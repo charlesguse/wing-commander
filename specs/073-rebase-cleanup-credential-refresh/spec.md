@@ -82,7 +82,7 @@ summary whose turn budget already bounds it to about a minute.
 
 ### Why this is a specification and not a fix PR
 
-The two workflows do not obviously want the same treatment, and choosing is a
+The two workflows do not obviously want the same treatment, and choosing was a
 trade-off, not a lookup:
 
 - Full mechanism everywhere is uniform and needs no exemption, but puts three
@@ -94,14 +94,30 @@ trade-off, not a lookup:
   carries `timeout-minutes: 10`), but it introduces a second, weaker kind of
   coverage that a future edit can silently remove.
 
+**Decided** (clarification answered on #558, 2026-09-25): `rebase.yml` gets the
+full post-agent mechanism; `cleanup.yml` gets the **wall-clock bound plus a
+recorded, assertable exemption**, following spec 052's `timeout-minutes: 10`
+precedent, because its agent has taken about a minute on every one of the 40
+measured runs. The weaker-coverage objection is answered by FR-006: the bound
+is not prose, it is a condition a gate asserts, so removing or raising it fails
+the suite.
+
 The related question — how Gate 68 decides *which* workflows it is
-responsible for — has the same shape, and is tracked as item 1 of #410
+responsible for — has the same shape, and was tracked as item 1 of #410
 ("derive the subject list"). Two other workflows already bear on it:
 `board-loop.yml` (spec 057) adopted the post-agent composites voluntarily
 (`board-loop.yml:901, :1228, :1720, :1727, :2217, :2732, :2739`) and is still
 not a Gate 68 subject, and `watchdog.yml`'s agent step carries
 `timeout-minutes: 10` (`watchdog.yml:2286`) but is recorded nowhere as an
 exemption.
+
+**Decided** (same answer): Gate 68's subjects are **derived from the workflows**
+rather than hand-listed, which resolves #410 item 1 inside this feature and
+brings `board-loop.yml` and `watchdog.yml` into scope — each recorded as an
+exemption whose condition the gate asserts, not as prose. The owner asked that
+this stay consistent with the derivation-plus-floor answer given on #549, so the
+derivation here must not contradict that decision; where the two touch the same
+mechanism, #549's shape wins.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -152,26 +168,28 @@ notice that says why.
 **Why this priority**: A silent half-teardown is worse than a loud failure: the
 lifecycle issue stays open and the branches stay behind, and the next run's
 idempotency checks then see a state nobody intended. The measured risk is low
-(one minute, every time), which is exactly why the remedy here is a judgment
-call rather than a copy of User Story 1's.
+(one minute, every time), which is why the remedy chosen here is the wall-clock
+bound rather than a copy of User Story 1's mechanism.
 
 **Independent Test**: Drive `cleanup.yml` to the `teardown-done` outcome and
-confirm that either every post-agent bot-acting step holds a post-agent
-credential, or the agent's run is bounded below the credential's lifetime by a
-limit that a deterministic check asserts is present.
+confirm the agent's run is bounded below the credential's lifetime by a limit a
+deterministic check asserts is present; then delete or raise that limit and
+confirm the check fails naming the job.
 
 **Acceptance Scenarios**:
 
-1. **Given** a `teardown-done` job whose agent step could run past the
-   credential's lifetime, **When** the close/label/delete steps run, **Then**
-   either they hold a post-agent credential, or the agent step could not have
-   run that long because an enforced wall-clock bound stopped it first.
-2. **Given** the remedy chosen is a wall-clock bound, **When** someone removes
-   or raises that bound past the credential's lifetime, **Then** a
-   deterministic check fails and names the job.
+1. **Given** a `teardown-done` job, **When** the close/label/delete steps run,
+   **Then** the agent step could not have run past the credential's lifetime,
+   because an enforced wall-clock bound would have stopped it first.
+2. **When** someone removes that bound or raises it past the credential's
+   lifetime, **Then** a deterministic check fails and names the job.
 3. **Given** a normal one-minute teardown, **When** the job runs, **Then** its
    completion summary, its issue close and its branch deletions are unchanged
    from today.
+4. **Given** the agent step hits the bound and is killed, **When** the job
+   continues, **Then** the close/label/delete steps still run on a credential
+   that is still inside its lifetime, and the incomplete-teardown report says
+   what did not finish.
 
 ---
 
@@ -187,7 +205,8 @@ subject list was a hand-written copy of FR-007's eight stages, so two
 workflows with the identical defect were never checked and nothing said so.
 Fixing the two files without fixing how they were missed leaves the next
 workflow to be missed the same way. It is P2 only because the two known
-exposures are what the maintainer is currently carrying.
+exposures are what the maintainer is currently carrying — but the clarification
+kept it in this feature rather than deferring it to #410, so it ships here.
 
 **Independent Test**: Add an agent step to a workflow that is neither covered
 nor exempt and confirm the gate fails naming that workflow and job; remove all
@@ -244,11 +263,13 @@ set.
   after that job's agent step MUST hold a credential established after the
   agent step finished — specifically the over-budget report, the publish arm,
   the abandon/escalate arm, and the lifecycle-issue announcement.
-- **FR-002**: Any git remote authenticated by a checkout that ran **before**
-  the agent step MUST be re-authenticated after it, in both affected jobs —
-  `rebase.yml`'s force-with-lease publish and `cleanup.yml`'s branch deletions
-  both push through such a remote and would otherwise carry the superseded
-  credential regardless of what any later step's environment says.
+- **FR-002**: In `rebase.yml`'s `rebase` job, any git remote authenticated by a
+  checkout that ran **before** the agent step MUST be re-authenticated after it
+  — its force-with-lease publish pushes through such a remote and would
+  otherwise carry the superseded credential regardless of what any later step's
+  environment says. `cleanup.yml`'s branch deletions push through the same kind
+  of persisted remote; there the exposure is closed by FR-005's bound keeping
+  the whole job inside the credential's lifetime, not by re-authentication.
 - **FR-003**: When post-agent re-establishment fails, the job MUST report the
   credential as the cause in its own outcome reporting, naming the workflow,
   the job and the step, rather than leaving a later step to fail with an
@@ -257,36 +278,49 @@ set.
   succeed MUST be able to name an expired or unrefreshed credential as the
   reason it is escalating, so a maintainer reading the escalation comment can
   tell a genuine conflict from a timed-out credential.
-- **FR-005**: `cleanup.yml`'s `teardown-done` job MUST be protected against
-  the same defect, by one of two remedies:
-  (a) the same post-agent re-establishment `rebase.yml` receives, or
-  (b) a wall-clock bound on the agent step or its job, strictly less than the
-  credential's lifetime, with a recorded exemption.
-  [NEEDS CLARIFICATION: which remedy does `cleanup.yml` get — the full
-  mechanism for uniformity, or the bound plus a recorded exemption, given its
-  agent has never exceeded one minute across 40 runs?]
-- **FR-006**: If FR-005's bounded remedy is chosen, the bound MUST be enforced
-  deterministically: a check MUST fail if the bound is absent, or is not
-  strictly less than the credential's lifetime, so that removing or raising it
-  cannot silently reintroduce the defect.
+- **FR-005**: `cleanup.yml`'s `teardown-done` job MUST be protected against the
+  same defect by a **wall-clock bound** on its agent step or its job, strictly
+  less than the credential's lifetime, together with a recorded exemption from
+  the post-agent mechanism. It MUST NOT receive the post-agent composites.
+  Following spec 052's precedent for `auto-update-spec-kit.yml`'s
+  `evaluate-path` and `comment-reply` jobs, the bound is `timeout-minutes: 10`
+  — an order of magnitude under the roughly 60-minute lifetime, and ten times
+  the agent's measured one minute.
+- **FR-006**: FR-005's bound MUST be enforced deterministically: a check MUST
+  fail if the bound is absent, or is not strictly less than the credential's
+  lifetime, so that removing or raising it cannot silently reintroduce the
+  defect.
 - **FR-007**: Any exemption MUST record its reason and cite the issue that
   decided it, in the same place the check that honours it reads — a reason
-  stated only in prose no check consults does not count (Principle VIII).
+  stated only in prose no check consults does not count (Principle VIII). Its
+  condition MUST be one the check can assert mechanically (a bound that is
+  present and under the lifetime; post-agent composites that are present and
+  consumed); an exemption whose condition the check cannot assert is not a valid
+  exemption, and the check MUST fail on it rather than honour it. `cleanup.yml`
+  and `watchdog.yml` cite #558 as the deciding issue; `board-loop.yml` cites
+  #558 and #410.
 
 **Coverage**
 
 - **FR-008**: The deterministic check that pins the post-agent remedy MUST
   treat `rebase.yml`'s `rebase` job as a subject, and MUST treat
-  `cleanup.yml`'s `teardown-done` job as either a subject or a recorded
-  exemption per FR-005.
-- **FR-009**: Every workflow in this repository that contains an agent step
-  MUST be either a subject of that check or covered by a recorded exemption,
-  and the check MUST fail when a workflow is neither.
-  [NEEDS CLARIFICATION: is the subject list derived by scanning the workflows
-  for agent steps — which brings `board-loop.yml` (already using the
-  composites, not yet a subject) and `watchdog.yml` (bounded at 10 minutes,
-  exemption unrecorded) into scope in this feature — or hand-extended with
-  these two files only, leaving #410 item 1 as separate work?]
+  `cleanup.yml`'s `teardown-done` job as a recorded exemption per FR-005.
+- **FR-009**: The check's subject set MUST be **derived** from the workflows —
+  discovered by finding the agent steps that are present, not read from a
+  hand-maintained list — so that a workflow or job with an agent step is in
+  scope by existing. Every derived agent-bearing workflow MUST be either a
+  subject or covered by a recorded exemption, and the check MUST fail when one
+  is neither. This resolves #410 item 1 within this feature, and brings two
+  further workflows into scope now:
+  - `board-loop.yml`, whose agent-bearing jobs already consume the post-agent
+    composites voluntarily, is recorded as an exemption for now, with adoption
+    of those composites as its asserted condition.
+  - `watchdog.yml`, whose agent step carries `timeout-minutes: 10`, is recorded
+    as an exemption on the same footing as `cleanup.yml` — the bound is its
+    asserted condition and FR-006 applies to it.
+  The derivation MUST stay consistent with the derivation-plus-floor decision
+  answered on #549; it MUST NOT introduce a second, contradicting way of
+  discovering the same subjects.
 - **FR-010**: The check MUST fail loudly rather than pass when it cannot reach
   its subject: a named file missing, a named job absent, a subject job with no
   agent step, or an empty subject list. This restates spec 052's FR-022 for
@@ -295,11 +329,13 @@ set.
   locally (`run-local-gates.py`) as in CI, and MUST be triggered by changes to
   every workflow it inspects.
 - **FR-012**: The check MUST ship with a self-test that reintroduces each way
-  the new coverage could regress — for each newly covered job, a post-agent
-  step reverted to the pre-agent credential, a deleted re-establishment, a
-  deleted remote re-authentication, a removed or over-long wall-clock bound
-  where one is relied on, and a subject removed from the list — and asserts
-  each one fails.
+  the new coverage could regress — for `rebase.yml`'s `rebase` job, a post-agent
+  step reverted to the pre-agent credential, a deleted re-establishment and a
+  deleted remote re-authentication; for each bounded job, a removed and an
+  over-long wall-clock bound; for the derived set, an agent-bearing workflow
+  that is neither a subject nor an exemption, an exemption whose asserted
+  condition no longer holds, and a subject whose agent step is gone — and
+  asserts each one fails.
 
 **Not changing anything else**
 
@@ -307,10 +343,12 @@ set.
   MUST be unchanged: a clean rebase that needs no agent work, and a normal
   one-minute teardown, MUST produce the same outcomes, comments, labels,
   branch deletions and artifacts as today.
-- **FR-014**: Post-agent steps MUST run when the agent step failed and MUST
-  NOT run when the workflow was cancelled, and the arms they feed
-  (`rebase.yml`'s publish and abandon/escalate; `cleanup.yml`'s close, delete
-  and incomplete-teardown report) MUST keep their existing gating semantics.
+- **FR-014**: In `rebase.yml`, post-agent steps MUST run when the agent step
+  failed and MUST NOT run when the workflow was cancelled, and the arms they
+  feed (publish and abandon/escalate) MUST keep their existing gating
+  semantics. In `cleanup.yml`, adding the bound MUST NOT change the gating of
+  the close, delete and incomplete-teardown steps — an agent step killed by the
+  bound counts as a failed agent step, not a cancelled workflow.
 - **FR-015**: No published composite's declared input surface may be widened
   to accomplish this, and any shared logic MUST be consumed from its existing
   single home rather than re-pasted into either workflow.
@@ -338,20 +376,25 @@ set.
 
 ### Measurable Outcomes
 
-- **SC-001**: Of the bot-acting steps that run after an agent step in
-  `rebase.yml`'s `rebase` job and `cleanup.yml`'s `teardown-done` job, **zero**
-  hold a credential established before that agent step — counted today as 4
-  and 4 respectively (plus two persisted remotes).
+- **SC-001**: Of the bot-acting steps that run after the agent step in
+  `rebase.yml`'s `rebase` job, **zero** hold a credential established before
+  that agent step — counted today as 4, plus one persisted remote.
+  `cleanup.yml`'s 4 such steps (plus its persisted remote) keep the pre-agent
+  mint by design, and are covered by SC-004's bound instead.
 - **SC-002**: The number of workflows in this repository that contain an agent
   step and are neither a subject of the check nor covered by a recorded
-  exemption is **zero**, verified by the check itself rather than by reading.
+  exemption is **zero**, verified by the check itself rather than by reading —
+  measured over the derived set, so the count includes workflows nobody added
+  to a list, and `board-loop.yml` and `watchdog.yml` are accounted for rather
+  than merely absent.
 - **SC-003**: A rebase whose agent runs past the credential's lifetime ends
   with the rebased branch published, or with a reported failure that names the
   credential — never with an unexplained authentication error and no
   explanation anywhere in the run.
-- **SC-004**: A teardown whose agent runs past the credential's lifetime
-  closes the lifecycle issue and deletes the pipeline branches, or the agent
-  could not have run that long because an enforced bound stopped it.
+- **SC-004**: No `teardown-done` agent step can run past the credential's
+  lifetime: the enforced bound is present, is at most 10 minutes, and the check
+  fails if it is deleted or raised — so the lifecycle issue is closed and the
+  pipeline branches deleted on a credential still inside its hour.
 - **SC-005**: Every regression the new coverage is meant to catch is
   demonstrated to fail by the check's self-test — 100% of the FR-012 list,
   with no case passing when reintroduced.
@@ -367,7 +410,12 @@ set.
   "Strictly less than the credential's lifetime" in FR-005/FR-006 means a
   bound with real margin under that — the precedent spec 052 set for
   `auto-update-spec-kit.yml`'s `evaluate-path` and `comment-reply` jobs is
-  `timeout-minutes: 10`, an order of magnitude under.
+  `timeout-minutes: 10`, an order of magnitude under, and the clarification
+  chose that same figure for `cleanup.yml`.
+- `board-loop.yml`'s exemption is provisional ("for now", per the
+  clarification): it is exempt because it already consumes the post-agent
+  composites, not because it is out of reach, so promoting it to a full subject
+  later is expected to be a re-classification, not a new remedy.
 - The measurements quoted in the Overview (40 runs per workflow, 2026-09-21)
   are accepted as the basis for the trade-off. They bound what has been
   observed, not what is possible — the rebase figures in particular are
@@ -400,6 +448,9 @@ set.
   its gate, all already shipped and consumed by eight stages.
 - Gate 68 (`.github/scripts/verify-post-agent-credential-refresh.py`) and its
   registration in `lint-workflows.yml` — the check this feature widens.
-- Issue #410 item 1 ("derive the subject list") — overlapping work whose
-  resolution FR-009's clarification decides in or out of this feature.
+- Issue #410 item 1 ("derive the subject list") — resolved **inside** this
+  feature by FR-009, per the clarification on #558; it should be closed against
+  this spec rather than worked separately.
+- Issue #549 — the derivation-plus-floor decision this feature's derivation must
+  stay consistent with (FR-009).
 - Issue #411 — the originating board item, carrying the measurement table.
