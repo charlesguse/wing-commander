@@ -8,6 +8,23 @@
 
 **Input**: User description: "watchdog: turn-budget-trend. The turn-budget collector emitted a cross-run trend for the clarify stage at band `elevated` over a 10-run window. This run (35665831869) counted 39 turns against an `intended-budget` of 40, and the window's `max-consumed-ceiling-fraction` is 0.61 with `headroom-remaining-fraction` 0.39; `consecutive-at-or-over-budget` is 0, so no run is currently stacking against the budget back-to-back. Two runs in the recorded history did exceed the intended budget outright — run 35554001500 at 61 counted turns and run 35422301482 at 45 counted turns, both against intended-budget 40 — which is the climb that puts the band above baseline. No step or job failed on this basis; the signal is a consumption trend for clarify, not a run failure. Class note: the signal's own `class-hint` is `turn-budget-trend`, which the repository already treats as a registered class (`.github/workflows/watchdog.yml:2985` maps `turn-budget-trend) keys='[\"stage\",\"expected\",\"actual\"]'`), and it is a distinct resource dimension from the listed `token-budget-warning` (agent turn count, not token consumption), so it is proposed as its own class rather than folded into a near-synonym. Evidence caveat for this run: `watchdog-untrusted-collectors.json` names `[\"collect-step-summary\"]`, so step-summary/sentinel evidence could not be gathered this run — any stall- or failure-flavored sentinel the clarify job may have written is absent from the signals file and was not weighed either way. Evidence: turn-budget-trend, watchdog-signals.json, signal id 57d2ab2e36bd34ff: facts.stage=\"clarify\", facts.band=\"elevated\", facts.window-size=10, facts.max-consumed-ceiling-fraction=0.61, facts.headroom-remaining-fraction=0.39, facts.consecutive-at-or-over-budget=0; facts.history entries {run 35665831869, counted-turns 39, intended-budget 40}, {run 35554001500, counted-turns 61, intended-budget 40}, {run 35422301482, counted-turns 45, intended-budget 40}. Routed from board-loop.yml (issue #448): the route agent judged this spec-shaped — turn-budget-trend is a fully-implemented, working alert (specs/046) correctly reporting clarify's elevated turn consumption; the response (raise the budget, investigate clarify's turn usage, or accept the trend) is the owner's trade-off to decide."
 
+## Clarifications
+
+### Session 2026-09-25 (issue #587)
+
+- Q: Which response to the reported clarify `turn-budget-trend` — re-base
+  the declared budget, reduce what clarify consumes, or accept the trend?
+  → A: Re-base the budget from the recorded run history, and record the
+  accepted range the new number is derived from.
+- Q: What is the scope of the response — clarify only, or every stage
+  re-based from its own history in one pass? → A: Clarify only; it is the
+  one stage with evidence, and a new published input would widen the
+  contract (constitution VII). No repository variable or new workflow
+  input is added for budget tuning.
+- Q: Does the runaway ceiling keep scaling with the declared budget, or
+  get pinned separately? → A: Keep the fixed ×2.5 multiplier, but any
+  change that moves a declared budget must state the resulting ceiling.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - A stage's declared turn budget describes the work that stage really does (Priority: P1)
@@ -29,7 +46,7 @@ The clarify stage declares an intended turn budget. Over the recorded window, re
 
 ### User Story 2 - Re-basing a budget does not quietly re-base what a runaway agent may spend (Priority: P1)
 
-The declared budget is an observability instrument; the runaway ceiling handed to the agent is the only hard stop, and today the ceiling is derived from the declared budget by a fixed multiplier. Any change to the declared budget therefore moves the worst-case spend with it. A maintainer changing the budget must see, and deliberately choose, the worst-case number of turns a runaway clarify agent may consume before anything stops it.
+The declared budget is an observability instrument; the runaway ceiling handed to the agent is the only hard stop, and the ceiling stays derived from the declared budget by the fleet-wide fixed multiplier (×2.5). Any change to the declared budget therefore moves the worst-case spend with it, so every change that moves a budget states the resulting ceiling. A maintainer changing the budget must see, and deliberately choose, the worst-case number of turns a runaway clarify agent may consume before anything stops it.
 
 **Why this priority**: Constitution II puts all of this repository's cost protection on the ceiling — no stage may run without a bounded turn budget, and since spec 037 the ceiling is the only thing that actually stops a run. Raising a declared budget to quiet an alert, and thereby raising the hard stop as an unremarked side effect, converts an observability fix into a cost decision nobody made. Clarify runs on the premium model tier, so the per-turn cost of that side effect is at the top of the fleet's range.
 
@@ -37,25 +54,25 @@ The declared budget is an observability instrument; the runaway ceiling handed t
 
 **Acceptance Scenarios**:
 
-1. **Given** the re-based clarify budget, **When** the resulting runaway ceiling is computed, **Then** its value is stated explicitly in the change and is the value the change intended, not a by-product noticed later.
+1. **Given** the re-based clarify budget, **When** the resulting runaway ceiling is computed as the declared budget times the fixed ×2.5 multiplier, **Then** its value is stated explicitly in the change and is the value the change intended, not a by-product noticed later.
 2. **Given** a clarify agent that genuinely runs away, **When** it reaches the ceiling, **Then** it is stopped at a finite, bounded turn count, and that count is recorded where a maintainer tuning the budget will see it.
 3. **Given** the change, **When** the stage's configuration is inspected, **Then** every clarify agent invocation still declares both an explicit model and a bounded ceiling, with no invocation left unbounded.
 
 ---
 
-### User Story 3 - A budget can be retuned without editing the published stage workflow (Priority: P2)
+### User Story 3 - Re-basing one stage changes one stage, and widens nothing (Priority: P2)
 
-A maintainer (of this repository or of an adopting one) who sees a `turn-budget-trend` for a stage can change that stage's declared budget through the same kind of knob every other stage setting uses — a wrapper-owned repository variable with the current value as its default — instead of editing the pinned, adopter-facing stage workflow.
+Clarify is the only stage with recorded evidence of divergence, so clarify is the only stage whose declared budget moves. The re-base lands at the single setting that already carries clarify's budget; it adds no repository variable, no new workflow input and no other new knob, and every other stage's budget, ceiling, over-budget reporting and spend are left exactly where they are.
 
-**Why this priority**: Today the clarify wrapper passes `model`, `runner`, `container-image`, the draft prefix and the findings knobs, but not `max-turns`, so the budget is fixed at the stage workflow's own default. That makes the answer to any future budget trend a code change to the published contract — which an adopter cannot make at all, and which this repository can only make by shipping a release. The trend signal exists to prompt a tuning action; the tuning action should not require modifying the instrument's housing. Under constitution VII the knob belongs in the wrapper, because a stage workflow reads no ambient repository state.
+**Why this priority**: The cheap reflex to a budget trend is to build a tuning knob so the number can be moved without a release — but every new knob is a new published input, and under constitution VII a published input is contract an adopter pins to and this repository then owns forever. The trend asks for one number to be decided on evidence, not for a new dial. Stages with no recorded divergence have no evidence to re-base from, so moving their numbers in the same pass would replace one unexplained constant with several.
 
-**Independent Test**: Change the repository variable for a stage's turn budget, dispatch that stage, and confirm the run uses the new budget and the correspondingly derived ceiling, with no edit to any file under the published stage-workflow surface.
+**Independent Test**: Diff the change and confirm exactly one stage's declared budget value moves, and that the set of inputs, repository variables and other knobs the pipeline exposes is identical before and after.
 
 **Acceptance Scenarios**:
 
-1. **Given** no repository variable is set, **When** the stage runs, **Then** it uses exactly the budget it uses today, so adopters who set nothing see no behavioural change.
-2. **Given** the repository variable is set to a valid positive value, **When** the stage runs, **Then** the declared budget, the derived ceiling, the over-budget determination and the reported metrics all reflect that value consistently.
-3. **Given** the repository variable is set to a value that is not a valid positive turn budget, **When** the stage runs, **Then** the run fails loudly naming the invalid value rather than silently falling back to an unbounded or zero ceiling.
+1. **Given** the change, **When** the pipeline's contract surface is inspected, **Then** it exposes no input, repository variable or other knob that it did not expose before.
+2. **Given** the change, **When** any stage other than clarify runs, **Then** its declared budget, derived ceiling, over-budget determination and reported metrics are identical to what they were before the change.
+3. **Given** a declared budget that is empty, zero, negative or non-numeric, **When** the stage runs, **Then** the run still fails loudly naming the offending value rather than resolving to an unbounded or zero ceiling — the existing guard is preserved, not weakened.
 
 ---
 
@@ -81,23 +98,24 @@ When the watchdog next reports a `turn-budget-trend` for any stage, the maintain
 - The recorded history includes runs whose counted turns were inflated by causes unrelated to clarify's real work (for example turns lost to denied tool calls, as diagnosed in spec 037). Re-basing on those turns bakes a defect into the declared budget.
 - The currently open `pipeline-defect` issue for the `elevated` band is closed as accepted rather than fixed: the collector's suppression then keeps that band quiet for clarify, but a later escalation to a higher band files a new, separate finding. The response chosen here must be legible against that behaviour rather than fighting it.
 - The re-based budget is raised far enough that the derived ceiling exceeds what any single clarify run could plausibly need, so the ceiling stops being a meaningful stop and becomes a formality.
-- An adopting repository has deliberately tuned a stage to a small budget for cost reasons; the change must not raise their spend without them setting anything.
+- An adopting repository has deliberately tuned clarify to a small budget for cost reasons by passing its own value; the re-base moves only the pipeline's own declared number, so their value must survive untouched.
+- An adopting repository that passes nothing inherits clarify's re-based budget — and the wider ceiling that follows from it — when it pins a release containing this change. That is the intended consequence of re-basing rather than knob-building, and the change must say so plainly enough that an adopter reading the release can see the new worst case.
 
 ## Requirements *(mandatory)*
 
 ### Functional Requirements
 
-- **FR-001**: The pipeline MUST respond to the reported clarify `turn-budget-trend` by [NEEDS CLARIFICATION: which response — (a) re-base clarify's declared budget upward from the recorded history so normal runs sit inside it, (b) reduce what clarify consumes so its real usage returns inside the existing budget of 40, or (c) accept the trend as tolerated and record that decision without moving any number?] and MUST record the reasoning for that response where a later maintainer reading the budget will find it.
-- **FR-002**: The scope of the response MUST be [NEEDS CLARIFICATION: clarify only, or every stage's declared budget re-based from its own recorded history in one pass?], and any stage left unchanged MUST be left unchanged deliberately rather than by omission.
-- **FR-003**: When a stage's declared budget changes, the worst-case turn count a runaway agent for that stage may reach before being stopped MUST [NEEDS CLARIFICATION: scale with the declared budget as it does today (fixed multiplier, so re-basing 40 → N raises the hard stop proportionally), or be pinned/sized separately so the hard stop and the reported budget move independently?].
+- **FR-001**: The pipeline MUST respond to the reported clarify `turn-budget-trend` by re-basing clarify's declared turn budget upward, derived from the recorded run history rather than chosen freehand, so that runs representative of clarify's real work sit inside it; and MUST record, beside the number, both the reasoning and the accepted range of counted turns the new budget was derived to cover, where a later maintainer reading the budget will find it.
+- **FR-002**: The scope of the response MUST be clarify only — it is the one stage with recorded evidence of divergence — and every other stage's declared budget MUST be left unchanged deliberately rather than by omission, with that decision recorded.
+- **FR-003**: The worst-case turn count a runaway agent may reach before being stopped MUST continue to be derived from the declared budget by the existing fleet-wide fixed multiplier (×2.5); the multiplier MUST NOT change and the ceiling MUST NOT be pinned or sized separately. Any change that moves a declared budget MUST state the resulting ceiling explicitly in the change.
 - **FR-004**: Every agent invocation in every stage MUST continue to declare an explicit model and a bounded, finite turn ceiling; no change in this feature may leave an invocation unbounded.
 - **FR-005**: A clarify run whose counted main-loop turns fall within clarify's established observed range MUST NOT be reported as over budget, either in the run summary or on the lifecycle issue.
 - **FR-006**: A run whose counted main-loop turns genuinely exceed the stage's declared budget MUST still be reported as over budget, and MUST still complete rather than fail on that basis — the existing observability-not-failure behaviour is preserved unchanged.
 - **FR-007**: After this feature lands, the recorded clarify history replayed against the new configuration MUST produce no trend band for clarify, so the watchdog stops re-filing a finding whose subject has been addressed.
-- **FR-008**: A maintainer MUST be able to change a stage's declared turn budget without editing any file in the published, adopter-pinned stage-workflow surface.
-- **FR-009**: The knob in FR-008 MUST default to the stage's current declared budget, so a repository that sets nothing observes no change in budget, ceiling, over-budget reporting or cost.
-- **FR-010**: The knob in FR-008 MUST live in the trigger-owning wrapper layer and be passed to the stage as a declared input; the stage MUST NOT read it as ambient repository state.
-- **FR-011**: An invalid value for the knob in FR-008 MUST fail the run loudly, naming the offending value, rather than resolving to zero, empty or unbounded.
+- **FR-008**: The re-base MUST be applied at the single setting that already declares clarify's turn budget. The feature MUST NOT add a repository variable, a new workflow input, or any other new knob for budget tuning: the pipeline's contract surface MUST be identical before and after the change.
+- **FR-009**: Every stage other than clarify MUST observe an identical declared budget, derived ceiling, over-budget determination, reported metrics and spend before and after the change.
+- **FR-010**: An adopting repository that already passes its own turn budget to a stage MUST keep the value it passes; the re-base MUST move only the value the pipeline itself declares.
+- **FR-011**: A declared turn budget that is empty, zero, negative or non-numeric MUST continue to fail the run loudly, naming the offending value, rather than resolving to zero, empty or unbounded; this existing guard MUST NOT be weakened by the re-base.
 - **FR-012**: The declared budget, the derived ceiling, the over-budget determination and the reported run metrics MUST all be computed from one value per stage per run, so no two of them can disagree about what that run's budget was.
 - **FR-013**: The repository MUST carry a written, evidence-based procedure for responding to a future `turn-budget-trend` on any stage, naming the evidence to read, how a new declared budget is derived from it, the spend consequence to check, and when accepting the trend is the correct response.
 - **FR-014**: The procedure in FR-013 MUST, when applied to the clarify history cited in this issue, reproduce the values this feature lands — so the procedure is demonstrated rather than merely asserted.
@@ -109,11 +127,11 @@ When the watchdog next reports a `turn-budget-trend` for any stage, the maintain
 ### Key Entities
 
 - **Declared turn budget**: the per-stage number a maintainer tunes and that consumption is reported against. Not a hard stop; an expectation.
-- **Runaway ceiling**: the finite turn count at which an agent is actually cut off. Today derived from the declared budget by a single fleet-wide multiplier.
+- **Runaway ceiling**: the finite turn count at which an agent is actually cut off. Derived from the declared budget by a single fleet-wide fixed multiplier (×2.5), and it stays that way — so re-basing a budget from 40 to N moves the ceiling from 100 to ceil(2.5 × N), a number the change must state.
 - **Counted main-loop turns**: the deterministic count of distinct main-loop assistant responses for a run, excluding subagent activity — the counter the declared budget is measured against.
 - **Trend band**: the severity value (`watch`, `elevated`, `critical`, or none) the supervision collector computes for a stage from its recent history; `elevated` is produced when the window's maximum consumed-ceiling fraction reaches the climb threshold without consecutive at-or-over-budget runs.
 - **History window**: the most recent N recorded runs for a stage, each carrying its counted turns, declared budget and ceiling; the evidence any re-basing decision reads.
-- **Budget knob**: the wrapper-owned repository variable through which a maintainer sets a stage's declared budget, defaulting to the stage's current value.
+- **Accepted range**: the span of counted turns, read from the history window, that the re-based budget is declared to cover — recorded beside the number so the number is traceable to evidence rather than to a session's judgement.
 
 ## Success Criteria *(mandatory)*
 
@@ -122,11 +140,11 @@ When the watchdog next reports a `turn-budget-trend` for any stage, the maintain
 - **SC-001**: Replaying the cited clarify history (39, 45 and 61 counted turns) against the post-change configuration produces zero `turn-budget-trend` signals for clarify.
 - **SC-002**: A clarify run at the heaviest observed consumption (61 counted turns) completes with zero over-budget notes posted to the lifecycle issue.
 - **SC-003**: The worst-case turn count a runaway clarify agent may reach before being stopped is a single stated number, recorded in the change, and no larger than the value that change chose.
-- **SC-004**: Changing a stage's declared turn budget requires edits to zero files in the published stage-workflow surface.
-- **SC-005**: A repository that sets no budget variable observes identical declared budgets, ceilings and over-budget behaviour before and after the change, across all stages.
+- **SC-004**: The change adds zero new inputs, repository variables or other knobs to the pipeline's contract surface, and moves exactly one stage's declared budget value.
+- **SC-005**: Every stage other than clarify shows identical declared budgets, ceilings, over-budget behaviour and cost before and after the change.
 - **SC-006**: Zero pipeline runs fail as a result of this change; no over-budget condition becomes fatal.
-- **SC-007**: Every stage's declared budget after the change is traceable in one step to either its recorded history or a stated decision to leave it alone — no stage's number is unexplained.
-- **SC-008**: An invalid budget value produces a failing run with a message naming the value, in 100% of the invalid shapes the repository's own fixtures exercise (empty, zero, negative, non-numeric).
+- **SC-007**: Every stage's declared budget after the change is traceable in one step to either its recorded history (clarify) or the stated decision to leave it alone (every other stage) — no stage's number is unexplained.
+- **SC-008**: An invalid budget value still produces a failing run with a message naming the value, in 100% of the invalid shapes the repository's own fixtures exercise (empty, zero, negative, non-numeric).
 - **SC-009**: Applying the recorded procedure to the cited clarify history reproduces the declared budget and ceiling this feature landed, with no additional judgement calls needed.
 
 ## Assumptions
@@ -135,14 +153,18 @@ When the watchdog next reports a `turn-budget-trend` for any stage, the maintain
 - The deterministic turn-counting and agent-verdict machinery (specs/037) is correct; the counted main-loop turns in the cited history are accurate measurements of clarify's work.
 - The cited history is the authoritative evidence base. No attempt is made to re-derive clarify's consumption from transcripts beyond what the recorded metrics already hold.
 - Over-budget remains observability, never failure: nothing in this feature makes reaching the declared budget fail a run.
-- Adopting repositories that set no configuration must be unaffected; any new knob is opt-in with today's behaviour as its default.
+- Adopting repositories that pass their own turn budget to a stage keep that value; only the pipeline's own declared number for clarify moves, and it moves for everyone who pins a release containing it.
 - The clarify stage's premium model tier is correct for the work and is not revisited here (constitution II).
-- Clarify's own workload — how many questions it asks, how it folds answers — is treated as given unless FR-001 resolves toward reducing consumption; this spec does not presume clarify is doing unnecessary work.
-- The currently open `pipeline-defect` issue for this trend is resolved by whatever FR-001 resolves to, including the case where the resolution is an explicit acceptance.
+- Clarify's own workload — how many questions it asks, how it folds answers — is treated as given: FR-001 resolved toward re-basing the declared number, not toward reducing what clarify does, so this spec does not presume clarify is doing unnecessary work.
+- The currently open `pipeline-defect` issue for this trend is resolved by the re-base landing and the replayed history producing no band.
 
 ## Out of Scope
 
 - Changing how bands, signal ids, fingerprints or dedup outcomes are computed.
+- Adding a repository variable, workflow input or any other new knob for per-stage budget tuning (Q2, session 2026-09-25: a new published input would widen the contract, constitution VII).
+- Re-basing, or otherwise moving, the declared budget of any stage other than clarify.
+- Changing the fleet-wide ×2.5 budget-to-ceiling multiplier, or pinning any stage's ceiling independently of its declared budget (Q3, session 2026-09-25).
+- Reducing what clarify consumes — changing how many questions it asks or how it folds answers (Q1, session 2026-09-25).
 - Changing model tiers for any stage.
 - Changing the `token-budget-warning` class or any other supervision collector.
 - Making an over-budget run fail, or removing the over-budget report.

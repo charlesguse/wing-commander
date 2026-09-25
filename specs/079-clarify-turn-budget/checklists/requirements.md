@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,30 +31,37 @@
 
 ## Notes
 
-- Three `[NEEDS CLARIFICATION]` markers remain, at the maximum the skill
-  permits, and all three are genuine owner trade-offs rather than gaps an
-  informed guess could close. They are why the board loop routed this
-  issue as spec-shaped rather than fixing it:
-  - **FR-001** — which response (re-base the budget, reduce clarify's
-    consumption, or accept the trend). Scope-defining: the other two
-    answers produce entirely different features.
-  - **FR-002** — clarify only, or every stage re-based in one pass.
-  - **FR-003** — whether the runaway ceiling scales with the declared
-    budget as it does today, or is pinned separately. This is the cost
-    decision: under today's fixed multiplier, re-basing 40 upward raises
-    the hard stop, and the spend, in proportion.
+- All three `[NEEDS CLARIFICATION]` markers are resolved by the owner's
+  answers on issue #587, recorded in the spec's **Clarifications**
+  section (session 2026-09-25):
+  - **FR-001** — re-base clarify's declared budget from the recorded run
+    history, and record the accepted range it was derived from. Neither
+    reducing clarify's consumption nor accepting the trend.
+  - **FR-002** — clarify only; it is the one stage with evidence. The
+    answer also rules out building a tuning knob, because a new
+    published input would widen the contract (constitution VII), so
+    User Story 3 and FR-008–FR-011 were rewritten from "a budget can be
+    retuned without editing the published stage workflow" to "re-basing
+    one stage changes one stage, and widens nothing", and the knob moved
+    to Out of Scope.
+  - **FR-003** — the runaway ceiling keeps scaling with the declared
+    budget through the existing fleet-wide ×2.5 multiplier; the cost
+    consequence is handled by requiring every budget change to state the
+    resulting ceiling rather than by pinning the ceiling separately.
 
-  Under the pipeline's CI deviation these are not blocking: the markers
-  stay in `spec.md` and the questions are posted to the lifecycle issue
-  for the owner to answer through the clarify stage.
+- Terms like "declared budget", "runaway ceiling", "contract surface"
+  and "registered gate suite" are this repository's own domain
+  vocabulary (constitution II, VII and VIII), not implementation detail;
+  they name *what* must hold, and every functional requirement stays
+  silent on *how*. FR-008 deliberately states the no-widening constraint
+  rather than a mechanism, because constitution VII makes the contract
+  surface itself the requirement.
 
-- Terms like "declared budget", "runaway ceiling", "wrapper", "published
-  stage-workflow surface" and "registered gate suite" are this
-  repository's own domain vocabulary (constitution II, VII and VIII),
-  not implementation detail; they name *what* must hold, and every
-  functional requirement stays silent on *how*. FR-008/FR-010 deliberately
-  state the layering constraint rather than a mechanism, because
-  constitution VII makes the layer itself the requirement.
+- FR-001 fixes the method for deriving clarify's new number (the
+  recorded history, through the procedure of FR-013) but not the number
+  itself; that is a deterministic derivation for the planning stage, not
+  a further owner trade-off. SC-009 keeps it honest by requiring the
+  recorded procedure to reproduce whatever budget and ceiling land.
 
 - Every other checklist item passes on the first validation pass; no
   re-write iterations were needed.
