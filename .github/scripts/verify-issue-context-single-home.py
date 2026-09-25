@@ -107,9 +107,12 @@ WHAT IT CHECKS
    whether that files a spec-request, so it fails closed. The check fails
    on zero sites too, so a rename of the label or the command cannot turn
    it vacuous. The builder's own behaviour (fallback order, the "No
-   drafted body." line, a fence no content can close so @mentions and #N
-   references stay inert, truncation under 65536 characters with a
-   visible note) is exercised by `--self-test`.
+   drafted body." line, a fence no content can close around both the
+   drafted body and the context, so @mentions, #N references, links,
+   images and HTML stay inert (#548), truncation under 65536 characters
+   with a visible note) is exercised by `--self-test`, and each
+   BUILDER_MUTATIONS rewrite of the builder (the draft unfenced, the
+   fence no longer sized from the content) must be caught.
 
 4. read-only-git (#513). triage-propose, route-propose and the reviewer
    are read-only, but were granted `Bash(git log:*)`/`Bash(git diff:*)`/
@@ -1375,24 +1378,25 @@ def _self_test_spec_request_sites(tmpdir):
     return failures
 
 
-def _load_builder():
+def _load_builder(path=SPEC_REQUEST_BUILDER):
     import importlib.util
     spec = importlib.util.spec_from_file_location(
-        "board_spec_request_body", SPEC_REQUEST_BUILDER)
+        "board_spec_request_body", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 
 
-def _fenced_inner(b, body):
-    """(fence, inner text) of the one fenced context block in `body`, or
-    (None, None) when the block is not well formed: an opening fence line
-    right after the heading and the SAME fence alone on a later line, with
-    no line in between that could close it (a backtick run at least as
-    long, alone on its line after up to three spaces)."""
+def _fenced_inner(b, body, heading=None):
+    """(fence, inner text) of the one fenced block under `heading` (the
+    context heading by default) in `body`, or (None, None) when the block
+    is not well formed: an opening fence line right after the heading and
+    the SAME fence alone on a later line, with no line in between that
+    could close it (a backtick run at least as long, alone on its line
+    after up to three spaces)."""
     lines = body.split("\n")
     try:
-        start = lines.index(b.CONTEXT_HEADING) + 2
+        start = lines.index(heading or b.CONTEXT_HEADING) + 2
     except ValueError:
         return None, None
     fence = lines[start] if start < len(lines) else ""
@@ -1405,6 +1409,59 @@ def _fenced_inner(b, body):
                 return None, None  # closed early by the content
             return fence, "\n".join(lines[start + 1:end])
     return None, None
+
+
+# #548: route-propose's pr-body is model output derived from issue
+# content. Every live-markdown shape it could carry must stay inside the
+# fence: an @mention (a ping), #N (a backlink), a link, an image, HTML,
+# and backtick runs -- one alone on its own line, the shape that closes
+# a too-short fence.
+DRAFTED_HOSTILE = (
+    "## Proposal\n\ncc @someone, see #12 and org/repo#3.\n"
+    "[x](http://example.com/x) ![i](http://example.com/i.png)\n"
+    "<img src=\"http://example.com/p.png\"> <details><summary>s</summary>"
+    "</details>\n```\n@escaped #1\n```\n``````\n@escaped #2\n"
+    "   `````\nend")
+# What must never appear outside the fence of a drafted body.
+LIVE_MARKDOWN_RE = re.compile(r"@\w|#\d|\]\(|!\[|<[A-Za-z/!]")
+
+
+def _drafted_fence_problems(b):
+    """Problems with how builder module `b` places a hostile drafted body
+    (DRAFTED_HOSTILE): it must sit whole under DRAFTED_HEADING inside a
+    fence longer than its longest backtick run, with nothing live outside
+    that fence, and the context must not also be rendered. Also run
+    against a mutated builder, which it must flag."""
+    problems = []
+    heading = getattr(b, "DRAFTED_HEADING", None)
+    if not heading:
+        return ["builder: no DRAFTED_HEADING for the drafted body"]
+    notice, footer = "Notice.", "Routed from x"
+    body = b.build_body(drafted=DRAFTED_HOSTILE, context="## Issue\n\nT",
+                        notice=notice, footer=footer)
+    fence, inner = _fenced_inner(b, body, heading)
+    if inner != DRAFTED_HOSTILE:
+        problems.append(f"builder: the drafted body is not whole inside "
+                        f"its own fence under {heading!r}: {body!r}")
+    else:
+        longest = max(len(r) for r in re.findall(r"`+", DRAFTED_HOSTILE))
+        if len(fence) <= longest:
+            problems.append(f"builder: drafted fence {fence!r} is not "
+                            f"longer than the draft's longest backtick "
+                            f"run ({longest})")
+        outside = body.replace(inner, "", 1)
+        live = LIVE_MARKDOWN_RE.findall(outside)
+        if live:
+            problems.append(f"builder: live markdown {live!r} sits outside "
+                            f"the drafted fence: {outside!r}")
+    if not (body.startswith(notice + "\n\n" + heading)
+            and body.endswith("\n\n---\n" + footer)):
+        problems.append(f"builder: drafted layout is not notice, heading, "
+                        f"fence, footer: {body!r}")
+    if b.CONTEXT_HEADING in body:
+        problems.append("builder: a drafted body should win over the "
+                        "context, not sit beside it")
+    return problems
 
 
 def _self_test_builder():
@@ -1449,10 +1506,7 @@ def _self_test_builder():
             failures.append(f"builder: fence {fence!r} is not longer than "
                             f"the longest backtick run in {tricky!r}")
 
-    body = b.build_body(drafted="Drafted.", context=ctx)
-    if body != "Drafted." or "Title" in body:
-        failures.append(f"builder: a drafted body should win over the "
-                        f"context: {body!r}")
+    failures.extend(_drafted_fence_problems(b))
 
     body = b.build_body(drafted="  \n", context="", notice="N", footer="F")
     if body != "N\n\nNo drafted body.\n\n---\nF":
@@ -1488,18 +1542,60 @@ def _self_test_builder():
         if not (body.startswith(notice) and body.endswith(footer)):
             failures.append(f"builder: truncating an oversized {label} "
                             f"lost the notice or footer")
-        if label == "context":
-            fence, inner = _fenced_inner(b, body)
-            if inner is None or not huge.startswith(inner):
-                failures.append("builder: truncating an oversized context "
-                                "left the fence unclosed or broken")
-            elif body.index("_[Truncated:") < body.rindex(fence):
-                failures.append("builder: the truncation note landed inside "
-                                "the fence, where it would not render")
+        heading = (b.CONTEXT_HEADING if label == "context"
+                   else getattr(b, "DRAFTED_HEADING", None))
+        fence, inner = _fenced_inner(b, body, heading)
+        if inner is None or not huge.startswith(inner):
+            failures.append(f"builder: truncating an oversized {label} "
+                            f"left the fence unclosed or broken")
+        elif body.index("_[Truncated:") < body.rindex(fence):
+            failures.append(f"builder: the truncation note for an oversized "
+                            f"{label} landed inside the fence, where it "
+                            f"would not render")
     if not failures:
         print("note: builder unit tests passed (fallback order, one-line "
-              "fallback, inert @/# inside an unbreakable fence, truncation "
-              "under the limit with a note).")
+              "fallback, inert @/#/links/images/HTML inside an unbreakable "
+              "fence for both the draft and the context, truncation under "
+              "the limit with a note).")
+    return failures
+
+
+# Each mutation rewrites the REAL builder in memory the way a later edit
+# could reopen #548; _drafted_fence_problems() must flag every one.
+BUILDER_MUTATIONS = (
+    ("drafted body unfenced again",
+     "        proper = fenced_section(DRAFTED_HEADING, drafted, budget)\n",
+     "        kept, note = truncate(drafted, budget)\n"
+     "        proper = kept + note\n"),
+    ("fence no longer sized from the content",
+     '    return "`" * max(3, longest + 1)\n',
+     '    return "```"\n'),
+)
+
+
+def _mutation_check_builder():
+    failures = []
+    try:
+        with open(SPEC_REQUEST_BUILDER, encoding="utf-8") as fh:
+            original = fh.read()
+    except OSError as exc:
+        return [f"mutation check: could not read {SPEC_REQUEST_BUILDER}: "
+                f"{exc}"]
+    with tempfile.TemporaryDirectory() as tmpdir:
+        for label, old, new in BUILDER_MUTATIONS:
+            if old not in original:
+                failures.append(
+                    f"mutation {label!r} no longer applies ({old!r} not in "
+                    f"{SPEC_REQUEST_BUILDER}) -- update BUILDER_MUTATIONS "
+                    f"so this gate stays proven.")
+                continue
+            path = os.path.join(tmpdir, "board_spec_request_body_mutated.py")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(original.replace(old, new, 1))
+            if not _drafted_fence_problems(_load_builder(path)):
+                failures.append(f"mutation {label!r} was NOT caught")
+            else:
+                print(f"note: mutation caught ({label}).")
     return failures
 
 
@@ -2094,6 +2190,7 @@ def run_self_test():
         failures.extend(_self_test_spec_request_sites(tmpdir))
         failures.extend(_self_test_read_only_git(tmpdir))
     failures.extend(_self_test_builder())
+    failures.extend(_mutation_check_builder())
     failures.extend(_mutation_check_spec_request_sites())
     failures.extend(_self_test_git_read_wrapper())
     failures.extend(_mutation_check_read_only_git())

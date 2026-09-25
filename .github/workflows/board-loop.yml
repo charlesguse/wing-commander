@@ -1021,6 +1021,7 @@ jobs:
           import sys
 
           sys.path.insert(0, ".github/scripts")
+          from board_route_backstop import normalize_category
           from wc_fence_extract import extract_fenced_json
 
           path = os.path.join(os.environ["RUNNER_TEMP"], "claude-execution-output.json")
@@ -1382,8 +1383,11 @@ jobs:
                   elif isinstance(parsed, dict):
                       proposal.update(parsed)
                       # A valid object with no fix/spec category is not
-                      # the agent's judgment of shape (#534 review).
-                      extracted = parsed.get("category") in ("fix", "spec")
+                      # the agent's judgment of shape (#534 review). The
+                      # category is read the way route() reads it
+                      # (normalize_category(), #548), so "SPEC" is an
+                      # extracted spec in both places.
+                      extracted = normalize_category(parsed.get("category")) is not None
                       if not extracted:
                           print("::warning::board-loop route-propose: parsed ```board-route-proposal``` block has no fix/spec category (got {0!r}) -- the route does not report it as the agent's own judgment".format(parsed.get("category")))
                   else:
@@ -1460,7 +1464,7 @@ jobs:
 
           proposal_extracted = os.environ.get("PROPOSAL_EXTRACTED") == "true"
           decision = route(
-              proposal.get("category") or "spec", file_changes,
+              proposal.get("category"), file_changes,
               int(os.environ["BOARD_MAX_FILES"]), int(os.environ["BOARD_MAX_LINES"]),
               measure_backstop, widened_paths_override=widened,
               proposal_extracted=proposal_extracted)

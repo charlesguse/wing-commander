@@ -1,0 +1,19 @@
+{
+  "_note": "upper-case SPEC is the agent's spec proposal (#548): normalize_category() strips and lowercases, and the extract step counts it as extracted.",
+  "agent_proposal": "SPEC",
+  "proposal_extracted": true,
+  "board_max_files": 6,
+  "board_max_lines": 120,
+  "measure": {
+    "over_threshold": false,
+    "files": 0,
+    "lines": 0
+  },
+  "diff_paths": [],
+  "diff_text": "",
+  "expected": {
+    "backstop_verdict": "spec",
+    "reason": "agent_proposed_spec",
+    "agent_proposal": "spec"
+  }
+}

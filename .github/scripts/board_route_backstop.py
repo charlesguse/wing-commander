@@ -174,6 +174,23 @@ def contract_widened(diff_paths, diff_text, file_contents=None):
     return widened
 
 
+PROPOSAL_CATEGORIES = ("fix", "spec")
+
+
+def normalize_category(category):
+    """The one home for reading route-propose's `category` (#548): "fix"
+    or "spec" after stripping whitespace and lowercasing, so "SPEC",
+    " spec " and "Fix" count as the agent's proposal; None for anything
+    else (a typo, a non-string, null). board-loop.yml's extract step
+    counts a proposal as extracted exactly when this is not None, and
+    route() treats None as no usable proposal -- spec, the safe
+    direction -- so the two can never disagree."""
+    if not isinstance(category, str):
+        return None
+    category = category.strip().lower()
+    return category if category in PROPOSAL_CATEGORIES else None
+
+
 def route(agent_proposal, file_changes, board_max_files, board_max_lines,
           measure_backstop, diff_paths=None, diff_text=None, file_contents=None,
           widened_paths_override=None, proposal_extracted=True):
@@ -190,7 +207,15 @@ def route(agent_proposal, file_changes, board_max_files, board_max_lines,
     `proposal_extracted` is False when the caller had no usable proposal
     from the agent and fell back to a default `spec` -- that spec is then
     reported as `no_usable_proposal`, never as the agent's own judgment
-    (#534)."""
+    (#534). `agent_proposal` is read through normalize_category(); a
+    value outside fix/spec is no usable proposal whatever
+    `proposal_extracted` says, so it is spec, never fix (#548). The
+    decision records the normalised value."""
+    category = normalize_category(agent_proposal)
+    if category is None:
+        agent_proposal, proposal_extracted = "spec", False
+    else:
+        agent_proposal = category
     over_threshold, files, lines = measure_backstop(file_changes, board_max_files, board_max_lines)
     if widened_paths_override is not None:
         widened_paths = widened_paths_override
