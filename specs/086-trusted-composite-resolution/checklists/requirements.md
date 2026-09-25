@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,21 +31,24 @@
 
 ## Notes
 
-- Three [NEEDS CLARIFICATION] markers remain, deliberately, and they are the
-  trade-offs the originating issue said an owner must decide rather than a
-  local fix pick unilaterally:
-  - **FR-011** (scope) — the three jobs exposed today, or every board-loop
-    job uniformly.
-  - **FR-012** (security) — whether trusted resolution alone is the answer
-    for an item branch that edits the loop's own judging surface, or whether
-    such an item is additionally stood down or held for a human.
-  - **FR-003** (security/provenance) — which commit supplies the trusted
-    copy: the commit whose workflow definition is running, or the default
-    branch's tip at job start.
-  This intake run does not wait for answers; they are posted to lifecycle
-  issue #615 as a questionnaire and folded in by the clarify stage. Every
-  other requirement carries a reasonable default with its assumption
-  recorded, so the marker count is at the limit of 3 and not above it.
+- The three [NEEDS CLARIFICATION] markers intake left for the owner were
+  answered on lifecycle issue #615 and folded in by the clarify stage; none
+  remain:
+  - **FR-011** (scope) — answered: **every board-loop job uniformly**, not
+    a list of the three jobs exposed today, because a per-job list is the
+    same shape as the gap being fixed. Propagated to the Scope section, User
+    Story 3, SC-001, the Key Entities and the Assumptions.
+  - **FR-012** (security) — answered: **trusted resolution alone**; the loop
+    works such an item normally and does not stand it down or hold it for a
+    human, since that would stop the loop fixing most of the board. The
+    residual gap (the gate suite runs the item's tree while the App token is
+    held) stays tracked on issue #590 and is now named in Assumptions and
+    Out of Scope. FR-013 was rewritten to match: the rule is unconditional,
+    so nothing branches on what the item's content touches.
+  - **FR-003** (security/provenance) — answered: **the commit whose workflow
+    definition is running**, the same provenance as the #583/#589 helper
+    snapshot. Propagated to FR-004, the "two runs at different workflow
+    versions" edge case, the Trusted copy entity and the Assumptions.
 - Named job names, composite names and file paths appear in the Overview,
   Scope, Edge Cases and Key Entities as *evidence of the reported defect*
   and as the boundary of the change, not as prescribed implementation. The
@@ -60,5 +63,4 @@
 - Counts are stated as "every reference in the affected jobs" rather than a
   literal number, so the requirements cannot go stale as call sites are
   added or removed.
-- Items marked incomplete require spec updates before `/speckit-clarify` or
-  `/speckit-plan`.
+- All items are complete; the spec is ready for `/speckit-plan`.

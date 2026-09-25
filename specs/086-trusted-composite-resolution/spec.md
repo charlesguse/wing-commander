@@ -94,6 +94,10 @@ Confirmed on `main` at the time of writing:
 
 The remaining jobs (`select`, `resolve-model`, `triage`, `route`,
 `prove-gate`, `prove`) check out trusted content and are not exposed today.
+They are nonetheless brought under the same rule: FR-011 settles the scope
+question as every board-loop job uniformly, so the rule and its gate are one
+unconditional statement rather than a per-job list — a list being the same
+shape as the gap being fixed.
 
 ### Exposure as of this filing
 
@@ -179,10 +183,11 @@ and confirm the job completes rather than failing to locate the action.
 
 ### User Story 3 - A gate keeps the rule true after this session (Priority: P2)
 
-A maintainer editing these jobs later, or adding a fourth job that checks
-out item content, gets a failing gate — not a silent regression — if a
-reference resolves from item-branch content. The gate must be able to fail
-its own subject.
+A maintainer editing these jobs later, or adding a new job to the loop, gets
+a failing gate — not a silent regression — if a reference resolves from the
+workspace. Because the rule is uniform across every board-loop job (FR-011),
+a new job is covered the moment it is added, with no allowlist to update.
+The gate must be able to fail its own subject.
 
 **Why this priority**: The repository's own experience (CLAUDE.md: "a rule
 with no gate behind it lasts until the next session"; Principle VIII) is
@@ -231,9 +236,12 @@ one mutation per rule is the existing house pattern.
   is the intended direction of the trade-off and should be stated, not
   worked around.
 - **Two runs at different workflow versions.** An item can be triaged by
-  one version of the loop and reviewed by a later one. Whichever trusted
-  ref is chosen must give each job a self-consistent pairing of workflow
-  definition, composites and helper scripts within a single run.
+  one version of the loop and reviewed by a later one. FR-003 resolves this
+  by construction: each job takes its trusted copy from the commit whose
+  workflow definition is running, so within a single run the workflow
+  definition, the composites and the helper scripts always agree. Across
+  runs the item may be handled by two different versions of the loop, each
+  internally consistent; that is accepted.
 - **A branch from a fork.** If an item's pull request head is on a fork,
   the item content is fully outside the repository's control; trusted
   resolution must hold identically.
@@ -242,23 +250,26 @@ one mutation per rule is the existing house pattern.
 
 ### Functional Requirements
 
-- **FR-001**: Every job in the board loop that puts board-item content in
-  its workspace MUST resolve the loop's own composite actions from a copy of
-  this repository taken at a trusted ref, never from the workspace.
+- **FR-001**: Every job in the board loop MUST resolve the loop's own
+  composite actions from a copy of this repository taken at the trusted ref,
+  never from the workspace — unconditionally, whether or not the job puts
+  board-item content in its workspace.
 - **FR-002**: The trusted copy MUST be established before any step that
   resolves a composite from it, before any credential is minted, and before
   any agent step in the job.
-- **FR-003**: The trusted ref MUST be [NEEDS CLARIFICATION: which commit
-  supplies the trusted copy — the commit whose workflow definition is
-  running (matching the helper-script snapshot the three jobs already take,
-  giving one provenance for composites and scripts alike), or the default
-  branch's tip at the moment the job starts (so a fix landed mid-flight
-  takes effect immediately, at the cost of pairing newer composites with an
-  older workflow definition)?]
+- **FR-003**: The trusted ref MUST be the commit whose workflow definition
+  is running. This is the same provenance as the helper-script and schema
+  snapshot the loop already takes (issues #583/#589), so a single run's
+  workflow definition, composites and helper scripts all come from one
+  commit and are self-consistent by construction. A fix landed on the
+  default branch mid-flight therefore takes effect on the next run of the
+  loop rather than immediately; that is the accepted cost of one
+  provenance.
 - **FR-004**: Helper scripts and schemas MUST continue to resolve from a
   read-only, pre-agent copy of trusted content, as they do today; this
-  feature MUST NOT weaken that guarantee, and SHOULD present composites and
-  helpers as one provenance rule rather than two unrelated mechanisms.
+  feature MUST NOT weaken that guarantee. Because FR-003 selects the same
+  commit the existing snapshot uses, composites and helpers MUST be
+  presented as one provenance rule rather than two unrelated mechanisms.
 - **FR-005**: The item's own content MUST remain available to the job for
   the work that legitimately needs it — reading the diff, editing files,
   committing, pushing, and running the gate suite over the change.
@@ -277,26 +288,30 @@ one mutation per rule is the existing house pattern.
 - **FR-010**: The gate of FR-008 MUST state its one narrow exemption
   explicitly — the gate-suite invocation that runs the item's tree on
   purpose (FR-005) — and MUST NOT admit any broader workspace reference.
-- **FR-011**: The jobs covered by FR-001 MUST be
-  [NEEDS CLARIFICATION: exactly the three jobs exposed today (`fix`,
-  `review`, `readiness`), keeping the change bounded — or every job in the
-  board loop uniformly, so the rule and its gate are one unconditional
-  statement and a future job that gains an item checkout is covered before
-  anyone notices?]
+- **FR-011**: The jobs covered by FR-001 MUST be every job in the board
+  loop, uniformly — including the jobs that check out only trusted content
+  today (`select`, `resolve-model`, `triage`, `route`, `prove-gate`,
+  `prove`). The rule and its gate are one unconditional statement, so a job
+  that later gains an item checkout is covered before anyone notices. A
+  per-job allowlist is the same shape as the gap being fixed and MUST NOT be
+  introduced.
 - **FR-012**: When a board item's branch modifies the loop's own judging
   surface — the shared composites, the helper scripts, or the workflow
-  definitions the loop runs — the loop MUST
-  [NEEDS CLARIFICATION: rely on trusted resolution alone and work the item
-  normally; or stand the item down for a human with an explanatory comment
-  and a label, on the grounds that the gate suite still runs the item's tree
-  by design (FR-005) and the job holds the loop's credentials; or work the
-  item but require a human decision before the readiness pass can report
-  the item ready?]
-- **FR-013**: The behaviour FR-012 settles on MUST be decided by
-  deterministic code, not by an agent's judgment, and MUST be observable in
-  the run's own record.
-- **FR-014**: Documentation that describes how these jobs obtain the loop's
-  own code — the affected jobs' comments, the board-loop workflow contract,
+  definitions the loop runs — the loop MUST rely on trusted resolution
+  alone and work the item normally. It MUST NOT stand the item down, label
+  it, or require a human decision on the strength of what the branch
+  touches: doing so would stop the loop fixing most of the board, since the
+  loop's own surface is most of what the board is about. The residual gap
+  this leaves — the gate suite runs the item's tree by design (FR-005)
+  while the loop's credential is in hand — is out of scope here and stays
+  tracked on issue #590.
+- **FR-013**: Trusted resolution MUST be unconditional: no code and no
+  agent may branch on whether an item's content touches the loop's own
+  surface. Each job's run record MUST show the provenance of the trusted
+  copy it used — the ref and commit it was taken from — so the property is
+  observable after the fact rather than inferred.
+- **FR-014**: Documentation that describes how the loop's jobs obtain the
+  loop's own code — those jobs' comments, the board-loop workflow contract,
   and the header that states the general rule for shared composites — MUST
   be updated to match the shipped behaviour, with one canonical statement
   and pointers from the other sites rather than repeated prose.
@@ -311,10 +326,12 @@ one mutation per rule is the existing house pattern.
   branch and pull request. Its branch content is untrusted.
 - **Item-branch job**: a board-loop job whose workspace holds board-item
   content at some point in its execution — today `fix` (resume path, and
-  every post-agent step on both paths), `review`, and `readiness`.
-- **Trusted copy**: a checkout of this repository at a trusted ref, kept
-  separate from the item's workspace, from which the loop's own composites
-  and helpers resolve.
+  every post-agent step on both paths), `review`, and `readiness`. These are
+  where the defect is observable; the rule of FR-001 applies to every job
+  regardless.
+- **Trusted copy**: a checkout of this repository at the commit whose
+  workflow definition is running, kept separate from the item's workspace,
+  from which the loop's own composites and helpers resolve.
 - **Judging surface**: the parts of the loop that decide something about an
   item — the untrusted-content filter, the agent-verdict validator, the
   findings extractor, the readiness and routing backstops, the kill-switch
@@ -327,7 +344,7 @@ one mutation per rule is the existing house pattern.
 ### Measurable Outcomes
 
 - **SC-001**: Of the references to the loop's own composites and helpers in
-  the item-branch jobs, 100% resolve from the trusted copy; the only
+  every board-loop job, 100% resolve from the trusted copy; the only
   workspace-resolved invocation left is the gate suite over the item's
   change.
 - **SC-002**: A branch that rewrites any part of the judging surface
@@ -353,8 +370,9 @@ one mutation per rule is the existing house pattern.
   maintainer's comment on this issue restates it; this spec treats the
   trust property (User Story 1) as the primary deliverable.
 - `board-loop.yml` is not a published, adopter-called stage, so the trusted
-  copy is this repository at a trusted ref — there is no adopter-supplied
-  pipeline ref to resolve, and no new typed input is implied.
+  copy is this repository at the commit whose workflow definition is running
+  (FR-003) — there is no adopter-supplied pipeline ref to resolve, and no
+  new typed input is implied.
 - The existing helper-script snapshot and its gate are correct and stay;
   this feature extends the same guarantee to composites rather than
   replacing the mechanism.
@@ -367,9 +385,12 @@ one mutation per rule is the existing house pattern.
 - The gate suite deliberately runs the item's tree, and that exemption
   survives unchanged.
 - Jobs that check out only trusted content today (`select`, `triage`,
-  `route`, `prove-gate`, `prove`) are not defective; whether they are
-  brought under the same uniform rule is the scope question in FR-011, not
-  a correctness claim about them.
+  `route`, `prove-gate`, `prove`) are not defective. FR-011 brings them
+  under the same uniform rule anyway, for the durability of the rule and its
+  gate, not as a correctness claim about them.
+- The gate suite running the item's tree while the loop's credential is in
+  hand remains a real residual exposure. FR-012 deliberately leaves it
+  alone; it is tracked on issue #590 and is not re-opened here.
 
 ## Out of Scope
 
@@ -383,3 +404,7 @@ one mutation per rule is the existing house pattern.
   already follow the rule this feature adopts.
 - Sandboxing or otherwise restricting what the fixer agent may edit in the
   item's workspace.
+- Standing an item down, labelling it, or holding it for a human because its
+  branch touches the loop's own judging surface — settled against by FR-012.
+- Closing the residual exposure of the gate suite running the item's tree
+  while the loop's credential is in hand; that is tracked on issue #590.
