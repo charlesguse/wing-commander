@@ -30,7 +30,22 @@
     "Please stop.",
     "please, stop - wrong approach",
     "﻿stop",
-    "​stop‍"
+    "​stop‍",
+    "STOP NOW",
+    "stop now",
+    "stop now.",
+    "stop please",
+    "Stop please",
+    "stop pls",
+    "stop immediately",
+    "stop immediately!",
+    "stop ...",
+    "stop …",
+    "stop !",
+    "stop .",
+    "@alice\nstop",
+    "<!--\nnote\n-->\nstop",
+    "---\nstop"
   ],
   "reject": [
     "We should stop retrying",
@@ -57,6 +72,11 @@
     "~~~\nstop\n~~~",
     "```\nstop",
     "<!-- stop -->",
-    ""
+    "",
+    "Stop now and then it flakes",
+    "stop please the build",
+    "<!--\nstop\n-->",
+    "---\n<!-- a -->\n> stop",
+    "<!-- a --> stop"
   ]
 }
