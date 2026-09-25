@@ -31,13 +31,21 @@
 
 ## Notes
 
-- Two `[NEEDS CLARIFICATION]` markers remain, deliberately, against FR-002
-  (stamp granularity vs. re-run attempts) and FR-008 (how the pre-stamp
-  window fallback interacts with a window that contains stamps). Both are
-  owner decisions with materially different outcomes; neither has a
-  defensible default. They are posted to lifecycle issue #491 by the
-  pipeline rather than blocking the draft, per the intake stage's CI
-  deviation from `/speckit-specify`.
+- Both original `[NEEDS CLARIFICATION]` markers were answered on lifecycle
+  issue #491 on 2026-09-25 and are folded in: FR-002 now names the metrics
+  record key as what the stamp carries, and FR-008 now states the
+  conservative fallback (only a foreign stamp excludes a comment; unstamped
+  comments in the window stay eligible). See the Clarifications section of
+  [spec.md](../spec.md).
+- One `[NEEDS CLARIFICATION]` marker remains, newly raised by folding that
+  answer in: the metrics record key the answer selects is
+  `<workflow run id>:<job key>:<step index>`, none of which varies across
+  re-run attempts, so it does not by itself separate a re-run's cost line
+  from the original attempt's as the answer intends. Whether the attempt
+  number is added to the record key itself (shared with the rollup line's
+  identity, pinned by existing metrics-record gates) or carried in the
+  stamp alongside it is an owner decision with materially different blast
+  radius, so it is posted back to #491 rather than defaulted.
 - "Users" in this spec are the repository's maintainers and the watchdog
   that supervises pipeline runs on their behalf; the cost line is a
   maintainer-facing report, so maintainer-facing language is the

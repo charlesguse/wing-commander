@@ -59,9 +59,28 @@ comments posted before the stamp existed.
 
 ## Clarifications
 
-Two questions remain open. They are recorded as `[NEEDS CLARIFICATION]`
-markers against the requirements they govern (FR-002, FR-008) and are posted
-to lifecycle issue #491 for the owner to answer.
+### Session 2026-09-25 (lifecycle issue #491)
+
+- **Q: What does the stamp carry, and must it separate re-run attempts?**
+  A: It carries the metrics record key the cost-line formatter already
+  computes — workflow run id, job key, step index — so no new lookup,
+  token, or network call is introduced and the stamp stays inside the
+  formatter's single home. The collector matches on the run-id portion of
+  that key, and the existing "first cost line wins" rule must tolerate
+  several stamps from one run. Re-run attempts are to be separated
+  (FR-002).
+- **Q: Once a window contains stamps, may an unstamped comment in that
+  window still be attributed to the inspected run?**
+  A: Yes — the conservative rule. A comment is excluded only by a stamp
+  naming a *different* run; the mere presence of stamps in the window does
+  not disqualify unstamped comments. This keeps FR-009 and SC-006 true by
+  construction (no repeat of #376's false issues), and the pre-stamp tail
+  ages out (FR-008).
+
+One question remains open, recorded as a `[NEEDS CLARIFICATION]` marker
+against FR-002: the record key chosen above does not, as composed today,
+vary across re-run attempts, so the mechanism named in the answer does not
+yet deliver the re-run separation the answer intends.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -98,6 +117,11 @@ alone.
 5. **Given** a run whose cost line is the only pipeline comment in its
    window, **When** the watchdog inspects it, **Then** the verdict is
    unchanged from today's behaviour.
+6. **Given** a window containing both a comment stamped by another run and
+   an unstamped comment carrying a well-formed cost line, **When** the
+   watchdog inspects the run, **Then** the foreign-stamped comment is
+   ignored and the unstamped one is still accepted as the run's own — no
+   `cost-line-missing` is emitted.
 
 ---
 
@@ -166,6 +190,10 @@ the stamp preference removed, and confirm a gate fails.
 - **No comment in the window carries a stamp** (every comment predates the
   stamp). The window heuristic decides, exactly as it does today — the
   pre-stamp behaviour is preserved, including its known limit.
+- **A mixed-era window**: some comments carry stamps naming other runs, and
+  an unstamped comment also falls inside the window. The foreign-stamped
+  comments are excluded; the unstamped one is still eligible and the window
+  decides it (FR-008's conservative rule).
 - **A comment carries a stamp naming a different run.** It is not this run's
   comment, whatever the window says.
 - **A comment carries a malformed or unparsable stamp.** It degrades to "no
@@ -175,9 +203,11 @@ the stamp preference removed, and confirm a gate fails.
   identities authored; the existing author filter is not weakened by the
   stamp, it is narrowed by it.
 - **One run posts several cost-bearing comments** (a stage that announces a
-  questionnaire and then a PR link). All carry the same run's stamp; the
-  collector's existing "first cost line wins, ordered by creation time" rule
-  is unchanged.
+  questionnaire and then a PR link). Each carries a stamp whose run-id
+  portion is this run's, though the job and step portions may differ
+  between them; all of them are this run's own comments. The collector's
+  existing "first cost line wins, ordered by creation time" rule is
+  unchanged and must not be confused by the differing keys.
 - **The run posted a stamped comment that carries no cost line at all.** The
   run is known to have commented, so the verdict is `cost-line-missing` with
   "a comment of its own was found" — the distinction the collector already
@@ -185,8 +215,10 @@ the stamp preference removed, and confirm a gate fails.
 - **The run's window or the App login is unresolvable.** Today the collector
   reports nothing either way (#376). With a stamp the run's own comments are
   identifiable without the window, so this degradation narrows — see FR-009.
-- **A run was re-run** (a second attempt of the same workflow run). See
-  FR-002's open question.
+- **A run was re-run** (a second attempt of the same workflow run). Both
+  attempts owe a cost line on the same lifecycle issue and share a workflow
+  run id, so the attempts must be told apart — see FR-002's remaining open
+  question on where the attempt number lives.
 - **A run posts its cost line after its recorded `updatedAt`.** Possible
   when the last comment lands as the run finalises; a stamped comment is
   attributed on its stamp regardless of the window.
@@ -201,12 +233,26 @@ the stamp preference removed, and confirm a gate fails.
   fallback a stage posts when the metrics summary never ran.
 
 - **FR-002**: The stamp MUST identify the posting run unambiguously among
-  the runs that can post on the same lifecycle issue.
-  [NEEDS CLARIFICATION: must the stamp distinguish re-run attempts of the
-  same workflow run (run id + attempt), or is the run id alone sufficient?
-  A re-run reuses its run id, and both attempts post their own cost line on
-  the same issue, so run-id-only attribution reproduces the reported defect
-  for that pair.]
+  the runs that can post on the same lifecycle issue, by carrying the
+  metrics record key the cost-line formatter already computes — the
+  workflow run id, the job key, and the step index. The collector MUST
+  match a stamp to the inspected run on the run-id portion of that key, and
+  MUST tolerate several stamps carrying different keys from one run, since
+  a stage may format the cost line at more than one step.
+  Re-run attempts of the same workflow run MUST be separated: both attempts
+  post their own cost line on the same lifecycle issue, so crediting one
+  attempt with the other's line reproduces the reported defect for that
+  pair.
+  [NEEDS CLARIFICATION: none of the three parts of the record key varies
+  across re-run attempts — the workflow run id is reused by a re-run, the
+  job key is the job's static identifier in the workflow file, and the step
+  index is fixed per call site — so the record key alone does not deliver
+  the re-run separation this requirement asks for. Should the attempt
+  number be added to the metrics record key itself (one identity
+  everywhere, but that key is also the per-run rollup line's identity and
+  is pinned by the existing metrics-record gates), or carried in the stamp
+  alongside the record key (record key and its consumers untouched, stamp
+  is a superset of it)?]
 
 - **FR-003**: The stamp MUST be applied at the single place the cost line is
   formatted, so that every consumer of that line inherits it. No stage
@@ -237,14 +283,16 @@ the stamp preference removed, and confirm a gate fails.
 
 - **FR-008**: The collector MUST retain the existing author-plus-window
   heuristic as a fallback for comments carrying no stamp, so comments posted
-  before this feature shipped keep their current attribution.
-  [NEEDS CLARIFICATION: when the inspected run's window contains stamped
-  comments but none of them is the inspected run's, may an *unstamped*
-  comment in that window still be attributed to the inspected run
-  (conservative: no false positives, but a pre-stamp comment from an
-  overlapping run can still be misattributed), or do stamps decide alone
-  once any stamp is present in the window (strict: catches every overlap,
-  but can report a false `cost-line-missing` against a mixed-era issue)?]
+  before this feature shipped keep their current attribution. The fallback
+  is conservative: an unstamped comment inside the inspected run's window
+  remains eligible to be that run's own comment even when other comments in
+  the same window carry stamps naming other runs. Only a stamp naming a
+  different run excludes a comment (FR-006); the presence of stamps
+  elsewhere in the window MUST NOT disqualify an unstamped one. A pre-stamp
+  comment from an overlapping run can therefore still be misattributed —
+  that is the accepted cost of never manufacturing a false
+  `cost-line-missing` against a mixed-era issue (SC-006), and it ages out
+  as pre-stamp comments fall behind the watchdog's inspection horizon.
 
 - **FR-009**: Where a stamped comment identifies the inspected run's own
   comments, the collector MUST NOT abandon the check merely because the
@@ -269,7 +317,10 @@ the stamp preference removed, and confirm a gate fails.
   for **each** run of an overlapping pair independently, and covering at
   minimum: overlapping pair where only one posted a line; overlapping pair
   where both posted; a foreign-stamped comment inside the window; an
-  unstamped comment inside the window (pre-stamp behaviour); a malformed
+  unstamped comment inside the window (pre-stamp behaviour); a mixed-era
+  window where a foreign-stamped comment and an unstamped comment both fall
+  inside it, asserting the unstamped one stays eligible (FR-008); several
+  stamps from one run inside one window; a malformed
   stamp; and a stamp in a comment by a non-pipeline author. The gates MUST
   fail when the stamp preference is removed or inverted (mutation check),
   since today's single-run scenarios pass with the defect present.
@@ -286,8 +337,10 @@ the stamp preference removed, and confirm a gate fails.
   every stage appends that formatter's output verbatim with a one-line
   fallback for the case where the formatter never ran.
 - **Run stamp**: the new machine-readable, human-invisible statement of
-  which run posted a cost-bearing comment. Analogous to the existing rollup
-  marker the metrics-persist step writes onto its own comment.
+  which run posted a cost-bearing comment, carrying the metrics record key
+  the cost-line formatter already computes (workflow run id, job key, step
+  index). Analogous to the existing rollup marker the metrics-persist step
+  writes onto its own comment, which is keyed by that same record key.
 - **Inspected run**: the run the watchdog is currently supervising, and the
   subject every cost-report signal is charged to.
 - **Cost-report signal**: `cost-line-missing` or `cost-line-malformed`,
@@ -329,8 +382,11 @@ the stamp preference removed, and confirm a gate fails.
   This feature relies on that being true and does not re-establish it; the
   gate that enforces it is in place today.
 - The run identity the stamp carries is already known at the point the cost
-  line is formatted — the metrics record the formatter reads is keyed by
-  run id. No new lookup, token, or network call is needed to write a stamp.
+  line is formatted — the formatter already computes the metrics record key
+  (workflow run id, job key, step index) for the record it emits. No new
+  lookup, token, or network call is needed to write a stamp. The one
+  identity component that is *not* already there is the re-run attempt,
+  which is FR-002's open question.
 - An HTML-comment-style marker is invisible in every surface these comments
   render in (issue comments, PR comments, step summaries), so applying the
   stamp at the formatter rather than at each posting site does not create
