@@ -738,3 +738,12 @@ Task: "New Gate 92: verify-board-prove-displacement.py fixtures"
   `specs/060-self-redrive-concurrency/contracts/concurrency-groups.md`.
   Found by T053's sweep, which could not write under `.claude/` in that
   run's permission set. Per FR-016 (contradicts).
+
+---
+
+## Maintainer Feedback (PR #490 review, 2026-09-25, @charlesguse)
+
+- [ ] Renumber this branch's "Gate 90" (the concurrency guarantee sentence, SC-006/FR-016) to **Gate 100** everywhere it appears: the `lint-workflows.yml` step name and comment header, the gate script's docstring and any printed gate prefix, and any spec/contract text (e.g. `specs/060-self-redrive-concurrency/contracts/`) that cites it. Collides with main's existing Gate 90 ("every applied label has a matching gh label create", #488/#493).
+- [ ] Renumber this branch's "Gate 91" (the directed proof run never conflicts with the item it is proving, FR-017) to **Gate 101** everywhere it appears, same scope as above. Collides with main's existing Gate 91 (auto-release.yml pass-path specs/ fallback, #482).
+- [ ] Renumber this branch's "Gate 99" (board loop prove-displacement detects a merge whose proof run never started, FR-010b) to **Gate 102** everywhere it appears, same scope as above. Collides with the Gate 99 claimed by PR #463 (converged means no task is left).
+- [ ] Re-run `python .github/scripts/run-local-gates.py` after the renumber and confirm a clean pass before the next push.
