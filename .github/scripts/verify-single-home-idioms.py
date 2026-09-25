@@ -111,9 +111,10 @@ SIX CHECKS, per contracts/single-home-gate.md (plus a spec 052 addition)
    `_shared/normalise-transcript.sh`. Matched by regex, whitespace- and
    quote-tolerant, and tolerant of equivalent rewrites (#575): a
    parenthesised or reversed condition (`(type=="array")`,
-   `"array"==type`) and an optional or parenthesised splice (`.[]?`,
-   `(.[])`). The per-document `then . else [.] end` wrap is a
-   different, legitimate idiom and is not matched.
+   `"array"==type`), the test in an `elif` arm, and an optional or
+   parenthesised splice (`.[]?`, `(.[])`). The per-document
+   `then . else [.] end` wrap is a different, legitimate idiom and is
+   not matched.
 
 Plus a promotion-prevention pass (FR-025): every `workflow_call`-only
 stage workflow and every non-underscore-prefixed composite action scanned
@@ -272,14 +273,15 @@ BOARD_STOP_CHECK_FRAGMENTS = (
 # `if type=="array" then . else [.] end` wrap used by fallback reads.
 # #575: equivalent rewrites are matched too -- the condition parenthesised
 # or reversed (`(type=="array")`, `"array"==type`), the splice optional or
-# parenthesised (`.[]?`, `(.[])`), the else-branch parenthesised.
+# parenthesised (`.[]?`, `(.[])`), the else-branch parenthesised, and the
+# array test moved into an `elif` arm.
 _TN_ARRAY = r'["\']array["\']'
 _TN_COND = (r'\(?\s*(?:type\s*==\s*' + _TN_ARRAY + r'|' + _TN_ARRAY +
             r'\s*==\s*type)\s*\)?')
 _TN_SPLICE = r'\(?\s*\.\[\]\??\s*\)?'
 _TN_SELF = r'\(?\s*\.\s*\)?'
 TRANSCRIPT_NORMALISE_RE = re.compile(
-    r'\bif\s*' + _TN_COND + r'\s*then\s+' + _TN_SPLICE + r'\s*else\s+'
+    r'\b(?:el)?if\s*' + _TN_COND + r'\s*then\s+' + _TN_SPLICE + r'\s*else\s+'
     + _TN_SELF + r'\s*end\b')
 MODE_TAG_FRAGMENT_RE = re.compile(r"\{\s*mode\s*:\s*\$[A-Za-z_][A-Za-z0-9_]*\s*\}")
 SHARED_REF_RE = re.compile(r"\.github/actions/_shared/[A-Za-z0-9_.\-/]+")
@@ -1296,6 +1298,9 @@ def run_selftest():
          "map(if type==\"array\" then (.[]) else . end)"),
         ("all four at once",
          "map(if (\"array\" == type) then (.[]?) else (.) end)"),
+        ("elif arm",
+         "map(if type==\"object\" then . "
+         "elif type==\"array\" then .[] else . end)"),
     ):
         slug = label.replace(" ", "-")
         selftest_third_paste_fails(
