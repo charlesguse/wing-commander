@@ -1195,6 +1195,7 @@ jobs:
 
             ```board-route-proposal
             {"category": "fix"|"spec",
+             "reasoning": "one line: why this is fix- or spec-shaped",
              "pr-title": "one line"|null,
              "pr-body": "..."|null,
              "file-changes": [{"path": "...", "diff": "<unified diff text>"}]}
@@ -1203,7 +1204,8 @@ jobs:
             "file-changes" is your best draft of the actual change (empty
             array when category is "spec"); it is never applied to the
             repository by you or by this step -- it exists only so the
-            backstop can measure it.
+            backstop can measure it. "reasoning" is quoted on the issue
+            when the route ends in a spec request.
           claude_args: |
             --model ${{ needs.resolve-model.outputs.model }}
             --max-turns ${{ steps.route-ceiling.outputs.ceiling }}
@@ -1276,7 +1278,10 @@ jobs:
           from wc_fence_extract import extract_fenced_json
 
           path = os.path.join(os.environ["RUNNER_TEMP"], "claude-execution-output.json")
-          proposal = {"category": "spec", "pr-title": None, "pr-body": None, "file-changes": []}
+          proposal = {"category": "spec", "reasoning": None, "pr-title": None, "pr-body": None, "file-changes": []}
+          # #534: whether the agent's own proposal was read, so a default
+          # spec is never reported as the agent's judgment.
+          extracted = False
           if os.path.isfile(path):
               with open(path, encoding="utf-8") as fh:
                   try:
@@ -1303,6 +1308,11 @@ jobs:
                       print("::warning::board-loop route-propose: {0} -- falling back to the default proposal (category=spec)".format(err))
                   elif isinstance(parsed, dict):
                       proposal.update(parsed)
+                      # A valid object with no fix/spec category is not
+                      # the agent's judgment of shape (#534 review).
+                      extracted = parsed.get("category") in ("fix", "spec")
+                      if not extracted:
+                          print("::warning::board-loop route-propose: parsed ```board-route-proposal``` block has no fix/spec category (got {0!r}) -- the route does not report it as the agent's own judgment".format(parsed.get("category")))
                   else:
                       print("::warning::board-loop route-propose: parsed ```board-route-proposal``` block was not a JSON object (got {0}) -- falling back to the default proposal (category=spec)".format(type(parsed).__name__))
               else:
@@ -1319,6 +1329,7 @@ jobs:
               fh.write("file-changes<<BOARD_ROUTE_FILE_CHANGES_EOF\n")
               fh.write(file_changes_json + "\n")
               fh.write("BOARD_ROUTE_FILE_CHANGES_EOF\n")
+              fh.write("extracted={0}\n".format("true" if extracted else "false"))
           PYEOF
 
       - name: Measure the drafted change against the board's own backstop
@@ -1342,6 +1353,7 @@ jobs:
         id: decide
         env:
           OVER_THRESHOLD: ${{ steps.backstop.outputs.over-threshold }}
+          PROPOSAL_EXTRACTED: ${{ steps.extract.outputs.extracted }}
           MEASURED_FILES: ${{ steps.backstop.outputs.measured-files }}
           MEASURED_LINES: ${{ steps.backstop.outputs.measured-lines }}
           BOARD_MAX_FILES: ${{ env.BOARD_MAX_FILES }}
@@ -1354,7 +1366,7 @@ jobs:
           import sys
 
           sys.path.insert(0, ".github/scripts")
-          from board_route_backstop import route, touches_protected_file
+          from board_route_backstop import one_line_rationale, route, touches_protected_file
 
           runner_temp = os.environ["RUNNER_TEMP"]
           with open(os.path.join(runner_temp, "board-route-proposal.json"), encoding="utf-8") as fh:
@@ -1372,14 +1384,18 @@ jobs:
           diff_paths = [fc.get("path") for fc in file_changes if fc.get("path")]
           widened = touches_protected_file(diff_paths)
 
+          proposal_extracted = os.environ.get("PROPOSAL_EXTRACTED") == "true"
           decision = route(
               proposal.get("category") or "spec", file_changes,
               int(os.environ["BOARD_MAX_FILES"]), int(os.environ["BOARD_MAX_LINES"]),
-              measure_backstop, widened_paths_override=widened)
+              measure_backstop, widened_paths_override=widened,
+              proposal_extracted=proposal_extracted)
 
           runner_temp = os.environ["RUNNER_TEMP"]
           with open(os.path.join(runner_temp, "board-route-decision.json"), "w", encoding="utf-8") as fh:
-              json.dump({"decision": decision, "proposal": proposal}, fh)
+              json.dump({"decision": decision, "proposal": proposal,
+                         "proposal_extracted": proposal_extracted,
+                         "rationale": one_line_rationale(proposal)}, fh)
 
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
               fh.write("verdict={0}\n".format(decision["backstop_verdict"]))
@@ -1418,8 +1434,51 @@ jobs:
           issue_title="$(gh issue view "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --json title --jq .title)"
 
           spec_title="${pr_title:-$issue_title}"
-          footer="$(printf 'Routed from board-loop.yml (issue #%s): reason=%s, measured=%s.\nOriginating issue: %s/%s/issues/%s' \
-            "$ISSUE_NUMBER" "$reason" "$measured" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$ISSUE_NUMBER")"
+          # #534: only the backstop narrowing a fix proposal to spec reads
+          # "re-routed". A spec that was never fix -- the agent's own call
+          # (agent_proposed_spec) or the default (no_usable_proposal) --
+          # reads "sent" and carries no measured size; when a backstop
+          # condition also fired on it, that condition is named as well.
+          # The rationale is agent text: one_line_rationale() already made
+          # it one bounded line with no backtick, `*`, format character or
+          # comment delimiter; it only ever reaches printf as a quoted %s
+          # argument, inside a code span, and the comment puts it AFTER
+          # the marker so it can never precede a line code rendered.
+          rationale="$(jq -r '.rationale // empty' "$RUNNER_TEMP/board-route-decision.json")"
+          rationale_footer=""
+          rationale_comment=""
+          if [ -n "$rationale" ]; then
+            rationale_line="$(printf 'Route agent'"'"'s rationale: `%s`' "$rationale")"
+            rationale_footer="$rationale_line"$'\n'
+            rationale_comment=$'\n\n'"$rationale_line"
+          fi
+          agent_proposal="$(jq -r '.decision.agent_proposal' "$RUNNER_TEMP/board-route-decision.json")"
+          proposal_extracted="$(jq -r '.proposal_extracted' "$RUNNER_TEMP/board-route-decision.json")"
+          agent_judged="the route agent judged this spec-shaped"
+          no_proposal="route-propose returned no usable proposal, so the route defaulted to spec"
+          if [ "$reason" = "agent_proposed_spec" ]; then
+            route_verb="sent"
+            route_detail="$agent_judged; reason: $reason"
+            footer_detail="reason=$reason ($agent_judged)"
+          elif [ "$reason" = "no_usable_proposal" ]; then
+            route_verb="sent"
+            route_detail="$no_proposal; reason: $reason"
+            footer_detail="reason=$reason ($no_proposal)"
+          elif [ "$agent_proposal" = "spec" ]; then
+            # Spec was never narrowed from fix here, so not "re-routed";
+            # the backstop condition that also fired is named alongside.
+            origin="$agent_judged"
+            [ "$proposal_extracted" = "true" ] || origin="$no_proposal"
+            route_verb="sent"
+            route_detail="$origin; the backstop also flagged: $reason, measured=$measured"
+            footer_detail="reason=$reason, measured=$measured ($origin; the backstop also flagged it)"
+          else
+            route_verb="re-routed"
+            route_detail="reason: $reason, measured=$measured"
+            footer_detail="reason=$reason, measured=$measured"
+          fi
+          footer="$(printf 'Routed from board-loop.yml (issue #%s): %s.\n%sOriginating issue: %s/%s/issues/%s' \
+            "$ISSUE_NUMBER" "$footer_detail" "$rationale_footer" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$ISSUE_NUMBER")"
           spec_body_file="$RUNNER_TEMP/board-spec-request-body.md"
           python3 .github/scripts/board_spec_request_body.py --context-file "$ISSUE_CONTEXT_FILE" \
             --drafted-body-file "$RUNNER_TEMP/board-spec-request-drafted.md" --footer "$footer" --out "$spec_body_file" \
@@ -1441,7 +1500,7 @@ jobs:
           echo "spec-url=$spec_url" >> "$GITHUB_OUTPUT"
 
           marker="$(python3 -c "import sys; sys.path.insert(0, '.github/scripts'); from board_item_marker import write_marker; print(write_marker('stalled', 0, None, None, None))")"
-          gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Route re-routed this issue to a spec request (reason: %s, measured=%s) -- a fix-shaped PR was never opened.\n\n%s' "$reason" "$measured" "$marker")"
+          gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Route %s this issue to a spec request (%s) -- a fix-shaped PR was never opened.\n\n%s%s' "$route_verb" "$route_detail" "$marker" "$rationale_comment")"
           gh issue edit "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --add-label "board:stalled"
 
       # research.md D9: every artifact this loop spins off outside the

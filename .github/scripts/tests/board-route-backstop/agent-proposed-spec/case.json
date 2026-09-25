@@ -1,0 +1,9 @@
+{
+  "agent_proposal": "spec",
+  "board_max_files": 6,
+  "board_max_lines": 120,
+  "measure": {"over_threshold": false, "files": 0, "lines": 0},
+  "diff_paths": [],
+  "diff_text": "",
+  "expected": {"backstop_verdict": "spec", "reason": "agent_proposed_spec"}
+}

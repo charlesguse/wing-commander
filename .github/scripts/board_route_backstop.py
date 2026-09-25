@@ -22,6 +22,7 @@ or a `wing-commander-*` composite's top-level `inputs:`/`outputs:` keys.
 """
 import re
 import sys
+import unicodedata
 
 TOP_LEVEL_KEY_RE = re.compile(r"^([A-Za-z0-9_.-]+):")
 HUNK_HEADER_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
@@ -175,7 +176,7 @@ def contract_widened(diff_paths, diff_text, file_contents=None):
 
 def route(agent_proposal, file_changes, board_max_files, board_max_lines,
           measure_backstop, diff_paths=None, diff_text=None, file_contents=None,
-          widened_paths_override=None):
+          widened_paths_override=None, proposal_extracted=True):
     """FR-016..FR-020. `measure_backstop` is a callable
     (file_changes, max_files, max_lines) -> (over_threshold, files, lines)
     -- the runtime caller (board-loop.yml) supplies one that shells out to
@@ -185,7 +186,11 @@ def route(agent_proposal, file_changes, board_max_files, board_max_lines,
     is used instead of calling contract_widened() internally -- the
     pre-push route job passes touches_protected_file()'s coarser result
     here (research.md D6's precise check needs the new side's full file
-    content, unavailable before a fix has been pushed)."""
+    content, unavailable before a fix has been pushed).
+    `proposal_extracted` is False when the caller had no usable proposal
+    from the agent and fell back to a default `spec` -- that spec is then
+    reported as `no_usable_proposal`, never as the agent's own judgment
+    (#534)."""
     over_threshold, files, lines = measure_backstop(file_changes, board_max_files, board_max_lines)
     if widened_paths_override is not None:
         widened_paths = widened_paths_override
@@ -194,8 +199,20 @@ def route(agent_proposal, file_changes, board_max_files, board_max_lines,
 
     if agent_proposal == "spec":
         backstop_verdict = "spec"
-        reason = "under_threshold" if not (over_threshold or widened_paths) else (
-            "contract_widening" if widened_paths else "over_threshold")
+        # #534: when no backstop condition fired, the spec verdict is the
+        # agent's own judgment -- say so, rather than "under_threshold",
+        # which read as a size backstop firing on an item measured at zero.
+        # A default spec the caller fell back to (no usable proposal) is
+        # not the agent's judgment either, and says so. A backstop
+        # condition that also fired keeps its own reason.
+        if widened_paths:
+            reason = "contract_widening"
+        elif over_threshold:
+            reason = "over_threshold"
+        elif proposal_extracted:
+            reason = "agent_proposed_spec"
+        else:
+            reason = "no_usable_proposal"
     elif widened_paths:
         backstop_verdict = "spec"
         reason = "contract_widening"
@@ -216,6 +233,39 @@ def route(agent_proposal, file_changes, board_max_files, board_max_lines,
         "reason": reason,
         "measured": measured,
     }
+
+
+RATIONALE_MAX_CHARS = 200
+
+
+def one_line_rationale(proposal, limit=RATIONALE_MAX_CHARS):
+    """#534: the route-propose agent's own one-line rationale for its
+    proposal (its `reasoning` field, or `rationale`), made safe to render
+    inside a code span in an issue comment or spec-request footer -- or ""
+    when it gave none. The text is agent-authored DATA: whitespace is
+    collapsed to one line, backticks become `'` so it cannot close the
+    code span it is rendered in, and HTML comment delimiters are removed
+    so it can never forge or break the board item marker, whose structure
+    only code renders (write_marker). `*` becomes `\u2217` so no
+    `**Run:**` line can form (board_stop_check's MARKER_RUN_RE takes the
+    first match), and every Unicode format (Cf) character -- bidi
+    overrides, zero-width joiners/spaces -- is dropped."""
+    if not isinstance(proposal, dict):
+        return ""
+    text = proposal.get("reasoning")
+    if not isinstance(text, str) or not text.strip():
+        text = proposal.get("rationale")
+    if not isinstance(text, str):
+        return ""
+    text = "".join(c for c in text if unicodedata.category(c) != "Cf")
+    text = " ".join(text.split())
+    text = text.replace("`", "'").replace("*", "\u2217")
+    while "<!--" in text or "-->" in text:
+        text = text.replace("<!--", "").replace("-->", "")
+    text = text.strip()
+    if len(text) > limit:
+        text = text[:limit - 3].rstrip() + "..."
+    return text
 
 
 def route_final_diff(route_decision, final_diff, board_max_files, board_max_lines,
