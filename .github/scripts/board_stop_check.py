@@ -82,7 +82,12 @@ STOP_COMMAND_RE = re.compile(
 _ZERO_WIDTH_RE = re.compile("[\ufeff\u200b\u200c\u200d\u2060]")
 _HANDLES_RE = re.compile(r"^(?:@[\w-]+(?:\[bot\])?(?:[\s,:]+|$))+")
 _HORIZONTAL_RULE_RE = re.compile(r"^-{3,}$")
-MARKER_RUN_RE = re.compile(r"\*\*Run:\*\*\s*(https://\S+/actions/runs/(\d+))")
+# Anchored to the start of a line (issue #547): write_marker() renders the
+# announcement as its own `**Run:** <url>` line, so a `**Run:**` inside
+# prose, a `>` quote or a code span is never one. `[ \t]*`, not `\s*`, so
+# the URL cannot be taken from the NEXT line either.
+MARKER_RUN_RE = re.compile(
+    r"^\*\*Run:\*\*[ \t]*(https://\S+/actions/runs/(\d+))", re.MULTILINE)
 
 
 def _command_line(body):
@@ -119,10 +124,26 @@ def is_stop_command(body):
     return bool(line and STOP_COMMAND_RE.match(line))
 
 
-def find_stop_request(comments, current_run_id):
-    """comments: [{"body": str, "author_association": str, "created_at": str}, ...],
-    any order (sorted here). Returns the run_id (str) to `gh run cancel`
-    when an authorized, unactioned stop request exists, else None.
+def is_loop_marker_author(comment, bot_login):
+    """True when `comment` was posted by the board loop's own GitHub App --
+    `user.type == "Bot"` AND `user.login == bot_login` (the caller's
+    `<app-slug>[bot]`, from wing-commander-context's `bot-slug` output).
+    Only such a comment's `**Run:**` line is a run announcement (issue
+    #547): anyone can comment on a public repository's issue, and a forged
+    `**Run:** .../actions/runs/N` would otherwise move the stop baseline
+    and choose the run a maintainer's genuine stop hands to `gh run
+    cancel`. An empty/missing bot_login matches nothing. The one predicate
+    find_stop_request() uses for marker authorship."""
+    user = comment.get("user") or {}
+    return bool(bot_login) and user.get("type") == "Bot" and user.get("login") == bot_login
+
+
+def find_stop_request(comments, current_run_id, bot_login):
+    """comments: [{"body": str, "author_association": str, "created_at": str,
+    "user": {"login": str, "type": str}}, ...], any order (sorted here).
+    bot_login: the loop's own App login (`<slug>[bot]`). Returns the run_id
+    (str) to `gh run cancel` when an authorized, unactioned stop request
+    exists, else None.
 
     Board-loop.yml runs triage through readiness as ONE long scheduled
     run, unlike pr-conversation.yml's per-comment-triggered stop
@@ -151,17 +172,24 @@ def find_stop_request(comments, current_run_id):
       is what made this self-cancel case reachable for the first time and
       is why the caller now guards against it explicitly.)
 
-    Only a `**Run:**`-prefixed marker (board_item_marker.write_marker()'s
-    own convention) counts as a run announcement -- an unrelated
-    `.../actions/runs/N` link (e.g. a human-pasted post-merge proof URL,
-    this repo's own convention for closing out a fix issue) must never be
-    mistaken for one."""
+    Only a `**Run:**` line at the start of a line (board_item_marker.
+    write_marker()'s own convention, MARKER_RUN_RE) in a comment the loop's
+    own App posted (is_loop_marker_author(), issue #547) counts as a run
+    announcement -- an unrelated `.../actions/runs/N` link (e.g. a
+    human-pasted post-merge proof URL, this repo's own convention for
+    closing out a fix issue) must never be mistaken for one, and neither
+    may a `**Run:**` line any other commenter types, maintainer or not.
+    The stop request itself is still honoured only from
+    MAINTAINER_ASSOCIATIONS -- a different author rule for a different
+    comment."""
     ordered = sorted(comments or [], key=lambda c: c.get("created_at") or "")
     current_run_id = str(current_run_id)
 
     baseline = ""
     last_other_run_id = None
     for comment in ordered:
+        if not is_loop_marker_author(comment, bot_login):
+            continue
         match = MARKER_RUN_RE.search(comment.get("body") or "")
         if not match:
             continue
@@ -185,10 +213,11 @@ def find_stop_request(comments, current_run_id):
 
 
 def main():
-    """Reads {"comments": [...], "current_run_id": "..."} from stdin,
-    prints the run_id to cancel (or nothing)."""
+    """Reads {"comments": [...], "current_run_id": "...", "bot_login": "..."}
+    from stdin, prints the run_id to cancel (or nothing)."""
     payload = json.load(sys.stdin)
-    run_id = find_stop_request(payload.get("comments") or [], payload.get("current_run_id"))
+    run_id = find_stop_request(payload.get("comments") or [], payload.get("current_run_id"),
+                               payload.get("bot_login"))
     if run_id:
         print(run_id)
 

@@ -1,9 +1,10 @@
 {
   "current_run_id": "999",
+  "bot_login": "wing-commander-bot[bot]",
   "comments": [
-    {"body": "**Run:** https://github.com/example/example/actions/runs/999\n\n<!-- wing-commander-board-item: {} -->", "author_association": "NONE", "created_at": "2026-01-01T00:00:00Z"},
-    {"body": "stop - please", "author_association": "OWNER", "created_at": "2026-01-01T00:05:00Z"},
-    {"body": "Re-drove and proved: https://github.com/example/example/actions/runs/555", "author_association": "OWNER", "created_at": "2026-01-01T00:10:00Z"}
+    {"body": "**Run:** https://github.com/example/example/actions/runs/999\n\n<!-- wing-commander-board-item: {} -->", "author_association": "NONE", "created_at": "2026-01-01T00:00:00Z", "user": {"login": "wing-commander-bot[bot]", "type": "Bot"}},
+    {"body": "stop - please", "author_association": "OWNER", "created_at": "2026-01-01T00:05:00Z", "user": {"login": "maintainer", "type": "User"}},
+    {"body": "Re-drove and proved: https://github.com/example/example/actions/runs/555", "author_association": "OWNER", "created_at": "2026-01-01T00:10:00Z", "user": {"login": "maintainer", "type": "User"}}
   ],
   "expected_run_id": "999"
 }

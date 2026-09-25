@@ -40,6 +40,15 @@ inputs:
   issue-number:
     description: The board item's issue number
     required: true
+  bot-login:
+    description: >
+      The loop's own App login, `<slug>[bot]` -- the caller's
+      wing-commander-context `bot-slug` output plus the `[bot]` suffix
+      (the same source pr-conversation.yml's stop
+      procedure filters its `**Run:**` scan by). Only a `**Run:**` line in a
+      comment this Bot posted moves the stop baseline or names a run to
+      cancel (issue #547, board_stop_check.is_loop_marker_author()).
+    required: true
   initial-paused:
     description: >
       The kill switch's own already-resolved boolean -- the caller's own
@@ -86,6 +95,7 @@ runs:
         GH_TOKEN: ${{ inputs.token }}
         CANCEL_TOKEN: ${{ inputs.cancel-token }}
         ISSUE_NUMBER: ${{ inputs.issue-number }}
+        BOT_LOGIN: ${{ inputs.bot-login }}
         INITIAL_PAUSED: ${{ inputs.initial-paused }}
         ISSUE_IS_OPEN: ${{ steps.closed-check.outputs.is-open }}
       run: |
@@ -95,14 +105,14 @@ runs:
           paused=true
         fi
         gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments" --paginate \
-          --jq '.[] | {body, author_association, created_at}' | jq -s '.' \
+          --jq '.[] | {body, author_association, created_at, user: {login: .user.login, type: .user.type}}' | jq -s '.' \
           > "$RUNNER_TEMP/board-stop-check-comments.json"
         stop_run_id="$(python3 -c "
         import json, os, sys
         sys.path.insert(0, '.github/scripts')
         from board_stop_check import find_stop_request
         comments = json.load(open(os.path.join(os.environ['RUNNER_TEMP'], 'board-stop-check-comments.json'), encoding='utf-8'))
-        run_id = find_stop_request(comments, os.environ['GITHUB_RUN_ID'])
+        run_id = find_stop_request(comments, os.environ['GITHUB_RUN_ID'], os.environ['BOT_LOGIN'])
         print(run_id or '')
         ")"
         if [ -n "$stop_run_id" ]; then
@@ -133,12 +143,30 @@ runs:
             # either, and it is not a closed enum this composite should
             # allowlist against. `completed` is the one value that always
             # means "gh run cancel will 409" (peer review of #465, round
-            # 2); an unreadable status (a transient `gh run view`
-            # failure, empty string here) is treated the same as
-            # not-completed -- worth attempting, since the alternative is
-            # silently skipping a cancel we have no evidence is pointless.
-            cancel_target_status="$(GH_TOKEN="$CANCEL_TOKEN" gh run view "$stop_run_id" -R "$GITHUB_REPOSITORY" --json status --jq .status 2>/dev/null || true)"
-            if [ "$cancel_target_status" != "completed" ]; then
+            # 2).
+            #
+            # Target check (issue #547, defence in depth behind
+            # find_stop_request()'s bot-authored-marker rule): the run is
+            # cancelled only when it is one of THIS workflow's own runs in
+            # THIS repository -- its `path` equals this run's own workflow
+            # file (GITHUB_WORKFLOW_REF, minus the repo prefix and @ref) --
+            # so no marker, however it got there, can aim an `actions:
+            # write` token at a release or an unrelated stage. A run that
+            # cannot be read (a transient failure, a foreign id) is NOT
+            # cancelled: without the path there is no evidence the target
+            # is ours, and `paused=true` below still halts this run. The
+            # read keeps the cancel-token it has always used (#465): the
+            # App token carries no `actions` permission (#461).
+            cancel_target_json="$(GH_TOKEN="$CANCEL_TOKEN" gh api "repos/$GITHUB_REPOSITORY/actions/runs/$stop_run_id" 2>/dev/null || true)"
+            cancel_target_status="$(printf '%s' "$cancel_target_json" | jq -r '.status // empty' 2>/dev/null || true)"
+            cancel_target_path="$(printf '%s' "$cancel_target_json" | jq -r '.path // empty' 2>/dev/null || true)"
+            cancel_target_repo="$(printf '%s' "$cancel_target_json" | jq -r '.repository.full_name // empty' 2>/dev/null || true)"
+            own_workflow_path="${GITHUB_WORKFLOW_REF:-}"
+            own_workflow_path="${own_workflow_path#"$GITHUB_REPOSITORY"/}"
+            own_workflow_path="${own_workflow_path%%@*}"
+            if [ -z "$cancel_target_path" ] || [ "${cancel_target_path%%@*}" != "$own_workflow_path" ] || [ "$cancel_target_repo" != "$GITHUB_REPOSITORY" ]; then
+              echo "::warning::not cancelling run $stop_run_id: it is not a readable $own_workflow_path run in $GITHUB_REPOSITORY (path='$cancel_target_path', repository='$cancel_target_repo')"
+            elif [ "$cancel_target_status" != "completed" ]; then
               if ! cancel_error="$(GH_TOKEN="$CANCEL_TOKEN" gh run cancel "$stop_run_id" -R "$GITHUB_REPOSITORY" 2>&1)"; then
                 echo "::warning::gh run cancel $stop_run_id failed: $cancel_error"
               fi

@@ -1,0 +1,12 @@
+{
+  "_comment": "#547: MARKER_RUN_RE is anchored to the start of a line, the way write_marker() renders it. A `**Run:**` inside prose -- even in the Bot's own comment -- or in a `>` quote is not an announcement.",
+  "current_run_id": "999",
+  "bot_login": "wing-commander-bot[bot]",
+  "comments": [
+    {"body": "**Run:** https://github.com/example/example/actions/runs/999\n\n<!-- wing-commander-board-item: {} -->", "author_association": "NONE", "created_at": "2026-01-01T00:00:00Z", "user": {"login": "wing-commander-bot[bot]", "type": "Bot"}},
+    {"body": "Route re-derived: see **Run:** https://github.com/example/example/actions/runs/777 for the earlier attempt.", "author_association": "NONE", "created_at": "2026-01-01T00:02:00Z", "user": {"login": "wing-commander-bot[bot]", "type": "Bot"}},
+    {"body": "> **Run:** https://github.com/example/example/actions/runs/778\n\nquoted for context", "author_association": "NONE", "created_at": "2026-01-01T00:03:00Z", "user": {"login": "wing-commander-bot[bot]", "type": "Bot"}},
+    {"body": "stop", "author_association": "OWNER", "created_at": "2026-01-01T00:04:00Z", "user": {"login": "maintainer", "type": "User"}}
+  ],
+  "expected_run_id": "999"
+}

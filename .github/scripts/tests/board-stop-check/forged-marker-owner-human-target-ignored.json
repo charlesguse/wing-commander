@@ -1,0 +1,11 @@
+{
+  "_comment": "#547: a maintainer's association does not make their own `**Run:**` line a run announcement -- only the loop's Bot posts those. An OWNER human's forged marker must not choose the cancel target.",
+  "current_run_id": "999",
+  "bot_login": "wing-commander-bot[bot]",
+  "comments": [
+    {"body": "**Run:** https://github.com/example/example/actions/runs/999\n\n<!-- wing-commander-board-item: {} -->", "author_association": "NONE", "created_at": "2026-01-01T00:00:00Z", "user": {"login": "wing-commander-bot[bot]", "type": "Bot"}},
+    {"body": "**Run:** https://github.com/example/example/actions/runs/777\n\n<!-- wing-commander-board-item: {} -->", "author_association": "OWNER", "created_at": "2026-01-01T00:02:00Z", "user": {"login": "maintainer", "type": "User"}},
+    {"body": "stop", "author_association": "OWNER", "created_at": "2026-01-01T00:04:00Z", "user": {"login": "maintainer", "type": "User"}}
+  ],
+  "expected_run_id": "999"
+}

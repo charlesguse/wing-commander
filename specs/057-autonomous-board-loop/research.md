@@ -324,6 +324,26 @@ an issue thread, with the same authorized-actor check (FR-052).
 pr-conversation stage already uses"; only the thread the loop posts to
 changes (issue, not PR), not the cancellation mechanism itself.
 
+**Which run announcements count** (issue #547): only the loop's own. A
+`**Run:** <url>` line is a run announcement when it starts a line (the way
+`board_item_marker.write_marker()` renders it; `board_stop_check.
+MARKER_RUN_RE` is anchored with `re.MULTILINE`) AND its comment was posted
+by the loop's GitHub App: `user.type == "Bot"` and `user.login ==
+<app-slug>[bot]`, the slug coming from `wing-commander-context`'s
+`bot-slug` output (`board_stop_check.is_loop_marker_author()` is the one
+predicate). pr-conversation.yml's stop procedure filters its `**Run:**`
+scan by the same bot login. Any other commenter's `**Run:**` line, a
+maintainer's included, moves neither the stop baseline nor the run handed
+to `gh run cancel`; on a public repository anyone can comment, and an
+unfiltered marker would let them choose which run a maintainer's genuine
+stop cancels. The stop request itself is still honoured only from
+OWNER/MEMBER/COLLABORATOR — a different author rule for a different
+comment. As defence in depth, `wing-commander-board-stop-check` cancels a
+named run only when the Actions API reports it as a run of this
+repository's own board-loop workflow file (`path`, compared against this
+run's `GITHUB_WORKFLOW_REF`); an unreadable or foreign run is not
+cancelled, with a warning, and `paused=true` still halts the current run.
+
 **What counts as a stop request** (issue #539): a *command*, not the word.
 pr-conversation classifies a comment into its `stop` category with an LLM
 — the comment has to *be* a stop request. The board loop's check
