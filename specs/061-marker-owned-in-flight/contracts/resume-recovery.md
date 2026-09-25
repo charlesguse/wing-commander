@@ -15,7 +15,11 @@ already-selected issue at").
 
 The marker is read with `read_marker(comments, bot_login)` from a comments
 fetch that projects `user: {login, type}`; only the loop's own App
-comments count (spec 057 board-item-marker.md "Author rule").
+comments count (spec 057 board-item-marker.md "Author rule"). A failed
+fetch fails the resume step with an `::error::` annotation (#557). It is
+not treated as "no marker", which would fall back to live-state recovery
+and could restart the item at triage. The failed select job then skips
+every later job.
 
 ## Branch recovery
 

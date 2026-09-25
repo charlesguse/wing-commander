@@ -217,10 +217,35 @@ jobs:
             issue_author="$(jq -r --arg n "$number" '.[] | select(.number == ($n|tonumber)) | .author.login' "$RUNNER_TEMP/board-open-issues.json")"
             issue_author_assoc="$(jq -r --arg n "$number" '.[] | select(.number == ($n|tonumber)) | .authorAssociation' "$RUNNER_TEMP/board-open-issues.json")"
 
+            # Issue #557: a comments fetch that feeds a board item marker
+            # reader fails its step on error -- never `[]`, never a null
+            # marker. "Fetch failed" is not "no marker": read as one, it
+            # hid an in-flight item here (so an older item could start
+            # alongside it, FR-048 / User Story 7), sent resume back to
+            # live-state recovery (the item could restart at triage), or
+            # dropped a merged board PR's prove. No retry: the repository
+            # has no shared retry helper for a gh api read, and the next
+            # scheduled run re-reads everything. A failed select job skips
+            # every later job (each gates on needs.select.result ==
+            # 'success', Gate 97). Gate 97 checks each such fetch.
+            # One exception, here only: HTTP 404/410 means the issue was
+            # deleted or transferred after the list above was read -- it
+            # has no marker to hide, so it leaves the candidate set with a
+            # warning rather than wedge every run on a vanished issue.
             if ! gh api "repos/$GITHUB_REPOSITORY/issues/$number/comments" --paginate \
-                --jq '.[] | {login: .user.login, association: .author_association, created_at, body, user: {login: .user.login, type: .user.type}}' 2>/dev/null | jq -s '.' \
+                --jq '.[] | {login: .user.login, association: .author_association, created_at, body, user: {login: .user.login, type: .user.type}}' \
+                2> "$RUNNER_TEMP/board-comments-$number.err" | jq -s '.' \
                 > "$RUNNER_TEMP/board-comments-$number.json"; then
-              echo '[]' > "$RUNNER_TEMP/board-comments-$number.json"
+              if grep -qE 'HTTP (404|410)' "$RUNNER_TEMP/board-comments-$number.err"; then
+                echo "::warning::board-loop: issue #$number is gone (comments fetch returned 404/410) -- dropped from this run's candidates (#557)."
+                jq --arg n "$number" 'map(select(.number != ($n|tonumber)))' "$RUNNER_TEMP/board-open-issues.json" \
+                  > "$RUNNER_TEMP/board-open-issues.tmp"
+                mv "$RUNNER_TEMP/board-open-issues.tmp" "$RUNNER_TEMP/board-open-issues.json"
+                continue
+              fi
+              cat "$RUNNER_TEMP/board-comments-$number.err" >&2
+              echo "::error::board-loop: could not fetch the comments of issue #$number -- its board item marker cannot be read, so no item is selected this run (#557)."
+              exit 1
             fi
 
             # contracts/in-flight-detection.md "Runtime caller contract":
@@ -385,8 +410,13 @@ jobs:
           BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}[bot]
         run: |
           set -uo pipefail
-          gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments" --paginate \
-            --jq '.[] | {created_at, body, user: {login: .user.login, type: .user.type}}' | jq -s '.' > "$RUNNER_TEMP/board-issue-comments.json"
+          # Issue #557: fails the step on error -- see the select step's
+          # per-issue comments fetch above in this file.
+          if ! gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments" --paginate \
+            --jq '.[] | {created_at, body, user: {login: .user.login, type: .user.type}}' | jq -s '.' > "$RUNNER_TEMP/board-issue-comments.json"; then
+            echo "::error::board-loop: could not fetch the comments of issue #$ISSUE_NUMBER -- its board item marker cannot be read, so resume stops here rather than re-derive the item's step without it (#557)."
+            exit 1
+          fi
 
           marker_json="$(COMMENTS_PATH="$RUNNER_TEMP/board-issue-comments.json" python3 - <<'PYEOF'
           import json
@@ -662,6 +692,11 @@ jobs:
             label="kill switch"
           elif [ "${{ steps.stand-down.outputs.status }}" = "in-flight" ]; then
             label="implement cycle in flight"
+          elif [ "${{ steps.select.outcome }}" = "failure" ]; then
+            # #557: a failed read is not "no eligible issue".
+            label="selection failed"
+          elif [ "${{ steps.resume.outcome }}" = "failure" ]; then
+            label="resume failed for issue #${{ steps.select.outputs.issue-number }}"
           elif [ -z "${{ steps.select.outputs.issue-number }}" ]; then
             label="no eligible issue"
           else
@@ -3234,8 +3269,28 @@ jobs:
             exit 0
           fi
 
-          gh api "repos/$GITHUB_REPOSITORY/issues/$issue_number/comments" --paginate \
-            --jq '.[] | {created_at, body, user: {login: .user.login, type: .user.type}}' | jq -s '.' > "$RUNNER_TEMP/board-prove-comments.json"
+          # Issue #557: only this loop's own PR enters prove -- the same
+          # ownership test the resume step applies to a marker's PR
+          # (BOARD_PR_OWNED_JQ -- see this workflow's top-level env:
+          # block), read off the event's own pull_request payload (labels
+          # as of the close, head.repo).
+          jq '.pull_request' "$GITHUB_EVENT_PATH" > "$RUNNER_TEMP/board-prove-pr.json"
+          if [ "$(jq -r --arg repo "$GITHUB_REPOSITORY" "$BOARD_PR_OWNED_JQ" "$RUNNER_TEMP/board-prove-pr.json")" != "true" ]; then
+            echo "PR #$PR_NUMBER is not board:owned with its head in this repository -- not a board item; prove is not entered." >> "$GITHUB_STEP_SUMMARY"
+            {
+              echo "issue-number=$issue_number"
+              echo "eligible=false"
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Issue #557: fails the step on error -- see the select step's
+          # per-issue comments fetch above in this file.
+          if ! gh api "repos/$GITHUB_REPOSITORY/issues/$issue_number/comments" --paginate \
+            --jq '.[] | {created_at, body, user: {login: .user.login, type: .user.type}}' | jq -s '.' > "$RUNNER_TEMP/board-prove-comments.json"; then
+            echo "::error::board-loop: could not fetch the comments of issue #$issue_number -- its board item marker cannot be read, so PR #$PR_NUMBER's prove is not decided; re-run this job to retry (#557)."
+            exit 1
+          fi
           has_marker="$(COMMENTS_PATH="$RUNNER_TEMP/board-prove-comments.json" python3 - <<'PYEOF'
           import json
           import os
@@ -3281,7 +3336,7 @@ jobs:
           transcript-path: ${{ runner.temp }}/wing-commander-no-transcript.json
           model: ''
           stage: board-loop
-          run-label: ${{ steps.gate.outputs.eligible == 'true' && 'eligible for prove' || 'prove not entered' }}
+          run-label: ${{ steps.gate.outcome == 'failure' && 'prove-gate failed' || steps.gate.outputs.eligible == 'true' && 'eligible for prove' || 'prove not entered' }}
           record-path: ${{ runner.temp }}/wing-commander-metrics-record-prove-gate.json
 
       - name: Upload metrics record (prove-gate)
