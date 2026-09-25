@@ -96,10 +96,19 @@ across the fleet (research.md R3/R4).
   that is itself an array), and every classification read and the
   `count-turns.sh` call use that copy. Non-object elements are skipped
   before any `.type` selection.
-- Output format (#551): every `$GITHUB_OUTPUT` value is a single line.
-  CR/LF in `run-label` and in the transcript's `subtype` become spaces,
-  and only `name=<digits or empty>` lines of `count-turns.sh`'s output
-  are evaluated, so no input or transcript value can add an output line.
+- Output format (#551): every `$GITHUB_OUTPUT` value is a single line,
+  enforced in two layers. (1) At the read site: CR/LF in `run-label` and
+  in the transcript's `subtype` become spaces, a non-string `subtype` is
+  read as compact JSON, and only `name=<digits or empty>` lines of
+  `count-turns.sh`'s output are evaluated. (2) At the write site: just
+  before the `$GITHUB_OUTPUT` block, CR/LF in each of the seven written
+  variables become spaces. Layer 2 alone guarantees one line per key
+  whatever a value holds, including on the fallback path where the
+  transcript could not be normalised. So no input or transcript value can
+  add an output line.
+- The parse check is `jq empty`, which fails only on a real parse error.
+  `jq -e .` would take its status from the last document alone, so
+  NDJSON ending in `null` or `false` would read as unparseable.
 - Does **not** validate any call site's declared JSON Schema
   (research.md R2) — that remains each site's own existing shape-check
   step, now gated on this action's `verdict` output.

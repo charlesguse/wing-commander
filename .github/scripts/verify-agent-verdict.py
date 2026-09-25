@@ -27,6 +27,7 @@ one that cannot.
 """
 import json
 import os
+import re
 import sys
 import tempfile
 
@@ -108,7 +109,7 @@ BASH = None
 
 
 def run_case(name, records, intended_turns="40", raw=None, with_shared=True,
-             run_label=""):
+             run_label="", runner_temp=None):
     tmp = tempfile.mkdtemp(prefix="wc-verdict-")
     if raw is not None:
         with open(os.path.join(tmp, TRANSCRIPT_NAME), "w",
@@ -139,7 +140,10 @@ def run_case(name, records, intended_turns="40", raw=None, with_shared=True,
         {"TRANSCRIPT_PATH": TRANSCRIPT_NAME,
          "INTENDED_TURNS": intended_turns,
          "RUN_LABEL": run_label,
-         "GITHUB_ACTION_PATH": action_dir},
+         "GITHUB_ACTION_PATH": action_dir,
+         # runner_temp overrides where the normalised copy is written; a
+         # path that does not exist forces the normaliser-failure path.
+         "RUNNER_TEMP": runner_temp or tmp},
         tmp)
     # The raw $GITHUB_OUTPUT text, for cases that must assert on the line
     # structure itself (an injected line) rather than the parsed dict.
@@ -697,6 +701,61 @@ def case_run_label_newline_cannot_inject_output():
                        f"{outputs.get('over-budget')!r}")
 
 
+def case_non_string_subtype_stays_one_line():
+    """A non-string subtype: `jq -r` pretty-prints an array or object over
+    several lines, which the runner rejects as an invalid $GITHUB_OUTPUT
+    ("Invalid format") and the step fails. It is read as compact JSON."""
+    for subtype, shown in ((["a\nverdict=healthy"],
+                            'subtype=["a\\nverdict=healthy"]'),
+                           ({"k": "v"}, 'subtype={"k":"v"}')):
+        case = f"non-string subtype {subtype!r} stays one output line"
+        expect(case, transcript(main=1, subtype=subtype, num_turns=1),
+               "failed", reason_contains=shown)
+        _expect_output_lines_intact(case, "failed")
+
+
+def case_normaliser_failure_keeps_output_lines():
+    """RUNNER_TEMP unwritable: no normalised copy, so the classifier reads
+    the raw NDJSON, where each per-document jq prints one line per result
+    record and subtype comes back as two lines. Only the write-site
+    flatten keeps $GITHUB_OUTPUT intact on this path."""
+    case = "normaliser failure (RUNNER_TEMP unwritable) keeps output lines"
+    recs = assistant("msg_main_0") \
+        + result(is_error=True, subtype="error_during_execution",
+                 num_turns=1) \
+        + assistant("msg_main_1") \
+        + result(is_error=True, subtype="error_during_execution",
+                 num_turns=2)
+    missing = os.path.join(tempfile.mkdtemp(prefix="wc-verdict-rt-"),
+                           "does-not-exist")
+    rc, output, outputs = run_case(case, None, raw=_ndjson(recs),
+                                   runner_temp=missing)
+    if rc != 0:
+        fail(case, f"exited {rc}: {output.strip()[:300]}")
+        return
+    _expect_output_lines_intact(case, outputs.get("verdict") or "")
+    if outputs.get("verdict") != "failed":
+        fail(case, f"expected verdict=failed, got {outputs.get('verdict')!r}")
+
+
+def case_ndjson_ending_in_null_is_parseable():
+    """`jq -e .` takes its status from the last document only, so NDJSON
+    whose last line is null or false read as unparseable."""
+    for tail in ("null", "false"):
+        case = f"NDJSON ending in {tail} is still classified"
+        recs = transcript(main=2, is_error=True,
+                          subtype="error_during_execution", num_turns=2)
+        outputs = expect(case, None, "failed", raw=_ndjson(recs) + tail + "\n",
+                         reason_contains="is_error=true")
+        # A trailing `false` still leaves counted-turns empty: count-turns.sh
+        # reads `.type` on every element and errors on a boolean (non-object
+        # handling there is tracked in #572), so only `null` is checked.
+        if tail == "null" and outputs.get("counted-turns") != "2":
+            fail(case, f"expected counted-turns=2, got "
+                       f"{outputs.get('counted-turns')!r}")
+        _expect_output_lines_intact(case, "failed")
+
+
 def case_shared_counter_absent():
     """_shared/count-turns.sh is not in the checkout at all.
 
@@ -771,11 +830,31 @@ CASES = [
     case_subtype_newline_cannot_inject_output,
     case_num_turns_newline_cannot_inject_output,
     case_run_label_newline_cannot_inject_output,
+    case_non_string_subtype_stays_one_line,
+    case_normaliser_failure_keeps_output_lines,
+    case_ndjson_ending_in_null_is_parseable,
     case_never_fails,
 ]
 
 
 # --- mutation checks ---------------------------------------------------------
+# The seven write-site lines, each `name="${name//[$'\r\n']/ }"`.
+WRITE_SITE_FLATTEN = re.compile(
+    r"^[ \t]*(\w+)=\"\$\{\1//\[\$'\\r\\n'\]/ \}\"\n", re.M)
+
+
+def without_write_site(s):
+    """Drop the write-site CR/LF flatten. The read-site mutations below
+    apply this too: with both layers in place, removing one read-site rule
+    is invisible in $GITHUB_OUTPUT by design (the write site catches it),
+    so each read-site mutation removes BOTH layers for its value. The
+    write-site layer is proven on its own by the normaliser-failure case,
+    where no read-site rule applies. Returns s unchanged unless all seven
+    lines are found, so a rewrite trips the no-op check."""
+    out, n = WRITE_SITE_FLATTEN.subn("", s)
+    return out if n == 7 else s
+
+
 MUTATIONS = [
     ("reads is_error/subtype from anywhere other than the last result record",
      "action",
@@ -835,9 +914,10 @@ MUTATIONS = [
     ("lets an empty top-level resetsAt hide the nested one", "action",
      lambda s: s.replace('map(select(. != null and . != ""))',
                          'map(select(. != null))', 1)),
-    ("stops stripping CR/LF from the reset/window values", "action",
-     lambda s: s.replace('tostring | gsub("[\\r\\n]"; " ") end;',
-                         'tostring end;', 1)),
+    ("stops stripping CR/LF from the reset/window values (and drops the "
+     "write-site flatten)", "action",
+     lambda s: without_write_site(s).replace(
+         'tostring | gsub("[\\r\\n]"; " ") end;', 'tostring end;', 1)),
     # #551: transcript shape and $GITHUB_OUTPUT line injection.
     ("reads the raw transcript instead of the normalised array, so NDJSON "
      "and multi-document input reach count-turns.sh's eval", "action",
@@ -857,15 +937,26 @@ MUTATIONS = [
      lambda s: s.replace(
          "| grep -E '^(main_turns|sub_turns|reported)=[0-9]*$' || true)\"",
          "| cat)\"", 1)),
-    ("stops flattening CR/LF in the run-label", "action",
-     lambda s: s.replace(
+    ("stops flattening CR/LF in the run-label (and drops the write-site "
+     "flatten)", "action",
+     lambda s: without_write_site(s).replace(
          'RUN_LABEL="$(printf \'%s\' "${RUN_LABEL:-}" | tr \'\\r\\n\' \'  \')"',
          'RUN_LABEL="${RUN_LABEL:-}"', 1)),
-    ("stops flattening CR/LF in the transcript's subtype", "action",
+    ("stops flattening CR/LF in the transcript's subtype (and drops the "
+     "write-site flatten)", "action",
+     lambda s: without_write_site(s).replace(
+         'if type=="string" then . else tojson end | gsub("[\\r\\n]"; " ")',
+         'if type=="string" then . else tojson end', 1)),
+    ("prints a non-string subtype with jq -r instead of as compact JSON",
+     "action",
      lambda s: s.replace(
-         'subtype="$(jqget \'.subtype | if type=="string" then '
-         'gsub("[\\r\\n]"; " ") else . end\')"',
-         'subtype="$(jqget \'.subtype\')"', 1)),
+         'if type=="string" then . else tojson end | gsub("[\\r\\n]"; " ")',
+         'if type=="string" then gsub("[\\r\\n]"; " ") else . end', 1)),
+    ("drops the write-site CR/LF flatten", "action", without_write_site),
+    ("checks parseability with `jq -e .` (last document only) instead of "
+     "`jq empty`", "action",
+     lambda s: s.replace('&& jq empty "$TRANSCRIPT" >/dev/null 2>&1; then',
+                         '&& jq -e . "$TRANSCRIPT" >/dev/null 2>&1; then', 1)),
 ]
 
 

@@ -80,12 +80,13 @@ runs:
 
         TRANSCRIPT="${TRANSCRIPT_PATH:-}"
         INTENDED_TURNS="${INTENDED_TURNS:-}"
-        # Every value a $GITHUB_OUTPUT line carries is made single-line
-        # where it is read (#551): run-label here, subtype below, the rate
-        # limit reset and window in their jq, and the turn counts by the
-        # digits-only filter on count-turns.sh's output. verdict and
-        # over-budget are literals. CR/LF become spaces, so no input or
-        # transcript value can add a line to $GITHUB_OUTPUT.
+        # Two layers keep every $GITHUB_OUTPUT value on one line (#551).
+        # Values are cleaned where they are read: run-label here, subtype
+        # below (a non-string one as compact JSON), the rate limit reset
+        # and window in their jq, and the turn counts by the digits-only
+        # filter on count-turns.sh's output. Then, just before the write,
+        # every written variable has CR/LF replaced by spaces again,
+        # covering any value no read-site rule anticipated.
         RUN_LABEL="$(printf '%s' "${RUN_LABEL:-}" | tr '\r\n' '  ')"
         label_suffix=""
         [ -n "$RUN_LABEL" ] && label_suffix=" ($RUN_LABEL)"
@@ -104,10 +105,13 @@ runs:
         # bare "0" as a command -- exit 127 under the runner's `bash -e`.
         # When the file does not parse, counting still gets the raw path,
         # where count-turns.sh's own parse check empties all three values.
+        # The parse check is `jq empty`, not `jq -e .`. Under -e, jq takes
+        # its exit status from the LAST document only, so NDJSON ending in
+        # `null` or `false` would read as unparseable.
         COUNT_SOURCE="$TRANSCRIPT"
         normalised=""
         if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ] && [ -s "$TRANSCRIPT" ] \
-           && jq -e . "$TRANSCRIPT" >/dev/null 2>&1; then
+           && jq empty "$TRANSCRIPT" >/dev/null 2>&1; then
           normalised="$(mktemp "${RUNNER_TEMP:-/tmp}/wc-agent-verdict.XXXXXX" 2>/dev/null || true)"
           if [ -n "$normalised" ] \
              && jq -cs 'map(if type=="array" then .[] else . end)' \
@@ -126,7 +130,7 @@ runs:
             reason="no terminal result record${label_suffix}"
           else
             jqget() { printf '%s' "$result_json" | jq -r "$1 // empty" 2>/dev/null || true; }
-            subtype="$(jqget '.subtype | if type=="string" then gsub("[\r\n]"; " ") else . end')"
+            subtype="$(jqget '(.subtype // empty) | if type=="string" then . else tojson end | gsub("[\r\n]"; " ")')"
             is_error="$(jqget '.is_error')"
             terminal_reason="$(jqget '.terminal_reason')"
             api_error_status="$(jqget '.api_error_status')"
@@ -278,6 +282,14 @@ runs:
 
         if [ -n "$normalised" ]; then rm -f "$normalised"; fi
 
+        # Write-site layer (see the RUN_LABEL comment above).
+        verdict="${verdict//[$'\r\n']/ }"
+        reason="${reason//[$'\r\n']/ }"
+        rate_limit_reset_output="${rate_limit_reset_output//[$'\r\n']/ }"
+        counted_turns="${counted_turns//[$'\r\n']/ }"
+        reported_turns="${reported_turns//[$'\r\n']/ }"
+        over_budget="${over_budget//[$'\r\n']/ }"
+        subagent_turns="${subagent_turns//[$'\r\n']/ }"
         {
           echo "verdict=$verdict"
           echo "reason=$reason"
