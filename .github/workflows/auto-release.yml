@@ -943,11 +943,26 @@ jobs:
           # never files it as a gate stall (#391 review). The gate reads above
           # the poll read use the same token, so under a persistent limit they
           # reach their failure bound first.
+          #
+          # specs/066-fine-grained-maintainer-token FR-011: a gate-driving
+          # act (posting the clarification reply, listing or merging a PR)
+          # that keeps failing because the harness credential itself was
+          # rejected -- expired, revoked, or narrowed mid-attempt -- is
+          # equally an infrastructure condition naming the credential as
+          # cause, never an undifferentiated gate stall. Detected from the
+          # same kind of fixed signature as the rate-limit arm above, reusing
+          # the phrase list wing-commander-lifecycle-gate's own credential
+          # check already matches (.github/actions/wing-commander-
+          # lifecycle-gate/action.yml) rather than inventing a second one.
           write_repeated_failure_verdict() { # gate expected observed
             if printf '%s' "$3" | grep -qi 'rate limit'; then
               write_verdict "fail-infra" "polling the test repository for a terminal state" \
                 "gh calls succeed within the poll budget" \
                 "GitHub API rate limit encountered while driving the $1 gate: $3"
+            elif printf '%s' "$3" | grep -qiE 'HTTP 401|Bad credentials|Resource not accessible by integration|requires authentication|insufficient .*scope|missing .*scope'; then
+              write_verdict "fail-infra" "$1" \
+                "the harness credential authenticates and authorizes every gate-driving act" \
+                "the harness credential was rejected while driving the $1 gate: $3"
             else
               write_verdict "fail-gate-stall" "$1" "$2" "$3"
             fi

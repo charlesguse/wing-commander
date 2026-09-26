@@ -4396,6 +4396,21 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-maintainer-credential-canonical-statement.py --self-test
 
+      # Gate 100 — specs/066-fine-grained-maintainer-token FR-011 (Edge Case
+      # "Expiry during a long attempt"): a gate-driving read or write that
+      # keeps failing at runtime because the harness credential itself was
+      # rejected (expired, revoked, or narrowed mid-attempt) must end
+      # fail-infra naming the credential as cause, not the undifferentiated
+      # fail-gate-stall every other repeated gate failure produces. Runs the
+      # real "Poll the test repository to a verdict" step against a stubbed
+      # `gh` and asserts the new branch fires on a credential-rejection
+      # signature, a plain repeated failure still gate-stalls, and the
+      # pre-existing rate-limit branch still takes precedence over it; a
+      # mutation dropping the new branch must fail the first assertion.
+      - name: "Gate 100 — a repeated gate-driving failure caused by the harness credential ends fail-infra, naming the credential"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-auto-release-poll-credential-failure.py
+
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and
       # verify-denied-tool-collector.sh has already shown what happens when
