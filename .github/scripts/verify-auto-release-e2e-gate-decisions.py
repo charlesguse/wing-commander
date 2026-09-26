@@ -36,6 +36,8 @@ CLARIFY_SCRIPT = os.path.join(".github", "actions", "_shared",
                                "auto-release-e2e-clarify-decision.sh")
 MERGE_SCRIPT = os.path.join(".github", "actions", "_shared",
                              "auto-release-e2e-merge-decision.sh")
+ALLOWANCE_SCRIPT = os.path.join(".github", "actions", "_shared",
+                                 "auto-release-e2e-gate-allowance-decision.sh")
 
 BASH = None
 
@@ -266,31 +268,31 @@ MERGE_SCENARIOS = [
                  status_checks=[COMPLETED_CHECK])],
          prefix="spec/", slug="055-foo", expected_base=DEFAULT_BASE,
          expect_head="blocked"),
-    dict(name="mergeStateStatus BLOCKED, a check still running: wait, not blocked",
+    dict(name="mergeStateStatus BLOCKED, a check still running: blocked-pending, not durably blocked",
          prs=[pr(1, "spec/055-foo", merge_state="BLOCKED",
                  status_checks=[COMPLETED_CHECK, PENDING_CHECK])],
          prefix="spec/", slug="055-foo", expected_base=DEFAULT_BASE,
-         expect_head="wait"),
-    dict(name="mergeStateStatus BLOCKED, no check has registered yet (freshly opened PR): wait, not blocked",
+         expect_head="blocked-pending"),
+    dict(name="mergeStateStatus BLOCKED, no check has registered yet (freshly opened PR): blocked-pending, not durably blocked",
          prs=[pr(1, "spec/055-foo", merge_state="BLOCKED", status_checks=[])],
          prefix="spec/", slug="055-foo", expected_base=DEFAULT_BASE,
-         expect_head="wait"),
-    dict(name="mergeStateStatus BLOCKED, a legacy StatusContext (state, no status/conclusion) still pending: wait",
+         expect_head="blocked-pending"),
+    dict(name="mergeStateStatus BLOCKED, a legacy StatusContext (state, no status/conclusion) still pending: blocked-pending",
          prs=[pr(1, "spec/055-foo", merge_state="BLOCKED",
                  status_checks=[STATUS_CONTEXT_PENDING])],
          prefix="spec/", slug="055-foo", expected_base=DEFAULT_BASE,
-         expect_head="wait"),
+         expect_head="blocked-pending"),
     dict(name="mergeStateStatus BLOCKED, a legacy StatusContext (state, no status/conclusion) resolved: blocked",
          prs=[pr(1, "spec/055-foo", merge_state="BLOCKED",
                  status_checks=[STATUS_CONTEXT_SUCCESS])],
          prefix="spec/", slug="055-foo", expected_base=DEFAULT_BASE,
          expect_head="blocked"),
     dict(name="mergeStateStatus BLOCKED, a legacy StatusContext in EXPECTED "
-              "(no status has posted yet): wait, not blocked",
+              "(no status has posted yet): blocked-pending, not durably blocked",
          prs=[pr(1, "spec/055-foo", merge_state="BLOCKED",
                  status_checks=[STATUS_CONTEXT_EXPECTED])],
          prefix="spec/", slug="055-foo", expected_base=DEFAULT_BASE,
-         expect_head="wait"),
+         expect_head="blocked-pending"),
     dict(name="clean and mergeable: merge <number>",
          prs=[pr(42, "spec-draft/055-foo")], prefix="spec-draft/", slug="055-foo",
          expected_base=DEFAULT_BASE, expect_head="merge", expect_number="42"),
@@ -318,8 +320,52 @@ def run_merge_suite(script_path):
     return failures
 
 
-def run_all(clarify_path, merge_path):
-    return run_clarify_suite(clarify_path) + run_merge_suite(merge_path)
+# --------------------------------------------------------------------------
+# Allowance-decision scenarios (contracts/gate-allowance-decision.md)
+# --------------------------------------------------------------------------
+ALLOWANCE_SCENARIOS = [
+    dict(name="blocked-pending, no prior blocked_since: start",
+         merge_decision="blocked-pending", blocked_since="", now="100",
+         allowance_seconds="1200", expect="start"),
+    dict(name="blocked-pending, elapsed under the allowance: wait",
+         merge_decision="blocked-pending", blocked_since="100", now="500",
+         allowance_seconds="1200", expect="wait"),
+    dict(name="blocked-pending, elapsed exactly at the allowance: stall",
+         merge_decision="blocked-pending", blocked_since="100", now="1300",
+         allowance_seconds="1200", expect="stall"),
+    dict(name="blocked-pending, elapsed past the allowance: stall",
+         merge_decision="blocked-pending", blocked_since="0", now="1500",
+         allowance_seconds="1200", expect="stall"),
+    dict(name="a merge decision (gate resolved to a pass) with a previously-set "
+              "blocked_since: clear",
+         merge_decision="merge", blocked_since="100", now="500",
+         allowance_seconds="1200", expect="clear"),
+    dict(name="a plain wait (draft PR / UNKNOWN / BEHIND) with a previously-set "
+              "blocked_since: clear",
+         merge_decision="wait", blocked_since="100", now="500",
+         allowance_seconds="1200", expect="clear"),
+]
+
+
+def run_allowance_suite(script_path):
+    failures = []
+    for sc in ALLOWANCE_SCENARIOS:
+        tag = f"[allowance: {sc['name']}]"
+        rc, out, err = run_script(script_path,
+                                   [sc["merge_decision"], sc["blocked_since"],
+                                    sc["now"], sc["allowance_seconds"]], "")
+        if rc != 0:
+            failures.append(f"{tag} script exited {rc}: {out}{err}")
+            continue
+        got = out.strip()
+        if got != sc["expect"]:
+            failures.append(f"{tag} expected {sc['expect']!r}, got {got!r}")
+    return failures
+
+
+def run_all(clarify_path, merge_path, allowance_path):
+    return (run_clarify_suite(clarify_path) + run_merge_suite(merge_path)
+            + run_allowance_suite(allowance_path))
 
 
 # --------------------------------------------------------------------------
@@ -358,11 +404,11 @@ MERGE_MUTATIONS = [
     ("conflicting collapsed into merge",
      'if [ "$mergeable" = "CONFLICTING" ]; then',
      'if false; then'),
-    ("a pending required check reads as blocked instead of wait",
+    ("a pending required check reads as blocked instead of blocked-pending",
      'if [ "$still_pending" = "true" ]; then',
      'if false; then'),
     ("an empty statusCheckRollup (no check registered yet on a freshly "
-     "opened PR) reads as blocked instead of wait",
+     "opened PR) reads as blocked instead of blocked-pending",
      'if ($rollup | length) == 0 then true',
      'if ($rollup | length) == 0 then false'),
     ("a legacy StatusContext rollup entry (state, no status/conclusion) is "
@@ -377,6 +423,21 @@ MERGE_MUTATIONS = [
     ("draft collapsed into merge",
      'if [ "$is_draft" = "true" ]; then',
      'if false; then'),
+]
+
+ALLOWANCE_MUTATIONS = [
+    ("clear collapsed away (a non-blocked-pending decision never resets the timer)",
+     'if [ "$merge_decision" != "blocked-pending" ]; then',
+     'if false; then'),
+    ("start collapsed away (a first blocked-pending observation is never timed)",
+     'if [ -z "$blocked_since" ]; then',
+     'if false; then'),
+    ("stall collapsed away (an exhausted allowance never ends the attempt)",
+     'if [ $((now - blocked_since)) -ge "$allowance_seconds" ]; then',
+     'if false; then'),
+    ("wait collapsed into clear (still-within-allowance is misreported as resolved)",
+     'echo "wait"',
+     'echo "clear"'),
 ]
 
 
@@ -409,8 +470,10 @@ def self_test():
         run_mutation(CLARIFY_SCRIPT, run_clarify_suite, label, old, new, failures)
     for label, old, new in MERGE_MUTATIONS:
         run_mutation(MERGE_SCRIPT, run_merge_suite, label, old, new, failures)
+    for label, old, new in ALLOWANCE_MUTATIONS:
+        run_mutation(ALLOWANCE_SCRIPT, run_allowance_suite, label, old, new, failures)
 
-    total = len(CLARIFY_MUTATIONS) + len(MERGE_MUTATIONS)
+    total = len(CLARIFY_MUTATIONS) + len(MERGE_MUTATIONS) + len(ALLOWANCE_MUTATIONS)
     print(f"Gate 66 self-test: {total} mutation(s); {len(failures)} failure(s).")
     return 1 if failures else 0
 
@@ -421,19 +484,21 @@ def main(argv):
     ensure_jq()
     BASH = resolve_bash()
 
-    if not os.path.isfile(CLARIFY_SCRIPT) or not os.path.isfile(MERGE_SCRIPT):
-        sys.exit(f"::error::run this from the repository root; {CLARIFY_SCRIPT} or "
-                 f"{MERGE_SCRIPT} not found.")
+    if (not os.path.isfile(CLARIFY_SCRIPT) or not os.path.isfile(MERGE_SCRIPT)
+            or not os.path.isfile(ALLOWANCE_SCRIPT)):
+        sys.exit(f"::error::run this from the repository root; {CLARIFY_SCRIPT}, "
+                 f"{MERGE_SCRIPT}, or {ALLOWANCE_SCRIPT} not found.")
 
     if "--self-test" in argv:
         return self_test()
 
-    failures = run_all(CLARIFY_SCRIPT, MERGE_SCRIPT)
+    failures = run_all(CLARIFY_SCRIPT, MERGE_SCRIPT, ALLOWANCE_SCRIPT)
     for f in failures:
         print(f"::error::{f}")
 
     total = (len(CLARIFY_DECIDE_SCENARIOS) + len(CLARIFY_SATISFIED_SCENARIOS)
-             + len(CLARIFY_MARKERS_SCENARIOS) + len(MERGE_SCENARIOS))
+             + len(CLARIFY_MARKERS_SCENARIOS) + len(MERGE_SCENARIOS)
+             + len(ALLOWANCE_SCENARIOS))
     print(f"auto-release e2e gate decisions: "
           f"{total} scenario(s); "
           f"{len(failures)} failure(s).")
