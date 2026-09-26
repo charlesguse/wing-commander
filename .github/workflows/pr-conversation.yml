@@ -1915,6 +1915,25 @@ jobs:
           fetch-depth: 0
           clean: false
 
+      # research.md D1: deterministic code, not a prompt instruction — the
+      # agent's own prompt and allowed-tools list below are unchanged. Every
+      # commit this leg makes in this checkout for the rest of the job
+      # carries a Wing-Commander-Run-Id trailer, regardless of what the
+      # agent's own commit message says, so a later fold-evidence read
+      # (wing-commander-fold-evidence) can tell this run's fold commits
+      # apart from a sibling run's same-id commit (FR-004, FR-005, #560).
+      - name: Install run-attribution hook for this leg's commits
+        if: steps.relay-gate.outputs.proceed == 'true' && steps.route.outputs.needs-checkout == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          hooks_dir="$RUNNER_TEMP/wing-commander-fold-hooks"
+          mkdir -p "$hooks_dir"
+          printf '%s\n' '#!/bin/sh' > "$hooks_dir/prepare-commit-msg"
+          printf '%s\n' "printf '\\n%s\\n' 'Wing-Commander-Run-Id: ${{ github.run_id }}' >> \"\$1\"" >> "$hooks_dir/prepare-commit-msg"
+          chmod +x "$hooks_dir/prepare-commit-msg"
+          git config core.hooksPath "$hooks_dir"
+
       # Drafted-content is already-classified data (T006), but still not
       # fresh instructions — staged to a file, not interpolated (constitution V).
       # Any small-unrelated-change size-backstop reshape (issue-title/
@@ -2680,11 +2699,25 @@ jobs:
           fetch-depth: 0
           clean: false
 
-      # research.md D1/D3 (contracts/fold-dispatch-once.md): the single
-      # dispatch point for the whole review. Folded-item evidence (D6's
-      # `fold(<id>): <summary>` commit messages) is read from the exact
-      # same range this decision is made from, so the PR comment's list and
-      # the dispatch decision can never disagree.
+      # research.md D2: the single home for "which fold(<id>): <summary>
+      # commits in this range are THIS run's own" is the
+      # wing-commander-fold-evidence composite's own header.
+      - name: Compute this run's fold evidence
+        id: fold-evidence
+        if: steps.tip.outputs.sha != needs.classify-and-announce.outputs.base-sha && steps.tip.outputs.sha != ''
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-fold-evidence
+        with:
+          working-directory: .
+          base-sha: ${{ needs.classify-and-announce.outputs.base-sha }}
+          tip-sha: ${{ steps.tip.outputs.sha }}
+
+      # research.md D1/D3/D4 (contracts/run-scoped-fold-evidence.md): the
+      # single dispatch point for the whole review. The dispatch decision
+      # and the fold list both narrow to THIS run's own fold evidence
+      # (folded-json above) -- a sibling run's commit, or an unrelated push,
+      # moving the tip during this run's window no longer dispatches an
+      # implement cycle on its own (FR-014); this run says so on the PR
+      # instead (FR-015).
       - name: Dispatch implement once for the whole review
         shell: bash
         if: steps.tip.outputs.sha != needs.classify-and-announce.outputs.base-sha && steps.tip.outputs.sha != ''
@@ -2696,17 +2729,33 @@ jobs:
           ISSUE: ${{ needs.classify-and-announce.outputs.issue-number }}
           IMPLEMENT_WORKFLOW: ${{ inputs.implement-workflow }}
           SPEC_BRANCH: ${{ inputs.spec-prefix }}${{ needs.classify-and-announce.outputs.slug }}
-          BASE_SHA: ${{ needs.classify-and-announce.outputs.base-sha }}
-          TIP_SHA: ${{ steps.tip.outputs.sha }}
+          FOLDED_JSON: ${{ steps.fold-evidence.outputs.folded-json }}
         run: |
           set -euo pipefail
           recorded=$(jq -r '.iteration // 0' "$SPEC_DIR/spec-meta.json")
           next=$((recorded + 1))
           start_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
-          folded=$(git log --grep '^fold(' --format='%s' "$BASE_SHA..$TIP_SHA" \
-            | sed -n 's/^fold(\([^)]*\)): \(.*\)$/- \1: \2/p')
-          [ -n "$folded" ] || folded="(no fold(<id>): commits were found in this range)"
+          folded_json="${FOLDED_JSON:-[]}"
+          [ -n "$folded_json" ] || folded_json="[]"
+
+          # FR-014/FR-015: this run folded nothing of its own -- the tip
+          # moved (the job-level if: above), but not from this run's own
+          # fold(s). Dispatching here would fire an implement cycle off a
+          # sibling run's commit or an unrelated push; decline instead and
+          # say so on the PR, so the missing cycle reads as this run's
+          # decision, not a lost one.
+          if [ "$(printf '%s' "$folded_json" | jq 'length')" = "0" ]; then
+            body_file="$RUNNER_TEMP/dispatch-once-reply.md"
+            {
+              echo "This run folded nothing of its own in this review, so no implement cycle was dispatched. The branch tip moved during this run's window, but not from a fold this run made — a sibling run's fold, or an unrelated push, moved it instead."
+            } > "$body_file"
+            gh pr comment "$PR_NUMBER" --body-file "$body_file"
+            echo "This run folded nothing of its own; no implement cycle dispatched (declined-dispatch notice posted on PR #$PR_NUMBER)." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          folded=$(printf '%s' "$folded_json" | jq -r '.[] | "- " + .id + ": " + .summary')
 
           # T078 standalone mode, mirroring implement.yml's/plan.yml's own
           # empty-next-workflow shape: the fold(s) are already committed and
@@ -2867,6 +2916,18 @@ jobs:
           fetch-depth: 0
           clean: false
 
+      # research.md D2: the single home for "which fold(<id>): <summary>
+      # commits in this range are THIS run's own" is the
+      # wing-commander-fold-evidence composite's own header.
+      - name: Compute this run's fold evidence
+        id: fold-evidence
+        if: steps.tip.outputs.sha != ''
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-fold-evidence
+        with:
+          working-directory: .
+          base-sha: ${{ needs.classify-and-announce.outputs.base-sha }}
+          tip-sha: ${{ steps.tip.outputs.sha }}
+
       # data-model.md §4: fetches THIS run's own jobs (Gate 18's established
       # paginated-read shape), filters to each `act (leg-N)` instance
       # (T010's per-instance name), and reads its GitHub-set `conclusion` —
@@ -2879,8 +2940,7 @@ jobs:
           PR_NUMBER: ${{ inputs.pr-number }}
           RUN_ID: ${{ github.run_id }}
           CLASSIFICATIONS: ${{ steps.bodies.outputs.classifications }}
-          BASE_SHA: ${{ needs.classify-and-announce.outputs.base-sha }}
-          TIP_SHA: ${{ steps.tip.outputs.sha }}
+          FOLDED_JSON: ${{ steps.fold-evidence.outputs.folded-json }}
         run: |
           set -euo pipefail
           # Gate 12: `.../actions/runs/.../jobs` needs Actions:read, which the
@@ -2889,10 +2949,16 @@ jobs:
           # keeping the App token (GH_TOKEN) for the PR comment write below.
           jobs=$(GH_TOKEN="$ACTIONS_TOKEN" gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs" --paginate --jq '.jobs[] | {name, conclusion}' | jq -s -c '.')
 
-          range=""
-          if [ -n "$TIP_SHA" ] && [ -n "$BASE_SHA" ] && [ "$TIP_SHA" != "$BASE_SHA" ]; then
-            range="$BASE_SHA..$TIP_SHA"
-          fi
+          # research.md D2/D5: this run's own fold evidence, read once here
+          # by the step above and reused for every announced leg id below —
+          # never re-queried per leg. A leg with a sibling run's same-id
+          # commit and no commit of its own still falls through to "not
+          # folded" (FR-001), because membership below is against THIS
+          # run's folded-json only. An empty FOLDED_JSON (the step above
+          # did not run because the tip never resolved) is exactly "no
+          # evidence" for every leg, not a crash.
+          folded_json="${FOLDED_JSON:-[]}"
+          [ -n "$folded_json" ] || folded_json="[]"
 
           fold_routes=$(printf '%s' "$CLASSIFICATIONS" | jq -c '
             [ .[] | select(.category == "in-scope-change"
@@ -2921,7 +2987,7 @@ jobs:
             conclusion=$(printf '%s' "$jobs" | jq -r --arg id "$id" '[.[] | select((.name == "act (" + $id + ")") or (.name | endswith(" / act (" + $id + ")")))] | .[0].conclusion // "missing"')
 
             folded=false
-            if [ -n "$range" ] && git log --grep "^fold($id):" --format='%H' "$range" 2>/dev/null | grep -q .; then
+            if printf '%s' "$folded_json" | jq -e --arg id "$id" 'any(.[]; .id == $id)' >/dev/null 2>&1; then
               folded=true
             fi
 
