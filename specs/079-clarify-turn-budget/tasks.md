@@ -108,13 +108,13 @@ step 1).
 
 **Depends on**: Phase 3 (T002 is the edit this story's tasks verify).
 
-- [ ] T004 [US2] Confirm T002's inline comment states the resulting
+- [X] T004 [US2] Confirm T002's inline comment states the resulting
   ceiling `163` explicitly, not just the accepted range — `grep -n "163"
   .github/workflows/clarify.yml` must find it beside the `max-turns`
   default (FR-003, SC-003, Acceptance Scenario 1 of User Story 2). Also
   run the independent arithmetic check from quickstart.md step 1
   (`awk`'s `ceil(65 * 2.5)`) and confirm it matches `163`.
-- [ ] T005 [US2] Verify only — no code change expected (research.md R3):
+- [X] T005 [US2] Verify only — no code change expected (research.md R3):
   every clarify agent invocation still declares an explicit `--model` and
   a bounded ceiling fed from `wing-commander-turn-ceiling`. Confirm
   `.github/workflows/clarify.yml` lines ~558-561 (`intended-turns:
