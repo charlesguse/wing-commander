@@ -1222,7 +1222,7 @@ jobs:
             # route.
             *) marker_step="route" ;;
           esac
-          marker="$(python3 -c "import sys; sys.path.insert(0, '.github/scripts'); from board_item_marker import write_marker; print(write_marker('$marker_step', 0, None, None, None))")"
+          marker="$(python3 .github/scripts/board_item_marker.py --step "$marker_step")"
 
           case "$outcome" in
             closed)
@@ -1664,7 +1664,7 @@ jobs:
           [[ "$spec_url" =~ ^https?://[^[:space:]]+/issues/[0-9]+$ ]] || { echo "::error::board-loop route (spec verdict): creating the spec-request returned no issue URL (got '$spec_url') -- no spec-request was filed; the issue is left without board:stalled so a later run retries it."; exit 1; }
           echo "spec-url=$spec_url" >> "$GITHUB_OUTPUT"
 
-          marker="$(python3 -c "import sys; sys.path.insert(0, '.github/scripts'); from board_item_marker import write_marker; print(write_marker('stalled', 0, None, None, None))")"
+          marker="$(python3 .github/scripts/board_item_marker.py --step stalled)"
           gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Route %s this issue to a spec request (%s) -- a fix-shaped PR was never opened.\n\n%s%s' "$route_verb" "$route_detail" "$marker" "$rationale_comment")"
           gh issue edit "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --add-label "board:stalled"
 
@@ -1983,7 +1983,7 @@ jobs:
           FIRST_FAILURE: ${{ steps.gate-suite.outputs.first-failure }}
         run: |
           set -uo pipefail
-          marker="$(python3 -I -c "import os, sys; sys.path.insert(0, os.path.join(os.environ['RUNNER_TEMP'], 'wc-pristine', 'scripts')); from board_item_marker import write_marker; print(write_marker('stalled', 0, None, os.environ['FIX_BRANCH'], os.environ['BASE_SHA']))")"
+          marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step stalled --branch "$FIX_BRANCH" --base-sha "$BASE_SHA")"
           # #580: the failing line comes from the gate suite on the fixer
           # agent's own branch, so it is posted inside a fence
           # (fenced_section(), #562's one fencing helper).
@@ -2030,7 +2030,7 @@ jobs:
           echo "pr-number=$pr_number" >> "$GITHUB_OUTPUT"
           echo "pr-url=$pr_url" >> "$GITHUB_OUTPUT"
 
-          marker="$(PR_NUMBER="$pr_number" python3 -I -c "import os, sys; sys.path.insert(0, os.path.join(os.environ['RUNNER_TEMP'], 'wc-pristine', 'scripts')); from board_item_marker import write_marker; print(write_marker('review', 0, int(os.environ['PR_NUMBER']), os.environ['BRANCH'], os.environ['BASE_SHA']))")"
+          marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step review --pr "$pr_number" --branch "$BRANCH" --base-sha "$BASE_SHA")"
           echo "$marker" > "$RUNNER_TEMP/board-fix-marker.txt"
 
       # T029/FR-021/FR-018: route_final_diff() re-applies the SAME backstop
@@ -2160,7 +2160,7 @@ jobs:
           set -uo pipefail
           measured="$(jq -c '.measured' "$RUNNER_TEMP/board-fix-final-diff-decision.json")"
           # A failed post only costs the retry path; the create is still attempted.
-          breach_marker="$(python3 -I -c "import os, sys; sys.path.insert(0, os.path.join(os.environ['RUNNER_TEMP'], 'wc-pristine', 'scripts')); from board_eligibility import BREACH_STEP; from board_item_marker import write_marker; print(write_marker(BREACH_STEP, 0, int(os.environ['PR_NUMBER']), os.environ['BRANCH'], os.environ['BASE_SHA']))")"
+          breach_marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step BREACH_STEP --pr "$PR_NUMBER" --branch "$BRANCH" --base-sha "$BASE_SHA")"
           gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Post-push backstop breach on %s (measured=%s) -- the PR will not be reviewed; filing a spec-request to cover finishing this at the right size.\n\n%s' "$PR_URL" "$measured" "$breach_marker")" \
             || echo "::warning::board-loop fix (post-push breach): could not post the step=breach marker on issue #$ISSUE_NUMBER -- if the spec-request create below fails too, a later run may resume this PR at review (#530)."
           issue_title="$(gh issue view "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --json title --jq .title)"
@@ -2186,7 +2186,7 @@ jobs:
           # (reusing the spec-request just filed).
           gh issue edit "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --add-label "board:stalled" \
             || { echo "::error::board-loop fix (post-push breach): spec-request $spec_url was filed but board:stalled could not be added to issue #$ISSUE_NUMBER -- the breach marker stays newest, so a later run retries through readiness (#530)."; exit 1; }
-          marker="$(python3 -I -c "import os, sys; sys.path.insert(0, os.path.join(os.environ['RUNNER_TEMP'], 'wc-pristine', 'scripts')); from board_item_marker import write_marker; print(write_marker('stalled', 0, None, None, None))")"
+          marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step stalled)"
           gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Post-push backstop breach on %s (measured=%s) -- the branch/PR are left open, unmerged; a spec-request now covers finishing this at the right size.\n\n%s' "$PR_URL" "$measured" "$marker")"
 
       - name: Cross-link the post-push-breach spec-request onto the originating issue
@@ -2945,19 +2945,19 @@ jobs:
         run: |
           set -uo pipefail
           if [ "$OUTCOME" = "converged" ]; then
-            marker="$(python3 -I -c "import os, sys; sys.path.insert(0, os.path.join(os.environ['RUNNER_TEMP'], 'wc-pristine', 'scripts')); from board_item_marker import write_marker; print(write_marker('readiness', 0, int(os.environ['PR_NUMBER']), os.environ['BRANCH'], None))")"
+            marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step readiness --pr "$PR_NUMBER" --branch "$BRANCH")"
             gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Review round %s converged -- zero open in-scope findings on PR #%s. Proceeding to readiness.\n\n%s' "$ROUND" "$PR_NUMBER" "$marker")"
           elif [ "$STALL_REASON" = "parse-failed" ]; then
             # SF1/#499: distinct from the budget-spent message below -- this
             # round never produced a trustworthy findings list at all, so
             # it must not be described as "findings still open" (there may
             # be none, or the reviewer may not have run to completion).
-            marker="$(python3 -I -c "import os, sys; sys.path.insert(0, os.path.join(os.environ['RUNNER_TEMP'], 'wc-pristine', 'scripts')); from board_item_marker import write_marker; print(write_marker('stalled', 0, None, None, None))")"
+            marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step stalled)"
             gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Review round %s on PR #%s could not be read -- the reviewer did not return a parseable findings block. Treating this as inconclusive, never as a clean review. The PR is left open, unmerged, pending a maintainer look. Removing board:stalled is the sole re-eligibility condition.\n\n%s' "$ROUND" "$PR_NUMBER" "$marker")"
             gh issue edit "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --add-label "board:stalled"
           elif [ "$STALL_REASON" = "malformed-findings" ]; then
             # #583: see "Decide the round outcome".
-            marker="$(python3 -I -c "import os, sys; sys.path.insert(0, os.path.join(os.environ['RUNNER_TEMP'], 'wc-pristine', 'scripts')); from board_item_marker import write_marker; print(write_marker('stalled', 0, None, None, None))")"
+            marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step stalled)"
             gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Review round %s on PR #%s returned no valid in-scope finding, but dropped %s malformed finding(s) that may have been in scope. Treating this as inconclusive, never as a clean review. The PR is left open, unmerged, pending a maintainer look. Removing board:stalled is the sole re-eligibility condition.\n\n%s' "$ROUND" "$PR_NUMBER" "${DROPPED_COUNT:-an unknown number of}" "$marker")"
             gh issue edit "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --add-label "board:stalled"
           else
@@ -2965,7 +2965,7 @@ jobs:
             # as in "Compose the review body" above.
             remaining="$(python3 -I -c "import json, os, sys; sys.path.insert(0, os.path.join(os.environ['RUNNER_TEMP'], 'wc-pristine', 'scripts')); from board_spec_request_body import fenced_section; f = json.load(open(os.path.join(os.environ['RUNNER_TEMP'], 'board-review-findings.json'), encoding='utf-8')); print(fenced_section('Open in-scope findings (reviewer agent titles, shown as text):', '\n'.join(str(x.get('title', '')) for x in f if x.get('in_scope') is True), 20000))")" \
               || remaining="(the open findings could not be rendered)"
-            marker="$(python3 -I -c "import os, sys; sys.path.insert(0, os.path.join(os.environ['RUNNER_TEMP'], 'wc-pristine', 'scripts')); from board_item_marker import write_marker; print(write_marker('stalled', 0, None, None, None))")"
+            marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step stalled)"
             gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Review round budget (%s) spent on PR #%s with in-scope findings still open. The PR is left open, unmerged. Removing board:stalled is the sole re-eligibility condition.\n\n%s\n\n%s' "$ROUND_BUDGET" "$PR_NUMBER" "$remaining" "$marker")"
             gh issue edit "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --add-label "board:stalled"
           fi
@@ -3115,7 +3115,7 @@ jobs:
           set -uo pipefail
           git push origin "HEAD:refs/heads/$BRANCH"
           next_round=$((CURRENT_ROUND + 1))
-          marker="$(PR_NUMBER="$PR_NUMBER" BRANCH="$BRANCH" NEXT_ROUND="$next_round" python3 -I -c "import os, sys; sys.path.insert(0, os.path.join(os.environ['RUNNER_TEMP'], 'wc-pristine', 'scripts')); from board_item_marker import write_marker; print(write_marker('review', int(os.environ['NEXT_ROUND']), int(os.environ['PR_NUMBER']), os.environ['BRANCH'], None))")"
+          marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step review --round "$next_round" --pr "$PR_NUMBER" --branch "$BRANCH")"
           gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Review round %s: pushed a follow-up commit addressing the in-scope findings on PR #%s. Re-reviewing on a later run.\n\n%s' "$next_round" "$PR_NUMBER" "$marker")"
 
       - name: Comment the failing gate on the issue (review-fixup, gate suite red)
@@ -3334,7 +3334,7 @@ jobs:
           body="$(printf 'Readiness: all conditions hold on head_sha %s.\n\ndecision: %s\n\nAwaiting a human merge -- this loop never merges, approves, or enables auto-merge.' \
             "$(jq -r '.head_sha' "$RUNNER_TEMP/board-readiness-decision.json")" "$decision")"
           gh pr comment "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --body "$body"
-          marker="$(python3 -I -c "import os, sys; sys.path.insert(0, os.path.join(os.environ['RUNNER_TEMP'], 'wc-pristine', 'scripts')); from board_eligibility import AWAITING_MERGE_STEP; from board_item_marker import write_marker; print(write_marker(AWAITING_MERGE_STEP, 0, int(os.environ['PR_NUMBER']), None, None))")"
+          marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step AWAITING_MERGE_STEP --pr "$PR_NUMBER")"
           gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf '%s\n\n%s' "$body" "$marker")"
 
       # A backstop breach below files a spec-request whose body carries
@@ -3450,7 +3450,7 @@ jobs:
             # post-push-breach step.
             gh issue edit "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --add-label "board:stalled" \
               || { echo "::error::board-loop readiness (backstop breach): spec-request $spec_url was filed but board:stalled could not be added to issue #$ISSUE_NUMBER -- no stalled marker is posted, so a later run retries (#530)."; exit 1; }
-            marker="$(python3 -I -c "import os, sys; sys.path.insert(0, os.path.join(os.environ['RUNNER_TEMP'], 'wc-pristine', 'scripts')); from board_item_marker import write_marker; print(write_marker('stalled', 0, None, None, None))")"
+            marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step stalled)"
             gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf '%s on PR #%s (measured: %s) -- the branch/PR are left open, unmerged; a spec-request now covers finishing this at the right size.\n\n%s' "$breach_what" "$PR_NUMBER" "$MEASURED" "$marker")"
           else
             gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Not ready on PR #%s: %s. Picked up again on a later run.' "$PR_NUMBER" "$unmet")"
@@ -3737,7 +3737,7 @@ jobs:
           REASON: ${{ steps.decide.outputs.reason }}
         run: |
           set -uo pipefail
-          marker="$(python3 -c "import sys; sys.path.insert(0, '.github/scripts'); from board_item_marker import write_marker; print(write_marker('proven', 0, None, None, None))")"
+          marker="$(python3 .github/scripts/board_item_marker.py --step proven)"
           gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
             --body "$(printf 'Closed on the merge of PR #%s alone: %s -- no Actions-only behaviour changed, so a re-driven run would prove nothing this merge did not.\n\n%s' "$PR_NUMBER" "$REASON" "$marker")"
           gh issue close "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY"
@@ -3793,19 +3793,19 @@ jobs:
         run: |
           set -uo pipefail
           if [ -z "$RUN_URL" ]; then
-            marker="$(python3 -c "import sys; sys.path.insert(0, '.github/scripts'); from board_item_marker import write_marker; print(write_marker('prove', 0, None, None, None))")"
+            marker="$(python3 .github/scripts/board_item_marker.py --step prove)"
             gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
               --body "$(printf 'PR #%s merged, but the proof run could not be correlated (%s). This issue stays open.\n\n%s' "$PR_NUMBER" "$REDRIVE_REASON" "$marker")"
             exit 0
           fi
 
           if [ "$CONCLUSION" = "success" ]; then
-            marker="$(python3 -c "import sys; sys.path.insert(0, '.github/scripts'); from board_item_marker import write_marker; print(write_marker('proven', 0, None, None, None))")"
+            marker="$(python3 .github/scripts/board_item_marker.py --step proven)"
             gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
               --body "$(printf 'Proven: %s was re-driven after the merge of PR #%s and concluded %s -- %s\n\n%s' "$REDRIVE_WORKFLOW" "$PR_NUMBER" "$CONCLUSION" "$RUN_URL" "$marker")"
             gh issue close "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY"
           else
-            marker="$(python3 -c "import sys; sys.path.insert(0, '.github/scripts'); from board_item_marker import write_marker; print(write_marker('prove', 0, None, None, None))")"
+            marker="$(python3 .github/scripts/board_item_marker.py --step prove)"
             gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
               --body "$(printf 'Not proven: %s was re-driven after the merge of PR #%s and concluded %s -- %s. This issue stays open.\n\n%s' "$REDRIVE_WORKFLOW" "$PR_NUMBER" "$CONCLUSION" "$RUN_URL" "$marker")"
           fi
