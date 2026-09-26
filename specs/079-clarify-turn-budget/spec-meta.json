@@ -2,7 +2,7 @@
   "issue": 587,
   "spec_dir": "specs/079-clarify-turn-budget",
   "feature_num": "079",
-  "stage": "spec",
+  "stage": "plan",
   "iteration": 0,
-  "spec_branch": null
+  "spec_branch": "spec/079-clarify-turn-budget"
 }
