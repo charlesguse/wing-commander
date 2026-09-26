@@ -1,0 +1,226 @@
+---
+
+description: "Task list for feature 071: The Agent's Own Push Credential Outlives Its Cycle"
+---
+
+# Tasks: The Agent's Own Push Credential Outlives Its Cycle
+
+**Input**: Design documents from `/specs/071-agent-push-credential/`
+
+**Prerequisites**: plan.md, spec.md, research.md, data-model.md, contracts/, quickstart.md (all present)
+
+**Tests**: Not explicitly requested as TDD. This feature's verification mechanism is the two new gate scripts (`verify-agent-push-credential-helper.py` — Gate 99, User Story 5; `verify-agent-push-credential-shell.py` — Gate 100, User Story 5's behavioural companion) and the extension of an existing gate (`verify-implement-stall-notice-unchanged.py`, User Story 4) — both are first-class implementation tasks below, per this repository's convention that `verify-*.py` scripts and their fixtures ARE the tests (Constitution VIII), not an optional add-on.
+
+**Organization**: Tasks are grouped by user story (spec.md priorities: US1/US2 = P1, US3/US4 = P2, US5 = P3). US1 (the credential helper) and US2 (the retry bound + mint-failure attribution) both touch every in-scope stage's file but add *different* steps for *different* reasons — this mirrors spec 052's own precedent of keeping same-file, different-mechanism stories in separate phases (spec.md frames US1 and US2 as independently valuable: "whatever mechanism User Story 1 ships, an agent that meets an unrecoverable push failure should stop spending turns on it").
+
+## Format: `[ID] [P?] [Story] Description`
+
+- **[P]**: Can run in parallel (different files, no dependency on an incomplete task)
+- **[Story]**: US1-US5, mapping to spec.md's priorities
+- Line numbers cited below are today's (branch `spec/071-agent-push-credential`, tip `23d8224`, pre-this-feature) positions. Each edit within a phase that touches a file more than once shifts later line numbers in that same file — locate steps by their `name:`/`id:` (the way Gate 99 itself will locate them, matching spec 052's Gate 68 precedent of "by name pattern, not by line number"), not by line number alone, once a prior task in the same phase has landed on that file.
+
+## Path Conventions
+
+CI/CD pipeline infrastructure repository — no `src`/`tests` split. Paths below are repository-root-relative (`.github/actions/`, `.github/workflows/`, `.github/scripts/`, `docs/`), per plan.md's Project Structure.
+
+---
+
+## Phase 1: Setup
+
+**Purpose**: Establish the baseline facts this feature's provisional gate numbering and scope depend on, before any file changes.
+
+- [ ] T001 Confirm the working tree's baseline: run `python .github/scripts/run-local-gates.py` and record that it is green before this feature's changes; confirm the highest existing gate is Gate 98 (`.github/workflows/lint-workflows.yml:4118-4134`, `verify-board-loop-helper-provenance.py`), so this feature's new gate pair provisionally claims **Gate 99** and **Gate 100** — subject to renumbering at merge if a parallel-landed spec claims either number first, per CLAUDE.md's documented norm (research.md D10, plan.md's own "renumbering possible" note). No file changes.
+- [ ] T002 Confirm `openssl` is present on every runner/container image the 8 in-scope stages actually target (`ubuntu-latest` for the 7 non-container stages, `implement.yml`'s own `container:` image) per research.md D2/quickstart.md's Prerequisites — this feature's one new tool dependency, "verified present... rather than assumed silently." Record the result; if any target image lacks it, that is a blocking finding for this feature, not something to route around silently. No file change if present (expected).
+
+**Checkpoint**: Baseline recorded; gate numbering claim and the `openssl` dependency are both on record.
+
+---
+
+## Phase 2: Foundational (Blocking Prerequisites)
+
+**Purpose**: The three composites every user story's wiring calls into.
+
+**⚠️ CRITICAL**: No User Story 1/2/4 wiring task can be written correctly until this phase is complete.
+
+- [ ] T003 Create `.github/actions/wing-commander-agent-push-credential/action.yml` per contracts/agent-push-credential-helper.md and research.md D1/D4/D5: a new composite with inputs `app-id`, `private-key`, `owner`, `repo-name` (no outputs — its only effect is the git-config side effect below). `runs.steps`, in order: (1) write `inputs.private-key` to `$RUNNER_TEMP/wc-agent-push-credential-<run-id>-<step-id>.pem`, `chmod 600` (a run/step-scoped filename, since `implement.yml` calls this composite up to twice per job and each call's key file must not collide); (2) clear the stale `http.https://github.com/.extraheader` entry `actions/checkout@v5` left, identical to `wing-commander-refresh-remote`'s existing first line (`.github/actions/wing-commander-refresh-remote/action.yml`); (3) `git config --local credential.https://github.com.helper` reset to empty then set to `!<absolute path to mint-credential.sh>`; (4) export `WC_AGENT_PUSH_APP_ID`, `WC_AGENT_PUSH_KEY_PATH`, `WC_AGENT_PUSH_OWNER`, `WC_AGENT_PUSH_REPO` via `$GITHUB_ENV`.
+- [ ] T004 [P] Create `.github/actions/wing-commander-agent-push-credential/mint-credential.sh` per contracts/agent-push-credential-helper.md and research.md D2/D3/D6, colocated with T003's composite (never referenced from outside this directory — Gate 99 check 3 depends on that). Invoked by git with `get` on stdin whenever an outbound `https://github.com/...` operation needs credentials: (1) build a GitHub App JWT (header `{"alg":"RS256","typ":"JWT"}`, payload `{"iat": now-60, "exp": now+540, "iss": <WC_AGENT_PUSH_APP_ID>}`, base64url-encoded, signed with `openssl dgst -sha256 -sign "$WC_AGENT_PUSH_KEY_PATH"`); (2) resolve the installation id via `GET /repos/{WC_AGENT_PUSH_OWNER}/{WC_AGENT_PUSH_REPO}/installation` (Bearer: the JWT), caching the result at `$RUNNER_TEMP/wc-agent-push-installation-id` and reading that cache on every later invocation in the same job instead of re-resolving; (3) mint via `POST /app/installations/{id}/access_tokens` (Bearer: the JWT); on success, stdout is exactly `username=x-access-token\npassword=<token>\n`, exit 0. On failure (key file at `$WC_AGENT_PUSH_KEY_PATH` missing/unreadable → reason `key-unreadable`; installation-lookup 4xx/5xx → reason `installation-lookup-failed`; token-mint 4xx/5xx → reason `token-mint-failed`): stdout empty, stderr's first line exactly `wing-commander-agent-push-credential: mint failed: <reason>`, exit 1. Never retries internally — retry policy for the agent's own next push attempt is the prompt guidance (T016), not this script's job.
+- [ ] T005 [P] Create `.github/actions/wing-commander-publish-stranded-commits/action.yml` per contracts/stranded-commit-publish.md and research.md D8: input `before-sha` (required); outputs `commits-published` (integer as string, `git rev-list --count <before-sha>..HEAD` computed before the push) and `push-ok` (`"true"`/`"false"`). Behaviour: does NOT `git fetch origin` first (pushes the local tree's current branch tip as-is); computes the count; runs `git push origin HEAD:<branch>`; reports `push-ok=false` (never a hard failure at the composite's own level — the caller decides via `continue-on-error: true` at the call site, matching every other call site's gating in this feature) on a push failure, with `commits-published` still populated (informational either way — "how much was at stake," not "how much succeeded").
+- [ ] T006 [P] Create `.github/actions/wing-commander-agent-push-credential-status/action.yml` per research.md D6, mirroring `.github/actions/wing-commander-post-agent-credential-status/action.yml`'s existing shape (spec 052) and its "never hard-fails the job" fix (that composite's own maintainer-feedback history in specs/052-agent-credential-lifetime/tasks.md — emit `::warning::` and set an output, `exit 0`, always): reads the agent step's already-uploaded execution-output artifact / transcript for the literal prefix `wing-commander-agent-push-credential: mint failed:`, sets `mint-failure-detected` (`"true"`/unset) as its output. No prose field — a grep-able fact only, matching `wing-commander-agent-ran-signal`'s own `steps.<id>.outcome`-not-prose precedent.
+
+**Checkpoint**: All three composites exist and are independently unit-testable (Gate 100 exercises T004's script directly). Every user story's per-stage wiring can now begin.
+
+---
+
+## Phase 3: User Story 1 - An agent still working after the credential lifetime can still publish its work (Priority: P1) 🎯 MVP
+
+**Goal**: Every push-capable agent step in every in-scope stage authenticates its own `git push` calls through a credential that resolves fresh at the moment of each push, regardless of how long that agent step has been running.
+
+**Independent Test**: Drive an agent stage whose agent step is still pushing after the credential lifetime has elapsed, and confirm every push the agent makes succeeds and the spec branch carries every commit the agent created, with no authentication failure in the agent's transcript.
+
+### Implementation for User Story 1
+
+Push-capable agent steps (confirmed by inspecting each site's composed `allowed-tools`/`disallowed-tools` for `Bash(git push:*)`): `intake.yml`'s `agent`, `clarify.yml`'s `agent`, `plan.yml`'s `agent-auto` and `agent-pr`, `tasks.yml`'s `agent-auto` and `agent-pr` (job `tasks` only), `implement.yml`'s `cycle` and `retry`, `pr-conversation.yml`'s `act` job's `agent`. Four agent steps in the 8-stage sweep are NOT push-capable and are excluded per FR-025 — each task below for a file containing one records the exclusion reason in place.
+
+- [ ] T007 [P] [US1] In `.github/workflows/intake.yml`'s `intake` job: add a `wing-commander-agent-push-credential` call (`app-id: secrets.speckit-app-id`, `private-key: secrets.speckit-app-private-key`, `owner: github.repository_owner`, `repo-name: ` the repository-name half of `github.repository`) positioned after "Re-checkout default branch as wing-commander-bot" (today line 487) and before "Create spec from issue" (`id: agent`, today line 601).
+- [ ] T008 [P] [US1] Same as T007 in `.github/workflows/clarify.yml`'s `clarify` job, positioned after "Checkout draft spec branch as wing-commander-bot" (today line 505) and before "Fold answers into the draft spec" (`id: agent`, today line 564).
+- [ ] T009 [US1] In `.github/workflows/plan.yml`'s `plan` job: add two independent calls (each its own key-file suffix per T003, since only one branch executes per dispatch but each needs the call in its own branch) — one after the shared "Checkout spec branch as wing-commander-bot" (today line 666) and before "Generate implementation plan (direct commit)" (`id: agent-auto`, today line 697); one after the same checkout and before "Generate implementation plan" (`id: agent-pr`, today line 899).
+- [ ] T010 [US1] In `.github/workflows/tasks.yml`'s `tasks` job (NOT `tasks-approved` — that job has no agent step at all, confirmed by inspection, so FR-007's sweep does not reach it): same two-branch pattern as T009, after the shared "Checkout spec branch as wing-commander-bot" (today line 587), before "Generate task list (direct commit)" (`id: agent-auto`, today line 698) and before "Generate task list (review PR)" (`id: agent-pr`, today line 889).
+- [ ] T011 [US1] In `.github/workflows/implement.yml`'s `implement` job: add two independent calls after the shared "Checkout spec branch as wing-commander-bot" (today line 564) — before "Implement and converge (cycle)" (`id: cycle`, today line 854) and before "Implement and converge (retry at escalation model)" (`id: retry`, today line 1442). "Compose progress summary (haiku)" (`id: progress`, today line 2085) is NOT push-capable — its composed `default-disallowed-tools` (today line 2044) already lists `Bash(git:*)` — add a short in-place comment at this step recording the FR-025 exclusion and its reason (no `Bash(git push:*)` in its tool list), per FR-007's "excluded MUST be recorded with the reason."
+- [ ] T012 [P] [US1] In `.github/workflows/finalize.yml`'s `finalize` job: "Summarize change and extract remaining manual work" (`id: summarize`, today line 672) is NOT push-capable — its composed `default-allowed-tools` (today line 656) has no `Bash(git push:*)` (the agent only reads the diff and writes a summary; PR creation is a later deterministic `gh pr create`/`gh pr edit` step). Add no composite call; add a short in-place comment at this step recording the FR-025 exclusion and its reason.
+- [ ] T013 [US1] In `.github/workflows/pr-conversation.yml`: "Classify the PR conversation request" (`id: agent`, `classify-and-announce` job, today line 835) is NOT push-capable — its composed `default-disallowed-tools` (today line 814) explicitly lists `Bash(git push:*),Bash(git commit:*)` (a deliberately strictly-read-only classifier, per the existing comment at today line 821). Add no composite call there; add a short in-place comment recording the FR-025 exclusion. In the separate `act` job, "Act on this classification" (`id: agent`, today line 1960) IS push-capable — add a `wing-commander-agent-push-credential` call after "Checkout working tree for this leg" (today line 1909) and before it.
+- [ ] T014 [US1] In `.github/workflows/auto-update-spec-kit.yml`'s `e2e-stage` job: "Run e2e agent-driven stage" (`id: decide`, today line 1961) is NOT push-capable — its `claude_args`/`--disallowedTools` (today line 2050) explicitly lists `Bash(git push:*)`, and its own prompt instructs the agent not to push at all (today line 2022; the job's deterministic steps do all pushing, per the existing comment at today lines 1952-1953). Add a short in-place comment at the `decide` step recording the FR-025 exclusion. Separately, realize FR-008's scratch-repository coverage by adding a `wing-commander-agent-push-credential` call parameterized to the scratch repository's own coordinates (`owner`/`repo-name` from "Mint a scratch-repository App token"'s existing `steps.scratch-parts.outputs.{owner,name}`, today line 1791's neighbourhood) positioned before "Push agent-produced spec.md to the scratch repository (best-effort)" (today line 2195) — the step that actually performs the scratch push, today authenticated by a single point-in-time re-mint ("Re-mint scratch-repository App token (post-agent)", today line 2076) rather than a credential that resolves fresh at push time. This placement — before a deterministic step, not before an agent step — deliberately diverges from every other in-scope stage's convention in T007-T013; call this out explicitly in Gate 99's own implementation (T040), since Gate 99 check 1 as contracted is keyed off "push-capable agent step" and this job has none, so check 1 needs a companion clause (or a documented, gate-checked exception) to cover this call site at all. See this run's `wing-commander-findings` for the underlying spec/plan-vs-workflow tension this task works around.
+- [ ] T015 [US1] Confirm the population is closed: `git grep -n "uses: anthropics/claude-code-action@v1"` across the 8 named files/jobs and confirm every match is one of the 9 wired sites (T007-T011, T013-T014) or one of the 4 excluded-and-recorded sites (T011's `progress`, T012's `summarize`, T013's `classify-and-announce`/`agent`, T014's `decide`) — zero unaccounted agent steps (FR-007, SC-007). Depends on: T007-T014.
+
+**Checkpoint**: Every push-capable agent step in all 8 in-scope stages authenticates through a credential that resolves fresh at push time; a stage whose agent finishes well inside the credential lifetime is behaviourally unchanged (FR-001 through FR-005, FR-007, FR-008, FR-024, FR-025 — User Story 1's own Independent Test). This is the MVP.
+
+---
+
+## Phase 4: User Story 2 - An agent never burns its budget on a push that cannot succeed (Priority: P1)
+
+**Goal**: An agent that meets the credential-expiry signature (or the helper's own mint-failure signature) stops retrying that push after a small, stated bound and continues to finish and commit its work locally; when it does, a maintainer reading the run can tell the reason was the credential, not the agent giving up.
+
+**Independent Test**: Seed an agent step whose push fails with the credential-expiry signature, and confirm the agent stops retrying the push within a small, stated number of attempts and proceeds to finish its work.
+
+### Implementation for User Story 2
+
+- [ ] T016 [US2] In `.github/workflows/clarify.yml`'s "Fold answers into the draft spec" step (`id: agent`, today line 564): append the canonical retry-bound paragraph to its `prompt:` block (research.md D7 exact text: *"A `git push` that fails with `remote: Invalid username or token` or `Authentication failed`, or with a message beginning `wing-commander-agent-push-credential: mint failed:`, is a credential problem this pipeline is already handling — retry it at most twice, then commit your work locally if it still fails and continue; do not spend further turns retrying the same push."*), immediately marked with a `# (canonical copy; do not condense)` comment above the step (this file's existing home for canonical prose, per the "Report over-budget agent run" precedent at today line 573), so Gate 47 (`verify-comment-canonical-pointers.py`) has a real canonical marker to check pointers against.
+- [ ] T017 [P] [US2] In `.github/workflows/intake.yml`'s "Create spec from issue" step (`id: agent`, today line 601): append the same paragraph verbatim to its `prompt:` block, with a one-line pointer comment (`-- see clarify.yml.`, the Gate-47-parseable form) above the step.
+- [ ] T018 [US2] In `.github/workflows/plan.yml`: append the paragraph verbatim, each with its own pointer comment, to both "Generate implementation plan (direct commit)" (`id: agent-auto`) and "Generate implementation plan" (`id: agent-pr`)'s `prompt:` blocks.
+- [ ] T019 [US2] In `.github/workflows/tasks.yml`'s `tasks` job (not `tasks-approved`, which has no agent step): same as T018, both "Generate task list (direct commit)" (`id: agent-auto`) and "Generate task list (review PR)" (`id: agent-pr`).
+- [ ] T020 [US2] In `.github/workflows/implement.yml`: append the paragraph verbatim, each with its own pointer comment, to "Implement and converge (cycle)" (`id: cycle`) and "Implement and converge (retry at escalation model)" (`id: retry`)'s `prompt:` blocks. Do NOT touch "Compose progress summary (haiku)" (`id: progress`) — it never pushes (FR-025).
+- [ ] T021 [P] [US2] In `.github/workflows/pr-conversation.yml`'s `act` job: append the paragraph verbatim with a pointer comment to "Act on this classification" (`id: agent`)'s `prompt:` block. Do NOT touch `classify-and-announce`'s "Classify the PR conversation request" — it never pushes (FR-025).
+- [ ] T022 [US2] Confirm `auto-update-spec-kit.yml`'s `e2e-stage` "Run e2e agent-driven stage" (`id: decide`) receives neither the composite call (T014 already routes FR-008 compliance through the deterministic scratch-push step, not this agent step) nor the retry-bound paragraph, since its own prompt already instructs it not to push at all (FR-025 compliance) — a confirmation task, no file change.
+- [ ] T023 [US2] Wire a `wing-commander-agent-push-credential-status` (T006) call at each of the 8 sites wired in T007-T011/T013 (intake, clarify, plan×2, tasks×2, implement cycle+retry, pr-conversation/act), positioned immediately alongside (same `if:` as) that site's existing "Determine post-agent credential status" step (spec 052) so its `mint-failure-detected` output feeds that existing step's `ok`-first computation already read by the stall path (FR-006, FR-013, FR-014).
+- [ ] T024 [US2] Confirm quickstart.md §6's check holds: `grep -A5 "mint failed:" .github/workflows/clarify.yml` finds T016's canonical paragraph verbatim, and run Gate 47 (`python3 .github/scripts/verify-comment-canonical-pointers.py`) to confirm it resolves every pointer T017/T018/T019/T020/T021 added and that each pointer's topic-word overlap with clarify.yml's canonical block passes Gate 47's check (b). If Gate 47's vocabulary-overlap heuristic does not recognize this specific prose pair, that is a Gate 47 finding, not a T016-T021 defect — record it rather than reshaping the paragraph to satisfy the gate.
+
+**Checkpoint**: An agent that meets the credential-expiry signature stops retrying after two attempts and finishes its work; the reason is attributable to the credential when a maintainer reads the run (FR-010 through FR-014 — User Story 2's own Independent Test).
+
+---
+
+## Phase 5: User Story 3 - A second agent in the same job does not start already expired (Priority: P2)
+
+**Goal**: Demonstrate that the retry arm — the shape whose whole purpose is to rescue a cycle that went badly, and which today is certain to start with an already-dead credential whenever the cycle alone runs past an hour — is covered on the same terms as the cycle arm.
+
+**Independent Test**: Drive an implement job whose cycle agent runs past the credential lifetime and whose retry agent then runs, and confirm the retry agent's pushes succeed.
+
+### Verification for User Story 3
+
+- [ ] T025 [US3] Confirm `implement.yml`'s retry agent step (`id: retry`, today line 1442), which runs after the cycle agent step (`id: cycle`, today line 854) in the same job, receives its own independent `wing-commander-agent-push-credential` call from T011 — not merely inheriting cycle's git-config state from earlier in the job — so retry's pushes resolve a credential minted at the moment retry needs it, regardless of how long cycle itself ran (FR-003, SC-006). Depends on: T011.
+- [ ] T026 [US3] Confirm, by construction, that "Compose progress summary (haiku)" (`id: progress`) needs no credential work of its own (FR-025 — it never pushes) and that a job whose cycle converges cleanly and never dispatches retry performs exactly one `wing-commander-agent-push-credential` call, not two (FR-005 — no additional cost on the common path). A confirmation task; no file change beyond T011/T020.
+
+**Checkpoint**: The retry arm — the one shape User Story 3 exists to demonstrate — succeeds on the same terms as the cycle arm (User Story 3's own Independent Test).
+
+---
+
+## Phase 6: User Story 4 - Work the agent could not publish is never silently lost (Priority: P2)
+
+**Goal**: Replace today's *incidental* rescue (a later agent step's own push happening to carry stranded commits with it) with a deterministic step that runs whether or not a later agent step ever does, and report the unpublished count where a maintainer reads it only when there is one to report.
+
+**Independent Test**: Seed an agent step that ends with unpushed commits on the runner, and confirm that either the commits reach the branch or a record naming the unpublished work is posted where the maintainer will read it.
+
+### Publication (every push-capable site from Phase 3)
+
+- [ ] T027 [P] [US4] In `.github/workflows/intake.yml`'s `intake` job: add a step immediately after "Re-checkout default branch as wing-commander-bot" (today line 487, before T007's credential-helper call) that captures the checkout's current `HEAD` SHA (`git rev-parse HEAD`) to a step output — this job has no pre-existing "before SHA" step to reuse, unlike `implement.yml`. Add a `wing-commander-publish-stranded-commits` call, `before-sha` wired from that new capture step, positioned immediately alongside (same `if: "!cancelled() && steps.agent.outcome != 'skipped'"` as) "Refresh authenticated spec-branch remote (post-agent)" (today line 770).
+- [ ] T028 [P] [US4] Same pattern as T027 in `.github/workflows/clarify.yml`'s `clarify` job: capture `HEAD` after "Checkout draft spec branch as wing-commander-bot" (today line 505); add the publish call alongside "Refresh authenticated spec-branch remote (post-agent)" (today line 702), `if:` keyed on `steps.agent.outcome`.
+- [ ] T029 [US4] In `.github/workflows/plan.yml`'s `plan` job: capture `HEAD` once after the shared "Checkout spec branch as wing-commander-bot" (today line 666) — valid as the "before" SHA for whichever of the two mutually-exclusive branches actually runs. Add two publish calls (one per branch, each reading the same captured SHA): alongside "Refresh authenticated spec-branch remote (post-agent, auto)" (today line 840, `if:` keyed on `steps.agent-auto.outcome`) and alongside "Refresh authenticated spec-branch remote (post-agent, pr)" (today line 1037, `if:` keyed on `steps.agent-pr.outcome`). `plan.yml` has no `stalled` job (confirmed) — no consumption task follows for this file, matching research.md D4's "publish with no reader" status.
+- [ ] T030 [US4] Same two-branch pattern as T029 in `.github/workflows/tasks.yml`'s `tasks` job (capture `HEAD` after the shared checkout, today line 587): alongside "Refresh authenticated spec-branch remote (post-agent, auto)" (today line 828) and alongside "Refresh authenticated spec-branch remote (post-agent, pr)" (today line 1021). `tasks-approved` has no agent step — not applicable, no call added there.
+- [ ] T031 [US4] In `.github/workflows/implement.yml`'s `implement` job: this file already resolves a distinct "before" SHA per agent step — reuse `steps.base.outputs.base-sha` (`id: base`, today line 696) as `before-sha` for a publish call alongside "Refresh authenticated spec-branch remote (post-agent, cycle)" (today line 1025, `if:` keyed on `steps.cycle.outcome`); reuse `steps.retry-base.outputs.base-sha` (`id: retry-base`, today line 1427) as `before-sha` for a second, independent publish call alongside "Refresh authenticated spec-branch remote (post-agent, retry)" (today line 1619, `if:` keyed on `steps.retry.outcome`). Do not derive `before-sha` from the existing "Record branch advance (cycle)" step (today line 2396) — that step runs later in the job, after both refresh triples, and its own `before-sha` output is job-start-scoped in a way that would double-count commits the cycle's own publish call already moved.
+- [ ] T032 [US4] In `.github/workflows/pr-conversation.yml`'s `act` job: capture `HEAD` after "Checkout working tree for this leg" (today line 1909) as `before-sha` (or reuse `needs.classify-and-announce.outputs.base-sha`, today resolved at `id: base-sha`, line 1422 in the other job, if it demonstrably predates this job's own checkout with nothing committed in between — verify this before reusing it instead of a fresh capture). Add the publish call alongside "Refresh authenticated spec-branch remote (post-agent)" (today line 2081, `if:` keyed on `steps.agent.outcome`). `act` has no survivor/`stalled` job (confirmed, matching research.md D4's precedent) — publish-only, no consumption task follows.
+- [ ] T033 [US4] In `.github/workflows/auto-update-spec-kit.yml`'s `e2e-stage` job: parallel to T014's placement, add a stranded-commit-publish call for the scratch repository (before-sha captured right after the job's scratch checkout/scaffold step, today around line 1886-1944) positioned alongside "Re-mint scratch-repository App token (post-agent)" (today line 2076) / ahead of "Push agent-produced spec.md to the scratch repository (best-effort)" (today line 2195) — same divergence-from-convention note as T014 applies here (no agent step to attach "alongside," since `decide` never pushes); flag this alongside T014's note for Gate 99's check 2.
+
+### Consumption (the four stages with an existing survivor job wrapping a push-capable agent step)
+
+- [ ] T034 [US4] In `.github/workflows/intake.yml`'s `stalled` job (today line 1385): extend its existing stall-notice rendering to read `needs.intake.outputs.commits-published` (a new job output, mapped from T027's publish-call step output) and, when nonzero, add one line to the `wing-commander-chain-stop-notice` callout: "N commit(s) the agent could not push during the run were published after it" (FR-016). When zero, add nothing (FR-017).
+- [ ] T035 [US4] Same as T034 in `.github/workflows/clarify.yml`'s `stalled` job (today line 1165), reading `needs.clarify.outputs.commits-published` from T028.
+- [ ] T036 [US4] Same as T034 in `.github/workflows/tasks.yml`'s `stalled` job (today line 1538, wrapping `tasks`), reading `needs.tasks.outputs.commits-published` from T030 (the auto/pr branches' calls both feed the same job output, matching how `agent-ran`/`agent-conclusion` already do). `stalled-approved` (today line 1688, wrapping `tasks-approved`) has nothing to consume — no task.
+- [ ] T037 [US4] Same as T034 in `.github/workflows/implement.yml`'s `stalled` job (today line 2693), reading `needs.implement.outputs.commits-published` — sourced from whichever of T031's two calls (cycle, retry) most recently ran, matching the existing most-recent-wins `||`-chain convention this job already uses for `agent-conclusion`/`credential-refresh-ok` (spec 052's own precedent, `implement.yml:375-382`-area).
+- [ ] T038 [US4] Extend `.github/scripts/verify-implement-stall-notice-unchanged.py`'s existing pinned-step fixture family (per plan.md's Testing section) with a case for the "commits published" line's presence branch (`commits-published` nonzero → the line appears, naming the count) and its absence branch (`commits-published` zero or unset → the notice is byte-for-byte unchanged from today, regression-pinned). Depends on: T037.
+- [ ] T039 [US4] Confirm, by construction, that FR-018 (a closing lifecycle-record commit made after the credential lifetime is observed by the job's own deterministic read-back once T027-T033's publish step has run) needs no separate fix to any read-back step itself — once the publish call succeeds, the commit is already on the branch by the time each job's own read-back runs later in the same job, matching spec 052's own precedent of fixing the *publication* side rather than teaching the read-back to guess. A confirmation task; no file change.
+
+**Checkpoint**: A cycle that ends with commits the agent could not push either publishes them before the job ends or the run records how many, in a place the maintainer reads, on every path the job can take except a run-level cancellation (FR-015 through FR-019 — User Story 4's own Independent Test).
+
+---
+
+## Phase 7: User Story 5 - A newly added agent step cannot silently reintroduce the exposure (Priority: P3)
+
+**Goal**: A deterministic gate fails when an agent step in scope does not follow the shipped remedy, naming the workflow, the job, and the step; every failure branch is fixture-covered.
+
+**Independent Test**: Introduce, in a fixture, an agent step that does not follow the shipped remedy, and confirm the check fails and names the workflow, the job, and the step; revert it and confirm the check passes.
+
+### The durability gate
+
+- [ ] T040 [US5] Implement `.github/scripts/verify-agent-push-credential-helper.py` (Gate 99) per contracts/agent-push-credential-gate.md: static `yaml.safe_load` inspection over the 8 named workflow files. Checks: (1) every push-capable agent step (identified structurally: `uses: anthropics/claude-code-action@*` AND composed allowed-tools containing `Bash(git push:*)`) has a `wing-commander-agent-push-credential` call between its job's push-capable checkout and itself; (2) every push-capable agent step that also has spec 052's post-agent `wing-commander-context` re-mint has a `wing-commander-publish-stranded-commits` call at the same `if:`; (3) no file outside `.github/actions/wing-commander-agent-push-credential/` contains a JWT-header/payload construction matching T004's structural shape; (4) a negative check — an agent step with no `Bash(git push:*)` in its allowed-tools carries neither the composite call nor the retry-bound paragraph; (5) the gate exits non-zero, naming the unreachable file/job, if any of the 8 named files is missing, an expected job cannot be located, or zero push-capable agent steps are found across all 8 combined. Per T014/T033's note, add a companion clause (or documented exception, itself gate-checked) so check 1/2's per-agent-step framing correctly covers `auto-update-spec-kit.yml`'s scratch-push call sites, which attach to a deterministic step rather than an agent step — resolve the tension flagged in T014 here, not by silently exempting that job from checks 1-2. Depends on: T007-T014, T027-T033 (the gate's first successful run needs the shipped tree to check against).
+- [ ] T041 [US5] Add `self_test()`/`--self-test` to Gate 99, following `verify-post-agent-credential-refresh.py`'s (Gate 68) `MUTATIONS`-over-the-live-tree convention (`copy.deepcopy` the real parsed tree per mutation): clean tree → PASS; delete the credential-helper call ahead of `implement.yml`'s `retry` step → FAIL naming `implement.yml`/`implement`/`retry`; delete the stranded-commit-publish call after `clarify.yml`'s agent step → FAIL naming `clarify.yml` and the step; duplicate the JWT-signing block into a second file outside the composite's directory → FAIL naming the second file; attach the credential-helper call to a fixture agent step whose allowed-tools carry no `Bash(git push:*)` → FAIL (check 4); point the subject list at a 9th, nonexistent workflow file → FAIL ("could not reach subject"); point the subject list at zero workflow files → FAIL (same, empty-result guard). Depends on: T040.
+- [ ] T042 [US5] Implement `.github/scripts/verify-agent-push-credential-shell.py` (Gate 100) per contracts/agent-push-credential-gate.md, driving T004's `mint-credential.sh` directly via `wc_shell_harness.py` (the same harness Gate 69 established): (1) a fixed, checked-in throwaway RSA test keypair stands in for `WC_AGENT_PUSH_KEY_PATH`; (2) `curl` stubbed to return a fixed installation-lookup response then a fixed token-mint response; assert stdout is exactly `username=x-access-token\npassword=<the stubbed token>\n`, exit 0; (3) repeat with the stubbed mint call returning 401 → stdout empty, stderr's first line matches `^wing-commander-agent-push-credential: mint failed: token-mint-failed$`, exit 1; (4) repeat with `WC_AGENT_PUSH_KEY_PATH` pointing at a nonexistent file → `key-unreadable` reason, exit 1, zero network calls attempted (the stubbed `curl` records invocation count).
+- [ ] T043 [US5] Add `--self-test` to Gate 100 covering the three scenarios in T042 as its own regression fixture (per FR-022 — every failure branch exercised by a checked-in fixture, not proven only by a live run).
+- [ ] T044 [US5] Wire Gate 99 and Gate 100 into `.github/workflows/lint-workflows.yml`'s existing PR-time job, following Gate 68/69's two-step-per-gate wiring pattern: a `"Gate 99 — <one-line summary>"` step running the script, and a `"Gate 99 self-test — <summary>"` step running it with `--self-test`, both `if: "!cancelled()"`; same pair for Gate 100. Confirm `wc_gate_registry.py`'s filename convention auto-discovers both scripts (no registry file to hand-edit) and that the gate-wiring gate (`verify-gate-wiring.py`) passes, confirming wiring is complete in both directions.
+- [ ] T045 [US5] Confirm local/CI parity (FR-021): `run-local-gates.py` derives Gate 99/100's invocations from `lint-workflows.yml`'s own `run:` blocks, so the local sweep runs the identical commands CI runs. Confirm triggering (FR-021): `lint-workflows.yml`'s existing `on.pull_request.paths` (`.github/workflows/**`, `.github/actions/**`) already covers both gates' subjects — no new path entry required.
+
+**Checkpoint**: Gate 99 is reachable through the registry, runs identically locally and in CI, fails loudly on every care point FR-020/FR-021 name, and every failure branch it ships is fixture-covered (FR-020 through FR-023 — User Story 5's own Independent Test).
+
+---
+
+## Phase 8: Polish & Cross-Cutting Concerns
+
+- [ ] T046 Per FR-023/research.md D11: rewrite `docs/architecture.md`'s "Identity & chaining" section's closing residual-risk sentence (which today points at issue #402 as an accepted gap) to describe the credential helper (T003-T004), the retry bound (T016), and the stranded-commit publish step (T027-T033) as what now covers that case, keeping the #402 pointer as a closed historical reference rather than deleting it. Edit `implement.yml`'s existing short-form FR-008 pointer comment (near its post-agent read-back, spec 052's own T038 site) to point at this new paragraph instead of duplicating it. Add the matching short-form pointer comment at the other 7 in-scope stages' equivalent sites if any currently narrate the same residual risk. Depends on: T003-T004, T016, T027-T033.
+- [ ] T047 Confirm FR-009/SC-010 (research.md D12): every credential this feature mints is the same kind of short-lived (one-hour) App installation token the pipeline already mints elsewhere, with the same implicit-expiry teardown behaviour ("Token expired, skipping token revocation") — no new revocation step is needed, and none is added. A confirmation task; no file change.
+- [ ] T048 Run the `review-step-gating` skill over this feature's full diff (CLAUDE.md: any change touching `if:`, `continue-on-error:`, or a failing step gets a pass before merging — this feature adds `continue-on-error:`/`if:` at roughly 16 new call sites per plan.md's Testing section) and fix any findings in this same PR.
+- [ ] T049 Run the `container-shell-safety` skill over this feature's full diff (CLAUDE.md: any change adding a `container:` block or a `run:` step inside one) — `implement.yml`'s `implement` job already carries a `container:` block, and T003/T011's credential-helper installation and T004's `mint-credential.sh` invocation site land inside it. Fix any findings in this same PR.
+- [ ] T050 Run `python .github/scripts/run-local-gates.py` from the repository root; confirm every gate passes, including Gate 99 and Gate 100 and their self-tests. Depends on: T001-T049.
+- [ ] T051 Run this PR's code review (CLAUDE.md: "every fix PR gets a code review before merge") and fix its findings in this same PR, filing anything outside this feature's own scope as a new issue carrying "Found by the code review of #N" per CLAUDE.md, rather than widening this PR.
+- [ ] T052 Record, per CLAUDE.md's "a fix to behaviour that only runs in Actions is proven after merge by re-driving one run" rule: after merge, drive quickstart.md §7's manual/integration confirmation (dispatch a cheap stage forced past 60 minutes wall clock in a scratch adopter repository, confirm zero authentication failures in the transcript including at least one push past the 60-minute mark, confirm a fast cycle is byte-for-byte unchanged, and — if the harness can simulate a mint failure — confirm the two-retry bound and the credential-attributed reporting). Post the run URL as this feature's post-merge proof on the lifecycle issue. This is a post-merge action, left unchecked pending merge.
+
+---
+
+## Dependencies & Execution Order
+
+### Phase Dependencies
+
+- **Setup (Phase 1)**: No dependencies — can start immediately.
+- **Foundational (Phase 2)**: Depends on Setup completion — BLOCKS every user story's wiring (T007+ all call composites T003-T006 create).
+- **User Story 1 (Phase 3)**: Depends on Foundational (T003, T004). The 8 stages' tasks (T007-T014) are largely file-disjoint (T009/T010/T011/T013/T014 each touch one file with 1-2 sites). No dependency on User Story 2, 3, or 4.
+- **User Story 2 (Phase 4)**: The prompt-paragraph tasks (T016-T022) have no code dependency on User Story 1's composite wiring (different call sites in the same steps' `prompt:` blocks) and could run in parallel with Phase 3. T023 (credential-status wiring) depends on T006 and benefits from landing alongside T007-T011/T013 in the same files. T024 depends on T016-T021.
+- **User Story 3 (Phase 5)**: Pure verification against Phase 3's own output — depends on T011 (T025) and T011/T020 (T026).
+- **User Story 4 (Phase 6)**: Depends on Foundational (T005). Publication tasks (T027-T033) are file-disjoint from each other and largely independent of User Story 1/2's wiring in the same files (different call sites), though landing them in the same commit/PR pass as T007-T023 in each file keeps diffs reviewable. Consumption tasks (T034-T037) each depend on their own file's publication task. T038 depends on T037. T039 depends on T027-T033.
+- **User Story 5 (Phase 7)**: The gate (T040-T045) depends on User Story 1 (T007-T014), User Story 2 (T016-T023), and User Story 4 (T027-T033) having landed, since it checks the shipped structure those stories produce.
+- **Polish (Phase 8)**: Depends on all five user stories being complete.
+
+### Parallel Opportunities
+
+- T003-T006 (the three Foundational composites) are file-disjoint and parallelizable once T001-T002 land.
+- T007, T008, T012 (User Story 1, three single-site files) are file-disjoint and fully parallelizable; T009, T010, T011, T013, T014 (two-site or special-case files) are each their own task.
+- T017, T021 (User Story 2, two single-site pointer files) are parallelizable with each other and with Phase 3's tasks (different edits to the same steps' `prompt:` blocks vs. new steps before them — sequence within a file, parallelize across files).
+- T027, T028 (User Story 4, two single-site files) are parallelizable; T029-T033 are each their own task.
+- T034, T035 (User Story 4 consumption, two single-site files) are parallelizable; T036, T037 are their own tasks.
+
+## Implementation Strategy
+
+### MVP First (User Story 1 Only)
+
+1. Complete Phase 1 (Setup) + Phase 2 (Foundational — the three composites).
+2. Complete Phase 3 (User Story 1) — all 8 stages.
+3. **STOP and VALIDATE**: quickstart.md §5's shell-level drill against a real (throwaway) App installation, confirming a mint succeeds and authenticates; manually confirm via quickstart.md §7 that a forced long-running cycle produces zero authentication failures. This is the defect's root cause, fixed and independently demonstrable.
+
+### Incremental Delivery
+
+1. Setup + Foundational → the three composites exist.
+2. User Story 1 → every push-capable agent step in all 8 stages holds a credential that resolves fresh at push time (MVP).
+3. User Story 2 → an agent stops retrying a doomed push and the reason is attributable to the credential.
+4. User Story 3 → the retry arm, demonstrated explicitly.
+5. User Story 4 → nothing the agent committed is lost without a record.
+6. User Story 5 → the remedy is durable: a regression is caught by CI, not rediscovered the next time a cycle runs long.
+7. Polish → full gate suite green, both required skill passes clean, code review passed, post-merge proof recorded.
+
+### Parallel Team Strategy
+
+Per CLAUDE.md's own cap (concurrent local agents kept to two during this pipeline's implement stage):
+
+1. Complete Setup + Foundational together (small, three-composite phase).
+2. Once Foundational is done: Contributor A takes User Story 1 (the MVP); Contributor B takes User Story 2's prompt-paragraph tasks (T016-T022, no code dependency on User Story 1's composite wiring) in parallel, then joins A for User Story 2's credential-status wiring (T023) once each stage's own T007-T014 task lands.
+3. Once User Story 1 and User Story 4's publication tasks have both landed in a file, either contributor takes that file's consumption task.
+4. Once User Story 1, 2, and 4 have all landed, either contributor takes User Story 5's gate (it needs all three as its checked subject).
+5. Phase 8 runs once all five stories are complete.
+
+---
+
+Lifecycle issue: #545.
