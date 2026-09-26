@@ -207,19 +207,19 @@ shipped tri-state behaviour and confirm no statement in it is false.
 
 ### Implementation for User Story 2
 
-- [ ] T014 [US2] Correct
+- [X] T014 [US2] Correct
   `specs/053-e2e-scratch-provisioning/spec.md`'s Clarifications
   session-2026-09-16 record (currently ending "...and converges on a
   re-run once the human has done it") to describe convergence as observed
   by dispatching the readiness check, not a re-run of the local command
   (FR-009) — matching this file's own already-corrected FR-015 wording
   elsewhere.
-- [ ] T015 [US2] Correct `specs/053-e2e-scratch-provisioning/plan.md`'s
+- [X] T015 [US2] Correct `specs/053-e2e-scratch-provisioning/plan.md`'s
   Constraints bullet (currently "...the one declared manual App-install
   step, and one re-invocation complete in under 15 minutes wall-clock") to
   measure completion by dispatching the readiness check instead of "one
   re-invocation" (FR-009).
-- [ ] T016 [US2] Correct
+- [X] T016 [US2] Correct
   `specs/053-e2e-scratch-provisioning/data-model.md`: remove
   `gh api .../installation` and `gh label view` from `OnboardingElement`'s
   `check` read-call list (neither is called by the shipped implementation
@@ -232,7 +232,7 @@ shipped tri-state behaviour and confirm no statement in it is false.
   `specs/069-scratch-readiness-reporting/data-model.md`, which states it
   "is the target state the User Story 2 documentation tasks converge
   [this file] to" (FR-011, SC-003).
-- [ ] T017 [US2] Correct `specs/053-e2e-scratch-provisioning/quickstart.md`
+- [X] T017 [US2] Correct `specs/053-e2e-scratch-provisioning/quickstart.md`
   steps 1, 3, and 4: step 1's brand-new `auto-release` target now reports
   exit code `2` (`unverified`) with `app_installation` `not_checkable`, not
   exit `1`; step 3's dispatched `auto-release` run now shows
@@ -241,35 +241,35 @@ shipped tri-state behaviour and confirm no statement in it is false.
   it currently promises (the originating defect, review item 2); step 4's
   local re-run's exit code changes from `1` to `2` for the same reason as
   step 1 (FR-008).
-- [ ] T018 [US2] Merge this feature's CLI contract amendment
+- [X] T018 [US2] Merge this feature's CLI contract amendment
   (`specs/069-scratch-readiness-reporting/contracts/cli.md`) into
   `specs/053-e2e-scratch-provisioning/contracts/cli.md` in place: replace
   step 5's two-valued exit description with the three-row `all_clear`/
   `not_clear`/`unverified` table, and add the sentence scoping the
   `scratch_marker` refusal to the mutating path only (FR-010).
-- [ ] T019 [P] [US2] Merge this feature's workflow contract amendment
+- [X] T019 [P] [US2] Merge this feature's workflow contract amendment
   (`specs/069-scratch-readiness-reporting/contracts/readiness-workflow.md`)
   into
   `specs/053-e2e-scratch-provisioning/contracts/readiness-workflow.md` in
   place: replace step 4's ✅/❌-only rendering description with the
   three-outcome table and the named aggregate verdict (FR-010).
-- [ ] T020 [P] [US2] Merge this feature's schema amendment
+- [X] T020 [P] [US2] Merge this feature's schema amendment
   (`specs/069-scratch-readiness-reporting/contracts/readiness-report.schema.json`)
   into
   `specs/053-e2e-scratch-provisioning/contracts/readiness-report.schema.json`
   in place: replace `elements[].ready`/top-level `ready` with
   `elements[].outcome` (enum `ready`/`missing`/`not_checkable`) and
   `verdict` (enum `all_clear`/`not_clear`/`unverified`) (FR-011).
-- [ ] T021 [US2] Correct `docs/setup.md`'s
+- [X] T021 [US2] Correct `docs/setup.md`'s
   `WING_COMMANDER_AUTO_RELEASE_E2E_REPO` row (currently "...then reports
   the App installation as the one remaining manual step for as long as it
   is absent") to describe convergence as observed by dispatching the
   readiness check against the target, not a further local re-invocation
   (FR-009).
-- [ ] T022 [P] [US2] Correct `docs/adoption.md`'s matching sentence
+- [X] T022 [P] [US2] Correct `docs/adoption.md`'s matching sentence
   (currently "...which it reports as the sole remaining step for as long
   as it is absent") the same way (FR-009).
-- [ ] T023 [US2] Read
+- [X] T023 [US2] Read
   `specs/053-e2e-scratch-provisioning/{spec.md,plan.md,data-model.md,
   quickstart.md,contracts/cli.md,contracts/readiness-workflow.md,
   contracts/readiness-report.schema.json}` and

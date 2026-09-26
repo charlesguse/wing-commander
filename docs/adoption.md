@@ -54,7 +54,11 @@ and `WING_COMMANDER_AUTO_RELEASE_E2E_REPO` in
 [docs/setup.md](setup.md#3-repository-variables). It is run locally,
 under your own `gh` authentication, never from a workflow; the one step it
 cannot perform for you is installing the wing-commander App, which it
-reports as the sole remaining step for as long as it is absent.
+reports as the sole remaining step until it is installed. Convergence on
+that step is observed by dispatching the readiness check
+(`auto-update-spec-kit-scratch-preflight.yml`) against the target, not by
+re-invoking this local command a second time — it has no way to verify an
+App installation under its own maintainer credential.
 
 ## Credentials
 
