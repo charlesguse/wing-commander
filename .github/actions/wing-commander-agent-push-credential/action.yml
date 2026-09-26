@@ -1,0 +1,90 @@
+# Single home for keeping a push-capable agent step's own git remote
+# credentialed for the entire life of that step, not just at job start
+# (research.md D1/D2/D4/D5 of specs/071-agent-push-credential). Spec 052
+# (specs/052-agent-credential-lifetime) re-established the wing-commander-bot
+# credential once, immediately after each agent step, for every
+# deterministic step that follows -- it deliberately left the credential
+# the *running* agent pushes with out of scope (its own FR-008). This
+# composite closes that gap: it installs a git credential helper that
+# mints a fresh App installation token on every outbound
+# https://github.com/... git operation, so a push issued deep into a long
+# agent cycle authenticates with a token minted seconds earlier, never the
+# one actions/checkout@v5 embedded at job start. Resolved from the
+# pipeline repository's own checkout -- see the header of
+# .github/actions/wing-commander-context/action.yml for the verified
+# self-checkout snippet.
+#
+# Existing scripts in this repository are never marked executable (see
+# any .sh file under .github/actions or .github/scripts -- all mode
+# 100644); this composite follows that convention and invokes
+# mint-credential.sh through `bash`, so the credential-helper value never
+# depends on a checked-out file's executable bit surviving the consuming
+# repository's own checkout settings.
+name: wing-commander-agent-push-credential
+description: >
+  Installs a git credential helper that mints a fresh GitHub App
+  installation token on every outbound https://github.com/... git
+  operation for the rest of this job, so the agent's own `git push` calls
+  need no change in behaviour to keep succeeding for as long as the step
+  runs. Clears the stale http.https://github.com/.extraheader entry
+  actions/checkout@v5 left first -- that header, not the remote URL or a
+  credential helper, is what git's http transport tries FIRST, and it
+  would otherwise silently override the helper this composite installs
+  (identical first move to wing-commander-refresh-remote). Has no output:
+  its only effect is this git-config side effect inside the caller's own
+  checkout -- the consumer is git itself, not a later workflow step.
+
+inputs:
+  app-id:
+    description: GitHub App ID (secrets.speckit-app-id)
+    required: true
+  private-key:
+    description: GitHub App private key (secrets.speckit-app-private-key)
+    required: true
+  owner:
+    description: >
+      Target repository's owner -- github.repository_owner for this
+      pipeline's own remote, the scratch repository's owner for the
+      end-to-end arm (research.md D9).
+    required: true
+  repo-name:
+    description: Target repository's name.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Stage App private key for on-demand credential minting
+      id: stage-key
+      shell: bash
+      env:
+        PRIVATE_KEY: ${{ inputs.private-key }}
+      run: |
+        set -euo pipefail
+        # GITHUB_ACTION is unique per invocation of this composite within
+        # the same job (GitHub suffixes repeat uses with _2, _3, ...), so
+        # this filename cannot collide even when a job -- e.g.
+        # implement.yml's cycle/retry pair -- calls this composite twice.
+        key_path="$RUNNER_TEMP/wc-agent-push-credential-${{ github.run_id }}-${GITHUB_ACTION}.pem"
+        printf '%s' "$PRIVATE_KEY" > "$key_path"
+        chmod 600 "$key_path"
+        echo "key-path=$key_path" >> "$GITHUB_OUTPUT"
+
+    - name: Install fresh-mint credential helper
+      shell: bash
+      env:
+        APP_ID: ${{ inputs.app-id }}
+        KEY_PATH: ${{ steps.stage-key.outputs.key-path }}
+        OWNER: ${{ inputs.owner }}
+        REPO_NAME: ${{ inputs.repo-name }}
+      run: |
+        set -euo pipefail
+        git config --local --unset-all "http.https://github.com/.extraheader" 2>/dev/null || true
+        git config --local --unset-all "credential.https://github.com.helper" 2>/dev/null || true
+        git config --local --add "credential.https://github.com.helper" "!bash \"$GITHUB_ACTION_PATH/mint-credential.sh\""
+        {
+          echo "WC_AGENT_PUSH_APP_ID=$APP_ID"
+          echo "WC_AGENT_PUSH_KEY_PATH=$KEY_PATH"
+          echo "WC_AGENT_PUSH_OWNER=$OWNER"
+          echo "WC_AGENT_PUSH_REPO=$REPO_NAME"
+        } >> "$GITHUB_ENV"
