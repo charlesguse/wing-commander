@@ -2,7 +2,8 @@
   "issue": 581,
   "spec_dir": "specs/077-stalled-per-spec-group",
   "feature_num": "077",
-  "stage": "implement",
+  "stage": "review",
   "iteration": 1,
-  "spec_branch": "spec/077-stalled-per-spec-group"
+  "spec_branch": "spec/077-stalled-per-spec-group",
+  "pending_re_review_from": []
 }
