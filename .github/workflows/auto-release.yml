@@ -110,7 +110,7 @@ jobs:
     permissions:
       contents: read
     outputs:
-      verdict: ${{ steps.config.outputs.verdict || steps.reachable.outputs.verdict || steps.maintainer-credential.outputs.verdict || steps.cleanup.outputs.verdict || steps.reset.outputs.verdict || steps.speckit-version.outputs.verdict || steps.scaffold.outputs.verdict || steps.kickoff.outputs.verdict || steps.poll.outputs.verdict }}
+      verdict: ${{ steps.config.outputs.verdict || steps.reachable.outputs.verdict || steps.maintainer-credential.outputs.verdict || steps.container-evidence-config.outputs.verdict || steps.cleanup.outputs.verdict || steps.reset.outputs.verdict || steps.speckit-version.outputs.verdict || steps.scaffold.outputs.verdict || steps.kickoff.outputs.verdict || steps.poll.outputs.verdict }}
       # Carried separately from the verdict's `mode` field (data-model.md
       # "Execution mode") -- true only when the container leg was due by
       # date parity but the pause control (research.md D3) forced this run
@@ -412,6 +412,77 @@ jobs:
           # maintainer feedback on PR #389, second review), so this step's
           # own resolved login was dead once that wiring changed.
 
+      # specs/067-e2e-container-image-evidence D1/D2: gates on the
+      # maintainer credential alone (not also on mode) so a default-runner
+      # turn still reaches this step and gets its no-op ok=true -- placed
+      # before cleanup/reset/speckit-version/scaffold so an unconfigured,
+      # drifted, or unreadable container-mode turn never reaches any of
+      # them (FR-011, SC-003). WC_SOURCE_CONTAINER_IMAGE is read straight
+      # from this repository's own vars context (research.md D3's
+      # "generalized readiness-check workflow" idiom): this_repo_container_
+      # image() then just echoes it, needing no gh call and no token to
+      # read this repository's own variable back -- the FR-007 "own pin
+      # unreadable" edge case does not arise via this path, since a vars.*
+      # reference cannot fail to resolve the way a gh call can.
+      - name: Read container-mode configuration evidence
+        id: container-evidence-config
+        if: steps.maintainer-credential.outputs.ok == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN }}
+          WC_SOURCE_CONTAINER_IMAGE: ${{ vars.WING_COMMANDER_CONTAINER_IMAGE }}
+          E2E_REPO: ${{ steps.config.outputs.e2e-repo }}
+          HEAD_SHA: ${{ needs.detect.outputs.head-sha }}
+          MODE: ${{ steps.mode.outputs.mode }}
+        run: |
+          set -uo pipefail
+          if [ "$MODE" != "container" ]; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # shellcheck source=.github/actions/_shared/auto-release-container-evidence-decision.sh
+          source .github/actions/_shared/auto-release-container-evidence-decision.sh
+          # shellcheck source=.github/scripts/e2e-provisioning/checks.sh
+          source .github/scripts/e2e-provisioning/checks.sh
+
+          write_config_fail() { # failing_check expected observed
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            {
+              echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
+              bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "$1" "$2" "$3" "$E2E_REPO" "$MODE" "false"
+              echo 'AUTO_RELEASE_VERDICT_EOF'
+            } >> "$GITHUB_OUTPUT"
+            echo "::error::wing-commander auto-release verify-e2e: $1."
+          }
+
+          expected_image="$(this_repo_container_image)"
+
+          if ! observed_image="$(gh variable list --repo "$E2E_REPO" --json name,value -q '.[] | select(.name=="WING_COMMANDER_CONTAINER_IMAGE") | .value' 2>"$RUNNER_TEMP/auto-release-cec-observed-err.txt")"; then
+            errtext="$(tail -c 300 "$RUNNER_TEMP/auto-release-cec-observed-err.txt" 2>/dev/null)"
+            read_status="$(classify_read_status 1 "$errtext")"
+            decision="$(bash .github/actions/_shared/auto-release-container-evidence-decision.sh config "$read_status" \
+              "a successful read of the test repository's WING_COMMANDER_CONTAINER_IMAGE variable" "$errtext")"
+            failing_check="$(printf '%s\n' "$decision" | sed -n 's/^failing_check=//p')"
+            expected="$(printf '%s\n' "$decision" | sed -n 's/^expected=//p')"
+            observed="$(printf '%s\n' "$decision" | sed -n 's/^observed=//p')"
+            write_config_fail "$failing_check" "$expected" "$observed"
+            exit 0
+          fi
+
+          decision="$(bash .github/actions/_shared/auto-release-container-evidence-decision.sh config ok "$expected_image" "$observed_image")"
+          failing_check="$(printf '%s\n' "$decision" | sed -n 's/^failing_check=//p')"
+          if [ -n "$failing_check" ]; then
+            observed_display="${observed_image:-(unset or empty)}"
+            write_config_fail "$failing_check" "$expected_image" "$observed_display"
+            exit 0
+          fi
+
+          echo "ok=true" >> "$GITHUB_OUTPUT"
+          echo "expected-image=$expected_image" >> "$GITHUB_OUTPUT"
+          echo "observed-image=$observed_image" >> "$GITHUB_OUTPUT"
+          echo "observed-at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
       # Any open issue/PR left by a previous attempt is closed (best-effort)
       # before the reset -- an orphan-reset default branch otherwise leaves
       # a stale open PR pointing at history that no longer exists
@@ -422,7 +493,13 @@ jobs:
       # fire.
       - name: Close prior leftovers
         id: cleanup
-        if: steps.maintainer-credential.outputs.ok == 'true'
+        # specs/067-e2e-container-image-evidence T006: re-pointed from
+        # steps.maintainer-credential.outputs.ok so an unconfigured,
+        # drifted, or unreadable container-mode turn cannot reach cleanup/
+        # reset/speckit-version/scaffold/kickoff (FR-011, SC-003) --
+        # container-evidence-config's own no-op sets ok=true on every
+        # default-runner turn, so this guard is unchanged for that mode.
+        if: steps.container-evidence-config.outputs.ok == 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
@@ -767,12 +844,24 @@ jobs:
           POLL_BUDGET_SECONDS: "8100"
           MAX_CLARIFICATION_ROUNDS: "3"
           MODE: ${{ steps.mode.outputs.mode }}
+          # specs/067-e2e-container-image-evidence: the matching image
+          # reference container-evidence-config already observed, carried
+          # into the eventual pass verdict's evidence (T009) -- empty on a
+          # default-runner turn, since that step no-ops without setting it.
+          CEC_OBSERVED_IMAGE: ${{ steps.container-evidence-config.outputs.observed-image }}
         run: |
           set -uo pipefail
+          # shellcheck source=.github/actions/_shared/auto-release-container-evidence-decision.sh
+          source .github/actions/_shared/auto-release-container-evidence-decision.sh
           # Same whitespace hazard as the credential step above: the login is
           # compared with `==` and used as a jq argument, so a secret stored
           # with a trailing newline would never match (#396 review).
           HARNESS_LOGIN="$(printf '%s' "$HARNESS_LOGIN" | tr -d '[:space:]')"
+          # specs/067-e2e-container-image-evidence T007: an approximate
+          # lower bound for "runs this attempt drove" -- captured here
+          # (poll starts immediately after kickoff) rather than as a new
+          # kickoff-step output, since no other step needs it.
+          kickoff_time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
           # $5 (evidence_url) defaults to the kickoff issue; a caller that
           # has better evidence (e.g. the test repository run a stall
@@ -1331,11 +1420,66 @@ jobs:
             echo "clarification-comment-ids=$clarification_comment_ids"
           } >> "$GITHUB_OUTPUT"
 
+          # --- Execution evidence (FR-006, case (iv); research.md D2/D4,
+          # contracts/container-evidence-decision-script.md) -- read only
+          # for a container-mode turn, only once every pass-path assertion
+          # above already succeeded, and strictly after the chain-stop-
+          # notice branch above (unchanged, FR-005's explicit requirement).
+          # Enumerates every stage-workflow run created since kickoff
+          # (T007's open point: one attempt drives up to eight separate
+          # stage-workflow runs, and this loop never tracked a single
+          # run_id to check instead) rather than assuming one run's job
+          # data is sufficient -- unconfirmed against real run data
+          # pending quickstart.md Scenario 3's live check (research.md D4).
+          execution_pass_observed=""
+          if [ "$MODE" = "container" ]; then
+            write_execution_fail() { # read_status errtext
+              decision="$(bash .github/actions/_shared/auto-release-container-evidence-decision.sh execution "$1" \
+                "a successful read of the test repository's run job data" "$2")"
+              failing_check="$(printf '%s\n' "$decision" | sed -n 's/^failing_check=//p')"
+              expected="$(printf '%s\n' "$decision" | sed -n 's/^expected=//p')"
+              observed="$(printf '%s\n' "$decision" | sed -n 's/^observed=//p')"
+              write_verdict "fail-infra" "$failing_check" "$expected" "$observed"
+              emit_verdict
+              exit 0
+            }
+            if ! runs_json="$(GH_TOKEN="$HARNESS_TOKEN" gh run list --repo "$E2E_REPO" --created ">=${kickoff_time}" --json databaseId --limit 100 2>"$RUNNER_TEMP/auto-release-cee-runs-err.txt")"; then
+              errtext="$(tail -c 300 "$RUNNER_TEMP/auto-release-cee-runs-err.txt")"
+              write_execution_fail "$(classify_read_status 1 "$errtext")" "$errtext"
+            fi
+            noncontainerized=""
+            while IFS= read -r run_id; do
+              [ -n "$run_id" ] || continue
+              if ! jobs_raw="$(GH_TOKEN="$HARNESS_TOKEN" gh api "repos/${E2E_REPO}/actions/runs/${run_id}/jobs" --paginate --jq '.jobs[]' 2>"$RUNNER_TEMP/auto-release-cee-jobs-err.txt")"; then
+                errtext="$(tail -c 300 "$RUNNER_TEMP/auto-release-cee-jobs-err.txt")"
+                write_execution_fail "$(classify_read_status 1 "$errtext")" "$errtext"
+              fi
+              jobs_json="$(printf '%s' "$jobs_raw" | jq -s -c '.' 2>/dev/null || echo '[]')"
+              while IFS= read -r job_name; do
+                [ -n "$job_name" ] || continue
+                noncontainerized="${noncontainerized:+$noncontainerized, }${job_name}"
+              done < <(printf '%s' "$jobs_json" | jq -r '.[] | select(([.steps[]?.name // empty] | index("Initialize containers")) | not) | .name')
+            done < <(printf '%s' "$runs_json" | jq -r '.[].databaseId')
+
+            decision="$(bash .github/actions/_shared/auto-release-container-evidence-decision.sh execution ok "every stage job" "$noncontainerized")"
+            failing_check="$(printf '%s\n' "$decision" | sed -n 's/^failing_check=//p')"
+            if [ -n "$failing_check" ]; then
+              write_verdict "fail-infra" "$failing_check" "every stage job" "$noncontainerized"
+              emit_verdict
+              exit 0
+            fi
+            execution_pass_observed="the stage jobs executed inside a container"
+          fi
+
           # The one call site that has earned container_image_configured:
           # true -- reached only once the full scaffolded chain closed
-          # stage:done, every intermediate stage label was observed, and
-          # the expected spec artifacts exist (specs/054 MF1).
-          write_verdict "pass" "" "" "" "$ISSUE_URL" "true"
+          # stage:done, every intermediate stage label was observed, the
+          # expected spec artifacts exist (specs/054 MF1), and (specs/067)
+          # the execution-evidence check above found every stage job
+          # containerized. $CEC_OBSERVED_IMAGE/$execution_pass_observed are
+          # both empty on a default-runner turn, leaving this call's
+          # expected/observed byte-identical to before this feature.
+          write_verdict "pass" "" "$CEC_OBSERVED_IMAGE" "$execution_pass_observed" "$ISSUE_URL" "true"
           emit_verdict
 
   # Patch-vs-minor signal collection (research.md D5) plus tag-collision
