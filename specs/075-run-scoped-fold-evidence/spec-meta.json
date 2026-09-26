@@ -2,7 +2,7 @@
   "issue": 565,
   "spec_dir": "specs/075-run-scoped-fold-evidence",
   "feature_num": "075",
-  "stage": "plan",
+  "stage": "tasks",
   "iteration": 0,
   "spec_branch": "spec/075-run-scoped-fold-evidence"
 }
