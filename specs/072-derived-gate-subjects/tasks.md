@@ -140,7 +140,7 @@ No new directory, no new dependency, no test framework beyond the gate's own `--
 
 - [X] T032 Run `python .github/scripts/run-local-gates.py` from the repository root and confirm it passes on the post-feature tree — the "after" half of SC-006, paired with T001.
 
-- [ ] T033 Follow quickstart.md steps 4-6 by hand (scratch/discarded edits — never committed) to confirm: SC-001 (a new stale-credential job fails with zero `verify-post-agent-credential-refresh.py` lines changed), SC-002 (removing an agent step from a floored job fails naming it), SC-003 (every job in `board-loop.yml`/`cleanup.yml`/`rebase.yml`/`watchdog.yml` prints as either excluded-with-a-reason or inspected-and-passing, never a third state), and SC-007 (the subject report from T029 names every inspected file/job without opening the script's source).
+- [X] T033 Follow quickstart.md steps 4-6 by hand (scratch/discarded edits — never committed) to confirm: SC-001 (a new stale-credential job fails with zero `verify-post-agent-credential-refresh.py` lines changed), SC-002 (removing an agent step from a floored job fails naming it), SC-003 (every job in `board-loop.yml`/`cleanup.yml`/`rebase.yml`/`watchdog.yml` prints as either excluded-with-a-reason or inspected-and-passing, never a third state), and SC-007 (the subject report from T029 names every inspected file/job without opening the script's source).
 
 ---
 
