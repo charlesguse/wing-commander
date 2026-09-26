@@ -111,12 +111,15 @@ def transcript(main=0, sub=0, chunks=1, **result_kw):
 
 TRANSCRIPT_NAME = "claude-execution-output.json"
 LAST_RAW_OUTPUT = ""
+LAST_TMP = ""
 BASH = None
 
 
 def run_case(name, records, intended_turns="40", raw=None, with_shared=True,
-             run_label="", runner_temp=None, counter=None):
+             run_label="", runner_temp=None, counter=None, keep=None):
     tmp = tempfile.mkdtemp(prefix="wc-verdict-")
+    global LAST_TMP
+    LAST_TMP = tmp
     if raw is not None:
         with open(os.path.join(tmp, TRANSCRIPT_NAME), "w",
                   encoding="utf-8") as f:
@@ -147,16 +150,16 @@ def run_case(name, records, intended_turns="40", raw=None, with_shared=True,
                   encoding="utf-8", newline="\n") as f:
             f.write(NORMALISE_SCRIPT)
 
-    rc, output, outputs, _summary = run_step(
-        BASH, SCRIPT, tmp,
-        {"TRANSCRIPT_PATH": TRANSCRIPT_NAME,
-         "INTENDED_TURNS": intended_turns,
-         "RUN_LABEL": run_label,
-         "GITHUB_ACTION_PATH": action_dir,
-         # runner_temp overrides where the normalised copy is written; a
-         # path that does not exist forces the normaliser-failure path.
-         "RUNNER_TEMP": runner_temp or tmp},
-        tmp)
+    env = {"TRANSCRIPT_PATH": TRANSCRIPT_NAME,
+           "INTENDED_TURNS": intended_turns,
+           "RUN_LABEL": run_label,
+           "GITHUB_ACTION_PATH": action_dir,
+           # runner_temp overrides where the normalised copy is written; a
+           # path that does not exist forces the normaliser-failure path.
+           "RUNNER_TEMP": runner_temp or tmp}
+    if keep is not None:
+        env["KEEP_NORMALISED"] = keep
+    rc, output, outputs, _summary = run_step(BASH, SCRIPT, tmp, env, tmp)
     # The raw $GITHUB_OUTPUT text, for cases that must assert on the line
     # structure itself (an injected line) rather than the parsed dict.
     global LAST_RAW_OUTPUT
@@ -576,8 +579,8 @@ def case_reset_newline_cannot_inject_output():
     if budget_lines != ["over-budget=false"]:
         fail(case, f"expected exactly one over-budget line, got "
                    f"{budget_lines!r}")
-    if len(lines) != 7:
-        fail(case, f"expected exactly 7 output lines, got {len(lines)}: "
+    if len(lines) != len(OUTPUT_KEYS):
+        fail(case, f"expected exactly {len(OUTPUT_KEYS)} output lines, got {len(lines)}: "
                    f"{lines!r}")
     if outputs.get("rate-limit-reset") != "2026-09-12T10:10:00Z verdict=healthy":
         fail(case, f"expected the newline flattened to a space, got "
@@ -585,11 +588,12 @@ def case_reset_newline_cannot_inject_output():
 
 
 OUTPUT_KEYS = ("verdict", "reason", "rate-limit-reset", "counted-turns",
-               "reported-turns", "over-budget", "subagent-turns")
+               "reported-turns", "over-budget", "subagent-turns",
+               "normalised-transcript")
 
 
 def _expect_output_lines_intact(case, verdict):
-    """Assert on the raw $GITHUB_OUTPUT text: exactly the seven keys, each
+    """Assert on the raw $GITHUB_OUTPUT text: exactly the output keys, each
     once, in order, and a single verdict line carrying the real verdict."""
     lines = LAST_RAW_OUTPUT.splitlines()
     keys = [ln.split("=", 1)[0] for ln in lines]
@@ -781,6 +785,85 @@ def case_normaliser_failure_keeps_output_lines():
         fail(case, f"expected verdict=failed, got {outputs.get('verdict')!r}")
 
 
+def _kept_copies(runner_temp):
+    return sorted(n for n in os.listdir(runner_temp)
+                  if n.startswith("wc-agent-verdict."))
+
+
+def case_keep_normalised_transcript():
+    """#575: implement.yml's refusal probe reads the retry transcript in
+    the normalised shape, but as a published stage it may not resolve
+    _shared/normalise-transcript.sh itself. keep-normalised-transcript
+    'true' leaves this composite's normalised copy in place and names it
+    in the normalised-transcript output; any other value removes the copy
+    and leaves the output empty, as before; and no copy (the normaliser
+    could not run) means an empty output, so the caller reads the raw
+    file."""
+    recs = [7, "x"] + transcript(main=2, is_error=True,
+                                 subtype="error_during_execution",
+                                 num_turns=2)
+    want = json.dumps([r for r in recs if isinstance(r, dict)],
+                      separators=(",", ":"))
+
+    case = "keep-normalised-transcript=true keeps and names the copy"
+    rc, output, outputs = run_case(case, None, raw=_ndjson(recs), keep="true")
+    path = outputs.get("normalised-transcript") or ""
+    if rc != 0:
+        fail(case, f"exited {rc}: {output.strip()[:300]}")
+    elif not path:
+        fail(case, "normalised-transcript output is empty")
+    elif not os.path.isfile(path):
+        fail(case, f"normalised-transcript names {path!r}, which was "
+                   f"removed -- the caller would read nothing")
+    else:
+        with open(path, encoding="utf-8") as f:
+            got = f.read()
+        if got != want + "\n":
+            fail(case, f"the kept copy is not the one flat array of "
+                       f"objects: {got!r}")
+        if os.path.dirname(os.path.abspath(path)) != os.path.abspath(LAST_TMP):
+            fail(case, f"the kept copy {path!r} is not under RUNNER_TEMP")
+    if "\n" in path:
+        fail(case, f"normalised-transcript is not one line: {path!r}")
+
+    for keep in (None, "false", "TRUE"):
+        case = f"keep-normalised-transcript={keep!r} removes the copy"
+        rc, output, outputs = run_case(case, None, raw=_ndjson(recs),
+                                       keep=keep)
+        if rc != 0:
+            fail(case, f"exited {rc}: {output.strip()[:300]}")
+            continue
+        if outputs.get("normalised-transcript", "") != "":
+            fail(case, f"expected an empty normalised-transcript, got "
+                       f"{outputs.get('normalised-transcript')!r}")
+        left = _kept_copies(LAST_TMP)
+        if left:
+            fail(case, f"normalised copies left in RUNNER_TEMP: {left}")
+
+    case = "keep-normalised-transcript=true with no copy written"
+    missing = os.path.join(tempfile.mkdtemp(prefix="wc-verdict-rt-"),
+                           "does-not-exist")
+    rc, output, outputs = run_case(case, None, raw=_ndjson(recs),
+                                   runner_temp=missing, keep="true")
+    if rc != 0:
+        fail(case, f"exited {rc}: {output.strip()[:300]}")
+    elif outputs.get("normalised-transcript", "") != "":
+        fail(case, f"expected an empty normalised-transcript when no copy "
+                   f"could be written, got "
+                   f"{outputs.get('normalised-transcript')!r}")
+
+    case = "keep-normalised-transcript=true on an unparseable transcript"
+    rc, output, outputs = run_case(case, None, raw="{not json",
+                                   keep="true")
+    if rc != 0:
+        fail(case, f"exited {rc}: {output.strip()[:300]}")
+    elif outputs.get("normalised-transcript", "") != "":
+        fail(case, f"expected an empty normalised-transcript, got "
+                   f"{outputs.get('normalised-transcript')!r}")
+    elif _kept_copies(LAST_TMP):
+        fail(case, f"copies left in RUNNER_TEMP: {_kept_copies(LAST_TMP)}")
+
+
 def case_ndjson_ending_in_null_is_parseable():
     """`jq -e .` takes its status from the last document only, so NDJSON
     whose last line is null or false read as unparseable."""
@@ -924,6 +1007,7 @@ CASES = [
     case_run_label_newline_cannot_inject_output,
     case_non_string_subtype_stays_one_line,
     case_normaliser_failure_keeps_output_lines,
+    case_keep_normalised_transcript,
     case_ndjson_ending_in_null_is_parseable,
     case_ndjson_last_result_record_decides,
     case_hostile_counter_output_is_filtered,
@@ -932,7 +1016,7 @@ CASES = [
 
 
 # --- mutation checks ---------------------------------------------------------
-# The seven write-site lines, each `name="${name//[$'\r\n']/ }"`.
+# The eight write-site lines, each `name="${name//[$'\r\n']/ }"`.
 WRITE_SITE_FLATTEN = re.compile(
     r"^[ \t]*(\w+)=\"\$\{\1//\[\$'\\r\\n'\]/ \}\"\n", re.M)
 
@@ -943,10 +1027,10 @@ def without_write_site(s):
     is invisible in $GITHUB_OUTPUT by design (the write site catches it),
     so each read-site mutation removes BOTH layers for its value. The
     write-site layer is proven on its own by the normaliser-failure case,
-    where no read-site rule applies. Returns s unchanged unless all seven
+    where no read-site rule applies. Returns s unchanged unless all eight
     lines are found, so a rewrite trips the no-op check."""
     out, n = WRITE_SITE_FLATTEN.subn("", s)
-    return out if n == 7 else s
+    return out if n == 8 else s
 
 
 MUTATIONS = [
@@ -1051,6 +1135,19 @@ MUTATIONS = [
          'if type=="string" then . else tojson end | gsub("[\\r\\n]"; " ")',
          'if type=="string" then gsub("[\\r\\n]"; " ") else . end', 1)),
     ("drops the write-site CR/LF flatten", "action", without_write_site),
+    # #575: the kept normalised copy.
+    ("removes the normalised copy even when the caller asked to keep it",
+     "action",
+     lambda s: s.replace(
+         'if [ -n "$normalised" ] && [ "$normalised" != "$normalised_output" ]; then',
+         'if [ -n "$normalised" ]; then', 1)),
+    ("never removes the normalised copy, leaving one per call", "action",
+     lambda s: s.replace(
+         'if [ -n "$normalised" ] && [ "$normalised" != "$normalised_output" ]; then',
+         'if false; then', 1)),
+    ("names the copy even when the caller did not ask to keep it", "action",
+     lambda s: s.replace('if [ "${KEEP_NORMALISED:-}" = "true" ]; then',
+                         'if true; then', 1)),
     ("checks parseability with `jq -e .` (last document only) instead of "
      "`jq empty`", "action",
      lambda s: s.replace('&& jq empty "$TRANSCRIPT" >/dev/null 2>&1; then',

@@ -5,9 +5,12 @@
 # every reader of it expects: one flat JSON array of objects (#572). Used by
 # count-turns.sh (beside this file), wing-commander-agent-verdict and
 # wing-commander-metrics-summary, which resolve it as
-# "$GITHUB_ACTION_PATH/../_shared/normalise-transcript.sh". Gate 60
+# "$GITHUB_ACTION_PATH/../_shared/normalise-transcript.sh". A published
+# stage cannot resolve this file, so implement.yml reads the copy
+# wing-commander-agent-verdict keeps (keep-normalised-transcript). Gate 60
 # (verify-single-home-idioms.py, check "transcript-normalise") fails if the
-# jq program below is pasted anywhere else under .github/.
+# jq program below is pasted anywhere else under .github/workflows or
+# .github/actions (the scope that gate scans).
 #
 # Invoke with `bash .../normalise-transcript.sh "$TRANSCRIPT"`, never
 # directly, so the executable bit is never load-bearing (see

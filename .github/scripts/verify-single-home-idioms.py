@@ -109,8 +109,12 @@ SIX CHECKS, per contracts/single-home-gate.md (plus a spec 052 addition)
    wing-commander-agent-verdict (#551) and then needed by count-turns.sh
    and wing-commander-metrics-summary too; it now lives solely in
    `_shared/normalise-transcript.sh`. Matched by regex, whitespace- and
-   quote-tolerant. The per-document `then . else [.] end` wrap is a
-   different, legitimate idiom and is not matched.
+   quote-tolerant, and tolerant of equivalent rewrites (#575): a
+   parenthesised or reversed condition (`(type=="array")`,
+   `"array"==type`), the test in an `elif` arm, and an optional or
+   parenthesised splice (`.[]?`, `(.[])`). The per-document
+   `then . else [.] end` wrap is a different, legitimate idiom and is
+   not matched.
 
 Plus a promotion-prevention pass (FR-025): every `workflow_call`-only
 stage workflow and every non-underscore-prefixed composite action scanned
@@ -267,8 +271,18 @@ BOARD_STOP_CHECK_FRAGMENTS = (
 # #572: the splice step of the transcript normaliser. `.[]` in the
 # then-branch is what distinguishes it from the per-document
 # `if type=="array" then . else [.] end` wrap used by fallback reads.
+# #575: equivalent rewrites are matched too -- the condition parenthesised
+# or reversed (`(type=="array")`, `"array"==type`), the splice optional or
+# parenthesised (`.[]?`, `(.[])`), the else-branch parenthesised, and the
+# array test moved into an `elif` arm.
+_TN_ARRAY = r'["\']array["\']'
+_TN_COND = (r'\(?\s*(?:type\s*==\s*' + _TN_ARRAY + r'|' + _TN_ARRAY +
+            r'\s*==\s*type)\s*\)?')
+_TN_SPLICE = r'\(?\s*\.\[\]\??\s*\)?'
+_TN_SELF = r'\(?\s*\.\s*\)?'
 TRANSCRIPT_NORMALISE_RE = re.compile(
-    r'if\s+type\s*==\s*["\']array["\']\s+then\s+\.\[\]\s+else\s+\.\s+end')
+    r'\b(?:el)?if\s*' + _TN_COND + r'\s*then\s+' + _TN_SPLICE + r'\s*else\s+'
+    + _TN_SELF + r'\s*end\b')
 MODE_TAG_FRAGMENT_RE = re.compile(r"\{\s*mode\s*:\s*\$[A-Za-z_][A-Za-z0-9_]*\s*\}")
 SHARED_REF_RE = re.compile(r"\.github/actions/_shared/[A-Za-z0-9_.\-/]+")
 
@@ -1058,6 +1072,37 @@ def selftest_third_paste_fails(check_key, paste_path, paste_content):
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def selftest_per_document_wrap_passes():
+    """#575: loosening the transcript-normalise regex must not start
+    flagging the per-document wrap -- the legitimate fallback read the
+    agent-verdict composite and implement.yml's refusal probe both keep --
+    in any of the spellings the loosened pattern tolerates for the splice."""
+    case = "the per-document `then . else [.] end` wrap is not flagged"
+    tmp = tempfile.mkdtemp(prefix="wc-single-home-")
+    try:
+        _clean_tree(tmp)
+        paste_path = ".github/workflows/per-document.yml"
+        _write(tmp, paste_path,
+              "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
+              "      - shell: bash\n        run: |\n"
+              "          jq -r 'if type==\"array\" then . else [.] end "
+              "| map(objects)' \"$T\"\n"
+              "          jq -r 'if (type == \"array\") then . else [.] end' "
+              "\"$T\"\n"
+              "          jq -r 'if \"array\"==type then (.) else [.] end' "
+              "\"$T\"\n")
+        findings, hard = evaluate(tmp)
+        hits = [f for f in findings if f.check == "transcript-normalise"]
+        if hard:
+            fail(f"[{case}] unexpected hard failure(s): {hard}")
+        elif hits:
+            fail(f"[{case}] the per-document wrap was flagged: {hits}")
+        else:
+            note(f"[{case}] passed")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def selftest_waived_copy_passes():
     case = "a waived copy passes"
     tmp = tempfile.mkdtemp(prefix="wc-single-home-")
@@ -1240,6 +1285,31 @@ def run_selftest():
         "      - shell: bash\n        run: |\n"
         "          jq -s '[.[] | if type == \"array\"  then .[] else . end]' "
         "\"$T\"\n")
+    # #575: equivalent rewrites of the same splice -- each is a paste the
+    # literal-spelling regex let through.
+    for label, program in (
+        ("parenthesised condition",
+         "map(if (type==\"array\") then .[] else . end)"),
+        ("reversed condition",
+         "map(if \"array\"==type then .[] else . end)"),
+        ("optional splice",
+         "map(if type==\"array\" then .[]? else . end)"),
+        ("parenthesised splice",
+         "map(if type==\"array\" then (.[]) else . end)"),
+        ("all four at once",
+         "map(if (\"array\" == type) then (.[]?) else (.) end)"),
+        ("elif arm",
+         "map(if type==\"object\" then . "
+         "elif type==\"array\" then .[] else . end)"),
+    ):
+        slug = label.replace(" ", "-")
+        selftest_third_paste_fails(
+            "transcript-normalise",
+            f".github/workflows/third-normalise-{slug}.yml",
+            "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n"
+            "    steps:\n      - shell: bash\n        run: |\n"
+            f"          jq -cs '{program}' \"$T\"\n")
+    selftest_per_document_wrap_passes()
     selftest_third_paste_fails(
         "verdict-shape", ".github/workflows/third-verdict.yml",
         "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"

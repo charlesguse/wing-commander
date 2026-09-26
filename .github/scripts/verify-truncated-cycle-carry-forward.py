@@ -47,7 +47,11 @@ escalation model never answered (modelUsage empty, zero cost — issue #231's
 spend-limit stall) is reattributed to the primary tier in the consolidated
 tier/reason, while a retry that really ran, a missing or result-less
 transcript, and every ok=true carried-forward retry keep the escalation
-tier untouched.
+tier untouched. That refusal probe is also driven end to end with the
+SHIPPED wing-commander-agent-verdict step producing its input (#575): an
+NDJSON transcript, or one carrying non-object records, yields exactly one
+`refused` line with the right value, and with no normalised copy the probe
+reads the raw file per document exactly as it did before.
 
 A battery of mutations at the end reintroduces the forced-false rule, the
 no-progress guard, either arm of the progress test, counting the
@@ -91,6 +95,9 @@ DISPATCH_STEP = "Dispatch next step"
 EFFECTIVE_MODEL_STEP = "Resolve effective model tier (cycle)"
 CYCLE_ANNOTATION_STEP = "Report exhausted cycle classification (cycle)"
 RETRY_ANNOTATION_STEP = "Report exhausted cycle classification (retry)"
+RETRY_VERDICT_STEP = "Compute agent run verdict (retry)"
+VERDICT_ACTION = ".github/actions/wing-commander-agent-verdict/action.yml"
+VERDICT_ACTION_STEP = "Classify agent run verdict"
 
 SPEC_PREFIX = "spec/"
 SLUG = "040-fixture"
@@ -301,16 +308,39 @@ def run_retry_step(steps, repo, base_sha, *, verdict, retry_result,
     return run_step(BASH, steps[RETRY_STEP], repo, env, runner_temp)
 
 
-def run_final_step(steps, env_overrides, root, transcript=None):
+LAST_FINAL_RUNNER_TEMP = None
+
+
+def run_final_step(steps, env_overrides, root, transcript=None,
+                   verdict_run=None):
+    """`verdict_run`, when given, is the shipped agent-verdict composite's
+    `run:` text: it runs first, against the same transcript and
+    RUNNER_TEMP, with keep-normalised-transcript 'true' -- as "Compute
+    agent run verdict (retry)" does -- and its normalised-transcript
+    output becomes RETRY_NORMALISED. Without it RETRY_NORMALISED is empty,
+    standing in for a verdict step that never ran."""
+    global LAST_FINAL_RUNNER_TEMP
     workdir = tempfile.mkdtemp(dir=root)
     runner_temp = os.path.join(workdir, "runner_temp")
     os.makedirs(runner_temp, exist_ok=True)
+    LAST_FINAL_RUNNER_TEMP = runner_temp
+    raw_path = os.path.join(runner_temp, "claude-execution-output.json")
     if transcript is not None:
         # The last attempt's transcript, exactly where the shipped step's
         # refusal probe reads it ($RUNNER_TEMP/claude-execution-output.json).
-        with open(os.path.join(runner_temp, "claude-execution-output.json"),
-                  "w", encoding="utf-8", newline="\n") as fh:
+        with open(raw_path, "w", encoding="utf-8", newline="\n") as fh:
             fh.write(transcript)
+    normalised = ""
+    if verdict_run is not None:
+        vdir = os.path.join(workdir, "verdict")
+        os.makedirs(vdir, exist_ok=True)
+        _, _, vout, _ = run_step(BASH, verdict_run, vdir, {
+            "TRANSCRIPT_PATH": raw_path, "INTENDED_TURNS": "40",
+            "RUN_LABEL": "retry",
+            "GITHUB_ACTION_PATH": os.path.abspath(
+                os.path.dirname(VERDICT_ACTION)),
+            "KEEP_NORMALISED": "true"}, runner_temp)
+        normalised = vout.get("normalised-transcript", "")
     env = {
         "RETRY_RAN": "false",
         "PRIMARY_OK": "true", "PRIMARY_TRUNCATED": "false",
@@ -320,6 +350,7 @@ def run_final_step(steps, env_overrides, root, transcript=None):
         "RETRY_REMAINING": "",
         "PRIMARY_REASON": "", "RETRY_REASON": "",
         "ESCALATION_MODEL": ESCALATION_MODEL,
+        "RETRY_NORMALISED": normalised,
     }
     env.update(env_overrides)
     return run_step(BASH, steps[FINAL_STEP], workdir, env, runner_temp)
@@ -888,6 +919,182 @@ def check_refused_retry_guard_mutation(root):
             f"mutation."]
 
 
+# #575: the refusal probe's `refused` value, observed directly. The line is
+# inserted just before the shipped step branches on it, so the harness
+# sees exactly what the branch sees -- one line, or several.
+REFUSED_PROBE_ANCHOR = '  if [ "$refused" = "true" ]; then\n'
+REFUSED_PROBE_LINE = ('  printf \'%s\' "${refused-__unset__}" '
+                      '> "$RUNNER_TEMP/refused.probe"\n')
+
+
+def _instrument_refused(final_run):
+    if final_run.count(REFUSED_PROBE_ANCHOR) != 1:
+        return None
+    return final_run.replace(REFUSED_PROBE_ANCHOR,
+                             REFUSED_PROBE_LINE + REFUSED_PROBE_ANCHOR)
+
+
+def _read_refused():
+    path = os.path.join(LAST_FINAL_RUNNER_TEMP, "refused.probe")
+    if not os.path.isfile(path):
+        return None
+    with open(path, encoding="utf-8", newline="") as fh:
+        return fh.read()
+
+
+def _ndjson(records):
+    return "".join(json.dumps(r) + "\n" for r in records)
+
+
+_REFUSED_RECS = json.loads(REFUSED_RETRY_TRANSCRIPT)
+_SERVED_RECS = json.loads(SERVED_RETRY_TRANSCRIPT)
+
+# (label, transcript, run the verdict composite?, RETRY_NORMALISED override,
+#  expected `refused`, expected tier). A None expected `refused` means only
+#  "not true" is asserted: that row pins the degrade path, whose value is
+#  whatever today's per-document read makes of the raw file.
+REFUSAL_PROBE_SCENARIOS = [
+    ("NDJSON refused retry", _ndjson(_REFUSED_RECS), True, None,
+     "true", PRIMARY_MODEL),
+    ("NDJSON retry that really ran", _ndjson(_SERVED_RECS), True, None,
+     "false", ESCALATION_MODEL),
+    ("array refused retry with non-object records",
+     json.dumps([7, "x", None, False] + _REFUSED_RECS), True, None,
+     "true", PRIMARY_MODEL),
+    ("NDJSON refused retry with non-object records",
+     "7\n\"x\"\n" + _ndjson(_REFUSED_RECS) + "false\n", True, None,
+     "true", PRIMARY_MODEL),
+    ("single-array refused retry (today's shape)", REFUSED_RETRY_TRANSCRIPT,
+     True, None, "true", PRIMARY_MODEL),
+    ("single-array retry that really ran (today's shape)",
+     SERVED_RETRY_TRANSCRIPT, True, None, "false", ESCALATION_MODEL),
+    ("no normalised copy: single-array refused retry read raw",
+     REFUSED_RETRY_TRANSCRIPT, False, None, "true", PRIMARY_MODEL),
+    ("no normalised copy: single-array served retry read raw",
+     SERVED_RETRY_TRANSCRIPT, False, None, "false", ESCALATION_MODEL),
+    ("named copy missing on disk: single-array refused retry read raw",
+     REFUSED_RETRY_TRANSCRIPT, False, "/nonexistent/wc-agent-verdict.gone",
+     "true", PRIMARY_MODEL),
+    ("no normalised copy: NDJSON degrades as before, never fails the step",
+     _ndjson(_REFUSED_RECS), False, None, None, ESCALATION_MODEL),
+    ("no transcript at all", None, True, None, "", ESCALATION_MODEL),
+]
+
+
+def _run_refusal_probe_scenarios(final_run, verdict_run, root):
+    """Every REFUSAL_PROBE_SCENARIOS row against `final_run` (already
+    instrumented); returns {label: failure-or-None}."""
+    results = {}
+    steps = {FINAL_STEP: final_run}
+    for (label, transcript, with_verdict, override, want_refused,
+         want_tier) in REFUSAL_PROBE_SCENARIOS:
+        overrides = dict(RETRY_FAILED_ENV)
+        if override is not None:
+            overrides["RETRY_NORMALISED"] = override
+        rc, out, outputs, _ = run_final_step(
+            steps, overrides, root, transcript=transcript,
+            verdict_run=verdict_run if with_verdict else None)
+        refused = _read_refused()
+        problem = None
+        if rc != 0:
+            problem = f"exited {rc}: {out.strip()[:300]}"
+        elif refused is None:
+            problem = "the refusal probe never ran"
+        elif want_refused is not None and refused != want_refused:
+            problem = (f"expected refused={want_refused!r} on one line, got "
+                       f"{refused!r}")
+        elif want_refused is None and refused == "true":
+            problem = f"expected refused not 'true', got {refused!r}"
+        elif outputs.get("tier") != want_tier:
+            problem = (f"expected tier={want_tier!r}, got "
+                       f"{outputs.get('tier')!r}")
+        elif (REFUSAL_MARKER in outputs.get("reason", "")) != (
+                want_tier == PRIMARY_MODEL):
+            problem = (f"refusal note presence does not match tier: "
+                       f"reason={outputs.get('reason')!r}")
+        results[label] = problem
+    return results
+
+
+def check_final_refusal_probe_reads_normalised(root):
+    """#575: the refusal probe read the transcript per document with no
+    `objects` filter, so an NDJSON transcript made `refused` one line per
+    document ("false\nfalse\nfalse\ntrue", never equal to "true") and a
+    non-object record was a jq error that `|| true` turned into "". It
+    now reads the normalised copy the SHIPPED wing-commander-agent-verdict
+    step keeps -- driven here for real, not stubbed -- and falls back to
+    the raw file exactly as before when there is no copy."""
+    failures = []
+    final_run = _instrument_refused(STEPS_CACHE[FINAL_STEP])
+    if final_run is None:
+        return [f"final(refusal probe): the anchor {REFUSED_PROBE_ANCHOR!r} "
+                f"is not in {FINAL_STEP!r} exactly once -- the probe was "
+                f"rewritten; re-point the instrumentation, do not drop it."]
+    verdict_run = find_step(VERDICT_ACTION, VERDICT_ACTION_STEP)["run"]
+    for label, problem in _run_refusal_probe_scenarios(
+            final_run, verdict_run, root).items():
+        if problem:
+            failures.append(f"final(refusal probe: {label}): {problem}")
+
+    # The wiring the scenarios above assume: the retry verdict step keeps
+    # its copy, and the consolidate step is handed its path.
+    verdict_with = (find_step(STAGE, RETRY_VERDICT_STEP).get("with") or {})
+    if str(verdict_with.get("keep-normalised-transcript")) != "true":
+        failures.append(
+            f"{RETRY_VERDICT_STEP!r} no longer passes "
+            f"keep-normalised-transcript: 'true', so the refusal probe in "
+            f"{FINAL_STEP!r} always reads the raw transcript per document.")
+    final_env = (find_step(STAGE, FINAL_STEP).get("env") or {})
+    if "steps.retry-verdict.outputs.normalised-transcript" not in str(
+            final_env.get("RETRY_NORMALISED", "")):
+        failures.append(
+            f"{FINAL_STEP!r} no longer sets RETRY_NORMALISED from "
+            f"steps.retry-verdict.outputs.normalised-transcript.")
+    return failures
+
+
+def check_refusal_probe_source_mutations(root):
+    """Each mutation must turn at least one row of
+    REFUSAL_PROBE_SCENARIOS red that the shipped step passes."""
+    failures = []
+    shipped = STEPS_CACHE[FINAL_STEP]
+    verdict_run = find_step(VERDICT_ACTION, VERDICT_ACTION_STEP)["run"]
+    guard = ('if [ -n "$RETRY_NORMALISED" ] && [ -s "$RETRY_NORMALISED" ]; '
+             'then probe_source="$RETRY_NORMALISED"; fi')
+    for label, mutated, verdict_mut in (
+        ("read the raw transcript per document even when a normalised "
+         "copy exists (the #575 defect)",
+         shipped.replace(guard, ":"), None),
+        ("read RETRY_NORMALISED unguarded, with no raw-file fallback",
+         shipped.replace(guard, 'probe_source="$RETRY_NORMALISED"'), None),
+        ("the verdict composite deletes the copy it was asked to keep",
+         shipped,
+         verdict_run.replace(
+             'if [ -n "$normalised" ] && [ "$normalised" != '
+             '"$normalised_output" ]; then',
+             'if [ -n "$normalised" ]; then', 1)),
+    ):
+        if mutated == shipped and verdict_mut in (None, verdict_run):
+            failures.append(f"mutation {label!r} changed nothing -- the code "
+                            f"it edits was rewritten. Update the mutation.")
+            continue
+        instrumented = _instrument_refused(mutated)
+        if instrumented is None:
+            failures.append(f"mutation {label!r} removed the probe anchor.")
+            continue
+        results = _run_refusal_probe_scenarios(
+            instrumented, verdict_mut or verdict_run, root)
+        red = [k for k, v in results.items() if v]
+        if red:
+            print(f"Mutation OK — {label}: caught ({len(red)} refusal-probe "
+                  f"scenario(s) red, e.g. {red[0]!r}: {results[red[0]]}).")
+        else:
+            failures.append(f"mutation survived: {label} -- every refusal-"
+                            f"probe scenario still passed. Fix the "
+                            f"scenarios, not the mutation.")
+    return failures
+
+
 def check_effective_model_tier(root):
     """Maintainer Feedback (tier persistence, FR-007/FR-021): "Resolve
     effective model tier" must fall back to inputs.model whenever no tier
@@ -1325,6 +1532,8 @@ def main():
         failures.extend(check_final_selects_retry_truncated(root))
         failures.extend(check_final_refused_retry_attribution(root))
         failures.extend(check_refused_retry_guard_mutation(root))
+        failures.extend(check_final_refusal_probe_reads_normalised(root))
+        failures.extend(check_refusal_probe_source_mutations(root))
         failures.extend(check_effective_model_tier(root))
         failures.extend(check_counter(root))
         failures.extend(check_reporting(root))

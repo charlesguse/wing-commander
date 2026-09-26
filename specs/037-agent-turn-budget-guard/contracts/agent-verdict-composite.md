@@ -64,10 +64,21 @@ across the fleet (research.md R3/R4).
 | `transcript-path` | no | `${{ runner.temp }}/claude-execution-output.json` | Same default as `wing-commander-metrics-summary`, so most call sites need not repeat it. |
 | `intended-turns` | yes | — | Same value passed to `wing-commander-turn-ceiling` at this site — used only for the `over-budget` comparison, never to gate the verdict itself. |
 | `run-label` | no | `""` | Passed straight through into `reason` text when non-empty, for jobs with more than one agent step sharing a transcript path convention. |
+| `keep-normalised-transcript` | no | `'false'` | `'true'` keeps the normalised copy of the transcript instead of deleting it and names it in the `normalised-transcript` output (#575). Any other value deletes the copy, as before. |
 
 **Outputs**: see `data-model.md`'s "Agent run verdict" table
 (`verdict`, `reason`, `counted-turns`, `reported-turns`, `over-budget`,
-`subagent-turns`).
+`subagent-turns`), plus:
+
+| Name | Notes |
+|---|---|
+| `normalised-transcript` | Path, under `$RUNNER_TEMP`, of the kept normalised copy: one flat JSON array of objects on one line. Set only when `keep-normalised-transcript` is `'true'` and the copy was written; empty otherwise (the transcript was missing or unparseable, the copy could not be written, or it was not asked for), and the caller then reads the raw transcript (#575). |
+
+`normalised-transcript` is an adopter-visible name, and the shape of the
+file it names is part of this composite's published contract. A future
+change to what `_shared/normalise-transcript.sh` produces is therefore a
+compatibility question for every caller that reads the kept copy, not an
+internal refactor.
 
 **Behavioral contract**:
 - Never fails its own step (always `exit 0`) — mirrors
@@ -99,14 +110,18 @@ across the fleet (research.md R3/R4).
   non-object skip) lives solely in `_shared/normalise-transcript.sh`
   (#572), which this composite, `count-turns.sh` and
   `wing-commander-metrics-summary` all call; Gate 60 fails on an inline
-  copy. `count-turns.sh` prints `reported` only when `.num_turns` is an
-  integer >= 0.
+  copy. With `keep-normalised-transcript: 'true'` that copy is kept and
+  named in the `normalised-transcript` output, so a published stage can
+  read the normalised shape without resolving the internal `_shared/`
+  helper; implement.yml's retry-refused probe (in "Consolidate final
+  outcome") is one such consumer (#575). `count-turns.sh` prints `reported`
+  only when `.num_turns` is an integer >= 0.
 - Output format (#551): every `$GITHUB_OUTPUT` value is a single line,
   enforced in two layers. (1) At the read site: CR/LF in `run-label` and
   in the transcript's `subtype` become spaces, a non-string `subtype` is
   read as compact JSON, and only `name=<digits or empty>` lines of
   `count-turns.sh`'s output are evaluated. (2) At the write site: just
-  before the `$GITHUB_OUTPUT` block, CR/LF in each of the seven written
+  before the `$GITHUB_OUTPUT` block, CR/LF in each of the eight written
   variables become spaces. Layer 2 alone guarantees one line per key
   whatever a value holds, including on the fallback path where the
   transcript could not be normalised. So no input or transcript value can
