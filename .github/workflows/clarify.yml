@@ -957,6 +957,40 @@ jobs:
             fi
           fi
 
+      # Gives stage:clarify a real writer (contracts/clarify-label-flip.md,
+      # research.md D3): a follow-up questionnaire just posted means the
+      # issue is waiting on the requester again; a ready, unblocked outcome
+      # means the spec is back to awaiting review. Deterministic, reading
+      # only this step's own outputs above.
+      - name: Flip stage label for clarification
+        if: steps.lifecycle-gate.outputs.is-open == 'true'
+        env:
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
+          ISSUE: ${{ inputs.issue-number }}
+          OUTCOME: ${{ steps.clarification.outputs.outcome }}
+          BLOCKED: ${{ steps.clarification.outputs.blocked }}
+        run: |
+          case "$OUTCOME" in
+            needs-clarification)
+              gh label create "stage:clarify" --color 1D76DB --description "Open clarification questions" --force
+              if ! gh issue edit "$ISSUE" --add-label "stage:clarify"; then
+                echo "::warning::wing-commander clarify: could not add stage:clarify to issue #$ISSUE (the follow-up questionnaire was still posted)." >> "$GITHUB_STEP_SUMMARY"
+              fi
+              gh issue edit "$ISSUE" --remove-label "stage:spec" 2>/dev/null || true
+              ;;
+            ready)
+              if [ "$BLOCKED" != "true" ]; then
+                gh label create "stage:spec" --color 1D76DB --description "Spec drafted / awaiting review" --force
+                if ! gh issue edit "$ISSUE" --add-label "stage:spec"; then
+                  echo "::warning::wing-commander clarify: could not add stage:spec to issue #$ISSUE (the spec PR was still announced ready)." >> "$GITHUB_STEP_SUMMARY"
+                fi
+                gh issue edit "$ISSUE" --remove-label "stage:clarify" 2>/dev/null || true
+              fi
+              ;;
+            none|*)
+              ;;
+          esac
+
       # specs/056-stage-found-defect-filing (FR-003/FR-023): runs after this
       # stage's own deterministic read-back, never gated on filing being
       # enabled — the composite's own enable check makes that decision

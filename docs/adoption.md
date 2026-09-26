@@ -1135,7 +1135,7 @@ Common to every stage below:
 | Inputs | `issue-number` (number, required); `model` (string, `claude-opus-5`); `max-turns` (number, `50`) |
 | Secrets | credentials + App (all stages; omitted below) |
 | Preconditions | spec-kit present in your checkout |
-| Side effects | `spec-draft/NNN-slug` branch (prefix configurable via `WING_COMMANDER_SPEC_DRAFT_PREFIX`, default `spec-draft/`) + draft spec PR to your default branch; `specs/NNN-slug/` with `spec.md`, `spec-meta.json`; `spec:NNN-slug` + `stage:spec` labels; clarification-questions or ready-for-review comment |
+| Side effects | `spec-draft/NNN-slug` branch (prefix configurable via `WING_COMMANDER_SPEC_DRAFT_PREFIX`, default `spec-draft/`) + draft spec PR to your default branch; `specs/NNN-slug/` with `spec.md`, `spec-meta.json`; `spec:NNN-slug` + `stage:spec` labels; clarification-questions or ready-for-review comment, flipped to `stage:clarify` while clarification questions are open |
 | Outputs | `spec-dir`, `feature-num` |
 
 Findings filing: `findings-filing-enabled` (boolean, default `false`;
@@ -1173,7 +1173,7 @@ jobs:
 |---|---|
 | Inputs | `issue-number` (number, required); `comment-id` (number, required); `model` (string, `claude-opus-5`); `max-turns` (number, `65`) |
 | Preconditions | spec-kit present; issue carries a `spec:NNN-slug` label; open `spec-draft/NNN-slug` branch (prefix configurable via `WING_COMMANDER_SPEC_DRAFT_PREFIX`, default `spec-draft/`) |
-| Side effects | commits to the draft branch (PR updates automatically); 👀 reaction on the comment; updated PR body; status comment on the issue |
+| Side effects | commits to the draft branch (PR updates automatically); 👀 reaction on the comment; updated PR body; status comment on the issue; `stage:clarify` applied on a follow-up question, or flipped back to `stage:spec` when the spec is ready for review |
 | Outputs | none |
 
 Findings filing: `findings-filing-enabled` (boolean, default `false`;

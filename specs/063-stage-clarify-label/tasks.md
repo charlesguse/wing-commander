@@ -20,7 +20,7 @@ description: "Task list for feature implementation"
 
 ## Phase 1: Setup
 
-- [ ] T001 Re-verify, against the current HEAD of `spec/063-stage-clarify-label`, every anchor line number this plan cites before editing: `.github/workflows/intake.yml`'s `Check whether the spec still needs clarification` step (`id: clarification`, plan cites lines 990-1136) and `Render clarification questionnaire` (plan cites line 1142); `.github/workflows/clarify.yml`'s `Determine clarification follow-up outcome` step (`id: clarification`, plan cites lines 845-932) and the `wing-commander-chain-stop-notice` call's `stage-label: "stage:clarify"` input (plan cites line 1292); `.github/workflows/auto-release.yml`'s stage-label-timeline check (plan cites lines 1136-1158), `comments_json` read (plan cites line 1250), `markers_json`/`clarification_satisfied` reads (plan cites lines 1267-1275); `.github/workflows/lint-workflows.yml`'s highest existing gate number (plan cites Gate 98 at line ~4131, making 99 the next number). Note any drift found before T004 onward proceeds, since research.md records plan.md's own citations already drifted once since spec.md was drafted.
+- [X] T001 Re-verify, against the current HEAD of `spec/063-stage-clarify-label`, every anchor line number this plan cites before editing: `.github/workflows/intake.yml`'s `Check whether the spec still needs clarification` step (`id: clarification`, plan cites lines 990-1136) and `Render clarification questionnaire` (plan cites line 1142); `.github/workflows/clarify.yml`'s `Determine clarification follow-up outcome` step (`id: clarification`, plan cites lines 845-932) and the `wing-commander-chain-stop-notice` call's `stage-label: "stage:clarify"` input (plan cites line 1292); `.github/workflows/auto-release.yml`'s stage-label-timeline check (plan cites lines 1136-1158), `comments_json` read (plan cites line 1250), `markers_json`/`clarification_satisfied` reads (plan cites lines 1267-1275); `.github/workflows/lint-workflows.yml`'s highest existing gate number (plan cites Gate 98 at line ~4131, making 99 the next number). Note any drift found before T004 onward proceeds, since research.md records plan.md's own citations already drifted once since spec.md was drafted.
 
 ## Phase 2: Foundational
 
@@ -36,7 +36,7 @@ No blocking prerequisites apply: User Story 1's two workflow edits, User Story 2
 
 ### Implementation for User Story 1
 
-- [ ] T002 [US1] In `.github/workflows/intake.yml`, add a new step named `Flip stage label for clarification` immediately after `Check whether the spec still needs clarification` (`id: clarification`) and before `Render clarification questionnaire`, gated `if: steps.lifecycle-gate.outputs.is-open == 'true'`. Body (contracts/clarify-label-flip.md, research.md D2):
+- [X] T002 [US1] In `.github/workflows/intake.yml`, add a new step named `Flip stage label for clarification` immediately after `Check whether the spec still needs clarification` (`id: clarification`) and before `Render clarification questionnaire`, gated `if: steps.lifecycle-gate.outputs.is-open == 'true'`. Body (contracts/clarify-label-flip.md, research.md D2):
   ```bash
   if [ "$NEEDED" = "true" ]; then
     gh label create "stage:clarify" --color 1D76DB --description "Open clarification questions" --force
@@ -50,7 +50,7 @@ No blocking prerequisites apply: User Story 1's two workflow edits, User Story 2
   ```
   with env `NEEDED=steps.clarification.outputs.needed`, `SPECIFIED=steps.clarification.outputs.specified`, `BLOCKED=steps.clarification.outputs.blocked`, `SPEC_DIR=steps.created.outputs.spec-dir`, `ISSUE=inputs.issue-number`. Confirm by inspection that this step's fixed position is after the agent's own unconditional `stage:spec` add (inside the earlier agent step, line 689) and before `Label spec PR to match the issue` (FR-023's ordering — no runtime check, position only).
 
-- [ ] T003 [US1] In `.github/workflows/clarify.yml`, add a new step named `Flip stage label for clarification` immediately after `Determine clarification follow-up outcome` (`id: clarification`), gated `if: steps.lifecycle-gate.outputs.is-open == 'true'`. Body (contracts/clarify-label-flip.md, research.md D3):
+- [X] T003 [US1] In `.github/workflows/clarify.yml`, add a new step named `Flip stage label for clarification` immediately after `Determine clarification follow-up outcome` (`id: clarification`), gated `if: steps.lifecycle-gate.outputs.is-open == 'true'`. Body (contracts/clarify-label-flip.md, research.md D3):
   ```bash
   case "$OUTCOME" in
     needs-clarification)
@@ -75,13 +75,13 @@ No blocking prerequisites apply: User Story 1's two workflow edits, User Story 2
   ```
   with env `OUTCOME=steps.clarification.outputs.outcome`, `BLOCKED=steps.clarification.outputs.blocked`, `ISSUE=inputs.issue-number`.
 
-- [ ] T004 [P] [US1] Correct the stale comment in `.github/scripts/verify-board-label-creation.py`-adjacent conventions is N/A here — instead, in `docs/architecture.md` (around line 372-374, the paragraph naming "the structural fix for #159"), add one clause naming the new label write as a second consumer of the same single derived output, alongside the callout (research.md D6: "Both callouts, and the stage-label write that now accompanies them, key off a single output...").
+- [X] T004 [P] [US1] Correct the stale comment in `.github/scripts/verify-board-label-creation.py`-adjacent conventions is N/A here — instead, in `docs/architecture.md` (around line 372-374, the paragraph naming "the structural fix for #159"), add one clause naming the new label write as a second consumer of the same single derived output, alongside the callout (research.md D6: "Both callouts, and the stage-label write that now accompanies them, key off a single output...").
 
-- [ ] T005 [P] [US1] In `docs/adoption.md`'s intake stage "Side effects" table row (the row reading `` `spec:NNN-slug` + `stage:spec` labels; clarification-questions or ready-for-review comment ``), append ", flipped to `stage:clarify` while clarification questions are open" so the row states the conditional outcome (research.md D6).
+- [X] T005 [P] [US1] In `docs/adoption.md`'s intake stage "Side effects" table row (the row reading `` `spec:NNN-slug` + `stage:spec` labels; clarification-questions or ready-for-review comment ``), append ", flipped to `stage:clarify` while clarification questions are open" so the row states the conditional outcome (research.md D6).
 
-- [ ] T006 [P] [US1] In `docs/adoption.md`'s clarify stage "Side effects" table row (today lists no label effect), append "; `stage:clarify` applied on a follow-up question, or flipped back to `stage:spec` when the spec is ready for review" (research.md D6).
+- [X] T006 [P] [US1] In `docs/adoption.md`'s clarify stage "Side effects" table row (today lists no label effect), append "; `stage:clarify` applied on a follow-up question, or flipped back to `stage:spec` when the spec is ready for review" (research.md D6).
 
-- [ ] T007 [US1] Confirm, by reading them fresh (not by assuming from spec.md's Overview table), that `docs/setup.md:146` (table row text), `docs/setup.md:175` (label-creation script), and `docs/architecture.md:355-357` (the trigger description) already read correctly under Direction A and need no edit (research.md D6) — record this confirmation rather than silently skipping, since an unnecessary edit is itself a drift risk.
+- [X] T007 [US1] Confirm, by reading them fresh (not by assuming from spec.md's Overview table), that `docs/setup.md:146` (table row text), `docs/setup.md:175` (label-creation script), and `docs/architecture.md:355-357` (the trigger description) already read correctly under Direction A and need no edit (research.md D6) — record this confirmation rather than silently skipping, since an unnecessary edit is itself a drift risk.
 
 **Checkpoint**: `stage:clarify` now has a real writer in both stages that can post or resolve a clarification questionnaire, and every FR-006 documentation site is consistent with that fact.
 
