@@ -42,13 +42,13 @@ trap 'rm -f "$SCRIPT"; rm -rf "$WORK"' EXIT
 SPEC_DIR="specs/074-serialized-fold-dispatch"
 
 run_release() {
-  local token="$1" round="$2" leg_id="$3" outcome="$4" commit_sha="$5"
+  local token="$1" round="$2" leg_id="$3" outcome="$4" commit_sha="$5" run_id="${6:-200}"
   local summary_file
   summary_file="$(mktemp)"
   GITHUB_ACTION_PATH="$COMPOSITE_DIR" \
     GH_TOKEN=x GITHUB_REPOSITORY=x/x \
     LEDGER_REMOTE_URL="$REMOTE" \
-    SPEC_DIR="$SPEC_DIR" TOKEN="$token" ROUND="$round" LEG_ID="$leg_id" \
+    SPEC_DIR="$SPEC_DIR" TOKEN="$token" ROUND="$round" RUN_ID="$run_id" LEG_ID="$leg_id" \
     OUTCOME="$outcome" COMMIT_SHA="$commit_sha" SUMMARY="s" \
     GITHUB_STEP_SUMMARY="$summary_file" \
     bash "$SCRIPT"
@@ -77,6 +77,15 @@ if run_release "run-200-act" 1 "leg-1" "folded" "deadbeef"; then
   echo "[ok] idempotent double-release: second release of an absent token is a no-op"
 else
   echo "::error::[idempotent double-release] second release exited non-zero"
+  FAILURES=$((FAILURES + 1))
+fi
+
+# --- Scenario 3: a second leg of the SAME run's matrix, sharing the SAME
+# (already-dequeued) ticket, still gets its own completion recorded -----
+if run_release "run-200-act" 1 "leg-2" "not-folded" ""; then
+  echo "[ok] second leg of the same run still records its own completion after the shared ticket was already dequeued"
+else
+  echo "::error::[second leg, same shared ticket] release exited non-zero"
   FAILURES=$((FAILURES + 1))
 fi
 

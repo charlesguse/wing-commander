@@ -1460,6 +1460,89 @@ jobs:
               {"name": "Fail loud on non-healthy agent verdict", "conclusion": "${{ steps.verdict-fail.conclusion }}"}
             ]
 
+  # specs/074-serialized-fold-dispatch research.md D1 -- see
+  # fold-queue-ledger.sh. Enqueues one ticket for this run's WHOLE fold
+  # phase (not one per leg) in the shared per-spec ledger and blocks until
+  # it is this run's turn, BEFORE `act` (whose own
+  # wing-commander-<spec-dir> concurrency group below is unchanged) is
+  # even scheduled -- the only lever that can stop `act` from becoming a
+  # second contender for that group's one-pending slot is gating whether
+  # the job runs at all, since GitHub evaluates concurrency: before any
+  # step. `needs`/`if` mirror `act`'s own qualifying condition exactly
+  # (including verify-image-prerequisites, needed here for the same
+  # reason `act` itself needs it -- an `if:` may only reference a job's
+  # own `needs:`) so this job is skipped in precisely the cases `act`
+  # itself would skip -- a `stop`-only run's `act` never mutates and never
+  # touches the ledger (FR-005/FR-017a), and a ticket that enqueued here
+  # only to have `act` skip afterward would sit ungranted forever, since
+  # only `act`'s own release step ever clears it.
+  fold-turn-act:
+    needs: [classify-and-announce, verify-image-prerequisites]
+    if: >-
+      !cancelled() &&
+      needs.verify-image-prerequisites.result != 'failure' &&
+      needs.classify-and-announce.result == 'success' &&
+      needs.classify-and-announce.outputs.qualifies == 'true' &&
+      needs.classify-and-announce.outputs.legs != '' &&
+      needs.classify-and-announce.outputs.legs != '[]'
+    runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
+    container:
+      image: ${{ inputs.container-image }}
+      credentials: >-
+        ${{
+          (secrets.container-registry-username != '' && secrets.container-registry-password != '')
+            && fromJSON(format('{{"username":{0},"password":{1}}}', toJSON(secrets.container-registry-username), toJSON(secrets.container-registry-password)))
+            || fromJSON('{}')
+        }}
+    permissions:
+      contents: write
+      id-token: write
+    outputs:
+      token: ${{ steps.admit.outputs.token }}
+      round: ${{ steps.admit.outputs.round }}
+    steps:
+      - name: Checkout consumer repository (bootstrap, default token)
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Resolve pipeline ref
+        id: pipeline-ref
+        env:
+          JOB_WORKFLOW_SHA: ${{ github.job_workflow_sha }}
+          PIPELINE_REF_INPUT: ${{ inputs.pipeline-ref }}
+        run: |
+          set -euo pipefail
+          ref="${PIPELINE_REF_INPUT:-$JOB_WORKFLOW_SHA}"
+          if [ -z "$ref" ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            payload=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+              "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=wing-commander-pipeline-ref" \
+              | jq -r '.value' | cut -d. -f2 | tr '_-' '/+')
+            while [ $(( ${#payload} % 4 )) -ne 0 ]; do payload="$payload="; done
+            ref=$(printf '%s' "$payload" | base64 -d 2>/dev/null | jq -r '.job_workflow_sha // empty' || true)
+          fi
+          if [ -z "$ref" ]; then
+            echo "::error::wing-commander pr-conversation stage: cannot determine the pipeline commit to check out — github.job_workflow_sha is empty and no OIDC token is available. Grant the calling job id-token: write, or set the pipeline-ref input to the same ref as your uses: pin."
+            exit 1
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout pipeline repository (shared composite actions)
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ inputs.pipeline-repo }}
+          ref: ${{ steps.pipeline-ref.outputs.ref }}
+          token: ${{ secrets.pipeline-repo-token || github.token }}
+          path: .wing-commander-pipeline
+          persist-credentials: false
+
+      - name: Enqueue and await this run's fold-phase ticket
+        id: admit
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-fold-queue-admit
+        with:
+          spec-dir: ${{ needs.classify-and-announce.outputs.spec-dir }}
+          kind: act
+
   # Executes each classification's route: fold-in + implement re-dispatch
   # (in-scope-change), new-issue/new-PR spin-offs (new-functionality,
   # small-unrelated-change, manual-step-permission's permission-request
@@ -1469,7 +1552,7 @@ jobs:
   # "multi-classification" note) so N distinct asks in one comment route
   # and report independently.
   act:
-    needs: [classify-and-announce, verify-image-prerequisites]
+    needs: [classify-and-announce, verify-image-prerequisites, fold-turn-act]
     # `legs != ''` is load-bearing beyond "nothing classified": an empty
     # string reaches fromJson below as a strategy error that kills the job,
     # and it is also what the runner leaves behind when it withholds an
@@ -1482,13 +1565,20 @@ jobs:
     # protection explicitly (and satisfy Gate 23's requirement that a
     # status-guarded job directly depend on verify-image-prerequisites
     # too); the rest is the pre-existing guard, unchanged.
+    # specs/074-serialized-fold-dispatch: the same loss-of-implicit-
+    # protection applies to fold-turn-act -- without checking its result
+    # explicitly here, a ticket-admission timeout (fold-turn-act failing)
+    # would NOT stop `act` from running unticketed and re-contending for
+    # the GitHub concurrency group, which is the exact defect this feature
+    # removes.
     if: >-
       !cancelled() &&
       needs.verify-image-prerequisites.result != 'failure' &&
       needs.classify-and-announce.result == 'success' &&
       needs.classify-and-announce.outputs.qualifies == 'true' &&
       needs.classify-and-announce.outputs.legs != '' &&
-      needs.classify-and-announce.outputs.legs != '[]'
+      needs.classify-and-announce.outputs.legs != '[]' &&
+      needs.fold-turn-act.result == 'success'
     # data-model.md §4 point 2: an explicit per-instance job name, keyed by
     # the stable `id` T005 assigns, so report-fold-outcomes can identify
     # each leg's own GitHub Actions job by id in the run's job list.
@@ -1523,6 +1613,10 @@ jobs:
     # and a separate per-PR group for a stop-ONLY run, which mutates nothing
     # and would otherwise be unable to start until the run it was asked to
     # cancel had already finished (FR-024/SC-009).
+    #
+    # Why fold-turn-act gates entry into this group ahead of a second
+    # overlapping run's own act/dispatch-once/implement -- see
+    # fold-queue-ledger.sh.
     concurrency:
       group: ${{ needs.classify-and-announce.outputs.concurrency-group }}
       cancel-in-progress: false
@@ -2567,6 +2661,76 @@ jobs:
           mint-outcome: ${{ steps.reestablish.outcome }}
           refresh-outcome: ${{ steps.refresh-remote.outcome }}
 
+      # specs/074-serialized-fold-dispatch T013/research.md D3: scoped to
+      # fold-route categories only (matching report-fold-outcomes' own
+      # scope below) -- a non-fold-route leg's release call two steps down
+      # still runs (every leg attempts it; the shared per-run ticket,
+      # research.md D1, is only actually dequeued once, by whichever leg's
+      # job instance runs last) but carries no leg-id, so it records
+      # nothing. Trusts the agent's own `mutated` self-report the same way
+      # "Fail on agent API error" above already does, but cross-checks it
+      # against this leg's OWN working tree HEAD (checked out fresh for
+      # this leg only, above) actually carrying a `fold(<id>):` commit
+      # matching this leg's id -- the same false-attribution class of bug
+      # this feature exists to remove (research.md D3), not a new trust
+      # boundary.
+      - name: Determine this leg's fold-queue outcome
+        id: fold-outcome
+        if: always()
+        shell: bash
+        env:
+          EFFECTIVE_CATEGORY: ${{ steps.route.outputs.effective-category }}
+          EFFECTIVE_FOLD_TARGET: ${{ steps.route.outputs.effective-fold-target }}
+          MUTATED: ${{ steps.act-result.outputs.mutated }}
+          LEG_ID: ${{ matrix.id }}
+        run: |
+          set -euo pipefail
+          fold_route=false
+          if [ "$EFFECTIVE_CATEGORY" = "in-scope-change" ] || { [ "$EFFECTIVE_CATEGORY" = "new-functionality" ] && [ "$EFFECTIVE_FOLD_TARGET" = "current-spec" ]; }; then
+            fold_route=true
+          fi
+
+          if [ "$fold_route" != "true" ]; then
+            {
+              echo "leg-id="
+              echo "outcome="
+              echo "commit-sha="
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          commit_sha=""
+          outcome="not-folded"
+          if [ "$MUTATED" = "true" ]; then
+            subject="$(git log -1 --format=%s 2>/dev/null || true)"
+            case "$subject" in
+              "fold($LEG_ID):"*)
+                commit_sha="$(git rev-parse HEAD)"
+                outcome="folded"
+                ;;
+            esac
+          fi
+
+          {
+            echo "leg-id=$LEG_ID"
+            echo "outcome=$outcome"
+            echo "commit-sha=$commit_sha"
+          } >> "$GITHUB_OUTPUT"
+
+      # contracts/wing-commander-fold-queue-release.md's step-placement
+      # contract: MUST be if: always() and the job's LAST step.
+      - name: Release this leg's fold-queue ticket
+        if: always()
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-fold-queue-release
+        with:
+          spec-dir: ${{ needs.classify-and-announce.outputs.spec-dir }}
+          token: ${{ needs.fold-turn-act.outputs.token }}
+          round: ${{ needs.fold-turn-act.outputs.round }}
+          leg-id: ${{ steps.fold-outcome.outputs.leg-id }}
+          outcome: ${{ steps.fold-outcome.outputs.outcome || 'not-folded' }}
+          commit-sha: ${{ steps.fold-outcome.outputs.commit-sha }}
+          summary: ${{ steps.leg.outputs.summary }}
+
   # research.md D1/D2/D3/contracts/fold-dispatch-once.md: the ONLY job in
   # this workflow that calls `gh workflow run` for implement.yml, and it
   # does so at most once per review — after the WHOLE `act` matrix has
@@ -2751,18 +2915,21 @@ jobs:
           gh pr comment "$PR_NUMBER" --body-file "$body_file"
 
   # research.md D6/contracts/fold-dispatch-once.md: cross-references this
-  # run's own GitHub-set job `conclusion`s against git-history fold
-  # evidence — two signals neither of which a cancelled leg has to publish
-  # itself (FR-006a) — to report any fold-route item that died without
-  # folding, distinguishing "not folded" from "partly folded"
-  # (data-model.md §4). Scoped to fold-route items only (in-scope-change,
+  # run's own GitHub-set job `conclusion`s against this run's own
+  # fold-queue-ledger completion records (specs/074-serialized-fold-dispatch
+  # T015/research.md D3 -- see fold-queue-ledger.sh; no longer a base..tip
+  # git-log range, which a concurrent run's fold commits could land inside
+  # and get misattributed by) — two signals neither of which a cancelled
+  # leg has to publish itself (FR-006a) — to report any fold-route item
+  # that died without folding, distinguishing "not folded" from "partly
+  # folded" (data-model.md §4). Scoped to fold-route items only (in-scope-change,
   # new-functionality/current-spec): every other route already posts its
   # own per-leg reply as its observable outcome (FR-006), so re-checking
   # those here would misreport a successful reply-only leg — which never
   # writes a `fold(<id>):` commit — as "not folded". `if: always()` so this
   # job runs even when `act` itself failed/cancelled/timed out.
   report-fold-outcomes:
-    needs: [verify-image-prerequisites, classify-and-announce, act]
+    needs: [verify-image-prerequisites, classify-and-announce, act, fold-turn-act]
     if: >-
       always() &&
       needs.verify-image-prerequisites.result != 'failure' &&
@@ -2867,6 +3034,24 @@ jobs:
           fetch-depth: 0
           clean: false
 
+      # specs/074-serialized-fold-dispatch T015/research.md D3: this run's
+      # own folded_items entries, keyed by run_id (never a base..tip
+      # git-log range, which a concurrent run's fold commits could land
+      # inside and get misattributed by) -- see fold-queue-ledger.sh.
+      - name: Read this run's own fold-queue completion records
+        id: fold-queue-round
+        if: needs.fold-turn-act.outputs.round != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          SPEC_DIR: ${{ needs.classify-and-announce.outputs.spec-dir }}
+          ROUND: ${{ needs.fold-turn-act.outputs.round }}
+        run: |
+          set -euo pipefail
+          out="$(bash .wing-commander-pipeline/.github/actions/_shared/fold-queue-ledger.sh peek-round)"
+          echo "folded-items=$(printf '%s\n' "$out" | grep '^folded-items=' | cut -d= -f2-)" >> "$GITHUB_OUTPUT"
+
       # data-model.md §4: fetches THIS run's own jobs (Gate 18's established
       # paginated-read shape), filters to each `act (leg-N)` instance
       # (T010's per-instance name), and reads its GitHub-set `conclusion` —
@@ -2879,8 +3064,7 @@ jobs:
           PR_NUMBER: ${{ inputs.pr-number }}
           RUN_ID: ${{ github.run_id }}
           CLASSIFICATIONS: ${{ steps.bodies.outputs.classifications }}
-          BASE_SHA: ${{ needs.classify-and-announce.outputs.base-sha }}
-          TIP_SHA: ${{ steps.tip.outputs.sha }}
+          FOLDED_ITEMS: ${{ steps.fold-queue-round.outputs.folded-items || '[]' }}
         run: |
           set -euo pipefail
           # Gate 12: `.../actions/runs/.../jobs` needs Actions:read, which the
@@ -2888,11 +3072,6 @@ jobs:
           # access") — use the job's default token for this call only,
           # keeping the App token (GH_TOKEN) for the PR comment write below.
           jobs=$(GH_TOKEN="$ACTIONS_TOKEN" gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs" --paginate --jq '.jobs[] | {name, conclusion}' | jq -s -c '.')
-
-          range=""
-          if [ -n "$TIP_SHA" ] && [ -n "$BASE_SHA" ] && [ "$TIP_SHA" != "$BASE_SHA" ]; then
-            range="$BASE_SHA..$TIP_SHA"
-          fi
 
           fold_routes=$(printf '%s' "$CLASSIFICATIONS" | jq -c '
             [ .[] | select(.category == "in-scope-change"
@@ -2921,7 +3100,9 @@ jobs:
             conclusion=$(printf '%s' "$jobs" | jq -r --arg id "$id" '[.[] | select((.name == "act (" + $id + ")") or (.name | endswith(" / act (" + $id + ")")))] | .[0].conclusion // "missing"')
 
             folded=false
-            if [ -n "$range" ] && git log --grep "^fold($id):" --format='%H' "$range" 2>/dev/null | grep -q .; then
+            if printf '%s' "$FOLDED_ITEMS" | jq -e --arg id "$id" --arg run_id "$RUN_ID" \
+                 '[.[] | select(.leg_id == $id and (.run_id|tostring) == ($run_id|tostring))] | length > 0' \
+                 >/dev/null 2>&1; then
               folded=true
             fi
 

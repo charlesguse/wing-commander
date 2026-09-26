@@ -13,8 +13,22 @@ inputs:
     description: "The token wing-commander-fold-queue-admit returned."
     required: true
   round:
-    description: "The round the ticket was filed under."
+    description: >
+      The round the ticket was filed under (accepted for interface parity
+      with wing-commander-fold-queue-admit's output; the release transform
+      itself derives the round from the ledger's own current round for
+      this spec-dir, since a still-queued ticket's round cannot have
+      changed underneath it).
     required: true
+  run-id:
+    description: >
+      Overridable only for fixture/test use. A run's whole act matrix
+      shares ONE ticket (research.md D1) but this composite is invoked
+      once per leg job instance, so run-id (not the ticket, which may
+      already be dequeued by an earlier leg) is what each call's
+      completion record is filed under.
+    required: false
+    default: ${{ github.run_id }}
   leg-id:
     description: >
       Required (non-empty) when the ticket's kind was act and this call
@@ -52,6 +66,7 @@ runs:
         GITHUB_REPOSITORY: ${{ github.repository }}
         SPEC_DIR: ${{ inputs.spec-dir }}
         TOKEN: ${{ inputs.token }}
+        RUN_ID: ${{ inputs.run-id }}
         OUTCOME: ${{ inputs.outcome }}
         COMMIT_SHA: ${{ inputs.commit-sha }}
         LEG_ID: ${{ inputs.leg-id }}

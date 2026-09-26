@@ -56,15 +56,22 @@
 #                     append. When the new ticket lands at queue index 0
 #                     (an uncontended enqueue), it is granted immediately
 #                     in the same write.
-#   release        -- SPEC_DIR, TOKEN, OUTCOME, COMMIT_SHA (optional),
-#                      LEG_ID (optional), SUMMARY (optional)
-#                     Removes TOKEN from the queue head and files a
-#                     completion record under the current round. A TOKEN
-#                     already absent from the queue is a no-op (idempotent
-#                     re-release after a retried always() step). A TOKEN
-#                     present but not at the queue head is a caller error.
-#                     When a new ticket becomes head as a result, it is
-#                     granted in the same write.
+#   release        -- SPEC_DIR, TOKEN, RUN_ID, OUTCOME, COMMIT_SHA
+#                      (optional), LEG_ID (optional), SUMMARY (optional)
+#                     Removes TOKEN from the queue head and, when LEG_ID is
+#                     non-empty, files a completion record under the
+#                     current round (idempotent per run_id+leg_id, so a
+#                     retried call never double-files). A run's whole act
+#                     matrix shares ONE ticket (research.md D1), so this is
+#                     called once per LEG job instance while the ticket
+#                     itself is only actually dequeued on the first such
+#                     call -- every later call for the same (now-absent)
+#                     token still records its own leg's completion; a call
+#                     with an empty LEG_ID (the dispatch/implement case,
+#                     which has no per-leg completion to record) is a pure
+#                     dequeue. A TOKEN present but not at the queue head is
+#                     a caller error. When a new ticket becomes head as a
+#                     result, it is granted in the same write.
 #   claim-dispatch -- SPEC_DIR, ROUND, DISPATCH_TOKEN, ITERATION
 #                     Valid only when DISPATCH_TOKEN is at the queue head.
 #                     Succeeds (should-dispatch=true) only when no other
@@ -98,6 +105,12 @@
 # wing-commander-fold-queue-admit's wait loop. Each call re-clones the
 # branch fresh -- callers MUST NOT cache a read across poll iterations.
 #
+# A sixth mode, `peek-round` -- SPEC_DIR, ROUND -- is the same kind of
+# read-only lookup, returning a round's folded_items/not_folded_items as
+# compact JSON. Used by report-fold-outcomes (research.md D3) to read THIS
+# run's own completion records instead of the base..tip git-log range scan
+# that could misattribute a concurrent run's fold commits.
+#
 # Output: one `key=value` line per result field on stdout (never
 # $GITHUB_OUTPUT directly -- the calling composite step decides which
 # fields it needs and how to publish them, since the three composites
@@ -107,9 +120,9 @@ set -uo pipefail
 TRANSFORM="${1:-}"
 
 case "$TRANSFORM" in
-  enqueue|release|claim-dispatch|reclaim-stale|peek) ;;
+  enqueue|release|claim-dispatch|reclaim-stale|peek|peek-round) ;;
   *)
-    echo "::error::fold-queue-ledger.sh: unknown or missing transform '$TRANSFORM' (expected one of: enqueue, release, claim-dispatch, reclaim-stale, peek)"
+    echo "::error::fold-queue-ledger.sh: unknown or missing transform '$TRANSFORM' (expected one of: enqueue, release, claim-dispatch, reclaim-stale, peek, peek-round)"
     exit 1
     ;;
 esac
@@ -127,6 +140,9 @@ case "$TRANSFORM" in
   peek)
     : "${PEEK_TOKEN:?fold-queue-ledger.sh peek: PEEK_TOKEN is required}"
     ;;
+  peek-round)
+    : "${ROUND:?fold-queue-ledger.sh peek-round: ROUND is required}"
+    ;;
   enqueue)
     : "${KIND:?fold-queue-ledger.sh enqueue: KIND is required}"
     : "${RUN_ID:?fold-queue-ledger.sh enqueue: RUN_ID is required}"
@@ -134,6 +150,7 @@ case "$TRANSFORM" in
   release)
     : "${TOKEN:?fold-queue-ledger.sh release: TOKEN is required}"
     : "${OUTCOME:?fold-queue-ledger.sh release: OUTCOME is required}"
+    : "${RUN_ID:?fold-queue-ledger.sh release: RUN_ID is required}"
     COMMIT_SHA="${COMMIT_SHA:-}"
     LEG_ID="${LEG_ID:-}"
     SUMMARY="${SUMMARY:-}"
@@ -187,6 +204,31 @@ if [ "$TRANSFORM" = "peek" ]; then
         "head-run-id": (($q[0].run_id) // ""),
         "head-granted-at": (($q[0].granted_at) // "")
       }
+  ' "$current_json" | jq -r 'to_entries[] | "\(.key)=\(.value)"'
+  exit 0
+fi
+
+if [ "$TRANSFORM" = "peek-round" ]; then
+  clone_dir="$workdir/peek-round-clone"
+  if git ls-remote --exit-code "$auth_url" "refs/heads/$LEDGER_BRANCH" >/dev/null 2>&1; then
+    if ! git clone --quiet --depth 1 --branch "$LEDGER_BRANCH" --single-branch "$auth_url" "$clone_dir" 2>"$workdir/peek-round-clone-err.txt"; then
+      cat "$workdir/peek-round-clone-err.txt" >&2
+      echo "::error::fold-queue-ledger.sh peek-round: failed to read $LEDGER_BRANCH"
+      exit 1
+    fi
+  fi
+  ledger_file="$clone_dir/$LEDGER_PATH"
+  if [ -f "$ledger_file" ]; then
+    current_json="$ledger_file"
+  else
+    current_json="$workdir/empty-ledger.json"
+    echo '{"specs":{}}' > "$current_json"
+  fi
+  jq -c --arg spec "$SPEC_DIR" --arg round "$ROUND" '
+    {
+      "folded-items": (.specs[$spec].rounds[$round].folded_items // [] | tojson),
+      "not-folded-items": (.specs[$spec].rounds[$round].not_folded_items // [] | tojson)
+    }
   ' "$current_json" | jq -r 'to_entries[] | "\(.key)=\(.value)"'
   exit 0
 fi
@@ -257,33 +299,39 @@ JQ
     cat > "$filter_file" <<'JQ'
 .specs[$spec] //= {"round": 0, "queue": [], "rounds": {}}
 | (.specs[$spec].queue | map(.token) | index($token)) as $idx
+| (.specs[$spec].round | tostring) as $round
+# A run's whole act matrix shares ONE ticket (research.md D1), so this
+# transform is called once per LEG job instance while only the first such
+# call still finds the ticket present -- every call must still record its
+# own leg's completion, even the calls that find the ticket already
+# dequeued by an earlier leg. Recording is itself idempotent per
+# (run_id, leg_id), independent of the dequeue below, so a retried release
+# of the SAME leg never double-appends.
+| (($leg_id != "") and (
+     ((.specs[$spec].rounds[$round].folded_items // []) + (.specs[$spec].rounds[$round].not_folded_items // []))
+     | map(select(.run_id == $run_id and .leg_id == $leg_id)) | length > 0
+   )) as $already_recorded
+| (if ($leg_id != "") and ($already_recorded | not) then
+     (if $commit_sha != "" then
+        .specs[$spec].rounds[$round].folded_items = ((.specs[$spec].rounds[$round].folded_items // []) + [{"run_id": $run_id, "leg_id": $leg_id, "summary": $summary, "commit_sha": $commit_sha}])
+      else
+        .specs[$spec].rounds[$round].not_folded_items = ((.specs[$spec].rounds[$round].not_folded_items // []) + [{"run_id": $run_id, "leg_id": $leg_id, "outcome": $outcome}])
+      end)
+   else
+     .
+   end)
 | if $idx == null then
-    { changed: false, ledger: ., result: { released: "false", already_absent: "true" } }
+    { changed: (($leg_id != "") and ($already_recorded | not)), ledger: ., result: { released: "false", "already-absent": "true" } }
   elif $idx != 0 then
     { error: ("fold-queue-ledger release: token " + $token + " is present but not at queue head (index " + ($idx | tostring) + ") -- release is only valid for the granted head ticket") }
   else
-    (.specs[$spec].queue[0].run_id) as $run_id
-    | (.specs[$spec].round | tostring) as $round
-    | (.specs[$spec].queue[1:]) as $remaining
-    | (if $commit_sha != "" then
-         (.specs[$spec].rounds[$round].folded_items // []) + [{"run_id": $run_id, "leg_id": $leg_id, "summary": $summary, "commit_sha": $commit_sha}]
-       else
-         null
-       end) as $new_folded
-    | (if $commit_sha == "" then
-         (.specs[$spec].rounds[$round].not_folded_items // []) + [{"run_id": $run_id, "leg_id": $leg_id, "outcome": $outcome}]
-       else
-         null
-       end) as $new_not_folded
-    | .specs[$spec].queue = $remaining
-    | (if $new_folded != null then .specs[$spec].rounds[$round].folded_items = $new_folded else . end)
-    | (if $new_not_folded != null then .specs[$spec].rounds[$round].not_folded_items = $new_not_folded else . end)
+    .specs[$spec].queue |= .[1:]
     | (if (.specs[$spec].queue | length) > 0 and (.specs[$spec].queue[0].granted_at == null) then
          .specs[$spec].queue[0].granted_at = $now
        else
          .
        end) as $newdoc
-    | { changed: true, ledger: $newdoc, result: { released: "true", already_absent: "false" } }
+    | { changed: true, ledger: $newdoc, result: { released: "true", "already-absent": "false" } }
   end
 JQ
     ;;
@@ -393,7 +441,7 @@ while [ "$attempt" -le "$max_attempts" ]; do
         -f "$filter_file" "$current_json" > "$output_file"
       ;;
     release)
-      jq -c --arg spec "$SPEC_DIR" --arg token "$TOKEN" --arg outcome "$OUTCOME" --arg commit_sha "$COMMIT_SHA" --arg leg_id "$LEG_ID" --arg summary "$SUMMARY" --arg now "$now" \
+      jq -c --arg spec "$SPEC_DIR" --arg token "$TOKEN" --arg run_id "$RUN_ID" --arg outcome "$OUTCOME" --arg commit_sha "$COMMIT_SHA" --arg leg_id "$LEG_ID" --arg summary "$SUMMARY" --arg now "$now" \
         -f "$filter_file" "$current_json" > "$output_file"
       ;;
     claim-dispatch)
