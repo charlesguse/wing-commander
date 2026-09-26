@@ -35,7 +35,7 @@ Every path below is relative to the repository root.
 
 ## Phase 1: Setup
 
-- [ ] T001 Confirm the gate-number reservation above is still accurate:
+- [X] T001 Confirm the gate-number reservation above is still accurate:
   `grep -n "Gate 9[0-9]" .github/workflows/lint-workflows.yml` must show
   nothing above Gate 98. If it does, shift "Gate 99" to the next free
   number everywhere it appears in this file before starting Phase 4
@@ -75,7 +75,7 @@ to removal, even if no shell has moved yet").
 
 ### Implementation for User Story 1
 
-- [ ] T002 [US1] In `.github/scripts/verify-correlated-release-dispatch.py`,
+- [X] T002 [US1] In `.github/scripts/verify-correlated-release-dispatch.py`,
   add a composite-resolution helper implementing research.md D3's
   three-outcome rule for a `uses: ./.github/actions/<name>` reference
   reached from the `dispatch-release` job's steps, one level deep: (a)
@@ -92,7 +92,7 @@ to removal, even if no shell has moved yet").
   (composite path → text) so the self-test never touches real files
   (contracts/resolving-gate.md "Self-test fixture shape"); when omitted,
   resolve from the filesystem.
-- [ ] T003 [US1] Add corpus construction per research.md D1: walk
+- [X] T003 [US1] Add corpus construction per research.md D1: walk
   `auto-release.yml`'s `dispatch-release` job's step list in file order.
   A `run:` step contributes its own text tagged
   `auto-release.yml:<line>`. A `uses:` step matching a local-composite
@@ -104,7 +104,7 @@ to removal, even if no shell has moved yet").
   text (research.md D4, FR-027) — check 4 must never see composite text,
   for either its positive check (`TAG_REV_PARSE` present) or its
   forbidden-construct scan (`gh run watch`, `.conclusion`).
-- [ ] T004 [US1] Update `correlation_step_errors` (check 3) and
+- [X] T004 [US1] Update `correlation_step_errors` (check 3) and
   `wait_before_tag_read_errors` (check 5) in
   `.github/scripts/verify-correlated-release-dispatch.py` to search T003's
   spliced corpus instead of `auto_lines`, keeping each check's existing
@@ -113,7 +113,7 @@ to removal, even if no shell has moved yet").
   in changes, never what it looks for or how it phrases a failure).
   `tag_state_outcome_errors` (check 4) keeps searching only the job's own
   text (T003's check-4-only corpus).
-- [ ] T005 [US1] Add pass-path attribution (FR-005, research.md D2): when
+- [X] T005 [US1] Add pass-path attribution (FR-005, research.md D2): when
   checks 3 or 5 pass, record which tagged source (`auto-release.yml` or
   the resolved composite's path) satisfied it, and have `run_gate()`
   print one line per check naming that location, e.g. "Gate 59: check 3
@@ -122,11 +122,11 @@ to removal, even if no shell has moved yet").
   is always attributed to `auto-release.yml` (FR-027). This is additive
   to the existing pass-path `print()` — no existing failure-message
   wording changes.
-- [ ] T006 [US1] Give `contract_errors()` a `resolve=None` parameter and
+- [X] T006 [US1] Give `contract_errors()` a `resolve=None` parameter and
   thread it through to T003's corpus construction; when `run_gate()`
   calls it with `resolve=None`, T002's helper falls back to reading
   `action.yml` files from the repository root.
-- [ ] T007 [US1] Add two new in-memory self-test fixtures per research.md
+- [X] T007 [US1] Add two new in-memory self-test fixtures per research.md
   D5: `CLEAN_COMPOSITE` (a resolved composite's shell text carrying
   checks 3 and 5's allowed constructs — the correlation loop's
   `createdAt`/token match and the `gh run view ... --json status` wait)
@@ -134,7 +134,7 @@ to removal, even if no shell has moved yet").
   correlation/wait step is a `uses:` reference to that composite instead
   of the inline `run:` `CLEAN_AUTO` carries today), wired through T002's
   injectable `resolve` mapping so no real file is touched.
-- [ ] T008 [US1] Extend `self_test()` in
+- [X] T008 [US1] Extend `self_test()` in
   `.github/scripts/verify-correlated-release-dispatch.py` with the six
   new fixture cases from research.md D5's matrix, each asserted to fail
   naming only its own clause (SC-003) except the passing case:
@@ -152,14 +152,14 @@ to removal, even if no shell has moved yet").
   `uses:` with no construct at the first level — fails loudly naming the
   second-level reference.
   The self-test now covers ten cases total (four existing, six new).
-- [ ] T009 [US1] Update the module docstring of
+- [X] T009 [US1] Update the module docstring of
   `.github/scripts/verify-correlated-release-dispatch.py` per FR-024:
   document that checks 3 and 5 resolve through a called local composite
   one level deep, name which locations the gate searches, and state that
   check 4 stays scoped to the job's own text only (research.md D4) — so
   the next maintainer who moves this shell learns the rule from the gate
   itself.
-- [ ] T010 [US1] Run
+- [X] T010 [US1] Run
   `python3 .github/scripts/verify-correlated-release-dispatch.py --self-test`
   and confirm all ten cases (T008) pass; then run
   `python3 .github/scripts/verify-correlated-release-dispatch.py`
