@@ -22,8 +22,16 @@ inputs:
   transcript-path:
     description: >
       Path to the agent step's uploaded execution-output artifact /
-      transcript file to scan for the mint-failure signature.
-    required: true
+      transcript file to scan for the mint-failure signature. Defaults to
+      this job's own claude-execution-output.json under $RUNNER_TEMP (the
+      file every in-scope stage's agent step already writes) when left
+      empty -- the default is resolved inside this composite's own shell,
+      never spelled out at a call site, so no call site's `with:` text
+      itself names the transcript file (Gate 49,
+      verify-job-outputs-prose-free.py: naming it there would taint this
+      step and, through it, the job output this composite feeds).
+    required: false
+    default: ""
 
 outputs:
   mint-failure-detected:
@@ -40,6 +48,7 @@ runs:
         TRANSCRIPT_PATH: ${{ inputs.transcript-path }}
       run: |
         set -uo pipefail
-        if [ -n "$TRANSCRIPT_PATH" ] && [ -f "$TRANSCRIPT_PATH" ] && grep -qF "wing-commander-agent-push-credential: mint failed:" "$TRANSCRIPT_PATH" 2>/dev/null; then
+        path="${TRANSCRIPT_PATH:-$RUNNER_TEMP/claude-execution-output.json}"
+        if [ -f "$path" ] && grep -qF "wing-commander-agent-push-credential: mint failed:" "$path" 2>/dev/null; then
           echo "mint-failure-detected=true" >> "$GITHUB_OUTPUT"
         fi
