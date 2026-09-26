@@ -4153,6 +4153,25 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-tasks-checkbox-convergence-signal.py
 
+      # Gate 100 — #587: docs/adoption.md's per-stage `max-turns` default is
+      # prose a human types, not a value derived from the workflow file, so
+      # a stage's re-based turn budget (clarify: 40 -> 65) could move without
+      # its docs row moving with it, and nothing before this gate would have
+      # caught it. For every published stage workflow that declares
+      # workflow_call.inputs.max-turns.default, this compares that literal
+      # against docs/adoption.md's matching `### <stage>` Inputs-row
+      # `max-turns` cell and fails naming the stage and both values on any
+      # disagreement, or on finding zero stage files to check at all.
+      # Numbered 100, not the 99 this branch's own commit picked: Gate 99
+      # (specs/059-converged-means-tasks-done) claimed that number before
+      # this branch's rebase landed (see the comment above).
+      - name: "Gate 100 — every published stage's max-turns default agrees with its docs/adoption.md row"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-stage-turn-budget-docs.py
+      - name: "Gate 100 self-test — a workflow-side drift, a docs-side drift, a docs section missing its cell, and zero discoverable stage files each fail"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-stage-turn-budget-docs.py --self-test
+
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and
       # verify-denied-tool-collector.sh has already shown what happens when

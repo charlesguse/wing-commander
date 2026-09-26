@@ -150,11 +150,11 @@ after (quickstart.md step 3).
 **Depends on**: Phase 3 (T002 supplies the `65`/`163` values T006 and the
 live gate run in T012 must agree with).
 
-- [ ] T006 [P] [US3] `docs/adoption.md`: update the `### clarify` section's
+- [X] T006 [P] [US3] `docs/adoption.md`: update the `### clarify` section's
   Inputs row (line 1161) from `` `max-turns` (number, `40`) `` to
   `` `max-turns` (number, `65`) `` — no other cell in that row changes
   (data-model.md's doc table).
-- [ ] T007 [P] [US3] Create `.github/scripts/fixtures/stage-turn-budget-docs/`
+- [X] T007 [P] [US3] Create `.github/scripts/fixtures/stage-turn-budget-docs/`
   with five fixtures per contracts/gate-coverage-079.md, each a minimal
   scratch pair of workflow-YAML-snippet + docs/adoption.md-snippet
   sufficient for the gate's `--self-test` to exercise one branch:
@@ -164,7 +164,7 @@ live gate run in T012 must agree with).
   workflow still `65`), `docs-missing-cell/` (a stage's docs section has
   no `max-turns` cell while its workflow declares one), `no-subjects/`
   (an empty scratch directory — zero stage files discoverable).
-- [ ] T008 [US3] Write `.github/scripts/verify-stage-turn-budget-docs.py`
+- [X] T008 [US3] Write `.github/scripts/verify-stage-turn-budget-docs.py`
   (Gate 99), modeled on `verify-versioning-refs.py`'s
   WHY-IT-EXISTS/WHAT-IT-CHECKS/WHAT-IT-DOES-NOT-CHECK/`--self-test`
   docstring shape (research.md R5). For each of the nine published stage
@@ -181,7 +181,7 @@ live gate run in T012 must agree with).
   skipped (constitution VIII, contracts/gate-coverage-079.md). Ship
   `--self-test` running all five of T007's fixtures and reporting each by
   name. Depends on T007.
-- [ ] T009 [US3] Register Gate 99 in `.github/workflows/lint-workflows.yml`'s
+- [X] T009 [US3] Register Gate 99 in `.github/workflows/lint-workflows.yml`'s
   gate registry, following Gate 98's shape: a preceding comment naming
   this issue (#587) and describing the check, a `run:` step invoking
   `python .github/scripts/verify-stage-turn-budget-docs.py` gated
@@ -189,19 +189,19 @@ live gate run in T012 must agree with).
   script with `--self-test`. No edit to `run-local-gates.py` is needed —
   it derives its invocation set from `lint-workflows.yml` (CLAUDE.md).
   Depends on T008.
-- [ ] T010 [US3] Run `python .github/scripts/verify-stage-turn-budget-docs.py
+- [X] T010 [US3] Run `python .github/scripts/verify-stage-turn-budget-docs.py
   --self-test` and confirm all five of T007's fixtures pass/fail exactly
   as contracts/gate-coverage-079.md specifies; then run the script live
   against the working tree (after T002 and T006 have both landed) and
   confirm exit 0 for all nine stages (quickstart.md step 4). Depends on
   T002, T006, T009.
-- [ ] T011 [US3] Confirm no repository variable, workflow input, or other
+- [X] T011 [US3] Confirm no repository variable, workflow input, or other
   knob was added anywhere: `git diff main -- .github/workflows/
   .github/actions/` shows only `clarify.yml`'s literal default and inline
   comment plus `lint-workflows.yml`'s new gate registration — no new
   `inputs:`, `vars.`, or `secrets.` entry anywhere (FR-008, SC-004,
   quickstart.md step 3, Acceptance Scenario 1 of User Story 3).
-- [ ] T012 [P] [US3] Confirm every stage other than clarify is
+- [X] T012 [P] [US3] Confirm every stage other than clarify is
   byte-identical: `git diff main -- .github/workflows/intake.yml
   .github/workflows/plan.yml .github/workflows/tasks.yml
   .github/workflows/implement.yml .github/workflows/finalize.yml
@@ -209,7 +209,7 @@ live gate run in T012 must agree with).
   .github/workflows/pr-conversation.yml` is empty (FR-002/FR-009/SC-005,
   Acceptance Scenario 2 of User Story 3). Depends on T002 having landed
   (so the diff base is meaningful).
-- [ ] T013 [P] [US3] Confirm the invalid-budget guard (empty, zero,
+- [X] T013 [P] [US3] Confirm the invalid-budget guard (empty, zero,
   negative, non-numeric `max-turns` → loud failure naming the value)
   inside `wing-commander-turn-ceiling` still fires unchanged: per
   research.md R3 this guard is a function of whatever `intended-turns`
