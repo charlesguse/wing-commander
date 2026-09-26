@@ -558,6 +558,70 @@ def scenario_plan_exact_sha_ignores_live_branch_state(step_text, root):
     return failures
 
 
+def scenario_plan_no_branch_advance_no_signal_no_fallback(step_text, root):
+    """specs/068-plan-tasks-branch-advance T019 (US4; FR-016/FR-017/FR-018;
+    research.md R9 case 3): a plan run whose downloaded artifact set
+    carries no record with branch_advance.available: true produces no
+    signal, attempts no since-created fallback measurement (unlike
+    implement's own no-record case, which does fall back), names T018's
+    exact skip wording in the step summary, and the collector's own
+    outcome is "ok" — an absent optional field is data, not a failed
+    read. This same no-record shape (no GH_DOWNLOAD_FIXTURE_DIR set)
+    doubles as T021's confirmation that a record predating this feature
+    (no branch_advance key at all) produces no false detection."""
+    failures = []
+    work = tempfile.mkdtemp(dir=root)
+    bindir = new_stub_dir(work)
+    # No GH_DOWNLOAD_FIXTURE_DIR set -> the gh stub's `run download` exits 1,
+    # exactly like an expired/absent artifact -- mirrors
+    # scenario_no_branch_advance_falls_back_to_since_created's own setup.
+    env = base_env(bindir, {"RUN_NAME": "Wing Commander · 3 plan"})
+    runner_temp = os.path.join(work, "runner_temp")
+    rc, out, signals, outcomes, summary = run_collector(
+        step_text, work, runner_temp, env)
+    if rc != 0:
+        failures.append(f"plan-no-evidence: exited {rc}: {out.strip()[:300]}")
+        return failures
+    if signals:
+        failures.append(f"plan-no-evidence: expected no signal, got "
+                        f"{signals!r}")
+    if {"collector": "collect-branch-drift", "outcome": "ok"} not in outcomes:
+        failures.append(f"plan-no-evidence: collector-outcomes.json does "
+                        f"not record an 'ok' outcome: {outcomes!r}")
+    if ("no recorded branch-advance evidence on this plan run — skipping"
+            not in summary):
+        failures.append(f"plan-no-evidence: step summary does not name "
+                        f"T018's exact skip wording: {summary!r}")
+    return failures
+
+
+def scenario_tasks_no_branch_advance_no_signal_no_fallback(step_text, root):
+    """specs/068-plan-tasks-branch-advance T019 (US4; research.md R9 case
+    4): the tasks mirror of
+    scenario_plan_no_branch_advance_no_signal_no_fallback above."""
+    failures = []
+    work = tempfile.mkdtemp(dir=root)
+    bindir = new_stub_dir(work)
+    env = base_env(bindir, {"RUN_NAME": "Wing Commander · 4 tasks"})
+    runner_temp = os.path.join(work, "runner_temp")
+    rc, out, signals, outcomes, summary = run_collector(
+        step_text, work, runner_temp, env)
+    if rc != 0:
+        failures.append(f"tasks-no-evidence: exited {rc}: {out.strip()[:300]}")
+        return failures
+    if signals:
+        failures.append(f"tasks-no-evidence: expected no signal, got "
+                        f"{signals!r}")
+    if {"collector": "collect-branch-drift", "outcome": "ok"} not in outcomes:
+        failures.append(f"tasks-no-evidence: collector-outcomes.json does "
+                        f"not record an 'ok' outcome: {outcomes!r}")
+    if ("no recorded branch-advance evidence on this tasks run — skipping"
+            not in summary):
+        failures.append(f"tasks-no-evidence: step summary does not name "
+                        f"T018's exact skip wording: {summary!r}")
+    return failures
+
+
 def scenario_no_branch_advance_falls_back_to_since_created(step_text, root):
     """US3 / FR-013, FR-018: no downloaded record carries
     branch_advance.available:true -> the since-created fallback fires
@@ -752,6 +816,8 @@ SCENARIOS = [
     scenario_plan_exact_sha_equal_fires_lost_progress,
     scenario_tasks_exact_sha_differ_no_signal,
     scenario_plan_exact_sha_ignores_live_branch_state,
+    scenario_plan_no_branch_advance_no_signal_no_fallback,
+    scenario_tasks_no_branch_advance_no_signal_no_fallback,
     scenario_no_branch_advance_falls_back_to_since_created,
     scenario_head_sha_arm_unaffected,
     scenario_non_push_expected_stage_unaffected,

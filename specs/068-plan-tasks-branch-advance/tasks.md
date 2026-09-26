@@ -374,7 +374,7 @@ is still recorded as trustworthy (spec.md US4).
   collector's own outcome as `"ok"` — never `"failed"` — since an absent
   optional field is data, not a failed read (FR-016).
 
-- [ ] T019 [US4] Extend `.github/scripts/verify-branch-drift-sha-baseline.py`
+- [X] T019 [US4] Extend `.github/scripts/verify-branch-drift-sha-baseline.py`
   (Gate 65) with two scenarios (research.md R9 cases 3-4): a plan run and
   a tasks run whose downloaded artifact set carries no record with
   `branch_advance.available: true` → assert no signal is emitted, the
@@ -383,13 +383,13 @@ is still recorded as trustworthy (spec.md US4).
   fall back), the step summary names T018's exact skip wording, and the
   collector's own outcome is `"ok"`.
 
-- [ ] T020 [US4] Extend `verify-branch-drift-sha-baseline.py` with a
+- [X] T020 [US4] Extend `verify-branch-drift-sha-baseline.py` with a
   regression scenario confirming a spec-branch-head run (`baseline =
   "head-sha"`) and a non-push-expected stage remain unaffected by T011/
   T018's changes (mirrors `specs/050-branch-drift-sha-baseline`'s own case
   5; research.md R9 item 5).
 
-- [ ] T021 [US4] Confirm (no code change expected) that a record predating
+- [X] T021 [US4] Confirm (no code change expected) that a record predating
   this feature — one with no `branch_advance` key at all, e.g. an existing
   fixture like `valid-single-model.json` — still validates under Gate 39
   unchanged, and that a plan/tasks run whose record lacks the group (an
