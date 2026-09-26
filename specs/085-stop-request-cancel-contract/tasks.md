@@ -177,7 +177,7 @@ Independent Test for this story).
 composite can pipe into it; T007 supplies the decision-function mutation
 T016 combines with).
 
-- [ ] T010 [US2] In
+- [X] T010 [US2] In
   `.github/actions/wing-commander-board-stop-check/action.yml`'s `check`
   step, remove the inline `python3 -c` block (lines 110-117 today) that
   inserts `.github/scripts` onto `sys.path` and imports `find_stop_request`.
@@ -192,7 +192,7 @@ T016 combines with).
   remain anywhere in this step (FR-006, User Story 2 Acceptance Scenario 1,
   SC-002, contracts/composite-invocation.md, research.md D4). The unchanged
   paginated comment read (lines 107-109) stays exactly as today.
-- [ ] T011 [US2] In the same `check` step, immediately after capturing
+- [X] T011 [US2] In the same `check` step, immediately after capturing
   `stop_decision_json`, validate it before reading either field — e.g. `jq
   -e '.stand_down | type=="boolean"' >/dev/null <<<"$stop_decision_json" ||
   { echo "::error::..." ; exit 1; }` — so a malformed payload, a crash, or a
@@ -200,7 +200,7 @@ T016 combines with).
   pipefail`, line 102) all fail the step loudly rather than resolving to "no
   stop request" (FR-007, User Story 2 Acceptance Scenario 2, research.md
   D5). Depends on T010.
-- [ ] T012 [US2] In the same `check` step, read `stand_down` and
+- [X] T012 [US2] In the same `check` step, read `stand_down` and
   `cancel_run_id` from the validated JSON (`jq -r '.stand_down'`, `jq -r
   '.cancel_run_id // empty'`), and keep exactly one shell comparison of
   `cancel_run_id` against `$GITHUB_RUN_ID` in the same position the old
@@ -213,13 +213,13 @@ T016 combines with).
   repository-target guards already carry in this step (FR-004, User Story 1
   Acceptance Scenario 4, contracts/composite-invocation.md, research.md D6).
   `paused` computation is unchanged. Depends on T010, T011.
-- [ ] T013 [P] [US2] Diff
+- [X] T013 [P] [US2] Diff
   `.github/actions/wing-commander-board-stop-check/action.yml`'s `inputs:`,
   `outputs:`, the `closed-check` step, and every guard below the self-cancel
   comparison (unreadable-run, workflow-path, repository, completed-status)
   against `main` — confirm none of it changed (FR-008). Verify only; no
   edit expected.
-- [ ] T014 [US2] In `.github/scripts/verify-board-stop-check.py`, add
+- [X] T014 [US2] In `.github/scripts/verify-board-stop-check.py`, add
   `"999": {"status": "in_progress", "path": OWN_PATH, "repository":
   {"full_name": REPO}}` to `RUNS` — closing the gate gap spec.md's own
   section names: `GITHUB_RUN_ID` is hard-coded `"999"` in
@@ -227,14 +227,14 @@ T016 combines with).
   `RUNS`, which is why the existing forged-marker shell case is saved by the
   unreadable-run guard regardless of the self-cancel comparison (FR-011,
   contracts/gate-87-coverage.md, research.md D9(2)).
-- [ ] T015 [US2] In the same file, add a `SHELL_CASES` entry: `("a first
+- [X] T015 [US2] In the same file, add a `SHELL_CASES` entry: `("a first
   pass through this run cancels nothing even though that run is otherwise a
   readable, same-workflow, non-completed run", [_marker(999), STOP],
   "true", None)` — proving the self-cancel invariant holds end-to-end
   through the real composite shell now that `999` is readable (T014). This
   is the exact scenario the "gate gap" section traces as previously
   unprovable. Depends on T014.
-- [ ] T016 [US2] In `composite_shell_check()`, extend the existing
+- [X] T016 [US2] In `composite_shell_check()`, extend the existing
   `GUARD_LINE_RE`-based mutation with a second mutation that also disables
   the redundant `cancel_run_id != $GITHUB_RUN_ID`-shaped comparison
   (T012's line), run in combination with a temporary on-disk copy of
@@ -248,18 +248,18 @@ T016 combines with).
   contracts/gate-87-coverage.md's "Extending the composite-shell mutation"
   section). The existing workflow-path guard mutation is unchanged and
   continues to run on its own. Depends on T007, T010-T012, T014, T015.
-- [ ] T017 [US2] Run `python3 .github/scripts/verify-board-stop-check.py`
+- [X] T017 [US2] Run `python3 .github/scripts/verify-board-stop-check.py`
   and confirm `0 failure(s)` end to end: every fixture, command case, all
   five `MUTATIONS` entries, every `SHELL_CASES` case (including T015's new
   one), and both composite-shell mutations (the pre-existing workflow-path
   one and T016's new combined one) report caught/`[ok]` (quickstart.md step
   4, in full). Depends on T008, T010-T016.
-- [ ] T018 [P] [US2] Follow quickstart.md step 3: `grep -n "sys.path"` and
+- [X] T018 [P] [US2] Follow quickstart.md step 3: `grep -n "sys.path"` and
   `grep -n "from board_stop_check import"` against
   `.github/actions/wing-commander-board-stop-check/action.yml` and confirm
   both find nothing (User Story 2 Acceptance Scenario 1, SC-002). Depends
   on T010.
-- [ ] T019 [P] [US2] Follow quickstart.md step 7: `git diff main --
+- [X] T019 [P] [US2] Follow quickstart.md step 7: `git diff main --
   .github/workflows/board-loop.yml` and confirm no output — this file
   consumes the composite's `paused` output across six jobs and is not part
   of this feature's diff (FR-008).
