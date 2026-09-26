@@ -40,7 +40,7 @@ applies.
 
 ## Phase 1: Setup (Shared Infrastructure)
 
-- [ ] T001 [P] Add a `.wc-pristine-repo/` entry to `.gitignore` so no `git
+- [X] T001 [P] Add a `.wc-pristine-repo/` entry to `.gitignore` so no `git
       add` invocation in any board-loop job — including the fixer and
       review-fixup agents' own `Bash(git add:*)` tool grant — can ever
       stage the sidecar into a board item's branch or pull request

@@ -10,3 +10,8 @@
 __pycache__/
 *.pyc
 .claude/worktrees/
+
+# board-loop.yml's own trusted-copy checkout (specs/086-trusted-composite-resolution):
+# a checkout of this repository at github.sha, so no git add invocation --
+# scripted or agent-typed -- can ever stage it into a board item's branch.
+.wc-pristine-repo/
