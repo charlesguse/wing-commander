@@ -2,7 +2,7 @@
   "issue": 509,
   "spec_dir": "specs/067-e2e-container-image-evidence",
   "feature_num": "067",
-  "stage": "plan",
+  "stage": "tasks",
   "iteration": 0,
   "spec_branch": "spec/067-e2e-container-image-evidence"
 }
