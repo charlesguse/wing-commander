@@ -1056,6 +1056,13 @@ jobs:
         with:
           mint-outcome: ${{ steps.reestablish-triage.outcome }}
 
+      - name: Record agent-ran signal (triage-propose)
+        id: agent-ran-triage
+        if: "!cancelled() && steps.propose.outcome != 'skipped'"
+        uses: ./.github/actions/wing-commander-agent-ran-signal
+        with:
+          agent-outcome: ${{ steps.propose.outcome }}
+
       - name: Compute agent run verdict (triage-propose)
         id: triage-verdict
         if: always() && steps.propose.outcome != 'skipped'
@@ -1387,6 +1394,13 @@ jobs:
         uses: ./.github/actions/wing-commander-post-agent-credential-status
         with:
           mint-outcome: ${{ steps.reestablish-route.outcome }}
+
+      - name: Record agent-ran signal (route-propose)
+        id: agent-ran-route
+        if: "!cancelled() && steps.propose.outcome != 'skipped'"
+        uses: ./.github/actions/wing-commander-agent-ran-signal
+        with:
+          agent-outcome: ${{ steps.propose.outcome }}
 
       - name: Compute agent run verdict (route-propose)
         id: route-verdict
@@ -1917,6 +1931,13 @@ jobs:
           mint-outcome: ${{ steps.reestablish-fix.outcome }}
           refresh-outcome: ${{ steps.refresh-remote-fix.outcome }}
 
+      - name: Record agent-ran signal (fixer)
+        id: agent-ran-fix
+        if: "!cancelled() && steps.fixer.outcome != 'skipped'"
+        uses: ./.github/actions/wing-commander-agent-ran-signal
+        with:
+          agent-outcome: ${{ steps.fixer.outcome }}
+
       - name: Compute agent run verdict (fixer)
         id: fix-verdict
         if: always() && steps.fixer.outcome != 'skipped'
@@ -2439,12 +2460,28 @@ jobs:
           app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
           private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
 
+      - name: Refresh authenticated remote (post-agent, reviewer)
+        id: refresh-remote-review
+        if: "!cancelled() && steps.reviewer.outcome != 'skipped'"
+        continue-on-error: true
+        uses: ./.github/actions/wing-commander-refresh-remote
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
+
       - name: Determine post-agent credential status (reviewer)
         id: credential-status-review
         if: "!cancelled() && steps.reviewer.outcome != 'skipped'"
         uses: ./.github/actions/wing-commander-post-agent-credential-status
         with:
           mint-outcome: ${{ steps.reestablish-review.outcome }}
+          refresh-outcome: ${{ steps.refresh-remote-review.outcome }}
+
+      - name: Record agent-ran signal (reviewer)
+        id: agent-ran-review
+        if: "!cancelled() && steps.reviewer.outcome != 'skipped'"
+        uses: ./.github/actions/wing-commander-agent-ran-signal
+        with:
+          agent-outcome: ${{ steps.reviewer.outcome }}
 
       - name: Compute agent run verdict (reviewer)
         id: review-verdict
@@ -3046,6 +3083,13 @@ jobs:
         with:
           mint-outcome: ${{ steps.reestablish-review-fixup.outcome }}
           refresh-outcome: ${{ steps.refresh-remote-review-fixup.outcome }}
+
+      - name: Record agent-ran signal (review-fixup)
+        id: agent-ran-review-fixup
+        if: "!cancelled() && steps.review-fixup.outcome != 'skipped'"
+        uses: ./.github/actions/wing-commander-agent-ran-signal
+        with:
+          agent-outcome: ${{ steps.review-fixup.outcome }}
 
       - name: Compute agent run verdict (review-fixup)
         id: review-fixup-verdict
