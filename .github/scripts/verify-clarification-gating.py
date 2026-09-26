@@ -91,6 +91,10 @@ CLARIFY = ".github/workflows/clarify.yml"
 # cap, where any earlier "denied" line masked them permanently.
 SENTINEL_PREFIX = "WC-SENTINEL: "
 
+# specs/065-intake-silent-path-cost: the single home of the uniform cost
+# report. Every stage's `Report run cost` step must point at this composite.
+COST_REPORT_ACTION = "wing-commander-cost-report"
+
 
 BASH = None          # set in main(), so importing this module probes nothing
 
@@ -843,7 +847,16 @@ def run_scenario(stage, steps, sc, tmproot):
     # scenario's outcome (clarify's job_failed=True scenario) rather than
     # silently surviving, since evaluate_if() alone always treats `always()`
     # as a no-op regardless of whether it is textually present.
-    if stage.report_cost:
+    if stage.report_cost and stage.report_cost not in steps:
+        # load_steps() hard-errors on a step missing from the real workflow,
+        # so this branch is only reachable from the "step deleted outright"
+        # mutation — which must land as a scenario failure, not a KeyError
+        # traceback that reads like a broken harness.
+        failures.append(
+            f"{tag} the uniform cost report ({stage.report_cost!r}) is gone "
+            f"from {stage.path} entirely. A run whose agent stepped must "
+            f"report its cost on every path (FR-001/FR-003/FR-012).")
+    elif stage.report_cost:
         report_if = steps[stage.report_cost].get("if")
         has_always = "always()" in str(report_if or "")
         report_fires = ((has_always or not job_failed)
@@ -887,7 +900,7 @@ def run_scenario(stage, steps, sc, tmproot):
                             f"the uniform cost report, so a run whose agent "
                             f"stepped would now double-report on every path "
                             f"that also fires this callout.")
-    if stage.report_cost:
+    if stage.report_cost and stage.report_cost in steps:
         report = steps[stage.report_cost]
         if "steps.cost-line.outputs.line" not in str(
                 (report.get("with") or {}).get("cost-line", "")):
@@ -895,6 +908,18 @@ def run_scenario(stage, steps, sc, tmproot):
                 f"{tag} {stage.report_cost!r} posts without the cost line: "
                 f"its `with.cost-line` is not steps.cost-line.outputs.line. "
                 f"A run that spent money must report it (FR-001).")
+        # The step name alone proves nothing about what it calls: a step
+        # still named `Report run cost` that has been re-pointed at any
+        # other composite is a report that no longer posts a cost. FR-002:
+        # the one home is wing-commander-cost-report.
+        if COST_REPORT_ACTION not in str(report.get("uses", "")):
+            failures.append(
+                f"{tag} {stage.report_cost!r} does not call "
+                f"{COST_REPORT_ACTION} (its uses: is "
+                f"{str(report.get('uses', '')) or '(unset)'!r}). The uniform "
+                f"cost report has exactly one home; a call site pointed "
+                f"somewhere else is a stage that has quietly stopped "
+                f"reporting (FR-002).")
 
     # --- does the run actually go red? -----------------------------------
     # Asserted separately from the callouts because the two can disagree in
@@ -1212,6 +1237,50 @@ def mut_cost_report_without_cost(loaded):
             steps[stage.report_cost]["with"]["cost-line"] = ""
 
 
+def mut_remove_cost_report(loaded):
+    """The report step is deleted outright — #366's defect, restored.
+
+    This is the whole feature's premise: a stage that spent money and says
+    nothing about it. Gate 47 and the sibling check in
+    verify-metrics-summary-record-emission.py cover the *duplicate*; this
+    covers the deletion, which is how the report disappeared last time.
+    """
+    for stage, steps, _ in loaded:
+        if stage.report_cost:
+            steps.pop(stage.report_cost, None)
+
+
+def mut_cost_report_drop_always(loaded):
+    """The report's if: loses always().
+
+    Without it GitHub Actions ANDs an implicit success() onto the condition,
+    so clarify's validation gate exiting 1 in place strands the report below
+    it: the runs most worth costing (the red ones) stop reporting (FR-012a).
+    """
+    for stage, steps, _ in loaded:
+        if stage.report_cost:
+            _strip_conjunct_one(steps[stage.report_cost], "always()")
+
+
+def mut_cost_report_drop_agent_ran(loaded):
+    """The report's if: loses `steps.agent.outcome != 'skipped'`, so a run
+    whose agent never stepped posts a cost line for money nobody spent."""
+    for stage, steps, _ in loaded:
+        if stage.report_cost:
+            _strip_conjunct_one(steps[stage.report_cost],
+                                "steps.agent.outcome")
+
+
+def mut_cost_report_wrong_action(loaded):
+    """The report keeps its name but is re-pointed at another composite —
+    a step that still reads as a cost report and posts no cost."""
+    for stage, steps, _ in loaded:
+        if stage.report_cost:
+            steps[stage.report_cost]["uses"] = (
+                "./.wing-commander-pipeline/.github/actions/"
+                "wing-commander-callout")
+
+
 def mut_no_cell_escape(loaded):
     """Agent text reaches the markdown table cell unescaped."""
     for stage, steps, _ in loaded:
@@ -1244,6 +1313,15 @@ MUTATIONS = [
      "cancelled run)", mut_drop_cost_report),
     ("the uniform cost report posting without the cost line",
      mut_cost_report_without_cost),
+    ("the uniform cost report deleted outright (the #366 defect, restored)",
+     mut_remove_cost_report),
+    ("the uniform cost report's if: losing always() (stranded below a "
+     "validation gate that exited 1 in place)", mut_cost_report_drop_always),
+    ("the uniform cost report's if: losing its agent-ran conjunct (would "
+     "report a cost for a run whose agent never stepped)",
+     mut_cost_report_drop_agent_ran),
+    ("the uniform cost report re-pointed at another composite",
+     mut_cost_report_wrong_action),
     ("agent text reaching a markdown table cell unescaped", mut_no_cell_escape),
     ("options past Z rendering their label as null", mut_no_ordinal_fallback),
 ]

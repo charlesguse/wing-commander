@@ -369,7 +369,7 @@ mis-gated, emptied, or pasted as a private duplicate.
 **Independent Test**: Run each gate script's `--self-test` mode and confirm
 every mutated (broken) variant is rejected.
 
-- [ ] T019 [US4] In `.github/scripts/verify-clarification-gating.py`, add
+- [X] T019 [US4] In `.github/scripts/verify-clarification-gating.py`, add
       self-test mutations for the new `Report run cost` step (both
       `INTAKE_STAGE` and `CLARIFY_STAGE`), mirroring Gate 63's mutation
       style: (1) the step removed entirely; (2) its `if:` loses `always()`;
@@ -380,7 +380,7 @@ every mutated (broken) variant is rejected.
       clean (unmutated) tree still passes first, per every other gate's
       self-test convention in this file.
 
-- [ ] T020 [US4] In `.github/scripts/verify-metrics-summary-record-emission.py`,
+- [X] T020 [US4] In `.github/scripts/verify-metrics-summary-record-emission.py`,
       add a sibling check next to `case_cost_line_formatter_has_exactly_one_home`
       that scans every workflow file and every `.github/actions/**` file
       (excluding `wing-commander-cost-report/action.yml` itself) for: (a) the
