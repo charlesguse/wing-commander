@@ -149,6 +149,12 @@ local verification CLAUDE.md's "Before pushing" section mandates.
 
 ---
 
+## Phase 7: Convergence
+
+- [ ] T023 Add a `tempfile.mkdtemp()` fixture to `.github/scripts/verify-stage-tool-lists.py`'s `self_test()` (or `_collector_fixtures()`) containing a syntactically invalid `.github/workflows/*.yml` file, and assert `_load_workflows()` (or `run()`) reports the FR-009 "could not be parsed as YAML and was skipped" failure for that file rather than raising `yaml.YAMLError` uncaught — the try/except branch T002 added currently has no checked-in fixture exercising it (Constitution VIII, FR-009)
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies
