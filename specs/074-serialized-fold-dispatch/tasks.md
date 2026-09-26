@@ -27,7 +27,7 @@ Confirmed against `.github/workflows/lint-workflows.yml` at this tasks-stage run
 
 ## Phase 1: Setup
 
-- [ ] T001 Re-confirm immediately before opening the implementation PR that Gate 99 is still the next unclaimed gate number in `.github/workflows/lint-workflows.yml` (locked above as Gate 98 + 1); if another feature has since claimed 99, renumber every task below and every `Gate 99` reference in the new gate script and its registration accordingly
+- [X] T001 Re-confirm immediately before opening the implementation PR that Gate 99 is still the next unclaimed gate number in `.github/workflows/lint-workflows.yml` (locked above as Gate 98 + 1); if another feature has since claimed 99, renumber every task below and every `Gate 99` reference in the new gate script and its registration accordingly
 
 ---
 
