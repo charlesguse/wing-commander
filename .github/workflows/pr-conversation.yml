@@ -831,6 +831,11 @@ jobs:
         with:
           intended-turns: ${{ inputs.max-turns }}
 
+      # FR-025 exclusion (specs/071-agent-push-credential): this step's own
+      # default-disallowed-tools above explicitly lists
+      # Bash(git push:*),Bash(git commit:*) -- a deliberately strictly
+      # read-only classifier. Neither the credential-helper call nor the
+      # retry-bound prompt paragraph applies here.
       - name: Classify the PR conversation request
         id: agent
         if: steps.identity.outputs.qualifies == 'true' && steps.lifecycle-gate.outputs.is-open == 'true' && steps.actor-gate.outputs.authorized == 'true' && steps.relay-resume.outputs.resumed != 'true' && steps.tool-args-classify.outputs.allowed-tools != ''
@@ -1914,6 +1919,18 @@ jobs:
           token: ${{ env.WC_BOT_TOKEN }}
           fetch-depth: 0
           clean: false
+
+      # A fresh-mint credential for the agent step's own `git push` calls
+      # -- see clarify.yml.
+      - name: Install fresh-mint push credential (agent)
+        id: push-cred
+        if: steps.relay-gate.outputs.proceed == 'true' && steps.route.outputs.agent-needed == 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-push-credential
+        with:
+          app-id: ${{ secrets.speckit-app-id }}
+          private-key: ${{ secrets.speckit-app-private-key }}
+          owner: ${{ github.repository_owner }}
+          repo-name: ${{ github.event.repository.name }}
 
       # Drafted-content is already-classified data (T006), but still not
       # fresh instructions — staged to a file, not interpolated (constitution V).

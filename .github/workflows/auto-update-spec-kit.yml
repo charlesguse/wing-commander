@@ -1957,6 +1957,12 @@ jobs:
         with:
           intended-turns: ${{ inputs.e2e-stage-max-turns }}
 
+      # FR-025 exclusion (specs/071-agent-push-credential): this step's own
+      # --disallowedTools below explicitly lists Bash(git push:*), and its
+      # prompt (below) instructs it not to push at all -- the workflow's
+      # own deterministic steps (T009/T012 above) do all pushing. Neither
+      # the credential-helper call nor the retry-bound prompt paragraph
+      # applies to this step itself.
       - name: Run e2e agent-driven stage
         id: decide
         continue-on-error: true
@@ -2188,6 +2194,23 @@ jobs:
             echo "$detail"
             echo "AUTOUPDATE_EOF"
           } >> "$GITHUB_OUTPUT"
+
+      # FR-008 (specs/071-agent-push-credential, research.md D9): the same
+      # composite that covers every other in-scope stage's agent push,
+      # parameterized to the scratch repository rather than
+      # github.repository. Unlike every other call site (T007-T013), this
+      # one attaches to a deterministic step, not an agent step -- `decide`
+      # above never pushes at all -- see this run's wing-commander-findings
+      # for the placement/mechanism tension this diverges to work around.
+      - name: Install fresh-mint push credential (scratch)
+        id: push-cred-scratch
+        if: steps.readback.outputs.passed == 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-push-credential
+        with:
+          app-id: ${{ secrets.speckit-app-id }}
+          private-key: ${{ secrets.speckit-app-private-key }}
+          owner: ${{ steps.scratch-parts.outputs.owner }}
+          repo-name: ${{ steps.scratch-parts.outputs.name }}
 
       # T012: best-effort — a push failure here must never flip `passed`,
       # since the gating assertion already happened against the local

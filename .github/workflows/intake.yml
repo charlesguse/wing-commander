@@ -597,6 +597,19 @@ jobs:
         with:
           intended-turns: ${{ inputs.max-turns }}
 
+      # A fresh-mint credential for the agent step's own `git push` calls,
+      # resolved at the moment of each push rather than fixed at job start
+      # -- see clarify.yml.
+      - name: Install fresh-mint push credential (agent)
+        id: push-cred
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.tool-args-intake.outputs.allowed-tools != ''
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-push-credential
+        with:
+          app-id: ${{ secrets.speckit-app-id }}
+          private-key: ${{ secrets.speckit-app-private-key }}
+          owner: ${{ github.repository_owner }}
+          repo-name: ${{ github.event.repository.name }}
+
       - name: Create spec from issue
         id: agent
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.tool-args-intake.outputs.allowed-tools != ''

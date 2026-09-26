@@ -668,6 +668,11 @@ jobs:
         with:
           intended-turns: ${{ inputs.max-turns }}
 
+      # FR-025 exclusion (specs/071-agent-push-credential): this step's own
+      # default-allowed-tools has no Bash(git push:*) -- it only reads the
+      # diff and writes a summary; PR creation is a later deterministic
+      # `gh pr create`/`gh pr edit` step. Neither the credential-helper
+      # call nor the retry-bound prompt paragraph applies here.
       - name: Summarize change and extract remaining manual work
         id: summarize
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true' && steps.tool-args-finalize.outputs.allowed-tools != ''

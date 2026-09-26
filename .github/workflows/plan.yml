@@ -693,6 +693,18 @@ jobs:
         with:
           intended-turns: ${{ inputs.max-turns }}
 
+      # A fresh-mint credential for the agent step's own `git push` calls
+      # -- see clarify.yml.
+      - name: Install fresh-mint push credential (agent-auto)
+        id: push-cred-auto
+        if: steps.dupe.outputs.skip != 'true' && steps.mode.outputs.mode == 'auto' && steps.tool-args-plan-direct-commit.outputs.allowed-tools != ''
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-push-credential
+        with:
+          app-id: ${{ secrets.speckit-app-id }}
+          private-key: ${{ secrets.speckit-app-private-key }}
+          owner: ${{ github.repository_owner }}
+          repo-name: ${{ github.event.repository.name }}
+
       - name: Generate implementation plan (direct commit)
         id: agent-auto
         if: steps.dupe.outputs.skip != 'true' && steps.mode.outputs.mode == 'auto' && steps.tool-args-plan-direct-commit.outputs.allowed-tools != ''
@@ -894,6 +906,18 @@ jobs:
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-turn-ceiling
         with:
           intended-turns: ${{ inputs.max-turns }}
+
+      # A fresh-mint credential for the agent step's own `git push` calls
+      # -- see clarify.yml.
+      - name: Install fresh-mint push credential (agent-pr)
+        id: push-cred-pr
+        if: steps.dupe.outputs.skip != 'true' && steps.mode.outputs.mode == 'pr' && steps.tool-args-plan-pr.outputs.allowed-tools != ''
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-push-credential
+        with:
+          app-id: ${{ secrets.speckit-app-id }}
+          private-key: ${{ secrets.speckit-app-private-key }}
+          owner: ${{ github.repository_owner }}
+          repo-name: ${{ github.event.repository.name }}
 
       - name: Generate implementation plan
         id: agent-pr

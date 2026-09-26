@@ -850,6 +850,18 @@ jobs:
         with:
           intended-turns: ${{ inputs.max-turns }}
 
+      # A fresh-mint credential for the agent step's own `git push` calls
+      # -- see clarify.yml.
+      - name: Install fresh-mint push credential (cycle)
+        id: push-cred-cycle
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true' && steps.tool-args-cycle.outputs.allowed-tools != ''
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-push-credential
+        with:
+          app-id: ${{ secrets.speckit-app-id }}
+          private-key: ${{ secrets.speckit-app-private-key }}
+          owner: ${{ github.repository_owner }}
+          repo-name: ${{ github.event.repository.name }}
+
       - name: Implement and converge (cycle)
         id: cycle
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true' && steps.tool-args-cycle.outputs.allowed-tools != ''
@@ -1437,6 +1449,23 @@ jobs:
         run: |
           git fetch origin "+refs/heads/${SPEC_PREFIX}$SLUG:refs/remotes/origin/${SPEC_PREFIX}$SLUG"
           echo "base-sha=$(git rev-parse "origin/${SPEC_PREFIX}$SLUG")" >> "$GITHUB_OUTPUT"
+
+      # A fresh-mint credential for the agent step's own `git push` calls
+      # -- see clarify.yml.
+      - name: Install fresh-mint push credential (retry)
+        id: push-cred-retry
+        if: >-
+          steps.lifecycle-gate.outputs.is-open == 'true' &&
+          steps.guard.outputs.skip != 'true' &&
+          steps.outcome.outputs.ok == 'false' &&
+          steps.effective-model.outputs.model != inputs.escalation-model &&
+          steps.tool-args-retry.outputs.allowed-tools != ''
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-push-credential
+        with:
+          app-id: ${{ secrets.speckit-app-id }}
+          private-key: ${{ secrets.speckit-app-private-key }}
+          owner: ${{ github.repository_owner }}
+          repo-name: ${{ github.event.repository.name }}
 
       - name: Implement and converge (retry at escalation model)
         id: retry
@@ -2081,6 +2110,10 @@ jobs:
         with:
           intended-turns: 15
 
+      # FR-025 exclusion (specs/071-agent-push-credential): this step's own
+      # default-disallowed-tools already lists Bash(git:*) below -- it
+      # never pushes, so it gets neither the credential-helper call nor
+      # the retry-bound prompt paragraph.
       - name: Compose progress summary (haiku)
         id: progress
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true' && steps.final.outputs.ok == 'true' && steps.tool-args-post-progress-comment.outputs.allowed-tools != ''

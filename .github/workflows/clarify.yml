@@ -560,6 +560,23 @@ jobs:
         with:
           intended-turns: ${{ inputs.max-turns }}
 
+      # A fresh-mint credential for the agent step's own `git push` calls
+      # (specs/071-agent-push-credential): a git credential.helper that
+      # mints a new App installation token on every outbound
+      # https://github.com/... operation, so a push issued deep into a
+      # long agent cycle never authenticates with the token
+      # actions/checkout@v5 embedded at job start. This is the canonical
+      # call-site comment -- every other in-scope stage's copy points here.
+      - name: Install fresh-mint push credential (agent)
+        id: push-cred
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.tool-args-clarify.outputs.allowed-tools != ''
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-push-credential
+        with:
+          app-id: ${{ secrets.speckit-app-id }}
+          private-key: ${{ secrets.speckit-app-private-key }}
+          owner: ${{ github.repository_owner }}
+          repo-name: ${{ github.event.repository.name }}
+
       - name: Fold answers into the draft spec
         id: agent
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.tool-args-clarify.outputs.allowed-tools != ''
