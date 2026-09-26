@@ -290,9 +290,9 @@ jobs:
       # in this job. The precheck below detects, from the token's own
       # literal prefix, which of the two accepted shapes the secret holds
       # -- classic or fine-grained -- and applies that shape's own checks;
-      # both are accepted during the transition (FR-003). See
+      # both are accepted during the transition (FR-003) -- see
       # docs/setup.md for the canonical statement of what each shape must
-      # carry (scope, permissions, expiry, rotation) -- specs/055-
+      # carry (scope, permissions, expiry, rotation). specs/055-
       # unattended-e2e-gates D1/D2 recorded the now-superseded classic-only
       # decision this feature replaces. Checked here, before any of those
       # gates are reached, so a misconfigured credential ends fail-infra

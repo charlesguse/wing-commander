@@ -4372,6 +4372,30 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-waiver-citations.py --self-test
 
+      # Gate 125 — specs/066-fine-grained-maintainer-token FR-017/FR-018: "a
+      # classic PAT, not fine-grained" was asserted in at least four places
+      # (docs/setup.md, auto-release.yml's credential-step comment, Gate
+      # 67's own docstring/scenario text, and specs/055-unattended-e2e-
+      # gates' research.md D1/D2 and Clarifications session) before this
+      # feature flipped the shape in three of them. docs/setup.md's secret
+      # row is now the sole canonical statement; the other three sites must
+      # carry a pointer to it (or, for specs/055's historical record, the
+      # FR-019 annotation) and none may carry an unqualified contradicting
+      # phrase. A new, topic-specific gate rather than an extension of Gate
+      # 47 (research.md D7): Gate 47's declared scope is `#` comments in
+      # .github/workflows/*.yml only, and never scans docs/*.md or
+      # specs/*/research.md as a pointer source. Numbered 125, not the 101
+      # this branch's own commit picked: Gate 101 is reserved for
+      # specs/060-self-redrive-concurrency, and this rebase's "onto" tip
+      # already claims up to Gate 124 with its own new gate (the waiver
+      # citations entry above).
+      - name: "Gate 125 — one canonical statement of the accepted maintainer-credential shape, every other site a pointer"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-maintainer-credential-canonical-statement.py
+      - name: "Gate 125 self-test — an unqualified contradicting phrase with no pointer, a removed pointer, a pointer aimed elsewhere, or a missing FR-019 annotation each fail"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-maintainer-credential-canonical-statement.py --self-test
+
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and
       # verify-denied-tool-collector.sh has already shown what happens when
