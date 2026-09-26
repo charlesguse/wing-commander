@@ -3,6 +3,6 @@
   "spec_dir": "specs/082-script-grant-existence-scope",
   "feature_num": "082",
   "stage": "implement",
-  "iteration": 1,
+  "iteration": 2,
   "spec_branch": "spec/082-script-grant-existence-scope"
 }
