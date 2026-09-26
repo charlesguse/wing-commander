@@ -57,40 +57,51 @@ written down - are still compared in order. Widening every row to a set
 comparison would have been the easy fix and would have thrown away a real
 assertion on the thirteen rows that can hold it.
 
-  3. Every `Bash(.specify/scripts/bash/<script>...)` grant - bare, or
-     prefixed with `bash `/`sh `/`./`, with or without a trailing
-     argument before the wildcard - names a script that exists. Spec Kit
-     stopped shipping `update-agent-context.sh` and both plan sites kept
-     granting it, with the prompt still describing the step it ran
-     (#426). A granted command that does not exist cannot be abused, but
-     it is a stale entry in a load-bearing list, and the next Spec Kit
-     rename would leave the same hole. Scoped to `.specify/scripts/bash/`
-     only, the one directory #426 actually hit, and to grants that reach
-     this check through a `wing-commander-tool-args` call site - a script
-     grant rooted elsewhere, or composed through a different mechanism
-     (e.g. a bare `claude_args` string), is not this check's job yet.
+  3. Every `Bash(<path>)` grant - at a `wing-commander-tool-args` composite
+     call site's `default-allowed-tools`, a reusable-workflow caller's
+     `extra-allowed-tools`/`allowed-tools-override`, or a bare
+     `claude-code-action` step's `claude_args --allowedTools` string - names
+     a script that exists, once any interpreter prefix (bare, `bash `, `sh `,
+     `./`, `python `/`python3 `, with an optional flag) is stripped and the
+     remaining token is a path (a leading `./` or a contained `/`) rather
+     than a bare command (`jq`, `git status`). A path absent from the
+     checkout by design (a run-time-provisioned directory) is recorded, with
+     its exact text and a reason, in `script-grant-waivers.json` - an entry
+     whose path *does* resolve is itself a failure, so the record cannot
+     outlive its reason. Spec Kit stopped shipping `update-agent-context.sh`
+     and both plan sites kept granting it, with the prompt still describing
+     the step it ran (#426); the same failure mode is now caught regardless
+     of which of the three surfaces carries the stale grant or which
+     directory the script lives in.
 
 WHAT IT DOES NOT CHECK
 ----------------------
 Whether a default list is the RIGHT list. Gate 12 answers that for `gh`
 tools (does the step's token carry the permission the grant implies); this
 gate mostly only answers whether the documentation says what the workflows
-do. Check 3 is the one exception: it reads the granted `.specify` script
-path against the working tree, not the table, so it can fail even when
-documentation and call sites already agree with each other (#426).
+do. Check 3 is the one exception: it reads the granted script path against
+the working tree, not the table, so it can fail even when documentation and
+call sites already agree with each other (#426). Check 3 resolves every
+granted path at the three surfaces named above; a `Bash(<path>)` grant
+written anywhere else under `.github/workflows/` is a fourth surface the
+check does not yet cover, and adding it is a new finding, not a gap this
+check silently absorbs (specs/082).
 
 SELF-TEST
 ---------
 `--self-test` mutates the real inputs in memory - dropping a row, adding a
 row for no call site, reordering one list, editing a single tool,
-breaking a `same as` reference, and granting a `.specify` script that
-does not exist - and asserts each is caught, and caught for the right
-reason. A gate that cannot fail its own subject is worthless; this
-repository has three recorded instances of shipping one (#169).
+breaking a `same as` reference, and granting a script that does not exist -
+and asserts each is caught, and caught for the right reason. A gate that
+cannot fail its own subject is worthless; this repository has three
+recorded instances of shipping one (#169). ...and granting a script at a
+reusable-workflow-caller or bare-`claude_args` surface that does not exist,
+plus a waiver entry that has gone stale (specs/082).
 """
 import argparse
 import glob
 import io
+import json
 import os
 import re
 import shutil
@@ -126,14 +137,44 @@ READ_CAPABLE_LABELS = {
     "implement.cycle", "implement.retry",
 }
 
-# A grant of a Spec Kit helper script: the two spellings the call sites use
-# (bare, and `bash `-prefixed), plus `sh ` and a `./` path prefix, and an
-# optional trailing argument before the wildcard, so a re-spelled grant
-# cannot walk around the check. The captured path is checked against the
-# working tree, case-sensitively even on a case-insensitive filesystem,
-# since Actions runs on Ubuntu (#426, #436 review round 2).
-SCRIPT_GRANT = re.compile(
-    r"^Bash\((?:(?:bash|sh) )?(?:\./)?(\.specify/scripts/bash/[^:\s)]+)[^)]*\)$")
+# A grant of any script, at any of the three surfaces this gate checks: an
+# optional interpreter prefix (`bash`, `sh`, `python`, `python3`, with zero or
+# more `-flag` tokens) followed by the granted token, so a re-spelled grant
+# cannot walk around the check. The captured token is then classified by
+# `_classify_grant_token` as a path or a bare command.
+GRANT_TOKEN = re.compile(
+    r"^Bash\((?:(?:bash|sh|python|python3)(?:\s+-\S+)*\s+)?"
+    r"([^\s:)]+)[^)]*\)$")
+
+WAIVER_FILE = ".github/scripts/script-grant-waivers.json"
+
+
+def _classify_grant_token(token):
+    """-> repository-relative path, or None if `token` is a bare command.
+
+    A leading `./` or any `/` makes it a path (FR-003); a bare command
+    (`jq`, `git`, `yamllint`) has neither and returns None.
+    """
+    if token.startswith("./"):
+        return token[2:]
+    if "/" in token:
+        return token
+    return None
+
+
+def _grant_path(tool):
+    """-> repository-relative path for `tool` (a `Bash(...)` string), or
+    None if it names no path (bare command) or is unresolvable (FR-008:
+    contains an unexpanded `${{ ... }}` expression, checked on the RAW
+    string before token extraction, since an expression may itself embed
+    whitespace GRANT_TOKEN would otherwise mis-split on).
+    """
+    if "${{" in tool:
+        return None
+    m = GRANT_TOKEN.match(tool)
+    if not m:
+        return None
+    return _classify_grant_token(m.group(1))
 
 # What repository guidance (CLAUDE.md's "Before pushing" section) mandates a
 # stage run - hand-maintained alongside CLAUDE.md edits, same as TABLE_DOC/
@@ -151,6 +192,30 @@ def split_tools(text):
     return [t.strip() for t in text.split(",") if t.strip()]
 
 
+def _load_workflows(root="."):
+    """-> ({path: parsed_doc}, [error, ...]).
+
+    Every collector reads from this map instead of re-globbing and
+    re-parsing .github/workflows/*.yml|*.yaml itself.
+    """
+    docs = {}
+    errors = []
+    paths = []
+    for pat in WORKFLOW_GLOBS:
+        paths.extend(glob.glob(
+            os.path.join(root, WORKFLOW_DIR, pat).replace(os.sep, "/")))
+    for path in sorted(set(paths)):
+        rel = path.replace(os.sep, "/")
+        try:
+            with io.open(path, encoding="utf-8") as fh:
+                docs[rel] = yaml.safe_load(fh) or {}
+        except yaml.YAMLError as exc:
+            errors.append(
+                "{0} could not be parsed as YAML and was skipped: {1}".format(
+                    rel, exc))
+    return docs, errors
+
+
 def collect_sites(root="."):
     """-> ({step-label: (allowed, disallowed)}, [error, ...]).
 
@@ -163,15 +228,8 @@ def collect_sites(root="."):
     """
     sites = {}
     origins = {}
-    errors = []
-    paths = []
-    for pat in WORKFLOW_GLOBS:
-        paths.extend(glob.glob(
-            os.path.join(root, WORKFLOW_DIR, pat).replace(os.sep, "/")))
-    for path in sorted(set(paths)):
-        with io.open(path, encoding="utf-8") as fh:
-            doc = yaml.safe_load(fh) or {}
-        rel = path.replace(os.sep, "/")
+    docs, errors = _load_workflows(root)
+    for rel, doc in docs.items():
         for job in (doc.get("jobs") or {}).values():
             for step in (job or {}).get("steps") or []:
                 if COMPOSITE not in str((step or {}).get("uses", "")):
@@ -405,45 +463,128 @@ def _script_exists(root, rel):
         return False
 
 
-def check_script_grants(sites, root="."):
+def collect_reusable_workflow_grants(docs):
+    """-> [(site_label, [tool, ...]), ...] for jobs calling a local
+    reusable workflow (`uses: ./.github/workflows/...`), reading
+    `with.extra-allowed-tools` / `with.allowed-tools-override`.
+    """
+    sites = []
+    for rel, doc in docs.items():
+        for job_name, job in (doc.get("jobs") or {}).items():
+            uses = str((job or {}).get("uses", ""))
+            if not uses.startswith("./.github/workflows/"):
+                continue
+            with_ = (job or {}).get("with") or {}
+            for key in ("extra-allowed-tools", "allowed-tools-override"):
+                val = with_.get(key)
+                if val is None:
+                    continue
+                label = "{0}:{1} ({2})".format(rel, job_name, key)
+                sites.append((label, split_tools(str(val))))
+    return sites
+
+
+_ALLOWED_TOOLS_RE = (
+    re.compile(r'--allowedTools\s+"([^"]*)"'),
+    re.compile(r"--allowedTools\s+'([^']*)'"),
+)
+
+
+def _extract_allowed_tools(claude_args):
+    for pattern in _ALLOWED_TOOLS_RE:
+        m = pattern.search(claude_args)
+        if m:
+            return m.group(1)
+    return None
+
+
+def collect_claude_args_grants(docs):
+    """-> [(site_label, [tool, ...]), ...] for claude-code-action steps
+    whose `with.claude_args` carries a bare `--allowedTools "..."` string.
+    """
+    sites = []
+    for rel, doc in docs.items():
+        for job_name, job in (doc.get("jobs") or {}).items():
+            for idx, step in enumerate((job or {}).get("steps") or []):
+                if "claude-code-action" not in str((step or {}).get("uses", "")):
+                    continue
+                claude_args = (step.get("with") or {}).get("claude_args")
+                if not claude_args:
+                    continue
+                allowed = _extract_allowed_tools(str(claude_args))
+                if allowed is None:
+                    continue
+                step_name = step.get("name") or step.get("id") or \
+                    "step[{0}]".format(idx)
+                label = "{0}:{1}:{2!r}".format(rel, job_name, step_name)
+                sites.append((label, split_tools(allowed)))
+    return sites
+
+
+def load_waivers(root="."):
+    """-> ({path: entry}, [error, ...])."""
+    path = os.path.join(root, WAIVER_FILE)
+    with io.open(path, encoding="utf-8") as fh:
+        data = json.load(fh)
+    return {w["path"]: w for w in data.get("waivers", [])}, []
+
+
+def check_grant_existence(all_sites, waivers, root="."):
     """-> list of failure strings.
 
-    Every granted `.specify/scripts/bash/<script>` must exist in the
-    working tree. Read off the CALL SITES, not the table: the table is
-    held to the sites by `compare()`, and the grant that reaches the
-    agent is the site's literal (#426). `exists` memoizes per call: the
-    same script is granted at up to a dozen call sites (`check-
-    prerequisites.sh` alone, across both spellings, at six labels), and
-    the directory listing behind `_script_exists` isn't free to repeat
-    (#436 review round 2).
+    `all_sites` is the concatenation of collect_sites()'s (label, allowed)
+    pairs (allowed half only) with collect_reusable_workflow_grants() and
+    collect_claude_args_grants()'s output - every surface, uniformly. Read
+    off the CALL SITES, not the table: the table is held to the sites by
+    `compare()`, and the grant that reaches the agent is the site's literal
+    (#426). `exists` memoizes per call: the same script is granted at up to
+    a dozen call sites (`check-prerequisites.sh` alone, across both
+    spellings, at six labels), and the directory listing behind
+    `_script_exists` isn't free to repeat (#436 review round 2).
     """
     failures = []
     exists = {}
-    for label in sorted(sites):
-        for tool in sites[label][0]:
-            m = SCRIPT_GRANT.match(tool)
-            if not m:
+    for label, tools in all_sites:
+        for tool in tools:
+            rel = _grant_path(tool)
+            if rel is None:
                 continue
-            rel = m.group(1)
+            if rel in waivers:
+                continue
             if rel not in exists:
                 exists[rel] = _script_exists(root, rel)
             if not exists[rel]:
                 failures.append(
                     "{0!r} grants {1!r}, but {2} does not exist in this "
-                    "repository - a stale entry in a load-bearing list; "
-                    "drop the grant and any prompt text that describes "
-                    "the step it ran (#426).".format(
-                        label, tool, rel))
+                    "repository and carries no waiver in {3} - a stale "
+                    "entry in a load-bearing list; drop the grant and any "
+                    "prompt text that describes the step it ran, or add a "
+                    "waiver entry if the path is absent by design.".format(
+                        label, tool, rel, WAIVER_FILE))
+    for rel, entry in waivers.items():
+        if _script_exists(root, rel):
+            failures.append(
+                "{0} waives {1!r} (#{2}) as absent by design, but it now "
+                "exists in the working tree - the waiver has gone stale; "
+                "drop the entry.".format(
+                    WAIVER_FILE, rel, entry.get("issue", "?")))
     return failures
 
 
 def run(root="."):
+    docs, load_errors = _load_workflows(root)
     with io.open(os.path.join(root, TABLE_DOC), encoding="utf-8") as fh:
         table, errors, relative = parse_table(fh.read())
     sites, site_errors = collect_sites(root)
-    return (site_errors + errors + compare(sites, table, relative) +
+    all_grant_sites = (
+        [(label, allowed) for label, (allowed, _disallowed) in sites.items()]
+        + collect_reusable_workflow_grants(docs)
+        + collect_claude_args_grants(docs))
+    waivers, waiver_errors = load_waivers(root)
+    return (load_errors + site_errors + errors + waiver_errors +
+            compare(sites, table, relative) +
             check_inspection_set(table) + check_mandated_commands(table) +
-            check_script_grants(sites, root))
+            check_grant_existence(all_grant_sites, waivers, root))
 
 
 # --------------------------------------------------------------------------
@@ -530,13 +671,52 @@ def _write_fixture(tmp, filename, labels):
         fh.write(_fixture_workflow(labels))
 
 
-def _collector_fixtures():
-    """Drive the two collector branches that the real tree cannot reach.
+_REUSABLE_FIXTURE = """name: fixture
+on: [push]
+jobs:
+  j:
+    uses: ./.github/workflows/x.yml
+    with:
+      extra-allowed-tools: "Bash(.github/scripts/zzz-does-not-exist.py:*)"
+"""
 
-    Neither is reachable from this repository's own workflows: there is no
-    .yaml stage here, and no duplicated step-label - which is exactly why
-    both shipped unexercised. A branch a gate cannot reach in production is
-    a branch that has to be given a fixture, or it is not covered at all.
+_CLAUDE_ARGS_FIXTURE = """name: fixture
+on: [push]
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: "Run agent"
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_args: --allowedTools "Bash(.github/scripts/zzz-does-not-exist.py:*)"
+"""
+
+# Syntactically invalid YAML (an unclosed flow sequence) - the fixture T023
+# adds to exercise _load_workflows' except branch, which the real tree can
+# never reach since a workflow that fails to parse would already fail
+# actions/checkout's own consumers long before Gate 27 ran.
+_INVALID_YAML_FIXTURE = "jobs:\n  j:\n    steps: [\n"
+
+
+def _write_text_fixture(tmp, filename, text):
+    wf_dir = os.path.join(tmp, WORKFLOW_DIR)
+    if not os.path.isdir(wf_dir):
+        os.makedirs(wf_dir)
+    with io.open(os.path.join(wf_dir, filename), "w",
+                 encoding="utf-8", newline=_NL) as fh:
+        fh.write(text)
+
+
+def _collector_fixtures():
+    """Drive the collector branches that the real tree cannot reach.
+
+    None is reachable from this repository's own workflows: there is no
+    .yaml stage here, no duplicated step-label, no reusable-workflow-caller
+    grant for a missing script, and no `claude_args` grant for a missing
+    script either - which is exactly why all four shipped unexercised. A
+    branch a gate cannot reach in production is a branch that has to be
+    given a fixture, or it is not covered at all.
     """
     results = []
 
@@ -561,12 +741,57 @@ def _collector_fixtures():
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
+    tmp = tempfile.mkdtemp()
+    try:
+        _write_text_fixture(tmp, "reusable.yml", _REUSABLE_FIXTURE)
+        docs, _ = _load_workflows(tmp)
+        reusable_sites = collect_reusable_workflow_grants(docs)
+        found = check_grant_existence(reusable_sites, {}, tmp)
+        results.append((
+            "a reusable-workflow caller's extra-allowed-tools grant for a "
+            "missing script is caught, naming the workflow file and job",
+            len(found) == 1 and "reusable.yml:j (extra-allowed-tools)"
+            in found[0],
+            found))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    tmp = tempfile.mkdtemp()
+    try:
+        _write_text_fixture(tmp, "claude-args.yml", _CLAUDE_ARGS_FIXTURE)
+        docs, _ = _load_workflows(tmp)
+        claude_sites = collect_claude_args_grants(docs)
+        found = check_grant_existence(claude_sites, {}, tmp)
+        results.append((
+            "a bare claude_args --allowedTools grant for a missing script "
+            "is caught, naming the workflow file, job, and step",
+            len(found) == 1 and "claude-args.yml:j:" in found[0]
+            and "Run agent" in found[0],
+            found))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    tmp = tempfile.mkdtemp()
+    try:
+        _write_text_fixture(tmp, "broken.yml", _INVALID_YAML_FIXTURE)
+        _, load_errors = _load_workflows(tmp)
+        results.append((
+            "a syntactically invalid workflow file is skipped with an "
+            "error, not raised as yaml.YAMLError",
+            any("broken.yml could not be parsed as YAML and was skipped"
+                in e for e in load_errors),
+            load_errors))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
     return results
 
 
 def self_test(root="."):
     bad = 0
     sites = call_sites(root)
+    docs, _doc_errors = _load_workflows(root)
+    waivers, _waiver_errors = load_waivers(root)
     with io.open(os.path.join(root, TABLE_DOC), encoding="utf-8") as fh:
         table, errors, relative = parse_table(fh.read())
 
@@ -576,6 +801,28 @@ def self_test(root="."):
         bad += 1
     else:
         print("[ok] the real table parses with no unresolved references")
+
+    # _grant_path's classifier, exercised directly and independent of any
+    # collector or surface (research.md D9 mutations 4/5).
+    bare = _grant_path("Bash(jq:*)")
+    if bare is None:
+        print("[ok] _grant_path classifies a bare-command grant "
+              "(Bash(jq:*)) as no path")
+    else:
+        bad += 1
+        print("[FAIL] _grant_path should classify a bare-command grant as "
+              "no path, got: {0!r}".format(bare))
+
+    expr_grant = "Bash(python3 -I ${{ runner.temp }}/x.py:*)"
+    expr = _grant_path(expr_grant)
+    if expr is None:
+        print("[ok] _grant_path classifies an expression-valued grant as "
+              "unresolvable, even though it contains a `/`")
+    else:
+        bad += 1
+        print("[FAIL] _grant_path should classify an expression-valued "
+              "grant ({0!r}) as unresolvable, got: {1!r}".format(
+                  expr_grant, expr))
 
     baseline = compare(sites, table, relative)
     if baseline:
@@ -605,13 +852,36 @@ def self_test(root="."):
         print("[ok] baseline: every mandated command is permitted where "
               "required")
 
-    baseline_scripts = check_script_grants(sites, root)
+    # T019 / SC-003: the widened check, run against every real grant across
+    # all three surfaces and the real waiver map, mechanically proving
+    # research.md D0's "13 grant occurrences, 2 waiver entries, repository
+    # green" claim rather than only asserting it in prose.
+    all_sites = (
+        [(label, allowed) for label, (allowed, _disallowed) in sites.items()]
+        + collect_reusable_workflow_grants(docs)
+        + collect_claude_args_grants(docs))
+    baseline_scripts = check_grant_existence(all_sites, waivers, root)
     if baseline_scripts:
-        print("[FAIL] baseline: every granted .specify script should exist, "
-              "got: " + " | ".join(baseline_scripts))
+        print("[FAIL] baseline: every granted script across all three "
+              "surfaces should exist or carry a waiver in {0}, got: {1}"
+              .format(WAIVER_FILE, " | ".join(baseline_scripts)))
         bad += 1
     else:
-        print("[ok] baseline: every granted .specify script exists")
+        print("[ok] baseline: every granted script across all three "
+              "surfaces ({0} grant site(s), {1} waiver entrie(s)) exists "
+              "or carries a waiver".format(len(all_sites), len(waivers)))
+
+    # These mutations run against the REAL sites/waivers/root, so their
+    # assertions look only at the NEW failures a mutation adds on top of
+    # `baseline_scripts` above - never at the raw count - since a stray
+    # untracked directory already present in the working tree (this
+    # repository's own `.wing-commander-pipeline/` pipeline-checkout
+    # convention, when this self-test runs from inside a pipeline stage's
+    # own job rather than a clean `actions/checkout@v5`) can itself already
+    # be contributing a pre-existing failure baseline_scripts already
+    # reported once, on its own, above.
+    def new_failures(found):
+        return [f for f in found if f not in baseline_scripts]
 
     # The shipped defect (#426), replayed: both spellings of a grant for a
     # script Spec Kit no longer ships, on the site that carried them.
@@ -621,7 +891,8 @@ def self_test(root="."):
     m_sites["plan.direct-commit"] = (
         allowed + ["Bash({0}:*)".format(ghost), "Bash(bash {0}:*)".format(ghost)],
         disallowed)
-    found = check_script_grants(m_sites, root)
+    m_all_sites = [(label, a) for label, (a, _d) in m_sites.items()]
+    found = new_failures(check_grant_existence(m_all_sites, waivers, root))
     if len(found) == 2 and all(ghost in f and "plan.direct-commit" in f
                                for f in found):
         print("[ok] mutation caught: a grant for a .specify script that does "
@@ -631,7 +902,7 @@ def self_test(root="."):
         print("[FAIL] a grant for a nonexistent .specify script was not caught "
               "in both spellings (expected 2 failures naming it): {0}".format(found))
 
-    # The other two spellings SCRIPT_GRANT accepts (`sh `-prefixed and a
+    # The other two spellings GRANT_TOKEN accepts (`sh `-prefixed and a
     # `./`-prefixed path), plus a grant carrying a trailing argument before
     # the wildcard - none of which the #426 replay above exercises. A
     # synthetic name, not a real script that merely happens to be absent
@@ -646,7 +917,8 @@ def self_test(root="."):
         m_sites = dict(sites)
         allowed, disallowed = m_sites["plan.direct-commit"]
         m_sites["plan.direct-commit"] = (allowed + [grant], disallowed)
-        found = check_script_grants(m_sites, root)
+        m_all_sites = [(label, a) for label, (a, _d) in m_sites.items()]
+        found = new_failures(check_grant_existence(m_all_sites, waivers, root))
         if len(found) == 1 and ghost2 in found[0]:
             print("[ok] mutation caught: a {0} grant for a .specify script "
                   "that does not exist".format(spelling))
@@ -655,6 +927,26 @@ def self_test(root="."):
             print("[FAIL] a {0} grant for a nonexistent .specify script was "
                   "not caught (expected 1 failure naming it): {1}".format(
                       spelling, found))
+
+    # research.md D9 mutation 1 / T012: a composite-site grant for a script
+    # OUTSIDE .specify/scripts/bash/ that does not exist - proving the
+    # widened check is not still secretly scoped to one directory.
+    ghost3 = ".github/scripts/zzz-does-not-exist.py"
+    m_sites = dict(sites)
+    allowed, disallowed = m_sites["plan.direct-commit"]
+    m_sites["plan.direct-commit"] = (
+        allowed + ["Bash({0}:*)".format(ghost3)], disallowed)
+    m_all_sites = [(label, a) for label, (a, _d) in m_sites.items()]
+    found = new_failures(check_grant_existence(m_all_sites, waivers, root))
+    if len(found) == 1 and ghost3 in found[0] and \
+            "plan.direct-commit" in found[0]:
+        print("[ok] mutation caught: a grant for a nonexistent script "
+              "outside .specify/scripts/bash/")
+    else:
+        bad += 1
+        print("[FAIL] a grant for a nonexistent script outside "
+              ".specify/scripts/bash/ was not caught (expected 1 failure "
+              "naming the site and path): {0}".format(found))
 
     # A grant whose case doesn't match the file on disk must fail here the
     # same way it fails on Actions' case-sensitive runners, even though
@@ -666,9 +958,9 @@ def self_test(root="."):
         with io.open(os.path.join(script_dir, "setup-plan.sh"), "w",
                      encoding="utf-8") as fh:
             fh.write("#!/bin/sh\n")
-        mismatched = {"plan.direct-commit": (
-            ["Bash(.specify/scripts/bash/Setup-Plan.sh:*)"], [])}
-        found = check_script_grants(mismatched, tmp)
+        mismatched = [("plan.direct-commit",
+                       ["Bash(.specify/scripts/bash/Setup-Plan.sh:*)"])]
+        found = check_grant_existence(mismatched, {}, tmp)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     if len(found) == 1 and "Setup-Plan.sh" in found[0]:
@@ -686,8 +978,10 @@ def self_test(root="."):
     # off plan.direct-commit) - that is not itself a defect, so it must not
     # be reported as one; `baseline_scripts` above already covers every
     # real grant across every site.
-    real = [t for t in sites["plan.direct-commit"][0] if SCRIPT_GRANT.match(t)]
-    found = check_script_grants({"plan.direct-commit": (real, [])}, root)
+    real = [t for t in sites["plan.direct-commit"][0]
+            if _grant_path(t) is not None]
+    found = new_failures(
+        check_grant_existence([("plan.direct-commit", real)], waivers, root))
     if not found:
         print("[ok] the {0} shipped script grant(s) on plan.direct-commit "
               "pass".format(len(real)))
@@ -695,6 +989,31 @@ def self_test(root="."):
         bad += 1
         print("[FAIL] the shipped script grants should pass, got: {0} for "
               "{1}".format(found, real))
+
+    # research.md D9 mutation 6 / T018 / FR-007: a waiver entry whose path
+    # DOES resolve is itself a failure - proven against a synthetic fixture
+    # tree, never against either of the two real waiver entries (neither is
+    # expected to ever resolve, per waiver-schema.md's Verification note).
+    tmp = tempfile.mkdtemp()
+    try:
+        stale_path = "stale-waived-script.sh"
+        with io.open(os.path.join(tmp, stale_path), "w",
+                     encoding="utf-8") as fh:
+            fh.write("#!/bin/sh\n")
+        stale_waivers = {stale_path: {"path": stale_path, "issue": "#000",
+                                       "reason": "test fixture"}}
+        found = check_grant_existence([], stale_waivers, tmp)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    if len(found) == 1 and WAIVER_FILE in found[0] and \
+            stale_path in found[0] and "#000" in found[0]:
+        print("[ok] mutation caught: a waiver entry whose path now exists "
+              "in the working tree is reported as stale")
+    else:
+        bad += 1
+        print("[FAIL] a stale waiver entry (path now exists) was not caught "
+              "(expected 1 failure naming {0}, the path, and the issue): "
+              "{1}".format(WAIVER_FILE, found))
 
     for name, m_sites, m_table, expect in _mutations(sites, table):
         found = compare(m_sites, m_table, relative)
