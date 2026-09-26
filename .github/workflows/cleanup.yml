@@ -731,6 +731,41 @@ jobs:
             --allowedTools "${{ steps.tool-args-cleanup.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-cleanup.outputs.disallowed-tools }}"
 
+      # spec 072: the post-agent credential contract (spec 052) this job was
+      # missing -- every step below used to read the pre-agent steps.ctx
+      # mint directly (T023 switches those to env.WC_BOT_TOKEN).
+      - name: Re-establish Wing Commander context (post-agent)
+        id: reestablish
+        if: "!cancelled() && steps.summarize.outcome != 'skipped'"
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
+        with:
+          app-id: ${{ secrets.speckit-app-id }}
+          private-key: ${{ secrets.speckit-app-private-key }}
+
+      - name: Refresh authenticated spec-branch remote (post-agent)
+        id: refresh-remote
+        if: "!cancelled() && steps.summarize.outcome != 'skipped'"
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-refresh-remote
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
+
+      - name: Record agent-ran signal
+        id: agent-ran
+        if: "!cancelled() && steps.summarize.outcome != 'skipped'"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-ran-signal
+        with:
+          agent-outcome: ${{ steps.summarize.outcome }}
+
+      - name: Determine post-agent credential status
+        id: credential-status
+        if: "!cancelled() && steps.summarize.outcome != 'skipped'"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-post-agent-credential-status
+        with:
+          mint-outcome: ${{ steps.reestablish.outcome }}
+          refresh-outcome: ${{ steps.refresh-remote.outcome }}
+
       # deterministic, transcript-only verdict replacing the raw steps.summarize.outcome checks
       # below -- see specs/037-agent-turn-budget-guard/data-model.md.
       - name: Compute agent run verdict
@@ -821,9 +856,10 @@ jobs:
       # over-budget is observability, not failure (FR-017) -- see clarify.yml.
       - name: Report over-budget agent run
         if: steps.idempotency.outputs.skip != 'true' && steps.summarize-verdict.outputs.verdict == 'healthy' && steps.summarize-verdict.outputs.over-budget == 'true'
+        continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
         with:
-          token: ${{ steps.ctx.outputs.token }}
+          token: ${{ env.WC_BOT_TOKEN }}
           issue-number: ${{ steps.meta.outputs.issue }}
           kind: info
           summary: "This step used its full intended turn budget."
@@ -860,7 +896,7 @@ jobs:
       - name: Close lifecycle issue and flip label
         if: steps.idempotency.outputs.skip != 'true'
         env:
-          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           ISSUE: ${{ steps.meta.outputs.issue }}
           PR_NUMBER: ${{ inputs.pr-number }}
         run: |
@@ -938,7 +974,7 @@ jobs:
         if: failure()
         shell: bash
         env:
-          GH_TOKEN: ${{ steps.ctx.outputs.token || github.token }}
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN || github.token }}
           ISSUE: ${{ steps.meta.outputs.issue }}
           SLUG: ${{ steps.spec.outputs.slug }}
           PR_NUMBER: ${{ inputs.pr-number }}
