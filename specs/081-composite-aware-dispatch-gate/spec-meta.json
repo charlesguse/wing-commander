@@ -2,7 +2,7 @@
   "issue": 595,
   "spec_dir": "specs/081-composite-aware-dispatch-gate",
   "feature_num": "081",
-  "stage": "plan",
+  "stage": "tasks",
   "iteration": 0,
   "spec_branch": "spec/081-composite-aware-dispatch-gate"
 }
