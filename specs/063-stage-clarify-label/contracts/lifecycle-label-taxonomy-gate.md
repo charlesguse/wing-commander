@@ -24,12 +24,18 @@ hand.
    script, and prose such as the "created on the fly" sentence), read fresh
    from the file on every run.
 2. **Applied label set** — every literal `stage:[a-z-]+` token passed as an
-   argument to `gh issue edit --add-label`/`--remove-label`, `gh issue
+   argument to an ADD-shaped call: `gh issue edit --add-label`, `gh issue
    create --label`/`-l`, or a REST `-f "labels[]=..."` call, scanned across
    every `.github/workflows/*.yml` and every `.github/actions/**/
    action.yml` (local composites only — `uses: ./...`, matching this
    repository's self-checkout convention; no external action is scanned).
-   A `--label`/`-l` argument to a *read* command (`gh issue list`, `gh
+   A bare `--remove-label` site does **not** put a label in this set on its
+   own — removing a label is not evidence anything ever adds it (Phase 7
+   convergence fix: `plan.yml`'s pre-existing, unrelated best-effort
+   `gh issue edit "$ISSUE" --remove-label "stage:clarify" 2>/dev/null ||
+   true` lines otherwise satisfied this gate for a label nothing ever
+   added, masking the exact regression this feature exists to catch). A
+   `--label`/`-l` argument to a *read* command (`gh issue list`, `gh
    search`) is excluded — the same read/write distinction Gate 90 already
    established and this gate reimplements locally (research.md D7).
 3. **Exemption registry** — `.github/scripts/lifecycle-label-taxonomy-
@@ -71,6 +77,10 @@ self-test` naming convention already in `lint-workflows.yml`)
    label** → FAILs, naming that label (User Story 3, Acceptance Scenario 2).
 7. **A malformed waivers file** (missing required field) → FAILs, names the
    malformed entry, distinct from "documented label with no writer."
+8. **A remove-only site with no add anywhere** (a bare `--remove-label`
+   call and nothing else) → FAILs, naming the label — the Phase 7
+   convergence fixture proving a remove-only site never satisfies "has a
+   writer" on its own.
 
 ## Gate 10 / local-runner parity (FR-009)
 

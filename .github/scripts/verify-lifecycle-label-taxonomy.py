@@ -19,18 +19,22 @@ WHAT IT CHECKS
    found anywhere in `docs/setup.md`, read fresh on every run -- never a
    hardcoded list (FR-007).
 2. The APPLIED set: every literal `stage:[a-z-]+` token passed as an
-   argument to `gh issue edit --add-label`/`--remove-label`, `gh issue
-   create --label`/`-l`, or a REST `-f "labels[]=..."` call, across every
+   argument to an ADD-shaped call -- `gh issue edit --add-label`, `gh issue
+   create --label`/`-l`, or a REST `-f "labels[]=..."` call -- across every
    `.github/workflows/*.yml` and every local `.github/actions/**/
-   action.yml`. This REIMPLEMENTS (never imports) Gate 90's
-   (`verify-board-label-creation.py`) segmentation rules -- comment
-   stripping, `;`/`&&`/`||`/`|`/`$(` splitting, backslash-continuation
-   joining, quote handling, and the read/apply distinction that excludes a
-   `--label`/`-l` argument to `gh issue list`/`gh pr list`/`gh search` --
-   because Gate 99 asks a strictly weaker question than Gate 90 does (does
-   a writer exist ANYWHERE, never "does this job's own `gh label create`
-   precede its own apply"), so importing Gate 90's job-ordering machinery
-   would buy nothing.
+   action.yml`. A bare `--remove-label` call does NOT put a label in this
+   set on its own: removing a label is not evidence that anything ever
+   adds it (Phase 7 convergence fix -- `plan.yml`'s pre-existing,
+   unrelated best-effort `--remove-label "stage:clarify"` lines otherwise
+   satisfied this gate for a label nothing ever added). This REIMPLEMENTS
+   (never imports) Gate 90's (`verify-board-label-creation.py`)
+   segmentation rules -- comment stripping, `;`/`&&`/`||`/`|`/`$(`
+   splitting, backslash-continuation joining, quote handling, and the
+   read/apply distinction that excludes a `--label`/`-l` argument to `gh
+   issue list`/`gh pr list`/`gh search` -- because Gate 99 asks a strictly
+   weaker question than Gate 90 does (does a writer exist ANYWHERE, never
+   "does this job's own `gh label create` precede its own apply"), so
+   importing Gate 90's job-ordering machinery would buy nothing.
 3. The EXEMPTION REGISTRY: `.github/scripts/lifecycle-label-taxonomy-
    waivers.json`, parsed the same way Gate 31
    (`verify-stage-invariants.py`) parses `stage-invariant-waivers.json`:
@@ -55,6 +59,13 @@ FAIL   the registry file is malformed, or an entry is missing a required
 Usage:
     python3 .github/scripts/verify-lifecycle-label-taxonomy.py
     python3 .github/scripts/verify-lifecycle-label-taxonomy.py --self-test
+
+NOTE: the applied set counts only ADD-shaped sites (`--add-label`, `gh
+issue create --label`/`-l`, a REST `-f "labels[]=..."` call). A bare
+`--remove-label` site never satisfies "has a writer" on its own -- fixed
+in this feature's Phase 7 convergence pass after `plan.yml`'s pre-existing
+best-effort `--remove-label "stage:clarify"` lines were found to satisfy
+the gate for a label nothing ever added.
 """
 import glob
 import json
@@ -99,7 +110,8 @@ def documented_labels(root="."):
 # --------------------------------------------------------------------------
 _VALUE = r'("[^"\n]*"|\'[^\'\n]*\'|[A-Za-z0-9_.,:=-]+)'
 ADD_LABEL_VALUE_RE = re.compile(r'--add-label(?:=|\s+)' + _VALUE)
-REMOVE_LABEL_VALUE_RE = re.compile(r'--remove-label(?:=|\s+)' + _VALUE)
+# `--remove-label` is intentionally NOT matched here -- a remove-only site
+# is not a writer (Phase 7 convergence fix; see module docstring).
 LABEL_FLAG_VALUE_RE = re.compile(r'--label(?:=|\s+)' + _VALUE)
 SHORT_LABEL_VALUE_RE = re.compile(r'-l(?:=|\s+)' + _VALUE)
 _LABEL_SHORT_FLAG_COMMANDS = ("gh pr create", "gh issue create", "gh issue edit")
@@ -172,14 +184,13 @@ def _labels_in_value(raw):
 
 
 def _labels_applied_in_segment(seg_text, is_read):
-    """Every literal `stage:*` label one command SEGMENT applies or
-    removes. `--add-label`/`--remove-label` have no read-command spelling
-    in this repository, so neither is ever suppressed by `is_read`; only
-    the bare `--label` flag (shared with `gh issue list`/`gh search`) is."""
+    """Every literal `stage:*` label one command SEGMENT ADDS -- never a
+    bare `--remove-label` site (Phase 7 convergence fix). `--add-label`
+    has no read-command spelling in this repository, so it is never
+    suppressed by `is_read`; only the bare `--label` flag (shared with
+    `gh issue list`/`gh search`) is."""
     labels = []
     for m in ADD_LABEL_VALUE_RE.finditer(seg_text):
-        labels.extend(_labels_in_value(m.group(1)))
-    for m in REMOVE_LABEL_VALUE_RE.finditer(seg_text):
         labels.extend(_labels_in_value(m.group(1)))
     if not is_read:
         for m in LABEL_FLAG_VALUE_RE.finditer(seg_text):
@@ -195,9 +206,9 @@ def _labels_applied_in_segment(seg_text, is_read):
 
 
 def _labels_applied_in_run(run_text):
-    """Every literal `stage:*` label a step's `run:` block applies or
-    removes anywhere in it -- no job-ordering or same-job requirement
-    (Gate 99's non-goal: a strictly weaker property than Gate 90's)."""
+    """Every literal `stage:*` label a step's `run:` block ADDS anywhere
+    in it -- no job-ordering or same-job requirement (Gate 99's non-goal:
+    a strictly weaker property than Gate 90's)."""
     found = set()
     carry_open = False
     carry_is_read = False
@@ -256,8 +267,9 @@ class GateParseError(Exception):
 
 
 def applied_labels(root="."):
-    """-> set of every literal `stage:*` label applied/removed anywhere
-    across every workflow and local composite action."""
+    """-> set of every literal `stage:*` label ADDED anywhere across every
+    workflow and local composite action -- a bare `--remove-label` site
+    does not count (Phase 7 convergence fix)."""
     found = set()
     for path in _subject_files(root):
         with open(path, encoding="utf-8") as fh:
@@ -373,10 +385,11 @@ def evaluate(root="."):
             continue
         failures.append(
             f"{label} is documented in {DOC_PATH} but no workflow or local "
-            f"composite action applies or removes it anywhere (FR-001) -- "
-            f"and no waiver in {WAIVERS_PATH} exempts it. Wire up a writer, "
-            f"drop it from {DOC_PATH}, or add a waiver naming why it is "
-            f"documented on purpose with no writer.")
+            f"composite action ever adds it anywhere (FR-001) -- and no "
+            f"waiver in {WAIVERS_PATH} exempts it. A bare `--remove-label` "
+            f"site does not count as a writer. Wire up a writer, drop it "
+            f"from {DOC_PATH}, or add a waiver naming why it is documented "
+            f"on purpose with no writer.")
 
     return failures
 
@@ -463,6 +476,19 @@ jobs:
       - name: Flip stage label
         run: |
           gh issue edit "$ISSUE" --add-label "stage:spec"
+"""
+
+WORKFLOW_REMOVE_ONLY = """\
+name: plan
+on:
+  workflow_call: {}
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Best-effort remove, no add anywhere
+        run: |
+          gh issue edit "$ISSUE" --remove-label "stage:clarify" 2>/dev/null || true
 """
 
 
@@ -569,13 +595,24 @@ def self_test():
     check("(7) a malformed waivers file fails, naming the malformed entry",
           build_7, expect_fail=True, name_fragment="entry 0")
 
+    # 8. A remove-only site with no add anywhere -- FAIL, naming it. The
+    #    Phase 7 convergence fixture: `plan.yml`'s pre-existing best-effort
+    #    `--remove-label "stage:clarify"` lines must not, on their own,
+    #    read as a writer.
+    def build_8(root):
+        _write(root, DOC_PATH, DOC_NO_WRITER)
+        _write(root, f"{WORKFLOWS_DIR}/intake.yml", WORKFLOW_REMOVE_ONLY)
+
+    check("(8) a remove-only site with no add anywhere still fails, naming it",
+          build_8, expect_fail=True, name_fragment="stage:clarify")
+
     if failed:
         print(f"::error::Gate 99 self-test: {len(failed)} check(s) behaved "
               f"wrongly: {'; '.join(failed)}. Gate 99's detection logic does "
               f"not do what its name claims, so a green Gate 99 on the real "
               f"fleet means nothing.")
         return 1
-    print("Gate 99 self-test: all 7 checks behaved as expected.")
+    print("Gate 99 self-test: all 8 checks behaved as expected.")
     return 0
 
 

@@ -55,11 +55,17 @@ the fly" prose at `docs/setup.md:158-160`, not a table row).
 
 Derived from every `.github/workflows/*.yml` and `.github/actions/**/
 action.yml`: every literal `stage:[a-z-]+` token passed as an argument to
-`gh issue edit --add-label`/`--remove-label`, `gh issue create --label`/
-`-l`, or a REST `-f "labels[]=..."` call — reusing Gate 90's segmentation
-*rules* (comment stripping, `;`/`&&`/`||`/`|`/`$(` splitting, backslash
-continuation, quote handling) reimplemented locally (research.md D7), never
-a read-only `--label` filter argument to `gh issue list`/`gh search`.
+an ADD-shaped call — `gh issue edit --add-label`, `gh issue create
+--label`/`-l`, or a REST `-f "labels[]=..."` call — reusing Gate 90's
+segmentation *rules* (comment stripping, `;`/`&&`/`||`/`|`/`$(` splitting,
+backslash continuation, quote handling) reimplemented locally (research.md
+D7), never a read-only `--label` filter argument to `gh issue list`/`gh
+search`. A bare `--remove-label` site does **not** put a label in this set
+on its own (Phase 7 convergence fix): `plan.yml:1155`/`:1241`'s
+pre-existing, unrelated best-effort `--remove-label "stage:clarify"` lines
+otherwise satisfied this set for a label nothing ever added, which would
+have let Gate 99 PASS against the pre-change tree instead of FAILing as
+FR-008 requires.
 
 ### Exemption registry: `.github/scripts/lifecycle-label-taxonomy-waivers.json`
 

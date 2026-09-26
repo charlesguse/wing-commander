@@ -149,21 +149,22 @@ No blocking prerequisites apply: User Story 1's two workflow edits, User Story 2
 
 - [X] T020 [US3] Confirm `"docs/setup.md"` appears as an actual Python string literal (not only in a comment) in `verify-lifecycle-label-taxonomy.py`'s source, so Gate 10's `check_subject_triggers()` sees it, and confirm the literal is already covered by `lint-workflows.yml`'s `pull_request.paths:` filter (no filter edit expected — research.md D8).
 
-- [ ] T021 [US3] Demonstrate FR-008/SC-002 on the implementation PR: `git stash` the `intake.yml`/`clarify.yml` changes from T002/T003, run `python3 .github/scripts/verify-lifecycle-label-taxonomy.py` and record the FAIL output naming `stage:clarify`, then `git stash pop` and re-run to record the PASS output against the real post-change tree (quickstart.md §§1-2).
-  - NOT reproducible as written: temporarily removing T002/T003's two flip
-    steps (via edit, `git stash` was outside this run's tool allowlist) and
-    running Gate 99 against that pre-change-shaped tree still PASSes —
-    `plan.yml:1155`/`:1241`'s existing `gh issue edit "$ISSUE" --remove-label
-    "stage:clarify" 2>/dev/null || true` lines (present on `main` well before
-    this feature, explicitly called out, unchanged, in contracts/clarify-
-    label-flip.md's Non-goals) already satisfy Gate 99's own Input #2
-    definition of "applied set" ("...passed to `gh issue edit --add-label`/
-    `--remove-label`..."), so `stage:clarify` never actually reads as having
-    zero apply sites pre-change under the contract's own literal wording,
-    even though nothing ever *added* it. Filed as a wing-commander-finding
-    rather than resolved here — narrowing "applied" to add-only sites would
-    contradict the contract's own Input #2 text. Edits reverted afterward;
-    `git diff` against both files is empty.
+- [X] T021 [US3] Demonstrate FR-008/SC-002 on the implementation PR: `git stash` the `intake.yml`/`clarify.yml` changes from T002/T003, run `python3 .github/scripts/verify-lifecycle-label-taxonomy.py` and record the FAIL output naming `stage:clarify`, then `git stash pop` and re-run to record the PASS output against the real post-change tree (quickstart.md §§1-2).
+  - Cycle 1 (superseded): NOT reproducible as written, filed as a
+    wing-commander-finding, since the applied-set scanner still counted
+    `plan.yml`'s pre-existing `--remove-label "stage:clarify"` lines as a
+    writer. See T028, which fixed that scanner in this cycle.
+  - Cycle 2, re-run against the fixed scanner (via edit, `git stash` still
+    outside this run's tool allowlist): removing T002/T003's two flip
+    steps and running `python .github/scripts/run-local-gates.py
+    verify-lifecycle-label-taxonomy.py` now correctly FAILs, naming
+    `stage:clarify` ("no workflow or local composite action ever adds it
+    anywhere"). Restoring the two files and re-running PASSes (0
+    failures) against the real post-change tree — `git diff --stat`
+    confirmed the restoration byte-identical. The same pre-change-shaped
+    run also names `stage:spec`, a distinct, pre-existing Gate 99 scanner
+    gap (it cannot see the intake agent's prompt-embedded add site) —
+    filed as a wing-commander-finding, not fixed here.
 
 - [X] T022 [US3] Confirm `.github/scripts/run-local-gates.py` and `verify-gate-wiring.py` (Gate 10) both pick up Gate 99 automatically through `wc_gate_registry.py`'s filename-glob discovery, with no manifest edit anywhere else (FR-009, research.md D8).
 
@@ -189,7 +190,43 @@ No blocking prerequisites apply: User Story 1's two workflow edits, User Story 2
 
 ## Phase 7: Convergence
 
-- [ ] T028 Fix `verify-lifecycle-label-taxonomy.py`'s (Gate 99) applied-label-set scanner so a documented label counts as "having a writer" only when at least one *add*-shaped site for it exists somewhere in the fleet (`--add-label`, `gh issue create --label`/`-l`, or a REST `-f "labels[]=..."` create) — a bare `--remove-label` with no corresponding add anywhere must not, on its own, satisfy the check. As built, `plan.yml:1155`/`:1241`'s pre-existing, unrelated `gh issue edit "$ISSUE" --remove-label "stage:clarify" 2>/dev/null || true` lines (predating this feature, called out unchanged in contracts/clarify-label-flip.md's Non-goals and plan.md's Project Structure) already satisfy the current (contract-literal) applied-set definition, so Gate 99 does not actually FAIL when run against the real pre-change tree (T021 in this cycle: temporarily removed intake.yml's/clarify.yml's new flip steps by hand, ran the gate, got PASS not the required FAIL naming `stage:clarify`, then restored both files — `git diff` confirmed empty). All 8 documented `stage:*` labels already have a real add site after this feature ships, so narrowing to require an add does not newly fail anything on the post-change tree. Update contracts/lifecycle-label-taxonomy-gate.md's Input #2 description and data-model.md's Applied label set section to match the narrowed definition, add an 8th `--self-test` fixture proving a remove-only label still fails, and re-run T021's live pre/post-change demonstration to record the corrected FAIL/PASS output per FR-008 (contradicts)
+- [X] T028 Fix `verify-lifecycle-label-taxonomy.py`'s (Gate 99) applied-label-set scanner so a documented label counts as "having a writer" only when at least one *add*-shaped site for it exists somewhere in the fleet (`--add-label`, `gh issue create --label`/`-l`, or a REST `-f "labels[]=..."` create) — a bare `--remove-label` with no corresponding add anywhere must not, on its own, satisfy the check. As built, `plan.yml:1155`/`:1241`'s pre-existing, unrelated `gh issue edit "$ISSUE" --remove-label "stage:clarify" 2>/dev/null || true` lines (predating this feature, called out unchanged in contracts/clarify-label-flip.md's Non-goals and plan.md's Project Structure) already satisfy the current (contract-literal) applied-set definition, so Gate 99 does not actually FAIL when run against the real pre-change tree (T021 in this cycle: temporarily removed intake.yml's/clarify.yml's new flip steps by hand, ran the gate, got PASS not the required FAIL naming `stage:clarify`, then restored both files — `git diff` confirmed empty). All 8 documented `stage:*` labels already have a real add site after this feature ships, so narrowing to require an add does not newly fail anything on the post-change tree. Update contracts/lifecycle-label-taxonomy-gate.md's Input #2 description and data-model.md's Applied label set section to match the narrowed definition, add an 8th `--self-test` fixture proving a remove-only label still fails, and re-run T021's live pre/post-change demonstration to record the corrected FAIL/PASS output per FR-008 (contradicts)
+  - Done: `_labels_applied_in_segment`/`applied_labels` in
+    `verify-lifecycle-label-taxonomy.py` no longer collect
+    `--remove-label` matches into the applied set — only `--add-label`,
+    the bare `--label`/`-l` create-command flags, and the REST
+    `labels[]=` match still count. Docstrings, the module header note,
+    and the FAIL message text were updated to describe the narrowed
+    ("add-shaped only") definition. An 8th `--self-test` fixture
+    (`WORKFLOW_REMOVE_ONLY`/`build_8`) proves a remove-only site with no
+    add anywhere still FAILs, naming the label; `self_test()` now expects
+    8 checks. contracts/lifecycle-label-taxonomy-gate.md's Input #2 and
+    fixture list, and data-model.md's "Applied label set" section, were
+    updated to match.
+  - Re-ran T021's live demonstration under the fixed gate:
+    `python .github/scripts/run-local-gates.py
+    verify-lifecycle-label-taxonomy.py` PASSes (0 failures) on the real
+    post-change tree. Temporarily removed both new `Flip stage label for
+    clarification` steps (intake.yml/clarify.yml) via edit (no `git
+    stash` in this run's allowlist), re-ran the same gate, and got the
+    required FAIL — `::error::Gate 99: stage:clarify is documented in
+    docs/setup.md but no workflow or local composite action ever adds it
+    anywhere...` — then restored both files; `git diff --stat` on both
+    confirmed empty (byte-identical restoration).
+  - The corrected pre-change-shaped run ALSO failed naming `stage:spec`,
+    not only `stage:clarify` as FR-008/T021 assumed. Root cause: Gate 99
+    only scans literal `run:` shell text, never a `with: prompt:` field,
+    so `stage:spec`'s real pre-existing writer — the intake agent's own
+    `gh issue edit --add-label "spec:<NNN-slug>,stage:spec"` instruction
+    at `intake.yml:689`, inside the Claude Code action's prompt, not a
+    `run:` step — is invisible to the scanner. On the real post-change
+    tree this is masked because `clarify.yml`'s new `ready` arm (T003)
+    happens to also contain a literal shell `--add-label "stage:spec"`
+    call; removing T002/T003 removes that incidental cover along with
+    the intended `stage:clarify` writer. This is a gap in Gate 99's own
+    design (Phase 5/US3), not something this task introduced or was
+    scoped to fix — filed as a `wing-commander-findings` entry rather
+    than fixed here.
 
 ---
 
