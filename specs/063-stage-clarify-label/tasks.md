@@ -96,12 +96,28 @@ No blocking prerequisites apply: User Story 1's two workflow edits, User Story 2
 ### Validation for User Story 2
 
 - [ ] T008 [US2] Using `wc_shell_harness.py`'s `find_step`/stubbed-`gh` pattern (the same one `verify-clarification-gating.py` uses to extract and run `intake.yml`/`clarify.yml`'s named steps), drive `intake.yml`'s new `Flip stage label for clarification` step three ways and record the results for the implementation PR (quickstart.md §3.1-§3.3): (a) `NEEDED=true` — assert exactly one `gh label create stage:clarify ... --force`, one `--add-label stage:clarify`, one `--remove-label stage:spec`; (b) `NEEDED=false`, `SPECIFIED=true`, `BLOCKED=false`, `SPEC_DIR` non-empty — assert exactly one `--remove-label stage:clarify`, no `stage:clarify` add, no `stage:spec` add; (c) the stubbed `gh issue edit --add-label stage:clarify` forced to fail — assert the step itself exits 0 and `$GITHUB_STEP_SUMMARY` contains the `::warning::` line (FR-015).
+  - NOT executed this cycle: this run's allowed-command list permits only
+    `python .github/scripts/run-local-gates.py` (plus its exact filtered
+    forms) for Python, not an arbitrary ad hoc harness driver script, and
+    T008 is not itself a wired gate `run-local-gates.py` would discover.
+    Verified instead by manual trace: the step's body is copied verbatim
+    from contracts/clarify-label-flip.md, and each of (a)/(b)/(c) was
+    hand-traced against the shipped shell (the `if`/`elif` matches exactly
+    one branch per case; the add-label failure is caught by `if ! ...;
+    then` so the step's exit status is the `if` construct's, always 0).
+    A human session (or one with a wider allowlist) should still run the
+    harness per quickstart.md §3.1-§3.3 for an executed proof.
 
 - [ ] T009 [US2] Repeat T008's harness-driven approach against `clarify.yml`'s new step for its four reachable branches (quickstart.md §3.4): `OUTCOME=needs-clarification`; `OUTCOME=ready` with `BLOCKED=false`; `OUTCOME=ready` with `BLOCKED=true` (assert no label calls at all); `OUTCOME=none` (assert no label calls at all).
+  - NOT executed this cycle, same tooling limitation as T008's note. Manually
+    traced instead: the `case "$OUTCOME" in` body is copied verbatim from
+    contracts/clarify-label-flip.md; `ready`+`BLOCKED=true` and `none`/`*`
+    both fall to branches with no `gh` calls at all, matching the expected
+    "no label calls" assertion.
 
-- [ ] T010 [US2] Run `python3 .github/scripts/verify-clarification-gating.py` (Gate 8) after T002/T003 land and confirm it neither gains nor loses a finding — it does not reference either new step's name, so its `wanted`-step extraction must be unaffected by construction (research.md D1, quickstart.md §3.5).
+- [X] T010 [US2] Run `python3 .github/scripts/verify-clarification-gating.py` (Gate 8) after T002/T003 land and confirm it neither gains nor loses a finding — it does not reference either new step's name, so its `wanted`-step extraction must be unaffected by construction (research.md D1, quickstart.md §3.5).
 
-- [ ] T011 [US2] Compare `docs/adoption.md:229`'s wrapper condition against the shipped `wing-commander-2-clarify.yml:25` trigger condition byte-for-byte and confirm they still agree after T002/T003 (neither is touched by this feature — Acceptance Scenario 3).
+- [X] T011 [US2] Compare `docs/adoption.md:229`'s wrapper condition against the shipped `wing-commander-2-clarify.yml:25` trigger condition byte-for-byte and confirm they still agree after T002/T003 (neither is touched by this feature — Acceptance Scenario 3).
 
 - [ ] T012 [US2] After this feature merges, re-drive one full end-to-end run (`gh workflow run` on `auto-release.yml`'s dispatchable wrapper per `specs/055-unattended-e2e-gates/`) and confirm on the scratch lifecycle issue: `stage:clarify` appears in the label timeline while questions are open and is removed when they're answered, `stage:spec` is restored, and `wing-commander-2-clarify.yml`'s trigger fires on the reply while the issue carries `stage:clarify` alone (User Story 2 Acceptance Scenario 1; quickstart.md §5). Record the run link on the implementation PR or issue #483 per CLAUDE.md's "prove" step for Actions-only behavior.
 
