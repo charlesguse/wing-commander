@@ -2,7 +2,7 @@
   "issue": 612,
   "spec_dir": "specs/085-stop-request-cancel-contract",
   "feature_num": "085",
-  "stage": "spec",
+  "stage": "plan",
   "iteration": 0,
-  "spec_branch": null
+  "spec_branch": "spec/085-stop-request-cancel-contract"
 }
