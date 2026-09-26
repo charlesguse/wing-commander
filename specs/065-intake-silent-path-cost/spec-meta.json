@@ -2,7 +2,7 @@
   "issue": 495,
   "spec_dir": "specs/065-intake-silent-path-cost",
   "feature_num": "065",
-  "stage": "spec",
+  "stage": "plan",
   "iteration": 0,
-  "spec_branch": null
+  "spec_branch": "spec/065-intake-silent-path-cost"
 }
