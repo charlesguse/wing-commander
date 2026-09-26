@@ -135,6 +135,13 @@ CI/CD pipeline infrastructure repository — no `src`/`tests` split. Paths below
 
 ---
 
+## Phase 8: Convergence
+
+- [ ] T032 In `.github/workflows/auto-release.yml`'s "Poll the test repository to a verdict" step, extend the gate-driving failure classification so a repeated API-level failure caused by the harness credential itself (an authentication/authorization rejection on the `HARNESS_TOKEN` — e.g. the credential expired or was revoked mid-attempt) is reported as its own named, distinguishable outcome identifying the credential as cause, rather than folding into the same undifferentiated `fail-gate-stall` every other repeated gate-driving failure (a stalled PR, a decision-script bug) already produces via `write_repeated_failure_verdict` (~line 945). Mirror the existing rate-limit special-case in that same helper (grep the last failure text for a credential-rejection signature) rather than adding a second helper. Cover this with a Gate 67-style fixture-plus-mutation test against the "Poll the test repository to a verdict" step, per FR-015/Constitution VIII. (FR-011, Edge Case "Expiry during a long attempt") (missing)
+- [ ] T033 Update `docs/setup.md`'s `WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN` canonical statement (T011) to explicitly state what the account's own Admin permission (conferred by the FR-002 ownership transfer) is allowed to be used for — maintainer acts performed by hand outside the pipeline: creating, resetting, and deleting the fixture — and what it must not be used for: anything the harness's own credential performs. FR-016's text requires both halves of this sentence verbatim; the current row states the Admin/credential asymmetry but not its permitted/forbidden uses. (FR-016) (partial)
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies
