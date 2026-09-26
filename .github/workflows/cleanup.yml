@@ -688,6 +688,14 @@ jobs:
         id: summarize
         if: steps.idempotency.outputs.skip != 'true' && steps.tool-args-cleanup.outputs.allowed-tools != ''
         continue-on-error: true
+        # Wall-clock bound, strictly under the ~60-minute credential lifetime
+        # (spec 073, #558): this job MUST NOT receive the post-agent
+        # composites (FR-005) -- the bound alone is this job's Gate 68
+        # exemption condition, mechanically asserted in
+        # .github/scripts/verify-post-agent-credential-refresh.py. This
+        # agent's measured runtime is ~1 minute on every one of 40 sampled
+        # runs, so the bound never fires in practice.
+        timeout-minutes: 10
         uses: anthropics/claude-code-action@v1
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
@@ -821,6 +829,7 @@ jobs:
       # over-budget is observability, not failure (FR-017) -- see clarify.yml.
       - name: Report over-budget agent run
         if: steps.idempotency.outputs.skip != 'true' && steps.summarize-verdict.outputs.verdict == 'healthy' && steps.summarize-verdict.outputs.over-budget == 'true'
+        continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
         with:
           token: ${{ steps.ctx.outputs.token }}

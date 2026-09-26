@@ -1,7 +1,11 @@
 # Contract: `wing-commander-context`'s env-var relay and the post-agent refresh convention
 
 **File**: `.github/actions/wing-commander-context/action.yml` (amended) —
-consumed by all 8 sweep-stage workflows.
+consumed by every workflow Gate 68 derives as a `full_subject`, per
+`.github/scripts/verify-post-agent-credential-refresh.py`'s derived-subject
+engine (spec 073, #558) rather than a fixed count of stages (this contract
+originally named "all 8 sweep-stage workflows"; `rebase.yml`'s `rebase` job
+is the ninth, added by spec 073 — see the `rebase.yml` section below).
 
 ## Composite amendment
 
@@ -121,6 +125,31 @@ the scratch-token minting step (not `wing-commander-context`, a distinct
 composite/inline mint local to this job) gains the same internal relay, and
 the job gains its own post-agent refresh pair (steps 2–3 above, scoped to
 `WC_SCRATCH_TOKEN` and whatever remote it authenticates).
+
+## `rebase.yml`'s `rebase` job (spec 073, #558)
+
+Same call-site convention (steps 1–5 above), with two job-local differences
+from the eight prior stages:
+
+- **No `STALL_REASON_JOBS`/`FAILED_STEP_REQUIRED_JOBS` membership.**
+  `rebase.yml` has no separate survivor/`stalled` job — its "Abandon and
+  escalate" arm is *inside* the same `rebase` job. "Determine failed
+  post-agent step" is still called (immediately before "Abandon and
+  escalate"), but that step reads its `outputs.step` directly
+  (`steps.failed-step.outputs.step`), rather than a job output a second job
+  relays through `wing-commander-stall-reason` — see contracts/
+  agent-ran-signal.md's "Not in scope for consumption" section.
+- **"Determine post-agent credential status" is also consumed job-locally.**
+  Placed after the job's last bot-acting step that does not itself depend on
+  it (`Publish rebased branch`) and before "Determine failed post-agent
+  step"/"Abandon and escalate", so the latter's own comment can name the
+  credential as cause (`steps.credential-status.outputs.ok`) when
+  re-establishment failed (FR-003, FR-004 of spec 073).
+
+`rebase.yml`'s `rebase` job runs as a `strategy.matrix` job (one instance per
+in-flight spec branch); each matrix leg is its own job instance with its own
+mint, refresh, and status sequence — no additional gate-side accommodation
+is needed for that (research.md D10 of spec 073).
 
 ## Compatibility (FR-025)
 

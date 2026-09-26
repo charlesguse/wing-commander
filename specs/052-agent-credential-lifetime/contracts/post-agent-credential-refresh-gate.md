@@ -16,14 +16,45 @@ landed first on the same base and took that number, so this gate is
 
 ## Subject
 
-The 8 workflow files FR-007 names, by literal path:
-`.github/workflows/intake.yml`, `clarify.yml`, `plan.yml`, `tasks.yml`,
-`implement.yml`, `finalize.yml`, `pr-conversation.yml`,
-`auto-update-spec-kit.yml` (scoped to its `e2e-stage` job only). Agent steps
-are identified structurally — a step whose `uses:` resolves to
-`anthropics/claude-code-action@*` (the same marker every existing gate that
-locates an agent step already keys on) — not by a hardcoded step-id list,
-so a stage's agent step being renamed does not silently blind the check.
+**Amended by spec 073 (#558) — see `specs/073-rebase-cleanup-credential-
+refresh/contracts/gate-68-derived-subjects.md` for the full mechanism this
+section now summarizes.** The subject set is no longer a hand-typed list;
+it is **derived**: every job, in every `.github/workflows/*.yml` file, that
+contains at least one agent step. Agent steps are identified structurally —
+a step whose `uses:` resolves to `anthropics/claude-code-action@*` (the
+same marker every existing gate that locates an agent step already keys
+on) — not by a hardcoded step-id list, so a stage's agent step being
+renamed does not silently blind the check, and a new agent-bearing workflow
+is in scope the day it ships, with zero edits to this gate.
+
+A checked-in `SUBJECT_FLOOR` (`workflow_path -> job_names`) is asserted to
+be a subset of the derived set on every run, so a subject's last agent step
+disappearing still fails loudly (derivation alone cannot notice an
+absence). Sixteen jobs are floor members today: the original eight FR-007
+stages (`intake.yml`, `clarify.yml`, `plan.yml`, `tasks.yml`,
+`implement.yml`, `finalize.yml`, `pr-conversation.yml`'s
+`classify-and-announce`/`act`, `auto-update-spec-kit.yml`'s `e2e-stage`),
+plus `rebase.yml`'s `rebase`, `cleanup.yml`'s `teardown-done`,
+`watchdog.yml`'s `diagnose`, and `board-loop.yml`'s `triage`/`route`/
+`fix`/`review` (spec 073).
+
+Every derived subject resolves to exactly one disposition:
+
+- **`full_subject`** (the default): the full post-agent mechanism below
+  applies. Covers the nine original stages plus `rebase.yml`'s `rebase`.
+- **`exempt`**: a checked-in `EXEMPT_JOBS` entry names a mechanically
+  asserted condition instead — a wall-clock bound (`cleanup.yml`'s
+  `teardown-done`, `watchdog.yml`'s `diagnose`, `auto-update-spec-kit.yml`'s
+  `evaluate-path`/`comment-reply`) or adoption of the post-agent composites
+  (`board-loop.yml`'s four jobs, provisional). The gate fails, naming the
+  entry, its reason and its deciding issue, the run the condition stops
+  holding.
+- **`agentless_in_scope`**: the pre-existing `AGENTLESS_JOBS` set
+  (`tasks-approved` only), for a job checks 3/5 below still cover despite
+  never running an agent step.
+
+A pair resolving to none of the three fails the gate, naming the pair
+(spec 072 FR-013).
 
 ## What it checks
 
@@ -46,16 +77,18 @@ so a stage's agent step being renamed does not silently blind the check.
    run" family (data-model.md's 12-row table, matched by a stable name
    pattern, not by line number) must carry `continue-on-error: true`.
 4. **Loud failure on an unreachable subject** (FR-022, Constitution
-   Principle VIII): if any of the 8 named files does not exist, or a named
-   file's expected job (e.g. `e2e-stage` in `auto-update-spec-kit.yml`)
-   cannot be located, or zero agent steps are found across all 8 files
-   combined, the gate exits non-zero with a message naming which file/job
-   it could not reach — never a silent pass over an empty result set.
+   Principle VIII; spec 072 FR-004/FR-013): if any loaded workflow file
+   fails to parse, a `SUBJECT_FLOOR` member is missing from the derived
+   set, a derived subject resolves to none of `full_subject`/`exempt`/
+   `agentless_in_scope`, or the derived set is empty, the gate exits
+   non-zero with a message naming which file/job/pair it could not
+   reach — never a silent pass over an empty result set.
 
 ## Mechanism
 
-Static structural inspection via `yaml.safe_load` over each of the 8 files
-(the same approach `verify-plan-tasks-cost-line.py` and
+Static structural inspection via `yaml.safe_load` over every
+`.github/workflows/*.yml` file (the same approach
+`verify-plan-tasks-cost-line.py` and
 `verify-implement-stall-notice-unchanged.py` already use for their
 subjects) — this gate's subject is step *ordering and reference shape*,
 not runtime behaviour, so no `wc_shell_harness.py` execution pass is
