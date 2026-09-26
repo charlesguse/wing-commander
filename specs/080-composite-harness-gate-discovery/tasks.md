@@ -48,9 +48,9 @@ options apply:
 code, so a defect discovered later cannot be mistaken for something this
 feature introduced.
 
-- [ ] T001 Run `grep -n '".github/actions/\*\*"\|".github/scripts/\*\*"' .github/workflows/lint-workflows.yml` and confirm both patterns already appear in `lint-workflows.yml`'s `pull_request: paths:` list (FR-008; research.md D1; quickstart.md §0). No edit expected — record the result for the PR description.
-- [ ] T002 Run `python .github/scripts/run-local-gates.py dispatch-and-wait-tests size-path-backstop-tests stage-findings-tests` and confirm all three composite harnesses run locally with CI's own arguments, and separately run `python .github/scripts/verify-gate-wiring.py` and confirm its `check_local_runner_parity()` "ok all N PR-time gate(s) are reproducible locally" line already counts the three harnesses (FR-002/FR-003/FR-005; research.md D1; quickstart.md §0).
-- [ ] T003 [P] Determine the next unclaimed gate number in `.github/workflows/lint-workflows.yml` (provisionally 99 per research.md D3, since the highest number present at plan time was Gate 98) — record it for T014, and re-verify it against `main` immediately before that task lands, since a concurrent spec may claim it first.
+- [X] T001 Run `grep -n '".github/actions/\*\*"\|".github/scripts/\*\*"' .github/workflows/lint-workflows.yml` and confirm both patterns already appear in `lint-workflows.yml`'s `pull_request: paths:` list (FR-008; research.md D1; quickstart.md §0). No edit expected — record the result for the PR description.
+- [X] T002 Run `python .github/scripts/run-local-gates.py dispatch-and-wait-tests size-path-backstop-tests stage-findings-tests` and confirm all three composite harnesses run locally with CI's own arguments, and separately run `python .github/scripts/verify-gate-wiring.py` and confirm its `check_local_runner_parity()` "ok all N PR-time gate(s) are reproducible locally" line already counts the three harnesses (FR-002/FR-003/FR-005; research.md D1; quickstart.md §0).
+- [X] T003 [P] Determine the next unclaimed gate number in `.github/workflows/lint-workflows.yml` (provisionally 99 per research.md D3, since the highest number present at plan time was Gate 98) — record it for T014, and re-verify it against `main` immediately before that task lands, since a concurrent spec may claim it first.
 
 **Checkpoint**: Baseline confirmed. Nothing above should require a code change; if any of T001/T002 fails, that is a defect in the current tree, not a task this feature's plan accounts for.
 
