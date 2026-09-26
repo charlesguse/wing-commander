@@ -2,7 +2,7 @@
   "issue": 560,
   "spec_dir": "specs/074-serialized-fold-dispatch",
   "feature_num": "074",
-  "stage": "plan",
+  "stage": "tasks",
   "iteration": 0,
   "spec_branch": "spec/074-serialized-fold-dispatch"
 }
