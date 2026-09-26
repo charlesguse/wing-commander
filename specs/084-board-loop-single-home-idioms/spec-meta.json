@@ -2,7 +2,7 @@
   "issue": 607,
   "spec_dir": "specs/084-board-loop-single-home-idioms",
   "feature_num": "084",
-  "stage": "tasks",
+  "stage": "stalled",
   "iteration": 0,
   "spec_branch": "spec/084-board-loop-single-home-idioms"
 }
