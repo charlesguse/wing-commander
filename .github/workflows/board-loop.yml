@@ -11,6 +11,23 @@
 # repository's own gate-suite entry point) which would each have to become
 # a typed input to publish, and it targets THIS repository's own issue
 # board, never an adopter's.
+#
+# Trusted-copy rule (specs/086-trusted-composite-resolution/{spec.md,plan.md,
+# research.md}, #468/#504/#615): every job below that resolves one of this
+# repository's own composite actions does so from a trusted copy, never the
+# workspace -- a checkout of this repository at `github.sha` into the
+# gitignored `.wc-pristine-repo`, established before any credential mint
+# and any agent step, never a direct `./.github/actions/...` reference into
+# whatever the job's own workspace happens to hold at that point (an
+# item's own branch, for fix's resume path onward, review and readiness).
+# This sits alongside -- not instead of -- the existing
+# `$RUNNER_TEMP/wc-pristine` helper-script/schema snapshot below (#583):
+# the same commit resolved two different ways for two structurally
+# different needs (a tar extract for importable Python modules; a real
+# checkout for a `uses:`-addressable composite directory). Gate 98
+# (verify-board-loop-helper-provenance.py) and Gate 99
+# (verify-board-loop-composite-provenance.py) are the two halves of this
+# one provenance property.
 name: "board-loop"
 
 on:
