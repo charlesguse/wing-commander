@@ -187,7 +187,7 @@ none of them now reports twice.
 confirm exactly one cost statement per scenario — the report on paths that
 used to embed the line in a callout, unchanged elsewhere.
 
-- [ ] T007 [US2] In `.github/scripts/verify-clarification-gating.py`, add
+- [X] T007 [US2] In `.github/scripts/verify-clarification-gating.py`, add
       `expect_cost_report=True` to every remaining `INTAKE_SCENARIOS` entry
       whose synthetic transcript represents an agent that actually ran —
       that is, every entry except none, since no entry sets
@@ -198,7 +198,7 @@ used to embed the line in a callout, unchanged elsewhere.
       failed validation or the run goes red — FR-012's "conclusion-blind"
       rule applies to these too, not only the two named vetoes).
 
-- [ ] T008 [US2] In `.github/workflows/intake.yml`, delete the
+- [X] T008 [US2] In `.github/workflows/intake.yml`, delete the
       "Append cost line to clarification questionnaire" step entirely (the
       one whose `run:` is `printf '\n%s\n' "$COST_LINE" >>
       ".../intake-clarification.md"`) so "Announce clarification needed" no
@@ -206,7 +206,7 @@ used to embed the line in a callout, unchanged elsewhere.
       Leave "Render clarification questionnaire" and "Announce clarification
       needed" themselves untouched — only the line-appending step goes.
 
-- [ ] T009 [US2] In `.github/workflows/intake.yml`, remove
+- [X] T009 [US2] In `.github/workflows/intake.yml`, remove
       `body: ${{ steps.cost-line.outputs.line }}` from "Announce spec PR
       ready for review"'s `with:` block. That callout's other inputs
       (`pr-url`, `pr-label`, `summary`, `kind: action`) are unaffected —
@@ -216,7 +216,7 @@ used to embed the line in a callout, unchanged elsewhere.
       also updates `wing-commander-callout`'s inputs to make `body` fully
       optional rather than working around the gap in intake.yml).
 
-- [ ] T010 [US2] Re-run `verify-clarification-gating.py`'s scenario suite
+- [X] T010 [US2] Re-run `verify-clarification-gating.py`'s scenario suite
       mentally against T008/T009's edits: confirm the inverted
       `carries_cost_line()` assertions from T005 now pass for intake (the
       two outcome callouts no longer carry the line, `Report run cost` does),
@@ -224,7 +224,7 @@ used to embed the line in a callout, unchanged elsewhere.
       the cost line changes callout bodies, not their firing conditions, so
       `fired` is unchanged by this task).
 
-- [ ] T011 [US2] In `.github/scripts/verify-clarification-gating.py`, retire
+- [X] T011 [US2] In `.github/scripts/verify-clarification-gating.py`, retire
       or repurpose `mut_cost_report_on_every_path` (around line 1125): today
       it encodes "the cost-only callout firing beside a callout that already
       carries the cost line" as a *bug* to catch (#366's original, narrower

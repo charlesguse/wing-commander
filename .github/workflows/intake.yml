@@ -1200,21 +1200,6 @@ jobs:
             | join("\n")
           ' > "${{ runner.temp }}/intake-clarification.md"
 
-      # A separate step, deliberately not folded into "Render clarification
-      # questionnaire" above: verify-clarification-gating.py extracts and
-      # re-executes that exact step's script byte-for-byte across both
-      # intake.yml and clarify.yml, and hard-fails on any `${{ }}` it
-      # doesn't already resolve (runner.temp only) — appending here keeps
-      # that contract intact.
-      #
-      # printf via env avoids bash treating a leading `$<digit>` (e.g.
-      # `$1.74`) as an unset positional parameter (#272) -- see clarify.yml.
-      - name: Append cost line to clarification questionnaire
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.needed == 'true'
-        env:
-          COST_LINE: ${{ steps.cost-line.outputs.line }}
-        run: printf '\n%s\n' "$COST_LINE" >> "${{ runner.temp }}/intake-clarification.md"
-
       - name: Announce clarification needed
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.needed == 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
@@ -1265,7 +1250,6 @@ jobs:
           summary: "Review the spec PR"
           pr-url: ${{ steps.spec-pr.outputs.url }}
           pr-label: "the spec PR"
-          body: ${{ steps.cost-line.outputs.line }}
 
       # Pipeline PRs carry the same labels as their lifecycle issue so PR
       # lists are filterable by spec. Deterministic.

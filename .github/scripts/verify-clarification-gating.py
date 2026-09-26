@@ -391,6 +391,7 @@ INTAKE_SCENARIOS = [
         result={"specified": True, "clarifications": QUESTIONS},
         spec_dir="specs/042-a-feature", expect_valid=True, expect_needed="true",
         expect_fires={"render", "announce_q"}, expect_run_red=False,
+        expect_cost_report=True,
     ),
     dict(
         name="spec authored, no open questions",
@@ -398,6 +399,7 @@ INTAKE_SCENARIOS = [
         result={"specified": True, "clarifications": []},
         spec_dir="specs/042-a-feature", expect_valid=True, expect_needed="false",
         expect_fires={"resolve_pr", "announce_pr"}, expect_run_red=False,
+        expect_cost_report=True,
     ),
     dict(
         name="no questions returned but the spec still has markers (defect b)",
@@ -412,7 +414,7 @@ INTAKE_SCENARIOS = [
         spec_dir="specs/042-a-feature", markers=True,
         expect_valid=True, expect_needed="false", expect_blocked="true",
         expect_fires=set(), expect_stdout=SENTINEL_PREFIX + "clarification-mismatch",
-        expect_run_red=True,
+        expect_run_red=True, expect_cost_report=True,
     ),
     dict(
         name="questions returned but the spec has no markers (warn only)",
@@ -425,7 +427,7 @@ INTAKE_SCENARIOS = [
         expect_valid=True, expect_needed="true", expect_blocked="",
         expect_fires={"render", "announce_q"},
         expect_stdout=SENTINEL_PREFIX + "clarification-mismatch",
-        expect_run_red=False,
+        expect_run_red=False, expect_cost_report=True,
     ),
     dict(
         name="spec authored with questions but no discoverable branch",
@@ -437,7 +439,7 @@ INTAKE_SCENARIOS = [
         spec_dir="", expect_valid=True, expect_needed="true",
         expect_fires={"render", "announce_q"},
         expect_stdout=SENTINEL_PREFIX + "clarification-orphaned",
-        expect_run_red=False,
+        expect_run_red=False, expect_cost_report=True,
     ),
     dict(
         name="spec authored, no questions, no discoverable branch",
@@ -488,7 +490,7 @@ INTAKE_SCENARIOS = [
         expect_valid=True, expect_needed="false", expect_blocked="true",
         expect_fires=set(),
         expect_stdout=SENTINEL_PREFIX + "clarification-mismatch",
-        expect_run_red=True,
+        expect_run_red=True, expect_cost_report=True,
     ),
     dict(
         name="questionnaire whose optional fields are empty strings (defect d)",
@@ -498,6 +500,7 @@ INTAKE_SCENARIOS = [
         result={"specified": True, "clarifications": BLANK_FIELD_QUESTIONS},
         spec_dir="specs/042-a-feature", expect_valid=True, expect_needed="true",
         expect_fires={"render", "announce_q"}, expect_run_red=False,
+        expect_cost_report=True,
     ),
     dict(
         name="questionnaire carrying pipes, newlines and 28 options",
@@ -513,6 +516,7 @@ INTAKE_SCENARIOS = [
         # The ordinal fallback for options past "Z", asserted positively —
         # "no literal null" alone would also pass on an empty label.
         expect_body=["| 27 |", "| 28 |"],
+        expect_cost_report=True,
     ),
     dict(
         name="spec.md unreadable while questions remain",
@@ -527,6 +531,7 @@ INTAKE_SCENARIOS = [
         expect_fires={"render", "announce_q"},
         forbid_stdout="clarification-mismatch",
         expect_summary="Cross-check skipped", expect_run_red=False,
+        expect_cost_report=True,
     ),
     dict(
         name="spec.md unreadable with NO questions returned (the silent skip)",
@@ -542,6 +547,7 @@ INTAKE_SCENARIOS = [
         expect_fires={"resolve_pr", "announce_pr"},
         forbid_stdout="clarification-mismatch",
         expect_summary="Cross-check skipped", expect_run_red=False,
+        expect_cost_report=True,
     ),
     dict(
         name="terminal result missing the specified discriminator",
@@ -551,6 +557,7 @@ INTAKE_SCENARIOS = [
         result={"clarifications": QUESTIONS},
         spec_dir="specs/042-a-feature", expect_valid=False,
         expect_needed=None, expect_fires=set(), expect_run_red=True,
+        expect_cost_report=True,
     ),
     dict(
         name="terminal result is a bare array (no schema wrapper)",
@@ -562,13 +569,14 @@ INTAKE_SCENARIOS = [
         result=None, raw_result=json.dumps(QUESTIONS),
         spec_dir="specs/042-a-feature", expect_valid=False,
         expect_needed=None, expect_fires=set(), expect_run_red=True,
+        expect_cost_report=True,
     ),
     dict(
         name="terminal result is not JSON at all",
         why="Same contract, blunter input.",
         result=None, raw_result="I could not complete the task.",
         spec_dir="", expect_valid=False, expect_needed=None, expect_fires=set(),
-        expect_run_red=True,
+        expect_run_red=True, expect_cost_report=True,
     ),
     dict(
         name="agent errored",
@@ -576,7 +584,7 @@ INTAKE_SCENARIOS = [
         result={"specified": True, "clarifications": QUESTIONS},
         spec_dir="", is_error=True, subtype="error_during_execution",
         expect_valid=False, expect_needed=None, expect_fires=set(),
-        expect_run_red=True,
+        expect_run_red=True, expect_cost_report=True,
     ),
 ]
 
@@ -1165,14 +1173,6 @@ def mut_drop_cost_report(loaded):
                     "outputs.outcome == 'none'", "outputs.outcome == 'never'"))
 
 
-def mut_cost_report_on_every_path(loaded):
-    """#366's fix widened: the cost-only callout fires beside the callouts
-    that already carry the cost line."""
-    for stage, steps, _ in loaded:
-        if stage.report_cost:
-            _strip_conjunct_one(steps[stage.report_cost], "outputs.outcome")
-
-
 def mut_questionnaire_without_cost(loaded):
     """The questionnaire's cost line is appended by a separate step; a
     refactor that drops that step's env leaves the callout's body-file
@@ -1221,8 +1221,6 @@ MUTATIONS = [
      mut_drop_unclaimed_sentinel),
     ("clarify's answered-nothing path never reporting the run's cost (#366)",
      mut_drop_cost_report),
-    ("the cost-only callout firing beside a callout that already carries the "
-     "cost line (#366)", mut_cost_report_on_every_path),
     ("the cost-only callout posting without the cost line (#366)",
      mut_cost_report_without_cost),
     ("the questionnaire posting without the cost line its append step "
