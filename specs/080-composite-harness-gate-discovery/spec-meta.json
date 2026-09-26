@@ -2,7 +2,7 @@
   "issue": 591,
   "spec_dir": "specs/080-composite-harness-gate-discovery",
   "feature_num": "080",
-  "stage": "plan",
+  "stage": "tasks",
   "iteration": 0,
   "spec_branch": "spec/080-composite-harness-gate-discovery"
 }
