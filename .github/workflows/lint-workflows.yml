@@ -935,13 +935,17 @@ jobs:
           ASSIGN_RE = re.compile(r'(?<![\w$])(\w+)=("(?:[^"\\]|\\.)*"|\$\([^)]*\)|\S+)')
           TOOL_GH_RE = re.compile(r'Bash\(gh\s+([a-zA-Z][\w-]*)(?:\s+([a-zA-Z][\w-]*))?')
           # A workflow step calling one of this repository's own composites,
-          # by either path a stage resolves them at: `./.github/actions/X`
-          # (a workflow running in this repository's own checkout) or
-          # `./.wing-commander-pipeline/.github/actions/X` (a published stage,
-          # through its self-checkout). Group 1 is X, the directory under
-          # .github/actions/ — `_shared/name` for a nested one.
+          # by any path a caller resolves them at: `./.github/actions/X` (a
+          # workflow running in this repository's own checkout),
+          # `./.wing-commander-pipeline/.github/actions/X` (a published
+          # stage, through its self-checkout), or
+          # `./.wc-pristine-repo/.github/actions/X` (board-loop.yml's own
+          # trusted-copy checkout -- see that file's header;
+          # specs/086-trusted-composite-resolution). Group 1 is X, the
+          # directory under .github/actions/ — `_shared/name` for a nested
+          # one.
           COMPOSITE_USES_RE = re.compile(
-              r'^\./(?:\.wing-commander-pipeline/)?\.github/actions/([^@\s]+?)/?(?:@\S+)?$')
+              r'^\./(?:\.wing-commander-pipeline/|\.wc-pristine-repo/)?\.github/actions/([^@\s]+?)/?(?:@\S+)?$')
           # `gh api` level: an explicit -X or --method decides (POST/PATCH/PUT/
           # DELETE write, anything else reads). Gate 28 separately requires
           # every `gh api` call that passes a field to name its method, so an
@@ -4127,13 +4131,31 @@ jobs:
       # script; sys.path changed only to insert the snapshot; no reference
       # to the working tree's .github/scripts (the gate-suite call
       # excepted). The snapshot step is also run against a scratch
-      # repository whose working tree differs from its commit.
+      # repository whose working tree differs from its commit. The
+      # composite half of this same provenance rule is Gate 99,
+      # immediately below.
       - name: "Gate 98 — board-loop's fix, review and readiness run helpers from a pristine snapshot, never the working tree"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-loop-helper-provenance.py
       - name: "Gate 98 self-test — a working-tree import (incl. pathlib or cd), python3 without -I, a dropped or late snapshot, a snapshot of the working tree, or a writable snapshot each fail"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-loop-helper-provenance.py --self-test
+
+      # Gate 99 — #468/#504/#615: board-loop.yml's review, readiness and fix
+      # (resume path, and every post-agent step) jobs check out board-item
+      # content and then resolve the loop's own shared composites by a
+      # relative `uses:` path, which resolves from that same untrusted
+      # workspace. Gate 98 closed the run:-block half of this exposure
+      # (helper scripts and schemas, #583); this gate closes the uses:-block
+      # half, unconditionally across every job in the file -- see
+      # board-loop.yml's own header for the trusted-copy statement both gates
+      # enforce a piece of.
+      - name: "Gate 99 — every uses: ./.github/actions/ reference in board-loop.yml resolves from the trusted copy, never the workspace"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-board-loop-composite-provenance.py
+      - name: "Gate 99 self-test — a raw workspace uses:, a moved, dropped, mis-pinned, or continue-on-error checkout, a missing .gitignore entry, or a widened ban each fail"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-board-loop-composite-provenance.py --self-test
 
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and

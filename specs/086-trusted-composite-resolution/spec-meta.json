@@ -1,3 +1,9 @@
-{"issue": 615, "spec_dir": "specs/086-trusted-composite-resolution",
- "feature_num": "086", "stage": "spec", "iteration": 0,
- "spec_branch": null}
+{
+  "issue": 615,
+  "spec_dir": "specs/086-trusted-composite-resolution",
+  "feature_num": "086",
+  "stage": "review",
+  "iteration": 1,
+  "spec_branch": "spec/086-trusted-composite-resolution",
+  "pending_re_review_from": []
+}
