@@ -37,6 +37,7 @@ cancelling the holder or being dropped (research.md D4).
 | `implement.yml` | dispatch-next-iteration job | `wing-commander-${{ inputs.spec-dir }}` (**unchanged**) |
 | `finalize.yml` | `finalize` | `wing-commander-${{ inputs.spec-dir }}` (**unchanged**) |
 | `tasks.yml` | `stalled`, `stalled-approved` (survivor jobs; mark spec-meta stalled through the chain-stop notice) | `wing-commander-${{ needs.resolve-spec.outputs.spec-dir }}` (joined 2026-09-21, #397) |
+| `pr-conversation.yml` | `stalled` | `wing-commander-${{ needs.resolve-identity.outputs.spec-dir }}${{ needs.resolve-identity.outputs.spec-dir == '' && format('pr-conversation-pr-{0}', inputs.pr-number) || '' }}` (joined 2026-09-26, #581 — falls back to the per-PR group `wing-commander-pr-conversation-pr-<n>` when `spec-dir` is empty; see `resolve-identity-job.md`) |
 | `cleanup.yml` | `teardown-done`, `teardown-rejected`, `mark-stalled` | `wing-commander-${{ needs.select.outputs.spec-dir }}` (joined 2026-09-21, #397; `select` derives it from `head-ref`) |
 
 Any future published stage that checks out and publishes to a
@@ -90,6 +91,18 @@ The downstream job (`plan`, `tasks`, `tasks-approved`) adds
 `needs: resolve-spec` and deletes its own now-redundant
 `Resolve spec identity` step, consuming `needs.resolve-spec.outputs.*`
 wherever that step's outputs were previously used.
+
+## `resolve-identity` job contract (new, `pr-conversation.yml` only)
+
+Same purpose as `resolve-spec` above — make the specification's identity
+available as a job output before a downstream job's `concurrency:` block is
+evaluated — and the same no-checkout/no-secrets shape, but it differs in
+the one respect `pr-conversation.yml`'s inputs force: this stage receives
+only `pr-number`, not a declared `head-ref`/`slug` input, so the job must
+read the GitHub API (`gh repo view`, `gh pr view`) to learn the head ref
+before it can derive anything, where `resolve-spec` derives everything by
+pure string manipulation. Full contract, not duplicated here:
+[specs/077-stalled-per-spec-group/contracts/resolve-identity-job.md](../../077-stalled-per-spec-group/contracts/resolve-identity-job.md).
 
 ## Behavioral guarantees this contract must preserve
 
