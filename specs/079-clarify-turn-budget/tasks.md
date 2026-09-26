@@ -241,7 +241,7 @@ procedure" table).
 **Depends on**: Phase 3 (the worked example restates the `65`/`163`
 values T002 lands — write this after, so the two cannot disagree).
 
-- [ ] T014 [US4] Add a new subsection to `docs/architecture.md`
+- [X] T014 [US4] Add a new subsection to `docs/architecture.md`
   immediately after the existing "What a 'turn' is here" / ceiling
   explanation (after the Gate 22/51 paragraph, ~lines 244-294, research.md
   R4 — the only place in the repository that already explains the
@@ -260,7 +260,7 @@ values T002 lands — write this after, so the two cannot disagree).
   `consecutive-at-or-over-budget` count that a bigger budget would only
   relabel — both cases close the `pipeline-defect` as accepted rather
   than move the number (data-model.md's "Written procedure" table).
-- [ ] T015 [US4] In the same subsection, add the worked example: applying
+- [X] T015 [US4] In the same subsection, add the worked example: applying
   the stated arithmetic to clarify's cited history (`{39, 45, 61}`)
   yields budget `65` (smallest multiple of 5 strictly greater than `61`)
   and ceiling `163` (`ceil(65 * 2.5)`) — the same values T002 lands,
@@ -276,7 +276,7 @@ here.
 
 ## Phase 7: Polish & Cross-Cutting Concerns
 
-- [ ] T016 Confirm no stale clarify-attributed `40` remains anywhere else
+- [X] T016 Confirm no stale clarify-attributed `40` remains anywhere else
   (FR-017's "no stale number left behind"): `grep -rn "40" docs/
   README.md .github/scripts/` and check every hit that could plausibly
   refer to clarify's turn budget. Research.md R6 found only
