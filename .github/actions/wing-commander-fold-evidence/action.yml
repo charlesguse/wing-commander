@@ -1,0 +1,95 @@
+# Like every shared composite, this action is resolved from the pipeline
+# repository's own checkout at github.job_workflow_sha (see the header of
+# .github/actions/wing-commander-context/action.yml for the verified
+# snippet). It is the ONE home (FR-009, research.md D2) of "which
+# fold(<leg-id>): <summary> commits, in a given commit range, belong to a
+# given stage-9 run" — before this composite, pr-conversation.yml's
+# dispatch-once and report-fold-outcomes jobs each ran their own unscoped
+# `git log --grep '^fold(' "$BASE_SHA..$TIP_SHA"`, so one run's range could
+# contain a sibling run's same-id fold commit and both jobs would credit it
+# to the wrong run — silencing exactly the case report-fold-outcomes exists
+# to catch (a leg cancelled before it folded anything, credited with a
+# sibling run's commit; #560's concurrent-runs resolution made the overlap
+# reachable in practice).
+#
+# A commit counts as THIS run's evidence only when its subject matches
+# `fold(<id>): <summary>` AND its full body carries the exact trailer line
+# `Wing-Commander-Run-Id: <run-id>` — appended by a `prepare-commit-msg` git
+# hook the `act` job installs on each leg's checkout (research.md D1), never
+# written by the agent's own commit message. A commit with no trailer at
+# all (made before this feature shipped, or made by a human directly on the
+# spec branch) is absent from the returned evidence, not reinterpreted as
+# anyone's (FR-007, FR-013) — the conservative direction spec.md's
+# Assumptions section requires.
+#
+# `git log --grep` alone cannot express "subject matches X AND a later line
+# matches Y" in one pass (its pattern is matched against the whole message
+# buffer without the multi-line anchoring a subject-then-trailer check
+# needs), so this reads candidate subjects first with `git log`, then
+# re-reads each candidate's full body with `git show` to check the trailer.
+name: wing-commander-fold-evidence
+description: >
+  Read which fold(<leg-id>): <summary> commits in a given commit range
+  carry THIS run's own Wing-Commander-Run-Id: trailer. The one home for the
+  fold-evidence read shared by pr-conversation.yml's dispatch-once and
+  report-fold-outcomes jobs (FR-009).
+
+inputs:
+  working-directory:
+    description: Path to the checkout (fetch-depth 0) holding the commit range to read.
+    required: true
+  base-sha:
+    description: Range start (exclusive), same value the caller already reads today.
+    required: true
+  tip-sha:
+    description: Range end (inclusive), same value the caller already reads today.
+    required: true
+  run-id:
+    description: >
+      The run whose evidence to select. Callers pass the default
+      (github.run_id); the input exists so Gate 34's harness can drive this
+      composite with a synthetic run id without depending on a real Actions
+      context.
+    required: false
+    default: ${{ github.run_id }}
+
+outputs:
+  folded-json:
+    description: >
+      JSON array of {id, summary} objects, one per commit in this run's
+      evidence. [] (never a missing output) when the range is empty or
+      nothing matches.
+    value: ${{ steps.read.outputs.folded-json }}
+
+runs:
+  using: composite
+  steps:
+    - name: Compute run-scoped fold evidence
+      id: read
+      shell: bash
+      env:
+        WORKING_DIRECTORY: ${{ inputs.working-directory }}
+        BASE_SHA: ${{ inputs.base-sha }}
+        TIP_SHA: ${{ inputs.tip-sha }}
+        RUN_ID: ${{ inputs.run-id }}
+      run: |
+        set -euo pipefail
+        FOLD_RE='^fold\(([^)]+)\): (.*)$'
+        result='[]'
+        if [ -n "$BASE_SHA" ] && [ -n "$TIP_SHA" ] && [ "$BASE_SHA" != "$TIP_SHA" ]; then
+          candidates=$(git -C "$WORKING_DIRECTORY" log --grep '^fold(' --format='%H%x1f%s' "$BASE_SHA..$TIP_SHA")
+          if [ -n "$candidates" ]; then
+            while IFS=$'\x1f' read -r sha subject; do
+              [ -n "$sha" ] || continue
+              if [[ "$subject" =~ $FOLD_RE ]]; then
+                id="${BASH_REMATCH[1]}"
+                summary="${BASH_REMATCH[2]}"
+                body=$(git -C "$WORKING_DIRECTORY" show -s --format=%B "$sha")
+                if printf '%s\n' "$body" | grep -qxF "Wing-Commander-Run-Id: $RUN_ID"; then
+                  result=$(printf '%s' "$result" | jq -c --arg id "$id" --arg summary "$summary" '. + [{id: $id, summary: $summary}]')
+                fi
+              fi
+            done <<< "$candidates"
+          fi
+        fi
+        echo "folded-json=$result" >> "$GITHUB_OUTPUT"
