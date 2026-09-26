@@ -10,7 +10,7 @@ description: "Task list template for feature implementation"
 **Prerequisites**: plan.md, spec.md, research.md, data-model.md, contracts/,
 quickstart.md (all present)
 
-**Tests**: FR-012 makes the ten checked-in fixtures a hard functional
+**Tests**: FR-012 makes the eleven checked-in fixtures a hard functional
 requirement of this feature (they are User Story 3's own deliverable, not
 optional test coverage) — they are scheduled as that story's phase below.
 
@@ -227,9 +227,9 @@ select an issue and leave `step` empty.
 
 ## Phase 5: User Story 3 - The rule has a home and a gate that can fail it (Priority: P2)
 
-**Goal**: `in_flight_candidate()` is covered by ten checked-in fixtures
-under Gate 81 (`verify-board-eligibility.py`), so a future change to the
-rule fails a gate rather than a scheduled run three weeks later.
+**Goal**: `in_flight_candidate()` is covered by FR-012's eleven checked-in
+fixtures under Gate 81 (`verify-board-eligibility.py`), so a future change
+to the rule fails a gate rather than a scheduled run three weeks later.
 
 **Independent Test**: Run the repository's PR-time gate suite against a
 deliberately broken in-flight rule and confirm a gate fails (spec.md US3
@@ -241,7 +241,11 @@ Each case is a directory under
 `.github/scripts/tests/board-eligibility/in-flight/<case>/` containing
 `open_issues.json`, `comments_by_issue.json`, `pr_state_by_number.json`,
 and `expected.json` (`{"issue_number": <int|null>, "multiple_found":
-<bool>}`), per contracts/in-flight-detection.md's fixture list:
+<bool>}`), per contracts/in-flight-detection.md's fixture list. FR-012
+requires exactly these eleven cases; Gate 81 iterates every directory
+present under `in-flight/`, so later, unrelated fixes to other defects may
+add further cases to that same directory without changing FR-012's own
+count:
 
 - [X] T014 [P] [US3] Create fixture case `no-marker` — no issue anywhere
   carries a marker → `{"issue_number": null, "multiple_found": false}`.
@@ -276,14 +280,20 @@ and `expected.json` (`{"issue_number": <int|null>, "multiple_found":
   second fixture loop (mirroring its existing `classify_issue` loop's
   "fail loudly, non-zero exit, `::error::` annotation if any of the four
   files is missing" pattern, not a new mechanism) that, for each of the ten
-  `in-flight/<case>/` directories (T014-T023), loads all four files, calls
-  `in_flight_candidate()` (T003) with them, and asserts the result equals
-  `expected.json`'s `{"issue_number", "multiple_found"}` (depends on T003,
-  T014-T023).
+  `in-flight/<case>/` directories T014-T023 create, loads all four files,
+  calls `in_flight_candidate()` (T003) with them, and asserts the result
+  equals `expected.json`'s `{"issue_number", "multiple_found"}` (depends on
+  T003, T014-T023). This loop iterates every case directory present rather
+  than a hardcoded count, so it picks up the eleventh case (`prove-no-pr`)
+  unmodified once Maintainer Feedback below adds it — FR-012's total is
+  eleven, not the ten this task creates.
 
 - [X] T025 [US3] Run `python3 .github/scripts/run-local-gates.py` and
-  confirm Gate 81 passes all ten new cases plus the four existing
-  `classify_issue` cases. Then, per quickstart.md §1, temporarily edit
+  confirm Gate 81 passes the ten new cases T024 wires up plus the four
+  existing `classify_issue` cases (fourteen at this point in the task
+  sequence; an eleventh in-flight case, `prove-no-pr`, joins later via
+  Maintainer Feedback, bringing FR-012's total to eleven). Then, per
+  quickstart.md §1, temporarily edit
   `in_flight_candidate()` to admit an issue with no marker (e.g. `return
   open_issues[0]["number"], False` unconditionally), re-run the same
   command, confirm Gate 81 fails naming the `no-marker` case, and revert
@@ -361,18 +371,20 @@ before-pushing requirements (CLAUDE.md).
   (different steps in the same file — apply with care if the same agent
   edits `board-loop.yml` serially).
 - All ten of US3's fixture tasks (T014-T023) are mutually [P] — different
-  directories, no shared file.
+  directories, no shared file. (The eleventh FR-012 case, `prove-no-pr`,
+  is added later by Maintainer Feedback, outside this numbered batch.)
 
 ---
 
 ## Parallel Example: User Story 3
 
 ```bash
-# Launch all ten fixture-case tasks together (different directories):
+# Launch all ten T014-T023 fixture-case tasks together (different directories):
 Task: "Create fixture case no-marker under .github/scripts/tests/board-eligibility/in-flight/no-marker/"
 Task: "Create fixture case pre-fix-no-pr under .../in-flight/pre-fix-no-pr/"
 Task: "Create fixture case fix-or-later-pr-open under .../in-flight/fix-or-later-pr-open/"
 # ... (T017-T023 similarly)
+# The eleventh FR-012 case, prove-no-pr, is added later by Maintainer Feedback.
 ```
 
 ---
