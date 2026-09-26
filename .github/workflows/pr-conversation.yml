@@ -1932,6 +1932,13 @@ jobs:
           mkdir -p /tmp/wing-commander
           printf '%s' "$DRAFTED_CONTENT" > /tmp/wing-commander/act-drafted-content.json
 
+      - name: Compose commit-message guidance (pr-conversation.fold)
+        id: commit-guidance-fold
+        if: steps.relay-gate.outputs.proceed == 'true' && steps.route.outputs.agent-needed == 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-commit-message-guidance
+        with:
+          scratch-filename: pr-conversation-commit-message-fold.txt
+
       - name: Compose tool args (pr-conversation.act)
         id: tool-args-act
         if: steps.relay-gate.outputs.proceed == 'true' && steps.route.outputs.agent-needed == 'true'
@@ -2008,7 +2015,11 @@ jobs:
               cycle finalizes again; do not remove any existing entry).
               Commit BOTH files together in one commit whose message starts
               with "fold(${{ matrix.id }}): ${{ steps.leg.outputs.summary }}"
-              and push to the current branch. Do NOT run `gh workflow run`
+              and push to the current branch.
+
+              ${{ steps.commit-guidance-fold.outputs.guidance }}
+
+              Do NOT run `gh workflow run`
               yourself — a later job (`dispatch-once`) dispatches implement
               exactly once, after every item in this review has folded.
 

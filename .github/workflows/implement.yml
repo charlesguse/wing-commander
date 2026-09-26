@@ -819,6 +819,12 @@ jobs:
       # committing directly to the spec branch. continue-on-error so the
       # deterministic outcome step can inspect the result instead of the job
       # dying here.
+      - name: Compose commit-message guidance (implement.cycle)
+        id: commit-guidance-cycle
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-commit-message-guidance
+        with:
+          scratch-filename: implement-commit-message-cycle.txt
+
       - name: Compose tool args (implement.cycle)
         id: tool-args-cycle
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-tool-args
@@ -935,14 +941,7 @@ jobs:
             Constraints: commit and push ONLY to
             ${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}; open no PRs; never merge or
             approve anything; do not edit files under .github/workflows
-            unless the task list explicitly requires it. A commit message
-            longer than one line goes through the Write tool to exactly
-            ${{ runner.temp }}/implement-commit-message-cycle.txt and then
-            git commit -F with that path; never a heredoc or $(cat ...)
-            on the command line, which the permission layer denies, and
-            never a file under the repository (a path inside .git/ is
-            denied outright, and any other path there would be swept
-            into the commit).
+            unless the task list explicitly requires it. ${{ steps.commit-guidance-cycle.outputs.guidance }}
 
             Tooling: ${{ steps.tool-args-cycle.outputs.shell-commands }} That
             statement is derived from this run's own composed allowed and
@@ -1392,6 +1391,16 @@ jobs:
       # One automatic retry of the SAME iteration, one tier up
       # (→ inputs.escalation-model). Skipped when the failing attempt already
       # ran on the escalation tier — that goes straight to stalled.
+      - name: Compose commit-message guidance (implement.retry)
+        id: commit-guidance-retry
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-commit-message-guidance
+        with:
+          scratch-filename: implement-commit-message-retry.txt
+          extra-note: >-
+            Use a name distinct from the cycle step's scratch file above --
+            the cycle attempt may have left one behind, and this is a fresh
+            session that never read it.
+
       - name: Compose tool args (implement.retry)
         id: tool-args-retry
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-tool-args
@@ -1527,16 +1536,7 @@ jobs:
             Constraints: commit and push ONLY to
             ${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}; open no PRs; never merge or
             approve anything; do not edit files under .github/workflows
-            unless the task list explicitly requires it. A commit message
-            longer than one line goes through the Write tool to exactly
-            ${{ runner.temp }}/implement-commit-message-retry.txt and then
-            git commit -F with that path; never a heredoc or $(cat ...)
-            on the command line, which the permission layer denies, and
-            never a file under the repository (a path inside .git/ is
-            denied outright, and any other path there would be swept
-            into the commit). Use a name distinct from the cycle step's
-            scratch file above -- the cycle attempt may have left one
-            behind, and this is a fresh session that never read it.
+            unless the task list explicitly requires it. ${{ steps.commit-guidance-retry.outputs.guidance }}
 
             Tooling: ${{ steps.tool-args-retry.outputs.shell-commands }} That
             statement is derived from this run's own composed allowed and
