@@ -284,19 +284,20 @@ jobs:
           echo "ok=true" >> "$GITHUB_OUTPUT"
           echo "default-branch=$DEFAULT_BRANCH" >> "$GITHUB_OUTPUT"
 
-      # specs/055-unattended-e2e-gates D1/D2: the fixture maintainer
-      # identity is a dedicated GitHub user account (never a bot), invited
-      # as a Write collaborator on the test repository alone, whose PAT
-      # drives the four human gates later in this job. A classic PAT, not
-      # a fine-grained one -- a fine-grained PAT can only reach
-      # repositories the token's own account OWNS, never one it merely
-      # collaborates on, so the runtime containment check below (not
-      # token scoping alone) is what actually enforces "the test
-      # repository alone" for this credential (maintainer feedback on PR
-      # #389; corrects every prior "fine-grained" claim about this
-      # secret). Checked here, before any of those gates are reached, so
-      # a misconfigured credential ends fail-infra before any attempt
-      # spend rather than surfacing as a mysterious gate stall.
+      # research.md D1 (specs/066-fine-grained-maintainer-token): the
+      # fixture maintainer identity is a dedicated GitHub user account
+      # (never a bot), whose credential drives the four human gates later
+      # in this job. The precheck below detects, from the token's own
+      # literal prefix, which of the two accepted shapes the secret holds
+      # -- classic or fine-grained -- and applies that shape's own checks;
+      # both are accepted during the transition (FR-003). See
+      # docs/setup.md for the canonical statement of what each shape must
+      # carry (scope, permissions, expiry, rotation) -- specs/055-
+      # unattended-e2e-gates D1/D2 recorded the now-superseded classic-only
+      # decision this feature replaces. Checked here, before any of those
+      # gates are reached, so a misconfigured credential ends fail-infra
+      # before any attempt spend rather than surfacing as a mysterious
+      # gate stall.
       - name: Confirm the fixture maintainer identity's credential
         id: maintainer-credential
         if: steps.reachable.outputs.ok == 'true'
@@ -304,6 +305,7 @@ jobs:
         env:
           MAINTAINER_TOKEN: ${{ secrets.WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN }}
           MAINTAINER_USERNAME: ${{ secrets.WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_USERNAME }}
+          MAINTAINER_TOKEN_EXPIRY_WARNING_DAYS: ${{ vars.WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN_EXPIRY_WARNING_DAYS }}
           E2E_REPO: ${{ steps.config.outputs.e2e-repo }}
           HEAD_SHA: ${{ needs.detect.outputs.head-sha }}
           MODE: ${{ steps.mode.outputs.mode }}
@@ -320,7 +322,7 @@ jobs:
             echo "ok=false" >> "$GITHUB_OUTPUT"
             {
               echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
-              bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "fixture maintainer identity credential" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN set to a classic PAT for a Write collaborator on the test repository" "unset" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN" "$MODE"
+              bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "fixture maintainer identity credential" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN set to a classic or fine-grained PAT for the test repository -- see docs/setup.md" "unset" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN" "$MODE"
               echo 'AUTO_RELEASE_VERDICT_EOF'
             } >> "$GITHUB_OUTPUT"
             echo "::error::wing-commander auto-release verify-e2e: WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN is unset -- see docs/setup.md."
@@ -336,56 +338,202 @@ jobs:
             echo "::error::wing-commander auto-release verify-e2e: WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_USERNAME is unset -- see docs/setup.md."
             exit 0
           fi
-          permission="$(GH_TOKEN="$MAINTAINER_TOKEN" gh repo view "$E2E_REPO" --json viewerPermission --jq .viewerPermission 2>/dev/null || true)"
-          case "$permission" in
-            WRITE|MAINTAIN|ADMIN) : ;;
+          # research.md D1: the token's own literal prefix says which
+          # accepted shape it is -- a deterministic string match, never a
+          # network round trip -- before any of the shape-specific checks
+          # below can even run. A value matching neither prefix is its own
+          # distinguishable branch, ahead of every other check.
+          case "$MAINTAINER_TOKEN" in
+            ghp_*) shape=classic ;;
+            github_pat_*) shape=fine-grained ;;
             *)
               echo "ok=false" >> "$GITHUB_OUTPUT"
               {
                 echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
-                bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "fixture maintainer identity credential" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN authenticates as a Write (or higher) collaborator on the test repository" "gh rejected the token, or viewerPermission was '${permission:-none}'" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN" "$MODE"
+                bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "fixture maintainer identity credential" "a value matching the classic (ghp_) or fine-grained (github_pat_) token prefix" "matches neither accepted shape" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN" "$MODE"
                 echo 'AUTO_RELEASE_VERDICT_EOF'
               } >> "$GITHUB_OUTPUT"
-              echo "::error::wing-commander auto-release verify-e2e: WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN did not authenticate with Write access to $E2E_REPO -- see docs/setup.md."
+              echo "::error::wing-commander auto-release verify-e2e: WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN does not match either accepted credential shape -- see docs/setup.md."
               exit 0
               ;;
           esac
-          login="$(GH_TOKEN="$MAINTAINER_TOKEN" gh api user --jq .login 2>/dev/null || true)"
-          if [ -z "$login" ]; then
-            echo "ok=false" >> "$GITHUB_OUTPUT"
-            {
-              echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
-              bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "fixture maintainer identity credential" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN authenticates as a Write (or higher) collaborator on the test repository" "gh rejected the token" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN" "$MODE"
-              echo 'AUTO_RELEASE_VERDICT_EOF'
-            } >> "$GITHUB_OUTPUT"
-            echo "::error::wing-commander auto-release verify-e2e: WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN could not resolve a login via gh api user -- see docs/setup.md."
-            exit 0
+          if [ "$shape" = classic ]; then
+            # contracts/credential-precheck.md step 5: every following check
+            # is BYTE-IDENTICAL to specs/055 D2/today's step -- see docs/setup.md
+            permission="$(GH_TOKEN="$MAINTAINER_TOKEN" gh repo view "$E2E_REPO" --json viewerPermission --jq .viewerPermission 2>/dev/null || true)"
+            case "$permission" in
+              WRITE|MAINTAIN|ADMIN) : ;;
+              *)
+                echo "ok=false" >> "$GITHUB_OUTPUT"
+                {
+                  echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
+                  bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "fixture maintainer identity credential" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN authenticates as a Write (or higher) collaborator on the test repository" "gh rejected the token, or viewerPermission was '${permission:-none}'" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN" "$MODE"
+                  echo 'AUTO_RELEASE_VERDICT_EOF'
+                } >> "$GITHUB_OUTPUT"
+                echo "::error::wing-commander auto-release verify-e2e: WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN did not authenticate with Write access to $E2E_REPO -- see docs/setup.md."
+                exit 0
+                ;;
+            esac
+            login="$(GH_TOKEN="$MAINTAINER_TOKEN" gh api user --jq .login 2>/dev/null || true)"
+            if [ -z "$login" ]; then
+              echo "ok=false" >> "$GITHUB_OUTPUT"
+              {
+                echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
+                bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "fixture maintainer identity credential" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN authenticates as a Write (or higher) collaborator on the test repository" "gh rejected the token" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN" "$MODE"
+                echo 'AUTO_RELEASE_VERDICT_EOF'
+              } >> "$GITHUB_OUTPUT"
+              echo "::error::wing-commander auto-release verify-e2e: WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN could not resolve a login via gh api user -- see docs/setup.md."
+              exit 0
+            fi
+            # Compared case-insensitively -- GitHub logins are case-
+            # insensitive, so a differently-cased secret must not produce a
+            # false pass-time failure here (maintainer feedback on PR #389,
+            # second review).
+            if [ "$(printf '%s' "$login" | tr '[:upper:]' '[:lower:]')" != "$(printf '%s' "$MAINTAINER_USERNAME" | tr '[:upper:]' '[:lower:]')" ]; then
+              echo "ok=false" >> "$GITHUB_OUTPUT"
+              {
+                echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
+                bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "fixture maintainer identity credential" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN authenticates as WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_USERNAME" "authenticated as a different login" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN, WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_USERNAME" "$MODE"
+                echo 'AUTO_RELEASE_VERDICT_EOF'
+              } >> "$GITHUB_OUTPUT"
+              echo "::error::wing-commander auto-release verify-e2e: WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN authenticated as a login other than WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_USERNAME -- see docs/setup.md."
+              exit 0
+            fi
+          else
+            # contracts/credential-precheck.md step 6, research.md D5/D6:
+            # viewerPermission is never consulted for this shape -- after
+            # the FR-002 ownership transfer the ACCOUNT is ADMIN on the
+            # repository by construction, so it would report the account's
+            # role, not this token's own granted permission (research.md
+            # D5's rationale) -- see docs/setup.md.
+            login_response="$(GH_TOKEN="$MAINTAINER_TOKEN" gh api -i user 2>/dev/null || true)"
+            login_body="$(printf '%s\n' "$login_response" | awk 'BEGIN{h=1} h==1 && /^\r?$/{h=0; next} h==0{print}')"
+            login="$(printf '%s' "$login_body" | jq -r '.login // empty' 2>/dev/null || true)"
+            if [ -z "$login" ]; then
+              echo "ok=false" >> "$GITHUB_OUTPUT"
+              {
+                echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
+                bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "fixture maintainer identity credential" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN authenticates" "gh rejected the token" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN" "$MODE"
+                echo 'AUTO_RELEASE_VERDICT_EOF'
+              } >> "$GITHUB_OUTPUT"
+              echo "::error::wing-commander auto-release verify-e2e: WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN could not resolve a login via gh api user -- see docs/setup.md."
+              exit 0
+            fi
+            if [ "$(printf '%s' "$login" | tr '[:upper:]' '[:lower:]')" != "$(printf '%s' "$MAINTAINER_USERNAME" | tr '[:upper:]' '[:lower:]')" ]; then
+              echo "ok=false" >> "$GITHUB_OUTPUT"
+              {
+                echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
+                bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "fixture maintainer identity credential" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN authenticates as WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_USERNAME" "authenticated as a different login" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN, WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_USERNAME" "$MODE"
+                echo 'AUTO_RELEASE_VERDICT_EOF'
+              } >> "$GITHUB_OUTPUT"
+              echo "::error::wing-commander auto-release verify-e2e: WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN authenticated as a login other than WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_USERNAME -- see docs/setup.md."
+              exit 0
+            fi
+            # research.md D6: Issues:write and Pull-requests:write are
+            # proven by attempting a write-shaped call against an id
+            # certain not to exist -- a fine-grained token lacking the
+            # permission is rejected (403) before the resource lookup
+            # (404) even happens. Read-side-effect-free: the id cannot
+            # exist, so neither call creates, modifies, or merges anything.
+            issues_status="$(GH_TOKEN="$MAINTAINER_TOKEN" gh api -i -X POST "repos/$E2E_REPO/issues/999999999/comments" -f body=probe 2>/dev/null | head -1 | awk '{print $2}' || true)"
+            prs_status="$(GH_TOKEN="$MAINTAINER_TOKEN" gh api -i -X PUT "repos/$E2E_REPO/pulls/999999999/merge" 2>/dev/null | head -1 | awk '{print $2}' || true)"
+            if [ -z "$issues_status" ] || [ -z "$prs_status" ]; then
+              echo "ok=false" >> "$GITHUB_OUTPUT"
+              {
+                echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
+                bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "fixture maintainer identity credential" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN authenticates" "a permission probe call failed outright" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN" "$MODE"
+                echo 'AUTO_RELEASE_VERDICT_EOF'
+              } >> "$GITHUB_OUTPUT"
+              echo "::error::wing-commander auto-release verify-e2e: a WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN permission probe against $E2E_REPO failed outright -- see docs/setup.md."
+              exit 0
+            fi
+            if [ "$issues_status" = "403" ] || [ "$prs_status" = "403" ]; then
+              echo "ok=false" >> "$GITHUB_OUTPUT"
+              {
+                echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
+                bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "fixture maintainer identity credential" "Issues and Pull-requests write, per research.md D6" "the probe was rejected (issues: $issues_status, pull requests: $prs_status)" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN" "$MODE"
+                echo 'AUTO_RELEASE_VERDICT_EOF'
+              } >> "$GITHUB_OUTPUT"
+              echo "::error::wing-commander auto-release verify-e2e: WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN lacks Issues and/or Pull-requests write on $E2E_REPO -- see docs/setup.md."
+              exit 0
+            fi
+            # research.md D5: the credential itself MUST carry no
+            # Administration permission on the test repository -- the
+            # account's own Admin, conferred by the FR-002 ownership
+            # transfer, is accepted; the credential's is not (FR-016). A
+            # 200 here means the token grants Administration; a 403 naming
+            # the missing permission passes this probe.
+            admin_status="$(GH_TOKEN="$MAINTAINER_TOKEN" gh api -i "repos/$E2E_REPO/collaborators" 2>/dev/null | head -1 | awk '{print $2}' || true)"
+            if [ -z "$admin_status" ]; then
+              echo "ok=false" >> "$GITHUB_OUTPUT"
+              {
+                echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
+                bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "fixture maintainer identity credential" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN authenticates" "a permission probe call failed outright" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN" "$MODE"
+                echo 'AUTO_RELEASE_VERDICT_EOF'
+              } >> "$GITHUB_OUTPUT"
+              echo "::error::wing-commander auto-release verify-e2e: a WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN permission probe against $E2E_REPO failed outright -- see docs/setup.md."
+              exit 0
+            fi
+            if [ "$admin_status" = "200" ]; then
+              echo "ok=false" >> "$GITHUB_OUTPUT"
+              {
+                echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
+                bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "fixture maintainer identity credential" "no Administration permission on the test repository" "the credential grants Administration permission" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN" "$MODE"
+                echo 'AUTO_RELEASE_VERDICT_EOF'
+              } >> "$GITHUB_OUTPUT"
+              echo "::error::wing-commander auto-release verify-e2e: WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN grants Administration permission on $E2E_REPO -- see docs/setup.md."
+              exit 0
+            fi
+            # research.md D2: a fine-grained PAT's own expiry is surfaced
+            # only via this response header, read from the `gh api user`
+            # call already made above -- never a second call. Absent means
+            # unobservable (proceed, as today, classic shape included).
+            # Already past "now" is rejected/expired; within the warning
+            # window is a report-only note on a pass, never a failure.
+            expiry_header="$(printf '%s\n' "$login_response" | grep -i '^github-authentication-token-expiration:' | head -1 | cut -d: -f2- | tr -d '\r' | sed 's/^ *//' || true)"
+            if [ -n "$expiry_header" ]; then
+              expiry_epoch="$(date -u -d "$expiry_header" +%s 2>/dev/null || true)"
+              if [ -n "$expiry_epoch" ]; then
+                now_epoch="$(date -u +%s)"
+                if [ "$expiry_epoch" -le "$now_epoch" ]; then
+                  echo "ok=false" >> "$GITHUB_OUTPUT"
+                  {
+                    echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
+                    bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "fixture maintainer identity credential" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN authenticates" "the credential expired at $expiry_header" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN" "$MODE"
+                    echo 'AUTO_RELEASE_VERDICT_EOF'
+                  } >> "$GITHUB_OUTPUT"
+                  echo "::error::wing-commander auto-release verify-e2e: WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN expired at $expiry_header -- see docs/setup.md."
+                  exit 0
+                fi
+                warning_seconds=$(( ${MAINTAINER_TOKEN_EXPIRY_WARNING_DAYS:-14} * 86400 ))
+                if [ "$expiry_epoch" -le "$(( now_epoch + warning_seconds ))" ]; then
+                  echo "expiry-warning=$expiry_header" >> "$GITHUB_OUTPUT"
+                fi
+              fi
+            fi
           fi
-          # Compared case-insensitively -- GitHub logins are case-
-          # insensitive, so a differently-cased secret must not produce a
-          # false pass-time failure here (maintainer feedback on PR #389,
-          # second review).
-          if [ "$(printf '%s' "$login" | tr '[:upper:]' '[:lower:]')" != "$(printf '%s' "$MAINTAINER_USERNAME" | tr '[:upper:]' '[:lower:]')" ]; then
-            echo "ok=false" >> "$GITHUB_OUTPUT"
-            {
-              echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
-              bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "fixture maintainer identity credential" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN authenticates as WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_USERNAME" "authenticated as a different login" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN, WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_USERNAME" "$MODE"
-              echo 'AUTO_RELEASE_VERDICT_EOF'
-            } >> "$GITHUB_OUTPUT"
-            echo "::error::wing-commander auto-release verify-e2e: WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN authenticated as a login other than WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_USERNAME -- see docs/setup.md."
-            exit 0
-          fi
-          # Runtime containment (maintainer feedback): a classic PAT
-          # carries whatever repository access the account itself has, so
-          # the credential check above cannot on its own prove the
-          # account is contained to the test repository -- only the
-          # account's own memberships can. List every repository this
+          # Runtime containment (maintainer feedback; research.md D3/D4):
+          # neither credential shape proves on its own that it is
+          # contained to the test repository alone -- a classic token
+          # carries whatever access the account itself has, and a
+          # fine-grained token's own selection is never read from a
+          # declarative field, only observed. List every repository this
           # token can reach and require the set to be EXACTLY the
           # configured test repository; any other set -- including empty,
-          # which a `gh api` failure would also produce -- ends the
-          # attempt naming repository names only, never the token
-          # (FR-003a, FR-011).
-          reachable_repos="$(GH_TOKEN="$MAINTAINER_TOKEN" gh api "user/repos?affiliation=owner,collaborator,organization_member" --paginate --jq '.full_name' 2>/dev/null | sort -u)"
+          # which used to be indistinguishable from the `gh api` call
+          # itself failing -- ends the attempt naming repository names
+          # only, never the token (FR-003a, FR-011, FR-012).
+          if ! reachable_raw="$(GH_TOKEN="$MAINTAINER_TOKEN" gh api "user/repos?affiliation=owner,collaborator,organization_member" --paginate --jq '.full_name' 2>/dev/null)"; then
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            {
+              echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
+              bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "fixture maintainer identity containment" "the credential's reachable-repository set can be observed" "the gh api call to list reachable repositories failed" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN" "$MODE"
+              echo 'AUTO_RELEASE_VERDICT_EOF'
+            } >> "$GITHUB_OUTPUT"
+            echo "::error::wing-commander auto-release verify-e2e: could not determine which repositories WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN can reach -- see docs/setup.md."
+            exit 0
+          fi
+          reachable_repos="$(printf '%s' "$reachable_raw" | sort -u)"
           reachable_count="$(printf '%s' "$reachable_repos" | grep -c . || true)"
           if [ "$reachable_count" -ne 1 ] || [ "$(printf '%s' "$reachable_repos" | tr '[:upper:]' '[:lower:]')" != "$(printf '%s' "$E2E_REPO" | tr '[:upper:]' '[:lower:]')" ]; then
             # The login is held in a masked secret, and GitHub drops any step

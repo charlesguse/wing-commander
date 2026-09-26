@@ -12,12 +12,23 @@ name the extra repositories the account can reach. That happened once already
 (the `reached: [<login>/...]` text, #396), and the review that should have
 caught it recorded the fix as "verified by inspection".
 
+specs/066-fine-grained-maintainer-token extended the step with a second
+accepted credential shape (classic and fine-grained, detected from the
+token's own literal prefix -- see docs/setup.md for the canonical statement
+of what each shape must carry); this gate's scenarios and mutations were
+extended alongside it to cover every row of that feature's data-model.md
+Credential precheck outcome table, not only the shapes specs/055 shipped.
+
 This gate runs the REAL step, extracted from the workflow, with a stubbed `gh`
 (a bindir prepended to PATH), and asserts on what it publishes:
 
   * the documented outcomes -- exactly the test repository passes; an extra
     repository, an empty set, a different login, no write access, an unset
-    token or username each end `ok=false` with a fail-infra verdict;
+    token or username, a malformed token prefix, a fine-grained credential
+    missing a needed permission or carrying Administration, an expired
+    fine-grained credential, and a `gh api` call that fails outright (as
+    opposed to succeeding with an empty result) each end `ok=false` with a
+    fail-infra verdict distinguishable from every other one;
   * the invariant: whatever the scenario, the login value appears NOWHERE in
     the step's outputs, in any letter case.
 
@@ -31,6 +42,7 @@ import os
 import shutil
 import sys
 import tempfile
+from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wc_shell_harness import (  # noqa: E402
@@ -42,27 +54,82 @@ LOGIN = "machine-acct"
 HEAD = "a" * 40
 BASH = None
 
-# Answers the three gh calls the step makes, from the environment:
-#   gh repo view <repo> --json viewerPermission --jq ...   -> $STUB_PERMISSION
-#   gh api user --jq .login                                -> $STUB_LOGIN
-#   gh api user/repos?... --paginate --jq .full_name       -> $STUB_REPOS
-#     (';'-separated, one full name each)
+
+def _rfc(delta_days):
+    return (datetime.now(timezone.utc) + timedelta(days=delta_days)).strftime(
+        "%Y-%m-%d %H:%M:%S UTC")
+
+
+# Answers the calls the step makes, from the environment:
+#   gh repo view <repo> --json viewerPermission --jq ...        classic-only -> $STUB_PERMISSION
+#   gh api user --jq .login                                     classic-only -> $STUB_LOGIN
+#   gh api -i user                                               fine-grained login+expiry read:
+#     empty $STUB_LOGIN -> exit 1 (transport failure / rejected token)
+#     else prints a 200 status line, an optional expiration header from
+#     $STUB_EXPIRY, and a JSON body carrying $STUB_LOGIN
+#   gh api -i -X POST .../issues/999999999/comments             D6 Issues probe -> $STUB_ISSUES_STATUS
+#     ($STUB_ISSUES_TRANSPORT_FAIL=1 -> exit 1, no output)
+#   gh api -i -X PUT .../pulls/999999999/merge                  D6 PRs probe -> $STUB_PRS_STATUS
+#     ($STUB_PRS_TRANSPORT_FAIL=1 -> exit 1, no output)
+#   gh api -i .../collaborators                                  D5 Administration probe -> $STUB_ADMIN_STATUS
+#     ($STUB_ADMIN_TRANSPORT_FAIL=1 -> exit 1, no output)
+#   gh api user/repos?... --paginate --jq .full_name             containment (both shapes) -> $STUB_REPOS
+#     ($STUB_REPOS_TRANSPORT_FAIL=1 -> exit 1, no output -- research.md D4)
 STUB_GH = r'''#!/usr/bin/env bash
 if [ "$1" = "repo" ] && [ "$2" = "view" ]; then
   printf '%s\n' "${STUB_PERMISSION-}"
-elif [ "$1" = "api" ] && [ "$2" = "user" ]; then
+  exit 0
+fi
+if [ "$1" = "api" ] && [ "$2" = "user" ] && [ "$3" = "--jq" ]; then
   printf '%s\n' "${STUB_LOGIN-}"
-elif [ "$1" = "api" ]; then
+  exit 0
+fi
+if [ "$1" = "api" ] && [ "$2" = "-i" ] && [ "$3" = "user" ]; then
+  if [ -z "${STUB_LOGIN-}" ]; then
+    exit 1
+  fi
+  printf 'HTTP/2.0 200 OK\r\n'
+  if [ -n "${STUB_EXPIRY-}" ]; then
+    printf 'github-authentication-token-expiration: %s\r\n' "${STUB_EXPIRY}"
+  fi
+  printf '\r\n{"login":"%s"}\n' "${STUB_LOGIN}"
+  exit 0
+fi
+if [ "$1" = "api" ] && [ "$2" = "-i" ] && [ "$3" = "-X" ] && [ "$4" = "POST" ]; then
+  if [ "${STUB_ISSUES_TRANSPORT_FAIL-0}" = "1" ]; then exit 1; fi
+  printf 'HTTP/2.0 %s Status\r\n\r\n' "${STUB_ISSUES_STATUS:-404}"
+  exit 0
+fi
+if [ "$1" = "api" ] && [ "$2" = "-i" ] && [ "$3" = "-X" ] && [ "$4" = "PUT" ]; then
+  if [ "${STUB_PRS_TRANSPORT_FAIL-0}" = "1" ]; then exit 1; fi
+  printf 'HTTP/2.0 %s Status\r\n\r\n' "${STUB_PRS_STATUS:-404}"
+  exit 0
+fi
+if [ "$1" = "api" ] && [ "$2" = "-i" ]; then
+  case "$3" in
+    */collaborators)
+      if [ "${STUB_ADMIN_TRANSPORT_FAIL-0}" = "1" ]; then exit 1; fi
+      printf 'HTTP/2.0 %s Status\r\n\r\n' "${STUB_ADMIN_STATUS:-403}"
+      exit 0
+      ;;
+  esac
+fi
+if [ "$1" = "api" ]; then
   case "$2" in
-    user/repos*) if [ -n "${STUB_REPOS-}" ]; then printf '%s' "$STUB_REPOS" | tr ';' '\n'; printf '\n'; fi ;;
+    user/repos*)
+      if [ "${STUB_REPOS_TRANSPORT_FAIL-0}" = "1" ]; then exit 1; fi
+      if [ -n "${STUB_REPOS-}" ]; then printf '%s' "$STUB_REPOS" | tr ';' '\n'; printf '\n'; fi
+      exit 0
+      ;;
   esac
 fi
 exit 0
 '''
 
 BASE = {
-    "MAINTAINER_TOKEN": "dummy-token",
+    "MAINTAINER_TOKEN": "ghp_dummytoken",
     "MAINTAINER_USERNAME": LOGIN,
+    "MAINTAINER_TOKEN_EXPIRY_WARNING_DAYS": "14",
     "E2E_REPO": "charlesguse/test-repo",
     "HEAD_SHA": HEAD,
     "MODE": "default-runner",
@@ -70,6 +137,12 @@ BASE = {
     "STUB_LOGIN": LOGIN,
     "STUB_REPOS": "charlesguse/test-repo",
 }
+
+# Fine-grained scenarios start from BASE plus this shape switch; the stub's
+# defaults for the D5/D6 probes (403/403) already match "every permission
+# this shape needs is granted, Administration is not", so a fine-grained
+# scenario need only override the fields it means to test.
+FG = {"MAINTAINER_TOKEN": "github_pat_dummytoken"}
 
 
 def verdict_of(outputs):
@@ -112,13 +185,73 @@ SCENARIOS = [
     # stay green. The username guard is also what keeps the redaction's
     # pattern from ever being empty.
     ("the token secret unset", {"MAINTAINER_TOKEN": ""}, "false",
-     ["MAINTAINER_TOKEN set to a classic PAT", "unset"]),
+     ["MAINTAINER_TOKEN set to a classic or fine-grained PAT", "unset"]),
     ("the username secret unset", {"MAINTAINER_USERNAME": ""}, "false",
      ["MAINTAINER_USERNAME set to that account's login", "unset"]),
     ("the username secret stored with a trailing newline",
      {"MAINTAINER_USERNAME": LOGIN + "\n",
       "STUB_REPOS": f"charlesguse/test-repo;{LOGIN}/notes"}, "false",
      ["<maintainer account>/notes"]),
+
+    # specs/066-fine-grained-maintainer-token: research.md D1 -- a token
+    # matching neither accepted prefix, ahead of every other check, for
+    # either shape's own value shape.
+    ("a malformed credential matching neither accepted prefix",
+     {"MAINTAINER_TOKEN": "not-a-real-token"}, "false",
+     ["matches neither accepted shape"]),
+
+    # data-model.md row #2 (fine-grained variants): a probe transport-fails
+    # outright rather than returning a permission-denied response.
+    ("fine-grained: the login/expiry probe fails outright",
+     {**FG, "STUB_LOGIN": ""}, "false", ["gh rejected the token"]),
+    ("fine-grained: the Issues/Pull-requests probe fails outright",
+     {**FG, "STUB_ISSUES_TRANSPORT_FAIL": "1"}, "false",
+     ["a permission probe call failed outright"]),
+    ("fine-grained: the Administration probe fails outright",
+     {**FG, "STUB_ADMIN_TRANSPORT_FAIL": "1"}, "false",
+     ["a permission probe call failed outright"]),
+    ("fine-grained: an already-expired credential",
+     {**FG, "STUB_EXPIRY": _rfc(-1)}, "false",
+     ["the credential expired at"]),
+
+    # data-model.md row #4 (fine-grained variant): D6 rejects Issues and/or
+    # Pull-requests write.
+    ("fine-grained: Issues write rejected",
+     {**FG, "STUB_ISSUES_STATUS": "403"}, "false",
+     ["Issues and Pull-requests write, per research.md D6",
+      "issues: 403"]),
+    ("fine-grained: Pull-requests write rejected",
+     {**FG, "STUB_PRS_STATUS": "403"}, "false",
+     ["Issues and Pull-requests write, per research.md D6",
+      "pull requests: 403"]),
+
+    # data-model.md row #5: D5 accepts (200) -- the credential itself grants
+    # Administration, never produced for the classic shape (FR-003).
+    ("fine-grained: the credential grants Administration permission",
+     {**FG, "STUB_ADMIN_STATUS": "200"}, "false",
+     ["no Administration permission on the test repository",
+      "the credential grants Administration permission"]),
+
+    # A correctly scoped fine-grained credential passes exactly like a
+    # classic one -- same containment mechanism, different shape.
+    ("fine-grained: exactly the test repository passes", FG, "true", None),
+
+    # data-model.md rows #6/#7 under the fine-grained shape (User Story 3):
+    # over-scoped fails naming the extra repository; a `gh api` call that
+    # itself fails is distinguishable from a call that succeeds empty.
+    ("fine-grained: an extra repository owned by someone else",
+     {**FG, "STUB_REPOS": "charlesguse/test-repo;other-owner/thing"}, "false",
+     ["other-owner/thing", "reached 2 repositories"]),
+    ("fine-grained: the containment call itself fails outright",
+     {**FG, "STUB_REPOS_TRANSPORT_FAIL": "1"}, "false",
+     ["the credential's reachable-repository set can be observed",
+      "the gh api call to list reachable repositories failed"],
+     ["reached 0 repositories"]),
+    ("classic: the containment call itself fails outright",
+     {"STUB_REPOS_TRANSPORT_FAIL": "1"}, "false",
+     ["the credential's reachable-repository set can be observed",
+      "the gh api call to list reachable repositories failed"],
+     ["reached 0 repositories"]),
 ]
 
 
@@ -188,6 +321,36 @@ def suite(script, tmproot):
     return failures
 
 
+# specs/066-fine-grained-maintainer-token T014: the approaching-expiry note
+# is report-only text on a pass, never a verdict field -- checked separately
+# from suite() above, which only inspects `ok` and `verdict`.
+EXPIRY_NOTE_SCENARIOS = [
+    ("fine-grained: expiry within the warning window notes it on a pass",
+     {**FG, "STUB_EXPIRY": _rfc(5)}, True),
+    ("fine-grained: expiry well outside the warning window notes nothing",
+     {**FG, "STUB_EXPIRY": _rfc(365)}, False),
+    ("classic: no expiration header, nothing to note",
+     {"STUB_EXPIRY": ""}, False),
+]
+
+
+def check_expiry_notes(script, tmproot):
+    failures = []
+    for name, overrides, want_note in EXPIRY_NOTE_SCENARIOS:
+        _env, rc, _out, outputs = run_scenario(script, name, overrides, tmproot)
+        if rc != 0:
+            failures.append(f"{name}: the step exited {rc}, expected 0")
+            continue
+        if outputs.get("ok") != "true":
+            failures.append(f"{name}: ok={outputs.get('ok')!r}, expected 'true'")
+            continue
+        has_note = bool(outputs.get("expiry-warning"))
+        if has_note != want_note:
+            failures.append(f"{name}: expiry-warning output present={has_note}, "
+                            f"expected {want_note}")
+    return failures
+
+
 def mut_raw_repository_names(script):
     """The old text: the reached names quoted verbatim, login included."""
     old = "'gsub($login; \"<maintainer account>\"; \"i\")'"
@@ -208,11 +371,70 @@ def mut_no_whitespace_trim(script):
     return script.replace(old, ":")
 
 
+def mut_malformed_prefix_accepted(script):
+    """research.md D1: a token matching neither accepted prefix silently
+    treated as classic, instead of ending fail-infra."""
+    old = "github_pat_*) shape=fine-grained ;;\n"
+    new = old + "  *) shape=classic ;;\n"
+    return script.replace(old, new)
+
+
+def mut_d6_rejection_accepted(script):
+    """research.md D6: a 403 (permission absent) on either write probe no
+    longer fails the precheck."""
+    old = 'if [ "$issues_status" = "403" ] || [ "$prs_status" = "403" ]; then'
+    new = 'if [ "$issues_status" = "999" ] || [ "$prs_status" = "999" ]; then'
+    return script.replace(old, new)
+
+
+def mut_d5_grant_accepted(script):
+    """research.md D5: a 200 (Administration granted) on the collaborators
+    probe no longer fails the precheck."""
+    old = 'if [ "$admin_status" = "200" ]; then'
+    new = 'if [ "$admin_status" = "999" ]; then'
+    return script.replace(old, new)
+
+
+def mut_expiry_check_dropped(script):
+    """research.md D2: an already-expired fine-grained credential no longer
+    ends the attempt."""
+    old = 'if [ "$expiry_epoch" -le "$now_epoch" ]; then'
+    new = "if false; then"
+    return script.replace(old, new)
+
+
+def mut_containment_exit_status_swallowed(script):
+    """research.md D4 reverted: the `gh api` call's own exit status folded
+    back into the same `2>/dev/null` swallow into `sort -u`, so a call that
+    fails outright is indistinguishable from one that succeeds empty."""
+    old_start = 'if ! reachable_raw="$(GH_TOKEN="$MAINTAINER_TOKEN" gh api "user/repos?affiliation=owner,collaborator,organization_member" --paginate --jq \'.full_name\' 2>/dev/null)"; then'
+    old_end = 'reachable_repos="$(printf \'%s\' "$reachable_raw" | sort -u)"'
+    start = script.find(old_start)
+    end = script.find(old_end)
+    if start == -1 or end == -1:
+        return script
+    end += len(old_end)
+    new = ('reachable_repos="$(GH_TOKEN="$MAINTAINER_TOKEN" gh api '
+           '"user/repos?affiliation=owner,collaborator,organization_member" '
+           '--paginate --jq \'.full_name\' 2>/dev/null | sort -u)"')
+    return script[:start] + new + script[end:]
+
+
 MUTATIONS = [
     ("the reached repository names quoted verbatim (login not redacted)",
      mut_raw_repository_names),
     ("the username-unset guard deleted", mut_no_username_guard),
     ("the username's whitespace no longer stripped", mut_no_whitespace_trim),
+    ("a malformed credential prefix silently accepted as classic",
+     mut_malformed_prefix_accepted),
+    ("a D6 write-permission rejection (403) no longer fails the precheck",
+     mut_d6_rejection_accepted),
+    ("a D5 Administration grant (200) no longer fails the precheck",
+     mut_d5_grant_accepted),
+    ("the expiry check dropped -- an expired credential no longer fails",
+     mut_expiry_check_dropped),
+    ("research.md D4 reverted: a gh api failure folded back into 'reached 0 repositories'",
+     mut_containment_exit_status_swallowed),
 ]
 
 
@@ -233,6 +455,7 @@ def main():
     failures = []
     try:
         failures = suite(script, tmproot)
+        failures += check_expiry_notes(script, tmproot)
         for f in failures:
             print(f"::error::{f}")
         for label, mutate in MUTATIONS:
@@ -243,7 +466,7 @@ def main():
                       f"proving it can fail.")
                 failures.append(f"mutation inapplicable: {label}")
                 continue
-            broke = suite(mutated, tmproot)
+            broke = suite(mutated, tmproot) + check_expiry_notes(mutated, tmproot)
             if broke:
                 print(f"Mutation OK - {label}: {len(broke)} assertion(s) fail.")
             else:
