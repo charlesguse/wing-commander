@@ -2,7 +2,8 @@
   "issue": 506,
   "spec_dir": "specs/066-fine-grained-maintainer-token",
   "feature_num": "066",
-  "stage": "implement",
+  "stage": "review",
   "iteration": 2,
-  "spec_branch": "spec/066-fine-grained-maintainer-token"
+  "spec_branch": "spec/066-fine-grained-maintainer-token",
+  "pending_re_review_from": []
 }
