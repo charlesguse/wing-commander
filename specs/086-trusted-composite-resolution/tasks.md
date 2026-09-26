@@ -333,7 +333,7 @@ checks that span every phase above.
       then `rm -rf .wc-pristine-repo` to clean up; separately confirm `git
       check-ignore -v .wc-pristine-repo` reports the `.gitignore` match
       from T001.
-- [ ] T027 Run `python .github/scripts/run-local-gates.py` (the full PR-time
+- [X] T027 Run `python .github/scripts/run-local-gates.py` (the full PR-time
       gate suite, per CLAUDE.md "Before pushing") and confirm every gate,
       including Gate 98 (unchanged) and Gate 99 (new), passes on the
       shipped tree (quickstart.md step 1, final integration check;
@@ -448,3 +448,29 @@ Task: "Add the sidecar checkout step to the fix job in board-loop.yml"
   diff reviewable.
 - Stop at any checkpoint to confirm the guarantee that phase claims before
   moving to the next.
+
+---
+
+## Phase 7: Convergence
+
+- [X] T028 Reconcile Gate 98's per-job single-checkout invariant with the
+      mandatory second (trusted-copy) checkout step T002/T004/T006 add to
+      `fix`, `review` and `readiness`, so `python3
+      .github/scripts/run-local-gates.py` passes cleanly on the shipped
+      tree (T027; Constitution VIII "A Green Check Means What It Says";
+      FR-002/FR-004). `verify-board-loop-helper-provenance.py`'s
+      `structural_problems()` found every step whose `uses:` starts with
+      `actions/checkout@` and required exactly one per job; the canonical
+      `Checkout board-loop's own trusted copy (composites)` step
+      (contracts/trusted-copy-checkout.md) this feature adds is a second
+      such step, so Gate 98 and its `--self-test` failed unconditionally
+      — `fix: expected one actions/checkout step, found 2` (and the same
+      for `review`, `readiness`) — even though the underlying guarantee
+      Gate 98 checks (helper scripts/schemas resolve from the pristine
+      snapshot, never the working tree) still held at runtime. Gate 98 now
+      excludes that one canonical step from its "one job checkout" count
+      by name — any other second checkout still fails it — with the
+      docstring recording that a step bearing that name is Gate 99's
+      subject (`ref: ${{ github.sha }}`, sidecar `path:`, fail-closed).
+      Gate 98's allowlist, `JOBS` scope and mutation set are otherwise
+      untouched (spec.md Out of Scope).
