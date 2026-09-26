@@ -129,9 +129,9 @@ CI/CD pipeline infrastructure repository — no `src`/`tests` split. Paths below
 
 **Purpose**: Repository-wide checks this feature's diff must pass before it can be reviewed and merged.
 
-- [ ] T029 [P] Run `python .github/scripts/run-local-gates.py` (CLAUDE.md's PR-time gate suite) and fix anything Gate 67, Gate 99, or any pre-existing gate newly flags as a result of this feature's changes.
-- [ ] T030 [P] Run the `review-step-gating` skill against this feature's diff, since it adds new fail-infra exit branches inside the "Confirm the fixture maintainer identity's credential" step and downstream steps still gate on `steps.maintainer-credential.outputs.ok == 'true'` (CLAUDE.md's rule for any change touching a failing step).
-- [ ] T031 Confirm no published stage workflow, the verdict schema, or any adopter-facing default changed (FR-021, SC-007): diff `.github/workflows/{intake,clarify,plan,tasks,implement,converge,finalize,cleanup,watchdog}.yml` and `docs/adoption.md` against the previous release tag and confirm this feature's commits touch none of them.
+- [X] T029 [P] Run `python .github/scripts/run-local-gates.py` (CLAUDE.md's PR-time gate suite) and fix anything Gate 67, Gate 99, or any pre-existing gate newly flags as a result of this feature's changes.
+- [X] T030 [P] Run the `review-step-gating` skill against this feature's diff, since it adds new fail-infra exit branches inside the "Confirm the fixture maintainer identity's credential" step and downstream steps still gate on `steps.maintainer-credential.outputs.ok == 'true'` (CLAUDE.md's rule for any change touching a failing step).
+- [X] T031 Confirm no published stage workflow, the verdict schema, or any adopter-facing default changed (FR-021, SC-007): diff `.github/workflows/{intake,clarify,plan,tasks,implement,converge,finalize,cleanup,watchdog}.yml` and `docs/adoption.md` against the previous release tag and confirm this feature's commits touch none of them.
 
 ---
 
