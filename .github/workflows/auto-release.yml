@@ -1443,14 +1443,14 @@ jobs:
               emit_verdict
               exit 0
             }
-            if ! runs_json="$(gh run list --repo "$E2E_REPO" --created ">=${kickoff_time}" --json databaseId --limit 100 2>"$RUNNER_TEMP/auto-release-cee-runs-err.txt")"; then
+            if ! runs_json="$(GH_TOKEN="$HARNESS_TOKEN" gh run list --repo "$E2E_REPO" --created ">=${kickoff_time}" --json databaseId --limit 100 2>"$RUNNER_TEMP/auto-release-cee-runs-err.txt")"; then
               errtext="$(tail -c 300 "$RUNNER_TEMP/auto-release-cee-runs-err.txt")"
               write_execution_fail "$(classify_read_status 1 "$errtext")" "$errtext"
             fi
             noncontainerized=""
             while IFS= read -r run_id; do
               [ -n "$run_id" ] || continue
-              if ! jobs_raw="$(gh api "repos/${E2E_REPO}/actions/runs/${run_id}/jobs" --paginate --jq '.jobs[]' 2>"$RUNNER_TEMP/auto-release-cee-jobs-err.txt")"; then
+              if ! jobs_raw="$(GH_TOKEN="$HARNESS_TOKEN" gh api "repos/${E2E_REPO}/actions/runs/${run_id}/jobs" --paginate --jq '.jobs[]' 2>"$RUNNER_TEMP/auto-release-cee-jobs-err.txt")"; then
                 errtext="$(tail -c 300 "$RUNNER_TEMP/auto-release-cee-jobs-err.txt")"
                 write_execution_fail "$(classify_read_status 1 "$errtext")" "$errtext"
               fi
