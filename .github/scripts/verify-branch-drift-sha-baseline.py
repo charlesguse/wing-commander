@@ -413,6 +413,92 @@ def scenario_stalled_short_circuits_exact_sha(step_text, root):
     return failures
 
 
+def scenario_plan_exact_sha_equal_fires_lost_progress(step_text, root):
+    """specs/068-plan-tasks-branch-advance T013 (US1 AS1): a plan run's own
+    downloaded record, branch_advance.available with before_sha ==
+    after_sha, fires lost-progress naming the plan/ review branch it
+    recorded -- the same mechanism
+    scenario_exact_sha_equal_fires_lost_progress proves for implement, now
+    reachable for plan too (T011 widened the exact-sha arm beyond
+    implement-only)."""
+    failures = []
+    work = tempfile.mkdtemp(dir=root)
+    bindir = new_stub_dir(work)
+    plan_branch = "plan/" + SLUG
+    fixture_dir = make_fixture_dir(root, {
+        "available": True, "branch": plan_branch,
+        "before_sha": "c" * 40, "before_available": True,
+        "after_sha": "c" * 40, "after_available": True,
+        "commits": 0, "commits_available": True,
+    })
+    env = base_env(bindir, {"GH_DOWNLOAD_FIXTURE_DIR": fixture_dir,
+                            "RUN_NAME": "Wing Commander · 3 plan"})
+    runner_temp = os.path.join(work, "runner_temp")
+    rc, out, signals, outcomes, _summary = run_collector(
+        step_text, work, runner_temp, env)
+    if rc != 0:
+        failures.append(f"plan-exact-sha-equal: exited {rc}: "
+                        f"{out.strip()[:300]}")
+        return failures
+    if len(signals) != 1:
+        failures.append(f"plan-exact-sha-equal: expected exactly one "
+                        f"signal, got {len(signals)}: {signals!r}")
+        return failures
+    entry = signals[0]
+    if entry.get("class-hint") != "lost-progress":
+        failures.append(f"plan-exact-sha-equal: expected class-hint "
+                        f"'lost-progress', got {entry.get('class-hint')!r}")
+    facts = entry.get("facts") or {}
+    if facts.get("branch") != plan_branch:
+        failures.append(f"plan-exact-sha-equal: facts.branch = "
+                        f"{facts.get('branch')!r}, expected {plan_branch!r} "
+                        f"-- a plan run's record names its own review "
+                        f"branch, never a prefix-derived guess")
+    if facts.get("before-sha") != "c" * 40 or facts.get("after-sha") != "c" * 40:
+        failures.append(f"plan-exact-sha-equal: facts SHAs did not match "
+                        f"the recorded pair: {facts!r}")
+    if facts.get("commits") != 0:
+        failures.append(f"plan-exact-sha-equal: facts.commits = "
+                        f"{facts.get('commits')!r}, expected 0")
+    if {"collector": "collect-branch-drift", "outcome": "ok"} not in outcomes:
+        failures.append(f"plan-exact-sha-equal: collector-outcomes.json "
+                        f"does not record an 'ok' outcome: {outcomes!r}")
+    return failures
+
+
+def scenario_tasks_exact_sha_differ_no_signal(step_text, root):
+    """specs/068-plan-tasks-branch-advance T013 (US1 AS3): a tasks run's
+    own downloaded record, branch_advance.available with before_sha !=
+    after_sha, produces no signal -- the healthy-progress mirror of
+    scenario_plan_exact_sha_equal_fires_lost_progress above."""
+    failures = []
+    work = tempfile.mkdtemp(dir=root)
+    bindir = new_stub_dir(work)
+    tasks_branch = "tasks/" + SLUG
+    fixture_dir = make_fixture_dir(root, {
+        "available": True, "branch": tasks_branch,
+        "before_sha": "d" * 40, "before_available": True,
+        "after_sha": "e" * 40, "after_available": True,
+        "commits": 5, "commits_available": True,
+    })
+    env = base_env(bindir, {"GH_DOWNLOAD_FIXTURE_DIR": fixture_dir,
+                            "RUN_NAME": "Wing Commander · 4 tasks"})
+    runner_temp = os.path.join(work, "runner_temp")
+    rc, out, signals, outcomes, _summary = run_collector(
+        step_text, work, runner_temp, env)
+    if rc != 0:
+        failures.append(f"tasks-exact-sha-differ: exited {rc}: "
+                        f"{out.strip()[:300]}")
+        return failures
+    if signals:
+        failures.append(f"tasks-exact-sha-differ: expected no signal, got "
+                        f"{signals!r}")
+    if {"collector": "collect-branch-drift", "outcome": "ok"} not in outcomes:
+        failures.append(f"tasks-exact-sha-differ: collector-outcomes.json "
+                        f"does not record an 'ok' outcome: {outcomes!r}")
+    return failures
+
+
 def scenario_no_branch_advance_falls_back_to_since_created(step_text, root):
     """US3 / FR-013, FR-018: no downloaded record carries
     branch_advance.available:true -> the since-created fallback fires
@@ -604,6 +690,8 @@ SCENARIOS = [
     scenario_exact_sha_commits_unavailable_reads_healthy,
     scenario_exact_sha_ignores_live_branch_state,
     scenario_stalled_short_circuits_exact_sha,
+    scenario_plan_exact_sha_equal_fires_lost_progress,
+    scenario_tasks_exact_sha_differ_no_signal,
     scenario_no_branch_advance_falls_back_to_since_created,
     scenario_head_sha_arm_unaffected,
     scenario_non_push_expected_stage_unaffected,
