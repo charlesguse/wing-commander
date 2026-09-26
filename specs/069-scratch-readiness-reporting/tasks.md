@@ -369,16 +369,16 @@ documented, and its test-time stand-in is stated in the test itself.
 
 ## Phase 6: Polish & Cross-Cutting Concerns
 
-- [ ] T033 [P] Run `python .github/scripts/run-local-gates.py` and
+- [X] T033 [P] Run `python .github/scripts/run-local-gates.py` and
   `python .github/scripts/verify-e2e-provisioning-single-home.py` (plus its
   `--self-test`), confirming the single-home gate still passes unchanged
   (plan.md Constraints, Constitution VIII) and every other PR-time gate is
   green.
-- [ ] T034 Run `bash .github/scripts/e2e-provisioning-tests/run-tests.sh`,
+- [X] T034 Run `bash .github/scripts/e2e-provisioning-tests/run-tests.sh`,
   confirm all nine suites pass against the rewritten scripts, and diff the
   result against T001's baseline to confirm every changed assertion is an
   intentional, accounted-for change from this feature.
-- [ ] T035 Walk `specs/069-scratch-readiness-reporting/quickstart.md`
+- [X] T035 Walk `specs/069-scratch-readiness-reporting/quickstart.md`
   steps 1-7 (as much as is locally reproducible against a real disposable
   target) and confirm the verdicts/exit codes it documents match what the
   changed scripts actually produce (SC-001, SC-002, SC-004, SC-006,

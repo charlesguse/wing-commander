@@ -38,8 +38,8 @@ check_contains "T7 the job-summary table keys its glyph on .outcome, not the ret
   "$READINESS_STEP" ".outcome"
 check_not_contains "T7 the job-summary table never reads the retired .ready field" \
   "$READINESS_STEP" ".ready"
-check_contains "T7 the job summary renders a not_checkable state" \
-  "$READINESS_STEP" "not_checkable"
+check_contains "T7 the job summary renders three distinct outcomes, including a not_checkable glyph" \
+  "$READINESS_STEP" "➖"
 check_contains "T7 the job summary names the aggregate verdict, not just pass/fail" \
   "$READINESS_STEP" ".verdict"
 
