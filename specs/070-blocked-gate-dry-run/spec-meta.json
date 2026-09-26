@@ -2,7 +2,8 @@
   "issue": 533,
   "spec_dir": "specs/070-blocked-gate-dry-run",
   "feature_num": "070",
-  "stage": "implement",
+  "stage": "review",
   "iteration": 1,
-  "spec_branch": "spec/070-blocked-gate-dry-run"
+  "spec_branch": "spec/070-blocked-gate-dry-run",
+  "pending_re_review_from": []
 }
