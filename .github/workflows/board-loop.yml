@@ -2230,24 +2230,17 @@ jobs:
       pr-number: ${{ steps.pr.outputs.pr-number }}
       outcome: ${{ steps.round.outputs.outcome }}
     steps:
+      # A same-run handoff from `fix` starts this PR's first review at
+      # round 0; a cross-run resume reads the marker's own round
+      # (T010/T042) -- never re-derived from anything the PR itself
+      # carries, since round count is this loop's own bookkeeping.
       - name: Resolve the PR under review
         id: pr
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ needs.fix.outputs.pr-number || needs.select.outputs.pr }}
-          ROUND: ${{ needs.select.outputs.round || 0 }}
-        run: |
-          set -uo pipefail
-          branch="$(gh pr view "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --json headRefName --jq .headRefName)"
-          # A same-run handoff from `fix` starts this PR's first review at
-          # round 0; a cross-run resume reads the marker's own round
-          # (T010/T042) -- never re-derived from anything the PR itself
-          # carries, since round count is this loop's own bookkeeping.
-          {
-            echo "pr-number=$PR_NUMBER"
-            echo "branch=$branch"
-            echo "round=$ROUND"
-          } >> "$GITHUB_OUTPUT"
+        uses: ./.github/actions/_shared/resolve-pr-branch
+        with:
+          pr-number: ${{ needs.fix.outputs.pr-number || needs.select.outputs.pr }}
+          token: ${{ github.token }}
+          round: ${{ needs.select.outputs.round || 0 }}
 
       - name: Checkout the PR branch
         uses: actions/checkout@v5
@@ -3158,16 +3151,10 @@ jobs:
     steps:
       - name: Resolve the PR under readiness
         id: pr
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ needs.review.outputs.pr-number || needs.select.outputs.pr }}
-        run: |
-          set -uo pipefail
-          branch="$(gh pr view "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --json headRefName --jq .headRefName)"
-          {
-            echo "pr-number=$PR_NUMBER"
-            echo "branch=$branch"
-          } >> "$GITHUB_OUTPUT"
+        uses: ./.github/actions/_shared/resolve-pr-branch
+        with:
+          pr-number: ${{ needs.review.outputs.pr-number || needs.select.outputs.pr }}
+          token: ${{ github.token }}
 
       - name: Checkout
         uses: actions/checkout@v5
