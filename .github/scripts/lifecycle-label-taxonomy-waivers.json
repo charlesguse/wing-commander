@@ -1,0 +1,22 @@
+{
+  "$comment": [
+    "Registered exceptions to FR-001/FR-007's rule that every documented",
+    "`stage:*` label in docs/setup.md has a real writer, enforced by",
+    ".github/scripts/verify-lifecycle-label-taxonomy.py (Gate 99) at",
+    "pull-request time (specs/063-stage-clarify-label).",
+    "",
+    "Direction A (the chosen fix) ships zero live exemptions: every",
+    "documented `stage:*` label -- including `stage:clarify`, the label",
+    "this feature gave a real writer to in intake.yml and clarify.yml --",
+    "now has one. This file stays empty on purpose; Gate 99's own",
+    "--self-test proves the exemption mechanism works via synthetic",
+    "fixtures, independent of whether this file holds any entries.",
+    "",
+    "Each entry, were one ever added, is STALE-CHECKED in both directions",
+    "the same way stage-invariant-waivers.json (Gate 31) is: a `pattern`",
+    "naming a label docs/setup.md no longer documents, or one that now has",
+    "a real writer, fails the gate -- and so does a `count` that no longer",
+    "matches the label's live documented-mention count."
+  ],
+  "waivers": []
+}
