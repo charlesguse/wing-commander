@@ -2,7 +2,7 @@
   "issue": 511,
   "spec_dir": "specs/068-plan-tasks-branch-advance",
   "feature_num": "068",
-  "stage": "spec",
+  "stage": "plan",
   "iteration": 0,
-  "spec_branch": null
+  "spec_branch": "spec/068-plan-tasks-branch-advance"
 }
