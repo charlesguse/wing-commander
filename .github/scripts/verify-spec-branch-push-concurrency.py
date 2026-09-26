@@ -89,6 +89,17 @@ PER_SPEC_GROUP_RE = re.compile(
     r"^wing-commander-\$\{\{\s*"
     r"(?:inputs\.spec-dir|needs\.[\w-]+\.outputs\.spec-dir|matrix\.spec_dir)"
     r"\s*\}\}$")
+# The per-PR fallback pr-conversation.yml's stalled job declares when
+# needs.resolve-identity.outputs.spec-dir is empty (specs/077). Distinct
+# from PER_SPEC_GROUP_RE: this is not a per-spec group at all, and its
+# literal "pr-conversation-pr-{0}" / "inputs.pr-number" text is specific
+# to this one job, not a general fourth per-spec spelling other stages
+# could adopt.
+PR_CONVERSATION_STALLED_FALLBACK_GROUP_RE = re.compile(
+    r"^wing-commander-\$\{\{\s*needs\.([\w-]+)\.outputs\.spec-dir\s*\}\}"
+    r"\$\{\{\s*needs\.\1\.outputs\.spec-dir\s*==\s*''\s*&&\s*"
+    r"format\('pr-conversation-pr-\{0\}',\s*inputs\.pr-number\)\s*\|\|\s*''\s*\}\}$"
+)
 LOCAL_COMPOSITE_RE = re.compile(r"(?:^|/)\.github/actions/([\w-]+)/?$")
 COMMENT_LINE_RE = re.compile(r"^\s*#")
 PRINT_LINE_RE = re.compile(r"^\s*(?:echo|printf)\b")
@@ -210,7 +221,9 @@ def evaluate(found, waivers):
         seen.add((rel, job_name))
         if (rel, job_name) in waived:
             continue
-        if isinstance(group, str) and PER_SPEC_GROUP_RE.match(group.strip()):
+        if isinstance(group, str) and (
+                PER_SPEC_GROUP_RE.match(group.strip())
+                or PR_CONVERSATION_STALLED_FALLBACK_GROUP_RE.match(group.strip())):
             continue
         failures.append(
             "{0} [{1}] can push ({2}) but its concurrency group is {3!r}, not "
@@ -274,6 +287,21 @@ MATRIX_GROUP = "wing-commander-${{ matrix.spec_dir }}"
 NEEDS_GROUP = "wing-commander-${{ needs.resolve-spec.outputs.spec-dir }}"
 BAD_GROUP = "wing-commander-cleanup-${{ inputs.head-ref }}"
 NEAR_GROUP = "wing-commander-${{ inputs.spec-dir }}-extra"
+FALLBACK_GROUP = ("wing-commander-${{ needs.resolve-identity.outputs.spec-dir }}"
+                   "${{ needs.resolve-identity.outputs.spec-dir == '' && "
+                   "format('pr-conversation-pr-{0}', inputs.pr-number) || '' }}")
+FALLBACK_GROUP_MISMATCHED_JOB = (
+    "wing-commander-${{ needs.resolve-identity.outputs.spec-dir }}"
+    "${{ needs.other-job.outputs.spec-dir == '' && "
+    "format('pr-conversation-pr-{0}', inputs.pr-number) || '' }}")
+FALLBACK_GROUP_NEAR_MISS_LITERAL = (
+    "wing-commander-${{ needs.resolve-identity.outputs.spec-dir }}"
+    "${{ needs.resolve-identity.outputs.spec-dir == '' && "
+    "format('pr-conversation-{0}', inputs.pr-number) || '' }}")
+FALLBACK_GROUP_NEAR_MISS_IDENTIFIER = (
+    "wing-commander-${{ needs.resolve-identity.outputs.spec-dir }}"
+    "${{ needs.resolve-identity.outputs.spec-dir == '' && "
+    "format('pr-conversation-pr-{0}', inputs.pr_number) || '' }}")
 
 
 def _tree(jobs_text, waivers=None, composite=True):
@@ -332,6 +360,17 @@ def self_test():
          _job("a", None, RUN_PUSH), ["a"], expect_substrings=["None"])
     case("a group that merely starts with the per-spec spelling is not the group",
          _job("a", NEAR_GROUP, RUN_PUSH), ["a"])
+    case("the pr-conversation stalled job's per-PR fallback spelling passes",
+         _job("a", FALLBACK_GROUP, RUN_PUSH), [])
+    case("the fallback spelling with a mismatched needs.<job> name across "
+         "its two halves still fails (defeats the backreference)",
+         _job("a", FALLBACK_GROUP_MISMATCHED_JOB, RUN_PUSH), ["a"])
+    case("the bare wing-commander- constant still fails",
+         _job("a", "wing-commander-", RUN_PUSH), ["a"])
+    case("a near-miss literal (pr-conversation-{0}, missing -pr-) still fails",
+         _job("a", FALLBACK_GROUP_NEAR_MISS_LITERAL, RUN_PUSH), ["a"])
+    case("a near-miss identifier (inputs.pr_number, underscore) still fails",
+         _job("a", FALLBACK_GROUP_NEAR_MISS_IDENTIFIER, RUN_PUSH), ["a"])
     case("an agent grant of Bash(git push:*) outside the group fails",
          _job("a", "wing-commander-intake", AGENT_GRANT), ["a"],
          expect_substrings=["agent grant Bash(git push:*)"])

@@ -325,15 +325,13 @@ jobs:
             exit 1
           fi
 
-  # Validates this PR is in scope, gates the actor, stages the untrusted
-  # request, classifies it, computes confirmation requirements, and
-  # announces intent before `act` starts (FR-023 — structurally guaranteed:
-  # `act`'s environment: binding cannot begin evaluating until this job
-  # completes). Read-only beyond posting replies — a misjudged
-  # classification cannot itself mutate anything (contracts/reusable-pr-conversation.md).
-  classify-and-announce:
-    # container-image no-op and the runs-on JSON-array branch stay unverified (D2, D3) -- see
-    # specs/038-runner-container-passthrough/research.md.
+  # Resolves this PR's identity (default branch, base/head ref, spec-dir
+  # qualification) as a JOB output, ahead of classify-and-announce and
+  # stalled, so a job-level concurrency.group can read it (a job cannot key
+  # its own concurrency group on a step output it has not produced yet —
+  # specs/077-stalled-per-spec-group). No checkout, no secrets -- read-only
+  # against the GitHub API (contracts/resolve-identity-job.md).
+  resolve-identity:
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
@@ -346,115 +344,18 @@ jobs:
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
-    # if: tolerates a skipped image check without widening to run merely
-    # because the workflow was not cancelled (#224) -- see clarify.yml.
     needs: verify-image-prerequisites
     if: "!cancelled() && needs.verify-image-prerequisites.result != 'failure'"
     permissions:
+      pull-requests: read
       contents: read
-      pull-requests: write
-      issues: write
-      id-token: write
-    # Serialized per-PR, not per-spec-dir: spec-dir isn't knowable until the
-    # PullRequestIdentity step below runs inside this job, and a job cannot
-    # key its own concurrency group on a step output it has not produced
-    # yet (GitHub evaluates concurrency before any step of the job starts).
-    # `act` below — the job that actually mutates spec/<slug> — joins the
-    # canonical wing-commander-<spec-dir> group instead (research.md D6),
-    # via needs.classify-and-announce.outputs.spec-dir, which IS available
-    # to it once this job has completed.
-    concurrency:
-      group: wing-commander-pr-conversation-pr-${{ inputs.pr-number }}
-      cancel-in-progress: false
     outputs:
       qualifies: ${{ steps.identity.outputs.qualifies }}
-      spec-dir: ${{ steps.identity.outputs.spec-dir }}
       slug: ${{ steps.identity.outputs.slug }}
+      spec-dir: ${{ steps.identity.outputs.spec-dir }}
       default-branch: ${{ steps.identity.outputs.default-branch }}
-      issue-number: ${{ steps.meta.outputs.issue-number }}
-      # #287 — the prose-free-output rule, stated once here (the act and
-      # report-fold-outcomes jobs point at this block): a job output must
-      # never carry text a person or a model wrote, or text copied out of
-      # the repository. The runner checks every JOB output at job
-      # completion and, if any substring would be redacted by its secret
-      # masker, drops the WHOLE output ("Skip output '<name>' since it may
-      # contain secret") — and the masker also redacts any key=value token
-      # whose key is one of two well-known credential words (the p-word and
-      # its three-letter abbreviation), matching secret or not. The
-      # classified legs used to travel through a `classifications` output
-      # here; a drafted task quoting one such shell line from the
-      # repository emptied it, `act` was skipped, and the stage reported
-      # success with nothing folded (four review folds lost on one PR).
-      #
-      # So the full bodies now travel in the pr-conversation-classifications
-      # artifact ("Upload classification bodies" below; `act` and
-      # report-fold-outcomes download it), and the matrix is built from
-      # `legs`: a projection to the two values `act` must know at JOB start
-      # — `id` (its per-leg job name) and `confirm-environment` (its
-      # environment binding; an adopter-configured input, not prose).
-      # `leg-count` is how the legs-dropped job downstream tells "nothing
-      # was classified" from "the runner withheld the list". Gate 49
-      # (verify-job-outputs-prose-free.py) enforces this shape: a tainted
-      # step may feed a job output only through a `# prose-free:`
-      # declaration it can verify against the write line.
-      # prose-free: map({id, "confirm-environment"})
-      legs: ${{ steps.confirm.outputs.legs }}
-      # prose-free: length
-      leg-count: ${{ steps.confirm.outputs.leg-count }}
-      # T072: the group `act` joins — the canonical per-spec group, except
-      # for a stop-only run, which mutates nothing and must not queue behind
-      # the very run it was asked to cancel.
-      # prose-free: literal
-      concurrency-group: ${{ steps.confirm.outputs.concurrency-group }}
-      # research.md D3/data-model.md §2: the spec branch's tip immediately
-      # before `act` starts folding anything — `dispatch-once` compares its
-      # own read of the tip against this to decide whether any leg folded.
-      base-sha: ${{ steps.base-sha.outputs.sha }}
-      # internal job-to-job wiring only, never a workflow_call output (research.md D3) -- see
-      # specs/041-implement-stall-notice/research.md D3.
-      refusal-reason: ${{ steps.identity.outputs.reason || steps.preflight.outputs.reason || steps.meta.outputs.reason }}
-      agent-ran: ${{ steps.agent-ran.outputs.ran }}
-      agent-conclusion: ${{ steps.agent-ran.outputs.conclusion }}
-      credential-refresh-ok: ${{ steps.credential-status.outputs.ok }}
-      failed-post-agent-step: ${{ steps.failed-step.outputs.step }}
+      reason: ${{ steps.identity.outputs.reason }}
     steps:
-      - name: Checkout consumer repository (bootstrap, default token)
-        uses: actions/checkout@v5
-        with:
-          persist-credentials: false
-
-      # research.md D3: pin the EXACT commit of the running reusable
-      # workflow, with an OIDC-claim fallback (mirrors clarify.yml/every
-      # other stage verbatim).
-      - name: Resolve pipeline ref
-        id: pipeline-ref
-        env:
-          JOB_WORKFLOW_SHA: ${{ github.job_workflow_sha }}
-          PIPELINE_REF_INPUT: ${{ inputs.pipeline-ref }}
-        run: |
-          ref="${PIPELINE_REF_INPUT:-$JOB_WORKFLOW_SHA}"
-          if [ -z "$ref" ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
-            payload=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-              "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=wing-commander-pipeline-ref" \
-              | jq -r '.value' | cut -d. -f2 | tr '_-' '/+')
-            while [ $(( ${#payload} % 4 )) -ne 0 ]; do payload="$payload="; done
-            ref=$(printf '%s' "$payload" | base64 -d 2>/dev/null | jq -r '.job_workflow_sha // empty' || true)
-          fi
-          if [ -z "$ref" ]; then
-            echo "::error::wing-commander pr-conversation stage: cannot determine the pipeline commit to check out — github.job_workflow_sha is empty and no OIDC token is available. Grant the calling job id-token: write, or set the pipeline-ref input to the same ref as your uses: pin."
-            exit 1
-          fi
-          echo "ref=$ref" >> "$GITHUB_OUTPUT"
-
-      - name: Checkout pipeline repository (shared composite actions)
-        uses: actions/checkout@v5
-        with:
-          repository: ${{ inputs.pipeline-repo }}
-          ref: ${{ steps.pipeline-ref.outputs.ref }}
-          token: ${{ secrets.pipeline-repo-token || github.token }}
-          path: .wing-commander-pipeline
-          persist-credentials: false
-
       # T003/FR-018/data-model.md PullRequestIdentity.qualifies: this PR is
       # in scope for this stage only when its base is the default branch and
       # its head starts with spec-prefix and NOT spec-draft-prefix/
@@ -528,24 +429,139 @@ jobs:
             echo "wing-commander pr-conversation stage: PR #$PR_NUMBER (base=$base_ref head=$head_ref) is not an implementation PR this stage acts on — stopping with no reply (FR-018)." >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      # Refusal note (research.md D1). Posts to inputs.pr-number, not a
-      # resolved lifecycle issue — pr-number is the one identifier FR-003
-      # guarantees present regardless of how early this job died
-      # (research.md D6). The non-qualifying-PR early exit above is a
-      # deliberate silent stop (FR-018), not a refusal — it never writes
-      # refused/reason, so it cannot trigger this step.
-      - name: Report identity-resolution refusal on the PR
-        if: always() && steps.identity.outputs.refused == 'true'
-        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+  # Validates this PR is in scope, gates the actor, stages the untrusted
+  # request, classifies it, computes confirmation requirements, and
+  # announces intent before `act` starts (FR-023 — structurally guaranteed:
+  # `act`'s environment: binding cannot begin evaluating until this job
+  # completes). Read-only beyond posting replies — a misjudged
+  # classification cannot itself mutate anything (contracts/reusable-pr-conversation.md).
+  classify-and-announce:
+    # container-image no-op and the runs-on JSON-array branch stay unverified (D2, D3) -- see
+    # specs/038-runner-container-passthrough/research.md.
+    runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
+    container:
+      image: ${{ inputs.container-image }}
+      credentials: >-
+        ${{
+          (secrets.container-registry-username != '' && secrets.container-registry-password != '')
+            && fromJSON(format('{{"username":{0},"password":{1}}}', toJSON(secrets.container-registry-username), toJSON(secrets.container-registry-password)))
+            || fromJSON('{}')
+        }}
+    environment:
+      name: ${{ inputs.environment }}
+      deployment: ${{ inputs.environment-deployment }}
+    # if: tolerates a skipped image check without widening to run merely
+    # because the workflow was not cancelled (#224) -- see clarify.yml.
+    # It also tolerates a resolve-identity failure the same way, but only to
+    # skip outright, never to run: a failed API read there must not be
+    # misread as "this PR does not qualify" (FR-005/FR-011).
+    needs: [verify-image-prerequisites, resolve-identity]
+    if: "!cancelled() && needs.verify-image-prerequisites.result != 'failure' && needs.resolve-identity.result != 'failure'"
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      id-token: write
+    # Serialized per-PR, not per-spec-dir: this job never itself pushes to
+    # spec/<slug> -- only `act` does, through its own group (research.md
+    # D7 item 1). spec-dir is available as a JOB output of resolve-identity
+    # before this job's own concurrency is even evaluated, but there is
+    # nothing here for that group to serialize.
+    concurrency:
+      group: wing-commander-pr-conversation-pr-${{ inputs.pr-number }}
+      cancel-in-progress: false
+    outputs:
+      qualifies: ${{ needs.resolve-identity.outputs.qualifies }}
+      spec-dir: ${{ needs.resolve-identity.outputs.spec-dir }}
+      slug: ${{ needs.resolve-identity.outputs.slug }}
+      default-branch: ${{ needs.resolve-identity.outputs.default-branch }}
+      issue-number: ${{ steps.meta.outputs.issue-number }}
+      # #287 — the prose-free-output rule, stated once here (the act and
+      # report-fold-outcomes jobs point at this block): a job output must
+      # never carry text a person or a model wrote, or text copied out of
+      # the repository. The runner checks every JOB output at job
+      # completion and, if any substring would be redacted by its secret
+      # masker, drops the WHOLE output ("Skip output '<name>' since it may
+      # contain secret") — and the masker also redacts any key=value token
+      # whose key is one of two well-known credential words (the p-word and
+      # its three-letter abbreviation), matching secret or not. The
+      # classified legs used to travel through a `classifications` output
+      # here; a drafted task quoting one such shell line from the
+      # repository emptied it, `act` was skipped, and the stage reported
+      # success with nothing folded (four review folds lost on one PR).
+      #
+      # So the full bodies now travel in the pr-conversation-classifications
+      # artifact ("Upload classification bodies" below; `act` and
+      # report-fold-outcomes download it), and the matrix is built from
+      # `legs`: a projection to the two values `act` must know at JOB start
+      # — `id` (its per-leg job name) and `confirm-environment` (its
+      # environment binding; an adopter-configured input, not prose).
+      # `leg-count` is how the legs-dropped job downstream tells "nothing
+      # was classified" from "the runner withheld the list". Gate 49
+      # (verify-job-outputs-prose-free.py) enforces this shape: a tainted
+      # step may feed a job output only through a `# prose-free:`
+      # declaration it can verify against the write line.
+      # prose-free: map({id, "confirm-environment"})
+      legs: ${{ steps.confirm.outputs.legs }}
+      # prose-free: length
+      leg-count: ${{ steps.confirm.outputs.leg-count }}
+      # T072: the group `act` joins — the canonical per-spec group, except
+      # for a stop-only run, which mutates nothing and must not queue behind
+      # the very run it was asked to cancel.
+      # prose-free: literal
+      concurrency-group: ${{ steps.confirm.outputs.concurrency-group }}
+      # research.md D3/data-model.md §2: the spec branch's tip immediately
+      # before `act` starts folding anything — `dispatch-once` compares its
+      # own read of the tip against this to decide whether any leg folded.
+      base-sha: ${{ steps.base-sha.outputs.sha }}
+      # internal job-to-job wiring only, never a workflow_call output (research.md D3) -- see
+      # specs/041-implement-stall-notice/research.md D3.
+      refusal-reason: ${{ steps.preflight.outputs.reason || steps.meta.outputs.reason }}
+      agent-ran: ${{ steps.agent-ran.outputs.ran }}
+      agent-conclusion: ${{ steps.agent-ran.outputs.conclusion }}
+      credential-refresh-ok: ${{ steps.credential-status.outputs.ok }}
+      failed-post-agent-step: ${{ steps.failed-step.outputs.step }}
+    steps:
+      - name: Checkout consumer repository (bootstrap, default token)
+        uses: actions/checkout@v5
         with:
-          token: ${{ github.token }}
-          issue-number: ${{ inputs.pr-number }}
-          kind: action
-          summary: "This stage could not start — ${{ steps.identity.outputs.reason }}"
+          persist-credentials: false
+
+      # research.md D3: pin the EXACT commit of the running reusable
+      # workflow, with an OIDC-claim fallback (mirrors clarify.yml/every
+      # other stage verbatim).
+      - name: Resolve pipeline ref
+        id: pipeline-ref
+        env:
+          JOB_WORKFLOW_SHA: ${{ github.job_workflow_sha }}
+          PIPELINE_REF_INPUT: ${{ inputs.pipeline-ref }}
+        run: |
+          ref="${PIPELINE_REF_INPUT:-$JOB_WORKFLOW_SHA}"
+          if [ -z "$ref" ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            payload=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+              "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=wing-commander-pipeline-ref" \
+              | jq -r '.value' | cut -d. -f2 | tr '_-' '/+')
+            while [ $(( ${#payload} % 4 )) -ne 0 ]; do payload="$payload="; done
+            ref=$(printf '%s' "$payload" | base64 -d 2>/dev/null | jq -r '.job_workflow_sha // empty' || true)
+          fi
+          if [ -z "$ref" ]; then
+            echo "::error::wing-commander pr-conversation stage: cannot determine the pipeline commit to check out — github.job_workflow_sha is empty and no OIDC token is available. Grant the calling job id-token: write, or set the pipeline-ref input to the same ref as your uses: pin."
+            exit 1
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout pipeline repository (shared composite actions)
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ inputs.pipeline-repo }}
+          ref: ${{ steps.pipeline-ref.outputs.ref }}
+          token: ${{ secrets.pipeline-repo-token || github.token }}
+          path: .wing-commander-pipeline
+          persist-credentials: false
 
       - name: Preflight
         id: preflight
-        if: steps.identity.outputs.qualifies == 'true'
+        if: needs.resolve-identity.outputs.qualifies == 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-preflight
         with:
           oauth-token: ${{ secrets.claude-code-oauth-token }}
@@ -567,7 +583,7 @@ jobs:
           summary: "This stage could not start — ${{ steps.preflight.outputs.reason }}"
 
       - name: Configure AWS credentials for Bedrock
-        if: steps.identity.outputs.qualifies == 'true'
+        if: needs.resolve-identity.outputs.qualifies == 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-bedrock-credentials
         with:
           use-bedrock: ${{ inputs.use-bedrock }}
@@ -578,7 +594,7 @@ jobs:
       # post-agent refresh) -- see clarify.yml.
       - name: Wing Commander context
         id: ctx
-        if: steps.identity.outputs.qualifies == 'true'
+        if: needs.resolve-identity.outputs.qualifies == 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
         with:
           app-id: ${{ secrets.speckit-app-id }}
@@ -592,11 +608,11 @@ jobs:
       # not otherwise need a working tree of the spec branch.
       - name: Read lifecycle issue number from spec-meta.json
         id: meta
-        if: steps.identity.outputs.qualifies == 'true'
+        if: needs.resolve-identity.outputs.qualifies == 'true'
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
-          SPEC_DIR: ${{ steps.identity.outputs.spec-dir }}
-          SPEC_BRANCH: ${{ inputs.spec-prefix }}${{ steps.identity.outputs.slug }}
+          SPEC_DIR: ${{ needs.resolve-identity.outputs.spec-dir }}
+          SPEC_BRANCH: ${{ inputs.spec-prefix }}${{ needs.resolve-identity.outputs.slug }}
         run: |
           # `-X GET` is load-bearing: `gh api` switches to POST the moment it
           # is handed a field (`-f`/`-F`/`--field`/`--raw-field`/`--input`)
@@ -629,14 +645,14 @@ jobs:
       # payload — re-fetch live state before any write can occur.
       - name: Check lifecycle issue state
         id: lifecycle-gate
-        if: steps.identity.outputs.qualifies == 'true'
+        if: needs.resolve-identity.outputs.qualifies == 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-lifecycle-gate
         with:
           issue-number: ${{ steps.meta.outputs.issue-number }}
           token: ${{ env.WC_BOT_TOKEN }}
 
       - name: Note closed lifecycle and stop
-        if: steps.identity.outputs.qualifies == 'true' && steps.lifecycle-gate.outputs.is-open != 'true'
+        if: needs.resolve-identity.outputs.qualifies == 'true' && steps.lifecycle-gate.outputs.is-open != 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
         with:
           token: ${{ env.WC_BOT_TOKEN }}
@@ -651,7 +667,7 @@ jobs:
       # requester carve-out, unlike clarify/intake (FR-019).
       - name: Authorized-actor gate
         id: actor-gate
-        if: steps.identity.outputs.qualifies == 'true' && steps.lifecycle-gate.outputs.is-open == 'true'
+        if: needs.resolve-identity.outputs.qualifies == 'true' && steps.lifecycle-gate.outputs.is-open == 'true'
         env:
           ACTOR_ASSOCIATION: ${{ inputs.actor-association }}
         run: |
@@ -661,7 +677,7 @@ jobs:
           esac
 
       - name: Note unauthorized request and stop
-        if: steps.identity.outputs.qualifies == 'true' && steps.lifecycle-gate.outputs.is-open == 'true' && steps.actor-gate.outputs.authorized != 'true'
+        if: needs.resolve-identity.outputs.qualifies == 'true' && steps.lifecycle-gate.outputs.is-open == 'true' && steps.actor-gate.outputs.authorized != 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
         with:
           token: ${{ env.WC_BOT_TOKEN }}
@@ -686,7 +702,7 @@ jobs:
       - name: Check for relay confirmation
         id: relay-resume
         shell: bash
-        if: steps.identity.outputs.qualifies == 'true' && steps.lifecycle-gate.outputs.is-open == 'true' && steps.actor-gate.outputs.authorized == 'true'
+        if: needs.resolve-identity.outputs.qualifies == 'true' && steps.lifecycle-gate.outputs.is-open == 'true' && steps.actor-gate.outputs.authorized == 'true'
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           PR_NUMBER: ${{ inputs.pr-number }}
@@ -768,7 +784,7 @@ jobs:
       # shell-interpolated, never pasted into the prompt (mirrors
       # clarify.yml's staging convention, data-model.md PRConversationEvent).
       - name: Stage the request as a data file
-        if: steps.identity.outputs.qualifies == 'true' && steps.lifecycle-gate.outputs.is-open == 'true' && steps.actor-gate.outputs.authorized == 'true'
+        if: needs.resolve-identity.outputs.qualifies == 'true' && steps.lifecycle-gate.outputs.is-open == 'true' && steps.actor-gate.outputs.authorized == 'true'
         env:
           BODY: ${{ inputs.body }}
           THREAD_PATH: ${{ inputs.thread-path }}
@@ -793,10 +809,10 @@ jobs:
       # it conflict with the constitution? is a "very small" claim
       # plausible?) — read-only, the default token is sufficient.
       - name: Checkout implementation branch (read-only)
-        if: steps.identity.outputs.qualifies == 'true' && steps.lifecycle-gate.outputs.is-open == 'true' && steps.actor-gate.outputs.authorized == 'true'
+        if: needs.resolve-identity.outputs.qualifies == 'true' && steps.lifecycle-gate.outputs.is-open == 'true' && steps.actor-gate.outputs.authorized == 'true'
         uses: actions/checkout@v5
         with:
-          ref: ${{ inputs.spec-prefix }}${{ steps.identity.outputs.slug }}
+          ref: ${{ inputs.spec-prefix }}${{ needs.resolve-identity.outputs.slug }}
           persist-credentials: false
           fetch-depth: 0
           clean: false
@@ -807,7 +823,7 @@ jobs:
       # (implement.post-progress-comment)".
       - name: Compose tool args (pr-conversation.classify)
         id: tool-args-classify
-        if: steps.identity.outputs.qualifies == 'true' && steps.lifecycle-gate.outputs.is-open == 'true' && steps.actor-gate.outputs.authorized == 'true'
+        if: needs.resolve-identity.outputs.qualifies == 'true' && steps.lifecycle-gate.outputs.is-open == 'true' && steps.actor-gate.outputs.authorized == 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-tool-args
         with:
           default-allowed-tools: "Read,Grep,Glob,Bash(python3 -I .wing-commander-pipeline/.github/scripts/git_read.py:*),Bash(cat:*),Bash(gh pr view:*),Bash(gh issue view:*),Bash(gh search issues:*)"
@@ -826,14 +842,14 @@ jobs:
       # mixes in-scope and out-of-scope items").
       - name: Compute agent turn ceiling
         id: agent-ceiling
-        if: steps.identity.outputs.qualifies == 'true' && steps.lifecycle-gate.outputs.is-open == 'true' && steps.actor-gate.outputs.authorized == 'true' && steps.relay-resume.outputs.resumed != 'true' && steps.tool-args-classify.outputs.allowed-tools != ''
+        if: needs.resolve-identity.outputs.qualifies == 'true' && steps.lifecycle-gate.outputs.is-open == 'true' && steps.actor-gate.outputs.authorized == 'true' && steps.relay-resume.outputs.resumed != 'true' && steps.tool-args-classify.outputs.allowed-tools != ''
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-turn-ceiling
         with:
           intended-turns: ${{ inputs.max-turns }}
 
       - name: Classify the PR conversation request
         id: agent
-        if: steps.identity.outputs.qualifies == 'true' && steps.lifecycle-gate.outputs.is-open == 'true' && steps.actor-gate.outputs.authorized == 'true' && steps.relay-resume.outputs.resumed != 'true' && steps.tool-args-classify.outputs.allowed-tools != ''
+        if: needs.resolve-identity.outputs.qualifies == 'true' && steps.lifecycle-gate.outputs.is-open == 'true' && steps.actor-gate.outputs.authorized == 'true' && steps.relay-resume.outputs.resumed != 'true' && steps.tool-args-classify.outputs.allowed-tools != ''
         # post-hoc turn-budget rejection of a healthy, finished run (#204) -- see
         # specs/037-agent-turn-budget-guard/plan.md.
         continue-on-error: true
@@ -851,7 +867,7 @@ jobs:
             You are the classification step of this repository's PR
             conversation stage, evaluating a maintainer's request on PR
             #${{ inputs.pr-number }} (the implementation PR for
-            ${{ steps.identity.outputs.spec-dir }}).
+            ${{ needs.resolve-identity.outputs.spec-dir }}).
 
             The request is staged at
             /tmp/wing-commander/pr-conversation-request.md, with context
@@ -869,7 +885,7 @@ jobs:
             `git` is denied) — you have no write tools at all in this step.
 
             Read .specify/memory/constitution.md and
-            ${{ steps.identity.outputs.spec-dir }}/{spec.md,plan.md,tasks.md}
+            ${{ needs.resolve-identity.outputs.spec-dir }}/{spec.md,plan.md,tasks.md}
             for context, then decide, for each distinguishable request
             inside the staged text, which ONE of these categories it is:
 
@@ -1001,7 +1017,7 @@ jobs:
       # must be caught explicitly before anything downstream trusts it.
       - name: Fail on agent API error
         id: schema-check
-        if: steps.identity.outputs.qualifies == 'true' && steps.lifecycle-gate.outputs.is-open == 'true' && steps.actor-gate.outputs.authorized == 'true' && steps.agent-verdict.outputs.verdict == 'healthy'
+        if: needs.resolve-identity.outputs.qualifies == 'true' && steps.lifecycle-gate.outputs.is-open == 'true' && steps.actor-gate.outputs.authorized == 'true' && steps.agent-verdict.outputs.verdict == 'healthy'
         run: |
           f="$RUNNER_TEMP/claude-execution-output.json"
           agent_ok="$(jq -r '([.[] | select(.type=="result")] | last) as $r
@@ -1037,7 +1053,7 @@ jobs:
       # Surface this run's own metrics in the run summary (see intake.yml).
       - name: Classify agent run metrics summary
         id: metrics-summary-classify
-        if: steps.identity.outputs.qualifies == 'true' && steps.lifecycle-gate.outputs.is-open == 'true' && steps.actor-gate.outputs.authorized == 'true' && always() && steps.agent.outcome != 'skipped'
+        if: needs.resolve-identity.outputs.qualifies == 'true' && steps.lifecycle-gate.outputs.is-open == 'true' && steps.actor-gate.outputs.authorized == 'true' && always() && steps.agent.outcome != 'skipped'
         # Belt-and-braces for the action's own "never fail the job" contract.
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-metrics-summary
@@ -1048,13 +1064,13 @@ jobs:
           verdict: ${{ steps.agent-verdict.outputs.verdict }}
           verdict-reason: ${{ steps.agent-verdict.outputs.reason }}
           stage: pr-conversation
-          spec-dir: ${{ steps.identity.outputs.spec-dir }}
+          spec-dir: ${{ needs.resolve-identity.outputs.spec-dir }}
           spec-issue: ${{ steps.meta.outputs.issue-number }}
 
       # Durable record (specs/043-durable-metrics-record) — the artifact this
       # feature persists past the transcript's own retention window.
       - name: Upload metrics record (classify)
-        if: steps.identity.outputs.qualifies == 'true' && steps.lifecycle-gate.outputs.is-open == 'true' && steps.actor-gate.outputs.authorized == 'true' && always() && steps.agent.outcome != 'skipped'
+        if: needs.resolve-identity.outputs.qualifies == 'true' && steps.lifecycle-gate.outputs.is-open == 'true' && steps.actor-gate.outputs.authorized == 'true' && always() && steps.agent.outcome != 'skipped'
         uses: actions/upload-artifact@v6
         with:
           name: metrics-record-classify
@@ -1067,7 +1083,7 @@ jobs:
       - name: Compute cost line (classify)
         id: cost-line-classify
         shell: bash
-        if: steps.identity.outputs.qualifies == 'true' && steps.lifecycle-gate.outputs.is-open == 'true' && steps.actor-gate.outputs.authorized == 'true' && always() && steps.agent.outcome != 'skipped'
+        if: needs.resolve-identity.outputs.qualifies == 'true' && steps.lifecycle-gate.outputs.is-open == 'true' && steps.actor-gate.outputs.authorized == 'true' && always() && steps.agent.outcome != 'skipped'
         env:
           COST_LINE: ${{ steps.metrics-summary-classify.outputs.cost-line }}
         run: |
@@ -1078,7 +1094,7 @@ jobs:
 
       # over-budget is observability, not failure (FR-017) -- see clarify.yml.
       - name: Report over-budget agent run
-        if: steps.identity.outputs.qualifies == 'true' && steps.lifecycle-gate.outputs.is-open == 'true' && steps.actor-gate.outputs.authorized == 'true' && steps.agent-verdict.outputs.verdict == 'healthy' && steps.agent-verdict.outputs.over-budget == 'true'
+        if: needs.resolve-identity.outputs.qualifies == 'true' && steps.lifecycle-gate.outputs.is-open == 'true' && steps.actor-gate.outputs.authorized == 'true' && steps.agent-verdict.outputs.verdict == 'healthy' && steps.agent-verdict.outputs.over-budget == 'true'
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
         with:
@@ -1144,7 +1160,7 @@ jobs:
           CONFIRM_CATEGORIES: ${{ inputs.confirm-categories }}
           CONFIRM_ENVIRONMENT: ${{ inputs.confirm-environment }}
           PR_NUMBER: ${{ inputs.pr-number }}
-          SPEC_DIR: ${{ steps.identity.outputs.spec-dir }}
+          SPEC_DIR: ${{ needs.resolve-identity.outputs.spec-dir }}
         run: |
           set -euo pipefail
           raw="$(cat "$RUNNER_TEMP/classifications-raw.json")"
@@ -1421,11 +1437,11 @@ jobs:
       - name: Read branch tip before folding
         id: base-sha
         shell: bash
-        if: steps.identity.outputs.qualifies == 'true'
+        if: needs.resolve-identity.outputs.qualifies == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           SPEC_PREFIX: ${{ inputs.spec-prefix }}
-          SLUG: ${{ steps.identity.outputs.slug }}
+          SLUG: ${{ needs.resolve-identity.outputs.slug }}
         run: |
           set -euo pipefail
           tip=$(git ls-remote "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "refs/heads/${SPEC_PREFIX}${SLUG}" | cut -f1)
@@ -3032,17 +3048,19 @@ jobs:
           exit 1
 
   # Survivor job (the #224 idiom, research.md D4): watches
-  # classify-and-announce only (data-model.md's pr-conversation row) — `act`
-  # runs per matrix leg with its own in-job refusal callout and has no
-  # bearing on whether this stage "started". Split internally on
-  # refusal-reason == '' (D3's mutual-exclusion arm — a refusal already
-  # posted its own in-job note, FR-006).
+  # classify-and-announce (data-model.md's pr-conversation row) and now also
+  # resolve-identity's own result — `act` runs per matrix leg with its own
+  # in-job refusal callout and has no bearing on whether this stage
+  # "started". Split internally on refusal-reason == '' (D3's
+  # mutual-exclusion arm — a refusal already posted its own in-job note,
+  # FR-006).
   stalled:
-    needs: [verify-image-prerequisites, classify-and-announce]
+    needs: [verify-image-prerequisites, resolve-identity, classify-and-announce]
     if: |
       needs.verify-image-prerequisites.result != 'failure' &&
       !cancelled() &&
       ( needs.verify-image-prerequisites.result == 'failure' ||
+        needs.resolve-identity.result == 'failure' ||
         needs.classify-and-announce.result == 'failure' ||
         needs.classify-and-announce.result == 'skipped' ) &&
       needs.classify-and-announce.outputs.refusal-reason == ''
@@ -3059,7 +3077,7 @@ jobs:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
     concurrency:
-      group: wing-commander-pr-conversation-pr-${{ inputs.pr-number }}
+      group: wing-commander-${{ needs.resolve-identity.outputs.spec-dir }}${{ needs.resolve-identity.outputs.spec-dir == '' && format('pr-conversation-pr-{0}', inputs.pr-number) || '' }}
       cancel-in-progress: false
     permissions:
       contents: read
@@ -3112,39 +3130,29 @@ jobs:
           app-id: ${{ secrets.speckit-app-id }}
           private-key: ${{ secrets.speckit-app-private-key }}
 
-      # Independent identity re-derivation (research.md D6, pr-conversation
-      # row): never trust needs.classify-and-announce.outputs.* for
-      # identity, only for refusal-reason (D3). gh pr view recovers the
-      # spec/NNN-slug branch name from the head ref, then the same
-      # spec-meta.json read "Read lifecycle issue number..." above already
-      # performs, run again here. Any failure along the way leaves
-      # spec-dir/issue-number empty — the composite's own "record could not
-      # be updated" branch (research.md D5) handles that gracefully.
-      - name: Resolve PR identity independently
-        id: identity
+      # Derivation-only prerequisite (research.md D6, pr-conversation row):
+      # identity itself is never re-derived here — it comes from
+      # needs.resolve-identity.outputs.* (T004). The one piece of identity
+      # resolution that stays in this job is the lifecycle-issue lookup, the
+      # same spec-meta.json read "Read lifecycle issue number..." above
+      # already performs, run again here since this job cannot read
+      # classify-and-announce's own steps. Skipped outright when spec-dir is
+      # empty — there is nothing to look up. Any failure along the way
+      # leaves issue-number empty — the composite's own "record could not be
+      # updated" branch (research.md D5) handles that gracefully.
+      - name: Look up the lifecycle issue number
+        id: issue-lookup
         shell: bash
-        if: needs.classify-and-announce.outputs.refusal-reason == ''
+        if: needs.classify-and-announce.outputs.refusal-reason == '' && needs.resolve-identity.outputs.spec-dir != ''
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ inputs.pr-number }}
-          SPEC_PREFIX: ${{ inputs.spec-prefix }}
+          SPEC_DIR: ${{ needs.resolve-identity.outputs.spec-dir }}
+          SPEC_BRANCH: ${{ inputs.spec-prefix }}${{ needs.resolve-identity.outputs.slug }}
         run: |
           set -uo pipefail
-          slug=""
-          spec_dir=""
-          issue=""
-          head_ref=$(gh pr view "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --json headRefName --jq '.headRefName' 2>/dev/null)
-          if [ -n "$head_ref" ] && [ "${head_ref#"$SPEC_PREFIX"}" != "$head_ref" ]; then
-            slug="${head_ref#"$SPEC_PREFIX"}"
-            spec_dir="specs/$slug"
-            issue=$(gh api -X GET "repos/$GITHUB_REPOSITORY/contents/$spec_dir/spec-meta.json" -f ref="$SPEC_PREFIX$slug" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null | jq -r '.issue // empty' 2>/dev/null)
-          fi
-          {
-            echo "slug=$slug"
-            echo "spec-dir=$spec_dir"
-            echo "issue-number=$issue"
-          } >> "$GITHUB_OUTPUT"
+          issue=$(gh api -X GET "repos/$GITHUB_REPOSITORY/contents/$SPEC_DIR/spec-meta.json" -f ref="$SPEC_BRANCH" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null | jq -r '.issue // empty' 2>/dev/null)
+          echo "issue-number=$issue" >> "$GITHUB_OUTPUT"
 
       # FR-004/FR-011: a credential re-establishment failure is named as
       # such, ahead of the generic agent-ran branch; otherwise, a real
@@ -3171,9 +3179,9 @@ jobs:
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-chain-stop-notice
         with:
           token: ${{ steps.ctx.outputs.token }}
-          issue-number: ${{ steps.identity.outputs.issue-number || inputs.pr-number }}
-          spec-dir: ${{ steps.identity.outputs.spec-dir }}
-          spec-branch: ${{ inputs.spec-prefix }}${{ steps.identity.outputs.slug }}
+          issue-number: ${{ steps.issue-lookup.outputs.issue-number || inputs.pr-number }}
+          spec-dir: ${{ needs.resolve-identity.outputs.spec-dir }}
+          spec-branch: ${{ inputs.spec-prefix }}${{ needs.resolve-identity.outputs.slug }}
           reason: ${{ steps.reason.outputs.reason }}
           # FR-015: resume-oriented wording when the agent ran and a step
           # after it is what stalled the job -- not a from-scratch restart.

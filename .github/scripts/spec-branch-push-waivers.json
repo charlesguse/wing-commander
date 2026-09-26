@@ -44,12 +44,6 @@
       "reason": "The group is computed by classify-and-announce: the per-spec group wing-commander-<spec-dir> for any run with a mutating leg, and a stop-only group for runs whose legs are all `stop` (specs/042 research.md D6, FR-015). A job-level expression that names a needs.* output is what the gate cannot read; the per-spec form is what it resolves to."
     },
     {
-      "file": ".github/workflows/pr-conversation.yml",
-      "job": "stalled",
-      "pushes": "a spec-meta stalled mark on spec/<NNN-slug> through wing-commander-chain-stop-notice, when the stage's own classify-and-announce job did not start",
-      "reason": "The spec directory is resolved inside this job (steps.identity), which a job-level concurrency group cannot read, and the job that would publish it is the one that did not start. Residual: the mark is unordered against a rebase on the same branch. Tracked on #437."
-    },
-    {
       "file": ".github/workflows/metrics-persist.yml",
       "job": "persist",
       "pushes": "the metrics branch (inputs.destination-branch) through wing-commander-metrics-persist",
