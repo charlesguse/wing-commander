@@ -105,6 +105,17 @@ jobs:
         with:
           persist-credentials: false
 
+      # see this file's header for why every job does this
+      - name: Checkout board-loop's own trusted copy (composites)
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          path: .wc-pristine-repo
+          persist-credentials: false
+      - name: Record trusted-copy provenance
+        run: |
+          echo "board-loop: composites resolved from $(git -C .wc-pristine-repo rev-parse HEAD) at ref ${{ github.sha }}." >> "$GITHUB_STEP_SUMMARY"
+
       # Entry gate 1 (research.md D2): the exact kill-switch idiom
       # auto-release.yml already uses at every durable-action boundary --
       # now a step (T067) rather than the job-level `if:` this replaced, so
@@ -138,7 +149,7 @@ jobs:
       - name: Wing Commander context
         id: ctx
         if: steps.killswitch.outputs.status != 'paused' && steps.stand-down.outputs.status != 'in-flight'
-        uses: ./.github/actions/wing-commander-context
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-context
         with:
           app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
           private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
@@ -745,7 +756,7 @@ jobs:
         id: metrics-summary
         if: always()
         continue-on-error: true
-        uses: ./.github/actions/wing-commander-metrics-summary
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-metrics-summary
         with:
           transcript-path: ${{ runner.temp }}/wing-commander-no-transcript.json
           model: ''
@@ -852,9 +863,20 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
 
+      # see this file's header for why every job does this
+      - name: Checkout board-loop's own trusted copy (composites)
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          path: .wc-pristine-repo
+          persist-credentials: false
+      - name: Record trusted-copy provenance
+        run: |
+          echo "board-loop: composites resolved from $(git -C .wc-pristine-repo rev-parse HEAD) at ref ${{ github.sha }}." >> "$GITHUB_STEP_SUMMARY"
+
       - name: Wing Commander context
         id: ctx
-        uses: ./.github/actions/wing-commander-context
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-context
         with:
           app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
           private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
@@ -867,7 +889,7 @@ jobs:
       # fails); it must never block triage's own verdict-acting step.
       - name: Ensure board-loop's own labels exist
         continue-on-error: true
-        uses: ./.github/actions/wing-commander-board-labels
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-board-labels
         with:
           token: ${{ env.WC_BOT_TOKEN }}
 
@@ -882,7 +904,7 @@ jobs:
       # instead.
       - name: Fetch issue context (triage-propose)
         id: issue-context-triage
-        uses: ./.github/actions/wing-commander-issue-context
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-issue-context
         with:
           token: ${{ env.WC_BOT_TOKEN }}
           issue-number: ${{ needs.select.outputs.issue-number }}
@@ -964,7 +986,7 @@ jobs:
       # wc-pristine snapshot instead (#518, see "Snapshot helper scripts").
       - name: Compose tool args (triage-propose)
         id: tool-args-triage
-        uses: ./.github/actions/wing-commander-tool-args
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-tool-args
         with:
           default-allowed-tools: "Read,Grep,Glob,Bash(python3 -I .github/scripts/git_read.py:*),Bash(cat:*)"
           default-disallowed-tools: "WebSearch,WebFetch,Write,Edit,Bash(git:*),Bash(cd:*),Bash(pushd:*),Bash(popd:*),Bash(git push:*),Bash(gh issue close:*),Bash(gh issue edit:*)"
@@ -972,7 +994,7 @@ jobs:
 
       - name: Compute agent turn ceiling (triage-propose)
         id: triage-ceiling
-        uses: ./.github/actions/wing-commander-turn-ceiling
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-turn-ceiling
         with:
           intended-turns: 15
 
@@ -1044,7 +1066,7 @@ jobs:
         id: reestablish-triage
         if: "!cancelled() && steps.propose.outcome != 'skipped'"
         continue-on-error: true
-        uses: ./.github/actions/wing-commander-context
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-context
         with:
           app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
           private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
@@ -1052,14 +1074,14 @@ jobs:
       - name: Determine post-agent credential status (triage-propose)
         id: credential-status-triage
         if: "!cancelled() && steps.propose.outcome != 'skipped'"
-        uses: ./.github/actions/wing-commander-post-agent-credential-status
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-post-agent-credential-status
         with:
           mint-outcome: ${{ steps.reestablish-triage.outcome }}
 
       - name: Compute agent run verdict (triage-propose)
         id: triage-verdict
         if: always() && steps.propose.outcome != 'skipped'
-        uses: ./.github/actions/wing-commander-agent-verdict
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-agent-verdict
         with:
           intended-turns: 15
           run-label: triage-propose
@@ -1067,7 +1089,7 @@ jobs:
       - name: Agent run metrics summary (triage-propose)
         if: always() && steps.propose.outcome != 'skipped'
         continue-on-error: true
-        uses: ./.github/actions/wing-commander-metrics-summary
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-metrics-summary
         with:
           model: ${{ needs.resolve-model.outputs.model }}
           max-turns: 15
@@ -1137,7 +1159,7 @@ jobs:
 
       - name: Re-check kill switch and stop requests before any durable action
         id: killswitch-recheck
-        uses: ./.github/actions/wing-commander-board-stop-check
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-board-stop-check
         with:
           token: ${{ env.WC_BOT_TOKEN }}
           cancel-token: ${{ github.token }}
@@ -1274,9 +1296,20 @@ jobs:
         with:
           persist-credentials: false
 
+      # see this file's header for why every job does this
+      - name: Checkout board-loop's own trusted copy (composites)
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          path: .wc-pristine-repo
+          persist-credentials: false
+      - name: Record trusted-copy provenance
+        run: |
+          echo "board-loop: composites resolved from $(git -C .wc-pristine-repo rev-parse HEAD) at ref ${{ github.sha }}." >> "$GITHUB_STEP_SUMMARY"
+
       - name: Wing Commander context
         id: ctx
-        uses: ./.github/actions/wing-commander-context
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-context
         with:
           app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
           private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
@@ -1285,7 +1318,7 @@ jobs:
       # missed create cannot block route's own decide step.
       - name: Ensure board-loop's own labels exist
         continue-on-error: true
-        uses: ./.github/actions/wing-commander-board-labels
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-board-labels
         with:
           token: ${{ env.WC_BOT_TOKEN }}
 
@@ -1293,7 +1326,7 @@ jobs:
       # triage job above -- same composite, same reason.
       - name: Fetch issue context (route-propose)
         id: issue-context-route
-        uses: ./.github/actions/wing-commander-issue-context
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-issue-context
         with:
           token: ${{ env.WC_BOT_TOKEN }}
           issue-number: ${{ needs.select.outputs.issue-number }}
@@ -1301,7 +1334,7 @@ jobs:
       # #513: no raw git grant -- see the triage job's tool-args step.
       - name: Compose tool args (route-propose)
         id: tool-args-route
-        uses: ./.github/actions/wing-commander-tool-args
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-tool-args
         with:
           default-allowed-tools: "Read,Grep,Glob,Bash(python3 -I .github/scripts/git_read.py:*),Bash(cat:*)"
           default-disallowed-tools: "WebSearch,WebFetch,Write,Edit,Bash(git:*),Bash(cd:*),Bash(pushd:*),Bash(popd:*),Bash(git push:*),Bash(git commit:*)"
@@ -1309,7 +1342,7 @@ jobs:
 
       - name: Compute agent turn ceiling (route-propose)
         id: route-ceiling
-        uses: ./.github/actions/wing-commander-turn-ceiling
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-turn-ceiling
         with:
           intended-turns: 25
 
@@ -1376,7 +1409,7 @@ jobs:
         id: reestablish-route
         if: "!cancelled() && steps.propose.outcome != 'skipped'"
         continue-on-error: true
-        uses: ./.github/actions/wing-commander-context
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-context
         with:
           app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
           private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
@@ -1384,14 +1417,14 @@ jobs:
       - name: Determine post-agent credential status (route-propose)
         id: credential-status-route
         if: "!cancelled() && steps.propose.outcome != 'skipped'"
-        uses: ./.github/actions/wing-commander-post-agent-credential-status
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-post-agent-credential-status
         with:
           mint-outcome: ${{ steps.reestablish-route.outcome }}
 
       - name: Compute agent run verdict (route-propose)
         id: route-verdict
         if: always() && steps.propose.outcome != 'skipped'
-        uses: ./.github/actions/wing-commander-agent-verdict
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-agent-verdict
         with:
           intended-turns: 25
           run-label: route-propose
@@ -1399,7 +1432,7 @@ jobs:
       - name: Agent run metrics summary (route-propose)
         if: always() && steps.propose.outcome != 'skipped'
         continue-on-error: true
-        uses: ./.github/actions/wing-commander-metrics-summary
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-metrics-summary
         with:
           model: ${{ needs.resolve-model.outputs.model }}
           max-turns: 25
@@ -1498,7 +1531,7 @@ jobs:
 
       - name: Measure the drafted change against the board's own backstop
         id: backstop
-        uses: ./.github/actions/wing-commander-size-path-backstop
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-size-path-backstop
         with:
           file-changes: ${{ steps.extract.outputs.file-changes || '[]' }}
           max-files: ${{ env.BOARD_MAX_FILES }}
@@ -1506,7 +1539,7 @@ jobs:
 
       - name: Re-check kill switch and stop requests before any durable action
         id: killswitch-recheck
-        uses: ./.github/actions/wing-commander-board-stop-check
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-board-stop-check
         with:
           token: ${{ env.WC_BOT_TOKEN }}
           cancel-token: ${{ github.token }}
@@ -1674,7 +1707,7 @@ jobs:
       # phrase) -- never a second, hand-written link format.
       - name: Cross-link the spec-request onto the originating issue
         if: steps.spec_request.outputs.spec-url != ''
-        uses: ./.github/actions/wing-commander-outstanding-task-item
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-outstanding-task-item
         with:
           token: ${{ env.WC_BOT_TOKEN }}
           issue-number: ${{ needs.select.outputs.issue-number }}
@@ -1769,9 +1802,20 @@ jobs:
           git archive --format=tar "$GITHUB_SHA" .github/scripts .github/schemas | tar -x -C "$dest" --strip-components=1
           chmod -R a-w "$dest"
 
+      # see this file's header for why every job does this
+      - name: Checkout board-loop's own trusted copy (composites)
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          path: .wc-pristine-repo
+          persist-credentials: false
+      - name: Record trusted-copy provenance
+        run: |
+          echo "board-loop: composites resolved from $(git -C .wc-pristine-repo rev-parse HEAD) at ref ${{ github.sha }}." >> "$GITHUB_STEP_SUMMARY"
+
       - name: Wing Commander context
         id: ctx
-        uses: ./.github/actions/wing-commander-context
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-context
         with:
           app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
           private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
@@ -1780,7 +1824,7 @@ jobs:
       # missed create cannot block the fix job's push/PR/gate steps.
       - name: Ensure board-loop's own labels exist
         continue-on-error: true
-        uses: ./.github/actions/wing-commander-board-labels
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-board-labels
         with:
           token: ${{ env.WC_BOT_TOKEN }}
 
@@ -1832,14 +1876,14 @@ jobs:
       # pre-filtered file and still no `gh issue` tool of its own.
       - name: Fetch issue context (fixer)
         id: issue-context-fixer
-        uses: ./.github/actions/wing-commander-issue-context
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-issue-context
         with:
           token: ${{ env.WC_BOT_TOKEN }}
           issue-number: ${{ needs.select.outputs.issue-number }}
 
       - name: Compose tool args (fixer)
         id: tool-args-fix
-        uses: ./.github/actions/wing-commander-tool-args
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-tool-args
         with:
           default-allowed-tools: "Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*)"
           default-disallowed-tools: "WebSearch,WebFetch,Bash(git push:*)"
@@ -1847,7 +1891,7 @@ jobs:
 
       - name: Compute agent turn ceiling (fixer)
         id: fix-ceiling
-        uses: ./.github/actions/wing-commander-turn-ceiling
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-turn-ceiling
         with:
           intended-turns: 60
 
@@ -1896,7 +1940,7 @@ jobs:
         id: reestablish-fix
         if: "!cancelled() && steps.fixer.outcome != 'skipped'"
         continue-on-error: true
-        uses: ./.github/actions/wing-commander-context
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-context
         with:
           app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
           private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
@@ -1905,14 +1949,14 @@ jobs:
         id: refresh-remote-fix
         if: "!cancelled() && steps.fixer.outcome != 'skipped'"
         continue-on-error: true
-        uses: ./.github/actions/wing-commander-refresh-remote
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-refresh-remote
         with:
           token: ${{ env.WC_BOT_TOKEN }}
 
       - name: Determine post-agent credential status (fixer)
         id: credential-status-fix
         if: "!cancelled() && steps.fixer.outcome != 'skipped'"
-        uses: ./.github/actions/wing-commander-post-agent-credential-status
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-post-agent-credential-status
         with:
           mint-outcome: ${{ steps.reestablish-fix.outcome }}
           refresh-outcome: ${{ steps.refresh-remote-fix.outcome }}
@@ -1920,7 +1964,7 @@ jobs:
       - name: Compute agent run verdict (fixer)
         id: fix-verdict
         if: always() && steps.fixer.outcome != 'skipped'
-        uses: ./.github/actions/wing-commander-agent-verdict
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-agent-verdict
         with:
           intended-turns: 60
           run-label: fixer
@@ -1928,7 +1972,7 @@ jobs:
       - name: Agent run metrics summary (fixer)
         if: always() && steps.fixer.outcome != 'skipped'
         continue-on-error: true
-        uses: ./.github/actions/wing-commander-metrics-summary
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-metrics-summary
         with:
           model: ${{ needs.resolve-model.outputs.model }}
           max-turns: 60
@@ -1995,7 +2039,7 @@ jobs:
       - name: Re-check kill switch and stop requests before any durable action
         id: killswitch-recheck
         if: steps.gate-suite.outputs.outcome == 'pass'
-        uses: ./.github/actions/wing-commander-board-stop-check
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-board-stop-check
         with:
           token: ${{ env.WC_BOT_TOKEN }}
           cancel-token: ${{ github.token }}
@@ -2098,7 +2142,7 @@ jobs:
 
       - name: Cross-link the fix PR onto the originating issue
         if: steps.push-pr.outputs.pr-url != '' && steps.final-diff-backstop.outputs.breach != 'true'
-        uses: ./.github/actions/wing-commander-outstanding-task-item
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-outstanding-task-item
         with:
           token: ${{ env.WC_BOT_TOKEN }}
           issue-number: ${{ needs.select.outputs.issue-number }}
@@ -2128,7 +2172,7 @@ jobs:
         id: issue-context-breach
         if: steps.push-pr.outputs.pr-url != '' && steps.final-diff-backstop.outputs.breach == 'true'
         continue-on-error: true
-        uses: ./.github/actions/wing-commander-issue-context
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-issue-context
         with:
           token: ${{ env.WC_BOT_TOKEN }}
           issue-number: ${{ needs.select.outputs.issue-number }}
@@ -2191,7 +2235,7 @@ jobs:
 
       - name: Cross-link the post-push-breach spec-request onto the originating issue
         if: steps.post-push-breach.outputs.spec-url != ''
-        uses: ./.github/actions/wing-commander-outstanding-task-item
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-outstanding-task-item
         with:
           token: ${{ env.WC_BOT_TOKEN }}
           issue-number: ${{ needs.select.outputs.issue-number }}
@@ -2268,9 +2312,20 @@ jobs:
           git archive --format=tar "$GITHUB_SHA" .github/scripts .github/schemas | tar -x -C "$dest" --strip-components=1
           chmod -R a-w "$dest"
 
+      # see this file's header for why every job does this
+      - name: Checkout board-loop's own trusted copy (composites)
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          path: .wc-pristine-repo
+          persist-credentials: false
+      - name: Record trusted-copy provenance
+        run: |
+          echo "board-loop: composites resolved from $(git -C .wc-pristine-repo rev-parse HEAD) at ref ${{ github.sha }}." >> "$GITHUB_STEP_SUMMARY"
+
       - name: Wing Commander context
         id: ctx
-        uses: ./.github/actions/wing-commander-context
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-context
         with:
           app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
           private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
@@ -2279,7 +2334,7 @@ jobs:
       # missed create cannot block the review round's own outcome step.
       - name: Ensure board-loop's own labels exist
         continue-on-error: true
-        uses: ./.github/actions/wing-commander-board-labels
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-board-labels
         with:
           token: ${{ env.WC_BOT_TOKEN }}
 
@@ -2352,7 +2407,7 @@ jobs:
       # one place that ever reads an issue for an agent to consume.
       - name: Fetch issue context (reviewer)
         id: issue-context-review
-        uses: ./.github/actions/wing-commander-issue-context
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-issue-context
         with:
           token: ${{ env.WC_BOT_TOKEN }}
           issue-number: ${{ needs.select.outputs.issue-number }}
@@ -2361,7 +2416,7 @@ jobs:
       # #503: no gh grant either -- see "Gather review inputs" above.
       - name: Compose tool args (reviewer)
         id: tool-args-review
-        uses: ./.github/actions/wing-commander-tool-args
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-tool-args
         with:
           default-allowed-tools: "Read,Grep,Glob,Bash(python3 -I ${{ runner.temp }}/wc-pristine/scripts/git_read.py:*),Bash(cat:*)"
           default-disallowed-tools: "WebSearch,WebFetch,Write,Edit,Bash(git:*),Bash(cd:*),Bash(pushd:*),Bash(popd:*),Bash(git push:*),Bash(git commit:*)"
@@ -2369,7 +2424,7 @@ jobs:
 
       - name: Compute agent turn ceiling (reviewer)
         id: review-ceiling
-        uses: ./.github/actions/wing-commander-turn-ceiling
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-turn-ceiling
         with:
           intended-turns: 30
 
@@ -2434,7 +2489,7 @@ jobs:
         id: reestablish-review
         if: "!cancelled() && steps.reviewer.outcome != 'skipped'"
         continue-on-error: true
-        uses: ./.github/actions/wing-commander-context
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-context
         with:
           app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
           private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
@@ -2442,14 +2497,14 @@ jobs:
       - name: Determine post-agent credential status (reviewer)
         id: credential-status-review
         if: "!cancelled() && steps.reviewer.outcome != 'skipped'"
-        uses: ./.github/actions/wing-commander-post-agent-credential-status
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-post-agent-credential-status
         with:
           mint-outcome: ${{ steps.reestablish-review.outcome }}
 
       - name: Compute agent run verdict (reviewer)
         id: review-verdict
         if: always() && steps.reviewer.outcome != 'skipped'
-        uses: ./.github/actions/wing-commander-agent-verdict
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-agent-verdict
         with:
           intended-turns: 30
           run-label: reviewer
@@ -2457,7 +2512,7 @@ jobs:
       - name: Agent run metrics summary (reviewer)
         if: always() && steps.reviewer.outcome != 'skipped'
         continue-on-error: true
-        uses: ./.github/actions/wing-commander-metrics-summary
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-metrics-summary
         with:
           model: ${{ needs.resolve-model.outputs.model }}
           max-turns: 30
@@ -2792,7 +2847,7 @@ jobs:
         id: file-oos-0
         if: steps.prepare-oos.outputs.oos-0-title != ''
         continue-on-error: true
-        uses: ./.github/actions/wing-commander-durable-failure-issue
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-durable-failure-issue
         with:
           token: ${{ env.WC_BOT_TOKEN }}
           operation: report
@@ -2807,7 +2862,7 @@ jobs:
 
       - name: Cross-link out-of-scope finding 0
         if: steps.file-oos-0.outputs.issue-number != ''
-        uses: ./.github/actions/wing-commander-outstanding-task-item
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-outstanding-task-item
         with:
           token: ${{ env.WC_BOT_TOKEN }}
           issue-number: ${{ needs.select.outputs.issue-number }}
@@ -2818,7 +2873,7 @@ jobs:
         id: file-oos-1
         if: steps.prepare-oos.outputs.oos-1-title != ''
         continue-on-error: true
-        uses: ./.github/actions/wing-commander-durable-failure-issue
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-durable-failure-issue
         with:
           token: ${{ env.WC_BOT_TOKEN }}
           operation: report
@@ -2833,7 +2888,7 @@ jobs:
 
       - name: Cross-link out-of-scope finding 1
         if: steps.file-oos-1.outputs.issue-number != ''
-        uses: ./.github/actions/wing-commander-outstanding-task-item
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-outstanding-task-item
         with:
           token: ${{ env.WC_BOT_TOKEN }}
           issue-number: ${{ needs.select.outputs.issue-number }}
@@ -2844,7 +2899,7 @@ jobs:
         id: file-oos-2
         if: steps.prepare-oos.outputs.oos-2-title != ''
         continue-on-error: true
-        uses: ./.github/actions/wing-commander-durable-failure-issue
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-durable-failure-issue
         with:
           token: ${{ env.WC_BOT_TOKEN }}
           operation: report
@@ -2859,7 +2914,7 @@ jobs:
 
       - name: Cross-link out-of-scope finding 2
         if: steps.file-oos-2.outputs.issue-number != ''
-        uses: ./.github/actions/wing-commander-outstanding-task-item
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-outstanding-task-item
         with:
           token: ${{ env.WC_BOT_TOKEN }}
           issue-number: ${{ needs.select.outputs.issue-number }}
@@ -2868,7 +2923,7 @@ jobs:
 
       - name: Re-check kill switch and stop requests before any durable action
         id: killswitch-recheck
-        uses: ./.github/actions/wing-commander-board-stop-check
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-board-stop-check
         with:
           token: ${{ env.WC_BOT_TOKEN }}
           cancel-token: ${{ github.token }}
@@ -2973,7 +3028,7 @@ jobs:
       - name: Compose tool args (review-fixup)
         id: tool-args-review-fixup
         if: steps.round.outputs.outcome == 'continue' && steps.killswitch-recheck.outputs.paused != 'true'
-        uses: ./.github/actions/wing-commander-tool-args
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-tool-args
         with:
           default-allowed-tools: "Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*)"
           default-disallowed-tools: "WebSearch,WebFetch,Bash(git push:*)"
@@ -2982,7 +3037,7 @@ jobs:
       - name: Compute agent turn ceiling (review-fixup)
         id: review-fixup-ceiling
         if: steps.round.outputs.outcome == 'continue' && steps.killswitch-recheck.outputs.paused != 'true'
-        uses: ./.github/actions/wing-commander-turn-ceiling
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-turn-ceiling
         with:
           intended-turns: 40
 
@@ -3026,7 +3081,7 @@ jobs:
         id: reestablish-review-fixup
         if: "!cancelled() && steps.review-fixup.outcome != 'skipped'"
         continue-on-error: true
-        uses: ./.github/actions/wing-commander-context
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-context
         with:
           app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
           private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
@@ -3035,14 +3090,14 @@ jobs:
         id: refresh-remote-review-fixup
         if: "!cancelled() && steps.review-fixup.outcome != 'skipped'"
         continue-on-error: true
-        uses: ./.github/actions/wing-commander-refresh-remote
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-refresh-remote
         with:
           token: ${{ env.WC_BOT_TOKEN }}
 
       - name: Determine post-agent credential status (review-fixup)
         id: credential-status-review-fixup
         if: "!cancelled() && steps.review-fixup.outcome != 'skipped'"
-        uses: ./.github/actions/wing-commander-post-agent-credential-status
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-post-agent-credential-status
         with:
           mint-outcome: ${{ steps.reestablish-review-fixup.outcome }}
           refresh-outcome: ${{ steps.refresh-remote-review-fixup.outcome }}
@@ -3050,7 +3105,7 @@ jobs:
       - name: Compute agent run verdict (review-fixup)
         id: review-fixup-verdict
         if: always() && steps.review-fixup.outcome != 'skipped'
-        uses: ./.github/actions/wing-commander-agent-verdict
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-agent-verdict
         with:
           intended-turns: 40
           run-label: review-fixup
@@ -3058,7 +3113,7 @@ jobs:
       - name: Agent run metrics summary (review-fixup)
         if: always() && steps.review-fixup.outcome != 'skipped'
         continue-on-error: true
-        uses: ./.github/actions/wing-commander-metrics-summary
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-metrics-summary
         with:
           model: ${{ needs.resolve-model.outputs.model }}
           max-turns: 40
@@ -3188,9 +3243,20 @@ jobs:
           git archive --format=tar "$GITHUB_SHA" .github/scripts .github/schemas | tar -x -C "$dest" --strip-components=1
           chmod -R a-w "$dest"
 
+      # see this file's header for why every job does this
+      - name: Checkout board-loop's own trusted copy (composites)
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          path: .wc-pristine-repo
+          persist-credentials: false
+      - name: Record trusted-copy provenance
+        run: |
+          echo "board-loop: composites resolved from $(git -C .wc-pristine-repo rev-parse HEAD) at ref ${{ github.sha }}." >> "$GITHUB_STEP_SUMMARY"
+
       - name: Wing Commander context
         id: ctx
-        uses: ./.github/actions/wing-commander-context
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-context
         with:
           app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
           private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
@@ -3199,7 +3265,7 @@ jobs:
       # missed create cannot block readiness's own report-unmet step.
       - name: Ensure board-loop's own labels exist
         continue-on-error: true
-        uses: ./.github/actions/wing-commander-board-labels
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-board-labels
         with:
           token: ${{ env.WC_BOT_TOKEN }}
 
@@ -3265,7 +3331,7 @@ jobs:
 
       - name: Re-check kill switch and stop requests
         id: killswitch-recheck
-        uses: ./.github/actions/wing-commander-board-stop-check
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-board-stop-check
         with:
           token: ${{ env.WC_BOT_TOKEN }}
           cancel-token: ${{ github.token }}
@@ -3348,7 +3414,7 @@ jobs:
         id: issue-context-readiness
         if: steps.decide.outputs.ready != 'true'
         continue-on-error: true
-        uses: ./.github/actions/wing-commander-issue-context
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-issue-context
         with:
           token: ${{ env.WC_BOT_TOKEN }}
           issue-number: ${{ needs.select.outputs.issue-number }}
@@ -3462,7 +3528,7 @@ jobs:
       # spec-request-artifact shape.
       - name: Cross-link the readiness-backstop-breach spec-request onto the originating issue
         if: steps.report-unmet.outputs.spec-url != ''
-        uses: ./.github/actions/wing-commander-outstanding-task-item
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-outstanding-task-item
         with:
           token: ${{ env.WC_BOT_TOKEN }}
           issue-number: ${{ needs.select.outputs.issue-number }}
@@ -3478,7 +3544,7 @@ jobs:
         id: metrics-summary
         if: always()
         continue-on-error: true
-        uses: ./.github/actions/wing-commander-metrics-summary
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-metrics-summary
         with:
           transcript-path: ${{ runner.temp }}/wing-commander-no-transcript.json
           model: ''
@@ -3519,9 +3585,20 @@ jobs:
         with:
           persist-credentials: false
 
+      # see this file's header for why every job does this
+      - name: Checkout board-loop's own trusted copy (composites)
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          path: .wc-pristine-repo
+          persist-credentials: false
+      - name: Record trusted-copy provenance
+        run: |
+          echo "board-loop: composites resolved from $(git -C .wc-pristine-repo rev-parse HEAD) at ref ${{ github.sha }}." >> "$GITHUB_STEP_SUMMARY"
+
       - name: Wing Commander context
         id: ctx
-        uses: ./.github/actions/wing-commander-context
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-context
         with:
           app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
           private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
@@ -3621,7 +3698,7 @@ jobs:
         id: metrics-summary
         if: always()
         continue-on-error: true
-        uses: ./.github/actions/wing-commander-metrics-summary
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-metrics-summary
         with:
           transcript-path: ${{ runner.temp }}/wing-commander-no-transcript.json
           model: ''
@@ -3660,9 +3737,20 @@ jobs:
         with:
           persist-credentials: false
 
+      # see this file's header for why every job does this
+      - name: Checkout board-loop's own trusted copy (composites)
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          path: .wc-pristine-repo
+          persist-credentials: false
+      - name: Record trusted-copy provenance
+        run: |
+          echo "board-loop: composites resolved from $(git -C .wc-pristine-repo rev-parse HEAD) at ref ${{ github.sha }}." >> "$GITHUB_STEP_SUMMARY"
+
       - name: Wing Commander context
         id: ctx
-        uses: ./.github/actions/wing-commander-context
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-context
         with:
           app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
           private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
@@ -3716,7 +3804,7 @@ jobs:
 
       - name: Re-check kill switch and stop requests before any durable action
         id: killswitch-recheck
-        uses: ./.github/actions/wing-commander-board-stop-check
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-board-stop-check
         with:
           token: ${{ env.WC_BOT_TOKEN }}
           cancel-token: ${{ github.token }}
@@ -3751,7 +3839,7 @@ jobs:
           steps.decide.outputs.actions-only == 'true'
           && steps.decide.outputs.redrive-workflow != ''
           && steps.killswitch-recheck.outputs.paused != 'true'
-        uses: ./.github/actions/wing-commander-dispatch-and-wait
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-dispatch-and-wait
         with:
           # github.token, never the wing-commander App token (WC_BOT_TOKEN)
           # -- that token has no `actions` permission and `gh workflow run`/
@@ -3767,7 +3855,7 @@ jobs:
 
       - name: Cross-link the proof run onto the originating issue
         if: steps.redrive.outputs.run-url != ''
-        uses: ./.github/actions/wing-commander-outstanding-task-item
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-outstanding-task-item
         with:
           token: ${{ env.WC_BOT_TOKEN }}
           issue-number: ${{ needs.prove-gate.outputs.issue-number }}
@@ -3834,7 +3922,7 @@ jobs:
         id: metrics-summary
         if: always()
         continue-on-error: true
-        uses: ./.github/actions/wing-commander-metrics-summary
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-metrics-summary
         with:
           transcript-path: ${{ runner.temp }}/wing-commander-no-transcript.json
           model: ''
