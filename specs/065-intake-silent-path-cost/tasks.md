@@ -44,7 +44,7 @@ editing, since research.md's Decision 3 explicitly left one item
 unconfirmed and exact line numbers shift between planning and
 implementation.
 
-- [ ] T001 Re-read `.github/workflows/intake.yml`, `.github/workflows/clarify.yml`,
+- [X] T001 Re-read `.github/workflows/intake.yml`, `.github/workflows/clarify.yml`,
       `.github/workflows/plan.yml`, and `.github/workflows/tasks.yml` fresh and
       confirm by name (not by line number, which will have shifted) that:
       (a) intake.yml still has "Compute cost line", "Append cost line to
@@ -73,7 +73,7 @@ story's workflow or gate-script edits are meaningful until both exist.
 
 **⚠️ CRITICAL**: Complete both tasks before starting any user story phase.
 
-- [ ] T002 [P] Create `.github/actions/wing-commander-cost-report/action.yml`
+- [X] T002 [P] Create `.github/actions/wing-commander-cost-report/action.yml`
       per `contracts/cost-report-action.md`: a composite action with required
       inputs `token`, `issue-number`, `cost-line`, `stage-label`; no outputs
       required; it composes a fixed-shape summary from `stage-label` that
@@ -87,7 +87,7 @@ story's workflow or gate-script edits are meaningful until both exist.
       judgment belongs entirely to each call site's own `if:` (Constitution
       IX).
 
-- [ ] T003 [P] In `.github/scripts/verify-clarification-gating.py`, extend
+- [X] T003 [P] In `.github/scripts/verify-clarification-gating.py`, extend
       `evaluate_if()` (around line 209) to treat a bare `!cancelled()` term as
       always-true, the same way the function already special-cases a bare
       `always()` term (see the `if term == "always()": continue` branch).

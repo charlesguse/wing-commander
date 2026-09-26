@@ -216,7 +216,11 @@ def evaluate_if(expr, ctx, step_name, path):
     if expr is None:
         return True
     expr = str(expr).strip()
-    if "||" in expr or "${{" in expr or "!" in expr.replace("!=", ""):
+    # !cancelled() is the one bare-! term this harness special-cases (see
+    # below) -- stripped here before the blanket "!" guard so a step whose
+    # if: contains it doesn't hard-error before reaching that special case.
+    stripped = expr.replace("!cancelled()", "").replace("!=", "")
+    if "||" in expr or "${{" in expr or "!" in stripped:
         sys.exit(
             f"::error file={path}::step {step_name!r} has an if: this harness "
             f"cannot evaluate ({expr!r}). Extend evaluate_if() in "
@@ -230,6 +234,12 @@ def evaluate_if(expr, ctx, step_name, path):
         # evaluator (see the `not job_failed and evaluate_if(...)` call
         # sites), so a bare always() term is a no-op here, not a hard error.
         if term == "always()":
+            continue
+        # !cancelled() says nothing about any ctx value either — none of
+        # INTAKE_SCENARIOS/CLARIFY_SCENARIOS model a cancelled run, so, like
+        # always(), it is a no-op here. This is NOT a general `!`-support
+        # relaxation: every other use of `!` still hits the hard-error below.
+        if term == "!cancelled()":
             continue
         m = TERM.match(term)
         if not m:
