@@ -226,7 +226,14 @@ though no spec-slug/spec label exists yet, since the label lives on the
 `needs.<entry-job>.outputs.*` for spec-dir/issue-number/iteration (only
 `refusal-reason`, D3) — it resolves identity from that stage's own
 `workflow_call` inputs, re-deriving anything not directly declared using the
-same read-only lookups the pipeline already performs elsewhere.
+same read-only lookups the pipeline already performs elsewhere. A
+**derivation-only prerequisite job** — no checkout, no secrets, whose only
+product is the identity — counts as "the stage's own declared inputs" for
+this rule's purpose, since it computes nothing the stage file itself does
+not already declare and runs unconditionally ahead of the entry job it is
+not derived *from* (specs/077-stalled-per-spec-group D6, Q2/FR-016 —
+`pr-conversation.yml`'s `resolve-identity` job is the first instance of
+this shape).
 
 | Stage | Directly declared | Re-derivation needed | Mechanism |
 |---|---|---|---|
@@ -234,7 +241,7 @@ same read-only lookups the pipeline already performs elsewhere.
 | finalize | `spec-dir`, `issue-number` | none | already available |
 | clarify | `issue-number` | `spec-dir` | independent `gh issue view --json labels`, parse `spec:*` label — the same lookup `wing-commander-context`'s `resolve` step already performs, run again here rather than trusted from a job that may not have reached it |
 | intake | `issue-number` | `spec-dir` — none exists (D5) | N/A — record-could-not-be-updated branch always taken |
-| pr-conversation | `pr-number` | `spec-dir`, `issue-number` | independent `gh pr view` on the head ref to recover the `spec/NNN-slug` branch name, then the same `spec-meta.json`-read `meta` step already performs, run again here. When this re-derivation itself fails, the notice posts to `pr-number` directly (`gh issue comment` — a PR *is* an issue at the API level) rather than to an unknown lifecycle issue: `pr-number` is the one identifier guaranteed present regardless of how early the job died |
+| pr-conversation | `pr-number` | `spec-dir` (via a derivation-only prerequisite job, `resolve-identity` — no checkout, no secrets, publishes identity only), `issue-number` | `spec-dir` and `slug` are read from `needs.resolve-identity.outputs.*`, computed once, before this stage's entry job runs; `issue-number` keeps its own independent `spec-meta.json` read in this job, keyed off that slug. When `resolve-identity` itself failed or was skipped, `spec-dir` is empty and the notice posts to `pr-number` directly (`gh issue comment` — a PR *is* an issue at the API level) rather than to an unknown lifecycle issue: `pr-number` is the one identifier guaranteed present regardless of how early the job died |
 | tasks (`mode: generate`) | `head-ref` or `slug` | `spec-dir` (string derivation only, `specs/<slug>`), `issue-number` | `spec-dir` needs no lookup — `slug` parses directly from `head-ref` when `slug` itself is empty; `issue-number` via `gh api .../contents/$SPEC_DIR/spec-meta.json -f ref=<branch>` (no full checkout), the same call `pr-conversation`'s `meta` step already makes |
 | tasks (`mode: approved`) | `head-ref` or `slug` | same as `generate` | same as `generate` |
 
