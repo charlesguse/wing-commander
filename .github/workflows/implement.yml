@@ -3,11 +3,17 @@
 # on: workflow_call only. Each call is one build-and-reassess cycle on the
 # persistent spec/<NNN-slug> branch: /speckit-implement then /speckit-converge,
 # both committing directly to the spec branch. A deterministic post-step reads
-# the pushed commits: no "converge:" commit touching tasks.md ⇒ converged ⇒
-# dispatch next-workflow (converged=true); one present ⇒ not converged ⇒
-# re-dispatch self-workflow with iteration+1, or at the max-iterations cap
-# post the remaining work and dispatch next-workflow (converged=false). An
-# outright pass failure retries the same iteration once on claude-opus-5;
+# tasks.md's own checkbox state at the pushed tip (spec 059): zero unchecked
+# tasks ⇒ converged ⇒ dispatch next-workflow (converged=true), regardless of
+# whether a "converge:" commit landed; tasks remain and the checked-task count
+# rose against this cycle's own base ⇒ not converged ⇒ re-dispatch
+# self-workflow with iteration+1; tasks remain, no "converge:" commit landed,
+# and the checked-task count did NOT rise ⇒ not converged, but no cycle would
+# finish this on its own either, so it hands off early to the same
+# max-iterations-cap path below rather than looping to the cap; at the
+# max-iterations cap (or that early hand-off) post the remaining work and
+# dispatch next-workflow (converged=false). An outright pass failure retries
+# the same iteration once on claude-opus-5;
 # if the retry also fails (or the pass already ran on opus) the spec is
 # marked stalled. Empty chaining inputs ⇒ report to the issue and stop —
 # any stage runs standalone (FR-002).
@@ -911,7 +917,9 @@ jobs:
                If it appends a convergence phase to tasks.md, commit exactly
                that tasks.md change on its own with a message prefixed
                "converge:". If it reports converged (tasks.md unchanged),
-               commit nothing further.
+               commit nothing further — this workflow's own convergence
+               signal is read from tasks.md's checkbox state at the pushed
+               tip, not from whether this step committed.
             4. Push the current branch (${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}).
 
             If, while doing your own task, you notice a defect that is not your
@@ -1151,17 +1159,26 @@ jobs:
       # Failure detection + convergence signal, all deterministic (no agent
       # turns): the attempt "completed" only if the action exited zero AND
       # spec-meta.json on the spec branch advanced as instructed; a completed
-      # cycle converged iff no "converge:" commit touching tasks.md landed.
-      # A run whose verdict is "exhausted" (it ran out of its turn budget,
-      # rather than erroring or finishing healthy) is instead classified
-      # "truncated" when the lifecycle record still advanced AND the branch
-      # shows real progress (either a newly-ticked tasks.md checkbox or a
-      # change outside $SPEC_DIR) — collapsing onto ok=true so the retry and
-      # stalled jobs' existing gates skip it for free, but with `converged`
-      # forced false without ever running the convergence scan (never
-      # inferred from a converge commit's absence for a run that was cut
-      # off). Exhausted with no progress, or exhausted without the lifecycle
-      # record advancing, takes today's failed path unchanged.
+      # cycle converged iff tasks.md has zero unchecked tasks at the pushed
+      # tip (spec 059, FR-001/FR-002) — never inferred from whether a
+      # "converge:" commit landed, which is now only evidence for the
+      # non-convergence reason narrative below. A run whose verdict is
+      # "exhausted" (it ran out of its turn budget, rather than erroring or
+      # finishing healthy) is instead classified "truncated" when the
+      # lifecycle record still advanced AND the branch shows real progress
+      # (either a newly-ticked tasks.md checkbox or a change outside
+      # $SPEC_DIR) — collapsing onto ok=true so the retry and stalled jobs'
+      # existing gates skip it for free, but with `converged` forced false
+      # without ever running the convergence scan (never inferred from
+      # tasks.md's state for a run that was cut off). Exhausted with no
+      # progress, or exhausted without the lifecycle record advancing, takes
+      # today's failed path unchanged. A healthy (non-truncated) cycle that
+      # leaves tasks outstanding, lands no "converge:" commit, AND whose
+      # checked-task count did not rise against its own base hands off to
+      # finalize early rather than looping to the iteration cap (FR-010,
+      # "Dispatch next step" below) — a spec whose only leftovers are
+      # human-only work costs one extra cycle, not the whole remaining
+      # budget.
       # The spec-meta.json read has one home, the wing-commander-spec-meta
       # composite (#340, Gate 61); the read-back compares its outputs.
       - name: Read spec-meta.json from the spec branch (cycle)
@@ -1172,6 +1189,39 @@ jobs:
           spec-prefix: ${{ inputs.spec-prefix }}
           slug: ${{ steps.spec.outputs.slug }}
           spec-dir: ${{ steps.spec.outputs.spec-dir }}
+
+      # FR-001/FR-002/FR-007 (spec 059): the checkbox-count composite is the
+      # one home (research.md D2) the convergence signal and the FR-010a
+      # progress test both read tasks.md through, so the primary and retry
+      # arms share one definition rather than two copies that could drift.
+      # The tip call needs the branch fetched first; hoisted into its own
+      # step here rather than inside "Read back cycle outcome" itself, which
+      # still resolves the default branch for its own Arm B further down.
+      - name: Fetch spec branch for checkbox count (cycle)
+        id: fetch-checkbox-cycle
+        shell: bash
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true'
+        env:
+          SLUG: ${{ steps.spec.outputs.slug }}
+          SPEC_PREFIX: ${{ inputs.spec-prefix }}
+        run: |
+          git fetch origin "+refs/heads/${SPEC_PREFIX}$SLUG:refs/remotes/origin/${SPEC_PREFIX}$SLUG"
+
+      - name: Count tasks.md checkboxes at base (cycle)
+        id: checkbox-base-cycle
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-tasks-checkbox-count
+        with:
+          ref: ${{ steps.base.outputs.base-sha }}
+          path: ${{ steps.spec.outputs.spec-dir }}/tasks.md
+
+      - name: Count tasks.md checkboxes at tip (cycle)
+        id: checkbox-tip-cycle
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-tasks-checkbox-count
+        with:
+          ref: origin/${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}
+          path: ${{ steps.spec.outputs.spec-dir }}/tasks.md
 
       # FR-008 residual risk (spec 052): the WC_BOT_TOKEN relay above keeps
       # every step after each agent step credentialed, but not the agent
@@ -1193,13 +1243,16 @@ jobs:
           META_ITERATION: ${{ steps.meta-cycle.outputs.iteration }}
           VERDICT: ${{ steps.cycle-verdict.outputs.verdict }}
           SPEC_PREFIX: ${{ inputs.spec-prefix }}
+          CHECKED_BASE: ${{ steps.checkbox-base-cycle.outputs.checked-count }}
+          CHECKED_TIP: ${{ steps.checkbox-tip-cycle.outputs.checked-count }}
+          UNCHECKED_TIP: ${{ steps.checkbox-tip-cycle.outputs.unchecked-count }}
+          REMAINING_TIP: ${{ steps.checkbox-tip-cycle.outputs.unchecked-items }}
           # The second alternative rides only on a RESOLVED slug: with an
           # empty slug the pattern would degrade to `claude\[bot\]|\[bot\]`,
           # which matches ANY bot - github-actions[bot] included (PR #258
           # review, F4).
           AGENT_AUTHOR_RE: claude\[bot\]${{ steps.ctx.outputs.bot-slug && format('|{0}\[bot\]', steps.ctx.outputs.bot-slug) || '' }}
         run: |
-          git fetch origin "+refs/heads/${SPEC_PREFIX}$SLUG:refs/remotes/origin/${SPEC_PREFIX}$SLUG"
           # Arm B below must not count commits the branch merely IMPORTED
           # from the default branch: an auto-rebase makes main's commits -
           # many of them bot-authored squash merges - reachable from the
@@ -1233,12 +1286,11 @@ jobs:
               advanced=true
             fi
           fi
+          progressed=""
           if [ "$VERDICT" = "exhausted" ]; then
             if [ "$advanced" = "true" ]; then
-              before_count=$(git show "$BASE_SHA:$SPEC_DIR/tasks.md" 2>/dev/null | grep -c '^\s*- \[[xX]\]' || true)
-              after_count=$(git show "origin/${SPEC_PREFIX}$SLUG:$SPEC_DIR/tasks.md" 2>/dev/null | grep -c '^\s*- \[[xX]\]' || true)
               arm_a=false
-              if [ "${after_count:-0}" -gt "${before_count:-0}" ]; then
+              if [ "${CHECKED_TIP:-0}" -gt "${CHECKED_BASE:-0}" ]; then
                 arm_a=true
               fi
               arm_b=false
@@ -1276,27 +1328,80 @@ jobs:
           fi
           echo "ok=$ok" >> "$GITHUB_OUTPUT"
           echo "truncated=$truncated" >> "$GITHUB_OUTPUT"
-          echo "reason=$reason" >> "$GITHUB_OUTPUT"
           converged=""
           converge_sha=""
+          handoff=false
           if [ "$ok" = "true" ] && [ "$truncated" = "true" ]; then
             converged=false
           elif [ "$ok" = "true" ]; then
             while read -r sha subject; do
               case "$subject" in converge:*) converge_sha="$sha"; break ;; esac
             done < <(git log --format='%H %s' "$BASE_SHA..origin/${SPEC_PREFIX}$SLUG" -- "$SPEC_DIR/tasks.md")
-            if [ -z "$converge_sha" ]; then
+            # FR-010a (spec 059): the FR-010 hand-off's progress test --
+            # reuses the identical checked-count comparison Arm A above
+            # already performs, now run unconditionally rather than only
+            # inside the VERDICT=="exhausted" branch (research.md D1).
+            if [ "${CHECKED_TIP:-0}" -gt "${CHECKED_BASE:-0}" ]; then
+              progressed=true
+            else
+              progressed=false
+            fi
+            # FR-001/FR-002/FR-010b (spec 059): zero unchecked tasks at the
+            # pushed tip wins regardless of whether a converge: commit
+            # landed — replacing "no converge commit ⇒ converged" (spec
+            # 057's failure: a cycle can stop healthy with the loop's own
+            # convergence pass never reached, leaving tasks.md untouched).
+            if [ "${UNCHECKED_TIP:-1}" -eq 0 ]; then
               converged=true
             else
               converged=false
             fi
           fi
+          # FR-010 (spec 059): a healthy cycle that makes no progress and
+          # lands no converge: commit hands off to finalize instead of
+          # looping to the iteration cap or being reported converged.
+          # FR-010b already decided converged=true above before progressed
+          # is even consulted, so handoff is never true when converged=true.
+          if [ "$ok" = "true" ] && [ "$truncated" = "false" ] && [ "$converged" = "false" ] && [ "$progressed" = "false" ] && [ -z "$converge_sha" ]; then
+            handoff=true
+          fi
+          # FR-013 (spec 059): the non-convergence reason narrative, gained
+          # here as the healthy-cycle counterpart of the failed/truncated
+          # reasons already set above (data-model.md's "Non-convergence
+          # reason"). Left untouched when the cycle failed or truncated —
+          # those reasons already stand.
+          if [ "$ok" = "true" ] && [ "$truncated" = "false" ] && [ "$converged" = "false" ]; then
+            if [ "$handoff" = "true" ]; then
+              reason="the cycle checked nothing new, so the loop is ending here rather than dispatching another cycle"
+            else
+              parts=()
+              if [ -n "$converge_sha" ]; then
+                parts+=("converge appended new work")
+              fi
+              if [ "$progressed" = "true" ]; then
+                parts+=("the cycle ended with tasks outstanding")
+              fi
+              if [ "${#parts[@]}" -eq 2 ]; then
+                reason="${parts[0]} and ${parts[1]}"
+              else
+                reason="${parts[0]}"
+              fi
+            fi
+          fi
+          echo "reason=$reason" >> "$GITHUB_OUTPUT"
           echo "converged=$converged" >> "$GITHUB_OUTPUT"
+          echo "progressed=$progressed" >> "$GITHUB_OUTPUT"
+          echo "handoff=$handoff" >> "$GITHUB_OUTPUT"
+          echo "Cycle: tasks.md unchecked-count at tip = ${UNCHECKED_TIP:-0}, progressed=${progressed:-n/a}." >> "$GITHUB_STEP_SUMMARY"
           {
             echo "remaining<<WING_COMMANDER_REMAINING_EOF"
-            if [ -n "$converge_sha" ]; then
-              git show "$converge_sha" -- "$SPEC_DIR/tasks.md" | grep '^+' | grep -v '^+++' | sed 's/^+//'
-            fi
+            # D6 (spec 059): the tip's own outstanding-item text, not a
+            # converge-commit diff -- covers both non-convergence reasons
+            # without double-listing (a converge:-appended phase is, by
+            # construction, additional unchecked lines already present at
+            # the tip) and is never empty on the no-converge-commit path
+            # (FR-012).
+            printf '%s' "$REMAINING_TIP"
             echo "WING_COMMANDER_REMAINING_EOF"
           } >> "$GITHUB_OUTPUT"
 
@@ -1503,7 +1608,9 @@ jobs:
                If it appends a convergence phase to tasks.md, commit exactly
                that tasks.md change on its own with a message prefixed
                "converge:". If it reports converged (tasks.md unchanged),
-               commit nothing further.
+               commit nothing further — this workflow's own convergence
+               signal is read from tasks.md's checkbox state at the pushed
+               tip, not from whether this step committed.
             5. Push the current branch (${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}).
 
             If, while doing your own task, you notice a defect that is not your
@@ -1740,6 +1847,35 @@ jobs:
           slug: ${{ steps.spec.outputs.slug }}
           spec-dir: ${{ steps.spec.outputs.spec-dir }}
 
+      # Mirrors the cycle arm's checkbox-count composite calls above
+      # (FR-007) — the retry's own base per FR-010a "own base"
+      # (research.md D2), never steps.base.outputs.base-sha.
+      - name: Fetch spec branch for checkbox count (retry)
+        id: fetch-checkbox-retry
+        shell: bash
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && (steps.retry.outcome == 'success' || steps.retry.outcome == 'failure')
+        env:
+          SLUG: ${{ steps.spec.outputs.slug }}
+          SPEC_PREFIX: ${{ inputs.spec-prefix }}
+        run: |
+          git fetch origin "+refs/heads/${SPEC_PREFIX}$SLUG:refs/remotes/origin/${SPEC_PREFIX}$SLUG"
+
+      - name: Count tasks.md checkboxes at base (retry)
+        id: checkbox-base-retry
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && (steps.retry.outcome == 'success' || steps.retry.outcome == 'failure')
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-tasks-checkbox-count
+        with:
+          ref: ${{ steps.retry-base.outputs.base-sha }}
+          path: ${{ steps.spec.outputs.spec-dir }}/tasks.md
+
+      - name: Count tasks.md checkboxes at tip (retry)
+        id: checkbox-tip-retry
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && (steps.retry.outcome == 'success' || steps.retry.outcome == 'failure')
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-tasks-checkbox-count
+        with:
+          ref: origin/${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}
+          path: ${{ steps.spec.outputs.spec-dir }}/tasks.md
+
       - name: Read back retry outcome
         id: retry-outcome
         shell: bash
@@ -1759,8 +1895,11 @@ jobs:
           VERDICT: ${{ steps.retry-verdict.outputs.verdict }}
           ESCALATION_MODEL: ${{ inputs.escalation-model }}
           SPEC_PREFIX: ${{ inputs.spec-prefix }}
+          CHECKED_BASE: ${{ steps.checkbox-base-retry.outputs.checked-count }}
+          CHECKED_TIP: ${{ steps.checkbox-tip-retry.outputs.checked-count }}
+          UNCHECKED_TIP: ${{ steps.checkbox-tip-retry.outputs.unchecked-count }}
+          REMAINING_TIP: ${{ steps.checkbox-tip-retry.outputs.unchecked-items }}
         run: |
-          git fetch origin "+refs/heads/${SPEC_PREFIX}$SLUG:refs/remotes/origin/${SPEC_PREFIX}$SLUG"
           # Arm B below must not count commits the branch merely IMPORTED
           # from the default branch: an auto-rebase makes main's commits -
           # many of them bot-authored squash merges - reachable from the
@@ -1794,12 +1933,11 @@ jobs:
               advanced=true
             fi
           fi
+          progressed=""
           if [ "$VERDICT" = "exhausted" ]; then
             if [ "$advanced" = "true" ]; then
-              before_count=$(git show "$BASE_SHA:$SPEC_DIR/tasks.md" 2>/dev/null | grep -c '^\s*- \[[xX]\]' || true)
-              after_count=$(git show "origin/${SPEC_PREFIX}$SLUG:$SPEC_DIR/tasks.md" 2>/dev/null | grep -c '^\s*- \[[xX]\]' || true)
               arm_a=false
-              if [ "${after_count:-0}" -gt "${before_count:-0}" ]; then
+              if [ "${CHECKED_TIP:-0}" -gt "${CHECKED_BASE:-0}" ]; then
                 arm_a=true
               fi
               arm_b=false
@@ -1836,27 +1974,78 @@ jobs:
           fi
           echo "ok=$ok" >> "$GITHUB_OUTPUT"
           echo "truncated=$truncated" >> "$GITHUB_OUTPUT"
-          echo "reason=$reason" >> "$GITHUB_OUTPUT"
           converged=""
           converge_sha=""
+          handoff=false
           if [ "$ok" = "true" ] && [ "$truncated" = "true" ]; then
             converged=false
           elif [ "$ok" = "true" ]; then
             while read -r sha subject; do
               case "$subject" in converge:*) converge_sha="$sha"; break ;; esac
             done < <(git log --format='%H %s' "$BASE_SHA..origin/${SPEC_PREFIX}$SLUG" -- "$SPEC_DIR/tasks.md")
-            if [ -z "$converge_sha" ]; then
+            # FR-010a (spec 059): the FR-010 hand-off's progress test,
+            # measured from the RETRY's own base (research.md D2's "own
+            # base") -- reuses the identical checked-count comparison Arm A
+            # above already performs, now run unconditionally rather than
+            # only inside the VERDICT=="exhausted" branch (research.md D1).
+            if [ "${CHECKED_TIP:-0}" -gt "${CHECKED_BASE:-0}" ]; then
+              progressed=true
+            else
+              progressed=false
+            fi
+            # FR-001/FR-002/FR-010b (spec 059): zero unchecked tasks at the
+            # pushed tip wins regardless of whether a converge: commit
+            # landed — replacing "no converge commit ⇒ converged" (spec
+            # 057's failure: a cycle can stop healthy with the loop's own
+            # convergence pass never reached, leaving tasks.md untouched).
+            if [ "${UNCHECKED_TIP:-1}" -eq 0 ]; then
               converged=true
             else
               converged=false
             fi
           fi
+          # FR-010 (spec 059): a healthy retry that makes no progress of
+          # its own and lands no converge: commit hands off to finalize
+          # instead of looping to the iteration cap or being reported
+          # converged. FR-010b already decided converged=true above before
+          # progressed is even consulted, so handoff is never true when
+          # converged=true.
+          if [ "$ok" = "true" ] && [ "$truncated" = "false" ] && [ "$converged" = "false" ] && [ "$progressed" = "false" ] && [ -z "$converge_sha" ]; then
+            handoff=true
+          fi
+          # FR-013 (spec 059): the non-convergence reason narrative, mirroring
+          # the cycle arm's identical block above (data-model.md's
+          # "Non-convergence reason"). Left untouched when the retry failed
+          # or truncated — those reasons already stand.
+          if [ "$ok" = "true" ] && [ "$truncated" = "false" ] && [ "$converged" = "false" ]; then
+            if [ "$handoff" = "true" ]; then
+              reason="the cycle checked nothing new, so the loop is ending here rather than dispatching another cycle"
+            else
+              parts=()
+              if [ -n "$converge_sha" ]; then
+                parts+=("converge appended new work")
+              fi
+              if [ "$progressed" = "true" ]; then
+                parts+=("the cycle ended with tasks outstanding")
+              fi
+              if [ "${#parts[@]}" -eq 2 ]; then
+                reason="${parts[0]} and ${parts[1]}"
+              else
+                reason="${parts[0]}"
+              fi
+            fi
+          fi
+          echo "reason=$reason" >> "$GITHUB_OUTPUT"
           echo "converged=$converged" >> "$GITHUB_OUTPUT"
+          echo "progressed=$progressed" >> "$GITHUB_OUTPUT"
+          echo "handoff=$handoff" >> "$GITHUB_OUTPUT"
+          echo "Retry: tasks.md unchecked-count at tip = ${UNCHECKED_TIP:-0}, progressed=${progressed:-n/a}." >> "$GITHUB_STEP_SUMMARY"
           {
             echo "remaining<<WING_COMMANDER_REMAINING_EOF"
-            if [ -n "$converge_sha" ]; then
-              git show "$converge_sha" -- "$SPEC_DIR/tasks.md" | grep '^+' | grep -v '^+++' | sed 's/^+//'
-            fi
+            # D6 (spec 059): the tip's own outstanding-item text, not a
+            # converge-commit diff -- see the cycle arm's identical change
+            # above (FR-012).
+            printf '%s' "$REMAINING_TIP"
             echo "WING_COMMANDER_REMAINING_EOF"
           } >> "$GITHUB_OUTPUT"
 
@@ -1893,20 +2082,24 @@ jobs:
           PRIMARY_OK: ${{ steps.outcome.outputs.ok }}
           PRIMARY_TRUNCATED: ${{ steps.outcome.outputs.truncated }}
           PRIMARY_CONVERGED: ${{ steps.outcome.outputs.converged }}
+          PRIMARY_PROGRESSED: ${{ steps.outcome.outputs.progressed }}
+          PRIMARY_HANDOFF: ${{ steps.outcome.outputs.handoff }}
           PRIMARY_REMAINING: ${{ steps.outcome.outputs.remaining }}
           PRIMARY_TIER: ${{ steps.effective-model.outputs.model }}
           RETRY_OK: ${{ steps.retry-outcome.outputs.ok }}
           RETRY_TRUNCATED: ${{ steps.retry-outcome.outputs.truncated }}
           RETRY_CONVERGED: ${{ steps.retry-outcome.outputs.converged }}
+          RETRY_PROGRESSED: ${{ steps.retry-outcome.outputs.progressed }}
+          RETRY_HANDOFF: ${{ steps.retry-outcome.outputs.handoff }}
           RETRY_REMAINING: ${{ steps.retry-outcome.outputs.remaining }}
           PRIMARY_REASON: ${{ steps.outcome.outputs.reason }}
           RETRY_REASON: ${{ steps.retry-outcome.outputs.reason }}
           ESCALATION_MODEL: ${{ inputs.escalation-model }}
         run: |
           if [ "$RETRY_RAN" = "true" ]; then
-            ok="$RETRY_OK"; truncated="$RETRY_TRUNCATED"; converged="$RETRY_CONVERGED"; remaining="$RETRY_REMAINING"; tier="$ESCALATION_MODEL"; reason="$RETRY_REASON"
+            ok="$RETRY_OK"; truncated="$RETRY_TRUNCATED"; converged="$RETRY_CONVERGED"; progressed="$RETRY_PROGRESSED"; handoff="$RETRY_HANDOFF"; remaining="$RETRY_REMAINING"; tier="$ESCALATION_MODEL"; reason="$RETRY_REASON"
           else
-            ok="$PRIMARY_OK"; truncated="$PRIMARY_TRUNCATED"; converged="$PRIMARY_CONVERGED"; remaining="$PRIMARY_REMAINING"; tier="$PRIMARY_TIER"; reason="$PRIMARY_REASON"
+            ok="$PRIMARY_OK"; truncated="$PRIMARY_TRUNCATED"; converged="$PRIMARY_CONVERGED"; progressed="$PRIMARY_PROGRESSED"; handoff="$PRIMARY_HANDOFF"; remaining="$PRIMARY_REMAINING"; tier="$PRIMARY_TIER"; reason="$PRIMARY_REASON"
           fi
           # A retry the API refused before its first model response — e.g. a
           # spend/rate-limit kill, observed live on issue #231's stall notice —
@@ -1941,6 +2134,8 @@ jobs:
             echo "ok=$ok"
             echo "truncated=$truncated"
             echo "converged=$converged"
+            echo "progressed=$progressed"
+            echo "handoff=$handoff"
             echo "tier=$tier"
             echo "reason=$reason"
             echo "remaining<<WING_COMMANDER_REMAINING_EOF"
@@ -2517,6 +2712,8 @@ jobs:
           CONVERGED: ${{ steps.final.outputs.converged }}
           TRUNCATED: ${{ steps.final.outputs.truncated }}
           TRUNCATED_COUNT: ${{ steps.record-truncation.outputs.count }}
+          HANDOFF: ${{ steps.final.outputs.handoff }}
+          REASON: ${{ steps.final.outputs.reason }}
           TIER: ${{ steps.final.outputs.tier }}
           REMAINING: ${{ steps.final.outputs.remaining }}
           SELF_WORKFLOW: ${{ inputs.self-workflow }}
@@ -2527,6 +2724,42 @@ jobs:
           # comment-posting step in this job after that record is computed.
           COST_LINE: ${{ steps.cost-line-progress.outputs.line }}
         run: |
+          # FR-010/D4 (spec 059): the FR-010 hand-off (HANDOFF branch below)
+          # and the cap-reached else branch post the identical shape of
+          # comment and dispatch the same workflow with the same payload
+          # (converged=false) — the reused terminal path (contracts/
+          # convergence-signal.md §4). One home for that body (CLAUDE.md
+          # "Shared logic has exactly one home" applies within a single
+          # script too); only the heading and step-summary line differ.
+          post_handoff_remaining_work() {
+            fence='```'
+            reason_line=""
+            # FR-013 (spec 059): name the reason so a reader can tell "the
+            # spec grew" from "the cycle ran short" from "the loop is
+            # ending here" without opening the branch.
+            [ -n "$REASON" ] && reason_line="**Why:** $REASON."
+            body=$(printf '%s\n' \
+              "$1" \
+              "" \
+              "$reason_line" \
+              "${fence}markdown" \
+              "$REMAINING" \
+              "$fence" \
+              "" \
+              "Handing off to finalization flagged **converged=false**; the final PR will carry this remaining work for human review." \
+              "" \
+              "_[Final cycle run](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})_" \
+              "" \
+              "$COST_LINE")
+            GH_TOKEN="$APP_TOKEN" gh issue comment "$ISSUE" --body "$body"
+            if [ -n "$NEXT_WORKFLOW" ]; then
+              GH_TOKEN="$DISPATCH_TOKEN" gh workflow run "$NEXT_WORKFLOW" \
+                -f spec_dir="$SPEC_DIR" -f issue="$ISSUE" -f converged=false
+              echo "$2 — reported remaining work and dispatched $NEXT_WORKFLOW (converged=false)." >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "$2 — reported remaining work; no next-workflow configured, stopped (standalone mode)." >> "$GITHUB_STEP_SUMMARY"
+            fi
+          }
           if [ "$CONVERGED" = "true" ]; then
             if [ -n "$NEXT_WORKFLOW" ]; then
               GH_TOKEN="$DISPATCH_TOKEN" gh workflow run "$NEXT_WORKFLOW" \
@@ -2583,6 +2816,16 @@ jobs:
             else
               echo "Iteration cap ($MAX) reached on a truncated cycle — reported; no next-workflow configured, stopped (standalone mode)." >> "$GITHUB_STEP_SUMMARY"
             fi
+          elif [ "$HANDOFF" = "true" ]; then
+            # FR-010 (spec 059, User Story 4): a healthy cycle that checked
+            # no new task and landed no converge: commit is the loop's
+            # natural end — a spec whose only leftovers are human-only work
+            # must not grind to the iteration cap. Takes the SAME terminal
+            # path the cap-reached branch below takes, regardless of
+            # ITERATION vs MAX (research.md D4).
+            post_handoff_remaining_work \
+              "⚠️ **No further progress this cycle** — cycle $ITERATION checked nothing new and landed no convergence commit, so the loop is ending here rather than dispatching another cycle. Remaining work identified by the last convergence pass:" \
+              "Cycle $ITERATION made no progress and landed no converge commit — handing off before the iteration cap ($MAX)"
           elif [ "$ITERATION" -lt "$MAX" ]; then
             if [ -n "$SELF_WORKFLOW" ]; then
               GH_TOKEN="$DISPATCH_TOKEN" gh workflow run "$SELF_WORKFLOW" \
@@ -2590,9 +2833,12 @@ jobs:
               echo "Not converged — dispatched $SELF_WORKFLOW iteration $((ITERATION + 1)) of $MAX." >> "$GITHUB_STEP_SUMMARY"
             else
               fence='```'
+              reason_line=""
+              [ -n "$REASON" ] && reason_line="**Why:** $REASON."
               body=$(printf '%s\n' \
                 "🔁 **Cycle $ITERATION completed without converging.** Remaining work identified by the convergence pass:" \
                 "" \
+                "$reason_line" \
                 "${fence}markdown" \
                 "$REMAINING" \
                 "$fence" \
@@ -2606,27 +2852,9 @@ jobs:
               echo "Not converged — no self-workflow configured; reported remaining work to the issue and stopped (standalone mode)." >> "$GITHUB_STEP_SUMMARY"
             fi
           else
-            fence='```'
-            body=$(printf '%s\n' \
+            post_handoff_remaining_work \
               "⚠️ **Iteration cap reached** — cycle $ITERATION of $MAX completed without converging. Remaining work identified by the last convergence pass:" \
-              "" \
-              "${fence}markdown" \
-              "$REMAINING" \
-              "$fence" \
-              "" \
-              "Handing off to finalization flagged **converged=false**; the final PR will carry this remaining work for human review." \
-              "" \
-              "_[Final cycle run](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})_" \
-              "" \
-              "$COST_LINE")
-            GH_TOKEN="$APP_TOKEN" gh issue comment "$ISSUE" --body "$body"
-            if [ -n "$NEXT_WORKFLOW" ]; then
-              GH_TOKEN="$DISPATCH_TOKEN" gh workflow run "$NEXT_WORKFLOW" \
-                -f spec_dir="$SPEC_DIR" -f issue="$ISSUE" -f converged=false
-              echo "Iteration cap ($MAX) reached without convergence — reported remaining work and dispatched $NEXT_WORKFLOW (converged=false)." >> "$GITHUB_STEP_SUMMARY"
-            else
-              echo "Iteration cap ($MAX) reached without convergence — reported remaining work; no next-workflow configured, stopped (standalone mode)." >> "$GITHUB_STEP_SUMMARY"
-            fi
+              "Iteration cap ($MAX) reached without convergence"
           fi
 
       # Deferred to the job's last steps, one per agent-step chain -- see

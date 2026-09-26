@@ -485,13 +485,28 @@ vars.WING_COMMANDER_MAX_ITERATIONS`).
    `## Phase N: Convergence` section appended to tasks.md (committed with a
    `converge:` prefix); converged ⇒ tasks.md byte-identical + "✅ Converged"
    report. So the loop condition is machine-checkable — the implementation
-   realizes it as a deterministic commit-range walk (a `converge:`-prefixed
+   reads it as a deterministic checkbox scan of tasks.md's own state at the
+   cycle's pushed tip (`specs/059-converged-means-tasks-done`): zero
+   unchecked task-list boxes ⇒ converged, regardless of whether a
+   `converge:`-prefixed commit landed this cycle; any remain ⇒ not
+   converged. A checked-task-count comparison against the cycle's own base
+   (reusing the same comparison the truncated-cycle classification below
+   already performs) tells "a later cycle will finish this" apart from "no
+   cycle ever will": progress made ⇒ another cycle is dispatched; no
+   progress and no `converge:` commit ⇒ the loop hands off to finalize
+   early (item 3) rather than grinding to the cap. Before this feature the
+   signal was instead the commit-range walk alone (a `converge:`-prefixed
    commit touching tasks.md landed this cycle ⇒ not converged; none ⇒
-   converged), since implement's own checkbox edits to tasks.md make a raw
-   working-tree diff ambiguous across the job boundary
-   (`specs/005-implement-converge/research.md`).
-3. On hitting the iteration cap: post the remaining tasks + final converge
-   report to the lifecycle issue and dispatch finalize with `converged=false`.
+   converged) — dropped because a cycle that stopped healthy with real
+   tasks left unchecked, but whose own convergence pass never ran or found
+   nothing to append, read as converged anyway
+   (`specs/005-implement-converge/research.md`'s original rationale for
+   avoiding a raw working-tree diff — implement's own checkbox edits make
+   that ambiguous across the job boundary — still holds; only the signal
+   built on top of it changed).
+3. On hitting the iteration cap, or on the FR-010 early hand-off above: post
+   the remaining tasks + final convergence-pass report to the lifecycle
+   issue and dispatch finalize with `converged=false`.
 4. Post a brief progress comment (`claude-haiku-4-5` summary) each iteration.
 5. **Failure ≠ non-convergence** (FR-013): an outright pass failure (step
    fails, or `spec-meta.json` didn't advance as instructed — read through the
@@ -1329,6 +1344,6 @@ The shape that shipped (details in the Foundations section above and in
 | Slash/skill invocation in `prompt` regresses (action issue #523, fixed v1.0.10) | Pin `@v1`; prompts name the skill file path explicitly as fallback context |
 | spec-kit moves fast (v0.12 changed feature resolution & dropped git from scripts) | Version pinned in `.specify/init-options.json`; re-verify scripts on upgrade |
 | `pull_request: closed` + `paths:` false-triggers | Head-branch prefix guards in every stage's `if:` |
-| Converge "unchanged tasks.md" is syntactic, not semantic | Iteration cap + final converge report always posted to the issue |
+| A commit-range proxy for "converged" (no `converge:` commit landed) can't tell "no cycle will ever finish this" apart from "another cycle will" (spec 057's cycle 1: 11 of 65 tasks ticked, no converge commit, wrongly reported converged) | Fixed at the root, not mitigated after the fact: the signal reads tasks.md's own checkbox state at the pushed tip, gated by a checked-task progress test (`specs/059-converged-means-tasks-done`) |
 | Prompt injection via issue/comment bodies | Never interpolated; framed as data; least-privilege tools; no web tools; maintainer label gate |
 | Rate-limit exhaustion (subscription auth) | `--max-turns` everywhere; Sonnet default; Opus is explicit opt-in |

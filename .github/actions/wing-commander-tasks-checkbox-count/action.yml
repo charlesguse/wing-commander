@@ -1,0 +1,57 @@
+# wing-commander-tasks-checkbox-count — count a tasks.md's checkbox state
+# at a git ref, and return its outstanding-item text.
+#
+# The stage workflows' front door to `_shared/count-tasks-checkboxes.sh`,
+# which is the one home of that read (research.md D2), mirroring how
+# wing-commander-spec-meta is the front door to `_shared/read-spec-meta.sh`.
+# implement.yml's two read-back arms each call it twice per cycle -- once
+# at their own base ref, once at the pushed tip -- to compute the
+# convergence signal (FR-001, FR-002) and the FR-010a progress test.
+#
+# Unlike wing-commander-spec-meta (whose missing record is a valid state,
+# so its own step never fails), this composite's step FAILS THE JOB when
+# `ref:path` cannot be read as a file: FR-006/Principle VIII require a scan
+# that cannot reach tasks.md to fail loudly rather than report a count of
+# zero, which would read as "converged" and is exactly the false pass this
+# composite must not produce. No `readable=false` output is offered for a
+# caller to swallow.
+#
+# Constitution VII: this composite is part of the published surface;
+# adding it is a minor-version change at the next release (the same note
+# wing-commander-spec-meta's own header records).
+name: wing-commander-tasks-checkbox-count
+description: >-
+  Counts a tasks.md's checked/unchecked task-list checkboxes at a git ref,
+  outside fenced code blocks, and returns the literal text of the
+  unchecked items. The one home of that read for stage workflows. Fails
+  the job when the ref:path cannot be read.
+inputs:
+  ref:
+    description: >-
+      A git ref or SHA resolvable in the checkout (e.g. a base SHA, or
+      origin/spec/NNN-slug for the pushed tip).
+    required: true
+  path:
+    description: Path to tasks.md within that ref (e.g. specs/NNN-slug/tasks.md).
+    required: true
+outputs:
+  checked-count:
+    description: "Count of - [x]/- [X] task-list lines outside fenced code blocks."
+    value: ${{ steps.read.outputs.checked-count }}
+  unchecked-count:
+    description: "Count of - [ ] task-list lines outside fenced code blocks."
+    value: ${{ steps.read.outputs.unchecked-count }}
+  unchecked-items:
+    description: "The literal text of each counted unchecked line, in file order."
+    value: ${{ steps.read.outputs.unchecked-items }}
+runs:
+  using: composite
+  steps:
+    - name: Count tasks.md checkboxes
+      id: read
+      shell: bash
+      env:
+        REF: ${{ inputs.ref }}
+        TASKS_PATH: ${{ inputs.path }}
+      run: |
+        bash "$GITHUB_ACTION_PATH/../_shared/count-tasks-checkboxes.sh" "$REF" "$TASKS_PATH" >> "$GITHUB_OUTPUT"
