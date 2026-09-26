@@ -111,10 +111,10 @@ Single project — this repository is a GitHub Actions pipeline, not an applicat
 
 **Purpose**: Confirm the feature-wide invariants no single story's gate fully covers on its own, and the manual post-merge proof step spec.md names directly.
 
-- [ ] T020 Run `python3 .github/scripts/run-local-gates.py verify-fold-dispatch-once.py` (verbose) and confirm all thirteen scenarios pass against the shipped workflow/composite action, and every one of the five mutations is caught (quickstart.md Scenarios 1–4).
-- [ ] T021 [P] Confirm data-model.md §7 / Constitution VII: diff `pr-conversation.yml`'s declared `workflow_call` `inputs`/`outputs`/`secrets` blocks against their pre-feature shape and confirm nothing was added, removed, or renamed by this feature.
-- [ ] T022 Run the full PR-time gate suite (`python .github/scripts/run-local-gates.py`, per this repository's "Before pushing" rule) and confirm it passes clean.
-- [ ] T023 Record, on lifecycle issue #565 (or a follow-up note there), that quickstart.md Scenario 5 (SC-006's post-merge live re-drive of a `pr-conversation` run — confirming a real fold commit carries the `Wing-Commander-Run-Id:` trailer and `report-fold-outcomes` reads it back correctly) remains a manual post-merge confirmation per this repository's "prove it after merge" rule for Actions-only behaviour — not part of this feature's own gate suite, and not blocking this feature's completion.
+- [X] T020 Run `python3 .github/scripts/run-local-gates.py verify-fold-dispatch-once.py` (verbose) and confirm all thirteen scenarios pass against the shipped workflow/composite action, and every one of the five mutations is caught (quickstart.md Scenarios 1–4).
+- [X] T021 [P] Confirm data-model.md §7 / Constitution VII: diff `pr-conversation.yml`'s declared `workflow_call` `inputs`/`outputs`/`secrets` blocks against their pre-feature shape and confirm nothing was added, removed, or renamed by this feature.
+- [X] T022 Run the full PR-time gate suite (`python .github/scripts/run-local-gates.py`, per this repository's "Before pushing" rule) and confirm it passes clean.
+- [X] T023 Record, on lifecycle issue #565 (or a follow-up note there), that quickstart.md Scenario 5 (SC-006's post-merge live re-drive of a `pr-conversation` run — confirming a real fold commit carries the `Wing-Commander-Run-Id:` trailer and `report-fold-outcomes` reads it back correctly) remains a manual post-merge confirmation per this repository's "prove it after merge" rule for Actions-only behaviour — not part of this feature's own gate suite, and not blocking this feature's completion.
 
 **Checkpoint**: The full gate suite is green, the published interface is unchanged, and the post-merge proof step is recorded as outstanding rather than silently skipped.
 
