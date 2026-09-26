@@ -2,7 +2,8 @@
   "issue": 558,
   "spec_dir": "specs/073-rebase-cleanup-credential-refresh",
   "feature_num": "073",
-  "stage": "implement",
+  "stage": "review",
   "iteration": 1,
-  "spec_branch": "spec/073-rebase-cleanup-credential-refresh"
+  "spec_branch": "spec/073-rebase-cleanup-credential-refresh",
+  "pending_re_review_from": []
 }
