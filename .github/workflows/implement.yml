@@ -32,6 +32,17 @@ on:
         description: "Implement/converge iteration (1-based)"
         type: number
         required: true
+      fold-queue-token:
+        description: >
+          specs/074-serialized-fold-dispatch: the implement-kind fold-queue
+          ticket dispatch-once's winning claim already enqueued for this
+          cycle (research.md D5) -- fold-turn-implement awaits it rather
+          than enqueueing its own. Optional, default '' -- a manual
+          `gh workflow run` dispatch, or any caller predating this
+          feature, omits it and gets today's behavior exactly (FR-019).
+        type: string
+        required: false
+        default: ""
       model:
         description: "Model for the implementation agent (constitution II tiering default)"
         type: string
@@ -340,6 +351,82 @@ jobs:
             exit 1
           fi
 
+  # specs/074-serialized-fold-dispatch research.md D5 -- see
+  # fold-queue-ledger.sh. When dispatched with a non-empty
+  # `fold-queue-token` (the SAME atomic transaction that won the dispatch
+  # claim already enqueued this ticket, research.md D5 -- this job only
+  # ever AWAITS it, never enqueues its own), blocks until it is granted
+  # before `implement` (whose own wing-commander-<spec-dir> concurrency
+  # group below is unchanged) is even scheduled. When the token is empty
+  # (a manual/standalone dispatch, or any caller predating this feature),
+  # this job succeeds immediately as a no-op so `implement`'s `needs:`
+  # stays uniform either way, preserving today's behavior exactly (FR-019).
+  fold-turn-implement:
+    needs: verify-image-prerequisites
+    if: "!cancelled() && needs.verify-image-prerequisites.result != 'failure'"
+    runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
+    container:
+      image: ${{ inputs.container-image }}
+      credentials: >-
+        ${{
+          (secrets.container-registry-username != '' && secrets.container-registry-password != '')
+            && fromJSON(format('{{"username":{0},"password":{1}}}', toJSON(secrets.container-registry-username), toJSON(secrets.container-registry-password)))
+            || fromJSON('{}')
+        }}
+    permissions:
+      contents: write
+      id-token: write
+    outputs:
+      token: ${{ steps.admit.outputs.token }}
+      round: ${{ steps.admit.outputs.round }}
+    steps:
+      - name: Checkout consumer repository (bootstrap, default token)
+        if: inputs.fold-queue-token != ''
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Resolve pipeline ref
+        id: pipeline-ref
+        if: inputs.fold-queue-token != ''
+        env:
+          JOB_WORKFLOW_SHA: ${{ github.job_workflow_sha }}
+          PIPELINE_REF_INPUT: ${{ inputs.pipeline-ref }}
+        run: |
+          set -euo pipefail
+          ref="${PIPELINE_REF_INPUT:-$JOB_WORKFLOW_SHA}"
+          if [ -z "$ref" ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            payload=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+              "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=wing-commander-pipeline-ref" \
+              | jq -r '.value' | cut -d. -f2 | tr '_-' '/+')
+            while [ $(( ${#payload} % 4 )) -ne 0 ]; do payload="$payload="; done
+            ref=$(printf '%s' "$payload" | base64 -d 2>/dev/null | jq -r '.job_workflow_sha // empty' || true)
+          fi
+          if [ -z "$ref" ]; then
+            echo "::error::wing-commander implement stage: cannot determine the pipeline commit to check out — github.job_workflow_sha is empty and no OIDC token is available. Grant the calling job id-token: write, or set the pipeline-ref input to the same ref as your uses: pin."
+            exit 1
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout pipeline repository (shared composite actions)
+        if: inputs.fold-queue-token != ''
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ inputs.pipeline-repo }}
+          ref: ${{ steps.pipeline-ref.outputs.ref }}
+          token: ${{ secrets.pipeline-repo-token || github.token }}
+          path: .wing-commander-pipeline
+          persist-credentials: false
+
+      - name: Await this cycle's already-enqueued implement ticket
+        id: admit
+        if: inputs.fold-queue-token != ''
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-fold-queue-admit
+        with:
+          spec-dir: ${{ inputs.spec-dir }}
+          kind: implement
+          existing-token: ${{ inputs.fold-queue-token }}
+
   implement:
     # container-image no-op and the runs-on JSON-array branch stay unverified (D2, D3) -- see
     # specs/038-runner-container-passthrough/research.md.
@@ -360,13 +447,25 @@ jobs:
     # One cycle per spec at a time, shared with the finalize stage's group so
     # the two never overlap for the same spec. A duplicate dispatch queues
     # behind the first and then no-ops on the idempotency guard.
+    #
+    # Why fold-turn-implement gates entry into this group ahead of a second
+    # overlapping run's own act/dispatch-once/implement -- see
+    # fold-queue-ledger.sh.
     concurrency:
       group: wing-commander-${{ inputs.spec-dir }}
       cancel-in-progress: false
     # if: tolerates a skipped image check without widening to run merely
     # because the workflow was not cancelled (#224) -- see clarify.yml.
-    needs: verify-image-prerequisites
-    if: "!cancelled() && needs.verify-image-prerequisites.result != 'failure'"
+    # specs/074-serialized-fold-dispatch: checking fold-turn-implement's
+    # result explicitly (not just needs:) is load-bearing for the same
+    # reason as pr-conversation.yml's fold-turn-act/-dispatch checks --
+    # without it, a ticket-admission timeout would not stop this job from
+    # running unticketed.
+    needs: [verify-image-prerequisites, fold-turn-implement]
+    if: >-
+      !cancelled() &&
+      needs.verify-image-prerequisites.result != 'failure' &&
+      needs.fold-turn-implement.result == 'success'
     permissions:
       contents: write
       issues: write
@@ -3059,3 +3158,70 @@ jobs:
           restart-command: ${{ steps.restart.outputs.restart-command }}
           agent-ran: ${{ needs.implement.outputs.agent-ran }}
           agent-conclusion: ${{ needs.implement.outputs.agent-conclusion }}
+
+  # contracts/wing-commander-fold-queue-release.md's step-placement
+  # contract (if: always(), the job's last step) applied at the WORKFLOW
+  # level: releases the implement-kind ticket (if any -- a manual/
+  # standalone dispatch never held one, and the release composite's own
+  # empty-token no-op covers it) once BOTH `implement` and `stalled` have
+  # concluded, rather than duplicating the release call into both jobs
+  # (contracts/workflow-changes.md).
+  fold-turn-release:
+    needs: [implement, stalled, fold-turn-implement]
+    if: always()
+    runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
+    container:
+      image: ${{ inputs.container-image }}
+      credentials: >-
+        ${{
+          (secrets.container-registry-username != '' && secrets.container-registry-password != '')
+            && fromJSON(format('{{"username":{0},"password":{1}}}', toJSON(secrets.container-registry-username), toJSON(secrets.container-registry-password)))
+            || fromJSON('{}')
+        }}
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - name: Checkout consumer repository (bootstrap, default token)
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Resolve pipeline ref
+        id: pipeline-ref
+        env:
+          JOB_WORKFLOW_SHA: ${{ github.job_workflow_sha }}
+          PIPELINE_REF_INPUT: ${{ inputs.pipeline-ref }}
+        run: |
+          set -euo pipefail
+          ref="${PIPELINE_REF_INPUT:-$JOB_WORKFLOW_SHA}"
+          if [ -z "$ref" ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            payload=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+              "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=wing-commander-pipeline-ref" \
+              | jq -r '.value' | cut -d. -f2 | tr '_-' '/+')
+            while [ $(( ${#payload} % 4 )) -ne 0 ]; do payload="$payload="; done
+            ref=$(printf '%s' "$payload" | base64 -d 2>/dev/null | jq -r '.job_workflow_sha // empty' || true)
+          fi
+          if [ -z "$ref" ]; then
+            echo "::error::wing-commander implement stage: cannot determine the pipeline commit to check out — github.job_workflow_sha is empty and no OIDC token is available. Grant the calling job id-token: write, or set the pipeline-ref input to the same ref as your uses: pin."
+            exit 1
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout pipeline repository (shared composite actions)
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ inputs.pipeline-repo }}
+          ref: ${{ steps.pipeline-ref.outputs.ref }}
+          token: ${{ secrets.pipeline-repo-token || github.token }}
+          path: .wing-commander-pipeline
+          persist-credentials: false
+
+      - name: Release this cycle's implement-queue ticket
+        if: always()
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-fold-queue-release
+        with:
+          spec-dir: ${{ inputs.spec-dir }}
+          token: ${{ needs.fold-turn-implement.outputs.token }}
+          round: ${{ needs.fold-turn-implement.outputs.round }}
+          outcome: not-folded
