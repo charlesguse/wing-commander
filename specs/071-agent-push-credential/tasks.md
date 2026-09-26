@@ -105,8 +105,8 @@ Push-capable agent steps (confirmed by inspecting each site's composed `allowed-
 
 ### Verification for User Story 3
 
-- [ ] T025 [US3] Confirm `implement.yml`'s retry agent step (`id: retry`, today line 1442), which runs after the cycle agent step (`id: cycle`, today line 854) in the same job, receives its own independent `wing-commander-agent-push-credential` call from T011 — not merely inheriting cycle's git-config state from earlier in the job — so retry's pushes resolve a credential minted at the moment retry needs it, regardless of how long cycle itself ran (FR-003, SC-006). Depends on: T011.
-- [ ] T026 [US3] Confirm, by construction, that "Compose progress summary (haiku)" (`id: progress`) needs no credential work of its own (FR-025 — it never pushes) and that a job whose cycle converges cleanly and never dispatches retry performs exactly one `wing-commander-agent-push-credential` call, not two (FR-005 — no additional cost on the common path). A confirmation task; no file change beyond T011/T020.
+- [X] T025 [US3] Confirm `implement.yml`'s retry agent step (`id: retry`, today line 1442), which runs after the cycle agent step (`id: cycle`, today line 854) in the same job, receives its own independent `wing-commander-agent-push-credential` call from T011 — not merely inheriting cycle's git-config state from earlier in the job — so retry's pushes resolve a credential minted at the moment retry needs it, regardless of how long cycle itself ran (FR-003, SC-006). Depends on: T011.
+- [X] T026 [US3] Confirm, by construction, that "Compose progress summary (haiku)" (`id: progress`) needs no credential work of its own (FR-025 — it never pushes) and that a job whose cycle converges cleanly and never dispatches retry performs exactly one `wing-commander-agent-push-credential` call, not two (FR-005 — no additional cost on the common path). A confirmation task; no file change beyond T011/T020.
 
 **Checkpoint**: The retry arm — the one shape User Story 3 exists to demonstrate — succeeds on the same terms as the cycle arm (User Story 3's own Independent Test).
 
