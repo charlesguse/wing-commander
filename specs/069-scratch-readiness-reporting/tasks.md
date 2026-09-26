@@ -299,14 +299,14 @@ the two previously-uncovered behaviours are now asserted.
 
 ### Implementation for User Story 3
 
-- [ ] T024 [US3] In `.github/scripts/provision-e2e-target.sh`, change the
+- [X] T024 [US3] In `.github/scripts/provision-e2e-target.sh`, change the
   `if ! check_repository "$OWNER" "$NAME"; then act_repository "$OWNER"
   "$NAME"; fi` call site to check `act_repository`'s own exit status and
   stop immediately — naming repository creation as the failed action,
   before the `scratch_marker` write two steps below is ever attempted —
   mirroring the existing `act_scratch_marker` failure-handling pattern a
   few lines later in the same file (research.md D6, FR-013).
-- [ ] T025 [P] [US3] In
+- [X] T025 [P] [US3] In
   `.github/scripts/e2e-provisioning-tests/gh_stub.py`'s `repo create`
   handler, add a `create_forbidden` failure-injection seam: if the target
   full name is already present in state (pre-seeded via `gh_state_set`
@@ -315,27 +315,27 @@ the two previously-uncovered behaviours are now asserted.
   overwriting the entry — extending the existing `edit_forbidden`/
   `secrets_forbidden`/`variables_forbidden` precedent rather than adding a
   new mechanism.
-- [ ] T026 [US3] Add a new case to
+- [X] T026 [US3] Add a new case to
   `.github/scripts/e2e-provisioning-tests/t9_maintainer_feedback.sh` using
   the `create_forbidden` seam: assert the run exits `1`, its stderr names
   repository creation as the failed action (and never contains "failed to
   write the scratch marker"), and no `repo edit`/`secret set`/
   `label create` call was made. Depends on T024, T025.
-- [ ] T027 [P] [US3] Add a new case to
+- [X] T027 [P] [US3] Add a new case to
   `.github/scripts/e2e-provisioning-tests/t4_refuse_self.sh`: using the
   same `PATH`-shadowing `git` fixture T045 (in `t9_maintainer_feedback.sh`)
   already builds, export `GITHUB_REPOSITORY` naming the target itself and
   assert refusal with the FR-007 self-target message (not T045's "could
   not determine this repository" message) and zero `gh` calls (research.md
   D7, FR-014).
-- [ ] T028 [US3] In `.github/scripts/provision-e2e-target.sh`'s stderr
+- [X] T028 [US3] In `.github/scripts/provision-e2e-target.sh`'s stderr
   summary block, add a one-line note after `app_installation`'s row —
   `  (confirmed via WC_APP_INSTALLATION_KNOWN_READY -- see docs/setup.md if
   this was not set intentionally)` — printed whenever that element's
   `outcome` is `ready` (research.md D5: the hint is the only way it is
   ever `ready`), so a false-ready report is traceable from the script's own
   output (research.md D8, FR-015). Depends on T004.
-- [ ] T029 [P] [US3] Add the D9 comment FR-017 requires to
+- [X] T029 [P] [US3] Add the D9 comment FR-017 requires to
   `.github/scripts/e2e-provisioning-tests/t9_maintainer_feedback.sh`'s
   T037/T044 block: state explicitly that the exported hint stands in for
   the dispatched readiness check's own token-mint proof of installation,
@@ -346,18 +346,18 @@ the two previously-uncovered behaviours are now asserted.
 
 ### Tests for User Story 3
 
-- [ ] T030 [P] [US3] Extend
+- [X] T030 [P] [US3] Extend
   `.github/scripts/e2e-provisioning-tests/t9_maintainer_feedback.sh`'s
   T043 hint-honoured case: assert stderr contains the D8 disclosure note
   after `WC_APP_INSTALLATION_KNOWN_READY=true` is exported (FR-015
   regression coverage). Depends on T028.
-- [ ] T031 [P] [US3] Document `WC_APP_INSTALLATION_KNOWN_READY` in
+- [X] T031 [P] [US3] Document `WC_APP_INSTALLATION_KNOWN_READY` in
   `docs/setup.md`: name it, state that the generalized readiness-check
   workflow is its legitimate setter, and warn that a stray `true` value
   left in a maintainer's own shell produces a false-`ready` local report
   for `app_installation` only, never any other element (FR-016). Sequenced
   after T021 (same file).
-- [ ] T032 [P] [US3] Add the same documentation to `docs/adoption.md`
+- [X] T032 [P] [US3] Add the same documentation to `docs/adoption.md`
   (FR-016). Sequenced after T022 (same file).
 
 **Checkpoint**: A failed repository creation names itself; the self-target

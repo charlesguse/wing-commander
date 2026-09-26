@@ -135,6 +135,22 @@ opens no pull requests, so there is nothing left to allowlist. See
 [docs/architecture.md](architecture.md#stage-9--watchdog-watchdogyml-wrapper-wing-commander-8-watchdogyml)
 for what it does with each dedup outcome.
 
+**`WC_APP_INSTALLATION_KNOWN_READY`** is not a repository variable — it is a
+shell environment variable `provision-e2e-target.sh`/`checks.sh` read
+directly. Its only legitimate setter is the generalized readiness-check
+workflow (`auto-update-spec-kit-scratch-preflight.yml`), which sets it after
+its own `create-github-app-token` step has already minted a token scoped to
+the target — proof the App is installed there, since `GET
+/repos/{owner}/{repo}/installation` cannot be called under any other
+credential this tooling holds. A stray `WC_APP_INSTALLATION_KNOWN_READY=true`
+left set in a maintainer's own shell produces a false-`ready`
+`app_installation` row on that maintainer's next local
+`provision-e2e-target.sh` run — never any other element, since no other
+`check_<key>` function reads it. `provision-e2e-target.sh` prints a
+disclosure note on stderr whenever this hint is what made `app_installation`
+report ready, so a false-ready report traceable to this variable is visible
+in the script's own output.
+
 ## 4. Labels
 
 Create these labels (Issues → Labels):

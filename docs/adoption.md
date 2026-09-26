@@ -60,6 +60,15 @@ that step is observed by dispatching the readiness check
 re-invoking this local command a second time — it has no way to verify an
 App installation under its own maintainer credential.
 
+That local command trusts a `WC_APP_INSTALLATION_KNOWN_READY` shell
+environment variable, never a repository variable, to decide whether the
+App is installed. Its only legitimate setter is the generalized
+readiness-check workflow itself, which sets it after minting a token scoped
+to the target already proves installation. A stray `true` value left in a
+maintainer's own shell produces a false-`ready` `app_installation` row on
+that maintainer's next local run and no other element; the script discloses
+on stderr whenever this hint is what made the row `ready`.
+
 ## Credentials
 
 Every agent-running stage declares two **optional** secrets; configure at

@@ -101,9 +101,11 @@ check "T9 app_installation is not_checkable without the hint, even though the st
 check_not_contains "T9 never calls the nonexistent stub installation endpoint" "$(cat "$GH_CALLS")" "installation"
 export WC_APP_INSTALLATION_KNOWN_READY=true
 : > "$GH_CALLS"
-OUT2="$(bash "$PROVISION_SCRIPT" --repo wc-user/wc-e2e-t43 --profile auto-release 2>/dev/null)"
+OUT2="$(bash "$PROVISION_SCRIPT" --repo wc-user/wc-e2e-t43 --profile auto-release 2>"$WORK/t43-stderr.log")"
 check "T9 app_installation converges to ready from the hint alone" \
   "$(jq -r '.elements[] | select(.key=="app_installation") | .outcome' <<<"$OUT2")" "ready"
+check_contains "T9 FR-015: stderr discloses the honoured WC_APP_INSTALLATION_KNOWN_READY hint" \
+  "$(cat "$WORK/t43-stderr.log")" "confirmed via WC_APP_INSTALLATION_KNOWN_READY"
 
 echo "--- T045: the mutating path refuses when neither the git remote nor GITHUB_REPOSITORY resolves this repository ---"
 new_gh_state
@@ -141,6 +143,20 @@ check "T9 exits non-zero when the marker write fails" "$?" "1"
 check_contains "T9 names the marker-write failure" "$(cat "$WORK/t46-stderr.log")" "scratch marker"
 check_not_contains "T9 sets no secret after a failed marker write" "$(cat "$GH_CALLS")" "secret set"
 check_not_contains "T9 creates no label after a failed marker write" "$(cat "$GH_CALLS")" "label create"
+
+echo "--- FR-013 (research.md D6): a failed repository creation names itself, never a misdiagnosed marker-write failure ---"
+new_gh_state
+export CLAUDE_CODE_OAUTH_TOKEN="test-oauth-token-value"
+gh_state_set "wc-user/wc-e2e-fr013" "create_forbidden" "true"
+bash "$PROVISION_SCRIPT" --repo wc-user/wc-e2e-fr013 --profile auto-release >/dev/null 2>"$WORK/fr013-stderr.log"
+check "T9 exits non-zero when repository creation fails" "$?" "1"
+check_contains "T9 names repository creation as the failed action" \
+  "$(cat "$WORK/fr013-stderr.log")" "failed to create repository"
+check_not_contains "T9 never misdiagnoses this as a marker-write failure" \
+  "$(cat "$WORK/fr013-stderr.log")" "failed to write the scratch marker"
+check_not_contains "T9 makes no repo edit call after a failed create" "$(cat "$GH_CALLS")" "repo edit"
+check_not_contains "T9 sets no secret after a failed create" "$(cat "$GH_CALLS")" "secret set"
+check_not_contains "T9 creates no label after a failed create" "$(cat "$GH_CALLS")" "label create"
 
 echo "--- T047: container_image_pin's comparison never folds a successful call's stderr noise into the compared value ---"
 new_gh_state
