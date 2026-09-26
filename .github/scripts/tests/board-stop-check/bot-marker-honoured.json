@@ -6,5 +6,5 @@
     {"body": "Triage: routing this issue.\n\n**Run:** https://github.com/example/example/actions/runs/333\n\n<!-- wing-commander-board-item: {} -->", "author_association": "NONE", "created_at": "2026-01-01T00:00:00Z", "user": {"login": "wing-commander-bot[bot]", "type": "Bot"}},
     {"body": "stop", "author_association": "COLLABORATOR", "created_at": "2026-01-01T00:02:00Z", "user": {"login": "maintainer", "type": "User"}}
   ],
-  "expected_run_id": "333"
+  "expected": {"stand_down": true, "cancel_run_id": "333"}
 }

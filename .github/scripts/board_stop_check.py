@@ -68,6 +68,7 @@ that does not start with stop (`Hold on, stop`, `Wait — stop`).
 An `@someone stop - ...` addressed to another human also counts; that is
 accepted (the handle is dropped before matching).
 """
+import collections
 import os
 import re
 import sys
@@ -94,6 +95,8 @@ _HORIZONTAL_RULE_RE = re.compile(r"^-{3,}$")
 # the URL cannot be taken from the NEXT line either.
 MARKER_RUN_RE = re.compile(
     r"^\*\*Run:\*\*[ \t]*(https://\S+/actions/runs/(\d+))", re.MULTILINE)
+
+StopDecision = collections.namedtuple("StopDecision", ["stand_down", "cancel_run_id"])
 
 
 def last_run_match(body):
@@ -146,9 +149,12 @@ def is_stop_command(body):
 def find_stop_request(comments, current_run_id, bot_login):
     """comments: [{"body": str, "author_association": str, "created_at": str,
     "user": {"login": str, "type": str}}, ...], any order (sorted here).
-    bot_login: the loop's own App login (`<slug>[bot]`). Returns the run_id
-    (str) to `gh run cancel` when an authorized, unactioned stop request
-    exists, else None.
+    bot_login: the loop's own App login (`<slug>[bot]`). Returns a
+    StopDecision(stand_down, cancel_run_id) two-fact answer: `stand_down` is
+    True iff an authorized, unactioned stop request exists; `cancel_run_id`
+    is the earlier run worth cancelling with `gh run cancel`, or None when
+    there is nothing to cancel. The current run is never a valid
+    `cancel_run_id` under any input -- Gate 87 mutation-proves this.
 
     Board-loop.yml runs triage through readiness as ONE long scheduled
     run, unlike pr-conversation.yml's per-comment-triggered stop
@@ -162,20 +168,19 @@ def find_stop_request(comments, current_run_id, bot_login):
       before that announcement is about an item that already ended or was
       superseded (FR-052 stops the *in-flight* item, not every issue that
       ever had the word said near it).
-    - The run_id handed back to `gh run cancel` prefers an EARLIER run's
-      own marker (skipping this run's own, current_run_id) when one
-      exists -- that is a genuinely different, still-possibly-running
-      attempt worth cancelling. When no earlier run announced itself yet
-      (an item's first pass through this run, the common case), this
-      function still returns current_run_id -- the caller (issue #461
-      review, wing-commander-board-stop-check/action.yml) is the one that
-      recognizes that case and skips the `gh run cancel` call rather than
-      cancelling the run executing its own step; `paused=true` is what
-      actually halts further durable action either way. (Earlier, the App
-      token this call ran under had no `actions` permission, so the
-      cancel silently 403'd regardless of target -- fixed in #461, which
-      is what made this self-cancel case reachable for the first time and
-      is why the caller now guards against it explicitly.)
+    - `cancel_run_id` prefers an EARLIER run's own marker (skipping this
+      run's own, current_run_id) when one exists -- that is a genuinely
+      different, still-possibly-running attempt worth cancelling. When no
+      earlier run announced itself yet (an item's first pass through this
+      run, the common case), `cancel_run_id` is None -- there is nothing
+      to cancel, since the run executing this check is never a cancel
+      target itself; `stand_down=True` is what actually halts further
+      durable action either way. (Earlier, the App token this call ran
+      under had no `actions` permission, so the cancel silently 403'd
+      regardless of target -- fixed in #461, which is what made this
+      self-cancel case reachable for the first time and is why the caller
+      still guards against it explicitly, as belt-and-braces defence in
+      depth.)
 
     Only a `**Run:**` line at the start of a line (board_item_marker.
     write_marker()'s own convention, MARKER_RUN_RE) in a comment the loop's
@@ -213,19 +218,22 @@ def find_stop_request(comments, current_run_id, bot_login):
             stop_seen = True
 
     if not stop_seen:
-        return None
+        return StopDecision(False, None)
 
-    return last_other_run_id if last_other_run_id is not None else current_run_id
+    return StopDecision(True, last_other_run_id)
 
 
 def main():
     """Reads {"comments": [...], "current_run_id": "...", "bot_login": "..."}
-    from stdin, prints the run_id to cancel (or nothing)."""
+    from stdin, prints exactly one line of JSON on success --
+    {"stand_down": <bool>, "cancel_run_id": <string> | null} -- the
+    StopDecision two-fact contract find_stop_request() documents. A
+    malformed payload raises inside json.load/dict access, writing a
+    traceback to stderr and exiting non-zero with nothing on stdout."""
     payload = json.load(sys.stdin)
-    run_id = find_stop_request(payload.get("comments") or [], payload.get("current_run_id"),
-                               payload.get("bot_login"))
-    if run_id:
-        print(run_id)
+    decision = find_stop_request(payload.get("comments") or [], payload.get("current_run_id"),
+                                  payload.get("bot_login"))
+    print(json.dumps(decision._asdict()))
 
 
 if __name__ == "__main__":

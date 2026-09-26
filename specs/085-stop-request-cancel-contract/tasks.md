@@ -37,7 +37,7 @@ deleted.
 
 ## Phase 1: Setup
 
-- [ ] T001 Run `python .github/scripts/run-local-gates.py` and record that it
+- [X] T001 Run `python .github/scripts/run-local-gates.py` and record that it
   passes on the unmodified tree — the pre-change baseline every later
   gate-suite run in this file is compared against (SC-006).
 
@@ -71,7 +71,7 @@ cancel run N". Delete the no-self-cancel rule and confirm at least one
 checked-in case fails. All of this runs at the Python-function layer only —
 no shell, no composite (spec.md's Independent Test for this story).
 
-- [ ] T002 [US1] In `.github/scripts/board_stop_check.py`, add
+- [X] T002 [US1] In `.github/scripts/board_stop_check.py`, add
   `StopDecision = collections.namedtuple("StopDecision", ["stand_down",
   "cancel_run_id"])` and change `find_stop_request()` to return
   `StopDecision(stand_down, cancel_run_id)` in place of the current bare
@@ -85,7 +85,7 @@ no shell, no composite (spec.md's Independent Test for this story).
   run's own id as `cancel_run_id` under any input." Returns `StopDecision(False,
   None)` immediately when `stop_seen` is `False` (today returns `None`
   early at line 216).
-- [ ] T003 [US1] In `.github/scripts/board_stop_check.py`, rewrite
+- [X] T003 [US1] In `.github/scripts/board_stop_check.py`, rewrite
   `find_stop_request()`'s docstring (currently: "Returns the run_id (str)
   to `gh run cancel` when an authorized, unactioned stop request exists,
   else None") to state the two-fact `StopDecision` contract in its own
@@ -93,7 +93,7 @@ no shell, no composite (spec.md's Independent Test for this story).
   `cancel_run_id` (FR-005, contracts/decision-function.md). No sentence in
   this module may describe the return value as "the run_id (str) to `gh run
   cancel`" after this task.
-- [ ] T004 [US1] In `.github/scripts/board_stop_check.py`, change `main()`
+- [X] T004 [US1] In `.github/scripts/board_stop_check.py`, change `main()`
   so that on success it prints exactly one line — `json.dumps({"stand_down":
   ..., "cancel_run_id": ...})` (or `decision._asdict()`) — always, including
   the `stand_down: False` case (today's `main()` prints the bare run id and
@@ -103,7 +103,7 @@ no shell, no composite (spec.md's Independent Test for this story).
   traceback to stderr and exiting non-zero with nothing on stdout — no new
   error-handling code is needed (contracts/decision-function.md, research.md
   D3).
-- [ ] T005 [P] [US1] Migrate every fixture under
+- [X] T005 [P] [US1] Migrate every fixture under
   `.github/scripts/tests/board-stop-check/*.json` (all fifteen files in
   `EXPECTED_FILES`) from `"expected_run_id": <string or null>` to
   `"expected": {"stand_down": <bool>, "cancel_run_id": <string or null>}`,
@@ -119,7 +119,7 @@ no shell, no composite (spec.md's Independent Test for this story).
   `"333"`) → `{"stand_down": true, "cancel_run_id": "<that value>"}`. No
   fixture is deleted and no fixture's real-world scenario changes — a shape
   migration only (FR-012, SC-003, contracts/gate-87-coverage.md).
-- [ ] T006 [US1] In `.github/scripts/verify-board-stop-check.py`, update
+- [X] T006 [US1] In `.github/scripts/verify-board-stop-check.py`, update
   `run_fixtures()` to compare `board_stop_check.find_stop_request(...)`
   against each fixture's new `expected` dict/`StopDecision` (in place of the
   old `spec["expected_run_id"]` bare-string comparison), and update
@@ -127,7 +127,7 @@ no shell, no composite (spec.md's Independent Test for this story).
   to the equivalent `StopDecision(want, "111" if want else None)` comparison
   (the `MARKER_BODY` fixture there announces run `"111"`, a genuinely
   earlier run relative to `current_run_id="999"`). Depends on T005.
-- [ ] T007 [US1] In `.github/scripts/verify-board-stop-check.py`, add a
+- [X] T007 [US1] In `.github/scripts/verify-board-stop-check.py`, add a
   fifth entry to `MUTATIONS`: `("self-run returned as cancel target,
   pre-085", "find_stop_request", ...)`, a replacement `find_stop_request`
   that reintroduces the pre-fix fallback (`StopDecision(stand_down,
@@ -139,13 +139,13 @@ no shell, no composite (spec.md's Independent Test for this story).
   mutation must fail, since under the mutation it reports `cancel_run_id:
   "999"` (FR-011's decision-function-layer proof, contracts/gate-87-
   coverage.md). Depends on T002, T006.
-- [ ] T008 [US1] Run `python3 .github/scripts/verify-board-stop-check.py`
+- [X] T008 [US1] Run `python3 .github/scripts/verify-board-stop-check.py`
   and confirm `run_fixtures()`, `run_command_cases()`, and all five
   `MUTATIONS` entries (including T007's new one) report `[ok]`/"mutation
   caught" with `0 failure(s)` — the composite-shell portion of this gate is
   still on the pre-change composite and is expected to still pass unchanged
   at this point (its own update is Phase 4). Depends on T002-T007.
-- [ ] T009 [US1] Follow quickstart.md steps 1 and 2: run the `python3 -c`
+- [X] T009 [US1] Follow quickstart.md steps 1 and 2: run the `python3 -c`
   snippet against the in-tree module and confirm it prints
   `StopDecision(stand_down=True, cancel_run_id=None)`; pipe the two
   `echo '{"comments": ...}' | python3 .github/scripts/board_stop_check.py`
