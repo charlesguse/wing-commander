@@ -1281,16 +1281,22 @@ than only ever exercised on a bare runner:
 - **Reporting**: both the verdict and `report`'s failure/success output
   always state which mode a run exercised, and `container_image_configured`
   defaults to false on every container-turn verdict except the poll step's
-  own `pass` (data-model.md "Execution mode"). This narrows, but does not
-  close, the overstatement risk: a container-mode turn whose image
-  variable was left unset on the test repository still reaches a plain
-  `pass`, since `verify-image-prerequisites` is **skipped** with no image
-  to pull (before specs/058-per-job-minute-floor it ran and vacuously
-  succeeded; either way it raises no objection) and the run completes
-  outside any container with nothing in the verdict able to tell —
-  detecting that specific case needs a permission (reading the
-  test repository's Actions run data) this verification does not have and
-  has not been granted (FR-017; research.md D7, tasks.md T009).
+  own `pass` (data-model.md "Execution mode"). **Container-mode evidence**
+  (specs/067-e2e-container-image-evidence) closes the overstatement risk
+  this section used to describe as accepted: a new `container-evidence-
+  config` step, gated on the existing `maintainer-credential` check and
+  placed before `cleanup`/`scaffold`/`kickoff`, confirms the test
+  repository's `WING_COMMANDER_CONTAINER_IMAGE` matches this repository's
+  own pin before any kickoff issue is created; a second, execution-evidence
+  check inside the `poll` step, immediately before its sole `pass`-writing
+  call, confirms the stage jobs the run actually drove executed inside a
+  container (read via the test repository's Actions Jobs API, using the
+  same fixture maintainer credential the other human gates already use —
+  no new App installation permission). Either check's failure — not
+  configured, drifted, unreadable, rate-limited, or not containerized —
+  ends the attempt with a named `fail-infra` verdict instead of a `pass`;
+  see `specs/067-e2e-container-image-evidence/contracts/container-evidence-
+  outcomes.md` for the exact vocabulary.
 
 ## Reusability (current state — `specs/010-reusable-pipeline/`)
 
