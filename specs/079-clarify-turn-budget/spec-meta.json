@@ -2,7 +2,8 @@
   "issue": 587,
   "spec_dir": "specs/079-clarify-turn-budget",
   "feature_num": "079",
-  "stage": "implement",
+  "stage": "review",
   "iteration": 1,
-  "spec_branch": "spec/079-clarify-turn-budget"
+  "spec_branch": "spec/079-clarify-turn-budget",
+  "pending_re_review_from": []
 }
