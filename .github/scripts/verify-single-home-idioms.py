@@ -230,6 +230,12 @@ DECLARED_HOMES = {
     # implement.yml's own former inline step so implement/plan/tasks share
     # one copy.
     "branch-advance-capture": ".github/actions/wing-commander-branch-advance/action.yml",
+    # specs/062-lifecycle-review-gate T012/T015: the `gh api .../reviews
+    # -f event=COMMENT` review-posting call. board-loop.yml's reviewer job
+    # is repointed at this composite (T013); lifecycle-review-gate.yml's
+    # `review` job (US1) is this check's reason to exist -- a second
+    # caller landing with its own inline copy instead.
+    "post-review-comment": ".github/actions/wing-commander-post-review-comment/action.yml",
 }
 CHECK_NAMES = tuple(DECLARED_HOMES) + ("promotion",)
 
@@ -258,6 +264,8 @@ ISSUE_LOOKUP_RE = re.compile(
     r"gh issue list\b[^\n]*--label\b[^\n]*--state open\b[^\n]*"
     r"--json number\b[^\n]*--jq\b[^\n]*\.\[0\]\.number // empty")
 OUTSTANDING_TASK_RE = re.compile(r'gh issue comment\b[^\n]*"- \[ \] ')
+POST_REVIEW_COMMENT_RE = re.compile(
+    r'gh\s+api\b[^\n]*reviews\b[^\n]*-f\s+event=COMMENT')
 SIZE_PATH_BACKSTOP_FRAGMENT = r'select(test("^[+-]") and (test("^(\\+\\+\\+|---)") | not))'
 # specs/057-autonomous-board-loop research.md D14: correlating a dispatched
 # run by an attempt-token carried in its own run-name -- never by recency --
@@ -469,6 +477,33 @@ def check_outstanding_task_item(root="."):
                         path, "outstanding-task-item",
                         line_of(text, max(offset, 0)),
                         'gh issue comment ... "- [ ] ..."'))
+    return findings
+
+
+# --------------------------------------------------------------------------
+# Check: post-review-comment (per-step, single-fragment)
+# --------------------------------------------------------------------------
+def check_post_review_comment(root="."):
+    home = DECLARED_HOMES["post-review-comment"]
+    findings = []
+    for path in all_subject_files(root):
+        if path == home:
+            continue
+        doc = load_yaml(root, path)
+        if doc is None:
+            continue
+        text = read(root, path)
+        for _ctx, steps in _step_lists(doc):
+            for step in steps:
+                run = str((step or {}).get("run") or "")
+                if not run:
+                    continue
+                if POST_REVIEW_COMMENT_RE.search(run):
+                    offset = text.find(run.splitlines()[0]) if run.splitlines() else 0
+                    findings.append(Finding(
+                        path, "post-review-comment",
+                        line_of(text, max(offset, 0)),
+                        'gh api -X POST ... reviews ... -f event=COMMENT'))
     return findings
 
 
@@ -723,6 +758,7 @@ ALL_CHECKS = {
     "extraheader-refresh": check_extraheader_refresh,
     "failure-issue": check_failure_issue,
     "outstanding-task-item": check_outstanding_task_item,
+    "post-review-comment": check_post_review_comment,
     "stage-findings": check_stage_findings,
     "size-path-backstop": check_size_path_backstop,
     "dispatch-and-wait": check_dispatch_and_wait,
@@ -1088,6 +1124,11 @@ def _clean_tree(root):
           "origin/$branch\"\n"
           "        commits=\"$(git rev-list --count "
           "\"$BEFORE_SHA..$after_sha\")\"\n")
+    _write(root, DECLARED_HOMES["post-review-comment"],
+          "runs:\n  using: composite\n  steps:\n"
+          "    - shell: bash\n      run: |\n"
+          "        gh api -X POST \"repos/$GITHUB_REPOSITORY/pulls/$PR/"
+          "reviews\" -f event=COMMENT -F body=@\"$BODY_FILE\"\n")
     _write(root, ".github/workflows/harmless.yml",
           "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
           "      - run: echo hi\n")

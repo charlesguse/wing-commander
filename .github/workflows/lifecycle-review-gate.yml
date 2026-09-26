@@ -1,0 +1,248 @@
+# Scheduled lifecycle review gate: an independent code review of the
+# lifecycle's merge-worthy PRs (contracts/lifecycle-review-gate-workflow.md,
+# specs/062-lifecycle-review-gate). Selects at most one ready lifecycle PR
+# per run, reviews it, folds in-scope findings back through the pipeline's
+# existing fold mechanism, and — only when explicitly switched on —
+# squash-merges a clean, ready PR.
+#
+# on: schedule + workflow_dispatch only — no workflow_call (research.md D1,
+# matching board-loop.yml/auto-release.yml's own layer). This file is not a
+# published stage: it encodes this repository's own review-gate policy
+# (the round budget, the kill-switch/auto-merge variable names) which would
+# each have to become a typed input to publish, and it targets THIS
+# repository's own lifecycle PRs, never an adopter's.
+name: "lifecycle-review-gate"
+
+on:
+  schedule:
+    - cron: "27 * * * *"   # one-line, PR-reviewed knob (research.md D12's sibling decision) -- not repository-variable-configurable
+  workflow_dispatch:
+
+run-name: lifecycle-review-gate
+
+permissions: {}
+
+concurrency:
+  # One review round in flight repository-wide, matching board-loop.yml's
+  # own one-item-at-a-time discipline (spec.md Edge Cases: "concurrent
+  # specs do not contend for the usage window").
+  group: wing-commander-lifecycle-review-gate
+  cancel-in-progress: false
+
+env:
+  # research.md D12: a PR-reviewed constant, not a vars. override -- how
+  # many fix -> review rounds one lifecycle PR may spend before this gate
+  # stands down and hands it to a human (contracts/lifecycle-review-gate-workflow.md
+  # "Round budget").
+  LIFECYCLE_REVIEW_ROUND_BUDGET: 5
+
+jobs:
+  # contracts/lifecycle-review-gate-workflow.md job 1: when the kill switch
+  # is set, this is the only job that runs. select/readiness/every later
+  # job each independently gates on the same variable (never a needs:
+  # chain to this job), so "no other job starts" holds without this job
+  # publishing an output anything else has to wait on. Nothing is
+  # recorded here -- no PR has been selected yet to stand down from; T059
+  # (US6) confirms the SAME switch's later stand-down inside `readiness`,
+  # once a PR IS selected, is what carries the durable, issue-visible
+  # record.
+  kill-switch:
+    if: vars.WING_COMMANDER_LIFECYCLE_REVIEW_GATE_PAUSED == 'true'
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Record the stand-down
+        run: |
+          echo "lifecycle-review-gate: standing down -- the kill switch is set." >> "$GITHUB_STEP_SUMMARY"
+
+  # contracts/lifecycle-review-gate-workflow.md job 2: lists open PRs,
+  # filters to spec-meta.json.stage == "review", keeps those whose
+  # review_gate.head_sha (if any) differs from the PR's current
+  # headRefOid, picks the oldest. Outputs are all empty on the common,
+  # cheapest-read case (nothing qualifies) -- SC-009's "at most one round
+  # per SHA" starts here, before any billable step runs.
+  select:
+    if: vars.WING_COMMANDER_LIFECYCLE_REVIEW_GATE_PAUSED != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      pr-number: ${{ steps.select.outputs.pr-number }}
+      issue: ${{ steps.select.outputs.issue }}
+      spec-dir: ${{ steps.select.outputs.spec-dir }}
+      head-sha: ${{ steps.select.outputs.head-sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Wing Commander context
+        id: ctx
+        uses: ./.github/actions/wing-commander-context
+        with:
+          app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
+          private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
+
+      # T010: reads each candidate's spec-meta.json off its own spec
+      # branch tip via the `_shared/read-spec-meta.sh` convention
+      # wing-commander-spec-meta wraps -- called directly in this shell
+      # loop (not the composite, which cannot run per loop iteration),
+      # the same non-published-workflow shape rebase.yml's own
+      # branch-selection loop already established. This is a call TO the
+      # shared script, never a second, independent `git show
+      # origin/...:spec-meta.json` -- Gate 61 (verify-spec-meta-single-home.py)
+      # would fail on the latter, not the former.
+      - name: Fetch open PRs and select the next lifecycle review candidate
+        id: select
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+        run: |
+          set -uo pipefail
+
+          best_number=""
+          best_issue=""
+          best_spec_dir=""
+          best_head_sha=""
+          best_created=""
+
+          mapfile -t prs < <(gh pr list --state open \
+            --json number,headRefName,headRefOid,createdAt \
+            --limit 100 --jq '.[] | @base64')
+
+          for row in "${prs[@]}"; do
+            [ -z "$row" ] && continue
+            pr_json="$(printf '%s' "$row" | base64 -d)"
+            number="$(printf '%s' "$pr_json" | jq -r '.number')"
+            head_ref="$(printf '%s' "$pr_json" | jq -r '.headRefName')"
+            head_sha="$(printf '%s' "$pr_json" | jq -r '.headRefOid')"
+            created="$(printf '%s' "$pr_json" | jq -r '.createdAt')"
+
+            case "$head_ref" in
+              spec/*) slug="${head_ref#spec/}" ;;
+              *) continue ;;
+            esac
+            printf '%s' "$slug" | grep -Eq '^[0-9]{3}-[a-z0-9][a-z0-9-]*$' || continue
+
+            eval "$(bash .github/actions/_shared/read-spec-meta.sh spec/ "$slug")"
+            [ "$meta_found" = "true" ] || continue
+            [ "$meta_identity_ok" = "true" ] || continue
+            [ "$meta_stage" = "review" ] || continue
+            [ "$meta_review_gate_head_sha" != "$head_sha" ] || continue
+
+            if [ -z "$best_created" ] || [[ "$created" < "$best_created" ]]; then
+              best_number="$number"
+              best_issue="$meta_issue"
+              best_spec_dir="specs/$slug"
+              best_head_sha="$head_sha"
+              best_created="$created"
+            fi
+          done
+
+          if [ -z "$best_number" ]; then
+            echo "lifecycle-review-gate: nothing to do -- no lifecycle PR is ready for a new review round." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "lifecycle-review-gate: selected PR #$best_number ($best_spec_dir) at $best_head_sha." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          {
+            echo "pr-number=$best_number"
+            echo "issue=$best_issue"
+            echo "spec-dir=$best_spec_dir"
+            echo "head-sha=$best_head_sha"
+          } >> "$GITHUB_OUTPUT"
+
+  # contracts/lifecycle-review-gate-workflow.md job 3: calls
+  # lifecycle_readiness.py against select's head-sha. ready: false posts
+  # unmet_reason on the lifecycle issue and stops; ready: true exposes an
+  # output the `review` job (US1, not yet built) gates on.
+  readiness:
+    needs: select
+    if: needs.select.outputs.pr-number != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: write
+    outputs:
+      ready: ${{ steps.decide.outputs.ready }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Wing Commander context
+        id: ctx
+        uses: ./.github/actions/wing-commander-context
+        with:
+          app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
+          private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
+
+      # specs/022-gate-closed-lifecycle: never trust a value another job
+      # captured earlier -- re-fetch live state before the durable action
+      # below (contracts "Edge cases": "PR or issue closed mid-round").
+      - name: Check lifecycle issue state
+        id: lifecycle-gate
+        uses: ./.github/actions/wing-commander-lifecycle-gate
+        with:
+          issue-number: ${{ needs.select.outputs.issue }}
+          token: ${{ steps.ctx.outputs.token }}
+
+      - name: Fetch a fresh PR snapshot and evaluate readiness
+        id: decide
+        if: steps.lifecycle-gate.outputs.is-open == 'true'
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          PR_NUMBER: ${{ needs.select.outputs.pr-number }}
+          HEAD_SHA: ${{ needs.select.outputs.head-sha }}
+        run: |
+          set -uo pipefail
+
+          snapshot="$(gh pr view "$PR_NUMBER" --json headRefOid,statusCheckRollup,mergeable,mergeStateStatus)"
+          # T006: only head_sha is a condition lifecycle_readiness.py
+          # reads (round/outcome/findings_open are US2/US4 concerns, not
+          # yet wired up) -- select's own filter already guarantees this
+          # differs from the PR's current head, so ready:false here (if it
+          # happens at all) is a defensive re-check, not the common path.
+          payload="$(jq -n --argjson snapshot "$snapshot" --arg head_sha "$HEAD_SHA" \
+            '{snapshot: $snapshot, review_gate: {head_sha: $head_sha}, kill_switch_paused: false}')"
+
+          decision="$(printf '%s' "$payload" | python3 .github/scripts/lifecycle_readiness.py)"
+          ready="$(printf '%s' "$decision" | jq -r '.ready')"
+          unmet_reason="$(printf '%s' "$decision" | jq -r '.unmet_reason // empty')"
+
+          echo "ready=$ready" >> "$GITHUB_OUTPUT"
+          echo "unmet-reason=$unmet_reason" >> "$GITHUB_OUTPUT"
+          echo "lifecycle-review-gate: PR #$PR_NUMBER readiness=$ready unmet_reason=${unmet_reason:-<none>}." >> "$GITHUB_STEP_SUMMARY"
+
+      # FR-001 scenario 4/FR-006: unmet_reason is a plain condition name
+      # (constitution IX), translated here into one human-legible sentence
+      # per condition for the lifecycle issue -- never narrated by an
+      # agent.
+      - name: Translate the unmet condition into a sentence
+        id: phrase
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.decide.outputs.ready == 'false'
+        env:
+          UNMET_REASON: ${{ steps.decide.outputs.unmet-reason }}
+        run: |
+          set -uo pipefail
+          case "$UNMET_REASON" in
+            checks_green) phrase="not every check has reported a passing result yet" ;;
+            gate_suite_green) phrase="the lint-workflows check is not green yet" ;;
+            mergeable) phrase="this pull request is not currently mergeable (conflicts with the base branch)" ;;
+            not_yet_reviewed) phrase="this exact commit was already reviewed in an earlier round" ;;
+            kill_switch_clear) phrase="the kill switch is set" ;;
+            *) phrase="an unrecognized condition ($UNMET_REASON) is unmet" ;;
+          esac
+          echo "phrase=$phrase" >> "$GITHUB_OUTPUT"
+
+      - name: Post the unmet condition on the lifecycle issue
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.decide.outputs.ready == 'false'
+        uses: ./.github/actions/wing-commander-callout
+        with:
+          token: ${{ steps.ctx.outputs.token }}
+          issue-number: ${{ needs.select.outputs.issue }}
+          kind: info
+          summary: "lifecycle-review-gate is standing down on PR #${{ needs.select.outputs.pr-number }} -- ${{ steps.phrase.outputs.phrase }}."

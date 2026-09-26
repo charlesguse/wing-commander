@@ -65,6 +65,11 @@ outputs:
   iteration:
     description: The iteration the file records (digits or empty).
     value: ${{ steps.read.outputs.iteration }}
+  review-gate-head-sha:
+    description: >-
+      specs/062-lifecycle-review-gate: the review_gate.head_sha the file
+      records (a git object id, or empty when no review round has run yet).
+    value: ${{ steps.read.outputs.review-gate-head-sha }}
 runs:
   using: composite
   steps:
@@ -86,6 +91,7 @@ runs:
           echo "issue=$meta_issue"
           echo "stage=$meta_stage"
           echo "iteration=$meta_iteration"
+          echo "review-gate-head-sha=$meta_review_gate_head_sha"
         } >> "$GITHUB_OUTPUT"
         where="${SPEC_DIR:-specs/$SLUG}/spec-meta.json on ${SPEC_PREFIX}${SLUG}"
         if [ "$meta_fetch_ok" != "true" ]; then

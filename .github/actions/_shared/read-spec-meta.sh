@@ -40,6 +40,7 @@
 #   meta_issue=<digits or empty>
 #   meta_stage=<word or empty>
 #   meta_iteration=<digits or empty>
+#   meta_review_gate_head_sha=<a git object id, or empty>  (specs/062-lifecycle-review-gate)
 # Never exits non-zero. Callers `eval` the output, which is safe because every
 # value is empty or matches the character class named for it — anything else
 # found in the file is dropped, never passed through (constitution V).
@@ -57,6 +58,7 @@ meta_spec_dir=""
 meta_issue=""
 meta_stage=""
 meta_iteration=""
+meta_review_gate_head_sha=""
 
 # field JSON FILTER  -> the jq -r result, or empty on any error.
 field() { printf '%s' "$1" | jq -r "$2" 2>/dev/null || true; }
@@ -80,6 +82,7 @@ if [ -n "$SLUG" ]; then
     meta_issue="$(only "$(field "$meta" '.issue // empty')" '^[0-9]+$')"
     meta_stage="$(only "$(field "$meta" '.stage // empty')" '^[A-Za-z0-9_-]+$')"
     meta_iteration="$(only "$(field "$meta" '.iteration // empty')" '^[0-9]+$')"
+    meta_review_gate_head_sha="$(only "$(field "$meta" '.review_gate.head_sha // empty')" '^[0-9a-fA-F]{7,40}$')"
   fi
 fi
 
@@ -90,3 +93,4 @@ printf 'meta_spec_dir=%s\n' "$meta_spec_dir"
 printf 'meta_issue=%s\n' "$meta_issue"
 printf 'meta_stage=%s\n' "$meta_stage"
 printf 'meta_iteration=%s\n' "$meta_iteration"
+printf 'meta_review_gate_head_sha=%s\n' "$meta_review_gate_head_sha"

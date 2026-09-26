@@ -2690,14 +2690,16 @@ jobs:
               fh.write("\n".join(lines) + "\n")
           PYEOF
 
+      # specs/062-lifecycle-review-gate T012/T013: the `gh api .../reviews
+      # -f event=COMMENT` idiom now lives solely in
+      # wing-commander-post-review-comment (CLAUDE.md's shared-logic rule)
+      # -- this is its first caller, byte-identical behavior.
       - name: Post the review on the PR
-        env:
-          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
-          PR_NUMBER: ${{ steps.pr.outputs.pr-number }}
-        run: |
-          set -uo pipefail
-          gh api -X POST "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews" \
-            -f event=COMMENT -F body=@"$RUNNER_TEMP/board-review-body.md" >/dev/null
+        uses: ./.github/actions/wing-commander-post-review-comment
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
+          pr-number: ${{ steps.pr.outputs.pr-number }}
+          body-file: ${{ runner.temp }}/board-review-body.md
 
       # T043/research.md D12: filed through the EXISTING durable-failure-
       # issue composite (FR-059) -- never a second filing implementation --

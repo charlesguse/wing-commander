@@ -1,0 +1,39 @@
+# The `gh api -X POST .../reviews -f event=COMMENT` idiom, in one home.
+#
+# Extracted from board-loop.yml's reviewer job's own "Post the review on
+# the PR" step (specs/062-lifecycle-review-gate T012) so that
+# lifecycle-review-gate.yml's `review` job (US1) can become a second
+# caller without pasting the same `gh api` call a second time (CLAUDE.md's
+# "Shared logic has exactly one home"). Both PRs this pipeline ever
+# reviews share the same App identity as the review itself, so
+# COMMENT is the only review event either caller can use — GitHub rejects
+# APPROVE/REQUEST_CHANGES from a PR's own author identity.
+name: wing-commander-post-review-comment
+description: >
+  Posts a COMMENT-event pull request review with the given body file — the
+  one home of this repository's `gh api -X POST .../reviews -f event=COMMENT` call.
+
+inputs:
+  token:
+    description: Token to post the review with
+    required: true
+  pr-number:
+    description: The pull request to review
+    required: true
+  body-file:
+    description: Path to a file containing the review body (Markdown)
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Post the review on the PR
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        PR_NUMBER: ${{ inputs.pr-number }}
+        BODY_FILE: ${{ inputs.body-file }}
+      run: |
+        set -uo pipefail
+        gh api -X POST "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews" \
+          -f event=COMMENT -F body=@"$BODY_FILE" >/dev/null
