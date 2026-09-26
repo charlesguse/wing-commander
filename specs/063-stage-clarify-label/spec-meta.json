@@ -2,7 +2,8 @@
   "issue": 483,
   "spec_dir": "specs/063-stage-clarify-label",
   "feature_num": "063",
-  "stage": "implement",
+  "stage": "review",
   "iteration": 2,
-  "spec_branch": "spec/063-stage-clarify-label"
+  "spec_branch": "spec/063-stage-clarify-label",
+  "pending_re_review_from": []
 }
