@@ -351,11 +351,11 @@ or 4 to have landed).
   including T023's post-change-style third paste and T024's new
   no-cancellation case) — quickstart.md step 5, User Story 3's all four
   Acceptance Scenarios. Depends on T020-T024.
-- [ ] T026 Run `python .github/scripts/run-local-gates.py` and confirm every
+- [X] T026 Run `python .github/scripts/run-local-gates.py` and confirm every
   gate passes, including the amended Gate 87 (T017) and Gate 60 (T025), with
   none skipped or waived to reach green (SC-006, quickstart.md step 6).
   Depends on T017, T025.
-- [ ] T027 Final cross-check of SC-002: confirm the shipped composite
+- [X] T027 Final cross-check of SC-002: confirm the shipped composite
   contains zero lines that import or path-bootstrap the stop-check module,
   and at most one comparison of a stop-check result against the current run
   id (the FR-004 redundant guard, carrying the comment T012 wrote stating
