@@ -2,7 +2,7 @@
   "issue": 516,
   "spec_dir": "specs/069-scratch-readiness-reporting",
   "feature_num": "069",
-  "stage": "spec",
+  "stage": "plan",
   "iteration": 0,
-  "spec_branch": null
+  "spec_branch": "spec/069-scratch-readiness-reporting"
 }
