@@ -2,7 +2,7 @@
   "issue": 549,
   "spec_dir": "specs/072-derived-gate-subjects",
   "feature_num": "072",
-  "stage": "implement",
+  "stage": "stalled",
   "iteration": 1,
   "spec_branch": "spec/072-derived-gate-subjects"
 }
