@@ -226,6 +226,7 @@ RUNS = {
             "repository": {"full_name": REPO}},
     "555": {"status": "completed", "path": OWN_PATH, "repository": {"full_name": REPO}},
     "666": {"status": "in_progress", "path": OWN_PATH, "repository": {"full_name": REPO}},
+    "999": {"status": "in_progress", "path": OWN_PATH, "repository": {"full_name": REPO}},
 }
 # (name, comments, expected `paused` output, expected cancelled run id or None)
 SHELL_CASES = (
@@ -239,8 +240,44 @@ SHELL_CASES = (
               user={"login": "maintainer", "type": "User"}),
       STOP], "true", None),
     ("no stop request, nothing cancelled", [_marker(222)], "false", None),
+    ("a first pass through this run cancels nothing even though that run is "
+     "otherwise a readable, same-workflow, non-completed run",
+     [_marker(999), STOP], "true", None),
 )
 GUARD_LINE_RE = re.compile(r'^(\s*)if \[ -z "\$cancel_target_path" \].*; then$', re.MULTILINE)
+# The composite's own T012 comparison -- redundant with find_stop_request()'s
+# contract by design, and independently mutation-proven below (FR-004).
+CANCEL_TARGET_GUARD_RE = re.compile(
+    r'^(\s*)if \[ -n "\$cancel_run_id" \] && \[ "\$cancel_run_id" != "\$GITHUB_RUN_ID" \]; then$',
+    re.MULTILINE)
+# find_stop_request()'s post-085 fallback -- reintroducing the pre-085 one
+# (T007's mutation, applied to the on-disk source instead of the imported
+# module, since the composite subprocess re-reads the file fresh).
+SELF_CANCEL_FALLBACK_RE = re.compile(
+    r'^(\s*)return StopDecision\(True, last_other_run_id\)$', re.MULTILINE)
+
+
+def _mutated_repo_root(board_stop_check_source):
+    """A throwaway directory shaped like the repo root with
+    .github/scripts/board_stop_check.py replaced by `board_stop_check_source`
+    and board_item_marker.py copied alongside it (board_stop_check.py's own
+    sys.path insert needs it there) -- so the composite's `python3
+    .github/scripts/board_stop_check.py` line runs the mutated module
+    without ever touching the real checkout. Caller removes the directory."""
+    root = tempfile.mkdtemp(prefix="board-stop-check-mutant-")
+    scripts_dir = os.path.join(root, ".github", "scripts")
+    os.makedirs(scripts_dir)
+    with open(os.path.join(scripts_dir, "board_stop_check.py"), "w", encoding="utf-8") as fh:
+        fh.write(board_stop_check_source)
+    shutil.copy(
+        os.path.join(REPO_ROOT, ".github", "scripts", "board_item_marker.py"),
+        os.path.join(scripts_dir, "board_item_marker.py"))
+    return root
+
+
+COMBINED_MUTATION_CASE = tuple(
+    c for c in SHELL_CASES
+    if c[0].startswith("a first pass through this run cancels nothing"))
 
 
 def composite_check_script():
@@ -252,7 +289,7 @@ def composite_check_script():
     return None
 
 
-def _run_shell_case(script_path, bindir, runs_dir, work, comments):
+def _run_shell_case(script_path, bindir, runs_dir, work, comments, repo_root=REPO_ROOT):
     case_dir = tempfile.mkdtemp(dir=work)
     comments_path = os.path.join(case_dir, "comments.json")
     with open(comments_path, "w", encoding="utf-8") as fh:
@@ -276,7 +313,7 @@ def _run_shell_case(script_path, bindir, runs_dir, work, comments):
     # pipefail {0}`: errexit is on whatever the script's own `set` says.
     proc = subprocess.run(
         ["bash", "--noprofile", "--norc", "-eo", "pipefail", script_path],
-        cwd=REPO_ROOT, env=env, capture_output=True, text=True)
+        cwd=repo_root, env=env, capture_output=True, text=True)
     with open(out, encoding="utf-8") as fh:
         outputs = dict(line.split("=", 1) for line in fh.read().splitlines() if "=" in line)
     with open(log, encoding="utf-8") as fh:
@@ -284,7 +321,7 @@ def _run_shell_case(script_path, bindir, runs_dir, work, comments):
     return proc, outputs, calls
 
 
-def run_shell_cases(script, verbose=True):
+def run_shell_cases(script, verbose=True, cases=SHELL_CASES, repo_root=REPO_ROOT):
     failures = 0
     work = tempfile.mkdtemp(prefix="board-stop-check-")
     try:
@@ -302,8 +339,9 @@ def run_shell_cases(script, verbose=True):
         script_path = os.path.join(work, "check.sh")
         with open(script_path, "w", encoding="utf-8") as fh:
             fh.write(script)
-        for name, comments, want_paused, want_cancel in SHELL_CASES:
-            proc, outputs, calls = _run_shell_case(script_path, bindir, runs_dir, work, comments)
+        for name, comments, want_paused, want_cancel in cases:
+            proc, outputs, calls = _run_shell_case(
+                script_path, bindir, runs_dir, work, comments, repo_root=repo_root)
             problems = []
             if proc.returncode != 0:
                 problems.append("exit {0}: {1}".format(proc.returncode, proc.stderr.strip()))
@@ -359,6 +397,44 @@ def composite_shell_check():
         return failures + 1
     print("note: mutation caught (cancel guard disabled: fails {0} composite "
           "shell case(s)).".format(caught))
+
+    guard_removed, guard_count = CANCEL_TARGET_GUARD_RE.subn(r"\1if true; then", script)
+    if guard_count != 1:
+        print("::error::verify-board-stop-check: could not locate the composite's "
+              "redundant cancel-target comparison (`if [ -n \"$cancel_run_id\" ] "
+              "&& [ \"$cancel_run_id\" != \"$GITHUB_RUN_ID\" ] ...`) to mutate.")
+        return failures + 1
+    unaffected = run_shell_cases(guard_removed, verbose=False)
+    if unaffected:
+        print("::error::verify-board-stop-check: disabling the redundant "
+              "cancel-target comparison alone changed {0} composite shell "
+              "case(s) -- it should be inert while find_stop_request() is "
+              "correct.".format(unaffected))
+        return failures + 1
+    with open(os.path.join(REPO_ROOT, ".github", "scripts", "board_stop_check.py"),
+              encoding="utf-8") as fh:
+        source = fh.read()
+    mutated_source, source_count = SELF_CANCEL_FALLBACK_RE.subn(
+        r'\1return StopDecision(True, last_other_run_id if last_other_run_id '
+        r'is not None else current_run_id)',
+        source)
+    if source_count != 1:
+        print("::error::verify-board-stop-check: could not locate "
+              "find_stop_request()'s self-cancel fallback line to mutate.")
+        return failures + 1
+    mutant_root = _mutated_repo_root(mutated_source)
+    try:
+        combined_caught = run_shell_cases(
+            guard_removed, verbose=False, cases=COMBINED_MUTATION_CASE, repo_root=mutant_root)
+    finally:
+        shutil.rmtree(mutant_root, ignore_errors=True)
+    if not combined_caught:
+        print("::error::verify-board-stop-check: mutation 'cancel-target comparison "
+              "removed + self-cancel fallback restored' was NOT caught -- the shell "
+              "comparison is not an independent backstop.")
+        return failures + 1
+    print("note: mutation caught (cancel-target comparison removed + self-cancel "
+          "fallback restored: fails {0} composite shell case(s)).".format(combined_caught))
     return failures
 
 
