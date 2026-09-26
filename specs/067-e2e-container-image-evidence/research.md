@@ -143,7 +143,18 @@ in the sense this section originally described; a human or a future
 session with live dispatch access must still run quickstart.md Scenario 3
 and either confirm the signal or switch to the documented log-scan
 fallback before this reaches the pass path with full confidence. The
-executed-step gate (Gate 99, `verify-gate-99.py`) exercises the shipped
+Also unconfirmed for the same reason: the `poll` step's run-enumeration
+read (`gh run list --repo "$E2E_REPO" --created ">=${kickoff_time}"`)
+assumes the installed `gh` CLI's `--created` flag accepts a bare
+`>=<ISO-8601 timestamp>` filter the way GitHub's search API date
+qualifiers do; T017 (or an earlier smoke check) should confirm this
+against the real `gh` version `ubuntu-latest` ships, not just against the
+gate's own stub. A flag it rejects fails the read outright, which this
+design already treats as `read_status=unreadable` (fail-infra, fail
+closed) rather than a silent pass -- so the risk here is a false
+`fail-infra` on an otherwise-good run, never a false `pass`.
+
+The executed-step gate (Gate 99, `verify-gate-99.py`) exercises the shipped
 `steps[]` check against synthetic fixtures only, which proves the shipped
 logic does what it says, not that GitHub's real Jobs API response matches
 the fixture's assumed shape.
