@@ -285,7 +285,7 @@ module-referencing file that orchestrates no cancel and confirm no finding;
 run the gate's clean-tree self-test and confirm no finding (spec.md's
 Independent Test for this story). No dependency on Phases 3-4's real code.
 
-- [ ] T020 [US3] In `.github/scripts/verify-single-home-idioms.py`, rewrite
+- [X] T020 [US3] In `.github/scripts/verify-single-home-idioms.py`, rewrite
   `check_board_stop_check()` to follow `check_token_mint()`'s pattern: for
   each `(path, doc)` via `load_yaml` (never grep raw text), resolve every
   step list via the existing `_step_lists(doc)` helper, excluding the
@@ -306,13 +306,13 @@ Independent Test for this story). No dependency on Phases 3-4's real code.
   require co-occurrence within one orchestration. Update the finding
   message's `<detail>` text to name which of the two facts matched and
   where.
-- [ ] T021 [US3] In the same file, rewrite `DECLARED_HOMES["board-stop-check"]`'s
+- [X] T021 [US3] In the same file, rewrite `DECLARED_HOMES["board-stop-check"]`'s
   comment (currently describing the `find_stop_request` import as the
   idiom) to describe the post-change idiom: obtain a decision from
   `board_stop_check.py`'s documented CLI, then `gh run cancel` whatever
   earlier run it names. Keep the comment's issue-#462 provenance note
   (FR-010, research.md D8).
-- [ ] T022 [US3] In `_clean_tree()`, rewrite the synthetic fixture planted
+- [X] T022 [US3] In `_clean_tree()`, rewrite the synthetic fixture planted
   at `DECLARED_HOMES["board-stop-check"]` (currently a shell containing the
   three literal fragments, with the import only as a never-executed `#
   from board_stop_check import find_stop_request` comment) to a shell that
@@ -321,14 +321,14 @@ Independent Test for this story). No dependency on Phases 3-4's real code.
   exercises the real post-change shape Gate 60 must stay silent on (FR-010,
   research.md D8). Depends on T020 (the new check must stay silent on this
   rewritten fixture).
-- [ ] T023 [US3] Rewrite the existing `selftest_third_paste_fails(
+- [X] T023 [US3] Rewrite the existing `selftest_third_paste_fails(
   "board-stop-check", ".github/workflows/third-board-stop-check.yml", ...)`
   call in `run_selftest()` to plant the *post-change* style (piping a
   payload to `.github/scripts/board_stop_check.py`, then `gh run cancel`)
   and assert a `board-stop-check` finding at that path (FR-010's "a finding
   on a planted paste written in the post-change style," User Story 3
   Acceptance Scenario 1). Depends on T020, T022.
-- [ ] T024 [US3] In `run_selftest()`, add a new self-test case that plants a
+- [X] T024 [US3] In `run_selftest()`, add a new self-test case that plants a
   file whose steps reference `.github/scripts/board_stop_check.py` (fact 1)
   but perform no `gh run cancel` (no fact 2) — e.g. a hypothetical dry-run
   reporter — and assert **no** `board-stop-check` finding for it (FR-010's
@@ -344,7 +344,7 @@ or 4 to have landed).
 
 ## Phase 6: Polish & Cross-Cutting Concerns
 
-- [ ] T025 [US3] Run `python3 .github/scripts/verify-single-home-idioms.py`
+- [X] T025 [US3] Run `python3 .github/scripts/verify-single-home-idioms.py`
   (against the real tree — expect `0 failure(s)`, no second site of the
   idiom exists) and `python3 .github/scripts/verify-single-home-idioms.py
   --self-test` (expect `0 failure(s)` across every synthetic case,
