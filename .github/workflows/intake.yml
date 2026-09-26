@@ -966,8 +966,11 @@ jobs:
       # "Compute cost line" already uses, plus !cancelled() (research.md
       # Decision 2). This is what closes intake's four silent paths (US1) and
       # replaces the cost line embedded in the two callouts below (US2).
+      # FR-009 tolerance: a lost cost comment must not change the run's
+      # conclusion -- see clarify.yml.
       - name: Report run cost
         if: steps.lifecycle-gate.outputs.is-open == 'true' && always() && !cancelled() && steps.agent.outcome != 'skipped'
+        continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-cost-report
         with:
           token: ${{ env.WC_BOT_TOKEN }}

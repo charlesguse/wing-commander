@@ -405,13 +405,13 @@ fails the PR-time gate suite by name.
 **Purpose**: Final verification and the process steps CLAUDE.md and plan.md
 call for around this specific change.
 
-- [ ] T021 Run `python .github/scripts/run-local-gates.py` (the full PR-time
+- [X] T021 Run `python .github/scripts/run-local-gates.py` (the full PR-time
       gate suite) and each touched script's own `--self-test` mode
       (`verify-clarification-gating.py --self-test`,
       `verify-metrics-summary-record-emission.py --self-test`,
       `verify-plan-tasks-cost-line.py --self-test`) per quickstart.md steps 1
       and 2; all must pass clean and reject every mutation.
-- [ ] T022 Before merge, run the `review-step-gating` skill over the diff
+- [X] T022 Before merge, run the `review-step-gating` skill over the diff
       (CLAUDE.md requires this for any change touching an `if:` or a failing
       step — every task in Phases 3–6 touches one), specifically checking
       FR-012a: the new report step must not be strandable by the readiness

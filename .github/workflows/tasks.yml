@@ -1245,7 +1245,10 @@ jobs:
       # same shape as plan.yml's: this job runs one of two mutually exclusive
       # agent steps per run (agent-auto / agent-pr), so the report fires
       # whichever one ran.
+      # FR-009 tolerance: a lost cost comment must not change the run's
+      # conclusion -- see clarify.yml.
       - name: Report run cost
+        continue-on-error: true
         if: >-
           steps.guard.outputs.skip != 'true' && always() && !cancelled() &&
           (steps.agent-auto.outcome != 'skipped' ||

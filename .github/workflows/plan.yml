@@ -1277,7 +1277,10 @@ jobs:
       # (agent-auto / agent-pr), so the report fires whichever one ran (see
       # "File findings from this run"'s steps.verify-pr.outcome != 'skipped'
       # || steps.verify-auto.outcome != 'skipped' precedent above).
+      # FR-009 tolerance: a lost cost comment must not change the run's
+      # conclusion -- see clarify.yml.
       - name: Report run cost
+        continue-on-error: true
         if: >-
           steps.dupe.outputs.skip != 'true' && always() && !cancelled() &&
           (steps.agent-auto.outcome != 'skipped' ||
