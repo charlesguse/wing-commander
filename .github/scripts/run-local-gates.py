@@ -158,7 +158,7 @@ import tempfile
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from wc_gate_registry import (pr_time_inline_steps,  # noqa: E402
+from wc_gate_registry import (gate_label, pr_time_inline_steps,  # noqa: E402
                               pr_time_invocations)
 from wc_shell_harness import ensure_jq, resolve_bash, use_utf8_stdout  # noqa: E402
 
@@ -273,7 +273,7 @@ def _parse_jobs_flag(argv):
     """Pull `--jobs N` / `--jobs=N` out of argv; everything else is a filter.
 
     Not argparse: this script has never had a flag before, every other
-    token is a free-text filter substring (see label_of matching below),
+    token is a free-text filter substring (see gate_label matching below),
     and argparse's positional/optional mixing would have to special-case
     that anyway. A tiny hand-rolled scan keeps `--jobs 4 sentinel gate-7`
     and `sentinel --jobs=4 gate-7` both working, which is the level of
@@ -334,19 +334,15 @@ def main(argv):
 
     all_gates = pr_time_invocations() + _inline_gate_files(bash)
 
-    def label_of(script, args):
-        base = os.path.basename(script)
-        return (base + " " + " ".join(args)).strip()
-
     jobs, argv = _parse_jobs_flag(argv)
 
     gates = all_gates
     if argv:
         gates = [(sc, ar) for sc, ar in gates
-                 if any(t in label_of(sc, ar) or t in sc for t in argv)]
+                 if any(t in gate_label(sc, ar) or t in sc for t in argv)]
     if not gates:
         sys.exit(f"no gates matched {argv!r}. Available:\n  "
-                 + "\n  ".join(label_of(sc, ar)
+                 + "\n  ".join(gate_label(sc, ar)
                                   for sc, ar in all_gates))
 
     results = []
@@ -361,7 +357,7 @@ def main(argv):
         print(f"Running {len(gates)} gate(s) with {sys.executable}\n"
               f"                and bash {bash}\n")
         for script, args in gates:
-            label = label_of(script, args)
+            label = gate_label(script, args)
             print(f"--- {label} " + "-" * max(0, 60 - len(label)))
             start = time.time()
             proc = subprocess.run(command_for(script, bash, args),
@@ -395,10 +391,10 @@ def main(argv):
         timing_cache = _load_timing_cache()
         gates = sorted(
             gates,
-            key=lambda sa: -timing_cache.get(label_of(*sa), float("inf")))
+            key=lambda sa: -timing_cache.get(gate_label(*sa), float("inf")))
         with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
             futures = [pool.submit(_run_one, script, args, bash,
-                                   label_of(script, args))
+                                   gate_label(script, args))
                        for script, args in gates]
             for fut in concurrent.futures.as_completed(futures):
                 label, rc, elapsed, out = fut.result()

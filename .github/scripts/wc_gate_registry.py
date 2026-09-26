@@ -39,8 +39,11 @@ import yaml
 
 SCRIPTS_DIR = ".github/scripts"
 WORKFLOWS_DIR = ".github/workflows"
+ACTIONS_DIR = ".github/actions"
+ACTIONS_SHARED_DIR = ACTIONS_DIR + "/_shared"
 SUBDIR_ENTRYPOINT = "run-tests.sh"
 SHARED_PREFIX = "wc_"
+STANDALONE_VERIFY_RE = re.compile(r"verify-.*\.(?:py|sh)$")
 
 
 def _rel(path):
@@ -71,6 +74,78 @@ def gate_scripts(root="."):
         r = _rel(p)
         out.append(r[len(prefix):] if prefix and r.startswith(prefix) else r)
     return sorted(out)
+
+
+def unsupported_actions_scripts(root="."):
+    """Every path under .github/actions/ that a test harness or standalone
+    gate script must not occupy -- see verify-actions-no-gate-scripts.py,
+    the gate this feeds.
+
+    Walks exactly `<root>/.github/actions`, never a broader sweep from
+    `<root>`, so a sibling checkout directory elsewhere in the tree is
+    unreachable by construction. At each directory: a `run-tests.sh`
+    entrypoint is always flagged; a standalone `verify-*.py`/`verify-*.sh`
+    is flagged only when no `run-tests.sh` shares its directory (one that
+    does is a helper of that harness, not a second violation).
+    `.github/actions/_shared/` is pruned from the walk entirely -- the
+    carve-out is structural, not a name checked per file.
+    """
+    base = os.path.join(root, *ACTIONS_DIR.split("/"))
+    if not os.path.isdir(base):
+        return []
+    prefix = _rel(os.path.join(root, "")) if root != "." else ""
+    out = []
+    for dirpath, dirnames, filenames in os.walk(base):
+        rel_dir = _rel(dirpath)
+        rel_dir = rel_dir[len(prefix):] if prefix and rel_dir.startswith(prefix) else rel_dir
+        if rel_dir == ACTIONS_SHARED_DIR or rel_dir.startswith(ACTIONS_SHARED_DIR + "/"):
+            dirnames[:] = []
+            continue
+        if SUBDIR_ENTRYPOINT in filenames:
+            matches = [SUBDIR_ENTRYPOINT]
+        else:
+            matches = sorted(n for n in filenames if STANDALONE_VERIFY_RE.match(n))
+        for name in matches:
+            r = _rel(os.path.join(dirpath, name))
+            out.append(r[len(prefix):] if prefix and r.startswith(prefix) else r)
+    return sorted(out)
+
+
+def referenced_actions_script_paths(root="."):
+    """Every .github/actions/... path any run: block names, -> workflows.
+
+    The reverse-direction sibling of `referenced_script_paths`, scoped to
+    `.github/actions/` instead of `.github/scripts/`. Matches on the
+    substring starting at `.github/actions/` regardless of what precedes it
+    in the source line, so a self-checkout prefix
+    (`./.wing-commander-pipeline/.github/actions/x.sh`) and the direct form
+    (`./.github/actions/x.sh`) both key to the identical string.
+    """
+    pattern = re.compile(r"\.github/actions/[A-Za-z0-9_./-]+")
+    result = {}
+    for wf in workflow_files(root):
+        for match in pattern.findall(_run_text(wf)):
+            result.setdefault(match.rstrip("."), set()).add(wf)
+    return {k: sorted(v) for k, v in sorted(result.items())}
+
+
+def gate_label(script, args, root="."):
+    """The display/cache/filter identity of one (script, args) gate call.
+
+    `script`'s path relative to `.github/scripts/` -- never
+    `os.path.basename`, which collapses every `.github/scripts/*/
+    run-tests.sh` harness to the identical string `run-tests.sh`. For a
+    script directly under `.github/scripts/` with no subdirectory, the
+    relative form and the basename coincide, so this is a drop-in
+    replacement for the old `label_of` on every gate that was never
+    colliding, not only the ones that were. Two distinct files cannot
+    share a repo-relative path, so this is unique across the whole gate
+    population by construction -- no uniqueness check is needed at call
+    sites.
+    """
+    prefix = SCRIPTS_DIR + "/"
+    relative = script[len(prefix):] if script.startswith(prefix) else script
+    return (relative + " " + " ".join(args)).strip()
 
 
 def _self_check():
