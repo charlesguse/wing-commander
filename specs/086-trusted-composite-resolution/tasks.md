@@ -80,7 +80,7 @@ branch's. Locally, `grep -n 'uses: \./\.github/actions/'
 
 ### Implementation for User Story 1
 
-- [ ] T002 [US1] In the `fix` job of `.github/workflows/board-loop.yml`,
+- [X] T002 [US1] In the `fix` job of `.github/workflows/board-loop.yml`,
       add the sidecar checkout step immediately after the existing
       "Snapshot helper scripts (before any agent runs)" step (~line 1761)
       and before "Fetch main / checkout the fix branch" — the step that
@@ -97,7 +97,7 @@ branch's. Locally, `grep -n 'uses: \./\.github/actions/'
       Add a one-line comment above the step: "see this file's header for
       why every job does this" (placeholder until T024 writes the header;
       contracts/documentation-updates.md "Pointer sites").
-- [ ] T003 [US1] In the `fix` job, rewrite every `uses:
+- [X] T003 [US1] In the `fix` job, rewrite every `uses:
       ./.github/actions/<name>` reference (14 call sites: two
       `wing-commander-context` calls at ~1774/1899, `wing-commander-board-labels`
       ~1783, `wing-commander-issue-context` at ~1835 and ~2131,
@@ -110,11 +110,11 @@ branch's. Locally, `grep -n 'uses: \./\.github/actions/'
       ./.wc-pristine-repo/.github/actions/<name>` (FR-001; must land after
       T002 so the sidecar the rewritten references depend on already
       exists).
-- [ ] T004 [US1] In the `review` job, add the same sidecar checkout +
+- [X] T004 [US1] In the `review` job, add the same sidecar checkout +
       provenance step immediately after its own "Snapshot helper scripts
       (before any agent runs)" step (~line 2260), before the job's first
       composite reference — same exact shape and pointer comment as T002.
-- [ ] T005 [US1] In the `review` job, rewrite every `uses:
+- [X] T005 [US1] In the `review` job, rewrite every `uses:
       ./.github/actions/<name>` reference (23 call sites across the main
       review pass and the review-fixup leg: `wing-commander-context`,
       `wing-commander-board-labels`, `wing-commander-issue-context`,
@@ -130,11 +130,11 @@ branch's. Locally, `grep -n 'uses: \./\.github/actions/'
       `wing-commander-post-agent-credential-status`,
       `wing-commander-agent-verdict`, `wing-commander-metrics-summary`
       (~2976-3061)) to the sidecar-relative form (FR-001; after T004).
-- [ ] T006 [US1] In the `readiness` job, add the same sidecar checkout +
+- [X] T006 [US1] In the `readiness` job, add the same sidecar checkout +
       provenance step immediately after its own "Snapshot helper scripts
       (before any agent runs)" step (~line 3180) — same exact shape and
       pointer comment as T002.
-- [ ] T007 [US1] In the `readiness` job, rewrite every `uses:
+- [X] T007 [US1] In the `readiness` job, rewrite every `uses:
       ./.github/actions/<name>` reference (6 call sites:
       `wing-commander-context`, `wing-commander-board-labels`,
       `wing-commander-board-stop-check`, `wing-commander-issue-context`,
@@ -168,38 +168,38 @@ added to this file inherits it automatically.)
 
 ### Implementation for User Story 2
 
-- [ ] T008 [US2] In the `select` job, add the sidecar checkout +
+- [X] T008 [US2] In the `select` job, add the sidecar checkout +
       provenance step immediately after its initial "Checkout" step (~line
       103) — these jobs have no helper-script snapshot to sit beside
       (research.md D2), so the sidecar checkout follows the job's own
       first checkout directly.
-- [ ] T009 [US2] In the `select` job, rewrite its 2 `uses:
+- [X] T009 [US2] In the `select` job, rewrite its 2 `uses:
       ./.github/actions/...` references (`wing-commander-context` ~141,
       `wing-commander-metrics-summary` ~748) to the sidecar-relative form
       (after T008).
-- [ ] T010 [US2] In the `triage` job, add the sidecar checkout +
+- [X] T010 [US2] In the `triage` job, add the sidecar checkout +
       provenance step immediately after its initial "Checkout" step (~line
       849).
-- [ ] T011 [US2] In the `triage` job, rewrite its 10 `uses:
+- [X] T011 [US2] In the `triage` job, rewrite its 10 `uses:
       ./.github/actions/...` references (~857-1140) to the
       sidecar-relative form (after T010).
-- [ ] T012 [US2] In the `route` job, add the sidecar checkout + provenance
+- [X] T012 [US2] In the `route` job, add the sidecar checkout + provenance
       step immediately after its initial "Checkout" step (~line 1272).
-- [ ] T013 [US2] In the `route` job, rewrite its 11 `uses:
+- [X] T013 [US2] In the `route` job, rewrite its 11 `uses:
       ./.github/actions/...` references (~1279-1509) to the
       sidecar-relative form (after T012).
-- [ ] T014 [US2] In the `prove-gate` job, add the sidecar checkout +
+- [X] T014 [US2] In the `prove-gate` job, add the sidecar checkout +
       provenance step immediately after its initial "Checkout" step (~line
       3517).
-- [ ] T015 [US2] In the `prove-gate` job, rewrite its 1 `uses:
+- [X] T015 [US2] In the `prove-gate` job, rewrite its 1 `uses:
       ./.github/actions/...` reference (`wing-commander-context` ~3524) to
       the sidecar-relative form (after T014).
-- [ ] T016 [US2] In the `prove` job, add the sidecar checkout + provenance
+- [X] T016 [US2] In the `prove` job, add the sidecar checkout + provenance
       step immediately after its initial "Checkout" step (~line 3658).
-- [ ] T017 [US2] In the `prove` job, rewrite its 5 `uses:
+- [X] T017 [US2] In the `prove` job, rewrite its 5 `uses:
       ./.github/actions/...` references (~3665-3837) to the
       sidecar-relative form (after T016).
-- [ ] T018 [US2] Confirm `resolve-model` gains no checkout step and no
+- [X] T018 [US2] Confirm `resolve-model` gains no checkout step and no
       rewrite: it carries zero `uses: ./.github/actions/...` references
       today and none are added by this feature (research.md D3) — leave it
       untouched and note that Gate 99's rule (b) applies to it automatically,
