@@ -35,7 +35,7 @@ path below is relative to the repository root.
 
 ## Phase 1: Setup
 
-- [ ] T001 Confirm the gate-number reservation above is still accurate:
+- [X] T001 Confirm the gate-number reservation above is still accurate:
   `grep -n "Gate 9[0-9]" .github/workflows/lint-workflows.yml` must show
   nothing above Gate 98. If it does, shift every "Gate 99" reference in
   this file and in contracts/gate-coverage-079.md to the next free number
@@ -71,7 +71,7 @@ counted turns) against the new budget of `65` and confirm none are
 reported over budget and no `elevated` trend band results (quickstart.md
 step 2, SC-001/SC-002).
 
-- [ ] T002 [US1] `.github/workflows/clarify.yml`: change the `max-turns`
+- [X] T002 [US1] `.github/workflows/clarify.yml`: change the `max-turns`
   input's `default:` from `40` to `65` (lines 25-29), and add an inline
   comment immediately above the `default:` line recording, verbatim: the
   accepted range `39-61` counted turns, the source (issue #587's recorded
@@ -80,7 +80,7 @@ step 2, SC-001/SC-002).
   recorded", research.md R1). Do not touch the input's `description`,
   `type`, or `required` fields — only the literal default and the new
   comment (FR-008/SC-004).
-- [ ] T003 [US1] Verify by replay (quickstart.md step 2): using the
+- [X] T003 [US1] Verify by replay (quickstart.md step 2): using the
   recorded history `{39, 45, 61}` and the new budget `65`, confirm
   `counted >= intended` is `false` for all three (no run over budget,
   SC-002) and that the window's `max-consumed-ceiling-fraction`
