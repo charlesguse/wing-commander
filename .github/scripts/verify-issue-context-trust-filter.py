@@ -35,6 +35,23 @@ A second fixture (only the Bot and the NONE non-author comment) asserts
 the zero-qualifying contract: comments-file is the empty string and
 comments.md is NOT written at all (context.md still is, title+body only).
 
+A third fixture (#520) sets OCCURRENCE_BOT_LOGIN (the composite's
+occurrence-bot-login input) and adds a stubbed issue-events fetch:
+bot-occurrences-file must hold exactly that login's Bot-type comments,
+oldest first -- never another bot's, never a User-type comment carrying
+the same login, never a human NONE comment with the occurrence text --
+last-reopened-at must be the newest `reopened` event, and every
+pre-existing output must be unchanged. The first two fixtures run with
+the input unset and assert both new outputs are empty; their stub
+refuses the events call, so no fetch is made without the input.
+The occurrence fixture's issue is a watchdog issue (filed by that App,
+with watchdog's fingerprint marker); NOT_WATCHDOG_ISSUES (no marker, a
+human or another bot filed it, a User-type author with the App's login)
+must stage no occurrence at all, since other agents share the App token
+(#520 review). OCCURRENCE_MUTATIONS (the Bot-type check dropped, the
+login check dropped, the sort dropped, the oldest reopen taken, the
+watchdog-issue rule dropped or either half of it) must each be caught.
+
 MUTATION: `or .user.id == $aid` dropped from all three jq programs (the
 qualifying-count filter, the excluded-human-count filter, and the
 comments.md template) -- the issue author's own NONE-association comment
@@ -127,7 +144,7 @@ case "$*" in
     printf '%%s\n' %(comment_lines)s
     exit 0
     ;;
-  *)
+%(events_case)s  *)
     echo "gate-96 stub gh: unrecognized invocation: $*" >&2
     exit 1
     ;;
@@ -135,25 +152,35 @@ esac
 '''
 
 
-def _build_stub_gh(comments):
+def _build_stub_gh(comments, events=None, issue_json=ISSUE_JSON):
     lines = " ".join(f"'{json.dumps(c)}'" for c in comments)
+    events_case = ""
+    if events is not None:
+        event_lines = " ".join(f"'{json.dumps(e)}'" for e in events)
+        events_case = (
+            f'  "api repos/{REPOSITORY}/issues/{ISSUE}/events?per_page=100 --paginate --jq .[]")\n'
+            f"    printf '%s\\n' {event_lines}\n"
+            "    exit 0\n"
+            "    ;;\n")
     text = STUB_GH_TEMPLATE % {
         "repo": REPOSITORY,
         "issue": ISSUE,
-        "issue_json": ISSUE_JSON,
+        "issue_json": issue_json,
         "comment_lines": lines,
+        "events_case": events_case,
     }
     return text
 
 
-def run_fixture(script, comments, tmproot):
+def run_fixture(script, comments, tmproot, bot_login=None, events=None,
+                issue_json=ISSUE_JSON):
     workdir = tempfile.mkdtemp(dir=tmproot)
     runner_temp = tempfile.mkdtemp(dir=tmproot)
     bindir = tempfile.mkdtemp(dir=tmproot)
     dest_dir = f"/tmp/wing-commander/issue-context-{ISSUE}"
     gh_path = os.path.join(bindir, "gh")
     with open(gh_path, "w", encoding="utf-8", newline="\n") as fh:
-        fh.write(_build_stub_gh(comments))
+        fh.write(_build_stub_gh(comments, events, issue_json))
     os.chmod(gh_path, 0o755)
     env = {
         "GH_TOKEN": "dummy-token",
@@ -161,6 +188,8 @@ def run_fixture(script, comments, tmproot):
         "ISSUE": ISSUE,
         "PATH": bindir + os.pathsep + os.environ["PATH"],
     }
+    if bot_login is not None:
+        env["OCCURRENCE_BOT_LOGIN"] = bot_login
     try:
         rc, out, outputs, _summary = run_step(BASH, script, workdir, env, runner_temp)
         comments_md = None
@@ -173,6 +202,12 @@ def run_fixture(script, comments, tmproot):
         if os.path.isfile(context_md_path):
             with open(context_md_path, encoding="utf-8") as fh:
                 context_md = fh.read()
+        occurrences = None
+        occurrences_path = outputs.get("bot-occurrences-file") or ""
+        if occurrences_path and os.path.isfile(occurrences_path):
+            with open(occurrences_path, encoding="utf-8") as fh:
+                occurrences = json.load(fh)
+        run_fixture.occurrences = occurrences
         return rc, out, outputs, comments_md, context_md
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
@@ -193,6 +228,10 @@ def check_full_fixture(script, label_prefix=""):
     prefix = f"{label_prefix}full fixture"
     if rc != 0:
         return [f"{prefix}: step exited {rc}: {out}"]
+
+    for key in ("bot-occurrences-file", "last-reopened-at"):
+        if outputs.get(key, None) != "":
+            failures.append(f"{prefix}: {key}={outputs.get(key)!r}, expected '' with occurrence-bot-login unset")
 
     if outputs.get("total-count") != "7":
         failures.append(f"{prefix}: total-count={outputs.get('total-count')!r}, expected '7'")
@@ -254,6 +293,157 @@ def check_zero_qualifying_fixture(script, label_prefix=""):
     elif "## Issue" not in context_md:
         failures.append(f"{prefix}: context.md has no '## Issue' section: {context_md!r}")
     return failures
+
+
+# --- #520: occurrence-bot-login stages one App's comments, nothing else. ---
+
+BOT_LOGIN = "wing-commander-bot[bot]"
+OCCURRENCE = ("\U0001F415 New occurrence of this fingerprint \u2014 "
+              "[this run](https://github.com/acme/widgets/actions/runs/{0}):")
+OCCURRENCE_COMMENTS = ALL_COMMENTS + [
+    _comment(BOT_LOGIN, 7000, "Bot", "NONE", "2024-01-09T00:00:00Z", OCCURRENCE.format(2)),
+    _comment(BOT_LOGIN, 7000, "Bot", "NONE", "2024-01-08T00:00:00Z", OCCURRENCE.format(1)),
+    _comment("other-app[bot]", 7001, "Bot", "MEMBER", "2024-01-10T00:00:00Z", OCCURRENCE.format(3)),
+    # Not a real GitHub shape (a User cannot hold a [bot] login); it is
+    # here so the `.user.type == "Bot"` half of the rule is exercised on
+    # its own.
+    _comment(BOT_LOGIN, 7002, "User", "NONE", "2024-01-11T00:00:00Z", OCCURRENCE.format(4)),
+    _comment("drive-by", 2001, "User", "NONE", "2024-01-12T00:00:00Z", OCCURRENCE.format(5)),
+]
+EVENTS = [
+    {"event": "closed", "created_at": "2024-01-05T00:00:00Z"},
+    {"event": "reopened", "created_at": "2024-01-08T00:00:00Z"},
+    {"event": "reopened", "created_at": "2024-01-03T00:00:00Z"},
+    {"event": "labeled", "created_at": "2024-01-20T00:00:00Z"},
+]
+EXPECTED_OCCURRENCES = [
+    {"created_at": "2024-01-08T00:00:00Z", "body": OCCURRENCE.format(1)},
+    {"created_at": "2024-01-09T00:00:00Z", "body": OCCURRENCE.format(2)},
+]
+
+
+def _issue(login, utype, body):
+    return json.dumps({"title": "watchdog: some-class", "body": body,
+                       "user": {"login": login, "id": 7000, "type": utype}})
+
+
+# #520 review: occurrences count only on an issue the App itself filed as a
+# watchdog issue (author login AND type, plus watchdog's fingerprint
+# marker) -- other agents hold the same App token and `gh issue comment`.
+MARKER = "<!-- wing-commander-watchdog: fingerprint=0123456789abcdef -->"
+WATCHDOG_ISSUE_JSON = _issue(BOT_LOGIN, "Bot", "## x\n\n" + MARKER + "\n")
+# (label, issue JSON) -- each must stage NO occurrence.
+NOT_WATCHDOG_ISSUES = (
+    ("App-filed issue with no fingerprint marker",
+     _issue(BOT_LOGIN, "Bot", "Filed by a stage agent.")),
+    ("human-filed issue carrying the marker",
+     _issue("reporter", "User", "copied: " + MARKER)),
+    ("another bot's issue carrying the marker",
+     _issue("other-app[bot]", "Bot", MARKER)),
+    ("User-type author with the App's login carrying the marker",
+     _issue(BOT_LOGIN, "User", MARKER)),
+    ("the default human-filed fixture issue", ISSUE_JSON),
+)
+
+
+def _run(script, issue_json, bot_login):
+    tmproot = tempfile.mkdtemp()
+    try:
+        result = run_fixture(script, OCCURRENCE_COMMENTS, tmproot,
+                             bot_login=bot_login, events=EVENTS,
+                             issue_json=issue_json)
+        return result + (run_fixture.occurrences,)
+    finally:
+        shutil.rmtree(tmproot, ignore_errors=True)
+
+
+def _unchanged_outputs(script, issue_json, with_input, prefix):
+    """The pre-existing outputs are identical with the input set or unset."""
+    _rc, _o, without, comments_md, context_md, _occ = _run(script, issue_json, None)
+    failures = []
+    for key in ("total-count", "qualifying-count", "excluded-human-count"):
+        if with_input[0].get(key) != without.get(key):
+            failures.append(f"{prefix}: {key}={with_input[0].get(key)!r} with "
+                            f"occurrence-bot-login set, {without.get(key)!r} without")
+    if (with_input[1], with_input[2]) != (comments_md, context_md):
+        failures.append(f"{prefix}: comments.md/context.md differ with "
+                        f"occurrence-bot-login set")
+    return failures
+
+
+def check_occurrence_fixture(script, label_prefix=""):
+    failures = []
+    rc, out, outputs, comments_md, context_md, occurrences = _run(
+        script, WATCHDOG_ISSUE_JSON, BOT_LOGIN)
+    prefix = f"{label_prefix}occurrence fixture"
+    if rc != 0:
+        return [f"{prefix}: step exited {rc}: {out}"]
+    if occurrences != EXPECTED_OCCURRENCES:
+        failures.append(f"{prefix}: bot-occurrences-file holds {occurrences!r}, "
+                        f"expected only {BOT_LOGIN}'s Bot comments, oldest "
+                        f"first: {EXPECTED_OCCURRENCES!r}")
+    if outputs.get("last-reopened-at") != "2024-01-08T00:00:00Z":
+        failures.append(f"{prefix}: last-reopened-at={outputs.get('last-reopened-at')!r}, "
+                        f"expected the newest reopened event '2024-01-08T00:00:00Z'")
+    if comments_md and BOT_LOGIN in comments_md:
+        failures.append(f"{prefix}: comments.md wrongly includes @{BOT_LOGIN}")
+    failures += _unchanged_outputs(script, WATCHDOG_ISSUE_JSON,
+                                   (outputs, comments_md, context_md), prefix)
+
+    for label, issue_json in NOT_WATCHDOG_ISSUES:
+        rc, out, outputs, _c, _x, occurrences = _run(script, issue_json, BOT_LOGIN)
+        sub = f"{label_prefix}not a watchdog issue ({label})"
+        if rc != 0:
+            failures.append(f"{sub}: step exited {rc}: {out}")
+            continue
+        if outputs.get("bot-occurrences-file", None) != "" or occurrences:
+            failures.append(f"{sub}: staged the App's comments as occurrences "
+                            f"({outputs.get('bot-occurrences-file')!r}, {occurrences!r})")
+        if outputs.get("last-reopened-at") != "2024-01-08T00:00:00Z":
+            failures.append(f"{sub}: last-reopened-at={outputs.get('last-reopened-at')!r}, "
+                            f"expected it on every issue")
+    return failures
+
+
+def check_no_occurrence_fixture(script):
+    """occurrence-bot-login set, a watchdog issue, but that App never
+    commented and the issue was never reopened: both outputs empty."""
+    tmproot = tempfile.mkdtemp()
+    try:
+        rc, out, outputs, _c, _x = run_fixture(
+            script, ZERO_QUALIFYING_COMMENTS, tmproot, bot_login=BOT_LOGIN,
+            events=[{"event": "closed", "created_at": "2024-01-05T00:00:00Z"}],
+            issue_json=WATCHDOG_ISSUE_JSON)
+    finally:
+        shutil.rmtree(tmproot, ignore_errors=True)
+    if rc != 0:
+        return [f"no-occurrence fixture: step exited {rc}: {out}"]
+    return [f"no-occurrence fixture: {key}={outputs.get(key)!r}, expected ''"
+            for key in ("bot-occurrences-file", "last-reopened-at")
+            if outputs.get(key, None) != ""]
+
+
+OCCURRENCE_MUTATIONS = (
+    ("occurrence filter drops the Bot-type check",
+     'select(.user.type == "Bot" and .user.login == $login)',
+     'select(.user.login == $login)'),
+    ("occurrence filter drops the login check (any bot)",
+     'select(.user.type == "Bot" and .user.login == $login)',
+     'select(.user.type == "Bot")'),
+    ("occurrences unsorted",
+     '.user.login == $login)] | sort_by(.created_at) |',
+     '.user.login == $login)] |'),
+    ("last-reopened-at takes the oldest reopen",
+     '| .created_at] | max // ""', '| .created_at] | min // ""'),
+    ("occurrences staged on any issue",
+     '--argjson watchdog "$WATCHDOG_ISSUE"', '--argjson watchdog true'),
+    ("watchdog issue no longer needs the fingerprint marker",
+     ' and ((.body // "") | test("<!-- wing-commander-watchdog: fingerprint=[0-9a-f]+ -->"))',
+     ''),
+    ("watchdog issue no longer needs the App as its author",
+     "'.user.type == \"Bot\" and .user.login == $login and ((.body",
+     "'((.body"),
+)
 
 
 # --- Mutation: drop `or .user.id == $aid` from all three jq programs. ----
@@ -351,13 +541,30 @@ def main():
         print(f"note: mutation (comments.md bot filter dropped) confirmed "
               f"caught: {mutated_bot_failures}")
 
+    failures += check_occurrence_fixture(script)
+    failures += check_no_occurrence_fixture(script)
+    for label, old, new in OCCURRENCE_MUTATIONS:
+        if script.count(old) != 1:
+            failures.append(f"mutation ({label}): expected one {old!r} in "
+                            f"{ACTION}, found {script.count(old)} -- update "
+                            f"this harness alongside the step.")
+            continue
+        caught = check_occurrence_fixture(script.replace(old, new, 1),
+                                          label_prefix=f"mutation ({label}): ")
+        if caught:
+            print(f"note: mutation ({label}) confirmed caught: {caught}")
+        else:
+            failures.append(f"mutation ({label}) did NOT change the occurrence "
+                            f"fixture's outcome")
+
     for f in failures:
         print(f"::error::Gate 96: {f}")
     if failures:
         print(f"Gate 96: {len(failures)} failure(s).")
         return 1
     print("Gate 96: the trust-filter jq's counts, ordering, and "
-          "zero-qualifying contract all behave correctly, and dropping "
+          "zero-qualifying contract and the #520 occurrence staging all "
+          "behave correctly, and dropping "
           "either the author-id clause or the comments.md bot filter is "
           "caught.")
     return 0

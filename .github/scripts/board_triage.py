@@ -410,22 +410,95 @@ def find_cited_run(text, repository):
     return match.group(0) if match else None
 
 
+# watchdog.yml's own recurrence comment opens with this line ("Ensure
+# pipeline-defect issue" step), both when it reopens a closed issue and
+# when it comments on an open one.
+OCCURRENCE_LINE = "\U0001F415 New occurrence of this fingerprint \u2014 [this run]("
+
+
+def latest_occurrence(occurrences, repository):
+    """#520: (run_url, created_at) of the newest watchdog occurrence among
+    `occurrences` -- wing-commander-issue-context's bot-occurrences-file, a
+    list of {created_at, body} that composite already restricted to
+    comments authored by this repository's own App bot (login AND
+    user.type, never body text), and to a watchdog issue that App filed
+    (that filter lives only there; the App token is shared, see
+    contracts/triage.md "Remaining risk"). A comment
+    counts only when its FIRST line is watchdog's OCCURRENCE_LINE citing a
+    run of `repository`. None when no comment qualifies."""
+    run_url = r"https://github\.com/{0}/actions/runs/[0-9]+".format(
+        re.escape(repository))
+    line_re = re.compile(
+        re.escape(OCCURRENCE_LINE) + "(" + run_url + r")[^)\s]*\):?$")
+    newest = None
+    for comment in occurrences if isinstance(occurrences, list) else []:
+        if not isinstance(comment, dict):
+            continue
+        body, created_at = comment.get("body"), comment.get("created_at")
+        if not isinstance(body, str) or not isinstance(created_at, str):
+            continue
+        match = line_re.match(body.split("\n", 1)[0].strip())
+        if match and (newest is None or created_at >= newest[1]):
+            newest = (match.group(1), created_at)
+    return newest
+
+
+def cite_run(context_text, occurrences, last_reopened_at, repository):
+    """#520: the run triage reads its close evidence from. Returns
+    (run_url or None, reason or None).
+
+    A: the newest watchdog occurrence (latest_occurrence()) wins over the
+    issue's own cite (find_cited_run()) -- a defect that recurred is
+    judged on its most recent run, not on the `_First seen_` run whose
+    pins main may since have bumped.
+    B: when the issue was reopened AFTER the cited run was recorded (no
+    occurrence at all, or a reopen newer than the newest one), no run is
+    cited: triage then has no close ground and proceeds, so neither an
+    action_bump nor a rate_limit close can rest on a run older than the
+    recurrence. `last_reopened_at` is wing-commander-issue-context's
+    last-reopened-at (an ISO-8601 UTC timestamp, or empty)."""
+    occurrence = latest_occurrence(occurrences, repository)
+    if occurrence is not None:
+        run_url, cited_at = occurrence
+    else:
+        run_url, cited_at = find_cited_run(context_text, repository), None
+    if run_url and last_reopened_at and (
+            cited_at is None or last_reopened_at > cited_at):
+        return None, ("reopened at {0}, after the cited run {1} was recorded"
+                      " -- no run cited".format(last_reopened_at, run_url))
+    return run_url, None
+
+
 def main():
     """Runtime entry point: reads the same shape triage() expects from
     stdin as JSON `{"issue": {...}, "cited_run": str|None}`, prints the
     TriageVerdict as JSON to stdout.
 
-    `find-cited-run --repository OWNER/REPO FILE` instead prints
-    find_cited_run() of FILE (nothing when no run is cited) -- the single
-    home board-loop.yml's triage `cite` step calls."""
+    `find-cited-run --repository OWNER/REPO [--bot-occurrences-file F]
+    [--last-reopened-at TS] FILE` instead prints cite_run() of FILE and
+    the two wing-commander-issue-context outputs (nothing when no run is
+    cited; the reason, if any, on stderr) -- the single home
+    board-loop.yml's triage `cite` step calls. An empty
+    --bot-occurrences-file means that composite staged none."""
     if len(sys.argv) > 1 and sys.argv[1] == "find-cited-run":
         import argparse
         parser = argparse.ArgumentParser(prog="board_triage.py find-cited-run")
         parser.add_argument("--repository", required=True)
+        parser.add_argument("--bot-occurrences-file", default="")
+        parser.add_argument("--last-reopened-at", default="")
         parser.add_argument("context_file")
         args = parser.parse_args(sys.argv[2:])
         with open(args.context_file, encoding="utf-8") as fh:
-            print(find_cited_run(fh.read(), args.repository) or "")
+            context_text = fh.read()
+        occurrences = []
+        if args.bot_occurrences_file:
+            with open(args.bot_occurrences_file, encoding="utf-8") as fh:
+                occurrences = json.load(fh)
+        run_url, reason = cite_run(context_text, occurrences,
+                                   args.last_reopened_at, args.repository)
+        if reason:
+            print("board_triage: " + reason, file=sys.stderr)
+        print(run_url or "")
         return
     payload = json.load(sys.stdin)
     verdict = triage(payload.get("issue") or {}, payload.get("cited_run"))
