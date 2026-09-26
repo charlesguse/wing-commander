@@ -1,0 +1,316 @@
+name: "reusable · fold-cycle-guard"
+
+# specs/074-serialized-fold-dispatch contracts/fold-cycle-guard.md (US3,
+# research.md D7). Deliberately agent-free: a small, fully deterministic
+# classification of a cancelled implement.yml run -- never started at all
+# vs. ran some steps then was cancelled -- and, only for the
+# never-started-and-correlated case, a lifecycle-issue notice plus an
+# at-most-once automatic re-dispatch (FR-012-FR-016a). Constitution VII: a
+# stage never reads github.event.* itself -- run-id/conclusion are passed
+# in explicitly by the wrapper (wing-commander-9b-fold-cycle-guard.yml).
+
+on:
+  workflow_call:
+    inputs:
+      run-id:
+        description: "The completed implement.yml-calling run to inspect."
+        type: string
+        required: true
+      conclusion:
+        description: "That run's conclusion."
+        type: string
+        required: true
+      spec-dir:
+        description: >
+          specs/NNN-slug. Empty (default) resolves it itself via the same
+          wing-commander-inspected-run-identity composite watchdog.yml
+          already uses, since a dispatched run's head-ref is uninformative
+          and the wrapper cannot know the spec ahead of time.
+        type: string
+        required: false
+        default: ""
+      implement-workflow:
+        description: >
+          Filename of the CONSUMER wrapper workflow to re-dispatch,
+          matching dispatch-once's existing implement-workflow input.
+        type: string
+        required: true
+      dry-run:
+        description: >
+          Quickstart/fixture use -- skips the real `gh workflow run`
+          re-dispatch, still exercises detection and notice composition.
+        type: boolean
+        required: false
+        default: false
+      pipeline-repo:
+        description: "Repository to check out for the pipeline's shared composite actions."
+        type: string
+        required: false
+        default: charlesguse/wing-commander
+      pipeline-ref:
+        description: "Ref of the pipeline repository to check out."
+        type: string
+        required: false
+        default: ""
+      runner:
+        description: "Runner label(s) for this stage's one job."
+        type: string
+        required: false
+        default: ubuntu-latest
+    secrets:
+      pipeline-repo-token:
+        description: "Token with read access to the pipeline repository, if private."
+        required: false
+      speckit-app-id:
+        description: "GitHub App ID used for pushes/issue comments"
+        required: true
+      speckit-app-private-key:
+        description: "GitHub App private key"
+        required: true
+    outputs:
+      action-taken:
+        description: "none | notice-only | notice-and-redispatch"
+        value: ${{ jobs.guard.outputs.action-taken }}
+
+permissions: {}
+
+jobs:
+  guard:
+    runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
+    permissions:
+      contents: write
+      issues: write
+      actions: read
+      id-token: write
+    outputs:
+      action-taken: ${{ steps.decide.outputs.action-taken }}
+    steps:
+      - name: Checkout consumer repository (bootstrap, default token)
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Resolve pipeline ref
+        id: pipeline-ref
+        env:
+          JOB_WORKFLOW_SHA: ${{ github.job_workflow_sha }}
+          PIPELINE_REF_INPUT: ${{ inputs.pipeline-ref }}
+        run: |
+          set -euo pipefail
+          ref="${PIPELINE_REF_INPUT:-$JOB_WORKFLOW_SHA}"
+          if [ -z "$ref" ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            payload=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+              "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=wing-commander-pipeline-ref" \
+              | jq -r '.value' | cut -d. -f2 | tr '_-' '/+')
+            while [ $(( ${#payload} % 4 )) -ne 0 ]; do payload="$payload="; done
+            ref=$(printf '%s' "$payload" | base64 -d 2>/dev/null | jq -r '.job_workflow_sha // empty' || true)
+          fi
+          if [ -z "$ref" ]; then
+            echo "::error::wing-commander fold-cycle-guard stage: cannot determine the pipeline commit to check out — github.job_workflow_sha is empty and no OIDC token is available. Grant the calling job id-token: write, or set the pipeline-ref input to the same ref as your uses: pin."
+            exit 1
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout pipeline repository (shared composite actions)
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ inputs.pipeline-repo }}
+          ref: ${{ steps.pipeline-ref.outputs.ref }}
+          token: ${{ secrets.pipeline-repo-token || github.token }}
+          path: .wing-commander-pipeline
+          persist-credentials: false
+
+      - name: Wing Commander context
+        id: ctx
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
+        with:
+          app-id: ${{ secrets.speckit-app-id }}
+          private-key: ${{ secrets.speckit-app-private-key }}
+
+      # Always resolved (even when inputs.spec-dir was already supplied)
+      # because this is also the only source of the lifecycle issue number
+      # the FR-012 notice posts to.
+      - name: Resolve inspected run's spec and lifecycle issue
+        id: identity
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-inspected-run-identity
+        with:
+          token: ${{ steps.ctx.outputs.token }}
+          actions-token: ${{ github.token }}
+          run-id: ${{ inputs.run-id }}
+          run-name: "Wing Commander · 5 implement"
+
+      # Detection algorithm (contracts/fold-cycle-guard.md; research.md D7):
+      # a fully deterministic classification, never an agent's inference
+      # (Principle IX) -- 1) never-started vs ran-then-cancelled, 2) a
+      # positive, deterministic correlation with another entrant (here:
+      # this feature's OWN ledger showing another ticket for the same
+      # spec-dir granted within a short window of this run's cancellation
+      # -- the one residual collision research.md D6 describes, a non-
+      # ticketed dispatch colliding with a ticketed run), 3) the
+      # redispatch_count bound.
+      - name: Detect a lost cycle and react
+        id: decide
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_TOKEN: ${{ steps.ctx.outputs.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ inputs.run-id }}
+          CONCLUSION: ${{ inputs.conclusion }}
+          SPEC_DIR: ${{ inputs.spec-dir || steps.identity.outputs.spec-dir }}
+          ISSUE: ${{ steps.identity.outputs.lifecycle-issue }}
+          IMPLEMENT_WORKFLOW: ${{ inputs.implement-workflow }}
+          DRY_RUN: ${{ inputs.dry-run }}
+        run: |
+          set -euo pipefail
+          LEDGER=".wing-commander-pipeline/.github/actions/_shared/fold-queue-ledger.sh"
+
+          if [ "$CONCLUSION" != "cancelled" ]; then
+            echo "action-taken=none" >> "$GITHUB_OUTPUT"
+            echo "fold-cycle-guard: conclusion is '$CONCLUSION', not 'cancelled' -- nothing to do." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          jobs_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs?per_page=100")"
+          never_started=true
+          if printf '%s' "$jobs_json" | jq -e '[.jobs[] | select(.started_at != null)] | length > 0' >/dev/null 2>&1; then
+            never_started=false
+          fi
+
+          if [ "$never_started" != "true" ]; then
+            # FR-013: ran at least one step, then was cancelled -- today's
+            # existing manual-cancel silence, unchanged.
+            echo "action-taken=none" >> "$GITHUB_OUTPUT"
+            echo "fold-cycle-guard: run $RUN_ID started at least one job step before being cancelled -- today's silent manual-cancel case, unchanged." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          if [ -z "$SPEC_DIR" ]; then
+            echo "action-taken=none" >> "$GITHUB_OUTPUT"
+            echo "fold-cycle-guard: no spec-dir could be resolved for run $RUN_ID -- cannot correlate or report." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          run_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID")"
+          cancelled_at="$(printf '%s' "$run_json" | jq -r '.updated_at')"
+          cancelled_epoch=$(date -u -d "$cancelled_at" +%s 2>/dev/null || echo 0)
+
+          # research.md D6's residual collision: a correlated entrant is
+          # another ticket for this SAME spec-dir granted within a short
+          # window of this run's cancellation -- since every ticketed
+          # participant now serializes through this ledger (D1), the only
+          # way a job still gets evicted from the GitHub concurrency group
+          # is a non-ticketed dispatch (this cancelled run) colliding with
+          # a ticketed one that won admission around the same moment. Reads
+          # the LIVE current head, a best-effort approximation (the ledger
+          # keeps no historical head-transition log) -- adequate here
+          # because the queue is typically near-empty again within
+          # poll-interval-seconds of a real collision, so "current head"
+          # and "head at cancellation" coincide for the common case this
+          # guard exists to catch.
+          peek_out="$(SPEC_DIR="$SPEC_DIR" PEEK_TOKEN="__fold-cycle-guard-probe__" bash "$LEDGER" peek)"
+          head_granted_at="$(printf '%s\n' "$peek_out" | grep '^head-granted-at=' | cut -d= -f2-)"
+
+          correlated=false
+          if [ -n "$head_granted_at" ] && [ "$cancelled_epoch" -gt 0 ]; then
+            granted_epoch=$(date -u -d "$head_granted_at" +%s 2>/dev/null || echo 0)
+            if [ "$granted_epoch" -gt 0 ]; then
+              diff=$(( cancelled_epoch - granted_epoch ))
+              [ "$diff" -lt 0 ] && diff=$(( -diff ))
+              # Five-minute correlation window: generous relative to the
+              # composites' own default 10s poll interval, tight relative
+              # to a typical implement cycle's runtime.
+              if [ "$diff" -le 300 ]; then
+                correlated=true
+              fi
+            fi
+          fi
+
+          if [ "$correlated" != "true" ]; then
+            # research.md D7's tie-break: an unexplained pending-cancel
+            # with no positive replacement evidence stays silent, exactly
+            # like today's default, rather than guessing a cause.
+            echo "action-taken=none" >> "$GITHUB_OUTPUT"
+            echo "fold-cycle-guard: run $RUN_ID never started and was cancelled, but no correlated entrant was found for $SPEC_DIR -- staying silent (research.md D7)." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          if [ -z "$ISSUE" ]; then
+            echo "action-taken=none" >> "$GITHUB_OUTPUT"
+            echo "fold-cycle-guard: no lifecycle issue could be resolved for $SPEC_DIR -- cannot post the notice." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          round_out="$(SPEC_DIR="$SPEC_DIR" IMPLEMENT_RUN_ID="$RUN_ID" bash "$LEDGER" peek-implement-run)"
+          round="$(printf '%s\n' "$round_out" | grep '^round=' | cut -d= -f2-)"
+          redispatch_count="$(printf '%s\n' "$round_out" | grep '^redispatch-count=' | cut -d= -f2-)"
+          iteration="$(printf '%s\n' "$round_out" | grep '^iteration=' | cut -d= -f2-)"
+
+          run_url="${GITHUB_SERVER_URL:-https://github.com}/$GITHUB_REPOSITORY/actions/runs/$RUN_ID"
+          notice_file="$RUNNER_TEMP/fold-cycle-guard-notice.md"
+          {
+            echo "⏸️ **Lost implementation cycle — replaced by a concurrency group**"
+            echo ""
+            echo "Spec: \`$SPEC_DIR\`${round:+ (round $round)}"
+            echo "Run: $run_url was cancelled while pending — another admitted run entered the same concurrency group before it could start."
+          } > "$notice_file"
+
+          if [ "$redispatch_count" = "1" ]; then
+            {
+              echo ""
+              echo "This cycle has already been automatically re-dispatched once (FR-016a) — a maintainer's re-drive is the remaining step."
+            } >> "$notice_file"
+            GH_TOKEN="$ISSUE_TOKEN" gh issue comment "$ISSUE" --body-file "$notice_file"
+            echo "action-taken=notice-only" >> "$GITHUB_OUTPUT"
+            echo "fold-cycle-guard: reported a second loss for $SPEC_DIR round $round -- no further automatic dispatch (FR-016a)." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          if [ "$DRY_RUN" = "true" ]; then
+            {
+              echo ""
+              echo "(dry-run: no re-dispatch attempted)"
+            } >> "$notice_file"
+            GH_TOKEN="$ISSUE_TOKEN" gh issue comment "$ISSUE" --body-file "$notice_file"
+            echo "action-taken=notice-only" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # FR-016/FR-016a's at-most-once bound: an atomic CAS claim, never
+          # this stage's own judgment about how many times it "already
+          # tried" (Principle IX).
+          claim_out="$(SPEC_DIR="$SPEC_DIR" ROUND="$round" bash "$LEDGER" claim-redispatch)"
+          should_redispatch="$(printf '%s\n' "$claim_out" | grep '^should-redispatch=' | cut -d= -f2-)"
+
+          if [ "$should_redispatch" != "true" ]; then
+            {
+              echo ""
+              echo "This cycle has already been automatically re-dispatched once (FR-016a) — a maintainer's re-drive is the remaining step."
+            } >> "$notice_file"
+            GH_TOKEN="$ISSUE_TOKEN" gh issue comment "$ISSUE" --body-file "$notice_file"
+            echo "action-taken=notice-only" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          GH_TOKEN="$GH_TOKEN" gh workflow run "$IMPLEMENT_WORKFLOW" \
+            -R "$GITHUB_REPOSITORY" -f spec_dir="$SPEC_DIR" -f issue="$ISSUE" -f iteration="${iteration:-1}"
+
+          new_run_url=""
+          for _ in 1 2 3 4 5 6; do
+            sleep 5
+            new_run_url=$(gh run list -R "$GITHUB_REPOSITORY" --workflow "$IMPLEMENT_WORKFLOW" \
+              --created ">=$cancelled_at" --limit 1 --json url --jq '.[0].url // empty' 2>/dev/null) || new_run_url=""
+            [ -n "$new_run_url" ] && break
+          done
+
+          {
+            echo ""
+            if [ -n "$new_run_url" ]; then
+              echo "Re-dispatched once automatically: $new_run_url"
+            else
+              echo "Re-dispatched once automatically — see the workflow's Actions tab for the new run."
+            fi
+          } >> "$notice_file"
+          GH_TOKEN="$ISSUE_TOKEN" gh issue comment "$ISSUE" --body-file "$notice_file"
+          echo "action-taken=notice-and-redispatch" >> "$GITHUB_OUTPUT"
+          echo "fold-cycle-guard: re-dispatched $SPEC_DIR round $round once (FR-016)." >> "$GITHUB_STEP_SUMMARY"

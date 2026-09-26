@@ -93,6 +93,27 @@
 #                     active and that its `granted_at` predates the
 #                     caller-supplied staleness bound (research.md D6);
 #                     this transform only performs the removal.
+#   record-implement-run -- SPEC_DIR, ROUND, IMPLEMENT_RUN_ID
+#                     Sets rounds[round].implement_run_id (data-model.md) --
+#                     the dispatched implement.yml run's OWN run id, distinct
+#                     from the implement-kind ticket's run_id field (which
+#                     carries the DISPATCHING run's id, since claim-dispatch
+#                     enqueues that ticket before the new run exists). Called
+#                     by dispatch-once once it has correlated the dispatched
+#                     run's own id (mirroring wing-commander-dispatch-and-
+#                     wait's token-correlation, research.md D7) -- what
+#                     fold-cycle-guard.yml reads to know which run it is
+#                     watching for this round. Idempotent: re-setting the
+#                     same value is a no-op write.
+#   claim-redispatch -- SPEC_DIR, ROUND
+#                     FR-016/FR-016a's at-most-once bound, the same single-
+#                     winner CAS shape as claim-dispatch: succeeds
+#                     (should-redispatch: true) only if
+#                     rounds[round].redispatch_count is 0, and in the same
+#                     write sets it to 1; otherwise returns
+#                     should-redispatch: false and mutates nothing. Called
+#                     by fold-cycle-guard.yml (research.md D7) -- never
+#                     incremented past 1.
 #
 # Every transform is idempotent under retry: a retried write observes its
 # own prior effect on the freshly re-fetched tip and returns the same
@@ -111,6 +132,12 @@
 # run's own completion records instead of the base..tip git-log range scan
 # that could misattribute a concurrent run's fold commits.
 #
+# A seventh mode, `peek-implement-run` -- SPEC_DIR, IMPLEMENT_RUN_ID -- scans
+# every round for this spec-dir for the one whose implement_run_id matches,
+# returning that round's number and redispatch_count (empty round when
+# none matches). Used by fold-cycle-guard.yml to find which round a
+# cancelled implement.yml run belonged to.
+#
 # Output: one `key=value` line per result field on stdout (never
 # $GITHUB_OUTPUT directly -- the calling composite step decides which
 # fields it needs and how to publish them, since the three composites
@@ -120,9 +147,9 @@ set -uo pipefail
 TRANSFORM="${1:-}"
 
 case "$TRANSFORM" in
-  enqueue|release|claim-dispatch|reclaim-stale|peek|peek-round) ;;
+  enqueue|release|claim-dispatch|reclaim-stale|record-implement-run|claim-redispatch|peek|peek-round|peek-implement-run) ;;
   *)
-    echo "::error::fold-queue-ledger.sh: unknown or missing transform '$TRANSFORM' (expected one of: enqueue, release, claim-dispatch, reclaim-stale, peek, peek-round)"
+    echo "::error::fold-queue-ledger.sh: unknown or missing transform '$TRANSFORM' (expected one of: enqueue, release, claim-dispatch, reclaim-stale, record-implement-run, claim-redispatch, peek, peek-round, peek-implement-run)"
     exit 1
     ;;
 esac
@@ -143,6 +170,9 @@ case "$TRANSFORM" in
   peek-round)
     : "${ROUND:?fold-queue-ledger.sh peek-round: ROUND is required}"
     ;;
+  peek-implement-run)
+    : "${IMPLEMENT_RUN_ID:?fold-queue-ledger.sh peek-implement-run: IMPLEMENT_RUN_ID is required}"
+    ;;
   enqueue)
     : "${KIND:?fold-queue-ledger.sh enqueue: KIND is required}"
     : "${RUN_ID:?fold-queue-ledger.sh enqueue: RUN_ID is required}"
@@ -162,6 +192,13 @@ case "$TRANSFORM" in
     ;;
   reclaim-stale)
     : "${STALE_TOKEN:?fold-queue-ledger.sh reclaim-stale: STALE_TOKEN is required}"
+    ;;
+  record-implement-run)
+    : "${ROUND:?fold-queue-ledger.sh record-implement-run: ROUND is required}"
+    : "${IMPLEMENT_RUN_ID:?fold-queue-ledger.sh record-implement-run: IMPLEMENT_RUN_ID is required}"
+    ;;
+  claim-redispatch)
+    : "${ROUND:?fold-queue-ledger.sh claim-redispatch: ROUND is required}"
     ;;
 esac
 
@@ -229,6 +266,34 @@ if [ "$TRANSFORM" = "peek-round" ]; then
       "folded-items": (.specs[$spec].rounds[$round].folded_items // [] | tojson),
       "not-folded-items": (.specs[$spec].rounds[$round].not_folded_items // [] | tojson)
     }
+  ' "$current_json" | jq -r 'to_entries[] | "\(.key)=\(.value)"'
+  exit 0
+fi
+
+if [ "$TRANSFORM" = "peek-implement-run" ]; then
+  clone_dir="$workdir/peek-implement-run-clone"
+  if git ls-remote --exit-code "$auth_url" "refs/heads/$LEDGER_BRANCH" >/dev/null 2>&1; then
+    if ! git clone --quiet --depth 1 --branch "$LEDGER_BRANCH" --single-branch "$auth_url" "$clone_dir" 2>"$workdir/peek-implement-run-clone-err.txt"; then
+      cat "$workdir/peek-implement-run-clone-err.txt" >&2
+      echo "::error::fold-queue-ledger.sh peek-implement-run: failed to read $LEDGER_BRANCH"
+      exit 1
+    fi
+  fi
+  ledger_file="$clone_dir/$LEDGER_PATH"
+  if [ -f "$ledger_file" ]; then
+    current_json="$ledger_file"
+  else
+    current_json="$workdir/empty-ledger.json"
+    echo '{"specs":{}}' > "$current_json"
+  fi
+  jq -c --arg spec "$SPEC_DIR" --arg implement_run_id "$IMPLEMENT_RUN_ID" '
+    (.specs[$spec].rounds // {}) as $rounds
+    | ($rounds | to_entries | map(select(.value.implement_run_id == $implement_run_id)) | .[0]) as $match
+    | {
+        round: ($match.key // ""),
+        "redispatch-count": (($match.value.redispatch_count // 0) | tostring),
+        iteration: (($match.value.iteration // "") | tostring)
+      }
   ' "$current_json" | jq -r 'to_entries[] | "\(.key)=\(.value)"'
   exit 0
 fi
@@ -382,6 +447,28 @@ JQ
   end
 JQ
     ;;
+  record-implement-run)
+    cat > "$filter_file" <<'JQ'
+.specs[$spec] //= {"round": 0, "queue": [], "rounds": {}}
+| if (.specs[$spec].rounds[$round].implement_run_id // "") == $implement_run_id then
+    { changed: false, ledger: ., result: { recorded: "true" } }
+  else
+    .specs[$spec].rounds[$round].implement_run_id = $implement_run_id
+    | { changed: true, ledger: ., result: { recorded: "true" } }
+  end
+JQ
+    ;;
+  claim-redispatch)
+    cat > "$filter_file" <<'JQ'
+.specs[$spec] //= {"round": 0, "queue": [], "rounds": {}}
+| if (.specs[$spec].rounds[$round].redispatch_count // 0) == 0 then
+    .specs[$spec].rounds[$round].redispatch_count = 1
+    | { changed: true, ledger: ., result: { "should-redispatch": "true" } }
+  else
+    { changed: false, ledger: ., result: { "should-redispatch": "false" } }
+  end
+JQ
+    ;;
 esac
 
 max_attempts=8
@@ -450,6 +537,14 @@ while [ "$attempt" -le "$max_attempts" ]; do
       ;;
     reclaim-stale)
       jq -c --arg spec "$SPEC_DIR" --arg stale_token "$STALE_TOKEN" --arg now "$now" \
+        -f "$filter_file" "$current_json" > "$output_file"
+      ;;
+    record-implement-run)
+      jq -c --arg spec "$SPEC_DIR" --arg round "$ROUND" --arg implement_run_id "$IMPLEMENT_RUN_ID" --arg now "$now" \
+        -f "$filter_file" "$current_json" > "$output_file"
+      ;;
+    claim-redispatch)
+      jq -c --arg spec "$SPEC_DIR" --arg round "$ROUND" --arg now "$now" \
         -f "$filter_file" "$current_json" > "$output_file"
       ;;
   esac

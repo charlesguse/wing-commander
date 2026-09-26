@@ -2952,6 +2952,7 @@ jobs:
           FOLDED_ITEMS: ${{ steps.claim.outputs.folded-items }}
           NOT_FOLDED_ITEMS: ${{ steps.claim.outputs.not-folded-items }}
           IMPLEMENT_TOKEN: ${{ steps.claim.outputs.implement-token }}
+          ROUND: ${{ needs.fold-turn-dispatch.outputs.round }}
         run: |
           set -euo pipefail
           next="$ITERATION"
@@ -2997,6 +2998,15 @@ jobs:
               --created ">=$start_ts" --limit 1 --json url --jq '.[0].url // empty' 2>/dev/null) || run_url=""
             [ -n "$run_url" ] && break
           done
+
+          # research.md D7: fold-cycle-guard.yml needs THIS dispatched run's
+          # own id (distinct from the implement-token's run_id field, which
+          # carries the DISPATCHING run's id) to know which round a later
+          # cancelled implement.yml run belonged to.
+          if [ -n "$run_url" ]; then
+            ROUND="$ROUND" IMPLEMENT_RUN_ID="${run_url##*/runs/}" \
+              bash .wing-commander-pipeline/.github/actions/_shared/fold-queue-ledger.sh record-implement-run >/dev/null
+          fi
 
           body_file="$RUNNER_TEMP/dispatch-once-reply.md"
           {

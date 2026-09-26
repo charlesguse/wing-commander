@@ -1,0 +1,34 @@
+name: "Wing Commander · 9b fold cycle guard"
+
+# specs/074-serialized-fold-dispatch (US3, contracts/fold-cycle-guard.md):
+# mirrors wing-commander-8-watchdog.yml's workflow_run wiring for the same
+# "Wing Commander · 5 implement" workflow, so both reactors observe every
+# completed implement run independently. The wrapper owns the trigger and
+# extracts github.event.workflow_run.* explicitly -- the reusable stage
+# never reads github.event.* itself (Constitution VII).
+
+on:
+  workflow_run:
+    workflows:
+      - "Wing Commander · 5 implement"
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  fold-cycle-guard:
+    if: github.event.workflow_run.conclusion == 'cancelled'
+    permissions:
+      contents: write
+      issues: write
+      actions: read
+      id-token: write
+    uses: ./.github/workflows/fold-cycle-guard.yml
+    with:
+      run-id: ${{ format('{0}', github.event.workflow_run.id) }}
+      conclusion: ${{ github.event.workflow_run.conclusion }}
+      implement-workflow: wing-commander-5-implement.yml
+      runner: ${{ vars.WING_COMMANDER_RUNNER || 'ubuntu-latest' }}
+    secrets:
+      speckit-app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
+      speckit-app-private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
