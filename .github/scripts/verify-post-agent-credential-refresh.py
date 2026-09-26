@@ -18,9 +18,19 @@ that touches a workflow file.
 
 WHAT THIS CHECKS
 ----------------
-For each of the 8 sweep-stage jobs (FR-007's list), except the jobs in
-AGENTLESS_JOBS (tasks-approved: a PR-merge acceptance handler that never
-runs an agent step by design):
+Subject selection (spec 072): every job, in every `.github/workflows/*.yml`
+file, containing a step whose `uses:` matches `^anthropics/claude-code-
+action@` is a subject -- derived structurally (derive_subjects()), never a
+hand-typed list. SUBJECT_FLOOR is a checked-in floor of jobs the derived set
+MUST still cover (a floor member the derivation no longer reaches fails
+loudly, FR-004); a job in EXCLUSIONS is derived but deliberately not held to
+the credential-freshness checks below, for the one-line reason recorded
+there (FR-012/FR-013). AGENTLESS_JOBS (tasks-approved: a PR-merge acceptance
+handler that never runs an agent step by design) is exempted from the
+"must contain an agent step" checks and from floor-coverage, but still
+scanned for checks 3 and 5 below.
+
+For every derived, non-excluded subject:
 
 1. No step positioned after the job's first agent step references
    `steps.<any-id>.outputs.*token*` directly (dot or bracket notation, or
@@ -44,12 +54,14 @@ runs an agent step by design):
    the tolerance is a property of the step itself (maintainer review of PR
    #407 hole (b): an earlier version of this check matched only the bare
    name).
-4. If any of the 8 named files is missing, a named job cannot be located, a
-   subject job outside AGENTLESS_JOBS contains zero agent steps, or zero
-   agent steps are found across the whole named subject, the gate fails
-   loudly rather than passing vacuously over an empty result set (FR-022,
-   Constitution Principle VIII; maintainer review of PR #407 hole (c): a
-   job silently losing its agent step used to pass this gate).
+4. If a `.github/workflows/*.yml` file is missing or fails to parse
+   (FR-006), a floor-named job is no longer reachable by derivation
+   (FR-004), or derivation yields zero subjects at all (FR-005), the gate
+   fails loudly rather than passing vacuously over an empty or shrunk
+   result set (FR-022, Constitution Principle VIII; maintainer review of PR
+   #407 hole (c): a job silently losing its agent step used to pass this
+   gate -- now caught via the floor-coverage branch, since it drops out of
+   derivation entirely).
 5. Every "Record agent-ran signal", "Refresh authenticated spec-branch
    remote (post-agent...)", and "Determine failed post-agent step" step
    resolves through its one shared composite home
@@ -117,19 +129,27 @@ step deleted entirely; the credential-status step renamed away from its
 recognized name with its `uses:` reverted; the "Determine failed
 post-agent step" step deleted outright (hole (a)); implement.yml's
 progress-agent-step credential-status call deleted while cycle's is
-duplicated, leaving the job-wide total unchanged (hole (c)); the subject
-list pointed at a 9th nonexistent file; and the subject list emptied --
-and asserts each one fails.
+duplicated, leaving the job-wide total unchanged (hole (c)); a real agent
+step's `uses:` respelled to a reference AGENT_ACTION_RE no longer matches;
+SUBJECT_FLOOR pointed at a 9th nonexistent file or at a nonexistent job in
+an existing file; derivation yielding zero subjects; and watchdog.yml's
+`diagnose` EXCLUSIONS entry removed -- and asserts each one fails.
 
 Usage: python3 .github/scripts/verify-post-agent-credential-refresh.py [--self-test]
 """
 import copy
+import glob
 import io
 import os
 import re
 import sys
 
 import yaml
+
+# Sentinel for a `.github/workflows/*.yml` file that exists but failed to
+# parse (yaml.safe_load raised) -- distinct from None ("file missing"), so
+# derive_subjects()/scan() can name which failure mode applies (FR-006).
+PARSE_ERROR = "PARSE_ERROR"
 
 AGENT_ACTION_RE = re.compile(r"^anthropics/claude-code-action@")
 # Matches steps.<id>.outputs.<...token...> in every mix of dot and bracket
@@ -209,11 +229,14 @@ SINGLE_HOME_STEPS = [
 
 # The "Determine which dependency did not start" reason step lives in each
 # stage's separate survivor/stalled job (spec 041), not the entry job
-# SUBJECTS scans -- a second, small map and check covers it (second
+# derive_subjects() selects -- a second, small map and check covers it (second
 # maintainer review of PR #407, CLAUDE.md single-home rule). auto-update-
 # spec-kit.yml's e2e-stage and plan.yml are excluded: neither has a
 # wing-commander-chain-stop-notice-based survivor job (contracts/
 # agent-ran-signal.md's "Not in scope for consumption").
+# keyed to a different job than the agent-step subject derivation selects;
+# deriving this would need its own structural rule, out of scope for this
+# feature (spec 072 item 1).
 STALL_REASON_JOBS = {
     ".github/workflows/clarify.yml": "stalled",
     ".github/workflows/finalize.yml": "stalled",
@@ -225,8 +248,14 @@ STALL_REASON_JOBS = {
 REASON_STEP_NAME = "Determine which dependency did not start"
 REASON_COMPOSITE = "wing-commander-stall-reason"
 
-# path -> job names in scope, per FR-007's eight named stages.
-SUBJECTS = {
+# path -> job names this feature's derivation is known to have covered as
+# of the last time this floor was updated (spec 072's D3): no longer the
+# selector `scan()` inspects (derive_subjects() is), read only to detect a
+# subject dropping out of derivation unnoticed (FR-004). A derived subject
+# absent from this floor is inspected like any other subject and never
+# fails for that reason alone -- an un-updated floor fails safe, it never
+# shrinks coverage. New entries land as a job adopts the contract (T026).
+SUBJECT_FLOOR = {
     ".github/workflows/intake.yml": ["intake"],
     ".github/workflows/clarify.yml": ["clarify"],
     ".github/workflows/plan.yml": ["plan"],
@@ -235,11 +264,40 @@ SUBJECTS = {
     ".github/workflows/finalize.yml": ["finalize"],
     ".github/workflows/pr-conversation.yml": ["classify-and-announce", "act"],
     ".github/workflows/auto-update-spec-kit.yml": ["e2e-stage"],
+    ".github/workflows/board-loop.yml": ["triage", "route", "fix", "review"],
+    ".github/workflows/cleanup.yml": ["teardown-done"],
+    ".github/workflows/rebase.yml": ["rebase"],
 }
 
-# Jobs in SUBJECTS that never run an agent step, by design -- tasks-approved
+# (path, job_name) -> one-line reason a derived subject is deliberately not
+# held to the credential-freshness checks (1/2/6/9 below) -- an explicit,
+# checked-in act, never the absence of an entry (FR-012/FR-013, spec 072's
+# D4). Checks 3 and 7 still run unconditionally for an excluded subject,
+# same as AGENTLESS_JOBS below.
+EXCLUSIONS = {
+    (".github/workflows/watchdog.yml", "diagnose"):
+        "agent step carries timeout-minutes: 10, an order of magnitude "
+        "under the credential's one-hour lifetime (same basis as spec "
+        "052's auto-update-spec-kit.yml exclusions)",
+    # Derivation surfaces these two jobs for the first time -- SUBJECTS
+    # never named them, only auto-update-spec-kit.yml's e2e-stage. Both
+    # agent steps ("Decide upgrade path", "Interpret the maintainer's
+    # reply") already carry the identical timeout-minutes: 10 bound as
+    # watchdog.yml's diagnose (spec 072, research.md D5's own precedent).
+    (".github/workflows/auto-update-spec-kit.yml", "evaluate-path"):
+        "agent step ('Decide upgrade path') carries timeout-minutes: 10, "
+        "an order of magnitude under the credential's one-hour lifetime "
+        "(same basis as watchdog.yml's diagnose exclusion)",
+    (".github/workflows/auto-update-spec-kit.yml", "comment-reply"):
+        "agent step ('Interpret the maintainer's reply') carries "
+        "timeout-minutes: 10, an order of magnitude under the "
+        "credential's one-hour lifetime (same basis as watchdog.yml's "
+        "diagnose exclusion)",
+}
+
+# Jobs in SUBJECT_FLOOR that never run an agent step, by design -- tasks-approved
 # is a PR-merge acceptance handler with no agent involvement at all (unlike
-# every other SUBJECTS job, whose absence of an agent step would mean the
+# every other SUBJECT_FLOOR job, whose absence of an agent step would mean the
 # sweep regressed). Exempted from the "must contain an agent step" check
 # (FR-020 care point 4/maintainer review of PR #407 hole (c)); still scanned
 # for checks 3 and 5, which apply regardless of agent-step presence (checks
@@ -268,6 +326,10 @@ NO_REMOTE_REFRESH_JOBS = {
     # branch" step, so there is no persisted git remote credential to
     # refresh in this job either.
     (".github/workflows/pr-conversation.yml", "classify-and-announce"),
+    # spec 072 T021: neither job ever pushes a branch -- triage only
+    # proposes a routing verdict and route only labels/routes the issue.
+    (".github/workflows/board-loop.yml", "triage"),
+    (".github/workflows/board-loop.yml", "route"),
 }
 
 # Third maintainer review of PR #407, Gate 68 hole (a): nothing previously
@@ -282,6 +344,9 @@ NO_REMOTE_REFRESH_JOBS = {
 # neither has a survivor job wrapping it (tasks-approved is also agentless
 # -- AGENTLESS_JOBS -- so it has nothing to report as a failed post-agent
 # step in the first place).
+# keyed to a different job than the agent-step subject derivation selects;
+# deriving this would need its own structural rule, out of scope for this
+# feature (spec 072 item 1).
 FAILED_STEP_REQUIRED_JOBS = {
     ".github/workflows/clarify.yml": "clarify",
     ".github/workflows/finalize.yml": "finalize",
@@ -343,20 +408,59 @@ def _step_text(step):
 
 
 def load_all(root="."):
-    """-> {path: parsed_yaml_or_None} for every subject file."""
+    """-> {path: parsed_yaml_or_sentinel} for every
+    .github/workflows/*.yml file (spec 072 D1) -- not merely the files
+    SUBJECT_FLOOR happens to name, since derive_subjects() below walks
+    every file this glob finds. A missing file is recorded as None; a
+    file that exists but fails to parse is recorded as PARSE_ERROR,
+    distinguishable from "missing" (FR-006) so a caller can tell "not
+    there" from "there but broken"."""
     out = {}
-    for path in SUBJECTS:
-        full = os.path.join(root, path)
+    pattern = os.path.join(root, ".github", "workflows", "*.yml")
+    for full in sorted(glob.glob(pattern)):
+        path = ".github/workflows/" + os.path.basename(full)
         if not os.path.isfile(full):
             out[path] = None
             continue
-        with io.open(full, encoding="utf-8") as f:
-            out[path] = yaml.safe_load(f) or {}
+        try:
+            with io.open(full, encoding="utf-8") as f:
+                out[path] = yaml.safe_load(f) or {}
+        except yaml.YAMLError:
+            out[path] = PARSE_ERROR
     return out
 
 
-def check_job(path, job_name, job):
-    """-> (failures: list[str], agent_step_count: int)."""
+def derive_subjects(loaded):
+    """-> (derived_subjects: set[(path, job_name)], parse_failures:
+    list[str]). Pure over `loaded` (load_all()'s output) -- no re-globbing,
+    no disk I/O of its own, so self_test() can mutate a copy of `loaded` in
+    memory and re-derive against it (spec 072 D2). A job is a subject iff
+    at least one of its steps is an agent step (_is_agent_step, unchanged);
+    a job with no `steps` key at all -- every wing-commander-*.yml wrapper's
+    workflow_call job -- contributes nothing and raises nothing."""
+    derived_subjects = set()
+    parse_failures = []
+    for path, wf in loaded.items():
+        if wf is None:
+            parse_failures.append(f"{path}: file not found (FR-006)")
+            continue
+        if wf == PARSE_ERROR:
+            parse_failures.append(f"{path}: failed to parse as YAML (FR-006)")
+            continue
+        jobs = (wf or {}).get("jobs") or {}
+        for job_name, job in jobs.items():
+            steps = (job or {}).get("steps") or []
+            if any(_is_agent_step(s) for s in steps):
+                derived_subjects.add((path, job_name))
+    return derived_subjects, parse_failures
+
+
+def check_job(path, job_name, job, excluded=None):
+    """-> (failures: list[str], agent_step_count: int). When `excluded` is
+    set (a derived subject's EXCLUSIONS reason), checks 1/2/6/9 -- the
+    credential-freshness checks the exclusion reason makes moot -- are
+    skipped; checks 3 and 7 still run unconditionally, same as
+    AGENTLESS_JOBS's existing treatment of tasks-approved (spec 072 D4)."""
     failures = []
     steps = list((job or {}).get("steps") or [])
 
@@ -397,127 +501,132 @@ def check_job(path, job_name, job):
 
     first = agent_idxs[0]
 
-    # check 1 -- no stale credential reference after the first agent step.
-    mint_ids = {(s or {}).get("id") for s in steps if _is_mint_step(s) and (s or {}).get("id")}
-    for step in steps[first + 1:]:
-        if _is_relay_step(step):
-            continue
-        name = (step or {}).get("name", "<unnamed step>")
-        m = TOKEN_REF_RE.search(_step_text(step))
-        if m and m.group(0).startswith("toJSON(") and not _toJSON_dump_is_mint(m.group(0), mint_ids):
-            continue
-        if m:
-            failures.append(
-                f"{path} [{job_name}] step {name!r} references "
-                f"{m.group(0)} after the job's first agent step -- it must "
-                f"resolve its credential through env.WC_BOT_TOKEN / "
-                f"env.WC_SCRATCH_TOKEN instead (FR-020 care point 1)")
-
-    # check 9 -- a step BEFORE the agent step relaying a pre-agent-minted
-    # credential-shaped value into $GITHUB_ENV under a name other than
-    # WC_BOT_TOKEN/WC_SCRATCH_TOKEN -- third maintainer review of PR #407,
-    # FR-020: any later step reading that shadow variable (before or after
-    # the agent step) holds a token minted before the agent ran, without
-    # ever matching check 1's direct steps.<id>.outputs.token pattern.
-    for step in steps[:first]:
-        if _is_relay_step(step):
-            continue
-        text = _step_text(step)
-        if not SHADOW_TOKEN_SOURCE_RE.search(text):
-            continue
-        for m in GITHUB_ENV_ASSIGN_RE.finditer(text):
-            varname = m.group(1)
-            if varname in ALLOWED_RELAY_VARS:
+    # Checks 1/2/6/9 (credential-freshness) are skipped for an excluded
+    # subject (spec 072 D4/FR-012/FR-013) -- the exclusion reason states why
+    # the contract does not apply, so re-mint/refresh/position checks would
+    # only ever fail against a job that was never meant to carry them.
+    if not excluded:
+        # check 1 -- no stale credential reference after the first agent step.
+        mint_ids = {(s or {}).get("id") for s in steps if _is_mint_step(s) and (s or {}).get("id")}
+        for step in steps[first + 1:]:
+            if _is_relay_step(step):
                 continue
             name = (step or {}).get("name", "<unnamed step>")
-            failures.append(
-                f"{path} [{job_name}] pre-agent step {name!r} relays a "
-                f"credential-shaped value into env.{varname} via "
-                f"$GITHUB_ENV -- a later step reading env.{varname} would "
-                f"hold a token minted before the agent ran, evading the "
-                f"WC_BOT_TOKEN/WC_SCRATCH_TOKEN relay this feature "
-                f"requires (FR-020, third maintainer review of PR #407)")
-
-    # check 2 -- every agent step is followed, before the NEXT agent step or
-    # the end of the job (whichever comes first), by a fresh mint. Checking
-    # only "between consecutive agent steps" (agent_idxs[1:]) missed the
-    # single-agent-step case entirely (clarify.yml) and the refresh after
-    # the LAST agent step in every job (maintainer review of PR #407 hole
-    # (a)) -- a sentinel boundary at len(steps) covers both.
-    boundaries = agent_idxs[1:] + [len(steps)]
-    for idx, boundary in zip(agent_idxs, boundaries):
-        between = steps[idx + 1:boundary]
-        if not any(_is_mint_step(s) for s in between):
-            name = (steps[idx] or {}).get("name", "<unnamed step>")
-            failures.append(
-                f"{path} [{job_name}]: agent step {name!r} has no "
-                f"wing-commander-context (or scoped-app-token) re-mint "
-                f"after it, before the next agent step or the job's end -- "
-                f"every step below it runs on a stale credential (FR-020 "
-                f"care point 2)")
-
-    # check 6 -- each agent step has its own refresh/agent-ran/credential-
-    # status composite call, matched by `uses:` (never by step `name:`, so a
-    # rename can't hide a deletion) -- second maintainer review of PR #407,
-    # FR-020/FR-021 hole (a). Checked by POSITION, not merely by a job-wide
-    # total (third maintainer review of PR #407 hole (c)): a job-wide count
-    # cannot tell "each agent step has its own call" from "one agent step
-    # has two and another has none" -- e.g. removing the LAST agent step's
-    # credential-status call while duplicating an EARLIER one's leaves the
-    # total unchanged. refresh-remote and agent-ran-signal each run
-    # immediately after their own agent step (contracts/
-    # wing-commander-context-relay.md's call-site convention), so their
-    # position check is "at least one call inside this agent step's own
-    # window" (same boundaries as check 2). credential-status is different
-    # BY DESIGN: it is deferred to the job's own last steps, after every
-    # business-logic/report step (review-step-gating self-review, spec
-    # 052's own T042/data-model.md), so in a multi-agent-step job all of a
-    # job's credential-status calls cluster at the END, never inside any
-    # individual agent step's window. Its "position" is therefore checked
-    # by REFERENCE, not by sequential order: each agent step's own mint
-    # step (found inside its window) must have some credential-status call,
-    # anywhere in the job, whose `mint-outcome` names that exact mint
-    # step's id -- the same reference a duplicated call cannot satisfy for
-    # more than one agent step, since ids are unique per agent step.
-    mint_id_re = re.compile(r"^[\w-]+$")
-    for idx, boundary in zip(agent_idxs, boundaries):
-        between = steps[idx + 1:boundary]
-        agent_name = (steps[idx] or {}).get("name", "<unnamed step>")
-        for marker, label in REQUIRED_PER_AGENT_STEP_COMPOSITES:
-            if marker == "wing-commander-post-agent-credential-status":
+            m = TOKEN_REF_RE.search(_step_text(step))
+            if m and m.group(0).startswith("toJSON(") and not _toJSON_dump_is_mint(m.group(0), mint_ids):
                 continue
-            if marker == "wing-commander-refresh-remote" and (path, job_name) in NO_REMOTE_REFRESH_JOBS:
-                continue
-            n_calls = sum(1 for s in between if marker in str((s or {}).get("uses", "")))
-            if n_calls < 1:
+            if m:
                 failures.append(
-                    f"{path} [{job_name}]: agent step {agent_name!r} has no "
-                    f"{marker} call between it and the next agent step or "
-                    f"the job's end -- each agent step needs its OWN {label} "
-                    f"composite call at that position, not merely a call "
-                    f"somewhere else in the job (FR-020, FR-021, third "
-                    f"maintainer review of PR #407 hole (c))")
+                    f"{path} [{job_name}] step {name!r} references "
+                    f"{m.group(0)} after the job's first agent step -- it must "
+                    f"resolve its credential through env.WC_BOT_TOKEN / "
+                    f"env.WC_SCRATCH_TOKEN instead (FR-020 care point 1)")
 
-        mint_id = next(
-            ((s or {}).get("id") for s in between if _is_mint_step(s)), None)
-        if mint_id is None or not mint_id_re.match(str(mint_id)):
-            continue  # no mint id to cross-reference; check 2 already flags a missing mint.
-        mint_ref_re = re.compile(
-            rf"steps(?:\.{re.escape(mint_id)}\b"
-            rf"|\[[\'\"]{re.escape(mint_id)}[\'\"]\])")
-        referenced = any(
-            "wing-commander-post-agent-credential-status" in str((s or {}).get("uses", ""))
-            and mint_ref_re.search(_step_text(s))
-            for s in steps)
-        if not referenced:
-            failures.append(
-                f"{path} [{job_name}]: agent step {agent_name!r}'s mint "
-                f"step (id: {mint_id!r}) is never referenced by any "
-                f"wing-commander-post-agent-credential-status call's "
-                f"mint-outcome anywhere in the job -- this agent step has "
-                f"no credential-status call of its OWN, even though the "
-                f"job-wide total may look sufficient (FR-020, FR-021, "
-                f"third maintainer review of PR #407 hole (c))")
+        # check 9 -- a step BEFORE the agent step relaying a pre-agent-minted
+        # credential-shaped value into $GITHUB_ENV under a name other than
+        # WC_BOT_TOKEN/WC_SCRATCH_TOKEN -- third maintainer review of PR #407,
+        # FR-020: any later step reading that shadow variable (before or after
+        # the agent step) holds a token minted before the agent ran, without
+        # ever matching check 1's direct steps.<id>.outputs.token pattern.
+        for step in steps[:first]:
+            if _is_relay_step(step):
+                continue
+            text = _step_text(step)
+            if not SHADOW_TOKEN_SOURCE_RE.search(text):
+                continue
+            for m in GITHUB_ENV_ASSIGN_RE.finditer(text):
+                varname = m.group(1)
+                if varname in ALLOWED_RELAY_VARS:
+                    continue
+                name = (step or {}).get("name", "<unnamed step>")
+                failures.append(
+                    f"{path} [{job_name}] pre-agent step {name!r} relays a "
+                    f"credential-shaped value into env.{varname} via "
+                    f"$GITHUB_ENV -- a later step reading env.{varname} would "
+                    f"hold a token minted before the agent ran, evading the "
+                    f"WC_BOT_TOKEN/WC_SCRATCH_TOKEN relay this feature "
+                    f"requires (FR-020, third maintainer review of PR #407)")
+
+        # check 2 -- every agent step is followed, before the NEXT agent step or
+        # the end of the job (whichever comes first), by a fresh mint. Checking
+        # only "between consecutive agent steps" (agent_idxs[1:]) missed the
+        # single-agent-step case entirely (clarify.yml) and the refresh after
+        # the LAST agent step in every job (maintainer review of PR #407 hole
+        # (a)) -- a sentinel boundary at len(steps) covers both.
+        boundaries = agent_idxs[1:] + [len(steps)]
+        for idx, boundary in zip(agent_idxs, boundaries):
+            between = steps[idx + 1:boundary]
+            if not any(_is_mint_step(s) for s in between):
+                name = (steps[idx] or {}).get("name", "<unnamed step>")
+                failures.append(
+                    f"{path} [{job_name}]: agent step {name!r} has no "
+                    f"wing-commander-context (or scoped-app-token) re-mint "
+                    f"after it, before the next agent step or the job's end -- "
+                    f"every step below it runs on a stale credential (FR-020 "
+                    f"care point 2)")
+
+        # check 6 -- each agent step has its own refresh/agent-ran/credential-
+        # status composite call, matched by `uses:` (never by step `name:`, so a
+        # rename can't hide a deletion) -- second maintainer review of PR #407,
+        # FR-020/FR-021 hole (a). Checked by POSITION, not merely by a job-wide
+        # total (third maintainer review of PR #407 hole (c)): a job-wide count
+        # cannot tell "each agent step has its own call" from "one agent step
+        # has two and another has none" -- e.g. removing the LAST agent step's
+        # credential-status call while duplicating an EARLIER one's leaves the
+        # total unchanged. refresh-remote and agent-ran-signal each run
+        # immediately after their own agent step (contracts/
+        # wing-commander-context-relay.md's call-site convention), so their
+        # position check is "at least one call inside this agent step's own
+        # window" (same boundaries as check 2). credential-status is different
+        # BY DESIGN: it is deferred to the job's own last steps, after every
+        # business-logic/report step (review-step-gating self-review, spec
+        # 052's own T042/data-model.md), so in a multi-agent-step job all of a
+        # job's credential-status calls cluster at the END, never inside any
+        # individual agent step's window. Its "position" is therefore checked
+        # by REFERENCE, not by sequential order: each agent step's own mint
+        # step (found inside its window) must have some credential-status call,
+        # anywhere in the job, whose `mint-outcome` names that exact mint
+        # step's id -- the same reference a duplicated call cannot satisfy for
+        # more than one agent step, since ids are unique per agent step.
+        mint_id_re = re.compile(r"^[\w-]+$")
+        for idx, boundary in zip(agent_idxs, boundaries):
+            between = steps[idx + 1:boundary]
+            agent_name = (steps[idx] or {}).get("name", "<unnamed step>")
+            for marker, label in REQUIRED_PER_AGENT_STEP_COMPOSITES:
+                if marker == "wing-commander-post-agent-credential-status":
+                    continue
+                if marker == "wing-commander-refresh-remote" and (path, job_name) in NO_REMOTE_REFRESH_JOBS:
+                    continue
+                n_calls = sum(1 for s in between if marker in str((s or {}).get("uses", "")))
+                if n_calls < 1:
+                    failures.append(
+                        f"{path} [{job_name}]: agent step {agent_name!r} has no "
+                        f"{marker} call between it and the next agent step or "
+                        f"the job's end -- each agent step needs its OWN {label} "
+                        f"composite call at that position, not merely a call "
+                        f"somewhere else in the job (FR-020, FR-021, third "
+                        f"maintainer review of PR #407 hole (c))")
+
+            mint_id = next(
+                ((s or {}).get("id") for s in between if _is_mint_step(s)), None)
+            if mint_id is None or not mint_id_re.match(str(mint_id)):
+                continue  # no mint id to cross-reference; check 2 already flags a missing mint.
+            mint_ref_re = re.compile(
+                rf"steps(?:\.{re.escape(mint_id)}\b"
+                rf"|\[[\'\"]{re.escape(mint_id)}[\'\"]\])")
+            referenced = any(
+                "wing-commander-post-agent-credential-status" in str((s or {}).get("uses", ""))
+                and mint_ref_re.search(_step_text(s))
+                for s in steps)
+            if not referenced:
+                failures.append(
+                    f"{path} [{job_name}]: agent step {agent_name!r}'s mint "
+                    f"step (id: {mint_id!r}) is never referenced by any "
+                    f"wing-commander-post-agent-credential-status call's "
+                    f"mint-outcome anywhere in the job -- this agent step has "
+                    f"no credential-status call of its OWN, even though the "
+                    f"job-wide total may look sufficient (FR-020, FR-021, "
+                    f"third maintainer review of PR #407 hole (c))")
 
     # check 7 -- the "Determine failed post-agent step" composite call must
     # actually exist in this job, not merely be well-formed when present --
@@ -551,21 +660,24 @@ def check_stall_reason_job(path, job):
     return []
 
 
-def scan(loaded, subjects=None, stall_reason_jobs=None):
-    subjects = SUBJECTS if subjects is None else subjects
+def scan(loaded, floor=None, exclusions=None, stall_reason_jobs=None,
+         report_subjects=False):
+    floor = SUBJECT_FLOOR if floor is None else floor
+    exclusions = EXCLUSIONS if exclusions is None else exclusions
     stall_reason_jobs = (STALL_REASON_JOBS if stall_reason_jobs is None
                          else stall_reason_jobs)
     failures = []
-    total_agent_steps = 0
+
     for path, job_name in stall_reason_jobs.items():
         wf = loaded.get(path)
-        if wf is None:
-            # Already reported (or not, per subjects) by the main SUBJECTS
-            # loop below when path is also a SUBJECTS key; otherwise still
-            # worth naming here so a missing file is never silently unchecked.
+        if wf is None or wf == PARSE_ERROR:
+            # Already reported (or not, per derivation) by the main subject
+            # loop below when path is also derived; otherwise still worth
+            # naming here so a missing/unparseable file is never silently
+            # unchecked.
             failures.append(
-                f"{path}: file not found -- cannot check its stall-reason "
-                f"composite call (FR-022)")
+                f"{path}: file not found or unparseable -- cannot check "
+                f"its stall-reason composite call (FR-022)")
             continue
         job = (wf.get("jobs") or {}).get(job_name)
         if job is None:
@@ -575,31 +687,65 @@ def scan(loaded, subjects=None, stall_reason_jobs=None):
             continue
         failures += check_stall_reason_job(path, job)
 
-    for path, job_names in subjects.items():
-        wf = loaded.get(path)
-        if wf is None:
-            failures.append(
-                f"{path}: file not found -- cannot check its credential "
-                f"handling (FR-022)")
-            continue
-        jobs = wf.get("jobs") or {}
-        for job_name in job_names:
-            job = jobs.get(job_name)
-            if job is None:
-                failures.append(
-                    f"{path}: job {job_name!r} not found -- cannot check "
-                    f"its credential handling (FR-022)")
-                continue
-            job_failures, n_agent = check_job(path, job_name, job)
-            failures += job_failures
-            total_agent_steps += n_agent
+    derived_subjects, parse_failures = derive_subjects(loaded)
+    failures += parse_failures
 
-    if total_agent_steps == 0:
+    floor_pairs = {(path, job_name)
+                   for path, job_names in floor.items()
+                   for job_name in job_names}
+
+    # Floor coverage (FR-004): every floor member MUST appear in the
+    # derived set, EXCEPT a member named in AGENTLESS_JOBS -- such a job is
+    # known by design to never contain an agent step (tasks-approved is a
+    # PR-merge acceptance handler), so it can never be reachable by
+    # agent-step derivation and its absence from derived_subjects is not a
+    # coverage regression. spec.md's own Assumptions section: AGENTLESS_JOBS
+    # jobs' checks 3/5 coverage is "independent of the agent-step
+    # derivation" and keeps its current reach -- see the dispatch set below.
+    for path, job_name in sorted(floor_pairs):
+        if job_name in AGENTLESS_JOBS:
+            continue
+        if (path, job_name) not in derived_subjects:
+            failures.append(
+                f"{path} [{job_name}]: named in SUBJECT_FLOOR but no "
+                f"longer reachable by derivation -- either the job was "
+                f"removed/renamed or its agent step no longer matches "
+                f"AGENT_ACTION_RE (FR-004)")
+
+    # Dispatch set: every derived subject, plus every floor member whose
+    # job_name is in AGENTLESS_JOBS (never derivable, but still checked for
+    # checks 3/5 today -- see the floor-coverage comment above).
+    dispatch_pairs = set(derived_subjects) | {
+        (path, job_name) for path, job_name in floor_pairs
+        if job_name in AGENTLESS_JOBS}
+
+    for path, job_name in sorted(dispatch_pairs):
+        wf = loaded.get(path)
+        if wf is None or wf == PARSE_ERROR:
+            continue  # already reported via parse_failures above
+        job = (wf.get("jobs") or {}).get(job_name)
+        if job is None:
+            failures.append(
+                f"{path}: job {job_name!r} not found -- cannot check "
+                f"its credential handling (FR-022)")
+            continue
+        job_failures, _n_agent = check_job(
+            path, job_name, job, excluded=exclusions.get((path, job_name)))
+        failures += job_failures
+
+    if not derived_subjects:
         failures.append(
-            "zero agent steps were found across the named workflow "
-            "files/jobs -- the subject list is misconfigured or "
+            "zero agent-bearing jobs were derived across "
+            ".github/workflows/*.yml -- derivation is misconfigured or "
             "unreachable, never a silent pass over an empty result set "
-            "(FR-022)")
+            "(FR-005)")
+
+    if report_subjects:
+        for path, job_name in sorted(derived_subjects):
+            marker = (" (excluded: " + exclusions[(path, job_name)] + ")"
+                      if (path, job_name) in exclusions
+                      else " (excluded: no (inspected))")
+            print(f"Gate 68 subject: {path} [{job_name}]{marker}")
 
     return failures
 
@@ -783,13 +929,34 @@ def mut_drop_suffixed_tolerance(loaded):
 
 def mut_job_loses_agent_step(loaded):
     """Hole (c): a subject job that stops having an agent step must fail
-    loudly, not silently skip all of its checks."""
+    loudly, not silently skip all of its checks. Under derivation (spec
+    072), this job silently drops out of derived_subjects entirely -- the
+    failure now comes from scan()'s floor-coverage branch (SUBJECT_FLOOR
+    still names clarify.yml's clarify job, but derivation no longer yields
+    it), not from check_job()'s old "expected an agent step, found none"
+    branch. Same mutation, same failing outcome, different internal code
+    path (FR-010)."""
     job = loaded[".github/workflows/clarify.yml"]["jobs"]["clarify"]
     step = _find_step(job, "Fold answers into the draft spec")
     assert step is not None, "fixture assumption broken: step renamed"
     assert "claude-code-action" in str(step.get("uses", "")), \
         "fixture assumption broken: no longer the agent step"
     step["uses"] = "actions/checkout@v5"
+
+
+def mut_agent_step_reference_respelled(loaded):
+    """FR-009's third named minimum (spec 072): a real agent step's `uses:`
+    respelled to a reference AGENT_ACTION_RE's prefix match does not match.
+    Targets intake.yml's intake job (its only agent step) -- distinct from
+    mut_job_loses_agent_step's clarify.yml/clarify fixture, so the two
+    mutations don't exercise the identical fixture. Fails via the same
+    floor-coverage branch as that mutation: the job silently drops out of
+    derived_subjects."""
+    job = loaded[".github/workflows/intake.yml"]["jobs"]["intake"]
+    agent_steps = [s for s in job["steps"] if _is_agent_step(s)]
+    assert len(agent_steps) == 1, \
+        "fixture assumption broken: expected exactly one agent step"
+    agent_steps[0]["uses"] = "anthropics/claude-code-action-v2@v1"
 
 
 def mut_single_home_reverted(loaded):
@@ -897,21 +1064,29 @@ def mut_credential_status_renamed_and_reverted(loaded):
     step["uses"] = "actions/checkout@v5"
 
 
-def mut_nonexistent_ninth_file(loaded_and_subjects):
-    loaded, subjects = loaded_and_subjects
-    subjects["nonexistent-ninth-workflow.yml"] = ["some-job"]
+def mut_floor_names_nonexistent_file(loaded_and_floor):
+    """Replaces mut_nonexistent_ninth_file (spec 072 D8): SUBJECT_FLOOR
+    naming a workflow file derivation cannot reach must fail via the
+    floor-coverage branch."""
+    loaded, floor = loaded_and_floor
+    floor["nonexistent-ninth-workflow.yml"] = ["some-job"]
 
 
-def mut_zero_files(loaded_and_subjects):
-    loaded, subjects = loaded_and_subjects
-    subjects.clear()
+def mut_derivation_yields_zero_subjects(loaded_and_floor):
+    """Replaces mut_zero_files (spec 072 D8): emptying `loaded` entirely
+    simulates the glob step finding nothing -- scan() must report the
+    "misconfigured, zero subjects" failure (FR-005), never a vacuous pass.
+    Also satisfies FR-009's "derived set emptied" minimum directly."""
+    loaded, floor = loaded_and_floor
+    loaded.clear()
 
 
-def mut_nonexistent_job_in_existing_file(loaded_and_subjects):
-    """should-fix (PR #407 review): a job that cannot be located inside an
-    existing, reachable file is its own failure mode from a missing file."""
-    loaded, subjects = loaded_and_subjects
-    subjects[".github/workflows/clarify.yml"] = ["nonexistent-job"]
+def mut_floor_names_nonexistent_job(loaded_and_floor):
+    """Replaces mut_nonexistent_job_in_existing_file (spec 072 D8):
+    SUBJECT_FLOOR naming a job absent from an existing, reachable file must
+    fail via the same floor-coverage branch."""
+    loaded, floor = loaded_and_floor
+    floor[".github/workflows/clarify.yml"] = ["nonexistent-job"]
 
 
 SIMPLE_MUTATIONS = [
@@ -964,14 +1139,17 @@ SIMPLE_MUTATIONS = [
      mut_credential_status_position_swap),
     ("a pre-agent step relaying the pre-agent token into a $GITHUB_ENV "
      "variable other than WC_BOT_TOKEN/WC_SCRATCH_TOKEN", mut_shadow_env_relay),
+    ("a real agent step's uses: respelled to a reference AGENT_ACTION_RE "
+     "does not match (plan.yml's plan job)", mut_agent_step_reference_respelled),
 ]
 
 SUBJECT_MUTATIONS = [
-    ("the subject list pointed at a 9th, nonexistent workflow file",
-     mut_nonexistent_ninth_file),
-    ("the subject list pointed at zero workflow files", mut_zero_files),
-    ("the subject list pointed at a nonexistent job inside an existing "
-     "file", mut_nonexistent_job_in_existing_file),
+    ("SUBJECT_FLOOR pointed at a 9th, nonexistent workflow file",
+     mut_floor_names_nonexistent_file),
+    ("derivation yields zero subjects (loaded emptied entirely)",
+     mut_derivation_yields_zero_subjects),
+    ("SUBJECT_FLOOR pointed at a nonexistent job inside an existing "
+     "file", mut_floor_names_nonexistent_job),
 ]
 
 
@@ -1017,14 +1195,34 @@ def self_test():
 
     for label, apply_mutation in SUBJECT_MUTATIONS:
         mutated_loaded = copy.deepcopy(base)
-        mutated_subjects = copy.deepcopy(SUBJECTS)
-        apply_mutation((mutated_loaded, mutated_subjects))
-        broke = scan(mutated_loaded, mutated_subjects)
+        mutated_floor = copy.deepcopy(SUBJECT_FLOOR)
+        apply_mutation((mutated_loaded, mutated_floor))
+        broke = scan(mutated_loaded, floor=mutated_floor)
         if not broke:
             problems.append(f"MUTATION SURVIVED -- reintroducing {label!r} "
                             f"broke nothing in this gate.")
         else:
             print(f"Mutation OK -- {label}: {len(broke)} assertion(s) fail.")
+
+    # T027 (spec 072, FR-013): the exclusion record is load-bearing, not
+    # decorative -- deleting watchdog.yml/diagnose's EXCLUSIONS entry must
+    # make the gate fail once diagnose is inspected under the full checks
+    # (no relay/refresh/signal/credential-status machinery exists in that
+    # job). A dedicated block, not the generic SIMPLE_MUTATIONS loop, since
+    # this mutation edits EXCLUSIONS rather than the loaded tree, so the
+    # loop's "mutated == base" sameness check would otherwise misfire.
+    exclusions_label = "watchdog.yml/diagnose's EXCLUSIONS entry removed"
+    mutated_exclusions = copy.deepcopy(EXCLUSIONS)
+    excl_key = (".github/workflows/watchdog.yml", "diagnose")
+    assert excl_key in mutated_exclusions, \
+        "fixture assumption broken: exclusion entry missing"
+    del mutated_exclusions[excl_key]
+    broke = scan(copy.deepcopy(base), exclusions=mutated_exclusions)
+    if not broke:
+        problems.append(f"MUTATION SURVIVED -- reintroducing "
+                        f"{exclusions_label!r} broke nothing in this gate.")
+    else:
+        print(f"Mutation OK -- {exclusions_label}: {len(broke)} assertion(s) fail.")
 
     for p in problems:
         print(f"::error::Gate 68 self-test: {p}")
@@ -1038,7 +1236,7 @@ def main(argv):
     if "--self-test" in argv:
         return self_test()
 
-    failures = scan(load_all())
+    failures = scan(load_all(), report_subjects=True)
     for f in failures:
         print(f"::error::Gate 68: {f}")
     print(f"Gate 68: post-agent credential refresh; {len(failures)} failure(s).")

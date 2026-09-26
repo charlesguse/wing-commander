@@ -3668,11 +3668,16 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-auto-release-credential-step.py
 
-      # Gate 68 — specs/052-agent-credential-lifetime: the minted App
-      # installation token has a one-hour lifetime, shorter than some agent
-      # steps run. Every agent-bearing job in the 8 sweep stages relays its
-      # mint into env.WC_BOT_TOKEN / env.WC_SCRATCH_TOKEN and re-mints it
-      # immediately after each agent step; this asserts no post-agent step
+      # Gate 68 — specs/052-agent-credential-lifetime, specs/072-derived-
+      # gate-subjects: the minted App installation token has a one-hour
+      # lifetime, shorter than some agent steps run. Every agent-bearing
+      # job, derived structurally from every .github/workflows/*.yml file
+      # (never a hand-typed list — spec 072), either relays its mint into
+      # env.WC_BOT_TOKEN / env.WC_SCRATCH_TOKEN and re-mints it immediately
+      # after each agent step, or is recorded in EXCLUSIONS with a stated
+      # reason (e.g. watchdog.yml's diagnose, whose agent step carries a
+      # wall-clock bound under the credential's lifetime). This asserts no
+      # post-agent step
       # reads the stale steps.<id>.outputs.token form (nor a pre-agent step's
       # $GITHUB_ENV relay of one under a different name), no agent step in a
       # job runs unrefreshed, every "Report over-budget agent run" copy
