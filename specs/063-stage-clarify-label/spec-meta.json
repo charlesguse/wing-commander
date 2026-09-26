@@ -2,7 +2,7 @@
   "issue": 483,
   "spec_dir": "specs/063-stage-clarify-label",
   "feature_num": "063",
-  "stage": "spec",
+  "stage": "plan",
   "iteration": 0,
-  "spec_branch": null
+  "spec_branch": "spec/063-stage-clarify-label"
 }
