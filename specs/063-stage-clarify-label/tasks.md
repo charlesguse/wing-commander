@@ -187,6 +187,12 @@ No blocking prerequisites apply: User Story 1's two workflow edits, User Story 2
 
 ---
 
+## Phase 7: Convergence
+
+- [ ] T028 Fix `verify-lifecycle-label-taxonomy.py`'s (Gate 99) applied-label-set scanner so a documented label counts as "having a writer" only when at least one *add*-shaped site for it exists somewhere in the fleet (`--add-label`, `gh issue create --label`/`-l`, or a REST `-f "labels[]=..."` create) — a bare `--remove-label` with no corresponding add anywhere must not, on its own, satisfy the check. As built, `plan.yml:1155`/`:1241`'s pre-existing, unrelated `gh issue edit "$ISSUE" --remove-label "stage:clarify" 2>/dev/null || true` lines (predating this feature, called out unchanged in contracts/clarify-label-flip.md's Non-goals and plan.md's Project Structure) already satisfy the current (contract-literal) applied-set definition, so Gate 99 does not actually FAIL when run against the real pre-change tree (T021 in this cycle: temporarily removed intake.yml's/clarify.yml's new flip steps by hand, ran the gate, got PASS not the required FAIL naming `stage:clarify`, then restored both files — `git diff` confirmed empty). All 8 documented `stage:*` labels already have a real add site after this feature ships, so narrowing to require an add does not newly fail anything on the post-change tree. Update contracts/lifecycle-label-taxonomy-gate.md's Input #2 description and data-model.md's Applied label set section to match the narrowed definition, add an 8th `--self-test` fixture proving a remove-only label still fails, and re-run T021's live pre/post-change demonstration to record the corrected FAIL/PASS output per FR-008 (contradicts)
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies
