@@ -4135,6 +4135,43 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-loop-helper-provenance.py --self-test
 
+      # Gate 102 — specs/060-self-redrive-concurrency (FR-010b, research.md
+      # D8): a merge whose own pull_request: closed run never reached
+      # prove-gate/prove at all -- displaced from wing-commander-board-loop's
+      # own pending slot before it began -- is a distinct, detectable
+      # condition from anything the directed-proof mechanism itself
+      # produces, since that mechanism only ever runs once prove-gate has
+      # already executed. (Renumbered from Gate 99, which collided with the
+      # Gate 99 PR #463 claimed -- PR #490 review, 2026-09-25.)
+      - name: Gate 102 — board loop prove-displacement detects a merge whose proof run never started
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-board-prove-displacement.py
+
+      # Gate 100 — specs/060-self-redrive-concurrency (SC-006): the FR-016
+      # one-board-item-in-flight guarantee sentence is restated verbatim in
+      # three places (board-loop.yml's own per-job concurrency: comments,
+      # board-loop-workflow.md's "Concurrency" section, and
+      # concurrency-groups.md itself) -- a paraphrase drifting in any one of
+      # them is a silent contract violation nothing else in the gate suite
+      # would catch. (Renumbered from Gate 90, which collided with main's
+      # existing Gate 90, every applied label has a matching gh label
+      # create -- PR #490 review, 2026-09-25.)
+      - name: Gate 100 — the concurrency guarantee sentence is identical everywhere it is stated
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-concurrency-guarantee-statement.py
+
+      # Gate 101 — specs/060-self-redrive-concurrency (FR-017, research.md
+      # D7): a directed proof run never selects a board item or opens a fix
+      # PR (D2's aimable_jobs exclusion), checked structurally rather than
+      # only argued in prose, plus accounting for the directed-proof-in-flight
+      # regression fixture verify-board-eligibility.py already asserts
+      # against. (Renumbered from Gate 91, which collided with main's
+      # existing Gate 91, auto-release.yml's pass-path specs/ fallback --
+      # PR #490 review, 2026-09-25.)
+      - name: Gate 101 — a directed proof run never conflicts with the item it is proving
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-directed-proof-no-item-conflict.py
+
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and
       # verify-denied-tool-collector.sh has already shown what happens when

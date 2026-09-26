@@ -20,14 +20,26 @@ typed input to publish.
 
 ## Concurrency
 
-```yaml
-concurrency:
-  group: wing-commander-board-loop
-  cancel-in-progress: false
-```
+specs/060-self-redrive-concurrency's own directed-proof-run mechanism
+(contracts/concurrency-groups.md, contracts/directed-proof-run.md) replaces
+the single workflow-level `concurrency:` block this section originally
+documented with per-job blocks. The guarantee (FR-016/FR-048):
 
-One item in flight repository-wide (FR-048); a second scheduled or
-dispatched run queues rather than cancels or races.
+> One board item is in flight repository-wide. A directed proof run, which
+> selects no board item and opens no fix PR, is the only run permitted to
+> overlap an ordinary board-loop run. Every other pair of `board-loop.yml`
+> runs queues rather than races or cancels.
+
+| Job | Group (ordinary trigger) | Group (`directed-stage != ''`) | `cancel-in-progress` |
+|---|---|---|---|
+| `select` | `wing-commander-board-loop` | n/a — job is skipped for a directed dispatch | `false` |
+| `triage`, `route`, `fix`, `review`, `readiness` | `wing-commander-board-loop` | `wing-commander-board-loop` when directed-reachable (`triage`/`review`/`readiness` only) | `false` |
+| `prove-gate`, `prove` | `wing-commander-board-loop` (`pull_request: closed`) | `wing-commander-board-loop-directed-proof` | `false` |
+
+See `specs/060-self-redrive-concurrency/contracts/concurrency-groups.md`
+for the pre-dispatch checks (FR-001/FR-001a) and
+`specs/060-self-redrive-concurrency/contracts/directed-proof-run.md` for
+the dispatch mechanism itself.
 
 ## Entry gates (checked before job bodies run)
 

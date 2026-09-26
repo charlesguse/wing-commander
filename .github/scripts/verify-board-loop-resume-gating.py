@@ -502,6 +502,13 @@ def _lookup(path, ctx):
             return ctx.outputs.get(dep, {}).get(parts[3], "")
     if parts[0] == "github" and parts[1] == "event_name":
         return ctx.vars.get("__event", "schedule")
+    if parts[0] == "inputs" and len(parts) == 2:
+        # specs/060-self-redrive-concurrency: every scenario this gate
+        # simulates is an ordinary (non-directed) trigger, so every
+        # `inputs.*` reference (e.g. `inputs.directed-stage`) reads as
+        # empty here -- the same value GitHub Actions gives a
+        # workflow_dispatch input on a schedule/pull_request-triggered run.
+        return (ctx.vars.get("__inputs") or {}).get(parts[1], "")
     raise ValueError("simulator does not model `{0}`".format(path))
 
 
@@ -1537,7 +1544,12 @@ def fetch_behaviour_findings(doc):
                    "STUB_LOG": log, "STUB_COMMENTS": comments,
                    "STUB_COMMENTS_FAIL": fail, "STUB_FAIL_ISSUE": "", "STUB_PULLS": "404",
                    "STUB_OWNED": "", "STUB_OWNED_FAIL": "", "STUB_LS_REMOTE_RC": "2",
-                   "PR_BODY": "Fixes #7", "PR_NUMBER": "42", "MERGED": "true"}
+                   "PR_BODY": "Fixes #7", "PR_NUMBER": "42", "MERGED": "true",
+                   # specs/060-self-redrive-concurrency: prove-gate's "gate"
+                   # step now branches on EVENT_NAME (workflow_dispatch vs.
+                   # the ordinary pull_request: closed trigger these fixtures
+                   # exercise) and reads DIRECTED_ISSUE on that other branch.
+                   "EVENT_NAME": "pull_request", "MERGED_EVENT": "true", "DIRECTED_ISSUE": ""}
             env.update({k: v.replace("{tmp}", tmp) for k, v in env_over.items()})
             rc, out, outputs, _summary = run_step(bash, run, workdir, env, runner_temp)
             with open(log, encoding="utf-8") as fh:
