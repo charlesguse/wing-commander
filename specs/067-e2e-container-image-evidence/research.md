@@ -132,6 +132,22 @@ documented fallback is scanning the job's log output (the same
 container-initialization log line, which is a strictly more expensive but
 strictly more certain signal.
 
+**2026-09-26 implement-stage status addendum**: this signal is implemented
+in `auto-release.yml`'s `poll` step exactly as decided above (`steps[]`
+presence of `Initialize containers`, no job-log fetch), but T017's live
+confirmation against a real dispatched run could not be performed from
+this implement-stage session — the tooling available to it excludes
+`gh workflow run`, `gh api`, `gh run list`, and `gh variable list` against
+the live test repository. This decision therefore remains **unconfirmed**
+in the sense this section originally described; a human or a future
+session with live dispatch access must still run quickstart.md Scenario 3
+and either confirm the signal or switch to the documented log-scan
+fallback before this reaches the pass path with full confidence. The
+executed-step gate (Gate 99, `verify-gate-99.py`) exercises the shipped
+`steps[]` check against synthetic fixtures only, which proves the shipped
+logic does what it says, not that GitHub's real Jobs API response matches
+the fixture's assumed shape.
+
 **Alternatives considered**: Reading `runner_name` or `labels` on the job
 — rejected on inspection of the Jobs API shape, since neither field
 reflects a job-level `container:` declaration (they describe the runner
