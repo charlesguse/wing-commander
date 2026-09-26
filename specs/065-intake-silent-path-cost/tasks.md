@@ -252,7 +252,7 @@ callouts too.
 find exactly one (`wing-commander-cost-report`), consumed by all four stage
 workflows; confirm the two retired bespoke step names are gone.
 
-- [ ] T012 [US3] In `.github/workflows/clarify.yml`, replace "Report cost of a
+- [X] T012 [US3] In `.github/workflows/clarify.yml`, replace "Report cost of a
       reply that answered nothing" with a `Report run cost` step calling
       `wing-commander-cost-report`, gated
       `if: steps.lifecycle-gate.outputs.is-open == 'true' && always() &&
@@ -264,14 +264,14 @@ workflows; confirm the two retired bespoke step names are gone.
       adjacent `# #366:` explanatory comment block, since it describes the
       retired bespoke step, not the shared composite.
 
-- [ ] T013 [US3] In `.github/workflows/clarify.yml`: delete the "Append cost
+- [X] T013 [US3] In `.github/workflows/clarify.yml`: delete the "Append cost
       line to clarification questionnaire" step (same shape as intake's,
       feeding "Announce remaining clarification questions"), and remove
       `body: ${{ steps.cost-line.outputs.line }}` from "Announce spec PR
       ready for review"'s `with:` block — the same two edits T008/T009 made
       in intake.yml, applied to clarify's equivalent steps.
 
-- [ ] T014 [US3] In `.github/scripts/verify-clarification-gating.py`:
+- [X] T014 [US3] In `.github/scripts/verify-clarification-gating.py`:
       1. Point `CLARIFY_STAGE`'s `report_cost=` at the renamed
          `"Report run cost"` step (it already carries the old name today;
          only the string changes).
@@ -291,7 +291,7 @@ workflows; confirm the two retired bespoke step names are gone.
          intake to clarify's "Announce remaining clarification questions" and
          "Announce spec PR ready for review".
 
-- [ ] T015 [US3] [P] In `.github/workflows/plan.yml`:
+- [X] T015 [US3] [P] In `.github/workflows/plan.yml`:
       1. Delete "Report cost of an auto-mode hand-off".
       2. In "Dispatch tasks stage (auto)", remove `"$COST_LINE"` from the
          standalone-mode `printf` call (the `NEXT_WORKFLOW`-empty branch) so
@@ -316,12 +316,12 @@ workflows; confirm the two retired bespoke step names are gone.
       4. Update or remove the adjacent `# #377:` comment block describing the
          retired step.
 
-- [ ] T016 [US3] [P] In `.github/workflows/tasks.yml`: apply the same four
+- [X] T016 [US3] [P] In `.github/workflows/tasks.yml`: apply the same four
       edits T015 made in plan.yml, to tasks.yml's "Report cost of an
       auto-mode hand-off", its "Dispatch implement stage (auto)" standalone
       branch, and its `agent-auto`/`agent-pr` pair, with `stage-label: Tasks`.
 
-- [ ] T017 [US3] In `.github/scripts/verify-plan-tasks-cost-line.py` (Gate
+- [X] T017 [US3] In `.github/scripts/verify-plan-tasks-cost-line.py` (Gate
       63): re-point `FILES`, `check_structure`, and `check_behavior` from the
       retired "Report cost of an auto-mode hand-off" step to the new
       `Report run cost` step calling `wing-commander-cost-report`:
@@ -349,7 +349,7 @@ workflows; confirm the two retired bespoke step names are gone.
         standalone `$COST_LINE` blanked) — none may be silently dropped in
         the re-point (Constitution VIII).
 
-- [ ] T018 [US3] Confirm the single-home properties by hand (quickstart.md
+- [X] T018 [US3] Confirm the single-home properties by hand (quickstart.md
       step 4): `grep -rn "Report cost of a reply that answered nothing"
       .github/` and `grep -rn "Report cost of an auto-mode hand-off"
       .github/` return nothing, and `grep -rln "wing-commander-cost-report"

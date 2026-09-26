@@ -175,7 +175,7 @@ CLARIFY_STAGE = Stage(
     spec_dir_ref="${{ steps.ctx.outputs.spec-dir }}",
     validate_exits_in_place=True,
     fail_steps=["Fail on unresolved clarification markers"],
-    report_cost="Report cost of a reply that answered nothing",
+    report_cost="Report run cost",
 )
 
 
@@ -593,12 +593,13 @@ CLARIFY_SCENARIOS = [
         name="reply answered nothing (early STOP)",
         why="answered=false is clarify's `none`: the agent's own comment says "
             "what is still needed and no cross-check runs — but the run still "
-            "spent money, and the cost line rides only on the two callouts "
-            "that do not fire here, so it gets an info callout of its own "
-            "(#366).",
+            "spent money, so it still gets the uniform cost report, gated only "
+            "on the agent having run (FR-001/FR-012).",
         result={"answered": False, "clarifications": []},
         spec_dir="specs/042-a-feature", expect_valid=True,
-        expect_outcome="none", expect_fires={"report_cost"}, expect_run_red=False,
+        expect_outcome="none", expect_fires=set(), expect_run_red=False,
+        expect_silent_green=True,   # the agent's own issue comment is the output
+        expect_cost_report=True,
     ),
     dict(
         name="reply resolved some questions, others remain",
@@ -606,7 +607,7 @@ CLARIFY_SCENARIOS = [
         result={"answered": True, "clarifications": QUESTIONS},
         spec_dir="specs/042-a-feature", expect_valid=True,
         expect_outcome="needs-clarification", expect_fires={"render", "announce_q"},
-        expect_run_red=False,
+        expect_run_red=False, expect_cost_report=True,
     ),
     dict(
         name="reply resolved everything",
@@ -614,7 +615,7 @@ CLARIFY_SCENARIOS = [
         result={"answered": True, "clarifications": []},
         spec_dir="specs/042-a-feature", expect_valid=True,
         expect_outcome="ready", expect_fires={"resolve_pr", "announce_pr"},
-        expect_run_red=False,
+        expect_run_red=False, expect_cost_report=True,
     ),
     dict(
         name="no questions returned but the spec still has markers (defect b)",
@@ -625,7 +626,7 @@ CLARIFY_SCENARIOS = [
         spec_dir="specs/042-a-feature", markers=True,
         expect_valid=True, expect_outcome="ready", expect_blocked="true",
         expect_fires=set(), expect_stdout=SENTINEL_PREFIX + "clarification-mismatch",
-        expect_run_red=True,
+        expect_run_red=True, expect_cost_report=True,
     ),
     dict(
         name="spec.md is unreadable while questions remain (defect c)",
@@ -639,6 +640,7 @@ CLARIFY_SCENARIOS = [
         expect_fires={"render", "announce_q"},
         forbid_stdout="clarification-mismatch",
         expect_summary="Cross-check skipped", expect_run_red=False,
+        expect_cost_report=True,
     ),
     dict(
         name="questionnaire whose optional fields are empty strings (defect d)",
@@ -646,7 +648,7 @@ CLARIFY_SCENARIOS = [
         result={"answered": True, "clarifications": BLANK_FIELD_QUESTIONS},
         spec_dir="specs/042-a-feature", expect_valid=True,
         expect_outcome="needs-clarification", expect_fires={"render", "announce_q"},
-        expect_run_red=False,
+        expect_run_red=False, expect_cost_report=True,
     ),
     dict(
         name="questionnaire carrying pipes, newlines and 28 options",
@@ -656,6 +658,7 @@ CLARIFY_SCENARIOS = [
         spec_dir="specs/042-a-feature", expect_valid=True,
         expect_outcome="needs-clarification", expect_fires={"render", "announce_q"},
         expect_run_red=False, expect_body=["| 27 |", "| 28 |"],
+        expect_cost_report=True,
     ),
     dict(
         name="terminal result missing the answered discriminator",
@@ -663,6 +666,7 @@ CLARIFY_SCENARIOS = [
         result={"clarifications": QUESTIONS},
         spec_dir="specs/042-a-feature", expect_valid=False,
         expect_outcome=None, expect_fires=set(), expect_run_red=True,
+        expect_cost_report=True,
     ),
 ]
 
@@ -829,11 +833,22 @@ def run_scenario(stage, steps, sc, tmproot):
     # specs/065-intake-silent-path-cost: the uniform cost report's own if:
     # is unconditioned by outcome (Decision 2), so it is asserted separately
     # from `fired` above — it must equal expect_cost_report on every
-    # scenario, whether or not an outcome callout also fired.
+    # scenario, whether or not an outcome callout also fired. Deliberately
+    # NOT gated on job_failed the way `fired` above is UNLESS the if: has
+    # lost its own always(): job_failed models clarify's validation gate
+    # exiting 1 IN PLACE, which in real GitHub Actions only skips steps that
+    # require success() — the report's own `always()` is exactly what
+    # exempts it from that (Decision 2, FR-012a). Checking for the literal
+    # term is what lets a mutation that drops `always()` actually change a
+    # scenario's outcome (clarify's job_failed=True scenario) rather than
+    # silently surviving, since evaluate_if() alone always treats `always()`
+    # as a no-op regardless of whether it is textually present.
     if stage.report_cost:
-        report_fires = (not job_failed and evaluate_if(
-            steps[stage.report_cost].get("if"), ctx, stage.report_cost,
-            stage.path))
+        report_if = steps[stage.report_cost].get("if")
+        has_always = "always()" in str(report_if or "")
+        report_fires = ((has_always or not job_failed)
+                        and evaluate_if(report_if, ctx, stage.report_cost,
+                                        stage.path))
         want_report = bool(sc.get("expect_cost_report"))
         if report_fires != want_report:
             failures.append(
@@ -841,6 +856,24 @@ def run_scenario(stage, steps, sc, tmproot):
                 f"fire={want_report}, got {report_fires}. A run whose agent "
                 f"stepped must report its cost exactly once, on every path "
                 f"(FR-001/FR-003/FR-012). {sc['why']}")
+
+        # !cancelled() and the agent-ran check both evaluate as true on
+        # every scenario in this table (none models a cancelled run or a
+        # skipped agent step), so evaluate_if() alone can never see either
+        # term's removal change a result — only a literal, structural check
+        # can (same reasoning as Gate 63's DISPATCHED_COND/mode=='auto'
+        # checks). FR-013.
+        cond = str(report_if or "")
+        if "!cancelled()" not in cond:
+            failures.append(
+                f"{tag} {stage.report_cost!r}'s if: does not require "
+                f"!cancelled() -- without it the report would post on a "
+                f"cancelled run (FR-013).")
+        if "steps.agent.outcome != 'skipped'" not in cond:
+            failures.append(
+                f"{tag} {stage.report_cost!r}'s if: does not require "
+                f"steps.agent.outcome != 'skipped' -- without it the report "
+                f"would post on a run whose agent never stepped (FR-013).")
 
     # FR-002a: the cost line moved OFF the outcome callouts entirely — the
     # uniform report is its only ride now. Checked statically, whether or not
@@ -1164,31 +1197,19 @@ def mut_drop_unclaimed_sentinel(loaded):
 
 
 def mut_drop_cost_report(loaded):
-    """#366: clarify's `none` path posts nothing, so the run's cost is never
-    reported."""
+    """specs/065-intake-silent-path-cost: the uniform report's if: loses its
+    !cancelled() conjunct, so it would post on a cancelled run (FR-013).
+    Mirrors the mutations T019 adds for the report's other conjuncts."""
     for stage, steps, _ in loaded:
         if stage.report_cost:
-            steps[stage.report_cost]["if"] = (
-                str(steps[stage.report_cost]["if"]).replace(
-                    "outputs.outcome == 'none'", "outputs.outcome == 'never'"))
-
-
-def mut_questionnaire_without_cost(loaded):
-    """The questionnaire's cost line is appended by a separate step; a
-    refactor that drops that step's env leaves the callout's body-file
-    configured and the line gone."""
-    for stage, steps, _ in loaded:
-        for step in steps.values():
-            env = step.get("env") or {}
-            if "COST_LINE" in env and ">>" in str(step.get("run", "")):
-                env["COST_LINE"] = "dropped"
+            _strip_conjunct_one(steps[stage.report_cost], "!cancelled()")
 
 
 def mut_cost_report_without_cost(loaded):
-    """#366's fix hollowed out: the callout posts, without the cost line."""
+    """The report posts without the cost line -- FR-001 hollowed out."""
     for stage, steps, _ in loaded:
         if stage.report_cost:
-            steps[stage.report_cost]["with"]["body"] = ""
+            steps[stage.report_cost]["with"]["cost-line"] = ""
 
 
 def mut_no_cell_escape(loaded):
@@ -1219,12 +1240,10 @@ MUTATIONS = [
     ("skipping the marker cross-check without saying so", mut_silent_skip),
     ("suppressing both callouts on specified=false without saying so",
      mut_drop_unclaimed_sentinel),
-    ("clarify's answered-nothing path never reporting the run's cost (#366)",
-     mut_drop_cost_report),
-    ("the cost-only callout posting without the cost line (#366)",
+    ("the uniform cost report's if: losing !cancelled() (would post on a "
+     "cancelled run)", mut_drop_cost_report),
+    ("the uniform cost report posting without the cost line",
      mut_cost_report_without_cost),
-    ("the questionnaire posting without the cost line its append step "
-     "supplies (#366)", mut_questionnaire_without_cost),
     ("agent text reaching a markdown table cell unescaped", mut_no_cell_escape),
     ("options past Z rendering their label as null", mut_no_ordinal_fallback),
 ]
