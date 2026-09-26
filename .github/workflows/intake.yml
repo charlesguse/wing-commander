@@ -959,6 +959,22 @@ jobs:
           [ -n "$line" ] || line="**Cost**: metrics unavailable"
           echo "line=$line" >> "$GITHUB_OUTPUT"
 
+      # specs/065-intake-silent-path-cost: the single home for posting this
+      # run's cost, independent of which outcome (if any) is announced below
+      # -- never nested inside any outcome branch's own if:. Gated only on
+      # "the agent ran" and "not cancelled", the same is-open/agent-ran gate
+      # "Compute cost line" already uses, plus !cancelled() (research.md
+      # Decision 2). This is what closes intake's four silent paths (US1) and
+      # replaces the cost line embedded in the two callouts below (US2).
+      - name: Report run cost
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && always() && !cancelled() && steps.agent.outcome != 'skipped'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-cost-report
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
+          issue-number: ${{ inputs.issue-number }}
+          cost-line: ${{ steps.cost-line.outputs.line }}
+          stage-label: Intake
+
       # Deterministic kind decision (contracts/callout-points.md rows 1/2):
       # the agent never decides whether to post an action-required callout,
       # it only authors the clarification-question content when needed.

@@ -117,7 +117,7 @@ discoverable branch"; "specified=false but a spec branch resolved") and
 confirm each now shows a fired cost report alongside its existing
 `expect_silent_green=True`.
 
-- [ ] T004 [US1] In `.github/workflows/intake.yml`, add a new step named
+- [X] T004 [US1] In `.github/workflows/intake.yml`, add a new step named
       `Report run cost` calling
       `./.wing-commander-pipeline/.github/actions/wing-commander-cost-report`,
       placed after "Compute cost line" (so `steps.cost-line` has already run)
@@ -129,7 +129,7 @@ confirm each now shows a fired cost report alongside its existing
       `token: ${{ env.WC_BOT_TOKEN }}`, `issue-number: ${{ inputs.issue-number }}`,
       `cost-line: ${{ steps.cost-line.outputs.line }}`, `stage-label: Intake`.
 
-- [ ] T005 [US1] In `.github/scripts/verify-clarification-gating.py`:
+- [X] T005 [US1] In `.github/scripts/verify-clarification-gating.py`:
       1. Set `report_cost="Report run cost"` on `INTAKE_STAGE`'s `Stage(...)`
          construction (it currently passes no `report_cost`, unlike
          `CLARIFY_STAGE`).
@@ -160,7 +160,7 @@ confirm each now shows a fired cost report alongside its existing
          reference `steps.cost-line.outputs.line` in body/body-file, and that
          `stage.report_cost`'s `with.cost-line` input does.
 
-- [ ] T006 [US1] In `.github/scripts/verify-clarification-gating.py`, add
+- [X] T006 [US1] In `.github/scripts/verify-clarification-gating.py`, add
       `expect_cost_report=True` to the four silent-path entries in
       `INTAKE_SCENARIOS` (the "no discernible feature request, empty
       clarifications", "no discernible feature request WITH questions",

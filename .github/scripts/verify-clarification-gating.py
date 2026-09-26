@@ -126,11 +126,13 @@ class Stage:
         # two, because the requester then sees only the run-started comment
         # while a marker-carrying spec PR sits in the review queue.
         self.fail_steps = fail_steps
-        # #366, clarify only: the info callout that carries the cost line
-        # when the agent's own comment was the run's only output (outcome
-        # none). Both posting callouts carry the cost line and neither fires
-        # there, so without this step a run that spent money reported none
-        # of it. Intake has no such path and leaves this None.
+        # specs/065-intake-silent-path-cost: the uniform cost report, fired
+        # on every path whose agent ran (never conditioned on which outcome,
+        # if any, the stage announced) — replaces #366's clarify-only bespoke
+        # report. Unlike the four outcome callouts below, this is expected to
+        # fire ALONGSIDE a real outcome callout on non-silent paths, so it is
+        # tracked as its own independent boolean (expect_cost_report), never
+        # folded into `posting_steps`'/`fired`'s mutual-exclusion check.
         self.report_cost = report_cost
 
     @property
@@ -140,8 +142,7 @@ class Stage:
 
     @property
     def posting_steps(self):
-        posting = {self.announce_q, self.announce_pr}
-        return posting | ({self.report_cost} if self.report_cost else set())
+        return {self.announce_q, self.announce_pr}
 
 
 INTAKE_STAGE = Stage(
@@ -158,6 +159,7 @@ INTAKE_STAGE = Stage(
     validate_exits_in_place=False,
     fail_steps=["Fail on invalid agent result",
                 "Fail on unresolved clarification markers"],
+    report_cost="Report run cost",
 )
 
 CLARIFY_STAGE = Stage(
@@ -369,6 +371,7 @@ INTAKE_SCENARIOS = [
         spec_dir="", expect_valid=True, expect_needed="false",
         expect_fires=set(), expect_run_red=False,
         expect_silent_green=True,   # the agent's own issue comment is the output
+        expect_cost_report=True,
     ),
     dict(
         name="no discernible feature request WITH questions (defect a)",
@@ -380,6 +383,7 @@ INTAKE_SCENARIOS = [
         spec_dir="", expect_valid=True, expect_needed="false",
         expect_fires=set(), expect_summary="dead end", expect_run_red=False,
         expect_silent_green=True,   # suppression is deliberate and is reported
+        expect_cost_report=True,
     ),
     dict(
         name="spec authored with open questions",
@@ -445,6 +449,7 @@ INTAKE_SCENARIOS = [
         # oversight: intake authored a spec, nothing is wrong with it, but no
         # branch resolved, so there is no PR URL to point anyone at.
         expect_silent_green=True,
+        expect_cost_report=True,
     ),
     dict(
         name="specified=false but a spec branch resolved (defect e)",
@@ -468,6 +473,7 @@ INTAKE_SCENARIOS = [
         # only because expect_stdout above pins that the run is loud in the
         # log. Silent to the issue is a decision; silent everywhere was a bug.
         expect_silent_green=True,
+        expect_cost_report=True,
     ),
     dict(
         name="specified=false, spec branch resolved, markers present (defect e)",
@@ -791,10 +797,12 @@ def run_scenario(stage, steps, sc, tmproot):
                         f"summary. Got:\n{decide_sum}")
 
     # --- which callouts fire ---------------------------------------------
+    # Scoped to the four outcome callouts only — the uniform cost report is
+    # no longer mutually exclusive with them (it now fires ALONGSIDE a real
+    # outcome callout on every non-silent path too), so it is checked as its
+    # own independent boolean below, never folded into this set.
     by_key = {"render": stage.render, "announce_q": stage.announce_q,
               "resolve_pr": stage.resolve_pr, "announce_pr": stage.announce_pr}
-    if stage.report_cost:
-        by_key["report_cost"] = stage.report_cost
     fired = {k for k, n in by_key.items()
              if not job_failed
              and evaluate_if(steps[n].get("if"), ctx, n, stage.path)}
@@ -810,17 +818,42 @@ def run_scenario(stage, steps, sc, tmproot):
                         f"({sorted(both)}). They are the arms of one decision "
                         f"and can never be simultaneously correct (#159).")
 
-    # #366: every posting step must hand the cost line to the callout —
-    # statically, whether or not this scenario fires it, so a fourth arm no
-    # scenario exercises is still held to it. Checked here rather than in
-    # structural_checks() because the mutations rerun only the scenarios.
+    # specs/065-intake-silent-path-cost: the uniform cost report's own if:
+    # is unconditioned by outcome (Decision 2), so it is asserted separately
+    # from `fired` above — it must equal expect_cost_report on every
+    # scenario, whether or not an outcome callout also fired.
+    if stage.report_cost:
+        report_fires = (not job_failed and evaluate_if(
+            steps[stage.report_cost].get("if"), ctx, stage.report_cost,
+            stage.path))
+        want_report = bool(sc.get("expect_cost_report"))
+        if report_fires != want_report:
+            failures.append(
+                f"{tag} expected the cost report ({stage.report_cost!r}) to "
+                f"fire={want_report}, got {report_fires}. A run whose agent "
+                f"stepped must report its cost exactly once, on every path "
+                f"(FR-001/FR-003/FR-012). {sc['why']}")
+
+    # FR-002a: the cost line moved OFF the outcome callouts entirely — the
+    # uniform report is its only ride now. Checked statically, whether or not
+    # this scenario fires either step, so a fourth arm no scenario exercises
+    # is still held to it. Checked here rather than in structural_checks()
+    # because the mutations rerun only the scenarios.
     for name in stage.posting_steps:
-        if not carries_cost_line(steps, steps[name]):
-            failures.append(f"{tag} {name!r} posts without the cost line: its "
-                            f"`body` is not steps.cost-line.outputs.line and no "
-                            f"step appends $COST_LINE to its body-file. A run "
-                            f"that spent money must report it on every path "
-                            f"that posts (#366).")
+        if carries_cost_line(steps, steps[name]):
+            failures.append(f"{tag} {name!r} still carries the cost line — "
+                            f"FR-002a moved it off every outcome callout onto "
+                            f"the uniform cost report, so a run whose agent "
+                            f"stepped would now double-report on every path "
+                            f"that also fires this callout.")
+    if stage.report_cost:
+        report = steps[stage.report_cost]
+        if "steps.cost-line.outputs.line" not in str(
+                (report.get("with") or {}).get("cost-line", "")):
+            failures.append(
+                f"{tag} {stage.report_cost!r} posts without the cost line: "
+                f"its `with.cost-line` is not steps.cost-line.outputs.line. "
+                f"A run that spent money must report it (FR-001).")
 
     # --- does the run actually go red? -----------------------------------
     # Asserted separately from the callouts because the two can disagree in
