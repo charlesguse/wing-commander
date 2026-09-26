@@ -2,7 +2,7 @@
   "issue": 599,
   "spec_dir": "specs/082-script-grant-existence-scope",
   "feature_num": "082",
-  "stage": "spec",
+  "stage": "plan",
   "iteration": 0,
-  "spec_branch": null
+  "spec_branch": "spec/082-script-grant-existence-scope"
 }
