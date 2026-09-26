@@ -1924,6 +1924,7 @@ jobs:
       # apart from a sibling run's same-id commit (FR-004, FR-005, #560).
       - name: Install run-attribution hook for this leg's commits
         if: steps.relay-gate.outputs.proceed == 'true' && steps.route.outputs.needs-checkout == 'true'
+        shell: bash
         run: |
           set -euo pipefail
           hooks_dir="$RUNNER_TEMP/wing-commander-fold-hooks"
@@ -2699,8 +2700,8 @@ jobs:
           clean: false
 
       # research.md D2: the single home for "which fold(<id>): <summary>
-      # commits in this range are THIS run's own" -- see
-      # .github/actions/wing-commander-fold-evidence/action.yml's header.
+      # commits in this range are THIS run's own" is the
+      # wing-commander-fold-evidence composite's own header.
       - name: Compute this run's fold evidence
         id: fold-evidence
         if: steps.tip.outputs.sha != needs.classify-and-announce.outputs.base-sha && steps.tip.outputs.sha != ''
@@ -2916,8 +2917,8 @@ jobs:
           clean: false
 
       # research.md D2: the single home for "which fold(<id>): <summary>
-      # commits in this range are THIS run's own" -- see
-      # .github/actions/wing-commander-fold-evidence/action.yml's header.
+      # commits in this range are THIS run's own" is the
+      # wing-commander-fold-evidence composite's own header.
       - name: Compute this run's fold evidence
         id: fold-evidence
         if: steps.tip.outputs.sha != ''
