@@ -448,6 +448,10 @@ jobs:
       # agent-ran above, for the same reason implement.yml does.
       agent-conclusion: ${{ steps.agent-ran-auto.outputs.conclusion || steps.agent-ran-pr.outputs.conclusion }}
       credential-refresh-ok: ${{ steps.credential-status-auto.outputs.ok || steps.credential-status-pr.outputs.ok }}
+      # No stalled job in this file to read this (research.md D4's own
+      # precedent, matching credential-refresh-ok above) -- published for
+      # symmetry with every other in-scope stage.
+      push-credential-mint-failed: ${{ steps.push-cred-status-auto.outputs.mint-failure-detected || steps.push-cred-status-pr.outputs.mint-failure-detected }}
       agent-any-failure: ${{ (steps.agent-ran-auto.outputs.conclusion == 'failure' || steps.agent-ran-pr.outputs.conclusion == 'failure') && 'true' || 'false' }}
       credential-any-refresh-failure: ${{ (steps.credential-status-auto.outputs.ok == 'false' || steps.credential-status-pr.outputs.ok == 'false') && 'true' || 'false' }}
     steps:
@@ -672,6 +676,17 @@ jobs:
           fetch-depth: 0
           clean: false
 
+      # constitution VII: a published stage may not read github.event
+      # directly -- github.repository (not .event.repository) is a run-level
+      # fact every job already has, split here so neither of this job's two
+      # credential-helper calls below needs to touch github.event -- see
+      # clarify.yml.
+      - name: Resolve this repository's name
+        id: repo-name
+        if: steps.dupe.outputs.skip != 'true'
+        shell: bash
+        run: echo "name=${GITHUB_REPOSITORY#*/}" >> "$GITHUB_OUTPUT"
+
       # Auto mode — generate the plan and commit it, with the stage update,
       # directly to the spec branch. No plan/<slug> branch, no PR.
       - name: Compose tool args (plan.direct-commit)
@@ -703,8 +718,10 @@ jobs:
           app-id: ${{ secrets.speckit-app-id }}
           private-key: ${{ secrets.speckit-app-private-key }}
           owner: ${{ github.repository_owner }}
-          repo-name: ${{ github.event.repository.name }}
+          repo-name: ${{ steps.repo-name.outputs.name }}
 
+      # This step's prompt carries the retry-bound paragraph for a credential-
+      # expiry/mint-failure `git push` signature -- see clarify.yml.
       - name: Generate implementation plan (direct commit)
         id: agent-auto
         if: steps.dupe.outputs.skip != 'true' && steps.mode.outputs.mode == 'auto' && steps.tool-args-plan-direct-commit.outputs.allowed-tools != ''
@@ -823,6 +840,13 @@ jobs:
               can. Never mkdir or ls a temp path first to prepare it.
             A denial is not a hint to retry a variant. Switch to the allowed form
             above, or record the limitation for the human and move on.
+
+            A `git push` that fails with `remote: Invalid username or token`
+            or `Authentication failed`, or with a message beginning
+            `wing-commander-agent-push-credential: mint failed:`, is a
+            credential problem this pipeline is already handling — retry it
+            at most twice, then commit your work locally if it still fails
+            and continue; do not spend further turns retrying the same push.
           claude_args: |
             --model ${{ inputs.model }}
             --max-turns ${{ steps.agent-auto-ceiling.outputs.ceiling }}
@@ -917,8 +941,10 @@ jobs:
           app-id: ${{ secrets.speckit-app-id }}
           private-key: ${{ secrets.speckit-app-private-key }}
           owner: ${{ github.repository_owner }}
-          repo-name: ${{ github.event.repository.name }}
+          repo-name: ${{ steps.repo-name.outputs.name }}
 
+      # This step's prompt carries the retry-bound paragraph for a credential-
+      # expiry/mint-failure `git push` signature -- see clarify.yml.
       - name: Generate implementation plan
         id: agent-pr
         if: steps.dupe.outputs.skip != 'true' && steps.mode.outputs.mode == 'pr' && steps.tool-args-plan-pr.outputs.allowed-tools != ''
@@ -1032,6 +1058,13 @@ jobs:
               can. Never mkdir or ls a temp path first to prepare it.
             A denial is not a hint to retry a variant. Switch to the allowed form
             above, or record the limitation for the human and move on.
+
+            A `git push` that fails with `remote: Invalid username or token`
+            or `Authentication failed`, or with a message beginning
+            `wing-commander-agent-push-credential: mint failed:`, is a
+            credential problem this pipeline is already handling — retry it
+            at most twice, then commit your work locally if it still fails
+            and continue; do not spend further turns retrying the same push.
           claude_args: |
             --model ${{ inputs.model }}
             --max-turns ${{ steps.agent-pr-ceiling.outputs.ceiling }}
@@ -1354,6 +1387,12 @@ jobs:
           mint-outcome: ${{ steps.reestablish-auto.outcome }}
           refresh-outcome: ${{ steps.refresh-remote-auto.outcome }}
 
+      # FR-006 (specs/071-agent-push-credential) -- see clarify.yml.
+      - name: Detect agent push-credential mint failure (auto)
+        id: push-cred-status-auto
+        if: "!cancelled() && steps.agent-auto.outcome != 'skipped'"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-push-credential-status
+
       - name: Determine post-agent credential status (pr)
         id: credential-status-pr
         if: "!cancelled() && steps.agent-pr.outcome != 'skipped'"
@@ -1361,3 +1400,9 @@ jobs:
         with:
           mint-outcome: ${{ steps.reestablish-pr.outcome }}
           refresh-outcome: ${{ steps.refresh-remote-pr.outcome }}
+
+      # FR-006 (specs/071-agent-push-credential) -- see clarify.yml.
+      - name: Detect agent push-credential mint failure (pr)
+        id: push-cred-status-pr
+        if: "!cancelled() && steps.agent-pr.outcome != 'skipped'"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-push-credential-status

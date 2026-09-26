@@ -37,6 +37,13 @@ inputs:
     description: needs.<job>.outputs.credential-refresh-ok
     required: false
     default: ""
+  push-credential-mint-failed:
+    description: >
+      needs.<job>.outputs.push-credential-mint-failed (specs/071-agent-push-
+      credential, FR-006) -- 'true' when the agent step's own push-credential
+      helper logged a mint failure at least once during the run.
+    required: false
+    default: ""
   failed-post-agent-step:
     description: needs.<job>.outputs.failed-post-agent-step
     required: false
@@ -60,6 +67,7 @@ runs:
         AGENT_RAN: ${{ inputs.agent-ran }}
         AGENT_CONCLUSION: ${{ inputs.agent-conclusion }}
         CREDENTIAL_REFRESH_OK: ${{ inputs.credential-refresh-ok }}
+        PUSH_CRED_MINT_FAILED: ${{ inputs.push-credential-mint-failed }}
         FAILED_STEP: ${{ inputs.failed-post-agent-step }}
       run: |
         if [ "$AGENT_RAN" = "true" ] && [ -n "$FAILED_STEP" ] && [ "$CREDENTIAL_REFRESH_OK" = "false" ]; then
@@ -68,6 +76,8 @@ runs:
           reason="the agent step ran (concluded: $AGENT_CONCLUSION) and the '$FAILED_STEP' step after it did not complete"
         elif [ "$AGENT_RAN" = "true" ] && [ "$CREDENTIAL_REFRESH_OK" = "false" ]; then
           reason="the agent step ran (concluded: $AGENT_CONCLUSION) and the post-agent wing-commander-bot credential re-establishment failed (see the 'Determine post-agent credential status' step) -- treat the credential, not the agent or a downstream step, as the cause"
+        elif [ "$AGENT_RAN" = "true" ] && [ "$PUSH_CRED_MINT_FAILED" = "true" ]; then
+          reason="the agent step ran (concluded: $AGENT_CONCLUSION) and its own push credential failed to mint at least once during the run (see the agent step's transcript for 'wing-commander-agent-push-credential: mint failed:') -- treat that credential, not the agent, as contributing cause"
         elif [ "$AGENT_RAN" = "true" ]; then
           reason="the agent step ran (concluded: $AGENT_CONCLUSION) and a step after it did not complete"
         elif [ "$IMAGE_RESULT" = "failure" ]; then

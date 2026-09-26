@@ -1538,6 +1538,7 @@ jobs:
       # job wrapping it to read one (research.md D4, same status as
       # plan.yml) -- see clarify.yml.
       credential-refresh-ok: ${{ steps.credential-status.outputs.ok }}
+      push-credential-mint-failed: ${{ steps.push-cred-status.outputs.mint-failure-detected }}
     strategy:
       fail-fast: false
       # Legs are NOT run concurrently: two classifications from the SAME
@@ -1920,6 +1921,16 @@ jobs:
           fetch-depth: 0
           clean: false
 
+      # constitution VII: a published stage may not read github.event
+      # directly -- github.repository (not .event.repository) is a run-level
+      # fact every job already has, split here so the credential-helper
+      # call below never touches github.event -- see clarify.yml.
+      - name: Resolve this repository's name
+        id: repo-name
+        if: steps.relay-gate.outputs.proceed == 'true' && steps.route.outputs.agent-needed == 'true'
+        shell: bash
+        run: echo "name=${GITHUB_REPOSITORY#*/}" >> "$GITHUB_OUTPUT"
+
       # A fresh-mint credential for the agent step's own `git push` calls
       # -- see clarify.yml.
       - name: Install fresh-mint push credential (agent)
@@ -1930,7 +1941,7 @@ jobs:
           app-id: ${{ secrets.speckit-app-id }}
           private-key: ${{ secrets.speckit-app-private-key }}
           owner: ${{ github.repository_owner }}
-          repo-name: ${{ github.event.repository.name }}
+          repo-name: ${{ steps.repo-name.outputs.name }}
 
       # Drafted-content is already-classified data (T006), but still not
       # fresh instructions — staged to a file, not interpolated (constitution V).
@@ -1973,6 +1984,8 @@ jobs:
         with:
           intended-turns: ${{ inputs.max-turns }}
 
+      # This step's prompt carries the retry-bound paragraph for a credential-
+      # expiry/mint-failure `git push` signature -- see clarify.yml.
       - name: Act on this classification
         id: agent
         if: steps.relay-gate.outputs.proceed == 'true' && steps.route.outputs.agent-needed == 'true' && steps.tool-args-act.outputs.allowed-tools != ''
@@ -2068,6 +2081,13 @@ jobs:
             paragraph, written for a PR reply), and `artifact-url` (the
             created issue/PR URL, or null when none was created — e.g. the
             fold-in routes, or a performed/not-performed manual step).
+
+            A `git push` that fails with `remote: Invalid username or token`
+            or `Authentication failed`, or with a message beginning
+            `wing-commander-agent-push-credential: mint failed:`, is a
+            credential problem this pipeline is already handling — retry it
+            at most twice, then commit your work locally if it still fails
+            and continue; do not spend further turns retrying the same push.
           claude_args: |
             --model ${{ inputs.model }}
             --max-turns ${{ steps.agent-ceiling.outputs.ceiling }}
@@ -2583,6 +2603,12 @@ jobs:
         with:
           mint-outcome: ${{ steps.reestablish.outcome }}
           refresh-outcome: ${{ steps.refresh-remote.outcome }}
+
+      # FR-006 (specs/071-agent-push-credential) -- see clarify.yml.
+      - name: Detect agent push-credential mint failure
+        id: push-cred-status
+        if: "!cancelled() && steps.agent.outcome != 'skipped'"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-push-credential-status
 
   # research.md D1/D2/D3/contracts/fold-dispatch-once.md: the ONLY job in
   # this workflow that calls `gh workflow run` for implement.yml, and it

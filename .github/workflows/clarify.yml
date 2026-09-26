@@ -328,6 +328,7 @@ jobs:
       agent-ran: ${{ steps.agent-ran.outputs.ran }}
       agent-conclusion: ${{ steps.agent-ran.outputs.conclusion }}
       credential-refresh-ok: ${{ steps.credential-status.outputs.ok }}
+      push-credential-mint-failed: ${{ steps.push-cred-status.outputs.mint-failure-detected }}
       failed-post-agent-step: ${{ steps.failed-step.outputs.step }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
@@ -560,6 +561,17 @@ jobs:
         with:
           intended-turns: ${{ inputs.max-turns }}
 
+      # constitution VII: a published stage may not read github.event
+      # directly -- github.repository (not .event.repository) is a run-level
+      # fact every job already has; this canonical copy splits it so no
+      # credential-helper call site anywhere else needs to touch
+      # github.event either. Every other in-scope stage's copy points here.
+      - name: Resolve this repository's name
+        id: repo-name
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.tool-args-clarify.outputs.allowed-tools != ''
+        shell: bash
+        run: echo "name=${GITHUB_REPOSITORY#*/}" >> "$GITHUB_OUTPUT"
+
       # A fresh-mint credential for the agent step's own `git push` calls
       # (specs/071-agent-push-credential): a git credential.helper that
       # mints a new App installation token on every outbound
@@ -575,8 +587,14 @@ jobs:
           app-id: ${{ secrets.speckit-app-id }}
           private-key: ${{ secrets.speckit-app-private-key }}
           owner: ${{ github.repository_owner }}
-          repo-name: ${{ github.event.repository.name }}
+          repo-name: ${{ steps.repo-name.outputs.name }}
 
+      # (canonical copy; do not condense)
+      # This step's prompt below carries the retry-bound paragraph for a
+      # `git push` that fails with the credential-expiry or mint-failure
+      # signature (specs/071-agent-push-credential, research.md D7).
+      # Every other in-scope stage's prompt either quotes this paragraph
+      # verbatim or points back at this copy with "-- see clarify.yml.".
       - name: Fold answers into the draft spec
         id: agent
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.tool-args-clarify.outputs.allowed-tools != ''
@@ -688,6 +706,13 @@ jobs:
             report. Then continue your own task unchanged.
 
             Never merge, approve, close, or relabel anything except as stated.
+
+            A `git push` that fails with `remote: Invalid username or token`
+            or `Authentication failed`, or with a message beginning
+            `wing-commander-agent-push-credential: mint failed:`, is a
+            credential problem this pipeline is already handling — retry it
+            at most twice, then commit your work locally if it still fails
+            and continue; do not spend further turns retrying the same push.
           claude_args: |
             --model ${{ inputs.model }}
             --max-turns ${{ steps.agent-ceiling.outputs.ceiling }}
@@ -1149,6 +1174,15 @@ jobs:
           mint-outcome: ${{ steps.reestablish.outcome }}
           refresh-outcome: ${{ steps.refresh-remote.outcome }}
 
+      # FR-006 (specs/071-agent-push-credential): attributes a mid-cycle
+      # push-credential mint failure to the credential, alongside the
+      # existing post-agent credential status check above -- see
+      # clarify.yml for the composite.
+      - name: Detect agent push-credential mint failure
+        id: push-cred-status
+        if: "!cancelled() && steps.agent.outcome != 'skipped'"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-push-credential-status
+
       # FR-011: names the specific post-agent step that failed, for the
       # stalled job to read instead of the generic "a step after it did not
       # complete" (spec 052 maintainer review of PR #407). Must be the
@@ -1296,6 +1330,7 @@ jobs:
           agent-ran: ${{ needs.clarify.outputs.agent-ran }}
           agent-conclusion: ${{ needs.clarify.outputs.agent-conclusion }}
           credential-refresh-ok: ${{ needs.clarify.outputs.credential-refresh-ok }}
+          push-credential-mint-failed: ${{ needs.clarify.outputs.push-credential-mint-failed }}
           failed-post-agent-step: ${{ needs.clarify.outputs.failed-post-agent-step }}
 
       - name: Report the stage did not start

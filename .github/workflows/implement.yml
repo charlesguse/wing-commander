@@ -411,6 +411,9 @@ jobs:
       # (most-recent-wins `||`, same convention as agent-ran above).
       agent-conclusion: ${{ steps.agent-ran-progress.outputs.conclusion || steps.agent-ran-retry.outputs.conclusion || steps.agent-ran-cycle.outputs.conclusion }}
       credential-refresh-ok: ${{ steps.credential-status-progress.outputs.ok || steps.credential-status-retry.outputs.ok || steps.credential-status-cycle.outputs.ok }}
+      # progress never pushes (FR-025) so it has no push-cred-status step;
+      # most-recent-wins across retry/cycle only, same convention as above.
+      push-credential-mint-failed: ${{ steps.push-cred-status-retry.outputs.mint-failure-detected || steps.push-cred-status-cycle.outputs.mint-failure-detected }}
       # Record-only (not read by the stall path): 'true' when ANY chain
       # that ran failed/could not refresh, even one a later chain healed.
       agent-any-failure: ${{ (steps.agent-ran-progress.outputs.conclusion == 'failure' || steps.agent-ran-retry.outputs.conclusion == 'failure' || steps.agent-ran-cycle.outputs.conclusion == 'failure') && 'true' || 'false' }}
@@ -569,6 +572,17 @@ jobs:
           token: ${{ env.WC_BOT_TOKEN }}
           fetch-depth: 0
           clean: false
+
+      # constitution VII: a published stage may not read github.event
+      # directly -- github.repository (not .event.repository) is a run-level
+      # fact every job already has, split here so neither of this job's
+      # two credential-helper calls below needs to touch github.event --
+      # see clarify.yml.
+      - name: Resolve this repository's name
+        id: repo-name
+        if: steps.lifecycle-gate.outputs.is-open == 'true'
+        shell: bash
+        run: echo "name=${GITHUB_REPOSITORY#*/}" >> "$GITHUB_OUTPUT"
 
       # The accepted task list must exist on the spec branch and the
       # lifecycle record must agree with the inputs — report and stop rather
@@ -860,8 +874,10 @@ jobs:
           app-id: ${{ secrets.speckit-app-id }}
           private-key: ${{ secrets.speckit-app-private-key }}
           owner: ${{ github.repository_owner }}
-          repo-name: ${{ github.event.repository.name }}
+          repo-name: ${{ steps.repo-name.outputs.name }}
 
+      # This step's prompt carries the retry-bound paragraph for a credential-
+      # expiry/mint-failure `git push` signature -- see clarify.yml.
       - name: Implement and converge (cycle)
         id: cycle
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true' && steps.tool-args-cycle.outputs.allowed-tools != ''
@@ -1008,6 +1024,13 @@ jobs:
               and never reconstruct an original file to diff warning lists.
             - Tick the tasks.md checkboxes for a whole phase in ONE edit at the end
               of that phase, not one edit per task.
+
+            A `git push` that fails with `remote: Invalid username or token`
+            or `Authentication failed`, or with a message beginning
+            `wing-commander-agent-push-credential: mint failed:`, is a
+            credential problem this pipeline is already handling — retry it
+            at most twice, then commit your work locally if it still fails
+            and continue; do not spend further turns retrying the same push.
           claude_args: |
             --model ${{ steps.effective-model.outputs.model }}
             --max-turns ${{ steps.cycle-ceiling.outputs.ceiling }}
@@ -1465,8 +1488,10 @@ jobs:
           app-id: ${{ secrets.speckit-app-id }}
           private-key: ${{ secrets.speckit-app-private-key }}
           owner: ${{ github.repository_owner }}
-          repo-name: ${{ github.event.repository.name }}
+          repo-name: ${{ steps.repo-name.outputs.name }}
 
+      # This step's prompt carries the retry-bound paragraph for a credential-
+      # expiry/mint-failure `git push` signature -- see clarify.yml.
       - name: Implement and converge (retry at escalation model)
         id: retry
         if: >-
@@ -1619,6 +1644,13 @@ jobs:
               and never reconstruct an original file to diff warning lists.
             - Tick the tasks.md checkboxes for a whole phase in ONE edit at the end
               of that phase, not one edit per task.
+
+            A `git push` that fails with `remote: Invalid username or token`
+            or `Authentication failed`, or with a message beginning
+            `wing-commander-agent-push-credential: mint failed:`, is a
+            credential problem this pipeline is already handling — retry it
+            at most twice, then commit your work locally if it still fails
+            and continue; do not spend further turns retrying the same push.
           claude_args: |
             --model ${{ inputs.escalation-model }}
             --max-turns ${{ steps.retry-ceiling.outputs.ceiling }}
@@ -2675,6 +2707,12 @@ jobs:
           mint-outcome: ${{ steps.reestablish-cycle.outcome }}
           refresh-outcome: ${{ steps.refresh-remote-cycle.outcome }}
 
+      # FR-006 (specs/071-agent-push-credential) -- see clarify.yml.
+      - name: Detect agent push-credential mint failure (cycle)
+        id: push-cred-status-cycle
+        if: "!cancelled() && steps.cycle.outcome != 'skipped'"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-push-credential-status
+
       - name: Determine post-agent credential status (retry)
         id: credential-status-retry
         if: "!cancelled() && steps.retry.outcome != 'skipped'"
@@ -2682,6 +2720,12 @@ jobs:
         with:
           mint-outcome: ${{ steps.reestablish-retry.outcome }}
           refresh-outcome: ${{ steps.refresh-remote-retry.outcome }}
+
+      # FR-006 (specs/071-agent-push-credential) -- see clarify.yml.
+      - name: Detect agent push-credential mint failure (retry)
+        id: push-cred-status-retry
+        if: "!cancelled() && steps.retry.outcome != 'skipped'"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-push-credential-status
 
       - name: Determine post-agent credential status (progress)
         id: credential-status-progress
@@ -3077,6 +3121,7 @@ jobs:
           agent-ran: ${{ needs.implement.outputs.agent-ran }}
           agent-conclusion: ${{ needs.implement.outputs.agent-conclusion }}
           credential-refresh-ok: ${{ needs.implement.outputs.credential-refresh-ok }}
+          push-credential-mint-failed: ${{ needs.implement.outputs.push-credential-mint-failed }}
           failed-post-agent-step: ${{ needs.implement.outputs.failed-post-agent-step }}
 
       - name: Report the stage did not start
