@@ -674,6 +674,12 @@ jobs:
 
       # Auto mode — generate the plan and commit it, with the stage update,
       # directly to the spec branch. No plan/<slug> branch, no PR.
+      - name: Compose commit-message guidance (plan.direct-commit)
+        id: commit-guidance-plan-direct
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-commit-message-guidance
+        with:
+          scratch-filename: plan-commit-message-direct.txt
+
       - name: Compose tool args (plan.direct-commit)
         id: tool-args-plan-direct-commit
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-tool-args
@@ -750,6 +756,8 @@ jobs:
                "plan: ${{ needs.resolve-spec.outputs.slug }} (#${{ steps.meta.outputs.issue || steps.newissue.outputs.issue }})"
                directly on ${{ inputs.spec-prefix }}${{ needs.resolve-spec.outputs.slug }} (no new
                branch) and push. Open no PR.
+
+               ${{ steps.commit-guidance-plan-direct.outputs.guidance }}
             4. Comment on issue #${{ steps.meta.outputs.issue || steps.newissue.outputs.issue }}:
                a short plan summary, artifacts generated, constitution-check
                outcome, a "Decisions made without clarification" section (omit
@@ -876,6 +884,12 @@ jobs:
       # Pr mode — the plan arrives as a reviewable PR against the spec
       # branch; nothing lands on the spec branch directly and the tasks
       # stage does NOT start here.
+      - name: Compose commit-message guidance (plan.pr)
+        id: commit-guidance-plan-pr
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-commit-message-guidance
+        with:
+          scratch-filename: plan-commit-message-pr.txt
+
       - name: Compose tool args (plan.pr)
         id: tool-args-plan-pr
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-tool-args
@@ -942,6 +956,8 @@ jobs:
                data-model.md, contracts/, quickstart.md, spec-meta.json) as
                "plan: ${{ needs.resolve-spec.outputs.slug }} (#${{ steps.meta.outputs.issue || steps.newissue.outputs.issue }})"
                and push ${{ inputs.plan-prefix }}${{ needs.resolve-spec.outputs.slug }}.
+
+               ${{ steps.commit-guidance-plan-pr.outputs.guidance }}
             5. Open the plan PR:
                gh pr create --base ${{ inputs.spec-prefix }}${{ needs.resolve-spec.outputs.slug }} \
                  --head ${{ inputs.plan-prefix }}${{ needs.resolve-spec.outputs.slug }} \

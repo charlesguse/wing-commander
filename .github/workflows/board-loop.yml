@@ -1845,6 +1845,12 @@ jobs:
           default-disallowed-tools: "WebSearch,WebFetch,Bash(git push:*)"
           step-label: "board-loop.fixer"
 
+      - name: Compose commit-message guidance (board-loop.fixer)
+        id: commit-guidance-fixer
+        uses: ./.github/actions/wing-commander-commit-message-guidance
+        with:
+          scratch-filename: board-loop-commit-message-fixer.txt
+
       - name: Compute agent turn ceiling (fixer)
         id: fix-ceiling
         uses: ./.github/actions/wing-commander-turn-ceiling
@@ -1886,6 +1892,8 @@ jobs:
             push` -- you do not have that tool, and a deterministic step
             after you runs the full local gate suite and pushes only if it
             is green). Do not open a PR yourself.
+
+            ${{ steps.commit-guidance-fixer.outputs.guidance }}
           claude_args: |
             --model ${{ needs.resolve-model.outputs.model }}
             --max-turns ${{ steps.fix-ceiling.outputs.ceiling }}
@@ -2979,6 +2987,13 @@ jobs:
           default-disallowed-tools: "WebSearch,WebFetch,Bash(git push:*)"
           step-label: "board-loop.review-fixup"
 
+      - name: Compose commit-message guidance (board-loop.review-fixup)
+        id: commit-guidance-review-fixup
+        if: steps.round.outputs.outcome == 'continue' && steps.killswitch-recheck.outputs.paused != 'true'
+        uses: ./.github/actions/wing-commander-commit-message-guidance
+        with:
+          scratch-filename: board-loop-commit-message-review-fixup.txt
+
       - name: Compute agent turn ceiling (review-fixup)
         id: review-fixup-ceiling
         if: steps.round.outputs.outcome == 'continue' && steps.killswitch-recheck.outputs.paused != 'true'
@@ -3016,6 +3031,8 @@ jobs:
             -- a deterministic step after you runs the full local gate
             suite and pushes only if it is green). Do not open or edit any
             PR yourself.
+
+            ${{ steps.commit-guidance-review-fixup.outputs.guidance }}
           claude_args: |
             --model ${{ needs.resolve-model.outputs.model }}
             --max-turns ${{ steps.review-fixup-ceiling.outputs.ceiling }}
