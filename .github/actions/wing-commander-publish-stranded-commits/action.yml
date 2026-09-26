@@ -1,0 +1,65 @@
+# Single home for the deterministic "publish whatever the agent could not
+# push itself" step (specs/071-agent-push-credential, research.md D8).
+# Today's rescue of stranded commits is *incidental*: a later agent step's
+# own push happens to carry them along once its credential is fresh
+# again. That path has no rescue when no later agent step runs -- a
+# cycle that converges on its first pass, or an agent step killed before
+# its own final push. This composite replaces the incidental rescue with
+# one that runs whether or not a later agent step ever does. Resolved
+# from the pipeline repository's own checkout -- see the header of
+# .github/actions/wing-commander-context/action.yml.
+name: wing-commander-publish-stranded-commits
+description: >
+  Pushes the local working tree's current branch tip as-is (no
+  `git fetch origin` first -- reconciling with a remote that moved for an
+  unrelated reason is `push-ok=false`'s job to surface, not this step's
+  job to resolve) and reports how many commits, if any, were locally
+  ahead of origin before this push. Runs immediately alongside (same
+  `if:` as) each in-scope agent step's existing post-agent
+  wing-commander-context re-mint -- the credential helper
+  wing-commander-agent-push-credential installed earlier in the job is
+  still active, so this deterministic push also resolves its own
+  credential fresh.
+
+inputs:
+  before-sha:
+    description: >
+      The spec branch's HEAD SHA before the agent step this call
+      accompanies ran -- reused from that job's own existing
+      before-SHA capture, never re-derived.
+    required: true
+
+outputs:
+  commits-published:
+    description: >
+      Count of commits git rev-list found locally ahead of the recorded
+      before-sha immediately before this push -- 0 when the agent had
+      already pushed everything itself (the common case). Informational
+      either way: it answers "how much was at stake," not "how much
+      succeeded."
+    value: ${{ steps.publish.outputs.commits-published }}
+  push-ok:
+    description: >
+      "true"/"false" -- whether the push attempt itself succeeded.
+      "false" covers a genuine race (e.g. a concurrent force-push), not a
+      credential failure.
+    value: ${{ steps.publish.outputs.push-ok }}
+
+runs:
+  using: composite
+  steps:
+    - name: Publish stranded commits
+      id: publish
+      shell: bash
+      env:
+        BEFORE_SHA: ${{ inputs.before-sha }}
+      run: |
+        set -uo pipefail
+        count="$(git rev-list --count "${BEFORE_SHA}..HEAD" 2>/dev/null || echo 0)"
+        echo "commits-published=$count" >> "$GITHUB_OUTPUT"
+        branch="$(git rev-parse --abbrev-ref HEAD)"
+        if git push origin "HEAD:$branch"; then
+          echo "push-ok=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "push-ok=false" >> "$GITHUB_OUTPUT"
+        fi

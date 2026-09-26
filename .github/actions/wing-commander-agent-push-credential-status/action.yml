@@ -1,0 +1,45 @@
+# Single home for attributing a mid-cycle credential mint failure to the
+# credential itself, rather than letting it surface only as a bare
+# authentication failure inside an agent step's own transcript
+# (specs/071-agent-push-credential, FR-006, research.md D6). Mirrors
+# wing-commander-post-agent-credential-status's existing shape (spec 052)
+# and its "never hard-fails the job" fix: a mint failure deep in an
+# otherwise-healthy cycle is not itself a stalled stage. Resolved from
+# the pipeline repository's own checkout -- see the header of
+# .github/actions/wing-commander-context/action.yml.
+name: wing-commander-agent-push-credential-status
+description: >
+  Reads the agent step's already-uploaded execution-output artifact /
+  transcript for the literal prefix
+  "wing-commander-agent-push-credential: mint failed:" (mint-credential.sh's
+  own stderr signature, research.md D6) and publishes a grep-able,
+  prose-free mint-failure-detected output the stall path can read on the
+  same terms wing-commander-post-agent-credential-status's own `ok` output
+  already is. Never fails the job itself -- a mint failure attributable
+  here, with every earlier step healthy, is not what "stalled" means.
+
+inputs:
+  transcript-path:
+    description: >
+      Path to the agent step's uploaded execution-output artifact /
+      transcript file to scan for the mint-failure signature.
+    required: true
+
+outputs:
+  mint-failure-detected:
+    description: "'true' when the signature is present anywhere in the transcript; unset otherwise."
+    value: ${{ steps.status.outputs.mint-failure-detected }}
+
+runs:
+  using: composite
+  steps:
+    - name: Detect a credential-mint failure in the agent transcript
+      id: status
+      shell: bash
+      env:
+        TRANSCRIPT_PATH: ${{ inputs.transcript-path }}
+      run: |
+        set -uo pipefail
+        if [ -n "$TRANSCRIPT_PATH" ] && [ -f "$TRANSCRIPT_PATH" ] && grep -qF "wing-commander-agent-push-credential: mint failed:" "$TRANSCRIPT_PATH" 2>/dev/null; then
+          echo "mint-failure-detected=true" >> "$GITHUB_OUTPUT"
+        fi
