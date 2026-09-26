@@ -746,6 +746,39 @@ jobs:
             --allowedTools "${{ steps.tool-args-rebase.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-rebase.outputs.disallowed-tools }}"
 
+      # !cancelled(), not always() (spec 052, should-fix per maintainer
+      # review of PR #407): a run cancelled during the agent step must not
+      # still perform a network mint and a remote rewrite in the cancel
+      # window -- see clarify.yml.
+      - name: Record agent-ran signal
+        id: agent-ran
+        if: "!cancelled() && steps.agent.outcome != 'skipped'"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-ran-signal
+        with:
+          agent-outcome: ${{ steps.agent.outcome }}
+
+      - name: Re-establish Wing Commander context (post-agent)
+        id: reestablish
+        if: "!cancelled() && steps.agent.outcome != 'skipped'"
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
+        with:
+          app-id: ${{ secrets.speckit-app-id }}
+          private-key: ${{ secrets.speckit-app-private-key }}
+
+      # rebase.yml's "Checkout spec branch as wing-commander-bot" step
+      # persists the pre-agent credential into the git remote the publish
+      # arm's force-with-lease push rides -- unlike e2e-stage/
+      # classify-and-announce (NO_REMOTE_REFRESH_JOBS), this job is not
+      # exempt from this refresh.
+      - name: Refresh authenticated spec-branch remote (post-agent)
+        id: refresh-remote
+        if: "!cancelled() && steps.agent.outcome != 'skipped'"
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-refresh-remote
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
+
       # deterministic, transcript-only verdict replacing the raw steps.agent.outcome reads below
       # -- see specs/037-agent-turn-budget-guard/data-model.md. Gated the
       # same way the other post-agent steps in this job already are: only
@@ -828,9 +861,10 @@ jobs:
       # abandon-and-escalate arm below ever populates.
       - name: Report over-budget agent run
         if: matrix.issue != '' && steps.agent-verdict.outputs.verdict == 'healthy' && steps.agent-verdict.outputs.over-budget == 'true'
+        continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
         with:
-          token: ${{ steps.ctx.outputs.token }}
+          token: ${{ env.WC_BOT_TOKEN }}
           issue-number: ${{ matrix.issue }}
           kind: info
           summary: "This step used its full intended turn budget."
@@ -919,6 +953,7 @@ jobs:
       # way "Compute agent run verdict" above is — only when the agent step
       # actually ran.
       - name: Fail loud on non-healthy agent verdict
+        id: verdict-fail
         if: always() && steps.agent.outcome != 'skipped' && steps.agent-verdict.outputs.verdict != 'healthy'
         env:
           VERDICT: ${{ steps.agent-verdict.outputs.verdict }}
@@ -948,7 +983,7 @@ jobs:
         env:
           SLUG: ${{ matrix.slug }}
           ISSUE: ${{ matrix.issue }}
-          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           SPEC_PREFIX: ${{ inputs.spec-prefix }}
         run: |
           set -uo pipefail
@@ -970,6 +1005,36 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 
+      # Deferred to the job's last bot-acting step before the failure arm
+      # (review-step-gating skill, spec 052 self-review): reads the mint/
+      # refresh outcomes from the composites added above the agent step's
+      # own window. rebase.yml has no separate stalled job (spec.md Edge
+      # Cases), so "Abandon and escalate" below reads this step's `ok`
+      # output directly rather than through a job output relay.
+      - name: Determine post-agent credential status
+        id: credential-status
+        if: "!cancelled() && steps.agent.outcome != 'skipped'"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-post-agent-credential-status
+        with:
+          mint-outcome: ${{ steps.reestablish.outcome }}
+          refresh-outcome: ${{ steps.refresh-remote.outcome }}
+
+      # FR-004: names the specific post-agent step that failed, for
+      # "Abandon and escalate" below to read directly -- rebase.yml has no
+      # separate survivor/stalled job (spec.md Edge Cases), so the
+      # composite's output is consumed job-locally instead of relayed
+      # through a job output to a second job, unlike the six entry-job
+      # consumers documented in wing-commander-context-relay.md.
+      - name: Determine failed post-agent step
+        id: failed-step
+        if: "!cancelled() && steps.agent.outcome != 'skipped'"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-failed-post-agent-step
+        with:
+          candidates-json: >-
+            [
+              {"name": "Fail loud on non-healthy agent verdict", "conclusion": "${{ steps.verdict-fail.conclusion }}"}
+            ]
+
       # Abandon + escalate: reached on an outright rebase error or a
       # scope-check failure. Clean up any in-progress rebase so the branch is
       # left byte-for-byte as it was — nothing was ever pushed — then escalate
@@ -990,9 +1055,14 @@ jobs:
         env:
           SLUG: ${{ matrix.slug }}
           BEFORE: ${{ steps.attempt.outputs.before }}
-          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           SPEC_PREFIX: ${{ inputs.spec-prefix }}
           COST_LINE: ${{ steps.cost-line.outputs.line }}
+          # FR-003/FR-004: name an expired or unrefreshed credential as the
+          # escalation cause when applicable, instead of leaving a later step
+          # to fail with an unexplained authentication error.
+          CREDENTIAL_OK: ${{ steps.credential-status.outputs.ok }}
+          FAILED_STEP: ${{ steps.failed-step.outputs.step }}
         run: |
           set -uo pipefail
           spec_dir="specs/$SLUG"
@@ -1035,6 +1105,13 @@ jobs:
             echo ""
             echo "The rebase was **abandoned** and the branch left exactly as it was (nothing was force-pushed). Its conflicts against \`$DB\` need a manual rebase or a decision on how to reconcile them."
             echo ""
+            if [ "$CREDENTIAL_OK" = "false" ]; then
+              echo "**Cause**: the post-agent wing-commander-bot credential re-establishment failed after the agent step ran — treat the credential, not the conflict resolution, as the cause (see the \"Determine post-agent credential status\" step)."
+              echo ""
+            elif [ -n "$FAILED_STEP" ]; then
+              echo "**Cause**: the \"$FAILED_STEP\" step failed after the agent step ran."
+              echo ""
+            fi
             echo "- Branch tip: \`$BEFORE\`"
             echo "- \`$DB\` tip: \`$main_sha\`"
             echo ""
@@ -1053,7 +1130,7 @@ jobs:
         if: always() && steps.escalate.outputs.issue != ''
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
         with:
-          token: ${{ steps.ctx.outputs.token }}
+          token: ${{ env.WC_BOT_TOKEN }}
           issue-number: ${{ steps.escalate.outputs.issue }}
           kind: action
           summary: "Manually rebase this branch"
