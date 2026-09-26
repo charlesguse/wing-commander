@@ -89,7 +89,7 @@ def run_fixtures(verbose=True):
             spec = json.load(fh)
         got = board_stop_check.find_stop_request(
             spec["comments"], spec["current_run_id"], spec["bot_login"])
-        expected = spec["expected_run_id"]
+        expected = board_stop_check.StopDecision(**spec["expected"])
         if got != expected:
             failures += 1
             if verbose:
@@ -114,15 +114,15 @@ def run_command_cases(verbose=True):
                  "user": {"login": "maintainer", "type": "User"}},
             ]
             got_pred = board_stop_check.is_stop_command(body)
-            got_run = board_stop_check.find_stop_request(comments, "999", BOT_LOGIN)
-            want_run = "111" if want else None
-            if got_pred != want or got_run != want_run:
+            got_decision = board_stop_check.find_stop_request(comments, "999", BOT_LOGIN)
+            want_decision = board_stop_check.StopDecision(want, "111" if want else None)
+            if got_pred != want or got_decision != want_decision:
                 failures += 1
                 if verbose:
                     print("::error::verify-board-stop-check: {0}: {1!r}: "
-                          "expected is_stop_command()={2}/run {3!r}, got "
+                          "expected is_stop_command()={2}/decision {3!r}, got "
                           "{4}/{5!r}.".format(COMMAND_CASES_FILE, body, want,
-                                              want_run, got_pred, got_run))
+                                              want_decision, got_pred, got_decision))
             elif verbose:
                 print("[ok] {0}: {1!r} -> {2}".format(
                     COMMAND_CASES_FILE, body, "stop" if want else "no stop"))
@@ -139,7 +139,21 @@ MUTATIONS = (
      lambda: re.compile(r"\*\*Run:\*\*\s*(https://\S+/actions/runs/(\d+))")),
     ("first `**Run:**` line in a comment read, pre-#580", "last_run_match",
      lambda: (lambda body: board_stop_check.MARKER_RUN_RE.search(body or ""))),
+    ("self-run returned as cancel target, pre-085", "find_stop_request",
+     lambda: _pre_085_find_stop_request),
 )
+
+_ORIGINAL_FIND_STOP_REQUEST = board_stop_check.find_stop_request
+
+
+def _pre_085_find_stop_request(comments, current_run_id, bot_login):
+    """Reintroduces the pre-085 fallback: cancel_run_id defaults to the
+    current run's own id instead of None when no earlier run announced
+    itself (today's line 218, before this feature replaced it)."""
+    decision = _ORIGINAL_FIND_STOP_REQUEST(comments, current_run_id, bot_login)
+    if decision.stand_down and decision.cancel_run_id is None:
+        return board_stop_check.StopDecision(True, str(current_run_id))
+    return decision
 
 
 def mutation_check():

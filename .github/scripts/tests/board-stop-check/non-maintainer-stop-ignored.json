@@ -5,5 +5,5 @@
     {"body": "**Run:** https://github.com/example/example/actions/runs/111\n\n<!-- wing-commander-board-item: {} -->", "author_association": "NONE", "created_at": "2026-01-01T00:00:00Z", "user": {"login": "wing-commander-bot[bot]", "type": "Bot"}},
     {"body": "please stop", "author_association": "NONE", "created_at": "2026-01-01T00:05:00Z", "user": {"login": "outsider", "type": "User"}}
   ],
-  "expected_run_id": null
+  "expected": {"stand_down": false, "cancel_run_id": null}
 }
