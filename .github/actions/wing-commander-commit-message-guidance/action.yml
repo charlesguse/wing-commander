@@ -1,0 +1,77 @@
+# The single canonical source of the "commit message longer than one line"
+# paragraph every commit-instructing agent prompt in this repository
+# renders (specs/078-plan-tasks-commit-scratch-path, FR-011). Pure shell —
+# no agent, no network — runs before the agent step it feeds, mirroring
+# wing-commander-tool-args/action.yml's and wing-commander-preflight/
+# action.yml's fail-fast-before-credentials position.
+#
+# Like every shared composite, this action is resolved from the pipeline
+# repository's own checkout (see the header of
+# .github/actions/wing-commander-context/action.yml for the verified
+# snippet), so it must never assume it lives in the workspace-root
+# repository.
+name: wing-commander-commit-message-guidance
+description: >
+  Render the canonical "a multi-line commit message goes through the Write
+  tool to a named scratch path, then git commit -F" paragraph for one
+  call site, substituting that site's own scratch filename and an optional
+  trailing note.
+
+inputs:
+  scratch-filename:
+    description: >
+      A bare filename, no directory component and no ${{ runner.temp }}
+      prefix -- this action supplies that prefix itself so no call site can
+      typo the path's root (FR-002).
+    required: true
+  extra-note:
+    description: >
+      An optional site-specific sentence appended verbatim after the
+      canonical paragraph. Only implement.yml's retry site sets this today.
+    required: false
+    default: ""
+
+outputs:
+  guidance:
+    description: >
+      The complete rendered paragraph, safe to interpolate directly into a
+      prompt: | block via ${{ steps.<id>.outputs.guidance }}.
+    value: ${{ steps.render.outputs.guidance }}
+
+runs:
+  using: composite
+  steps:
+    - name: Render commit-message guidance
+      id: render
+      shell: bash
+      env:
+        SCRATCH_FILENAME: ${{ inputs.scratch-filename }}
+        EXTRA_NOTE: ${{ inputs.extra-note }}
+        RUNNER_TEMP_DIR: ${{ runner.temp }}
+      run: |
+        set -uo pipefail
+
+        fail() {
+          echo "::error::wing-commander-commit-message-guidance: $1"
+          exit 1
+        }
+
+        case "$SCRATCH_FILENAME" in
+          "")
+            fail "scratch-filename is required and must not be empty."
+            ;;
+          */*)
+            fail "scratch-filename must be a bare filename with no directory component: got '$SCRATCH_FILENAME'."
+            ;;
+        esac
+
+        scratch_path="$RUNNER_TEMP_DIR/$SCRATCH_FILENAME"
+
+        guidance="A commit message longer than one line goes through the Write tool to exactly $scratch_path and then git commit -F with that path; never a heredoc or \$(cat ...) on the command line, which the permission layer denies, and never a file under the repository (a path inside .git/ is denied outright, and any other path there would be swept into the commit)."
+
+        if [ -n "$EXTRA_NOTE" ]; then
+          guidance="$guidance $EXTRA_NOTE"
+        fi
+
+        delim="wc_$(openssl rand -hex 16)"
+        { printf 'guidance<<%s\n%s\n%s\n' "$delim" "$guidance" "$delim"; } >> "$GITHUB_OUTPUT"
