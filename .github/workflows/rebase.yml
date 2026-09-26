@@ -746,6 +746,44 @@ jobs:
             --allowedTools "${{ steps.tool-args-rebase.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-rebase.outputs.disallowed-tools }}"
 
+      # spec 072: the post-agent credential contract (spec 052) this job was
+      # missing -- this job persists a git-remote credential via "Checkout
+      # spec branch as wing-commander-bot" and later force-pushes in
+      # "Publish rebased branch", so a refresh-remote call is required (T025
+      # switches every post-agent steps.ctx.outputs.token read to
+      # env.WC_BOT_TOKEN).
+      - name: Re-establish Wing Commander context (post-agent)
+        id: reestablish
+        if: "!cancelled() && steps.agent.outcome != 'skipped'"
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
+        with:
+          app-id: ${{ secrets.speckit-app-id }}
+          private-key: ${{ secrets.speckit-app-private-key }}
+
+      - name: Refresh authenticated spec-branch remote (post-agent)
+        id: refresh-remote
+        if: "!cancelled() && steps.agent.outcome != 'skipped'"
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-refresh-remote
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
+
+      - name: Record agent-ran signal
+        id: agent-ran
+        if: "!cancelled() && steps.agent.outcome != 'skipped'"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-ran-signal
+        with:
+          agent-outcome: ${{ steps.agent.outcome }}
+
+      - name: Determine post-agent credential status
+        id: credential-status
+        if: "!cancelled() && steps.agent.outcome != 'skipped'"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-post-agent-credential-status
+        with:
+          mint-outcome: ${{ steps.reestablish.outcome }}
+          refresh-outcome: ${{ steps.refresh-remote.outcome }}
+
       # deterministic, transcript-only verdict replacing the raw steps.agent.outcome reads below
       # -- see specs/037-agent-turn-budget-guard/data-model.md. Gated the
       # same way the other post-agent steps in this job already are: only
@@ -828,9 +866,10 @@ jobs:
       # abandon-and-escalate arm below ever populates.
       - name: Report over-budget agent run
         if: matrix.issue != '' && steps.agent-verdict.outputs.verdict == 'healthy' && steps.agent-verdict.outputs.over-budget == 'true'
+        continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
         with:
-          token: ${{ steps.ctx.outputs.token }}
+          token: ${{ env.WC_BOT_TOKEN }}
           issue-number: ${{ matrix.issue }}
           kind: info
           summary: "This step used its full intended turn budget."
@@ -948,7 +987,7 @@ jobs:
         env:
           SLUG: ${{ matrix.slug }}
           ISSUE: ${{ matrix.issue }}
-          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           SPEC_PREFIX: ${{ inputs.spec-prefix }}
         run: |
           set -uo pipefail
@@ -990,7 +1029,7 @@ jobs:
         env:
           SLUG: ${{ matrix.slug }}
           BEFORE: ${{ steps.attempt.outputs.before }}
-          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           SPEC_PREFIX: ${{ inputs.spec-prefix }}
           COST_LINE: ${{ steps.cost-line.outputs.line }}
         run: |
@@ -1053,7 +1092,7 @@ jobs:
         if: always() && steps.escalate.outputs.issue != ''
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
         with:
-          token: ${{ steps.ctx.outputs.token }}
+          token: ${{ env.WC_BOT_TOKEN }}
           issue-number: ${{ steps.escalate.outputs.issue }}
           kind: action
           summary: "Manually rebase this branch"
