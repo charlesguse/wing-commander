@@ -121,8 +121,8 @@ Single project — this repository's own GitHub Actions workflows and gate scrip
 
 **Purpose**: The repository-wide acceptance bar and the review pass this class of change requires.
 
-- [ ] T041 [P] Run `python .github/scripts/run-local-gates.py` (the full local PR-time gate suite) and confirm every gate, including Gate 68, its self-test, and Gate 69, passes clean (quickstart.md §1; CLAUDE.md "Before pushing").
-- [ ] T042 Get a pass from the `review-step-gating` skill on this change, since it adds `if:` guards and a `continue-on-error:` step in `rebase.yml` and `cleanup.yml` (research.md D13; CLAUDE.md: "A change that touches any `if:`, `continue-on-error:`, or failing step in a workflow should also get a pass from the `review-step-gating` skill"). Fix any findings in the same PR.
+- [X] T041 [P] Run `python .github/scripts/run-local-gates.py` (the full local PR-time gate suite) and confirm every gate, including Gate 68, its self-test, and Gate 69, passes clean (quickstart.md §1; CLAUDE.md "Before pushing").
+- [X] T042 Get a pass from the `review-step-gating` skill on this change, since it adds `if:` guards and a `continue-on-error:` step in `rebase.yml` and `cleanup.yml` (research.md D13; CLAUDE.md: "A change that touches any `if:`, `continue-on-error:`, or failing step in a workflow should also get a pass from the `review-step-gating` skill"). Fix any findings in the same PR.
 - [ ] T043 After this feature's implementation PR merges, re-drive one real run of `rebase.yml` on a branch with a genuine conflict (so the agent step actually executes) and one real run of `cleanup.yml` to `teardown-done` on a normal teardown, via `gh workflow run` on the wrapper that can dispatch each; record on the PR or lifecycle issue #558 that the publish/escalate arm completed on a post-agent credential and that both runs' outcomes, comments, labels, and artifacts are unchanged from before this feature (quickstart.md §7; SC-007; CLAUDE.md "Working the issue board" prove step).
 
 ---
