@@ -129,6 +129,12 @@ BOARD_LOOP_FILE = ".github/workflows/board-loop.yml"
 
 WORKFLOWS_DIR = ".github/workflows"
 ACTIONS_DIR = ".github/actions"
+# board-loop.yml resolves every local composite through a same-commit
+# sidecar checkout, never the workspace directly (see that file's header;
+# specs/086-trusted-composite-resolution) -- its content is this same
+# commit's .github/actions tree, so a `uses:` path through it still
+# resolves to the real action.yml this gate can walk.
+SIDECAR_PREFIX = ".wc-pristine-repo/"
 
 # Tier 1: board:* only, matching main's original (#488) scope.
 BOARD_LABEL_TOKEN_RE = re.compile(r'^board:[A-Za-z0-9_-]+$')
@@ -415,6 +421,8 @@ def _composite_creates(root, uses_path):
     rel = uses_path
     while rel.startswith("./"):
         rel = rel[2:]
+    if rel.startswith(SIDECAR_PREFIX):
+        rel = rel[len(SIDECAR_PREFIX):]
     for name in ("action.yml", "action.yaml"):
         candidate = f"{rel}/{name}"
         if os.path.isfile(os.path.join(root, candidate)):

@@ -228,7 +228,7 @@ checkout, makes the gate fail and name the offending job and reference.
 
 ### Implementation for User Story 3
 
-- [ ] T019 [US3] Create `.github/scripts/verify-board-loop-composite-provenance.py`
+- [X] T019 [US3] Create `.github/scripts/verify-board-loop-composite-provenance.py`
       (Gate 99) implementing, over `.github/workflows/board-loop.yml` and
       this repository's own `.gitignore` (contracts/gate-99.md "Rules"):
       (a) no line anywhere in the file matches `uses:
@@ -249,7 +249,7 @@ checkout, makes the gate fail and name the offending job and reference.
       conventions (`wc_shell_harness` imports, `WORKFLOW` constant, `yaml`
       parsing) where they transfer, but do not inherit its `JOBS = (...)`
       per-job-allowlist shape (research.md D5) — Gate 99 has no such tuple.
-- [ ] T020 [US3] Add a `--self-test` mode to the same script implementing
+- [X] T020 [US3] Add a `--self-test` mode to the same script implementing
       the 7 mutations of research.md D7 / data-model.md "Gate 99 Fixture
       Set", each asserted caught and attributed to its own rule, plus a
       baseline assertion that the unmutated, shipped file is clean first:
@@ -269,7 +269,7 @@ checkout, makes the gate fail and name the offending job and reference.
          pattern — must fail, proving the rule admits no allowlist
          (FR-010, read onto Gate 99's own design per contracts/gate-99.md
          "Self-test").
-- [ ] T021 [US3] Register Gate 99 in `.github/workflows/lint-workflows.yml`
+- [X] T021 [US3] Register Gate 99 in `.github/workflows/lint-workflows.yml`
       as two steps immediately after Gate 98's block, using exactly the
       comment and step names in contracts/gate-99.md (the `# Gate 99 —
       ...` comment block, `Gate 99 — every uses: ./.github/actions/
@@ -277,7 +277,7 @@ checkout, makes the gate fail and name the offending job and reference.
       the workspace`, and `Gate 99 self-test — ...`), each with `if:
       "!cancelled()"` and calling the script from T019/T020 with and
       without `--self-test`.
-- [ ] T022 [US3] Append one sentence to Gate 98's existing comment block in
+- [X] T022 [US3] Append one sentence to Gate 98's existing comment block in
       `.github/workflows/lint-workflows.yml` (immediately before Gate 99's
       own block) pointing at Gate 99 for the composite half of the same
       provenance property (FR-014; contracts/documentation-updates.md
