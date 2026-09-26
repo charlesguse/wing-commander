@@ -147,7 +147,9 @@ jobs:
             echo
             echo "| Element | Status | Remaining action |"
             echo "|---|---|---|"
-            printf '%s\n' "$report" | jq -r '.elements[] | "| " + .key + " | " + (if .ready then "✅" else "❌" end) + " | " + (.remaining_action // "") + " |"'
+            printf '%s\n' "$report" | jq -r '.elements[] | "| " + .key + " | " + (if .outcome == "ready" then "✅" elif .outcome == "missing" then "❌" else "➖" end) + " | " + (.remaining_action // "") + " |"'
+            echo
+            printf '%s\n' "$report" | jq -r '"Verdict: **" + .verdict + "**"'
           } >> "$GITHUB_STEP_SUMMARY"
           if [ "$rc" -ne 0 ]; then
             echo "::error::wing-commander scratch preflight: $TARGET is not ready for the $PROFILE profile. See the job summary."

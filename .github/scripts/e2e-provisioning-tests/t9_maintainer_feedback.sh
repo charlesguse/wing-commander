@@ -19,12 +19,15 @@ seed_fully_onboarded "wc-user/wc-e2e-t36" true
 gh_state_set "wc-user/wc-e2e-t36" "secrets_forbidden" "true"
 gh_state_set "wc-user/wc-e2e-t36" "variables_forbidden" "true"
 OUT="$(bash "$PROVISION_SCRIPT" --repo wc-user/wc-e2e-t36 --profile auto-release --check-only 2>/dev/null)"
-check "T9 claude_credential is not ready when secrets are unreadable" \
-  "$(jq -r '.elements[] | select(.key=="claude_credential") | .ready' <<<"$OUT")" "false"
+RC=$?
+check "T9 T36 exits 2 (unverified, nothing missing)" "$RC" "2"
+check "T9 T36 overall verdict is unverified" "$(jq -r .verdict <<<"$OUT")" "unverified"
+check "T9 claude_credential is not_checkable when secrets are unreadable" \
+  "$(jq -r '.elements[] | select(.key=="claude_credential") | .outcome' <<<"$OUT")" "not_checkable"
 check_contains "T9 claude_credential names it as not checkable, not missing" \
   "$(jq -r '.elements[] | select(.key=="claude_credential") | .remaining_action' <<<"$OUT")" "Not checkable with this token"
-check "T9 container_image_pin is not ready when variables are unreadable" \
-  "$(jq -r '.elements[] | select(.key=="container_image_pin") | .ready' <<<"$OUT")" "false"
+check "T9 container_image_pin is not_checkable when variables are unreadable" \
+  "$(jq -r '.elements[] | select(.key=="container_image_pin") | .outcome' <<<"$OUT")" "not_checkable"
 check_contains "T9 container_image_pin names it as not checkable, not missing" \
   "$(jq -r '.elements[] | select(.key=="container_image_pin") | .remaining_action' <<<"$OUT")" "Not checkable with this token"
 
@@ -39,21 +42,32 @@ jq --arg full "wc-user/wc-e2e-t37" \
 mv "$tmp" "$GH_STATE"
 # Stands in for the readiness workflow, the only realistic caller of
 # --check-only (T044's Independent Test is framed as the readiness check,
-# not this script run bare from a maintainer's shell).
+# not this script run bare from a maintainer's shell). This exported hint
+# stands in for the dispatched readiness check's own token-mint proof of
+# installation (research.md D5) -- it does not exercise real JWT-only
+# verification, and is why the local, maintainer-run path can never itself
+# reach app_installation: ready any other way (the exact limitation User
+# Story 1 of 069-scratch-readiness-reporting addresses).
 export WC_APP_INSTALLATION_KNOWN_READY=true
 OUT="$(bash "$PROVISION_SCRIPT" --repo wc-user/wc-e2e-t37 --profile spec-kit-scratch --check-only 2>/dev/null)"
 RC=$?
 check "T9 check-only exits 0 (scratch_marker is not applicable on the read-only path)" "$RC" "0"
-check "T9 check-only reports ready" "$(jq -r .ready <<<"$OUT")" "true"
+check "T9 check-only reports all_clear" "$(jq -r .verdict <<<"$OUT")" "all_clear"
 check "T9 check-only reports scratch_marker as ready (not applicable, T044)" \
-  "$(jq -r '.elements[] | select(.key=="scratch_marker") | .ready' <<<"$OUT")" "true"
+  "$(jq -r '.elements[] | select(.key=="scratch_marker") | .outcome' <<<"$OUT")" "ready"
 check_not_contains "T9 check-only performs no mutating call" "$(cat "$GH_CALLS")" "repo edit"
 
 echo "--- T038/T039: a freshly created, still-empty target is marked immediately, surviving a later content push ---"
 new_gh_state
 OUT="$(bash "$PROVISION_SCRIPT" --repo wc-user/wc-e2e-t38 --profile spec-kit-scratch 2>/dev/null)"
+RC=$?
+# Edge Cases (FR-006): a spec-kit-scratch target's local run has no hint to
+# reach app_installation: ready, so its best attainable verdict here is
+# unverified/exit 2, not the failure status this profile could give before.
+check "T9 T38 first run (no hint) exits 2 (unverified)" "$RC" "2"
+check "T9 T38 first run reports unverified" "$(jq -r .verdict <<<"$OUT")" "unverified"
 check "T9 scratch_marker is ready immediately on a freshly created, still-empty target" \
-  "$(jq -r '.elements[] | select(.key=="scratch_marker") | .ready' <<<"$OUT")" "true"
+  "$(jq -r '.elements[] | select(.key=="scratch_marker") | .outcome' <<<"$OUT")" "ready"
 check "T9 its description is set to the scratch marker while still empty" \
   "$(gh_state_get "wc-user/wc-e2e-t38" description)" "$SCRATCH_MARKER_FOR_TESTS"
 # Simulate e2e-stage later pushing real content, and a human installing the
@@ -64,7 +78,7 @@ export WC_APP_INSTALLATION_KNOWN_READY=true
 : > "$GH_CALLS"
 SECOND="$(bash "$PROVISION_SCRIPT" --repo wc-user/wc-e2e-t38 --profile spec-kit-scratch 2>/dev/null)"
 check "T9 re-provisioning after content exists is adopted, not refused as foreign" "$?" "0"
-check "T9 re-provisioning reports ready" "$(jq -r .ready <<<"$SECOND")" "true"
+check "T9 re-provisioning reports all_clear" "$(jq -r .verdict <<<"$SECOND")" "all_clear"
 check_not_contains "T9 re-provisioning issues no further repo edit" "$(cat "$GH_CALLS")" "repo edit"
 
 echo "--- T040: a failed source-image read refuses to pin an empty value ---"
@@ -82,14 +96,14 @@ echo "--- T043: app_installation never calls the JWT-only API; it trusts WC_APP_
 new_gh_state
 seed_fully_onboarded "wc-user/wc-e2e-t43" false
 OUT="$(bash "$PROVISION_SCRIPT" --repo wc-user/wc-e2e-t43 --profile auto-release 2>/dev/null)"
-check "T9 app_installation is not ready without the hint, even though the stub has no installation endpoint at all" \
-  "$(jq -r '.elements[] | select(.key=="app_installation") | .ready' <<<"$OUT")" "false"
+check "T9 app_installation is not_checkable without the hint, even though the stub has no installation endpoint at all" \
+  "$(jq -r '.elements[] | select(.key=="app_installation") | .outcome' <<<"$OUT")" "not_checkable"
 check_not_contains "T9 never calls the nonexistent stub installation endpoint" "$(cat "$GH_CALLS")" "installation"
 export WC_APP_INSTALLATION_KNOWN_READY=true
 : > "$GH_CALLS"
 OUT2="$(bash "$PROVISION_SCRIPT" --repo wc-user/wc-e2e-t43 --profile auto-release 2>/dev/null)"
 check "T9 app_installation converges to ready from the hint alone" \
-  "$(jq -r '.elements[] | select(.key=="app_installation") | .ready' <<<"$OUT2")" "true"
+  "$(jq -r '.elements[] | select(.key=="app_installation") | .outcome' <<<"$OUT2")" "ready"
 
 echo "--- T045: the mutating path refuses when neither the git remote nor GITHUB_REPOSITORY resolves this repository ---"
 new_gh_state
@@ -136,7 +150,7 @@ gh_state_set "wc-user/wc-e2e-t47" "variables" '{"WING_COMMANDER_CONTAINER_IMAGE"
 gh_state_set "wc-user/wc-e2e-t47" "variables_noisy_stderr" "true"
 OUT="$(bash "$PROVISION_SCRIPT" --repo wc-user/wc-e2e-t47 --profile auto-release --check-only 2>/dev/null)"
 check "T9 container_image_pin still reads ready despite noisy stderr on a successful call" \
-  "$(jq -r '.elements[] | select(.key=="container_image_pin") | .ready' <<<"$OUT")" "true"
+  "$(jq -r '.elements[] | select(.key=="container_image_pin") | .outcome' <<<"$OUT")" "ready"
 
 echo "--- T048: gh_stub prints non-ASCII scratch-marker text as UTF-8 regardless of the host's default IO encoding ---"
 new_gh_state

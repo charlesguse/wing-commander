@@ -242,7 +242,14 @@ if [ "$CHECK_ONLY" != "true" ]; then
   fi
 
   if ! check_repository "$OWNER" "$NAME"; then
-    act_repository "$OWNER" "$NAME"
+    # FR-013/T046 precedent: a failed create must stop here, before the
+    # scratch-marker write below is ever attempted, so the reported reason
+    # names repository creation and never "failed to write the scratch
+    # marker" for what was actually a failed repository creation.
+    if ! act_repository "$OWNER" "$NAME"; then
+      echo "provision-e2e-target.sh: failed to create repository $OWNER/$NAME -- refusing to proceed with any further privileged action" >&2
+      exit 1
+    fi
   fi
   # T038/T039: claim the marker immediately once the repository exists,
   # before any other privileged action (e.g. wrapper_set) can give it
@@ -286,10 +293,19 @@ printf '%s\n' "$REPORT"
 
 {
   echo "Readiness report for $OWNER/$NAME ($PROFILE):"
-  jq -r '.elements[] | (if .ready then "  [ready]     " else "  [NOT READY] " end) + .key + (if .remaining_action then " -- " + .remaining_action else "" end)' <<<"$REPORT"
+  jq -r '.elements[] |
+    (if .outcome == "ready" then "  [ready]        "
+     elif .outcome == "not_checkable" then "  [not checkable]"
+     else "  [MISSING]      " end)
+    + .key
+    + (if .key == "app_installation" and .outcome == "ready" then
+         " (confirmed via WC_APP_INSTALLATION_KNOWN_READY -- see docs/setup.md if this was not set intentionally)"
+       else "" end)
+    + (if .remaining_action then " -- " + .remaining_action else "" end)' <<<"$REPORT"
 } >&2
 
-if [ "$(jq -r .ready <<<"$REPORT")" = "true" ]; then
-  exit 0
-fi
-exit 1
+case "$(jq -r .verdict <<<"$REPORT")" in
+  all_clear) exit 0 ;;
+  not_clear) exit 1 ;;
+  unverified) exit 2 ;;
+esac

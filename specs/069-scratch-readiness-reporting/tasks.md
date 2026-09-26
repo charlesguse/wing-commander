@@ -43,7 +43,7 @@ files to.
 **Purpose**: Establish a baseline before changing behaviour, so every
 resulting test diff is attributable to this feature and nothing else.
 
-- [ ] T001 Run `bash .github/scripts/e2e-provisioning-tests/run-tests.sh`
+- [X] T001 Run `bash .github/scripts/e2e-provisioning-tests/run-tests.sh`
   on the unmodified tree and record the result (all nine suites passing) as
   the baseline this feature's test-file edits are diffed against.
 
@@ -81,7 +81,7 @@ individual element rows.
 
 ### Implementation for User Story 1
 
-- [ ] T002 [US1] In `.github/scripts/e2e-provisioning/checks.sh`, make
+- [X] T002 [US1] In `.github/scripts/e2e-provisioning/checks.sh`, make
   `check_app_installation` set a global `APP_INSTALLATION_NOT_CHECKABLE=true`
   whenever `WC_APP_INSTALLATION_KNOWN_READY` is not exactly the literal
   string `true`, mirroring the existing `CLAUDE_CREDENTIAL_NOT_CHECKABLE`/
@@ -91,7 +91,7 @@ individual element rows.
   D5) — because the one route that could ever prove non-installation (the
   readiness workflow's own App-token mint failing) already exits before
   `checks.sh` runs at all.
-- [ ] T003 [US1] Rewrite `assemble_report` in
+- [X] T003 [US1] Rewrite `assemble_report` in
   `.github/scripts/e2e-provisioning/checks.sh` to classify each element's
   outcome as `ready` (`check_$key` returned 0), `not_checkable`
   (`check_$key` returned 1 and `<KEY_UPPER>_NOT_CHECKABLE=true`), or
@@ -106,18 +106,18 @@ individual element rows.
   `ready`/`elements[].ready` entirely (this is a breaking JSON-shape change,
   research.md D4, deliberately with no compatibility field). Depends on
   T002.
-- [ ] T004 [US1] In `.github/scripts/provision-e2e-target.sh`, update the
+- [X] T004 [US1] In `.github/scripts/provision-e2e-target.sh`, update the
   stderr human-readable summary (the `jq -r '.elements[] | (if .ready then
   ... else ...)' ` line) to render three distinct labels for `ready`/
   `missing`/`not_checkable` keyed on `.outcome`, replacing the current
   `[ready]`/`[NOT READY]` two-valued rendering. Depends on T003.
-- [ ] T005 [US1] In `.github/scripts/provision-e2e-target.sh`, replace the
+- [X] T005 [US1] In `.github/scripts/provision-e2e-target.sh`, replace the
   closing `if [ "$(jq -r .ready <<<"$REPORT")" = "true" ]; then exit 0; fi;
   exit 1` block with one that reads `.verdict` from `$REPORT` and exits `0`
   for `all_clear`, `1` for `not_clear`, `2` for `unverified` (research.md
   D3) — a run MUST NOT exit `0` for anything but `all_clear` (FR-004).
   Depends on T003.
-- [ ] T006 [P] [US1] In
+- [X] T006 [P] [US1] In
   `.github/workflows/auto-update-spec-kit-scratch-preflight.yml`'s "Run the
   readiness check" step, replace the
   `(if .ready then "✅" else "❌" end)` job-summary rendering with three
@@ -130,7 +130,7 @@ individual element rows.
 
 ### Tests for User Story 1
 
-- [ ] T007 [P] [US1] Update
+- [X] T007 [P] [US1] Update
   `.github/scripts/e2e-provisioning-tests/t1_new_target.sh`: the expected
   exit code changes from `1` to `2` (nothing is missing; only
   `app_installation` is `not_checkable`); `"T1 overall ready is false"`
@@ -138,12 +138,12 @@ individual element rows.
   app_installation is not ready"` becomes an assertion that its `.outcome`
   is `"not_checkable"`; every other `.elements[].ready` check is renamed to
   `.elements[].outcome == "ready"`. Depends on T003, T004, T005.
-- [ ] T008 [P] [US1] Update
+- [X] T008 [P] [US1] Update
   `.github/scripts/e2e-provisioning-tests/t2_idempotent.sh`: rename both
   `jq -r .ready` checks to `jq -r .verdict`, asserting `"all_clear"`
   (behaviour is unchanged here — `app_installation` is hinted ready).
   Depends on T003, T004, T005.
-- [ ] T009 [P] [US1] Update
+- [X] T009 [P] [US1] Update
   `.github/scripts/e2e-provisioning-tests/t3_converge_after_install.sh`:
   the first run's expected exit code changes from `1` to `2`; `"T3 first
   run reports not ready"` becomes `.verdict == "unverified"`; `"T3 first
@@ -151,12 +151,12 @@ individual element rows.
   `select(.outcome != "ready")` assertion naming `app_installation`
   (`not_checkable`, not `missing`); the second run's `.ready == "true"`
   check becomes `.verdict == "all_clear"`. Depends on T003, T004, T005.
-- [ ] T010 [P] [US1] Update
+- [X] T010 [P] [US1] Update
   `.github/scripts/e2e-provisioning-tests/t5_refuse_foreign.sh` (the
   `select(.key=="repository") | .ready` check): rename to `.outcome`,
   asserting `"ready"` — no behavioural change, this element is never
   checked-and-missing in this scenario. Depends on T003, T004, T005.
-- [ ] T011 [P] [US1] Update
+- [X] T011 [P] [US1] Update
   `.github/scripts/e2e-provisioning-tests/t8_container_image_pin.sh`:
   rename every `.ready`/`.elements[].ready` reference to `.verdict`/
   `.outcome`; the check-only mismatch case keeps exit `1` because
@@ -165,7 +165,7 @@ individual element rows.
   token on the dispatched route), so its top-level check becomes
   `.verdict == "not_clear"`; the two real-run cases become
   `.verdict == "all_clear"`. Depends on T003, T004, T005.
-- [ ] T012 [US1] Update
+- [X] T012 [US1] Update
   `.github/scripts/e2e-provisioning-tests/t9_maintainer_feedback.sh`'s
   T036, T037/T044, T038/T039, and T043 blocks: rename every
   `.elements[].ready` check to `.outcome` (T036's two permission-denied
@@ -180,7 +180,7 @@ individual element rows.
   status to the unverified status (FR-006)"; rename T043's two `.ready`
   checks to `.outcome` (`"not_checkable"` then `"ready"`). Depends on T003,
   T004, T005.
-- [ ] T013 [P] [US1] Update
+- [X] T013 [P] [US1] Update
   `.github/scripts/e2e-provisioning-tests/t7_readiness_workflow.sh`: add
   assertions that the workflow's `run:` block reads `.outcome`/`.verdict`
   (not the retired `.ready`) and renders three distinct glyphs plus a named

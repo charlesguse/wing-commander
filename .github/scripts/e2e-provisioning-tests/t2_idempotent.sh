@@ -9,7 +9,7 @@ seed_fully_onboarded "wc-user/wc-e2e-ready" true
 
 FIRST="$(bash "$PROVISION_SCRIPT" --repo wc-user/wc-e2e-ready --profile auto-release 2>/dev/null)"
 check "T2 first run against an already-ready target exits 0" "$?" "0"
-check "T2 first run reports ready" "$(jq -r .ready <<<"$FIRST")" "true"
+check "T2 first run reports all_clear" "$(jq -r .verdict <<<"$FIRST")" "all_clear"
 
 : > "$GH_CALLS"
 SECOND="$(bash "$PROVISION_SCRIPT" --repo wc-user/wc-e2e-ready --profile auto-release 2>/dev/null)"

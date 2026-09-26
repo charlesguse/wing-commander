@@ -34,7 +34,7 @@ jq --arg full "wc-user/empty-preexisting" \
 mv "$tmp" "$GH_STATE"
 OUT="$(bash "$PROVISION_SCRIPT" --repo wc-user/empty-preexisting --profile spec-kit-scratch 2>/dev/null)"
 check "T5 an empty pre-existing repo is adopted (repository already ready)" \
-  "$(jq -r '.elements[] | select(.key=="repository") | .ready' <<<"$OUT")" "true"
+  "$(jq -r '.elements[] | select(.key=="repository") | .outcome' <<<"$OUT")" "ready"
 check_not_contains "T5 adopting an empty repo makes no repo create call" "$(cat "$GH_CALLS")" "repo create"
 
 report "T5 refuse foreign"
