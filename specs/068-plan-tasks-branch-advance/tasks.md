@@ -407,7 +407,7 @@ caught; an unmeasurable one degrades visibly and never falsely.
 **Purpose**: Update the published contract to describe what shipped, and
 confirm the properties that span every story.
 
-- [ ] T022 In `specs/043-durable-metrics-record/contracts/metrics-record-
+- [X] T022 In `specs/043-durable-metrics-record/contracts/metrics-record-
   schema.md`, amend the `branch_advance` clause per
   `contracts/metrics-record-schema-delta.md`: state that implement, plan,
   and tasks all populate the group now (not implement alone); restate
@@ -416,18 +416,18 @@ confirm the properties that span every story.
   commit for a branch the run created) as a widening, not a behavior
   change, of every already-persisted value (FR-005/FR-009/FR-010).
 
-- [ ] T023 [P] Run `python .github/scripts/run-local-gates.py` (CLAUDE.md
+- [X] T023 [P] Run `python .github/scripts/run-local-gates.py` (CLAUDE.md
   "Before pushing") and confirm Gates 39, 43, 60, and 65 (T001 — not "53")
   all pass, alongside the full suite.
 
-- [ ] T024 [P] Confirm SC-007/FR-007 (no new agent invocation anywhere):
+- [X] T024 [P] Confirm SC-007/FR-007 (no new agent invocation anywhere):
   `grep -c "uses: anthropics/claude-code-action" .github/workflows/plan.yml`
   and the same for `tasks.yml` and `implement.yml` each report the same
   count before and after this feature's diff, and
   `verify-actions-layer-invariants.py` still passes against the new
   `wing-commander-branch-advance/action.yml` (quickstart.md Scenario 7).
 
-- [ ] T025 Run the `review-step-gating` skill against the full diff
+- [X] T025 Run the `review-step-gating` skill against the full diff
   (CLAUDE.md: any change touching an `if:`, `continue-on-error:`, or a
   failing step in a workflow gets a pass from this skill) — T003, T005-T008,
   T011, and T018 all touch `if:`/step-ordering in

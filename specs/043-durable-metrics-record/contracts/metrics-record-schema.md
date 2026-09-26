@@ -84,19 +84,35 @@ alone has them — not left to be inferred from spec.md):
 ```
 
 `branch_advance` is stage-neutral (specs/050-branch-drift-sha-baseline
-FR-020): its name and shape carry no reference to any one stage, so a
-future populator besides `implement` may adopt it later using the same
-shape and the same `branch_advance.available` gate, with no contract
-change required. `available` is `true` only when the emitting call site
-recorded both a branch and at least one of the two SHA points; every
-other field is `null`/`false` when `available` is `false`. A record
-produced by a version of `wing-commander-metrics-summary` that predates
-this group has no `branch_advance` key at all — a reader MUST treat that
-absence identically to `{available: false, branch: null, before_sha:
-null, before_available: false, after_sha: null, after_available: false,
-commits: null, commits_available: false}`, never as a validation
-failure; this is the one field this contract treats as optional at the
-top level rather than unconditionally required.
+FR-020): its name and shape carry no reference to any one stage. All
+three push-expected stages — `implement`, `plan`, and `tasks` — populate
+it for a run that reaches the point where its metrics record is emitted
+(specs/068-plan-tasks-branch-advance). `available` is `true` only when
+the emitting call site recorded both a branch and at least one of the
+two SHA points; every other field is `null`/`false` when `available` is
+`false`. A record produced by a version of `wing-commander-metrics-
+summary` that predates this group has no `branch_advance` key at all —
+a reader MUST treat that absence identically to `{available: false,
+branch: null, before_sha: null, before_available: false, after_sha:
+null, after_available: false, commits: null, commits_available: false}`,
+never as a validation failure; this is the one field this contract
+treats as optional at the top level rather than unconditionally
+required.
+
+`branch` is the branch the run actually pushed to for the review mode it
+ran in: the persistent spec branch (`spec/<slug>`) in `auto` mode, or the
+run's own review branch (`plan/<slug>`, `tasks/<slug>`) in `pr` mode —
+recorded literally, never derivable by a reader from a prefix or the
+review mode itself, because the record does not carry the mode.
+`before_sha` is, stage-neutrally, "the point the run advanced the branch
+from": for a branch that already existed at the start of the run's work,
+its tip at that moment (implement's original meaning); for a branch the
+run itself creates (a `pr`-mode plan/tasks run creating its own review
+branch, or an `auto`-mode plan run whose spec branch does not yet exist),
+the commit the branch was created from. A single reader-side rule
+("compare `before_sha` to `after_sha`") covers both cases without the
+reader needing to know which one applies — a widening of the field's
+definition that every already-persisted value already satisfied.
 
 ## Field reference
 
