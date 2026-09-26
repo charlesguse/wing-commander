@@ -17,6 +17,7 @@ issue #580). The loop's comments embed agent text (a triage proposal, a
 review finding title) and always end with write_marker()'s own output, so
 a marker-shaped string in the agent text always comes before the real one.
 """
+import argparse
 import json
 import os
 import re
@@ -133,3 +134,30 @@ def write_marker(step, round, pr, branch, base_sha):
         run_url = "{0}/{1}/actions/runs/{2}".format(server_url, repository, run_id)
         return "**Run:** {0}\n\n{1}".format(run_url, marker)
     return marker
+
+
+def _resolve_step(value):
+    """Resolves the symbolic tokens `BREACH_STEP`/`AWAITING_MERGE_STEP` to
+    their `board_eligibility` values; any other value passes through
+    unchanged. The one place a caller's YAML names these steps -- never a
+    second hardcoded copy of the literal "breach"/"awaiting-merge" string
+    (contracts/marker-write-entrypoint.md, research.md D3)."""
+    if value in ("BREACH_STEP", "AWAITING_MERGE_STEP"):
+        from board_eligibility import AWAITING_MERGE_STEP, BREACH_STEP
+        return {"BREACH_STEP": BREACH_STEP, "AWAITING_MERGE_STEP": AWAITING_MERGE_STEP}[value]
+    return value
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--step", required=True)
+    parser.add_argument("--round", type=int, default=0)
+    parser.add_argument("--pr", type=int, default=None)
+    parser.add_argument("--branch", default=None)
+    parser.add_argument("--base-sha", default=None)
+    args = parser.parse_args()
+    print(write_marker(_resolve_step(args.step), args.round, args.pr, args.branch, args.base_sha))
+
+
+if __name__ == "__main__":
+    main()
