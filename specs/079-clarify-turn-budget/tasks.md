@@ -284,10 +284,10 @@ here.
   `docs/architecture.md` line 240's "specify / clarify" reference is
   about model tier, not turn count — re-confirm that finding still holds
   on this branch.
-- [ ] T017 Run `python .github/scripts/run-local-gates.py` (CLAUDE.md:
+- [X] T017 Run `python .github/scripts/run-local-gates.py` (CLAUDE.md:
   before pushing) and confirm the full suite passes, including new Gate
   99 and unmodified Gates 22/23.
-- [ ] T018 Follow quickstart.md steps 1-6 end to end as a final
+- [X] T018 Follow quickstart.md steps 1-6 end to end as a final
   acceptance pass: the declared budget and ceiling moved together (step
   1), the cited history replays with no trend band and no over-budget
   note (step 2), every other stage is untouched (step 3), Gate 99 passes
