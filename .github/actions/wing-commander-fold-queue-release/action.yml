@@ -1,0 +1,69 @@
+name: wing-commander-fold-queue-release
+description: >
+  Releases a granted ticket (removing it from the ledger's queue head) and,
+  for an act-kind ticket, records this run's own fold outcome directly --
+  replacing the base..tip git-log range scan report-fold-outcomes and
+  dispatch-once used before this feature (research.md D3) -- see
+  fold-queue-ledger.sh.
+
+inputs:
+  spec-dir:
+    required: true
+  token:
+    description: "The token wing-commander-fold-queue-admit returned."
+    required: true
+  round:
+    description: "The round the ticket was filed under."
+    required: true
+  leg-id:
+    description: >
+      Required (non-empty) when the ticket's kind was act and this call
+      reports one leg's outcome -- the calling job invokes this composite
+      once per leg it ran.
+    required: false
+    default: ""
+  outcome:
+    description: "folded | not-folded | error."
+    required: true
+  commit-sha:
+    description: "The fold(<id>): commit SHA this leg produced, when outcome: folded."
+    required: false
+    default: ""
+  summary:
+    description: >
+      Free-text summary for the eventual "Folded in this review" reply;
+      framed as data, never as instructions to any later reader
+      (Principle V).
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    # Step placement contract (contracts/wing-commander-fold-queue-release.md):
+    # MUST be invoked with if: always() as the last step of the job holding
+    # the ticket -- callers are responsible for that placement; this
+    # composite itself has no way to enforce a caller's if: condition, so
+    # Gate 99 checks it against the shipped workflow instead.
+    - name: Release ticket and record outcome
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+        SPEC_DIR: ${{ inputs.spec-dir }}
+        TOKEN: ${{ inputs.token }}
+        OUTCOME: ${{ inputs.outcome }}
+        COMMIT_SHA: ${{ inputs.commit-sha }}
+        LEG_ID: ${{ inputs.leg-id }}
+        SUMMARY: ${{ inputs.summary }}
+      run: |
+        set -euo pipefail
+        LEDGER="$GITHUB_ACTION_PATH/../_shared/fold-queue-ledger.sh"
+
+        if [ -z "$TOKEN" ]; then
+          echo "wing-commander-fold-queue-release: no token supplied (this run never held a ticket for $SPEC_DIR) -- nothing to release." >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+        fi
+
+        bash "$LEDGER" release >/dev/null
+        echo "wing-commander-fold-queue-release: released $TOKEN (outcome: $OUTCOME)." >> "$GITHUB_STEP_SUMMARY"

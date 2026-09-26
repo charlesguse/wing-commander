@@ -1,0 +1,147 @@
+name: wing-commander-fold-queue-admit
+description: >
+  Enqueues one ticket for the calling run in the per-spec fold-queue ledger
+  and blocks until it is that ticket's turn, before the downstream job
+  (which still carries the unchanged wing-commander-<spec-dir> GitHub
+  concurrency group) is allowed to start. Used by the fold-turn-act /
+  fold-turn-dispatch / fold-turn-implement prerequisite jobs
+  (contracts/wing-commander-fold-queue-admit.md, research.md D1) -- see
+  fold-queue-ledger.sh.
+
+inputs:
+  spec-dir:
+    description: "specs/NNN-slug -- identifies which ledger entry to use."
+    required: true
+  kind:
+    description: "One of act, dispatch, implement."
+    required: true
+  run-id:
+    description: "Overridable only for fixture/test use."
+    required: false
+    default: ${{ github.run_id }}
+  existing-token:
+    description: >
+      When set (implement.yml's case, research.md D5), skip enqueue and
+      only await this token -- it was already written by another run's
+      claim-dispatch call.
+    required: false
+    default: ""
+  max-wait-minutes:
+    description: "Hard ceiling; exceeding it is a step failure, never a silent pass-through."
+    required: false
+    default: "30"
+  poll-interval-seconds:
+    description: "Seconds between polls of the ledger branch tip."
+    required: false
+    default: "10"
+  stale-after-minutes:
+    description: >
+      Passed through to the reclaim check (research.md D6); must be
+      smaller than max-wait-minutes.
+    required: false
+    default: "10"
+
+outputs:
+  token:
+    description: "The ticket token this call is now holding (either newly enqueued or the existing-token it awaited)."
+    value: ${{ steps.admit.outputs.token }}
+  round:
+    description: "The round id the ticket was filed under."
+    value: ${{ steps.admit.outputs.round }}
+  granted:
+    description: "'true' once returned -- there is no 'false' output value, only a non-zero exit on timeout."
+    value: ${{ steps.admit.outputs.granted }}
+
+runs:
+  using: composite
+  steps:
+    # Guarantee 2 (contracts/wing-commander-fold-queue-admit.md): this
+    # composite's own job carries no concurrency: block, by contract of
+    # every job that uses it -- nothing here joins one, so this step is
+    # never itself a contender for anyone else's pending slot.
+    - name: Enqueue (or resolve existing token) and await this run's turn
+      id: admit
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+        SPEC_DIR: ${{ inputs.spec-dir }}
+        KIND: ${{ inputs.kind }}
+        RUN_ID: ${{ inputs.run-id }}
+        EXISTING_TOKEN: ${{ inputs.existing-token }}
+        MAX_WAIT_MINUTES: ${{ inputs.max-wait-minutes }}
+        POLL_INTERVAL_SECONDS: ${{ inputs.poll-interval-seconds }}
+        STALE_AFTER_MINUTES: ${{ inputs.stale-after-minutes }}
+      run: |
+        set -euo pipefail
+        LEDGER="$GITHUB_ACTION_PATH/../_shared/fold-queue-ledger.sh"
+
+        if [ -n "$EXISTING_TOKEN" ]; then
+          token="$EXISTING_TOKEN"
+        else
+          out="$(bash "$LEDGER" enqueue)"
+          token="$(printf '%s\n' "$out" | grep '^token=' | cut -d= -f2-)"
+          granted="$(printf '%s\n' "$out" | grep '^granted=' | cut -d= -f2-)"
+          round="$(printf '%s\n' "$out" | grep '^round=' | cut -d= -f2-)"
+          if [ "$granted" = "true" ]; then
+            {
+              echo "token=$token"
+              echo "round=$round"
+              echo "granted=true"
+            } >> "$GITHUB_OUTPUT"
+            echo "wing-commander-fold-queue-admit: ticket $token granted immediately (round $round, no contention)." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+        fi
+
+        start_ts=$(date +%s)
+        deadline=$(( start_ts + MAX_WAIT_MINUTES * 60 ))
+
+        while :; do
+          peek_out="$(SPEC_DIR="$SPEC_DIR" PEEK_TOKEN="$token" GH_TOKEN="$GH_TOKEN" GITHUB_REPOSITORY="$GITHUB_REPOSITORY" bash "$LEDGER" peek)"
+          position="$(printf '%s\n' "$peek_out" | grep '^position=' | cut -d= -f2-)"
+          round="$(printf '%s\n' "$peek_out" | grep '^round=' | cut -d= -f2-)"
+          granted="$(printf '%s\n' "$peek_out" | grep '^granted=' | cut -d= -f2-)"
+          head_token="$(printf '%s\n' "$peek_out" | grep '^head-token=' | cut -d= -f2-)"
+          head_run_id="$(printf '%s\n' "$peek_out" | grep '^head-run-id=' | cut -d= -f2-)"
+          head_granted_at="$(printf '%s\n' "$peek_out" | grep '^head-granted-at=' | cut -d= -f2-)"
+
+          if [ "$position" = "0" ] && [ "$granted" = "true" ]; then
+            {
+              echo "token=$token"
+              echo "round=$round"
+              echo "granted=true"
+            } >> "$GITHUB_OUTPUT"
+            echo "wing-commander-fold-queue-admit: ticket $token granted after waiting (round $round)." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          now_ts=$(date +%s)
+          if [ "$now_ts" -ge "$deadline" ]; then
+            echo "::error::wing-commander-fold-queue-admit: timed out after ${MAX_WAIT_MINUTES}m waiting for ticket $token (spec-dir=$SPEC_DIR, kind=$KIND) to be granted -- current head is $head_token (run $head_run_id)."
+            exit 1
+          fi
+
+          # research.md D6: a waiter that has watched the SAME head ticket
+          # sit granted for longer than stale-after-minutes independently
+          # confirms (via gh api) that its owning run is no longer active,
+          # then reclaims it -- the bounded backstop for a ticket whose
+          # holder never released (an orphaned runner, or a non-ticketed
+          # dispatch colliding with the GitHub concurrency group --
+          # research.md D5's manual-dispatch carve-out). Ordinary ticketed
+          # contention never needs this path (D1's whole point).
+          if [ -n "$head_token" ] && [ "$head_token" != "$token" ] && [ -n "$head_granted_at" ]; then
+            head_granted_epoch=$(date -u -d "$head_granted_at" +%s 2>/dev/null || echo 0)
+            if [ "$head_granted_epoch" -gt 0 ]; then
+              age_minutes=$(( (now_ts - head_granted_epoch) / 60 ))
+              if [ "$age_minutes" -ge "$STALE_AFTER_MINUTES" ]; then
+                head_status="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${head_run_id}" --jq '.status' 2>/dev/null || echo "")"
+                if [ -z "$head_status" ] || [ "$head_status" = "completed" ]; then
+                  SPEC_DIR="$SPEC_DIR" STALE_TOKEN="$head_token" GH_TOKEN="$GH_TOKEN" GITHUB_REPOSITORY="$GITHUB_REPOSITORY" bash "$LEDGER" reclaim-stale >/dev/null || true
+                fi
+              fi
+            fi
+          fi
+
+          sleep "$POLL_INTERVAL_SECONDS"
+        done

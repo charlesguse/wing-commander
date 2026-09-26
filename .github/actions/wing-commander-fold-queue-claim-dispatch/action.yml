@@ -1,0 +1,79 @@
+name: wing-commander-fold-queue-claim-dispatch
+description: >
+  Called once by dispatch-once, after its own dispatch-kind ticket has been
+  granted, to decide -- via a single atomic ledger transaction -- whether
+  this run is the one that dispatches the round's implement cycle
+  (research.md D4). Exactly one winner per round; the winning transaction
+  also enqueues the implement-kind ticket for the about-to-be-dispatched
+  cycle in the same write (research.md D5) -- see fold-queue-ledger.sh.
+
+inputs:
+  spec-dir:
+    required: true
+  round:
+    description: "The round this run's act phase (if any) and dispatch ticket belong to."
+    required: true
+  dispatch-token:
+    description: "This run's own granted dispatch-kind ticket -- proves the caller is entitled to attempt the claim."
+    required: true
+
+outputs:
+  should-dispatch:
+    description: "'true' only for the single winning run; 'false' for every other run whose round the claim resolved without dispatching."
+    value: ${{ steps.claim.outputs.should-dispatch }}
+  folded-items:
+    description: "JSON array of every {run_id, leg_id, summary, commit_sha} the round accumulated. Present only when should-dispatch: true."
+    value: ${{ steps.claim.outputs.folded-items }}
+  not-folded-items:
+    description: "JSON array of every {run_id, leg_id, outcome} the round accumulated. Present only when should-dispatch: true."
+    value: ${{ steps.claim.outputs.not-folded-items }}
+  iteration:
+    description: "The computed next iteration number. Present only when should-dispatch: true."
+    value: ${{ steps.claim.outputs.iteration }}
+  implement-token:
+    description: "The implement-kind ticket token this same transaction enqueued. Present only when should-dispatch: true."
+    value: ${{ steps.claim.outputs.implement-token }}
+
+runs:
+  using: composite
+  steps:
+    # research.md D4: iteration is read fresh from spec-meta.json on the
+    # ALREADY-checked-out spec branch (the caller -- dispatch-once -- has
+    # already done this checkout for its own pre-existing steps) rather
+    # than by this composite fetching a second copy of the branch; the
+    # freshness guarantee this satisfies is "not cached from an earlier
+    # point in a long-running job", not "re-read on every CAS retry" --
+    # spec-meta.json's iteration only ever advances via implement.yml
+    # itself, never mid-claim.
+    - name: Attempt the round's dispatch claim
+      id: claim
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+        SPEC_DIR: ${{ inputs.spec-dir }}
+        ROUND: ${{ inputs.round }}
+        DISPATCH_TOKEN: ${{ inputs.dispatch-token }}
+      run: |
+        set -euo pipefail
+        LEDGER="$GITHUB_ACTION_PATH/../_shared/fold-queue-ledger.sh"
+
+        recorded="$(jq -r '.iteration // 0' "$SPEC_DIR/spec-meta.json")"
+        next=$(( recorded + 1 ))
+
+        out="$(ITERATION="$next" bash "$LEDGER" claim-dispatch)"
+
+        should_dispatch="$(printf '%s\n' "$out" | grep '^should-dispatch=' | cut -d= -f2-)"
+        echo "should-dispatch=$should_dispatch" >> "$GITHUB_OUTPUT"
+
+        if [ "$should_dispatch" = "true" ]; then
+          {
+            printf 'folded-items=%s\n' "$(printf '%s\n' "$out" | grep '^folded-items=' | cut -d= -f2-)"
+            printf 'not-folded-items=%s\n' "$(printf '%s\n' "$out" | grep '^not-folded-items=' | cut -d= -f2-)"
+            printf 'iteration=%s\n' "$(printf '%s\n' "$out" | grep '^iteration=' | cut -d= -f2-)"
+            printf 'implement-token=%s\n' "$(printf '%s\n' "$out" | grep '^implement-token=' | cut -d= -f2-)"
+          } >> "$GITHUB_OUTPUT"
+          echo "wing-commander-fold-queue-claim-dispatch: this run won the dispatch claim for round $ROUND (iteration $next)." >> "$GITHUB_STEP_SUMMARY"
+        else
+          echo "wing-commander-fold-queue-claim-dispatch: another act-kind ticket remains, or round $ROUND was already claimed -- this run dispatches nothing." >> "$GITHUB_STEP_SUMMARY"
+        fi
