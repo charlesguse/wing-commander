@@ -78,6 +78,8 @@ from wc_shell_pin import effective_shell, is_container_bound, pins_bash  # noqa:
 ACTION = ".github/actions/wing-commander-metrics-summary/action.yml"
 STEP_NAME = "Render agent run metrics summary"
 ACTION_DIR = os.path.abspath(os.path.dirname(ACTION))
+BRANCH_ADVANCE_ACTION = ".github/actions/wing-commander-branch-advance/action.yml"
+BRANCH_ADVANCE_STEP_NAME = "Record branch advance"
 SCHEMA_GATE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                            "verify-metrics-record-schema.py")
 TRANSCRIPT_NAME = "claude-execution-output.json"
@@ -408,6 +410,158 @@ def case_repeated_invocation_in_one_job_gets_distinct_record_keys():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+# Frozen copy of implement.yml's pre-refactor "Record branch advance
+# (cycle)" inline bash (specs/068-plan-tasks-branch-advance T004) -- the
+# regression proof that extracting it into wing-commander-branch-advance
+# (T002/T003) changed no value implement.yml records (FR-011). Deliberately
+# NOT re-derived from the shipped composite -- find_step()-ing the new
+# action here would just compare the new script with itself, proving
+# nothing -- this is the literal text implement.yml carried before this
+# feature's refactor, frozen as the one-time baseline
+# case_branch_advance_composite_matches_pre_refactor_inline_bash diffs
+# against.
+PRE_REFACTOR_BRANCH_ADVANCE_SCRIPT = """set -uo pipefail
+branch="${SPEC_PREFIX}${SLUG}"
+echo "branch=$branch" >> "$GITHUB_OUTPUT"
+
+before_sha="$BASE_SHA"
+before_available=false
+[ -n "$before_sha" ] && before_available=true
+echo "before-sha=$before_sha" >> "$GITHUB_OUTPUT"
+echo "before-sha-available=$before_available" >> "$GITHUB_OUTPUT"
+
+after_sha=""
+after_available=false
+if git fetch origin "+refs/heads/$branch:refs/remotes/origin/$branch" 2>/dev/null; then
+  after_sha="$(git rev-parse "refs/remotes/origin/$branch" 2>/dev/null)" || after_sha=""
+  [ -n "$after_sha" ] && after_available=true
+fi
+echo "after-sha=$after_sha" >> "$GITHUB_OUTPUT"
+echo "after-sha-available=$after_available" >> "$GITHUB_OUTPUT"
+
+commits=""
+commits_available=false
+if [ "$before_available" = "true" ] && [ "$after_available" = "true" ]; then
+  commits="$(git rev-list --count "$before_sha..$after_sha" 2>/dev/null)" || commits=""
+  [ -n "$commits" ] && commits_available=true
+fi
+echo "commits=$commits" >> "$GITHUB_OUTPUT"
+echo "commits-available=$commits_available" >> "$GITHUB_OUTPUT"
+"""
+
+
+def _sh(script, cwd):
+    proc = subprocess.run([BASH, "-c", script], cwd=cwd, capture_output=True,
+                          text=True, encoding="utf-8", errors="replace")
+    if proc.returncode != 0:
+        sys.exit(f"::error::harness could not seed a git workspace for "
+                 f"the branch-advance regression case: "
+                 f"{proc.stdout}{proc.stderr}")
+    return proc.stdout
+
+
+def _make_branch_advance_repo(root):
+    """A bare remote + clone with a branch two commits ahead of an earlier
+    'before' point -- real git state for both the composite and the frozen
+    pre-refactor script to fetch/rev-list against (mirrors verify-branch-
+    drift-sha-baseline.py's make_repo discipline)."""
+    work = tempfile.mkdtemp(dir=root)
+    remote = os.path.join(work, "remote.git")
+    repo = os.path.join(work, "repo")
+    setup = f"""
+set -e
+git init --bare -q -b main '{remote}'
+git clone -q '{remote}' '{repo}'
+cd '{repo}'
+git config user.email harness@example.invalid
+git config user.name harness
+echo root > README.md
+git add -A
+git commit -q -m 'seed main'
+git checkout -q -b branch-advance-fixture
+echo one >> README.md
+git commit -q -am 'before point'
+before="$(git rev-parse HEAD)"
+git push -q -u origin branch-advance-fixture
+echo two >> README.md
+git commit -q -am 'after point one'
+echo three >> README.md
+git commit -q -am 'after point two'
+git push -q origin branch-advance-fixture
+after="$(git rev-parse HEAD)"
+echo "BEFORE=$before"
+echo "AFTER=$after"
+"""
+    out = _sh(setup, work)
+    before = after = ""
+    for line in out.splitlines():
+        if line.startswith("BEFORE="):
+            before = line[len("BEFORE="):]
+        elif line.startswith("AFTER="):
+            after = line[len("AFTER="):]
+    return repo, work, before, after
+
+
+def case_branch_advance_composite_matches_pre_refactor_inline_bash():
+    """FR-011's regression proof (T002/T003/T004): the new
+    wing-commander-branch-advance composite, run standalone against a real
+    git fixture, produces byte-identical after-sha/commits outputs to
+    implement.yml's pre-refactor inline bash (frozen above) for the same
+    branch/before-sha inputs -- proving the extraction moved the logic
+    without changing any value implement.yml records."""
+    case = "branch-advance composite matches pre-refactor inline bash"
+    root = tempfile.mkdtemp(prefix="wc-branch-advance-regression-")
+    try:
+        repo, _work, before, after = _make_branch_advance_repo(root)
+        if not before or not after:
+            fail(case, f"harness could not resolve before/after SHAs from "
+                       f"its own fixture setup (before={before!r} "
+                       f"after={after!r})")
+            return
+
+        new_script = find_step(BRANCH_ADVANCE_ACTION,
+                               BRANCH_ADVANCE_STEP_NAME)["run"]
+        new_rc, new_out, new_outputs, _s = run_step(
+            BASH, new_script, repo,
+            {"BRANCH": "branch-advance-fixture", "BEFORE_SHA": before,
+             "BEFORE_AVAILABLE": "true"}, repo)
+        if new_rc != 0:
+            fail(case, f"composite exited {new_rc}: {new_out.strip()[:300]}")
+            return
+
+        old_rc, old_out, old_outputs, _s2 = run_step(
+            BASH, PRE_REFACTOR_BRANCH_ADVANCE_SCRIPT, repo,
+            {"SLUG": "advance-fixture", "SPEC_PREFIX": "branch-",
+             "BASE_SHA": before}, repo)
+        if old_rc != 0:
+            fail(case, f"pre-refactor script exited {old_rc}: "
+                       f"{old_out.strip()[:300]}")
+            return
+
+        for key in ("after-sha", "after-sha-available", "commits",
+                    "commits-available"):
+            if new_outputs.get(key) != old_outputs.get(key):
+                fail(case, f"{key}: composite produced "
+                           f"{new_outputs.get(key)!r}, pre-refactor inline "
+                           f"bash produced {old_outputs.get(key)!r} -- the "
+                           f"extraction (T002/T003) changed a recorded "
+                           f"value")
+        if new_outputs.get("after-sha") != after:
+            fail(case, f"after-sha = {new_outputs.get('after-sha')!r}, "
+                       f"expected the fixture's own pushed tip {after!r}")
+        if new_outputs.get("commits") != "2":
+            fail(case, f"commits = {new_outputs.get('commits')!r}, expected "
+                       f"'2' (the two commits pushed after the before-sha "
+                       f"point)")
+        note(f"wing-commander-branch-advance produced "
+             f"after-sha={new_outputs.get('after-sha')!r} "
+             f"commits={new_outputs.get('commits')!r}, byte-identical to "
+             f"implement.yml's pre-refactor inline bash for the same "
+             f"inputs")
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def case_branch_advance_availability_follows_contract_or_rule():
     """metrics-record-schema-delta.md / data-model.md: branch_advance.
     available is true iff branch is non-empty AND (before-sha-available OR
@@ -478,6 +632,74 @@ def case_branch_advance_availability_follows_contract_or_rule():
              "inputs, matching the valid-branch-advance-before-"
              "unavailable/after-unavailable fixtures (available:true, "
              "branch kept)")
+
+
+def case_plan_tasks_branch_advance_call_sites_emit_conforming_records():
+    """T007/T008 (contracts/gate-coverage-068.md assertions 2-3): plan.yml's
+    and tasks.yml's own new "Agent run metrics summary (branch advance)"
+    call sites -- an auto-mode-shaped invocation (stage: plan, a persistent
+    spec/<slug> branch) and a pr-mode-shaped one (stage: tasks, a review
+    tasks/<slug> branch) -- each with an intentionally-absent transcript
+    path and fully populated branch/before-sha/after-sha/commits inputs,
+    produce a record with record_available: false and branch_advance
+    matching those inputs verbatim."""
+    case = "plan/tasks branch-advance call sites emit conforming records"
+    scenarios = [
+        ("plan (auto mode)", "plan", {
+            "BRANCH": "spec/068-plan-tasks-branch-advance",
+            "BEFORE_SHA": "a" * 40, "BEFORE_SHA_AVAILABLE": "true",
+            "AFTER_SHA": "a" * 40, "AFTER_SHA_AVAILABLE": "true",
+            "COMMITS": "0", "COMMITS_AVAILABLE": "true"}),
+        ("tasks (pr mode)", "tasks", {
+            "BRANCH": "tasks/068-plan-tasks-branch-advance",
+            "BEFORE_SHA": "b" * 40, "BEFORE_SHA_AVAILABLE": "true",
+            "AFTER_SHA": "c" * 40, "AFTER_SHA_AVAILABLE": "true",
+            "COMMITS": "4", "COMMITS_AVAILABLE": "true"}),
+    ]
+    any_failed = False
+    for label, stage, ba_env in scenarios:
+        tmp = tempfile.mkdtemp(prefix="wc-metrics-record-")
+        try:
+            env_over = dict(ba_env)
+            env_over.update({"STAGE": stage, "STEP_INDEX": "1",
+                             "RUN_LABEL": "branch advance"})
+            rc, _outputs, _summary, record, output = run_case(
+                tmp, missing=True, env_over=env_over)
+            if rc != 0:
+                fail(case, f"{label}: exited {rc}: {output.strip()[:300]}")
+                any_failed = True
+                continue
+            if record is None:
+                fail(case, f"{label}: record-path was not written")
+                any_failed = True
+                continue
+            validate_schema(f"{case} ({label})", record)
+            if record.get("record_available") is not False:
+                fail(case, f"{label}: expected record_available: false "
+                           f"(absent transcript), got "
+                           f"{record.get('record_available')!r}")
+                any_failed = True
+            want_ba = {
+                "available": True, "branch": ba_env["BRANCH"],
+                "before_sha": ba_env["BEFORE_SHA"], "before_available": True,
+                "after_sha": ba_env["AFTER_SHA"], "after_available": True,
+                "commits": int(ba_env["COMMITS"]), "commits_available": True,
+            }
+            ba = record.get("branch_advance") or {}
+            if ba != want_ba:
+                fail(case, f"{label}: branch_advance = {ba!r}, want "
+                           f"{want_ba!r}")
+                any_failed = True
+            if record.get("stage") != stage:
+                fail(case, f"{label}: stage = {record.get('stage')!r}, "
+                           f"expected {stage!r}")
+                any_failed = True
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+    if not any_failed:
+        note("plan's and tasks's own branch-advance call sites each "
+             "produce record_available: false with branch_advance matching "
+             "their inputs verbatim")
 
 
 def case_multi_model_record_tokens_sum_across_per_model():
@@ -666,7 +888,9 @@ CASES = [
     case_empty_transcript_degrades,
     case_unparseable_transcript_degrades,
     case_repeated_invocation_in_one_job_gets_distinct_record_keys,
+    case_branch_advance_composite_matches_pre_refactor_inline_bash,
     case_branch_advance_availability_follows_contract_or_rule,
+    case_plan_tasks_branch_advance_call_sites_emit_conforming_records,
     case_multi_model_record_tokens_sum_across_per_model,
     case_cost_line_formatter_has_exactly_one_home,
     case_container_pipefail_steps_pin_shell_bash,

@@ -2395,41 +2395,13 @@ jobs:
       # blocking "Flip stage label" below.
       - name: Record branch advance (cycle)
         id: branch-advance
-        shell: bash
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true' && steps.cycle.outcome != 'skipped'
         continue-on-error: true
-        env:
-          SLUG: ${{ steps.spec.outputs.slug }}
-          SPEC_PREFIX: ${{ inputs.spec-prefix }}
-          BASE_SHA: ${{ steps.base.outputs.base-sha }}
-        run: |
-          set -uo pipefail
-          branch="${SPEC_PREFIX}${SLUG}"
-          echo "branch=$branch" >> "$GITHUB_OUTPUT"
-
-          before_sha="$BASE_SHA"
-          before_available=false
-          [ -n "$before_sha" ] && before_available=true
-          echo "before-sha=$before_sha" >> "$GITHUB_OUTPUT"
-          echo "before-sha-available=$before_available" >> "$GITHUB_OUTPUT"
-
-          after_sha=""
-          after_available=false
-          if git fetch origin "+refs/heads/$branch:refs/remotes/origin/$branch" 2>/dev/null; then
-            after_sha="$(git rev-parse "refs/remotes/origin/$branch" 2>/dev/null)" || after_sha=""
-            [ -n "$after_sha" ] && after_available=true
-          fi
-          echo "after-sha=$after_sha" >> "$GITHUB_OUTPUT"
-          echo "after-sha-available=$after_available" >> "$GITHUB_OUTPUT"
-
-          commits=""
-          commits_available=false
-          if [ "$before_available" = "true" ] && [ "$after_available" = "true" ]; then
-            commits="$(git rev-list --count "$before_sha..$after_sha" 2>/dev/null)" || commits=""
-            [ -n "$commits" ] && commits_available=true
-          fi
-          echo "commits=$commits" >> "$GITHUB_OUTPUT"
-          echo "commits-available=$commits_available" >> "$GITHUB_OUTPUT"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-branch-advance
+        with:
+          branch: ${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}
+          before-sha: ${{ steps.base.outputs.base-sha }}
+          before-sha-available: ${{ steps.base.outputs.base-sha != '' }}
 
       # Durable record of the same quadruple (specs/050-branch-drift-sha-
       # baseline) — a transcript-less fourth wing-commander-metrics-summary
@@ -2452,9 +2424,9 @@ jobs:
           run-label: branch advance
           step-index: '3'
           record-path: ${{ runner.temp }}/wing-commander-metrics-record-branch-advance.json
-          branch: ${{ steps.branch-advance.outputs.branch }}
-          before-sha: ${{ steps.branch-advance.outputs.before-sha }}
-          before-sha-available: ${{ steps.branch-advance.outputs.before-sha-available }}
+          branch: ${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}
+          before-sha: ${{ steps.base.outputs.base-sha }}
+          before-sha-available: ${{ steps.base.outputs.base-sha != '' }}
           after-sha: ${{ steps.branch-advance.outputs.after-sha }}
           after-sha-available: ${{ steps.branch-advance.outputs.after-sha-available }}
           commits: ${{ steps.branch-advance.outputs.commits }}

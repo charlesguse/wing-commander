@@ -112,6 +112,18 @@ SIX CHECKS, per contracts/single-home-gate.md (plus a spec 052 addition)
    quote-tolerant. The per-document `then . else [.] end` wrap is a
    different, legitimate idiom and is not matched.
 
+7. branch-advance-capture (specs/068-plan-tasks-branch-advance research.md
+   R10): the "after"/"commits" branch-advance git plumbing -- co-occurrence,
+   file-wide, of the refspec-form `git fetch origin "+refs/heads/$...` fetch
+   (its `+` force-update prefix is what distinguishes it from several
+   other, unrelated `git fetch origin "refs/heads/$..."` idioms elsewhere
+   in the fleet) and a `..`-range `git rev-list --count "$..."` read
+   (watchdog.yml's own since-created/head-sha arms use this shape too, but
+   never alongside the refspec fetch, so co-occurrence -- not either
+   fragment alone -- is what the declared home uniquely carries). Extracted
+   from implement.yml's former inline step so implement, plan, and tasks
+   share one copy (FR-011/FR-012).
+
 Plus a promotion-prevention pass (FR-025): every `workflow_call`-only
 stage workflow and every non-underscore-prefixed composite action scanned
 for any reference resolving into a `_shared/` path.
@@ -211,6 +223,12 @@ DECLARED_HOMES = {
     # wing-commander-agent-verdict and wing-commander-metrics-summary all
     # call it; a fourth inline copy is what this check catches.
     "transcript-normalise": ".github/actions/_shared/normalise-transcript.sh",
+    # specs/068-plan-tasks-branch-advance research.md R10 (CLAUDE.md: "add
+    # the 'single home' check to the nearest existing gate"): the
+    # "after"/"commits" branch-advance git plumbing, extracted from
+    # implement.yml's own former inline step so implement/plan/tasks share
+    # one copy.
+    "branch-advance-capture": ".github/actions/wing-commander-branch-advance/action.yml",
 }
 CHECK_NAMES = tuple(DECLARED_HOMES) + ("promotion",)
 
@@ -271,6 +289,19 @@ TRANSCRIPT_NORMALISE_RE = re.compile(
     r'if\s+type\s*==\s*["\']array["\']\s+then\s+\.\[\]\s+else\s+\.\s+end')
 MODE_TAG_FRAGMENT_RE = re.compile(r"\{\s*mode\s*:\s*\$[A-Za-z_][A-Za-z0-9_]*\s*\}")
 SHARED_REF_RE = re.compile(r"\.github/actions/_shared/[A-Za-z0-9_.\-/]+")
+# specs/068-plan-tasks-branch-advance research.md R10: the branch-advance
+# capture's "after"/"commits" git plumbing. The refspec-form fetch (the `+`
+# force-update prefix is what distinguishes it from the fleet's several
+# other, unrelated `git fetch origin "refs/heads/$..."` idioms, e.g.
+# implement.yml's/plan.yml's/tasks.yml's default-branch-divergence checks,
+# none of which use the `+` prefix) co-occurring with a `..`-range
+# `git rev-list --count "$..."` read (watchdog.yml's own since-created/
+# head-sha arms use this shape too, but never alongside the refspec fetch
+# above -- verified empirically against the tree once this feature's own
+# T003 refactor landed) is what only the declared home carries.
+BRANCH_ADVANCE_FETCH_FRAGMENT = 'git fetch origin "+refs/heads/$'
+BRANCH_ADVANCE_REVLIST_RE = re.compile(
+    r'git rev-list --count "\$[A-Za-z_][A-Za-z0-9_]*\.\.')
 
 Finding = namedtuple("Finding", ["path", "check", "line", "text"])
 
@@ -625,6 +656,26 @@ def check_token_mint(root="."):
 
 
 # --------------------------------------------------------------------------
+# Check: branch-advance-capture (file-wide co-occurrence, specs/068-plan-
+# tasks-branch-advance research.md R10)
+# --------------------------------------------------------------------------
+def check_branch_advance_capture(root="."):
+    home = DECLARED_HOMES["branch-advance-capture"]
+    findings = []
+    for path in all_subject_files(root):
+        if path == home:
+            continue
+        text = read(root, path)
+        if BRANCH_ADVANCE_FETCH_FRAGMENT in text and \
+                BRANCH_ADVANCE_REVLIST_RE.search(text):
+            offset = text.index(BRANCH_ADVANCE_FETCH_FRAGMENT)
+            findings.append(Finding(
+                path, "branch-advance-capture", line_of(text, offset),
+                BRANCH_ADVANCE_FETCH_FRAGMENT))
+    return findings
+
+
+# --------------------------------------------------------------------------
 # Promotion-prevention pass (FR-025)
 # --------------------------------------------------------------------------
 # research.md D1/D2: auto-update-spec-kit.yml IS a workflow_call-only
@@ -672,6 +723,7 @@ ALL_CHECKS = {
     "verdict-shape": check_verdict_shape,
     "token-mint": check_token_mint,
     "mode-tag-shape": check_mode_tag_shape,
+    "branch-advance-capture": check_branch_advance_capture,
     "promotion": check_promotion,
 }
 
@@ -1017,6 +1069,13 @@ def _clean_tree(root):
           "#!/usr/bin/env bash\n"
           "jq -cs 'map(if type==\"array\" then .[] else . end) "
           "| map(objects)' \"$1\"\n")
+    _write(root, DECLARED_HOMES["branch-advance-capture"],
+          "runs:\n  using: composite\n  steps:\n"
+          "    - shell: bash\n      run: |\n"
+          "        git fetch origin \"+refs/heads/$branch:refs/remotes/"
+          "origin/$branch\"\n"
+          "        commits=\"$(git rev-list --count "
+          "\"$BEFORE_SHA..$after_sha\")\"\n")
     _write(root, ".github/workflows/harmless.yml",
           "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
           "      - run: echo hi\n")
@@ -1266,6 +1325,12 @@ def run_selftest():
         "\"fail-infra\" \"$HEAD_SHA\" \"c\" \"e\" \"o\" \"$E2E_REPO\" | "
         "jq --arg tag_mode \"$MODE\" '. + {mode:$tag_mode} + (if $tag_mode == "
         "\"container\" then {container_image_configured: true} else {} end)'\n")
+    selftest_third_paste_fails(
+        "branch-advance-capture", ".github/workflows/third-branch-advance.yml",
+        "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - shell: bash\n        run: |\n"
+        "          git fetch origin \"+refs/heads/$b:refs/remotes/origin/$b\"\n"
+        "          commits=\"$(git rev-list --count \"$before..$after\")\"\n")
     selftest_third_paste_fails(
         "token-mint", ".github/workflows/third-token.yml",
         "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
