@@ -634,6 +634,74 @@ def case_branch_advance_availability_follows_contract_or_rule():
              "branch kept)")
 
 
+def case_plan_tasks_branch_advance_call_sites_emit_conforming_records():
+    """T007/T008 (contracts/gate-coverage-068.md assertions 2-3): plan.yml's
+    and tasks.yml's own new "Agent run metrics summary (branch advance)"
+    call sites -- an auto-mode-shaped invocation (stage: plan, a persistent
+    spec/<slug> branch) and a pr-mode-shaped one (stage: tasks, a review
+    tasks/<slug> branch) -- each with an intentionally-absent transcript
+    path and fully populated branch/before-sha/after-sha/commits inputs,
+    produce a record with record_available: false and branch_advance
+    matching those inputs verbatim."""
+    case = "plan/tasks branch-advance call sites emit conforming records"
+    scenarios = [
+        ("plan (auto mode)", "plan", {
+            "BRANCH": "spec/068-plan-tasks-branch-advance",
+            "BEFORE_SHA": "a" * 40, "BEFORE_SHA_AVAILABLE": "true",
+            "AFTER_SHA": "a" * 40, "AFTER_SHA_AVAILABLE": "true",
+            "COMMITS": "0", "COMMITS_AVAILABLE": "true"}),
+        ("tasks (pr mode)", "tasks", {
+            "BRANCH": "tasks/068-plan-tasks-branch-advance",
+            "BEFORE_SHA": "b" * 40, "BEFORE_SHA_AVAILABLE": "true",
+            "AFTER_SHA": "c" * 40, "AFTER_SHA_AVAILABLE": "true",
+            "COMMITS": "4", "COMMITS_AVAILABLE": "true"}),
+    ]
+    any_failed = False
+    for label, stage, ba_env in scenarios:
+        tmp = tempfile.mkdtemp(prefix="wc-metrics-record-")
+        try:
+            env_over = dict(ba_env)
+            env_over.update({"STAGE": stage, "STEP_INDEX": "1",
+                             "RUN_LABEL": "branch advance"})
+            rc, _outputs, _summary, record, output = run_case(
+                tmp, missing=True, env_over=env_over)
+            if rc != 0:
+                fail(case, f"{label}: exited {rc}: {output.strip()[:300]}")
+                any_failed = True
+                continue
+            if record is None:
+                fail(case, f"{label}: record-path was not written")
+                any_failed = True
+                continue
+            validate_schema(f"{case} ({label})", record)
+            if record.get("record_available") is not False:
+                fail(case, f"{label}: expected record_available: false "
+                           f"(absent transcript), got "
+                           f"{record.get('record_available')!r}")
+                any_failed = True
+            want_ba = {
+                "available": True, "branch": ba_env["BRANCH"],
+                "before_sha": ba_env["BEFORE_SHA"], "before_available": True,
+                "after_sha": ba_env["AFTER_SHA"], "after_available": True,
+                "commits": int(ba_env["COMMITS"]), "commits_available": True,
+            }
+            ba = record.get("branch_advance") or {}
+            if ba != want_ba:
+                fail(case, f"{label}: branch_advance = {ba!r}, want "
+                           f"{want_ba!r}")
+                any_failed = True
+            if record.get("stage") != stage:
+                fail(case, f"{label}: stage = {record.get('stage')!r}, "
+                           f"expected {stage!r}")
+                any_failed = True
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+    if not any_failed:
+        note("plan's and tasks's own branch-advance call sites each "
+             "produce record_available: false with branch_advance matching "
+             "their inputs verbatim")
+
+
 def case_multi_model_record_tokens_sum_across_per_model():
     """A run that used two models (the watchdog diagnose site: an opus
     main loop plus a haiku helper) carries BOTH in `.modelUsage`, but the
@@ -822,6 +890,7 @@ CASES = [
     case_repeated_invocation_in_one_job_gets_distinct_record_keys,
     case_branch_advance_composite_matches_pre_refactor_inline_bash,
     case_branch_advance_availability_follows_contract_or_rule,
+    case_plan_tasks_branch_advance_call_sites_emit_conforming_records,
     case_multi_model_record_tokens_sum_across_per_model,
     case_cost_line_formatter_has_exactly_one_home,
     case_container_pipefail_steps_pin_shell_bash,

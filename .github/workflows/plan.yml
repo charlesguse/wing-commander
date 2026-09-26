@@ -672,6 +672,41 @@ jobs:
           fetch-depth: 0
           clean: false
 
+      # specs/068-plan-tasks-branch-advance R2: the "before" half of the
+      # branch-advance capture, shared by both review modes. The checkout
+      # just above is always ${spec-prefix}${slug}, so HEAD here is that
+      # branch's tip regardless of which mode this run resolves to. In auto
+      # mode the agent commits directly to this same branch, so HEAD is
+      # "the point the run advanced the branch from" in the ordinary sense.
+      # In pr mode the agent's own first act is `git checkout -b
+      # ${plan-prefix}${slug}` from this same HEAD, so the same read is
+      # exactly "the commit the review branch was created from" — one
+      # capture point covers both modes and both the branch-exists and
+      # branch-created-by-this-run cases with no special-casing (FR-005).
+      - name: Record branch tip before agent
+        id: branch-tip
+        if: steps.dupe.outputs.skip != 'true'
+        shell: bash
+        env:
+          SLUG: ${{ needs.resolve-spec.outputs.slug }}
+          SPEC_PREFIX: ${{ inputs.spec-prefix }}
+          PLAN_PREFIX: ${{ inputs.plan-prefix }}
+          MODE: ${{ steps.mode.outputs.mode }}
+        run: |
+          set -uo pipefail
+          if [ "$MODE" = "auto" ]; then
+            branch="${SPEC_PREFIX}${SLUG}"
+          else
+            branch="${PLAN_PREFIX}${SLUG}"
+          fi
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+
+          before_sha="$(git rev-parse HEAD 2>/dev/null)" || before_sha=""
+          before_available=false
+          [ -n "$before_sha" ] && before_available=true
+          echo "before-sha=$before_sha" >> "$GITHUB_OUTPUT"
+          echo "before-sha-available=$before_available" >> "$GITHUB_OUTPUT"
+
       # Auto mode — generate the plan and commit it, with the stage update,
       # directly to the spec branch. No plan/<slug> branch, no PR.
       - name: Compose tool args (plan.direct-commit)
@@ -1064,6 +1099,75 @@ jobs:
         with:
           name: claude-execution-output
           path: ${{ runner.temp }}/claude-execution-output.json
+          if-no-files-found: ignore
+          retention-days: 90
+
+      # specs/068-plan-tasks-branch-advance R3: the "after"/"commits" half
+      # of the branch-advance capture, using the "before" values "Record
+      # branch tip before agent" produced. Placed before "Fail loud on
+      # non-healthy agent verdict (pr)" (which exit 1's the job with no
+      # always()/continue-on-error protecting anything after it) so a
+      # truncated, rejected-push, or otherwise unhealthy run is still
+      # measured — the same placement rule implement.yml's own cycle-level
+      # capture already follows. Same if: as "Agent run metrics summary"
+      # below (one capture point serves both mutually-exclusive modes, not
+      # one per mode) and the same continue-on-error: true convention.
+      - name: Record branch advance (after agent)
+        id: branch-advance
+        if: >-
+          always() &&
+          (steps.agent-pr.outcome != 'skipped' ||
+           steps.agent-auto.outcome != 'skipped')
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-branch-advance
+        with:
+          branch: ${{ steps.branch-tip.outputs.branch }}
+          before-sha: ${{ steps.branch-tip.outputs.before-sha }}
+          before-sha-available: ${{ steps.branch-tip.outputs.before-sha-available }}
+
+      # Durable record of the same quadruple — a transcript-less second
+      # wing-commander-metrics-summary invocation, deliberately pointed at a
+      # transcript path that does not exist so it drives the composite's own
+      # already-gate-covered degraded-record path for every transcript-
+      # derived field; the branch_advance group is populated independently
+      # of that (mirrors implement.yml's own fourth call site).
+      - name: Agent run metrics summary (branch advance)
+        id: metrics-summary-branch-advance
+        if: >-
+          always() &&
+          (steps.agent-pr.outcome != 'skipped' ||
+           steps.agent-auto.outcome != 'skipped')
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-metrics-summary
+        with:
+          transcript-path: ${{ runner.temp }}/wing-commander-no-transcript.json
+          model: ${{ inputs.model }}
+          stage: plan
+          spec-dir: ${{ needs.resolve-spec.outputs.spec-dir }}
+          spec-issue: ${{ steps.meta.outputs.issue || steps.newissue.outputs.issue }}
+          run-label: branch advance
+          step-index: '1'
+          record-path: ${{ runner.temp }}/wing-commander-metrics-record-branch-advance.json
+          branch: ${{ steps.branch-tip.outputs.branch }}
+          before-sha: ${{ steps.branch-tip.outputs.before-sha }}
+          before-sha-available: ${{ steps.branch-tip.outputs.before-sha-available }}
+          after-sha: ${{ steps.branch-advance.outputs.after-sha }}
+          after-sha-available: ${{ steps.branch-advance.outputs.after-sha-available }}
+          commits: ${{ steps.branch-advance.outputs.commits }}
+          commits-available: ${{ steps.branch-advance.outputs.commits-available }}
+
+      # Durable record (specs/043-durable-metrics-record) — the artifact
+      # this feature persists past the transcript's own retention window.
+      - name: Upload metrics record (branch advance)
+        if: >-
+          always() &&
+          (steps.agent-pr.outcome != 'skipped' ||
+           steps.agent-auto.outcome != 'skipped')
+        continue-on-error: true
+        uses: actions/upload-artifact@v6
+        with:
+          name: metrics-record-branch-advance
+          path: ${{ runner.temp }}/wing-commander-metrics-record-branch-advance.json
           if-no-files-found: ignore
           retention-days: 90
 

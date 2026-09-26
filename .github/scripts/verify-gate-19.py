@@ -740,9 +740,19 @@ BD_SCENARIOS = [
         revlist_fail=False,
         expect_outcome=None,
     ),
+    # specs/068-plan-tasks-branch-advance widened this arm: a plan run
+    # whose head is not the branch it pushes to no longer exits before any
+    # download is attempted (#112's own head-branch reasoning is
+    # unchanged, but the metrics-record download-and-scan now runs for
+    # plan/tasks too, not only implement). No fixture record is downloaded
+    # here (gh_records unset), so no branch_advance evidence is found and
+    # the arm degrades to "no signal" -- but the download WAS attempted,
+    # so the collector's own outcome is now "ok", not absent.
     dict(
         name="slug resolved but the head is not the branch this stage pushes "
-             "to (draft-branch head, plan run): nothing fetched (#112)",
+             "to (draft-branch head, plan run): no branch-advance evidence "
+             "found, no fetch of the measured branch itself (#112; "
+             "specs/068-plan-tasks-branch-advance)",
         run_name="Wing Commander · 3 plan",
         head_branch="spec-draft/999-torn-down",
         slug="999-torn-down",
@@ -750,7 +760,8 @@ BD_SCENARIOS = [
         fetch_msg="",
         revparse_fail=False,
         revlist_fail=False,
-        expect_outcome=None,
+        expect_outcome="ok",
+        expect_signal=None,
     ),
     # #322: a dispatched IMPLEMENT run reports the default branch as its
     # head, but spec-slug now recovers the slug from the run's metrics
@@ -841,10 +852,16 @@ BD_SCENARIOS = [
     ),
     # Tasks is dispatched too, but pushes to spec/<slug> only in `auto`
     # review mode (pr mode goes to tasks/<slug>), and the record does not
-    # say which — so the #322 arm is implement-only and tasks still skips.
+    # say which — so the #322 since-created arm stays implement-only
+    # (research.md R5 of specs/068-plan-tasks-branch-advance): tasks gets
+    # no analogous fallback. What changed is that the download-and-scan
+    # now runs here too (no fixture record set, so no branch_advance
+    # evidence is found) — the arm degrades to "no signal" with the
+    # collector's own outcome recorded "ok", not absent.
     dict(
-        name="dispatched tasks run with a recovered slug: the push target "
-             "depends on review mode, so nothing is fetched (#322 scope)",
+        name="dispatched tasks run with a recovered slug: no branch-advance "
+             "evidence found, no since-created fallback for tasks (#322 "
+             "scope; specs/068-plan-tasks-branch-advance)",
         run_name="Wing Commander · 4 tasks",
         head_branch="main",
         slug="999-torn-down",
@@ -852,7 +869,8 @@ BD_SCENARIOS = [
         fetch_msg="",
         revparse_fail=False,
         revlist_fail=False,
-        expect_outcome=None,
+        expect_outcome="ok",
+        expect_signal=None,
     ),
     # The exact-SHA arm is untouched: when the head IS the spec branch the
     # baseline is HEAD_SHA, not the creation time.

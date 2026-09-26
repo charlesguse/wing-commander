@@ -716,51 +716,61 @@ jobs:
           # stage pushes to a branch that is not one of the pipeline's own,
           # so an unresolved slug means the head branch owes no commits.
           #
-          # #322: with spec-slug now reading the slug from a dispatched
-          # run's metrics record, an IMPLEMENT run with a non-spec head is
-          # measured on the branch it actually pushes to. Implement is the
-          # one stage whose target is unconditional — implement.yml pushes
-          # every cycle to spec/<slug>, including a deterministic spec-meta
-          # advance commit, so a converged cycle never legitimately pushes
-          # nothing. Plan and tasks push to spec/<slug> only in `auto`
-          # review mode (pr mode goes to plan/ and tasks/ branches, and the
-          # record does not carry the mode), so with a non-spec head they
-          # still skip. Until this arm existed the collector measured
-          # nothing at all: plan is pull_request-triggered (draft head),
-          # tasks and implement are only ever dispatched (default-branch
-          # head), so no run's head was ever the spec branch.
+          # #322 / specs/068-plan-tasks-branch-advance: a run whose head
+          # branch is not the branch it pushes to — every plan run (always
+          # pull_request-triggered, draft head) and every dispatched tasks/
+          # implement run (default-branch head) alike — still cannot be
+          # measured by its head branch: a draft or default-branch head
+          # names nothing about what the run actually pushed. That part of
+          # #112/#318's reasoning is unchanged. What is no longer true is
+          # that plan and tasks stay unmeasured for this reason: implement,
+          # plan, and tasks now each record the exact branch/before-sha/
+          # after-sha/commits quadruple they observed in their own metrics
+          # record (implement's "Record branch advance (cycle)" step; plan's
+          # and tasks's own "Record branch advance (after agent)" steps),
+          # read below the same way for all three (specs/050-branch-drift-
+          # sha-baseline shipped this for implement only; specs/068-plan-
+          # tasks-branch-advance is the follow-up FR-020 of that spec named,
+          # closing the gap that used to leave plan/tasks permanently
+          # skipped here).
           #
-          # The baseline for that arm is measured two ways now
-          # (specs/050-branch-drift-sha-baseline). HEAD_SHA cannot be used
-          # directly for a dispatched run either way: it is the DEFAULT
-          # branch's tip, and `HEAD_SHA..spec/<slug>` would count the spec
-          # branch's whole history since it diverged — never zero, a
-          # measurement that can never fire.
+          # The baseline for that arm is measured two ways. HEAD_SHA cannot
+          # be used directly for a dispatched run either way: it is the
+          # DEFAULT branch's tip, and `HEAD_SHA..spec/<slug>` would count
+          # the spec branch's whole history since it diverged — never zero,
+          # a measurement that can never fire.
           #
-          # Primary (`baseline="exact-sha"`): a dispatched implement run's
-          # own cycle now records the exact branch/before-sha/after-sha/
-          # commits quadruple it observed (implement.yml's "Record branch
-          # advance (cycle)" step, after every push the cycle could make).
-          # When the inspected run's metrics record carries that evidence,
-          # the verdict is a pure comparison of the two recorded SHAs —
-          # invariant to anything that happens to the branch afterward,
-          # closing both the rebase-force-push miss and the second-run-
-          # masking miss described below.
+          # Primary (`baseline="exact-sha"`): when the inspected run's
+          # metrics record carries that evidence, the verdict is a pure
+          # comparison of the two recorded SHAs — invariant to anything that
+          # happens to the branch afterward, closing both the rebase-force-
+          # push miss and the second-run-masking miss described below. The
+          # branch measured is always the record's own `branch_advance
+          # .branch` (the persistent spec branch in `auto` mode, a review
+          # branch in `pr` mode) — never re-derived from a prefix, which
+          # would guess wrong for a `pr`-mode plan/tasks run (FR-004).
           #
-          # Fallback (`baseline="since-created"`): `--since=<createdAt>`
-          # counts commits whose committer date is at or after the run was
-          # created; the runner commits after that instant. This arm
-          # survives only for a record that predates this feature or never
-          # reached the recording point (an older pipeline version, an
-          # expired 90-day artifact retention window, a cycle whose push
-          # step never ran). Anything that lands on the branch inside its
-          # open-ended window still inflates the count the same way it
-          # always has: a rebase.yml force-push rewrites committer dates
-          # (implement run 34709026525 reads 22 after a rebase, 16 before),
-          # and a later run on the same branch (a retry, the next cycle)
-          # that has already pushed by the time this one is inspected adds
-          # its own commits. Both are missed detections, never false ones,
-          # for a run whose record lacks the new evidence (FR-018).
+          # Fallback (`baseline="since-created"`, implement only):
+          # `--since=<createdAt>` counts commits whose committer date is at
+          # or after the run was created; the runner commits after that
+          # instant. This arm survives only for an implement record that
+          # predates this feature or never reached the recording point (an
+          # older pipeline version, an expired 90-day artifact retention
+          # window, a cycle whose push step never ran). Anything that lands
+          # on the branch inside its open-ended window still inflates the
+          # count the same way it always has: a rebase.yml force-push
+          # rewrites committer dates (implement run 34709026525 reads 22
+          # after a rebase, 16 before), and a later run on the same branch
+          # (a retry, the next cycle) that has already pushed by the time
+          # this one is inspected adds its own commits. Both are missed
+          # detections, never false ones, for a run whose record lacks the
+          # new evidence (FR-018). A plan or tasks run with no usable record
+          # gets no analogous fallback: the since-created baseline branch is
+          # only the branch a plan/tasks run actually advanced in `auto`
+          # mode, and guessing it for a `pr`-mode run risks a FALSE
+          # lost-progress signal on a healthy run whose review branch nobody
+          # merged yet — that case keeps exactly today's outcome, no signal
+          # (FR-016/FR-017/FR-018; research.md R5).
           _spec_prefix="${SPEC_PREFIX:-spec/}"
           measure_branch="$HEAD_BRANCH"
           baseline="head-sha"
@@ -769,21 +779,30 @@ jobs:
               echo "branch-drift: no spec slug resolved for run head '$HEAD_BRANCH' (not a pipeline branch, and no metrics record named a spec) — the head branch owes no commits. Skipping." >> "$GITHUB_STEP_SUMMARY"
               exit 0
             fi
-            if [ "$RUN_NAME" != "Wing Commander · 5 implement" ] || [ -z "$RUN_CREATED_AT" ]; then
+            # Regression (contracts/gate-coverage-050.md assertion 6): an
+            # implement run whose RUN_CREATED_AT cannot be resolved has no
+            # since-created baseline to fall back to either, so it still
+            # exits quietly here, before ever attempting the download below
+            # — unaffected by this feature, exactly as before specs/068.
+            if [ "$RUN_NAME" = "Wing Commander · 5 implement" ] && [ -z "$RUN_CREATED_AT" ]; then
               echo "branch-drift: run head is '$HEAD_BRANCH' but this stage pushes to '${_spec_prefix}${SLUG}' (or to a review branch, depending on its review mode) — the head branch owes no commits. Skipping." >> "$GITHUB_STEP_SUMMARY"
               exit 0
             fi
             measure_branch="${_spec_prefix}${SLUG}"
-            baseline="since-created"
 
             # R7: look for a downloaded metrics-record* artifact off the
             # inspected run carrying branch_advance evidence before falling
-            # through to the since-created fallback. Same download pattern
+            # through to the since-created fallback (implement only) or
+            # giving up with no signal (plan/tasks). Same download pattern
             # wing-commander-inspected-run-identity's record_fallback
             # already uses. Filtered on the group's own `available` flag,
             # not on step-index/run-label, since FR-020 makes the group
             # stage-neutral — a future non-implement populator must be
-            # picked up here with no collector change.
+            # picked up here with no collector change. Runs for all three
+            # push-expected stages now (specs/068-plan-tasks-branch-advance)
+            # — the outer `case "$RUN_NAME"` gate above already restricts
+            # this whole step to plan/tasks/implement, so nothing new
+            # becomes reachable here.
             exact_branch=""
             exact_before_sha=""
             exact_after_sha=""
@@ -816,14 +835,33 @@ jobs:
 
             if [ -n "$exact_before_sha" ] && [ -n "$exact_after_sha" ]; then
               baseline="exact-sha"
-              # FR-003: the branch this arm reports is the one the record
-              # itself named, never re-derived from prefix+slug — the
+              # FR-003/FR-004: the branch this arm reports is the one the
+              # record itself named, never re-derived from prefix+slug — the
               # prefix-derived value above is only a fallback for the rare
               # case a record carries both points but no branch name.
               [ -n "$exact_branch" ] && measure_branch="$exact_branch"
-              echo "branch-drift: run head is '$HEAD_BRANCH' (a dispatched implement run reports the default branch); measuring '$measure_branch' via the implement run's own recorded before/after SHAs (specs/050-branch-drift-sha-baseline)." >> "$GITHUB_STEP_SUMMARY"
-            else
+              echo "branch-drift: run head is '$HEAD_BRANCH' (not the branch this stage pushes to); measuring '$measure_branch' via the run's own recorded before/after SHAs (specs/050-branch-drift-sha-baseline; specs/068-plan-tasks-branch-advance)." >> "$GITHUB_STEP_SUMMARY"
+            elif [ "$RUN_NAME" = "Wing Commander · 5 implement" ] && [ -n "$RUN_CREATED_AT" ]; then
+              baseline="since-created"
               echo "branch-drift: run head is '$HEAD_BRANCH' (a dispatched implement run reports the default branch); measuring '$measure_branch' for commits since the run was created at $RUN_CREATED_AT (no recorded branch-advance evidence on this run)." >> "$GITHUB_STEP_SUMMARY"
+            else
+              # FR-016/FR-017/FR-018/research.md R5: a plan or tasks run
+              # (or an implement run with no RUN_CREATED_AT to fall back on)
+              # whose record carries no usable branch-advance evidence keeps
+              # exactly today's outcome — no signal, no fallback measurement
+              # — since guessing the since-created baseline branch for a
+              # `pr`-mode plan/tasks run risks a false lost-progress signal.
+              # An absent optional field is data, not a failed read, so the
+              # collector's own outcome still records "ok".
+              bd_outcome="ok"
+              jq -c --arg c "collect-branch-drift" --arg o "$bd_outcome" '. + [{"collector":$c,"outcome":$o}]' "$RUNNER_TEMP/collector-outcomes.json" > "$RUNNER_TEMP/collector-outcomes.json.tmp" && mv "$RUNNER_TEMP/collector-outcomes.json.tmp" "$RUNNER_TEMP/collector-outcomes.json"
+              stage_label="plan"
+              case "$RUN_NAME" in
+                "Wing Commander · 4 tasks") stage_label="tasks" ;;
+                "Wing Commander · 5 implement") stage_label="implement" ;;
+              esac
+              echo "branch-drift: no recorded branch-advance evidence on this $stage_label run — skipping." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
             fi
           fi
 
