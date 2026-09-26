@@ -499,6 +499,65 @@ def scenario_tasks_exact_sha_differ_no_signal(step_text, root):
     return failures
 
 
+def scenario_plan_exact_sha_ignores_live_branch_state(step_text, root):
+    """specs/068-plan-tasks-branch-advance T014 (US2 AS1-2): the exact-sha
+    arm's verdict for a plan run cannot be affected by an intervening push
+    either -- mirrors scenario_exact_sha_ignores_live_branch_state, but for
+    a plan/<slug>-branch record and RUN_NAME "Wing Commander · 3 plan"
+    (T011 widened the exact-sha arm beyond implement-only)."""
+    failures = []
+    repo, work, tip = make_repo(root)
+    bindir = new_stub_dir(work)
+    plan_branch = "plan/" + SLUG
+    fixture_dir = make_fixture_dir(root, {
+        "available": True, "branch": plan_branch,
+        "before_sha": tip, "before_available": True,
+        "after_sha": tip, "after_available": True,
+        "commits": 0, "commits_available": True,
+    })
+    env = base_env(bindir, {"GH_DOWNLOAD_FIXTURE_DIR": fixture_dir,
+                            "RUN_NAME": "Wing Commander · 3 plan"})
+
+    runner_temp_1 = os.path.join(work, "runner_temp_1")
+    rc1, out1, signals1, _outcomes1, _s1 = run_collector(
+        step_text, repo, runner_temp_1, env)
+    if rc1 != 0:
+        failures.append(f"plan-exact-sha-invariant (first run): exited "
+                        f"{rc1}: {out1.strip()[:300]}")
+        return failures
+
+    # Simulate an intervening push on the local fixture repo -- the
+    # record's own plan/<slug> branch is not even present in this repo,
+    # which is the point: the exact-sha arm never fetches or rev-parses
+    # the branch it names, so nothing about the repo's state can move
+    # this verdict.
+    add_commit(repo, work, "an intervening push after the run finished")
+
+    runner_temp_2 = os.path.join(work, "runner_temp_2")
+    rc2, out2, signals2, _outcomes2, _s2 = run_collector(
+        step_text, repo, runner_temp_2, env)
+    if rc2 != 0:
+        failures.append(f"plan-exact-sha-invariant (second run): exited "
+                        f"{rc2}: {out2.strip()[:300]}")
+        return failures
+
+    if signals1 != signals2:
+        failures.append(
+            "plan-exact-sha-invariant: the verdict changed after the "
+            f"local repo advanced — the exact-sha arm must never read "
+            f"live branch state, for plan/tasks any more than for "
+            f"implement. first={signals1!r} second={signals2!r}")
+    if len(signals1) != 1 or signals1[0].get("class-hint") != "lost-progress":
+        failures.append(f"plan-exact-sha-invariant: expected a "
+                        f"lost-progress signal from the (unchanged) "
+                        f"equal-SHA record, got {signals1!r}")
+    if signals1 and signals1[0].get("facts", {}).get("branch") != plan_branch:
+        failures.append(f"plan-exact-sha-invariant: facts.branch = "
+                        f"{signals1[0].get('facts', {}).get('branch')!r}, "
+                        f"expected {plan_branch!r}")
+    return failures
+
+
 def scenario_no_branch_advance_falls_back_to_since_created(step_text, root):
     """US3 / FR-013, FR-018: no downloaded record carries
     branch_advance.available:true -> the since-created fallback fires
@@ -692,6 +751,7 @@ SCENARIOS = [
     scenario_stalled_short_circuits_exact_sha,
     scenario_plan_exact_sha_equal_fires_lost_progress,
     scenario_tasks_exact_sha_differ_no_signal,
+    scenario_plan_exact_sha_ignores_live_branch_state,
     scenario_no_branch_advance_falls_back_to_since_created,
     scenario_head_sha_arm_unaffected,
     scenario_non_push_expected_stage_unaffected,
