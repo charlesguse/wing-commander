@@ -1,0 +1,77 @@
+# Single home for the "after"/"commits" half of the exact-SHA
+# branch-advance capture (specs/050-branch-drift-sha-baseline,
+# specs/068-plan-tasks-branch-advance) -- extracted byte-identical from
+# implement.yml's own former inline "Record branch advance (cycle)" step
+# so implement, plan, and tasks share one copy of this git plumbing
+# (contracts/branch-advance-capture-contract.md). "Before" stays each
+# caller's own concern -- see that contract's Non-goals. Resolved from the
+# pipeline repository's own checkout -- see the header of
+# .github/actions/wing-commander-context/action.yml for the verified
+# self-checkout snippet.
+name: wing-commander-branch-advance
+description: >
+  Fetches a branch's current tip and, when a before-point is also
+  available, the commit count between the two -- the "after"/"commits"
+  half of the branch-advance capture. Never fails its own step; every
+  failure degrades an output instead (the caller wraps the call in
+  continue-on-error: true as belt-and-braces, matching implement's
+  existing convention for this same logic).
+
+inputs:
+  branch:
+    description: The branch to measure. Passed straight through as a git fetch/rev-parse target -- never interpreted otherwise.
+    required: true
+  before-sha:
+    description: The caller's already-resolved "before" point.
+    required: false
+    default: ''
+  before-sha-available:
+    description: "'true' when the caller successfully resolved before-sha."
+    required: false
+    default: 'false'
+
+outputs:
+  after-sha:
+    description: branch's tip as observed by this composite, after a fresh fetch. Empty if the fetch or rev-parse failed.
+    value: ${{ steps.branch-advance.outputs.after-sha }}
+  after-sha-available:
+    description: "'true' unless the fetch/rev-parse failed."
+    value: ${{ steps.branch-advance.outputs.after-sha-available }}
+  commits:
+    description: git rev-list --count "<before-sha>..<after-sha>", computed only when both SHAs are available. Empty otherwise.
+    value: ${{ steps.branch-advance.outputs.commits }}
+  commits-available:
+    description: "'true' unless either SHA is unavailable or the range failed to resolve for a reason other than \"0 commits\"."
+    value: ${{ steps.branch-advance.outputs.commits-available }}
+
+runs:
+  using: composite
+  steps:
+    - name: Record branch advance
+      id: branch-advance
+      shell: bash
+      env:
+        BRANCH: ${{ inputs.branch }}
+        BEFORE_SHA: ${{ inputs.before-sha }}
+        BEFORE_AVAILABLE: ${{ inputs.before-sha-available }}
+      run: |
+        set -uo pipefail
+        branch="$BRANCH"
+
+        after_sha=""
+        after_available=false
+        if git fetch origin "+refs/heads/$branch:refs/remotes/origin/$branch" 2>/dev/null; then
+          after_sha="$(git rev-parse "refs/remotes/origin/$branch" 2>/dev/null)" || after_sha=""
+          [ -n "$after_sha" ] && after_available=true
+        fi
+        echo "after-sha=$after_sha" >> "$GITHUB_OUTPUT"
+        echo "after-sha-available=$after_available" >> "$GITHUB_OUTPUT"
+
+        commits=""
+        commits_available=false
+        if [ "$BEFORE_AVAILABLE" = "true" ] && [ "$after_available" = "true" ]; then
+          commits="$(git rev-list --count "$BEFORE_SHA..$after_sha" 2>/dev/null)" || commits=""
+          [ -n "$commits" ] && commits_available=true
+        fi
+        echo "commits=$commits" >> "$GITHUB_OUTPUT"
+        echo "commits-available=$commits_available" >> "$GITHUB_OUTPUT"
