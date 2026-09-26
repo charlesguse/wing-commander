@@ -35,7 +35,7 @@ against a snapshot of the tree, and this repository's own convention
 (`specs/050-branch-drift-sha-baseline/tasks.md` T001) is to re-verify
 before relying on them.
 
-- [ ] T001 Re-grep the current state of the four files this feature edits
+- [X] T001 Re-grep the current state of the four files this feature edits
   and confirm/correct the following against plan.md's and research.md's
   assumptions, recording any drift before starting T002+:
   - `.github/workflows/implement.yml`'s `Record branch advance (cycle)`
@@ -94,7 +94,7 @@ it, before either new stage call site is added.
 
 **⚠️ CRITICAL**: No user story task may start until this phase is complete.
 
-- [ ] T002 Create `.github/actions/wing-commander-branch-advance/action.yml`
+- [X] T002 Create `.github/actions/wing-commander-branch-advance/action.yml`
   (research.md R1; `contracts/branch-advance-capture-contract.md`): a
   composite action with inputs `branch` (required), `before-sha` (optional,
   default `''`), `before-sha-available` (optional, default `'false'`), and
@@ -111,7 +111,7 @@ it, before either new stage call site is added.
   concern, matching `wing-commander-refresh-remote/action.yml`'s shape as
   the nearest structural template).
 
-- [ ] T003 In `.github/workflows/implement.yml`, replace the inline bash in
+- [X] T003 In `.github/workflows/implement.yml`, replace the inline bash in
   "Record branch advance (cycle)" (T001's confirmed ~2396-2432) with a
   single `uses:
   ./.wing-commander-pipeline/.github/actions/wing-commander-branch-advance`
@@ -125,7 +125,7 @@ it, before either new stage call site is added.
   metrics summary (branch advance)" step unchanged. No value implement.yml
   records may change (FR-011).
 
-- [ ] T004 [P] In `.github/scripts/verify-metrics-summary-record-emission.py`,
+- [X] T004 [P] In `.github/scripts/verify-metrics-summary-record-emission.py`,
   add a case (alongside `case_repeated_invocation_in_one_job_gets_distinct_record_keys`)
   that runs the real `wing-commander-branch-advance` composite (T002)
   standalone against a local git fixture with a known before-SHA/branch,
@@ -155,7 +155,7 @@ it compared — where today both are silently skipped (spec.md US1).
 
 ### Implementation for User Story 1
 
-- [ ] T005 [P] [US1] In `.github/workflows/plan.yml`, add a new step named
+- [X] T005 [P] [US1] In `.github/workflows/plan.yml`, add a new step named
   "Record branch tip before agent" immediately after "Checkout spec branch
   as wing-commander-bot" (T001's confirmed ~666-673) and before "Compute
   agent turn ceiling (auto)" (~689), guarded by `if: steps.dupe.outputs.skip
@@ -170,7 +170,7 @@ it compared — where today both are silently skipped (spec.md US1).
   `before-sha-available` = `'true'` unless the rev-parse fails
   (research.md R2).
 
-- [ ] T006 [US1] In `.github/workflows/tasks.yml`, add the same kind of
+- [X] T006 [US1] In `.github/workflows/tasks.yml`, add the same kind of
   step, "Record branch tip before agent", but placed after "Resolve review
   mode" (T001's confirmed ~648-650) rather than immediately after the
   checkout (T001: tasks.yml checks out before resolving mode, the reverse
@@ -180,7 +180,7 @@ it compared — where today both are silently skipped (spec.md US1).
   `${{ inputs.tasks-prefix }}` (confirm the exact input name) for the
   pr-mode branch.
 
-- [ ] T007 [P] [US1] In `.github/workflows/plan.yml`, add a new step named
+- [X] T007 [P] [US1] In `.github/workflows/plan.yml`, add a new step named
   "Record branch advance (after agent)" immediately before the existing
   "Agent run metrics summary" step (T001's confirmed ~1071), using the
   **same** `if:` shape as that existing step (`if: always() &&
@@ -202,13 +202,13 @@ it compared — where today both are silently skipped (spec.md US1).
   `retention-days: 90`, `continue-on-error: true`), mirroring
   implement.yml's own three-step shape (T003).
 
-- [ ] T008 [US1] In `.github/workflows/tasks.yml`, add the same three steps
+- [X] T008 [US1] In `.github/workflows/tasks.yml`, add the same three steps
   as T007 (branch-advance capture, transcript-less metrics-summary call
   with `stage: tasks`, upload), placed immediately before the existing
   "Agent run metrics summary" step (T001's confirmed ~1052), using that
   step's exact `if:` shape.
 
-- [ ] T009 [P] [US1] In `.github/scripts/verify-metrics-summary-record-emission.py`,
+- [X] T009 [P] [US1] In `.github/scripts/verify-metrics-summary-record-emission.py`,
   add a case exercising an "auto"-mode and a "pr"-mode invocation shaped
   like T007/T008's new call site (populated `branch`/`before-sha`/
   `after-sha`/`commits` inputs, an absent transcript path, `stage: plan`
@@ -216,7 +216,7 @@ it compared — where today both are silently skipped (spec.md US1).
   with `branch_advance.available: true` matching the inputs verbatim
   (`contracts/gate-coverage-068.md` assertions 2-3).
 
-- [ ] T010 [P] [US1] Add three new fixtures under
+- [X] T010 [P] [US1] Add three new fixtures under
   `.github/scripts/fixtures/metrics-record-schema/` (research.md R8;
   `contracts/gate-coverage-068.md`):
   `valid-branch-advance-branch-created-from-this-commit.json` (schema-
@@ -230,7 +230,7 @@ it compared — where today both are silently skipped (spec.md US1).
   match the new total (confirm the current pinned count first — do not
   assume the number in any planning doc).
 
-- [ ] T011 [US1] In `.github/workflows/watchdog.yml`'s `collect-branch-drift`
+- [X] T011 [US1] In `.github/workflows/watchdog.yml`'s `collect-branch-drift`
   step, move the metrics-record download-and-scan block (T001's confirmed
   ~779-827) out from inside the `if [ "$RUN_NAME" != "Wing Commander · 5
   implement" ] || [ -z "$RUN_CREATED_AT" ]` guard (~772) so it runs for
@@ -242,7 +242,7 @@ it compared — where today both are silently skipped (spec.md US1).
   unconditionally rather than only inside the implement-only arm
   (research.md R5; FR-004).
 
-- [ ] T012 [US1] Replace the two comment blocks at `.github/workflows/watchdog.yml`
+- [X] T012 [US1] Replace the two comment blocks at `.github/workflows/watchdog.yml`
   ~696-699 and inside ~719-731 (both quoted verbatim in spec.md's Overview
   — "plan and tasks push to the persistent spec branch, but... the
   collector skips it" / "...so with a non-spec head they still skip") with
@@ -256,7 +256,7 @@ it compared — where today both are silently skipped (spec.md US1).
   describing edit under CLAUDE.md's load-bearing-comments rule, not a
   cosmetic one.
 
-- [ ] T013 [US1] Extend `.github/scripts/verify-branch-drift-sha-baseline.py`
+- [X] T013 [US1] Extend `.github/scripts/verify-branch-drift-sha-baseline.py`
   (Gate 65 — see T001; **not** "Gate 53") with two new scenarios (research.md
   R9 cases 1-2): a plan run (`RUN_NAME = "Wing Commander · 3 plan"`) with a
   downloaded record carrying `branch_advance.available: true`, `branch:
@@ -286,7 +286,7 @@ produce the same verdict (spec.md US2).
 
 ### Implementation for User Story 2
 
-- [ ] T014 [US2] Extend `.github/scripts/verify-branch-drift-sha-baseline.py`
+- [X] T014 [US2] Extend `.github/scripts/verify-branch-drift-sha-baseline.py`
   with a scenario for a plan (or tasks) run: when T011's widened exact-sha
   arm fires, assert no `git fetch`/`rev-parse`/`rev-list` runs against the
   measured branch's *current* state — mirroring the existing
@@ -296,7 +296,7 @@ produce the same verdict (spec.md US2).
   read, and confirming the reported verdict/commit count still match only
   the record's own `before_sha`/`after_sha`/`commits` (spec.md US2 AS1-2).
 
-- [ ] T015 [US2] Confirm (no code change expected) that the fingerprint/
+- [X] T015 [US2] Confirm (no code change expected) that the fingerprint/
   dedup mechanism downstream of the collector (`specs/024-watchdog-
   precision-hardening`'s definition: `sha256(class + "|signals:" +
   sorted-joined(signal ids))`) projects only `branch` and signal identity,
@@ -321,7 +321,7 @@ confirm the gate suite fails on it (spec.md US3).
 
 ### Implementation for User Story 3
 
-- [ ] T016 [US3] In `.github/scripts/verify-single-home-idioms.py` (Gate
+- [X] T016 [US3] In `.github/scripts/verify-single-home-idioms.py` (Gate
   60), add a `branch-advance-capture` entry to `DECLARED_HOMES` pointing at
   `.github/actions/wing-commander-branch-advance/action.yml` (T002), keyed
   on the co-occurrence, in one file, of the refspec-form fetch fragment
@@ -335,7 +335,7 @@ confirm the gate suite fails on it (spec.md US3).
   pattern of every other entry (do not assume a specific ordinal count of
   existing entries — confirm the current count first).
 
-- [ ] T017 [US3] In the same file, add the new home's shipped shell to
+- [X] T017 [US3] In the same file, add the new home's shipped shell to
   `selftest_clean_tree_passes()`'s clean-tree fixture (mirroring every
   other `DECLARED_HOMES` entry) and add a
   `selftest_third_paste_fails("branch-advance-capture", ...)` call proving
@@ -361,7 +361,7 @@ is still recorded as trustworthy (spec.md US4).
 
 ### Implementation for User Story 4
 
-- [ ] T018 [US4] In `.github/workflows/watchdog.yml`'s `collect-branch-drift`
+- [X] T018 [US4] In `.github/workflows/watchdog.yml`'s `collect-branch-drift`
   step, after T011's widened download-and-scan finds no usable record:
   make the `baseline="since-created"` fallback (T001's confirmed ~776-777,
   826) fire **only when `RUN_NAME` is `"Wing Commander · 5 implement"`**
