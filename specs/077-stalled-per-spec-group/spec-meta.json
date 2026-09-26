@@ -2,7 +2,7 @@
   "issue": 581,
   "spec_dir": "specs/077-stalled-per-spec-group",
   "feature_num": "077",
-  "stage": "spec",
+  "stage": "plan",
   "iteration": 0,
-  "spec_branch": null
+  "spec_branch": "spec/077-stalled-per-spec-group"
 }
