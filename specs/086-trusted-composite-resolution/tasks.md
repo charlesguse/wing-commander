@@ -298,7 +298,7 @@ both new steps automatically, with no manifest edit beyond T021/T022
 **Purpose**: FR-014's documentation pointers and the final integration
 checks that span every phase above.
 
-- [ ] T023 Append the canonical trusted-copy-rule paragraph to
+- [X] T023 Append the canonical trusted-copy-rule paragraph to
       `.github/workflows/board-loop.yml`'s existing file header (today
       lines 1-13): what the sidecar is (a checkout of this repository at
       `github.sha` into `.wc-pristine-repo`, never `./.github/actions/...`
@@ -313,13 +313,13 @@ checks that span every phase above.
       documents (FR-014; contracts/documentation-updates.md "Canonical
       statement"). This is the one place the rule's rationale is written
       in prose.
-- [ ] T024 Revisit the one-line pointer comment placed above each of the 8
+- [X] T024 Revisit the one-line pointer comment placed above each of the 8
       sidecar checkout steps (added inline during T002/T004/T006/T008/T010/T012/T014/T016)
       and confirm each reads "see this file's header for why every job
       does this" with no restated rationale, now that T023 has written the
       header they point at (contracts/documentation-updates.md "Pointer
       sites").
-- [ ] T025 [P] Append one sentence to
+- [X] T025 [P] Append one sentence to
       `.github/actions/wing-commander-context/action.yml`'s header, after
       the existing "Verified self-checkout snippet" block: board-loop.yml
       is not a published stage and is not called through this composite's
@@ -327,7 +327,7 @@ checks that span every phase above.
       composites the same way, from its own repository at `github.sha`;
       see board-loop.yml's own header (FR-014;
       contracts/documentation-updates.md "Pointer sites").
-- [ ] T026 Run the `.gitignore` negative check from quickstart.md step 3:
+- [X] T026 Run the `.gitignore` negative check from quickstart.md step 3:
       `mkdir .wc-pristine-repo && touch .wc-pristine-repo/probe && git add
       -A && git status --porcelain` shows nothing staged for that path,
       then `rm -rf .wc-pristine-repo` to clean up; separately confirm `git
