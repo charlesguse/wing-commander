@@ -692,6 +692,12 @@ jobs:
           claude_args: --allowedTools "Bash(.github/scripts/zzz-does-not-exist.py:*)"
 """
 
+# Syntactically invalid YAML (an unclosed flow sequence) - the fixture T023
+# adds to exercise _load_workflows' except branch, which the real tree can
+# never reach since a workflow that fails to parse would already fail
+# actions/checkout's own consumers long before Gate 27 ran.
+_INVALID_YAML_FIXTURE = "jobs:\n  j:\n    steps: [\n"
+
 
 def _write_text_fixture(tmp, filename, text):
     wf_dir = os.path.join(tmp, WORKFLOW_DIR)
@@ -762,6 +768,19 @@ def _collector_fixtures():
             len(found) == 1 and "claude-args.yml:j:" in found[0]
             and "Run agent" in found[0],
             found))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    tmp = tempfile.mkdtemp()
+    try:
+        _write_text_fixture(tmp, "broken.yml", _INVALID_YAML_FIXTURE)
+        _, load_errors = _load_workflows(tmp)
+        results.append((
+            "a syntactically invalid workflow file is skipped with an "
+            "error, not raised as yaml.YAMLError",
+            any("broken.yml could not be parsed as YAML and was skipped"
+                in e for e in load_errors),
+            load_errors))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
