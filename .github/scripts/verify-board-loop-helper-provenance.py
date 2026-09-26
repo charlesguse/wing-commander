@@ -18,8 +18,15 @@ WHAT IT CHECKS
 --------------
 In each of fix, review and readiness:
   1. exactly one "Snapshot helper scripts" step, directly after the job's
-     actions/checkout step, before any agent step and before any other
-     step that references the snapshot;
+     own actions/checkout step, before any agent step and before any other
+     step that references the snapshot. The job's own checkout is the only
+     actions/checkout step counted here: the trusted-copy sidecar checkout
+     every board-loop job carries (spec 086; see board-loop.yml's header)
+     is excluded by its canonical name, because it lands after the
+     snapshot step and is Gate 99's subject, not this gate's -- Gate 99
+     (verify-board-loop-composite-provenance.py) is what holds a step
+     bearing that name to `ref: ${{ github.sha }}`, a sidecar `path:` and
+     a fail-closed shape. Any other second checkout still fails here;
   2. the three snapshot steps' run: blocks are identical;
   3. an allowlist over every other run: block. Each python call is
      `python3 -I -`, `python3 -I -c`, or `python3 -I` on a script under
@@ -68,6 +75,11 @@ import yaml  # noqa: E402
 WORKFLOW = os.path.join(".github", "workflows", "board-loop.yml")
 JOBS = ("fix", "review", "readiness")
 SNAPSHOT_NAME = "Snapshot helper scripts (before any agent runs)"
+# Gate 99's subject, not this gate's (spec 086): the sidecar checkout that
+# every board-loop job takes so its composites resolve from $GITHUB_SHA. It
+# sits after the snapshot step, so it is excluded from this gate's "one job
+# checkout" count by name -- see WHAT IT CHECKS, 1.
+TRUSTED_COPY_NAME = "Checkout board-loop's own trusted copy (composites)"
 AGENT_USES = "anthropics/claude-code-action@"
 GATE_SUITE_IDS = ("gate-suite", "gate-suite-review-fixup")
 GATE_SUITE_CALL = "python3 .github/scripts/run-local-gates.py"
@@ -153,11 +165,12 @@ def structural_problems(doc):
             problems.append("job {0!r} not found or has no steps".format(job_id))
             continue
         checkout = [i for i, s in enumerate(steps)
-                    if str((s or {}).get("uses", "")).startswith("actions/checkout@")]
+                    if str((s or {}).get("uses", "")).startswith("actions/checkout@")
+                    and (s or {}).get("name") != TRUSTED_COPY_NAME]
         snaps = [i for i, s in enumerate(steps) if (s or {}).get("name") == SNAPSHOT_NAME]
         if len(checkout) != 1:
-            problems.append("{0}: expected one actions/checkout step, found {1}".format(
-                job_id, len(checkout)))
+            problems.append("{0}: expected one actions/checkout step besides {1!r}, "
+                            "found {2}".format(job_id, TRUSTED_COPY_NAME, len(checkout)))
             continue
         if len(snaps) != 1:
             problems.append("{0}: expected one {1!r} step, found {2}".format(
