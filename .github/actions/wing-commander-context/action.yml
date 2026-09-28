@@ -21,6 +21,13 @@
 # This action itself is relocation-safe: it touches no workspace paths
 # (App-token mint + label parse only). wing-commander-metrics-summary reads only
 # runner.temp. Audited 2026-07-11 (T003 of specs/010-reusable-pipeline).
+#
+# board-loop.yml is not a published stage and is not called through this
+# composite's pipeline-repo/OIDC mechanism at all -- it resolves its own
+# composites the same way, from its own repository at `github.sha`, into
+# its own `.wc-pristine-repo` sidecar; see that file's own header for the
+# trusted-copy rule it and every other job share
+# (specs/086-trusted-composite-resolution).
 name: wing-commander-context
 description: >
   Shared context for Wing Commander pipeline stages: mints the wing-commander-bot GitHub App
