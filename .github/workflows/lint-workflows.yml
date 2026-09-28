@@ -4135,6 +4135,24 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-loop-helper-provenance.py --self-test
 
+      # Gate 99 — specs/059-converged-means-tasks-done (FR-001/FR-002/
+      # FR-006/FR-018): "Read back cycle outcome" and its retry-arm twin
+      # used to decide `converged` from whether a `converge:` commit
+      # landed, never from whether tasks.md still had unchecked boxes —
+      # spec 057's cycle 1 stopped healthy with 54 of 65 tasks never built
+      # and was reported converged anyway. Drives the shipped read-back
+      # step against a synthetic git repo with a real bare remote, proving
+      # the decision is read from tasks.md's own checkbox state at the
+      # pushed tip, not the agent's verdict. Numbered 99, not the 81
+      # reserved when this branch started (tasks.md T001) or the 90/91 this
+      # branch's own commit picked next: Gates 81-89 (#451, specs/057-
+      # autonomous-board-loop) and Gates 90-91 (#488, #482) claimed those
+      # first, and Gates 92-97 (#499, #525/#526) and Gate 98 (#583) claimed
+      # 92-98 before this branch's rebase landed.
+      - name: Gate 99 — converged means no task is left, and the signal reads tasks.md
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-tasks-checkbox-convergence-signal.py
+
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and
       # verify-denied-tool-collector.sh has already shown what happens when
