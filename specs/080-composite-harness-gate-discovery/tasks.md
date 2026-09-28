@@ -158,8 +158,8 @@ missing (spec.md Independent Test, Story 3).
 
 **Purpose**: Whole-suite validation that spans all three stories.
 
-- [ ] T025 Run quickstart.md §4 (placement vs. orphan-hood do not conflate): create `.github/actions/wing-commander-context/tests/run-tests.sh`, confirm `verify-actions-no-gate-scripts.py` fails (placement) while `verify-gate-wiring.py` is unaffected (this path is outside `.github/scripts/`, so Gate 10's forward check has nothing to say about it), then remove the fixture directory. (spec.md Edge Case; Story 2 Acceptance Scenario 4) — depends on T011, T015
-- [ ] T026 Run the full suite, `python .github/scripts/run-local-gates.py`, and confirm SC-007: every gate that passed before this feature still passes, no existing gate's subject or arguments changed, and the reported gate count grew by exactly the gates this feature added versus the T001/T002 baseline. (quickstart.md §6; SC-007) — depends on all preceding tasks
+- [X] T025 Run quickstart.md §4 (placement vs. orphan-hood do not conflate): create `.github/actions/wing-commander-context/tests/run-tests.sh`, confirm `verify-actions-no-gate-scripts.py` fails (placement) while `verify-gate-wiring.py` is unaffected (this path is outside `.github/scripts/`, so Gate 10's forward check has nothing to say about it), then remove the fixture directory. (spec.md Edge Case; Story 2 Acceptance Scenario 4) — depends on T011, T015
+- [X] T026 Run the full suite, `python .github/scripts/run-local-gates.py`, and confirm SC-007: every gate that passed before this feature still passes, no existing gate's subject or arguments changed, and the reported gate count grew by exactly the gates this feature added versus the T001/T002 baseline. (quickstart.md §6; SC-007) — depends on all preceding tasks
 
 ---
 
