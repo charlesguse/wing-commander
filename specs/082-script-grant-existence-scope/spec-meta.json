@@ -2,8 +2,10 @@
   "issue": 599,
   "spec_dir": "specs/082-script-grant-existence-scope",
   "feature_num": "082",
-  "stage": "implement",
+  "stage": "stalled",
   "iteration": 3,
   "spec_branch": "spec/082-script-grant-existence-scope",
-  "pending_re_review_from": ["charlesguse"]
+  "pending_re_review_from": [
+    "charlesguse"
+  ]
 }
