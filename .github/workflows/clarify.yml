@@ -602,6 +602,14 @@ jobs:
           # runs die with "Workflow initiated by non-human actor". The
           # filter form is the bare slug, no [bot] suffix.
           allowed_bots: "github-actions,${{ steps.ctx.outputs.bot-slug }}"
+          # (canonical copy; do not condense)
+          # #569: the settled anchor rule the prompt below states --
+          # "gate_or_artifact" only moves the dedup key once it is found,
+          # normalized, inside the file "file_path" names (the anchor
+          # verifies); when it is not found, including when that file does
+          # not exist, the finding still reaches the board keyed by a
+          # fallback route instead of being dropped, never silently
+          # discarded.
           prompt: |
             You are the clarification stage of this repository's spec pipeline,
             working on the draft spec in ${{ steps.ctx.outputs.spec-dir }} for
@@ -681,8 +689,12 @@ jobs:
             you saw, quoted), and "fingerprint_basis" (an object with
             "file_path" and "gate_or_artifact"). "gate_or_artifact" is half of
             the dedup key, so give it a stable name (a heading, a job name, a
-            gate name), never a sentence. An empty array means nothing to
-            report. Then continue your own task unchanged.
+            gate name), never a sentence. It must occur, verbatim once
+            punctuation, case, and spacing are ignored, in the file named by
+            "file_path"; if it does not, this finding still reaches the
+            board keyed by a fallback route instead of being dropped. An
+            empty array means nothing to report. Then continue your own task
+            unchanged.
 
             Never merge, approve, close, or relabel anything except as stated.
           claude_args: |

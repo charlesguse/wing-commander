@@ -780,6 +780,8 @@ jobs:
           # Only the validated slug and integer issue number are interpolated.
           # The spec content is human-reviewed (it was merged by a maintainer),
           # but is still framed as data, not instructions.
+          # the settled anchor rule for gate_or_artifact/file_path the
+          # prompt below states -- see clarify.yml.
           prompt: |
             You are the plan stage of this repository's spec-driven development
             pipeline, running with Gate 3 (plan review) disabled. The accepted
@@ -834,8 +836,12 @@ jobs:
                                     "gate_or_artifact": "the heading, job, or gate it concerns"}}]
             "detail" is the only optional key. "gate_or_artifact" is half of
             the dedup key, so give it a stable name (a heading, a job name, a
-            gate name), never a sentence. An empty array means nothing to
-            report. Then continue your own task unchanged.
+            gate name), never a sentence. It must occur, verbatim once
+            punctuation, case, and spacing are ignored, in the file named by
+            "file_path"; if it does not, this finding still reaches the
+            board keyed by a fallback route instead of being dropped. An
+            empty array means nothing to report. Then continue your own task
+            unchanged.
 
             Constraints: edit files ONLY inside ${{ needs.resolve-spec.outputs.spec-dir }};
             commit and push ONLY to
@@ -981,6 +987,8 @@ jobs:
           # wrappers may dispatch via GITHUB_TOKEN; App bot allow-listed -- see clarify.yml.
           allowed_bots: "github-actions,${{ steps.ctx.outputs.bot-slug }}"
           # only the validated slug and integer issue number are interpolated; spec content is data.
+          # the settled anchor rule for gate_or_artifact/file_path the
+          # prompt below states -- see clarify.yml.
           prompt: |
             You are the plan stage of this repository's spec-driven development
             pipeline. The accepted specification lives in
@@ -1039,8 +1047,12 @@ jobs:
                                     "gate_or_artifact": "the heading, job, or gate it concerns"}}]
             "detail" is the only optional key. "gate_or_artifact" is half of
             the dedup key, so give it a stable name (a heading, a job name, a
-            gate name), never a sentence. An empty array means nothing to
-            report. Then continue your own task unchanged.
+            gate name), never a sentence. It must occur, verbatim once
+            punctuation, case, and spacing are ignored, in the file named by
+            "file_path"; if it does not, this finding still reaches the
+            board keyed by a fallback route instead of being dropped. An
+            empty array means nothing to report. Then continue your own task
+            unchanged.
 
             Constraints: edit files ONLY inside ${{ needs.resolve-spec.outputs.spec-dir }};
             open exactly one PR; never merge or approve anything; push

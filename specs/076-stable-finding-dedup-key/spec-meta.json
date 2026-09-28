@@ -2,7 +2,8 @@
   "issue": 569,
   "spec_dir": "specs/076-stable-finding-dedup-key",
   "feature_num": "076",
-  "stage": "spec",
-  "iteration": 0,
-  "spec_branch": null
+  "stage": "review",
+  "iteration": 1,
+  "spec_branch": "spec/076-stable-finding-dedup-key",
+  "pending_re_review_from": []
 }

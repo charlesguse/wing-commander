@@ -895,6 +895,8 @@ jobs:
           # Only the validated slug, integer issue number, and integer
           # iteration are interpolated. The spec/plan/tasks content was merged
           # by a maintainer, but is still framed as data, not instructions.
+          # the settled anchor rule for gate_or_artifact/file_path the
+          # prompt below states -- see clarify.yml.
           prompt: |
             You are the implement/converge stage of this repository's
             spec-driven development pipeline, running build-and-reassess
@@ -953,8 +955,12 @@ jobs:
                                     "gate_or_artifact": "the heading, job, or gate it concerns"}}]
             "detail" is the only optional key. "gate_or_artifact" is half of
             the dedup key, so give it a stable name (a heading, a job name, a
-            gate name), never a sentence. An empty array means nothing to
-            report. Then continue your own task unchanged.
+            gate name), never a sentence. It must occur, verbatim once
+            punctuation, case, and spacing are ignored, in the file named by
+            "file_path"; if it does not, this finding still reaches the
+            board keyed by a fallback route instead of being dropped. An
+            empty array means nothing to report. Then continue your own task
+            unchanged.
 
             Constraints: commit and push ONLY to
             ${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}; open no PRs; never merge or
@@ -1586,6 +1592,8 @@ jobs:
           # See the cycle step above.
           # the pipeline's own App bot is allow-listed too (bare slug) -- see clarify.yml.
           allowed_bots: "github-actions,${{ steps.ctx.outputs.bot-slug }}"
+          # the settled anchor rule for gate_or_artifact/file_path the
+          # prompt below states -- see clarify.yml.
           prompt: |
             You are the implement/converge stage of this repository's
             spec-driven development pipeline, retrying build-and-reassess
@@ -1649,8 +1657,12 @@ jobs:
                                     "gate_or_artifact": "the heading, job, or gate it concerns"}}]
             "detail" is the only optional key. "gate_or_artifact" is half of
             the dedup key, so give it a stable name (a heading, a job name, a
-            gate name), never a sentence. An empty array means nothing to
-            report. Then continue your own task unchanged.
+            gate name), never a sentence. It must occur, verbatim once
+            punctuation, case, and spacing are ignored, in the file named by
+            "file_path"; if it does not, this finding still reaches the
+            board keyed by a fallback route instead of being dropped. An
+            empty array means nothing to report. Then continue your own task
+            unchanged.
 
             Constraints: commit and push ONLY to
             ${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}; open no PRs; never merge or
