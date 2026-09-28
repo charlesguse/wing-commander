@@ -168,10 +168,20 @@ def checkbox_count_env(repo, ref):
     if len(lines) > 2 and "<<" in lines[2]:
         delim = lines[2].split("<<", 1)[1]
         body = []
+        closed = False
         for line in lines[3:]:
             if line == delim:
+                closed = True
                 break
             body.append(line)
+        # Parse the way the runner's $GITHUB_OUTPUT file command does: the
+        # closing delimiter must stand on a line of its own, or the runner
+        # rejects the block and fails the step.
+        if not closed:
+            sys.exit(f"::error::checkbox_count_env: count-tasks-checkboxes.sh's "
+                     f"unchecked-items block never closes -- no line equal to "
+                     f"'{delim}' (the runner fails the step with 'Matching "
+                     f"delimiter not found'):\n{proc.stdout}")
         items = "\n".join(body) + ("\n" if body else "")
     return checked, unchecked, items
 
