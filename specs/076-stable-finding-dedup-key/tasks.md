@@ -268,7 +268,7 @@ prompt sentence describing the rule matches it everywhere it is repeated.
 key rule changed in code but not in the data model, or not in the prompt
 sentence, and confirm a gate fails.
 
-- [ ] T021 [US4] Create `.github/scripts/verify-dedup-key-canonical-rule.py`
+- [X] T021 [US4] Create `.github/scripts/verify-dedup-key-canonical-rule.py`
   implementing `check_canonical_rule_sync` (FR-012, contracts/gates.md):
   import `find_step` from `.github/scripts/wc_shell_harness.py` (the same
   helper `.github/scripts/stage-findings-tests/run_fixtures.py` already
@@ -283,7 +283,7 @@ sentence, and confirm a gate fails.
   step text. Fail loudly, naming which literal is missing and from which
   side, on any divergence; fail loudly (never "0 checked, pass") if either
   source file is missing or the fenced block cannot be found.
-- [ ] T022 [US4] In the same script, add `check_composition_split` (FR-015,
+- [X] T022 [US4] In the same script, add `check_composition_split` (FR-015,
   contracts/gates.md): extract this feature's own formula as in T021, and
   spec 057's `sha256("<issue>|<norm(title)>|<norm(file_path)>")` formula
   from `.github/workflows/board-loop.yml`'s "Prepare out-of-scope findings
@@ -293,7 +293,7 @@ sentence, and confirm a gate fails.
   feature's `anchor|`/`fallback|` tag, or spec 057's issue-number segment
   (guards further, undocumented divergence). The failure message must name
   FR-015 as the reason the two are required to keep differing.
-- [ ] T023 [US4] Add `--self-test` fixtures to
+- [X] T023 [US4] Add `--self-test` fixtures to
   `verify-dedup-key-canonical-rule.py`, per contracts/gates.md: a scratch
   copy of the action file with one shape tag changed (asserted to fail,
   naming that tag); a scratch copy of the data-model.md fenced block with
@@ -303,7 +303,7 @@ sentence, and confirm a gate fails.
   issue-number segment (asserted to fail as "diverged"); the real files,
   post-implementation, asserted to pass (mirrors `verify-single-home-idioms.py`'s
   self-test shape).
-- [ ] T024 [US4] Register the new gate in
+- [X] T024 [US4] Register the new gate in
   `.github/workflows/lint-workflows.yml`, next to the existing spec-056
   Gate 71/72 entries: pick the next free gate number in the real tree (see
   T001; do not hardcode 99 if another spec has since taken it, per this

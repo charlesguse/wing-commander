@@ -52,7 +52,7 @@ normalizes to the empty string — the finding is keyed under the fallback
 shape instead of being dropped:
 
 ```
-norm(s)          = lowercase(s), every run of non-word characters or underscores -> one space, trimmed (letters and digits in any script survive)
+norm(s)          = lowercase(s); every match of the regex [\W_]+ collapses to one space; trimmed (letters and digits in any script survive)
 with-anchor key  = sha256("anchor|<stage>|<norm(fingerprint_basis.file_path)>|<norm(fingerprint_basis.gate_or_artifact)>")
 fallback key     = sha256("fallback|<stage>|<norm(fingerprint_basis.file_path)>")
 ```
