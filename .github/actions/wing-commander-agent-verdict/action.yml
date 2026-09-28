@@ -37,6 +37,16 @@ inputs:
       straight through into the reason text when non-empty.
     required: false
     default: ''
+  keep-normalised-transcript:
+    description: >
+      'true' keeps the normalised copy of the transcript (one flat JSON
+      array of objects, from _shared/normalise-transcript.sh) instead of
+      deleting it, and names it in the normalised-transcript output, so a
+      published stage can read the transcript in that shape without
+      resolving the internal _shared/ helper itself (#575). Any other
+      value deletes the copy as before.
+    required: false
+    default: 'false'
 
 outputs:
   verdict:
@@ -64,6 +74,12 @@ outputs:
   subagent-turns:
     description: Distinct subagent (Task-tool) message count, or empty if uncountable.
     value: ${{ steps.classify.outputs.subagent-turns }}
+  normalised-transcript:
+    description: >
+      Path of the kept normalised copy of the transcript. Set only when
+      keep-normalised-transcript is 'true' and the copy was written;
+      empty otherwise, and the caller then reads the raw transcript.
+    value: ${{ steps.classify.outputs.normalised-transcript }}
 
 runs:
   using: composite
@@ -75,6 +91,7 @@ runs:
         TRANSCRIPT_PATH: ${{ inputs.transcript-path }}
         INTENDED_TURNS: ${{ inputs.intended-turns }}
         RUN_LABEL: ${{ inputs.run-label }}
+        KEEP_NORMALISED: ${{ inputs.keep-normalised-transcript }}
       run: |
         set -uo pipefail
 
@@ -110,6 +127,7 @@ runs:
         # `null` or `false` would read as unparseable.
         COUNT_SOURCE="$TRANSCRIPT"
         normalised=""
+        normalised_output=""
         if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ] && [ -s "$TRANSCRIPT" ] \
            && jq empty "$TRANSCRIPT" >/dev/null 2>&1; then
           normalised="$(mktemp "${RUNNER_TEMP:-/tmp}/wc-agent-verdict.XXXXXX" 2>/dev/null || true)"
@@ -118,6 +136,9 @@ runs:
                   "$TRANSCRIPT" > "$normalised" 2>/dev/null; then
             TRANSCRIPT="$normalised"
             COUNT_SOURCE="$normalised"
+            if [ "${KEEP_NORMALISED:-}" = "true" ]; then
+              normalised_output="$normalised"
+            fi
           fi
           # Non-object elements (a bare number or string) are skipped with
           # `objects` before any `.type` read: `.type` on a number is a jq
@@ -280,7 +301,11 @@ runs:
           over_budget="true"
         fi
 
-        if [ -n "$normalised" ]; then rm -f "$normalised"; fi
+        # A copy the caller asked to keep (keep-normalised-transcript) is
+        # left in place; every other copy, written or not, is removed.
+        if [ -n "$normalised" ] && [ "$normalised" != "$normalised_output" ]; then
+          rm -f "$normalised"
+        fi
 
         # Write-site layer (see the RUN_LABEL comment above).
         verdict="${verdict//[$'\r\n']/ }"
@@ -290,6 +315,7 @@ runs:
         reported_turns="${reported_turns//[$'\r\n']/ }"
         over_budget="${over_budget//[$'\r\n']/ }"
         subagent_turns="${subagent_turns//[$'\r\n']/ }"
+        normalised_output="${normalised_output//[$'\r\n']/ }"
         {
           echo "verdict=$verdict"
           echo "reason=$reason"
@@ -298,6 +324,7 @@ runs:
           echo "reported-turns=$reported_turns"
           echo "over-budget=$over_budget"
           echo "subagent-turns=$subagent_turns"
+          echo "normalised-transcript=$normalised_output"
         } >> "$GITHUB_OUTPUT"
 
         exit 0
