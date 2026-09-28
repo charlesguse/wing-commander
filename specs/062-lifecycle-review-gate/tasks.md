@@ -314,3 +314,11 @@ With parallel capacity: one line of work on the new `lifecycle-review-gate.yml` 
 - [X] Renumber the two already-registered gates (currently Gate 101 — Lifecycle readiness, Gate 102 — wing-commander-post-review-comment composite) to their new numbers, including their step names, self-test step names, and their "Numbered 101/102, not the 99/100…" cross-reference comment blocks.
 - [X] Update `specs/062-lifecycle-review-gate/tasks.md`'s stale gate-number references in T003, T008, T014, T030, T032, T035, T041, T050, T057, and the "Gate 104" mention in the Incremental Delivery section, to match the renumbered gates.
 - [X] Rebase this branch onto `main` to resolve the resulting conflict in `lint-workflows.yml`. This branch's merge-base with `origin/main` is already `origin/main`'s own tip (35812fd) — no conflict exists and no rebase is needed.
+
+---
+
+## Phase 10: Convergence
+
+**Purpose**: Close a gap this cycle's `/speckit-converge` assessment found between FR-014/SC-008 and the task list — a real, previously-uncaptured piece of remaining work, not merely an unbuilt existing task.
+
+- [ ] T067 [US1] In the `report` job (or a new step in `disposition`), when a round's outcome is not clean — the reviewer step itself failed, the round was parse-failed/rate-limited, or (once US2/T040 lands) the round budget is exhausted — post a non-passing commit status on the reviewed head SHA (`gh api -X POST repos/.../statuses/<head-sha>`, matching T024's shape): `state=failure` for open findings or budget exhaustion, `state=error` for a reviewer-step failure or a parse-failed round. Per contracts/review-and-findings.md "Clean vs. not-clean outcome": "the failure is never reported as silence — a `state=failure`/`state=error` distinct from 'no status posted yet'" (FR-014, SC-008). T023/T024 currently implement only the clean-path `state=success` write; no existing task (T025, T037-T040) covers the not-clean side, even though Phase 3's own checkpoint claims SC-008 is "partially" held and Phase 8's checkpoint claims SC-008 fully "holds" without ever adding this status write. Use `github.token` with the job's own `statuses: write` permission (T024's own precedent — the wing-commander-bot App installation is not granted `statuses` in docs/setup.md).
