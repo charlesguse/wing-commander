@@ -1313,10 +1313,11 @@ jobs:
         if: always() && steps.cycle.outcome != 'skipped'
         env:
           COST_LINE: ${{ steps.metrics-summary-cycle.outputs.cost-line }}
+          RUN_STAMP: ${{ steps.metrics-summary-cycle.outputs.stamp }}
         run: |
           set -uo pipefail
           line="$COST_LINE"
-          [ -n "$line" ] || line="**Cost**: metrics unavailable"
+          [ -n "$line" ] || line="**Cost**: metrics unavailable $RUN_STAMP"
           echo "line=$line" >> "$GITHUB_OUTPUT"
 
       # over-budget is observability, not failure (FR-017) -- see clarify.yml.
@@ -2139,10 +2140,11 @@ jobs:
         if: always() && steps.retry.outcome != 'skipped'
         env:
           COST_LINE: ${{ steps.metrics-summary-retry.outputs.cost-line }}
+          RUN_STAMP: ${{ steps.metrics-summary-retry.outputs.stamp }}
         run: |
           set -uo pipefail
           line="$COST_LINE"
-          [ -n "$line" ] || line="**Cost**: metrics unavailable"
+          [ -n "$line" ] || line="**Cost**: metrics unavailable $RUN_STAMP"
           echo "line=$line" >> "$GITHUB_OUTPUT"
 
       # Observability, not failure (FR-017) — see "Report over-budget agent
@@ -2970,10 +2972,11 @@ jobs:
         if: always() && steps.progress.outcome != 'skipped'
         env:
           COST_LINE: ${{ steps.metrics-summary-progress.outputs.cost-line }}
+          RUN_STAMP: ${{ steps.metrics-summary-progress.outputs.stamp }}
         run: |
           set -uo pipefail
           line="$COST_LINE"
-          [ -n "$line" ] || line="**Cost**: metrics unavailable"
+          [ -n "$line" ] || line="**Cost**: metrics unavailable $RUN_STAMP"
           echo "line=$line" >> "$GITHUB_OUTPUT"
 
       # Observability, not failure (FR-017) — see "Report over-budget agent

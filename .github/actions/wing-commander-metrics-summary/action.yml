@@ -200,10 +200,49 @@ outputs:
       just a one-line "**Cost**: metrics unavailable" fallback for the
       case where this action never ran.
     value: ${{ steps.render.outputs.cost-line }}
+  stamp:
+    description: >
+      The run stamp (see the run-stamp step's canonical comment below) —
+      an invisible HTML comment naming this invocation's run identity.
+      Already appended to cost-line's own text; exposed standalone so a
+      caller's degraded literal fallback (used only when this action
+      itself never ran, so cost-line has nothing to append it to) can
+      still carry it with one added line, instead of reconstructing the
+      marker (FR-003, FR-013).
+    value: ${{ steps.run-stamp.outputs.value }}
 
 runs:
   using: composite
   steps:
+    - name: Compute the run stamp
+      id: run-stamp
+      shell: bash
+      env:
+        RUN_ID: ${{ github.run_id }}
+        RUN_ATTEMPT: ${{ github.run_attempt }}
+        JOB_KEY: ${{ github.job }}
+        STEP_INDEX: ${{ inputs.step-index }}
+      # (canonical copy, do not condense) The run stamp is an HTML comment
+      # carrying the metrics record key verbatim —
+      # <!-- wing-commander-cost-stamp:<workflow_run_id>:<run_attempt>:
+      # <job_key-or-job_id>:<step_index> --> — invisible in every rendered
+      # surface a cost-bearing comment can appear in (issue comments, PR
+      # comments, step summaries), the same rendering guarantee the
+      # existing wing-commander-metrics-rollup:begin marker relies on.
+      # Computed here, in exactly one place: this unconditional, first
+      # step of this composite, from the same four ambient values
+      # RECORD_KEY is built from below — nothing in it can fail. Every
+      # consumer reads this step's `stamp` output, or the `cost-line`
+      # output that already appends it, rather than reconstructing the
+      # marker; a reconstruction anywhere else fails
+      # verify-metrics-summary-record-emission.py's
+      # case_run_stamp_has_exactly_one_home (FR-013,
+      # specs/064-run-stamped-cost-attribution/contracts/run-stamp.md).
+      run: |
+        set -uo pipefail
+        STAMP="<!-- wing-commander-cost-stamp:${RUN_ID}:${RUN_ATTEMPT}:${JOB_KEY}:${STEP_INDEX} -->"
+        echo "value=$STAMP" >> "$GITHUB_OUTPUT"
+
     - name: Render agent run metrics summary
       id: render
       shell: bash
@@ -225,6 +264,7 @@ runs:
         RUN_ID: ${{ github.run_id }}
         RUN_ATTEMPT: ${{ github.run_attempt }}
         JOB_KEY: ${{ github.job }}
+        STAMP: ${{ steps.run-stamp.outputs.value }}
         BRANCH: ${{ inputs.branch }}
         BEFORE_SHA: ${{ inputs.before-sha }}
         BEFORE_SHA_AVAILABLE: ${{ inputs.before-sha-available }}
@@ -243,6 +283,7 @@ runs:
         RUN_LABEL="${RUN_LABEL:-}"
         VERDICT="${VERDICT:-}"
         VERDICT_REASON="${VERDICT_REASON:-}"
+        STAMP="${STAMP:-}"
         SUMMARY="${GITHUB_STEP_SUMMARY:-/dev/stdout}"
 
         # --- record emission (specs/043-durable-metrics-record) ----------------
@@ -393,7 +434,7 @@ runs:
           # the normal and the degraded branch — each part degrades to
           # "... unavailable" independently. Empty only if jq itself dies,
           # which the callers' one-line fallback covers.
-          cost_line="$(jq -r '
+          cost_line="$(jq -r --arg stamp "$STAMP" '
             def usd($m; $d):
               (. * $m | round | tostring) as $c | ($c | length) as $n
               | if $n > $d then "$" + $c[0:$n-$d] + "." + $c[$n-$d:]
@@ -404,7 +445,7 @@ runs:
                 (.turns.counted|tostring) + (if .turns.intended_budget != null then "/" + (.turns.intended_budget|tostring) else "" end) + " turns"
               else "turns unavailable" end;
             def modelpart: if .model_available then .model else "model unavailable" end;
-            "**Cost**: " + costpart + " · " + turnspart + " · " + modelpart
+            "**Cost**: " + costpart + " · " + turnspart + " · " + modelpart + " " + $stamp
           ' "$RECORD_PATH" 2>/dev/null || true)"
 
           {

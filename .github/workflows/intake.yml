@@ -1015,10 +1015,11 @@ jobs:
         if: steps.lifecycle-gate.outputs.is-open == 'true' && always() && steps.agent.outcome != 'skipped'
         env:
           COST_LINE: ${{ steps.metrics-summary.outputs.cost-line }}
+          RUN_STAMP: ${{ steps.metrics-summary.outputs.stamp }}
         run: |
           set -uo pipefail
           line="$COST_LINE"
-          [ -n "$line" ] || line="**Cost**: metrics unavailable"
+          [ -n "$line" ] || line="**Cost**: metrics unavailable $RUN_STAMP"
           echo "line=$line" >> "$GITHUB_OUTPUT"
 
       # specs/065-intake-silent-path-cost: the single home for posting this

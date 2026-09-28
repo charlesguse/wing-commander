@@ -1327,10 +1327,11 @@ jobs:
            steps.agent-auto.outcome != 'skipped')
         env:
           COST_LINE: ${{ steps.metrics-summary.outputs.cost-line }}
+          RUN_STAMP: ${{ steps.metrics-summary.outputs.stamp }}
         run: |
           set -uo pipefail
           line="$COST_LINE"
-          [ -n "$line" ] || line="**Cost**: metrics unavailable"
+          [ -n "$line" ] || line="**Cost**: metrics unavailable $RUN_STAMP"
           echo "line=$line" >> "$GITHUB_OUTPUT"
 
       - name: Fail loud on non-healthy agent verdict (pr)

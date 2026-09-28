@@ -1119,10 +1119,11 @@ jobs:
         if: needs.resolve-identity.outputs.qualifies == 'true' && steps.lifecycle-gate.outputs.is-open == 'true' && steps.actor-gate.outputs.authorized == 'true' && always() && steps.agent.outcome != 'skipped'
         env:
           COST_LINE: ${{ steps.metrics-summary-classify.outputs.cost-line }}
+          RUN_STAMP: ${{ steps.metrics-summary-classify.outputs.stamp }}
         run: |
           set -uo pipefail
           line="$COST_LINE"
-          [ -n "$line" ] || line="**Cost**: metrics unavailable"
+          [ -n "$line" ] || line="**Cost**: metrics unavailable $RUN_STAMP"
           echo "line=$line" >> "$GITHUB_OUTPUT"
 
       # over-budget is observability, not failure (FR-017) -- see clarify.yml.
@@ -2572,10 +2573,11 @@ jobs:
         if: steps.relay-gate.outputs.proceed == 'true' && steps.route.outputs.agent-needed == 'true' && always() && steps.agent.outcome != 'skipped'
         env:
           COST_LINE: ${{ steps.metrics-summary-act.outputs.cost-line }}
+          RUN_STAMP: ${{ steps.metrics-summary-act.outputs.stamp }}
         run: |
           set -uo pipefail
           line="$COST_LINE"
-          [ -n "$line" ] || line="**Cost**: metrics unavailable"
+          [ -n "$line" ] || line="**Cost**: metrics unavailable $RUN_STAMP"
           echo "line=$line" >> "$GITHUB_OUTPUT"
 
       - name: Report over-budget agent run

@@ -865,10 +865,11 @@ jobs:
         if: steps.lifecycle-gate.outputs.is-open == 'true' && always() && steps.agent.outcome != 'skipped'
         env:
           COST_LINE: ${{ steps.metrics-summary.outputs.cost-line }}
+          RUN_STAMP: ${{ steps.metrics-summary.outputs.stamp }}
         run: |
           set -uo pipefail
           line="$COST_LINE"
-          [ -n "$line" ] || line="**Cost**: metrics unavailable"
+          [ -n "$line" ] || line="**Cost**: metrics unavailable $RUN_STAMP"
           echo "line=$line" >> "$GITHUB_OUTPUT"
 
       # The action exits zero even when the agent run itself errored (e.g. a

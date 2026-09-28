@@ -187,7 +187,7 @@ posted it, computed at the single place the cost line is formatted.
 the stamp names that run; then confirm that a workflow posting a cost
 line without going through the formatter fails a gate.
 
-- [ ] T014 [US2] Add a new, unconditional **first** step to
+- [X] T014 [US2] Add a new, unconditional **first** step to
       `.github/actions/wing-commander-metrics-summary/action.yml`'s
       `runs.steps` list (before the existing `id: render` step): `id:
       run-stamp`, no `continue-on-error` (nothing in it can fail), with
@@ -203,12 +203,12 @@ line without going through the formatter fails a gate.
       place that text is written; every other reference must point at
       it rather than restate it.
 
-- [ ] T015 [US2] Add a new `stamp` output to the composite's `outputs:`
+- [X] T015 [US2] Add a new `stamp` output to the composite's `outputs:`
       block in the same file, `value: ${{ steps.run-stamp.outputs.value
       }}`, documented analogously to the existing `cost-line` output
       immediately above it.
 
-- [ ] T016 [US2] Add `STAMP: ${{ steps.run-stamp.outputs.value }}` to
+- [X] T016 [US2] Add `STAMP: ${{ steps.run-stamp.outputs.value }}` to
       the existing `render` step's `env:` block (action.yml:201-223)
       and pass it into the cost-line jq pipeline via `--arg stamp
       "$STAMP"`; change the pipeline's final concatenation line
@@ -218,7 +218,7 @@ line without going through the formatter fails a gate.
       internally-degraded paths, with zero call-site changes needed for
       those paths (research.md R2).
 
-- [ ] T017 [US2] In
+- [X] T017 [US2] In
       `.github/scripts/verify-metrics-summary-record-emission.py`, add
       `case_run_stamp_has_exactly_one_home()`, a sibling to the existing
       `case_cost_line_formatter_has_exactly_one_home()` (line 558),
@@ -235,7 +235,7 @@ line without going through the formatter fails a gate.
       fails the case, one proving the real call-sites' `$RUN_STAMP`
       consumption (T018-T020) passes it.
 
-- [ ] T018 [P] [US2] For each of these 7 stage workflows' single
+- [X] T018 [P] [US2] For each of these 7 stage workflows' single
       "Compute cost line" step — `.github/workflows/clarify.yml` (`id:
       cost-line`, reads `steps.metrics-summary.outputs.stamp`),
       `.github/workflows/intake.yml` (same), `.github/workflows/plan.yml`
@@ -250,7 +250,7 @@ line without going through the formatter fails a gate.
       already-computed `stamp` output rather than reconstructing the
       marker.
 
-- [ ] T019 [US2] In `.github/workflows/implement.yml`, apply the same
+- [X] T019 [US2] In `.github/workflows/implement.yml`, apply the same
       env-line-plus-fallback-line edit from T018 to all three of its
       "Compute cost line" steps: `cost-line-cycle` (line 1123, `steps.
       metrics-summary-cycle.outputs.stamp`), `cost-line-retry` (line
@@ -258,7 +258,7 @@ line without going through the formatter fails a gate.
       `cost-line-progress` (line 2289,
       `steps.metrics-summary-progress.outputs.stamp`).
 
-- [ ] T020 [US2] In `.github/workflows/pr-conversation.yml`, apply the
+- [X] T020 [US2] In `.github/workflows/pr-conversation.yml`, apply the
       same edit to both of its "Compute cost line" steps:
       `cost-line-classify` (line 1068, `steps.metrics-summary-classify.
       outputs.stamp`) and `cost-line-act` (line 2245, `steps.

@@ -251,6 +251,10 @@ def run_case(tmp, records=None, raw=None, missing=False, env_over=None):
     }
     if env_over:
         env.update(env_over)
+    if "STAMP" not in (env_over or {}):
+        env["STAMP"] = (f"<!-- wing-commander-cost-stamp:{env['RUN_ID']}:"
+                        f"{env['RUN_ATTEMPT']}:{env['JOB_KEY']}:"
+                        f"{env['STEP_INDEX']} -->")
     rc, output, outputs, summary = run_step(BASH, SCRIPT, tmp, env, tmp)
     record = None
     if os.path.exists(record_path):
@@ -295,7 +299,8 @@ def case_healthy_transcript_emits_a_valid_record():
         if "$1.50" not in summary:
             fail(case, "the rendered summary's cost cell disagreed with "
                        "the record's cost_usd (expected $1.50)")
-        want_line = "**Cost**: $1.50 · 5/60 turns · claude-sonnet-5"
+        want_line = ("**Cost**: $1.50 · 5/60 turns · claude-sonnet-5 "
+                    "<!-- wing-commander-cost-stamp:555000111:1:cycle:0 -->")
         if outputs.get("cost-line") != want_line:
             fail(case, f"cost-line output: expected {want_line!r}, got "
                        f"{outputs.get('cost-line')!r} — the stage "
@@ -321,7 +326,9 @@ def _degraded_case(case, **run_kwargs):
         # The cost-line output degrades per-part, never to empty/absent:
         # cost and turns come from the (missing) transcript, the model is
         # caller-supplied and survives.
-        want_line = "**Cost**: cost unavailable · turns unavailable · claude-sonnet-5"
+        want_line = ("**Cost**: cost unavailable · turns unavailable · "
+                    "claude-sonnet-5 "
+                    "<!-- wing-commander-cost-stamp:555000111:1:cycle:0 -->")
         if outputs.get("cost-line") != want_line:
             fail(case, f"degraded cost-line output: expected {want_line!r}, "
                        f"got {outputs.get('cost-line')!r}")
@@ -1116,6 +1123,96 @@ def case_container_pipefail_steps_pin_shell_bash():
              f"pin shell: bash")
 
 
+def case_run_stamp_has_exactly_one_home():
+    """The run stamp's only home is this action's `run-stamp` step
+    (contracts/run-stamp.md). A workflow or composite action that builds
+    the `wing-commander-cost-stamp:` marker prefix itself, rather than
+    consuming the composite's already-computed `stamp` output (or the
+    `cost-line` output that already carries it appended), silently drifts
+    the next time the marker's shape changes.
+
+    Scans the same two sources
+    case_cost_line_formatter_has_exactly_one_home does. A marker-prefix
+    occurrence is a *construction* unless an `outputs.stamp` / `$RUN_STAMP`
+    reference appears on the same line or an immediately adjacent one --
+    mentioning the marker in prose right next to the real consumption (a
+    comment explaining what `$RUN_STAMP` carries, say) is not a
+    reconstruction; building the string with no such reference nearby is."""
+    case = "run stamp single home"
+    MARKER = "wing-commander-cost-stamp:"
+    CONSUMERS = ("outputs.stamp", "$RUN_STAMP")
+
+    def scan_text(text):
+        lines = text.splitlines()
+        hits = []
+        for i, line in enumerate(lines):
+            if MARKER not in line:
+                continue
+            window = lines[max(0, i - 1):i + 2]
+            if not any(consumer in w for w in window for consumer in CONSUMERS):
+                hits.append(i + 1)
+        return hits
+
+    # Fixture 1: a literal reconstruction of the marker, no consumer
+    # reference anywhere nearby -- must be caught.
+    bad_fixture = (
+        'STAMP="<!-- wing-commander-cost-stamp:${RUN_ID}:${RUN_ATTEMPT}:'
+        '${JOB_KEY}:${STEP_INDEX} -->"\n'
+        'echo "value=$STAMP" >> "$GITHUB_OUTPUT"\n'
+    )
+    if not scan_text(bad_fixture):
+        fail(case, "detection fixture failed to prove itself: a literal "
+                   "reconstruction of the marker prefix with no nearby "
+                   "outputs.stamp/$RUN_STAMP reference must be caught, but "
+                   "the scan found nothing")
+
+    # Fixture 2: the real call sites' shape (T018-T020) -- a $RUN_STAMP
+    # consumption, with the marker only ever mentioned (if at all) right
+    # next to it -- must NOT be caught.
+    good_fixture = (
+        "        env:\n"
+        "          RUN_STAMP: ${{ steps.metrics-summary.outputs.stamp }}\n"
+        "        run: |\n"
+        "          # fallback carries the run stamp (wing-commander-cost-"
+        "stamp:...) via $RUN_STAMP\n"
+        '          [ -n "$line" ] || line="**Cost**: metrics unavailable '
+        '$RUN_STAMP"\n'
+    )
+    if scan_text(good_fixture):
+        fail(case, "detection fixture failed to prove itself: a real "
+                   "call site consuming outputs.stamp/$RUN_STAMP must not "
+                   "be flagged, but the scan caught it")
+
+    hits = []
+    for path, text in _workflow_texts().items():
+        for line in scan_text(text):
+            hits.append(f"{path}:{line}")
+
+    actions_dir = ".github/actions"
+    canonical = os.path.normpath(ACTION)
+    for root, _dirs, files in os.walk(actions_dir):
+        for name in sorted(files):
+            if name in ("action.yml", "action.yaml") or \
+                    name.endswith((".sh", ".py")):
+                path = os.path.join(root, name)
+                if os.path.normpath(path) == canonical:
+                    continue
+                with open(path, encoding="utf-8") as fh:
+                    for line in scan_text(fh.read()):
+                        hits.append(f"{path}:{line}")
+
+    if hits:
+        fail(case, "the run stamp's only home is "
+                   f"{ACTION}'s run-stamp step; a reconstruction pasted "
+                   "into a workflow or composite action drifts silently "
+                   "the next time the marker's shape changes. Found in: "
+                   + ", ".join(hits))
+    else:
+        note("no workflow or composite action outside the canonical "
+             "action constructs the wing-commander-cost-stamp: marker; "
+             "every reference consumes the already-computed output")
+
+
 CASES = [
     case_healthy_transcript_emits_a_valid_record,
     case_missing_transcript_degrades,
@@ -1129,6 +1226,7 @@ CASES = [
     case_multi_model_record_tokens_sum_across_per_model,
     case_cost_line_formatter_has_exactly_one_home,
     case_cost_report_has_exactly_one_home,
+    case_run_stamp_has_exactly_one_home,
     case_container_pipefail_steps_pin_shell_bash,
 ]
 
