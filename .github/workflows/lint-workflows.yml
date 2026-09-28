@@ -4181,16 +4181,16 @@ jobs:
         run: python3 .github/scripts/verify-stage-turn-budget-docs.py --self-test
 
       # Gate 101 — specs/088-stop-check-closed-read (FR-007/FR-008/FR-009):
-      # no comment in this repository may assert that a `shell: bash` step
-      # runs without errexit, or that `set -uo pipefail` clears `-e` --
-      # both are false (see verify-errexit-claim-comments.py's own
-      # docstring for the canonical fact). Five shipped comments made this
-      # claim and every review pass on #465 assumed the wrong semantics;
-      # this scans every comment block in `.github/workflows/*.yml` and
-      # `.github/actions/**/action.yml` (deliberately wider than Gate 24's
-      # workflows-only glob, since the FR-001 violation this feature fixes
-      # lived in an action file) and fails on a new one, naming the file
-      # and line.
+      # no comment in this repository may claim that errexit is inactive on
+      # a `shell: bash` step, or that `set -uo pipefail` leaves `-e`
+      # cleared -- both are false (see verify-errexit-claim-comments.py's
+      # own docstring for the canonical fact). Five shipped comments made
+      # exactly that claim and every review pass on #465 assumed the wrong
+      # semantics; this scans every comment block in
+      # `.github/workflows/*.yml` and `.github/actions/**/action.yml`
+      # (deliberately wider than Gate 24's workflows-only glob, since the
+      # FR-001 violation this feature fixes lived in an action file) and
+      # fails on a newly introduced one, naming the file and line.
       - name: "Gate 101 — no comment claims a shell: bash step runs without errexit"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-errexit-claim-comments.py

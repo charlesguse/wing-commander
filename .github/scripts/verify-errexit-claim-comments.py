@@ -80,11 +80,15 @@ _joined = _cp._joined
 # --- Phrase patterns (research.md D6) ---------------------------------------
 
 PHRASE_PATTERNS = [
-    re.compile(r"\brun(?:s)?\s+without\s+(?:`?-e`?|errexit)\b", re.IGNORECASE),
+    # `(?!\w)` rather than a trailing `\b` after a closing backtick: a
+    # backtick is itself a non-word character, so `` `-e`\b `` only matches
+    # when the NEXT character happens to be a word character -- never true
+    # for real prose, where `-e` is followed by whitespace or punctuation.
+    re.compile(r"\brun(?:s)?\s+without\s+(?:`?-e`?(?!\w)|errexit\b)", re.IGNORECASE),
     re.compile(r"\bwithout\s+errexit\b", re.IGNORECASE),
-    re.compile(r"\bwith\s+no\s+`-e`\b", re.IGNORECASE),
-    re.compile(r"\bno\s+`-e`\b", re.IGNORECASE),
-    re.compile(r"\bclears?\s+`-e`\b", re.IGNORECASE),
+    re.compile(r"\bwith\s+no\s+`-e`(?!\w)", re.IGNORECASE),
+    re.compile(r"\bno\s+`-e`(?!\w)", re.IGNORECASE),
+    re.compile(r"\bclears?\s+`-e`(?!\w)", re.IGNORECASE),
 ]
 
 NEGATION_WORDS = {"not", "never", "doesn't", "does", "cannot"}

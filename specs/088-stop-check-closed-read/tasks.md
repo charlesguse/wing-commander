@@ -112,11 +112,11 @@ None. Every user story below is additive over the currently shipped `action.yml`
 
 **Purpose**: Run every gate this feature's changes must pass, per CLAUDE.md and quickstart.md.
 
-- [ ] T023 [P] Run `python .github/scripts/verify-errexit-claim-comments.py` and `python .github/scripts/verify-errexit-claim-comments.py --self-test` standalone; confirm zero violations on the shipped tree (SC-002) and a passing self-test (SC-003).
-- [ ] T024 [P] Run `python .github/scripts/verify-board-stop-check.py` standalone; confirm every pre-existing fixture/shell case, the T011 SC-007 coverage, and both mutations (T012's and the pre-existing cancel-guard mutation) pass (SC-007).
+- [X] T023 [P] Run `python .github/scripts/verify-errexit-claim-comments.py` and `python .github/scripts/verify-errexit-claim-comments.py --self-test` standalone; confirm zero violations on the shipped tree (SC-002) and a passing self-test (SC-003).
+- [X] T024 [P] Run `python .github/scripts/verify-board-stop-check.py` standalone; confirm every pre-existing fixture/shell case, the T011 SC-007 coverage, and both mutations (T012's and the pre-existing cancel-guard mutation) pass (SC-007).
 - [ ] T025 Run quickstart.md's Gate-24-boundary check and composite step-order sanity-check snippets; confirm `check` precedes `closed-check` in `runs.steps`, `continue-on-error` is absent from `closed-check`, and `verify-gate-24.py`'s docstring names a real, open issue (T021).
 - [X] T026 Get a `review-step-gating` skill pass on the `.github/actions/wing-commander-board-stop-check/action.yml` diff, since it touches `if:` and `continue-on-error:` (CLAUDE.md "Before pushing").
-- [ ] T027 Run `python .github/scripts/run-local-gates.py` and confirm it exits 0 (quickstart.md's primary acceptance signal; SC-008).
+- [X] T027 Run `python .github/scripts/run-local-gates.py` and confirm it exits 0 (quickstart.md's primary acceptance signal; SC-008).
 - [X] T028 Confirm `git diff main --name-only` excludes `.github/actions/wing-commander-lifecycle-gate/action.yml` and `.github/workflows/watchdog.yml`, and that `action.yml:171`'s `gh run cancel ... failed: $cancel_error` interpolation is unchanged (FR-005, FR-006, FR-011).
 
 ---
