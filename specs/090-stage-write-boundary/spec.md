@@ -40,11 +40,12 @@ First, the trade-off the route agent flagged: may an automated stage edit this
 repository's own agent control surface under `.claude/` at all — the skills
 that tell agents how to work, the hooks that fire on their tool calls, the
 settings that grant their permissions — or must work that touches it be routed
-to someone who can do it? Second, whatever that answer is: the boundary must
-be stated to the stage before it spends turns discovering it, and work that
-falls outside it must be discharged deterministically — filed, labelled,
-owned, and taken out of the loop's way — rather than resurfacing each cycle
-and then evaporating into a PR body.
+to someone who can do it? That question is now answered: it may not, and the
+work is routed (see Clarifications and FR-002). Second, given that answer: the
+boundary must be stated to the stage before it spends turns discovering it,
+and work that falls outside it must be discharged deterministically — filed,
+labelled, owned, and taken out of the loop's way — rather than resurfacing
+each cycle and then evaporating into a PR body.
 
 One thing this feature must not get wrong: `.claude/` is not off-limits to
 automation. The auto-update stage changes `.claude/skills/speckit-*` on every
@@ -133,6 +134,37 @@ declares must distinguish them.
   signal and the progress test both read `tasks.md` through
   (`implement.yml:1210-1224`, spec 059 research.md D2). Any new `tasks.md`
   state would have to be understood there, not beside it.
+
+## Clarifications
+
+### Session 2026-09-28 — answered on lifecycle issue #675
+
+- Q: May an automated stage's agent edit this repository's agent control
+  surface under `.claude/`, and if narrowly, which subpaths? → A: **No — do
+  not widen the implement agent's write access to `.claude/`, for any
+  subpath.** Principle V requires each stage to hold the least-privilege tool
+  allowlist it needs; write access under `.claude/` would let an agent rewrite
+  its own permission settings and hooks mid-run; and Principle IX puts the
+  gating of durable writes in deterministic code rather than in an agent's
+  judgement. Work that targets `.claude/` is routed out of the loop instead.
+  (FR-002, FR-018, User Story 2)
+- Q: How is an already-assigned out-of-boundary task discharged so the loop
+  terminates honestly — by a new `tasks.md` state the checkbox-count composite
+  understands, or by leaving the task unchecked and having a deterministic
+  step route it and end the loop? → A: **Leave the task unchecked and route it
+  deterministically, outside the checkbox loop.** The checkbox format is
+  vendored Spec Kit and belongs to the pin rather than to the consuming
+  repository (Principle VI), and a new marker would reach every reader of the
+  checkbox count. FR-011's distinct reason line already explains the
+  non-converged verdict, so no new `tasks.md` state is introduced.
+  (FR-010, FR-011, User Story 3)
+- Q: Is the boundary defined for `.claude/` specifically, or as a general
+  declared no-write set per stage? → A: **One general declared no-write list,
+  defined in exactly one place** (the "Shared logic has exactly one home"
+  rule, FR-003), exposed as a new optional stage input that defaults to
+  `.claude/` — so an adopter who configures nothing keeps today's behaviour,
+  and the next unwritable path is a list entry rather than a second mechanism.
+  (FR-003, FR-019, FR-021, User Story 4)
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -253,7 +285,8 @@ only for `.claude/` leaves the next one to be found the same way this one was
 **Why this priority**: It is scope, not correctness, and the Story 1–3
 mechanism delivers value for `.claude/` alone. It ranks here because the cost
 of retrofitting generality later is a second pass over every consumer of the
-boundary.
+boundary — a cost FR-019 has now resolved by declaring the set general from
+the start, with `.claude/` as its default sole entry.
 
 **Independent Test**: Introduce a second unwritable path and confirm that the
 boundary statement, the routing, and the report all cover it with no change to
@@ -296,8 +329,10 @@ the mechanism itself.
   is the same failure as making no statement at all, only harder to notice.
 - **The task is to change the boundary itself** — a task under
   `.claude/settings.json` that would grant the very permission the stage lacks.
-  Whatever FR-002 decides, this case must be decided explicitly and not left
-  to fall out of a path-prefix comparison.
+  Under FR-002 this is squarely out of reach and is routed like any other
+  `.claude/` task; the mechanism must reach that outcome explicitly rather
+  than letting it fall out of a path-prefix comparison, because an agent
+  widening its own grants mid-run is the case the policy exists to prevent.
 - **An adopting repository with no `.claude/` skills of its own.** The boundary
   is a per-stage input on the published contract, so an adopter's default must
   be sensible without their configuring anything (Principle VI/VII).
@@ -314,17 +349,18 @@ the mechanism itself.
   run 36013041955 is not explained by this repository's own configuration, and
   no requirement below may assume it is.
 
-- **FR-002**: The repository MUST state, as a decision rather than an
-  inherited accident, whether an automated stage's agent may write under
-  `.claude/` — and if so, which of its three parts: the vendored
+- **FR-002**: An automated stage's agent MUST NOT write under `.claude/` with
+  `Edit`/`Write`, for any of its three parts — the vendored
   `.claude/skills/speckit-*` artifacts under the Spec Kit pin, this
-  repository's own skills, and the control surface
-  (`.claude/settings.json`, `.claude/hooks/`).
-  [NEEDS CLARIFICATION: may an automated stage's agent edit this repository's
-  agent control surface under `.claude/`, and if narrowly, which subpaths?]
-  The decision MUST distinguish an agent's in-run `Edit`/`Write` from the
-  deterministic, non-agent writes `auto-update-spec-kit.yml` already performs
-  under `.claude/skills/speckit-*`, which are not in question here.
+  repository's own skills, and the control surface (`.claude/settings.json`,
+  `.claude/hooks/`). The repository MUST record this as a decision rather than
+  an inherited accident: it is the least-privilege allowlist Principle V
+  requires, it denies an agent the ability to rewrite its own permission
+  settings and hooks mid-run, and it keeps the gating of durable writes in
+  deterministic code per Principle IX. The decision MUST distinguish an
+  agent's in-run `Edit`/`Write` from the deterministic, non-agent writes
+  `auto-update-spec-kit.yml` already performs under `.claude/skills/speckit-*`,
+  which remain permitted and are not in question here.
 
 - **FR-003**: The set of paths a stage's agent may not write MUST have exactly
   one definition in the repository, consumed by every site that needs it,
@@ -361,11 +397,13 @@ the mechanism itself.
 
 - **FR-010**: The loop MUST NOT dispatch a further iteration for the sake of
   out-of-boundary work alone. A `tasks.md` whose only unchecked items are
-  routed MUST terminate the loop.
-  [NEEDS CLARIFICATION: how is an already-assigned out-of-boundary task
-  discharged so the loop terminates honestly — by a new `tasks.md` state the
-  checkbox-count composite understands, or by leaving the task unchecked and
-  having a deterministic step route it and end the loop?]
+  routed MUST terminate the loop. The discharge MUST leave the task's
+  `tasks.md` line unchecked and untouched: a deterministic step routes it
+  (FR-007) and ends the loop, and NO new `tasks.md` state or checkbox marker
+  is introduced. The checkbox format belongs to the vendored Spec Kit pin
+  (Principle VI), and a new marker would reach every reader of the checkbox
+  count; the honest terminal verdict is carried by FR-011's reason line
+  instead.
 
 - **FR-011**: A terminal outcome reached under FR-010 MUST be reported as
   neither converged nor stalled nor failed: the reason line MUST name the
@@ -400,17 +438,21 @@ the mechanism itself.
   in a tracked, owned state rather than as an unchecked line in a `tasks.md`
   on a spec branch.
 
-- **FR-018**: Whatever `.claude/` write policy FR-002 resolves to MUST be
-  recorded where a future change will read it — the boundary's single
-  definition and, if the policy narrows or widens what an agent may do to its
-  own control surface, the governing document — so the next session does not
-  re-derive it from a refused tool call.
+- **FR-018**: FR-002's policy — no agent write under `.claude/`, deterministic
+  non-agent writes unaffected — MUST be recorded where a future change will
+  read it: the boundary's single definition (FR-003), and the governing
+  document to the extent the policy states something about an agent's own
+  control surface that the constitution does not already say. The next session
+  MUST be able to read the policy rather than re-derive it from a refused tool
+  call.
 
-- **FR-019**: The scope of the boundary mechanism MUST be decided: `.claude/`
-  alone, or a general per-stage set of unwritable paths that `.claude/` is the
-  first entry in.
-  [NEEDS CLARIFICATION: is the boundary defined for `.claude/` specifically,
-  or as a general declared no-write set per stage?]
+- **FR-019**: The boundary MUST be a general declared no-write set per stage,
+  not a `.claude/`-specific special case: `.claude/` is its first entry. The
+  set MUST be exposed as a new optional stage input whose default is
+  `.claude/`, so adding the next unwritable path is a list entry rather than a
+  second mechanism, and the prompt statement (FR-004), the routing decision
+  (FR-006/FR-007), and the lifecycle report (FR-009) all read the one
+  definition FR-003 requires.
 
 - **FR-020**: Every behavioural requirement above MUST be covered by a gate
   reachable through the gate registry and runnable locally through
@@ -435,8 +477,9 @@ the mechanism itself.
   earlier.
 - **Agent control surface**: the part of `.claude/` that governs how agents in
   this checkout behave — `settings.json`'s permission allowlist and hook
-  registration, `hooks/`, and the skills agents are told to run. The thing
-  FR-002 decides whether an agent may edit while running under it.
+  registration, `hooks/`, and the skills agents are told to run. FR-002 puts
+  all of it beyond an agent's `Edit`/`Write` reach while it runs under it;
+  deterministic non-agent writes are a separate act and remain permitted.
 - **Routed work**: work the pipeline has removed from the loop and handed to a
   tracked owner outside it. Today's nearest relatives are the
   `found-by:<stage>` finding (a defect the stage met, not work it was assigned)
@@ -464,8 +507,9 @@ the mechanism itself.
 - **SC-005**: Zero out-of-boundary tasks reach the final PR as untracked
   prose: every item in the final PR's remaining-manual-work list that was
   routed carries a pointer to its tracked item.
-- **SC-006**: Spec 060's `T055` is closed out — either completed under FR-002's
-  policy or tracked as routed work — with the outcome recorded on issue #675.
+- **SC-006**: Spec 060's `T055` is closed out as tracked, routed work — FR-002's
+  policy puts its path beyond any agent's reach, so it cannot be completed by
+  the stage — with the outcome recorded on issue #675.
 - **SC-007**: A mutation that disables the boundary check, and a mutation that
   makes the boundary statement drift from the run's real permissions, are each
   caught by the gate suite; the full suite
@@ -480,11 +524,12 @@ the mechanism itself.
   refusal in an earlier run. The observation is trusted; its *cause* is not
   assumed, because `main`'s own tool lists do not explain it (FR-001).
 - Because the cause may lie outside this repository's configuration, FR-002's
-  "may an agent write under `.claude/`" may turn out to be moot for some
-  subpaths — the answer could be "not permitted regardless of policy". The
-  decision is still worth making explicitly: it determines whether the
-  repository routes such work by choice or merely by inability, and only the
-  first survives a change in the harness.
+  "no agent write under `.claude/`" may be redundant for some subpaths — the
+  harness may already refuse them regardless of policy. Stating it as a
+  decision is still what matters: the repository now routes such work by
+  choice rather than merely by inability, and only that survives a change in
+  the harness. FR-001's observation therefore still has to be done, but its
+  outcome cannot reopen FR-002.
 - `tasks.md` task text names its target paths often enough for a path-based
   check to classify the cases that matter. `T055` names its path; FR-015
   exists for the tasks that do not.
@@ -492,12 +537,14 @@ the mechanism itself.
   as shipped for the cases they cover; this feature adds a case they do not
   cover rather than revisiting their logic.
 - `wing-commander-tasks-checkbox-count` remains the single home through which
-  `tasks.md` state is read, so any new state introduced under FR-010 is taught
-  there rather than counted a second way.
+  `tasks.md` state is read. FR-010 introduces no new `tasks.md` state, so the
+  composite is unchanged by this feature; if a later change ever needs one, it
+  is taught there rather than counted a second way.
 - The implement stage is the only stage whose agent is assigned `tasks.md`
   work, so it is the only stage where an out-of-boundary *task* can arise. The
   boundary statement itself may still be worth rendering in other stages'
-  prompts; that is FR-019's scope question, not an assumption.
+  prompts; FR-019's per-stage no-write set makes that a configuration
+  question for the plan, not an assumption here.
 - Filing and labelling capacity already exists (`wing-commander-stage-findings`,
   `found-by:<stage>`); whether routed work reuses it or needs its own label is
   a design choice for the plan, not a new capability.
@@ -516,7 +563,8 @@ the mechanism itself.
   run-derived `shell-commands` sentence is composed, and the natural home for a
   run-derived paths clause (FR-004).
 - `.github/actions/wing-commander-tasks-checkbox-count/action.yml` — the single
-  home for reading `tasks.md` state (FR-010).
+  home for reading `tasks.md` state; read for the convergence signal, and left
+  unchanged, since FR-010 adds no new `tasks.md` state.
 - `.github/actions/wing-commander-stage-findings/action.yml` — the existing
   deterministic filing step and its `found-by:<stage>` label (FR-007).
 - `.github/workflows/finalize.yml:715-721` — the remaining-manual-work prompt

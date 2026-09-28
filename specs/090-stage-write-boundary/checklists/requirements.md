@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,29 +31,30 @@
 
 ## Notes
 
-- Three `[NEEDS CLARIFICATION]` markers remain, at the limit the specify
-  skill allows, and each is a trade-off the owner decides rather than a gap
-  a reasonable default closes:
-  1. **FR-002** — may an automated stage's agent edit this repository's agent
-     control surface under `.claude/`, and if narrowly, which subpaths? This
-     is the decision the route agent identified as the reason the issue is
-     spec-shaped. No default exists: "never" and "narrowly" produce
-     materially different features, and the constitution's Principle IX
-     argues one way while Principle IV's automation-first bias argues the
-     other.
-  2. **FR-010** — how an already-assigned out-of-boundary task is discharged
-     so the loop terminates honestly. A new `tasks.md` state and a
-     leave-it-unchecked-and-route approach have different blast radii: the
-     first reaches `wing-commander-tasks-checkbox-count` and every consumer
-     of the convergence signal, the second reaches none of them but leaves
-     the verdict reading "not converged".
-  3. **FR-019** — whether the boundary is defined for `.claude/` alone or as
-     a general per-stage no-write set. A scope question with a real cost
-     either way: generality now, or a second pass over every consumer later.
-- The markers are left in place deliberately: this specification was authored
-  by the pipeline's intake stage in CI, where there is no user to answer at
-  authoring time. The questions are posted to lifecycle issue #675 for the
-  clarify stage.
+- All three `[NEEDS CLARIFICATION]` markers are resolved. The specification
+  was authored by the pipeline's intake stage in CI, where there is no user
+  to answer at authoring time, so the questions were posted to lifecycle
+  issue #675 and answered there on 2026-09-28. The answers are recorded in
+  the spec's `## Clarifications` section and folded into the requirements:
+  1. **FR-002** — no agent write under `.claude/`, for any subpath
+     (Principle V least privilege, Principle IX deterministic gating of
+     durable writes; an agent must not be able to rewrite its own settings
+     and hooks mid-run). Deterministic non-agent writes by
+     `auto-update-spec-kit.yml` are untouched. Knock-ons applied to the
+     Overview, FR-018, SC-006, the "change the boundary itself" edge case,
+     the "cause may lie outside" assumption, and the Agent-control-surface
+     entity.
+  2. **FR-010** — the task stays unchecked and a deterministic step routes it
+     and ends the loop; no new `tasks.md` state, because the checkbox format
+     is the vendored pin's (Principle VI) and a marker would reach every
+     reader of the checkbox count. Knock-ons applied to the
+     `wing-commander-tasks-checkbox-count` assumption and its Dependencies
+     entry, which now record the composite as read-and-unchanged.
+  3. **FR-019** — one general per-stage declared no-write set, defined in one
+     place (FR-003) and exposed as a new optional stage input defaulting to
+     `.claude/`. Knock-ons applied to User Story 4's priority rationale and
+     the other-stages assumption; FR-021's optional-input-with-default
+     requirement already covered the adopter case.
 - Every other checklist item was re-read against the spec after the first
   draft. Two corrections were made in that pass: the terminology for
   `.claude/`'s three parts was made consistent across the Overview, FR-002,
