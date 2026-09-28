@@ -3,7 +3,7 @@
 **Files**: `.github/actions/wing-commander-agent-push-credential/action.yml`
 (composite, new), `.github/actions/wing-commander-agent-push-credential/
 mint-credential.sh` (shell script, new, colocated — never referenced from
-outside its own composite's directory, per Gate 99 check 3).
+outside its own composite's directory, per Gate 120 check 3).
 
 ## Composite interface
 
@@ -90,7 +90,7 @@ window is irrelevant (the id itself does not expire), but whose own
 private-key staging step must exist before it, matching the one-call-per-
 agent-step shape the existing post-agent refresh triple already uses.
 
-## What Gate 99 checks here
+## What Gate 120 checks here
 
 That every job containing an agent step with `Bash(git push:*)` in its
 allowed-tools has exactly one call to this composite positioned between

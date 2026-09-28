@@ -13,8 +13,8 @@ convention for CI-only features (specs/038, specs/041, specs/052).
   present on every runner/container image this pipeline's 8 in-scope
   stages target before relying on the credential helper in production
   (research.md D2 explicitly declines to assume this silently).
-- No live GitHub API access needed for either gate check itself (Gate 99
-  is static YAML inspection; Gate 100 stubs `curl`, per its own contract).
+- No live GitHub API access needed for either gate check itself (Gate 120
+  is static YAML inspection; Gate 121 stubs `curl`, per its own contract).
 
 ## 1. Run the full PR-time gate suite (per CLAUDE.md)
 
@@ -22,11 +22,11 @@ convention for CI-only features (specs/038, specs/041, specs/052).
 python .github/scripts/run-local-gates.py
 ```
 
-Expected: all gates pass, including the new Gate 99 and Gate 100
-(provisional numbers — see contracts/agent-push-credential-gate.md),
-once implemented.
+Expected: all gates pass, including the new Gate 120 and Gate 121
+(renumbered from a provisional 99/100 at merge time — see
+contracts/agent-push-credential-gate.md), once implemented.
 
-## 2. Prove Gate 99 catches every structural care point FR-020/FR-023 name
+## 2. Prove Gate 120 catches every structural care point FR-020/FR-023 name
 
 ```bash
 python3 .github/scripts/verify-agent-push-credential-helper.py --self-test
@@ -39,7 +39,7 @@ call, a duplicated minting shell outside its one composite, a credential-
 helper call wrongly attached to a non-pushing agent step, and the two
 unreachable-subject cases.
 
-## 3. Prove Gate 100 exercises `mint-credential.sh` itself, not just its presence
+## 3. Prove Gate 121 exercises `mint-credential.sh` itself, not just its presence
 
 ```bash
 python3 .github/scripts/verify-agent-push-credential-shell.py --self-test

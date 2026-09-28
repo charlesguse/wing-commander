@@ -44,9 +44,10 @@ or not a later agent step ever does, closing FR-015–FR-018 for the cases
 User Story 4 names (a killed step, a runaway-ceiling cutoff) that today's
 incidental path cannot reach.
 
-A new gate, provisionally **Gate 99** (`verify-agent-push-credential-
-helper.py` — renumbering possible if another PR claims 99 first, per spec
-052's own documented precedent), makes the remedy durable: it fails when
+A new gate, **Gate 120** (`verify-agent-push-credential-
+helper.py` — renumbered from a provisional 99 at merge time after main
+claimed 99 and 100 for other specs, per spec 052's own documented
+precedent), makes the remedy durable: it fails when
 an in-scope agent step lacks the credential-helper installation or the
 stranded-commit publish step, when a second, independently-authored copy
 of the minting shell appears outside its one composite, or when it cannot
@@ -96,8 +97,8 @@ private-key file (research.md D4) are both job-scoped files under
 environment variables are job-scoped like `WC_BOT_TOKEN` already is.
 
 **Testing**: New `.github/scripts/verify-agent-push-credential-helper.py`
-(Gate 99, structural) and its behavioural companion (Gate 100,
-provisionally, following the Gate 68/69 split), both wired into
+(Gate 120, structural) and its behavioural companion (Gate 121,
+following the Gate 68/69 split), both wired into
 `.github/workflows/lint-workflows.yml` as new PR-time steps.
 `verify-implement-stall-notice-unchanged.py`'s existing pinned-step family
 is checked for non-interference (the new stranded-commit publish step
@@ -136,7 +137,7 @@ stranded-commit push attempt per agent step.
   `prompt:` block, not a new tool.
 - FR-007/SC-007: all 8 stages' push-capable agent steps changed in this one
   sweep; FR-025 exempts only agent steps that never push, and that
-  exemption must be checkable (Gate 99), not asserted in prose alone.
+  exemption must be checkable (Gate 120), not asserted in prose alone.
 - FR-008: the end-to-end arm's scratch-repository push is covered by the
   same composite, parameterized (research.md D9) — not a second
   mechanism.
@@ -176,7 +177,7 @@ paragraph pointer comments at the other 7 stages' call sites.
 | V. Security — untrusted content is never instructions | No new untrusted-content path. The credential helper reads only this repository's own App private key (an existing trusted secret) and mints against this repository's own installation; it never reads `github.event.*` body text. Authentication continues through the dedicated wing-commander-bot App, never widened to a PAT (Out of Scope; the mechanism this plan adds mints the *same kind* of App-scoped token `wing-commander-context` already does, just more often and closer to the point of use). | ✅ Pass |
 | VI. Portability — consuming repo owns its artifacts | No change to what this feature reads or writes outside the calling repository's own checkout, its own App installation, and its own lifecycle issue; the new composites and gate script live under `.github/actions/**` / `.github/scripts/**`, resolved the same way every existing one is. | ✅ Pass |
 | VII. Two Interfaces — published contract vs. consuming instrument | No stage workflow's `workflow_call` interface changes (FR-002/FR-025, Technical Context above). The new composites' inputs/outputs are themselves new (they did not exist before), but they are internal call-site plumbing inside each stage's job, never a `workflow_call` input/secret/output — the exact class of change Principle VII's adopters-pin-by-tag guarantee absorbs for free. | ✅ Pass |
-| VIII. A Green Check Means What It Says | This is what FR-020–FR-023 and User Story 5 restate at the spec level. Gate 99 is reachable through the registry (`wc_gate_registry.py`'s filename convention), runs the same subject with the same arguments locally and in CI (`run-local-gates.py` derives its invocation from `lint-workflows.yml`), is triggered by changes to the workflows/composites it inspects (existing `.github/workflows/**` / `.github/actions/**` path triggers already cover it), fails loudly rather than passing vacuously when it cannot locate its 8-file subject (research.md D10 check 4), and every failure branch it ships is exercised by a fixture (research.md D10, contracts/agent-push-credential-gate.md). | ✅ Pass |
+| VIII. A Green Check Means What It Says | This is what FR-020–FR-023 and User Story 5 restate at the spec level. Gate 120 is reachable through the registry (`wc_gate_registry.py`'s filename convention), runs the same subject with the same arguments locally and in CI (`run-local-gates.py` derives its invocation from `lint-workflows.yml`), is triggered by changes to the workflows/composites it inspects (existing `.github/workflows/**` / `.github/actions/**` path triggers already cover it), fails loudly rather than passing vacuously when it cannot locate its 8-file subject (research.md D10 check 4), and every failure branch it ships is exercised by a fixture (research.md D10, contracts/agent-push-credential-gate.md). | ✅ Pass |
 | IX. Judgment that gates a durable action belongs in deterministic code | The retry-bound guidance (FR-010–FR-014) is deliberately NOT a new judgment: the signature the agent keys on is a literal string match, given to it as a fact, exactly the shape Out of Scope requires ("nothing in this feature asks a model to decide whether a credential expired"). The mint-failure attribution (FR-006, research.md D6) and the stranded-commit count (FR-016/FR-017, research.md D8) are both deterministic code reading a literal signature or a `git rev-list --count`, never a model's account of what happened. | ✅ Pass |
 
 **Post-Phase-1 re-check**: Unchanged. Phase 1 design (data-model.md,
@@ -199,7 +200,7 @@ specs/071-agent-push-credential/
 ├── contracts/                                 # Phase 1 output (/speckit-plan command)
 │   ├── agent-push-credential-helper.md        # composite + mint-credential.sh contract
 │   ├── stranded-commit-publish.md             # publish step's contract
-│   └── agent-push-credential-gate.md          # new Gate 99/100's contract
+│   └── agent-push-credential-gate.md          # new Gate 120/121's contract
 ├── checklists/
 │   └── requirements.md                        # already present (intake stage output)
 ├── spec-meta.json
@@ -232,11 +233,11 @@ feature touches:
 │                                             #   spec 052's own post-agent
 │                                             #   deterministic-step refresh
 ├── scripts/
-│   ├── verify-agent-push-credential-helper.py     # NEW — Gate 99
-│   └── verify-agent-push-credential-shell.py      # NEW — Gate 100
+│   ├── verify-agent-push-credential-helper.py     # NEW — Gate 120
+│   └── verify-agent-push-credential-shell.py      # NEW — Gate 121
 │                                                    #   (behavioural companion)
 └── workflows/
-    ├── lint-workflows.yml                   # + Gate 99 + Gate 100 steps
+    ├── lint-workflows.yml                   # + Gate 120 + Gate 121 steps
     ├── intake.yml                           # + credential-helper install,
     │                                        #   stranded-commit publish,
     │                                        #   prompt paragraph (if its
