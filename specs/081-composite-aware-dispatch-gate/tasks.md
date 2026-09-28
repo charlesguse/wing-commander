@@ -498,3 +498,9 @@ With two developers/agents:
   - [ ] `.github/scripts/verify-auto-release-tag-state-runtime.py`: the docstring header (line 2), the "Gate 99 is check 4's counterpart" reference (line 17), and the `print("Gate 99: ...")` summary line (line 182) — all currently still say Gate 99, not even Gate 101.
   - [ ] `specs/048-correlated-release-dispatch/contracts/regression-gate.md:77` ("a stubbed `git` in Gate 99").
   - [ ] `specs/081-composite-aware-dispatch-gate/{tasks.md,plan.md,quickstart.md,data-model.md,research.md}`, wherever they name the gate number.
+
+---
+
+## Maintainer Feedback (optional)
+
+- [ ] In `.github/actions/wing-commander-dispatch-and-wait/action.yml` (lines 106-107), derive `request_time_iso` from the `request_time` epoch value with a single `date` call instead of two separate `date -u` invocations, so the two values can't drift by up to a second, matching the old inline shell's behavior.
