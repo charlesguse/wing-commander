@@ -56,6 +56,7 @@ import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import board_stop_check  # noqa: E402
+import wc_gha_expr  # noqa: E402
 
 FIXTURES_DIR = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "tests", "board-stop-check")
@@ -303,7 +304,7 @@ def _run_shell_case(script_path, bindir, runs_dir, work, comments, repo_root=REP
         "PATH": bindir + os.pathsep + env.get("PATH", ""),
         "GH_TOKEN": "app-token", "CANCEL_TOKEN": "cancel-token",
         "ISSUE_NUMBER": "1", "BOT_LOGIN": BOT_LOGIN,
-        "INITIAL_PAUSED": "false", "ISSUE_IS_OPEN": "",
+        "INITIAL_PAUSED": "false",
         "GITHUB_REPOSITORY": REPO, "GITHUB_RUN_ID": "999",
         "GITHUB_WORKFLOW_REF": "{0}/{1}@refs/heads/main".format(REPO, OWN_PATH),
         "RUNNER_TEMP": case_dir, "GITHUB_OUTPUT": out,
@@ -438,6 +439,119 @@ def composite_shell_check():
     return failures
 
 
+# --- Structural checks on the reordered composite (D1, FR-002) -------------
+
+
+def _composite_structural_failures(action):
+    """The reorder's three load-bearing properties: `closed-check` carries
+    no truthy continue-on-error, `check` precedes it in runs.steps, and
+    `check`'s own run: text depends on nothing `closed-check` writes."""
+    steps = action["runs"]["steps"]
+    ids = [s.get("id") for s in steps]
+    if "check" not in ids or "closed-check" not in ids:
+        return ["composite is missing a `check` or `closed-check` step"]
+    check_idx = ids.index("check")
+    closed_idx = ids.index("closed-check")
+    failures = []
+    if steps[closed_idx].get("continue-on-error"):
+        failures.append("`closed-check` still carries a truthy continue-on-error "
+                         "-- FR-002 requires it removed")
+    if check_idx >= closed_idx:
+        failures.append("`check` must precede `closed-check` in runs.steps (D1) "
+                         "-- found check at index {0}, closed-check at {1}".format(
+                             check_idx, closed_idx))
+    check_run = steps[check_idx].get("run") or ""
+    if "steps.closed-check" in check_run:
+        failures.append("`check`'s run: text still references steps.closed-check "
+                         "-- it must not depend on closed-check's output (D1)")
+    return failures
+
+
+def composite_structural_checks():
+    with open(COMPOSITE, encoding="utf-8") as fh:
+        action = yaml.safe_load(fh)
+    failures = _composite_structural_failures(action)
+    for msg in failures:
+        print("::error::verify-board-stop-check: {0}.".format(msg))
+    if not failures:
+        print("[ok] composite structure: check precedes closed-check, no "
+              "continue-on-error, no cross-step output dependency.")
+    return len(failures)
+
+
+def structural_mutation_check():
+    """T012: reintroducing continue-on-error: true on closed-check (the
+    pre-fix shape), as a structural YAML toggle rather than a run: regex
+    substitution, must be caught by the structural checks above."""
+    with open(COMPOSITE, encoding="utf-8") as fh:
+        action = yaml.safe_load(fh)
+    for step in action["runs"]["steps"]:
+        if step.get("id") == "closed-check":
+            step["continue-on-error"] = True
+    caught = _composite_structural_failures(action)
+    if not caught:
+        print("::error::verify-board-stop-check: mutation 're-add continue-on-error "
+              "to closed-check' was NOT caught by the structural checks.")
+        return 1
+    print("note: mutation caught (continue-on-error reintroduced on closed-check: "
+          "{0} structural failure(s)).".format(len(caught)))
+    return 0
+
+
+# --- The composite's `outputs.paused` expression (D2, SC-007) --------------
+
+# (name, inputs.check-issue-closed, steps.check.outputs.paused,
+#  steps.closed-check.outputs.is-open, expected composite `paused`)
+PAUSED_EXPRESSION_CASES = (
+    ("check-issue-closed unset, check paused=false (six non-prove callers)",
+     "false", "false", None, False),
+    ("check-issue-closed unset, check paused=true (six non-prove callers)",
+     "false", "true", None, True),
+    ("read succeeds OPEN, check paused=false", "true", "false", "true", False),
+    ("read succeeds OPEN, check also paused=true", "true", "true", "true", True),
+    ("read succeeds CLOSED", "true", "false", "false", True),
+    ("read fails transiently then succeeds OPEN (same code path as success -- "
+     "lifecycle-gate's own retry is Gate 25's territory)", "true", "false", "true", False),
+    ("read fails all attempts (job already failed; this expression's value is "
+     "moot -- the composite's own step conclusion is failure regardless)",
+     "true", "false", None, False),
+)
+
+
+def composite_paused_output_expr():
+    with open(COMPOSITE, encoding="utf-8") as fh:
+        action = yaml.safe_load(fh)
+    return action["outputs"]["paused"]["value"]
+
+
+def run_paused_expression_cases(expr, verbose=True):
+    failures = 0
+    for name, check_issue_closed, check_paused, is_open, expected in PAUSED_EXPRESSION_CASES:
+        ctx = {
+            "steps.check.outputs.paused": check_paused,
+            "inputs.check-issue-closed": check_issue_closed,
+            "steps.closed-check.outputs.is-open": "" if is_open is None else is_open,
+        }
+        got = wc_gha_expr.evaluate(expr, ctx)
+        if got != expected:
+            failures += 1
+            if verbose:
+                print("::error::verify-board-stop-check: paused output expression: "
+                      "{0}: expected {1!r}, got {2!r}.".format(name, expected, got))
+        elif verbose:
+            print("[ok] paused output expression: {0} -> {1!r}".format(name, got))
+    return failures
+
+
+def composite_paused_output_check():
+    expr = composite_paused_output_expr()
+    if not expr:
+        print("::error::verify-board-stop-check: no outputs.paused.value in {0}.".format(
+            COMPOSITE))
+        return 1
+    return run_paused_expression_cases(expr)
+
+
 def run():
     failures = 0
 
@@ -456,7 +570,10 @@ def run():
     failures += run_fixtures()
     failures += run_command_cases()
     failures += mutation_check()
+    failures += composite_structural_checks()
+    failures += structural_mutation_check()
     failures += composite_shell_check()
+    failures += composite_paused_output_check()
 
     print("verify-board-stop-check: {0} failure(s).".format(failures))
     return 1 if failures else 0

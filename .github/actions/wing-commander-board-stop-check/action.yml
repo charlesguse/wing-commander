@@ -66,28 +66,14 @@ inputs:
 outputs:
   paused:
     description: "true when this job's next durable action must stand down"
-    value: ${{ steps.check.outputs.paused }}
+    value: >-
+      ${{ steps.check.outputs.paused == 'true' ||
+          (inputs.check-issue-closed == 'true' &&
+           steps.closed-check.outputs.is-open == 'false') }}
 
 runs:
   using: composite
   steps:
-    # Gate 25 (verify-lifecycle-gate-retry.py) hardens this exact "is the
-    # issue open" read against the transient-failure case run 31597186484
-    # hit with a single bare `gh issue view` attempt (specs/039-lifecycle-
-    # gate-retry) -- reused here (issue #462 review) rather than a second,
-    # weaker bare read. continue-on-error: the behaviour this replaces
-    # already treated a failed read as "not closed, keep going" rather
-    # than failing the job; this keeps that same fallback while gaining
-    # the retry/timeout hardening lifecycle-gate already has.
-    - name: Check whether the issue is already closed
-      id: closed-check
-      if: inputs.check-issue-closed == 'true'
-      continue-on-error: true
-      uses: ./.github/actions/wing-commander-lifecycle-gate
-      with:
-        issue-number: ${{ inputs.issue-number }}
-        token: ${{ inputs.token }}
-
     - name: Re-check kill switch and stop requests before any durable action
       id: check
       shell: bash
@@ -97,13 +83,9 @@ runs:
         ISSUE_NUMBER: ${{ inputs.issue-number }}
         BOT_LOGIN: ${{ inputs.bot-login }}
         INITIAL_PAUSED: ${{ inputs.initial-paused }}
-        ISSUE_IS_OPEN: ${{ steps.closed-check.outputs.is-open }}
       run: |
         set -uo pipefail
         paused="$INITIAL_PAUSED"
-        if [ "$ISSUE_IS_OPEN" = "false" ]; then
-          paused=true
-        fi
         gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments" --paginate \
           --jq '.[] | {body, author_association, created_at, user: {login: .user.login, type: .user.type}}' | jq -s '.' \
           > "$RUNNER_TEMP/board-stop-check-comments.json"
@@ -175,3 +157,38 @@ runs:
           paused=true
         fi
         echo "paused=$paused" >> "$GITHUB_OUTPUT"
+
+    # Gate 25 (verify-lifecycle-gate-retry.py) hardens this exact "is the
+    # issue open" read against the transient-failure case run 31597186484
+    # hit with a single bare `gh issue view` attempt (specs/039-lifecycle-
+    # gate-retry) -- reused here (issue #462 review) rather than a second,
+    # weaker bare read. Fail-loud (FR-002): once those retries are
+    # exhausted, this step's own failure fails this composite's `uses:`
+    # step in the caller, stopping the job before its next durable action.
+    # That is a decision, not an inherited default -- the code this step
+    # replaced was a bare `state="$(gh issue view … --jq .state)"` with no
+    # tolerance, and it failed the job on a failed read under the same
+    # errexit-active semantics every `shell: bash` step runs under (`set
+    # -uo pipefail` does not clear `-e`) -- see
+    # verify-errexit-claim-comments.py. The trade-off this buys: one
+    # deferred `prove` that the board loop's next scheduled run retries,
+    # against closing or re-driving an issue a maintainer already closed
+    # by hand while the read was failing.
+    - name: Check whether the issue is already closed
+      id: closed-check
+      if: inputs.check-issue-closed == 'true'
+      uses: ./.github/actions/wing-commander-lifecycle-gate
+      with:
+        issue-number: ${{ inputs.issue-number }}
+        token: ${{ inputs.token }}
+
+    - name: Note the closed-check read failure
+      id: closed-check-note
+      if: steps.closed-check.outcome == 'failure'
+      shell: bash
+      env:
+        ISSUE_NUMBER: ${{ inputs.issue-number }}
+      run: |
+        set -uo pipefail
+        echo "::error::wing-commander-board-stop-check: could not determine whether issue #$ISSUE_NUMBER is closed; this composite's fail-loud policy stops the job before its next durable action (see this file's closed-check step comment)"
+        exit 0
