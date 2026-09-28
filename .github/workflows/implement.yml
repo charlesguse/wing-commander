@@ -378,6 +378,7 @@ jobs:
       deployment: ${{ inputs.environment-deployment }}
     permissions:
       contents: write
+      actions: read
       id-token: write
     outputs:
       token: ${{ steps.admit.outputs.token }}

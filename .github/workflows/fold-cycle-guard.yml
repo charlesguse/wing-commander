@@ -177,7 +177,7 @@ jobs:
     permissions:
       contents: write
       issues: write
-      actions: read
+      actions: write
       id-token: write
     outputs:
       action-taken: ${{ steps.decide.outputs.action-taken || steps.react.outputs.action-taken }}
