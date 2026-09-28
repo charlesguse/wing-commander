@@ -37,7 +37,12 @@ hand.
    added, masking the exact regression this feature exists to catch). A
    `--label`/`-l` argument to a *read* command (`gh issue list`, `gh
    search`) is excluded — the same read/write distinction Gate 90 already
-   established and this gate reimplements locally (research.md D7).
+   established and this gate reimplements locally (research.md D7). Each
+   step is scanned on both its `run:` shell text and, for an agent step,
+   its `with.prompt` text — e.g. `intake.yml`'s `stage:spec` add lives
+   inside the Claude Code action's prompt, not a `run:` step (maintainer
+   feedback on PR #651) — through the same segmentation and comma-list
+   parsing.
 3. **Exemption registry** — `.github/scripts/lifecycle-label-taxonomy-
    waivers.json`, parsed the same way Gate 31 parses `stage-invariant-
    waivers.json`: missing file → zero waivers; malformed JSON or a missing

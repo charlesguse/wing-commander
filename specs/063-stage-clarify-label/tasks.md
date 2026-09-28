@@ -295,8 +295,25 @@ With two developers (this repository's own concurrency guidance caps concurrent 
 
 ## Maintainer Feedback
 
-- [ ] T029 In `.github/scripts/verify-lifecycle-label-taxonomy.py`, extend the applied-label-set scanner so it also inspects a step's `with.prompt` text (not only `step["run"]`), reusing `_labels_applied_in_run`'s segmentation against the prompt string; ensure comma-separated label lists (e.g. `"spec:<NNN-slug>,stage:spec"`) parse into individual `stage:*` tokens. Addresses PR #651 review comment (#649): Gate 99 currently cannot see `intake.yml:689`'s prompt-embedded `stage:spec` add, which T028 recorded as a known gap rather than fixed.
-- [ ] T030 [P] Add a Gate 99 `--self-test` fixture where the only writer for a documented label is a `with.prompt` field (no `run:` shell site at all) and confirm it PASSes only after T029 lands; confirm it FAILs (naming the label) against the pre-T029 scanner.
+- [X] T029 In `.github/scripts/verify-lifecycle-label-taxonomy.py`, extend the applied-label-set scanner so it also inspects a step's `with.prompt` text (not only `step["run"]`), reusing `_labels_applied_in_run`'s segmentation against the prompt string; ensure comma-separated label lists (e.g. `"spec:<NNN-slug>,stage:spec"`) parse into individual `stage:*` tokens. Addresses PR #651 review comment (#649): Gate 99 currently cannot see `intake.yml:689`'s prompt-embedded `stage:spec` add, which T028 recorded as a known gap rather than fixed.
+  - Done: `applied_labels()` now also reads
+    `((step or {}).get("with") or {}).get("prompt")` and feeds it through
+    the same `_labels_applied_in_run()` used for `run:` text, so the
+    existing comma-list parsing in `_labels_in_value()` (used by both)
+    applies unchanged. Module docstring updated to describe the
+    `with.prompt` scan.
+- [X] T030 [P] Add a Gate 99 `--self-test` fixture where the only writer for a documented label is a `with.prompt` field (no `run:` shell site at all) and confirm it PASSes only after T029 lands; confirm it FAILs (naming the label) against the pre-T029 scanner.
+  - Done: fixture (9) (`DOC_PROMPT_LABEL` / `WORKFLOW_PROMPT_ONLY_WRITER`)
+    documents `stage:spec` with its only writer inside a
+    `with: prompt: |` block styled on `intake.yml`'s real "Create spec
+    from issue" step, and asserts PASS. `self_test()` now expects 9
+    checks; `python .github/scripts/run-local-gates.py
+    verify-lifecycle-label-taxonomy.py` confirms both the self-test and
+    the real-tree run PASS against the T029 scanner. By construction this
+    fixture would FAIL naming `stage:spec` against the pre-T029 scanner
+    (it only ever inspected `step["run"]`, and this fixture has no `run:`
+    site at all) — not re-verified by reverting the code in this run, since
+    the reasoning is direct from the diff.
 
 ## Maintainer Feedback
 

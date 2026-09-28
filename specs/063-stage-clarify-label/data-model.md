@@ -65,7 +65,10 @@ on its own (Phase 7 convergence fix): `plan.yml:1155`/`:1241`'s
 pre-existing, unrelated best-effort `--remove-label "stage:clarify"` lines
 otherwise satisfied this set for a label nothing ever added, which would
 have let Gate 99 PASS against the pre-change tree instead of FAILing as
-FR-008 requires.
+FR-008 requires. Each step's `with.prompt` text is scanned alongside its
+`run:` text (maintainer feedback on PR #651): `intake.yml`'s `stage:spec`
+add lives inside the Claude Code action's prompt, not a `run:` step, and
+was otherwise invisible to this set.
 
 ### Exemption registry: `.github/scripts/lifecycle-label-taxonomy-waivers.json`
 

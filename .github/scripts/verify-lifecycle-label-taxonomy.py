@@ -22,9 +22,12 @@ WHAT IT CHECKS
    argument to an ADD-shaped call -- `gh issue edit --add-label`, `gh issue
    create --label`/`-l`, or a REST `-f "labels[]=..."` call -- across every
    `.github/workflows/*.yml` and every local `.github/actions/**/
-   action.yml`. A bare `--remove-label` call does NOT put a label in this
-   set on its own: removing a label is not evidence that anything ever
-   adds it (Phase 7 convergence fix -- `plan.yml`'s pre-existing,
+   action.yml`, scanning both a step's `run:` shell text and, for an agent
+   step, its `with.prompt` text (e.g. intake.yml's `stage:spec` add lives
+   inside the Claude Code action's prompt, not a `run:` step -- maintainer
+   feedback on PR #651). A bare `--remove-label` call does NOT put a label
+   in this set on its own: removing a label is not evidence that anything
+   ever adds it (Phase 7 convergence fix -- `plan.yml`'s pre-existing,
    unrelated best-effort `--remove-label "stage:clarify"` lines otherwise
    satisfied this gate for a label nothing ever added). This REIMPLEMENTS
    (never imports) Gate 90's (`verify-board-label-creation.py`)
@@ -269,7 +272,12 @@ class GateParseError(Exception):
 def applied_labels(root="."):
     """-> set of every literal `stage:*` label ADDED anywhere across every
     workflow and local composite action -- a bare `--remove-label` site
-    does not count (Phase 7 convergence fix)."""
+    does not count (Phase 7 convergence fix). Scans both a step's `run:`
+    shell text and, for an agent step, its `with.prompt` text (e.g.
+    intake.yml's `gh issue edit --add-label "spec:<NNN-slug>,stage:spec"`
+    instruction, which lives inside the Claude Code action's prompt, not a
+    `run:` step) -- reusing the same segmentation and comma-list parsing
+    for both (maintainer feedback on PR #651)."""
     found = set()
     for path in _subject_files(root):
         with open(path, encoding="utf-8") as fh:
@@ -283,6 +291,9 @@ def applied_labels(root="."):
                 run = str((step or {}).get("run") or "")
                 if run:
                     found.update(_labels_applied_in_run(run))
+                prompt = str(((step or {}).get("with") or {}).get("prompt") or "")
+                if prompt:
+                    found.update(_labels_applied_in_run(prompt))
     return found
 
 
@@ -491,6 +502,30 @@ jobs:
           gh issue edit "$ISSUE" --remove-label "stage:clarify" 2>/dev/null || true
 """
 
+DOC_PROMPT_LABEL = """\
+# Setup
+
+| Label | Purpose |
+|---|---|
+| `stage:spec` | Spec drafted / awaiting review |
+"""
+
+WORKFLOW_PROMPT_ONLY_WRITER = """\
+name: intake
+on:
+  workflow_call: {}
+jobs:
+  intake:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create spec from issue
+        uses: anthropics/claude-code-action@v1
+        with:
+          prompt: |
+            7. Update the lifecycle issue:
+               - gh issue edit --add-label "spec:<NNN-slug>,stage:spec"
+"""
+
 
 def self_test():
     failed = []
@@ -606,13 +641,25 @@ def self_test():
     check("(8) a remove-only site with no add anywhere still fails, naming it",
           build_8, expect_fail=True, name_fragment="stage:clarify")
 
+    # 9. A `with.prompt`-only writer (no `run:` shell site at all) counts
+    #    as a writer -- PASS. Maintainer feedback on PR #651: intake.yml's
+    #    real `stage:spec` add lives inside the Claude Code action's
+    #    prompt text, not a `run:` step, and was invisible to the scanner
+    #    before this fixture's corresponding fix.
+    def build_9(root):
+        _write(root, DOC_PATH, DOC_PROMPT_LABEL)
+        _write(root, f"{WORKFLOWS_DIR}/intake.yml", WORKFLOW_PROMPT_ONLY_WRITER)
+
+    check("(9) a with.prompt-only writer counts as a writer",
+          build_9, expect_fail=False)
+
     if failed:
         print(f"::error::Gate 99 self-test: {len(failed)} check(s) behaved "
               f"wrongly: {'; '.join(failed)}. Gate 99's detection logic does "
               f"not do what its name claims, so a green Gate 99 on the real "
               f"fleet means nothing.")
         return 1
-    print("Gate 99 self-test: all 8 checks behaved as expected.")
+    print("Gate 99 self-test: all 9 checks behaved as expected.")
     return 0
 
 
