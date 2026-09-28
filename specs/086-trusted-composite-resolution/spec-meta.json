@@ -2,10 +2,8 @@
   "issue": 615,
   "spec_dir": "specs/086-trusted-composite-resolution",
   "feature_num": "086",
-  "stage": "implement",
+  "stage": "review",
   "iteration": 4,
   "spec_branch": "spec/086-trusted-composite-resolution",
-  "pending_re_review_from": [
-    "charlesguse"
-  ]
+  "pending_re_review_from": []
 }
