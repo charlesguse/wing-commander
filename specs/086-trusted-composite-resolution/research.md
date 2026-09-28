@@ -86,7 +86,7 @@ reference today, and gains neither. Nothing is added to it.
 **Rationale**: FR-011 requires the *rule* to apply uniformly, not that
 every job carry a copy of a step it has no use for — spec.md's own framing
 ("a per-job allowlist is the same shape as the gap being fixed") is about
-the gate's coverage, not about padding jobs with no-op checkouts. Gate 99
+the gate's coverage, not about padding jobs with no-op checkouts. Gate 100
 (D5) is written to fail on *any* job that ever gains a
 `uses: ./.github/actions/...` reference without the preceding sidecar
 checkout, `resolve-model` included, so the day this job (or any future
@@ -132,9 +132,9 @@ it repository-wide could affect a published stage's own adopter-facing
 checkout behavior in ways this feature has not evaluated. Reported as a
 `wing-commander-findings` entry rather than fixed here.
 
-## D5: Gate 99 is a file-wide, unconditional rule over `uses:` blocks — not a job-tuple allowlist
+## D5: Gate 100 is a file-wide, unconditional rule over `uses:` blocks — not a job-tuple allowlist
 
-**Decision**: `verify-board-loop-composite-provenance.py` (Gate 99) parses
+**Decision**: `verify-board-loop-composite-provenance.py` (Gate 100) parses
 `board-loop.yml` once and checks, with no per-job allowlist: (a) no
 `uses: ./.github/actions/` (the raw, workspace-relative form) may appear
 anywhere in the file; (b) every job containing a
@@ -153,30 +153,40 @@ and no `if:` that could skip it while a dependent reference still runs
 unconditional statement, and names a per-job allowlist as "the same shape
 as the gap being fixed." Gate 98's own `JOBS = ("fix", "review",
 "readiness")` tuple is exactly that shape, applied to a different surface
-(`run:` blocks); Gate 99 must not inherit it. Scanning the whole file for
+(`run:` blocks); Gate 100 must not inherit it. Scanning the whole file for
 the banned raw form and requiring every sidecar reference to be preceded
 by the one correctly-shaped step is both simpler to implement than a
 per-job check list and automatically covers a job added to this file
 after this feature ships, with no edit to the gate.
 
-## D6: Gate 99 is a new script, not an extension of Gate 98
+## D6: Gate 100 is a new script, not an extension of Gate 98
 
 **Decision**: A new file, `.github/scripts/verify-board-loop-composite-provenance.py`,
-registered as **Gate 99** — the next available number (98 is the highest
-in use; confirmed by scanning every `Gate N` step name in
-`lint-workflows.yml` and every `verify-*.py` under `.github/scripts`) —
-with the standard two-step registration (`Gate 99 — ...` and `Gate 99
-self-test — ...`), immediately after Gate 98's block. Gate 98's own
-`lint-workflows.yml` comment gains one added sentence pointing at Gate 99
-for the composite half of the same provenance property (FR-014,
-contracts/documentation-updates.md); Gate 98's own scope, allowlist, and
-self-test are untouched (spec.md Out of Scope: "Re-litigating the
-helper-script snapshot shipped for issue #583 or its gate").
+registered with the standard two-step registration (`Gate N — ...` and
+`Gate N self-test — ...`), immediately after Gate 98's block. At the time
+this branch was written, 98 was the highest number in use (confirmed by
+scanning every `Gate N` step name in `lint-workflows.yml` and every
+`verify-*.py` under `.github/scripts`), so this gate was first registered
+as Gate 99; by the time this branch's own rebase landed, main had already
+claimed Gate 99 for spec 059's `verify-tasks-checkbox-convergence-signal.py`
+(converged-means-tasks-done), so this gate is **Gate 100** in the shipped
+tree (#640 maintainer review; see lint-workflows.yml's own Gate 100
+comment for the full renumbering note). Gate 98's own `lint-workflows.yml`
+comment gains one added sentence pointing at Gate 100 for the composite
+half of the same provenance property (FR-014,
+contracts/documentation-updates.md); Gate 98's own allowlist and mutation
+set are untouched (spec.md Out of Scope: "Re-litigating the helper-script
+snapshot shipped for issue #583 or its gate"), but its
+`structural_problems()` one-checkout-per-job count now excludes the
+canonical trusted-copy checkout step by name, since this feature adds a
+second, legitimate `actions/checkout@` step to `fix`, `review` and
+`readiness` (T027/T028; see verify-board-loop-helper-provenance.py's own
+pointer comments).
 
 **Rationale**: Gate 98 checks `run:`-block behavior (interpreter spelling,
 import hygiene, the pristine-copy snapshot's own correctness) — a
 different subject with a different failure shape than "does this `uses:`
-line point at the sidecar." Folding Gate 99's file-wide, allowlist-free
+line point at the sidecar." Folding Gate 100's file-wide, allowlist-free
 check into Gate 98's existing three-job, `run:`-scoped structure would
 either weaken Gate 98's precision (its allowlist logic has no notion of
 `uses:` lines at all) or force Gate 98 to grow a second, structurally
@@ -189,7 +199,7 @@ separate manifest edit is needed beyond the two `lint-workflows.yml` steps.
 
 ## D7: Self-test mutations — one per rule in D5, plus the shipped-clean baseline
 
-**Decision**: Gate 99's `--self-test` mode follows Gate 97/98's exact
+**Decision**: Gate 100's `--self-test` mode follows Gate 97/98's exact
 convention (a `MUTATIONS` list of `(label, mutate_fn, expected_substring)`
 tuples, `main()` asserting the unmutated file is clean, then that every
 mutation is caught and attributable to its own rule):
@@ -213,7 +223,7 @@ mutation is caught and attributable to its own rule):
    must fail, proving the rule admits no allowlist (FR-010's "MUST NOT
    admit any broader workspace reference," read onto this gate's own
    design rather than Gate 98's existing gate-suite exemption, which Gate
-   99 does not need at all since it never inspects `run:` blocks).
+   100 does not need at all since it never inspects `run:` blocks).
 
 **Rationale**: FR-009 requires one mutation per rule the gate enforces;
 this enumerates D5's five structural checks plus the one behavioral
@@ -221,16 +231,16 @@ guarantee (D4) tightly enough that Principle VIII's "every failure branch
 a gate ships MUST be exercised by a checked-in fixture" holds without
 relying on a future maintainer's manual demonstration.
 
-## D8: FR-010's exemption is empty by construction — Gate 99 has none to state
+## D8: FR-010's exemption is empty by construction — Gate 100 has none to state
 
-**Decision**: Gate 99 inspects only `uses:` blocks, never `run:` blocks.
+**Decision**: Gate 100 inspects only `uses:` blocks, never `run:` blocks.
 The gate-suite invocation (`python3 .github/scripts/run-local-gates.py`)
 that legitimately runs the item's own tree (spec.md's edge case, FR-005,
 FR-010) is a `run:`-block concern already carved out narrowly by Gate 98;
-Gate 99 has no analogous case to exempt, because a board-loop job never
+Gate 100 has no analogous case to exempt, because a board-loop job never
 invokes a composite *as* its own gate-suite step — the gate suite is a
 plain Python script call, not a `uses:` reference. FR-010 is satisfied
-here by having nothing to exempt, stated explicitly in Gate 99's own
+here by having nothing to exempt, stated explicitly in Gate 100's own
 docstring so a future reader does not go looking for a carve-out that does
 not exist.
 

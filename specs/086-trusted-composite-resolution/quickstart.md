@@ -5,7 +5,7 @@ gate suite runnable (`python .github/scripts/run-local-gates.py`). Steps
 4-5 need a real dispatched run against a disposable/test repository you
 own — never against this repository or any repository you do not control.
 
-## 1. Static: Gate 99 against the shipped workflow
+## 1. Static: Gate 100 against the shipped workflow
 
 ```bash
 python .github/scripts/verify-board-loop-composite-provenance.py
@@ -15,10 +15,11 @@ python .github/scripts/run-local-gates.py
 
 Expected: the first two exit 0 (the shipped file is clean; every
 self-test mutation is caught — contracts/gate-99.md, data-model.md "Gate
-99 Fixture Set"); the third runs the full suite including Gate 98
-(unchanged) and Gate 99, both green.
+100 Fixture Set"); the third runs the full suite including Gate 98 (its
+one-checkout-per-job count now excludes the trusted-copy checkout by
+name, T027/T028; otherwise unchanged) and Gate 100, both green.
 
-To confirm Gate 99 can actually fail its own subject (Principle VIII),
+To confirm Gate 100 can actually fail its own subject (Principle VIII),
 temporarily reintroduce one raw `uses: ./.github/actions/wing-commander-context`
 line in `board-loop.yml`, re-run the first command, confirm it fails
 naming the job and the line, then revert.
