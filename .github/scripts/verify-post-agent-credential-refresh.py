@@ -286,6 +286,12 @@ NO_REMOTE_REFRESH_JOBS = {
     # branch" step, so there is no persisted git remote credential to
     # refresh in this job either.
     (".github/workflows/pr-conversation.yml", "classify-and-announce"),
+    # specs/062-lifecycle-review-gate T020: the review job checks out the
+    # lifecycle PR's head ref with persist-credentials: false and never
+    # pushes -- its only write is the `gh api` review post (through
+    # env.WC_BOT_TOKEN directly), so there is no persisted git remote
+    # credential to refresh either.
+    (".github/workflows/lifecycle-review-gate.yml", "review"),
 }
 
 # Third maintainer review of PR #407, Gate 68 hole (a): nothing previously

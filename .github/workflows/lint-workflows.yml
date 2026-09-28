@@ -923,6 +923,12 @@ jobs:
               # "Contents" repository permission as .../commits/... and
               # .../contents/... above.
               "compare": "contents",
+              # specs/062-lifecycle-review-gate T024: POST .../statuses/{sha}
+              # (Create a commit status) -- the REST reference lists
+              # "Commit statuses" as its own fine-grained repository
+              # permission, distinct from "Checks" (which covers
+              # check-runs/check-suites above).
+              "statuses": "statuses",
           }
 
           GH_INVOKE_RE = re.compile(
