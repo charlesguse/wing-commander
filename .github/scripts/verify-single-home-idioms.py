@@ -236,6 +236,18 @@ DECLARED_HOMES = {
     # `review` job (US1) is this check's reason to exist -- a second
     # caller landing with its own inline copy instead.
     "post-review-comment": ".github/actions/wing-commander-post-review-comment/action.yml",
+    # specs/062-lifecycle-review-gate T028/T030: the review-finding
+    # fingerprint formula (sha256("<issue>|<norm(title)>|<norm(file_path)>"))
+    # board-loop.yml's out-of-scope filing step computed inline before this
+    # extraction (T029). lifecycle-review-gate.yml's `disposition` job (US2,
+    # T037) is this module's second caller -- the reason a structural check
+    # is worth having, the same way check_post_review_comment protects
+    # wing-commander-post-review-comment. Deliberately distinct from
+    # wing-commander-stage-findings' own similarly-shaped
+    # sha256(STAGE|norm(file_path)|norm(gate_or_artifact)) idiom (spec 056):
+    # REVIEW_FINDING_FINGERPRINT_RE keys on the `issue_number` argument name
+    # that formula never uses, so the two checks do not collide.
+    "review-finding-fingerprint": ".github/scripts/wc_review_finding_fingerprint.py",
 }
 CHECK_NAMES = tuple(DECLARED_HOMES) + ("promotion",)
 
@@ -266,6 +278,11 @@ ISSUE_LOOKUP_RE = re.compile(
 OUTSTANDING_TASK_RE = re.compile(r'gh issue comment\b[^\n]*"- \[ \] ')
 POST_REVIEW_COMMENT_RE = re.compile(
     r'gh\s+api\b[^\n]*reviews\b[^\n]*-f\s+event=COMMENT')
+# specs/062-lifecycle-review-gate T028/T030: keys on the `issue_number`
+# argument name, which spec 056's own similarly-shaped
+# sha256("{0}|{1}|{2}".format(STAGE, ...)) fingerprint idiom never uses.
+REVIEW_FINDING_FINGERPRINT_RE = re.compile(
+    r'hashlib\.sha256\(\s*"\{0\}\|\{1\}\|\{2\}"\.format\(\s*issue_number\b')
 SIZE_PATH_BACKSTOP_FRAGMENT = r'select(test("^[+-]") and (test("^(\\+\\+\\+|---)") | not))'
 # specs/057-autonomous-board-loop research.md D14: correlating a dispatched
 # run by an attempt-token carried in its own run-name -- never by recency --
@@ -504,6 +521,33 @@ def check_post_review_comment(root="."):
                         path, "post-review-comment",
                         line_of(text, max(offset, 0)),
                         'gh api -X POST ... reviews ... -f event=COMMENT'))
+    return findings
+
+
+# --------------------------------------------------------------------------
+# Check: review-finding-fingerprint (per-step, single-fragment)
+# --------------------------------------------------------------------------
+def check_review_finding_fingerprint(root="."):
+    home = DECLARED_HOMES["review-finding-fingerprint"]
+    findings = []
+    for path in all_subject_files(root):
+        if path == home:
+            continue
+        doc = load_yaml(root, path)
+        if doc is None:
+            continue
+        text = read(root, path)
+        for _ctx, steps in _step_lists(doc):
+            for step in steps:
+                run = str((step or {}).get("run") or "")
+                if not run:
+                    continue
+                if REVIEW_FINDING_FINGERPRINT_RE.search(run):
+                    offset = text.find(run.splitlines()[0]) if run.splitlines() else 0
+                    findings.append(Finding(
+                        path, "review-finding-fingerprint",
+                        line_of(text, max(offset, 0)),
+                        'hashlib.sha256("{0}|{1}|{2}".format(issue_number, ...))'))
     return findings
 
 
@@ -759,6 +803,7 @@ ALL_CHECKS = {
     "failure-issue": check_failure_issue,
     "outstanding-task-item": check_outstanding_task_item,
     "post-review-comment": check_post_review_comment,
+    "review-finding-fingerprint": check_review_finding_fingerprint,
     "stage-findings": check_stage_findings,
     "size-path-backstop": check_size_path_backstop,
     "dispatch-and-wait": check_dispatch_and_wait,
@@ -1129,6 +1174,17 @@ def _clean_tree(root):
           "    - shell: bash\n      run: |\n"
           "        gh api -X POST \"repos/$GITHUB_REPOSITORY/pulls/$PR/"
           "reviews\" -f event=COMMENT -F body=@\"$BODY_FILE\"\n")
+    _write(root, DECLARED_HOMES["review-finding-fingerprint"],
+          "#!/usr/bin/env python3\n"
+          "import hashlib\n"
+          "import re\n\n\n"
+          "def norm(value):\n"
+          "    return \" \".join(re.sub(r\"[\\W_]+\", \" \", "
+          "str(value).lower()).split())\n\n\n"
+          "def fingerprint(issue_number, title, file_path):\n"
+          "    return hashlib.sha256(\"{0}|{1}|{2}\".format(\n"
+          "        issue_number, norm(title), norm(file_path)\n"
+          "    ).encode(\"utf-8\")).hexdigest()\n")
     _write(root, ".github/workflows/harmless.yml",
           "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
           "      - run: echo hi\n")
@@ -1427,6 +1483,17 @@ def run_selftest():
         "      - shell: bash\n        env:\n"
         "          OUTCOME: ${{ steps.mint.outcome }}\n"
         "        run: echo hi\n")
+    selftest_third_paste_fails(
+        "review-finding-fingerprint",
+        ".github/workflows/third-review-finding.yml",
+        "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - shell: bash\n        run: |\n"
+        "          python3 - <<'PYEOF'\n"
+        "          import hashlib\n"
+        "          fp = hashlib.sha256(\"{0}|{1}|{2}\".format(\n"
+        "              issue_number, norm(title), norm(file_path)\n"
+        "          ).encode(\"utf-8\")).hexdigest()\n"
+        "          PYEOF\n")
     selftest_waived_copy_passes()
     selftest_stale_waiver_fails()
     selftest_promotion_fails()

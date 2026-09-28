@@ -2719,14 +2719,13 @@ jobs:
         run: |
           set -uo pipefail
           python3 -I - <<'PYEOF'
-          import hashlib
           import json
           import os
-          import re
           import sys
 
           sys.path.insert(0, os.path.join(os.environ["RUNNER_TEMP"], "wc-pristine", "scripts"))
           from board_spec_request_body import fenced_section
+          from wc_review_finding_fingerprint import fingerprint
           from wc_step_output import clean_output_value, write_outputs
 
           # #583: wing-commander-durable-failure-issue dedupes by finding
@@ -2740,9 +2739,6 @@ jobs:
               while MARKER_PREFIX in text:
                   text = text.replace(MARKER_PREFIX, "")
               return text
-
-          def norm(value):
-              return " ".join(re.sub(r"[\W_]+", " ", str(value).lower()).split())
 
           runner_temp = os.environ["RUNNER_TEMP"]
           issue_number = os.environ["ISSUE_NUMBER"]
@@ -2759,9 +2755,7 @@ jobs:
           outputs = []
           for i, f in enumerate(out_of_scope):
               basis = f.get("fingerprint_basis") or {}
-              fp = hashlib.sha256("{0}|{1}|{2}".format(
-                  issue_number, norm(f.get("title", "")), norm(basis.get("file_path", ""))
-              ).encode("utf-8")).hexdigest()
+              fp = fingerprint(issue_number, f.get("title", ""), basis.get("file_path", ""))
               marker = "<!-- wing-commander-board-review-finding: fingerprint={0} -->".format(fp)
 
               # #580: the finding is the reviewer agent's own output --

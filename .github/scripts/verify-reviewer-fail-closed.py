@@ -94,7 +94,8 @@ SHARED_SCRIPTS = ("wc_fence_extract.py", "verify-board-review-finding-schema.py"
                   "wc_schema_pattern.py", "board_spec_request_body.py")
 SHARED_SCHEMAS = ("board-review-finding.schema.json",)
 PRISTINE_DIR = "wc-pristine"
-PRISTINE_SCRIPTS = SHARED_SCRIPTS + ("board_item_marker.py", "wc_step_output.py")
+PRISTINE_SCRIPTS = SHARED_SCRIPTS + ("board_item_marker.py", "wc_step_output.py",
+                                     "wc_review_finding_fingerprint.py")
 
 
 def _fenced_transcript(findings_json_text):
@@ -1081,6 +1082,37 @@ def check_step_output_helper(path=HELPER_PATH):
     return failures
 
 
+FINGERPRINT_HELPER_PATH = os.path.join(".github", "scripts", "wc_review_finding_fingerprint.py")
+
+
+def check_review_finding_fingerprint_helper(path=FINGERPRINT_HELPER_PATH):
+    """wc_review_finding_fingerprint itself (specs/062-lifecycle-review-gate
+    T028, loaded from `path`): the fingerprint is stable across case/
+    punctuation/whitespace variance in its normalised inputs, and differs
+    when the issue number or the title actually differs."""
+    import importlib.util
+    import wc_review_finding_fingerprint
+    mod = wc_review_finding_fingerprint
+    if path != FINGERPRINT_HELPER_PATH:
+        spec = importlib.util.spec_from_file_location(
+            "wc_review_finding_fingerprint_under_test", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+    failures = []
+    a = mod.fingerprint("1", "Some Title!!", "a/b.py")
+    b = mod.fingerprint("1", "some   title", "A/B.PY")
+    if a != b:
+        failures.append("fingerprint is not stable across case/punctuation/"
+                        "whitespace variance in title/file_path")
+    if a == mod.fingerprint("2", "Some Title!!", "a/b.py"):
+        failures.append("fingerprint does not vary with the issue number")
+    if a == mod.fingerprint("1", "Different Title", "a/b.py"):
+        failures.append("fingerprint does not vary with the title")
+    if len(a) != 64:
+        failures.append("fingerprint is not a 64-character hex digest")
+    return failures
+
+
 def _mut_once(script, old, new, what):
     if script.count(old) != 1:
         sys.exit("::error::verify-reviewer-fail-closed: expected one {0} in its step; "
@@ -1093,6 +1125,8 @@ def check_583(extract_script, round_script, compose_script, oos_script, file_scr
     failures = []
     for label, found in (
             ("wc_step_output removes line breaks and lone surrogates", check_step_output_helper()),
+            ("wc_review_finding_fingerprint is stable and issue/title-sensitive",
+             check_review_finding_fingerprint_helper()),
             ("hostile titles never set other outputs", check_oos_output_sanitised(oos_script, tmproot)),
             ("title flattening and dropped findings",
              check_oos_title_validated(extract_script, oos_script, round_script,
