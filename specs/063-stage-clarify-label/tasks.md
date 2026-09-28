@@ -365,4 +365,8 @@ With two developers (this repository's own concurrency guidance caps concurrent 
 
 ## Phase 8: Convergence
 
-- [ ] T033 Update the stale count in `.github/scripts/verify-lifecycle-label-taxonomy.py:417`'s comment (`# Self-test -- the seven required fixtures ...`) to say "nine" per FR-008 (partial): T030 raised the self-test fixture count to nine (contracts/lifecycle-label-taxonomy-gate.md's fixture list and `self_test()`'s own "all 9 checks behaved as expected" message both already read nine), but this section-header comment was never updated to match.
+- [X] T033 Update the stale count in `.github/scripts/verify-lifecycle-label-taxonomy.py:417`'s comment (`# Self-test -- the seven required fixtures ...`) to say "nine" per FR-008 (partial): T030 raised the self-test fixture count to nine (contracts/lifecycle-label-taxonomy-gate.md's fixture list and `self_test()`'s own "all 9 checks behaved as expected" message both already read nine), but this section-header comment was never updated to match.
+  - Done: line 417's comment now reads "the nine required fixtures".
+    `python .github/scripts/run-local-gates.py
+    verify-lifecycle-label-taxonomy.py` confirms both the self-test and
+    the real-tree run still PASS.

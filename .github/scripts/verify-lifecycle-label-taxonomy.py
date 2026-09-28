@@ -414,7 +414,7 @@ def main():
 
 
 # --------------------------------------------------------------------------
-# Self-test -- the seven required fixtures (contracts/lifecycle-label-
+# Self-test -- the nine required fixtures (contracts/lifecycle-label-
 # taxonomy-gate.md), each a synthetic root under tempfile.mkdtemp()
 # --------------------------------------------------------------------------
 def _write(root, relpath, content):
