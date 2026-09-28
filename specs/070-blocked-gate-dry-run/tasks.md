@@ -133,3 +133,9 @@ spec.md defines exactly one user story, so there is no incremental multi-story d
 - [X] Before writing `fail-timeout` in the poll step's post-loop block (`.github/workflows/auto-release.yml`, currently ~1083-1089), check whether any `gate_blocked_since[$prefix]` is non-empty. If one is, write `fail-gate-stall` for the first such gate (`"gh pr merge succeeds"` expected / `"PR #<n>: required checks never reported a result"` observed, matching T006's evidence strings) instead of the generic timeout — per spec.md's "the waiting allowance is reached late in the poll budget" edge case and FR-007 (the generic timeout must remain the outcome only when *no* gate is blocked).
 - [X] Add a Gate 66 or Gate 52 fixture covering a gate that goes blocked-pending late enough in the poll budget that its 1200s allowance would not otherwise fully elapse before the loop exits on budget, asserting the outcome is `fail-gate-stall` naming that gate, not the generic timeout.
 - [X] Update the stale comment in `.github/actions/_shared/auto-release-e2e-merge-decision.sh` (~line 81, "confirm a pending-checks PR is never declared a gate stall") to reflect that a pending-checks PR is now declared stalled after the 20-minute allowance, per FR-004.
+
+---
+
+## Phase 4: Convergence
+
+- [ ] T011 Reconcile `plan.md`'s Constraints section (~lines 76-79), which states the generic-timeout code path (`auto-release.yml` lines 1083-1089 at plan time) and the `report` job's classification `case` "must not change" since both "already handle any fail-gate-stall correctly today," with the Maintainer Feedback fix above that added a `gate_blocked_since` clamp check immediately before that write, per spec.md's "the waiting allowance is reached late in the poll budget" edge case and FR-007 (plan: Constraints, contradicts).
