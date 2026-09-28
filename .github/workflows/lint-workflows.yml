@@ -4179,33 +4179,34 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-stage-turn-budget-docs.py --self-test
 
-      # Gate 101 — specs/062-lifecycle-review-gate: lifecycle_readiness.py's
+      # Gate 107 — specs/062-lifecycle-review-gate: lifecycle_readiness.py's
       # five-condition decision (checks_green, gate_suite_green, mergeable,
       # not_yet_reviewed, kill_switch_clear) resolves correctly on every
       # documented branch, mirroring Gate 97's own board_readiness.py check.
-      # Numbered 101, not the 100 this branch's own commit picked (nor the
-      # 99 tasks.md's T003/T008 originally reserved): Gate 99 was claimed by
-      # specs/059-converged-means-tasks-done's own rebase, and Gate 100 by
-      # #587's turn-budget-docs gate above, both landing on main before this
-      # branch's rebase.
-      - name: "Gate 101 — Lifecycle readiness"
+      # Numbered 107, not the 101 this branch's own prior rebase picked (nor
+      # the 99 tasks.md's T003/T008 originally reserved): the review that
+      # allocated 107-113 found Gates 99-100 claimed by main
+      # (specs/059-converged-means-tasks-done and #587's turn-budget-docs
+      # gate) and 101-106 claimed by other open finalize PRs, so this
+      # feature's seven gates moved to the next collision-free block.
+      - name: "Gate 107 — Lifecycle readiness"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-lifecycle-readiness.py
-      - name: "Gate 101 self-test — unmet_reason names only the first failing condition, and a null review_gate is not-yet-reviewed"
+      - name: "Gate 107 self-test — unmet_reason names only the first failing condition, and a null review_gate is not-yet-reviewed"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-lifecycle-readiness.py --self-test
 
-      # Gate 102 — specs/062-lifecycle-review-gate T014: the shipped
+      # Gate 108 — specs/062-lifecycle-review-gate T014: the shipped
       # wing-commander-post-review-comment step emits exactly
       # -f event=COMMENT -F body=@<body-file>, and board-loop.yml's
       # reviewer job now calls the composite rather than its own inline
       # `gh api` call (CLAUDE.md's shared-logic rule, T012/T013). Numbered
-      # 102, not the 100 tasks.md's T014 reserved — see Gate 101's comment
+      # 108, not the 100 tasks.md's T014 reserved — see Gate 107's comment
       # above.
-      - name: "Gate 102 — wing-commander-post-review-comment composite"
+      - name: "Gate 108 — wing-commander-post-review-comment composite"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-post-review-comment-composite.py
-      - name: "Gate 102 self-test — a missing composite call and a lingering inline call are both caught"
+      - name: "Gate 108 self-test — a missing composite call and a lingering inline call are both caught"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-post-review-comment-composite.py --self-test
 
