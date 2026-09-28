@@ -3397,8 +3397,8 @@ jobs:
         run: python3 .github/scripts/verify-comment-canonical-pointers.py --self-test
 
       # Gate 48 — release.yml's pass 2, at PR time: shellcheck over the
-      # opt-in list of stages, and the closure check that every published
-      # stage is either on that list or knowingly exempt. Both ran only on
+      # linted list of stages, and the closure check that every published
+      # stage is on that list (no exemptions). Both ran only on
       # a release dispatch until #291, so a stage added to neither list
       # merged green and turned the next release red (2026-08-20 and
       # 2026-09-08). release.yml's Gate 1a now invokes this same script so
@@ -3407,7 +3407,7 @@ jobs:
       # not taken from the image, so the local sweep lints with the same
       # one CI does. It also fails any workflow or composite step naming a
       # fixed /tmp/<name> scratch path instead of $RUNNER_TEMP (#598).
-      - name: Gate 48 — every published stage is shell-linted or knowingly exempt, and the linted ones pass shellcheck
+      - name: Gate 48 — every published stage is shell-linted, and the linted ones pass shellcheck
         if: "!cancelled()"
         run: python3 .github/scripts/verify-stage-shell-lint.py
       - name: Gate 48 self-test — the closure rules and the shellcheck driver detect what they claim to
