@@ -2,8 +2,10 @@
   "issue": 506,
   "spec_dir": "specs/066-fine-grained-maintainer-token",
   "feature_num": "066",
-  "stage": "implement",
+  "stage": "stalled",
   "iteration": 3,
   "spec_branch": "spec/066-fine-grained-maintainer-token",
-  "pending_re_review_from": ["charlesguse"]
+  "pending_re_review_from": [
+    "charlesguse"
+  ]
 }
