@@ -292,3 +292,8 @@ With two developers (this repository's own concurrency guidance caps concurrent 
 1. Developer A: User Story 1 (T002-T007), then Polish (T023-T027) once T002/T003 land.
 1. Developer B: User Story 3's gate script (T013-T020), independent of User Story 1's edits until T021's live demonstration.
 2. Either developer picks up User Story 2 (T008-T012) once User Story 1 lands.
+
+## Maintainer Feedback
+
+- [ ] T029 In `.github/scripts/verify-lifecycle-label-taxonomy.py`, extend the applied-label-set scanner so it also inspects a step's `with.prompt` text (not only `step["run"]`), reusing `_labels_applied_in_run`'s segmentation against the prompt string; ensure comma-separated label lists (e.g. `"spec:<NNN-slug>,stage:spec"`) parse into individual `stage:*` tokens. Addresses PR #651 review comment (#649): Gate 99 currently cannot see `intake.yml:689`'s prompt-embedded `stage:spec` add, which T028 recorded as a known gap rather than fixed.
+- [ ] T030 [P] Add a Gate 99 `--self-test` fixture where the only writer for a documented label is a `with.prompt` field (no `run:` shell site at all) and confirm it PASSes only after T029 lands; confirm it FAILs (naming the label) against the pre-T029 scanner.
