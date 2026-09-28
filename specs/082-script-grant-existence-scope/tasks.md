@@ -241,3 +241,11 @@ within one PR, not separately shippable increments across multiple PRs.
 - [ ] T025 Apply the same git-tracked test to the forward existence check (`check_grant_existence`'s `exists[rel] = _script_exists(root, rel)` at `.github/scripts/verify-stage-tool-lists.py:555`), per the reviewer's 'consider the same change for the forward check' note, keeping the existing per-path memoization (FR-011).
 - [ ] T026 Add a `--self-test` mutation proving the fix: with an untracked file on disk at a waived path, `check_grant_existence` must NOT report the FR-007 staleness failure; with the same file `git add`-tracked (or an equivalent tracked fixture), it MUST report the failure. Reachable through the gate registry per Constitution VIII.
 - [ ] T027 Re-run `python3 .github/scripts/verify-stage-tool-lists.py --self-test`, `python3 .github/scripts/verify-stage-tool-lists.py`, and `python .github/scripts/run-local-gates.py` to confirm the fix and the full suite are green, including with an untracked `.wing-commander-pipeline/` present in the workspace (the reproduction case).
+
+---
+
+## Maintainer Feedback
+
+**Source**: PR #636 review, optional note on #630 (`.github/scripts/verify-stage-tool-lists.py` ~:567)
+
+- [ ] T028 Drop the extra literal `#` in the FR-007 stale-waiver failure message's format string (`.github/scripts/verify-stage-tool-lists.py:567`, `"{0} waives {1!r} (#{2}) as absent..."`), since `entry.get("issue", "?")` already carries the `#` prefix (e.g. `"#599"` in `script-grant-waivers.json`) and the doubled literal currently prints `##599`.
