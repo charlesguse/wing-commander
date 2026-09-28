@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,20 +31,23 @@
 
 ## Notes
 
-- **Three [NEEDS CLARIFICATION] markers remain by design** (FR-002 remedy
-  shape, FR-010 enforcement strength, FR-011 rule scope). Per this
-  repository's CI intake deviation, the markers stay in `spec.md` and the
-  questions are posted to the lifecycle issue rather than blocking on an
-  interactive answer. They are the three decisions that change what gets
-  built; everything else was resolved with a documented assumption.
+- **All three [NEEDS CLARIFICATION] markers are resolved** (2026-09-28,
+  answered on issue #658; recorded in the spec's Clarifications section).
+  Remedy shape is a gate over the concrete quote (FR-002, FR-012),
+  enforcement is blocking with a waiver file on the existing
+  `*-waivers.json` precedent (FR-010, FR-013, FR-014, SC-007), and the rule
+  binds only the one `board-loop.yml` claim that exists today (FR-011).
+  Requirements FR-012..FR-014 and SC-007 were added by those answers; the
+  Scope section and the review-skills assumption were narrowed to match.
 
 - **"No implementation details" reads differently for this feature.** The
   subject of the spec *is* two tracked files and the agreement between
   them, so `.claude/skills/spec-cross-reference/SKILL.md` and
   `.github/workflows/board-loop.yml` are named as subjects, not as chosen
-  implementations. No remedy mechanism (script name, gate number, comparison
-  technique) is prescribed — FR-002 explicitly defers the mechanism to
-  clarify and plan.
+  implementations. Clarify has now fixed the remedy *shape* (a blocking
+  gate over the concrete quote, with a waiver file), but still no script
+  name, gate number, or comparison technique — those remain plan's to
+  choose.
 
 - **The originating report's premise is inverted, and the spec says so.**
   `board-loop.yml` still carries the single workflow-level concurrency
@@ -53,5 +56,4 @@
   literally "describe the per-job split", that intent cannot be satisfied
   against the current tree and should be raised before planning.
 
-- Items marked incomplete require spec updates before `/speckit-clarify` or
-  `/speckit-plan`.
+- No items remain incomplete; the spec is ready for `/speckit-plan`.

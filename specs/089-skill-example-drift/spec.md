@@ -81,17 +81,51 @@ exist. A claim that cannot be dated cannot be triaged.
 
 ## Scope
 
-In scope: the durability of structural claims the `spec-cross-reference`
-skill makes about files it does not own — today, the single claim about
-`board-loop.yml`'s concurrency configuration. Whether the rule generalizes
-to every skill document is a question this spec raises rather than assumes
-(the two other review skills, `review-step-gating` and
-`container-shell-safety`, name workflow files only as example command
-arguments, never as load-bearing assertions about their content).
+In scope: the durability of the single structural claim the
+`spec-cross-reference` skill makes about a file it does not own — the
+Over-rated example's assertion about `board-loop.yml`'s concurrency
+configuration — and a blocking gate that owns it.
 
 Out of scope: changing `board-loop.yml`'s concurrency configuration, and
 deciding spec 060's design. This feature must follow the workflow, never
-anticipate it.
+anticipate it. Also out of scope: generalizing the rule to every skill
+document. The two other review skills, `review-step-gating` and
+`container-shell-safety`, name workflow files only as example command
+arguments, never as load-bearing assertions about their content, so there
+is nothing for a registry to hold; building one, or recording an intent to
+cover examples that do not exist, would add weight nothing acts on.
+
+## Clarifications
+
+### Session 2026-09-28
+
+- Q: Which remedy shape — remove the file-specific detail so there is
+  nothing to drift, keep the concrete quote and gate it against the
+  workflow, or restate the example as dated history plus a reader
+  instruction? → A: Keep the concrete quote and add a gate. CLAUDE.md says
+  a rule with no gate behind it lasts until the next session, and the
+  constitution treats a check that cannot fail as a liability; the
+  reader-instruction option leaves the claim unenforced, and dropping the
+  detail throws away the concreteness FR-005 exists to protect. The
+  accepted cost is a gate that has to read two files' shapes rather than
+  compare two strings. (FR-002, FR-005, FR-012)
+- Q: Should a drift failure block the PR that changes `board-loop.yml`, or
+  be advisory so a concurrency change is never held up by a doc edit? → A:
+  Blocking, with a waiver file on the existing `*-waivers.json` precedent
+  (single-home, stage-invariant, spec-branch-push). A PR that outdates the
+  example — spec 060's, for instance — lands with a waiver entry while a
+  human session updates the skill, because the implement stage agent cannot
+  write under `.claude/` (#489, #675). The accepted cost is a second
+  tracked file whose entries must themselves be stale-checked so a waiver
+  cannot become a permanent exemption. (FR-010, FR-013, FR-014, SC-001,
+  SC-007)
+- Q: Does the rule bind this one `board-loop.yml` claim, or every
+  structural quote in every skill document? → A: The one example that
+  exists today. No registry, and no recorded intent to cover future
+  examples — recording intent that nothing acts on only adds weight to the
+  system. A second quoted example gets the gate extended when it appears.
+  The accepted cost is that a future skill author quoting a workflow fact
+  is not obliged by anything to register it. (FR-011)
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -159,6 +193,14 @@ that names the skill line and the workflow line that disagree.
    suite runs, **Then** it passes.
 3. **Given** a branch that touches neither file, **When** the suite runs,
    **Then** the check adds no failure and no manual step.
+4. **Given** a branch that changes the concurrency block and cannot touch
+   `.claude/` (an implement-stage PR), **When** it records a waiver entry
+   naming the reason and the tracking issue, **Then** the suite passes and
+   the branch merges with the divergence in the open rather than hidden.
+5. **Given** that waiver still recorded after a later session brings the
+   skill back into agreement, **When** the suite runs, **Then** it fails on
+   the stale waiver, so the exemption cannot outlive the update it was
+   waiting on.
 
 ---
 
@@ -224,12 +266,12 @@ or the issue history.
 - **FR-002**: Every structural claim the skill makes about a file it does
   not own MUST have a mechanical owner — something in the PR-time gate
   suite that fails when the claim and the quoted file diverge — rather than
-  depending on a future reader noticing.
-  [NEEDS CLARIFICATION: which remedy shape does the owner want — remove the
-  file-specific detail from the example so there is nothing to drift, keep
-  the concrete quote and add a gate that compares it against the workflow,
-  or restate the example as dated history plus extend Procedure step 2 to
-  cover the skill's own claims? See Q1.]
+  depending on a future reader noticing. The remedy is a **gate over the
+  concrete quote**: the Over-rated example keeps its specific claim about
+  `board-loop.yml`, and a check compares that claim against the workflow.
+  De-concretizing the example, or relying on an instruction to the reader
+  alone, is not sufficient — a rule with no gate behind it lasts until the
+  next session, and a check that cannot fail is a liability.
 
 - **FR-003**: The skill MUST apply to its own worked example the same force
   its Procedure step 2 already applies to claims a *spec* makes — a reader
@@ -269,27 +311,51 @@ or the issue history.
 - **FR-010**: The enforcement MUST be registered with the repository's
   existing PR-time gate suite so it runs from
   `python .github/scripts/run-local-gates.py` and in CI by the same
-  derivation, with no separate invocation to remember.
-  [NEEDS CLARIFICATION: should a drift failure block the PR that changes
-  `board-loop.yml` — forcing the skill update into that same PR — or should
-  it be advisory so a concurrency change is never held up by a doc edit?
-  See Q2.]
+  derivation, with no separate invocation to remember. A drift failure is
+  **blocking**: the PR that changes `board-loop.yml` does not merge while
+  the skill still describes the previous shape. It is not advisory.
 
-- **FR-011**: The rule MUST state explicitly whether it binds only this one
-  claim or every structural claim in `.claude/skills/**`, so a future skill
-  author knows whether quoting a workflow fact obliges them to register it.
-  [NEEDS CLARIFICATION: scope — this single `board-loop.yml` concurrency
-  claim, or a general registry covering every structural quote in every
-  skill document? See Q3.]
+- **FR-011**: The rule binds **only this one claim** — the
+  `spec-cross-reference` Over-rated example's assertion about
+  `board-loop.yml`'s concurrency configuration. The feature MUST NOT build
+  a registry covering every structural quote in `.claude/skills/**`, and
+  MUST NOT record an intent to cover future examples that nothing acts on.
+  If a second load-bearing structural quote appears in a skill document
+  later, the gate is extended then.
+
+- **FR-012**: The comparison MUST cover the properties the refutation
+  actually leans on, not merely the group's name: that the concurrency
+  block is workflow-level (so it applies to every trigger in the file),
+  that its group is repository-wide, and that a second run queues rather
+  than cancelling (`cancel-in-progress: false`). A change that keeps the
+  group name while dropping any of these MUST fail the check.
+
+- **FR-013**: A PR that outdates the example MUST be able to land behind a
+  recorded waiver rather than being stuck, because the implement stage
+  agent cannot write under `.claude/` (issues #489, #675) and so cannot fix
+  the skill in the same PR. The waiver MUST follow this repository's
+  existing `*-waivers.json` precedent
+  (`single-home-waivers.json`, `stage-invariant-waivers.json`,
+  `spec-branch-push-waivers.json`): one tracked file, each entry carrying a
+  reason and a tracking issue, in the open rather than as a name missing
+  from a list.
+
+- **FR-014**: Waiver entries MUST be stale-checked in both directions, the
+  way the existing waiver files are: an entry whose subject no longer
+  diverges MUST fail the gate, so a waiver cannot outlive the update it was
+  waiting on. Waiving MUST therefore be a temporary state that a later
+  human session closes out, never a permanent exemption.
 
 ## Success Criteria *(mandatory)*
 
 ### Measurable Outcomes
 
 - **SC-001**: A change to `board-loop.yml`'s concurrency configuration
-  cannot reach `main` with the skill still describing the previous shape —
-  the divergence is surfaced by the gate suite before merge, in 100% of
-  cases, rather than by a reader.
+  cannot reach `main` with the skill silently still describing the previous
+  shape — the divergence is surfaced by the gate suite before merge, in
+  100% of cases, rather than by a reader. The only path past it is a
+  recorded waiver entry naming a tracking issue, which the gate itself
+  removes the cover for once the skill is updated.
 
 - **SC-002**: A reviewer invoking the skill against a concurrency-shaped
   finding reaches the verdict that matches the branch under review, with
@@ -312,6 +378,11 @@ or the issue history.
   one tracked location; the claim has exactly one home, consistent with the
   repository's single-home rule.
 
+- **SC-007**: A PR that changes `board-loop.yml`'s concurrency block can
+  still merge without a `.claude/` edit by recording one waiver entry, and
+  that same entry fails the gate once the skill is brought back into
+  agreement — both demonstrated, so the waiver is provably temporary.
+
 ## Assumptions
 
 - The workflow-level concurrency block at
@@ -325,8 +396,9 @@ or the issue history.
   it remains the governing requirement unless spec 060 supersedes it.
 - `review-step-gating` and `container-shell-safety` reference workflow files
   only as example command arguments and carry no load-bearing assertion
-  about another file's content, so they need no remediation today — but a
-  general rule (Q3) would bind them going forward.
+  about another file's content, so they need no remediation today, and
+  FR-011 leaves them unbound going forward. The gate covers the one claim
+  that exists; a second one gets the gate extended when it appears.
 - The remedy is a documentation-and-gate change; no workflow behaviour, no
   agent prompt, and no pipeline stage contract changes as part of it.
 - The originating report's factual claim about eight per-job blocks is a
