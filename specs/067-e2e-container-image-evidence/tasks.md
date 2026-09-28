@@ -248,3 +248,11 @@ With two maintainers/agents (CLAUDE.md caps concurrent local agents at two for t
 - [ ] Change the container-mode evidence execution check in `.github/workflows/auto-release.yml` (~line 1484-1490) to match a job's containerization exclusion against the suffix of its name after the last ` / ` (reusable-workflow jobs report as `caller / job`, e.g. real run 36484092749's `implement / verify-image-prerequisites`), not an exact-name match, so real container-mode runs are no longer misflagged as non-containerized.
 - [ ] Extend the same exclusion to the wrappers' host-side jobs: `resolve-model` in `wing-commander-5-implement.yml` and `wing-commander-9-pr-conversation.yml`, and `sweep`.
 - [ ] Update Gate 106's (see following item) fixtures to use real `caller / job`-shaped names, including a `resolve-model` wrapper job, so the gate would fail without this fix (i.e. actually exercises the suffix-matching and host-side-job exclusion logic).
+
+## Maintainer Feedback
+
+- [ ] Rename the container-mode evidence gate from its current mismatched labeling (script/messages say "Gate 99", `lint-workflows.yml` step names say "Gate 101", which collides with spec 060's 101-103) to **Gate 106** consistently:
+  - [ ] `.github/scripts/verify-gate-99.py` → `.github/scripts/verify-gate-106.py`
+  - [ ] the corresponding step names in `.github/workflows/lint-workflows.yml`
+  - [ ] the script's own internal messages/docstring (`Gate 99` references)
+  - [ ] the spec docs referencing the gate number (`specs/067-e2e-container-image-evidence/research.md`, `tasks.md`)
