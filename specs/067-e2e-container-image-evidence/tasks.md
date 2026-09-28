@@ -227,3 +227,10 @@ With two maintainers/agents (CLAUDE.md caps concurrent local agents at two for t
   but, like D4 itself, this remains unconfirmed against real Jobs API data
   until a session with live dispatch access completes T016-T019/T022 and,
   from that, T032.
+
+## Maintainer Feedback
+
+- [ ] Exclude jobs with `conclusion == "skipped"` from the `noncontainerized` job-name enumeration in `auto-release.yml`'s poll step (the `jq -r '.[] | select(([.steps[]?.name // empty] | index("Initialize containers")) | not) | .name'` loop, ~line 1461), so skipped conditional jobs (e.g. `stalled`, which report `steps: []`) don't trip the container-execution check.
+- [ ] Exclude the host-side `verify-image-prerequisites` job from that same enumeration — every stage workflow (e.g. `intake.yml`) has this job gated on `if: inputs.container-image != ''`, it carries no `container:` key and always runs on the host, so it always lacks an `Initialize containers` step even on a genuine container-mode pass.
+- [ ] Limit the `gh run list --repo "$E2E_REPO" --created ">=${kickoff_time}"` enumeration (~line 1446) to only the stage workflows this turn actually drove, so unrelated workflow runs created in the test repository after `kickoff_time` cannot pollute `noncontainerized`.
+- [ ] Add a Gate 99 (`verify-gate-99.py`) fixture for each of the three cases above: a passing container-mode run whose job set includes a skipped `stalled` job, one whose job set includes `verify-image-prerequisites`, and one where an unrelated workflow run was created in the test repository after `kickoff_time` — confirming the gate still passes a genuine container-mode success in each case.

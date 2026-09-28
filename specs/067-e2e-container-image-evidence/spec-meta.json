@@ -2,8 +2,8 @@
   "issue": 509,
   "spec_dir": "specs/067-e2e-container-image-evidence",
   "feature_num": "067",
-  "stage": "review",
+  "stage": "implement",
   "iteration": 1,
   "spec_branch": "spec/067-e2e-container-image-evidence",
-  "pending_re_review_from": []
+  "pending_re_review_from": ["charlesguse"]
 }
