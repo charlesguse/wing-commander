@@ -1027,6 +1027,30 @@ jobs:
           if [ "$META_STAGE" = "$expected" ]; then
             exit 0
           fi
+          # Issue #686: META_STAGE is read from the spec branch TIP at
+          # inspection time, not as of the inspected run's end, so a stage
+          # that succeeded and chained into the next one is routinely seen
+          # already advanced (plan read as "tasks", implement as "review").
+          # A recorded stage LATER in the lifecycle than expected is the
+          # pipeline having moved on, not drift; only an EARLIER stage, or a
+          # value off this list ("stalled", anything unknown), is a mismatch.
+          # This list is the one home for the primary stage field's order.
+          stage_order="spec plan tasks implement review"
+          stage_rank() {
+            local i=0 s
+            for s in $stage_order; do
+              if [ "$s" = "$1" ]; then echo "$i"; return 0; fi
+              i=$((i + 1))
+            done
+            echo -1
+          }
+          expected_rank="$(stage_rank "$expected")"
+          actual_rank="$(stage_rank "$META_STAGE")"
+          # An off-list value ranks -1, below every expected stage.
+          if [ "$actual_rank" -gt "$expected_rank" ]; then
+            echo "spec-meta: recorded stage '$META_STAGE' is later in the lifecycle than '$expected' — the pipeline already advanced past this run (#686). No mismatch." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           entry=$(jq -n --arg expected "$expected" --arg actual "$META_STAGE" \
             '[{source:"spec-meta","class-hint":"stage-mismatch",facts:{"expected-stage":$expected,"actual-stage":$actual}}]')
           jq -c --argjson new "$entry" '. + $new' "$RUNNER_TEMP/signals.json" > "$RUNNER_TEMP/signals.json.tmp" && mv "$RUNNER_TEMP/signals.json.tmp" "$RUNNER_TEMP/signals.json"

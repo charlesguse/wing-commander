@@ -1840,6 +1840,88 @@ SPEC_META_SCENARIOS = [
         slug="024-watchdog-precision-hardening",
         expect_signal=False,
     ),
+    # Issue #686 (dups #671, #687): the recorded stage is read at the spec
+    # branch TIP when the watchdog inspects, so a successful stage that
+    # already chained into the next one reads as a LATER stage. These are
+    # the observed runs; none of them is drift.
+    dict(
+        name="plan run 36473729960 succeeded and the spec already moved on "
+             "to tasks: no signal (#686)",
+        run_conclusion="success",
+        run_name="Wing Commander · 3 plan",
+        meta_stage="tasks",
+        slug="024-watchdog-precision-hardening",
+        expect_signal=False,
+    ),
+    dict(
+        name="implement run 36480201695 succeeded and finalize already set "
+             "review: no signal (#686)",
+        run_conclusion="success",
+        run_name="Wing Commander · 5 implement",
+        meta_stage="review",
+        slug="024-watchdog-precision-hardening",
+        expect_signal=False,
+    ),
+    dict(
+        name="implement run 36480221990 succeeded and finalize already set "
+             "review: no signal (#686)",
+        run_conclusion="success",
+        run_name="Wing Commander · 5 implement",
+        meta_stage="review",
+        slug="024-watchdog-precision-hardening",
+        expect_signal=False,
+    ),
+    dict(
+        name="implement run succeeded but the spec is still at tasks (an "
+             "EARLIER stage): a stage-mismatch signal is emitted (#686)",
+        run_conclusion="success",
+        run_name="Wing Commander · 5 implement",
+        meta_stage="tasks",
+        slug="024-watchdog-precision-hardening",
+        expect_signal=True,
+    ),
+    dict(
+        name="tasks run succeeded but the spec reads stalled (off the "
+             "lifecycle order): a stage-mismatch signal is emitted (#686)",
+        run_conclusion="success",
+        run_name="Wing Commander · 4 tasks",
+        meta_stage="stalled",
+        slug="024-watchdog-precision-hardening",
+        expect_signal=True,
+    ),
+    dict(
+        name="finalize run succeeded but the spec reads an unknown stage: a "
+             "stage-mismatch signal is emitted (#686)",
+        run_conclusion="success",
+        run_name="Wing Commander · 6 finalize",
+        meta_stage="bogus",
+        slug="024-watchdog-precision-hardening",
+        expect_signal=True,
+    ),
+]
+
+
+def mutate_spec_meta(script, old, new, what):
+    if script.count(old) != 1:
+        sys.exit(f"::error::verify-gate-19: could not locate spec-meta's {what} "
+                 f"(#686) to mutate — the step text may have changed shape; "
+                 f"update this harness alongside it.")
+    return script.replace(old, new, 1)
+
+
+# Each must break at least one SPEC_META_SCENARIOS fixture (#686).
+SPEC_META_MUTATIONS = [
+    ("spec-meta's advanced-stage acceptance (#686)",
+     'if [ "$actual_rank" -gt "$expected_rank" ]; then',
+     'if false; then'),
+    ("spec-meta accepting an EARLIER stage as advanced (#686)",
+     'if [ "$actual_rank" -gt "$expected_rank" ]; then',
+     'if [ "$actual_rank" -ne "$expected_rank" ]; then'),
+    ("spec-meta ranking an off-order stage (stalled/unknown) as latest (#686)",
+     'echo -1\n', 'echo 99\n'),
+    ("spec-meta's lifecycle order reversed (#686)",
+     'stage_order="spec plan tasks implement review"',
+     'stage_order="review implement tasks plan spec"'),
 ]
 
 
@@ -2273,6 +2355,11 @@ def main():
             "spec-meta's RUN_CONCLUSION attribution guard (FR-026)",
             suite_spec_meta, spec_meta_script, spec_meta_env, spec_meta_tmproot,
             "RUN_CONCLUSION"))
+        for label, old, new in SPEC_META_MUTATIONS:
+            spec_meta_failures.extend(run_script_mutation(
+                label, suite_spec_meta,
+                mutate_spec_meta(spec_meta_script, old, new, label),
+                spec_meta_env, spec_meta_tmproot))
     finally:
         shutil.rmtree(spec_meta_tmproot, ignore_errors=True)
     for f in spec_meta_failures:
