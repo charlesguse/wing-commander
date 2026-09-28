@@ -67,6 +67,14 @@
       "reason": "specs/057-autonomous-board-loop tasks.md T054 (repoint auto-release.yml's dispatch-release job at the new wing-commander-dispatch-and-wait composite) is NOT done in this cycle, and its blocker is specific and checkable: Gate 59 (verify-correlated-release-dispatch.py) checks 3, 4 and 5 assert the correlation search, the tag-state outcome and the wait-for-status all appear in auto-release.yml's OWN raw YAML text -- it is a line-based textual gate over that one file, not an execution harness. Repointing the job moves that shell into the composite and makes Gate 59 fail, so T054 is not a repoint but a coupled redesign of spec 048's own regression gate. dispatch-release also emits six outputs (correlation, correlated-run-id, correlated-run-url, tag-matches, request-time, dispatch-rejected) that its report job branches on, including the three-way found/ambiguous/not-observed distinction and the 90-second fixed wait on the uncorrelated path, none of which this composite's contracted run-url/conclusion pair can carry. board-loop.yml's own prove job reaches the idiom only through the composite. Remove this waiver when T054 lands."
     },
     {
+      "file": ".github/workflows/pr-conversation.yml",
+      "check": "promotion",
+      "pattern": "\\.github/actions/_shared/cancel-already-terminal\\.sh",
+      "count": 1,
+      "issue": "#621",
+      "reason": "specs/087-stop-cancel-error-classification research.md D1/contracts/cancel-already-terminal-script.md: pr-conversation.yml's Stop procedure is a plain workflow job (not a composite), so it resolves the shared already-terminal predicate the same repo-root-relative way _shared/auto-release-verdict.sh's own call sites in auto-release.yml do -- auto-release.yml itself carries no workflow_call trigger and so is outside this check's scope, but pr-conversation.yml IS a workflow_call-only published stage, which is what makes this a promotion the gate correctly notices rather than an accidental one. Routing it through a composite instead, purely to dodge this check, would add a call-site layer this feature's own scope (research.md D1's 'minimal edit') does not otherwise need."
+    },
+    {
       "file": ".github/workflows/board-loop.yml",
       "check": "stage-findings",
       "pattern": "sha256\\(\\.\\.\\.\\) \\+ fingerprint_basis \\+ validate_finding co-occurrence",

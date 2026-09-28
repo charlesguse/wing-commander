@@ -230,6 +230,13 @@ DECLARED_HOMES = {
     # implement.yml's own former inline step so implement/plan/tasks share
     # one copy.
     "branch-advance-capture": ".github/actions/wing-commander-branch-advance/action.yml",
+    # specs/087-stop-cancel-error-classification, FR-009a: the
+    # already-terminal-cancellation vocabulary (409 / already completed /
+    # cannot cancel). Consumed by wing-commander-board-stop-check and
+    # pr-conversation.yml's Stop procedure -- a third site re-implementing
+    # the recognition pattern (rather than calling the shared script) is
+    # what this check catches.
+    "cancel-already-terminal": ".github/actions/_shared/cancel-already-terminal.sh",
 }
 CHECK_NAMES = tuple(DECLARED_HOMES) + ("promotion",)
 
@@ -304,6 +311,19 @@ SHARED_REF_RE = re.compile(r"\.github/actions/_shared/[A-Za-z0-9_.\-/]+")
 BRANCH_ADVANCE_FETCH_FRAGMENT = 'git fetch origin "+refs/heads/$'
 BRANCH_ADVANCE_REVLIST_RE = re.compile(
     r'git rev-list --count "\$[A-Za-z_][A-Za-z0-9_]*\.\.')
+# specs/087-stop-cancel-error-classification, FR-009a: the three fragments
+# that only ever legitimately co-occur, all three, inside ONE recognition
+# construct (a grep/case/regex argument) in the already-terminal-
+# cancellation idiom. `409` is deliberately the bare digits, not `HTTP
+# 409` -- research.md D7/contracts/cancel-already-terminal-script.md: a
+# re-pasted copy of the idiom's ORIGINAL, unanchored form
+# ('409|already completed|cannot cancel') must still be caught, and this
+# is a duplicate-detection heuristic, not the shipped predicate's own
+# HTTP-anchored matching behaviour (that anchoring lives in
+# cancel-already-terminal.sh itself, check_cancel_already_terminal's
+# subject).
+CANCEL_ALREADY_TERMINAL_FRAGMENTS = ("409", "already completed", "cannot cancel")
+QUOTED_LITERAL_RE = re.compile(r"'([^'\\]*(?:\\.[^'\\]*)*)'|\"([^\"\\]*(?:\\.[^\"\\]*)*)\"")
 
 Finding = namedtuple("Finding", ["path", "check", "line", "text"])
 
@@ -504,6 +524,31 @@ def check_transcript_normalise(root="."):
         for m in TRANSCRIPT_NORMALISE_RE.finditer(text):
             findings.append(Finding(path, "transcript-normalise",
                                     line_of(text, m.start()), m.group(0)))
+    return findings
+
+
+# --------------------------------------------------------------------------
+# Check: cancel-already-terminal (single-literal co-occurrence, FR-009a)
+# --------------------------------------------------------------------------
+def check_cancel_already_terminal(root="."):
+    """Unlike the file-wide checks above, this looks for all three
+    vocabulary fragments inside ONE quoted string literal -- a file-wide
+    scan would false-positive on pr-conversation.yml's own surviving
+    rationale comments and PR-facing prose, which legitimately mention all
+    three phrases, each in its own separate line/string (research.md D7)."""
+    home = DECLARED_HOMES["cancel-already-terminal"]
+    findings = []
+    for path in all_subject_files(root):
+        if path == home:
+            continue
+        text = read(root, path)
+        for m in QUOTED_LITERAL_RE.finditer(text):
+            literal = m.group(1) if m.group(1) is not None else m.group(2)
+            lowered = literal.lower()
+            if all(frag in lowered for frag in CANCEL_ALREADY_TERMINAL_FRAGMENTS):
+                findings.append(Finding(
+                    path, "cancel-already-terminal", line_of(text, m.start()),
+                    literal[:120]))
     return findings
 
 
@@ -728,6 +773,7 @@ ALL_CHECKS = {
     "dispatch-and-wait": check_dispatch_and_wait,
     "board-stop-check": check_board_stop_check,
     "transcript-normalise": check_transcript_normalise,
+    "cancel-already-terminal": check_cancel_already_terminal,
     "verdict-shape": check_verdict_shape,
     "token-mint": check_token_mint,
     "mode-tag-shape": check_mode_tag_shape,
@@ -1088,6 +1134,14 @@ def _clean_tree(root):
           "origin/$branch\"\n"
           "        commits=\"$(git rev-list --count "
           "\"$BEFORE_SHA..$after_sha\")\"\n")
+    _write(root, DECLARED_HOMES["cancel-already-terminal"],
+          "#!/usr/bin/env bash\n"
+          "if printf '%s' \"$1\" | grep -qiE "
+          "'http 409|already completed|cannot cancel'; then\n"
+          "  exit 0\n"
+          "else\n"
+          "  exit 1\n"
+          "fi\n")
     _write(root, ".github/workflows/harmless.yml",
           "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
           "      - run: echo hi\n")
@@ -1227,6 +1281,39 @@ def selftest_promotion_fails():
         if not composite_hit:
             fail(f"[{case}] non-underscore composite resolving _shared/ was not caught")
         if stage_hit and composite_hit:
+            note(f"[{case}] passed")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def selftest_cancel_vocab_scattered_mentions_pass():
+    """Modeled on pr-conversation.yml's own surviving lines (research.md
+    D6: "unchanged: everything else in this step") -- a rationale comment
+    naming HTTP 409, a PR-comment body naming "already completed", and a
+    third line naming "cannot cancel" each stay their own separate
+    literal/comment, never combined into one recognition construct. A
+    file-wide check would false-positive here; this one must not."""
+    case = "scattered cancel-vocabulary mentions across separate lines do not false-positive"
+    tmp = tempfile.mkdtemp(prefix="wc-single-home-")
+    try:
+        _clean_tree(tmp)
+        _write(tmp, ".github/workflows/scattered-cancel-vocab.yml",
+              "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
+              "      - shell: bash\n        run: |\n"
+              "          # A genuine already-completed run reports itself via HTTP 409.\n"
+              "          echo \"The announced run had already completed "
+              "\u2014 nothing was cancelled.\"\n"
+              "          echo \"The run reports it cannot cancel the target.\"\n"
+              "          bash .github/actions/_shared/"
+              "cancel-already-terminal.sh \"$cancel_error\"\n")
+        findings, hard = evaluate(tmp)
+        if hard:
+            fail(f"[{case}] unexpected hard failure(s): {hard}")
+            return
+        hits = [f for f in findings if f.check == "cancel-already-terminal"]
+        if hits:
+            fail(f"[{case}] false positive: {hits}")
+        else:
             note(f"[{case}] passed")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -1386,6 +1473,15 @@ def run_selftest():
         "      - shell: bash\n        env:\n"
         "          OUTCOME: ${{ steps.mint.outcome }}\n"
         "        run: echo hi\n")
+    selftest_third_paste_fails(
+        "cancel-already-terminal", ".github/workflows/third-cancel-vocab.yml",
+        "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - shell: bash\n        run: |\n"
+        "          if grep -qiE '409|already completed|cannot cancel' "
+        "\"$RUNNER_TEMP/cancel-err.txt\" 2>/dev/null; then\n"
+        "            outcome=already-completed\n"
+        "          fi\n")
+    selftest_cancel_vocab_scattered_mentions_pass()
     selftest_waived_copy_passes()
     selftest_stale_waiver_fails()
     selftest_promotion_fails()

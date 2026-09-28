@@ -2499,7 +2499,7 @@ jobs:
             # misconfigured token — is NOT an already-completed outcome and
             # must not be reported as one (T062/FR-024/SC-009): the targeted
             # run may still be running.
-            if grep -qiE '409|already completed|cannot cancel' "$RUNNER_TEMP/cancel-err.txt" 2>/dev/null; then
+            if bash .github/actions/_shared/cancel-already-terminal.sh "$(cat "$RUNNER_TEMP/cancel-err.txt" 2>/dev/null)"; then
               outcome="already-completed"
             else
               outcome="cancel-failed"
