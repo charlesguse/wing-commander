@@ -212,35 +212,35 @@ legible when it shares an issue with another unanchorable defect.
 about an existing file with nothing quotable, each still reach the board
 (filed or appended, never dropped), each readable in full.
 
-- [ ] T014 [US3] In `run_fixtures.py`, add a fixture function (e.g.
+- [X] T014 [US3] In `run_fixtures.py`, add a fixture function (e.g.
   `case_anchor_absent_from_existing_file_takes_fallback`) proving the
   contracts/anchor-verification.md fixture table's third row: a finding
   whose `fingerprint_basis.file_path` names a fixture file that exists but
   whose content does not contain (even normalized) the finding's
   `gate_or_artifact` takes the FR-007 fallback key.
-- [ ] T015 [US3] Add a fixture function (e.g.
+- [X] T015 [US3] Add a fixture function (e.g.
   `case_two_unanchorable_findings_share_fallback_key`) proving FR-011: two
   such absent-anchor findings in the same fixture file produce the same
   fallback key.
-- [ ] T016 [US3] Add a fixture function (e.g.
+- [X] T016 [US3] Add a fixture function (e.g.
   `case_fallback_and_with_anchor_keys_do_not_collide`) proving FR-011's
   "does not collide" clause and the Edge Cases entry on the
   anchored/unanchored split: one fallback-keyed finding and one
   with-anchor-keyed finding in the same fixture file produce distinct
   keys.
-- [ ] T017 [US3] Add a fixture function (e.g.
+- [X] T017 [US3] Add a fixture function (e.g.
   `case_anchor_normalizing_to_empty_takes_fallback`) proving the Edge
   Cases entry / research.md D1: a `gate_or_artifact` made only of
   punctuation/whitespace (normalizes to the empty string) takes the
   fallback key, and the with-anchor key's third segment is never an empty
   string.
-- [ ] T018 [US3] Add a fixture function (e.g.
+- [X] T018 [US3] Add a fixture function (e.g.
   `case_missing_named_file_takes_fallback`) proving
   contracts/anchor-verification.md's last fixture-table row and User Story
   3's own independent test: `fingerprint_basis.file_path` naming a path
   that does not exist anywhere under the working directory takes the
   fallback key rather than failing the step.
-- [ ] T019 [US3] Add a fixture function (e.g.
+- [X] T019 [US3] Add a fixture function (e.g.
   `case_fallback_issue_append_carries_each_findings_own_text`) exercising
   T005's `compose_recap()` change in the context FR-007/FR-008 name: for
   an unanchorable finding, assert the recap file the "prepare" step writes
@@ -249,7 +249,7 @@ about an existing file with nothing quotable, each still reach the board
   share one fallback-keyed issue (already proven generically able to
   dedup by `case_dedup_hit_open_comments_not_duplicates`), each remains
   individually legible from the issue body per SC-005.
-- [ ] T020 [US3] Add T014-T019's function(s) to the `CASES` list in
+- [X] T020 [US3] Add T014-T019's function(s) to the `CASES` list in
   `run_fixtures.py`.
 
 **Checkpoint**: Unanchorable findings never vanish, and a shared fallback

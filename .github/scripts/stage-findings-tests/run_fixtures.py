@@ -21,6 +21,7 @@ Invoked via the thin run-tests.sh wrapper beside this file. Lives under
 shipped -- see run-tests.sh's own header comment.
 """
 import glob
+import hashlib
 import json
 import os
 import re
@@ -451,6 +452,135 @@ def case_key_is_rederivable_from_recorded_inputs():
         markers.append(outputs.get("survivor-0-marker", ""))
     check(case + ": two independent runs, same inputs, identical key",
           markers[0] and markers[0] == markers[1], markers)
+
+
+def _norm_for_fixtures(value):
+    return " ".join(re.sub(r"[\W_]+", " ", str(value).lower()).split())
+
+
+def _fallback_key(stage, file_path):
+    return hashlib.sha256(
+        "fallback|{0}|{1}".format(stage, _norm_for_fixtures(file_path)).encode("utf-8")
+    ).hexdigest()
+
+
+def case_anchor_absent_from_existing_file_takes_fallback():
+    case = "an anchor absent from an EXISTING file's content takes the FR-007 fallback key (contracts/anchor-verification.md fixture table row 3)"
+    tmp = tempfile.mkdtemp(prefix="wc-sf-absentanchor-")
+    with open(os.path.join(tmp, "existing-nothing-quotable.md"), "w", encoding="utf-8") as fh:
+        fh.write("Nothing in this file matches the finding's own anchor text.\n")
+    finding = valid_finding(
+        title="anchor absent from an existing file",
+        fingerprint_basis={"file_path": "existing-nothing-quotable.md",
+                           "gate_or_artifact": "Gate 12345"})
+    rc, outputs, state, out = run_prepare(tmp, "structured-array", findings=[finding])
+    check(case + ": exit 0", rc == 0, out)
+    expected = "<!-- wing-commander-finding: fingerprint={0} -->".format(
+        _fallback_key("implement", "existing-nothing-quotable.md"))
+    check(case + ": takes exactly the FR-007 fallback key, independently re-derived",
+          outputs.get("survivor-0-marker") == expected,
+          (outputs.get("survivor-0-marker"), expected))
+
+
+def case_two_unanchorable_findings_share_fallback_key():
+    case = "two findings with no verifiable anchor in the same file share the fallback key (FR-011)"
+    tmp = tempfile.mkdtemp(prefix="wc-sf-twofallback-")
+    with open(os.path.join(tmp, "no-anchors-here.md"), "w", encoding="utf-8") as fh:
+        fh.write("A file with no quotable anchor for either finding below.\n")
+    findings = [
+        valid_finding(title="first unanchorable finding", fingerprint_basis={
+            "file_path": "no-anchors-here.md", "gate_or_artifact": "Gate one-thousand"}),
+        valid_finding(title="second, differently worded unanchorable finding", fingerprint_basis={
+            "file_path": "no-anchors-here.md", "gate_or_artifact": "an entirely different anchor"}),
+    ]
+    rc, outputs, state, out = run_prepare(tmp, "structured-array", findings=findings)
+    check(case + ": exit 0", rc == 0, out)
+    check(case + ": two survivors", outputs.get("survivor-count") == "2", out)
+    m0, m1 = outputs.get("survivor-0-marker"), outputs.get("survivor-1-marker")
+    check(case + ": both share the same fallback key", m0 and m0 == m1, (m0, m1))
+
+
+def case_fallback_and_with_anchor_keys_do_not_collide():
+    case = "a fallback-keyed finding and a with-anchor-keyed finding in the same file produce distinct keys (FR-011's 'does not collide' clause; Edge Cases)"
+    tmp = tempfile.mkdtemp(prefix="wc-sf-nocollide-")
+    with open(os.path.join(tmp, "mixed.md"), "w", encoding="utf-8") as fh:
+        fh.write("## Gate 88 -- the one anchor this file actually contains\n")
+    findings = [
+        valid_finding(title="verified-anchor finding", fingerprint_basis={
+            "file_path": "mixed.md", "gate_or_artifact": "Gate 88"}),
+        valid_finding(title="unverifiable-anchor finding", fingerprint_basis={
+            "file_path": "mixed.md", "gate_or_artifact": "Gate 89 (not in this file)"}),
+    ]
+    rc, outputs, state, out = run_prepare(tmp, "structured-array", findings=findings)
+    check(case + ": exit 0", rc == 0, out)
+    m0, m1 = outputs.get("survivor-0-marker"), outputs.get("survivor-1-marker")
+    check(case + ": the with-anchor key and the fallback key for the same file are distinct",
+          m0 and m1 and m0 != m1, (m0, m1))
+    check(case + ": the second finding's key is exactly the independently re-derived fallback key",
+          m1 == "<!-- wing-commander-finding: fingerprint={0} -->".format(
+              _fallback_key("implement", "mixed.md")), m1)
+
+
+def case_anchor_normalizing_to_empty_takes_fallback():
+    case = "a gate_or_artifact that normalizes to the empty string takes the fallback key, never an empty with-anchor segment (Edge Cases, research.md D1)"
+    tmp = tempfile.mkdtemp(prefix="wc-sf-emptyanchor-")
+    with open(os.path.join(tmp, "anything.md"), "w", encoding="utf-8") as fh:
+        fh.write("Some content, irrelevant to this case.\n")
+    finding = valid_finding(
+        title="an all-punctuation anchor",
+        fingerprint_basis={"file_path": "anything.md", "gate_or_artifact": "::: --- ...   "})
+    rc, outputs, state, out = run_prepare(tmp, "structured-array", findings=[finding])
+    check(case + ": exit 0", rc == 0, out)
+    expected_fallback = "<!-- wing-commander-finding: fingerprint={0} -->".format(
+        _fallback_key("implement", "anything.md"))
+    empty_anchor_key = hashlib.sha256(
+        "anchor|implement|{0}|".format(_norm_for_fixtures("anything.md"))
+        .encode("utf-8")).hexdigest()
+    check(case + ": takes the fallback key, not an anchor key with an empty third segment",
+          outputs.get("survivor-0-marker") == expected_fallback
+          and empty_anchor_key not in (outputs.get("survivor-0-marker") or ""),
+          (outputs.get("survivor-0-marker"), expected_fallback))
+
+
+def case_missing_named_file_takes_fallback():
+    case = "fingerprint_basis.file_path naming a path that does not exist anywhere under the working directory takes the fallback key rather than failing the step (User Story 3)"
+    tmp = tempfile.mkdtemp(prefix="wc-sf-missingfile-")
+    finding = valid_finding(
+        title="a finding naming a file that does not exist",
+        fingerprint_basis={"file_path": "this/path/does/not/exist.md",
+                           "gate_or_artifact": "Gate 71"})
+    rc, outputs, state, out = run_prepare(tmp, "structured-array", findings=[finding])
+    check(case + ": exit 0 -- never fails the step", rc == 0, out)
+    check(case + ": one survivor, not dropped", outputs.get("survivor-count") == "1", out)
+    expected = "<!-- wing-commander-finding: fingerprint={0} -->".format(
+        _fallback_key("implement", "this/path/does/not/exist.md"))
+    check(case + ": takes the fallback key",
+          outputs.get("survivor-0-marker") == expected,
+          (outputs.get("survivor-0-marker"), expected))
+    check(case + ": the rejection is recorded, naming the missing file",
+          state and any("this/path/does/not/exist.md" in n for n in state["notes"]),
+          state and state["notes"])
+
+
+def case_fallback_issue_append_carries_each_findings_own_text():
+    case = "the recap file for an unanchorable finding carries that finding's own title/what verbatim, not only 'Seen again' (FR-008, SC-005, T005)"
+    tmp = tempfile.mkdtemp(prefix="wc-sf-recaptext-")
+    with open(os.path.join(tmp, "no-anchor.md"), "w", encoding="utf-8") as fh:
+        fh.write("Nothing quotable in here.\n")
+    finding = valid_finding(
+        title="a distinctive title for the recap-legibility fixture",
+        what="a distinctive what-text this finding must remain legible by",
+        fingerprint_basis={"file_path": "no-anchor.md", "gate_or_artifact": "not present"})
+    rc, outputs, state, out = run_prepare(tmp, "structured-array", findings=[finding])
+    check(case + ": exit 0", rc == 0, out)
+    recap_path = outputs.get("survivor-0-recap-file", "")
+    with open(recap_path, encoding="utf-8") as fh:
+        recap = fh.read()
+    check(case + ": the recap still says 'Seen again in run'", "Seen again in run" in recap, recap)
+    check(case + ": the recap carries this finding's own title verbatim",
+          "a distinctive title for the recap-legibility fixture" in recap, recap)
+    check(case + ": the recap carries this finding's own what verbatim",
+          "a distinctive what-text this finding must remain legible by" in recap, recap)
 
 
 # --- dedup / API-failure cases (stub `gh`, exercise the shipped lookup) ----
@@ -979,6 +1109,12 @@ CASES = [
     case_two_verifiable_anchors_key_apart,
     case_unverifiable_anchor_is_rejected_and_recorded,
     case_key_is_rederivable_from_recorded_inputs,
+    case_anchor_absent_from_existing_file_takes_fallback,
+    case_two_unanchorable_findings_share_fallback_key,
+    case_fallback_and_with_anchor_keys_do_not_collide,
+    case_anchor_normalizing_to_empty_takes_fallback,
+    case_missing_named_file_takes_fallback,
+    case_fallback_issue_append_carries_each_findings_own_text,
     case_dedup_hit_open_comments_not_duplicates,
     case_dedup_hit_closed_creates_and_links,
     case_no_dedup_match_creates,
