@@ -2984,9 +2984,14 @@ jobs:
       # reads the same REASON / AGENT_MSG variables it always did. Heredoc
       # form because the message is multi-line and agent-authored; the
       # random delimiter keeps a crafted body from ending the block early.
-      # No `-e`: an unreadable file degrades to empty fields, the same as a
-      # missing one — this step must never fail, since "Mark lifecycle
-      # record stalled" below carries no always() and would be stranded.
+      # Errexit is already active on this `shell: bash` step -- see
+      # verify-errexit-claim-comments.py -- so this step's safety comes
+      # from its own guards, not from `-e` being off: each `jq` read above
+      # is `2>/dev/null || true`-guarded (an unreadable file degrades to
+      # empty fields, the same as a missing one), and emit()'s writes are
+      # plain printfs that cannot fail. This step must never fail, since
+      # "Mark lifecycle record stalled" below carries no always() and would
+      # be stranded.
       - name: Load stall diagnostics
         id: stall-diagnostics
         if: needs.implement.outputs.final-ok == 'false'

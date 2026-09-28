@@ -345,10 +345,13 @@ jobs:
           # jq, not `date -d` (MF-09): `date -d` is GNU-only and this step
           # runs inside the adopter-supplied container image (Gate 45,
           # container-shell-safety) -- a BusyBox or macOS `date` rejects the
-          # syntax outright, and under `set -uo pipefail` with no `-e` the
-          # resulting empty window_start/list_from silently listed the
-          # repository's ENTIRE run history rather than failing loudly. jq
-          # is already a checked prerequisite of this stage; `date -d` never
+          # syntax outright. Errexit is already active on this `shell: bash`
+          # step -- see verify-errexit-claim-comments.py -- so that
+          # rejection would abort the step at the assignment below, not
+          # silently leave window_start/list_from empty and list the
+          # repository's ENTIRE run history; portability across container
+          # images, not error-handling, is why jq replaced it. jq is
+          # already a checked prerequisite of this stage; `date -d` never
           # was.
           window_start="$(jq -nr --arg s "$since" '(($s | fromdate) - 3600) | todate')"
           # Server-side `created` bound so --paginate does not walk the

@@ -1650,17 +1650,21 @@ jobs:
             || printf 'No drafted body.\n\n---\n%s\n' "$footer" > "$spec_body_file"
 
           spec_url="$(gh issue create -R "$GITHUB_REPOSITORY" --title "$spec_title" --body-file "$spec_body_file" --label spec-request)"
-          # #514: this step runs without -e, so a failed create would
-          # otherwise still post the re-route comment, add board:stalled
-          # and cross-link an empty URL, dropping the issue from
-          # eligibility with no spec-request filed. The URL is checked
-          # before any of that; a failed create fails the job with the
-          # issue left unstalled, so a later run retries it (the resume
-          # path into fix/readiness depends on #525's job gating). Known
-          # limits, tracked in #527: the retry is unbounded, and a
-          # failure after a successful create (comment or label) can
-          # file a duplicate spec-request next run. Gate 93 check 3
-          # requires this guard at every spec-request site.
+          # #514: errexit is already active on this `shell: bash` step --
+          # see verify-errexit-claim-comments.py -- so a failed `gh issue
+          # create` would already have aborted at the assignment above,
+          # before this line runs; the re-route comment, board:stalled
+          # label, and cross-link below never get a chance to fire on an
+          # empty URL. The guard below is belt-and-braces validation on
+          # top of that abort: it also fails the job, with the issue left
+          # unstalled so a later run retries it, when `gh` exits 0 but
+          # returns something that is not a real issue URL -- a case
+          # errexit alone does not catch (the resume path into
+          # fix/readiness depends on #525's job gating). Known limits,
+          # tracked in #527: the retry is unbounded, and a failure after a
+          # successful create (comment or label) can file a duplicate
+          # spec-request next run. Gate 93 check 3 requires this guard at
+          # every spec-request site.
           [[ "$spec_url" =~ ^https?://[^[:space:]]+/issues/[0-9]+$ ]] || { echo "::error::board-loop route (spec verdict): creating the spec-request returned no issue URL (got '$spec_url') -- no spec-request was filed; the issue is left without board:stalled so a later run retries it."; exit 1; }
           echo "spec-url=$spec_url" >> "$GITHUB_OUTPUT"
 

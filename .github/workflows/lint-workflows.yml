@@ -1917,14 +1917,15 @@ jobs:
       # page separately and concatenates the raw outputs; a filter that wraps
       # its result in `[...]` (or no `--jq` at all, feeding a separate
       # array-collecting `jq` pass downstream, this step's pre-fix shape)
-      # silently drops every annotation past page 1 under `set -uo pipefail`
-      # with no `-e` — the failure never surfaces, it just reads as "nothing
-      # to report" (spec 036, issue #182). Nothing exercised this step before
-      # this feature; Gate 9 covers only its neighbor, "Collect: step
-      # summaries". Same discipline as Gate 9: the shipped step is extracted
-      # and executed against synthetic multi-page `gh` responses, and a
-      # mutation reintroduces the array-collecting shape to prove the suite
-      # can fail.
+      # would have silently dropped every annotation past page 1, under the
+      # mistaken belief that "set -uo pipefail with no -e" was what let the
+      # failure pass unnoticed -- errexit was already active the whole time
+      # (spec 036, issue #182; see verify-errexit-claim-comments.py). Nothing
+      # exercised this step before this feature; Gate 9 covers only its
+      # neighbor, "Collect: step summaries". Same discipline as Gate 9: the
+      # shipped step is extracted and executed against synthetic multi-page
+      # `gh` responses, and a mutation reintroduces the array-collecting
+      # shape to prove the suite can fail.
       - name: Gate 19 — the watchdog's annotation collector sees every page
         run: python3 .github/scripts/verify-gate-19.py
 
@@ -4178,6 +4179,24 @@ jobs:
       - name: "Gate 100 self-test — a workflow-side drift, a docs-side drift, a docs section missing its cell, and zero discoverable stage files each fail"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-stage-turn-budget-docs.py --self-test
+
+      # Gate 101 — specs/088-stop-check-closed-read (FR-007/FR-008/FR-009):
+      # no comment in this repository may assert that a `shell: bash` step
+      # runs without errexit, or that `set -uo pipefail` clears `-e` --
+      # both are false (see verify-errexit-claim-comments.py's own
+      # docstring for the canonical fact). Five shipped comments made this
+      # claim and every review pass on #465 assumed the wrong semantics;
+      # this scans every comment block in `.github/workflows/*.yml` and
+      # `.github/actions/**/action.yml` (deliberately wider than Gate 24's
+      # workflows-only glob, since the FR-001 violation this feature fixes
+      # lived in an action file) and fails on a new one, naming the file
+      # and line.
+      - name: "Gate 101 — no comment claims a shell: bash step runs without errexit"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-errexit-claim-comments.py
+      - name: "Gate 101 self-test — canonical phrasing, quoted corrections, and each bare phrase pattern are classified correctly, and this feature's own five corrected sites are proven mutable back to their pre-fix false claim"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-errexit-claim-comments.py --self-test
 
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and
