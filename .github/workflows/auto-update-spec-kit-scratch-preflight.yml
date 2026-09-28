@@ -151,7 +151,9 @@ jobs:
             echo
             printf '%s\n' "$report" | jq -r '"Verdict: **" + .verdict + "**"'
           } >> "$GITHUB_STEP_SUMMARY"
-          if [ "$rc" -ne 0 ]; then
+          if [ "$rc" -eq 2 ]; then
+            echo "::error::wing-commander scratch preflight: $TARGET is unverified for the $PROFILE profile. See the job summary."
+          elif [ "$rc" -ne 0 ]; then
             echo "::error::wing-commander scratch preflight: $TARGET is not ready for the $PROFILE profile. See the job summary."
           fi
           exit "$rc"

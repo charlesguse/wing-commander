@@ -308,4 +308,5 @@ case "$(jq -r .verdict <<<"$REPORT")" in
   all_clear) exit 0 ;;
   not_clear) exit 1 ;;
   unverified) exit 2 ;;
+  *) exit 1 ;;
 esac

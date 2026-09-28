@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # Regression coverage for charlesguse's PR #374 review (tasks.md "Maintainer
-# Feedback" and "Maintainer Feedback (round 2)" sections, T034-T049): each
-# of these would have failed against the pre-fix code, using only the seams
-# gh_stub.py already exposes.
+# Feedback" and "Maintainer Feedback (round 2)" sections, T034-T049) and the
+# 069-scratch-readiness-reporting "Maintainer Feedback" section (MF001/MF002):
+# each of these would have failed against the pre-fix code. Most use only the
+# seams gh_stub.py already exposes; MF002 shadows `jq` itself with a
+# PATH-local stub, the only way to force assemble_report's own JSON assembly
+# to fail without a `gh`-level seam.
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 echo "--- T034: spec_request_label is checked via a real gh subcommand ---"
@@ -173,5 +176,24 @@ new_gh_state
 seed_fully_onboarded "wc-user/wc-e2e-t48" true
 DESC="$(PYTHONIOENCODING=ascii gh repo view wc-user/wc-e2e-t48 --json description -q .description)"
 check "T9 the stub's em-dash survives a forced-ASCII default IO encoding" "$DESC" "$SCRATCH_MARKER_FOR_TESTS"
+
+echo "--- MF001/MF002 (069-scratch-readiness-reporting): a failed assemble_report fails the script, never falls through to exit 0 ---"
+new_gh_state
+seed_fully_onboarded "wc-user/wc-e2e-mf002" true
+JQ_BREAK_DIR="$(mktemp -d)"
+cat > "$JQ_BREAK_DIR/jq" <<'STUB'
+#!/usr/bin/env bash
+# Simulates assemble_report's own JSON assembly failing (malformed/empty
+# $REPORT) -- the only local seam that can force this without a gh-level
+# hook, since the CLI's own --profile validation rules out an invalid
+# profile ever reaching assemble_report's profile_elements() call.
+exit 1
+STUB
+chmod +x "$JQ_BREAK_DIR/jq"
+OUT="$(PATH="$JQ_BREAK_DIR:$PATH" bash "$PROVISION_SCRIPT" --repo wc-user/wc-e2e-mf002 --profile spec-kit-scratch --check-only 2>/dev/null)"
+RC=$?
+rm -rf "$JQ_BREAK_DIR"
+check "MF002 a failed assemble_report makes the script exit non-zero, not the pre-MF001 silent 0" "$RC" "1"
+check "MF002 no report is printed on stdout when assemble_report fails" "$OUT" ""
 
 report "T9 maintainer feedback (PR #374)"
