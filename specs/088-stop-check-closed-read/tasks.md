@@ -29,8 +29,8 @@ CI/CD pipeline repository, no `src/`. All changes live under `.github/actions/`,
 
 **Purpose**: Pin down the two facts every later task depends on for correct file targeting, both of which plan.md/research.md flag as time-sensitive against this checkout.
 
-- [ ] T001 [P] Confirm the next sequential gate number for FR-009's new gate: grep `.github/workflows/lint-workflows.yml` for every `Gate NNN —` step name and take the highest + 1. research.md D5 recorded this as 101 (highest shipped: Gate 100, `.github/workflows/lint-workflows.yml:4168`) at plan time — re-confirm it at implementation time in case another branch landed Gate 101+ in the interim, and use the confirmed number in T020.
-- [ ] T002 [P] Confirm the current line of `.github/workflows/implement.yml`'s "No `-e`" comment by content search for `No .-e.: an unreadable file degrades` rather than trusting spec.md's stale `implement.yml:2785` citation (research.md D9: confirmed at line 3013 as of this checkout, content search finds a different, already-correct comment at 2785) — re-confirm at implementation time since the file continues to change, and use the confirmed line in T016.
+- [X] T001 [P] Confirm the next sequential gate number for FR-009's new gate: grep `.github/workflows/lint-workflows.yml` for every `Gate NNN —` step name and take the highest + 1. research.md D5 recorded this as 101 (highest shipped: Gate 100, `.github/workflows/lint-workflows.yml:4168`) at plan time — re-confirm it at implementation time in case another branch landed Gate 101+ in the interim, and use the confirmed number in T020.
+- [X] T002 [P] Confirm the current line of `.github/workflows/implement.yml`'s "No `-e`" comment by content search for `No .-e.: an unreadable file degrades` rather than trusting spec.md's stale `implement.yml:2785` citation (research.md D9: confirmed at line 3013 as of this checkout, content search finds a different, already-correct comment at 2785) — re-confirm at implementation time since the file continues to change, and use the confirmed line in T016.
 
 ---
 
