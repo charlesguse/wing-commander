@@ -765,3 +765,11 @@ Task: "New Gate 102: verify-board-prove-displacement.py fixtures"
 ## Maintainer Feedback (PR #490 review, 2026-09-25, @charlesguse)
 
 - [ ] Finish T055 (still unchecked): update `.claude/skills/spec-cross-reference/SKILL.md`'s "Over-rated" example (lines 23-28), which still describes `group: wing-commander-board-loop` as "applied to every trigger in the file" — the single workflow-level block T009 replaced with per-job groups. Restate it in terms of the per-job split (the refutation itself still stands) and point at `specs/060-self-redrive-concurrency/contracts/concurrency-groups.md`.
+
+---
+
+## Maintainer Feedback (PR #490 review, 2026-09-28, @charlesguse)
+
+- [ ] Fix the `review` job's `if:` in board-loop.yml (~line 2390) and the `readiness` job's `if:` (~line 3391): each carries `needs.select.result == 'success'` as a top-level conjunct, so on a directed dispatch — where `select` is skipped by design (line 113: `github.event_name != 'pull_request' && inputs.directed-stage == ''`) — both jobs are always skipped even when `inputs.directed-stage == 'review'`/`'readiness'` is true. A directed review/readiness proof run therefore never executes its target job, yet the run still concludes `success` and `outcome_reason` records `proven`, closing the issue on evidence that never ran. Change the condition to `(needs.select.result == 'success' || inputs.directed-stage == 'review')` for review and the `'readiness'` equivalent for readiness, mirroring the `triage` job's already-correct `!cancelled() && needs.select.result != 'failure'` form (board-loop.yml:962-963).
+- [ ] Update Gate 97 (`.github/scripts/verify-board-loop-resume-gating.py`), which currently asserts the old `needs.select.result == 'success'` top-level form, to accept the corrected condition.
+- [ ] Add a Gate 97 fixture case asserting that a directed `review` and a directed `readiness` dispatch each reach their job (not skip), closing the gap that let this ship.
