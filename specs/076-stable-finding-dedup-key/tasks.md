@@ -175,12 +175,12 @@ agent, no `gh`): differently-worded findings sharing one anchor produce one
 key; findings naming genuinely different anchors produce two; an
 unverifiable anchor takes the stated fallback with the reason recorded.
 
-- [ ] T010 [US2] In `run_fixtures.py`, add a fixture function (e.g.
+- [X] T010 [US2] In `run_fixtures.py`, add a fixture function (e.g.
   `case_two_verifiable_anchors_key_apart`) proving FR-010's second case:
   two findings in one fixture file naming two genuinely different,
   both-verifiable anchors (e.g. two distinct headings both present in the
   file) produce two distinct with-anchor keys.
-- [ ] T011 [US2] Add a fixture function (e.g.
+- [X] T011 [US2] Add a fixture function (e.g.
   `case_unverifiable_anchor_is_rejected_and_recorded`) proving FR-006: a
   finding whose `gate_or_artifact` does not occur in its named file is not
   filed under that value; assert the resulting state's `notes` list
@@ -188,13 +188,13 @@ unverifiable anchor takes the stated fallback with the reason recorded.
   checked, and that it was keyed via the fallback route — and assert no new
   run-summary counter/field was added (the existing
   `filed`/`appended`/`dropped_*` set is unchanged, per research.md D4).
-- [ ] T012 [US2] Add a fixture function (e.g.
+- [X] T012 [US2] Add a fixture function (e.g.
   `case_key_is_rederivable_from_recorded_inputs`) proving FR-002 /
   Acceptance Scenario 2: run the "prepare" step twice, in two independent
   temp directories, with byte-identical finding input (including the same
   fixture file content); assert the two runs' `-marker` outputs are
   identical.
-- [ ] T013 [US2] Add T010-T012's function(s) to the `CASES` list in
+- [X] T013 [US2] Add T010-T012's function(s) to the `CASES` list in
   `run_fixtures.py`.
 
 **Checkpoint**: Rejections are logged with a reason and a route, and keys

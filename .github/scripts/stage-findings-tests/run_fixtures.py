@@ -381,6 +381,78 @@ def case_anchor_wording_variance_shares_one_key():
           state and not any("anchor unverifiable" in n for n in state["notes"]), state and state["notes"])
 
 
+def case_two_verifiable_anchors_key_apart():
+    case = "two genuinely different, both-verifiable anchors in one file produce two distinct with-anchor keys (FR-010's second case)"
+    tmp = tempfile.mkdtemp(prefix="wc-sf-twoanchors-")
+    fixture_path = os.path.join(tmp, "two-headings.md")
+    with open(fixture_path, "w", encoding="utf-8") as fh:
+        fh.write("## Gate 71 — fixture harness\n\n## Gate 72 — schema validator\n")
+    findings = [
+        valid_finding(title="a", fingerprint_basis={
+            "file_path": "two-headings.md", "gate_or_artifact": "Gate 71"}),
+        valid_finding(title="b", fingerprint_basis={
+            "file_path": "two-headings.md", "gate_or_artifact": "Gate 72"}),
+    ]
+    rc, outputs, state, out = run_prepare(tmp, "structured-array", findings=findings)
+    check(case + ": exit 0", rc == 0, out)
+    check(case + ": two survivors", outputs.get("survivor-count") == "2", out)
+    m0, m1 = (outputs.get(f"survivor-{i}-marker", "") for i in range(2))
+    check(case + ": two distinct verified anchors produce two distinct keys", m0 and m1 and m0 != m1, (m0, m1))
+    check(case + ": neither anchor is rejected",
+          state and not any("anchor unverifiable" in n for n in state["notes"]), state and state["notes"])
+
+
+def case_unverifiable_anchor_is_rejected_and_recorded():
+    case = "an anchor absent from its named file is rejected, the rejection is recorded naming title/anchor/file/route, and no new counter is added (FR-006)"
+    tmp = tempfile.mkdtemp(prefix="wc-sf-unverifiable-")
+    fixture_path = os.path.join(tmp, "no-such-anchor.md")
+    with open(fixture_path, "w", encoding="utf-8") as fh:
+        fh.write("This file mentions nothing quotable for the finding below.\n")
+    finding = valid_finding(
+        title="the anchor rejection fixture's own finding",
+        fingerprint_basis={"file_path": "no-such-anchor.md",
+                           "gate_or_artifact": "Gate 999 that does not exist"})
+    rc, outputs, state, out = run_prepare(tmp, "structured-array", findings=[finding])
+    check(case + ": exit 0", rc == 0, out)
+    check(case + ": one survivor (not dropped)", outputs.get("survivor-count") == "1", out)
+    check(case + ": a note names the finding's title",
+          state and any("the anchor rejection fixture's own finding" in n for n in state["notes"]),
+          state and state["notes"])
+    check(case + ": the note names the anchor value that failed",
+          state and any("Gate 999 that does not exist" in n for n in state["notes"]),
+          state and state["notes"])
+    check(case + ": the note names the file it was checked against",
+          state and any("no-such-anchor.md" in n for n in state["notes"]),
+          state and state["notes"])
+    check(case + ": the note names the fallback route, not a drop",
+          state and any("fallback" in n for n in state["notes"]), state and state["notes"])
+    check(case + ": the filed/appended/dropped_* set is unchanged -- no new counter (research.md D4)",
+          state and set(state.keys()) == {
+              "disabled", "proposed", "dropped_malformed", "dropped_cap", "filed",
+              "appended", "dropped_api_failure", "outstanding_skipped", "notes"},
+          state and sorted(state.keys()))
+    check(case + ": dropped_malformed/dropped_cap are still zero -- not counted as a drop",
+          state and state["dropped_malformed"] == [] and state["dropped_cap"] == 0, state)
+
+
+def case_key_is_rederivable_from_recorded_inputs():
+    case = "the prepare step is deterministic: byte-identical inputs in two independent runs produce the identical key (FR-002, Acceptance Scenario 2)"
+    fixture_content = "## Gate 71 — fixture harness for stage-findings\n"
+    finding = valid_finding(
+        title="a rederivability finding",
+        fingerprint_basis={"file_path": "rederive-fixture.md", "gate_or_artifact": "Gate 71"})
+    markers = []
+    for _ in range(2):
+        tmp = tempfile.mkdtemp(prefix="wc-sf-rederive-")
+        with open(os.path.join(tmp, "rederive-fixture.md"), "w", encoding="utf-8") as fh:
+            fh.write(fixture_content)
+        rc, outputs, state, out = run_prepare(tmp, "structured-array", findings=[finding])
+        check(case + ": exit 0", rc == 0, out)
+        markers.append(outputs.get("survivor-0-marker", ""))
+    check(case + ": two independent runs, same inputs, identical key",
+          markers[0] and markers[0] == markers[1], markers)
+
+
 # --- dedup / API-failure cases (stub `gh`, exercise the shipped lookup) ----
 STUB_GH_TEMPLATE = """#!/usr/bin/env bash
 set -uo pipefail
@@ -904,6 +976,9 @@ CASES = [
     case_forged_delimiter_in_what_cannot_override_other_outputs,
     case_fingerprint_ignores_punctuation_case_and_spacing,
     case_anchor_wording_variance_shares_one_key,
+    case_two_verifiable_anchors_key_apart,
+    case_unverifiable_anchor_is_rejected_and_recorded,
+    case_key_is_rederivable_from_recorded_inputs,
     case_dedup_hit_open_comments_not_duplicates,
     case_dedup_hit_closed_creates_and_links,
     case_no_dedup_match_creates,
