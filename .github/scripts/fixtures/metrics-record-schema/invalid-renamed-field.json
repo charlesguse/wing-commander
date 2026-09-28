@@ -3,6 +3,7 @@
   "record_available": true,
   "run": {
     "workflow_run_id": "1234567894",
+    "run_attempt": "1",
     "job_key": "cycle",
     "job_id": null,
     "step_index": 0,

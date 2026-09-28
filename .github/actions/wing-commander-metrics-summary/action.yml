@@ -223,6 +223,7 @@ runs:
         SPEC_IDENTITY_IS_OWN: ${{ inputs.spec-identity-is-own }}
         STEP_INDEX: ${{ inputs.step-index }}
         RUN_ID: ${{ github.run_id }}
+        RUN_ATTEMPT: ${{ github.run_attempt }}
         JOB_KEY: ${{ github.job }}
         BRANCH: ${{ inputs.branch }}
         BEFORE_SHA: ${{ inputs.before-sha }}
@@ -252,8 +253,9 @@ runs:
         SPEC_IDENTITY_IS_OWN="${SPEC_IDENTITY_IS_OWN:-false}"
         STEP_INDEX="${STEP_INDEX:-0}"
         RUN_ID="${RUN_ID:-}"
+        RUN_ATTEMPT="${RUN_ATTEMPT:-}"
         JOB_KEY="${JOB_KEY:-}"
-        RECORD_KEY="${RUN_ID}:${JOB_KEY}:${STEP_INDEX}"
+        RECORD_KEY="${RUN_ID}:${RUN_ATTEMPT}:${JOB_KEY}:${STEP_INDEX}"
         EMITTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
         BRANCH="${BRANCH:-}"
         BEFORE_SHA="${BEFORE_SHA:-}"
@@ -289,6 +291,7 @@ runs:
           jq -n \
             --argjson record_available "$record_available" \
             --arg run_id "$RUN_ID" \
+            --arg run_attempt "$RUN_ATTEMPT" \
             --arg job_key "$JOB_KEY" \
             --argjson step_index "${STEP_INDEX:-0}" \
             --arg record_key "$RECORD_KEY" \
@@ -335,6 +338,7 @@ runs:
               record_available: $record_available,
               run: {
                 workflow_run_id: $run_id,
+                run_attempt: $run_attempt,
                 job_key: $job_key,
                 job_id: null,
                 step_index: $step_index,

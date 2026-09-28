@@ -57,8 +57,8 @@ DIAGNOSE_JOB = "diagnose"
 
 SPEC_DIR = "specs/058-per-job-minute-floor"
 # The inspection that emitted nothing. Its record key is what must be absent.
-ABSENT_KEY = "9001:diagnose:0"
-PRESENT_KEYS = ("1000:implement:0", "1001:clarify:0")
+ABSENT_KEY = "9001:1:diagnose:0"
+PRESENT_KEYS = ("1000:1:implement:0", "1001:1:clarify:0")
 
 GH_STUB = """#!/usr/bin/env bash
 # No prior rollup comment: the shipped step's lookup returns an empty object

@@ -88,11 +88,16 @@ REQUIRED_TOP = {
 }
 REQUIRED_RUN = {
     "workflow_run_id": str,
+    "run_attempt": str,
     "job_key": str,
     "job_id": (str, int, type(None)),
     "step_index": int,
     "record_key": str,
 }
+# research.md R9: catches ANY future record_key composition site left
+# emitting an un-widened key, not only the ones this feature remembers to
+# mutate-test by name.
+RECORD_KEY_SHAPE_RE = re.compile(r"^[0-9]+:[0-9]+:[^:]+:[0-9]+$")
 REQUIRED_SPEC = {
     "spec_dir": (str, type(None)),
     "issue": (int, type(None)),
@@ -209,6 +214,12 @@ def validate_record(record):
     _check_fields(record, REQUIRED_TOP, "record", failures)
     if isinstance(record.get("run"), dict):
         _check_fields(record["run"], REQUIRED_RUN, "record.run", failures)
+        record_key = record["run"].get("record_key")
+        if isinstance(record_key, str) and not RECORD_KEY_SHAPE_RE.match(record_key):
+            failures.append(
+                "record.run.record_key {0!r} does not match the widened "
+                "shape run_id:run_attempt:job_key:step_index "
+                "(^[0-9]+:[0-9]+:[^:]+:[0-9]+$)".format(record_key))
     if isinstance(record.get("spec"), dict):
         _check_fields(record["spec"], REQUIRED_SPEC, "record.spec", failures)
         _check_optional_fields(record["spec"], OPTIONAL_SPEC, "record.spec", failures)

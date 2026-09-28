@@ -69,8 +69,8 @@ def compute_rollup(store_lines):
 # ----------------------------------------------------------------------------
 V1_RECORD = json.dumps({
     "schema_version": 1, "record_available": True,
-    "run": {"workflow_run_id": "1", "job_key": "cycle", "job_id": None,
-            "step_index": 0, "record_key": "1:cycle:0"},
+    "run": {"workflow_run_id": "1", "run_attempt": "1", "job_key": "cycle",
+            "job_id": None, "step_index": 0, "record_key": "1:1:cycle:0"},
     "stage": "implement", "stage_available": True, "run_label": None,
     "spec": {"spec_dir": "specs/043-durable-metrics-record", "issue": 148,
              "identity_available": True},
@@ -87,8 +87,8 @@ V1_RECORD = json.dumps({
 
 V2_UNKNOWN_RECORD = json.dumps({
     "schema_version": 2, "record_available": True,
-    "run": {"workflow_run_id": "2", "job_key": "cycle", "job_id": None,
-            "step_index": 0, "record_key": "2:cycle:0"},
+    "run": {"workflow_run_id": "2", "run_attempt": "1", "job_key": "cycle",
+            "job_id": None, "step_index": 0, "record_key": "2:1:cycle:0"},
     "stage": "implement",
     "cost_usd": 9999.0, "cost_available": True,
     "a_field_this_reader_has_never_heard_of": {"nested": True},

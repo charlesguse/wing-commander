@@ -56,16 +56,17 @@ LEDGER = "unpersisted.jsonl"
 # --------------------------------------------------------------------------
 # The record fixture
 # --------------------------------------------------------------------------
-def metrics_record(run_id, job_key, step_index=0):
+def metrics_record(run_id, job_key, step_index=0, attempt="1"):
     """A schema-version-1 record exactly as wing-commander-metrics-summary
     emits it for a reusable-workflow job: job_id null, record_key in its
-    emission-time run_id:job_key:step_index form. Shape mirrors the
-    metrics-record-diagnose artifact of run 34562449781."""
+    emission-time run_id:run_attempt:job_key:step_index form. Shape mirrors
+    the metrics-record-diagnose artifact of run 34562449781."""
     return {
         "schema_version": 1, "record_available": True,
-        "run": {"workflow_run_id": run_id, "job_key": job_key,
+        "run": {"workflow_run_id": run_id, "run_attempt": attempt,
+                "job_key": job_key,
                 "job_id": None, "step_index": step_index,
-                "record_key": f"{run_id}:{job_key}:{step_index}"},
+                "record_key": f"{run_id}:{attempt}:{job_key}:{step_index}"},
         "stage": "watchdog", "stage_available": True, "run_label": job_key,
         "spec": {"spec_dir": None, "issue": None, "identity_available": False},
         "model": "claude-opus-5", "model_available": True,
@@ -107,16 +108,16 @@ def fixture_job_id(run_id, index):
     return int(run_id) * 100 + index
 
 
-def resolved_key(run_id, index=0, step_index=0):
-    return f"{run_id}:{fixture_job_id(run_id, index)}:{step_index}"
+def resolved_key(run_id, index=0, step_index=0, attempt="1"):
+    return f"{run_id}:{attempt}:{fixture_job_id(run_id, index)}:{step_index}"
 
 
-def persisted_record(run_id, job_key, index=0, step_index=0):
+def persisted_record(run_id, job_key, index=0, step_index=0, attempt="1"):
     """What a record looks like AFTER the validate step rewrote it — i.e.
     what a line already in records.jsonl holds."""
-    rec = metrics_record(run_id, job_key, step_index)
+    rec = metrics_record(run_id, job_key, step_index, attempt=attempt)
     rec["run"]["job_id"] = fixture_job_id(run_id, index)
-    rec["run"]["record_key"] = resolved_key(run_id, index, step_index)
+    rec["run"]["record_key"] = resolved_key(run_id, index, step_index, attempt=attempt)
     return rec
 
 

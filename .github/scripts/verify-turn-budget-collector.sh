@@ -249,16 +249,16 @@ os.makedirs(cycle_dir)
 os.makedirs(ba_dir)
 cycle_record = {
     "schema_version": 1, "record_available": True,
-    "run": {"workflow_run_id": "999000222", "job_key": "cycle", "job_id": None,
-            "step_index": 1, "record_key": "999000222:cycle:1"},
+    "run": {"workflow_run_id": "999000222", "run_attempt": "1", "job_key": "cycle",
+            "job_id": None, "step_index": 1, "record_key": "999000222:1:cycle:1"},
     "stage": "implement", "stage_available": True,
     "turns": {"counted": 20, "reported": 20, "intended_budget": 180,
               "enforced_ceiling": 450, "available": True},
 }
 ba_record = {
     "schema_version": 1, "record_available": False,
-    "run": {"workflow_run_id": "999000222", "job_key": "cycle", "job_id": None,
-            "step_index": 3, "record_key": "999000222:cycle:3"},
+    "run": {"workflow_run_id": "999000222", "run_attempt": "1", "job_key": "cycle",
+            "job_id": None, "step_index": 3, "record_key": "999000222:1:cycle:3"},
     "stage": "implement", "stage_available": True,
     "turns": {"counted": None, "reported": None, "intended_budget": None,
               "enforced_ceiling": None, "available": False},

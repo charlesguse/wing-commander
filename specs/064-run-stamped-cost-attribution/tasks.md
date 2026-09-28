@@ -43,7 +43,7 @@ pipeline. Paths below are relative to the repository root:
 **Purpose**: Establish the baseline this feature's edits are measured
 against.
 
-- [ ] T001 Run `python3 .github/scripts/run-local-gates.py` from the
+- [X] T001 Run `python3 .github/scripts/run-local-gates.py` from the
       repository root and confirm it is green before making any edits —
       this is the same command `lint-workflows.yml` derives its PR-time
       gate invocations from (CLAUDE.md), and the baseline every later
@@ -64,28 +64,28 @@ against the narrow 3-field key.
 **⚠️ CRITICAL**: No user story work can begin until this phase is
 complete.
 
-- [ ] T002 In `.github/actions/wing-commander-metrics-summary/action.yml`'s
+- [X] T002 In `.github/actions/wing-commander-metrics-summary/action.yml`'s
       "Render agent run metrics summary" step (`id: render`), add
       `RUN_ATTEMPT: ${{ github.run_attempt }}` to the step's `env:`
       block (action.yml:215, alongside the existing `RUN_ID: ${{
       github.run_id }}`), and read it into `RUN_ATTEMPT="${RUN_ATTEMPT:-}"`
       next to `RUN_ID="${RUN_ID:-}"` (action.yml:243).
 
-- [ ] T003 In the same file, widen
+- [X] T003 In the same file, widen
       `RECORD_KEY="${RUN_ID}:${JOB_KEY}:${STEP_INDEX}"` (action.yml:245)
       to `RECORD_KEY="${RUN_ID}:${RUN_ATTEMPT}:${JOB_KEY}:${STEP_INDEX}"`,
       inserting the attempt as the **second** segment (research.md R1) so
       `run_id:run_attempt` is a clean two-field prefix a collector can
       split off without knowing anything about `job_key`'s own content.
 
-- [ ] T004 In the same file's `emit_record()` jq invocation
+- [X] T004 In the same file's `emit_record()` jq invocation
       (action.yml:276-373), add `--arg run_attempt "$RUN_ATTEMPT"` to the
       `jq -n` argument list and a new sibling field `run_attempt:
       $run_attempt` inside the emitted `run: {...}` object (next to
       `workflow_run_id`), matching data-model.md's widened record `run`
       shape.
 
-- [ ] T005 In
+- [X] T005 In
       `.github/actions/wing-commander-metrics-persist/action.yml`'s
       job-id resolution step (the `.run.job_id = $jid | .run.record_key
       = ...` rewrite, action.yml:342-343), change
@@ -96,7 +96,7 @@ complete.
       ever substitutes `job_key` → `job_id` and must not recompute or
       touch the attempt segment (research.md R1).
 
-- [ ] T006 [P] In `.github/scripts/wc_metrics_harness.py`, add an
+- [X] T006 [P] In `.github/scripts/wc_metrics_harness.py`, add an
       `attempt="1"` parameter (default matching `github.run_attempt`'s
       first-attempt default) to `metrics_record()` (line 59), threading
       it into its `record_key` literal (line 68, currently
@@ -105,7 +105,7 @@ complete.
       (line 110) and `persisted_record()` (line 114), threading it into
       their `record_key` literals the same way.
 
-- [ ] T007 [P] In
+- [X] T007 [P] In
       `.github/scripts/verify-metrics-summary-record-emission.py`,
       update `mutate()` (line 691) so it targets the new literal
       `RECORD_KEY="${RUN_ID}:${RUN_ATTEMPT}:${JOB_KEY}:${STEP_INDEX}"`
@@ -117,7 +117,7 @@ complete.
       assert both mutations are independently caught (research.md R1,
       FR-014).
 
-- [ ] T008 [P] In `.github/scripts/verify-metrics-persist-retry.py`,
+- [X] T008 [P] In `.github/scripts/verify-metrics-persist-retry.py`,
       widen the literal `want_key = f"{run_id}:{diagnose_job_id}:0"`
       (line 607) to `f"{run_id}:1:{diagnose_job_id}:0"` and the
       ambiguous-job-key literal `f"{run_id}:collect:0"` (line 612 area)
@@ -125,7 +125,7 @@ complete.
       attempt from T006), updating every assertion and failure-message
       text that repeats these literals (lines 608-617, 634-643).
 
-- [ ] T009 [P] In `.github/scripts/verify-metrics-record-schema.py`
+- [X] T009 [P] In `.github/scripts/verify-metrics-record-schema.py`
       (Gate 39): add `"run_attempt": str` to `REQUIRED_RUN` (lines
       89-95); add a new positive shape assertion applying the regex
       `^[0-9]+:[0-9]+:[^:]+:[0-9]+$` to every ingested record's
@@ -138,27 +138,27 @@ complete.
       object, so `check_fields_match_contract()`'s key-set cross-check
       against `REQUIRED_RUN` continues to pass.
 
-- [ ] T010 [P] In
+- [X] T010 [P] In
       `.github/scripts/verify-metrics-schema-version-tolerance.py`, add
       `"run_attempt": "1"` and widen `record_key` to `"1:1:cycle:0"` in
       `V1_RECORD` (lines 70-73), and add `"run_attempt": "1"` / widen
       `record_key` to `"2:1:cycle:0"` in `V2_UNKNOWN_RECORD` (lines
       88-91).
 
-- [ ] T011 [P] In `.github/scripts/verify-turn-budget-collector.sh`,
+- [X] T011 [P] In `.github/scripts/verify-turn-budget-collector.sh`,
       widen the two inline JSON record fixtures' `record_key` literals
       (lines 252-253, 260-261) from `"999000222:cycle:1"` /
       `"999000222:cycle:3"` to `"999000222:1:cycle:1"` /
       `"999000222:1:cycle:3"`, adding `"run_attempt":"1"` alongside each.
 
-- [ ] T012 [P] In
+- [X] T012 [P] In
       `.github/scripts/verify-watchdog-no-record-on-clean-path.py`
       (Gate 74), widen `ABSENT_KEY = "9001:diagnose:0"` (line 60) to
       `"9001:1:diagnose:0"` and `PRESENT_KEYS = ("1000:implement:0",
       "1001:clarify:0")` (line 61) to `("1000:1:implement:0",
       "1001:1:clarify:0")`.
 
-- [ ] T013 [P] Widen every `record_key` literal (and add a sibling
+- [X] T013 [P] Widen every `record_key` literal (and add a sibling
       `run_attempt` field to each `run` object that carries one) across
       the fixture files under
       `.github/scripts/fixtures/metrics-record-schema/*.json` that

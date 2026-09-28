@@ -24,10 +24,11 @@ alone has them — not left to be inferred from spec.md):
   "record_available": true,
   "run": {
     "workflow_run_id": "1234567890",
+    "run_attempt": "1",
     "job_key": "cycle",
     "job_id": null,
     "step_index": 0,
-    "record_key": "1234567890:cycle:0"
+    "record_key": "1234567890:1:cycle:0"
   },
   "stage": "implement",
   "stage_available": true,
@@ -129,10 +130,11 @@ explains the rationale for each field's presence.
   "record_available": false,
   "run": {
     "workflow_run_id": "1234567890",
+    "run_attempt": "1",
     "job_key": "cycle",
     "job_id": null,
     "step_index": 0,
-    "record_key": "1234567890:cycle:0"
+    "record_key": "1234567890:1:cycle:0"
   },
   "stage": "implement",
   "stage_available": true,

@@ -604,12 +604,12 @@ def case_validate_then_append_persists_reusable_workflow_records():
                        f"got job_id={diag.get('job_id')!r} — reusable-workflow "
                        "jobs are displayed as '<caller job> / <callee job>', "
                        "never as the bare github.job the record carries")
-        want_key = f"{run_id}:{diagnose_job_id}:0"
+        want_key = f"{run_id}:1:{diagnose_job_id}:0"
         if diag.get("record_key") != want_key:
             fail(case, f"expected the persisted record_key rewritten to "
                        f"{want_key!r}, got {diag.get('record_key')!r}")
         coll = by_key.get("collect", {}).get("run", {})
-        if coll.get("job_id") is not None or coll.get("record_key") != f"{run_id}:collect:0":
+        if coll.get("job_id") is not None or coll.get("record_key") != f"{run_id}:1:collect:0":
             fail(case, "job_key 'collect' matches two callers ('watchdog / "
                        "collect' and 'watchdog-self / collect'), so it must "
                        "keep job_id null and its emission-time record_key "
@@ -632,7 +632,7 @@ def case_validate_then_append_persists_reusable_workflow_records():
         shutil.rmtree(final_work, ignore_errors=True)
         dest_lines = [line for line in (text or "").split("\n") if line.strip()]
         if len(dest_lines) != 5 or want_key not in (text or "") \
-                or f"{run_id}:collect:0" not in (text or "") \
+                or f"{run_id}:1:collect:0" not in (text or "") \
                 or unverifiable_key not in (text or "") \
                 or branch_advance_key not in (text or "") \
                 or bad_cost_key in (text or ""):

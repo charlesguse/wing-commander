@@ -3,10 +3,11 @@
   "record_available": true,
   "run": {
     "workflow_run_id": "1234567897",
+    "run_attempt": "1",
     "job_key": "act",
     "job_id": 987654324,
     "step_index": 0,
-    "record_key": "1234567897:987654324:0"
+    "record_key": "1234567897:1:987654324:0"
   },
   "stage": "pr-conversation",
   "stage_available": true,

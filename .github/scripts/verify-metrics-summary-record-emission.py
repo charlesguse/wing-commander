@@ -245,6 +245,7 @@ def run_case(tmp, records=None, raw=None, missing=False, env_over=None):
         "SPEC_IDENTITY_IS_OWN": "true",
         "STEP_INDEX": "0",
         "RUN_ID": "555000111",
+        "RUN_ATTEMPT": "1",
         "JOB_KEY": "cycle",
         "GITHUB_ACTION_PATH": ACTION_DIR,
     }
@@ -278,7 +279,7 @@ def case_healthy_transcript_emits_a_valid_record():
         if record.get("record_available") is not True:
             fail(case, f"expected record_available true, got "
                        f"{record.get('record_available')!r}")
-        if record.get("run", {}).get("record_key") != "555000111:cycle:0":
+        if record.get("run", {}).get("record_key") != "555000111:1:cycle:0":
             fail(case, f"unexpected record_key "
                        f"{record.get('run', {}).get('record_key')!r}")
         if outputs.get("record-key") != record.get("run", {}).get("record_key"):
@@ -1145,12 +1146,25 @@ def run_suite():
 # stopped being part of record_key, this file's whole point (T061 — "neither
 # record overwriting the other") would be silently lost.
 MUTATION_LABEL = "record_key drops step_index (records collide across a job's repeated invocations)"
+MUTATION_LABEL_ATTEMPT = "record_key drops the attempt number (re-run attempts of one workflow run collide)"
 
 
 def mutate(script):
     return script.replace(
-        'RECORD_KEY="${RUN_ID}:${JOB_KEY}:${STEP_INDEX}"',
-        'RECORD_KEY="${RUN_ID}:${JOB_KEY}"')
+        'RECORD_KEY="${RUN_ID}:${RUN_ATTEMPT}:${JOB_KEY}:${STEP_INDEX}"',
+        'RECORD_KEY="${RUN_ID}:${RUN_ATTEMPT}:${JOB_KEY}"')
+
+
+def mutate_attempt(script):
+    return script.replace(
+        'RECORD_KEY="${RUN_ID}:${RUN_ATTEMPT}:${JOB_KEY}:${STEP_INDEX}"',
+        'RECORD_KEY="${RUN_ID}:${JOB_KEY}:${STEP_INDEX}"')
+
+
+MUTATIONS = [
+    (MUTATION_LABEL, mutate),
+    (MUTATION_LABEL_ATTEMPT, mutate_attempt),
+]
 
 
 def main():
@@ -1166,27 +1180,29 @@ def main():
 
     global SCRIPT, MUTATING
     original = SCRIPT
-    mutated = mutate(original)
-    if mutated == original:
-        print(f"::error file={ACTION}::this gate's mutation no longer "
-              f"changes the script — the code it keys on has been "
-              f"rewritten. Re-point it at the current implementation.")
-        return 1
-
-    MUTATING = True
-    SCRIPT = mutated
-    caught = run_suite()
-    SCRIPT = original
-    MUTATING = False
     mutation_failed = False
-    if not caught:
-        print(f"::error file={ACTION}::mutation {MUTATION_LABEL!r} was NOT "
-              f"caught — the suite passed against a knowingly broken "
-              f"script, so its green verdict on the real one means nothing.")
-        mutation_failed = True
-    else:
-        print(f"note: mutation caught ({MUTATION_LABEL}): {len(caught)} "
-              f"case(s) failed as intended")
+    for label, mutate_fn in MUTATIONS:
+        mutated = mutate_fn(original)
+        if mutated == original:
+            print(f"::error file={ACTION}::mutation {label!r} no longer "
+                  f"changes the script — the code it keys on has been "
+                  f"rewritten. Re-point it at the current implementation.")
+            mutation_failed = True
+            continue
+
+        MUTATING = True
+        SCRIPT = mutated
+        caught = run_suite()
+        SCRIPT = original
+        MUTATING = False
+        if not caught:
+            print(f"::error file={ACTION}::mutation {label!r} was NOT "
+                  f"caught — the suite passed against a knowingly broken "
+                  f"script, so its green verdict on the real one means nothing.")
+            mutation_failed = True
+        else:
+            print(f"note: mutation caught ({label}): {len(caught)} "
+                  f"case(s) failed as intended")
 
     residual = run_suite()
     if residual:
