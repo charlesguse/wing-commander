@@ -234,3 +234,7 @@ With two maintainers/agents (CLAUDE.md caps concurrent local agents at two for t
 - [ ] Exclude the host-side `verify-image-prerequisites` job from that same enumeration — every stage workflow (e.g. `intake.yml`) has this job gated on `if: inputs.container-image != ''`, it carries no `container:` key and always runs on the host, so it always lacks an `Initialize containers` step even on a genuine container-mode pass.
 - [ ] Limit the `gh run list --repo "$E2E_REPO" --created ">=${kickoff_time}"` enumeration (~line 1446) to only the stage workflows this turn actually drove, so unrelated workflow runs created in the test repository after `kickoff_time` cannot pollute `noncontainerized`.
 - [ ] Add a Gate 99 (`verify-gate-99.py`) fixture for each of the three cases above: a passing container-mode run whose job set includes a skipped `stalled` job, one whose job set includes `verify-image-prerequisites`, and one where an unrelated workflow run was created in the test repository after `kickoff_time` — confirming the gate still passes a genuine container-mode success in each case.
+
+## Maintainer Feedback
+
+- [ ] Record `kickoff_time` before the kickoff step runs (currently taken at the start of the poll step at auto-release.yml:864, after kickoff has already created and labelled the issue), so the intake run kickoff triggers is not created before the timestamp used by the poll step's `gh run list --created ">=${kickoff_time}"` filter.
