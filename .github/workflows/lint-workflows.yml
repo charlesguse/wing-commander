@@ -4232,6 +4232,28 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-pipeline-checkout-guard.py --self-test
 
+      # Gate 117 — specs/078-plan-tasks-commit-scratch-path: every agent
+      # prompt that instructs a commit renders the canonical commit-message
+      # scratch-path guidance (the wing-commander-commit-message-guidance
+      # composite action's output), or is a named EXEMPT_SITES entry.
+      # Dynamically scans every .github/workflows/*.yml file for an agent
+      # step whose prompt: mentions "commit", so a future eleventh site is
+      # caught rather than silently exempt-by-omission. implement.yml's
+      # cycle/retry sites additionally get their rendered guidance executed
+      # for real (wc_shell_harness.run_step) and compared, proving FR-009's
+      # "same meaning, same named forms" and FR-013's "keeps behaving
+      # exactly as it does today" both hold. Numbered 117, not the 99 this
+      # branch's own commit picked next: Gates 92-98 (#499, #525/#526,
+      # #583), Gate 99 (specs/059-converged-means-tasks-done), Gate 100
+      # (#587), and Gate 116 (#611) claimed those numbers before this
+      # branch's rebase landed.
+      - name: "Gate 117 — commit-message scratch path is named at every in-scope agent prompt"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-commit-message-scratch-path.py
+      - name: "Gate 117 self-test — a stripped render, an orphaned reference, a stale exemption, an implement.yml collision or blanked extra-note, and zero discovered sites each fail"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-commit-message-scratch-path.py --self-test
+
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and
       # verify-denied-tool-collector.sh has already shown what happens when

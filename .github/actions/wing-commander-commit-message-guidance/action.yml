@@ -20,9 +20,9 @@ description: >
 inputs:
   scratch-filename:
     description: >
-      A bare filename, no directory component and no ${{ runner.temp }}
-      prefix -- this action supplies that prefix itself so no call site can
-      typo the path's root (FR-002).
+      A bare filename, no directory component and no `runner.temp` prefix
+      -- this action supplies that prefix itself so no call site can typo
+      the path's root (FR-002).
     required: true
   extra-note:
     description: >
@@ -35,7 +35,7 @@ outputs:
   guidance:
     description: >
       The complete rendered paragraph, safe to interpolate directly into a
-      prompt: | block via ${{ steps.<id>.outputs.guidance }}.
+      prompt: | block via `steps.<id>.outputs.guidance`.
     value: ${{ steps.render.outputs.guidance }}
 
 runs:
