@@ -1,0 +1,48 @@
+# specs/071-agent-push-credential FR-016/FR-017 (code review of that PR,
+# CLAUDE.md single-home rule): a published stage (a workflow_call-only
+# workflow) may not resolve `.github/actions/_shared/` directly (Gate 60's
+# promotion check) -- only a composite may. This is the one composite
+# front door onto `_shared/published-commits-line.sh` for a caller that is
+# not itself a composite (implement.yml's inline exhausted-retry stall
+# notice); wing-commander-chain-stop-notice, already a composite, reaches
+# the shared script directly instead of through this front door.
+name: wing-commander-published-commits-line
+description: >
+  Renders the "N commit(s) the agent could not push during the run were
+  published after it" (or, when the rescue push itself failed, "... could
+  not be published either") stall-notice line from a
+  wing-commander-publish-stranded-commits call's own outputs.
+
+inputs:
+  commits-published:
+    description: >
+      commits-published output of a wing-commander-publish-stranded-commits
+      call. A nonzero value renders a line naming the count; zero, empty,
+      or anything non-numeric renders no line at all.
+    required: false
+    default: ""
+  push-ok:
+    description: >
+      push-ok output of the same call. "false" renders the "could not be
+      published either" wording; anything else means success.
+    required: false
+    default: ""
+
+outputs:
+  line:
+    description: The rendered line, or "" when there is nothing to say.
+    value: ${{ steps.render.outputs.line }}
+
+runs:
+  using: composite
+  steps:
+    - name: Render the published-commits line
+      id: render
+      shell: bash
+      env:
+        COMMITS_PUBLISHED: ${{ inputs.commits-published }}
+        PUSH_OK: ${{ inputs.push-ok }}
+      run: |
+        set -uo pipefail
+        eval "$(bash "$GITHUB_ACTION_PATH/../_shared/published-commits-line.sh" "$COMMITS_PUBLISHED" "$PUSH_OK")"
+        echo "line=$published_line" >> "$GITHUB_OUTPUT"

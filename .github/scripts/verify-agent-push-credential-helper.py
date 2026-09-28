@@ -107,8 +107,6 @@ SUBJECTS = {
     ".github/workflows/auto-update-spec-kit.yml": ["e2e-stage"],
 }
 
-AUTO_UPDATE_SPEC_KIT = ".github/workflows/auto-update-spec-kit.yml"
-SCRATCH_REMINT_STEP_NAME = "Re-mint scratch-repository App token (post-agent)"
 
 
 def _is_agent_step(step):
@@ -128,13 +126,6 @@ def _walk_strings(value):
 
 def _step_text(step):
     return "\n".join(_walk_strings(step))
-
-
-def _find_step_by_name(steps, name):
-    for s in steps or []:
-        if (s or {}).get("name") == name:
-            return s
-    return None
 
 
 def composed_allowed_tools(step, steps_by_id):
@@ -216,10 +207,26 @@ def check_job(path, job_name, job):
     return failures, push_capable_count
 
 
+AUTO_UPDATE_SPEC_KIT = ".github/workflows/auto-update-spec-kit.yml"
+SCRATCH_REMINT_STEP_NAME = "Re-mint scratch-repository App token (post-agent)"
+
+
 def check_e2e_scratch_companion(loaded):
     """Companion clause for check 2: auto-update-spec-kit.yml's scratch
     publish call attaches to a deterministic step, not an agent step (T014;
-    `decide` never pushes, FR-025) -- checked on its own terms."""
+    `decide` never pushes, FR-025) -- checked on its own terms.
+
+    Deliberately narrow, not "every re-mint in a job with no push-capable
+    agent step" (code review of this PR tried that generalization and
+    reverted it): finalize.yml, classify-and-announce, and tasks-approved
+    all have post-agent context re-mints with no push-capable agent step
+    in the same job EITHER, but for reasons unrelated to FR-008 scratch-
+    repository coverage -- a job-wide rule there produced false positives
+    against every one of them. A genuinely new site needing this same
+    exception is exactly what the code review of the PR introducing it
+    should catch and add here by name, matching how this named exception
+    itself was added.
+    """
     wf = loaded.get(AUTO_UPDATE_SPEC_KIT)
     if wf is None:
         return []
@@ -227,7 +234,7 @@ def check_e2e_scratch_companion(loaded):
     if job is None:
         return []
     steps = (job or {}).get("steps") or []
-    remint = _find_step_by_name(steps, SCRATCH_REMINT_STEP_NAME)
+    remint = next((s for s in steps if (s or {}).get("name") == SCRATCH_REMINT_STEP_NAME), None)
     if remint is None:
         return [f"{AUTO_UPDATE_SPEC_KIT} [e2e-stage]: no {SCRATCH_REMINT_STEP_NAME!r} "
                 f"step found -- cannot check the scratch-repository publish "

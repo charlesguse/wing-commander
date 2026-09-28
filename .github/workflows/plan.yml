@@ -742,17 +742,6 @@ jobs:
         if: steps.dupe.outputs.skip != 'true'
         run: echo "before-sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      # constitution VII: a published stage may not read github.event
-      # directly -- github.repository (not .event.repository) is a run-level
-      # fact every job already has, split here so neither of this job's two
-      # credential-helper calls below needs to touch github.event -- see
-      # clarify.yml.
-      - name: Resolve this repository's name
-        id: repo-name
-        if: steps.dupe.outputs.skip != 'true'
-        shell: bash
-        run: echo "name=${GITHUB_REPOSITORY#*/}" >> "$GITHUB_OUTPUT"
-
       # Auto mode — generate the plan and commit it, with the stage update,
       # directly to the spec branch. No plan/<slug> branch, no PR.
       - name: Compose commit-message guidance (plan.direct-commit)
@@ -790,7 +779,6 @@ jobs:
           app-id: ${{ secrets.speckit-app-id }}
           private-key: ${{ secrets.speckit-app-private-key }}
           owner: ${{ github.repository_owner }}
-          repo-name: ${{ steps.repo-name.outputs.name }}
 
       # This step's prompt carries the retry-bound paragraph for a credential-
       # expiry/mint-failure `git push` signature -- see clarify.yml.
@@ -1042,7 +1030,6 @@ jobs:
           app-id: ${{ secrets.speckit-app-id }}
           private-key: ${{ secrets.speckit-app-private-key }}
           owner: ${{ github.repository_owner }}
-          repo-name: ${{ steps.repo-name.outputs.name }}
 
       # This step's prompt carries the retry-bound paragraph for a credential-
       # expiry/mint-failure `git push` signature -- see clarify.yml.

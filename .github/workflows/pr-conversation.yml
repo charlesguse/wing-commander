@@ -1962,16 +1962,6 @@ jobs:
           chmod +x "$hooks_dir/prepare-commit-msg"
           git config core.hooksPath "$hooks_dir"
 
-      # constitution VII: a published stage may not read github.event
-      # directly -- github.repository (not .event.repository) is a run-level
-      # fact every job already has, split here so the credential-helper
-      # call below never touches github.event -- see clarify.yml.
-      - name: Resolve this repository's name
-        id: repo-name
-        if: steps.relay-gate.outputs.proceed == 'true' && steps.route.outputs.agent-needed == 'true'
-        shell: bash
-        run: echo "name=${GITHUB_REPOSITORY#*/}" >> "$GITHUB_OUTPUT"
-
       # A fresh-mint credential for the agent step's own `git push` calls
       # -- see clarify.yml.
       - name: Install fresh-mint push credential (agent)
@@ -1982,7 +1972,6 @@ jobs:
           app-id: ${{ secrets.speckit-app-id }}
           private-key: ${{ secrets.speckit-app-private-key }}
           owner: ${{ github.repository_owner }}
-          repo-name: ${{ steps.repo-name.outputs.name }}
 
       # Drafted-content is already-classified data (T006), but still not
       # fresh instructions — staged to a file, not interpolated (constitution V).

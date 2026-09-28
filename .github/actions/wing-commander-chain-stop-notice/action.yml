@@ -90,6 +90,15 @@ inputs:
       predates this input adds nothing.
     required: false
     default: ""
+  push-ok:
+    description: >
+      push-ok output of the same wing-commander-publish-stranded-commits
+      call(s) (specs/071-agent-push-credential, code review of that PR):
+      "false" reports the rescue push itself failed instead of claiming
+      the commits were published; anything else, including empty for a
+      caller that predates this input, means success.
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -179,6 +188,7 @@ runs:
         AGENT_RAN: ${{ inputs.agent-ran }}
         AGENT_CONCLUSION: ${{ inputs.agent-conclusion }}
         COMMITS_PUBLISHED: ${{ inputs.commits-published }}
+        PUSH_OK: ${{ inputs.push-ok }}
       run: |
         set -uo pipefail
 
@@ -220,15 +230,10 @@ runs:
           fi
         fi
 
-        # specs/071-agent-push-credential FR-016/FR-017: named only when
-        # there is something to name -- a caller that predates this input,
-        # or one that passed zero, adds nothing.
-        published_line=""
-        case "$COMMITS_PUBLISHED" in
-          ''|0) ;;
-          *[!0-9]*) ;;
-          *) published_line="$COMMITS_PUBLISHED commit(s) the agent could not push during the run were published after it." ;;
-        esac
+        # specs/071-agent-push-credential FR-016/FR-017 -- single home in
+        # _shared/published-commits-line.sh (also read by implement.yml's
+        # own inline exhausted-retry notice, code review of this PR).
+        eval "$(bash "$GITHUB_ACTION_PATH/../_shared/published-commits-line.sh" "$COMMITS_PUBLISHED" "$PUSH_OK")"
 
         {
           echo "$headline"

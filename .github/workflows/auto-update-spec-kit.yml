@@ -2098,26 +2098,6 @@ jobs:
           owner: ${{ steps.scratch-parts.outputs.owner }}
           repo-name: ${{ steps.scratch-parts.outputs.name }}
 
-      # Deterministic rescue for scratch-repository work that landed after
-      # the scaffold commit but never reached the remote -- parallel to
-      # T014's placement, positioned alongside the re-mint above and ahead
-      # of "Push agent-produced spec.md" below -- see clarify.yml. workdir/
-      # push-token/push-repo used because e2e-scratch is a separate clone
-      # pushed via an explicit authenticated URL, never `origin` as-is (see
-      # the scaffold and best-effort push steps above) -- see this run's
-      # wing-commander-findings for the mechanism tension this call site
-      # diverges to work around (same tension T014 already flagged).
-      - name: Publish stranded commits (scratch, post-agent)
-        id: publish-stranded-scratch
-        if: "!cancelled() && steps.decide.outcome != 'skipped'"
-        continue-on-error: true
-        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-publish-stranded-commits
-        with:
-          before-sha: ${{ steps.pre-agent-scratch.outputs.before-sha }}
-          workdir: e2e-scratch
-          push-token: ${{ env.WC_SCRATCH_TOKEN }}
-          push-repo: ${{ steps.scratch-repo.outputs.full-name }}
-
       # FR-005/FR-004 (spec 052, second maintainer review of PR #407):
       # guarded on the composite's own `ok` output, not `.outcome` --
       # `scoped-app-token`'s "Confirm the target repository is reachable"
@@ -2136,6 +2116,29 @@ jobs:
           TOKEN: ${{ steps.scratch-token-post-agent.outputs.token }}
         run: |
           echo "WC_SCRATCH_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+
+      # Deterministic rescue for scratch-repository work that landed after
+      # the scaffold commit but never reached the remote -- parallel to
+      # T014's placement, positioned alongside the re-mint above and ahead
+      # of "Push agent-produced spec.md" below -- see clarify.yml. workdir/
+      # push-token/push-repo used because e2e-scratch is a separate clone
+      # pushed via an explicit authenticated URL, never `origin` as-is (see
+      # the scaffold and best-effort push steps above) -- see this run's
+      # wing-commander-findings for the mechanism tension this call site
+      # diverges to work around (same tension T014 already flagged). Reads
+      # env.WC_SCRATCH_TOKEN AFTER the relay above (code review of this PR)
+      # -- reading it before the relay used the pre-agent token even when
+      # the re-mint above had already succeeded.
+      - name: Publish stranded commits (scratch, post-agent)
+        id: publish-stranded-scratch
+        if: "!cancelled() && steps.decide.outcome != 'skipped'"
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-publish-stranded-commits
+        with:
+          before-sha: ${{ steps.pre-agent-scratch.outputs.before-sha }}
+          workdir: e2e-scratch
+          push-token: ${{ env.WC_SCRATCH_TOKEN }}
+          push-repo: ${{ steps.scratch-repo.outputs.full-name }}
 
       - name: Compute agent run verdict
         id: decide-verdict

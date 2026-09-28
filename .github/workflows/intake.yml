@@ -623,19 +623,11 @@ jobs:
         with:
           intended-turns: ${{ inputs.max-turns }}
 
-      # constitution VII: a published stage may not read github.event
-      # directly -- github.repository (not .event.repository) is a run-level
-      # fact every job already has, split here so the credential-helper call
-      # below never touches github.event -- see clarify.yml.
-      - name: Resolve this repository's name
-        id: repo-name
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.tool-args-intake.outputs.allowed-tools != ''
-        shell: bash
-        run: echo "name=${GITHUB_REPOSITORY#*/}" >> "$GITHUB_OUTPUT"
-
       # A fresh-mint credential for the agent step's own `git push` calls,
       # resolved at the moment of each push rather than fixed at job start
-      # -- see clarify.yml.
+      # -- see clarify.yml. repo-name omitted: this pipeline's own remote,
+      # derived by the composite itself from $GITHUB_REPOSITORY (code
+      # review of this PR -- see clarify.yml).
       - name: Install fresh-mint push credential (agent)
         id: push-cred
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.tool-args-intake.outputs.allowed-tools != ''
@@ -644,7 +636,6 @@ jobs:
           app-id: ${{ secrets.speckit-app-id }}
           private-key: ${{ secrets.speckit-app-private-key }}
           owner: ${{ github.repository_owner }}
-          repo-name: ${{ steps.repo-name.outputs.name }}
 
       # This step's prompt carries the retry-bound paragraph for a credential-
       # expiry/mint-failure `git push` signature -- see clarify.yml.

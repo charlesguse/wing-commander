@@ -532,7 +532,7 @@ jobs:
 
       # Recorded before the agent step runs so a later publish call
       # (specs/071-agent-push-credential) can report how many commits, if
-      # any, the agent could not push itself -- see clarify.yml.
+      # any, the agent could not push itself.
       - name: Record pre-agent SHA
         id: pre-agent
         if: steps.lifecycle-gate.outputs.is-open == 'true'
@@ -593,17 +593,6 @@ jobs:
         with:
           intended-turns: ${{ inputs.max-turns }}
 
-      # constitution VII: a published stage may not read github.event
-      # directly -- github.repository (not .event.repository) is a run-level
-      # fact every job already has; this canonical copy splits it so no
-      # credential-helper call site anywhere else needs to touch
-      # github.event either. Every other in-scope stage's copy points here.
-      - name: Resolve this repository's name
-        id: repo-name
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.tool-args-clarify.outputs.allowed-tools != ''
-        shell: bash
-        run: echo "name=${GITHUB_REPOSITORY#*/}" >> "$GITHUB_OUTPUT"
-
       # A fresh-mint credential for the agent step's own `git push` calls
       # (specs/071-agent-push-credential): a git credential.helper that
       # mints a new App installation token on every outbound
@@ -611,6 +600,11 @@ jobs:
       # long agent cycle never authenticates with the token
       # actions/checkout@v5 embedded at job start. This is the canonical
       # call-site comment -- every other in-scope stage's copy points here.
+      # repo-name omitted: this pipeline's own remote, derived by the
+      # composite itself from $GITHUB_REPOSITORY (code review of this PR --
+      # constitution VII: a published stage may not read github.event
+      # directly, and $GITHUB_REPOSITORY, unlike github.event.repository,
+      # is a run-level fact every job already has).
       - name: Install fresh-mint push credential (agent)
         id: push-cred
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.tool-args-clarify.outputs.allowed-tools != ''
@@ -619,7 +613,6 @@ jobs:
           app-id: ${{ secrets.speckit-app-id }}
           private-key: ${{ secrets.speckit-app-private-key }}
           owner: ${{ github.repository_owner }}
-          repo-name: ${{ steps.repo-name.outputs.name }}
 
       # (canonical copy; do not condense)
       # This step's prompt below carries the retry-bound paragraph for a

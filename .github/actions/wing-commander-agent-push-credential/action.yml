@@ -48,8 +48,16 @@ inputs:
       end-to-end arm (research.md D9).
     required: true
   repo-name:
-    description: Target repository's name.
-    required: true
+    description: >
+      Target repository's name. Empty (the default) derives it from
+      $GITHUB_REPOSITORY -- this pipeline's own remote, the common case
+      across 7 of the 8 in-scope stages (code review of this PR: a
+      one-line "split owner/repo" step was pasted into each of those 7
+      workflows purely to compute this). The end-to-end arm passes it
+      explicitly: the scratch repository is a different repository
+      entirely, not derivable from this job's own $GITHUB_REPOSITORY.
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -79,6 +87,8 @@ runs:
         REPO_NAME: ${{ inputs.repo-name }}
       run: |
         set -euo pipefail
+        repo_name="$REPO_NAME"
+        [ -n "$repo_name" ] || repo_name="${GITHUB_REPOSITORY#*/}"
         git config --local --unset-all "http.https://github.com/.extraheader" 2>/dev/null || true
         git config --local --unset-all "credential.https://github.com.helper" 2>/dev/null || true
         git config --local --add "credential.https://github.com.helper" "!bash \"$GITHUB_ACTION_PATH/mint-credential.sh\""
@@ -86,5 +96,5 @@ runs:
           echo "WC_AGENT_PUSH_APP_ID=$APP_ID"
           echo "WC_AGENT_PUSH_KEY_PATH=$KEY_PATH"
           echo "WC_AGENT_PUSH_OWNER=$OWNER"
-          echo "WC_AGENT_PUSH_REPO=$REPO_NAME"
+          echo "WC_AGENT_PUSH_REPO=$repo_name"
         } >> "$GITHUB_ENV"
