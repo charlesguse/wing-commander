@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "ReadinessReport",
-  "description": "Emitted on stdout by provision-e2e-target.sh (with or without --check-only) and rendered into the GITHUB_STEP_SUMMARY of the generalized auto-update-spec-kit-scratch-preflight.yml workflow. See data-model.md. Tri-state outcome/verdict shape amended by specs/069-scratch-readiness-reporting/contracts/readiness-report.schema.json (FR-010/FR-011): elements[].ready (bool) is replaced by elements[].outcome (tri-state), and top-level ready (bool) is replaced by verdict (tri-state).",
+  "description": "Amends specs/053-e2e-scratch-provisioning/contracts/readiness-report.schema.json (FR-010/FR-011): elements[].ready (bool) is replaced by elements[].outcome (tri-state), and top-level ready (bool) is replaced by verdict (tri-state). Emitted on stdout by provision-e2e-target.sh (with or without --check-only) and rendered into the GITHUB_STEP_SUMMARY of auto-update-spec-kit-scratch-preflight.yml. See ../data-model.md.",
   "type": "object",
   "additionalProperties": false,
   "required": ["target", "profile", "elements", "verdict", "generated_at"],
@@ -38,7 +38,7 @@
           "outcome": {
             "type": "string",
             "enum": ["ready", "missing", "not_checkable"],
-            "description": "The three outcomes a machine consumer must be able to tell apart without parsing remaining_action. not_checkable means the checking route's credential cannot answer this element at all -- never folded into missing."
+            "description": "FR-001: the three outcomes a machine consumer must be able to tell apart without parsing remaining_action. not_checkable means the checking route's credential cannot answer this element at all (FR-002) -- never folded into missing."
           },
           "remaining_action": {
             "type": ["string", "null"],
@@ -50,7 +50,7 @@
     "verdict": {
       "type": "string",
       "enum": ["all_clear", "not_clear", "unverified"],
-      "description": "all_clear iff every element is ready; not_clear if any element is missing (checked-and-missing outranks unverified); unverified iff nothing is missing but at least one element is not_checkable. Never all_clear with a missing or not_checkable element present. Maps 1:1 to provision-e2e-target.sh's exit status: 0 / 1 / 2 respectively (see contracts/cli.md)."
+      "description": "FR-002/FR-003: all_clear iff every element is ready; not_clear if any element is missing (checked-and-missing outranks unverified, Edge Cases); unverified iff nothing is missing but at least one element is not_checkable. Never all_clear with a missing or not_checkable element present (FR-003). Maps 1:1 to provision-e2e-target.sh's exit status: 0 / 1 / 2 respectively (FR-004, SC-008; see ../contracts/cli.md)."
     },
     "generated_at": {
       "type": "string",

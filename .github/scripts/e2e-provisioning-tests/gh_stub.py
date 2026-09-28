@@ -82,6 +82,10 @@ def main():
         sub = argv[1] if len(argv) > 1 else ""
         if sub == "create":
             full = argv[2]
+            existing = s["repos"].get(full)
+            if existing and existing.get("create_forbidden"):
+                sys.stderr.write("gh: HTTP 403: Resource not accessible by integration\n")
+                return 1
             s["repos"][full] = {
                 "exists": True, "description": None, "diskUsage": 0,
                 "defaultBranch": "main", "secrets": [], "labels": [],
