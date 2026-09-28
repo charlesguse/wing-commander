@@ -3,7 +3,7 @@
   "spec_dir": "specs/066-fine-grained-maintainer-token",
   "feature_num": "066",
   "stage": "implement",
-  "iteration": 2,
+  "iteration": 3,
   "spec_branch": "spec/066-fine-grained-maintainer-token",
   "pending_re_review_from": ["charlesguse"]
 }
