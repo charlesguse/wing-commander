@@ -2,7 +2,7 @@
   "issue": 615,
   "spec_dir": "specs/086-trusted-composite-resolution",
   "feature_num": "086",
-  "stage": "implement",
+  "stage": "stalled",
   "iteration": 3,
   "spec_branch": "spec/086-trusted-composite-resolution",
   "pending_re_review_from": [
