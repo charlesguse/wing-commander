@@ -319,25 +319,66 @@ def case_forged_delimiter_in_what_cannot_override_other_outputs():
 
 
 def case_fingerprint_ignores_punctuation_case_and_spacing():
-    case = "the fingerprint normalizes gate_or_artifact/file_path: punctuation, case, spacing cannot move it; a word can (#424)"
+    case = "the fingerprint normalizes gate_or_artifact/file_path: punctuation, case, spacing cannot move a VERIFIED anchor's key (#424); an anchor a word away from what the file says is not a third distinct key, it is #569's fallback route"
     tmp = tempfile.mkdtemp(prefix="wc-sf-fpnorm-")
+    fixture_path = os.path.join(tmp, "constitution-fixture.md")
+    with open(fixture_path, "w", encoding="utf-8") as fh:
+        fh.write("## Principle III: Test-First (NON-NEGOTIABLE)\n\nBody text.\n")
     findings = [
         valid_finding(title="a", fingerprint_basis={
-            "file_path": ".specify/memory/constitution.md",
+            "file_path": "constitution-fixture.md",
             "gate_or_artifact": "Principle III: Test-First (NON-NEGOTIABLE)"}),
         valid_finding(title="b", fingerprint_basis={
-            "file_path": ".SPECIFY/memory/constitution.md",
+            "file_path": "constitution-fixture.md",
             "gate_or_artifact": "  principle iii.  test-first  (non-negotiable) "}),
+        # #569: this anchor is a different word from what the fixture file
+        # says (Principle IV, not III) -- under the pre-076 rule this moved
+        # the key to a third distinct value; under the anchor rule it fails
+        # verification and takes the FR-007 fallback key instead, sharing
+        # the fallback key rather than minting a new anchored one.
         valid_finding(title="c", fingerprint_basis={
-            "file_path": ".specify/memory/constitution.md",
+            "file_path": "constitution-fixture.md",
             "gate_or_artifact": "Principle IV: Test-First (NON-NEGOTIABLE)"}),
     ]
     rc, outputs, state, out = run_prepare(tmp, "structured-array", findings=findings)
     check(case + ": exit 0", rc == 0, out)
     check(case + ": three survivors", outputs.get("survivor-count") == "3", out)
     m0, m1, m2 = (outputs.get(f"survivor-{i}-marker", "") for i in range(3))
-    check(case + ": punctuation/case/spacing variants share one fingerprint", m0 and m0 == m1, (m0, m1))
-    check(case + ": a different word gives a different fingerprint", m2 and m2 != m0, (m0, m2))
+    check(case + ": punctuation/case/spacing variants of a verified anchor share one fingerprint",
+          m0 and m0 == m1, (m0, m1))
+    check(case + ": an anchor a word away from the file's text takes a key distinct from the verified-anchor key",
+          m2 and m2 != m0, (m0, m2))
+    check(case + ": the note records the anchor rejection for finding c",
+          state and any("anchor unverifiable" in n and "Principle IV" in n for n in state["notes"]),
+          state and state["notes"])
+
+
+def case_anchor_wording_variance_shares_one_key():
+    case = "two runs meeting one anchored defect in different words still produce one key (FR-010, SC-002)"
+    tmp = tempfile.mkdtemp(prefix="wc-sf-anchorshare-")
+    fixture_path = os.path.join(tmp, "gate-fixture.md")
+    with open(fixture_path, "w", encoding="utf-8") as fh:
+        fh.write("Gate 71 -- the fixture harness for stage-findings.\n")
+    findings = [
+        valid_finding(
+            title="Gate 71 self-test is missing a case",
+            what="The first agent's own words for this defect.",
+            fingerprint_basis={"file_path": "gate-fixture.md",
+                               "gate_or_artifact": "Gate 71"}),
+        valid_finding(
+            title="stage-findings gate 71 lacks self-test coverage",
+            what="A later run's differently-worded description of the same defect.",
+            fingerprint_basis={"file_path": "gate-fixture.md",
+                               "gate_or_artifact": "  GATE-71.  "}),
+    ]
+    rc, outputs, state, out = run_prepare(tmp, "structured-array", findings=findings)
+    check(case + ": exit 0", rc == 0, out)
+    check(case + ": two survivors", outputs.get("survivor-count") == "2", out)
+    m0, m1 = (outputs.get(f"survivor-{i}-marker", "") for i in range(2))
+    check(case + ": differing titles/what, both anchoring the same verified text, share one key",
+          m0 and m0 == m1, (m0, m1))
+    check(case + ": no anchor-rejection note for either (both verify)",
+          state and not any("anchor unverifiable" in n for n in state["notes"]), state and state["notes"])
 
 
 # --- dedup / API-failure cases (stub `gh`, exercise the shipped lookup) ----
@@ -862,6 +903,7 @@ CASES = [
     case_instruction_shaped_detail_is_quoted_as_data,
     case_forged_delimiter_in_what_cannot_override_other_outputs,
     case_fingerprint_ignores_punctuation_case_and_spacing,
+    case_anchor_wording_variance_shares_one_key,
     case_dedup_hit_open_comments_not_duplicates,
     case_dedup_hit_closed_creates_and_links,
     case_no_dedup_match_creates,

@@ -35,7 +35,7 @@ in place (plan.md's Project Structure).
 
 ## Phase 1: Setup
 
-- [ ] T001 Verify baseline facts against the current tree before assigning
+- [X] T001 Verify baseline facts against the current tree before assigning
   any new identifier (this repository's own T001 convention — see
   `verify-single-home-idioms.py`'s module docstring on why a claim about the
   tree is not the same as the tree). Confirm, and note any drift found: (a)
@@ -65,7 +65,7 @@ mechanism already exists and only adds fixtures or gates on top of it.
 
 **⚠️ CRITICAL**: No user story task can be verified until this phase is done.
 
-- [ ] T002 In `.github/actions/wing-commander-stage-findings/action.yml`'s
+- [X] T002 In `.github/actions/wing-commander-stage-findings/action.yml`'s
   "Extract, validate, cap, and prepare findings" step (the inline Python
   block), add the anchor-verification logic from
   `contracts/anchor-verification.md` steps 1-4: resolve
@@ -82,7 +82,7 @@ mechanism already exists and only adds fixtures or gates on top of it.
   `norm(gate_or_artifact) in norm(file_text)` — contained means the anchor
   verifies, not contained means unverifiable. Position-independence: the
   test only needs containment, never the offset (Edge Cases).
-- [ ] T003 In the same step, depends on T002: replace the single
+- [X] T003 In the same step, depends on T002: replace the single
   three-segment fingerprint with the two shapes from research.md D2 —
   when the anchor verifies, `with-anchor key =
   sha256("anchor|<stage>|<norm(file_path)>|<norm(gate_or_artifact)>")`
@@ -91,7 +91,7 @@ mechanism already exists and only adds fixtures or gates on top of it.
   `fallback key = sha256("fallback|<stage>|<norm(file_path)>")`. Both
   literal tags (`anchor|`, `fallback|`) must appear verbatim in the shipped
   code, since T021's gate later checks for them by string match.
-- [ ] T004 In the same step, depends on T002/T003: when an anchor is
+- [X] T004 In the same step, depends on T002/T003: when an anchor is
   unverifiable, append one line to the existing `notes` list (FR-006,
   research.md D4) naming the finding's title, the anchor value that failed,
   the file path it was checked against, and that the finding was keyed via
@@ -99,13 +99,13 @@ mechanism already exists and only adds fixtures or gates on top of it.
   run-summary counter or field — `notes` is the only carrier, matching the
   existing `dropped (malformed): ...` / `dropped (cap exceeded): ...` line
   convention.
-- [ ] T005 In the same file's `compose_recap()` function, implement FR-008:
+- [X] T005 In the same file's `compose_recap()` function, implement FR-008:
   the text used as `comment-body-file` when a finding appends to an
   already-open issue must include that finding's own `title` and `what`,
   not only the current `"Seen again in run {0}.\n".format(RUN_URL)`. Every
   distinct defect that lands on a shared (fallback-keyed) issue must stay
   legible from the issue body alone.
-- [ ] T006 Depends on T003: amend
+- [X] T006 Depends on T003: amend
   `specs/056-stage-found-defect-filing/data-model.md`'s "Fingerprint"
   section in place — replace the single-formula statement with both shapes
   from T003 (fenced, mechanically extractable: keep the block a `norm()`
@@ -134,7 +134,7 @@ across runs still produces exactly one key.
 titles/what differing in wording, both anchoring on the same file text with
 differing punctuation/case/spacing — exactly one key results.
 
-- [ ] T007 [US1] In
+- [X] T007 [US1] In
   `.github/scripts/stage-findings-tests/run_fixtures.py`, add a fixture
   function (e.g. `case_anchor_wording_variance_shares_one_key`) proving
   FR-010's first case / SC-002's first clause: write one temp fixture file
@@ -144,7 +144,7 @@ differing punctuation/case/spacing — exactly one key results.
   different punctuation, capitalisation, and spacing (both verified as
   contained via `norm()`), and the same `fingerprint_basis.file_path`;
   assert both survivors' `-marker` outputs are identical with-anchor keys.
-- [ ] T008 [US1] In the same file, amend the existing
+- [X] T008 [US1] In the same file, amend the existing
   `case_fingerprint_ignores_punctuation_case_and_spacing` per research.md
   D8: keep its first assertion (punctuation/case/spacing variants share one
   fingerprint), but replace its third finding and its "a different word
@@ -156,7 +156,7 @@ differing punctuation/case/spacing — exactly one key results.
   requires both the same-key and different-key directions to stay proven);
   keep the amendment visible in the diff and its docstring/comment updated
   to say why.
-- [ ] T009 [US1] Add T007's and T008's function(s) to the `CASES` list in
+- [X] T009 [US1] Add T007's and T008's function(s) to the `CASES` list in
   `.github/scripts/stage-findings-tests/run_fixtures.py` so Gate 71
   (`bash .github/scripts/stage-findings-tests/run-tests.sh`) exercises them.
 
