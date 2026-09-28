@@ -73,10 +73,15 @@ constraint, not a throughput target.
 - Must not change `auto-release-verdict.sh`'s six-field JSON shape or add a
   new `outcome` value (Assumptions: "the existing verdict vocabulary is
   sufficient").
-- Must not change the generic-timeout code path (`auto-release.yml`
-  lines 1083-1089) or the `report` job's three-way classification `case`
-  (lines 1790-1794) — both already handle any `fail-gate-stall` correctly
-  today (FR-007, FR-008).
+- Must not change the `report` job's three-way classification `case`
+  (lines 1790-1794) — it already handles any `fail-gate-stall` correctly
+  today (FR-008). The generic-timeout code path (`auto-release.yml`
+  lines 1083-1089 at plan time) does gain a pre-write clamp: per spec.md's
+  "the waiting allowance is reached late in the poll budget" edge case and
+  FR-007, the post-loop block checks `gate_blocked_since` for every gate
+  and writes that gate's `fail-gate-stall` before falling through to the
+  unchanged `fail-timeout` write, so the generic timeout remains the
+  outcome only when no gate is blocked.
 - Must not reset a gate's allowance timer merely because the *shape* of the
   unresolved check result changes between observations (FR-005) — only
   merging or leaving the blocked-with-unresolved-checks state resets it.

@@ -138,4 +138,4 @@ spec.md defines exactly one user story, so there is no incremental multi-story d
 
 ## Phase 4: Convergence
 
-- [ ] T011 Reconcile `plan.md`'s Constraints section (~lines 76-79), which states the generic-timeout code path (`auto-release.yml` lines 1083-1089 at plan time) and the `report` job's classification `case` "must not change" since both "already handle any fail-gate-stall correctly today," with the Maintainer Feedback fix above that added a `gate_blocked_since` clamp check immediately before that write, per spec.md's "the waiting allowance is reached late in the poll budget" edge case and FR-007 (plan: Constraints, contradicts).
+- [X] T011 Reconcile `plan.md`'s Constraints section (~lines 76-79), which states the generic-timeout code path (`auto-release.yml` lines 1083-1089 at plan time) and the `report` job's classification `case` "must not change" since both "already handle any fail-gate-stall correctly today," with the Maintainer Feedback fix above that added a `gate_blocked_since` clamp check immediately before that write, per spec.md's "the waiting allowance is reached late in the poll budget" edge case and FR-007 (plan: Constraints, contradicts).
