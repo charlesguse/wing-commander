@@ -25,7 +25,7 @@
 # the same commit resolved two different ways for two structurally
 # different needs (a tar extract for importable Python modules; a real
 # checkout for a `uses:`-addressable composite directory). Gate 98
-# (verify-board-loop-helper-provenance.py) and Gate 99
+# (verify-board-loop-helper-provenance.py) and Gate 100
 # (verify-board-loop-composite-provenance.py) are the two halves of this
 # one provenance property.
 name: "board-loop"
@@ -132,6 +132,8 @@ jobs:
       - name: Record trusted-copy provenance
         run: |
           echo "board-loop: composites resolved from $(git -C .wc-pristine-repo rev-parse HEAD) at ref ${{ github.sha }}." >> "$GITHUB_STEP_SUMMARY"
+      - name: Write-protect board-loop's own trusted copy (composites)
+        run: chmod -R a-w .wc-pristine-repo
 
       # Entry gate 1 (research.md D2): the exact kill-switch idiom
       # auto-release.yml already uses at every durable-action boundary --
@@ -890,6 +892,8 @@ jobs:
       - name: Record trusted-copy provenance
         run: |
           echo "board-loop: composites resolved from $(git -C .wc-pristine-repo rev-parse HEAD) at ref ${{ github.sha }}." >> "$GITHUB_STEP_SUMMARY"
+      - name: Write-protect board-loop's own trusted copy (composites)
+        run: chmod -R a-w .wc-pristine-repo
 
       - name: Wing Commander context
         id: ctx
@@ -1328,6 +1332,8 @@ jobs:
       - name: Record trusted-copy provenance
         run: |
           echo "board-loop: composites resolved from $(git -C .wc-pristine-repo rev-parse HEAD) at ref ${{ github.sha }}." >> "$GITHUB_STEP_SUMMARY"
+      - name: Write-protect board-loop's own trusted copy (composites)
+        run: chmod -R a-w .wc-pristine-repo
 
       - name: Wing Commander context
         id: ctx
@@ -1834,6 +1840,8 @@ jobs:
       - name: Record trusted-copy provenance
         run: |
           echo "board-loop: composites resolved from $(git -C .wc-pristine-repo rev-parse HEAD) at ref ${{ github.sha }}." >> "$GITHUB_STEP_SUMMARY"
+      - name: Write-protect board-loop's own trusted copy (composites)
+        run: chmod -R a-w .wc-pristine-repo
 
       - name: Wing Commander context
         id: ctx
@@ -1870,6 +1878,15 @@ jobs:
             # Resume mid-step (T035): the branch already exists and has no
             # PR yet -- checkout that SAME branch, never cut a second one.
             git fetch origin "$EXISTING_BRANCH" --quiet
+            # #640 maintainer review: a branch that force-tracks files under
+            # the gitignored .wc-pristine-repo would silently overwrite the
+            # trusted copy on checkout, exit code 0. Refuse before that can
+            # happen (the write-protect step above is the second, fail-closed
+            # layer for the same case).
+            if [ -n "$(git ls-tree -r --name-only "origin/$EXISTING_BRANCH" -- .wc-pristine-repo)" ]; then
+              echo "::error::board-loop: $EXISTING_BRANCH tracks files under .wc-pristine-repo -- refusing to check it out over the trusted copy." >&2
+              exit 1
+            fi
             git checkout -B "$EXISTING_BRANCH" "origin/$EXISTING_BRANCH"
             base_sha="${EXISTING_BASE_SHA:-$(git merge-base origin/main HEAD)}"
             echo "base-sha=$base_sha" >> "$GITHUB_OUTPUT"
@@ -2344,6 +2361,8 @@ jobs:
       - name: Record trusted-copy provenance
         run: |
           echo "board-loop: composites resolved from $(git -C .wc-pristine-repo rev-parse HEAD) at ref ${{ github.sha }}." >> "$GITHUB_STEP_SUMMARY"
+      - name: Write-protect board-loop's own trusted copy (composites)
+        run: chmod -R a-w .wc-pristine-repo
 
       - name: Wing Commander context
         id: ctx
@@ -3275,6 +3294,8 @@ jobs:
       - name: Record trusted-copy provenance
         run: |
           echo "board-loop: composites resolved from $(git -C .wc-pristine-repo rev-parse HEAD) at ref ${{ github.sha }}." >> "$GITHUB_STEP_SUMMARY"
+      - name: Write-protect board-loop's own trusted copy (composites)
+        run: chmod -R a-w .wc-pristine-repo
 
       - name: Wing Commander context
         id: ctx
@@ -3617,6 +3638,8 @@ jobs:
       - name: Record trusted-copy provenance
         run: |
           echo "board-loop: composites resolved from $(git -C .wc-pristine-repo rev-parse HEAD) at ref ${{ github.sha }}." >> "$GITHUB_STEP_SUMMARY"
+      - name: Write-protect board-loop's own trusted copy (composites)
+        run: chmod -R a-w .wc-pristine-repo
 
       - name: Wing Commander context
         id: ctx
@@ -3769,6 +3792,8 @@ jobs:
       - name: Record trusted-copy provenance
         run: |
           echo "board-loop: composites resolved from $(git -C .wc-pristine-repo rev-parse HEAD) at ref ${{ github.sha }}." >> "$GITHUB_STEP_SUMMARY"
+      - name: Write-protect board-loop's own trusted copy (composites)
+        run: chmod -R a-w .wc-pristine-repo
 
       - name: Wing Commander context
         id: ctx

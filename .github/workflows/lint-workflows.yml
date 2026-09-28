@@ -4193,15 +4193,19 @@ jobs:
       # (helper scripts and schemas, #583); this gate closes the uses:-block
       # half, unconditionally across every job in the file -- see
       # board-loop.yml's own header for the trusted-copy statement both gates
-      # enforce a piece of. Numbered 101, not the 100 this branch's own
-      # commit picked next: #587's Gate 100 (every published stage's
-      # max-turns default agrees with its docs/adoption.md row, immediately
-      # above) claimed 100 first on the default branch before this branch's
-      # rebase landed.
+      # enforce a piece of. #640 maintainer review: this gate also requires
+      # a write-protect step (chmod -R a-w) immediately after each job's
+      # trusted-copy checkout, since the fixer and review-fixup agents hold
+      # unrestricted Write/Edit on the workspace and could otherwise rewrite
+      # the sidecar before it runs with the App private key. Numbered 101,
+      # not the 100 this branch's own commit picked next: #587's Gate 100
+      # (every published stage's max-turns default agrees with its
+      # docs/adoption.md row, immediately above) claimed 100 first on the
+      # default branch before this branch's rebase landed.
       - name: "Gate 101 — every uses: ./.github/actions/ reference in board-loop.yml resolves from the trusted copy, never the workspace"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-loop-composite-provenance.py
-      - name: "Gate 101 self-test — a raw workspace uses:, a moved, dropped, mis-pinned, or continue-on-error checkout, a missing .gitignore entry, or a widened ban each fail"
+      - name: "Gate 101 self-test — a raw workspace uses:, a moved, dropped, mis-pinned, or continue-on-error checkout, a missing .gitignore entry, a widened ban, or a dropped write-protect step each fail"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-loop-composite-provenance.py --self-test
 

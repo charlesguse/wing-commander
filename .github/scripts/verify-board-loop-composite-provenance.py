@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gate 99 -- every uses: ./.github/actions/ reference in board-loop.yml
+"""Gate 100 -- every uses: ./.github/actions/ reference in board-loop.yml
 resolves from the trusted copy, never the workspace (#468/#504/#615).
 
 WHY THIS EXISTS
@@ -36,11 +36,18 @@ feature closes):
       (if it has one at all) is not a condition that could skip it while a
       dependent reference still runs;
   (e) `.gitignore` contains an entry matching the sidecar path,
-      `.wc-pristine-repo`.
+      `.wc-pristine-repo`;
+  (f) every job that carries the trusted-copy checkout also carries a
+      canonical `Write-protect board-loop's own trusted copy (composites)`
+      step, after the checkout and before every dependent reference in
+      that job -- #640 maintainer review: the fixer and review-fixup
+      agents hold unrestricted Write/Edit on the workspace and could
+      otherwise rewrite the sidecar before it is executed with
+      `secrets.WING_COMMANDER_APP_PRIVATE_KEY`.
 
 A job with no composite reference at all (today: only `resolve-model`)
-trivially satisfies (a)-(d); rule (e) is a file-level fact independent of
-any one job.
+trivially satisfies (a)-(d) and (f); rule (e) is a file-level fact
+independent of any one job.
 
 Gate 98's own `run:`-block checks (helper-script/schema provenance, the
 `python3 -I` allowlist) are untouched and out of this gate's scope; this
@@ -67,6 +74,7 @@ import yaml  # noqa: E402
 WORKFLOW = os.path.join(".github", "workflows", "board-loop.yml")
 GITIGNORE = ".gitignore"
 CHECKOUT_NAME = "Checkout board-loop's own trusted copy (composites)"
+WRITE_PROTECT_NAME = "Write-protect board-loop's own trusted copy (composites)"
 RAW_PREFIX = "./.github/actions/"
 SIDECAR_PREFIX = "./.wc-pristine-repo/.github/actions/"
 AGENT_USES = "anthropics/claude-code-action@"
@@ -107,6 +115,10 @@ def _checkout_indices(steps):
             and str((s or {}).get("uses", "")).startswith("actions/checkout@")]
 
 
+def _write_protect_indices(steps):
+    return [i for i, s in enumerate(steps) if (s or {}).get("name") == WRITE_PROTECT_NAME]
+
+
 def job_problems(job_id, job):
     problems = []
     steps = (job or {}).get("steps") or []
@@ -143,6 +155,26 @@ def job_problems(job_id, job):
         problems.append(
             "{0}: trusted-copy checkout's if: {1!r} could skip it while a dependent "
             "reference still runs -- rule (d)".format(job_id, step_if))
+    write_protects = _write_protect_indices(steps)
+    if not write_protects:
+        problems.append(
+            "{0}: has a trusted-copy checkout but no {1!r} step -- rule (f)".format(
+                job_id, WRITE_PROTECT_NAME))
+    else:
+        if len(write_protects) > 1:
+            problems.append("{0}: more than one {1!r} step -- rule (f)".format(
+                job_id, WRITE_PROTECT_NAME))
+        write_protect = write_protects[0]
+        if write_protect < checkout:
+            problems.append(
+                "{0}: the write-protect step (step {1}) is before the trusted-copy "
+                "checkout (step {2}) -- rule (f)".format(job_id, write_protect, checkout))
+        for d in dependents:
+            if write_protect > d:
+                problems.append(
+                    "{0}: the write-protect step (step {1}) is not before step {2} "
+                    "({3!r}) -- rule (f)".format(
+                        job_id, write_protect, d, (steps[d] or {}).get("name", d)))
     return problems
 
 
@@ -187,7 +219,7 @@ def _checkout_index(steps):
     for i, s in enumerate(steps):
         if (s or {}).get("name") == CHECKOUT_NAME:
             return i
-    sys.exit("::error::Gate 99 self-test: no {0!r} step found; update the self-test "
+    sys.exit("::error::Gate 100 self-test: no {0!r} step found; update the self-test "
              "alongside the workflow.".format(CHECKOUT_NAME))
 
 
@@ -195,7 +227,7 @@ def _first_sidecar_ref(steps):
     for i, s in enumerate(steps):
         if str((s or {}).get("uses", "")).startswith(SIDECAR_PREFIX):
             return i
-    sys.exit("::error::Gate 99 self-test: no sidecar-relative reference found; update "
+    sys.exit("::error::Gate 100 self-test: no sidecar-relative reference found; update "
              "the self-test alongside the workflow.")
 
 
@@ -244,6 +276,15 @@ def mut_continue_on_error(doc):
     return doc
 
 
+def mut_write_protect_dropped(doc):
+    """#640 maintainer review: the write-protect step is removed from
+    `fix`, leaving the sidecar writable for the fixer agent's Write/Edit."""
+    steps = _job_steps(doc, "fix")
+    idx = next(i for i, s in enumerate(steps) if (s or {}).get("name") == WRITE_PROTECT_NAME)
+    del steps[idx]
+    return doc
+
+
 def mut_gitignore_removed(text):
     return "".join(line for line in text.splitlines(keepends=True)
                    if SIDECAR_PATH not in line)
@@ -267,6 +308,8 @@ MUTATIONS = [
     ("a raw uses: ./.github/actions/ reappears in select -- outside Gate 98's own "
      "JOBS, proving rule (a) admits no per-job carve-out",
      "doc", mut_raw_uses_outside_jobs_tuple, "rule (a)"),
+    ("the write-protect step is dropped from fix, leaving the sidecar writable",
+     "doc", mut_write_protect_dropped, "rule (f)"),
 ]
 
 
@@ -297,14 +340,14 @@ def main():
     else:
         failures = check(text, gitignore_text)
     for f in failures:
-        print("::error file={0}::Gate 99: {1}".format(WORKFLOW, f))
+        print("::error file={0}::Gate 100: {1}".format(WORKFLOW, f))
     if failures:
         return 1
     if self_test:
-        print("Gate 99 self-test: {0} mutation(s), each caught and attributed to its own "
+        print("Gate 100 self-test: {0} mutation(s), each caught and attributed to its own "
               "rule.".format(len(MUTATIONS)))
     else:
-        print("Gate 99: every uses: ./.github/actions/ reference in board-loop.yml "
+        print("Gate 100: every uses: ./.github/actions/ reference in board-loop.yml "
               "resolves from the trusted copy, never the workspace.")
     return 0
 
