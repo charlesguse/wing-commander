@@ -420,6 +420,8 @@ jobs:
       # progress never pushes (FR-025) so it has no push-cred-status step;
       # most-recent-wins across retry/cycle only, same convention as above.
       push-credential-mint-failed: ${{ steps.push-cred-status-retry.outputs.mint-failure-detected || steps.push-cred-status-cycle.outputs.mint-failure-detected }}
+      # Same most-recent-wins convention as push-credential-mint-failed above.
+      commits-published: ${{ steps.publish-stranded-retry.outputs.commits-published || steps.publish-stranded-cycle.outputs.commits-published }}
       # Record-only (not read by the stall path): 'true' when ANY chain
       # that ran failed/could not refresh, even one a later chain healed.
       agent-any-failure: ${{ (steps.agent-ran-progress.outputs.conclusion == 'failure' || steps.agent-ran-retry.outputs.conclusion == 'failure' || steps.agent-ran-cycle.outputs.conclusion == 'failure') && 'true' || 'false' }}
@@ -1097,6 +1099,16 @@ jobs:
         with:
           token: ${{ env.WC_BOT_TOKEN }}
 
+      # Deterministic rescue for work the agent could not push itself --
+      # runs whether or not a later agent step ever would have carried it
+      # along -- see clarify.yml.
+      - name: Publish stranded commits (post-agent, cycle)
+        id: publish-stranded-cycle
+        if: "!cancelled() && steps.cycle.outcome != 'skipped'"
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-publish-stranded-commits
+        with:
+          before-sha: ${{ steps.base.outputs.base-sha }}
 
       # deterministic, transcript-only verdict -- see specs/037-agent-turn-budget-guard/
       # data-model.md. Guarded like the upload/metrics
@@ -1834,6 +1846,16 @@ jobs:
         with:
           token: ${{ env.WC_BOT_TOKEN }}
 
+      # Deterministic rescue for work the agent could not push itself --
+      # runs whether or not a later agent step ever would have carried it
+      # along -- see clarify.yml.
+      - name: Publish stranded commits (post-agent, retry)
+        id: publish-stranded-retry
+        if: "!cancelled() && steps.retry.outcome != 'skipped'"
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-publish-stranded-commits
+        with:
+          before-sha: ${{ steps.retry-base.outputs.base-sha }}
 
       # See "Compute agent run verdict (cycle)" above — same shared
       # composite, same steps.retry.outcome != 'skipped' guard so this
@@ -3210,6 +3232,7 @@ jobs:
           AGENT_MSG: ${{ steps.stall-diagnostics.outputs.agent-message }}
           SELF_WORKFLOW: ${{ inputs.self-workflow }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          COMMITS_PUBLISHED: ${{ needs.implement.outputs.commits-published }}
         run: |
           gh label create "stage:stalled" --color E99695 --description "Stage did not complete; manual restart required" --force
           gh issue edit "$ISSUE" --add-label "stage:stalled"
@@ -3235,6 +3258,15 @@ jobs:
           recorded=$(jq -r '.iteration // 0' "$SPEC_DIR/spec-meta.json" 2>/dev/null) || recorded=""
           case "$recorded" in ''|*[!0-9]*) recorded="$ITERATION" ;; esac
           restart_iteration=$((recorded + 1))
+          # specs/071-agent-push-credential FR-016/FR-017: named only when
+          # there is something to name -- see clarify.yml for the
+          # composite that carries the same line on the other stall path.
+          published_line=""
+          case "$COMMITS_PUBLISHED" in
+            ''|0) ;;
+            *[!0-9]*) ;;
+            *) published_line="$COMMITS_PUBLISHED commit(s) the agent could not push during the run were published after it." ;;
+          esac
           {
             echo "⏸️ **Implementation stalled** — iteration $ITERATION of the implement/converge loop failed (last attempt on \`$TIER\`), and no higher model tier remains to escalate to, so this specification is now **stalled** (nothing restarts automatically)."
             echo ""
@@ -3249,6 +3281,10 @@ jobs:
               echo "$fence"
               echo ""
               echo "</details>"
+            fi
+            if [ -n "$published_line" ]; then
+              echo ""
+              echo "$published_line"
             fi
             echo ""
             echo "### Runbook — restarting this specification"
@@ -3415,3 +3451,4 @@ jobs:
           restart-command: ${{ steps.restart.outputs.restart-command }}
           agent-ran: ${{ needs.implement.outputs.agent-ran }}
           agent-conclusion: ${{ needs.implement.outputs.agent-conclusion }}
+          commits-published: ${{ needs.implement.outputs.commits-published }}

@@ -81,6 +81,15 @@ inputs:
       signal. Only rendered when agent-ran is 'true'.
     required: false
     default: ""
+  commits-published:
+    description: >
+      commits-published output of this job's own
+      wing-commander-publish-stranded-commits call(s)
+      (specs/071-agent-push-credential, FR-016/FR-017). A nonzero value
+      adds one line naming the count; zero, empty, or a caller that
+      predates this input adds nothing.
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -169,6 +178,7 @@ runs:
         RECORD_STATUS: ${{ steps.mark.outputs.record-status }}
         AGENT_RAN: ${{ inputs.agent-ran }}
         AGENT_CONCLUSION: ${{ inputs.agent-conclusion }}
+        COMMITS_PUBLISHED: ${{ inputs.commits-published }}
       run: |
         set -uo pipefail
 
@@ -210,12 +220,26 @@ runs:
           fi
         fi
 
+        # specs/071-agent-push-credential FR-016/FR-017: named only when
+        # there is something to name -- a caller that predates this input,
+        # or one that passed zero, adds nothing.
+        published_line=""
+        case "$COMMITS_PUBLISHED" in
+          ''|0) ;;
+          *[!0-9]*) ;;
+          *) published_line="$COMMITS_PUBLISHED commit(s) the agent could not push during the run were published after it." ;;
+        esac
+
         {
           echo "$headline"
           echo ""
           echo "$REASON ($run_url)."
           echo ""
           echo "$body"
+          if [ -n "$published_line" ]; then
+            echo ""
+            echo "$published_line"
+          fi
           echo ""
           echo "$restart"
         } > "$RUNNER_TEMP/wcsn-notice.md"

@@ -333,6 +333,7 @@ jobs:
       agent-conclusion: ${{ steps.agent-ran.outputs.conclusion }}
       credential-refresh-ok: ${{ steps.credential-status.outputs.ok }}
       push-credential-mint-failed: ${{ steps.push-cred-status.outputs.mint-failure-detected }}
+      commits-published: ${{ steps.publish-stranded.outputs.commits-published }}
       failed-post-agent-step: ${{ steps.failed-step.outputs.step }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
@@ -525,6 +526,14 @@ jobs:
           p=.wing-commander-pipeline; want="$(cd "$GITHUB_WORKSPACE" && pwd -P)/$p"
           if [ -L "$p" ] || [ ! -d "$p" ] || [ -L "$p/.git" ] || [ ! -d "$p/.git" ] || [ "$(git -C "$p" rev-parse --show-toplevel 2>/dev/null)" != "$want" ] || { [[ "${WC_PIPELINE_REF:-}" =~ ^[0-9a-f]{40}$ ]] && [ "$(git -C "$p" rev-parse HEAD 2>/dev/null)" != "$WC_PIPELINE_REF" ]; }; then rm -rf -- "$p"; echo "::error::wing-commander: $p is no longer the trusted pipeline checkout (a symlink, a missing or replaced .git, or another commit): the branch just checked out replaced it. Removed it so no later step loads branch code from there (#611)."; exit 1; fi
           git -C "$p" cat-file blob HEAD:.github/scripts/pipeline-checkout-guard.sh | bash -s
+
+      # Recorded before the agent step runs so a later publish call
+      # (specs/071-agent-push-credential) can report how many commits, if
+      # any, the agent could not push itself -- see clarify.yml.
+      - name: Record pre-agent SHA
+        id: pre-agent
+        if: steps.lifecycle-gate.outputs.is-open == 'true'
+        run: echo "before-sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       # Acknowledge the reply immediately: an 👀 reaction on the triggering
       # comment says "a run picked this up" without adding comment noise.
@@ -795,6 +804,17 @@ jobs:
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-refresh-remote
         with:
           token: ${{ env.WC_BOT_TOKEN }}
+
+      # Deterministic rescue for work the agent could not push itself --
+      # runs whether or not a later agent step ever would have carried it
+      # along -- see clarify.yml.
+      - name: Publish stranded commits (post-agent)
+        id: publish-stranded
+        if: "!cancelled() && steps.agent.outcome != 'skipped'"
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-publish-stranded-commits
+        with:
+          before-sha: ${{ steps.pre-agent.outputs.before-sha }}
 
       # deterministic, transcript-only verdict (healthy/exhausted/failed/unclassifiable) replacing
       # the raw outcome check the action's post-hoc rejection can no longer be trusted to reflect
@@ -1424,3 +1444,4 @@ jobs:
           # agent ran -- see clarify.yml.
           agent-ran: ${{ needs.clarify.outputs.agent-ran }}
           agent-conclusion: ${{ needs.clarify.outputs.agent-conclusion }}
+          commits-published: ${{ needs.clarify.outputs.commits-published }}

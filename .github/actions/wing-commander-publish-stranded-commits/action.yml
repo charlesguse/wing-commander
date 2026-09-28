@@ -28,6 +28,27 @@ inputs:
       accompanies ran -- reused from that job's own existing
       before-SHA capture, never re-derived.
     required: true
+  workdir:
+    description: >
+      Directory to operate in, when the branch to publish is not the job's
+      own root checkout (auto-update-spec-kit.yml's e2e-stage job clones
+      the scratch repository into its own subdirectory). Empty (the
+      default) means the current directory.
+    required: false
+    default: ""
+  push-token:
+    description: >
+      Already-minted token to build an explicit authenticated push URL
+      from, for a target whose remote carries no stored credential (the
+      same explicit-URL idiom orphan-branch-reset/action.yml uses).
+      Empty (the default) pushes to the `origin` remote as-is -- every
+      in-scope stage's own spec-branch checkout.
+    required: false
+    default: ""
+  push-repo:
+    description: "owner/name to push to, required together with push-token."
+    required: false
+    default: ""
 
 outputs:
   commits-published:
@@ -53,13 +74,22 @@ runs:
       shell: bash
       env:
         BEFORE_SHA: ${{ inputs.before-sha }}
+        WORKDIR: ${{ inputs.workdir }}
+        PUSH_TOKEN: ${{ inputs.push-token }}
+        PUSH_REPO: ${{ inputs.push-repo }}
       run: |
         set -uo pipefail
-        count="$(git rev-list --count "${BEFORE_SHA}..HEAD" 2>/dev/null || echo 0)"
-        echo "commits-published=$count" >> "$GITHUB_OUTPUT"
-        branch="$(git rev-parse --abbrev-ref HEAD)"
-        if git push origin "HEAD:$branch"; then
-          echo "push-ok=true" >> "$GITHUB_OUTPUT"
-        else
-          echo "push-ok=false" >> "$GITHUB_OUTPUT"
-        fi
+        dir="${WORKDIR:-.}"
+        (
+          cd "$dir"
+          count="$(git rev-list --count "${BEFORE_SHA}..HEAD" 2>/dev/null || echo 0)"
+          echo "commits-published=$count" >> "$GITHUB_OUTPUT"
+          branch="$(git rev-parse --abbrev-ref HEAD)"
+          target="origin"
+          [ -n "$PUSH_TOKEN" ] && target="https://x-access-token:${PUSH_TOKEN}@github.com/${PUSH_REPO}.git"
+          if git push "$target" "HEAD:$branch"; then
+            echo "push-ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "push-ok=false" >> "$GITHUB_OUTPUT"
+          fi
+        )

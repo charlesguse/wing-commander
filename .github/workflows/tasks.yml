@@ -477,6 +477,7 @@ jobs:
       agent-conclusion: ${{ steps.agent-ran-auto.outputs.conclusion || steps.agent-ran-pr.outputs.conclusion }}
       credential-refresh-ok: ${{ steps.credential-status-auto.outputs.ok || steps.credential-status-pr.outputs.ok }}
       push-credential-mint-failed: ${{ steps.push-cred-status-auto.outputs.mint-failure-detected || steps.push-cred-status-pr.outputs.mint-failure-detected }}
+      commits-published: ${{ steps.publish-stranded-auto.outputs.commits-published || steps.publish-stranded-pr.outputs.commits-published }}
       agent-any-failure: ${{ (steps.agent-ran-auto.outputs.conclusion == 'failure' || steps.agent-ran-pr.outputs.conclusion == 'failure') && 'true' || 'false' }}
       credential-any-refresh-failure: ${{ (steps.credential-status-auto.outputs.ok == 'false' || steps.credential-status-pr.outputs.ok == 'false') && 'true' || 'false' }}
       failed-post-agent-step: ${{ steps.failed-step.outputs.step }}
@@ -601,6 +602,15 @@ jobs:
           p=.wing-commander-pipeline; want="$(cd "$GITHUB_WORKSPACE" && pwd -P)/$p"
           if [ -L "$p" ] || [ ! -d "$p" ] || [ -L "$p/.git" ] || [ ! -d "$p/.git" ] || [ "$(git -C "$p" rev-parse --show-toplevel 2>/dev/null)" != "$want" ] || { [[ "${WC_PIPELINE_REF:-}" =~ ^[0-9a-f]{40}$ ]] && [ "$(git -C "$p" rev-parse HEAD 2>/dev/null)" != "$WC_PIPELINE_REF" ]; }; then rm -rf -- "$p"; echo "::error::wing-commander: $p is no longer the trusted pipeline checkout (a symlink, a missing or replaced .git, or another commit): the branch just checked out replaced it. Removed it so no later step loads branch code from there (#611)."; exit 1; fi
           git -C "$p" cat-file blob HEAD:.github/scripts/pipeline-checkout-guard.sh | bash -s
+
+      # Recorded before whichever agent step actually runs, so a later
+      # publish call (specs/071-agent-push-credential) can report how many
+      # commits, if any, the agent could not push itself -- see
+      # clarify.yml. Valid as the "before" SHA for both branches: only one
+      # of them runs per dispatch.
+      - name: Record pre-agent SHA
+        id: pre-agent
+        run: echo "before-sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       # constitution VII: a published stage may not read github.event
       # directly -- github.repository (not .event.repository) is a run-level
@@ -930,6 +940,16 @@ jobs:
         with:
           token: ${{ env.WC_BOT_TOKEN }}
 
+      # Deterministic rescue for work the agent could not push itself --
+      # runs whether or not a later agent step ever would have carried it
+      # along -- see clarify.yml.
+      - name: Publish stranded commits (post-agent, auto)
+        id: publish-stranded-auto
+        if: "!cancelled() && steps.agent-auto.outcome != 'skipped'"
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-publish-stranded-commits
+        with:
+          before-sha: ${{ steps.pre-agent.outputs.before-sha }}
 
       # deterministic, transcript-only verdict replacing raw steps.agent-auto.outcome checks
       # -- see specs/037-agent-turn-budget-guard/data-model.md. Gated on
@@ -1167,6 +1187,16 @@ jobs:
         with:
           token: ${{ env.WC_BOT_TOKEN }}
 
+      # Deterministic rescue for work the agent could not push itself --
+      # runs whether or not a later agent step ever would have carried it
+      # along -- see clarify.yml.
+      - name: Publish stranded commits (post-agent, pr)
+        id: publish-stranded-pr
+        if: "!cancelled() && steps.agent-pr.outcome != 'skipped'"
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-publish-stranded-commits
+        with:
+          before-sha: ${{ steps.pre-agent.outputs.before-sha }}
 
       - name: Compute agent run verdict (pr)
         id: agent-pr-verdict
@@ -1921,6 +1951,7 @@ jobs:
           restart-command: ${{ needs.tasks.outputs.agent-ran == 'true' && needs.tasks.outputs.agent-conclusion == 'success' && 'The tasks agent step completed its work; a step after it did not. Re-dispatch the tasks stage for this specification once the cause above is resolved.' || needs.tasks.outputs.agent-ran == 'true' && 'The tasks agent step failed after running; its pushed commits are on the branch. Re-dispatch the tasks stage for this specification once the cause above is resolved.' || 'Re-dispatch the tasks stage for this specification once the cause above is resolved.' }}
           agent-ran: ${{ needs.tasks.outputs.agent-ran }}
           agent-conclusion: ${{ needs.tasks.outputs.agent-conclusion }}
+          commits-published: ${{ needs.tasks.outputs.commits-published }}
 
   # Survivor job for mode: approved — same shape as the mode: generate job
   # above, against tasks-approved.

@@ -1944,6 +1944,14 @@ jobs:
             git push --force --quiet "$auth_url" "HEAD:refs/heads/$BRANCH"
           )
 
+      # Recorded after the scaffold's own commit+push, so a later publish
+      # call (specs/071-agent-push-credential) rescues only what lands in
+      # e2e-scratch after this point -- see clarify.yml.
+      - name: Record pre-agent SHA (scratch)
+        id: pre-agent-scratch
+        shell: bash
+        run: echo "before-sha=$(git -C e2e-scratch rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
       # T010: one throwaway /speckit-specify-equivalent turn. Prompt is a
       # fixed, hardcoded throwaway feature description — never issue/comment
       # text, there is no untrusted input to this step at all (constitution
@@ -2089,6 +2097,26 @@ jobs:
           private-key: ${{ secrets.speckit-app-private-key }}
           owner: ${{ steps.scratch-parts.outputs.owner }}
           repo-name: ${{ steps.scratch-parts.outputs.name }}
+
+      # Deterministic rescue for scratch-repository work that landed after
+      # the scaffold commit but never reached the remote -- parallel to
+      # T014's placement, positioned alongside the re-mint above and ahead
+      # of "Push agent-produced spec.md" below -- see clarify.yml. workdir/
+      # push-token/push-repo used because e2e-scratch is a separate clone
+      # pushed via an explicit authenticated URL, never `origin` as-is (see
+      # the scaffold and best-effort push steps above) -- see this run's
+      # wing-commander-findings for the mechanism tension this call site
+      # diverges to work around (same tension T014 already flagged).
+      - name: Publish stranded commits (scratch, post-agent)
+        id: publish-stranded-scratch
+        if: "!cancelled() && steps.decide.outcome != 'skipped'"
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-publish-stranded-commits
+        with:
+          before-sha: ${{ steps.pre-agent-scratch.outputs.before-sha }}
+          workdir: e2e-scratch
+          push-token: ${{ env.WC_SCRATCH_TOKEN }}
+          push-repo: ${{ steps.scratch-repo.outputs.full-name }}
 
       # FR-005/FR-004 (spec 052, second maintainer review of PR #407):
       # guarded on the composite's own `ok` output, not `.outcome` --

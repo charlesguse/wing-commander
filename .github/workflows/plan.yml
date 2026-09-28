@@ -452,6 +452,8 @@ jobs:
       # precedent, matching credential-refresh-ok above) -- published for
       # symmetry with every other in-scope stage.
       push-credential-mint-failed: ${{ steps.push-cred-status-auto.outputs.mint-failure-detected || steps.push-cred-status-pr.outputs.mint-failure-detected }}
+      # Same no-reader precedent as push-credential-mint-failed above.
+      commits-published: ${{ steps.publish-stranded-auto.outputs.commits-published || steps.publish-stranded-pr.outputs.commits-published }}
       agent-any-failure: ${{ (steps.agent-ran-auto.outputs.conclusion == 'failure' || steps.agent-ran-pr.outputs.conclusion == 'failure') && 'true' || 'false' }}
       credential-any-refresh-failure: ${{ (steps.credential-status-auto.outputs.ok == 'false' || steps.credential-status-pr.outputs.ok == 'false') && 'true' || 'false' }}
     steps:
@@ -730,6 +732,16 @@ jobs:
           echo "before-sha=$before_sha" >> "$GITHUB_OUTPUT"
           echo "before-sha-available=$before_available" >> "$GITHUB_OUTPUT"
 
+      # Recorded before whichever agent step actually runs, so a later
+      # publish call (specs/071-agent-push-credential) can report how many
+      # commits, if any, the agent could not push itself -- see
+      # clarify.yml. Valid as the "before" SHA for both branches: only one
+      # of them runs per dispatch.
+      - name: Record pre-agent SHA
+        id: pre-agent
+        if: steps.dupe.outputs.skip != 'true'
+        run: echo "before-sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
       # constitution VII: a published stage may not read github.event
       # directly -- github.repository (not .event.repository) is a run-level
       # fact every job already has, split here so neither of this job's two
@@ -954,6 +966,16 @@ jobs:
         with:
           token: ${{ env.WC_BOT_TOKEN }}
 
+      # Deterministic rescue for work the agent could not push itself --
+      # runs whether or not a later agent step ever would have carried it
+      # along -- see clarify.yml.
+      - name: Publish stranded commits (post-agent, auto)
+        id: publish-stranded-auto
+        if: "!cancelled() && steps.agent-auto.outcome != 'skipped'"
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-publish-stranded-commits
+        with:
+          before-sha: ${{ steps.pre-agent.outputs.before-sha }}
 
       # deterministic, transcript-only verdict replacing the raw steps.agent-auto.outcome checks
       # -- see specs/037-agent-turn-budget-guard/data-model.md. Gated on
@@ -1191,6 +1213,16 @@ jobs:
         with:
           token: ${{ env.WC_BOT_TOKEN }}
 
+      # Deterministic rescue for work the agent could not push itself --
+      # runs whether or not a later agent step ever would have carried it
+      # along -- see clarify.yml.
+      - name: Publish stranded commits (post-agent, pr)
+        id: publish-stranded-pr
+        if: "!cancelled() && steps.agent-pr.outcome != 'skipped'"
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-publish-stranded-commits
+        with:
+          before-sha: ${{ steps.pre-agent.outputs.before-sha }}
 
       - name: Compute agent run verdict (pr)
         id: agent-pr-verdict

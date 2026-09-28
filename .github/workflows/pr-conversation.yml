@@ -1549,6 +1549,8 @@ jobs:
       # plan.yml) -- see clarify.yml.
       credential-refresh-ok: ${{ steps.credential-status.outputs.ok }}
       push-credential-mint-failed: ${{ steps.push-cred-status.outputs.mint-failure-detected }}
+      # No reader either (same status as push-credential-mint-failed above).
+      commits-published: ${{ steps.publish-stranded.outputs.commits-published }}
     strategy:
       fail-fast: false
       # Legs are NOT run concurrently: two classifications from the SAME
@@ -2172,6 +2174,20 @@ jobs:
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-refresh-remote
         with:
           token: ${{ env.WC_BOT_TOKEN }}
+
+      # Deterministic rescue for work the agent could not push itself --
+      # runs whether or not a later agent step ever would have carried it
+      # along -- see clarify.yml. before-sha reused from
+      # classify-and-announce's own pre-fold tip (research.md D3 -- read
+      # last in that job, immediately before this job starts folding
+      # anything, so it demonstrably predates this job's own checkout).
+      - name: Publish stranded commits (post-agent)
+        id: publish-stranded
+        if: "!cancelled() && steps.agent.outcome != 'skipped'"
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-publish-stranded-commits
+        with:
+          before-sha: ${{ needs.classify-and-announce.outputs.base-sha }}
 
       - name: Compute agent run verdict
         id: agent-verdict
