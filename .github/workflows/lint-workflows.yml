@@ -4251,6 +4251,18 @@ jobs:
       - name: Gate 10 — every check is wired to a workflow, and every wire lands
         run: python3 .github/scripts/verify-gate-wiring.py
 
+      # Gate 99 — gate_scripts() discovers .github/scripts/ only (FR-001), so
+      # a test harness or standalone gate script placed under
+      # .github/actions/ instead is invisible to Gate 10 and to
+      # run-local-gates.py alike: it belongs at
+      # .github/scripts/<composite>-tests/ instead, for the two reasons
+      # verify-actions-no-gate-scripts.py's own docstring gives. The
+      # .github/actions/_shared/ carve-out is structural, not a waiver.
+      - name: "Gate 99 — no test harness or standalone gate script lives under .github/actions/"
+        run: python3 .github/scripts/verify-actions-no-gate-scripts.py
+      - name: "Gate 99 self-test — a harness or standalone verify-* script under .github/actions/ (outside _shared/), at any depth, is caught; a _shared/ helper is not"
+        run: python3 .github/scripts/verify-actions-no-gate-scripts.py --self-test
+
       # spec 053, SC-007 (Constitution VIII) — the E2E onboarding-element
       # list has exactly one home (.github/scripts/e2e-provisioning/), so a
       # future change cannot paste a second, independently-drifting copy of

@@ -603,6 +603,65 @@ def _fixture_distinct_gate_labels():
     return a != b, f"got {a!r} == {b!r}"
 
 
+def _fixture_actions_harness_not_gate10_subject():
+    """A run-tests.sh under .github/actions/ (outside _shared/), invoked by
+    some workflow but not lint-workflows.yml, never enters gate_scripts()'s
+    .github/scripts/-only notion of "a gate" (D2) -- Gate 10's forward check
+    has nothing to say about it either way, so it cannot double-report or
+    contradict the placement gate's (verify-actions-no-gate-scripts.py) own
+    failure for the same file (research.md D6, fourth bullet; spec.md Edge
+    Case; quickstart.md §4)."""
+    root = tempfile.mkdtemp(prefix="wc-gate-wiring-")
+    try:
+        path = ".github/actions/widget/run-tests.sh"
+        _write(root, path, "echo hi\n")
+        _write(root, ".github/workflows/other.yml",
+               "on: push\njobs:\n  a:\n    steps:\n"
+               f"      - run: {path}\n")
+        wiring, failures = check_forward_wiring(root)
+        ok = path not in wiring and not any(path in f for f in failures)
+        return ok, f"got wiring keys={list(wiring)!r} failures={failures!r}"
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def _fixture_missing_actions_path():
+    """A run: block naming a .github/actions/ script path with no file on
+    disk is reported as missing, the same way a missing .github/scripts/
+    path already is (FR-004, research.md D6 second bullet)."""
+    root = tempfile.mkdtemp(prefix="wc-gate-wiring-")
+    try:
+        path = ".github/actions/widget/missing.sh"
+        _write(root, ".github/workflows/fake.yml",
+               "on: push\njobs:\n  a:\n    steps:\n"
+               f"      - run: ./{path}\n")
+        failures = check_reverse_wiring(root)
+        ok = any(path in f and "does not exist" in f for f in failures)
+        return ok, f"got {failures!r}"
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def _fixture_actions_self_checkout_dedup():
+    """A pair of run: blocks -- one ./.github/actions/_shared/x.sh, one
+    ./.wing-commander-pipeline/.github/actions/_shared/x.sh -- with the same
+    file existing once on disk report as ONE path, not a spurious second
+    entry (FR-013, research.md D6 third bullet)."""
+    root = tempfile.mkdtemp(prefix="wc-gate-wiring-")
+    try:
+        _write(root, ".github/actions/_shared/x.sh", "echo hi\n")
+        _write(root, ".github/workflows/fake.yml",
+               "on: push\njobs:\n  a:\n    steps:\n"
+               "      - run: |\n"
+               "          ./.github/actions/_shared/x.sh\n"
+               "          ./.wing-commander-pipeline/.github/actions/_shared/x.sh\n")
+        refs = referenced_actions_script_paths(root)
+        ok = list(refs.keys()) == [".github/actions/_shared/x.sh"]
+        return ok, f"got {refs!r}"
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 # Each entry: (name, fixture_fn), fixture_fn() -> (ok: bool, detail: str).
 # A fixture builds and tears down its own tempdir, so a FAILing fixture never
 # leaves scratch state for the next one to trip over.
@@ -611,6 +670,12 @@ FIXTURES = [
      _fixture_orphaned_composite_harness),
     ("two run-tests.sh harnesses under different directories get distinct "
      "gate_label identities", _fixture_distinct_gate_labels),
+    ("a run-tests.sh under .github/actions/ is never Gate 10's forward-check "
+     "subject", _fixture_actions_harness_not_gate10_subject),
+    ("a missing .github/actions/ path named by a run: block is reported",
+     _fixture_missing_actions_path),
+    ("the self-checkout .github/actions/ prefix dedups to one path",
+     _fixture_actions_self_checkout_dedup),
 ]
 
 

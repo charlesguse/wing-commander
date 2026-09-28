@@ -7,10 +7,8 @@
 # Covers successful correlation, ambiguous/absent correlation (empty
 # run-url), and poll-budget exhaustion (conclusion: timeout).
 #
-# Lives under .github/scripts/ rather than beside the composite for the
-# reason spelled out once in size-path-backstop-tests/run-tests.sh: gate
-# discovery is scoped to .github/scripts/, so a harness under
-# .github/actions/**/tests/ never runs in run-local-gates.py.
+# Lives under .github/scripts/, not beside the composite -- see
+# verify-actions-no-gate-scripts.py.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
