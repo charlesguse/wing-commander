@@ -492,3 +492,10 @@ for User Story 1 to land first, per the Dependencies section above.
   (plan.md: "Unchanged (already runs every t*.sh)").
 - Commit after each task or logical group; re-run
   `.github/scripts/run-local-gates.py` before pushing (CLAUDE.md).
+
+---
+
+## Maintainer Feedback
+
+- [ ] MF001 In `.github/scripts/provision-e2e-target.sh`, add a `*) exit 1 ;;` default arm to the closing `case "$(jq -r .verdict <<<"$REPORT")"` statement (~line 307), so an `assemble_report` failure (empty/malformed `$REPORT`, no arm matches) fails the script instead of falling through to an implicit exit 0 (Constitution Principle VIII). Before this feature's T005 rewrite, the same situation exited 1.
+- [ ] MF002 Add a provisioning test (e.g. under `.github/scripts/e2e-provisioning-tests/`) that forces `assemble_report` to fail and asserts `provision-e2e-target.sh` exits non-zero, covering MF001's new default arm.
