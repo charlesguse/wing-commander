@@ -46,13 +46,16 @@ busy-check meaningful (research.md D3's "Alternatives considered").
   `board-loop.yml`) this is true by construction once the groups above
   ship; the check exists so a future edit narrowing or removing the split
   fails loudly rather than silently reintroducing the deadlock.
-- **FR-001a (dynamic)**: `board_prove.directed_proof_group_busy(run_list_json)`
-  reads `gh run list --workflow=board-loop.yml --json
-  databaseId,displayTitle,status -L 20` and reports whether any
-  non-`completed` run's `displayTitle` carries the `[directed:` marker
-  `board-loop.yml`'s `run-name:` expression embeds for a directed
-  dispatch. `True` → record `outcome_reason: group-busy` (never dispatch);
-  `False` → proceed to dispatch.
+- **FR-001a (dynamic)**: `board_prove.directed_proof_group_busy(run_list_json,
+  own_run_id)` reads `gh run list --workflow=board-loop.yml --json
+  databaseId,displayTitle,status -L 20` and reports whether any row OTHER
+  THAN `own_run_id` (the calling run's own `GITHUB_RUN_ID`) is
+  non-`completed` and carries the `[directed:` marker `board-loop.yml`'s
+  `run-name:` expression embeds for a directed dispatch — excluding the
+  caller's own row so a directed run never sees its own in-progress
+  marker and reports the group busy against itself (PR #490 review,
+  2026-09-28). `True` → record `outcome_reason: group-busy` (never
+  dispatch); `False` → proceed to dispatch.
 
 ## What does not change
 
