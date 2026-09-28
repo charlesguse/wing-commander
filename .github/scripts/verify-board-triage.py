@@ -56,6 +56,17 @@ closed. Two checks keep that shut:
    or in a local reusable workflow it calls, must; an unknown or
    untracked cited workflow yields no bump. A mutation that widens the
    scope back to every workflow must fail these cases.
+   #519/#521: every shape of `uses:` pin counts -- a `- uses:` step line
+   with a trailing `# vX` comment, a quoted value, a pin inside a local
+   composite action's action.yml (and a nested composite's action.yaml),
+   and a pin in a `.yaml` workflow -- while a comment-only change and a
+   bump in a composite the cited workflow never calls do not. In the same
+   repo, tracked_pin_files() must list exactly the fixture's workflows of
+   both extensions plus its composite manifests. Mutations restoring the
+   pre-#519 line regex, dropping composites from the scope, or dropping
+   `.yaml` workflows must each fail these cases, and board-loop.yml's
+   decide step must take workflow_files from tracked_pin_files() with no
+   `git ls-files` of its own (the pathspecs have one home).
 2. cite-source (structural, board-loop.yml's triage job):
    - the `cite` step reads the issue ONLY from an env var mapped to
      exactly `${{ steps.ID.outputs.context-file }}`, where ID is an
@@ -638,6 +649,49 @@ _BUMPS = {
 # Main's bump in ci.yml exists only for the "cited workflow bumped" case.
 _CI_BUMP = (WF + "ci.yml", ("@v4", "@v5"))
 
+# #519/#521: one file per pin shape the pre-fix line regex or the
+# workflows-only *.yml scope missed, each bumped on main, plus negatives.
+AC = ".github/actions/"
+_SHAPES_TREE = {
+    WF + "step-line.yml": "jobs:\n  a:\n    steps:\n"
+                          "      - uses: owner/step-line@1111111 # v4\n"
+                          "        with:\n          x: 1\n",
+    WF + "quoted.yml": "jobs:\n  a:\n    steps:\n      - name: q\n"
+                       "        uses: \"owner/quoted@v4\"\n",
+    WF + "composite-caller.yml": "jobs:\n  a:\n    steps:\n"
+                                 "      - uses: ./.github/actions/pinned\n",
+    AC + "pinned/action.yml": "runs:\n  using: composite\n  steps:\n"
+                              "    - uses: owner/composite-pin@v1\n",
+    WF + "nested-caller.yml": "jobs:\n  a:\n    steps:\n"
+                              "      - uses: ./.github/actions/outer/\n",
+    AC + "outer/action.yml": "runs:\n  using: composite\n  steps:\n"
+                             "    - uses: owner/outer-pin@v1\n"
+                             "    - uses: './.github/actions/inner'\n",
+    AC + "inner/action.yaml": "runs:\n  using: composite\n  steps:\n"
+                              "    - uses: owner/inner-pin@v1\n",
+    WF + "dot-yaml.yaml": "jobs:\n  a:\n    steps:\n"
+                          "      - uses: owner/dot-yaml@v1\n",
+    WF + "negative.yml": "jobs:\n  a:\n    steps:\n"
+                         "      - uses: owner/comment-only@2222222 # v4\n"
+                         "      - uses: ./.github/actions/steady\n",
+    AC + "steady/action.yml": "runs:\n  using: composite\n  steps:\n"
+                              "    - uses: owner/steady@v1\n",
+    AC + "unused/action.yml": "runs:\n  using: composite\n  steps:\n"
+                              "    - uses: owner/unused@v1\n",
+}
+_OLD_TREE.update(_SHAPES_TREE)
+_BUMPS.update({
+    WF + "step-line.yml": ("@1111111 # v4", "@3333333 # v5"),
+    WF + "quoted.yml": ("@v4", "@v5"),
+    AC + "pinned/action.yml": ("@v1", "@v2"),
+    AC + "inner/action.yaml": ("@v1", "@v2"),
+    WF + "dot-yaml.yaml": ("@v1", "@v2"),
+    # Negatives: the pin's trailing comment changes but its ref does not,
+    # and the only real bump is in a composite nothing here calls.
+    WF + "negative.yml": ("@2222222 # v4", "@2222222 # v4.0.1"),
+    AC + "unused/action.yml": ("@v1", "@v2"),
+})
+
 ALL_WORKFLOWS = sorted(_OLD_TREE)
 
 # (label, cited workflow path, bump ci.yml on main too?, expected
@@ -655,6 +709,20 @@ SCOPING_CASES = (
      None, True, None),
     ("a cited workflow main does not track (dynamic) yields no bump",
      "dynamic/pages/pages-build-deployment", True, None),
+    # #519
+    ("a `- uses:` step-line pin with a trailing comment counts",
+     WF + "step-line.yml", False, WF + "step-line.yml"),
+    ("a quoted `uses:` pin counts",
+     WF + "quoted.yml", False, WF + "quoted.yml"),
+    # #521
+    ("a pin inside a local composite's action.yml counts",
+     WF + "composite-caller.yml", False, AC + "pinned/action.yml"),
+    ("a pin inside a nested composite's action.yaml counts",
+     WF + "nested-caller.yml", False, AC + "inner/action.yaml"),
+    ("a pin in a .yaml workflow counts",
+     WF + "dot-yaml.yaml", False, WF + "dot-yaml.yaml"),
+    ("a comment-only change and an uncalled composite's bump do not count",
+     WF + "negative.yml", False, None),
 )
 
 
@@ -708,6 +776,13 @@ def run_scoping_cases(verbose=True):
             prev = os.getcwd()
             os.chdir(repo)
             try:
+                tracked = board_triage.tracked_pin_files()
+                if tracked != ALL_WORKFLOWS:
+                    failures.append(
+                        "scoping: tracked_pin_files() must list every "
+                        "fixture workflow (.yml and .yaml) and composite "
+                        "manifest: expected {0!r}, got {1!r}".format(
+                            ALL_WORKFLOWS, tracked))
                 for label, cited, needs_ci_bump, expected in SCOPING_CASES:
                     if needs_ci_bump != bump_ci:
                         continue
@@ -735,20 +810,60 @@ def run_scoping_cases(verbose=True):
     return failures
 
 
+_PRE_519_USES_RE = re.compile(r"^\s*uses:\s*(\S+)\s*$", re.MULTILINE)
+
+
+def _pre_519_uses_pins(text):
+    """The pre-#519 line-regex reader. Used only as a mutation."""
+    pins = {}
+    for match in _PRE_519_USES_RE.finditer(text or ""):
+        value = match.group(1)
+        if "@" in value:
+            name, ref = value.rsplit("@", 1)
+            pins[name] = ref
+    return pins
+
+
+def _scope_filtered(keep):
+    """A _scoped_workflow_files() mutation keeping only paths `keep`
+    accepts -- the pre-#521 scope, which never reached composites or
+    `.yaml` workflows."""
+    def factory(original):
+        return lambda cited, files, read_at_run: [
+            p for p in original(cited, files, read_at_run) if keep(p)]
+    return factory
+
+
+SCOPING_MUTATIONS = (
+    ("scope widened to every workflow", "_scoped_workflow_files",
+     lambda original: (lambda cited, workflow_files, read_at_run:
+                       list(workflow_files or []))),
+    ("pre-#519 line regex restored", "_uses_pins",
+     lambda original: _pre_519_uses_pins),
+    ("composites dropped from the scope", "_scoped_workflow_files",
+     _scope_filtered(lambda p: not p.startswith(AC))),
+    (".yaml workflows dropped from the scope", "_scoped_workflow_files",
+     _scope_filtered(lambda p: not p.endswith(".yaml"))),
+)
+
+
 def _mutation_check_scoping():
-    """The scoping cases must fail once the scope is widened back to every
-    tracked workflow (the pre-#505 behaviour)."""
-    original = board_triage._scoped_workflow_files
-    board_triage._scoped_workflow_files = (
-        lambda cited, workflow_files, read_at_run: list(workflow_files or []))
-    try:
-        caught = bool(run_scoping_cases(verbose=False))
-    finally:
-        board_triage._scoped_workflow_files = original
-    if not caught:
-        return ["mutation 'scope widened to every workflow' was NOT caught"]
-    print("note: mutation caught (scope widened to every workflow).")
-    return []
+    """The scoping cases must fail under each of SCOPING_MUTATIONS: the
+    scope widened back to every tracked workflow (pre-#505), the pre-#519
+    line regex, and the pre-#521 scope without composites or `.yaml`."""
+    failures = []
+    for label, name, factory in SCOPING_MUTATIONS:
+        original = getattr(board_triage, name)
+        setattr(board_triage, name, factory(original))
+        try:
+            caught = bool(run_scoping_cases(verbose=False))
+        finally:
+            setattr(board_triage, name, original)
+        if caught:
+            print("note: mutation caught ({0}).".format(label))
+        else:
+            failures.append("mutation {0!r} was NOT caught".format(label))
+    return failures
 
 
 # ---------------------------------------------------------------------------
@@ -796,6 +911,10 @@ CITE_ALLOWED_LINES = frozenset((
 DECIDE_KEY_RE = re.compile(
     r'^\s*"cited_run_workflow_path":\s*os\.environ\.get\("WORKFLOW_PATH"\)',
     re.MULTILINE)
+# #521: the decide step's pin-file bound comes from board_triage's one home
+# for the pathspecs, never a `git ls-files` of its own.
+DECIDE_PIN_FILES_RE = re.compile(
+    r"^\s*workflow_files\s*=\s*tracked_pin_files\(\)\s*$", re.MULTILINE)
 
 
 def _expr(value):
@@ -908,6 +1027,12 @@ def check_cite_source(path, reassignment_res):
     if not DECIDE_KEY_RE.search(_code_lines(decide.get("run"))):
         problems.append("the decide step never sets the issue's "
                         '"cited_run_workflow_path" key from WORKFLOW_PATH')
+    if not DECIDE_PIN_FILES_RE.search(_code_lines(decide.get("run"))):
+        problems.append("the decide step must take workflow_files from "
+                        "board_triage.tracked_pin_files() (#521)")
+    if "ls-files" in _code_lines(decide.get("run")):
+        problems.append("the decide step lists pin files itself -- "
+                        "board_triage.PIN_FILE_PATHSPECS is their one home")
     fetch = steps[by_id["fetch"]] if "fetch" in by_id else {}
     # #583: emitted through wc_step_output.py (control characters removed).
     if not re.search(r"workflow-path=|wc_step_output\.py workflow-path ", str(fetch.get("run") or "")):
@@ -995,6 +1120,18 @@ CITE_MUTATIONS = (
     ("cite step renamed away",
      "        id: cite\n",
      "        id: cite-any\n"),
+    ("decide reads workflow_files from somewhere else",
+     "          workflow_files = tracked_pin_files()\n",
+     "          workflow_files = json.load(open(os.path.join(runner_temp, "
+     "\"board-triage-workflow-files.json\")))\n"),
+    ("decide spells its own pre-#521 ls-files again",
+     "          python3 - <<'PYEOF'\n          import json\n          import os\n"
+     "          import sys\n\n          sys.path.insert(0, \".github/scripts\")\n"
+     "          from board_triage import tracked_pin_files, triage\n",
+     "          git ls-files '.github/workflows/*.yml' > \"$RUNNER_TEMP/wf.txt\"\n"
+     "          python3 - <<'PYEOF'\n          import json\n          import os\n"
+     "          import sys\n\n          sys.path.insert(0, \".github/scripts\")\n"
+     "          from board_triage import tracked_pin_files, triage\n"),
 )
 
 

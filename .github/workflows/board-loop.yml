@@ -1154,22 +1154,18 @@ jobs:
           TRANSCRIPT_PATH: ${{ steps.fetch.outputs.transcript-path }}
         run: |
           set -uo pipefail
-          git ls-files '.github/workflows/*.yml' | jq -R -s -c 'split("\n") | map(select(length > 0))' \
-            > "$RUNNER_TEMP/board-triage-workflow-files.json"
-
           python3 - <<'PYEOF'
           import json
           import os
           import sys
 
           sys.path.insert(0, ".github/scripts")
-          from board_triage import triage
+          from board_triage import tracked_pin_files, triage
 
           runner_temp = os.environ["RUNNER_TEMP"]
           with open(os.path.join(runner_temp, "board-triage-proposal.json"), encoding="utf-8") as fh:
               proposal = json.load(fh)
-          with open(os.path.join(runner_temp, "board-triage-workflow-files.json"), encoding="utf-8") as fh:
-              workflow_files = json.load(fh)
+          workflow_files = tracked_pin_files()
 
           run_url = os.environ.get("RUN_URL") or None
           issue = {

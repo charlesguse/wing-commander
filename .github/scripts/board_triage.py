@@ -29,9 +29,12 @@ transcript's own fields (FR-013), never constants.
 
 Ground 2 (action bump) has no prior art in this repository (research.md D4):
 it diffs the cited run's own workflow file's `uses: owner/action@ref` pins
-(plus those of the local reusable workflows it calls -- never any other
-workflow, #505) as they stood at the cited run's own commit against the
-same file's pins on current `main`.
+(plus those of the local reusable workflows and local composite actions it
+calls, transitively -- never any other workflow, #505/#521) as they stood
+at the cited run's own commit against the same file's pins on current
+`main`. Pins are read by parsing the YAML, not by a line regex (#519): a
+`- uses:` step line, a quoted value and a pin with a trailing `# vX`
+comment are all the same `uses:` value once parsed.
 Because the cited run's commit is (by construction, verified here) an
 ancestor of `main` on a fast-forward-only branch, ANY divergent pin between
 that commit and `main` is, by definition, a pin `main` moved to later --
@@ -45,7 +48,18 @@ import re
 import subprocess
 import sys
 
-USES_RE = re.compile(r"^\s*uses:\s*(\S+)\s*$", re.MULTILINE)
+import yaml
+
+# The files check_action_bump() may read pins from, as `git ls-files`
+# pathspecs: workflows (either extension, #521) and local composite action
+# manifests (#521). The one home for this list -- board-loop.yml's decide
+# step calls tracked_pin_files() rather than spelling its own ls-files.
+PIN_FILE_PATHSPECS = (
+    ".github/workflows/*.yml",
+    ".github/workflows/*.yaml",
+    ".github/actions/*/action.yml",
+    ".github/actions/*/action.yaml",
+)
 
 
 def _last_of_type(records, type_name):
@@ -137,16 +151,70 @@ def check_rate_limit(run_transcript_path):
     }
 
 
+def _uses_values(text):
+    """Every `uses:` string in a workflow or composite action file, parsed
+    structurally (#519): `jobs.<id>.uses` (a reusable-workflow call),
+    `jobs.<id>.steps[*].uses`, and a composite's `runs.steps[*].uses`.
+    YAML itself strips the quotes, the `- ` list marker and any trailing
+    `# comment`, so no line shape can hide a pin. The single home for how
+    triage reads `uses:` -- both _uses_pins() and _local_refs() go through
+    here. Unparsable or non-mapping text yields [] (no pins, so no close:
+    fails safe)."""
+    try:
+        doc = yaml.safe_load(text or "")
+    except yaml.YAMLError:
+        return []
+    if not isinstance(doc, dict):
+        return []
+    values = []
+    step_lists = []
+    jobs = doc.get("jobs")
+    if isinstance(jobs, dict):
+        for job in jobs.values():
+            if not isinstance(job, dict):
+                continue
+            values.append(job.get("uses"))
+            step_lists.append(job.get("steps"))
+    runs = doc.get("runs")
+    if isinstance(runs, dict):
+        step_lists.append(runs.get("steps"))
+    for steps in step_lists:
+        if isinstance(steps, list):
+            values.extend(step.get("uses") for step in steps
+                          if isinstance(step, dict))
+    return [v.strip() for v in values if isinstance(v, str) and v.strip()]
+
+
 def _uses_pins(text):
-    """{owner/action: ref} for every `uses: owner/action@ref` line."""
+    """{owner/action: ref} for every remote `uses: owner/action@ref` value
+    (_uses_values()). Local (`./...`) and `docker://` refs are not pins."""
     pins = {}
-    for match in USES_RE.finditer(text or ""):
-        value = match.group(1)
-        if "@" not in value:
+    for value in _uses_values(text):
+        if value.startswith(("./", "docker://")) or "@" not in value:
             continue
         name, ref = value.rsplit("@", 1)
         pins[name] = ref
     return pins
+
+
+def _local_refs(text):
+    """Repo-relative paths of every local `uses: ./path` value
+    (_uses_values()) -- a reusable workflow file or a composite action
+    directory -- with the `./` and any trailing `/` removed."""
+    return [value[2:].rstrip("/") for value in _uses_values(text)
+            if value.startswith("./") and len(value) > 2]
+
+
+def tracked_pin_files():
+    """Main's tracked files matching PIN_FILE_PATHSPECS (this checkout's
+    `git ls-files`), sorted -- the bound check_action_bump()'s scope is
+    drawn inside. [] when git fails."""
+    proc = subprocess.run(
+        ["git", "ls-files", "--"] + list(PIN_FILE_PATHSPECS),
+        capture_output=True, text=True)
+    if proc.returncode != 0:
+        return []
+    return sorted(line for line in proc.stdout.splitlines() if line)
 
 
 def _git_show(ref, path):
@@ -183,15 +251,6 @@ def _first_divergent_pin(workflow_file, run_pins, main_pins):
     return None
 
 
-# A `uses: ./.github/workflows/<name>.yml` line -- a local reusable
-# workflow the cited workflow calls, and so part of what the cited run
-# executed. A local ref carries no `@ref`, so _uses_pins() never reads it
-# as a pin; this pattern only widens the scope to the callee's own file.
-LOCAL_REUSABLE_RE = re.compile(
-    r"^\s*(?:-\s+)?uses:\s*[\"']?\./(\.github/workflows/[^\s\"'@#]+\.ya?ml)",
-    re.MULTILINE)
-
-
 def _normalize_workflow_path(path):
     """The run API's `path` field (".github/workflows/x.yml"), with any
     trailing "@ref" stripped. None for a missing or blank value."""
@@ -200,16 +259,29 @@ def _normalize_workflow_path(path):
     return str(path).strip().split("@", 1)[0] or None
 
 
+def _local_ref_files(ref, tracked):
+    """The tracked file(s) a local `uses: ./<ref>` names: the ref itself
+    when it is a tracked workflow file, else the composite action manifest
+    `<ref>/action.yml` or `<ref>/action.yaml` that main tracks (#521)."""
+    if ref in tracked:
+        return [ref]
+    return [manifest for manifest in
+            (ref + "/action.yml", ref + "/action.yaml") if manifest in tracked]
+
+
 def _scoped_workflow_files(cited_workflow_path, workflow_files, read_at_run):
     """#505: the only files check_action_bump() may compare -- the cited
-    run's own workflow plus every local reusable workflow it calls
-    (transitively, each as it stood at the run's commit). A bump in an
-    unrelated workflow says nothing about why THIS run failed, so it must
-    never become close evidence for the issue that cites the run.
+    run's own workflow plus every local reusable workflow and local
+    composite action (#521) it calls (transitively, each as it stood at
+    the run's commit). A bump in an unrelated workflow or composite says
+    nothing about why THIS run failed, so it must never become close
+    evidence for the issue that cites the run.
 
-    `workflow_files` is main's own tracked workflow list and only bounds
-    the scope: a cited path not in it (a dynamic workflow such as
-    "dynamic/pages/...", or one since deleted or renamed) yields [] --
+    `workflow_files` is main's own tracked pin-file list
+    (tracked_pin_files(): workflows of either extension plus composite
+    action manifests) and only bounds the scope: a cited path not in it (a
+    dynamic workflow such as "dynamic/pages/...", or one since deleted or
+    renamed) yields [] --
     there is no main-side file to compare against, so no bump can be
     shown. `read_at_run(path)` returns the file's text at the run's
     commit, or None; it is injected so this stays fixturable without a git
@@ -225,24 +297,25 @@ def _scoped_workflow_files(cited_workflow_path, workflow_files, read_at_run):
         if path in scoped or path not in tracked:
             continue
         scoped.append(path)
-        queue.extend(LOCAL_REUSABLE_RE.findall(read_at_run(path) or ""))
+        for ref in _local_refs(read_at_run(path)):
+            queue.extend(_local_ref_files(ref, tracked))
     return scoped
 
 
 def check_action_bump(run_commit_sha, workflow_files, cited_workflow_path):
     """NEW (research.md D4). Runtime wrapper: reads the `uses:` pins of the
     cited run's own workflow file(s) -- cited_workflow_path (the run API's
-    `path` field) plus the local reusable workflows it calls, see
-    _scoped_workflow_files() -- as they stood at run_commit_sha (via
-    `git show`) and on current main (HEAD of this checkout, i.e. the
-    working tree), and returns the first divergence via
-    _first_divergent_pin(). workflow_files (main's tracked workflows)
-    bounds that scope and never widens it (#505). Because run_commit_sha
-    is verified here to be an ancestor of main on a fast-forward-only
-    branch, any divergence found IS main's pin being the newer one --
-    there is no older-pin case once ancestry holds. Returns None when
-    every in-scope pin matches, the cited workflow is unknown or not
-    tracked on main, the commit cannot be confirmed as an ancestor of
+    `path` field) plus the local reusable workflows and composite actions
+    it calls, see _scoped_workflow_files() -- as they stood at
+    run_commit_sha (via `git show`) and on current main (HEAD of this
+    checkout, i.e. the working tree), and returns the first divergence via
+    _first_divergent_pin(). workflow_files (main's tracked pin files,
+    tracked_pin_files()) bounds that scope and never widens it (#505).
+    Because run_commit_sha is verified here to be an ancestor of main on a
+    fast-forward-only branch, any divergence found IS main's pin being the
+    newer one -- there is no older-pin case once ancestry holds. Returns
+    None when every in-scope pin matches, the cited workflow is unknown or
+    not tracked on main, the commit cannot be confirmed as an ancestor of
     main, or a workflow file's content cannot be read at that commit."""
     if _normalize_workflow_path(cited_workflow_path) is None:
         return None
