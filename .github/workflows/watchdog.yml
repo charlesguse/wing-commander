@@ -2286,7 +2286,9 @@ jobs:
         # A stalled agent must fail THIS STEP (not the job): continue-on-error
         # then routes it into the diagnose-failed read-back path, which
         # reports "this run was NOT inspected" instead of dying silently.
-        # Normal diagnose completes in well under 2 minutes.
+        # Normal diagnose completes in well under 2 minutes. This bound is
+        # also this job's Gate 68 exemption condition (#558) -- see
+        # verify-post-agent-credential-refresh.py.
         timeout-minutes: 10
         uses: anthropics/claude-code-action@v1
         env:
