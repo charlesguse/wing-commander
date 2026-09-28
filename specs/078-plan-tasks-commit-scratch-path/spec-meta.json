@@ -3,6 +3,6 @@
   "spec_dir": "specs/078-plan-tasks-commit-scratch-path",
   "feature_num": "078",
   "stage": "implement",
-  "iteration": 1,
+  "iteration": 2,
   "spec_branch": "spec/078-plan-tasks-commit-scratch-path"
 }
