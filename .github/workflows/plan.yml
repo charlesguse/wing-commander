@@ -691,6 +691,41 @@ jobs:
           if [ -L "$p" ] || [ ! -d "$p" ] || [ -L "$p/.git" ] || [ ! -d "$p/.git" ] || [ "$(git -C "$p" rev-parse --show-toplevel 2>/dev/null)" != "$want" ] || { [[ "${WC_PIPELINE_REF:-}" =~ ^[0-9a-f]{40}$ ]] && [ "$(git -C "$p" rev-parse HEAD 2>/dev/null)" != "$WC_PIPELINE_REF" ]; }; then rm -rf -- "$p"; echo "::error::wing-commander: $p is no longer the trusted pipeline checkout (a symlink, a missing or replaced .git, or another commit): the branch just checked out replaced it. Removed it so no later step loads branch code from there (#611)."; exit 1; fi
           git -C "$p" cat-file blob HEAD:.github/scripts/pipeline-checkout-guard.sh | bash -s
 
+      # specs/068-plan-tasks-branch-advance R2: the "before" half of the
+      # branch-advance capture, shared by both review modes. The checkout
+      # just above is always ${spec-prefix}${slug}, so HEAD here is that
+      # branch's tip regardless of which mode this run resolves to. In auto
+      # mode the agent commits directly to this same branch, so HEAD is
+      # "the point the run advanced the branch from" in the ordinary sense.
+      # In pr mode the agent's own first act is `git checkout -b
+      # ${plan-prefix}${slug}` from this same HEAD, so the same read is
+      # exactly "the commit the review branch was created from" — one
+      # capture point covers both modes and both the branch-exists and
+      # branch-created-by-this-run cases with no special-casing (FR-005).
+      - name: Record branch tip before agent
+        id: branch-tip
+        if: steps.dupe.outputs.skip != 'true'
+        shell: bash
+        env:
+          SLUG: ${{ needs.resolve-spec.outputs.slug }}
+          SPEC_PREFIX: ${{ inputs.spec-prefix }}
+          PLAN_PREFIX: ${{ inputs.plan-prefix }}
+          MODE: ${{ steps.mode.outputs.mode }}
+        run: |
+          set -uo pipefail
+          if [ "$MODE" = "auto" ]; then
+            branch="${SPEC_PREFIX}${SLUG}"
+          else
+            branch="${PLAN_PREFIX}${SLUG}"
+          fi
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+
+          before_sha="$(git rev-parse HEAD 2>/dev/null)" || before_sha=""
+          before_available=false
+          [ -n "$before_sha" ] && before_available=true
+          echo "before-sha=$before_sha" >> "$GITHUB_OUTPUT"
+          echo "before-sha-available=$before_available" >> "$GITHUB_OUTPUT"
+
       # Auto mode — generate the plan and commit it, with the stage update,
       # directly to the spec branch. No plan/<slug> branch, no PR.
       - name: Compose tool args (plan.direct-commit)
@@ -1086,6 +1121,75 @@ jobs:
           if-no-files-found: ignore
           retention-days: 90
 
+      # specs/068-plan-tasks-branch-advance R3: the "after"/"commits" half
+      # of the branch-advance capture, using the "before" values "Record
+      # branch tip before agent" produced. Placed before "Fail loud on
+      # non-healthy agent verdict (pr)" (which exit 1's the job with no
+      # always()/continue-on-error protecting anything after it) so a
+      # truncated, rejected-push, or otherwise unhealthy run is still
+      # measured — the same placement rule implement.yml's own cycle-level
+      # capture already follows. Same if: as "Agent run metrics summary"
+      # below (one capture point serves both mutually-exclusive modes, not
+      # one per mode) and the same continue-on-error: true convention.
+      - name: Record branch advance (after agent)
+        id: branch-advance
+        if: >-
+          always() &&
+          (steps.agent-pr.outcome != 'skipped' ||
+           steps.agent-auto.outcome != 'skipped')
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-branch-advance
+        with:
+          branch: ${{ steps.branch-tip.outputs.branch }}
+          before-sha: ${{ steps.branch-tip.outputs.before-sha }}
+          before-sha-available: ${{ steps.branch-tip.outputs.before-sha-available }}
+
+      # Durable record of the same quadruple — a transcript-less second
+      # wing-commander-metrics-summary invocation, deliberately pointed at a
+      # transcript path that does not exist so it drives the composite's own
+      # already-gate-covered degraded-record path for every transcript-
+      # derived field; the branch_advance group is populated independently
+      # of that (mirrors implement.yml's own fourth call site).
+      - name: Agent run metrics summary (branch advance)
+        id: metrics-summary-branch-advance
+        if: >-
+          always() &&
+          (steps.agent-pr.outcome != 'skipped' ||
+           steps.agent-auto.outcome != 'skipped')
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-metrics-summary
+        with:
+          transcript-path: ${{ runner.temp }}/wing-commander-no-transcript.json
+          model: ${{ inputs.model }}
+          stage: plan
+          spec-dir: ${{ needs.resolve-spec.outputs.spec-dir }}
+          spec-issue: ${{ steps.meta.outputs.issue || steps.newissue.outputs.issue }}
+          run-label: branch advance
+          step-index: '1'
+          record-path: ${{ runner.temp }}/wing-commander-metrics-record-branch-advance.json
+          branch: ${{ steps.branch-tip.outputs.branch }}
+          before-sha: ${{ steps.branch-tip.outputs.before-sha }}
+          before-sha-available: ${{ steps.branch-tip.outputs.before-sha-available }}
+          after-sha: ${{ steps.branch-advance.outputs.after-sha }}
+          after-sha-available: ${{ steps.branch-advance.outputs.after-sha-available }}
+          commits: ${{ steps.branch-advance.outputs.commits }}
+          commits-available: ${{ steps.branch-advance.outputs.commits-available }}
+
+      # Durable record (specs/043-durable-metrics-record) — the artifact
+      # this feature persists past the transcript's own retention window.
+      - name: Upload metrics record (branch advance)
+        if: >-
+          always() &&
+          (steps.agent-pr.outcome != 'skipped' ||
+           steps.agent-auto.outcome != 'skipped')
+        continue-on-error: true
+        uses: actions/upload-artifact@v6
+        with:
+          name: metrics-record-branch-advance
+          path: ${{ runner.temp }}/wing-commander-metrics-record-branch-advance.json
+          if-no-files-found: ignore
+          retention-days: 90
+
       # Surface this run's own metrics in the run summary (see intake stage).
       - name: Agent run metrics summary
         id: metrics-summary
@@ -1273,14 +1377,11 @@ jobs:
           ISSUE: ${{ steps.meta.outputs.issue || steps.newissue.outputs.issue }}
           NEXT_WORKFLOW: ${{ inputs.next-workflow }}
           SPEC_PREFIX: ${{ inputs.spec-prefix }}
-          COST_LINE: ${{ steps.cost-line.outputs.line }}
         run: |
           if [ -z "$NEXT_WORKFLOW" ]; then
             echo "No next-workflow configured — plan is committed; stopping here (standalone mode). Dispatch your tasks workflow manually if/when you want task generation to run." >> "$GITHUB_STEP_SUMMARY"
             if [ -n "$ISSUE" ]; then
-              body=$(printf '%s\n\n%s' \
-                "📐 Plan committed to \`$SPEC_PREFIX$SLUG\`. No tasks workflow is configured for automatic hand-off — dispatch one manually with \`slug=$SLUG\` when ready." \
-                "$COST_LINE")
+              body="📐 Plan committed to \`$SPEC_PREFIX$SLUG\`. No tasks workflow is configured for automatic hand-off — dispatch one manually with \`slug=$SLUG\` when ready."
               GH_TOKEN="$APP_TOKEN" gh issue comment "$ISSUE" --body "$body"
             fi
             exit 0
@@ -1289,21 +1390,30 @@ jobs:
           echo "Dispatched $NEXT_WORKFLOW (slug=$SLUG)." >> "$GITHUB_STEP_SUMMARY"
           echo "dispatched=true" >> "$GITHUB_OUTPUT"
 
-      # #377: the auto-mode hand-off above posts nothing to the lifecycle
-      # issue -- only the NEXT_WORKFLOW-empty branch above it does, in the
-      # standalone-mode comment. So a run that spent real money and handed
-      # off cleanly reported none of it. Same shape as #366's fix in
-      # clarify.yml: a cost-only info callout on the arm that would
-      # otherwise stay silent (callout-points.md row 13).
-      - name: Report cost of an auto-mode hand-off
-        if: steps.dupe.outputs.skip != 'true' && steps.mode.outputs.mode == 'auto' && steps.dispatch-auto.outputs.dispatched == 'true'
-        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+      # specs/065-intake-silent-path-cost: the single home for posting this
+      # run's cost, independent of which outcome (if any) is announced above
+      # -- never nested inside any outcome branch's own if:. Replaces #377's
+      # bespoke report, which only covered the auto-mode hand-off; this also
+      # closes the wider gap #377 never touched -- mode == 'pr' (human-
+      # reviewed) runs post no cost statement anywhere today. Dual-mode gate:
+      # plan.yml runs one of two mutually exclusive agent steps per run
+      # (agent-auto / agent-pr), so the report fires whichever one ran (see
+      # "File findings from this run"'s steps.verify-pr.outcome != 'skipped'
+      # || steps.verify-auto.outcome != 'skipped' precedent above).
+      # FR-009 tolerance: a lost cost comment must not change the run's
+      # conclusion -- see clarify.yml.
+      - name: Report run cost
+        continue-on-error: true
+        if: >-
+          steps.dupe.outputs.skip != 'true' && always() && !cancelled() &&
+          (steps.agent-auto.outcome != 'skipped' ||
+           steps.agent-pr.outcome != 'skipped')
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-cost-report
         with:
           token: ${{ env.WC_BOT_TOKEN }}
           issue-number: ${{ steps.meta.outputs.issue || steps.newissue.outputs.issue }}
-          kind: info
-          summary: "Plan committed; task generation was dispatched automatically."
-          body: ${{ steps.cost-line.outputs.line }}
+          cost-line: ${{ steps.cost-line.outputs.line }}
+          stage-label: Plan
 
       # over-budget is observability, not failure (FR-017) -- see clarify.yml.
       - name: Report over-budget agent run (auto)

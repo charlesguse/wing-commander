@@ -27,6 +27,14 @@ across 9 stage workflows, where a rounding fix would have had to land 12
 times with nothing failing on a drifted copy. A copy reappearing in any
 workflow OR composite action under .github/actions/ fails here.
 
+specs/065-intake-silent-path-cost gave the per-stage cost REPORT the same
+treatment (FR-010a): the report that carries that line to the lifecycle
+issue was itself three pasted copies (#366 in clarify, #377 in plan and
+tasks) before it became one composite, so
+`case_cost_report_has_exactly_one_home` fails on either the retired step
+names reappearing or a second consumer of the cost line inside a file that
+has adopted the shared report.
+
 Every "Compute cost line" call site also runs inside a job whose
 `container: image:` is a caller-supplied input, never one this repo
 controls (implement.yml's verify-image-prerequisites checks a tool only
@@ -78,6 +86,8 @@ from wc_shell_pin import effective_shell, is_container_bound, pins_bash  # noqa:
 ACTION = ".github/actions/wing-commander-metrics-summary/action.yml"
 STEP_NAME = "Render agent run metrics summary"
 ACTION_DIR = os.path.abspath(os.path.dirname(ACTION))
+BRANCH_ADVANCE_ACTION = ".github/actions/wing-commander-branch-advance/action.yml"
+BRANCH_ADVANCE_STEP_NAME = "Record branch advance"
 SCHEMA_GATE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                            "verify-metrics-record-schema.py")
 TRANSCRIPT_NAME = "claude-execution-output.json"
@@ -86,6 +96,17 @@ TRANSCRIPT_NAME = "claude-execution-output.json"
 # so forms like `set -e -o pipefail` or `set -o errexit -o pipefail` are
 # caught too, not just `set -eo pipefail` / `set -o pipefail`.
 PIPEFAIL_RE = re.compile(r"\bset\b[^\n;&|]*\bpipefail\b")
+
+# specs/065-intake-silent-path-cost: the uniform per-stage cost report's one
+# home, the bespoke reports it retired, and the workflow-local output every
+# stage's cost statement must now reach the issue through it rather than
+# around it. See case_cost_report_has_exactly_one_home below.
+COST_REPORT_ACTION = "wing-commander-cost-report"
+RETIRED_REPORT_STEPS = (
+    "Report cost of a reply that answered nothing",   # #366, clarify
+    "Report cost of an auto-mode hand-off",           # #377, plan + tasks
+)
+COST_LINE_REF = "steps.cost-line.outputs.line"
 
 failures = []
 MUTATING = False
@@ -408,6 +429,158 @@ def case_repeated_invocation_in_one_job_gets_distinct_record_keys():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+# Frozen copy of implement.yml's pre-refactor "Record branch advance
+# (cycle)" inline bash (specs/068-plan-tasks-branch-advance T004) -- the
+# regression proof that extracting it into wing-commander-branch-advance
+# (T002/T003) changed no value implement.yml records (FR-011). Deliberately
+# NOT re-derived from the shipped composite -- find_step()-ing the new
+# action here would just compare the new script with itself, proving
+# nothing -- this is the literal text implement.yml carried before this
+# feature's refactor, frozen as the one-time baseline
+# case_branch_advance_composite_matches_pre_refactor_inline_bash diffs
+# against.
+PRE_REFACTOR_BRANCH_ADVANCE_SCRIPT = """set -uo pipefail
+branch="${SPEC_PREFIX}${SLUG}"
+echo "branch=$branch" >> "$GITHUB_OUTPUT"
+
+before_sha="$BASE_SHA"
+before_available=false
+[ -n "$before_sha" ] && before_available=true
+echo "before-sha=$before_sha" >> "$GITHUB_OUTPUT"
+echo "before-sha-available=$before_available" >> "$GITHUB_OUTPUT"
+
+after_sha=""
+after_available=false
+if git fetch origin "+refs/heads/$branch:refs/remotes/origin/$branch" 2>/dev/null; then
+  after_sha="$(git rev-parse "refs/remotes/origin/$branch" 2>/dev/null)" || after_sha=""
+  [ -n "$after_sha" ] && after_available=true
+fi
+echo "after-sha=$after_sha" >> "$GITHUB_OUTPUT"
+echo "after-sha-available=$after_available" >> "$GITHUB_OUTPUT"
+
+commits=""
+commits_available=false
+if [ "$before_available" = "true" ] && [ "$after_available" = "true" ]; then
+  commits="$(git rev-list --count "$before_sha..$after_sha" 2>/dev/null)" || commits=""
+  [ -n "$commits" ] && commits_available=true
+fi
+echo "commits=$commits" >> "$GITHUB_OUTPUT"
+echo "commits-available=$commits_available" >> "$GITHUB_OUTPUT"
+"""
+
+
+def _sh(script, cwd):
+    proc = subprocess.run([BASH, "-c", script], cwd=cwd, capture_output=True,
+                          text=True, encoding="utf-8", errors="replace")
+    if proc.returncode != 0:
+        sys.exit(f"::error::harness could not seed a git workspace for "
+                 f"the branch-advance regression case: "
+                 f"{proc.stdout}{proc.stderr}")
+    return proc.stdout
+
+
+def _make_branch_advance_repo(root):
+    """A bare remote + clone with a branch two commits ahead of an earlier
+    'before' point -- real git state for both the composite and the frozen
+    pre-refactor script to fetch/rev-list against (mirrors verify-branch-
+    drift-sha-baseline.py's make_repo discipline)."""
+    work = tempfile.mkdtemp(dir=root)
+    remote = os.path.join(work, "remote.git")
+    repo = os.path.join(work, "repo")
+    setup = f"""
+set -e
+git init --bare -q -b main '{remote}'
+git clone -q '{remote}' '{repo}'
+cd '{repo}'
+git config user.email harness@example.invalid
+git config user.name harness
+echo root > README.md
+git add -A
+git commit -q -m 'seed main'
+git checkout -q -b branch-advance-fixture
+echo one >> README.md
+git commit -q -am 'before point'
+before="$(git rev-parse HEAD)"
+git push -q -u origin branch-advance-fixture
+echo two >> README.md
+git commit -q -am 'after point one'
+echo three >> README.md
+git commit -q -am 'after point two'
+git push -q origin branch-advance-fixture
+after="$(git rev-parse HEAD)"
+echo "BEFORE=$before"
+echo "AFTER=$after"
+"""
+    out = _sh(setup, work)
+    before = after = ""
+    for line in out.splitlines():
+        if line.startswith("BEFORE="):
+            before = line[len("BEFORE="):]
+        elif line.startswith("AFTER="):
+            after = line[len("AFTER="):]
+    return repo, work, before, after
+
+
+def case_branch_advance_composite_matches_pre_refactor_inline_bash():
+    """FR-011's regression proof (T002/T003/T004): the new
+    wing-commander-branch-advance composite, run standalone against a real
+    git fixture, produces byte-identical after-sha/commits outputs to
+    implement.yml's pre-refactor inline bash (frozen above) for the same
+    branch/before-sha inputs -- proving the extraction moved the logic
+    without changing any value implement.yml records."""
+    case = "branch-advance composite matches pre-refactor inline bash"
+    root = tempfile.mkdtemp(prefix="wc-branch-advance-regression-")
+    try:
+        repo, _work, before, after = _make_branch_advance_repo(root)
+        if not before or not after:
+            fail(case, f"harness could not resolve before/after SHAs from "
+                       f"its own fixture setup (before={before!r} "
+                       f"after={after!r})")
+            return
+
+        new_script = find_step(BRANCH_ADVANCE_ACTION,
+                               BRANCH_ADVANCE_STEP_NAME)["run"]
+        new_rc, new_out, new_outputs, _s = run_step(
+            BASH, new_script, repo,
+            {"BRANCH": "branch-advance-fixture", "BEFORE_SHA": before,
+             "BEFORE_AVAILABLE": "true"}, repo)
+        if new_rc != 0:
+            fail(case, f"composite exited {new_rc}: {new_out.strip()[:300]}")
+            return
+
+        old_rc, old_out, old_outputs, _s2 = run_step(
+            BASH, PRE_REFACTOR_BRANCH_ADVANCE_SCRIPT, repo,
+            {"SLUG": "advance-fixture", "SPEC_PREFIX": "branch-",
+             "BASE_SHA": before}, repo)
+        if old_rc != 0:
+            fail(case, f"pre-refactor script exited {old_rc}: "
+                       f"{old_out.strip()[:300]}")
+            return
+
+        for key in ("after-sha", "after-sha-available", "commits",
+                    "commits-available"):
+            if new_outputs.get(key) != old_outputs.get(key):
+                fail(case, f"{key}: composite produced "
+                           f"{new_outputs.get(key)!r}, pre-refactor inline "
+                           f"bash produced {old_outputs.get(key)!r} -- the "
+                           f"extraction (T002/T003) changed a recorded "
+                           f"value")
+        if new_outputs.get("after-sha") != after:
+            fail(case, f"after-sha = {new_outputs.get('after-sha')!r}, "
+                       f"expected the fixture's own pushed tip {after!r}")
+        if new_outputs.get("commits") != "2":
+            fail(case, f"commits = {new_outputs.get('commits')!r}, expected "
+                       f"'2' (the two commits pushed after the before-sha "
+                       f"point)")
+        note(f"wing-commander-branch-advance produced "
+             f"after-sha={new_outputs.get('after-sha')!r} "
+             f"commits={new_outputs.get('commits')!r}, byte-identical to "
+             f"implement.yml's pre-refactor inline bash for the same "
+             f"inputs")
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def case_branch_advance_availability_follows_contract_or_rule():
     """metrics-record-schema-delta.md / data-model.md: branch_advance.
     available is true iff branch is non-empty AND (before-sha-available OR
@@ -478,6 +651,74 @@ def case_branch_advance_availability_follows_contract_or_rule():
              "inputs, matching the valid-branch-advance-before-"
              "unavailable/after-unavailable fixtures (available:true, "
              "branch kept)")
+
+
+def case_plan_tasks_branch_advance_call_sites_emit_conforming_records():
+    """T007/T008 (contracts/gate-coverage-068.md assertions 2-3): plan.yml's
+    and tasks.yml's own new "Agent run metrics summary (branch advance)"
+    call sites -- an auto-mode-shaped invocation (stage: plan, a persistent
+    spec/<slug> branch) and a pr-mode-shaped one (stage: tasks, a review
+    tasks/<slug> branch) -- each with an intentionally-absent transcript
+    path and fully populated branch/before-sha/after-sha/commits inputs,
+    produce a record with record_available: false and branch_advance
+    matching those inputs verbatim."""
+    case = "plan/tasks branch-advance call sites emit conforming records"
+    scenarios = [
+        ("plan (auto mode)", "plan", {
+            "BRANCH": "spec/068-plan-tasks-branch-advance",
+            "BEFORE_SHA": "a" * 40, "BEFORE_SHA_AVAILABLE": "true",
+            "AFTER_SHA": "a" * 40, "AFTER_SHA_AVAILABLE": "true",
+            "COMMITS": "0", "COMMITS_AVAILABLE": "true"}),
+        ("tasks (pr mode)", "tasks", {
+            "BRANCH": "tasks/068-plan-tasks-branch-advance",
+            "BEFORE_SHA": "b" * 40, "BEFORE_SHA_AVAILABLE": "true",
+            "AFTER_SHA": "c" * 40, "AFTER_SHA_AVAILABLE": "true",
+            "COMMITS": "4", "COMMITS_AVAILABLE": "true"}),
+    ]
+    any_failed = False
+    for label, stage, ba_env in scenarios:
+        tmp = tempfile.mkdtemp(prefix="wc-metrics-record-")
+        try:
+            env_over = dict(ba_env)
+            env_over.update({"STAGE": stage, "STEP_INDEX": "1",
+                             "RUN_LABEL": "branch advance"})
+            rc, _outputs, _summary, record, output = run_case(
+                tmp, missing=True, env_over=env_over)
+            if rc != 0:
+                fail(case, f"{label}: exited {rc}: {output.strip()[:300]}")
+                any_failed = True
+                continue
+            if record is None:
+                fail(case, f"{label}: record-path was not written")
+                any_failed = True
+                continue
+            validate_schema(f"{case} ({label})", record)
+            if record.get("record_available") is not False:
+                fail(case, f"{label}: expected record_available: false "
+                           f"(absent transcript), got "
+                           f"{record.get('record_available')!r}")
+                any_failed = True
+            want_ba = {
+                "available": True, "branch": ba_env["BRANCH"],
+                "before_sha": ba_env["BEFORE_SHA"], "before_available": True,
+                "after_sha": ba_env["AFTER_SHA"], "after_available": True,
+                "commits": int(ba_env["COMMITS"]), "commits_available": True,
+            }
+            ba = record.get("branch_advance") or {}
+            if ba != want_ba:
+                fail(case, f"{label}: branch_advance = {ba!r}, want "
+                           f"{want_ba!r}")
+                any_failed = True
+            if record.get("stage") != stage:
+                fail(case, f"{label}: stage = {record.get('stage')!r}, "
+                           f"expected {stage!r}")
+                any_failed = True
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+    if not any_failed:
+        note("plan's and tasks's own branch-advance call sites each "
+             "produce record_available: false with branch_advance matching "
+             "their inputs verbatim")
 
 
 def case_multi_model_record_tokens_sum_across_per_model():
@@ -598,6 +839,181 @@ def case_cost_line_formatter_has_exactly_one_home():
              "output")
 
 
+def _iter_steps(doc):
+    """Every step of a workflow doc (`jobs.*.steps`) or a composite action
+    doc (`runs.steps`) — one walk, so a copy pasted into either shape is
+    seen the same way."""
+    if not isinstance(doc, dict):
+        return
+    for job in (doc.get("jobs") or {}).values():
+        for step in ((job or {}).get("steps") or []):
+            if isinstance(step, dict):
+                yield step
+    runs = doc.get("runs")
+    if isinstance(runs, dict):
+        for step in (runs.get("steps") or []):
+            if isinstance(step, dict):
+                yield step
+
+
+def _cost_report_single_home_hits(case, sources):
+    """Scan {path: text} for copies of the uniform cost report.
+
+    Split out from the case below so the self-test fixtures at the end of
+    that case can feed this the synthetic snippets Constitution VIII wants
+    behind every failure branch — a single-home check that has never been
+    shown rejecting a paste is a check nobody has proven can fail.
+
+    Two rules:
+
+      (a) The retired step names, anywhere. Those two steps ARE the paste
+          this feature retired (#366 once, #377 twice); their names
+          reappearing means a fourth copy is being grown.
+
+      (b) In a workflow or composite that has ADOPTED the report, any OTHER
+          step consuming the workflow-local `cost-line` output. In an
+          adopting file the report is the cost line's only consumer, so a
+          second one — a `wing-commander-callout` body, a `gh issue comment`
+          body, a step appending it to a questionnaire — is a double-post
+          (FR-002a/FR-003), which is what the retired copies did.
+
+    Rule (b) is deliberately keyed on adoption rather than applied to every
+    workflow: the stages outside this feature's scope (finalize, rebase,
+    cleanup, implement) still embed their cost line in their own callouts,
+    and flagging them here would fail the gate over work the spec did not
+    ask for. Keying on adoption makes the rule self-extending instead —
+    each of those files comes under it the day it starts calling the
+    composite, with nobody remembering to add it to a list.
+    """
+    hits = []
+    for path, text in sorted(sources.items()):
+        for retired in RETIRED_REPORT_STEPS:
+            if retired in text:
+                hits.append(f"{path} (carries the retired step {retired!r})")
+        try:
+            doc = yaml.safe_load(text) or {}
+        except yaml.YAMLError as exc:
+            fail(case, f"{path}: could not parse as YAML ({exc}) -- cannot "
+                       f"confirm it holds no copy of the cost report, so "
+                       f"this gate fails rather than silently dropping the "
+                       f"file from coverage.")
+            continue
+        steps = list(_iter_steps(doc))
+        if not any(COST_REPORT_ACTION in str(s.get("uses") or "")
+                   for s in steps):
+            continue
+        for step in steps:
+            if COST_REPORT_ACTION in str(step.get("uses") or ""):
+                continue
+            if COST_LINE_REF in yaml.safe_dump(step, default_flow_style=False):
+                hits.append(f"{path} (step {step.get('name')!r} consumes "
+                            f"{COST_LINE_REF} outside the report)")
+    return hits
+
+
+def case_cost_report_has_exactly_one_home():
+    """FR-010a's sibling to the formatter check above: the uniform per-stage
+    cost report is defined once, in
+    .github/actions/wing-commander-cost-report, and every stage calls it
+    rather than growing its own copy.
+
+    Scans the same walk the formatter check does — every
+    .github/workflows/*.yml plus every composite action file under
+    .github/actions/ — excluding only the canonical home itself. See
+    _cost_report_single_home_hits for the two rules and why the second is
+    scoped to files that have adopted the report.
+    """
+    case = "cost report single home"
+    sources = dict(_workflow_texts())
+
+    actions_dir = ".github/actions"
+    canonical_dir = os.path.normpath(
+        os.path.join(actions_dir, COST_REPORT_ACTION))
+    for root, _dirs, files in os.walk(actions_dir):
+        if os.path.normpath(root) == canonical_dir:
+            continue
+        for name in sorted(files):
+            if name in ("action.yml", "action.yaml"):
+                path = os.path.join(root, name)
+                with open(path, encoding="utf-8") as fh:
+                    sources[path] = fh.read()
+
+    hits = _cost_report_single_home_hits(case, sources)
+    if hits:
+        fail(case, "the per-stage cost report's only home is "
+                   f".github/actions/{COST_REPORT_ACTION} (called as "
+                   "`Report run cost`); a copy pasted into a workflow or "
+                   "composite action drifts silently the next time the "
+                   "report changes, and double-posts the cost of every run "
+                   "that fires both. Found in: " + ", ".join(hits))
+    else:
+        note("no workflow or composite action carries a copy of the "
+             f"cost report; every call site uses {COST_REPORT_ACTION}")
+
+    # The fixtures: this check must be shown rejecting a paste, or its
+    # green verdict above is indistinguishable from a scan that matches
+    # nothing any more (Constitution VIII).
+    pasted = {"synthetic-pasted-report.yml": PASTED_REPORT_FIXTURE}
+    if not _cost_report_single_home_hits(case, pasted):
+        fail(case, "the single-home scan did not reject a synthetic "
+                   "workflow carrying a pasted copy of the retired report "
+                   "shape, so its verdict on the real tree proves nothing. "
+                   "Fix the scan, not the fixture.")
+    clean = {"synthetic-clean-report.yml": CLEAN_REPORT_FIXTURE}
+    residual = _cost_report_single_home_hits(case, clean)
+    if residual:
+        fail(case, "the single-home scan rejected a synthetic workflow that "
+                   "calls the shared report correctly and consumes the cost "
+                   f"line nowhere else: {residual}. A check that fails on "
+                   "the shape it is asking for teaches call sites to work "
+                   "around it.")
+
+
+# A workflow that calls the shared report AND keeps a second cost statement
+# alongside it: the retired #377 step by name, and a callout body embedding
+# the same cost line the report already posts.
+PASTED_REPORT_FIXTURE = """\
+name: synthetic stage
+on: workflow_call
+jobs:
+  stage:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report run cost
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-cost-report
+        with:
+          cost-line: ${{ steps.cost-line.outputs.line }}
+          stage-label: Synthetic
+      - name: Report cost of an auto-mode hand-off
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          kind: info
+          body: ${{ steps.cost-line.outputs.line }}
+"""
+
+# The same workflow done right: one report, and no other consumer of the
+# cost line. Proves the fixture above is rejected for what it carries
+# rather than for being synthetic.
+CLEAN_REPORT_FIXTURE = """\
+name: synthetic stage
+on: workflow_call
+jobs:
+  stage:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report run cost
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-cost-report
+        with:
+          cost-line: ${{ steps.cost-line.outputs.line }}
+          stage-label: Synthetic
+      - name: Announce spec PR ready for review
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          kind: action
+          pr-url: https://example.invalid/pr/1
+"""
+
+
 def case_container_pipefail_steps_pin_shell_bash():
     """Every `run:` step in a caller-supplied-container job whose body
     calls `set ... pipefail` must declare `shell: bash` (directly, or via
@@ -666,9 +1082,12 @@ CASES = [
     case_empty_transcript_degrades,
     case_unparseable_transcript_degrades,
     case_repeated_invocation_in_one_job_gets_distinct_record_keys,
+    case_branch_advance_composite_matches_pre_refactor_inline_bash,
     case_branch_advance_availability_follows_contract_or_rule,
+    case_plan_tasks_branch_advance_call_sites_emit_conforming_records,
     case_multi_model_record_tokens_sum_across_per_model,
     case_cost_line_formatter_has_exactly_one_home,
+    case_cost_report_has_exactly_one_home,
     case_container_pipefail_steps_pin_shell_bash,
 ]
 

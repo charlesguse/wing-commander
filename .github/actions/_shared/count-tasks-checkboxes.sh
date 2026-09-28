@@ -92,5 +92,10 @@ unchecked_items="${rest#*$'\x1f'}"
 printf 'checked-count=%s\n' "$checked_count"
 printf 'unchecked-count=%s\n' "$unchecked_count"
 printf 'unchecked-items<<WING_COMMANDER_UNCHECKED_ITEMS_EOF\n'
-printf '%s' "$unchecked_items"
+# "$(...)" above strips the items' trailing newline, so the last item must
+# get its newline back here -- without it the closing delimiter lands on the
+# same line as that item and $GITHUB_OUTPUT rejects the whole block
+# ("Matching delimiter not found"), failing every cycle that still has an
+# unchecked task.
+[ -z "$unchecked_items" ] || printf '%s\n' "$unchecked_items"
 printf 'WING_COMMANDER_UNCHECKED_ITEMS_EOF\n'
