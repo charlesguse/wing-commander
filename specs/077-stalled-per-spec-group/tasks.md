@@ -159,3 +159,10 @@ This repository is a GitHub Actions pipeline component — no `src`/`tests` spli
 4. User Story 3 → a non-qualifying PR's silence is provably unchanged (can run any time after Foundational).
 5. User Story 4 → the derivation's single-home property is provably true.
 6. Polish → cross-spec documentation, the two skill passes CLAUDE.md requires, the full gate suite, and the post-merge drill.
+
+---
+
+## Maintainer Feedback
+
+- [ ] T020 In `.github/workflows/pr-conversation.yml`'s `resolve-identity` job (`Resolve PR identity and check qualification` step, currently line ~425), change `echo "spec-dir=specs/$slug"` to `echo "spec-dir=${slug:+specs/$slug}"` so a non-qualifying PR (empty `slug`) emits an empty `spec-dir` rather than the malformed `specs/`. Verify the qualifying-case consumers (`SPEC_DIR` env values around lines ~614/~1163, prompt text around ~870/~888) are unaffected since they all sit behind `needs.resolve-identity.outputs.qualifies == 'true'`.
+- [ ] T021 In `.github/scripts/verify-spec-branch-push-concurrency.py`'s `self_test()`, add a case asserting that a non-qualifying PR (empty `slug`) yields an empty `spec-dir` output from `resolve-identity`, and that the `stalled` job's concurrency group correctly resolves to the per-PR fallback (not `wing-commander-specs/`) in that case. Run `python3 .github/scripts/verify-spec-branch-push-concurrency.py --self-test` to confirm.
