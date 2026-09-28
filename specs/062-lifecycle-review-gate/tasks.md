@@ -304,3 +304,13 @@ With parallel capacity: one line of work on the new `lifecycle-review-gate.yml` 
 - This plan needs seven new gates, not the four contracts/gates.md enumerates, because its "each composite's own `tests/run-tests.sh`" testing convention does not exist anywhere in this repository; every composite-level check here instead becomes its own numbered `verify-*.py` gate (T014, T032, T035), matching how `wing-commander-board-labels` and `wing-commander-tool-args` are actually tested today.
 - FR-033/research.md D16 are binding: this feature never drafts, commits, or merges the constitution amendment. `verify-constitution-merge-class-parity.py` (T055–T057) is this branch's only deliverable relating to it.
 - Commit after each task or logical group, consistent with this repository's existing per-task commit discipline on the implementation stage.
+
+---
+
+## Maintainer Feedback
+
+### Renumber this feature's gates to 107–113 and rebase onto main
+- [ ] Re-derive the actual next-free `Gate N —` numbers in `.github/workflows/lint-workflows.yml` against current `main`, per the maintainer's allocation: this feature's seven gates (lifecycle readiness, `wing-commander-post-review-comment`, fold-wiring, `wing-commander-fold-commit`, `wing-commander-fold-dispatch`, lifecycle merge preconditions, constitution merge-class parity — T003's order) get **107–113**.
+- [ ] Renumber the two already-registered gates (currently Gate 101 — Lifecycle readiness, Gate 102 — wing-commander-post-review-comment composite) to their new numbers, including their step names, self-test step names, and their "Numbered 101/102, not the 99/100…" cross-reference comment blocks.
+- [ ] Update `specs/062-lifecycle-review-gate/tasks.md`'s stale gate-number references in T003, T008, T014, T030, T032, T035, T041, T050, T057, and the "Gate 104" mention in the Incremental Delivery section, to match the renumbered gates.
+- [ ] Rebase this branch onto `main` to resolve the resulting conflict in `lint-workflows.yml`.
