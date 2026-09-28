@@ -182,7 +182,9 @@ def checkbox_count_env(repo, ref):
                      f"unchecked-items block never closes -- no line equal to "
                      f"'{delim}' (the runner fails the step with 'Matching "
                      f"delimiter not found'):\n{proc.stdout}")
-        items = "\n".join(body) + ("\n" if body else "")
+        # The runner joins a heredoc value's lines with "\n" and keeps no
+        # trailing newline -- hand the next step exactly that.
+        items = "\n".join(body)
     return checked, unchecked, items
 
 

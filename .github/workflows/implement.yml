@@ -1400,8 +1400,10 @@ jobs:
             # without double-listing (a converge:-appended phase is, by
             # construction, additional unchecked lines already present at
             # the tip) and is never empty on the no-converge-commit path
-            # (FR-012).
-            printf '%s' "$REMAINING_TIP"
+            # (FR-012). The runner hands a multi-line output back with no
+            # trailing newline, so restore it here or the closing delimiter
+            # shares the last item's line and the runner rejects the block.
+            [ -z "$REMAINING_TIP" ] || printf '%s\n' "$REMAINING_TIP"
             echo "WING_COMMANDER_REMAINING_EOF"
           } >> "$GITHUB_OUTPUT"
 
@@ -2044,8 +2046,8 @@ jobs:
             echo "remaining<<WING_COMMANDER_REMAINING_EOF"
             # D6 (spec 059): the tip's own outstanding-item text, not a
             # converge-commit diff -- see the cycle arm's identical change
-            # above (FR-012).
-            printf '%s' "$REMAINING_TIP"
+            # above (FR-012), including its trailing-newline restore.
+            [ -z "$REMAINING_TIP" ] || printf '%s\n' "$REMAINING_TIP"
             echo "WING_COMMANDER_REMAINING_EOF"
           } >> "$GITHUB_OUTPUT"
 
