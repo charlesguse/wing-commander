@@ -205,3 +205,9 @@ Task: "Extend verify-auto-release-credential-step.py with fine-grained containme
 - [Story] labels map each task to spec.md's user stories for traceability.
 - No published stage workflow or `docs/adoption.md`-documented wrapper changes at any step (FR-021) — every edit lands in `auto-release.yml` (this repository's own wrapper), `verify-auto-release-credential-step.py`'s fixtures, a new gate script, `lint-workflows.yml`'s gate registry, `docs/setup.md`, and specs/055's history annotation.
 - Every new precheck decision is a fixed string/status-code comparison in shell (Constitution IX) — no task above asks an agent to judge whether a credential passes.
+
+---
+
+## Maintainer Feedback
+
+- [ ] T034 Replace the FR-016 Administration-absence probe in `.github/workflows/auto-release.yml` (~line 466, `GET repos/$E2E_REPO/collaborators`) with a call gated on Administration read (e.g. `GET repos/$E2E_REPO/actions/permissions`), since `collaborators` is gated on Metadata:read (carried by every fine-grained token) and so a correctly-scoped token currently gets a 200 and is wrongly failed. Update research.md D5's premise and Gate 67's stubbed scenario/response codes to match the new endpoint.
