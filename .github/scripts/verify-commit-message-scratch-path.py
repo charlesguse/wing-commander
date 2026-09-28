@@ -389,17 +389,15 @@ def scan(workflows_glob, root, check_exempt_staleness=True):
                           f"than silently dropping the file."))
 
     checked = 0
-    seen_paths_jobs = set()
+    seen_jobs = {}  # (path, job_name) -> job dict, from discover() -- never re-parsed.
     for path, job_name, job, step, step_name, prompt in sites:
         checked += 1
         msg = check_site(path, job, step, step_name, prompt)
         if msg:
             failures.append(((path, job_name, step_name), msg))
-        seen_paths_jobs.add((path, job_name))
+        seen_jobs[(path, job_name)] = job
 
-    for path, job_name in sorted(seen_paths_jobs):
-        wf = load_workflow(path)
-        job = (wf.get("jobs") or {}).get(job_name) or {}
+    for (path, job_name), job in sorted(seen_jobs.items()):
         for msg in deep_check(path, job, root):
             failures.append(((path, job_name, "-"), msg))
 

@@ -108,9 +108,9 @@ CI/CD pipeline infrastructure repository — no `src`/`tests` split. Paths below
 
 **Purpose**: Whole-tree validation once every story has landed.
 
-- [ ] T021 Run `python .github/scripts/run-local-gates.py` from the repository root and confirm every gate passes, including Gate 99 and its self-test step, with Gate 99 listed among the gates the script ran (confirming registry reachability — Constitution VIII, SC-005) — quickstart.md §1.
-- [ ] T022 [P] Run quickstart.md §5's `cat .github/actions/wing-commander-commit-message-guidance/action.yml` and confirm the guidance wording exists in exactly that one file (`git grep` for a distinctive phrase like "never a heredoc or" across `.github/workflows/` and `.github/actions/` should return zero hits outside this one action.yml) — SC-007, SC-009.
-- [ ] T023 Run this PR's code review (CLAUDE.md's "every fix PR gets a code review before merge") and fix its findings in this same PR; if the review surfaces a bug outside this feature's scope, file it as a new issue carrying the line "Found by the code review of #585" rather than widening this PR.
+- [X] T021 Run `python .github/scripts/run-local-gates.py` from the repository root and confirm every gate passes, including Gate 99 and its self-test step, with Gate 99 listed among the gates the script ran (confirming registry reachability — Constitution VIII, SC-005) — quickstart.md §1.
+- [X] T022 [P] Run quickstart.md §5's `cat .github/actions/wing-commander-commit-message-guidance/action.yml` and confirm the guidance wording exists in exactly that one file (`git grep` for a distinctive phrase like "never a heredoc or" across `.github/workflows/` and `.github/actions/` should return zero hits outside this one action.yml) — SC-007, SC-009.
+- [X] T023 Run this PR's code review (CLAUDE.md's "every fix PR gets a code review before merge") and fix its findings in this same PR; if the review surfaces a bug outside this feature's scope, file it as a new issue carrying the line "Found by the code review of #585" rather than widening this PR.
 
 ---
 
