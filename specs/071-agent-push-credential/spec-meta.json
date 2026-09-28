@@ -2,7 +2,7 @@
   "issue": 545,
   "spec_dir": "specs/071-agent-push-credential",
   "feature_num": "071",
-  "stage": "stalled",
-  "iteration": 0,
+  "stage": "implement",
+  "iteration": 1,
   "spec_branch": "spec/071-agent-push-credential"
 }
