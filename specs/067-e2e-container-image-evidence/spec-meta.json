@@ -3,7 +3,7 @@
   "spec_dir": "specs/067-e2e-container-image-evidence",
   "feature_num": "067",
   "stage": "implement",
-  "iteration": 1,
+  "iteration": 2,
   "spec_branch": "spec/067-e2e-container-image-evidence",
   "pending_re_review_from": ["charlesguse"]
 }
