@@ -70,6 +70,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 
@@ -304,6 +305,26 @@ FALLBACK_GROUP_NEAR_MISS_IDENTIFIER = (
     "format('pr-conversation-pr-{0}', inputs.pr_number) || '' }}")
 
 
+def _resolve_identity_spec_dir(slug):
+    """Runs resolve-identity's own `spec-dir=${slug:+specs/$slug}` line
+    (pr-conversation.yml, specs/077) against a candidate slug, to prove the
+    non-qualifying (empty-slug) case yields an empty spec-dir rather than
+    the malformed `specs/`."""
+    out = subprocess.run(
+        ["bash", "-c", 'slug=$1; echo "${slug:+specs/$slug}"', "bash", slug],
+        capture_output=True, text=True, check=True).stdout
+    return out.rstrip(_NL)
+
+
+def _fallback_group_value(spec_dir, pr_number):
+    """Mirrors FALLBACK_GROUP's two `${{ }}` blocks once GitHub Actions has
+    substituted spec-dir and, only when it is empty, the per-PR
+    format(...) fallback -- so a caller can check what the stalled job's
+    concurrency group actually resolves to for a given spec-dir value."""
+    tail = "pr-conversation-pr-{0}".format(pr_number) if spec_dir == "" else ""
+    return "wing-commander-" + spec_dir + tail
+
+
 def _tree(jobs_text, waivers=None, composite=True):
     tmp = tempfile.mkdtemp(prefix="gate80-")
     os.makedirs(os.path.join(tmp, WORKFLOW_DIR))
@@ -371,6 +392,27 @@ def self_test():
          _job("a", FALLBACK_GROUP_NEAR_MISS_LITERAL, RUN_PUSH), ["a"])
     case("a near-miss identifier (inputs.pr_number, underscore) still fails",
          _job("a", FALLBACK_GROUP_NEAR_MISS_IDENTIFIER, RUN_PUSH), ["a"])
+
+    label = ("resolve-identity emits an empty spec-dir for a non-qualifying "
+             "PR (empty slug), so the stalled job's fallback group resolves "
+             "to the per-PR spelling, not wing-commander-specs/")
+    empty_spec_dir = _resolve_identity_spec_dir("")
+    empty_group = _fallback_group_value(empty_spec_dir, "42")
+    if empty_spec_dir == "" and empty_group == "wing-commander-pr-conversation-pr-42":
+        print("[ok] {0}".format(label))
+    else:
+        bad += 1
+        print("[FAIL] {0}: spec-dir={1!r} group={2!r}".format(
+            label, empty_spec_dir, empty_group))
+
+    label = "resolve-identity emits specs/<slug> for a qualifying PR"
+    qualifying_spec_dir = _resolve_identity_spec_dir("042-example")
+    if qualifying_spec_dir == "specs/042-example":
+        print("[ok] {0}".format(label))
+    else:
+        bad += 1
+        print("[FAIL] {0}: got {1!r}".format(label, qualifying_spec_dir))
+
     case("an agent grant of Bash(git push:*) outside the group fails",
          _job("a", "wing-commander-intake", AGENT_GRANT), ["a"],
          expect_substrings=["agent grant Bash(git push:*)"])

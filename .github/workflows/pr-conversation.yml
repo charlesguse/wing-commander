@@ -422,7 +422,7 @@ jobs:
           {
             echo "qualifies=$qualifies"
             echo "slug=$slug"
-            echo "spec-dir=specs/$slug"
+            echo "spec-dir=${slug:+specs/$slug}"
             echo "default-branch=$default_branch"
           } >> "$GITHUB_OUTPUT"
           if [ "$qualifies" != "true" ]; then
@@ -571,8 +571,10 @@ jobs:
           aws-role-arn: ${{ inputs.aws-role-arn }}
           aws-region: ${{ inputs.aws-region }}
 
-      # Refusal note (research.md D1) — see "Report identity-resolution
-      # refusal" above.
+      # Refusal note (research.md D1). No analogous callout exists for an
+      # identity refusal here — resolve-identity's own failure has no PR-side
+      # callout of its own; the stalled job's stall notice is its replacement
+      # (FR-006).
       - name: Report preflight refusal on the PR
         if: always() && steps.preflight.outputs.refused == 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
@@ -630,8 +632,10 @@ jobs:
           fi
           echo "issue-number=$issue" >> "$GITHUB_OUTPUT"
 
-      # Refusal note (research.md D1) — see "Report identity-resolution
-      # refusal" above.
+      # Refusal note (research.md D1). No analogous callout exists for an
+      # identity refusal here — resolve-identity's own failure has no PR-side
+      # callout of its own; the stalled job's stall notice is its replacement
+      # (FR-006).
       - name: Report spec-meta refusal on the PR
         if: always() && steps.meta.outputs.refused == 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
