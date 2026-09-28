@@ -11,7 +11,7 @@
 # unchecked count would be the shape CLAUDE.md's "Shared logic has exactly
 # one home" forbids, so this script is now the one home both counts (and
 # the literal unchecked-item text used for the remaining-work report) come
-# from; count-tasks-checkboxes.sh is the only file gate 81's structural
+# from; count-tasks-checkboxes.sh is the only file Gate 99's structural
 # check needs to keep in sync.
 #
 # Invoke with
