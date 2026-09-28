@@ -2231,8 +2231,11 @@ jobs:
       # parameterized to the scratch repository rather than
       # github.repository. Unlike every other call site (T007-T013), this
       # one attaches to a deterministic step, not an agent step -- `decide`
-      # above never pushes at all -- see this run's wing-commander-findings
-      # for the placement/mechanism tension this diverges to work around.
+      # above never pushes at all. `workdir: e2e-scratch` is load-bearing
+      # (T053): the scratch repository is cloned into its own subdirectory
+      # with its own git config, so installing the helper against this
+      # job's root checkout would be inert for the push below, which runs
+      # inside e2e-scratch against a different repository entirely.
       - name: Install fresh-mint push credential (scratch)
         id: push-cred-scratch
         if: steps.readback.outputs.passed == 'true'
@@ -2242,18 +2245,22 @@ jobs:
           private-key: ${{ secrets.speckit-app-private-key }}
           owner: ${{ steps.scratch-parts.outputs.owner }}
           repo-name: ${{ steps.scratch-parts.outputs.name }}
+          workdir: e2e-scratch
 
       # T012: best-effort — a push failure here must never flip `passed`,
       # since the gating assertion already happened against the local
-      # working tree above.
+      # working tree above. T053: pushes to the plain `origin` URL
+      # (orphan-branch-reset already rewrote it to a token-free
+      # https://github.com/... form) instead of an inline
+      # x-access-token@github.com URL, so the credential helper installed
+      # above -- not the point-in-time WC_SCRATCH_TOKEN mint -- is what git
+      # actually consults; an inline-credentialed URL takes priority over
+      # any helper and would have made the mint above inert.
       - name: Push agent-produced spec.md to the scratch repository (best-effort)
         shell: bash
         if: steps.readback.outputs.passed == 'true'
         continue-on-error: true
         env:
-          # The scratch-scoped token, not steps.ctx's — see the mint step.
-          GH_TOKEN: ${{ env.WC_SCRATCH_TOKEN }}
-          FULL_NAME: ${{ steps.scratch-repo.outputs.full-name }}
           BRANCH: ${{ steps.scratch-repo.outputs.branch }}
           BOT_SLUG: ${{ steps.ctx.outputs.bot-slug }}
         run: |
@@ -2264,7 +2271,7 @@ jobs:
             git config user.email "${BOT_SLUG}[bot]@users.noreply.github.com"
             git add -A
             git commit -m "chore: e2e-stage agent output" --quiet || exit 0
-            git push --quiet "https://x-access-token:${GH_TOKEN}@github.com/${FULL_NAME}.git" "HEAD:refs/heads/$BRANCH"
+            git push --quiet origin "HEAD:refs/heads/$BRANCH"
           ) || echo "::warning::wing-commander auto-update-spec-kit e2e-stage: best-effort push of the agent-produced spec.md failed — the gating assertion already ran against the local working tree, so this does not affect the verdict."
 
       # Deferred to the job's last step, after "Read back stage result" and

@@ -58,6 +58,18 @@ inputs:
       entirely, not derivable from this job's own $GITHUB_REPOSITORY.
     required: false
     default: ""
+  workdir:
+    description: >
+      Directory whose local git config receives the credential helper,
+      when the repository the agent pushes is not the job's own root
+      checkout (auto-update-spec-kit.yml's e2e-stage job clones the
+      scratch repository into its own subdirectory -- installing the
+      helper into the root checkout there is inert, since the scratch
+      push runs against a different repository's own git config).
+      Mirrors wing-commander-publish-stranded-commits' own `workdir`
+      input. Empty (the default) means the current directory.
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -85,13 +97,18 @@ runs:
         KEY_PATH: ${{ steps.stage-key.outputs.key-path }}
         OWNER: ${{ inputs.owner }}
         REPO_NAME: ${{ inputs.repo-name }}
+        WORKDIR: ${{ inputs.workdir }}
       run: |
         set -euo pipefail
         repo_name="$REPO_NAME"
         [ -n "$repo_name" ] || repo_name="${GITHUB_REPOSITORY#*/}"
-        git config --local --unset-all "http.https://github.com/.extraheader" 2>/dev/null || true
-        git config --local --unset-all "credential.https://github.com.helper" 2>/dev/null || true
-        git config --local --add "credential.https://github.com.helper" "!bash \"$GITHUB_ACTION_PATH/mint-credential.sh\""
+        dir="${WORKDIR:-.}"
+        (
+          cd "$dir"
+          git config --local --unset-all "http.https://github.com/.extraheader" 2>/dev/null || true
+          git config --local --unset-all "credential.https://github.com.helper" 2>/dev/null || true
+          git config --local --add "credential.https://github.com.helper" "!bash \"$GITHUB_ACTION_PATH/mint-credential.sh\""
+        )
         {
           echo "WC_AGENT_PUSH_APP_ID=$APP_ID"
           echo "WC_AGENT_PUSH_KEY_PATH=$KEY_PATH"

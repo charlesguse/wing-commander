@@ -40,7 +40,12 @@ all) -- contains `Bash(git push:*)`.
    repository App token (post-agent)"), not an agent step -- `decide` itself
    never pushes (FR-025) -- so it is checked on its own terms: that named
    remint step must exist, and a publish call sharing its exact `if:` must
-   exist alongside it.
+   exist alongside it. A second companion clause covers the credential
+   helper itself: existence of a wing-commander-agent-push-credential call
+   is not enough -- the scratch push it exists to cover must carry no
+   inline x-access-token credential in its URL, and the helper must be
+   installed into the SAME working directory the push runs from, or the
+   mint is never actually consulted (T054).
 3. No file outside `.github/actions/wing-commander-agent-push-credential/`
    contains a JWT-header/payload construction matching the same structural
    shape (`"alg":"RS256"` co-occurring with `"typ":"JWT"` in one file) --
@@ -209,6 +214,10 @@ def check_job(path, job_name, job):
 
 AUTO_UPDATE_SPEC_KIT = ".github/workflows/auto-update-spec-kit.yml"
 SCRATCH_REMINT_STEP_NAME = "Re-mint scratch-repository App token (post-agent)"
+SCRATCH_PUSH_STEP_NAME = "Push agent-produced spec.md to the scratch repository (best-effort)"
+SCRATCH_CRED_HELPER_STEP_NAME = "Install fresh-mint push credential (scratch)"
+INLINE_CRED_URL_RE = re.compile(r"x-access-token:[^\s\"]*@github\.com")
+CD_DIR_RE = re.compile(r"(?:^|\n)\s*cd\s+([^\s;&|]+)")
 
 
 def check_e2e_scratch_companion(loaded):
@@ -248,6 +257,65 @@ def check_e2e_scratch_companion(loaded):
                 f"condition {remint_if!r} (FR-020 care point 2 companion "
                 f"clause)."]
     return []
+
+
+def check_e2e_scratch_push_resolves_via_helper(loaded):
+    """T054/FR-020 (partial): the companion clause above only proved a
+    wing-commander-agent-push-credential call EXISTS somewhere in the job --
+    it passed even against a call that no push ever consulted (an inline
+    x-access-token URL always wins over a credential helper, and a helper
+    installed into one working directory's git config is never consulted by
+    a push issued from a different one). This closes that gap for the one
+    push this feature claims to cover: it must carry no inline credential in
+    its URL, and the credential-helper call feeding it must be installed
+    into the SAME working directory the push actually runs from.
+    """
+    wf = loaded.get(AUTO_UPDATE_SPEC_KIT)
+    if wf is None:
+        return []
+    job = (wf.get("jobs") or {}).get("e2e-stage")
+    if job is None:
+        return []
+    steps = (job or {}).get("steps") or []
+    push_step = next((s for s in steps if (s or {}).get("name") == SCRATCH_PUSH_STEP_NAME), None)
+    if push_step is None:
+        return [f"{AUTO_UPDATE_SPEC_KIT} [e2e-stage]: no {SCRATCH_PUSH_STEP_NAME!r} "
+                f"step found -- cannot check whether the scratch push "
+                f"resolves through the credential helper (FR-020 care point "
+                f"2 companion clause, T054)."]
+    cred_step = next(
+        (s for s in steps if (s or {}).get("name") == SCRATCH_CRED_HELPER_STEP_NAME
+         and CRED_HELPER_MARKER in str((s or {}).get("uses", ""))),
+        None)
+    failures = []
+    push_text = _step_text(push_step)
+    if INLINE_CRED_URL_RE.search(push_text):
+        failures.append(
+            f"{AUTO_UPDATE_SPEC_KIT} [e2e-stage]: {SCRATCH_PUSH_STEP_NAME!r} "
+            f"still embeds an x-access-token credential directly in its push "
+            f"URL -- an inline-credentialed URL always wins over a "
+            f"credential helper, so {SCRATCH_CRED_HELPER_STEP_NAME!r}'s mint "
+            f"is never actually consulted (FR-020 care point 2 companion "
+            f"clause, T054).")
+    if cred_step is None:
+        failures.append(
+            f"{AUTO_UPDATE_SPEC_KIT} [e2e-stage]: no {SCRATCH_CRED_HELPER_STEP_NAME!r} "
+            f"step found -- cannot confirm the scratch push resolves via the "
+            f"helper (T054).")
+    else:
+        cred_workdir = str((cred_step.get("with") or {}).get("workdir", ""))
+        cd_match = CD_DIR_RE.search(push_text)
+        push_dir = cd_match.group(1) if cd_match else ""
+        if not cred_workdir or cred_workdir != push_dir:
+            failures.append(
+                f"{AUTO_UPDATE_SPEC_KIT} [e2e-stage]: {SCRATCH_CRED_HELPER_STEP_NAME!r} "
+                f"installs the credential helper into workdir {cred_workdir!r} "
+                f"but {SCRATCH_PUSH_STEP_NAME!r} pushes from working "
+                f"directory {push_dir!r} -- a helper installed into a "
+                f"different working directory's git config is never "
+                f"consulted by the push (FR-020 care point 2 companion "
+                f"clause, T054).")
+    return failures
 
 
 SINGLE_HOME_SCAN_EXTENSIONS = (".sh", ".yml", ".yaml", ".py")
@@ -335,6 +403,7 @@ def scan(loaded, subjects=None, root="."):
             "(FR-022).")
 
     failures += check_e2e_scratch_companion(loaded)
+    failures += check_e2e_scratch_push_resolves_via_helper(loaded)
     failures += check_single_home(root)
     return failures
 
@@ -381,6 +450,32 @@ def mut_no_grant_gets_cred_helper(loaded):
     steps.insert(idx, fake)
 
 
+def mut_scratch_push_reintroduces_inline_credential(loaded):
+    job = loaded[AUTO_UPDATE_SPEC_KIT]["jobs"]["e2e-stage"]
+    steps = job["steps"]
+    idx = next((i for i, s in enumerate(steps)
+               if (s or {}).get("name") == SCRATCH_PUSH_STEP_NAME), None)
+    assert idx is not None, "fixture assumption broken: step renamed"
+    original = steps[idx]["run"]
+    replaced = original.replace(
+        'git push --quiet origin "HEAD:refs/heads/$BRANCH"',
+        'git push --quiet "https://x-access-token:${GH_TOKEN}@github.com/'
+        '${FULL_NAME}.git" "HEAD:refs/heads/$BRANCH"')
+    assert replaced != original, "fixture assumption broken: push line changed"
+    steps[idx]["run"] = replaced
+
+
+def mut_scratch_cred_helper_wrong_workdir(loaded):
+    job = loaded[AUTO_UPDATE_SPEC_KIT]["jobs"]["e2e-stage"]
+    steps = job["steps"]
+    idx = next((i for i, s in enumerate(steps)
+               if (s or {}).get("name") == SCRATCH_CRED_HELPER_STEP_NAME), None)
+    assert idx is not None, "fixture assumption broken: step renamed"
+    assert "workdir" in (steps[idx].get("with") or {}), \
+        "fixture assumption broken: workdir input removed"
+    steps[idx]["with"].pop("workdir")
+
+
 def self_test(root="."):
     base = load_all(root)
     problems = []
@@ -401,6 +496,12 @@ def self_test(root="."):
         ("the credential-helper call attached to a fixture agent step "
          "whose allowed-tools carry no Bash(git push:*)",
          mut_no_grant_gets_cred_helper, ["finalize.yml", "FR-025"]),
+        ("the scratch-repository push reverted to an inline x-access-token "
+         "URL", mut_scratch_push_reintroduces_inline_credential,
+         ["never actually consulted"]),
+        ("the scratch-repository credential-helper call's workdir input "
+         "removed", mut_scratch_cred_helper_wrong_workdir,
+         ["different working directory"]),
     ]
     for label, apply_mutation, expect_substrings in mutations:
         mutated = copy.deepcopy(base)
