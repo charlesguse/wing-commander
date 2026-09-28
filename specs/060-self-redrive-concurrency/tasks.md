@@ -779,3 +779,9 @@ Task: "New Gate 102: verify-board-prove-displacement.py fixtures"
 ## Maintainer Feedback (PR #490 review, 2026-09-28, @charlesguse)
 
 - [ ] T055 remains unchecked (specs/060-self-redrive-concurrency/tasks.md:743). `.claude/skills/spec-cross-reference/SKILL.md`'s "Over-rated" example (lines 23-28) still describes `group: wing-commander-board-loop` as applied to every trigger in the file, which T009 replaced with per-job concurrency groups. Update the example to describe the per-job split (the refutation itself still stands), and point at `specs/060-self-redrive-concurrency/contracts/concurrency-groups.md`.
+
+---
+
+## Maintainer Feedback (PR #490 review, 2026-09-28, @charlesguse)
+
+- [ ] `directed_proof_group_busy` (`.github/scripts/board_prove.py:409-425`) does not exclude the calling run's own row from the `gh run list --workflow=board-loop.yml --json databaseId,displayTitle,status` result it evaluates. Inside a `[directed:prove]` run, the run sees its own in-progress `[directed:...]` marker and reports the group busy against itself, posting a misleading "group busy" comment and marker. Skip rows where `databaseId == GITHUB_RUN_ID` before evaluating occupancy.
