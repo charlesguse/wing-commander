@@ -12,16 +12,8 @@
 # larger, board-specific thresholds are both exercised here as plain
 # max-files/max-lines arguments, not literals baked into this script.
 #
-# WHY THIS LIVES UNDER .github/scripts/ AND NOT BESIDE THE COMPOSITE
-# ------------------------------------------------------------------
-# wc_gate_registry.py discovers gates under .github/scripts/ ONLY
-# (SCRIPTS_DIR), so a run-tests.sh under .github/actions/<composite>/tests/
-# is invisible to BOTH verify-gate-wiring.py and run-local-gates.py: CI's
-# own lint-workflows.yml step still ran it, but `python
-# .github/scripts/run-local-gates.py` -- the suite CLAUDE.md's "Before
-# pushing" section tells every contributor to trust -- silently did not.
-# T062 caught that. wing-commander-stage-findings' own harness already sets
-# the precedent this file follows (.github/scripts/stage-findings-tests/).
+# Lives under .github/scripts/, not beside the composite -- see
+# verify-actions-no-gate-scripts.py.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
