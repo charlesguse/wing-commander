@@ -360,12 +360,12 @@ Gate 47 agree.
 
 ## Phase 7: Polish & Cross-Cutting Concerns
 
-- [ ] T032 Run `python .github/scripts/run-local-gates.py` and
+- [X] T032 Run `python .github/scripts/run-local-gates.py` and
   `bash .github/scripts/stage-findings-tests/run-tests.sh` directly against
   the full implementation (quickstart.md steps 1-2); confirm every gate,
   including the new one from T021-T024 and the extended one from T025,
   passes clean.
-- [ ] T033 Follow quickstart.md step 2's mutation drill: temporarily change
+- [X] T033 Follow quickstart.md step 2's mutation drill: temporarily change
   one shape tag in `action.yml` without updating data-model.md and confirm
   `verify-dedup-key-canonical-rule.py` fails naming the missing literal;
   separately, temporarily make `board-loop.yml`'s formula byte-identical to
