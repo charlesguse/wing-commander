@@ -127,3 +127,9 @@ spec.md defines exactly one user story, so there is no incremental multi-story d
 - Verify `run-local-gates.py` passes before push, per CLAUDE.md.
 - Commit after each task or logical group; stop at the Phase 2/Phase 3 checkpoints to confirm the prior phase is solid before continuing.
 - Avoid: re-deriving the rollup-shape judgment a second time outside `auto-release-e2e-merge-decision.sh` (CLAUDE.md's single-home rule, research.md D1's rejected alternative); a third fixture harness alongside Gate 66/Gate 52 (research.md D5's rejected alternative); a new `outcome` value instead of a new `fail-gate-stall` reason (spec.md Assumptions).
+
+## Maintainer Feedback
+
+- [ ] Before writing `fail-timeout` in the poll step's post-loop block (`.github/workflows/auto-release.yml`, currently ~1083-1089), check whether any `gate_blocked_since[$prefix]` is non-empty. If one is, write `fail-gate-stall` for the first such gate (`"gh pr merge succeeds"` expected / `"PR #<n>: required checks never reported a result"` observed, matching T006's evidence strings) instead of the generic timeout — per spec.md's "the waiting allowance is reached late in the poll budget" edge case and FR-007 (the generic timeout must remain the outcome only when *no* gate is blocked).
+- [ ] Add a Gate 66 or Gate 52 fixture covering a gate that goes blocked-pending late enough in the poll budget that its 1200s allowance would not otherwise fully elapse before the loop exits on budget, asserting the outcome is `fail-gate-stall` naming that gate, not the generic timeout.
+- [ ] Update the stale comment in `.github/actions/_shared/auto-release-e2e-merge-decision.sh` (~line 81, "confirm a pending-checks PR is never declared a gate stall") to reflect that a pending-checks PR is now declared stalled after the 20-minute allowance, per FR-004.
