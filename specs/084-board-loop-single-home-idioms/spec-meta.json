@@ -2,7 +2,8 @@
   "issue": 607,
   "spec_dir": "specs/084-board-loop-single-home-idioms",
   "feature_num": "084",
-  "stage": "implement",
+  "stage": "review",
   "iteration": 2,
-  "spec_branch": "spec/084-board-loop-single-home-idioms"
+  "spec_branch": "spec/084-board-loop-single-home-idioms",
+  "pending_re_review_from": []
 }
