@@ -7,7 +7,11 @@
 # Covers quickstart.md Drill 2: a losing claim (round not empty) and a
 # winning claim (round empty, atomic implement-ticket insertion).
 #
-# Not discovered by run-local-gates.py -- invoke directly:
+# Invoked directly by a `run:` step in lint-workflows.yml (Gate 99
+# fixtures), so CI runs this suite on every PR; not yet mirrored by
+# run-local-gates.py, whose gate list only covers .github/scripts paths --
+# see wing-commander-fold-queue-admit/tests/run.sh for why. Invoke
+# directly for a quick local check:
 # bash .github/actions/wing-commander-fold-queue-claim-dispatch/tests/run.sh
 set -uo pipefail
 

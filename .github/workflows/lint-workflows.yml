@@ -4147,6 +4147,24 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-fold-queue-admission.py
 
+      # Gate 99 fixtures — specs/074-serialized-fold-dispatch quickstart.md
+      # Drill 2: the three fold-queue composites' own bash fixture suites,
+      # extracted from each composite's action.yml and run against a
+      # throwaway local bare git repo (no live network). Gate 99 above
+      # exercises the claim-dispatch transform and fold-cycle-guard.yml's
+      # decide step directly; these three cover the admit/release/
+      # claim-dispatch composites' own shipped shell, which nothing else
+      # runs — see each suite's own header comment for scenario coverage.
+      - name: Gate 99 fixtures — wing-commander-fold-queue-admit composite (quickstart.md Drill 2)
+        if: "!cancelled()"
+        run: bash .github/actions/wing-commander-fold-queue-admit/tests/run.sh
+      - name: Gate 99 fixtures — wing-commander-fold-queue-release composite (quickstart.md Drill 2)
+        if: "!cancelled()"
+        run: bash .github/actions/wing-commander-fold-queue-release/tests/run.sh
+      - name: Gate 99 fixtures — wing-commander-fold-queue-claim-dispatch composite (quickstart.md Drill 2)
+        if: "!cancelled()"
+        run: bash .github/actions/wing-commander-fold-queue-claim-dispatch/tests/run.sh
+
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and
       # verify-denied-tool-collector.sh has already shown what happens when

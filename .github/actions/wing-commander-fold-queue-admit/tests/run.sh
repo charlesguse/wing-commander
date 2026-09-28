@@ -9,9 +9,16 @@
 # Covers quickstart.md Drill 2's three scenarios: a clean immediate grant,
 # a queued-then-granted sequence, and one stale-ticket reclaim.
 #
-# Not discovered by run-local-gates.py (.github/actions/**/tests/ is
-# outside its scan, per this repository's existing size-path-backstop-tests
-# precedent) -- invoke directly: bash .github/actions/wing-commander-fold-queue-admit/tests/run.sh
+# Invoked directly by a `run:` step in lint-workflows.yml (Gate 99
+# fixtures), so CI runs this suite on every PR. run-local-gates.py mirrors
+# CI by deriving its gate list from wc_gate_registry.gate_scripts(), which
+# only recognizes .github/scripts/verify-*.{py,sh} and
+# .github/scripts/*/run-tests.sh; a path under .github/actions/**/tests/
+# does not match that convention, so this suite runs in CI but is not yet
+# reproduced by the local sweep -- size-path-backstop-tests is in fact a
+# poor precedent for that gap, since .github/scripts/size-path-backstop-tests/run-tests.sh
+# matches the convention and IS a registered gate. Invoke directly for a
+# quick local check: bash .github/actions/wing-commander-fold-queue-admit/tests/run.sh
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
