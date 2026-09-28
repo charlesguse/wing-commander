@@ -39,12 +39,15 @@ change — fail-loud to fail-open — that shipped as an accident under a
 comment asserting it was a no-op.
 
 This feature does three things. It makes the read-failure policy for that
-step an explicit decision and states it truthfully in the composite. It
-settles whether a tolerated read failure can manufacture a watchdog
-`pipeline-defect` against an otherwise-healthy `prove` run. And because
-the same misreading of `-e` is what let the mistake through every review
-pass, it corrects the repository's other comments that repeat the claim
-and puts a gate behind the corrected fact so the next one cannot ship.
+step an explicit decision — resolved to **fail-loud** — and states it
+truthfully in the composite. That same choice settles the watchdog
+question: with no tolerated failure left on the step, an exhausted read
+can no longer manufacture a `pipeline-defect` against an otherwise-healthy
+green `prove` run, so no change to `lifecycle-gate` or to the watchdog's
+collector is needed. And because the same misreading of `-e` is what let
+the mistake through every review pass, it corrects the repository's other
+comments that repeat the claim and puts a gate behind the corrected fact
+so the next one cannot ship.
 
 ### Observed facts (verified against main at 53b7450)
 
@@ -78,7 +81,9 @@ and puts a gate behind the corrected fact so the next one cannot ship.
   `echo "::warning::gh run cancel $stop_run_id failed: $cancel_error"`.
   `lifecycle-gate`, called two steps above, already carries a
   `sanitize()` helper (newline/tab flattening, 300-char truncation, `%`
-  escaping) written for exactly this hazard.
+  escaping) written for exactly this hazard. Spec 087 (#621) replaces this
+  same line, so the fix is sequenced there rather than here (see
+  Clarifications).
 - `verify-gate-24.py` sets `WORKFLOWS_GLOB = ".github/workflows/*.yml"`
   and globs nothing else, so Gate 24 never inspected this composite's
   `if:`/`continue-on-error:` pair. #465's "Gate 24: 0 findings" was true
@@ -107,6 +112,39 @@ and puts a gate behind the corrected fact so the next one cannot ship.
   step and drives it under `bash -eo pipefail` against a stub `gh`,
   including a mutation that must be caught. It is the nearest existing
   home for any new assertion about this step, as CLAUDE.md asks.
+
+## Clarifications
+
+### Session 2026-09-28 — answered on lifecycle issue #623
+
+- Q: Is the read-failure policy for the `prove` job's lifecycle-issue state
+  check fail-open (keep `continue-on-error: true`) or fail-loud (drop it)?
+  → A: **Fail loud.** The other six `wing-commander-lifecycle-gate` call
+  sites (intake, clarify, tasks, implement, finalize, pr-conversation) carry
+  no `continue-on-error:`; the gate's own contract is that it "fails on any
+  other value rather than guessing"; and the comment justifying the
+  tolerance is factually wrong about `-e`. A transient read failure costs
+  one deferred `prove`, which the next scheduled run retries, whereas
+  failing open can close or re-drive an issue a maintainer already closed.
+  (FR-002, User Story 1)
+- Q: Where does the remedy for watchdog annotation noise from a tolerated
+  `closed-check` live — the tolerated call site, the watchdog's collector or
+  classifier, or documented acceptance of the noise? → A: **Moot under the
+  fail-loud choice.** With the tolerance removed there is no tolerated
+  failure to annotate, so no remedy is needed in `lifecycle-gate` or in the
+  watchdog; FR-005 is resolved by FR-002's choice rather than by a change of
+  its own. (FR-005, FR-006, User Story 2)
+- Q: Does this feature also widen Gate 24 to scan `.github/actions/**`, or
+  only record the boundary? → A: **Record the boundary only**, and file the
+  widening (composite actions under `.github/actions/`) as its own issue.
+  CLAUDE.md turns out-of-scope work into a new issue rather than widening
+  the change in flight, and widening now would pull
+  `wing-commander-stage-findings`' eleven tolerated steps into this
+  feature's PR. (FR-012, User Story 4)
+- Sequencing, volunteered with the answers: User Story 4's sanitizing of
+  `$cancel_error` edits the same line spec 087 (#621) replaces, so it is
+  left to 087's classification change rather than rewritten twice. It is
+  out of scope here. (FR-011, SC-006, User Story 4)
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -140,18 +178,19 @@ and the git history respectively.
    every retry, **When** the composite runs, **Then** the outcome matches
    the policy the comment states, and the reason the step took that path
    is visible in the run without reading the composite's source.
-3. **Given** the chosen policy is fail-open, **When** the read fails
-   totally, **Then** the kill switch and the stop-request scan are still
-   evaluated and can still set `paused=true` — a failed closed-check
-   never weakens the two checks that do not depend on it.
-4. **Given** the chosen policy is fail-loud, **When** the read fails
-   totally, **Then** the job stops before its next durable action rather
-   than proceeding on an unknown issue state, and the `prove` job's
+3. **Given** the fail-loud policy chosen under FR-002, **When** the read
+   fails totally, **Then** the kill switch and the stop-request scan are
+   still evaluated and can still report `paused=true` — a failed
+   closed-check never weakens, and never preempts, the two checks that do
+   not depend on it.
+4. **Given** the fail-loud policy chosen under FR-002, **When** the read
+   fails totally, **Then** the job stops before its next durable action
+   rather than proceeding on an unknown issue state, and the `prove` job's
    close-or-redrive step does not run.
 
 ---
 
-### User Story 2 - A tolerated read failure does not accuse a healthy run (Priority: P1)
+### User Story 2 - A tolerated read failure does not accuse a healthy run (Priority: P1) — satisfied by construction
 
 A maintainer watching the board loop wants `pipeline-defect` issues to
 mean something. If a transient, retried, and deliberately tolerated
@@ -160,29 +199,41 @@ watchdog collects from a green `prove` job and hands to the classifier,
 the loop can open a defect issue against a run that behaved exactly as
 designed — and then spend a board cycle triaging it.
 
+**Resolved by the FR-002 clarification**: with `continue-on-error: true`
+removed there is no tolerated step left on this path, so the accusing
+combination this story guards against — a *green* `prove` job carrying
+`closed-check` failure annotations — can no longer occur. A read failure
+now fails the job, where the annotations describe a real failure and are
+the signal the watchdog exists to carry. This story therefore ships with no
+change of its own: the work is to confirm the combination is unreachable,
+not to build a remedy.
+
 **Why this priority**: A false `pipeline-defect` consumes the autonomous
 loop's own capacity and erodes the signal the watchdog exists to provide
 (constitution Principle VIII, "A Green Check Means What It Says"). The
-collection path is confirmed to reach the classifier today.
+collection path was confirmed to reach the classifier before this feature.
 
-**Independent Test**: Drive `prove` with a lifecycle-gate read that fails
-all attempts and a tolerated `closed-check`, then inspect what the
-watchdog's signal set contains for that run and whether a
-`pipeline-defect` can be filed from it.
+**Independent Test**: Confirm that no `prove` job can complete green while
+carrying a `closed-check` read-failure annotation, and that this feature's
+diff introduces no annotation filtering in `lifecycle-gate` or in the
+watchdog's collector.
 
 **Acceptance Scenarios**:
 
-1. **Given** a `prove` job that completes green with a tolerated
-   `closed-check` that exhausted its retries, **When** the watchdog
-   inspects that run, **Then** no `pipeline-defect` is opened on the
-   strength of that step's annotations alone.
+1. **Given** the fail-loud policy, **When** a `closed-check` read fails
+   every attempt, **Then** the job does not complete green, so no
+   `pipeline-defect` can be opened against an otherwise-healthy `prove`
+   run on the strength of that step's annotations.
 2. **Given** a genuine, untolerated `lifecycle-gate` failure at any of
    its other six call sites, **When** the watchdog inspects that run,
-   **Then** its annotations still reach the classifier unchanged — the
-   remedy must not blind the watchdog to real failures.
-3. **Given** the chosen policy under FR-002 is fail-loud, **When** this
-   story is evaluated, **Then** it is satisfied by construction (no
-   tolerated step remains) and requires no further change.
+   **Then** its annotations still reach the classifier unchanged — this
+   feature adds no filtering that could blind the watchdog to real
+   failures.
+3. **Given** a read that fails on attempts 1–2 and succeeds on attempt 3,
+   **When** the watchdog inspects that green run, **Then** the two retry
+   `::warning::` annotations are carried exactly as they are for the other
+   six call sites today — `lifecycle-gate`'s retry annotations are
+   unchanged by this feature and out of its scope.
 
 ---
 
@@ -223,35 +274,36 @@ sites point at. Then add such a claim and confirm the gate suite fails.
 
 ---
 
-### User Story 4 - The small inconsistencies in the same file are closed (Priority: P3)
+### User Story 4 - Gate 24's scope is recorded where the next PR will read it (Priority: P3)
 
-A maintainer reading a `gh run cancel` failure in the log wants the whole
-diagnostic on one line. Raw multi-line `gh` stderr interpolated into a
-`::warning::` can be truncated or misparsed by Actions at an embedded
-newline, and the sibling composite called two steps above already has the
-helper that prevents it.
+A reviewer citing "Gate 24: 0 findings" as evidence about a composite
+action wants to discover from the gate itself that Gate 24 globs only
+`.github/workflows/*.yml`. #465's pass was vacuous for exactly this reason,
+and nothing in the gate says so, so the next PR can make the same claim.
 
-**Why this priority**: Cosmetic worst case — a garbled log line — but it
-is an inconsistency introduced by the same change that reused
-`sanitize()`'s reasoning without reusing `sanitize()`, and it needs no
-design decision.
+**Why this priority**: No live defect follows from it — the guard it would
+have inspected is not stranded today — but it is what let the subject of
+this feature ship behind a green check, and recording the boundary is a
+one-line change with no blast radius.
 
-**Independent Test**: Drive the composite's cancel path with a stub `gh`
-whose stderr is multi-line and contains a `%`, and confirm the emitted
-warning is a single, complete, bounded line.
+**Independent Test**: Read `verify-gate-24.py` and its documented scope
+with no other context and answer "does Gate 24 inspect
+`.github/actions/**`?" correctly.
 
 **Acceptance Scenarios**:
 
-1. **Given** a `gh run cancel` that fails with multi-line stderr, **When**
-   the composite reports it, **Then** the warning is one line, length-
-   bounded, and its `%` characters do not corrupt the workflow command.
-2. **Given** the flattening behaviour, **When** a second composite needs
-   it, **Then** it is reached from one shared home rather than pasted a
-   third time.
-3. **Given** Gate 24's documented scope, **When** a reader asks whether
+1. **Given** Gate 24's documented scope, **When** a reader asks whether
    it inspected this composite, **Then** the answer is recorded in the
    gate itself rather than left to be rediscovered by a future PR making
    the same vacuous claim.
+2. **Given** the recorded boundary, **When** a reader asks whether the
+   blind spot is being closed, **Then** the record points at the
+   follow-up issue for widening Gate 24 to `.github/actions/**` rather
+   than leaving the gap undocumented.
+
+**Deferred out of this story** (per the FR-011 clarification): flattening
+the `gh run cancel` stderr interpolated into a `::warning::` edits the same
+line spec 087 (#621) replaces, and is sequenced there.
 
 ---
 
@@ -262,18 +314,22 @@ warning is a single, complete, bounded line.
   `closed-check` policy must not convert that deliberate refusal into a
   silent "assume open".
 - The state read fails on attempt 1 and 2 and succeeds on attempt 3. Two
-  `::warning::` annotations exist on a job that behaved perfectly. This is
-  the common transient case and must not produce a defect issue either.
+  `::warning::` annotations exist on a job that behaved perfectly. The step
+  succeeds, so the fail-loud policy does not fire; this is
+  `lifecycle-gate`'s existing retry behaviour at all seven call sites and is
+  unchanged here.
 - The read fails with a permanent classification (not-found, credentials
   rejected). `lifecycle-gate` exits after one attempt with `::error::`.
-  Under a fail-open policy this is indistinguishable, to the composite,
-  from a transient exhaustion — and a permanently unreadable lifecycle
-  issue is a configuration fault, not a blip.
+  Under the fail-loud policy this fails the job on attempt one, which is
+  the right outcome: a permanently unreadable lifecycle issue is a
+  configuration fault, not a blip.
 - The issue is genuinely CLOSED and the read succeeds. Unchanged: `paused`
   becomes true and `prove` stands down.
 - The kill switch is already on (`initial-paused: true`) and the state
-  read fails. `paused` must remain true regardless of policy; a failed
-  closed-check can never *un*-pause.
+  read fails. The run must still stand down as paused; a failed
+  closed-check can never *un*-pause, and the fail-loud failure must not
+  replace the pause outcome with a bare step failure that skips the
+  stop-request scan (FR-003).
 - A comment that discusses errexit correctly, or quotes the wrong claim in
   order to correct it, must not trip the new gate.
 - The four other "no `-e`" comments include historical narrative about
@@ -291,43 +347,40 @@ warning is a single, complete, bounded line.
   it MUST describe it as failing the job.
 
 - **FR-002**: The read-failure policy for the `prove` job's lifecycle-issue
-  state check MUST be one explicit decision, recorded in the composite
-  alongside the trade-off it resolves.
-  [NEEDS CLARIFICATION: fail-open or fail-loud? Keeping
-  `continue-on-error: true` means a `prove` job whose state read fails all
-  three retries proceeds treating the issue as open — it may close or
-  redrive an issue a maintainer already closed. Dropping it matches the
-  pre-#465 fail-loud behaviour and this repository's stated preference for
-  refusing to guess (`lifecycle-gate`: "fails on any other value rather
-  than guessing"; Gate 25), at the cost of failing a `prove` job on a
-  transient read that three retries and a 4s timeout already survive most
-  of the time.]
+  state check MUST be **fail-loud**: `continue-on-error: true` MUST be
+  removed from the `closed-check` step, so a state read that fails every
+  `lifecycle-gate` attempt fails the step and the job instead of
+  proceeding on an undetermined state. The decision and the trade-off it
+  resolves — one deferred `prove` that the next scheduled run retries,
+  bought against closing or re-driving an issue a maintainer already
+  closed — MUST be recorded in the composite.
 
-- **FR-003**: Whatever FR-002 resolves to, a `closed-check` that cannot
-  determine the issue state MUST NOT weaken the kill-switch re-check or
-  the stop-request scan: `paused` MUST still become `true` when
-  `initial-paused` is true or a valid stop request is found.
+- **FR-003**: A `closed-check` that cannot determine the issue state MUST
+  NOT weaken *or preempt* the kill-switch re-check and the stop-request
+  scan: both MUST still run, and the run MUST still stand down as paused
+  when `initial-paused` is true or a valid stop request is found, before
+  the fail-loud outcome stops the job. A failed closed-check can never
+  *un*-pause. (As shipped, `closed-check` precedes the step that performs
+  those two checks, so satisfying FR-002 without violating this
+  requirement constrains where the failure surfaces.)
 
 - **FR-004**: A `closed-check` read failure MUST be visible in the run it
   occurred in — naming which issue could not be read and what the policy
   did about it — rather than only inferable from the absence of an output.
 
 - **FR-005**: A `prove` job that completes successfully MUST NOT, on the
-  strength of a tolerated `closed-check`'s retry warnings or total-failure
-  error alone, cause the watchdog to open a `pipeline-defect` issue.
-  [NEEDS CLARIFICATION: where does this remedy live? (a) the tolerated
-  call site suppresses or downgrades the annotations, e.g. via a new
-  `lifecycle-gate` input, which changes a composite seven call sites
-  share; (b) the watchdog's annotation collector or classifier learns to
-  discount annotations produced by a step the caller declared survivable,
-  which changes classification for the whole fleet; (c) accept the noise
-  and document it, on the grounds that a triage pass closing it with
-  quoted evidence is cheap. Moot if FR-002 resolves to fail-loud.]
+  strength of a `closed-check` total-failure error, cause the watchdog to
+  open a `pipeline-defect` issue. **Resolved by FR-002**: with the
+  tolerance removed, a total read failure fails the job, so no green
+  `prove` run can carry that error at all. This requirement is satisfied by
+  construction and MUST NOT be implemented as a separate remedy in
+  `lifecycle-gate` or in the watchdog.
 
-- **FR-006**: The remedy chosen for FR-005 MUST NOT suppress annotations
-  from an untolerated `lifecycle-gate` failure at any of its other call
-  sites, nor from any other step whose failure is not declared
-  survivable.
+- **FR-006**: Because FR-005 needs no remedy, this feature MUST NOT
+  introduce any suppression, downgrade, or filtering of annotations
+  anywhere: annotations from an untolerated `lifecycle-gate` failure at any
+  of its other six call sites, and from any other step whose failure is not
+  declared survivable, MUST reach the watchdog exactly as they do today.
 
 - **FR-007**: No comment in this repository may assert that a
   `shell: bash` step runs without errexit, or that `set -uo pipefail`
@@ -349,21 +402,22 @@ warning is a single, complete, bounded line.
   that genuinely relied on falling through MUST be fixed rather than only
   re-commented.
 
-- **FR-011**: `gh` stderr interpolated into a workflow command by
-  `wing-commander-board-stop-check` MUST be flattened to a single line,
-  length-bounded, and `%`-escaped before emission, reusing the existing
-  helper's behaviour from one shared home rather than a third copy.
+- **FR-011**: **Deferred — out of scope for this feature.** Flattening,
+  length-bounding and `%`-escaping the `gh` stderr that
+  `wing-commander-board-stop-check` interpolates into a workflow command
+  edits the same line spec 087 (#621) replaces, so it is sequenced with
+  087's classification change rather than rewritten twice. This feature
+  MUST leave that line alone.
 
 - **FR-012**: Gate 24's documented scope MUST state which paths it
   inspects and that `.github/actions/**` is outside them, so a future PR
-  cannot cite "Gate 24: 0 findings" as evidence about a composite.
-  [NEEDS CLARIFICATION: does this feature also widen Gate 24 to scan
-  `.github/actions/**`, or only record the boundary? Widening would put
-  the composite fleet under the gate — `wing-commander-stage-findings`
-  alone carries eleven `continue-on-error: true` steps — and any finding
-  it surfaces would have to be resolved in this feature's PR. Recording
-  the boundary is a one-line change with no blast radius but leaves the
-  blind spot open.]
+  cannot cite "Gate 24: 0 findings" as evidence about a composite. This
+  feature MUST record that boundary only and MUST NOT widen Gate 24's glob:
+  widening would pull the composite fleet under the gate —
+  `wing-commander-stage-findings` alone carries eleven
+  `continue-on-error: true` steps — and any finding would have to be
+  resolved in this feature's PR. The widening MUST instead be carried by
+  its own issue, which the recorded boundary points at.
 
 - **FR-013**: Every behavioural requirement above that concerns the
   composite's own shell MUST be covered by the existing
@@ -379,11 +433,13 @@ warning is a single, complete, bounded line.
   acknowledge exists.
 - **Read-failure policy**: the repository's chosen answer to "what does
   `prove` do when the read is undetermined?" Today implicitly fail-open;
-  FR-002 makes it explicit.
+  FR-002 makes it explicit and makes it fail-loud.
 - **Tolerated-step annotation**: a `::warning::`/`::error::` emitted by a
   step whose caller declared its failure survivable. Distinguished from an
   ordinary annotation only by the caller's `continue-on-error:`
-  declaration, which the watchdog's collector does not currently read.
+  declaration, which the watchdog's collector does not read. After FR-002
+  this composite produces none; the concept stays here only to name what
+  FR-005 was about and why it needs no remedy.
 - **Errexit premise**: the belief, held by a comment, about whether its own
   step aborts on an unguarded failure. A wrong premise is invisible until
   a step is written to depend on it.
@@ -402,15 +458,19 @@ warning is a single, complete, bounded line.
 - **SC-003**: Introducing one such comment fails the PR-time gate suite
   (`python .github/scripts/run-local-gates.py`), and the gate's own
   mutation self-test fails when the check is disabled.
-- **SC-004**: A `prove` run whose lifecycle-issue read fails every attempt
-  produces zero `pipeline-defect` issues attributable to that step alone,
-  across the next 30 days of scheduled board-loop runs.
+- **SC-004**: Zero `prove` jobs complete green while carrying a
+  `closed-check` read-failure `::error::`, across the next 30 days of
+  scheduled board-loop runs — the two states are mutually exclusive under
+  FR-002, so no `pipeline-defect` can be filed against an otherwise-healthy
+  run on the strength of that step. (A `prove` job that genuinely fails the
+  read is a real failure; a defect issue raised from it is the honest
+  signal and is triaged against its evidence per CLAUDE.md.)
 - **SC-005**: An untolerated `lifecycle-gate` failure at any other call
-  site still reaches the watchdog classifier, demonstrated by driving one
-  such run.
-- **SC-006**: Driving the composite's cancel path with multi-line,
-  `%`-containing `gh` stderr yields exactly one complete log line, with
-  no truncation at an embedded newline.
+  site still reaches the watchdog classifier — demonstrated by this
+  feature's diff containing no change to `lifecycle-gate`'s annotation
+  emission or to the watchdog's `Collect: annotations` step.
+- **SC-006**: *Deferred with FR-011* — the cancel path's stderr flattening
+  is measured by spec 087 (#621), not here.
 - **SC-007**: Every branch of the read-failure policy — read succeeds
   OPEN, succeeds CLOSED, fails transiently then succeeds, fails all
   attempts, returns an unrecognized value — is exercised by
@@ -437,8 +497,12 @@ warning is a single, complete, bounded line.
   does not duplicate durable action — the resume path already handles a
   job that stopped mid-item.
 - Gate 24's `.github/workflows/*.yml` scope is deliberate as shipped, not
-  an oversight to be silently widened; whether it changes is the FR-012
-  decision.
+  an oversight to be silently widened; per FR-012 it does not change in this
+  feature and the widening is carried by its own issue.
+- Deferring a `prove` run (the fail-loud cost under FR-002) is acceptable
+  because the board loop is scheduled: the next run re-drives the same item,
+  and no durable action was taken on an unknown issue state in the
+  meantime.
 - No adopter consumes `wing-commander-board-stop-check` directly today, so
   a behaviour change to its `closed-check` needs no published-contract
   migration note beyond the composite's own documentation.
@@ -448,8 +512,8 @@ warning is a single, complete, bounded line.
 - `.github/actions/wing-commander-board-stop-check/action.yml` — the
   subject.
 - `.github/actions/wing-commander-lifecycle-gate/action.yml` — the
-  `closed-check` delegate, its `sanitize()` helper, and the composite
-  whose other six call sites FR-006 protects.
+  `closed-check` delegate, and the composite whose other six call sites
+  FR-006 protects (read for its contract; unchanged by this feature).
 - `.github/workflows/board-loop.yml` — the `prove` job at the
   `check-issue-closed: "true"` call site, plus one FR-007 comment.
 - `.github/workflows/watchdog.yml` — `Collect: annotations`, the signal
@@ -467,9 +531,15 @@ warning is a single, complete, bounded line.
 - Changing `lifecycle-gate`'s retry count, timeout, or failure
   classification.
 - Redesigning the board loop's redrive or concurrency model (issue #460).
-- Auditing `continue-on-error:` on steps other than `closed-check`,
-  except as FR-012's decision may surface them.
+- Auditing `continue-on-error:` on steps other than `closed-check`. FR-012
+  resolved to record Gate 24's boundary rather than widen it, so the
+  composite fleet's tolerated steps stay outside this feature.
+- Widening Gate 24 to `.github/actions/**` — a follow-up issue per FR-012.
+- Flattening the `gh run cancel` stderr in
+  `wing-commander-board-stop-check` — sequenced with spec 087 (#621) per
+  FR-011, which replaces the same line.
 - Any change to the stop-request detection rules in
   `board_stop_check.py` (issues #539, #547, #580).
-- Making the watchdog's classifier generally better at distinguishing
-  benign from real annotations, beyond the narrow FR-005/FR-006 case.
+- Any change to the watchdog's annotation collection or classification:
+  FR-005 is satisfied by FR-002's fail-loud choice, so no remedy — narrow
+  or general — lands here.

@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -71,3 +71,48 @@
 - No spec updates required beyond the open clarifications. The three
   markers are posted to lifecycle issue #623 for the maintainer rather than
   guessed; per the intake stage's CI deviation they stay in `spec.md`.
+
+### Clarification iteration 2 — 2026-09-28
+
+All three markers are answered on lifecycle issue #623 and folded into
+`spec.md`'s new `## Clarifications` section. Zero remain.
+
+- **FR-002 — fail-loud.** `continue-on-error: true` comes off the
+  `closed-check` step. Recorded with the trade-off it resolves (one deferred
+  `prove` retried by the next schedule, against closing or re-driving an
+  issue a maintainer already closed) and reflected in User Story 1's
+  scenarios 3–4, which were written as a fail-open/fail-loud pair and are
+  now both fail-loud.
+- **FR-003 tightened while folding FR-002 in.** As shipped, `closed-check`
+  runs *before* the step that re-checks the kill switch and scans for stop
+  requests, so a fail-loud failure of `closed-check` would abort the
+  composite before either. FR-003 previously only forbade *weakening* those
+  checks; it now forbids preempting them too, and names the ordering as the
+  constraint the plan stage has to satisfy. Edge case "kill switch already
+  on and the read fails" updated to match.
+- **FR-005 — moot, resolved by FR-002.** No remedy in `lifecycle-gate` or
+  the watchdog; a green `prove` can no longer carry a `closed-check`
+  total-failure error at all. FR-006 was a constraint *on* the remedy and is
+  now the stronger "this feature introduces no annotation filtering
+  anywhere". User Story 2 is retitled "satisfied by construction", and its
+  third scenario now covers what the fail-loud choice does *not* change —
+  the retry `::warning::`s on a read that fails twice and then succeeds,
+  which are `lifecycle-gate`'s existing behaviour at all seven call sites
+  and stay out of scope. SC-004 and SC-005 were written to be measured by
+  driving runs against a remedy that no longer exists; both are now measured
+  against the diff and the mutual exclusion.
+- **FR-012 — record Gate 24's boundary only.** The widening to
+  `.github/actions/**` becomes its own issue, per CLAUDE.md's rule about
+  out-of-scope work, and the recorded boundary points at it. Added to Out of
+  Scope.
+- **FR-011 — deferred, not answered.** The reply volunteered a sequencing
+  decision: sanitizing `$cancel_error` edits the same line spec 087 (#621)
+  replaces, so it ships there rather than being rewritten twice. FR-011 and
+  SC-006 are marked deferred rather than renumbered, so existing references
+  to them keep resolving. User Story 4 loses its sanitize half and is
+  retitled around what remains — Gate 24's recorded scope — with the
+  deferral noted on the story.
+- **Still testable after the folding**: FR-002/FR-003 by driving the
+  extracted step under `verify-board-stop-check.py` (FR-013); FR-005/FR-006
+  by inspecting the diff for absence of filtering; FR-012 by reading the
+  gate. No requirement now depends on an unmade decision.
