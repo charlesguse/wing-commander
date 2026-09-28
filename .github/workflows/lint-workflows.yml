@@ -4135,6 +4135,18 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-loop-helper-provenance.py --self-test
 
+      # Gate 99 — specs/074-serialized-fold-dispatch (FR-021/FR-022): the
+      # fold-queue admission wiring actually serializes every stage-9
+      # concurrency contender through a ticket, and fold-cycle-guard.yml's
+      # automatic re-dispatch is bounded to exactly one attempt. Loads the
+      # real if:/needs:/concurrency.group text of every job the feature
+      # gated and runs the real fold-cycle-guard.yml decide step and
+      # fold-queue-ledger.sh claim-dispatch transform directly — see
+      # verify-fold-queue-admission.py.
+      - name: Gate 99 — fold-queue admission wiring serializes every contender and bounds the automatic re-dispatch
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-fold-queue-admission.py
+
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and
       # verify-denied-tool-collector.sh has already shown what happens when
