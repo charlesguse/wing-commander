@@ -4250,6 +4250,8 @@ jobs:
       # hide from this check.
       - name: Gate 10 — every check is wired to a workflow, and every wire lands
         run: python3 .github/scripts/verify-gate-wiring.py
+      - name: "Gate 10 self-test — collided harness identities, .github/actions/ placement vs. orphan-hood, and both directions of missing/duplicate .github/actions/ references each fail loudly"
+        run: python3 .github/scripts/verify-gate-wiring.py --self-test
 
       # Gate 99 — gate_scripts() discovers .github/scripts/ only (FR-001), so
       # a test harness or standalone gate script placed under
