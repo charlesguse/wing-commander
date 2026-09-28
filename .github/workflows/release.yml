@@ -98,14 +98,13 @@ jobs:
       # the only thing that can detect GitHub rejecting the key, and it sees
       # main only, post-merge.
       #
-      # Pass 2 — shellcheck over the opt-in list, and the closure check
-      # that every published stage is either on that list or knowingly
-      # exempt — .github/scripts/verify-stage-shell-lint.py, Gate 48. The
-      # list is an opt-IN to shellcheck and #149 is the ticket for
-      # widening it, but the exemption is stated rather than implied: a
-      # new stage cannot join it by omission. Both lists, each exemption's
-      # reason, the severity floor and the excluded codes live in that
-      # script, and so does the history of the two release dispatches
+      # Pass 2 — shellcheck over the linted list, and the closure check
+      # that every published stage is on that list —
+      # .github/scripts/verify-stage-shell-lint.py, Gate 48. There is no
+      # exemption list any more (the last three exemptions waited on #149
+      # and retired with it), so a new stage cannot go unlinted by
+      # omission. The list, the severity floor and the excluded codes
+      # live in that script, and so does the history of the two release dispatches
       # this pass turned red after a change had merged with every PR-time
       # gate green: 2026-08-20 (pr-conversation.yml, once recorded here
       # above a shell_exempt array) and 2026-09-08 (#290). That is why the
