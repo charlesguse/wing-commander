@@ -27,6 +27,14 @@ across 9 stage workflows, where a rounding fix would have had to land 12
 times with nothing failing on a drifted copy. A copy reappearing in any
 workflow OR composite action under .github/actions/ fails here.
 
+specs/065-intake-silent-path-cost gave the per-stage cost REPORT the same
+treatment (FR-010a): the report that carries that line to the lifecycle
+issue was itself three pasted copies (#366 in clarify, #377 in plan and
+tasks) before it became one composite, so
+`case_cost_report_has_exactly_one_home` fails on either the retired step
+names reappearing or a second consumer of the cost line inside a file that
+has adopted the shared report.
+
 Every "Compute cost line" call site also runs inside a job whose
 `container: image:` is a caller-supplied input, never one this repo
 controls (implement.yml's verify-image-prerequisites checks a tool only
@@ -86,6 +94,17 @@ TRANSCRIPT_NAME = "claude-execution-output.json"
 # so forms like `set -e -o pipefail` or `set -o errexit -o pipefail` are
 # caught too, not just `set -eo pipefail` / `set -o pipefail`.
 PIPEFAIL_RE = re.compile(r"\bset\b[^\n;&|]*\bpipefail\b")
+
+# specs/065-intake-silent-path-cost: the uniform per-stage cost report's one
+# home, the bespoke reports it retired, and the workflow-local output every
+# stage's cost statement must now reach the issue through it rather than
+# around it. See case_cost_report_has_exactly_one_home below.
+COST_REPORT_ACTION = "wing-commander-cost-report"
+RETIRED_REPORT_STEPS = (
+    "Report cost of a reply that answered nothing",   # #366, clarify
+    "Report cost of an auto-mode hand-off",           # #377, plan + tasks
+)
+COST_LINE_REF = "steps.cost-line.outputs.line"
 
 failures = []
 MUTATING = False
@@ -598,6 +617,181 @@ def case_cost_line_formatter_has_exactly_one_home():
              "output")
 
 
+def _iter_steps(doc):
+    """Every step of a workflow doc (`jobs.*.steps`) or a composite action
+    doc (`runs.steps`) — one walk, so a copy pasted into either shape is
+    seen the same way."""
+    if not isinstance(doc, dict):
+        return
+    for job in (doc.get("jobs") or {}).values():
+        for step in ((job or {}).get("steps") or []):
+            if isinstance(step, dict):
+                yield step
+    runs = doc.get("runs")
+    if isinstance(runs, dict):
+        for step in (runs.get("steps") or []):
+            if isinstance(step, dict):
+                yield step
+
+
+def _cost_report_single_home_hits(case, sources):
+    """Scan {path: text} for copies of the uniform cost report.
+
+    Split out from the case below so the self-test fixtures at the end of
+    that case can feed this the synthetic snippets Constitution VIII wants
+    behind every failure branch — a single-home check that has never been
+    shown rejecting a paste is a check nobody has proven can fail.
+
+    Two rules:
+
+      (a) The retired step names, anywhere. Those two steps ARE the paste
+          this feature retired (#366 once, #377 twice); their names
+          reappearing means a fourth copy is being grown.
+
+      (b) In a workflow or composite that has ADOPTED the report, any OTHER
+          step consuming the workflow-local `cost-line` output. In an
+          adopting file the report is the cost line's only consumer, so a
+          second one — a `wing-commander-callout` body, a `gh issue comment`
+          body, a step appending it to a questionnaire — is a double-post
+          (FR-002a/FR-003), which is what the retired copies did.
+
+    Rule (b) is deliberately keyed on adoption rather than applied to every
+    workflow: the stages outside this feature's scope (finalize, rebase,
+    cleanup, implement) still embed their cost line in their own callouts,
+    and flagging them here would fail the gate over work the spec did not
+    ask for. Keying on adoption makes the rule self-extending instead —
+    each of those files comes under it the day it starts calling the
+    composite, with nobody remembering to add it to a list.
+    """
+    hits = []
+    for path, text in sorted(sources.items()):
+        for retired in RETIRED_REPORT_STEPS:
+            if retired in text:
+                hits.append(f"{path} (carries the retired step {retired!r})")
+        try:
+            doc = yaml.safe_load(text) or {}
+        except yaml.YAMLError as exc:
+            fail(case, f"{path}: could not parse as YAML ({exc}) -- cannot "
+                       f"confirm it holds no copy of the cost report, so "
+                       f"this gate fails rather than silently dropping the "
+                       f"file from coverage.")
+            continue
+        steps = list(_iter_steps(doc))
+        if not any(COST_REPORT_ACTION in str(s.get("uses") or "")
+                   for s in steps):
+            continue
+        for step in steps:
+            if COST_REPORT_ACTION in str(step.get("uses") or ""):
+                continue
+            if COST_LINE_REF in yaml.safe_dump(step, default_flow_style=False):
+                hits.append(f"{path} (step {step.get('name')!r} consumes "
+                            f"{COST_LINE_REF} outside the report)")
+    return hits
+
+
+def case_cost_report_has_exactly_one_home():
+    """FR-010a's sibling to the formatter check above: the uniform per-stage
+    cost report is defined once, in
+    .github/actions/wing-commander-cost-report, and every stage calls it
+    rather than growing its own copy.
+
+    Scans the same walk the formatter check does — every
+    .github/workflows/*.yml plus every composite action file under
+    .github/actions/ — excluding only the canonical home itself. See
+    _cost_report_single_home_hits for the two rules and why the second is
+    scoped to files that have adopted the report.
+    """
+    case = "cost report single home"
+    sources = dict(_workflow_texts())
+
+    actions_dir = ".github/actions"
+    canonical_dir = os.path.normpath(
+        os.path.join(actions_dir, COST_REPORT_ACTION))
+    for root, _dirs, files in os.walk(actions_dir):
+        if os.path.normpath(root) == canonical_dir:
+            continue
+        for name in sorted(files):
+            if name in ("action.yml", "action.yaml"):
+                path = os.path.join(root, name)
+                with open(path, encoding="utf-8") as fh:
+                    sources[path] = fh.read()
+
+    hits = _cost_report_single_home_hits(case, sources)
+    if hits:
+        fail(case, "the per-stage cost report's only home is "
+                   f".github/actions/{COST_REPORT_ACTION} (called as "
+                   "`Report run cost`); a copy pasted into a workflow or "
+                   "composite action drifts silently the next time the "
+                   "report changes, and double-posts the cost of every run "
+                   "that fires both. Found in: " + ", ".join(hits))
+    else:
+        note("no workflow or composite action carries a copy of the "
+             f"cost report; every call site uses {COST_REPORT_ACTION}")
+
+    # The fixtures: this check must be shown rejecting a paste, or its
+    # green verdict above is indistinguishable from a scan that matches
+    # nothing any more (Constitution VIII).
+    pasted = {"synthetic-pasted-report.yml": PASTED_REPORT_FIXTURE}
+    if not _cost_report_single_home_hits(case, pasted):
+        fail(case, "the single-home scan did not reject a synthetic "
+                   "workflow carrying a pasted copy of the retired report "
+                   "shape, so its verdict on the real tree proves nothing. "
+                   "Fix the scan, not the fixture.")
+    clean = {"synthetic-clean-report.yml": CLEAN_REPORT_FIXTURE}
+    residual = _cost_report_single_home_hits(case, clean)
+    if residual:
+        fail(case, "the single-home scan rejected a synthetic workflow that "
+                   "calls the shared report correctly and consumes the cost "
+                   f"line nowhere else: {residual}. A check that fails on "
+                   "the shape it is asking for teaches call sites to work "
+                   "around it.")
+
+
+# A workflow that calls the shared report AND keeps a second cost statement
+# alongside it: the retired #377 step by name, and a callout body embedding
+# the same cost line the report already posts.
+PASTED_REPORT_FIXTURE = """\
+name: synthetic stage
+on: workflow_call
+jobs:
+  stage:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report run cost
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-cost-report
+        with:
+          cost-line: ${{ steps.cost-line.outputs.line }}
+          stage-label: Synthetic
+      - name: Report cost of an auto-mode hand-off
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          kind: info
+          body: ${{ steps.cost-line.outputs.line }}
+"""
+
+# The same workflow done right: one report, and no other consumer of the
+# cost line. Proves the fixture above is rejected for what it carries
+# rather than for being synthetic.
+CLEAN_REPORT_FIXTURE = """\
+name: synthetic stage
+on: workflow_call
+jobs:
+  stage:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report run cost
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-cost-report
+        with:
+          cost-line: ${{ steps.cost-line.outputs.line }}
+          stage-label: Synthetic
+      - name: Announce spec PR ready for review
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          kind: action
+          pr-url: https://example.invalid/pr/1
+"""
+
+
 def case_container_pipefail_steps_pin_shell_bash():
     """Every `run:` step in a caller-supplied-container job whose body
     calls `set ... pipefail` must declare `shell: bash` (directly, or via
@@ -669,6 +863,7 @@ CASES = [
     case_branch_advance_availability_follows_contract_or_rule,
     case_multi_model_record_tokens_sum_across_per_model,
     case_cost_line_formatter_has_exactly_one_home,
+    case_cost_report_has_exactly_one_home,
     case_container_pipefail_steps_pin_shell_bash,
 ]
 

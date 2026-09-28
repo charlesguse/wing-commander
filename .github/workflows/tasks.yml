@@ -1220,13 +1220,12 @@ jobs:
           ISSUE: ${{ steps.meta.outputs.issue }}
           NEXT_WORKFLOW: ${{ inputs.next-workflow }}
           SPEC_PREFIX: ${{ inputs.spec-prefix }}
-          COST_LINE: ${{ steps.cost-line.outputs.line }}
         run: |
           if [ -z "$NEXT_WORKFLOW" ]; then
             echo "No next-workflow configured — task list is committed; stopping here (standalone mode). Dispatch your implement workflow manually if/when you want implementation to run." >> "$GITHUB_STEP_SUMMARY"
             if [ -n "$ISSUE" ]; then
               body="📋 Task list committed to \`$SPEC_PREFIX$SLUG\`. No implement workflow is configured for automatic hand-off — dispatch one manually with \`spec_dir=specs/$SLUG\`, \`issue=$ISSUE\`, \`iteration=1\` when ready."
-              GH_TOKEN="$APP_TOKEN" gh issue comment "$ISSUE" --body "$(printf '%s\n\n%s' "$body" "$COST_LINE")"
+              GH_TOKEN="$APP_TOKEN" gh issue comment "$ISSUE" --body "$body"
             fi
             exit 0
           fi
@@ -1237,20 +1236,29 @@ jobs:
           echo "Dispatched $NEXT_WORKFLOW (spec_dir=specs/$SLUG, issue=$ISSUE, iteration=1)." >> "$GITHUB_STEP_SUMMARY"
           echo "dispatched=true" >> "$GITHUB_OUTPUT"
 
-      # #377: same gap as plan.yml's -- the auto-mode hand-off above posts
-      # nothing to the lifecycle issue except on the NEXT_WORKFLOW-empty
-      # (standalone) branch, so a run that spent real money and handed off
-      # cleanly reported none of it. Mirrors #366's fix in clarify.yml
-      # (callout-points.md row 14).
-      - name: Report cost of an auto-mode hand-off
-        if: steps.guard.outputs.skip != 'true' && steps.mode.outputs.mode == 'auto' && steps.dispatch-auto.outputs.dispatched == 'true'
-        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+      # specs/065-intake-silent-path-cost: the single home for posting this
+      # run's cost, independent of which outcome (if any) is announced above
+      # -- never nested inside any outcome branch's own if:. Replaces #377's
+      # bespoke report, which only covered the auto-mode hand-off; this also
+      # closes the wider gap #377 never touched -- mode == 'pr' (human-
+      # reviewed) runs post no cost statement anywhere today. Dual-mode gate,
+      # same shape as plan.yml's: this job runs one of two mutually exclusive
+      # agent steps per run (agent-auto / agent-pr), so the report fires
+      # whichever one ran.
+      # FR-009 tolerance: a lost cost comment must not change the run's
+      # conclusion -- see clarify.yml.
+      - name: Report run cost
+        continue-on-error: true
+        if: >-
+          steps.guard.outputs.skip != 'true' && always() && !cancelled() &&
+          (steps.agent-auto.outcome != 'skipped' ||
+           steps.agent-pr.outcome != 'skipped')
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-cost-report
         with:
           token: ${{ env.WC_BOT_TOKEN }}
           issue-number: ${{ steps.meta.outputs.issue }}
-          kind: info
-          summary: "Task list committed; implementation was dispatched automatically."
-          body: ${{ steps.cost-line.outputs.line }}
+          cost-line: ${{ steps.cost-line.outputs.line }}
+          stage-label: Tasks
 
       # The action writes its full execution transcript — every tool call,
       # including permission denials — to claude-execution-output.json in the
