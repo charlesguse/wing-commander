@@ -2,8 +2,8 @@
   "issue": 595,
   "spec_dir": "specs/081-composite-aware-dispatch-gate",
   "feature_num": "081",
-  "stage": "implement",
+  "stage": "review",
   "iteration": 4,
   "spec_branch": "spec/081-composite-aware-dispatch-gate",
-  "pending_re_review_from": ["charlesguse"]
+  "pending_re_review_from": []
 }
