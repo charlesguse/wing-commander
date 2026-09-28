@@ -18,6 +18,11 @@ implementation time in case another in-flight branch has since claimed it
 (research.md's own numbering caveat) and renumber this file and
 contracts/gate-coverage-079.md by the same offset if so.
 
+**Shipped as Gate 100**: spec 059 (#463) took Gate 99 on `main` first, so
+the lint step landed as Gate 100. The "Gate 99" references in the task
+bodies below are the historical record; the shipped step and the script's
+own messages say Gate 100.
+
 ## Format: `[ID] [P?] [Story] Description`
 
 - **[P]**: Can run in parallel (different files, no dependencies on an
