@@ -159,10 +159,16 @@ TRANSITIVE_SCRIPT_IMPORT_CASE = (
 )
 
 DIRECTED_PROOF_GROUP_BUSY_CASES = [
-    ("[]", False),
-    (json.dumps([{"databaseId": 1, "displayTitle": "board-loop [directed:prove]", "status": "in_progress"}]), True),
-    (json.dumps([{"databaseId": 1, "displayTitle": "board-loop [directed:prove]", "status": "completed"}]), False),
-    (json.dumps([{"databaseId": 1, "displayTitle": "board-loop", "status": "in_progress"}]), False),
+    ("[]", None, False),
+    (json.dumps([{"databaseId": 1, "displayTitle": "board-loop [directed:prove]", "status": "in_progress"}]), None, True),
+    (json.dumps([{"databaseId": 1, "displayTitle": "board-loop [directed:prove]", "status": "completed"}]), None, False),
+    (json.dumps([{"databaseId": 1, "displayTitle": "board-loop", "status": "in_progress"}]), None, False),
+    # PR #490 review, 2026-09-28: a directed run must not see its own
+    # in-progress `[directed:]` row and report the group busy against
+    # itself -- own_run_id excludes exactly that row.
+    (json.dumps([{"databaseId": 1, "displayTitle": "board-loop [directed:prove]", "status": "in_progress"}]), 1, False),
+    (json.dumps([{"databaseId": 1, "displayTitle": "board-loop [directed:prove]", "status": "in_progress"},
+                 {"databaseId": 2, "displayTitle": "board-loop [directed:review]", "status": "in_progress"}]), 1, True),
 ]
 
 # contracts/proof-outcome-taxonomy.md's eight-reason table (research.md D6):
@@ -299,14 +305,14 @@ def run():
               "(board_stop_check.py via wing-commander-board-stop-check) "
               "resolves on the checked-out tree")
 
-    for run_list_json, expected in DIRECTED_PROOF_GROUP_BUSY_CASES:
-        got = directed_proof_group_busy(run_list_json)
+    for run_list_json, own_run_id, expected in DIRECTED_PROOF_GROUP_BUSY_CASES:
+        got = directed_proof_group_busy(run_list_json, own_run_id)
         if got != expected:
             failures += 1
-            print("::error::verify-board-prove: directed_proof_group_busy({0}): "
-                  "expected {1}, got {2}.".format(run_list_json, expected, got))
+            print("::error::verify-board-prove: directed_proof_group_busy({0}, {1}): "
+                  "expected {2}, got {3}.".format(run_list_json, own_run_id, expected, got))
         else:
-            print("[ok] directed_proof_group_busy({0}) = {1}".format(run_list_json, got))
+            print("[ok] directed_proof_group_busy({0}, {1}) = {2}".format(run_list_json, own_run_id, got))
 
     for name, args, expected in OUTCOME_REASON_CASES:
         got = outcome_reason(*args)

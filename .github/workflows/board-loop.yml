@@ -253,9 +253,16 @@ jobs:
           echo '{}' > "$RUNNER_TEMP/board-displacement-comments-by-issue.json"
           mapfile -t displacement_issues < <(jq -r '.[].issue' "$RUNNER_TEMP/board-recent-merges-by-issue.json")
           for number in "${displacement_issues[@]}"; do
-            gh api "repos/$GITHUB_REPOSITORY/issues/$number/comments" --paginate \
-              --jq '.[] | {created_at, body, user}' 2>/dev/null | jq -s '.' \
-              > "$RUNNER_TEMP/board-displacement-comments-$number.json" || echo '[]' > "$RUNNER_TEMP/board-displacement-comments-$number.json"
+            # Issue #557: fails the step on error -- see the select step's
+            # per-issue comments fetch above in this file. A swallowed
+            # failure here is indistinguishable from "no comments found"
+            # and could post a false "proof run never started" comment.
+            if ! gh api "repos/$GITHUB_REPOSITORY/issues/$number/comments" --paginate \
+              --jq '.[] | {created_at, body, user}' | jq -s '.' \
+              > "$RUNNER_TEMP/board-displacement-comments-$number.json"; then
+              echo "::error::board-loop: could not fetch the comments of issue #$number -- its board item marker cannot be read, so the proof-run-displacement check is not decided (#557)."
+              exit 1
+            fi
             jq --arg number "$number" --slurpfile comments "$RUNNER_TEMP/board-displacement-comments-$number.json" \
               '. + {($number): $comments[0]}' "$RUNNER_TEMP/board-displacement-comments-by-issue.json" \
               > "$RUNNER_TEMP/board-displacement-comments-by-issue.tmp"
@@ -4265,11 +4272,11 @@ jobs:
           run_list_json="$(gh run list --workflow=board-loop.yml -R "$GITHUB_REPOSITORY" \
             --json databaseId,displayTitle,status -L 20)"
 
-          busy="$(RUN_LIST_JSON="$run_list_json" python3 -c "
+          busy="$(RUN_LIST_JSON="$run_list_json" OWN_RUN_ID="$GITHUB_RUN_ID" python3 -c "
           import os, sys
           sys.path.insert(0, '.github/scripts')
           from board_prove import directed_proof_group_busy
-          print('true' if directed_proof_group_busy(os.environ['RUN_LIST_JSON']) else 'false')
+          print('true' if directed_proof_group_busy(os.environ['RUN_LIST_JSON'], os.environ['OWN_RUN_ID']) else 'false')
           ")"
           echo "busy=$busy" >> "$GITHUB_OUTPUT"
 

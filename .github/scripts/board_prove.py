@@ -406,7 +406,7 @@ def joins_directed_group(target_workflow_path, target_job, aimable_jobs):
     return group not in (ORDINARY_GROUP, DIRECTED_GROUP)
 
 
-def directed_proof_group_busy(run_list_json):
+def directed_proof_group_busy(run_list_json, own_run_id=None):
     """research.md D4, FR-001a (dynamic): whether DIRECTED_GROUP is already
     occupied by another directed dispatch, read from a live `gh run list
     --workflow=board-loop.yml --json databaseId,displayTitle,status -L 20`
@@ -416,11 +416,18 @@ def directed_proof_group_busy(run_list_json):
     tree-derived proxy this repository can construct for itself, generalizing
     board_stand_down.py's own gh-run-list-occupancy idiom.
 
-    True if any row's status is not "completed" and its displayTitle
-    contains the literal "[directed:" marker."""
+    True if any row OTHER THAN own_run_id (the calling run's own
+    GITHUB_RUN_ID, when given) has status not "completed" and a
+    displayTitle containing the literal "[directed:" marker. A directed
+    run's own row is otherwise indistinguishable from another directed
+    run's, and a `prove` dispatch would see its own in-progress
+    `[directed:prove]` marker and report the group busy against itself
+    (PR #490 review, 2026-09-28)."""
     runs = json.loads(run_list_json) if isinstance(run_list_json, str) else (run_list_json or [])
+    own_run_id = str(own_run_id) if own_run_id is not None else None
     return any(
         row.get("status") != "completed" and "[directed:" in (row.get("displayTitle") or "")
+        and str(row.get("databaseId")) != own_run_id
         for row in runs
     )
 
