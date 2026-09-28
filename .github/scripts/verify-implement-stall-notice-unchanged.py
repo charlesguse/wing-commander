@@ -308,13 +308,23 @@ def check_commits_published_branch(script=None):
         os.makedirs(spec_dir, exist_ok=True)
         with open(os.path.join(spec_dir, "spec-meta.json"), "w", encoding="utf-8") as fh:
             fh.write('{"iteration": 2}')
+        # The script's own first four lines are `gh label create`/`gh issue
+        # edit` calls, unconditional -- stub gh on PATH so those become
+        # no-ops instead of "command not found" under this step's own
+        # `bash -e` (production always has a real gh).
+        bindir = os.path.join(workdir, "bin")
+        os.makedirs(bindir, exist_ok=True)
+        with open(os.path.join(bindir, "gh"), "w", encoding="utf-8", newline="\n") as fh:
+            fh.write("#!/bin/sh\nexit 0\n")
+        os.chmod(os.path.join(bindir, "gh"), 0o755)
         env = dict(base_env)
         env["SPEC_DIR"] = "specs/041-implement-stall-notice"
+        env["PATH"] = bindir + os.pathsep + os.environ["PATH"]
 
         for commits, expect_line in (("", False), ("0", False), ("3", True)):
             env_run = dict(env)
             env_run["COMMITS_PUBLISHED"] = commits
-            run_step(bash, script, workdir, env_run, runner_temp)
+            run_step(bash, script, workdir, env_run, runner_temp, path_prepend=bindir)
             try:
                 with open(os.path.join(runner_temp, "stall-comment.md"),
                           encoding="utf-8") as fh:

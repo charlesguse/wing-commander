@@ -149,7 +149,7 @@ def run_labels(steps, repo, runner_temp, bindir, calls, stage_label,
 
 def run_notice(steps, repo, runner_temp, bindir, calls, reason,
                restart_command, record_status, run_url="", agent_ran="",
-               agent_conclusion=""):
+               agent_conclusion="", commits_published=""):
     return run_step(
         BASH, steps[NOTICE_STEP], repo,
         {"GH_TOKEN": "x", "ISSUE": ISSUE, "REASON": reason,
@@ -157,6 +157,12 @@ def run_notice(steps, repo, runner_temp, bindir, calls, reason,
          "DEFAULT_RUN_URL": "https://example.invalid/actions/runs/1",
          "RESTART_COMMAND": restart_command, "RECORD_STATUS": record_status,
          "AGENT_RAN": agent_ran, "AGENT_CONCLUSION": agent_conclusion,
+         # specs/071-agent-push-credential: always supplied, empty by
+         # default, matching the composite's own input default -- `set -u`
+         # inside the step under test would otherwise reject a truly unset
+         # env var, a gap production never hits (the input always resolves
+         # to at least "").
+         "COMMITS_PUBLISHED": commits_published,
          "GH_CALLS": calls,
          "PATH": bindir + os.pathsep + os.environ["PATH"]},
         runner_temp)
@@ -401,6 +407,42 @@ def scenario_agent_ran_success(steps, root):
     return failures
 
 
+def scenario_commits_published(steps, root):
+    """specs/071-agent-push-credential FR-016/FR-017: a nonzero
+    commits-published count names it; zero/empty renders no such line."""
+    failures = []
+    where = "scenario: commits-published line (071)"
+    work, repo = make_workspace(root, reachable_remote=True)
+    runner_temp = os.path.join(work, "runner_temp")
+    os.makedirs(runner_temp, exist_ok=True)
+    bindir, calls = new_gh_stub(work)
+
+    for commits, expect_line in (("", False), ("0", False), ("3", True)):
+        rc, out, _, _ = run_notice(
+            steps, repo, runner_temp, bindir, calls,
+            "the clarify stage never started",
+            "Re-dispatch the clarify stage for this specification once "
+            "the cause above is resolved.", "marked",
+            commits_published=commits)
+        if rc != 0:
+            failures.append(f"{where} (commits-published={commits!r}): "
+                            f"{NOTICE_STEP!r} exited {rc}: {out.strip()}")
+            continue
+        body = read_notice_body(runner_temp)
+        has_line = "were published after it" in body
+        if expect_line and not has_line:
+            failures.append(f"{where}: commits-published={commits!r} did "
+                            f"not render the published-commits line: {body!r}")
+        if expect_line and "3 commit(s)" not in body:
+            failures.append(f"{where}: commits-published={commits!r} did "
+                            f"not name the count: {body!r}")
+        if not expect_line and has_line:
+            failures.append(f"{where}: commits-published={commits!r} "
+                            f"rendered the published-commits line when it "
+                            f"should not have: {body!r}")
+    return failures
+
+
 def scenario_restart_command_verbatim(steps, root, stage, restart_command,
                                        forbid_substrings=()):
     """T019: restart-command is opaque to the composite — echoed verbatim."""
@@ -455,6 +497,7 @@ def suite(steps, root):
     failures += scenario_empty_spec_dir(steps, root)
     failures += scenario_agent_ran(steps, root)
     failures += scenario_agent_ran_success(steps, root)
+    failures += scenario_commits_published(steps, root)
     for stage, cmd in PLAIN_RESTART_FIXTURES:
         failures += scenario_restart_command_verbatim(
             steps, root, stage, cmd,
@@ -508,9 +551,29 @@ def _mut_notice_ignores_agent_conclusion(steps):
         'agent_clause="the agent completed its work"')
 
 
+def _mut_notice_ignores_commits_published(steps):
+    """specs/071-agent-push-credential regression: the notice stops naming
+    a nonzero commits-published count."""
+    original = steps[NOTICE_STEP]
+    mutated = original.replace(
+        '  if [ -n "$published_line" ]; then\n'
+        '    echo ""\n'
+        '    echo "$published_line"\n'
+        '  fi\n',
+        '')
+    if mutated == original:
+        sys.exit("::error::self-test setup: "
+                 "_mut_notice_ignores_commits_published's target text was "
+                 "not found in the shipped step -- update the mutation "
+                 "together with the step.")
+    steps[NOTICE_STEP] = mutated
+
+
 MUTATIONS = [
     ("notice renders the same wording regardless of record-status",
      _mut_notice_ignores_record_status),
+    ("notice ignores commits-published and never names a nonzero count",
+     _mut_notice_ignores_commits_published),
     ("labels step removes stage-label even when the mark never landed",
      _mut_labels_removes_regardless_of_status),
     ("notice ignores the caller's restart-command",

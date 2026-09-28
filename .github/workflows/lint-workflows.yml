@@ -3721,6 +3721,41 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-credential-relay-shell.py --self-test
 
+      # Gate 99 — specs/071-agent-push-credential: the minted App
+      # installation token this pipeline already relies on (spec 052) has a
+      # one-hour lifetime, and an agent step still pushing past it starts
+      # failing every `git push` with "Invalid username or token" — the
+      # remedy is a `git credential.helper` that resolves fresh at push
+      # time (contracts/agent-push-credential-helper.md), wired into all 8
+      # in-scope stages' push-capable agent steps, plus a deterministic
+      # rescue for whatever a step still could not push itself. This checks
+      # the wiring structurally: every push-capable agent step has the
+      # credential-helper call before it and, where it also has spec 052's
+      # own post-agent re-mint, the stranded-commit-publish call alongside
+      # it; nothing not push-capable spends either; the minting shell has
+      # exactly one home -- see verify-agent-push-credential-helper.py's own
+      # docstring (checks 1-5) for the current, authoritative list.
+      - name: Gate 99 — every push-capable agent step holds a fresh-mint push credential and rescues what it could not push itself
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-agent-push-credential-helper.py
+      - name: Gate 99 self-test — each documented mutation fails
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-agent-push-credential-helper.py --self-test
+
+      # Gate 100 — specs/071-agent-push-credential's behavioural companion
+      # to Gate 99: `mint-credential.sh` signs a GitHub App JWT and
+      # exchanges it for an installation token entirely in plain shell, so
+      # its success/failure shape is a runtime fact Gate 99's structural
+      # check cannot see (the same reason Gate 69 exists alongside Gate 68).
+      # Drives the shipped script directly against a throwaway RSA key and
+      # a stubbed `curl`.
+      - name: Gate 100 — mint-credential.sh mints, fails loud on a 401, and never calls the network with an unreadable key
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-agent-push-credential-shell.py
+      - name: Gate 100 self-test — both regressions this gate exists to catch fail
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-agent-push-credential-shell.py --self-test
+
       # Gate 70 — the 8b verifier stands down on a skipped stage-8 run only
       # when the run stage 8 was asked to inspect was itself skipped (PR
       # #403). Stage 8 writes its source's conclusion at the end of its
