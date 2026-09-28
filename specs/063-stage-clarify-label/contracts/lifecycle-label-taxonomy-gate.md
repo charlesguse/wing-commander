@@ -86,6 +86,11 @@ self-test` naming convention already in `lint-workflows.yml`)
    call and nothing else) → FAILs, naming the label — the Phase 7
    convergence fixture proving a remove-only site never satisfies "has a
    writer" on its own.
+9. **A `with.prompt`-only writer** (the only add site for a documented
+   label lives inside an agent step's `with.prompt` text, no `run:` shell
+   site at all) → PASSes — the maintainer-feedback fixture (PR #651)
+   proving the applied-set scanner sees a prompt-embedded add, styled on
+   `intake.yml`'s real `stage:spec` add.
 
 ## Gate 10 / local-runner parity (FR-009)
 
