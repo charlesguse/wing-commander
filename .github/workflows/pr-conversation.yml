@@ -801,6 +801,16 @@ jobs:
           fetch-depth: 0
           clean: false
 
+      - name: Refuse a branch that tracks .wing-commander-pipeline/
+        shell: bash
+        if: steps.identity.outputs.qualifies == 'true' && steps.lifecycle-gate.outputs.is-open == 'true' && steps.actor-gate.outputs.authorized == 'true'
+        env:
+          WC_PIPELINE_REF: ${{ steps.pipeline-ref.outputs.ref }}
+        run: |
+          p=.wing-commander-pipeline; want="$(cd "$GITHUB_WORKSPACE" && pwd -P)/$p"
+          if [ -L "$p" ] || [ ! -d "$p" ] || [ -L "$p/.git" ] || [ ! -d "$p/.git" ] || [ "$(git -C "$p" rev-parse --show-toplevel 2>/dev/null)" != "$want" ] || { [[ "${WC_PIPELINE_REF:-}" =~ ^[0-9a-f]{40}$ ]] && [ "$(git -C "$p" rev-parse HEAD 2>/dev/null)" != "$WC_PIPELINE_REF" ]; }; then rm -rf -- "$p"; echo "::error::wing-commander: $p is no longer the trusted pipeline checkout (a symlink, a missing or replaced .git, or another commit): the branch just checked out replaced it. Removed it so no later step loads branch code from there (#611)."; exit 1; fi
+          git -C "$p" cat-file blob HEAD:.github/scripts/pipeline-checkout-guard.sh | bash -s
+
       # #518: git goes through the pipeline checkout's
       # .github/scripts/git_read.py, not a raw `Bash(git ...)` grant --
       # see implement.yml's "Compose tool args
@@ -1915,6 +1925,16 @@ jobs:
           fetch-depth: 0
           clean: false
 
+      - name: Refuse a branch that tracks .wing-commander-pipeline/
+        shell: bash
+        if: steps.relay-gate.outputs.proceed == 'true' && steps.route.outputs.needs-checkout == 'true'
+        env:
+          WC_PIPELINE_REF: ${{ steps.pipeline-ref.outputs.ref }}
+        run: |
+          p=.wing-commander-pipeline; want="$(cd "$GITHUB_WORKSPACE" && pwd -P)/$p"
+          if [ -L "$p" ] || [ ! -d "$p" ] || [ -L "$p/.git" ] || [ ! -d "$p/.git" ] || [ "$(git -C "$p" rev-parse --show-toplevel 2>/dev/null)" != "$want" ] || { [[ "${WC_PIPELINE_REF:-}" =~ ^[0-9a-f]{40}$ ]] && [ "$(git -C "$p" rev-parse HEAD 2>/dev/null)" != "$WC_PIPELINE_REF" ]; }; then rm -rf -- "$p"; echo "::error::wing-commander: $p is no longer the trusted pipeline checkout (a symlink, a missing or replaced .git, or another commit): the branch just checked out replaced it. Removed it so no later step loads branch code from there (#611)."; exit 1; fi
+          git -C "$p" cat-file blob HEAD:.github/scripts/pipeline-checkout-guard.sh | bash -s
+
       # research.md D1: deterministic code, not a prompt instruction — the
       # agent's own prompt and allowed-tools list below are unchanged. Every
       # commit this leg makes in this checkout for the rest of the job
@@ -2699,6 +2719,16 @@ jobs:
           fetch-depth: 0
           clean: false
 
+      - name: Refuse a branch that tracks .wing-commander-pipeline/
+        shell: bash
+        if: steps.tip.outputs.sha != needs.classify-and-announce.outputs.base-sha && steps.tip.outputs.sha != ''
+        env:
+          WC_PIPELINE_REF: ${{ steps.pipeline-ref.outputs.ref }}
+        run: |
+          p=.wing-commander-pipeline; want="$(cd "$GITHUB_WORKSPACE" && pwd -P)/$p"
+          if [ -L "$p" ] || [ ! -d "$p" ] || [ -L "$p/.git" ] || [ ! -d "$p/.git" ] || [ "$(git -C "$p" rev-parse --show-toplevel 2>/dev/null)" != "$want" ] || { [[ "${WC_PIPELINE_REF:-}" =~ ^[0-9a-f]{40}$ ]] && [ "$(git -C "$p" rev-parse HEAD 2>/dev/null)" != "$WC_PIPELINE_REF" ]; }; then rm -rf -- "$p"; echo "::error::wing-commander: $p is no longer the trusted pipeline checkout (a symlink, a missing or replaced .git, or another commit): the branch just checked out replaced it. Removed it so no later step loads branch code from there (#611)."; exit 1; fi
+          git -C "$p" cat-file blob HEAD:.github/scripts/pipeline-checkout-guard.sh | bash -s
+
       # research.md D2: the single home for "which fold(<id>): <summary>
       # commits in this range are THIS run's own" is the
       # wing-commander-fold-evidence composite's own header.
@@ -2915,6 +2945,16 @@ jobs:
           token: ${{ steps.ctx.outputs.token }}
           fetch-depth: 0
           clean: false
+
+      - name: Refuse a branch that tracks .wing-commander-pipeline/
+        shell: bash
+        if: steps.tip.outputs.sha != ''
+        env:
+          WC_PIPELINE_REF: ${{ steps.pipeline-ref.outputs.ref }}
+        run: |
+          p=.wing-commander-pipeline; want="$(cd "$GITHUB_WORKSPACE" && pwd -P)/$p"
+          if [ -L "$p" ] || [ ! -d "$p" ] || [ -L "$p/.git" ] || [ ! -d "$p/.git" ] || [ "$(git -C "$p" rev-parse --show-toplevel 2>/dev/null)" != "$want" ] || { [[ "${WC_PIPELINE_REF:-}" =~ ^[0-9a-f]{40}$ ]] && [ "$(git -C "$p" rev-parse HEAD 2>/dev/null)" != "$WC_PIPELINE_REF" ]; }; then rm -rf -- "$p"; echo "::error::wing-commander: $p is no longer the trusted pipeline checkout (a symlink, a missing or replaced .git, or another commit): the branch just checked out replaced it. Removed it so no later step loads branch code from there (#611)."; exit 1; fi
+          git -C "$p" cat-file blob HEAD:.github/scripts/pipeline-checkout-guard.sh | bash -s
 
       # research.md D2: the single home for "which fold(<id>): <summary>
       # commits in this range are THIS run's own" is the
