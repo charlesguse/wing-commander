@@ -886,6 +886,7 @@ jobs:
         with:
           token: ${{ env.WC_BOT_TOKEN }}
           issue-number: ${{ needs.select.outputs.issue-number }}
+          occurrence-bot-login: ${{ steps.ctx.outputs.bot-slug }}[bot]
 
       # A cited run is read from the issue's own text -- a plain URL scan,
       # never an agent's paraphrase of what it cited (FR-011). #505: only
@@ -900,15 +901,23 @@ jobs:
       # Not comments-file: that drops the body. board_triage.py's
       # find_cited_run() also skips `>`-quoted lines and fenced code (a
       # trusted reply quoting a stranger's link is not a cite) and prefers
-      # a watchdog issue's own "First seen" run. verify-board-triage.py
-      # (Gate 82) fails this step on any other read or line.
+      # a watchdog issue's own "First seen" run. #520: a pipeline-defect
+      # that recurred is judged on its newest watchdog occurrence comment
+      # instead -- staged by the same composite, from this job's own App
+      # (the one watchdog posts as) and no other author -- and when the
+      # issue was reopened after the run it would cite, no run is cited
+      # at all, so neither close ground can rest on a run older than the
+      # recurrence. verify-board-triage.py (Gate 82) fails this step on any
+      # other read or line.
       - name: Locate a cited run, if any
         id: cite
         env:
           ISSUE_CONTEXT_FILE: ${{ steps.issue-context-triage.outputs.context-file }}
+          BOT_OCCURRENCES_FILE: ${{ steps.issue-context-triage.outputs.bot-occurrences-file }}
+          LAST_REOPENED_AT: ${{ steps.issue-context-triage.outputs.last-reopened-at }}
         run: |
           set -uo pipefail
-          run_url="$(python3 .github/scripts/board_triage.py find-cited-run --repository "$GITHUB_REPOSITORY" "$ISSUE_CONTEXT_FILE" || true)"
+          run_url="$(python3 .github/scripts/board_triage.py find-cited-run --repository "$GITHUB_REPOSITORY" --bot-occurrences-file "$BOT_OCCURRENCES_FILE" --last-reopened-at "$LAST_REOPENED_AT" "$ISSUE_CONTEXT_FILE" || true)"
           echo "run-url=$run_url" >> "$GITHUB_OUTPUT"
           if [ -n "$run_url" ]; then
             echo "run-id=${run_url##*/}" >> "$GITHUB_OUTPUT"
