@@ -77,10 +77,21 @@ comments posted before the stamp existed.
   construction (no repeat of #376's false issues), and the pre-stamp tail
   ages out (FR-008).
 
-One question remains open, recorded as a `[NEEDS CLARIFICATION]` marker
-against FR-002: the record key chosen above does not, as composed today,
-vary across re-run attempts, so the mechanism named in the answer does not
-yet deliver the re-run separation the answer intends.
+### Session 2026-09-28 (lifecycle issue #491)
+
+- **Q: None of the three parts of the metrics record key varies across
+  re-run attempts, so the key alone does not deliver the re-run separation
+  FR-002 asks for. Should the attempt number be added to the metrics
+  record key itself, or carried in the stamp alongside the record key?**
+  A: The attempt number is added to the **metrics record key itself**, so
+  there is one run identity everywhere rather than a stamp identity that is
+  a superset of the record identity. The consequence is accepted
+  deliberately: the record key is also the per-run rollup line's identity
+  and its shape is pinned by the existing metrics-record gates, so
+  widening it means widening those consumers and those gates in the same
+  change (FR-002, FR-014).
+
+No `[NEEDS CLARIFICATION]` markers remain.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -122,6 +133,11 @@ alone.
    watchdog inspects the run, **Then** the foreign-stamped comment is
    ignored and the unstamped one is still accepted as the run's own — no
    `cost-line-missing` is emitted.
+7. **Given** two attempts of one workflow run, both owing a cost line on
+   one lifecycle issue, where only the second attempt posted one, **When**
+   the watchdog inspects each attempt, **Then** `cost-line-missing` is
+   emitted for the first attempt alone — the attempts are told apart by the
+   attempt number in the stamped record key.
 
 ---
 
@@ -217,8 +233,13 @@ the stamp preference removed, and confirm a gate fails.
   identifiable without the window, so this degradation narrows — see FR-009.
 - **A run was re-run** (a second attempt of the same workflow run). Both
   attempts owe a cost line on the same lifecycle issue and share a workflow
-  run id, so the attempts must be told apart — see FR-002's remaining open
-  question on where the attempt number lives.
+  run id, so the attempt number is part of the record key the stamp carries
+  and part of what the collector matches on (FR-002, FR-014); each
+  attempt's verdict is decided on its own line.
+- **The inspected run's attempt number cannot be resolved.** Comments
+  stamped by a different workflow run id are still excluded; among comments
+  stamped by the inspected workflow run id the window decides, and the
+  finding records that it was window-attributed (FR-002a, FR-010).
 - **A run posts its cost line after its recorded `updatedAt`.** Possible
   when the last comment lands as the run finalises; a stamped comment is
   attributed on its stamp regardless of the window.
@@ -235,24 +256,26 @@ the stamp preference removed, and confirm a gate fails.
 - **FR-002**: The stamp MUST identify the posting run unambiguously among
   the runs that can post on the same lifecycle issue, by carrying the
   metrics record key the cost-line formatter already computes — the
-  workflow run id, the job key, and the step index. The collector MUST
-  match a stamp to the inspected run on the run-id portion of that key, and
-  MUST tolerate several stamps carrying different keys from one run, since
-  a stage may format the cost line at more than one step.
-  Re-run attempts of the same workflow run MUST be separated: both attempts
-  post their own cost line on the same lifecycle issue, so crediting one
-  attempt with the other's line reproduces the reported defect for that
-  pair.
-  [NEEDS CLARIFICATION: none of the three parts of the record key varies
-  across re-run attempts — the workflow run id is reused by a re-run, the
-  job key is the job's static identifier in the workflow file, and the step
-  index is fixed per call site — so the record key alone does not deliver
-  the re-run separation this requirement asks for. Should the attempt
-  number be added to the metrics record key itself (one identity
-  everywhere, but that key is also the per-run rollup line's identity and
-  is pinned by the existing metrics-record gates), or carried in the stamp
-  alongside the record key (record key and its consumers untouched, stamp
-  is a superset of it)?]
+  workflow run id, the re-run attempt number, the job key, and the step
+  index. The attempt number is part of the record key itself, not an extra
+  field the stamp adds on top of it (FR-014). The collector MUST match a
+  stamp to the inspected run on the run-identity portion of that key — the
+  workflow run id together with the attempt number — and MUST tolerate
+  several stamps carrying different keys from one run, since a stage may
+  format the cost line at more than one step.
+  Re-run attempts of the same workflow run MUST therefore be separated:
+  both attempts post their own cost line on the same lifecycle issue, so
+  crediting one attempt with the other's line reproduces the reported
+  defect for that pair.
+
+- **FR-002a**: The collector MUST resolve the inspected run's attempt
+  number from the run metadata it already reads. Where the attempt number
+  is unresolvable for the inspected run, the collector MUST still exclude a
+  comment whose stamp names a different workflow run id (FR-006), and MUST
+  degrade the attempt-level discrimination alone to the window fallback
+  (FR-008) for comments whose stamp names the inspected workflow run id —
+  it MUST NOT credit one attempt with another's line on a run-id match
+  alone while presenting the result as stamp-backed (FR-010).
 
 - **FR-003**: The stamp MUST be applied at the single place the cost line is
   formatted, so that every consumer of that line inherits it. No stage
@@ -320,14 +343,28 @@ the stamp preference removed, and confirm a gate fails.
   unstamped comment inside the window (pre-stamp behaviour); a mixed-era
   window where a foreign-stamped comment and an unstamped comment both fall
   inside it, asserting the unstamped one stays eligible (FR-008); several
-  stamps from one run inside one window; a malformed
+  stamps from one run inside one window; two attempts of one workflow run,
+  each owing a cost line on the same lifecycle issue, asserted
+  independently (FR-002); an inspected run whose attempt number is
+  unresolvable (FR-002a); a malformed
   stamp; and a stamp in a comment by a non-pipeline author. The gates MUST
-  fail when the stamp preference is removed or inverted (mutation check),
-  since today's single-run scenarios pass with the defect present.
+  fail when the stamp preference is removed or inverted, and when the
+  attempt number is dropped from the matched portion of the key (mutation
+  check), since today's single-run scenarios pass with the defect present.
 
 - **FR-013**: The stamp's shape MUST be documented once, at the place it is
   written, with every reader pointing at that description rather than
   restating it.
+
+- **FR-014**: Adding the attempt number to the metrics record key MUST
+  leave that key a single identity with one composition rule: every place
+  the key is composed MUST produce the widened key, and the consumers that
+  are keyed by it — the per-run rollup line's identity, and the record
+  idempotence and de-duplication that rest on the key being unique per
+  emission — MUST be widened with it in the same change. The existing
+  metrics-record gates that pin the key's shape MUST be updated in that
+  same change rather than left asserting the narrow key, and MUST fail if a
+  composition site is left emitting a key without the attempt number.
 
 ### Key Entities
 
@@ -338,9 +375,16 @@ the stamp preference removed, and confirm a gate fails.
   fallback for the case where the formatter never ran.
 - **Run stamp**: the new machine-readable, human-invisible statement of
   which run posted a cost-bearing comment, carrying the metrics record key
-  the cost-line formatter already computes (workflow run id, job key, step
-  index). Analogous to the existing rollup marker the metrics-persist step
-  writes onto its own comment, which is keyed by that same record key.
+  the cost-line formatter computes (workflow run id, attempt number, job
+  key, step index). The stamp carries that key and nothing more — it is not
+  a superset of the record identity. Analogous to the existing rollup
+  marker the metrics-persist step writes onto its own comment, which is
+  keyed by that same record key.
+- **Metrics record key**: the identity of one metrics record, widened by
+  this feature to include the re-run attempt number (FR-014), so that the
+  stamp, the record, and the per-run rollup line all name a run the same
+  way. Its run-identity portion — workflow run id plus attempt number — is
+  what the collector matches on.
 - **Inspected run**: the run the watchdog is currently supervising, and the
   subject every cost-report signal is charged to.
 - **Cost-report signal**: `cost-line-missing` or `cost-line-malformed`,
@@ -374,6 +418,13 @@ the stamp preference removed, and confirm a gate fails.
   repeated in the opposite direction.
 - **SC-007**: A maintainer reading any cost-report finding can tell from the
   finding alone whether it was attributed by stamp or by window.
+- **SC-008**: For two attempts of one workflow run that both owe a cost
+  line on one lifecycle issue, the watchdog produces each attempt's verdict
+  from that attempt's own comment 100% of the time, demonstrated by
+  fixture.
+- **SC-009**: Every place the metrics record key is composed emits the
+  attempt number, and dropping it from any one of them fails the PR-time
+  gate suite.
 
 ## Assumptions
 
@@ -386,7 +437,12 @@ the stamp preference removed, and confirm a gate fails.
   (workflow run id, job key, step index) for the record it emits. No new
   lookup, token, or network call is needed to write a stamp. The one
   identity component that is *not* already there is the re-run attempt,
-  which is FR-002's open question.
+  which this feature adds to the record key itself (FR-014); it is
+  available to the formatter from the run's own environment, so adding it
+  introduces no lookup either.
+- The inspected run's attempt number is available to the collector from the
+  run metadata it already lists, alongside the `createdAt`/`updatedAt`
+  bounds; FR-002a covers the case where it is not.
 - An HTML-comment-style marker is invisible in every surface these comments
   render in (issue comments, PR comments, step summaries), so applying the
   stamp at the formatter rather than at each posting site does not create
@@ -424,6 +480,11 @@ the stamp preference removed, and confirm a gate fails.
   correction inside that feature's boundary.
 - The rollup marker written by the metrics-persist step, as the precedent
   for an invisible, machine-readable marker on a pipeline-authored comment.
+- The metrics record key itself, every place it is composed, the per-run
+  rollup line keyed by it, and the existing metrics-record gates that pin
+  its shape — all widened by the attempt number (FR-014). This is the blast
+  radius the 2026-09-28 clarification accepted in exchange for one run
+  identity everywhere.
 
 ## Out of Scope
 

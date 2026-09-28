@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -37,15 +37,21 @@
   conservative fallback (only a foreign stamp excludes a comment; unstamped
   comments in the window stay eligible). See the Clarifications section of
   [spec.md](../spec.md).
-- One `[NEEDS CLARIFICATION]` marker remains, newly raised by folding that
-  answer in: the metrics record key the answer selects is
-  `<workflow run id>:<job key>:<step index>`, none of which varies across
-  re-run attempts, so it does not by itself separate a re-run's cost line
-  from the original attempt's as the answer intends. Whether the attempt
-  number is added to the record key itself (shared with the rollup line's
-  identity, pinned by existing metrics-record gates) or carried in the
-  stamp alongside it is an owner decision with materially different blast
-  radius, so it is posted back to #491 rather than defaulted.
+- The one remaining `[NEEDS CLARIFICATION]` marker — where the re-run
+  attempt number lives, given that no part of
+  `<workflow run id>:<job key>:<step index>` varies across attempts — was
+  answered on #491 on 2026-09-28 and is folded in: the attempt number goes
+  into the **metrics record key itself**, so one run identity serves the
+  stamp, the record, and the per-run rollup line. No markers remain.
+- That choice's blast radius is now specified rather than implied: FR-014
+  requires every composition site of the record key, the rollup line's
+  identity, the record idempotence resting on the key, and the existing
+  metrics-record gates pinning its shape to be widened in the same change,
+  with SC-009 as the measurable outcome. FR-002a specifies the collector
+  side (resolve the inspected run's attempt number; degrade the
+  attempt-level discrimination alone to the window when it cannot), and
+  FR-012 gains the re-run pair and unresolvable-attempt scenarios plus a
+  mutation check for dropping the attempt number from the matched key.
 - "Users" in this spec are the repository's maintainers and the watchdog
   that supervises pipeline runs on their behalf; the cost line is a
   maintainer-facing report, so maintainer-facing language is the
