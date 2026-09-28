@@ -59,7 +59,7 @@ summary` composite, invoked end-to-end.
    shape after this feature; `implement.yml`'s stays four (unchanged
    count, refactored internals).
 
-## `verify-branch-drift-sha-baseline.py` (Gate 53, extended)
+## `verify-branch-drift-sha-baseline.py` (Gate 65, extended)
 
 **Subject**: unchanged — the real, shipped `collect-branch-drift` step's
 bash text, run via the existing harness against synthetic run-metadata/
@@ -120,7 +120,7 @@ naming it.
 - Gate 39's and Gate 43's PR trigger path lists already include
   `.github/actions/wing-commander-metrics-summary/**` and
   `.github/workflows/{implement,plan,tasks}.yml` — this feature's edits
-  land inside paths those gates already watch. Gate 53's PR trigger path
+  land inside paths those gates already watch. Gate 65's PR trigger path
   list already includes `.github/workflows/watchdog.yml`. Gate 60's
   scan is file-system-wide by construction (`all_subject_files()`), so
   the new composite is discovered automatically once it exists — no
