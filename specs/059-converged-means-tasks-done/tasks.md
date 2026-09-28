@@ -15,9 +15,12 @@ verify rather than in a separate TDD phase.
 (T001) was Gate 80 (`grep -n "Gate [0-9]" .github/workflows/lint-workflows.yml`),
 so this feature's gate was originally assigned Gate 81. Spec
 057-autonomous-board-loop's board-loop gates (Gates 81-89, #451) landed on
-`main` after T001's check had last run, colliding with that reservation —
-this feature's gate is **Gate 90** throughout this file and the shipped
-code (Maintainer Feedback T036).
+`main` after T001's check had last run, colliding with that reservation, so
+Maintainer Feedback T036 renumbered it to Gate 90. Main's own Gate 90
+(the label-create check, #488/#493) then landed first too, so the shipped
+gate is **Gate 99** (the final Maintainer Feedback item). The "Gate 90"
+references in the task bodies below are the historical record of that
+work; the shipped step, `GATE_PREFIX`, and self-test all say Gate 99.
 
 ## Format: `[ID] [P?] [Story] Description`
 
