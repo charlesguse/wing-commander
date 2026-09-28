@@ -615,7 +615,7 @@ jobs:
 
           expected_image="$(this_repo_container_image)"
 
-          if ! observed_image="$(gh variable list --repo "$E2E_REPO" --json name,value -q '.[] | select(.name=="WING_COMMANDER_CONTAINER_IMAGE") | .value' 2>"$RUNNER_TEMP/auto-release-cec-observed-err.txt")"; then
+          if ! observed_image="$(read_repo_container_image_variable "$E2E_REPO" 2>"$RUNNER_TEMP/auto-release-cec-observed-err.txt")"; then
             errtext="$(tail -c 300 "$RUNNER_TEMP/auto-release-cec-observed-err.txt" 2>/dev/null)"
             read_status="$(classify_read_status 1 "$errtext")"
             decision="$(bash .github/actions/_shared/auto-release-container-evidence-decision.sh config "$read_status" \
@@ -929,6 +929,14 @@ jobs:
           MODE: ${{ steps.mode.outputs.mode }}
         run: |
           set -uo pipefail
+          # specs/067-e2e-container-image-evidence: captured before the
+          # issue-create call below, not at the start of the poll step
+          # (maintainer feedback on PR #628) -- capturing it in poll ran
+          # after this step had already created and labelled the issue, so
+          # the intake run kickoff triggers could start before this
+          # timestamp and fall outside poll's own `gh run list --created
+          # ">=${KICKOFF_TIME}"` filter.
+          kickoff_time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           short_sha="${HEAD_SHA:0:7}"
           {
             echo "Add a single new markdown file under \`docs/\` stating the verified commit and timestamp."
@@ -961,6 +969,7 @@ jobs:
           echo "ok=true" >> "$GITHUB_OUTPUT"
           echo "issue-number=$issue_number" >> "$GITHUB_OUTPUT"
           echo "issue-url=$url" >> "$GITHUB_OUTPUT"
+          echo "kickoff-time=$kickoff_time" >> "$GITHUB_OUTPUT"
 
       # Poll over the issue's own state/labels/timeline, plus artifact
       # presence -- never agent narration (research.md D10). Bounded by
@@ -997,6 +1006,11 @@ jobs:
           DEFAULT_BRANCH: ${{ steps.reachable.outputs.default-branch }}
           ISSUE: ${{ steps.kickoff.outputs.issue-number }}
           ISSUE_URL: ${{ steps.kickoff.outputs.issue-url }}
+          # specs/067-e2e-container-image-evidence: read from the kickoff
+          # step's own output (captured there, before it created the issue)
+          # rather than recomputed here -- see that step's comment
+          # (maintainer feedback on PR #628).
+          KICKOFF_TIME: ${{ steps.kickoff.outputs.kickoff-time }}
           HEAD_SHA: ${{ needs.detect.outputs.head-sha }}
           POLL_BUDGET_SECONDS: "8100"
           GATE_BLOCKED_ALLOWANCE_SECONDS: "1200"
@@ -1015,11 +1029,6 @@ jobs:
           # compared with `==` and used as a jq argument, so a secret stored
           # with a trailing newline would never match (#396 review).
           HARNESS_LOGIN="$(printf '%s' "$HARNESS_LOGIN" | tr -d '[:space:]')"
-          # specs/067-e2e-container-image-evidence T007: an approximate
-          # lower bound for "runs this attempt drove" -- captured here
-          # (poll starts immediately after kickoff) rather than as a new
-          # kickoff-step output, since no other step needs it.
-          kickoff_time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
           # $5 (evidence_url) defaults to the kickoff issue; a caller that
           # has better evidence (e.g. the test repository run a stall
@@ -1686,10 +1695,20 @@ jobs:
               emit_verdict
               exit 0
             }
-            if ! runs_json="$(GH_TOKEN="$HARNESS_TOKEN" gh run list --repo "$E2E_REPO" --created ">=${kickoff_time}" --json databaseId --limit 100 2>"$RUNNER_TEMP/auto-release-cee-runs-err.txt")"; then
+            # $path is requested alongside $databaseId so the enumeration
+            # below can be limited to the wing-commander-*.yml wrapper
+            # workflows this turn's own scaffold step pushed -- an
+            # unrelated workflow run created in the test repository after
+            # $KICKOFF_TIME must not pollute this check (maintainer
+            # feedback on PR #628).
+            if ! runs_json="$(GH_TOKEN="$HARNESS_TOKEN" gh run list --repo "$E2E_REPO" --created ">=${KICKOFF_TIME}" --json databaseId,path --limit 100 2>"$RUNNER_TEMP/auto-release-cee-runs-err.txt")"; then
               errtext="$(tail -c 300 "$RUNNER_TEMP/auto-release-cee-runs-err.txt")"
               write_execution_fail "$(classify_read_status 1 "$errtext")" "$errtext"
             fi
+            stage_run_ids="$(printf '%s' "$runs_json" | jq -r '
+              .[]
+              | select(.path | test("^\\.github/workflows/wing-commander-"))
+              | .databaseId')"
             noncontainerized=""
             while IFS= read -r run_id; do
               [ -n "$run_id" ] || continue
@@ -1698,11 +1717,24 @@ jobs:
                 write_execution_fail "$(classify_read_status 1 "$errtext")" "$errtext"
               fi
               jobs_json="$(printf '%s' "$jobs_raw" | jq -s -c '.' 2>/dev/null || echo '[]')"
+              # A skipped job (e.g. the conditional `stalled` job, which
+              # reports `steps: []`) never ran anywhere and so never got a
+              # chance to initialize a container; `verify-image-
+              # prerequisites` is a host-side job every stage workflow
+              # carries (gated on `if: inputs.container-image != ''`) that
+              # has no `container:` key and always runs on the host. Both
+              # are excluded from this enumeration rather than flagged as
+              # non-containerized (maintainer feedback on PR #628).
               while IFS= read -r job_name; do
                 [ -n "$job_name" ] || continue
                 noncontainerized="${noncontainerized:+$noncontainerized, }${job_name}"
-              done < <(printf '%s' "$jobs_json" | jq -r '.[] | select(([.steps[]?.name // empty] | index("Initialize containers")) | not) | .name')
-            done < <(printf '%s' "$runs_json" | jq -r '.[].databaseId')
+              done < <(printf '%s' "$jobs_json" | jq -r '
+                .[]
+                | select(.conclusion != "skipped")
+                | select(.name != "verify-image-prerequisites")
+                | select(([.steps[]?.name // empty] | index("Initialize containers")) | not)
+                | .name')
+            done < <(printf '%s\n' "$stage_run_ids")
 
             decision="$(bash .github/actions/_shared/auto-release-container-evidence-decision.sh execution ok "every stage job" "$noncontainerized")"
             failing_check="$(printf '%s\n' "$decision" | sed -n 's/^failing_check=//p')"

@@ -341,6 +341,7 @@ if [ "$1" = "api" ]; then
   case "$2" in
     repos/*/actions/runs/111/jobs) printf '%s\n' "${GH_STUB_JOBS_111:-}" ;;
     repos/*/actions/runs/222/jobs) printf '%s\n' "${GH_STUB_JOBS_222:-}" ;;
+    repos/*/actions/runs/333/jobs) printf '%s\n' "${GH_STUB_JOBS_333:-}" ;;
     *) echo "unexpected gh api invocation: $*" >&2; exit 1 ;;
   esac
   exit 0
@@ -349,20 +350,39 @@ echo "unexpected gh invocation: $*" >&2
 exit 1
 '''
 
+WRAPPER_PATH = ".github/workflows/wing-commander-5-implement.yml"
+
 JOB_CONTAINERIZED = json.dumps({
-    "name": "implement", "steps": [
+    "name": "implement", "conclusion": "success", "steps": [
         {"name": "Set up job"}, {"name": "Initialize containers"},
         {"name": "Run agent"}, {"name": "Stop containers"}]})
 JOB_NOT_CONTAINERIZED = json.dumps({
-    "name": "implement", "steps": [
+    "name": "implement", "conclusion": "success", "steps": [
         {"name": "Set up job"}, {"name": "Run agent"}]})
+# A conditional job (e.g. `stalled`) that never ran reports `steps: []` and
+# a "skipped" conclusion -- it never got a chance to initialize a container
+# and must not be flagged as non-containerized (maintainer feedback on PR
+# #628).
+JOB_SKIPPED = json.dumps({
+    "name": "stalled", "conclusion": "skipped", "steps": []})
+# Every stage workflow carries this host-side job (gated on
+# `if: inputs.container-image != ''`); it has no `container:` key and
+# always runs on the host, so it always lacks an `Initialize containers`
+# step even on a genuine container-mode pass (maintainer feedback on PR
+# #628).
+JOB_VERIFY_IMAGE_PREREQUISITES = json.dumps({
+    "name": "verify-image-prerequisites", "conclusion": "success", "steps": [
+        {"name": "Set up job"}, {"name": "Check image prerequisites"}]})
 
 EXECUTION_BASE_ENV = dict(
     MODE="container", E2E_REPO="owner/e2e-target", HEAD_SHA=HEAD,
     HARNESS_TOKEN="dummy-token", HARNESS_LOGIN="dummy-login",
     ISSUE="1", ISSUE_URL="https://example.invalid/issues/1",
-    GH_STUB_RUNS_JSON=json.dumps([{"databaseId": 111}]),
+    KICKOFF_TIME="2026-01-01T00:00:00Z",
+    GH_STUB_RUNS_JSON=json.dumps(
+        [{"databaseId": 111, "path": WRAPPER_PATH}]),
     GH_STUB_JOBS_111=JOB_CONTAINERIZED, GH_STUB_JOBS_222="",
+    GH_STUB_JOBS_333="",
     GH_STUB_RUNS_FAIL="", GH_STUB_RUNS_ERR="",
     GH_STUB_JOBS_FAIL="", GH_STUB_JOBS_ERR="",
 )
@@ -406,6 +426,29 @@ EXECUTION_SCENARIOS = [
     dict(
         name="default-runner turn: fragment is a no-op, reaches pass",
         env=dict(MODE="default-runner", GH_STUB_RUNS_FAIL="true"),
+        reached_pass=True,
+    ),
+    # The three maintainer-feedback fixtures (PR #628): confirm the gate
+    # still passes a genuine container-mode success once each confounder
+    # is present, rather than flagging it as non-containerized or letting
+    # it pollute the enumeration.
+    dict(
+        name="MF(PR#628) a skipped conditional job (e.g. stalled) present: still reaches pass",
+        env=dict(GH_STUB_JOBS_111="\n".join([JOB_CONTAINERIZED, JOB_SKIPPED])),
+        reached_pass=True,
+    ),
+    dict(
+        name="MF(PR#628) the host-side verify-image-prerequisites job present: still reaches pass",
+        env=dict(GH_STUB_JOBS_111="\n".join(
+            [JOB_CONTAINERIZED, JOB_VERIFY_IMAGE_PREREQUISITES])),
+        reached_pass=True,
+    ),
+    dict(
+        name="MF(PR#628) an unrelated workflow run created after kickoff_time: excluded, still reaches pass",
+        env=dict(GH_STUB_RUNS_JSON=json.dumps([
+            {"databaseId": 111, "path": WRAPPER_PATH},
+            {"databaseId": 333, "path": ".github/workflows/unrelated.yml"},
+        ]), GH_STUB_JOBS_333=JOB_NOT_CONTAINERIZED),
         reached_pass=True,
     ),
 ]

@@ -107,7 +107,6 @@ TAG_REV_PARSE = 'rev-parse -q --verify "refs/tags/'
 TAG_FETCH_MARKER = 'git fetch origin "refs/tags/'
 RUN_VIEW_MARKER = "gh run view"
 STATUS_JSON_MARKER = "--json status"
-
 JOB_KEY_RE = re.compile(r"^  [A-Za-z_][\w-]*:\s*$")
 USES_RE = re.compile(r"uses:\s*(\S+)")
 
