@@ -205,9 +205,22 @@ unrelated step happens to run next — but a named post-agent step failure
 always outranks the credential-only diagnosis, mentioning the credential
 only as context when both are known (third maintainer review of PR #407).
 
-This remedy does not cover the credential an agent step itself pushes with
-while it is still running — only the steps that run after it. That residual
-risk is tracked in [issue #402](https://github.com/charlesguse/wing-commander/issues/402).
+The credential an agent step itself pushes with while it is still running —
+the gap the remedy above does not cover, tracked as
+[issue #402](https://github.com/charlesguse/wing-commander/issues/402) (now
+closed) — is covered by `wing-commander-agent-push-credential`
+(specs/071-agent-push-credential): a `git credential.helper` installed
+ahead of every push-capable agent step in the same 8-stage sweep, which
+resolves a fresh App installation token from `mint-credential.sh` at the
+moment of each `git push` rather than relying on one minted at job start.
+An agent step that meets the credential-expiry (or mint-failure) signature
+on a `git push` retries at most twice, then commits locally and continues
+rather than spending further turns on a push that cannot succeed (the
+canonical retry-bound paragraph, home in `clarify.yml`'s agent step). What
+the agent still could not push itself is rescued by a deterministic
+`wing-commander-publish-stranded-commits` call alongside each agent step's
+own post-agent re-mint, whose count — when nonzero — is named on the
+stall notice a maintainer reads (FR-016/FR-017).
 
 ### State model
 - **`specs/NNN-slug/spec-meta.json`** — durable source of truth:

@@ -1294,10 +1294,12 @@ jobs:
           ref: origin/${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}
           path: ${{ steps.spec.outputs.spec-dir }}/tasks.md
 
-      # FR-008 residual risk (spec 052): the WC_BOT_TOKEN relay above keeps
-      # every step after each agent step credentialed, but not the agent
-      # step's own push credential while it is still running -- see
-      # docs/architecture.md's "Identity & chaining" section.
+      # FR-008 (spec 052): the WC_BOT_TOKEN relay above keeps every step
+      # after each agent step credentialed. The agent step's OWN push
+      # credential while it is still running is covered separately --
+      # specs/071-agent-push-credential's wing-commander-agent-push-
+      # credential call ahead of "Implement and converge (cycle)"/"(retry)"
+      # above -- see docs/architecture.md's "Identity & chaining" section.
       - name: Read back cycle outcome
         id: outcome
         shell: bash

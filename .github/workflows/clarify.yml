@@ -466,9 +466,12 @@ jobs:
       # four composites: .github/actions/wing-commander-*/action.yml — the
       # other 7 sweep-stage workflows point here instead of repeating this
       # paragraph. docs/architecture.md's "Identity & chaining" section
-      # carries the same statement for readers outside the workflow files,
-      # including the FR-008 residual risk (the agent's own push credential,
-      # tracked in issue #402) this mechanism does not cover.
+      # carries the same statement for readers outside the workflow files.
+      # The FR-008 gap this mechanism does not cover -- the agent's own
+      # push credential while it is still running, formerly tracked in
+      # issue #402 (now closed) -- is covered separately by
+      # wing-commander-agent-push-credential (specs/071-agent-push-
+      # credential), installed ahead of this job's own agent step below.
       - name: Wing Commander context
         id: ctx
         if: steps.lifecycle-gate.outputs.is-open == 'true'
