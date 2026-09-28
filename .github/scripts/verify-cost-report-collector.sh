@@ -202,6 +202,68 @@ if [ "$out" != '{"comment_found":true,"observed_text":"Cost: $2.22 · 9/40 turns
   reason "an empty 'until' must leave the window open-ended and github-actions[bot] must count as the pipeline's own, got $out"
 fi
 
+# ── Attribution (#617): an intake questionnaire's trade-off prose carries
+#    "Cost:" (plain, and bolded) ABOVE the stage's real cost line, in the same
+#    comment. Only a whole "**Cost**: " line is a cost line, and the first one
+#    with a "$" figure wins -- the first-match regex this replaced read the
+#    prose, found no amount, and filed a false cost-line-missing (run
+#    36147839566).
+# shellcheck disable=SC2016 # single-quoted JSON literal, not a shell expansion
+QUESTIONNAIRE='[
+  {"createdAt":"2026-09-25T14:29:53Z","userLogin":"wing-commander-bot[bot]","body":"intake started"},
+  {"createdAt":"2026-09-25T14:36:19Z","userLogin":"wing-commander-bot[bot]","body":"> **Action needed: Answer the open clarification questions**\n>\n> | B | Stand the item down. | Removes the residual. Cost: the loop can never fix a defect in its own composites unaided. |\n> **Cost**: roughly $5 more per run if we pick B\n>\n> **Cost**: $1.76 · 18/50 turns · claude-opus-5\n"}
+]'
+out="$(jq -c '{comments: ., since: "2026-09-25T14:29:00Z", until: "2026-09-25T14:36:30Z", logins: ["wing-commander-bot[bot]"]}' <<<"$QUESTIONNAIRE" | jq -c "$ATTRIBUTION")"
+# shellcheck disable=SC2016 # literal comparison text, not a shell expansion
+want='{"comment_found":true,"observed_text":"Cost: $1.76 · 18/50 turns · claude-opus-5","cost_token":"$1.76"}'
+if [ "$out" != "$want" ]; then
+  reason "questionnaire 'Cost:' prose above the real cost line must not shadow it (#617); expected $want, got $out"
+else
+  note "questionnaire 'Cost:' prose correctly skipped for the stage's own cost line (#617)"
+fi
+if [ "$(jq -c "$FILTER" <<<"$(jq -c '{stage:"intake",run:"36147839566",cost_available:true,comments_checked:true} + .' <<<"$out")")" != "[]" ]; then
+  reason "the #617 questionnaire comment must produce no cost-report signal end to end"
+fi
+
+# A questionnaire line that is itself shaped like a cost line, figure and
+# all ("**Cost**: $5 more per run"), above the real one: only a comment's
+# last cost line is its own, so "$5" is never read as the run's figure (a
+# false cost-line-malformed). Found by the code review of #657.
+# shellcheck disable=SC2016 # single-quoted JSON literal, not a shell expansion
+DOLLAR_PROSE='[
+  {"createdAt":"2026-09-25T14:36:19Z","userLogin":"wing-commander-bot[bot]","body":"> | B | Stand the item down. |\n> **Cost**: $5 more per run if we pick B\n>\n> **Cost**: $1.76 · 18/50 turns · claude-opus-5\n"}
+]'
+out="$(jq -c '{comments: ., since: "", until: "", logins: ["wing-commander-bot[bot]"]}' <<<"$DOLLAR_PROSE" | jq -c "$ATTRIBUTION")"
+if [ "$(jq -r '.cost_token' <<<"$out")" != '$1.76' ]; then
+  reason "a '**Cost**: \$5 ...' questionnaire line above the real cost line must not shadow it, got $out"
+else
+  note "a dollar-bearing '**Cost**:' prose line correctly skipped for the comment's last cost line"
+fi
+
+# Prose only -- the questionnaire without its cost line: still missing, and
+# the bolded prose's later "$5" is never read as a malformed figure.
+# shellcheck disable=SC2016 # single-quoted JSON literal, not a shell expansion
+PROSE_ONLY='[
+  {"createdAt":"2026-09-25T14:36:19Z","userLogin":"wing-commander-bot[bot]","body":"> | B | Stand the item down. | Cost: the loop can never fix a defect unaided. |\n> **Cost**: roughly $5 more per run if we pick B\n"}
+]'
+out="$(jq -c '{comments: ., since: "", until: "", logins: ["wing-commander-bot[bot]"]}' <<<"$PROSE_ONLY" | jq -c "$ATTRIBUTION")"
+if [ "$(jq -r '.cost_token' <<<"$out")" != "null" ] || [ "$(jq -r '.comment_found' <<<"$out")" != "true" ]; then
+  reason "a comment with only 'Cost:' prose must read comment_found:true with no token (#617), got $out"
+fi
+sig="$(jq -c "$FILTER" <<<"$(jq -c '{stage:"intake",run:"r617",cost_available:true,comments_checked:true} + .' <<<"$out")")"
+if [ "$(jq -r '.[0]."class-hint" // "none"' <<<"$sig")" != "cost-line-missing" ]; then
+  reason "a comment with only 'Cost:' prose must still report cost-line-missing (#617), got $sig"
+else
+  note "'Cost:' prose with no cost line correctly still reported cost-line-missing"
+fi
+
+# Plain prose alone ("Cost:" never bolded, as in the #617 table cell) is no
+# cost line at all.
+out="$(jq -c '{comments: ., since: "", until: "", logins: ["wing-commander-bot[bot]"]}' <<<'[{"createdAt":"2026-09-25T14:36:19Z","userLogin":"wing-commander-bot[bot]","body":"Cost: the loop can never fix it"}]' | jq -c "$ATTRIBUTION")"
+if [ "$out" != '{"comment_found":true,"observed_text":null,"cost_token":null}' ]; then
+  reason "an unbolded 'Cost:' prose line must not be read as a cost line (#617), got $out"
+fi
+
 if [ "${#fail_reasons[@]}" -eq 0 ]; then
   echo "✅ verify-cost-report-collector: all assertions passed."
   exit 0

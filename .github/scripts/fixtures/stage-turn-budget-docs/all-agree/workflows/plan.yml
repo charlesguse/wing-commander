@@ -1,0 +1,6 @@
+on:
+  workflow_call:
+    inputs:
+      max-turns:
+        type: number
+        default: 110

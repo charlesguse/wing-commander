@@ -107,23 +107,23 @@ runs:
         gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments" --paginate \
           --jq '.[] | {body, author_association, created_at, user: {login: .user.login, type: .user.type}}' | jq -s '.' \
           > "$RUNNER_TEMP/board-stop-check-comments.json"
-        stop_run_id="$(python3 -c "
-        import json, os, sys
-        sys.path.insert(0, '.github/scripts')
-        from board_stop_check import find_stop_request
-        comments = json.load(open(os.path.join(os.environ['RUNNER_TEMP'], 'board-stop-check-comments.json'), encoding='utf-8'))
-        run_id = find_stop_request(comments, os.environ['GITHUB_RUN_ID'], os.environ['BOT_LOGIN'])
-        print(run_id or '')
-        ")"
-        if [ -n "$stop_run_id" ]; then
-          # A first pass through this run (the common case) has no earlier
-          # run to cancel -- find_stop_request() falls back to this run's
-          # own id, and cancelling the run executing this very step would
-          # race its own graceful stand-down against GitHub's async
-          # cancellation. `paused=true` is what actually halts further
-          # durable action either way; the cancel call only ever targets a
-          # genuinely different, earlier run (issue #461 review).
-          if [ "$stop_run_id" != "$GITHUB_RUN_ID" ]; then
+        stop_decision_json="$(jq -n --slurpfile comments "$RUNNER_TEMP/board-stop-check-comments.json" \
+          --arg run_id "$GITHUB_RUN_ID" --arg bot_login "$BOT_LOGIN" \
+          '{comments: $comments[0], current_run_id: $run_id, bot_login: $bot_login}' \
+          | python3 .github/scripts/board_stop_check.py)"
+        jq -e '.stand_down | type == "boolean"' >/dev/null <<<"$stop_decision_json" || {
+          echo "::error::wing-commander-board-stop-check: could not read a stop decision from board_stop_check.py: $stop_decision_json"
+          exit 1
+        }
+        stand_down="$(jq -r '.stand_down' <<<"$stop_decision_json")"
+        cancel_run_id="$(jq -r '.cancel_run_id // empty' <<<"$stop_decision_json")"
+        if [ "$stand_down" = "true" ]; then
+          # find_stop_request()'s own contract (Gate 87, mutation-proven)
+          # already guarantees cancel_run_id is never this run's own id --
+          # this comparison is deliberately redundant defence in depth,
+          # kept because `gh run cancel` is not recoverable by retry
+          # (issue #461 review).
+          if [ -n "$cancel_run_id" ] && [ "$cancel_run_id" != "$GITHUB_RUN_ID" ]; then
             # board-loop.yml's single workflow-level concurrency group
             # (cancel-in-progress: false) serializes every trigger, so a
             # DIFFERENT run that already posted its own marker (this
@@ -157,7 +157,7 @@ runs:
             # is ours, and `paused=true` below still halts this run. The
             # read keeps the cancel-token it has always used (#465): the
             # App token carries no `actions` permission (#461).
-            cancel_target_json="$(GH_TOKEN="$CANCEL_TOKEN" gh api "repos/$GITHUB_REPOSITORY/actions/runs/$stop_run_id" 2>/dev/null || true)"
+            cancel_target_json="$(GH_TOKEN="$CANCEL_TOKEN" gh api "repos/$GITHUB_REPOSITORY/actions/runs/$cancel_run_id" 2>/dev/null || true)"
             cancel_target_status="$(printf '%s' "$cancel_target_json" | jq -r '.status // empty' 2>/dev/null || true)"
             cancel_target_path="$(printf '%s' "$cancel_target_json" | jq -r '.path // empty' 2>/dev/null || true)"
             cancel_target_repo="$(printf '%s' "$cancel_target_json" | jq -r '.repository.full_name // empty' 2>/dev/null || true)"
@@ -165,10 +165,10 @@ runs:
             own_workflow_path="${own_workflow_path#"$GITHUB_REPOSITORY"/}"
             own_workflow_path="${own_workflow_path%%@*}"
             if [ -z "$cancel_target_path" ] || [ "${cancel_target_path%%@*}" != "$own_workflow_path" ] || [ "$cancel_target_repo" != "$GITHUB_REPOSITORY" ]; then
-              echo "::warning::not cancelling run $stop_run_id: it is not a readable $own_workflow_path run in $GITHUB_REPOSITORY (path='$cancel_target_path', repository='$cancel_target_repo')"
+              echo "::warning::not cancelling run $cancel_run_id: it is not a readable $own_workflow_path run in $GITHUB_REPOSITORY (path='$cancel_target_path', repository='$cancel_target_repo')"
             elif [ "$cancel_target_status" != "completed" ]; then
-              if ! cancel_error="$(GH_TOKEN="$CANCEL_TOKEN" gh run cancel "$stop_run_id" -R "$GITHUB_REPOSITORY" 2>&1)"; then
-                echo "::warning::gh run cancel $stop_run_id failed: $cancel_error"
+              if ! cancel_error="$(GH_TOKEN="$CANCEL_TOKEN" gh run cancel "$cancel_run_id" -R "$GITHUB_REPOSITORY" 2>&1)"; then
+                echo "::warning::gh run cancel $cancel_run_id failed: $cancel_error"
               fi
             fi
           fi

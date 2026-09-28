@@ -112,6 +112,18 @@ SIX CHECKS, per contracts/single-home-gate.md (plus a spec 052 addition)
    quote-tolerant. The per-document `then . else [.] end` wrap is a
    different, legitimate idiom and is not matched.
 
+7. branch-advance-capture (specs/068-plan-tasks-branch-advance research.md
+   R10): the "after"/"commits" branch-advance git plumbing -- co-occurrence,
+   file-wide, of the refspec-form `git fetch origin "+refs/heads/$...` fetch
+   (its `+` force-update prefix is what distinguishes it from several
+   other, unrelated `git fetch origin "refs/heads/$..."` idioms elsewhere
+   in the fleet) and a `..`-range `git rev-list --count "$..."` read
+   (watchdog.yml's own since-created/head-sha arms use this shape too, but
+   never alongside the refspec fetch, so co-occurrence -- not either
+   fragment alone -- is what the declared home uniquely carries). Extracted
+   from implement.yml's former inline step so implement, plan, and tasks
+   share one copy (FR-011/FR-012).
+
 Plus a promotion-prevention pass (FR-025): every `workflow_call`-only
 stage workflow and every non-underscore-prefixed composite action scanned
 for any reference resolving into a `_shared/` path.
@@ -197,20 +209,27 @@ DECLARED_HOMES = {
     # THIRD site cannot paste the correlate-and-poll loop a second,
     # independent time while T054 is outstanding.
     "dispatch-and-wait": ".github/actions/wing-commander-dispatch-and-wait/action.yml",
-    # issue #462 (code review of #451): the kill-switch/stop-request
-    # recheck -- paginate the issue's own comments, hand them to
-    # board_stop_check.find_stop_request(), and `gh run cancel` whatever
-    # it names -- was pasted near-verbatim into all six of board-loop.yml's
-    # jobs. board_stop_check.py's own docstring already called
-    # find_stop_request() "the reusable check every job's own... step also
-    # performs," but never the surrounding gh/bash orchestration around it;
-    # this check is the structural scan that catches a THIRD paste the way
-    # every other idiom in this gate already does.
+    # issue #462 (code review of #451), idiom updated by #085: the
+    # kill-switch/stop-request recheck -- paginate the issue's own comments,
+    # obtain a decision from board_stop_check.py's documented CLI (pipe a
+    # payload into it), and `gh run cancel` whatever earlier run it names --
+    # was pasted near-verbatim into all six of board-loop.yml's jobs.
+    # board_stop_check.py's own docstring already called find_stop_request()
+    # "the reusable check every job's own... step also performs," but never
+    # the surrounding gh/bash orchestration around it; this check is the
+    # structural scan that catches a THIRD paste the way every other idiom
+    # in this gate already does.
     "board-stop-check": ".github/actions/wing-commander-board-stop-check/action.yml",
     # #572: the transcript normaliser. count-turns.sh,
     # wing-commander-agent-verdict and wing-commander-metrics-summary all
     # call it; a fourth inline copy is what this check catches.
     "transcript-normalise": ".github/actions/_shared/normalise-transcript.sh",
+    # specs/068-plan-tasks-branch-advance research.md R10 (CLAUDE.md: "add
+    # the 'single home' check to the nearest existing gate"): the
+    # "after"/"commits" branch-advance git plumbing, extracted from
+    # implement.yml's own former inline step so implement/plan/tasks share
+    # one copy.
+    "branch-advance-capture": ".github/actions/wing-commander-branch-advance/action.yml",
 }
 CHECK_NAMES = tuple(DECLARED_HOMES) + ("promotion",)
 
@@ -253,17 +272,18 @@ DISPATCH_WAIT_FRAGMENTS = (
 )
 VERDICT_FIELDS = ("outcome", "verified_head", "failing_check", "expected",
                   "observed", "evidence_url")
-# issue #462: `gh run cancel` alone is ordinary gh-CLI usage that also
-# appears in pr-conversation.yml's own (unrelated) stop procedure, so
-# co-occurrence with the other two fragments -- both unique to this
-# idiom's own shell -- is what keeps this check from false-positiving
-# there, the same reasoning check_dispatch_and_wait already documents for
-# its own fragment set.
-BOARD_STOP_CHECK_FRAGMENTS = (
-    "from board_stop_check import find_stop_request",
-    "gh run cancel",
-    "board-stop-check-comments.json",
-)
+# issue #462, idiom updated by #085: `gh run cancel` alone is ordinary
+# gh-CLI usage that also appears in pr-conversation.yml's own (unrelated)
+# stop procedure, so co-occurrence with fact 1 below -- unique to this
+# idiom -- is what keeps this check from false-positiving there, the same
+# reasoning check_dispatch_and_wait already documents for its own fragment
+# set. Fact 1 matches either the post-085 CLI invocation
+# (`board_stop_check.py`) or the pre-085 import style (`from
+# board_stop_check import find_stop_request`), so a paste of either idiom
+# is caught regardless of which era it copies (FR-009).
+BOARD_STOP_CHECK_DECISION_RE = re.compile(
+    r"board_stop_check\.py|from board_stop_check import find_stop_request")
+BOARD_STOP_CHECK_CANCEL = "gh run cancel"
 # #572: the splice step of the transcript normaliser. `.[]` in the
 # then-branch is what distinguishes it from the per-document
 # `if type=="array" then . else [.] end` wrap used by fallback reads.
@@ -271,6 +291,19 @@ TRANSCRIPT_NORMALISE_RE = re.compile(
     r'if\s+type\s*==\s*["\']array["\']\s+then\s+\.\[\]\s+else\s+\.\s+end')
 MODE_TAG_FRAGMENT_RE = re.compile(r"\{\s*mode\s*:\s*\$[A-Za-z_][A-Za-z0-9_]*\s*\}")
 SHARED_REF_RE = re.compile(r"\.github/actions/_shared/[A-Za-z0-9_.\-/]+")
+# specs/068-plan-tasks-branch-advance research.md R10: the branch-advance
+# capture's "after"/"commits" git plumbing. The refspec-form fetch (the `+`
+# force-update prefix is what distinguishes it from the fleet's several
+# other, unrelated `git fetch origin "refs/heads/$..."` idioms, e.g.
+# implement.yml's/plan.yml's/tasks.yml's default-branch-divergence checks,
+# none of which use the `+` prefix) co-occurring with a `..`-range
+# `git rev-list --count "$..."` read (watchdog.yml's own since-created/
+# head-sha arms use this shape too, but never alongside the refspec fetch
+# above -- verified empirically against the tree once this feature's own
+# T003 refactor landed) is what only the declared home carries.
+BRANCH_ADVANCE_FETCH_FRAGMENT = 'git fetch origin "+refs/heads/$'
+BRANCH_ADVANCE_REVLIST_RE = re.compile(
+    r'git rev-list --count "\$[A-Za-z_][A-Za-z0-9_]*\.\.')
 
 Finding = namedtuple("Finding", ["path", "check", "line", "text"])
 
@@ -519,9 +552,8 @@ def check_dispatch_and_wait(root="."):
 
 
 # --------------------------------------------------------------------------
-# Check: board-stop-check (file-wide co-occurrence of the find_stop_request
-# import, the gh run cancel call, and the paginated-comments filename --
-# issue #462)
+# Check: board-stop-check (YAML-structural, per job / composite step-list --
+# issue #462, reworked #085/research.md D7)
 # --------------------------------------------------------------------------
 def check_board_stop_check(root="."):
     home = DECLARED_HOMES["board-stop-check"]
@@ -533,13 +565,20 @@ def check_board_stop_check(root="."):
     for path in all_subject_files(root):
         if path == home or path.startswith(home_dir):
             continue
+        doc = load_yaml(root, path)
+        if doc is None:
+            continue
         text = read(root, path)
-        if all(fragment in text for fragment in BOARD_STOP_CHECK_FRAGMENTS):
-            offset = text.find(BOARD_STOP_CHECK_FRAGMENTS[0])
-            findings.append(Finding(
-                path, "board-stop-check", line_of(text, max(offset, 0)),
-                "from board_stop_check import find_stop_request + gh run "
-                "cancel + board-stop-check-comments.json co-occurrence"))
+        for _ctx, steps in _step_lists(doc):
+            run_text = "\n".join(str((step or {}).get("run") or "") for step in steps)
+            decision_match = BOARD_STOP_CHECK_DECISION_RE.search(run_text)
+            if decision_match and BOARD_STOP_CHECK_CANCEL in run_text:
+                offset = text.find(decision_match.group(0))
+                findings.append(Finding(
+                    path, "board-stop-check", line_of(text, max(offset, 0)),
+                    f"{decision_match.group(0)!r} (obtains a stop decision) + "
+                    f"'gh run cancel' (performs a cancellation), in the same "
+                    f"step list"))
     return findings
 
 
@@ -625,6 +664,26 @@ def check_token_mint(root="."):
 
 
 # --------------------------------------------------------------------------
+# Check: branch-advance-capture (file-wide co-occurrence, specs/068-plan-
+# tasks-branch-advance research.md R10)
+# --------------------------------------------------------------------------
+def check_branch_advance_capture(root="."):
+    home = DECLARED_HOMES["branch-advance-capture"]
+    findings = []
+    for path in all_subject_files(root):
+        if path == home:
+            continue
+        text = read(root, path)
+        if BRANCH_ADVANCE_FETCH_FRAGMENT in text and \
+                BRANCH_ADVANCE_REVLIST_RE.search(text):
+            offset = text.index(BRANCH_ADVANCE_FETCH_FRAGMENT)
+            findings.append(Finding(
+                path, "branch-advance-capture", line_of(text, offset),
+                BRANCH_ADVANCE_FETCH_FRAGMENT))
+    return findings
+
+
+# --------------------------------------------------------------------------
 # Promotion-prevention pass (FR-025)
 # --------------------------------------------------------------------------
 # research.md D1/D2: auto-update-spec-kit.yml IS a workflow_call-only
@@ -672,6 +731,7 @@ ALL_CHECKS = {
     "verdict-shape": check_verdict_shape,
     "token-mint": check_token_mint,
     "mode-tag-shape": check_mode_tag_shape,
+    "branch-advance-capture": check_branch_advance_capture,
     "promotion": check_promotion,
 }
 
@@ -1010,13 +1070,24 @@ def _clean_tree(root):
           "        gh api \"repos/$GITHUB_REPOSITORY/issues/$N/comments\" "
           "--paginate --jq '.[]' | jq -s '.' > "
           "\"$RUNNER_TEMP/board-stop-check-comments.json\"\n"
-          "        # from board_stop_check import find_stop_request\n"
+          "        stop_decision_json=\"$(jq -n --slurpfile comments "
+          "\"$RUNNER_TEMP/board-stop-check-comments.json\" '{comments: "
+          "$comments[0]}' | python3 .github/scripts/board_stop_check.py)\"\n"
+          "        cancel_run_id=\"$(jq -r '.cancel_run_id // empty' "
+          "<<<\"$stop_decision_json\")\"\n"
           "        GH_TOKEN=\"$CANCEL_TOKEN\" gh run cancel "
-          "\"$stop_run_id\" -R \"$GITHUB_REPOSITORY\" 2>/dev/null || true\n")
+          "\"$cancel_run_id\" -R \"$GITHUB_REPOSITORY\" 2>/dev/null || true\n")
     _write(root, DECLARED_HOMES["transcript-normalise"],
           "#!/usr/bin/env bash\n"
           "jq -cs 'map(if type==\"array\" then .[] else . end) "
           "| map(objects)' \"$1\"\n")
+    _write(root, DECLARED_HOMES["branch-advance-capture"],
+          "runs:\n  using: composite\n  steps:\n"
+          "    - shell: bash\n      run: |\n"
+          "        git fetch origin \"+refs/heads/$branch:refs/remotes/"
+          "origin/$branch\"\n"
+          "        commits=\"$(git rev-list --count "
+          "\"$BEFORE_SHA..$after_sha\")\"\n")
     _write(root, ".github/workflows/harmless.yml",
           "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
           "      - run: echo hi\n")
@@ -1054,6 +1125,32 @@ def selftest_third_paste_fails(check_key, paste_path, paste_content):
                 f"got: {findings}")
         else:
             note(f"[{case}] passed ({hits[0].path}:{hits[0].line})")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def selftest_board_stop_check_no_cancel_no_finding():
+    case = "board_stop_check.py referenced with no cancellation is not flagged"
+    tmp = tempfile.mkdtemp(prefix="wc-single-home-")
+    try:
+        _clean_tree(tmp)
+        paste_path = ".github/workflows/dry-run-reporter.yml"
+        _write(tmp, paste_path,
+              "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
+              "      - shell: bash\n        run: |\n"
+              "          gh api \"repos/$GITHUB_REPOSITORY/issues/$N/comments\" "
+              "--paginate --jq '.[]' | jq -s '.' > \"$RUNNER_TEMP/comments.json\"\n"
+              "          jq -n --slurpfile comments \"$RUNNER_TEMP/comments.json\" "
+              "'{comments: $comments[0]}' | python3 .github/scripts/board_stop_check.py\n")
+        findings, hard = evaluate(tmp)
+        if hard:
+            fail(f"[{case}] unexpected hard failure(s): {hard}")
+            return
+        hits = [f for f in findings if f.check == "board-stop-check" and f.path == paste_path]
+        if hits:
+            fail(f"[{case}] unexpected board-stop-check finding(s): {hits}")
+        else:
+            note(f"[{case}] passed")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -1223,9 +1320,18 @@ def run_selftest():
         "          gh api \"repos/$GITHUB_REPOSITORY/issues/$N/comments\" "
         "--paginate --jq '.[]' | jq -s '.' > "
         "\"$RUNNER_TEMP/board-stop-check-comments.json\"\n"
-        "          # from board_stop_check import find_stop_request\n"
+        "          stop_decision_json=\"$(jq -n --slurpfile comments "
+        "\"$RUNNER_TEMP/board-stop-check-comments.json\" '{comments: "
+        "$comments[0]}' | python3 .github/scripts/board_stop_check.py)\"\n"
+        "          cancel_run_id=\"$(jq -r '.cancel_run_id // empty' "
+        "<<<\"$stop_decision_json\")\"\n"
         "          GH_TOKEN=\"$CANCEL_TOKEN\" gh run cancel "
-        "\"$stop_run_id\" -R \"$GITHUB_REPOSITORY\" 2>/dev/null || true\n")
+        "\"$cancel_run_id\" -R \"$GITHUB_REPOSITORY\" 2>/dev/null || true\n")
+    # #085 (research.md D7's third named self-test direction): fact 1
+    # (references board_stop_check.py) with no fact 2 (no cancellation) is a
+    # legitimate non-loop consumer -- e.g. a hypothetical dry-run reporter --
+    # and must NOT be flagged.
+    selftest_board_stop_check_no_cancel_no_finding()
     selftest_third_paste_fails(
         "transcript-normalise",
         ".github/actions/wing-commander-third/action.yml",
@@ -1266,6 +1372,12 @@ def run_selftest():
         "\"fail-infra\" \"$HEAD_SHA\" \"c\" \"e\" \"o\" \"$E2E_REPO\" | "
         "jq --arg tag_mode \"$MODE\" '. + {mode:$tag_mode} + (if $tag_mode == "
         "\"container\" then {container_image_configured: true} else {} end)'\n")
+    selftest_third_paste_fails(
+        "branch-advance-capture", ".github/workflows/third-branch-advance.yml",
+        "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - shell: bash\n        run: |\n"
+        "          git fetch origin \"+refs/heads/$b:refs/remotes/origin/$b\"\n"
+        "          commits=\"$(git rev-list --count \"$before..$after\")\"\n")
     selftest_third_paste_fails(
         "token-mint", ".github/workflows/third-token.yml",
         "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"

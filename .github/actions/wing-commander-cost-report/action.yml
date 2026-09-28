@@ -1,0 +1,55 @@
+# Single home for POSTING a stage's already-computed cost line to its
+# lifecycle issue, independent of whatever outcome (if any) that stage
+# announces — see contracts/cost-report-action.md
+# (specs/065-intake-silent-path-cost). Replaces the bespoke reports added
+# for #366 (clarify) and #377 (plan/tasks); intake's four silent paths gain
+# this mechanism for the first time.
+#
+# Relocation note: same self-checkout convention as every other composite
+# under .github/actions/ — see the header of wing-commander-context/action.yml
+# for the verified snippet. Called from inside a caller's already-checked-out
+# `.wing-commander-pipeline` directory, so its own `uses:` line below
+# resolves the same way any stage workflow's own `uses:` line does.
+name: wing-commander-cost-report
+description: >
+  Post one lifecycle-issue comment carrying a stage's per-run cost line,
+  via wing-commander-callout, regardless of which outcome (if any) that
+  stage decided to announce. Gating on run outcome, agent status, or
+  cancellation is the caller's job (its own `if:`), never this action's —
+  it only posts what it is given.
+
+inputs:
+  token:
+    description: >
+      GitHub token with issues: write (the same App-installation token
+      every stage already mints via wing-commander-context)
+    required: true
+  issue-number:
+    description: The lifecycle issue to comment on
+    required: true
+  cost-line:
+    description: >
+      The fully formatted cost line to post verbatim — either the real
+      **Cost**: ... line or the **Cost**: metrics unavailable fallback
+      (steps.cost-line.outputs.line at the call site). Never reformatted,
+      rounded, or recomputed here (FR-004) — this action forwards exactly
+      what it is given.
+    required: true
+  stage-label:
+    description: >
+      Human-readable stage name for the report's summary text (e.g.
+      Intake, Clarify, Plan, Tasks). Composes only the summary; never
+      affects gating.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Post cost report
+      uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+      with:
+        token: ${{ inputs.token }}
+        issue-number: ${{ inputs.issue-number }}
+        kind: info
+        summary: "${{ inputs.stage-label }} run cost"
+        body: ${{ inputs.cost-line }}

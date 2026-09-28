@@ -149,3 +149,12 @@ the six named stages (contracts/post-agent-credential-refresh-gate.md does
 not cover consumption at all — that is proven by
 `.github/scripts/verify-implement-stall-notice-unchanged.py`'s existing
 family, extended in the same PR to the new branch, not by the new gate).
+
+`rebase.yml`'s `rebase` job (spec 073, #558) publishes this signal too, for
+the same reason and with the same shape of gap: it has no separate
+survivor/`stalled` job at all, so nothing consumes `wing-commander-agent-
+ran-signal`'s own outputs. Unlike `plan.yml`, the job still needs to name a
+post-agent step failure — it does so directly, job-locally, by reading
+`wing-commander-failed-post-agent-step`'s `outputs.step` from its own
+"Abandon and escalate" step, never through a job output a second job relays
+(contracts/wing-commander-context-relay.md's `rebase.yml` section).

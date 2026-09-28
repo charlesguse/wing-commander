@@ -126,14 +126,23 @@ WHAT IT CHECKS
    site whose allowed list has neither Write nor Edit) must:
    - grant no Bash command other than READ_ONLY_BASH_GRANTS. Raw git in
      any spelling (`git log:*`, `git *`, `/usr/bin/git show:*`) is named
-     as such; the git grant is `Bash(python3 .github/scripts/
-     board_git_read.py:*)`, a wrapper that runs only log/diff/show and
-     refuses `--output` and every prefix of it, and `-o`;
+     as such; the git grant is `Bash(python3 -I .github/scripts/
+     git_read.py:*)` (the reviewer's is the job's read-only
+     `${{ runner.temp }}/wc-pristine/scripts/git_read.py` snapshot,
+     since its checkout is a branch the fixer wrote -- #518 review), a
+     wrapper that runs only log/diff/show and refuses `--output` and
+     every prefix of it, `-o`, and reads outside the object store;
+   - grant that wrapper, and name it in the prompt of the agent step it
+     feeds by exactly the granted path (every `...git_read.py` token in
+     the prompt must be that path), and not tell the agent to run raw
+     `git log`/`git diff`/`git show`;
    - allow no Write/Edit/MultiEdit/NotebookEdit;
    - deny `Bash(git:*)` (so plain git, which Claude Code otherwise runs
-     as a built-in read-only command, is not a second path), plus Write
-     and Edit (Claude Code refuses a `>`/`>>` redirect because Edit is
-     denied).
+     as a built-in read-only command, is not a second path), Write and
+     Edit (Claude Code refuses a `>`/`>>` redirect because Edit is
+     denied), and `cd`/`pushd`/`popd` (#518 review: `cd` runs with no
+     grant, and after it a relative wrapper path names whatever file
+     sits there). A bare `Bash` deny covers the Bash ones.
    The agent step fed by such a site may not append a Bash grant to its
    own `--allowedTools` outside that list, and must pass the site's
    disallowed-tools output. It also may not switch the checks off or
@@ -145,6 +154,30 @@ WHAT IT CHECKS
    rename cannot make it pass without checking anything. Since #503 the
    list holds only the wrapper and `cat`: a read-only agent gets no `gh`
    command at all.
+
+   4b. read-only-git across the fleet (#518). The same hole was open in
+   implement.yml's progress composer, watchdog.yml's diagnose and
+   pr-conversation.yml's classify. Every other workflow is now checked
+   with the git half of check 4: each read-only tool-args site (the
+   labels in FLEET_READ_ONLY_STEP_LABELS, plus any site whose shipped
+   allowed list has neither Write nor Edit, whole or path-scoped) must
+   grant no raw `Bash(git ...)` (nor bare `Bash`/`Bash(*)`), allow no
+   write tool, deny what check 4 requires, and its agent step must pass the
+   deny list, keep permission checks on, and name the wrapper in its
+   prompt by the granted path. A listed site must grant the wrapper.
+   Other Bash grants (`gh ...`) are not this check's business outside
+   board-loop.yml. The wrapper is the one file .github/scripts/
+   git_read.py; a published stage (workflow_call) reaches it through
+   its pipeline checkout, so its grant is `Bash(python3
+   -I .wing-commander-pipeline/.github/scripts/git_read.py:*)`, and a
+   grant of the repo-local path there (a file a consumer's tree does not
+   have) fails. `${{ inputs.* }}` values (a consumer's own
+   extra/override lists) are ignored; the shipped defaults are checked.
+   An agent step with no tool-args site whose own inline
+   `--allowedTools` has neither Write nor Edit (auto-update-spec-kit.yml's
+   evaluate-path, #518 review) is held to the same rules, its inline
+   `--disallowedTools` read as the deny list. This applies in check 4
+   too.
 
 5. reviewer-staged-inputs (#503). The reviewer prompt named
    `${{ github.workspace }}/../board-review-diff.txt` while its gather
@@ -168,9 +201,10 @@ board-loop tool-args grant carrying `gh issue view`, a second file
 re-implementing all three trust-filter fragments, and spec-request
 creation steps that bypass the builder, feed it the wrong file, or read
 the issue unfiltered, and read-only agents granted raw git or missing a
-deny), unit-test board_spec_request_body.py and board_git_read.py, run
+deny), unit-test board_spec_request_body.py and git_read.py, run
 mutation checks (each mutation of the real board-loop.yml's spec-request
-sites and read-only tool grants must be caught), and confirm the real
+sites and read-only tool grants, and of the other workflows' read-only
+git grants and prompts, must be caught), and confirm the real
 fleet passes.
 """
 import glob
@@ -183,6 +217,7 @@ import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wc_shell_harness import use_utf8_stdout  # noqa: E402
+from wc_published_stages import published_stages  # noqa: E402
 
 BOARD_LOOP = ".github/workflows/board-loop.yml"
 ISSUE_CONTEXT_ACTION = ".github/actions/wing-commander-issue-context/action.yml"
@@ -344,9 +379,49 @@ def check_tool_grants(path):
     return problems
 
 
-GIT_READ_WRAPPER = ".github/scripts/board_git_read.py"
-GIT_READ_GRANT = f"Bash(python3 {GIT_READ_WRAPPER}:*)"
+# The one copy of the wrapper (#518 moved it from board_git_read.py),
+# always run under `python3 -I`. A read-only agent reaches it by a path
+# its job put a trusted copy at:
+# - board-loop.yml's triage and route jobs check out the default branch
+#   and reach it at GIT_READ_WRAPPER;
+# - board-loop.yml's reviewer checks out a branch the fixer wrote, so it
+#   reaches the read-only snapshot its job takes from $GITHUB_SHA before
+#   any agent runs (#583), at SNAPSHOT_GIT_READ_WRAPPER (runner.temp is
+#   expanded by Actions, so the agent is granted a literal path);
+# - a published stage (workflow_call) runs in the consumer's tree with the
+#   pipeline checked out at PIPELINE_CHECKOUT, so its agents reach it at
+#   PUBLISHED_GIT_READ_WRAPPER.
+GIT_READ_WRAPPER = ".github/scripts/git_read.py"
+PIPELINE_CHECKOUT = ".wing-commander-pipeline"
+PUBLISHED_GIT_READ_WRAPPER = f"{PIPELINE_CHECKOUT}/{GIT_READ_WRAPPER}"
+SNAPSHOT_GIT_READ_WRAPPER = "${{ runner.temp }}/wc-pristine/scripts/git_read.py"
+
+
+def _wrapper_grant(wrapper):
+    return f"Bash(python3 -I {wrapper}:*)"
+
+
+GIT_READ_GRANT = _wrapper_grant(GIT_READ_WRAPPER)
+PUBLISHED_GIT_READ_GRANT = _wrapper_grant(PUBLISHED_GIT_READ_WRAPPER)
+SNAPSHOT_GIT_READ_GRANT = _wrapper_grant(SNAPSHOT_GIT_READ_WRAPPER)
 RAW_GIT_DENY = "Bash(git:*)"
+# Denied to every read-only agent. Bash(git:*) keeps plain git from being
+# a second way around the wrapper; Write and Edit being denied is what
+# makes Claude Code refuse a `>` redirect; cd/pushd/popd are denied because
+# a relative wrapper path after `cd somewhere` names whatever file sits at
+# that path there (#518 review: `cd` needs no grant otherwise).
+REQUIRED_READ_ONLY_DENIES = (RAW_GIT_DENY, "Write", "Edit", "Bash(cd:*)",
+                             "Bash(pushd:*)", "Bash(popd:*)")
+# Any token naming the wrapper, by whatever path. Each one in a read-only
+# agent's prompt must be exactly the token its grant names.
+WRAPPER_TOKEN_RE = re.compile(r"[^\s`'\"(]*" + re.escape(
+    os.path.basename(GIT_READ_WRAPPER)))
+# A prompt telling the agent to run raw git log/diff/show: at the start of
+# a line or right after an opening backtick.
+PROMPT_RAW_GIT_RE = re.compile(r"(?:^[ \t]*|`)git\s+(?:log|diff|show)\b",
+                               re.MULTILINE)
+# A consumer's own extra/override tool lists: not shipped, not checked.
+CONSUMER_INPUT_RE = re.compile(r"\$\{\{\s*inputs\.[A-Za-z0-9_-]+\s*\}\}")
 # The only Bash grants a read-only board-loop agent may hold. Each one was
 # checked to write nothing: the wrapper refuses git's --output (#513);
 # `cat` has no write option, and Claude Code denies a `>`/`>>` redirect
@@ -359,6 +434,19 @@ READ_ONLY_BASH_GRANTS = (GIT_READ_GRANT, "Bash(cat:*)")
 # allowed list has neither Write nor Edit is held to the same rules.
 READ_ONLY_STEP_LABELS = ("board-loop.triage-propose",
                          "board-loop.route-propose", "board-loop.reviewer")
+# The wrapper grant each board-loop read-only agent must hold (None: any
+# other read-only site). The reviewer's tree is agent-written, so it runs
+# the snapshot (#518 review).
+BOARD_LOOP_GIT_GRANTS = {None: GIT_READ_GRANT,
+                         "board-loop.reviewer": SNAPSHOT_GIT_READ_GRANT}
+# Check 4b (#518): the read-only agent steps outside board-loop.yml that
+# read git, by workflow. Each must grant the wrapper. Any other site
+# whose shipped allowed list has neither Write nor Edit is checked too.
+FLEET_READ_ONLY_STEP_LABELS = {
+    ".github/workflows/implement.yml": ("implement.post-progress-comment",),
+    ".github/workflows/pr-conversation.yml": ("pr-conversation.classify",),
+    ".github/workflows/watchdog.yml": ("watchdog.diagnose",),
+}
 WRITE_TOOLS = ("Write", "Edit", "MultiEdit", "NotebookEdit")
 TOOL_ARGS_OUTPUT_RE = re.compile(
     r"steps\.([A-Za-z0-9_-]+)\.outputs\.(allowed|disallowed)-tools")
@@ -367,6 +455,10 @@ TOOL_ARGS_OUTPUT_RE = re.compile(
 # whole). Only allow flags are scanned: a literal deny is not a grant.
 ALLOWED_TOOLS_ARG_RE = re.compile(
     r"--allowed(?:Tools|-tools)(?:=|[ \t]+)(\"[^\"]*\"|'[^']*'|[^\n]*)")
+# The same for `--disallowedTools`, read only for an agent step whose lists
+# are inline rather than composed by wing-commander-tool-args (#518).
+DISALLOWED_TOOLS_ARG_RE = re.compile(
+    r"--disallowed(?:Tools|-tools)(?:=|[ \t]+)(\"[^\"]*\"|'[^']*'|[^\n]*)")
 
 
 def _tool_names(value):
@@ -379,11 +471,17 @@ def _tool_names(value):
     return names
 
 
-def _bash_grant_problems(text, where):
+def _bash_grant_problems(text, where, git_grant=GIT_READ_GRANT, strict=True):
+    """Problems with the Bash grants in `text` for a read-only agent whose
+    git grant is `git_grant`. `strict` (board-loop.yml, check 4) allows
+    only that grant and `cat`; otherwise (check 4b) only git is checked:
+    no raw git in any spelling, no unrestricted Bash, and the wrapper by
+    no other path."""
     problems = []
+    allowed = (git_grant, "Bash(cat:*)") if strict else (git_grant,)
     for m in BASH_GRANT_RE.finditer(text or ""):
         grant = m.group(0)
-        if grant in READ_ONLY_BASH_GRANTS:
+        if grant in allowed:
             continue
         command = m.group(1).split(":", 1)[0].strip().rstrip("* ")
         tokens = command.split()
@@ -392,7 +490,18 @@ def _bash_grant_problems(text, where):
                 f"{where} grants raw {grant} to a read-only agent. git "
                 f"log/diff/show take --output=<path>, which writes a file, "
                 f"and an allow rule does not stop it (#513). Grant "
-                f"{GIT_READ_GRANT} instead.")
+                f"{git_grant} instead.")
+        elif not tokens:
+            problems.append(
+                f"{where} grants unrestricted {grant} to a read-only agent, "
+                f"which includes raw git (#513).")
+        elif WRAPPER_TOKEN_RE.search(command):
+            problems.append(
+                f"{where} grants {grant}, which is not this workflow's git "
+                f"wrapper grant {git_grant}: the agent would be pointed at "
+                f"a path its job does not run the wrapper from (#518).")
+        elif not strict:
+            continue
         elif tokens and os.path.basename(tokens[0]) == "gh":
             problems.append(
                 f"{where} grants {grant} to a read-only agent. `gh pr view "
@@ -448,79 +557,148 @@ def _permission_bypass_problems(claude_args, settings_input, where):
     return problems
 
 
-def check_read_only_git(path):
-    """Gate 93 check 4 (#513): a read-only board-loop agent gets no raw
-    `Bash(git ...)` grant and no Bash grant outside READ_ONLY_BASH_GRANTS,
-    has `Bash(git:*)`, Write and Edit denied, and no write tool allowed,
-    through the tool-args composite or its own claude_args."""
+def _can_write(names):
+    """Whether a tool list allows Write or Edit, whole or path-scoped
+    (`Write(dir/**)`): such an agent is not a read-only one."""
+    return any(n.split("(", 1)[0] in ("Write", "Edit") for n in names)
+
+
+def _shipped(value):
+    """A tool-list input as shipped: a consumer's own `${{ inputs.* }}`
+    list is theirs to set, not this gate's to check."""
+    return CONSUMER_INPUT_RE.sub("", str(value or ""))
+
+
+def check_read_only_git(path, labels=READ_ONLY_STEP_LABELS,
+                        git_grant=BOARD_LOOP_GIT_GRANTS, strict=True):
+    """Gate 93 check 4 (#513) and, with strict=False, check 4b (#518): a
+    read-only agent gets no raw `Bash(git ...)` grant (strict: and no Bash
+    grant but the wrapper and `cat`), has REQUIRED_READ_ONLY_DENIES
+    denied, and no write tool allowed, through the tool-args composite or
+    its own claude_args. A read-only agent is one fed by a tool-args site
+    in `labels`, or by any site whose shipped allowed list has neither
+    Write nor Edit, or an agent step with no tool-args site whose own
+    inline --allowedTools has neither. `git_grant` is the wrapper grant
+    (or a {label: grant} map with a None default); a site in `labels`
+    must hold it, and the prompt of an agent step granted the wrapper
+    must name it by exactly the granted command and never tell the agent
+    to run raw git."""
     problems = []
+    check = "check 4" if strict else "check 4b"
+    grants = git_grant if isinstance(git_grant, dict) else {None: git_grant}
+
+    def grant_for(label):
+        return grants.get(label, grants[None])
+
     try:
         with open(path, encoding="utf-8") as fh:
             doc = yaml.safe_load(fh)
     except yaml.YAMLError as exc:
         return [f"{path}: could not parse as YAML ({exc})"]
+    except OSError as exc:
+        return [f"{path}: could not read ({exc}) -- {check} found nothing "
+                f"to check."]
     if not isinstance(doc, (dict, list)):
-        return [f"{path}: not a workflow -- check 4 found nothing to check."]
+        return [f"{path}: not a workflow -- {check} found nothing to check."]
 
-    read_only_ids = set()
+    def deny_problems(disallowed, where):
+        out = []
+        for needed in REQUIRED_READ_ONLY_DENIES:
+            if needed not in disallowed and not (
+                    needed.startswith("Bash(") and "Bash" in disallowed):
+                out.append(
+                    f"{where} does not deny {needed} to a read-only agent. "
+                    f"{RAW_GIT_DENY} keeps plain git from being a second "
+                    f"way around the git wrapper; Write and Edit being "
+                    f"denied is what makes Claude Code refuse a `>` "
+                    f"redirect (#513); cd/pushd/popd would let a relative "
+                    f"wrapper path name a planted copy (#518).")
+        return out
+
+    read_only_ids = {}      # tool-args step id -> the grant it must hold
+    wrapper_ids = set()
     labels_seen = set()
     for step in find_tool_args_steps(doc):
         with_block = step.get("with") or {}
         if not isinstance(with_block, dict):
             continue
         label = str(with_block.get("step-label") or "")
-        override = with_block.get("allowed-tools-override")
-        allowed_values = ([str(override)] if override is not None else
-                          [str(with_block.get("default-allowed-tools") or ""),
-                           str(with_block.get("extra-allowed-tools") or "")])
+        override = _shipped(with_block.get("allowed-tools-override"))
+        allowed_values = ([override] if override and override.strip() else
+                          [_shipped(with_block.get("default-allowed-tools")),
+                           _shipped(with_block.get("extra-allowed-tools"))])
         allowed = [n for v in allowed_values for n in _tool_names(v)]
-        if (label not in READ_ONLY_STEP_LABELS
-                and any(t in allowed for t in ("Write", "Edit"))):
+        if (label not in labels
+                and _can_write(allowed)):
             continue
         labels_seen.add(label)
+        site_grant = grant_for(label)
         if step.get("id"):
-            read_only_ids.add(str(step["id"]))
+            read_only_ids[str(step["id"])] = site_grant
+            if site_grant in allowed:
+                wrapper_ids.add(str(step["id"]))
         where = f"{path}: step {step.get('name') or label!r}"
         for value in allowed_values:
-            problems.extend(_bash_grant_problems(value, where))
+            problems.extend(_bash_grant_problems(value, where, site_grant,
+                                                 strict))
+        if label in labels and site_grant not in allowed:
+            problems.append(
+                f"{where} does not grant {site_grant}; this read-only agent "
+                f"reads git history only through that wrapper (#518).")
         for tool in WRITE_TOOLS:
             if tool in allowed:
                 problems.append(f"{where} allows {tool} to a read-only "
                                 f"agent (#513).")
-        d_override = with_block.get("disallowed-tools-override")
+        d_override = _shipped(with_block.get("disallowed-tools-override"))
         disallowed = _tool_names(
-            d_override if d_override is not None else
-            f"{with_block.get('default-disallowed-tools') or ''},"
-            f"{with_block.get('extra-disallowed-tools') or ''}")
-        for needed in (RAW_GIT_DENY, "Write", "Edit"):
-            if needed not in disallowed:
-                problems.append(
-                    f"{where} does not deny {needed} to a read-only agent. "
-                    f"{RAW_GIT_DENY} keeps plain git from being a second "
-                    f"way around {GIT_READ_WRAPPER}; Write and Edit being "
-                    f"denied is what makes Claude Code refuse a `>` "
-                    f"redirect (#513).")
+            d_override if d_override and d_override.strip() else
+            f"{_shipped(with_block.get('default-disallowed-tools'))},"
+            f"{_shipped(with_block.get('extra-disallowed-tools'))}")
+        problems.extend(deny_problems(disallowed, where))
 
-    for label in READ_ONLY_STEP_LABELS:
+    for label in labels:
         if label not in labels_seen:
             problems.append(
-                f"{path}: no tool-args step labelled {label!r} -- check 4 "
+                f"{path}: no tool-args step labelled {label!r} -- {check} "
                 f"would pass without checking it. If it was renamed, "
-                f"update READ_ONLY_STEP_LABELS.")
+                f"update READ_ONLY_STEP_LABELS/FLEET_READ_ONLY_STEP_LABELS.")
 
     for step in find_agent_steps(doc):
         with_block = step.get("with") or {}
         if not isinstance(with_block, dict):
             continue
         claude_args = str(with_block.get("claude_args") or "")
+        name = step.get('name') or step.get('id')
+        where = f"{path}: agent step {name!r}'s claude_args"
         refs = {m.group(1) for m in TOOL_ARGS_OUTPUT_RE.finditer(claude_args)}
-        ids = refs & read_only_ids
+        ids = refs & set(read_only_ids)
+        inline_allowed = [m.group(1).strip("\"'") for m in
+                          ALLOWED_TOOLS_ARG_RE.finditer(claude_args)]
+        step_grants = {read_only_ids[i] for i in ids}
+        granted_wrapper = bool(ids & wrapper_ids)
         if not ids:
-            continue
-        where = (f"{path}: agent step {step.get('name') or step.get('id')!r}"
-                 f"'s claude_args")
-        for m in ALLOWED_TOOLS_ARG_RE.finditer(claude_args):
-            problems.extend(_bash_grant_problems(m.group(1), where))
+            # #518 review: an agent step with no tool-args site whose own
+            # inline --allowedTools has no Write/Edit is read-only too.
+            if refs or not inline_allowed:
+                continue
+            names = [n for v in inline_allowed for n in _tool_names(v)]
+            if _can_write(names):
+                continue
+            site_grant = grant_for(None)
+            step_grants = {site_grant}
+            granted_wrapper = site_grant in names
+            for tool in WRITE_TOOLS:
+                if tool in names:
+                    problems.append(f"{where} allows {tool} to a read-only "
+                                    f"agent (#513).")
+            denied = [m.group(1).strip("\"'") for m in
+                      DISALLOWED_TOOLS_ARG_RE.finditer(claude_args)]
+            problems.extend(deny_problems(
+                [n for v in denied for n in _tool_names(v)], where))
+        for step_grant in sorted(step_grants):
+            for value in inline_allowed:
+                problems.extend(_bash_grant_problems(value, where,
+                                                     step_grant, strict))
         problems.extend(_permission_bypass_problems(
             claude_args, with_block.get("settings"), where))
         for tool_id in sorted(ids):
@@ -529,10 +707,62 @@ def check_read_only_git(path):
                     f"{where} does not pass steps.{tool_id}.outputs."
                     f"disallowed-tools, so {RAW_GIT_DENY}/Write/Edit are not "
                     f"denied (#513).")
+        prompt = str(with_block.get("prompt") or "")
+        where = f"{path}: agent step {name!r}'s prompt"
+        for step_grant in sorted(step_grants):
+            command = BASH_GRANT_RE.match(step_grant).group(1).split(":", 1)[0]
+            token = WRAPPER_TOKEN_RE.search(command).group(0)
+            for m in PROMPT_RAW_GIT_RE.finditer(prompt):
+                problems.append(
+                    f"{where} tells a read-only agent to run raw "
+                    f"{m.group(0).strip(' `')!r}, which its tools deny; name "
+                    f"`{command}` instead (#518).")
+            if not granted_wrapper:
+                continue
+            if command not in prompt:
+                problems.append(
+                    f"{where} never tells the agent to run `{command}`, "
+                    f"the git wrapper it is granted (#518).")
+            for other in sorted(set(WRAPPER_TOKEN_RE.findall(prompt))
+                                - {token}):
+                problems.append(
+                    f"{where} names the git wrapper as {other!r}, but the "
+                    f"agent is granted it only as `{command}` (#518).")
 
     if not os.path.isfile(GIT_READ_WRAPPER):
         problems.append(f"{GIT_READ_WRAPPER} is missing, but read-only "
-                        f"board-loop agents are granted it.")
+                        f"agents are granted it.")
+    return problems
+
+
+def fleet_git_grant(path, published):
+    """The wrapper grant a workflow's read-only agents must hold: through
+    the pipeline checkout for a published stage, repo-local otherwise."""
+    return PUBLISHED_GIT_READ_GRANT if path in published else GIT_READ_GRANT
+
+
+def check_fleet_read_only_git(root="."):
+    """Gate 93 check 4b (#518): check 4's git rules for every workflow
+    other than board-loop.yml (which check 4 holds to the strict list)."""
+    problems = []
+    published = set(published_stages(root))
+    base = os.path.join(root, ".github", "workflows")
+    paths = sorted(glob.glob(os.path.join(base, "*.yml"))
+                   + glob.glob(os.path.join(base, "*.yaml")))
+    rel_paths = []
+    for full in paths:
+        rel = os.path.relpath(full, root).replace(os.sep, "/")
+        rel_paths.append(rel)
+        if rel == BOARD_LOOP:
+            continue
+        problems.extend(check_read_only_git(
+            full, labels=FLEET_READ_ONLY_STEP_LABELS.get(rel, ()),
+            git_grant=fleet_git_grant(rel, published), strict=False))
+    for rel in FLEET_READ_ONLY_STEP_LABELS:
+        if rel not in rel_paths:
+            problems.append(f"{rel} is missing, but FLEET_READ_ONLY_STEP_"
+                            f"LABELS names read-only agents in it -- check "
+                            f"4b would pass without checking them.")
     return problems
 
 
@@ -1082,6 +1312,7 @@ def check_repo():
     problems.extend(check_tool_grants(BOARD_LOOP))
     problems.extend(check_spec_request_bodies(BOARD_LOOP))
     problems.extend(check_read_only_git(BOARD_LOOP))
+    problems.extend(check_fleet_read_only_git())
     problems.extend(check_reviewer_staged_inputs(BOARD_LOOP))
     for path in gather_scannable_files():
         problems.extend(check_single_home(path, ISSUE_CONTEXT_ACTION))
@@ -1762,13 +1993,15 @@ def _mutation_check_spec_request_sites():
 
 
 _RO_ALLOWED = f"Read,Grep,Glob,{GIT_READ_GRANT},Bash(cat:*)"
-_RO_DENIED = "WebSearch,WebFetch,Write,Edit,Bash(git:*),Bash(git push:*)"
+_RO_DENIED = ("WebSearch,WebFetch,Write,Edit,Bash(git:*),Bash(cd:*),Bash(pushd:*),"
+              "Bash(popd:*),Bash(git push:*)")
 
 
 def _read_only_fixture(allowed=_RO_ALLOWED, denied=_RO_DENIED,
                        claude_allowed='"${{ steps.ta.outputs.allowed-tools }}"',
                        claude_denied='"${{ steps.ta.outputs.disallowed-tools }}"',
-                       extra_step="", claude_extra="", with_extra=""):
+                       extra_step="", claude_extra="", with_extra="",
+                       prompt=f"run python3 -I {GIT_READ_WRAPPER} log -1"):
     """A workflow with the three read-only tool-args sites; the route one
     (id `ta`) takes the given lists and feeds an agent step."""
     def site(label, step_id, allow, deny):
@@ -1785,20 +2018,70 @@ def _read_only_fixture(allowed=_RO_ALLOWED, denied=_RO_DENIED,
             "    steps:\n"
             + site("board-loop.triage-propose", "tt", _RO_ALLOWED, _RO_DENIED)
             + site("board-loop.route-propose", "ta", allowed, denied)
-            + site("board-loop.reviewer", "tr", _RO_ALLOWED, _RO_DENIED)
+            + site("board-loop.reviewer", "tr", _RO_ALLOWED.replace(
+                GIT_READ_GRANT, SNAPSHOT_GIT_READ_GRANT), _RO_DENIED)
             + site("board-loop.fixer", "tf",
                    "Read,Write,Edit,Bash(git log:*),Bash(git commit:*)",
                    "WebFetch")
             + "      - name: Route-propose\n"
             "        uses: anthropics/claude-code-action@v1\n"
             "        with:\n"
-            "          prompt: hello\n"
+            f"          prompt: \"{prompt}\"\n"
             + with_extra
             + "          claude_args: |\n"
             f"            --allowedTools {claude_allowed}\n"
             f"            --disallowedTools {claude_denied}\n"
             + (f"            {claude_extra}\n" if claude_extra else "")
             + extra_step)
+
+
+_FLEET_ALLOWED = f"Read,Grep,Bash(gh run view:*),{PUBLISHED_GIT_READ_GRANT}"
+_FLEET_DENIED = "WebFetch,Write,Edit,Bash(git:*),Bash(cd:*),Bash(pushd:*),Bash(popd:*)"
+
+
+def _fleet_fixture(allowed=_FLEET_ALLOWED, denied=_FLEET_DENIED,
+                   prompt=f"run python3 -I {PUBLISHED_GIT_READ_WRAPPER} log -1",
+                   with_extra="", extra_site=""):
+    """A published-stage-shaped workflow for check 4b: one labelled
+    read-only site (`stage.ro`, id `ro`) feeding an agent step."""
+    return ("name: gate-93-fixture-fleet\n"
+            "jobs:\n"
+            "  demo:\n"
+            "    steps:\n"
+            "      - name: Compose tool args (stage.ro)\n"
+            "        id: ro\n"
+            "        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-tool-args\n"
+            "        with:\n"
+            f"          default-allowed-tools: \"{allowed}\"\n"
+            f"          default-disallowed-tools: \"{denied}\"\n"
+            + with_extra +
+            "          step-label: \"stage.ro\"\n"
+            + extra_site +
+            "      - name: Agent\n"
+            "        uses: anthropics/claude-code-action@v1\n"
+            "        with:\n"
+            f"          prompt: \"{prompt}\"\n"
+            "          claude_args: |\n"
+            "            --allowedTools \"${{ steps.ro.outputs.allowed-tools }}\"\n"
+            "            --disallowedTools \"${{ steps.ro.outputs.disallowed-tools }}\"\n")
+
+
+def _inline_fixture(allowed=f"Read,Bash(gh api:*),{PUBLISHED_GIT_READ_GRANT}",
+                    denied=_FLEET_DENIED,
+                    prompt=f"run python3 -I {PUBLISHED_GIT_READ_WRAPPER} diff"):
+    """An agent step with no tool-args site: its lists are inline in
+    claude_args (the shape of auto-update-spec-kit.yml's evaluate-path)."""
+    return ("name: gate-93-fixture-inline\n"
+            "jobs:\n"
+            "  demo:\n"
+            "    steps:\n"
+            "      - name: Decide\n"
+            "        uses: anthropics/claude-code-action@v1\n"
+            "        with:\n"
+            f"          prompt: \"{prompt}\"\n"
+            "          claude_args: |\n"
+            f"            --allowedTools \"{allowed}\"\n"
+            f"            --disallowedTools \"{denied}\"\n")
 
 
 def _self_test_read_only_git(tmpdir):
@@ -1833,7 +2116,27 @@ def _self_test_read_only_git(tmpdir):
         ("wrapper granted under a different spelling",
          _read_only_fixture(allowed=_RO_ALLOWED.replace(
              GIT_READ_GRANT, "Bash(python3 .github/scripts/board_git_read.py*)")),
-         "not in this gate's READ_ONLY_BASH_GRANTS"),
+         "is not this workflow's git wrapper grant"),
+        ("wrapper granted by the published-stage path in board-loop",
+         _read_only_fixture(allowed=_RO_ALLOWED.replace(
+             GIT_READ_GRANT, PUBLISHED_GIT_READ_GRANT)),
+         "is not this workflow's git wrapper grant"),
+        ("route no longer grants the wrapper",
+         _read_only_fixture(allowed=_RO_ALLOWED.replace(
+             "," + GIT_READ_GRANT, "")),
+         f"does not grant {GIT_READ_GRANT}"),
+        ("prompt never names the wrapper",
+         _read_only_fixture(prompt="read the history"),
+         f"never tells the agent to run `python3 -I {GIT_READ_WRAPPER}`"),
+        ("prompt names the wrapper by another path",
+         _read_only_fixture(prompt=(
+             f"run python3 -I {GIT_READ_WRAPPER} log, or python3 "
+             f"{PUBLISHED_GIT_READ_WRAPPER} show")),
+         f"names the git wrapper as '{PUBLISHED_GIT_READ_WRAPPER}'"),
+        ("prompt tells the agent to run raw git",
+         _read_only_fixture(prompt=(
+             f"run python3 -I {GIT_READ_WRAPPER} log, or `git show HEAD`")),
+         "tells a read-only agent to run raw 'git show'"),
         ("bare Bash grant",
          _read_only_fixture(allowed=_RO_ALLOWED + ",Bash"),
          "grants bare Bash"),
@@ -1846,6 +2149,16 @@ def _self_test_read_only_git(tmpdir):
         ("Edit not denied",
          _read_only_fixture(denied=_RO_DENIED.replace(",Edit", "")),
          "does not deny Edit"),
+        ("cd not denied (the #518 review's cd escape)",
+         _read_only_fixture(denied=_RO_DENIED.replace(",Bash(cd:*)", "")),
+         "does not deny Bash(cd:*)"),
+        ("pushd not denied",
+         _read_only_fixture(denied=_RO_DENIED.replace(",Bash(pushd:*)", "")),
+         "does not deny Bash(pushd:*)"),
+        ("reviewer granted the working-tree wrapper",
+         _read_only_fixture().replace(
+             SNAPSHOT_GIT_READ_GRANT, GIT_READ_GRANT),
+         f"does not grant {SNAPSHOT_GIT_READ_GRANT}"),
         ("raw git appended in claude_args",
          _read_only_fixture(claude_allowed=(
              '"${{ steps.ta.outputs.allowed-tools }},Bash(git show:*)"')),
@@ -1890,11 +2203,63 @@ def _self_test_read_only_git(tmpdir):
          _read_only_fixture().replace("board-loop.reviewer", "board-loop.rv"),
          "no tool-args step labelled 'board-loop.reviewer'"),
     ]
-    for index, (label, text, expect) in enumerate(cases):
+    fleet = {"labels": ("stage.ro",), "git_grant": PUBLISHED_GIT_READ_GRANT,
+             "strict": False}
+    inline = dict(fleet, labels=())
+    cases = [c + ({},) for c in cases] + [
+        ("4b: well-formed published read-only site (gh left alone)",
+         _fleet_fixture(), None, fleet),
+        ("4b: consumer override inputs are not the shipped list",
+         _fleet_fixture(with_extra=(
+             "          allowed-tools-override: ${{ inputs.allowed-tools-override }}\n"
+             "          disallowed-tools-override: ${{ inputs.disallowed-tools-override }}\n")),
+         None, fleet),
+        ("4b: raw Bash(git log:*) (the #518 shape)",
+         _fleet_fixture(allowed=_FLEET_ALLOWED + ",Bash(git log:*)"),
+         "grants raw Bash(git log:*)", fleet),
+        ("4b: unrestricted Bash(*)",
+         _fleet_fixture(allowed=_FLEET_ALLOWED + ",Bash(*)"),
+         "grants unrestricted Bash(*)", fleet),
+        ("4b: repo-local wrapper path in a published stage",
+         _fleet_fixture(allowed=_FLEET_ALLOWED.replace(
+             PUBLISHED_GIT_READ_GRANT, GIT_READ_GRANT)),
+         "is not this workflow's git wrapper grant", fleet),
+        ("4b: Bash(git:*) not denied",
+         _fleet_fixture(denied=_FLEET_DENIED.replace(",Bash(git:*)", "")),
+         "does not deny Bash(git:*)", fleet),
+        ("4b: prompt names the repo-local wrapper path",
+         _fleet_fixture(prompt=f"run python3 -I {GIT_READ_WRAPPER} log"),
+         f"names the git wrapper as '{GIT_READ_WRAPPER}'", fleet),
+        ("4b: an unlisted site with no Write/Edit holds raw git",
+         _fleet_fixture(extra_site=(
+             "      - name: Compose tool args (stage.summary)\n"
+             "        id: ts\n"
+             "        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-tool-args\n"
+             "        with:\n"
+             "          default-allowed-tools: \"Read,Bash(git show:*)\"\n"
+             "          default-disallowed-tools: \"WebFetch\"\n"
+             "          step-label: \"stage.summary\"\n")),
+         "grants raw Bash(git show:*)", fleet),
+        ("4b: well-formed inline read-only agent step",
+         _inline_fixture(), None, inline),
+        ("4b: inline read-only agent step holds raw git (#518 review)",
+         _inline_fixture(allowed="Read,Bash(gh api:*),Bash(git diff:*)"),
+         "grants raw Bash(git diff:*)", inline),
+        ("4b: inline read-only agent step does not deny cd",
+         _inline_fixture(denied=_FLEET_DENIED.replace(",Bash(cd:*)", "")),
+         "does not deny Bash(cd:*)", inline),
+        ("4b: inline agent step with path-scoped Write is not read-only",
+         _inline_fixture(allowed="Read,Write(scratch/**),Bash(git diff:*)",
+                         denied="WebFetch"), None, inline),
+        ("4b: inline agent step denying bare Bash needs no Bash denies",
+         _inline_fixture(allowed="Read", denied="WebFetch,Write,Edit,Bash",
+                         prompt="read only"), None, inline),
+    ]
+    for index, (label, text, expect, kwargs) in enumerate(cases):
         path = os.path.join(tmpdir, f"gate-93-fixture-git-{index}.yml")
         with open(path, "w", encoding="utf-8") as fh:
             fh.write(text)
-        problems = check_read_only_git(path)
+        problems = check_read_only_git(path, **kwargs)
         if expect is None:
             if problems:
                 failures.append(f"check 4 fixture {label!r} should pass but "
@@ -1911,14 +2276,14 @@ def _self_test_read_only_git(tmpdir):
 
 
 def _self_test_git_read_wrapper():
-    """board_git_read.py: log/diff/show with ordinary arguments pass; every
+    """git_read.py: log/diff/show with ordinary arguments pass; every
     spelling of --output, -o, and every other subcommand are refused, and
     a refused call runs nothing."""
     import importlib.util
     import subprocess
     failures = []
     try:
-        spec = importlib.util.spec_from_file_location("board_git_read",
+        spec = importlib.util.spec_from_file_location("git_read",
                                                       GIT_READ_WRAPPER)
         w = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(w)
@@ -1982,10 +2347,78 @@ def _self_test_git_read_wrapper():
         ["--git-dir=/tmp", "log"],
         ["LOG"],
         ["log;", "rm"],
+        # #518 review: reads outside the object store, and external
+        # commands, under every spelling git could accept.
+        ["diff", "--no-index", "a", "b"],
+        ["diff", "--no-index=x", "a", "b"],
+        ["diff", "--no-inde", "a", "b"],
+        ["diff", "--no-i", "a", "b"],
+        ["log", "--no-index"],
+        ["show", "--no-index"],
+        ["diff", "--ext-diff", "HEAD"],
+        ["log", "-p", "--ext", "-1"],
+        ["show", "--textconv", "HEAD"],
+        ["diff", "--textc", "HEAD"],
     )
     for argv in refused:
         if w.refusal(argv) is None:
             failures.append(f"wrapper did not refuse {argv!r}")
+
+    # Paths: with a work tree, a diff path outside it is refused (git
+    # would compare plain files -- an implicit --no-index); inside it, and
+    # revision ranges, pass.
+    top = os.path.abspath(".")
+    outside = os.path.dirname(top)
+    for argv in (["diff", "HEAD", "--", "README.md"],
+                 ["diff", "origin/main...HEAD"],
+                 ["diff", "HEAD~1..HEAD", "--stat"],
+                 ["show", "--text", "HEAD"],
+                 ["diff", "-a", "--no-indent-heuristic", "HEAD"],
+                 ["log", "--", "/etc"]):
+        reason = w.refusal(argv, top, top)
+        if reason is not None:
+            failures.append(f"wrapper refused in-tree {argv!r}: {reason}")
+    for argv in (["diff", "/etc/hostname", ".git/config"],
+                 ["diff", ".git/config", "/etc/hostname"],
+                 ["diff", "--", "../x", "README.md"],
+                 ["diff", "--stat", outside, "."],
+                 ["diff", "HEAD", "--", "sub/../../x"]):
+        if w.refusal(argv, top, top) is None:
+            failures.append(f"wrapper did not refuse out-of-tree {argv!r}")
+    cmd = w.command(["diff", "HEAD"])
+    for needed in ("--no-pager", "diff.external=", "core.pager=cat",
+                   "--no-ext-diff", "--no-textconv"):
+        if needed not in cmd:
+            failures.append(f"wrapper command {cmd!r} lacks {needed!r}")
+    if cmd.index("diff") > cmd.index("--no-ext-diff"):
+        failures.append(f"wrapper command {cmd!r} puts --no-ext-diff "
+                        f"before the subcommand")
+    env = w.clean_env({"GIT_EXTERNAL_DIFF": "x", "GIT_PAGER": "x",
+                       "GIT_CONFIG_PARAMETERS": "x", "GIT_CONFIG_COUNT": "1",
+                       "GIT_CONFIG_KEY_0": "x", "GIT_CONFIG_GLOBAL": "x",
+                       "PATH": "/usr/bin", "HOME": "/h"})
+    if sorted(env) != ["HOME", "PATH"]:
+        failures.append(f"wrapper clean_env kept {sorted(env)!r}")
+
+    # End to end in a scratch repository: an implicit --no-index diff of
+    # .git/config prints nothing and exits 2, and so does any call made
+    # outside a work tree.
+    with tempfile.TemporaryDirectory() as tmpdir:
+        repo = os.path.join(tmpdir, "repo")
+        os.mkdir(repo)
+        subprocess.run(["git", "init", "-q", repo], check=True)
+        secret = os.path.join(tmpdir, "outside.txt")
+        with open(secret, "w", encoding="utf-8") as fh:
+            fh.write("x\n")
+        wrapper = os.path.abspath(GIT_READ_WRAPPER)
+        for cwd, argv in ((repo, ["diff", secret, ".git/config"]),
+                          (tmpdir, ["log", "-1"])):
+            result = subprocess.run([sys.executable, "-I", wrapper, *argv],
+                                    cwd=cwd, capture_output=True, text=True)
+            if result.returncode != 2 or result.stdout:
+                failures.append(f"wrapper {argv!r} in {cwd} exited "
+                                f"{result.returncode} (want 2) or printed "
+                                f"{result.stdout[:200]!r}")
 
     # A refused call must exit 2 and run nothing -- check it end to end.
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -2007,39 +2440,57 @@ def _self_test_git_read_wrapper():
 
 # Each mutation rewrites the REAL board-loop.yml in memory the way a later
 # edit could reopen #513; check 4 must catch every one.
+_BL_DENY_TAIL = ('Bash(git:*),Bash(cd:*),Bash(pushd:*),Bash(popd:*),'
+                 'Bash(git push:*),Bash(git commit:*)"')
 READ_ONLY_GIT_MUTATIONS = (
     ("route regains Bash(git log:*)",
      f'"Read,Grep,Glob,{GIT_READ_GRANT},Bash(cat:*)"\n'
      '          default-disallowed-tools: "WebSearch,WebFetch,Write,Edit,'
-     'Bash(git:*),Bash(git push:*),Bash(git commit:*)"\n'
+     + _BL_DENY_TAIL + '\n'
      '          step-label: "board-loop.route-propose"',
      '"Read,Grep,Glob,Bash(git log:*),Bash(cat:*)"\n'
      '          default-disallowed-tools: "WebSearch,WebFetch,Write,Edit,'
-     'Bash(git:*),Bash(git push:*),Bash(git commit:*)"\n'
+     + _BL_DENY_TAIL + '\n'
      '          step-label: "board-loop.route-propose"'),
     ("triage regains Bash(git show:*)",
      f'"Read,Grep,Glob,{GIT_READ_GRANT},Bash(cat:*)"\n'
      '          default-disallowed-tools: "WebSearch,WebFetch,Write,Edit,'
-     'Bash(git:*),Bash(git push:*),Bash(gh issue close:*)',
+     'Bash(git:*),Bash(cd:*),Bash(pushd:*),Bash(popd:*),Bash(git push:*),'
+     'Bash(gh issue close:*)',
      f'"Read,Grep,Glob,{GIT_READ_GRANT},Bash(cat:*),Bash(git show:*)"\n'
      '          default-disallowed-tools: "WebSearch,WebFetch,Write,Edit,'
-     'Bash(git:*),Bash(git push:*),Bash(gh issue close:*)'),
+     'Bash(git:*),Bash(cd:*),Bash(pushd:*),Bash(popd:*),Bash(git push:*),'
+     'Bash(gh issue close:*)'),
     ("reviewer stops denying Bash(git:*)",
-     '"WebSearch,WebFetch,Write,Edit,Bash(git:*),Bash(git push:*),'
-     'Bash(git commit:*)"\n'
+     '"WebSearch,WebFetch,Write,Edit,' + _BL_DENY_TAIL + '\n'
      '          step-label: "board-loop.reviewer"',
-     '"WebSearch,WebFetch,Write,Edit,Bash(git push:*),'
-     'Bash(git commit:*)"\n'
+     '"WebSearch,WebFetch,Write,Edit,' + _BL_DENY_TAIL.replace(
+         "Bash(git:*),", "") + '\n'
      '          step-label: "board-loop.reviewer"'),
+    ("triage stops denying cd (the #518 review's cd escape)",
+     'Bash(git:*),Bash(cd:*),Bash(pushd:*),Bash(popd:*),Bash(git push:*),'
+     'Bash(gh issue close:*)',
+     'Bash(git:*),Bash(pushd:*),Bash(popd:*),Bash(git push:*),'
+     'Bash(gh issue close:*)'),
+    ("route stops denying popd",
+     '"WebSearch,WebFetch,Write,Edit,' + _BL_DENY_TAIL + '\n'
+     '          step-label: "board-loop.route-propose"',
+     '"WebSearch,WebFetch,Write,Edit,' + _BL_DENY_TAIL.replace(
+         "Bash(popd:*),", "") + '\n'
+     '          step-label: "board-loop.route-propose"'),
     ("reviewer regains Bash(gh pr view:*) (#503)",
-     f'"Read,Grep,Glob,{GIT_READ_GRANT},Bash(cat:*)"\n'
-     '          default-disallowed-tools: "WebSearch,WebFetch,Write,Edit,'
-     'Bash(git:*),Bash(git push:*),Bash(git commit:*)"\n'
-     '          step-label: "board-loop.reviewer"',
-     f'"Read,Grep,Glob,{GIT_READ_GRANT},Bash(cat:*),Bash(gh pr view:*)"\n'
-     '          default-disallowed-tools: "WebSearch,WebFetch,Write,Edit,'
-     'Bash(git:*),Bash(git push:*),Bash(git commit:*)"\n'
-     '          step-label: "board-loop.reviewer"'),
+     f'"Read,Grep,Glob,{SNAPSHOT_GIT_READ_GRANT},Bash(cat:*)"',
+     f'"Read,Grep,Glob,{SNAPSHOT_GIT_READ_GRANT},Bash(cat:*),'
+     'Bash(gh pr view:*)"'),
+    ("reviewer granted the agent-written tree's wrapper again",
+     f'"Read,Grep,Glob,{SNAPSHOT_GIT_READ_GRANT},Bash(cat:*)"',
+     f'"Read,Grep,Glob,{GIT_READ_GRANT},Bash(cat:*)"'),
+    ("reviewer's prompt names the agent-written tree's wrapper",
+     f"`python3 -I {SNAPSHOT_GIT_READ_WRAPPER} diff origin/main...HEAD`",
+     f"`python3 -I {GIT_READ_WRAPPER} diff origin/main...HEAD`"),
+    ("route's prompt drops -I",
+     f"To read git history, run `python3 -I {GIT_READ_WRAPPER}`",
+     f"To read git history, run `python3 {GIT_READ_WRAPPER}`"),
     ("route agent's claude_args appends raw git",
      '--allowedTools "${{ steps.tool-args-route.outputs.allowed-tools }}"',
      '--allowedTools "${{ steps.tool-args-route.outputs.allowed-tools }},'
@@ -2070,6 +2521,123 @@ def _mutation_check_read_only_git():
             with open(path, "w", encoding="utf-8") as fh:
                 fh.write(original.replace(old, new, 1))
             if not check_read_only_git(path):
+                failures.append(f"mutation {label!r} was NOT caught")
+            else:
+                print(f"note: mutation caught ({label}).")
+    return failures
+
+
+_PUB_GRANT_LIT = PUBLISHED_GIT_READ_GRANT
+# Each mutation rewrites a REAL workflow other than board-loop.yml in
+# memory the way a later edit could reopen #518; check 4b must catch
+# every one.
+FLEET_READ_ONLY_GIT_MUTATIONS = (
+    (".github/workflows/implement.yml",
+     "progress composer regains raw git log/diff/show (the #518 shape)",
+     f'default-allowed-tools: "{_PUB_GRANT_LIT}"',
+     'default-allowed-tools: "Bash(git log:*),Bash(git diff:*),'
+     'Bash(git show:*)"'),
+    (".github/workflows/implement.yml",
+     "progress composer's prompt goes back to raw git log",
+     f"              python3 -I {PUBLISHED_GIT_READ_WRAPPER} log --oneline",
+     "              git log --oneline"),
+    (".github/workflows/implement.yml",
+     "progress composer stops denying Bash(git:*)",
+     '"WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage,Write,Edit,'
+     'Bash(git:*),Bash(cd:*)',
+     '"WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage,Write,Edit,'
+     'Bash(cd:*)'),
+    (".github/workflows/implement.yml",
+     "progress composer stops denying cd (the #518 review's cd escape)",
+     'Edit,Bash(git:*),Bash(cd:*),Bash(pushd:*),Bash(popd:*)"',
+     'Edit,Bash(git:*),Bash(pushd:*),Bash(popd:*)"'),
+    (".github/workflows/implement.yml",
+     "progress composer's grant drops -I",
+     f'default-allowed-tools: "{_PUB_GRANT_LIT}"',
+     f'default-allowed-tools: "{_PUB_GRANT_LIT.replace(" -I", "")}"'),
+    (".github/workflows/watchdog.yml",
+     "diagnose stops denying pushd",
+     "Bash(git:*),Bash(cd:*),Bash(pushd:*),Bash(popd:*),Bash(git commit:*)",
+     "Bash(git:*),Bash(cd:*),Bash(popd:*),Bash(git commit:*)"),
+    (".github/workflows/auto-update-spec-kit.yml",
+     "evaluate-path's inline --allowedTools regains raw git diff (#518 review)",
+     f'--allowedTools "Read,Grep,Bash(gh api:*),{_PUB_GRANT_LIT}"',
+     '--allowedTools "Read,Grep,Bash(gh api:*),Bash(git diff:*)"'),
+    (".github/workflows/auto-update-spec-kit.yml",
+     "evaluate-path's inline --disallowedTools stops denying Bash(git:*)",
+     '--disallowedTools "WebSearch,WebFetch,Write,Edit,Bash(git:*),'
+     'Bash(cd:*)',
+     '--disallowedTools "WebSearch,WebFetch,Write,Edit,Bash(cd:*)'),
+    (".github/workflows/auto-update-spec-kit.yml",
+     "evaluate-path's inline --disallowedTools stops denying cd",
+     'Edit,Bash(git:*),Bash(cd:*),Bash(pushd:*),Bash(popd:*),'
+     'Bash(git commit:*),Bash(git push:*)"',
+     'Edit,Bash(git:*),Bash(pushd:*),Bash(popd:*),'
+     'Bash(git commit:*),Bash(git push:*)"'),
+    (".github/workflows/auto-update-spec-kit.yml",
+     "evaluate-path's prompt names the repo-local wrapper path",
+     f"`python3 -I {PUBLISHED_GIT_READ_WRAPPER}`\n            with `log`",
+     f"`python3 -I {GIT_READ_WRAPPER}`\n            with `log`"),
+    (".github/workflows/watchdog.yml",
+     "diagnose regains raw Bash(git diff:*) beside the wrapper",
+     f"Bash(gh:*),{_PUB_GRANT_LIT}",
+     f"Bash(gh:*),Bash(git diff:*),{_PUB_GRANT_LIT}"),
+    (".github/workflows/watchdog.yml",
+     "diagnose is granted board-loop's repo-local wrapper path",
+     f'"Read,Grep,Bash(gh:*),{_PUB_GRANT_LIT}"',
+     f'"Read,Grep,Bash(gh:*),{GIT_READ_GRANT}"'),
+    (".github/workflows/watchdog.yml",
+     "diagnose's claude_args appends raw git",
+     '--allowedTools "${{ steps.tool-args-diagnose.outputs.allowed-tools }}"',
+     '--allowedTools "${{ steps.tool-args-diagnose.outputs.allowed-tools }},'
+     'Bash(git show:*)"'),
+    (".github/workflows/pr-conversation.yml",
+     "classify stops denying Bash(git:*)",
+     '"Write,Edit,WebSearch,WebFetch,Bash(git:*),Bash(cd:*)',
+     '"Write,Edit,WebSearch,WebFetch,Bash(cd:*)'),
+    (".github/workflows/pr-conversation.yml",
+     "classify's prompt names the repo-local wrapper path",
+     f"through `python3 -I {PUBLISHED_GIT_READ_WRAPPER}`",
+     f"through `python3 -I {GIT_READ_WRAPPER}`"),
+    (".github/workflows/pr-conversation.yml",
+     "classify is allowed Write (its label still holds it read-only)",
+     f'default-allowed-tools: "Read,Grep,Glob,{_PUB_GRANT_LIT}',
+     f'default-allowed-tools: "Read,Write,Grep,Glob,{_PUB_GRANT_LIT}'),
+    (".github/workflows/finalize.yml",
+     "finalize drops Write and becomes a read-only agent holding raw git",
+     'default-allowed-tools: "Read,Glob,Grep,Bash(git log:*),'
+     'Bash(git diff:*),Bash(git show:*),Write"',
+     'default-allowed-tools: "Read,Glob,Grep,Bash(git log:*),'
+     'Bash(git diff:*),Bash(git show:*)"'),
+)
+
+
+def _mutation_check_fleet_read_only_git():
+    failures = []
+    published = set(published_stages("."))
+    with tempfile.TemporaryDirectory() as tmpdir:
+        for workflow, label, old, new in FLEET_READ_ONLY_GIT_MUTATIONS:
+            try:
+                with open(workflow, encoding="utf-8") as fh:
+                    original = fh.read()
+            except OSError as exc:
+                failures.append(f"mutation {label!r}: could not read "
+                                f"{workflow}: {exc}")
+                continue
+            if original.count(old) != 1:
+                failures.append(
+                    f"mutation {label!r} no longer applies ({old!r} is not "
+                    f"in {workflow} exactly once) -- update "
+                    f"FLEET_READ_ONLY_GIT_MUTATIONS so this gate stays "
+                    f"proven.")
+                continue
+            path = os.path.join(tmpdir, os.path.basename(workflow))
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(original.replace(old, new, 1))
+            if not check_read_only_git(
+                    path, labels=FLEET_READ_ONLY_STEP_LABELS.get(workflow, ()),
+                    git_grant=fleet_git_grant(workflow, published),
+                    strict=False):
                 failures.append(f"mutation {label!r} was NOT caught")
             else:
                 print(f"note: mutation caught ({label}).")
@@ -2263,6 +2831,7 @@ def run_self_test():
     failures.extend(_mutation_check_spec_request_sites())
     failures.extend(_self_test_git_read_wrapper())
     failures.extend(_mutation_check_read_only_git())
+    failures.extend(_mutation_check_fleet_read_only_git())
     failures.extend(_mutation_check_reviewer_staging())
 
     # Re-confirm the real fleet still passes, so a self-test fixture
@@ -2294,8 +2863,10 @@ def main():
           "one home, and every spec-request board-loop.yml files takes "
           "its body from board_spec_request_body.py with the "
           "composite's context-file as its fallback. Its read-only agents "
-          "get git only through board_git_read.py, with Bash(git:*), Write "
-          "and Edit denied. The reviewer prompt names only files its "
+          "get git only through git_read.py, with Bash(git:*), Write "
+          "and Edit denied, and so do the read-only agents of every other "
+          "workflow (by the pipeline-checkout path in a published stage). "
+          "The reviewer prompt names only files its "
           "gather step writes.")
 
     if not self_test:
@@ -2313,7 +2884,7 @@ def main():
           "re-implementation, every spec-request site that skips the "
           "trust-filtered fallback, every raw-git or missing-deny grant "
           "to a read-only agent, and every mutation of the real "
-          "sites) was caught, board_git_read.py refused every --output "
+          "sites) was caught, git_read.py refused every --output "
           "spelling, the exempt file and the well-formed site were "
           "left alone, every mutation of the reviewer's staged inputs "
           "was caught, the "
