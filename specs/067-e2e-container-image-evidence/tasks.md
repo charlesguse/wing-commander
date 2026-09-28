@@ -238,3 +238,7 @@ With two maintainers/agents (CLAUDE.md caps concurrent local agents at two for t
 ## Maintainer Feedback
 
 - [ ] Record `kickoff_time` before the kickoff step runs (currently taken at the start of the poll step at auto-release.yml:864, after kickoff has already created and labelled the issue), so the intake run kickoff triggers is not created before the timestamp used by the poll step's `gh run list --created ">=${kickoff_time}"` filter.
+
+## Maintainer Feedback
+
+- [ ] Give the `gh variable list --repo ... -q '.[] | select(.name=="WING_COMMANDER_CONTAINER_IMAGE") | .value'` read at auto-release.yml:461 one home: add a shared helper to `.github/scripts/e2e-provisioning/checks.sh` (alongside `this_repo_container_image()`/`check_container_image_pin()`) that also returns the stderr text, and call that helper from the container-evidence-config step instead of re-deriving the query a third time (CLAUDE.md: shared logic has exactly one home).
