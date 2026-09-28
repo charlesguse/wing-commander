@@ -62,6 +62,10 @@ FIXTURES_DIR = os.path.join(
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 COMPOSITE = os.path.join(
     REPO_ROOT, ".github", "actions", "wing-commander-board-stop-check", "action.yml")
+CANCEL_VOCAB_SCRIPT_PATH = os.path.join(
+    REPO_ROOT, ".github", "actions", "_shared", "cancel-already-terminal.sh")
+with open(CANCEL_VOCAB_SCRIPT_PATH, encoding="utf-8") as _f:
+    CANCEL_VOCAB_SCRIPT = _f.read()
 BOT_LOGIN = "wing-commander-bot[bot]"
 BOT_USER = {"login": BOT_LOGIN, "type": "Bot"}
 
@@ -198,6 +202,10 @@ if [ "$1" = "api" ] && [[ "$2" == */actions/runs/* ]]; then
   exit 1
 fi
 if [ "$1" = "run" ] && [ "$2" = "cancel" ]; then
+  if [ "${STUB_CANCEL_FAIL:-}" = "1" ]; then
+    printf '%s' "$STUB_CANCEL_ERROR" >&2
+    exit 1
+  fi
   exit 0
 fi
 echo "stub gh: unexpected call: $*" >&2
@@ -227,22 +235,56 @@ RUNS = {
     "555": {"status": "completed", "path": OWN_PATH, "repository": {"full_name": REPO}},
     "666": {"status": "in_progress", "path": OWN_PATH, "repository": {"full_name": REPO}},
     "999": {"status": "in_progress", "path": OWN_PATH, "repository": {"full_name": REPO}},
+    "777": {"status": "in_progress", "path": OWN_PATH, "repository": {"full_name": REPO}},
+    "888": {"status": "in_progress", "path": OWN_PATH, "repository": {"full_name": REPO}},
+    "1010": {"status": "in_progress", "path": OWN_PATH, "repository": {"full_name": REPO}},
+    "1111": {"status": "in_progress", "path": OWN_PATH, "repository": {"full_name": REPO}},
 }
-# (name, comments, expected `paused` output, expected cancelled run id or None)
+
+
+def _case(name, comments, want_paused, want_cancel, cancel_fail=False,
+          cancel_stderr="", want_warning=False, want_info_line=False):
+    return (name, comments, want_paused, want_cancel, cancel_fail,
+            cancel_stderr, want_warning, want_info_line)
+
+
+# (name, comments, expected `paused` output, expected cancelled run id or
+# None, whether `gh run cancel` is stubbed to fail, the stderr text it fails
+# with, whether exactly one `::warning::` line is expected, whether a
+# non-`::...::` informational line is expected)
 SHELL_CASES = (
-    ("an earlier board-loop run is cancelled", [_marker(222), STOP], "true", "222"),
-    ("a different workflow's run is not cancelled", [_marker(333), STOP], "true", None),
-    ("an unreadable run is not cancelled", [_marker(444), STOP], "true", None),
-    ("a completed run is not cancelled", [_marker(555), STOP], "true", None),
-    ("an OWNER human's forged marker never reaches gh run cancel",
-     [_marker(999),
-      _marker(666, created_at="2026-01-01T00:01:00Z", author_association="OWNER",
-              user={"login": "maintainer", "type": "User"}),
-      STOP], "true", None),
-    ("no stop request, nothing cancelled", [_marker(222)], "false", None),
-    ("a first pass through this run cancels nothing even though that run is "
-     "otherwise a readable, same-workflow, non-completed run",
-     [_marker(999), STOP], "true", None),
+    _case("an earlier board-loop run is cancelled", [_marker(222), STOP], "true", "222"),
+    _case("a different workflow's run is not cancelled", [_marker(333), STOP], "true", None,
+          want_warning=True),
+    _case("an unreadable run is not cancelled", [_marker(444), STOP], "true", None,
+          want_warning=True),
+    _case("an already-terminal refusal is attempted, not warned, and recorded",
+          [_marker(555), STOP], "true", "555", cancel_fail=True,
+          cancel_stderr="HTTP 409: Conflict", want_warning=False, want_info_line=True),
+    _case("an OWNER human's forged marker never reaches gh run cancel",
+          [_marker(999),
+           _marker(666, created_at="2026-01-01T00:01:00Z", author_association="OWNER",
+                   user={"login": "maintainer", "type": "User"}),
+           STOP], "true", None),
+    _case("no stop request, nothing cancelled", [_marker(222)], "false", None),
+    _case("a first pass through this run cancels nothing even though that run is "
+          "otherwise a readable, same-workflow, non-completed run",
+          [_marker(999), STOP], "true", None),
+    _case("a non-terminal (permission) failure is warned",
+          [_marker(777), STOP], "true", "777", cancel_fail=True,
+          cancel_stderr="HTTP 403: Resource not accessible by integration",
+          want_warning=True, want_info_line=False),
+    _case("an empty-stderr failure is warned",
+          [_marker(888), STOP], "true", "888", cancel_fail=True,
+          cancel_stderr="", want_warning=True, want_info_line=False),
+    _case("a bare-409-without-HTTP-prefix failure is warned, not treated as already-terminal",
+          [_marker(1010), STOP], "true", "1010", cancel_fail=True,
+          cancel_stderr="permission denied for run id 4091234",
+          want_warning=True, want_info_line=False),
+    _case("newline/workflow-command-shaped error text produces exactly one warning",
+          [_marker(1111), STOP], "true", "1111", cancel_fail=True,
+          cancel_stderr="first line\n::warning::forged annotation should not survive\nsecond line",
+          want_warning=True, want_info_line=False),
 )
 GUARD_LINE_RE = re.compile(r'^(\s*)if \[ -z "\$cancel_target_path" \].*; then$', re.MULTILINE)
 # The composite's own T012 comparison -- redundant with find_stop_request()'s
@@ -289,7 +331,8 @@ def composite_check_script():
     return None
 
 
-def _run_shell_case(script_path, bindir, runs_dir, work, comments, repo_root=REPO_ROOT):
+def _run_shell_case(script_path, bindir, runs_dir, work, comments, repo_root=REPO_ROOT,
+                     cancel_fail=False, cancel_stderr="", cancel_vocab_script=None):
     case_dir = tempfile.mkdtemp(dir=work)
     comments_path = os.path.join(case_dir, "comments.json")
     with open(comments_path, "w", encoding="utf-8") as fh:
@@ -298,6 +341,17 @@ def _run_shell_case(script_path, bindir, runs_dir, work, comments, repo_root=REP
     out = os.path.join(case_dir, "output")
     for path in (log, out):
         open(path, "w", encoding="utf-8").close()
+    # A sibling _shared/ next to a stand-in action dir, mirroring Gate 22's
+    # own action_dir/shared_dir isolation, so the composite's own
+    # $GITHUB_ACTION_PATH/../_shared/cancel-already-terminal.sh resolves to
+    # THIS case's (possibly mutated) shared script, never the real repo file.
+    action_dir = os.path.join(case_dir, "actiondir")
+    shared_dir = os.path.join(case_dir, "_shared")
+    os.makedirs(action_dir, exist_ok=True)
+    os.makedirs(shared_dir, exist_ok=True)
+    with open(os.path.join(shared_dir, "cancel-already-terminal.sh"), "w",
+              encoding="utf-8", newline="\n") as fh:
+        fh.write(CANCEL_VOCAB_SCRIPT if cancel_vocab_script is None else cancel_vocab_script)
     env = dict(os.environ)
     env.update({
         "PATH": bindir + os.pathsep + env.get("PATH", ""),
@@ -308,6 +362,9 @@ def _run_shell_case(script_path, bindir, runs_dir, work, comments, repo_root=REP
         "GITHUB_WORKFLOW_REF": "{0}/{1}@refs/heads/main".format(REPO, OWN_PATH),
         "RUNNER_TEMP": case_dir, "GITHUB_OUTPUT": out,
         "STUB_LOG": log, "STUB_COMMENTS": comments_path, "STUB_RUNS_DIR": runs_dir,
+        "GITHUB_ACTION_PATH": action_dir,
+        "STUB_CANCEL_FAIL": "1" if cancel_fail else "0",
+        "STUB_CANCEL_ERROR": cancel_stderr,
     })
     # Actions runs a `shell: bash` step as `bash --noprofile --norc -eo
     # pipefail {0}`: errexit is on whatever the script's own `set` says.
@@ -321,7 +378,8 @@ def _run_shell_case(script_path, bindir, runs_dir, work, comments, repo_root=REP
     return proc, outputs, calls
 
 
-def run_shell_cases(script, verbose=True, cases=SHELL_CASES, repo_root=REPO_ROOT):
+def run_shell_cases(script, verbose=True, cases=SHELL_CASES, repo_root=REPO_ROOT,
+                     cancel_vocab_script=None):
     failures = 0
     work = tempfile.mkdtemp(prefix="board-stop-check-")
     try:
@@ -339,9 +397,12 @@ def run_shell_cases(script, verbose=True, cases=SHELL_CASES, repo_root=REPO_ROOT
         script_path = os.path.join(work, "check.sh")
         with open(script_path, "w", encoding="utf-8") as fh:
             fh.write(script)
-        for name, comments, want_paused, want_cancel in cases:
+        for (name, comments, want_paused, want_cancel, cancel_fail, cancel_stderr,
+             want_warning, want_info_line) in cases:
             proc, outputs, calls = _run_shell_case(
-                script_path, bindir, runs_dir, work, comments, repo_root=repo_root)
+                script_path, bindir, runs_dir, work, comments, repo_root=repo_root,
+                cancel_fail=cancel_fail, cancel_stderr=cancel_stderr,
+                cancel_vocab_script=cancel_vocab_script)
             problems = []
             if proc.returncode != 0:
                 problems.append("exit {0}: {1}".format(proc.returncode, proc.stderr.strip()))
@@ -356,6 +417,17 @@ def run_shell_cases(script, verbose=True, cases=SHELL_CASES, repo_root=REPO_ROOT
                 problems.append("gh run cancel ran without the cancel-token")
             if any(c[0] != "app-token" for c in calls if "/comments" in c[1]):
                 problems.append("the issue-comment read did not use the App token")
+            stdout_lines = proc.stdout.splitlines()
+            warning_lines = [l for l in stdout_lines if l.startswith("::warning::")]
+            info_lines = [l for l in stdout_lines if l and not l.startswith("::")]
+            if bool(warning_lines) != want_warning:
+                problems.append("warning lines {0!r}, expected presence={1}".format(
+                    warning_lines, want_warning))
+            if len(warning_lines) > 1:
+                problems.append("more than one ::warning:: line: {0!r}".format(warning_lines))
+            if bool(info_lines) != want_info_line:
+                problems.append("info lines {0!r}, expected presence={1}".format(
+                    info_lines, want_info_line))
             if problems:
                 failures += 1
                 if verbose:
@@ -435,6 +507,29 @@ def composite_shell_check():
         return failures + 1
     print("note: mutation caught (cancel-target comparison removed + self-cancel "
           "fallback restored: fails {0} composite shell case(s)).".format(combined_caught))
+
+    # FR-008/SC-003: invert the shared already-terminal predicate (read
+    # fresh from disk, not the module-level CANCEL_VOCAB_SCRIPT, so this
+    # always mutates the actual shipped script) and confirm at least one
+    # fixture depends on it classifying correctly.
+    with open(CANCEL_VOCAB_SCRIPT_PATH, encoding="utf-8") as fh:
+        original_vocab_script = fh.read()
+    inverted_vocab_script = (
+        original_vocab_script
+        .replace("exit 0", "__CANCEL_VOCAB_EXIT_PLACEHOLDER__")
+        .replace("exit 1", "exit 0")
+        .replace("__CANCEL_VOCAB_EXIT_PLACEHOLDER__", "exit 1"))
+    if inverted_vocab_script == original_vocab_script:
+        print("::error::verify-board-stop-check: could not locate cancel-already-terminal.sh's "
+              "`exit 0`/`exit 1` outcomes to invert.")
+        return failures + 1
+    caught = run_shell_cases(script, verbose=False, cancel_vocab_script=inverted_vocab_script)
+    if not caught:
+        print("::error::verify-board-stop-check: mutation 'already-terminal classification "
+              "inverted' was NOT caught by any composite shell case.")
+        return failures + 1
+    print("note: mutation caught (already-terminal classification inverted: fails {0} "
+          "composite shell case(s)).".format(caught))
     return failures
 
 
