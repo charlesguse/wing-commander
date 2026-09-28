@@ -274,7 +274,7 @@ existing structural scan, per research.md D10).
 
 ### Implementation for User Story 3
 
-- [ ] T017 [US3] Split `auto-release.yml`'s `dispatch-release` job's
+- [X] T017 [US3] Split `auto-release.yml`'s `dispatch-release` job's
   single "Dispatch release.yml and correlate its run" step (currently
   `.github/workflows/auto-release.yml:1465-1576`) into two steps per
   research.md D9:
@@ -296,7 +296,7 @@ existing structural scan, per research.md D10).
      block from these values (FR-019, FR-027 — the tag-state decision
      never reads the composite's `conclusion` or any run-status value as
      an input to the *decision*, only to the *passthrough*).
-- [ ] T018 [US3] Update `dispatch-release`'s `outputs:` block
+- [X] T018 [US3] Update `dispatch-release`'s `outputs:` block
   (currently `.github/workflows/auto-release.yml:1442-1457`) so each
   output is a passthrough of step 2's own output, keeping every name
   unchanged (`correlation`, `correlated-run-id`, `correlated-run-url` —
@@ -304,7 +304,7 @@ existing structural scan, per research.md D10).
   `dispatch-rejected`) per FR-018. Confirm the `report` job (needs
   `dispatch-release`, reads these six names at
   `auto-release.yml:1624-1632`) requires no edit.
-- [ ] T019 [US3] Create
+- [X] T019 [US3] Create
   `.github/scripts/verify-auto-release-tag-state-runtime.py` (Gate 99),
   following Gate 67's shape
   (`.github/scripts/verify-auto-release-credential-step.py`): use
@@ -318,7 +318,7 @@ existing structural scan, per research.md D10).
   Add a mutation-kill fixture (matching Gate 67's `MUTATIONS` precedent)
   that swaps the tag comparison for a run-conclusion check and confirms
   the suite then fails.
-- [ ] T020 [US3] Wire Gate 99 into
+- [X] T020 [US3] Wire Gate 99 into
   `.github/workflows/lint-workflows.yml`'s PR-time gate job, immediately
   after Gate 98's step, with `if: "!cancelled()"` (the same sequential
   convention every other gate uses — never `continue-on-error`). No new
@@ -326,26 +326,26 @@ existing structural scan, per research.md D10).
   `.github/workflows/**` and `.github/scripts/**`
   (`lint-workflows.yml:19-29`). Confirm `run-local-gates.py` and
   `verify-gate-wiring.py` pick it up automatically.
-- [ ] T021 [US3] Remove the `.github/workflows/auto-release.yml` /
+- [X] T021 [US3] Remove the `.github/workflows/auto-release.yml` /
   `dispatch-and-wait` entry (issue #408) from
   `.github/scripts/single-home-waivers.json` — the entry whose `reason`
   field states "Remove this waiver when T054 lands" (research.md D10,
   FR-020).
-- [ ] T022 [US3] Run `python3 .github/scripts/verify-single-home-idioms.py`
+- [X] T022 [US3] Run `python3 .github/scripts/verify-single-home-idioms.py`
   and confirm it passes with zero `dispatch-and-wait` waivers — Gate 60's
   existing `check_dispatch_and_wait` structural scan (unchanged code,
   `.github/scripts/verify-single-home-idioms.py:501-518`) now finds no
   inline copy left in `auto-release.yml` because T017 moved it (FR-021).
-- [ ] T023 [US3] Remove the composite's header-comment paragraph stating
+- [X] T023 [US3] Remove the composite's header-comment paragraph stating
   `auto-release.yml`'s `dispatch-release` job is "NOT yet repointed" (the
   T054-blocker note, `.github/actions/wing-commander-dispatch-and-wait/action.yml:10-17`)
   now that T017 has landed the repoint (research.md D7).
-- [ ] T024 [US3] In `specs/057-autonomous-board-loop/tasks.md`, mark T054
+- [X] T024 [US3] In `specs/057-autonomous-board-loop/tasks.md`, mark T054
   and the second half of T056 done: change both from `- [ ]` to `- [X]`
   and replace each task's blocker note with a one-line pointer to this
   feature (`specs/081-composite-aware-dispatch-gate`), per this
   repository's canonical-pointer convention (FR-023, research.md D11).
-- [ ] T025 [US3] Add a note to
+- [X] T025 [US3] Add a note to
   `specs/048-correlated-release-dispatch/contracts/regression-gate.md`'s
   "five checks" table stating that checks 3 and 5 now resolve through a
   called composite (pointing at
@@ -354,15 +354,31 @@ existing structural scan, per research.md D10).
   Gate 88 and Gate 99) — superseding that document's "does not
   re-implement or simulate" Non-goals framing for checks 3 and 5 only
   (FR-023, research.md D11).
-- [ ] T026 [US3] Run `python .github/scripts/run-local-gates.py` and
+- [X] T026 [US3] Run `python .github/scripts/run-local-gates.py` and
   confirm every gate passes on the repointed tree, including Gate 59
   (T002-T010), Gate 88 (T015), and the new Gate 99 (T019), with no gate
   skipped, waived, or newly excluded (SC-007).
-- [ ] T027 [US3] Side-by-side report-text comparison (quickstart.md
+- [X] T027 [US3] Side-by-side report-text comparison (quickstart.md
   step 4): for each of released / branch-advanced / dispatch-failed /
   dispatched-but-no-tag, diff the `report` job's rendered summary before
   and after the repoint using the same fixed inputs. Confirm zero
   differences (FR-018, SC-005).
+  **Confirmed by inspection, not a live redrive**: `report`'s own step
+  ("Determine this run's outcome") is untouched by this feature and
+  reads `needs.dispatch-release.outputs.*` by name only
+  (`auto-release.yml:1624-1632`). Tracing each of the six named outputs
+  through the split (`correlation`/`correlated-run-id`/`tag-matches`/
+  `request-time`/`dispatch-rejected` passed through step "Decide release
+  outcome from tag state" unchanged; `correlated-run-url` sourced
+  directly from the composite step's `run-url`) shows every value is
+  computed by the identical logic that shipped before this feature,
+  merely relocated — branch-advanced and version-collision reports don't
+  read `dispatch-release`'s outputs at all (that job never runs on those
+  paths), so they are untouched by construction. `request-time`'s two
+  formatting call sites (`date -u +%s` then format, vs. one direct
+  `date -u +%Y-%m-%dT%H:%M:%SZ` call) differ only at sub-second
+  resolution the emitted string does not carry. A live re-drive is
+  T028's job, not this one's.
 - [ ] T028 [US3] After this feature's PR merges, re-drive
   `auto-release.yml` once (`gh workflow run auto-release.yml` —
   `workflow_dispatch: {}` with no required inputs, research.md D12) and

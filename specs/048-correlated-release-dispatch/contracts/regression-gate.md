@@ -40,6 +40,13 @@ VIII:
 | 4 | `auto-release.yml`'s outcome computation reads a `refs/tags/` comparison (`git rev-parse` against a tag ref) to decide `released` | the outcome is instead read from a run's `conclusion`/`status` field | "lets a release be reported from a run conclusion instead of the tag state" |
 | 5 | `auto-release.yml` waits for the correlated run's own `status` (a `gh run view ... --json status` poll, never `.conclusion`) to reach a terminal state before the tag fetch that decides `released` | the tag fetch is moved ahead of, or the wait removed from before, that status poll | "reads tag state immediately after correlation, which can observe a correlated run still mid-flight and file a false dispatch-failed report" (added this cycle, T025) |
 
+Checks 3 and 5 now resolve `auto-release.yml`'s `dispatch-release` job's
+own steps plus the shell of any local composite those steps call, one
+level deep, instead of that job's raw text alone — see
+`specs/081-composite-aware-dispatch-gate/contracts/resolving-gate.md`.
+Check 4 stays scoped to the job's own text only (FR-027), unchanged by
+that widening.
+
 ## Self-test fixture shape
 
 Following Gate 50's pattern exactly: an in-memory "clean" pair of file
@@ -61,4 +68,12 @@ or the tag-time check — it is a static, textual check that the
 *mechanisms* are present and correctly ordered, the same level Gate 50
 already operates at for its own three checks. Runtime correctness (does
 the poll loop actually find the right run) is validated by the
-quickstart scenarios in `quickstart.md`, not by this gate.
+quickstart scenarios in `quickstart.md`, not by this gate. This is now
+superseded for checks 3, 4 and 5 specifically: runtime proof for the
+correlation/wait invariants (checks 3 and 5) exists by execution against
+a stubbed `gh` in Gate 88
+(`.github/scripts/dispatch-and-wait-tests/run-tests.sh`), and runtime
+proof for the tag-state invariant (check 4) exists by execution against
+a stubbed `git` in Gate 99
+(`.github/scripts/verify-auto-release-tag-state-runtime.py`) — see
+`specs/081-composite-aware-dispatch-gate/contracts/resolving-gate.md`.

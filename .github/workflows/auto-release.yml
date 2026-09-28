@@ -1513,19 +1513,26 @@ jobs:
     outputs:
       # `found` | `ambiguous` | `not-observed` -- diagnostic only, never
       # itself the release verdict (see `tag-matches` below, FR-007a).
-      correlation: ${{ steps.watch.outputs.correlation }}
-      correlated-run-id: ${{ steps.watch.outputs.correlated-run-id }}
-      correlated-run-url: ${{ steps.watch.outputs.correlated-run-url }}
+      # Passed through step "Decide release outcome from tag state"
+      # (id: decide), never recomputed there.
+      correlation: ${{ steps.decide.outputs.correlation }}
+      correlated-run-id: ${{ steps.decide.outputs.correlated-run-id }}
+      # Sourced directly from the composite step's own `run-url` output
+      # (specs/081-composite-aware-dispatch-gate contracts/
+      # dispatch-and-wait-outputs.md) -- the decide step passes the other
+      # five facts through unrenamed but this one is the composite's
+      # generic name, not the release-specific one.
+      correlated-run-url: ${{ steps.watch.outputs.run-url }}
       # The sole authority for "did this attempt's release happen"
       # (FR-007): the exact version tag exists and points at the verified
       # head, independent of `correlation` and of release.yml's own run
       # conclusion.
-      tag-matches: ${{ steps.watch.outputs.tag-matches }}
+      tag-matches: ${{ steps.decide.outputs.tag-matches }}
       # The report's diagnostic wording (FR-006/SC-004) is written once in
       # specs/048-correlated-release-dispatch/contracts/release-handover-contract.md;
       # request-time and dispatch-rejected feed it, not restated here.
-      request-time: ${{ steps.watch.outputs.request-time }}
-      dispatch-rejected: ${{ steps.watch.outputs.dispatch-rejected }}
+      request-time: ${{ steps.decide.outputs.request-time }}
+      dispatch-rejected: ${{ steps.decide.outputs.dispatch-rejected }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -1533,101 +1540,56 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
 
-      - name: Dispatch release.yml and correlate its run
+      # Single home for the dispatch-correlate-wait idiom
+      # (specs/081-composite-aware-dispatch-gate, closing specs/057
+      # T054): the dispatching run's own id+attempt is unique across this
+      # repository's entire run history (GitHub's own guarantee), so two
+      # attempts can never mint the same attempt-token by construction
+      # (FR-002a) -- no counter or random value is needed. Correlation is
+      # by evidence, never by recency (FR-001): the composite matches a
+      # release.yml run whose title carries this attempt's own token,
+      # started after this attempt's own request (FR-002, FR-002a,
+      # FR-003); zero, one, or more than one match are three distinct
+      # outcomes (FR-004, FR-005), never collapsed by picking "the
+      # newest" among them. uncorrelated-wait-seconds: "90" preserves
+      # this job's own historical fixed uncorrelated-path wait exactly.
+      - name: Dispatch and correlate release.yml
         id: watch
+        uses: ./.github/actions/wing-commander-dispatch-and-wait
+        with:
+          token: ${{ github.token }}
+          workflow-file: release.yml
+          workflow-inputs: >-
+            {"version": "${{ needs.decide-version.outputs.next-version }}",
+            "breaking": false, "breaking-notes": "",
+            "commit": "${{ needs.detect.outputs.head-sha }}"}
+          attempt-token: ${{ github.run_id }}-${{ github.run_attempt }}
+          uncorrelated-wait-seconds: "90"
+
+      # "Released" is decided from tag state alone (FR-007, FR-007a,
+      # research.md D5) -- after the composite's correlation search and
+      # wait above conclude, regardless of either's outcome, and
+      # independent of whether the dispatch itself was rejected. This
+      # invariant stays in this job's own text, never the composite's
+      # (FR-027): the composite gains no release-specific input, and a
+      # relocation of this shell into a composite must read as a
+      # deletion, same as removing it outright (Gate 59 check 4). Every
+      # other fact below is a passthrough of the composite's own output,
+      # never recomputed here.
+      - name: Decide release outcome from tag state
+        id: decide
         shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
+          CORRELATION: ${{ steps.watch.outputs.correlation }}
+          CORRELATED_RUN_ID: ${{ steps.watch.outputs.correlated-run-id }}
+          REQUEST_TIME: ${{ steps.watch.outputs.request-time }}
+          DISPATCH_REJECTED: ${{ steps.watch.outputs.dispatch-rejected }}
           VERSION: ${{ needs.decide-version.outputs.next-version }}
           VERIFIED_HEAD: ${{ needs.detect.outputs.head-sha }}
         run: |
           set -uo pipefail
 
-          # The dispatching run's own id+attempt is unique across this
-          # repository's entire run history (GitHub's own guarantee), so
-          # two attempts can never mint the same token by construction
-          # (FR-002a) -- no counter or random value is needed. Minted once,
-          # reused for the dispatch call, the correlation search, and the
-          # report.
-          token="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          request_time="$(date -u +%s)"
-          request_time_iso="$(date -u -d "@$request_time" +"%Y-%m-%dT%H:%M:%SZ")"
-
-          correlation="not-observed"
-          correlated_run_id=""
-          correlated_run_url=""
-          dispatch_rejected=false
-
-          if ! gh workflow run release.yml -f "version=${VERSION}" -f breaking=false -f breaking-notes= -f "attempt-token=${token}" -f "commit=${VERIFIED_HEAD}"; then
-            dispatch_rejected=true
-            echo "::error::wing-commander auto-release dispatch-release: gh workflow run release.yml was rejected."
-          else
-            # Correlate by evidence, never by recency (FR-001): a
-            # release.yml run whose title carries this attempt's own
-            # token, started after this attempt's own request (FR-002,
-            # FR-002a, FR-003). Zero, one, or more than one match are three
-            # distinct outcomes (FR-004, FR-005), never collapsed by
-            # picking "the newest" among them.
-            attempt=0
-            while [ "$attempt" -lt 12 ]; do
-              rows="$(gh run list --workflow=release.yml --json databaseId,displayTitle,createdAt,url -L 20 2>/dev/null || true)"
-              count=0
-              match_id=""
-              match_url=""
-              while IFS=$'\t' read -r row_id row_title row_created row_url; do
-                [ -n "$row_id" ] || continue
-                case "$row_title" in
-                  *"[attempt:${token}]"*) ;;
-                  *) continue ;;
-                esac
-                created_epoch="$(date -u -d "$row_created" +%s 2>/dev/null || echo 0)"
-                if [ "$created_epoch" -ge "$request_time" ]; then
-                  count=$((count + 1))
-                  match_id="$row_id"
-                  match_url="$row_url"
-                fi
-              done < <(printf '%s' "$rows" | jq -r '.[] | [.databaseId, .displayTitle, .createdAt, .url] | @tsv')
-
-              if [ "$count" -eq 1 ]; then
-                correlation="found"
-                correlated_run_id="$match_id"
-                correlated_run_url="$match_url"
-                break
-              elif [ "$count" -ge 2 ]; then
-                correlation="ambiguous"
-                break
-              fi
-
-              attempt=$((attempt + 1))
-              [ "$attempt" -lt 12 ] && sleep 5
-            done
-          fi
-
-          # A correlated run may still be mid-flight (checkout, lint, tag
-          # creation) the instant the loop above exits; reading tag state
-          # before it reaches a terminal status would file a false
-          # "release dispatch failed" report while the release succeeds
-          # moments later. Wait for that run's status alone -- never its
-          # conclusion, which plays no part in the verdict below -- to go
-          # terminal before ever reading tag state. When no single run was
-          # found to wait on, wait a fixed bounded interval instead.
-          if [ "$correlation" = "found" ]; then
-            wait_attempt=0
-            while [ "$wait_attempt" -lt 60 ]; do
-              run_status="$(gh run view "$correlated_run_id" --json status --jq .status 2>/dev/null || echo "")"
-              [ "$run_status" = "completed" ] && break
-              wait_attempt=$((wait_attempt + 1))
-              sleep 10
-            done
-          else
-            sleep 90
-          fi
-
-          # "Released" is decided from tag state alone (FR-007, FR-007a,
-          # research.md D5) -- after the correlation search concludes and
-          # the wait above, regardless of either's outcome, and
-          # independent of whether the dispatch itself was rejected. A
-          # fresh, post-dispatch fetch, never a value read before the
+          # A fresh, post-dispatch fetch, never a value read before the
           # dispatch.
           git fetch origin "refs/tags/${VERSION}:refs/tags/${VERSION}" --quiet 2>/dev/null || true
           tag_matches=false
@@ -1638,12 +1600,11 @@ jobs:
           fi
 
           {
-            echo "correlation=$correlation"
-            echo "correlated-run-id=$correlated_run_id"
-            echo "correlated-run-url=$correlated_run_url"
+            echo "correlation=$CORRELATION"
+            echo "correlated-run-id=$CORRELATED_RUN_ID"
             echo "tag-matches=$tag_matches"
-            echo "request-time=$request_time_iso"
-            echo "dispatch-rejected=$dispatch_rejected"
+            echo "request-time=$REQUEST_TIME"
+            echo "dispatch-rejected=$DISPATCH_REJECTED"
           } >> "$GITHUB_OUTPUT"
 
   # The only place this feature writes anything maintainer-facing

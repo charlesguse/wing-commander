@@ -7,15 +7,6 @@
 # correlate-and-poll idiom rather than a second, independently-drifting
 # copy.
 #
-# auto-release.yml's own dispatch-release job is NOT yet repointed at this
-# composite (specs/057-autonomous-board-loop tasks.md T054) -- see that
-# task's own note and the waiver in single-home-waivers.json: its `report`
-# job reads six distinct outputs (correlation, correlated-run-id,
-# correlated-run-url, tag-matches, request-time, dispatch-rejected) this
-# composite's own contracted shape (run-url, conclusion) does not carry, so
-# a byte-identical repoint is a genuine outputs-contract redesign, not a
-# mechanical swap.
-#
 # A generic post-wait verification hook -- a caller-supplied "does the
 # state I expected to change actually show it" check -- was considered
 # and deliberately deferred (specs/081-composite-aware-dispatch-gate
