@@ -212,3 +212,9 @@ Task: "Add fixtures under wing-commander-fold-queue-release/tests/"
 - No task in this list removes, renames, or adds a required input to either workflow's published `workflow_call` contract (FR-019) — the only new input is `implement.yml`'s optional `fold-queue-token` (T021).
 - Every job this feature adds (`fold-turn-act`, `fold-turn-dispatch`, `fold-turn-implement`, `fold-turn-release`) carries no `concurrency:` block of its own, by design (research.md D1) — do not add one during implementation even for convenience.
 - `act`'s, `dispatch-once`'s, `implement`'s, and `stalled`'s existing `concurrency:` blocks are never edited by any task above — only their `needs:` lists change.
+
+---
+
+## Phase 7: Convergence
+
+- [ ] T037 Register the three composite fixture suites this feature shipped (`.github/actions/wing-commander-fold-queue-admit/tests/run.sh`, `.../wing-commander-fold-queue-release/tests/run.sh`, `.../wing-commander-fold-queue-claim-dispatch/tests/run.sh`) as gate steps in `.github/workflows/lint-workflows.yml`, so CI and `run-local-gates.py` actually execute them — today no `run:` step anywhere names any of the three, and `run-local-gates.py` derives its list from `lint-workflows.yml`, so all three are checked in but never run and a regression in the `admit`/`release` composites' shell fails no check. Follow the shape the repository already uses for exactly this kind of suite: `- run: bash .github/scripts/size-path-backstop-tests/run-tests.sh` (`lint-workflows.yml:3923`) and `- run: bash .github/scripts/dispatch-and-wait-tests/run-tests.sh` (`:3978`). Also correct each suite's header comment, which currently cites `size-path-backstop-tests` as precedent for *not* being discovered by `run-local-gates.py` when that suite is in fact a registered gate step — the precedent it names contradicts the conclusion it draws. Per FR-021 (partial)
