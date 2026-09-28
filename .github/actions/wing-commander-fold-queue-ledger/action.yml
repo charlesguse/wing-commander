@@ -1,0 +1,60 @@
+name: wing-commander-fold-queue-ledger
+description: >
+  The single published entry point a workflow uses to invoke one of
+  fold-queue-ledger.sh's read-only or narrow-write transforms directly
+  (peek, peek-round, peek-implement-run, record-implement-run,
+  claim-redispatch) -- everything the admit/release/claim-dispatch
+  composites don't already cover. Gate 60's promotion-prevention check
+  (specs/049-single-home-release-idioms FR-025) forbids a published
+  workflow_call stage from resolving `_shared/` directly, so
+  pr-conversation.yml and fold-cycle-guard.yml call this composite instead
+  -- see fold-queue-ledger.sh.
+
+inputs:
+  transform:
+    description: "One of peek, peek-round, peek-implement-run, record-implement-run, claim-redispatch."
+    required: true
+  spec-dir:
+    description: "specs/NNN-slug -- identifies which ledger entry to use."
+    required: true
+  round:
+    description: "Required by peek-round, record-implement-run, claim-redispatch; unused otherwise."
+    required: false
+    default: ""
+  implement-run-id:
+    description: "Required by peek-implement-run and record-implement-run; unused otherwise."
+    required: false
+    default: ""
+  peek-token:
+    description: "Required by peek; unused otherwise."
+    required: false
+    default: ""
+
+outputs:
+  output:
+    description: "The transform's raw stdout -- one key=value line per result field, exactly as fold-queue-ledger.sh prints it."
+    value: ${{ steps.run.outputs.output }}
+
+runs:
+  using: composite
+  steps:
+    - name: Run the ledger transform
+      id: run
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+        TRANSFORM: ${{ inputs.transform }}
+        SPEC_DIR: ${{ inputs.spec-dir }}
+        ROUND: ${{ inputs.round }}
+        IMPLEMENT_RUN_ID: ${{ inputs.implement-run-id }}
+        PEEK_TOKEN: ${{ inputs.peek-token }}
+      run: |
+        set -euo pipefail
+        LEDGER="$GITHUB_ACTION_PATH/../_shared/fold-queue-ledger.sh"
+        out="$(bash "$LEDGER" "$TRANSFORM")"
+        {
+          echo "output<<WC_FOLD_QUEUE_LEDGER_EOF"
+          printf '%s\n' "$out"
+          echo "WC_FOLD_QUEUE_LEDGER_EOF"
+        } >> "$GITHUB_OUTPUT"

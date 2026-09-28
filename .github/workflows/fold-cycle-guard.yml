@@ -57,6 +57,24 @@ on:
         type: string
         required: false
         default: ubuntu-latest
+      container-image:
+        description: >
+          Container image every job in this stage runs inside. Empty
+          (default) means no container — every job runs directly on the
+          runner, unchanged from today (specs/038-runner-container-passthrough).
+        type: string
+        required: false
+        default: ""
+      environment:
+        description: "GitHub Environment name every job in this stage binds to. Empty (default) means no environment gate (specs/031-stage-environment-binding)."
+        type: string
+        required: false
+        default: ""
+      environment-deployment:
+        description: "Whether binding to environment: creates a deployment record (specs/031-stage-environment-binding)."
+        type: boolean
+        required: false
+        default: true
     secrets:
       pipeline-repo-token:
         description: "Token with read access to the pipeline repository, if private."
@@ -67,6 +85,12 @@ on:
       speckit-app-private-key:
         description: "GitHub App private key"
         required: true
+      container-registry-username:
+        description: "Username for container-image's registry, if private. Inert when container-image is empty (specs/038-runner-container-passthrough)."
+        required: false
+      container-registry-password:
+        description: "Password or token for container-image's registry, if private. May be a short-lived token minted by the calling wrapper before its uses: call. Inert when container-image is empty (specs/038-runner-container-passthrough)."
+        required: false
     outputs:
       action-taken:
         description: "none | notice-only | notice-and-redispatch"
@@ -75,15 +99,88 @@ on:
 permissions: {}
 
 jobs:
-  guard:
+  # specs/038-runner-container-passthrough -- deliberately left unbound
+  # (no environment: block), asserted by Gate 7; every OTHER job of this
+  # stage runs inside the adopter's container, bound by Gate 22.
+  verify-image-prerequisites:
+    if: inputs.container-image != ''
+    permissions: {}
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
+    steps:
+      - name: Pull image and verify prerequisites
+        if: inputs.container-image != ''
+        env:
+          IMAGE: ${{ inputs.container-image }}
+          REGISTRY_USERNAME: ${{ secrets.container-registry-username }}
+          REGISTRY_PASSWORD: ${{ secrets.container-registry-password }}
+        run: |
+          # Canonical required-tool list: .github/scripts/required-tools.txt
+          # (kept in agreement by Gate 23, specs/038 FR-011a).
+          REQUIRED_TOOLS="git gh jq curl python3 bash node timeout"
+
+          if [ -n "$REGISTRY_USERNAME" ] && [ -n "$REGISTRY_PASSWORD" ]; then
+            candidate=""
+            case "$IMAGE" in
+              */*) candidate="${IMAGE%%/*}" ;;
+            esac
+            case "$candidate" in
+              *.*|*:*|localhost) login_args=("$candidate") ;;
+              *) login_args=() ;;
+            esac
+            if ! echo "$REGISTRY_PASSWORD" | docker login "${login_args[@]}" --username "$REGISTRY_USERNAME" --password-stdin 2>docker-login-error.log; then
+              echo "::error::wing-commander verify-image-prerequisites: the registry rejected the supplied credentials for $IMAGE -- $(cat docker-login-error.log)"
+              exit 1
+            fi
+          fi
+
+          if ! docker pull "$IMAGE" 2>docker-pull-error.log; then
+            if [ -z "$REGISTRY_USERNAME" ] && [ -z "$REGISTRY_PASSWORD" ]; then
+              echo "::error::wing-commander verify-image-prerequisites: failed to pull $IMAGE -- no credentials were supplied for this image. $(cat docker-pull-error.log)"
+            elif [ -z "$REGISTRY_USERNAME" ]; then
+              echo "::error::wing-commander verify-image-prerequisites: failed to pull $IMAGE -- container-registry-username was not supplied (container-registry-password was), so no login was attempted. $(cat docker-pull-error.log)"
+            elif [ -z "$REGISTRY_PASSWORD" ]; then
+              echo "::error::wing-commander verify-image-prerequisites: failed to pull $IMAGE -- container-registry-password was not supplied (container-registry-username was), so no login was attempted. $(cat docker-pull-error.log)"
+            else
+              echo "::error::wing-commander verify-image-prerequisites: failed to pull $IMAGE -- the registry rejected the supplied credentials or image reference. $(cat docker-pull-error.log)"
+            fi
+            exit 1
+          fi
+
+          if ! missing=$(docker run --rm -e REQUIRED_TOOLS="$REQUIRED_TOOLS" \
+            --entrypoint sh "$IMAGE" -c \
+            'for t in $REQUIRED_TOOLS; do command -v "$t" >/dev/null 2>&1 || printf " %s" "$t"; done' \
+            2>docker-inspect-error.log); then
+            echo "::error::wing-commander verify-image-prerequisites: could not run a POSIX shell inside $IMAGE to check its prerequisites -- $(cat docker-inspect-error.log)"
+            exit 1
+          fi
+
+          if [ -n "$missing" ]; then
+            echo "::error::wing-commander verify-image-prerequisites: $IMAGE is missing required tool(s):$missing"
+            exit 1
+          fi
+
+  guard:
+    needs: verify-image-prerequisites
+    if: "!cancelled() && needs.verify-image-prerequisites.result != 'failure'"
+    runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
+    container:
+      image: ${{ inputs.container-image }}
+      credentials: >-
+        ${{
+          (secrets.container-registry-username != '' && secrets.container-registry-password != '')
+            && fromJSON(format('{{"username":{0},"password":{1}}}', toJSON(secrets.container-registry-username), toJSON(secrets.container-registry-password)))
+            || fromJSON('{}')
+        }}
+    environment:
+      name: ${{ inputs.environment }}
+      deployment: ${{ inputs.environment-deployment }}
     permissions:
       contents: write
       issues: write
       actions: read
       id-token: write
     outputs:
-      action-taken: ${{ steps.decide.outputs.action-taken }}
+      action-taken: ${{ steps.decide.outputs.action-taken || steps.react.outputs.action-taken }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
         uses: actions/checkout@v5
@@ -92,6 +189,7 @@ jobs:
 
       - name: Resolve pipeline ref
         id: pipeline-ref
+        shell: bash
         env:
           JOB_WORKFLOW_SHA: ${{ github.job_workflow_sha }}
           PIPELINE_REF_INPUT: ${{ inputs.pipeline-ref }}
@@ -139,6 +237,31 @@ jobs:
           run-id: ${{ inputs.run-id }}
           run-name: "Wing Commander · 5 implement"
 
+      # Both reads below run unconditionally whenever conclusion is
+      # 'cancelled' -- cheap and harmless even on the branches (ran-then-
+      # cancelled, uncorrelated) that end up not using them; splitting
+      # them out here, rather than calling fold-queue-ledger.sh inline
+      # from the decide step below, is what keeps this published stage
+      # from resolving an internal _shared/ helper directly (Gate 60
+      # FR-025) -- see wing-commander-fold-queue-ledger.
+      - name: Peek the fold queue head
+        id: peek
+        if: inputs.conclusion == 'cancelled'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-fold-queue-ledger
+        with:
+          transform: peek
+          spec-dir: ${{ inputs.spec-dir || steps.identity.outputs.spec-dir }}
+          peek-token: "__fold-cycle-guard-probe__"
+
+      - name: Peek this run's ledger round
+        id: peek-implement-run
+        if: inputs.conclusion == 'cancelled'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-fold-queue-ledger
+        with:
+          transform: peek-implement-run
+          spec-dir: ${{ inputs.spec-dir || steps.identity.outputs.spec-dir }}
+          implement-run-id: ${{ inputs.run-id }}
+
       # Detection algorithm (contracts/fold-cycle-guard.md; research.md D7):
       # a fully deterministic classification, never an agent's inference
       # (Principle IX) -- 1) never-started vs ran-then-cancelled, 2) a
@@ -147,7 +270,10 @@ jobs:
       # spec-dir granted within a short window of this run's cancellation
       # -- the one residual collision research.md D6 describes, a non-
       # ticketed dispatch colliding with a ticketed run), 3) the
-      # redispatch_count bound.
+      # redispatch_count bound. The actual claim-redispatch write (FR-016's
+      # at-most-once CAS) is a separate step below, gated on this step's
+      # own should-attempt-redispatch output, since a write must stay
+      # conditional on actually reaching that branch.
       - name: Detect a lost cycle and react
         id: decide
         shell: bash
@@ -161,9 +287,10 @@ jobs:
           ISSUE: ${{ steps.identity.outputs.lifecycle-issue }}
           IMPLEMENT_WORKFLOW: ${{ inputs.implement-workflow }}
           DRY_RUN: ${{ inputs.dry-run }}
+          PEEK_OUT: ${{ steps.peek.outputs.output }}
+          ROUND_OUT: ${{ steps.peek-implement-run.outputs.output }}
         run: |
           set -euo pipefail
-          LEDGER=".wing-commander-pipeline/.github/actions/_shared/fold-queue-ledger.sh"
 
           if [ "$CONCLUSION" != "cancelled" ]; then
             echo "action-taken=none" >> "$GITHUB_OUTPUT"
@@ -208,8 +335,7 @@ jobs:
           # poll-interval-seconds of a real collision, so "current head"
           # and "head at cancellation" coincide for the common case this
           # guard exists to catch.
-          peek_out="$(SPEC_DIR="$SPEC_DIR" PEEK_TOKEN="__fold-cycle-guard-probe__" bash "$LEDGER" peek)"
-          head_granted_at="$(printf '%s\n' "$peek_out" | grep '^head-granted-at=' | cut -d= -f2-)"
+          head_granted_at="$(printf '%s\n' "$PEEK_OUT" | grep '^head-granted-at=' | cut -d= -f2-)"
 
           correlated=false
           if [ -n "$head_granted_at" ] && [ "$cancelled_epoch" -gt 0 ]; then
@@ -241,10 +367,9 @@ jobs:
             exit 0
           fi
 
-          round_out="$(SPEC_DIR="$SPEC_DIR" IMPLEMENT_RUN_ID="$RUN_ID" bash "$LEDGER" peek-implement-run)"
-          round="$(printf '%s\n' "$round_out" | grep '^round=' | cut -d= -f2-)"
-          redispatch_count="$(printf '%s\n' "$round_out" | grep '^redispatch-count=' | cut -d= -f2-)"
-          iteration="$(printf '%s\n' "$round_out" | grep '^iteration=' | cut -d= -f2-)"
+          round="$(printf '%s\n' "$ROUND_OUT" | grep '^round=' | cut -d= -f2-)"
+          redispatch_count="$(printf '%s\n' "$ROUND_OUT" | grep '^redispatch-count=' | cut -d= -f2-)"
+          iteration="$(printf '%s\n' "$ROUND_OUT" | grep '^iteration=' | cut -d= -f2-)"
 
           run_url="${GITHUB_SERVER_URL:-https://github.com}/$GITHUB_REPOSITORY/actions/runs/$RUN_ID"
           notice_file="$RUNNER_TEMP/fold-cycle-guard-notice.md"
@@ -276,11 +401,46 @@ jobs:
             exit 0
           fi
 
-          # FR-016/FR-016a's at-most-once bound: an atomic CAS claim, never
-          # this stage's own judgment about how many times it "already
-          # tried" (Principle IX).
-          claim_out="$(SPEC_DIR="$SPEC_DIR" ROUND="$round" bash "$LEDGER" claim-redispatch)"
-          should_redispatch="$(printf '%s\n' "$claim_out" | grep '^should-redispatch=' | cut -d= -f2-)"
+          # FR-016/FR-016a's at-most-once bound is an atomic CAS claim
+          # (never this stage's own judgment about how many times it
+          # "already tried", Principle IX) -- performed by the composite
+          # step below, since it is a write and must stay conditional on
+          # actually reaching this branch. notice_file (already holding the
+          # header written above) and the rest of the reaction logic
+          # continue in the react step, same $RUNNER_TEMP, same job.
+          echo "should-attempt-redispatch=true" >> "$GITHUB_OUTPUT"
+          echo "round=$round" >> "$GITHUB_OUTPUT"
+          echo "iteration=$iteration" >> "$GITHUB_OUTPUT"
+          echo "cancelled-at=$cancelled_at" >> "$GITHUB_OUTPUT"
+
+      - name: Claim this cycle's at-most-once redispatch slot
+        id: claim
+        if: steps.decide.outputs.should-attempt-redispatch == 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-fold-queue-ledger
+        with:
+          transform: claim-redispatch
+          spec-dir: ${{ inputs.spec-dir || steps.identity.outputs.spec-dir }}
+          round: ${{ steps.decide.outputs.round }}
+
+      - name: React to the redispatch claim
+        id: react
+        if: steps.decide.outputs.should-attempt-redispatch == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_TOKEN: ${{ steps.ctx.outputs.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          SPEC_DIR: ${{ inputs.spec-dir || steps.identity.outputs.spec-dir }}
+          ISSUE: ${{ steps.identity.outputs.lifecycle-issue }}
+          IMPLEMENT_WORKFLOW: ${{ inputs.implement-workflow }}
+          ROUND: ${{ steps.decide.outputs.round }}
+          ITERATION: ${{ steps.decide.outputs.iteration }}
+          CANCELLED_AT: ${{ steps.decide.outputs.cancelled-at }}
+          CLAIM_OUT: ${{ steps.claim.outputs.output }}
+        run: |
+          set -euo pipefail
+          notice_file="$RUNNER_TEMP/fold-cycle-guard-notice.md"
+          should_redispatch="$(printf '%s\n' "$CLAIM_OUT" | grep '^should-redispatch=' | cut -d= -f2-)"
 
           if [ "$should_redispatch" != "true" ]; then
             {
@@ -293,13 +453,13 @@ jobs:
           fi
 
           GH_TOKEN="$GH_TOKEN" gh workflow run "$IMPLEMENT_WORKFLOW" \
-            -R "$GITHUB_REPOSITORY" -f spec_dir="$SPEC_DIR" -f issue="$ISSUE" -f iteration="${iteration:-1}"
+            -R "$GITHUB_REPOSITORY" -f spec_dir="$SPEC_DIR" -f issue="$ISSUE" -f iteration="${ITERATION:-1}"
 
           new_run_url=""
           for _ in 1 2 3 4 5 6; do
             sleep 5
             new_run_url=$(gh run list -R "$GITHUB_REPOSITORY" --workflow "$IMPLEMENT_WORKFLOW" \
-              --created ">=$cancelled_at" --limit 1 --json url --jq '.[0].url // empty' 2>/dev/null) || new_run_url=""
+              --created ">=$CANCELLED_AT" --limit 1 --json url --jq '.[0].url // empty' 2>/dev/null) || new_run_url=""
             [ -n "$new_run_url" ] && break
           done
 
@@ -313,4 +473,4 @@ jobs:
           } >> "$notice_file"
           GH_TOKEN="$ISSUE_TOKEN" gh issue comment "$ISSUE" --body-file "$notice_file"
           echo "action-taken=notice-and-redispatch" >> "$GITHUB_OUTPUT"
-          echo "fold-cycle-guard: re-dispatched $SPEC_DIR round $round once (FR-016)." >> "$GITHUB_STEP_SUMMARY"
+          echo "fold-cycle-guard: re-dispatched $SPEC_DIR round $ROUND once (FR-016)." >> "$GITHUB_STEP_SUMMARY"

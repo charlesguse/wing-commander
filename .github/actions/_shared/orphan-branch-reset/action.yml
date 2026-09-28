@@ -91,9 +91,7 @@ runs:
           if git rev-parse --verify HEAD >/dev/null 2>&1; then
             git checkout --quiet --detach
             git branch -D "$BRANCH" >/dev/null 2>&1 || true
-            git checkout --quiet --orphan "$BRANCH"
-            git rm -rq --cached . >/dev/null 2>&1 || true
-            find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+            bash "$GITHUB_ACTION_PATH/../orphan-branch-empty-tree.sh" "$BRANCH"
           else
             git checkout --quiet -b "$BRANCH"
           fi

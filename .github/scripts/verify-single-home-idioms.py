@@ -154,7 +154,12 @@ WAIVERS_PATH = ".github/scripts/single-home-waivers.json"
 VERDICT_SCRIPT = ".github/actions/_shared/auto-release-verdict.sh"
 
 DECLARED_HOMES = {
-    "orphan-reset": ".github/actions/_shared/orphan-branch-reset/action.yml",
+    # specs/074-serialized-fold-dispatch: the reset-to-empty-orphan-branch
+    # fragment moved out of orphan-branch-reset/action.yml's own inline
+    # shell into this plain script once fold-queue-ledger.sh needed the
+    # same reset from inside its own retry loop (a bash script, which
+    # cannot `uses:` a composite) -- see orphan-branch-empty-tree.sh.
+    "orphan-reset": ".github/actions/_shared/orphan-branch-empty-tree.sh",
     # specs/056-stage-found-defect-filing, research.md D8: promoted out of
     # _shared/ and given the wing-commander- prefix because a published
     # composite (wing-commander-stage-findings) is now a second, deliberate

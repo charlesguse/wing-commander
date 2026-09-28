@@ -354,8 +354,8 @@ jobs:
   # specs/074-serialized-fold-dispatch research.md D5 -- see
   # fold-queue-ledger.sh. When dispatched with a non-empty
   # `fold-queue-token` (the SAME atomic transaction that won the dispatch
-  # claim already enqueued this ticket, research.md D5 -- this job only
-  # ever AWAITS it, never enqueues its own), blocks until it is granted
+  # claim already enqueued this ticket, per that same decision -- this job
+  # only ever AWAITS it, never enqueues its own), blocks until it is granted
   # before `implement` (whose own wing-commander-<spec-dir> concurrency
   # group below is unchanged) is even scheduled. When the token is empty
   # (a manual/standalone dispatch, or any caller predating this feature),
@@ -373,6 +373,9 @@ jobs:
             && fromJSON(format('{{"username":{0},"password":{1}}}', toJSON(secrets.container-registry-username), toJSON(secrets.container-registry-password)))
             || fromJSON('{}')
         }}
+    environment:
+      name: ${{ inputs.environment }}
+      deployment: ${{ inputs.environment-deployment }}
     permissions:
       contents: write
       id-token: write
@@ -389,6 +392,7 @@ jobs:
       - name: Resolve pipeline ref
         id: pipeline-ref
         if: inputs.fold-queue-token != ''
+        shell: bash
         env:
           JOB_WORKFLOW_SHA: ${{ github.job_workflow_sha }}
           PIPELINE_REF_INPUT: ${{ inputs.pipeline-ref }}
@@ -3167,8 +3171,8 @@ jobs:
   # concluded, rather than duplicating the release call into both jobs
   # (contracts/workflow-changes.md).
   fold-turn-release:
-    needs: [implement, stalled, fold-turn-implement]
-    if: always()
+    needs: [verify-image-prerequisites, implement, stalled, fold-turn-implement]
+    if: always() && needs.verify-image-prerequisites.result != 'failure'
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
@@ -3178,6 +3182,9 @@ jobs:
             && fromJSON(format('{{"username":{0},"password":{1}}}', toJSON(secrets.container-registry-username), toJSON(secrets.container-registry-password)))
             || fromJSON('{}')
         }}
+    environment:
+      name: ${{ inputs.environment }}
+      deployment: ${{ inputs.environment-deployment }}
     permissions:
       contents: write
       id-token: write
@@ -3189,6 +3196,7 @@ jobs:
 
       - name: Resolve pipeline ref
         id: pipeline-ref
+        shell: bash
         env:
           JOB_WORKFLOW_SHA: ${{ github.job_workflow_sha }}
           PIPELINE_REF_INPUT: ${{ inputs.pipeline-ref }}

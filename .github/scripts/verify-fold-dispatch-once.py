@@ -61,7 +61,8 @@ from wc_shell_harness import (ensure_jq, find_job, find_step, resolve_bash,
 
 STAGE = ".github/workflows/pr-conversation.yml"
 
-DISPATCH_STEP = "Dispatch implement once for the whole review"
+DISPATCH_STEP = "Dispatch implement once for the whole round"
+DISPATCH_REPLY_STEP = "Reply confirming dispatch on the PR"
 REPORT_STEP = "Report fold-route leg outcomes"
 REPLY_STEP = "Reply confirming fold-in (no dispatch)"
 ACT_AGENT_STEP = "Act on this classification"
@@ -120,50 +121,32 @@ def sh(script, cwd):
                           errors="replace")
 
 
-def make_repo(root, iteration, fold_commits):
-    """A real git repo (bare remote + clone) seeded with spec-meta.json,
-    then one commit per (id, summary) in fold_commits, each message
-    `fold(<id>): <summary>` — the exact shape D6 requires `act` to write.
-    Returns (repo_path, base_sha, tip_sha).
-    """
-    work = tempfile.mkdtemp(dir=root)
-    remote = os.path.join(work, "remote.git")
-    repo = os.path.join(work, "repo")
-    setup = f"""
-git init --bare -q -b main '{remote}'
-git clone -q '{remote}' '{repo}'
-cd '{repo}'
-git config user.email harness@example.invalid
-git config user.name harness
-mkdir -p '{SPEC_DIR}'
-printf '%s\\n' '{{"issue": {ISSUE}, "spec_dir": "{SPEC_DIR}", "stage": "implement", "iteration": {iteration}}}' > '{SPEC_DIR}/spec-meta.json'
-git add -A
-git commit -q -m seed
-git push -q origin main
-git rev-parse HEAD
-"""
-    proc = sh(setup, work)
-    if proc.returncode != 0:
-        sys.exit(f"::error::harness could not seed a git workspace: "
-                 f"{proc.stdout}{proc.stderr}")
-    base_sha = proc.stdout.strip().splitlines()[-1]
+RUN_ID = "1"
 
-    tip_sha = base_sha
-    for idx, (leg_id, summary) in enumerate(fold_commits):
-        commit_script = f"""
-cd '{repo}'
-echo 'change {idx}' >> '{SPEC_DIR}/tasks.md'
-git add -A
-git commit -q -m 'fold({leg_id}): {summary}'
-git push -q origin main
-git rev-parse HEAD
-"""
-        proc = sh(commit_script, work)
-        if proc.returncode != 0:
-            sys.exit(f"::error::harness could not seed a fold commit: "
-                     f"{proc.stdout}{proc.stderr}")
-        tip_sha = proc.stdout.strip().splitlines()[-1]
-    return repo, base_sha, tip_sha
+
+def make_workdir(root):
+    """A plain scratch directory to run a step in.
+
+    specs/074-serialized-fold-dispatch T015/T019: neither DISPATCH_STEP nor
+    REPORT_STEP reads git at all any more (both now trust the fold-queue
+    ledger's own folded_items/not_folded_items records, passed in as
+    FOLDED_ITEMS/NOT_FOLDED_ITEMS JSON, over the base..tip fold(<id>)
+    commit scan this harness used to seed via a throwaway git repo) -- see
+    fold-queue-ledger.sh.
+    """
+    return tempfile.mkdtemp(dir=root)
+
+
+def _folded_item(leg_id, summary, run_id=RUN_ID, commit_sha="deadbeef"):
+    """One fold-queue-ledger.sh `release` folded_items record (schema:
+    contracts/wing-commander-fold-queue-release.md)."""
+    return {"run_id": run_id, "leg_id": leg_id, "summary": summary,
+            "commit_sha": commit_sha}
+
+
+def _not_folded_item(leg_id, outcome, run_id=RUN_ID):
+    """One fold-queue-ledger.sh `release` not_folded_items record."""
+    return {"run_id": run_id, "leg_id": leg_id, "outcome": outcome}
 
 
 def new_stub_dir(work):
@@ -195,27 +178,23 @@ def scenario_three_clean_legs(steps, root):
     """
     failures = []
     where = "scenario 1 (three clean legs)"
-    fold_commits = [("leg-0", "first item"), ("leg-1", "second item"),
-                    ("leg-2", "third item")]
-    repo, base_sha, tip_sha = make_repo(root, 3, fold_commits)
-    work = os.path.dirname(repo)
+    work = make_workdir(root)
     runner_temp = os.path.join(work, "runner_temp")
     os.makedirs(runner_temp, exist_ok=True)
     bindir, calls, last_comment = new_stub_dir(work)
     path = bindir + os.pathsep + os.environ["PATH"]
 
-    rc, out, _, _ = run_step(
-        BASH, steps[DISPATCH_STEP], repo,
-        {"GH_TOKEN": "x", "DISPATCH_TOKEN": "x", "PR_NUMBER": PR_NUMBER,
-         "SPEC_DIR": SPEC_DIR, "ISSUE": ISSUE,
-         "IMPLEMENT_WORKFLOW": IMPLEMENT_WORKFLOW,
-         "GITHUB_REPOSITORY": REPO, "BASE_SHA": base_sha, "TIP_SHA": tip_sha,
-         "GH_CALLS": calls, "GH_LAST_COMMENT": last_comment,
-         "GH_RUN_LIST_JSON": '[{"url":"https://example.invalid/runs/1"}]',
-         "PATH": path},
-        runner_temp)
+    folded_items = _json([
+        _folded_item("leg-0", "first item"),
+        _folded_item("leg-1", "second item"),
+        _folded_item("leg-2", "third item"),
+    ])
+
+    rc, out = _run_dispatch_and_reply(steps, work, runner_temp, calls,
+                                      last_comment, path, folded_items)
     if rc != 0:
-        failures.append(f"{where}: {DISPATCH_STEP!r} exited {rc}: {out.strip()}")
+        failures.append(f"{where}: {DISPATCH_STEP!r}/{DISPATCH_REPLY_STEP!r} "
+                        f"exited {rc}: {out.strip()}")
         return failures
 
     dispatches = gh_call_count(calls, "workflow run")
@@ -244,11 +223,11 @@ def scenario_three_clean_legs(steps, root):
             fh.write('{"name": "%s", "conclusion": "success"}\n'
                      % ACT_JOB_NAME.format(leg_id))
     rc, out, _, summary = run_step(
-        BASH, steps[REPORT_STEP], repo,
-        {"GH_TOKEN": "x", "ACTIONS_TOKEN": "x", "PR_NUMBER": PR_NUMBER, "RUN_ID": "1",
+        BASH, steps[REPORT_STEP], work,
+        {"GH_TOKEN": "x", "ACTIONS_TOKEN": "x", "PR_NUMBER": PR_NUMBER, "RUN_ID": RUN_ID,
          "GITHUB_REPOSITORY": REPO,
          "CLASSIFICATIONS": _json(classifications),
-         "BASE_SHA": base_sha, "TIP_SHA": tip_sha,
+         "FOLDED_ITEMS": folded_items,
          "GH_CALLS": calls, "GH_LAST_COMMENT": last_comment,
          "GH_JOBS_JSONL": jobs_jsonl, "PATH": path},
         runner_temp)
@@ -294,13 +273,14 @@ def scenario_missing_job(steps, root):
 def _report_single_leg_scenario(steps, root, where, conclusion, fold_commits,
                                 expect):
     failures = []
-    repo, base_sha, tip_sha = make_repo(root, 1, fold_commits)
-    work = os.path.dirname(repo)
+    work = make_workdir(root)
     runner_temp = os.path.join(work, "runner_temp")
     os.makedirs(runner_temp, exist_ok=True)
     bindir, calls, last_comment = new_stub_dir(work)
     path = bindir + os.pathsep + os.environ["PATH"]
 
+    folded_items = _json([_folded_item(leg_id, summary)
+                          for leg_id, summary in fold_commits])
     classifications = [{"id": "leg-0", "category": "in-scope-change",
                         "summary": "the item"}]
     jobs_jsonl = os.path.join(work, "jobs.jsonl")
@@ -311,11 +291,11 @@ def _report_single_leg_scenario(steps, root, where, conclusion, fold_commits,
         # conclusion is None -> the job never appears at all (missing case).
 
     rc, out, _, _ = run_step(
-        BASH, steps[REPORT_STEP], repo,
-        {"GH_TOKEN": "x", "ACTIONS_TOKEN": "x", "PR_NUMBER": PR_NUMBER, "RUN_ID": "1",
+        BASH, steps[REPORT_STEP], work,
+        {"GH_TOKEN": "x", "ACTIONS_TOKEN": "x", "PR_NUMBER": PR_NUMBER, "RUN_ID": RUN_ID,
          "GITHUB_REPOSITORY": REPO,
          "CLASSIFICATIONS": _json(classifications),
-         "BASE_SHA": base_sha, "TIP_SHA": tip_sha,
+         "FOLDED_ITEMS": folded_items,
          "GH_CALLS": calls, "GH_LAST_COMMENT": last_comment,
          "GH_JOBS_JSONL": jobs_jsonl, "PATH": path},
         runner_temp)
@@ -339,8 +319,7 @@ def scenario_zero_in_scope(steps, root):
     """
     failures = []
     where = "scenario 6 (zero in-scope items)"
-    repo, base_sha, tip_sha = make_repo(root, 1, [])
-    work = os.path.dirname(repo)
+    work = make_workdir(root)
     runner_temp = os.path.join(work, "runner_temp")
     os.makedirs(runner_temp, exist_ok=True)
     bindir, calls, last_comment = new_stub_dir(work)
@@ -354,11 +333,11 @@ def scenario_zero_in_scope(steps, root):
     open(jobs_jsonl, "w").close()
 
     rc, out, _, _ = run_step(
-        BASH, steps[REPORT_STEP], repo,
-        {"GH_TOKEN": "x", "ACTIONS_TOKEN": "x", "PR_NUMBER": PR_NUMBER, "RUN_ID": "1",
+        BASH, steps[REPORT_STEP], work,
+        {"GH_TOKEN": "x", "ACTIONS_TOKEN": "x", "PR_NUMBER": PR_NUMBER, "RUN_ID": RUN_ID,
          "GITHUB_REPOSITORY": REPO,
          "CLASSIFICATIONS": _json(classifications),
-         "BASE_SHA": base_sha, "TIP_SHA": tip_sha,
+         "FOLDED_ITEMS": "[]",
          "GH_CALLS": calls, "GH_LAST_COMMENT": last_comment,
          "GH_JOBS_JSONL": jobs_jsonl, "PATH": path},
         runner_temp)
@@ -369,15 +348,11 @@ def scenario_zero_in_scope(steps, root):
         failures.append(f"{where}: report-fold-outcomes posted a comment "
                         f"for a review with no fold-route items.")
 
-    # And dispatch-once: base unchanged (nothing folded) -> the step's own
-    # `if:` (checked structurally below) must gate this out; simulate the
-    # no-fold case directly by never invoking the step at all — the job's
-    # OWN `if:` on the shipped step (asserted in test_structural) is what
-    # provides this guarantee in production. Confirmed here by running the
-    # step's underlying script and checking it takes the standalone no-op
-    # branch when BASE_SHA == TIP_SHA is never reached in practice — this
-    # step is not even invoked when tip == base; that gating is asserted
-    # structurally, not by executing this step with contradictory input.
+    # And dispatch-once: a round that never accumulated a folded_items
+    # entry -> the step's own `if:` (checked structurally below) must gate
+    # this out; simulate the no-fold case directly by never invoking the
+    # step at all — the job's OWN `if:` on the shipped step (asserted in
+    # test_structural) is what provides this guarantee in production.
     return failures
 
 
@@ -388,29 +363,22 @@ def scenario_held_leg_timeout(steps, root):
     """
     failures = []
     where = "scenario 5 (held leg timeout)"
-    fold_commits = [("leg-0", "ready item")]
-    repo, base_sha, tip_sha = make_repo(root, 1, fold_commits)
-    work = os.path.dirname(repo)
+    work = make_workdir(root)
     runner_temp = os.path.join(work, "runner_temp")
     os.makedirs(runner_temp, exist_ok=True)
     bindir, calls, last_comment = new_stub_dir(work)
     path = bindir + os.pathsep + os.environ["PATH"]
 
+    folded_items = _json([_folded_item("leg-0", "ready item")])
+
     # leg-0 (ready, non-confirm-gated) folded and succeeded; leg-1 (held)
     # timed out waiting on its environment approval -> GitHub reports its
-    # job conclusion as cancelled, with no fold(<id>) evidence.
-    rc, out, _, _ = run_step(
-        BASH, steps[DISPATCH_STEP], repo,
-        {"GH_TOKEN": "x", "DISPATCH_TOKEN": "x", "PR_NUMBER": PR_NUMBER,
-         "SPEC_DIR": SPEC_DIR, "ISSUE": ISSUE,
-         "IMPLEMENT_WORKFLOW": IMPLEMENT_WORKFLOW,
-         "GITHUB_REPOSITORY": REPO, "BASE_SHA": base_sha, "TIP_SHA": tip_sha,
-         "GH_CALLS": calls, "GH_LAST_COMMENT": last_comment,
-         "GH_RUN_LIST_JSON": '[{"url":"https://example.invalid/runs/1"}]',
-         "PATH": path},
-        runner_temp)
+    # job conclusion as cancelled, with no folded_items entry.
+    rc, out = _run_dispatch_and_reply(steps, work, runner_temp, calls,
+                                      last_comment, path, folded_items)
     if rc != 0:
-        failures.append(f"{where}: {DISPATCH_STEP!r} exited {rc}: {out.strip()}")
+        failures.append(f"{where}: {DISPATCH_STEP!r}/{DISPATCH_REPLY_STEP!r} "
+                        f"exited {rc}: {out.strip()}")
         return failures
     if gh_call_count(calls, "workflow run") != 1:
         failures.append(f"{where}: the ready leg's fold was not dispatched "
@@ -430,11 +398,11 @@ def scenario_held_leg_timeout(steps, root):
     open(calls, "w").close()
     open(last_comment, "w").close()
     rc, out, _, _ = run_step(
-        BASH, steps[REPORT_STEP], repo,
-        {"GH_TOKEN": "x", "ACTIONS_TOKEN": "x", "PR_NUMBER": PR_NUMBER, "RUN_ID": "1",
+        BASH, steps[REPORT_STEP], work,
+        {"GH_TOKEN": "x", "ACTIONS_TOKEN": "x", "PR_NUMBER": PR_NUMBER, "RUN_ID": RUN_ID,
          "GITHUB_REPOSITORY": REPO,
          "CLASSIFICATIONS": _json(classifications),
-         "BASE_SHA": base_sha, "TIP_SHA": tip_sha,
+         "FOLDED_ITEMS": folded_items,
          "GH_CALLS": calls, "GH_LAST_COMMENT": last_comment,
          "GH_JOBS_JSONL": jobs_jsonl, "PATH": path},
         runner_temp)
@@ -485,7 +453,43 @@ def suite(steps, root):
 
 def load_steps():
     return {name: find_step(STAGE, name)["run"]
-            for name in (DISPATCH_STEP, REPORT_STEP)}
+            for name in (DISPATCH_STEP, DISPATCH_REPLY_STEP, REPORT_STEP)}
+
+
+def _run_dispatch_and_reply(steps, work, runner_temp, calls, last_comment,
+                            path, folded_items, not_folded_items="[]",
+                            iteration="2"):
+    """Runs DISPATCH_STEP then, when it reached the dispatch point,
+    DISPATCH_REPLY_STEP -- specs/074-serialized-fold-dispatch T019 split
+    the once-single dispatch-once step in two so the ledger's
+    record-implement-run write could move into its own composite step
+    (Gate 60 FR-025) -- see wing-commander-fold-queue-ledger/action.yml.
+    Returns (rc, out) matching a single run_step call's first two fields.
+    """
+    rc, out, outputs, _ = run_step(
+        BASH, steps[DISPATCH_STEP], work,
+        {"GH_TOKEN": "x", "DISPATCH_TOKEN": "x", "PR_NUMBER": PR_NUMBER,
+         "SPEC_DIR": SPEC_DIR, "ISSUE": ISSUE,
+         "IMPLEMENT_WORKFLOW": IMPLEMENT_WORKFLOW,
+         "ITERATION": iteration, "FOLDED_ITEMS": folded_items,
+         "NOT_FOLDED_ITEMS": not_folded_items, "IMPLEMENT_TOKEN": "impl-token",
+         "GITHUB_REPOSITORY": REPO,
+         "GH_CALLS": calls, "GH_LAST_COMMENT": last_comment,
+         "GH_RUN_LIST_JSON": '[{"url":"https://example.invalid/runs/1"}]',
+         "PATH": path},
+        runner_temp)
+    if rc != 0 or outputs.get("dispatched") != "true":
+        return rc, out
+    rc2, out2, _, _ = run_step(
+        BASH, steps[DISPATCH_REPLY_STEP], work,
+        {"GH_TOKEN": "x", "PR_NUMBER": PR_NUMBER, "ITERATION": iteration,
+         "RUN_URL": outputs.get("run-url", ""),
+         "FOLDED": outputs.get("folded", ""),
+         "NOT_FOLDED": outputs.get("not-folded", ""),
+         "GH_CALLS": calls, "GH_LAST_COMMENT": last_comment,
+         "PATH": path},
+        runner_temp)
+    return rc2, out + out2
 
 
 # ------------------------------------------------------------- structural
@@ -498,6 +502,13 @@ def test_structural():
     doc = yaml.safe_load(open(STAGE, encoding="utf-8")) or {}
     jobs = doc.get("jobs") or {}
 
+    # specs/074-serialized-fold-dispatch T016/T011: each job also depends
+    # on its own fold-queue admission-ticket prerequisite job now (needed
+    # before this job may even be scheduled, research.md D1) -- see
+    # fold-queue-ledger.sh.
+    EXTRA_NEEDS = {"dispatch-once": "fold-turn-dispatch",
+                   "report-fold-outcomes": "fold-turn-act"}
+
     for job_id in ("dispatch-once", "report-fold-outcomes"):
         job = jobs.get(job_id)
         if job is None:
@@ -509,11 +520,13 @@ def test_structural():
                             f"review, not once per leg (research.md D1).")
         needs = job.get("needs")
         needs_set = set(needs) if isinstance(needs, list) else {needs}
-        expected_needs = {"verify-image-prerequisites", "classify-and-announce", "act"}
+        expected_needs = {"verify-image-prerequisites", "classify-and-announce",
+                          "act", EXTRA_NEEDS[job_id]}
         if needs_set != expected_needs:
             failures.append(f"structural: {job_id!r}.needs is {needs!r}, "
                             f"expected exactly [verify-image-prerequisites, "
-                            f"classify-and-announce, act] (Gate 23 requires "
+                            f"classify-and-announce, act, "
+                            f"{EXTRA_NEEDS[job_id]}] (Gate 23 requires "
                             f"every always()-guarded job to depend on "
                             f"verify-image-prerequisites directly — PR #253 "
                             f"review).")
@@ -632,30 +645,23 @@ def run_mutation(label, apply_mutation, steps, root):
         # Simulate 3 legs each running the mutated (dispatching) reply
         # step, plus dispatch-once's own single dispatch — total must be
         # caught as "more than one".
-        repo, base_sha, tip_sha = make_repo(
-            root, 1, [("leg-0", "a"), ("leg-1", "b"), ("leg-2", "c")])
-        work = os.path.dirname(repo)
+        work = make_workdir(root)
         runner_temp = os.path.join(work, "runner_temp")
         os.makedirs(runner_temp, exist_ok=True)
         bindir, calls, last_comment = new_stub_dir(work)
         path = bindir + os.pathsep + os.environ["PATH"]
         for _ in range(3):
-            run_step(BASH, mutated[REPLY_STEP], repo,
+            run_step(BASH, mutated[REPLY_STEP], work,
                      {"GH_TOKEN": "x", "PR_NUMBER": PR_NUMBER,
                       "IMPLEMENT_WORKFLOW": IMPLEMENT_WORKFLOW,
                       "GITHUB_REPOSITORY": REPO, "GH_CALLS": calls,
                       "GH_LAST_COMMENT": last_comment, "PATH": path},
                      runner_temp)
-        run_step(BASH, mutated[DISPATCH_STEP], repo,
-                 {"GH_TOKEN": "x", "DISPATCH_TOKEN": "x",
-                  "PR_NUMBER": PR_NUMBER, "SPEC_DIR": SPEC_DIR,
-                  "ISSUE": ISSUE, "IMPLEMENT_WORKFLOW": IMPLEMENT_WORKFLOW,
-                  "GITHUB_REPOSITORY": REPO, "BASE_SHA": base_sha,
-                  "TIP_SHA": tip_sha, "GH_CALLS": calls,
-                  "GH_LAST_COMMENT": last_comment,
-                  "GH_RUN_LIST_JSON": '[{"url":"https://example.invalid"}]',
-                  "PATH": path},
-                 runner_temp)
+        folded_items = _json([_folded_item("leg-0", "a"),
+                              _folded_item("leg-1", "b"),
+                              _folded_item("leg-2", "c")])
+        _run_dispatch_and_reply(mutated, work, runner_temp, calls,
+                                last_comment, path, folded_items)
         return gh_call_count(calls, "workflow run") > 1
 
     if label.startswith("job name matched by bare equality"):
@@ -699,12 +705,13 @@ def _mutation_now_says_unhealthy(steps, root, conclusion, fold_commits):
 
 def _report_single_leg_raw(steps, root, conclusion, fold_commits):
     """Run the report step for one leg-0; returns (rc, calls_path)."""
-    repo, base_sha, tip_sha = make_repo(root, 1, fold_commits)
-    work = os.path.dirname(repo)
+    work = make_workdir(root)
     runner_temp = os.path.join(work, "runner_temp")
     os.makedirs(runner_temp, exist_ok=True)
     bindir, calls, last_comment = new_stub_dir(work)
     path = bindir + os.pathsep + os.environ["PATH"]
+    folded_items = _json([_folded_item(leg_id, summary)
+                          for leg_id, summary in fold_commits])
     classifications = [{"id": "leg-0", "category": "in-scope-change",
                         "summary": "the item"}]
     jobs_jsonl = os.path.join(work, "jobs.jsonl")
@@ -712,11 +719,11 @@ def _report_single_leg_raw(steps, root, conclusion, fold_commits):
         fh.write('{"name": "%s", "conclusion": "%s"}\n'
                  % (ACT_JOB_NAME.format("leg-0"), conclusion))
     rc, _, _, _ = run_step(
-        BASH, steps[REPORT_STEP], repo,
-        {"GH_TOKEN": "x", "ACTIONS_TOKEN": "x", "PR_NUMBER": PR_NUMBER, "RUN_ID": "1",
+        BASH, steps[REPORT_STEP], work,
+        {"GH_TOKEN": "x", "ACTIONS_TOKEN": "x", "PR_NUMBER": PR_NUMBER, "RUN_ID": RUN_ID,
          "GITHUB_REPOSITORY": REPO,
          "CLASSIFICATIONS": _json(classifications),
-         "BASE_SHA": base_sha, "TIP_SHA": tip_sha,
+         "FOLDED_ITEMS": folded_items,
          "GH_CALLS": calls, "GH_LAST_COMMENT": last_comment,
          "GH_JOBS_JSONL": jobs_jsonl, "PATH": path},
         runner_temp)

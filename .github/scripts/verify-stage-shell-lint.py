@@ -119,7 +119,7 @@ SHELL_LINTED = tuple(
     f".github/workflows/{name}.yml" for name in (
         "intake", "clarify", "plan", "tasks", "implement", "finalize",
         "cleanup", "rebase", "metrics-persist", "private-image-dogfood",
-        "release"))
+        "release", "fold-cycle-guard"))
 
 # Published stages knowingly outside the shellcheck pass (issue #149).
 # Anything published and NOT in SHELL_LINTED must be here, with the

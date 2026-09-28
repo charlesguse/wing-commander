@@ -498,9 +498,7 @@ while [ "$attempt" -le "$max_attempts" ]; do
     fi
     (
       cd "$clone_dir" || exit 1
-      git checkout --quiet --orphan "$LEDGER_BRANCH"
-      git rm -rq --cached . >/dev/null 2>&1 || true
-      find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+      bash "$(dirname "${BASH_SOURCE[0]}")/orphan-branch-empty-tree.sh" "$LEDGER_BRANCH"
     )
   fi
 

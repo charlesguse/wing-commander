@@ -1494,6 +1494,9 @@ jobs:
             && fromJSON(format('{{"username":{0},"password":{1}}}', toJSON(secrets.container-registry-username), toJSON(secrets.container-registry-password)))
             || fromJSON('{}')
         }}
+    environment:
+      name: ${{ inputs.environment }}
+      deployment: ${{ inputs.environment-deployment }}
     permissions:
       contents: write
       id-token: write
@@ -1508,6 +1511,7 @@ jobs:
 
       - name: Resolve pipeline ref
         id: pipeline-ref
+        shell: bash
         env:
           JOB_WORKFLOW_SHA: ${{ github.job_workflow_sha }}
           PIPELINE_REF_INPUT: ${{ inputs.pipeline-ref }}
@@ -2758,6 +2762,9 @@ jobs:
             && fromJSON(format('{{"username":{0},"password":{1}}}', toJSON(secrets.container-registry-username), toJSON(secrets.container-registry-password)))
             || fromJSON('{}')
         }}
+    environment:
+      name: ${{ inputs.environment }}
+      deployment: ${{ inputs.environment-deployment }}
     permissions:
       contents: write
       id-token: write
@@ -2772,6 +2779,7 @@ jobs:
 
       - name: Resolve pipeline ref
         id: pipeline-ref
+        shell: bash
         env:
           JOB_WORKFLOW_SHA: ${{ github.job_workflow_sha }}
           PIPELINE_REF_INPUT: ${{ inputs.pipeline-ref }}
@@ -2939,6 +2947,7 @@ jobs:
       # -- never a git-log range, so the PR comment's list and the dispatch
       # decision can never disagree with what actually released tickets.
       - name: Dispatch implement once for the whole round
+        id: dispatch
         shell: bash
         if: steps.claim.outputs.should-dispatch == 'true'
         env:
@@ -2952,7 +2961,6 @@ jobs:
           FOLDED_ITEMS: ${{ steps.claim.outputs.folded-items }}
           NOT_FOLDED_ITEMS: ${{ steps.claim.outputs.not-folded-items }}
           IMPLEMENT_TOKEN: ${{ steps.claim.outputs.implement-token }}
-          ROUND: ${{ needs.fold-turn-dispatch.outputs.round }}
         run: |
           set -euo pipefail
           next="$ITERATION"
@@ -2999,29 +3007,59 @@ jobs:
             [ -n "$run_url" ] && break
           done
 
-          # research.md D7: fold-cycle-guard.yml needs THIS dispatched run's
-          # own id (distinct from the implement-token's run_id field, which
-          # carries the DISPATCHING run's id) to know which round a later
-          # cancelled implement.yml run belonged to.
-          if [ -n "$run_url" ]; then
-            ROUND="$ROUND" IMPLEMENT_RUN_ID="${run_url##*/runs/}" \
-              bash .wing-commander-pipeline/.github/actions/_shared/fold-queue-ledger.sh record-implement-run >/dev/null
-          fi
+          {
+            echo "dispatched=true"
+            echo "run-url=$run_url"
+            # research.md D7: fold-cycle-guard.yml needs THIS dispatched
+            # run's own id (distinct from the implement-token's run_id
+            # field, which carries the DISPATCHING run's id) to know which
+            # round a later cancelled implement.yml run belonged to.
+            if [ -n "$run_url" ]; then
+              echo "implement-run-id=${run_url##*/runs/}"
+            fi
+            echo "folded<<WC_DISPATCH_ONCE_EOF"
+            printf '%s\n' "$folded"
+            echo "WC_DISPATCH_ONCE_EOF"
+            echo "not-folded<<WC_DISPATCH_ONCE_EOF"
+            printf '%s\n' "$not_folded"
+            echo "WC_DISPATCH_ONCE_EOF"
+          } >> "$GITHUB_OUTPUT"
 
+      - name: Record this round's dispatched implement run
+        if: steps.dispatch.outputs.run-url != ''
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-fold-queue-ledger
+        with:
+          transform: record-implement-run
+          spec-dir: ${{ needs.classify-and-announce.outputs.spec-dir }}
+          round: ${{ needs.fold-turn-dispatch.outputs.round }}
+          implement-run-id: ${{ steps.dispatch.outputs.implement-run-id }}
+
+      - name: Reply confirming dispatch on the PR
+        if: steps.dispatch.outputs.dispatched == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          PR_NUMBER: ${{ inputs.pr-number }}
+          ITERATION: ${{ steps.claim.outputs.iteration }}
+          RUN_URL: ${{ steps.dispatch.outputs.run-url }}
+          FOLDED: ${{ steps.dispatch.outputs.folded }}
+          NOT_FOLDED: ${{ steps.dispatch.outputs.not-folded }}
+        run: |
+          set -euo pipefail
           body_file="$RUNNER_TEMP/dispatch-once-reply.md"
           {
-            if [ -n "$run_url" ]; then
-              echo "Implementation cycle $next dispatched: $run_url — note this re-dispatched iteration may hit implement.yml's own iteration cap; if so, that run's own reply on the lifecycle issue is the authoritative outcome."
+            if [ -n "$RUN_URL" ]; then
+              echo "Implementation cycle $ITERATION dispatched: $RUN_URL — note this re-dispatched iteration may hit implement.yml's own iteration cap; if so, that run's own reply on the lifecycle issue is the authoritative outcome."
             else
-              echo "Implementation cycle $next dispatched — note this re-dispatched iteration may hit implement.yml's own iteration cap; see the workflow's Actions tab for the new run."
+              echo "Implementation cycle $ITERATION dispatched — note this re-dispatched iteration may hit implement.yml's own iteration cap; see the workflow's Actions tab for the new run."
             fi
             echo ""
             echo "Folded in this round:"
-            printf '%s\n' "$folded"
-            if [ -n "$not_folded" ]; then
+            printf '%s\n' "$FOLDED"
+            if [ -n "$NOT_FOLDED" ]; then
               echo ""
               echo "Not folded in this round:"
-              printf '%s\n' "$not_folded"
+              printf '%s\n' "$NOT_FOLDED"
             fi
           } > "$body_file"
           gh pr comment "$PR_NUMBER" --body-file "$body_file"
@@ -3047,7 +3085,8 @@ jobs:
   # and get misattributed by) — two signals neither of which a cancelled
   # leg has to publish itself (FR-006a) — to report any fold-route item
   # that died without folding, distinguishing "not folded" from "partly
-  # folded" (data-model.md §4). Scoped to fold-route items only (in-scope-change,
+  # folded" (the Round entity's own shape, per the data model's own §4).
+  # Scoped to fold-route items only (in-scope-change,
   # new-functionality/current-spec): every other route already posts its
   # own per-leg reply as its observable outcome (FR-006), so re-checking
   # those here would misreport a successful reply-only leg — which never
@@ -3163,19 +3202,24 @@ jobs:
       # own folded_items entries, keyed by run_id (never a base..tip
       # git-log range, which a concurrent run's fold commits could land
       # inside and get misattributed by) -- see fold-queue-ledger.sh.
-      - name: Read this run's own fold-queue completion records
+      - name: Read this run's own fold-queue completion records (ledger)
+        id: fold-queue-round-read
+        if: needs.fold-turn-act.outputs.round != ''
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-fold-queue-ledger
+        with:
+          transform: peek-round
+          spec-dir: ${{ needs.classify-and-announce.outputs.spec-dir }}
+          round: ${{ needs.fold-turn-act.outputs.round }}
+
+      - name: Extract this run's own fold-queue completion records
         id: fold-queue-round
         if: needs.fold-turn-act.outputs.round != ''
         shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          SPEC_DIR: ${{ needs.classify-and-announce.outputs.spec-dir }}
-          ROUND: ${{ needs.fold-turn-act.outputs.round }}
+          LEDGER_OUTPUT: ${{ steps.fold-queue-round-read.outputs.output }}
         run: |
           set -euo pipefail
-          out="$(bash .wing-commander-pipeline/.github/actions/_shared/fold-queue-ledger.sh peek-round)"
-          echo "folded-items=$(printf '%s\n' "$out" | grep '^folded-items=' | cut -d= -f2-)" >> "$GITHUB_OUTPUT"
+          echo "folded-items=$(printf '%s\n' "$LEDGER_OUTPUT" | grep '^folded-items=' | cut -d= -f2-)" >> "$GITHUB_OUTPUT"
 
       # data-model.md §4: fetches THIS run's own jobs (Gate 18's established
       # paginated-read shape), filters to each `act (leg-N)` instance
