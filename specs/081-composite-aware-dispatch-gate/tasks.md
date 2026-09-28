@@ -488,3 +488,13 @@ With two developers/agents:
    Developer/Agent B: User Story 2 (Phase 3b).
 3. Once both checkpoints pass, either takes User Story 3 (Phase 4) —
    it is a single sequential chain, not further parallelizable.
+
+---
+
+## Maintainer Feedback
+
+- [ ] Renumber the new gate from Gate 101 to **Gate 117** (Gate 101 is reserved for spec 060) everywhere it is wired or named:
+  - [ ] `.github/workflows/lint-workflows.yml`: the comment header above the step, the "Numbered 101, not the 99…" note, and the step `name:` fields.
+  - [ ] `.github/scripts/verify-auto-release-tag-state-runtime.py`: the docstring header (line 2), the "Gate 99 is check 4's counterpart" reference (line 17), and the `print("Gate 99: ...")` summary line (line 182) — all currently still say Gate 99, not even Gate 101.
+  - [ ] `specs/048-correlated-release-dispatch/contracts/regression-gate.md:77` ("a stubbed `git` in Gate 99").
+  - [ ] `specs/081-composite-aware-dispatch-gate/{tasks.md,plan.md,quickstart.md,data-model.md,research.md}`, wherever they name the gate number.
