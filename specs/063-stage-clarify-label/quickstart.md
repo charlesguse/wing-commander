@@ -14,7 +14,7 @@ every `verify-*.py` gate (no adopter-facing manual steps beyond what
   modelled locally, matching `wc_shell_harness.py`'s convention (a stubbed
   `gh` on `PATH`).
 
-## 1. Prove Gate 99 catches the exact regression this feature fixes
+## 1. Prove Gate 105 catches the exact regression this feature fixes
 
 ```bash
 python3 .github/scripts/verify-lifecycle-label-taxonomy.py --self-test
@@ -33,7 +33,7 @@ python3 .github/scripts/verify-lifecycle-label-taxonomy.py
 Expected: PASS against the real, post-change tree — every documented
 `stage:*` label (`docs/setup.md`) has a real apply site.
 
-## 2. Prove the pre-change tree actually fails Gate 99 (FR-008's live demonstration)
+## 2. Prove the pre-change tree actually fails Gate 105 (FR-008's live demonstration)
 
 ```bash
 git stash push -- .github/workflows/intake.yml .github/workflows/clarify.yml

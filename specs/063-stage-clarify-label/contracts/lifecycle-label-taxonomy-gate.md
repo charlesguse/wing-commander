@@ -1,7 +1,7 @@
-# Contract: Gate 99 — `verify-lifecycle-label-taxonomy.py`
+# Contract: Gate 105 — `verify-lifecycle-label-taxonomy.py`
 
 **New gate**, `.github/scripts/verify-lifecycle-label-taxonomy.py`, wired
-into `lint-workflows.yml` as **Gate 99** (the next available number —
+into `lint-workflows.yml` as **Gate 105** (the next available number —
 research.md D7 confirms Gate 98 is the current highest). Discovered
 automatically by `verify-gate-wiring.py` (Gate 10) and invoked identically
 by `.github/scripts/run-local-gates.py` via `wc_gate_registry.py`'s
@@ -109,6 +109,6 @@ self-test` naming convention already in `lint-workflows.yml`)
 - Does not check label *color* or *description* text, only existence of a
   writer.
 - Does not enforce the create-before-add ordering Gate 90 checks (a
-  same-job "create appears before apply" property) — Gate 99 asks only
+  same-job "create appears before apply" property) — Gate 105 asks only
   "does a writer exist anywhere," a strictly weaker and cheaper property
   sufficient for FR-001/FR-007 (research.md D7).

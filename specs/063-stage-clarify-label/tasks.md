@@ -8,7 +8,7 @@ description: "Task list for feature implementation"
 **Input**: Design documents from `/specs/063-stage-clarify-label/`
 **Prerequisites**: plan.md, spec.md, research.md, data-model.md, contracts/, quickstart.md (all present)
 
-**Tests**: spec.md requests no TDD approach; the tests present below (Gate 99's required `--self-test` fixtures, US2's harness-driven step checks) are requested directly by FR-007/FR-008/FR-015 and contracts/, not added speculatively.
+**Tests**: spec.md requests no TDD approach; the tests present below (Gate 105's required `--self-test` fixtures, US2's harness-driven step checks) are requested directly by FR-007/FR-008/FR-015 and contracts/, not added speculatively.
 
 **Organization**: Tasks are grouped by user story (US1, US2, US3, both P1/P2 per spec.md) plus one unlabeled Polish phase for the E2E assertion amendment (FR-005/FR-021), which spec.md does not assign to any of the three user stories.
 
@@ -127,13 +127,13 @@ No blocking prerequisites apply: User Story 1's two workflow edits, User Story 2
 
 ## Phase 5: User Story 3 - The rule has a home and a gate that can fail it (Priority: P2)
 
-**Goal**: A checked-in, pull-request-time gate (Gate 99) enforces "every documented lifecycle label has a writer," derives both the documented and applied sets from the shipped repository rather than hardcoding either, and is demonstrated failing on the pre-change tree and passing on the post-change tree.
+**Goal**: A checked-in, pull-request-time gate (Gate 105) enforces "every documented lifecycle label has a writer," derives both the documented and applied sets from the shipped repository rather than hardcoding either, and is demonstrated failing on the pre-change tree and passing on the post-change tree.
 
 **Independent Test**: Run the gate on the pre-change tree (expect failure naming `stage:clarify`) and the post-change tree (expect pass); add a synthetic label row with no writer and confirm the gate goes red; add a synthetic exemption entry and confirm the gate passes with the reason readable next to the label.
 
 ### Implementation for User Story 3
 
-- [X] T013 [US3] Create `.github/scripts/verify-lifecycle-label-taxonomy.py` (Gate 99) with a documented-label-set scanner: every backtick-quoted `` `stage:[a-z-]+` `` token found anywhere in `docs/setup.md` (table rows, the label-creation script, and prose such as the "created on the fly" sentence), deduplicated, read fresh from the file on every run (data-model.md, contracts/lifecycle-label-taxonomy-gate.md).
+- [X] T013 [US3] Create `.github/scripts/verify-lifecycle-label-taxonomy.py` (Gate 105) with a documented-label-set scanner: every backtick-quoted `` `stage:[a-z-]+` `` token found anywhere in `docs/setup.md` (table rows, the label-creation script, and prose such as the "created on the fly" sentence), deduplicated, read fresh from the file on every run (data-model.md, contracts/lifecycle-label-taxonomy-gate.md).
 
 - [X] T014 [US3] In the same script, add an applied-label-set scanner over every `.github/workflows/*.yml` and `.github/actions/**/action.yml`: every literal `stage:[a-z-]+` token passed to `gh issue edit --add-label`/`--remove-label`, `gh issue create --label`/`-l`, or a REST `-f "labels[]=..."` call, reimplementing (not importing) Gate 90's (`verify-board-label-creation.py`) segmentation rules locally — comment stripping, `;`/`&&`/`||`/`|`/`$(` splitting, backslash-continuation joining, quote handling — and excluding a `--label`/`-l` argument to a read command (`gh issue list`, `gh search`) (research.md D7).
 
@@ -141,11 +141,11 @@ No blocking prerequisites apply: User Story 1's two workflow edits, User Story 2
 
 - [X] T016 [US3] In the same script, implement the verdict table from contracts/lifecycle-label-taxonomy-gate.md: PASS when every documented label is in the applied set or covered by a non-stale waiver; FAIL naming the label when a documented label is in neither set; FAIL (stale, either direction) when a waiver's `pattern` no longer matches or its `count` no longer matches the live documented-mention count; FAIL when a documented label has both a writer and a waiver entry. Wire a `--self-test` CLI flag alongside the default (real-tree) run mode, following this repository's `verify-*.py` convention.
 
-- [X] T017 [P] [US3] Implement Gate 99's seven required `--self-test` fixtures (contracts/lifecycle-label-taxonomy-gate.md): (1) a synthetic `docs/setup.md` documenting `stage:clarify` with no apply site anywhere → FAIL naming `stage:clarify` (the permanently pinned FR-008 regression fixture); (2) a documented label with a valid, exact waiver → PASS; (3) a stale waiver whose labeled deviation now has a writer → FAIL; (4) a waiver whose `count` no longer matches → FAIL; (5) a new documented label with no writer added to a synthetic `docs/setup.md` → FAIL naming the new label; (6) a workflow change that deletes the only apply site for a documented label → FAIL naming that label; (7) a malformed waivers file (missing required field) → FAIL naming the malformed entry, distinct from case 1/5.
+- [X] T017 [P] [US3] Implement Gate 105's seven required `--self-test` fixtures (contracts/lifecycle-label-taxonomy-gate.md): (1) a synthetic `docs/setup.md` documenting `stage:clarify` with no apply site anywhere → FAIL naming `stage:clarify` (the permanently pinned FR-008 regression fixture); (2) a documented label with a valid, exact waiver → PASS; (3) a stale waiver whose labeled deviation now has a writer → FAIL; (4) a waiver whose `count` no longer matches → FAIL; (5) a new documented label with no writer added to a synthetic `docs/setup.md` → FAIL naming the new label; (6) a workflow change that deletes the only apply site for a documented label → FAIL naming that label; (7) a malformed waivers file (missing required field) → FAIL naming the malformed entry, distinct from case 1/5.
 
 - [X] T018 [US3] Decide and create `.github/scripts/lifecycle-label-taxonomy-waivers.json`'s real (non-test) state: Direction A ships zero live exemptions, so this file is either left absent or created with an empty `"waivers": []` list plus a `$comment` block (matching `stage-invariant-waivers.json`'s documentation style) explaining that every documented `stage:*` label has a writer after this change.
 
-- [X] T019 [US3] Wire Gate 99 into `.github/workflows/lint-workflows.yml`: add a `Gate 99` `run:` step (`python3 .github/scripts/verify-lifecycle-label-taxonomy.py`) and a `Gate 99 self-test` `run:` step (`python3 .github/scripts/verify-lifecycle-label-taxonomy.py --self-test`), following the `Gate 98`/`Gate 98 self-test` two-step pattern immediately preceding them in the file (research.md D8).
+- [X] T019 [US3] Wire Gate 105 into `.github/workflows/lint-workflows.yml`: add a `Gate 105` `run:` step (`python3 .github/scripts/verify-lifecycle-label-taxonomy.py`) and a `Gate 105 self-test` `run:` step (`python3 .github/scripts/verify-lifecycle-label-taxonomy.py --self-test`), following the `Gate 98`/`Gate 98 self-test` two-step pattern immediately preceding them in the file (research.md D8).
 
 - [X] T020 [US3] Confirm `"docs/setup.md"` appears as an actual Python string literal (not only in a comment) in `verify-lifecycle-label-taxonomy.py`'s source, so Gate 10's `check_subject_triggers()` sees it, and confirm the literal is already covered by `lint-workflows.yml`'s `pull_request.paths:` filter (no filter edit expected — research.md D8).
 
@@ -162,13 +162,13 @@ No blocking prerequisites apply: User Story 1's two workflow edits, User Story 2
     anywhere"). Restoring the two files and re-running PASSes (0
     failures) against the real post-change tree — `git diff --stat`
     confirmed the restoration byte-identical. The same pre-change-shaped
-    run also names `stage:spec`, a distinct, pre-existing Gate 99 scanner
+    run also names `stage:spec`, a distinct, pre-existing Gate 105 scanner
     gap (it cannot see the intake agent's prompt-embedded add site) —
     filed as a wing-commander-finding, not fixed here.
 
-- [X] T022 [US3] Confirm `.github/scripts/run-local-gates.py` and `verify-gate-wiring.py` (Gate 10) both pick up Gate 99 automatically through `wc_gate_registry.py`'s filename-glob discovery, with no manifest edit anywhere else (FR-009, research.md D8).
+- [X] T022 [US3] Confirm `.github/scripts/run-local-gates.py` and `verify-gate-wiring.py` (Gate 10) both pick up Gate 105 automatically through `wc_gate_registry.py`'s filename-glob discovery, with no manifest edit anywhere else (FR-009, research.md D8).
 
-**Checkpoint**: Gate 99 is demonstrated failing on the pre-change tree and passing on the post-change tree, registered in both `run-local-gates.py` and Gate 10, and its exemption mechanism is proven by fixture even though it holds zero live entries.
+**Checkpoint**: Gate 105 is demonstrated failing on the pre-change tree and passing on the post-change tree, registered in both `run-local-gates.py` and Gate 10, and its exemption mechanism is proven by fixture even though it holds zero live entries.
 
 ---
 
@@ -190,7 +190,7 @@ No blocking prerequisites apply: User Story 1's two workflow edits, User Story 2
 
 ## Phase 7: Convergence
 
-- [X] T028 Fix `verify-lifecycle-label-taxonomy.py`'s (Gate 99) applied-label-set scanner so a documented label counts as "having a writer" only when at least one *add*-shaped site for it exists somewhere in the fleet (`--add-label`, `gh issue create --label`/`-l`, or a REST `-f "labels[]=..."` create) — a bare `--remove-label` with no corresponding add anywhere must not, on its own, satisfy the check. As built, `plan.yml:1155`/`:1241`'s pre-existing, unrelated `gh issue edit "$ISSUE" --remove-label "stage:clarify" 2>/dev/null || true` lines (predating this feature, called out unchanged in contracts/clarify-label-flip.md's Non-goals and plan.md's Project Structure) already satisfy the current (contract-literal) applied-set definition, so Gate 99 does not actually FAIL when run against the real pre-change tree (T021 in this cycle: temporarily removed intake.yml's/clarify.yml's new flip steps by hand, ran the gate, got PASS not the required FAIL naming `stage:clarify`, then restored both files — `git diff` confirmed empty). All 8 documented `stage:*` labels already have a real add site after this feature ships, so narrowing to require an add does not newly fail anything on the post-change tree. Update contracts/lifecycle-label-taxonomy-gate.md's Input #2 description and data-model.md's Applied label set section to match the narrowed definition, add an 8th `--self-test` fixture proving a remove-only label still fails, and re-run T021's live pre/post-change demonstration to record the corrected FAIL/PASS output per FR-008 (contradicts)
+- [X] T028 Fix `verify-lifecycle-label-taxonomy.py`'s (Gate 105) applied-label-set scanner so a documented label counts as "having a writer" only when at least one *add*-shaped site for it exists somewhere in the fleet (`--add-label`, `gh issue create --label`/`-l`, or a REST `-f "labels[]=..."` create) — a bare `--remove-label` with no corresponding add anywhere must not, on its own, satisfy the check. As built, `plan.yml:1155`/`:1241`'s pre-existing, unrelated `gh issue edit "$ISSUE" --remove-label "stage:clarify" 2>/dev/null || true` lines (predating this feature, called out unchanged in contracts/clarify-label-flip.md's Non-goals and plan.md's Project Structure) already satisfy the current (contract-literal) applied-set definition, so Gate 105 does not actually FAIL when run against the real pre-change tree (T021 in this cycle: temporarily removed intake.yml's/clarify.yml's new flip steps by hand, ran the gate, got PASS not the required FAIL naming `stage:clarify`, then restored both files — `git diff` confirmed empty). All 8 documented `stage:*` labels already have a real add site after this feature ships, so narrowing to require an add does not newly fail anything on the post-change tree. Update contracts/lifecycle-label-taxonomy-gate.md's Input #2 description and data-model.md's Applied label set section to match the narrowed definition, add an 8th `--self-test` fixture proving a remove-only label still fails, and re-run T021's live pre/post-change demonstration to record the corrected FAIL/PASS output per FR-008 (contradicts)
   - Done: `_labels_applied_in_segment`/`applied_labels` in
     `verify-lifecycle-label-taxonomy.py` no longer collect
     `--remove-label` matches into the applied set — only `--add-label`,
@@ -209,12 +209,12 @@ No blocking prerequisites apply: User Story 1's two workflow edits, User Story 2
     post-change tree. Temporarily removed both new `Flip stage label for
     clarification` steps (intake.yml/clarify.yml) via edit (no `git
     stash` in this run's allowlist), re-ran the same gate, and got the
-    required FAIL — `::error::Gate 99: stage:clarify is documented in
+    required FAIL — `::error::Gate 105: stage:clarify is documented in
     docs/setup.md but no workflow or local composite action ever adds it
     anywhere...` — then restored both files; `git diff --stat` on both
     confirmed empty (byte-identical restoration).
   - The corrected pre-change-shaped run ALSO failed naming `stage:spec`,
-    not only `stage:clarify` as FR-008/T021 assumed. Root cause: Gate 99
+    not only `stage:clarify` as FR-008/T021 assumed. Root cause: Gate 105
     only scans literal `run:` shell text, never a `with: prompt:` field,
     so `stage:spec`'s real pre-existing writer — the intake agent's own
     `gh issue edit --add-label "spec:<NNN-slug>,stage:spec"` instruction
@@ -223,7 +223,7 @@ No blocking prerequisites apply: User Story 1's two workflow edits, User Story 2
     tree this is masked because `clarify.yml`'s new `ready` arm (T003)
     happens to also contain a literal shell `--add-label "stage:spec"`
     call; removing T002/T003 removes that incidental cover along with
-    the intended `stage:clarify` writer. This is a gap in Gate 99's own
+    the intended `stage:clarify` writer. This is a gap in Gate 105's own
     design (Phase 5/US3), not something this task introduced or was
     scoped to fix — filed as a `wing-commander-findings` entry rather
     than fixed here.
@@ -282,7 +282,7 @@ Task: "Extend adoption.md's clarify Side effects row (T006)"
 ### Incremental Delivery
 
 1. Setup → User Story 1 (label has a writer) → User Story 2 (reply path proven) → **MVP reached**.
-2. Add User Story 3 (Gate 99) → the rule that "every documented label has a writer" is now enforced going forward, not just true today.
+2. Add User Story 3 (Gate 105) → the rule that "every documented label has a writer" is now enforced going forward, not just true today.
 3. Add the Polish phase (T023-T027) → the E2E harness's own clarification gate stops reporting zero assertions and the stale comment recording the pre-change regression is corrected.
 
 ### Parallel Team Strategy
@@ -295,14 +295,14 @@ With two developers (this repository's own concurrency guidance caps concurrent 
 
 ## Maintainer Feedback
 
-- [X] T029 In `.github/scripts/verify-lifecycle-label-taxonomy.py`, extend the applied-label-set scanner so it also inspects a step's `with.prompt` text (not only `step["run"]`), reusing `_labels_applied_in_run`'s segmentation against the prompt string; ensure comma-separated label lists (e.g. `"spec:<NNN-slug>,stage:spec"`) parse into individual `stage:*` tokens. Addresses PR #651 review comment (#649): Gate 99 currently cannot see `intake.yml:689`'s prompt-embedded `stage:spec` add, which T028 recorded as a known gap rather than fixed.
+- [X] T029 In `.github/scripts/verify-lifecycle-label-taxonomy.py`, extend the applied-label-set scanner so it also inspects a step's `with.prompt` text (not only `step["run"]`), reusing `_labels_applied_in_run`'s segmentation against the prompt string; ensure comma-separated label lists (e.g. `"spec:<NNN-slug>,stage:spec"`) parse into individual `stage:*` tokens. Addresses PR #651 review comment (#649): Gate 105 currently cannot see `intake.yml:689`'s prompt-embedded `stage:spec` add, which T028 recorded as a known gap rather than fixed.
   - Done: `applied_labels()` now also reads
     `((step or {}).get("with") or {}).get("prompt")` and feeds it through
     the same `_labels_applied_in_run()` used for `run:` text, so the
     existing comma-list parsing in `_labels_in_value()` (used by both)
     applies unchanged. Module docstring updated to describe the
     `with.prompt` scan.
-- [X] T030 [P] Add a Gate 99 `--self-test` fixture where the only writer for a documented label is a `with.prompt` field (no `run:` shell site at all) and confirm it PASSes only after T029 lands; confirm it FAILs (naming the label) against the pre-T029 scanner.
+- [X] T030 [P] Add a Gate 105 `--self-test` fixture where the only writer for a documented label is a `with.prompt` field (no `run:` shell site at all) and confirm it PASSes only after T029 lands; confirm it FAILs (naming the label) against the pre-T029 scanner.
   - Done: fixture (9) (`DOC_PROMPT_LABEL` / `WORKFLOW_PROMPT_ONLY_WRITER`)
     documents `stage:spec` with its only writer inside a
     `with: prompt: |` block styled on `intake.yml`'s real "Create spec
@@ -341,4 +341,22 @@ With two developers (this repository's own concurrency guidance caps concurrent 
 
 ## Maintainer Feedback
 
-- [ ] T032 Rename this spec's gate from Gate 99/101 to **Gate 105** throughout: `.github/workflows/lint-workflows.yml`'s step names and comment (currently say Gate 101), `.github/scripts/verify-lifecycle-label-taxonomy.py`'s docstring (currently Gate 99), its user-facing messages, and its `verify_gate99_` temp-dir prefix, `.github/scripts/lifecycle-label-taxonomy-waivers.json`'s `$comment`, and this spec's docs (plan.md/tasks.md/contracts/data-model.md references to Gate 99). Addresses PR #651 review comment: main now holds 99/100/116 and other open PRs hold 101-115, so this spec's allocation is 105.
+- [X] T032 Rename this spec's gate from Gate 99/101 to **Gate 105** throughout: `.github/workflows/lint-workflows.yml`'s step names and comment (currently say Gate 101), `.github/scripts/verify-lifecycle-label-taxonomy.py`'s docstring (currently Gate 99), its user-facing messages, and its `verify_gate99_` temp-dir prefix, `.github/scripts/lifecycle-label-taxonomy-waivers.json`'s `$comment`, and this spec's docs (plan.md/tasks.md/contracts/data-model.md references to Gate 99). Addresses PR #651 review comment: main now holds 99/100/116 and other open PRs hold 101-115, so this spec's allocation is 105.
+  - Done: every "Gate 99" and "Gate 101" mention naming this spec's own
+    gate is now "Gate 105" — `verify-lifecycle-label-taxonomy.py`'s
+    docstring, inline comments, user-facing `print()`/`::error::` messages,
+    and its `verify_gate105_` temp-dir prefix (was `verify_gate99_`);
+    `lint-workflows.yml`'s two step names and the comment block above them
+    (now explains the 99 -> 101 -> 105 numbering history); the waivers
+    file's `$comment`; and every reference across plan.md, tasks.md (this
+    file, including the historical task entries above that named the gate
+    by its prior numbers), quickstart.md, research.md, data-model.md, and
+    contracts/lifecycle-label-taxonomy-gate.md. `lint-workflows.yml`'s
+    unrelated Gate 99 (specs/059-converged-means-tasks-done, a different
+    feature's gate that happens to hold that number on main) is untouched
+    by construction — the replacement only ever targeted this spec's own
+    gate identity. `python .github/scripts/run-local-gates.py` passes
+    155/155 after the rename (Gate 105's self-test included), and
+    `verify-comment-canonical-pointers.py` (Gate 47) is among the passing
+    gates, confirming the renumbered comment stayed consistent everywhere
+    it's duplicated.

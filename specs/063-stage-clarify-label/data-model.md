@@ -40,7 +40,7 @@ the best-effort *remove* calls keep the existing `2>/dev/null || true`
 silent-failure idiom `plan.yml:1154-1155` already established, since a
 missing label to remove is the routine case, not a failure worth reporting.
 
-## Gate 99 subjects (new)
+## Gate 105 subjects (new)
 
 ### Documented label set
 
@@ -64,7 +64,7 @@ search`. A bare `--remove-label` site does **not** put a label in this set
 on its own (Phase 7 convergence fix): `plan.yml:1155`/`:1241`'s
 pre-existing, unrelated best-effort `--remove-label "stage:clarify"` lines
 otherwise satisfied this set for a label nothing ever added, which would
-have let Gate 99 PASS against the pre-change tree instead of FAILing as
+have let Gate 105 PASS against the pre-change tree instead of FAILing as
 FR-008 requires. Each step's `with.prompt` text is scanned alongside its
 `run:` text (maintainer feedback on PR #651): `intake.yml`'s `stage:spec`
 add lives inside the Claude Code action's prompt, not a `run:` step, and
@@ -85,10 +85,10 @@ Structurally identical to `stage-invariant-waivers.json` (Gate 31) —
 `REQUIRED_WAIVER_FIELDS`-style shape check, stale-checked in both
 directions, missing file == zero waivers. Direction A leaves zero live
 entries at merge time (every documented `stage:*` label has a writer);
-Gate 99's `--self-test` proves the mechanism (Acceptance Scenario 3) via a
+Gate 105's `--self-test` proves the mechanism (Acceptance Scenario 3) via a
 synthetic fixture, independent of whether the real file holds any entries.
 
-### Gate 99 verdict
+### Gate 105 verdict
 
 | Outcome | Condition |
 |---|---|
@@ -97,7 +97,7 @@ synthetic fixture, independent of whether the real file holds any entries.
 | FAIL | A waiver's `pattern` matches a label that now has a writer (stale — the deviation it covered no longer exists) |
 | FAIL | A waiver's `count` no longer matches the live count of documented mentions (stale — either direction) |
 
-Gate 99 run against the pre-change tree (this PR's own parent commit) is
+Gate 105 run against the pre-change tree (this PR's own parent commit) is
 FR-008's required demonstration: PASS on every label except `stage:clarify`,
 which FAILs with zero apply sites and zero waiver — recorded in the
 implementation PR per FR-008, not asserted here.

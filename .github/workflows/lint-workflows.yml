@@ -4185,21 +4185,23 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-stage-turn-budget-docs.py --self-test
 
-      # Gate 101 — specs/063-stage-clarify-label: every `stage:*` label
+      # Gate 105 — specs/063-stage-clarify-label: every `stage:*` label
       # docs/setup.md documents either has a real writer among the shipped
       # workflows and local composite actions, or a registered, reasoned
       # exemption in lifecycle-label-taxonomy-waivers.json. `stage:clarify`
       # was documented for as long as this repository has had a clarify
       # stage, with zero writers and zero waiver, undetected until this
       # feature's own spec traced it by hand — this gate exists so the
-      # next one fails a pull request instead. Numbered 101, not the 99 this
-      # branch's own commit picked: Gate 99 (specs/059-converged-means-
-      # tasks-done) and Gate 100 (#587, above) claimed 99 and 100 before
-      # this branch's rebase landed.
-      - name: "Gate 101 — every documented stage:* label has a writer or a registered waiver"
+      # next one fails a pull request instead. Numbered 105, not the 99 or
+      # 101 this branch's own commits picked in turn: Gate 99 (specs/059-
+      # converged-means-tasks-done) and Gate 100 (#587, above) claimed 99
+      # and 100 before this branch's rebase landed, and by the time of this
+      # renumbering main also held Gate 116 (#611) while other concurrently
+      # open PRs held 101-115 — 105 was the first number still free.
+      - name: "Gate 105 — every documented stage:* label has a writer or a registered waiver"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-lifecycle-label-taxonomy.py
-      - name: "Gate 101 self-test — a documented label with no writer, a stale waiver (either direction, or one covering a label that now has a writer), a new unwritten label, a deleted apply site, and a malformed waivers file each fail"
+      - name: "Gate 105 self-test — a documented label with no writer, a stale waiver (either direction, or one covering a label that now has a writer), a new unwritten label, a deleted apply site, and a malformed waivers file each fail"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-lifecycle-label-taxonomy.py --self-test
 

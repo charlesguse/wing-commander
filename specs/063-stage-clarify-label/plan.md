@@ -25,7 +25,7 @@ a label-write failure (FR-015): a failed `--add-label` warns in the step
 summary rather than failing the job the questionnaire was already posted
 in.
 
-A new gate, **Gate 99** (`.github/scripts/verify-lifecycle-label-
+A new gate, **Gate 105** (`.github/scripts/verify-lifecycle-label-
 taxonomy.py`), enforces FR-001/FR-007 going forward: it derives the
 documented `stage:*` label set from `docs/setup.md` and the applied set from
 every shipped workflow and composite action's `gh issue edit`/`gh issue
@@ -61,7 +61,7 @@ matching every existing gate script) — no new language introduced.
 
 **Primary Dependencies**: `gh` CLI, `jq` (already the sole dependencies of
 every existing stage-label flip and of the E2E harness script this feature
-amends); `wc_gate_registry.py` (existing, unmodified — Gate 99 is discovered
+amends); `wc_gate_registry.py` (existing, unmodified — Gate 105 is discovered
 by it, not registered in it); `wc_shell_harness.py` (existing, reused to
 extract and drive the two new steps and the amended E2E script in
 isolation, matching `verify-clarification-gating.py`'s own convention).
@@ -74,7 +74,7 @@ waivers.json` (JSON, structurally identical to `stage-invariant-
 waivers.json`).
 
 **Testing**: New `.github/scripts/verify-lifecycle-label-taxonomy.py`
-(Gate 99), wired into `.github/workflows/lint-workflows.yml`, following this
+(Gate 105), wired into `.github/workflows/lint-workflows.yml`, following this
 repository's established `verify-*.py` + `--self-test` convention (no shared
 test framework beyond `wc_shell_harness.py` and `wc_gate_registry.py`).
 `verify-clarification-gating.py` (Gate 8) is exercised, not modified, to
@@ -108,7 +108,7 @@ best-effort `gh issue edit --remove-label` — the same shape and cost class
   either published stage changes. Both new steps read only inputs/outputs
   those stages already declare or compute.
 - Out of Scope: `spec-request`, `model:*`, `disposition:*`, `board:*` labels
-  are not covered by Gate 99; retiring `stage:clarify` (Direction B,
+  are not covered by Gate 105; retiring `stage:clarify` (Direction B,
   FR-016..FR-020) is not implemented; no historical `specs/` document is
   rewritten (FR-022).
 
@@ -132,14 +132,14 @@ new conditional branch — no new script, no new `gh` call).
 | V. Security — untrusted content is never instructions | No new untrusted-content path. Both new steps read only this repository's own step outputs, computed from the agent's schema-validated structured result (already trusted for the callout decision) — never `github.event.*` comment body text directly. | ✅ Pass |
 | VI. Portability — consuming repo owns its artifacts | The new gate and registry live under `.github/scripts/`, resolved the same way every existing gate is; no bundled or hardcoded repository-specific content. | ✅ Pass |
 | VII. Two Interfaces — published contract vs. consuming instrument | No `workflow_call` input, output, or secret of `intake.yml`/`clarify.yml` changes — the new steps are internal to each stage's own job, reading only inputs/outputs already declared or computed inside it. `wing-commander-chain-stop-notice`'s published `stage-label` input contract (specs/041) is unchanged; this feature only makes an existing input do real work. | ✅ Pass |
-| VIII. A Green Check Means What It Says | This is the principle FR-007/FR-008/User Story 3 restate at the spec level. Gate 99 is reachable through the gate registry (research.md D8), runs the same subject locally and in CI, is triggered by changes to `docs/setup.md` and every workflow/composite action (already in `lint-workflows.yml`'s `pull_request.paths:` filter), fails loudly rather than vacuously when it cannot read its subject, and every failure branch it ships (contracts/lifecycle-label-taxonomy-gate.md's seven required fixtures) is exercised by a checked-in `--self-test` fixture, including the exact pre-change regression (FR-008) demonstrated live in the implementation PR. | ✅ Pass |
-| IX. Judgment That Gates a Durable Action Belongs in Deterministic Code | The label write is deterministic code reading a deterministic step output (FR-013) — never an agent's judgment call folded into the write. Gate 99's documented-vs-applied comparison and its waiver stale-checks are likewise pure code, no model in the loop. | ✅ Pass |
+| VIII. A Green Check Means What It Says | This is the principle FR-007/FR-008/User Story 3 restate at the spec level. Gate 105 is reachable through the gate registry (research.md D8), runs the same subject locally and in CI, is triggered by changes to `docs/setup.md` and every workflow/composite action (already in `lint-workflows.yml`'s `pull_request.paths:` filter), fails loudly rather than vacuously when it cannot read its subject, and every failure branch it ships (contracts/lifecycle-label-taxonomy-gate.md's seven required fixtures) is exercised by a checked-in `--self-test` fixture, including the exact pre-change regression (FR-008) demonstrated live in the implementation PR. | ✅ Pass |
+| IX. Judgment That Gates a Durable Action Belongs in Deterministic Code | The label write is deterministic code reading a deterministic step output (FR-013) — never an agent's judgment call folded into the write. Gate 105's documented-vs-applied comparison and its waiver stale-checks are likewise pure code, no model in the loop. | ✅ Pass |
 | X. Bounded Autonomy — The Pipeline Works Its Own Board | Not applicable — this feature is a spec-shaped change routed through the full lifecycle (a design trade-off, FR-002, required the owner's call), not a board-loop fix-shaped PR. | N/A |
 
 **Post-Phase-1 re-check**: Unchanged. Phase 1 design (data-model.md,
 contracts/, quickstart.md) confirms both new steps read only pre-existing
 step outputs local to their own job (no new ambient state, no new
-`workflow_call` surface) and that Gate 99's own derivation logic is the
+`workflow_call` surface) and that Gate 105's own derivation logic is the
 only new compatibility surface this feature adds internally (it is not part
 of the published contract — a gate script, not a stage or composite).
 
@@ -155,7 +155,7 @@ specs/063-stage-clarify-label/
 ├── quickstart.md                              # Phase 1 output (/speckit-plan command)
 ├── contracts/                                 # Phase 1 output (/speckit-plan command)
 │   ├── clarify-label-flip.md                  # the two new steps' shared shape and per-stage behavior
-│   ├── lifecycle-label-taxonomy-gate.md        # Gate 99's derivation rules, verdict table, required fixtures
+│   ├── lifecycle-label-taxonomy-gate.md        # Gate 105's derivation rules, verdict table, required fixtures
 │   └── e2e-clarification-label-assertion.md    # auto-release.yml's amended pass-path check
 ├── checklists/
 │   └── requirements.md                        # already present (intake stage output)
@@ -176,14 +176,14 @@ feature touches:
 │       └── action.yml                       #   stage-label input starts
 │                                             #   removing a real label
 ├── scripts/
-│   ├── verify-lifecycle-label-taxonomy.py   # NEW — Gate 99's script
+│   ├── verify-lifecycle-label-taxonomy.py   # NEW — Gate 105's script
 │   ├── lifecycle-label-taxonomy-waivers.json  # NEW — exemption registry
 │   │                                         #   (empty/absent at merge —
 │   │                                         #   Direction A needs none)
-│   └── wc_gate_registry.py                  # UNCHANGED — discovers Gate 99
+│   └── wc_gate_registry.py                  # UNCHANGED — discovers Gate 105
 │                                             #   by filename convention
 └── workflows/
-    ├── lint-workflows.yml                   # + one Gate 99 run: step
+    ├── lint-workflows.yml                   # + one Gate 105 run: step
     ├── intake.yml                           # + "Flip stage label for
     │                                         #   clarification" step
     ├── clarify.yml                          # + "Flip stage label for

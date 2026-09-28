@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gate 99 -- every documented `stage:*` label either has a real writer or a
+"""Gate 105 -- every documented `stage:*` label either has a real writer or a
 registered, reasoned exemption (FR-001/FR-007, specs/063-stage-clarify-label).
 
 WHY THIS EXISTS
@@ -34,7 +34,7 @@ WHAT IT CHECKS
    segmentation rules -- comment stripping, `;`/`&&`/`||`/`|`/`$(`
    splitting, backslash-continuation joining, quote handling, and the
    read/apply distinction that excludes a `--label`/`-l` argument to `gh
-   issue list`/`gh pr list`/`gh search` -- because Gate 99 asks a strictly
+   issue list`/`gh pr list`/`gh search` -- because Gate 105 asks a strictly
    weaker question than Gate 90 does (does a writer exist ANYWHERE, never
    "does this job's own `gh label create` precede its own apply"), so
    importing Gate 90's job-ordering machinery would buy nothing.
@@ -210,7 +210,7 @@ def _labels_applied_in_segment(seg_text, is_read):
 
 def _labels_applied_in_run(run_text):
     """Every literal `stage:*` label a step's `run:` block ADDS anywhere
-    in it -- no job-ordering or same-job requirement (Gate 99's non-goal:
+    in it -- no job-ordering or same-job requirement (Gate 105's non-goal:
     a strictly weaker property than Gate 90's)."""
     found = set()
     carry_open = False
@@ -408,8 +408,8 @@ def evaluate(root="."):
 def main():
     failures = evaluate()
     for f in failures:
-        print(f"::error::Gate 99: {f}")
-    print(f"Gate 99: lifecycle label taxonomy check; {len(failures)} failure(s).")
+        print(f"::error::Gate 105: {f}")
+    print(f"Gate 105: lifecycle label taxonomy check; {len(failures)} failure(s).")
     return 1 if failures else 0
 
 
@@ -425,7 +425,7 @@ def _write(root, relpath, content):
 
 
 def _fresh_root():
-    root = tempfile.mkdtemp(prefix="verify_gate99_")
+    root = tempfile.mkdtemp(prefix="verify_gate105_")
     os.makedirs(os.path.join(root, WORKFLOWS_DIR), exist_ok=True)
     os.makedirs(os.path.join(root, ACTIONS_DIR), exist_ok=True)
     os.makedirs(os.path.join(root, os.path.dirname(WAIVERS_PATH)), exist_ok=True)
@@ -654,12 +654,12 @@ def self_test():
           build_9, expect_fail=False)
 
     if failed:
-        print(f"::error::Gate 99 self-test: {len(failed)} check(s) behaved "
-              f"wrongly: {'; '.join(failed)}. Gate 99's detection logic does "
-              f"not do what its name claims, so a green Gate 99 on the real "
+        print(f"::error::Gate 105 self-test: {len(failed)} check(s) behaved "
+              f"wrongly: {'; '.join(failed)}. Gate 105's detection logic does "
+              f"not do what its name claims, so a green Gate 105 on the real "
               f"fleet means nothing.")
         return 1
-    print("Gate 99 self-test: all 9 checks behaved as expected.")
+    print("Gate 105 self-test: all 9 checks behaved as expected.")
     return 0
 
 

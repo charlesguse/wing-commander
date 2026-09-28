@@ -302,7 +302,7 @@ sites need no edit — recorded above rather than silently assumed, since an
 unnecessary edit is itself a drift risk this repository's "load-bearing
 comments" convention warns about).
 
-## D7 — Gate 99: a new, self-contained script — not a refactor of Gate 90
+## D7 — Gate 105: a new, self-contained script — not a refactor of Gate 90
 
 **Decision**: FR-007's gate ships as a new, self-contained
 `.github/scripts/verify-lifecycle-label-taxonomy.py` (next available gate
@@ -332,18 +332,18 @@ by importing another gate's whole module. Extracting Gate 90's scanner into
 a new `wc_label_apply_scan.py` shared module, refactoring Gate 90 itself to
 consume it, is a real option but widens this feature's blast radius onto a
 gate (90) with 1201 lines and 20+ self-tests that this feature has no other
-reason to touch, for a scope Gate 99 needs only a subset of (Gate 90 is
-job-scoped and create-before-apply-ordered; Gate 99 is repo-wide and
+reason to touch, for a scope Gate 105 needs only a subset of (Gate 90 is
+job-scoped and create-before-apply-ordered; Gate 105 is repo-wide and
 existence-only — "does *some* site create this label before *some* site
 applies it," with no job-boundary requirement, since FR-001 only asks
-whether a writer exists at all). Gate 99 therefore reimplements the same
+whether a writer exists at all). Gate 105 therefore reimplements the same
 segmentation *shape*, scoped to what it needs (existence, not ordering),
 as a same-file scanner — the size cost is small (a few hundred lines
 against Gate 90's 1201, most of it in Gate 90's per-job walk this feature
 does not need) against the regression risk of touching Gate 90's fixtures
 for a concern it was not built to check.
 
-**What Gate 99 actually checks** (data-model.md and contracts/lifecycle-
+**What Gate 105 actually checks** (data-model.md and contracts/lifecycle-
 label-taxonomy-gate.md detail the mechanism):
 - **Documented set**: every backtick-quoted `stage:[a-z-]+` token appearing
   anywhere in `docs/setup.md` (table rows, the creation script, and prose
@@ -367,7 +367,7 @@ label-taxonomy-gate.md detail the mechanism):
   `load_waivers()` convention — Direction A leaves this feature with zero
   live exemptions (every `stage:*` label has a writer after this change),
   so the registry ships either absent or with an empty `"waivers": []`
-  list; Acceptance Scenario 3's exemption mechanism is proven by Gate 99's
+  list; Acceptance Scenario 3's exemption mechanism is proven by Gate 105's
   own `--self-test` fixture, not by a live entry this feature has no
   reason to add.
 - **Failure mode (FR-008)**: run against the pre-change tree (this
@@ -378,7 +378,7 @@ label-taxonomy-gate.md detail the mechanism):
 
 ## D8 — Wiring: one `lint-workflows.yml` step, no manifest edit anywhere else
 
-**Decision**: Gate 99 is wired by adding exactly one `run:` step to
+**Decision**: Gate 105 is wired by adding exactly one `run:` step to
 `lint-workflows.yml` (`run: python3 .github/scripts/verify-lifecycle-label-
 taxonomy.py`), following the `Gate 98`/`Gate 98 self-test` two-step pattern
 already established for the newest gates in this file. No other file needs
@@ -400,7 +400,7 @@ the first place). `check_subject_triggers()` (part of Gate 10) additionally
 requires that any `docs/*.md`/`specs/*/contracts/*.md` string constant
 appearing in the new gate's source be covered by `lint-workflows.yml`'s
 `pull_request.paths:` filter — `"docs/setup.md"` is already listed there
-(confirmed by reading the filter directly), so Gate 99's own `docs/
+(confirmed by reading the filter directly), so Gate 105's own `docs/
 setup.md` literal needs no filter edit either, as long as the string
 appears as an actual Python string constant (not only in a comment) in the
 new script's source, per `_string_constants`'s AST-based reader.
