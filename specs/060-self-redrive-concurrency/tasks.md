@@ -785,3 +785,9 @@ Task: "New Gate 102: verify-board-prove-displacement.py fixtures"
 ## Maintainer Feedback (PR #490 review, 2026-09-28, @charlesguse)
 
 - [ ] `directed_proof_group_busy` (`.github/scripts/board_prove.py:409-425`) does not exclude the calling run's own row from the `gh run list --workflow=board-loop.yml --json databaseId,displayTitle,status` result it evaluates. Inside a `[directed:prove]` run, the run sees its own in-progress `[directed:...]` marker and reports the group busy against itself, posting a misleading "group busy" comment and marker. Skip rows where `databaseId == GITHUB_RUN_ID` before evaluating occupancy.
+
+---
+
+## Maintainer Feedback (PR #490 review, 2026-09-28, @charlesguse)
+
+- [ ] The displacement detection step's per-issue comment fetch in board-loop.yml (~lines 226-232) runs `gh api "repos/$GITHUB_REPOSITORY/issues/$number/comments" --paginate --jq '...' 2>/dev/null | jq -s '.' > ... || echo '[]' > ...`. An API error (rate limit, transient failure) is swallowed and treated identically to "issue has no comments," which can let `find_undetected_merges` post a false "proof run never started" displacement comment/marker on an issue that actually has a proof record. Fail loud on the `gh api` error instead of substituting `[]`, per the fail-loud convention #557 established for this class of API-error handling.
