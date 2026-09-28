@@ -25,10 +25,13 @@ Requires: bash, jq. See wc_shell_harness.py for running this on Windows.
 """
 import json
 import os
+import shutil
 import sys
+import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from wc_shell_harness import ensure_jq, resolve_bash, use_utf8_stdout  # noqa: E402
+from wc_shell_harness import (  # noqa: E402
+    ensure_jq, find_step, resolve_bash, run_step, use_utf8_stdout)
 
 import subprocess  # noqa: E402
 
@@ -38,6 +41,7 @@ MERGE_SCRIPT = os.path.join(".github", "actions", "_shared",
                              "auto-release-e2e-merge-decision.sh")
 ALLOWANCE_SCRIPT = os.path.join(".github", "actions", "_shared",
                                  "auto-release-e2e-gate-allowance-decision.sh")
+POLL_WORKFLOW = os.path.join(".github", "workflows", "auto-release.yml")
 
 BASH = None
 
@@ -369,6 +373,205 @@ def run_all(clarify_path, merge_path, allowance_path):
 
 
 # --------------------------------------------------------------------------
+# Poll-budget clamp scenario (specs/070-blocked-gate-dry-run, fold review on
+# #533): a gate that first goes blocked-pending late enough in the poll
+# budget that its allowance cannot fully elapse before the `poll` step's own
+# `while [ "$SECONDS" -lt "$POLL_BUDGET_SECONDS" ]` condition goes false must
+# still end the attempt as that gate's stall, not the generic timeout.
+# Neither decision script above has any notion of the poll budget (both are
+# pure functions of their own arguments, per contracts/gate-allowance-
+# decision.md), so this cannot be exercised as another ALLOWANCE_SCENARIOS
+# entry -- it EXECUTES the real "poll" step out of auto-release.yml
+# (find_step/run_step), the same way verify-auto-release-specs-fallback.py's
+# Gate 91 already does for a different corner of this step, rather than
+# re-deriving the clamp as a third pure script (CLAUDE.md's single-home
+# rule; this feature registers no new gate, research.md D5).
+# --------------------------------------------------------------------------
+POLL_STEP_NAME = "Poll the test repository to a verdict"
+
+POLL_E2E_REPO = "wc-fixture/test-repo"
+POLL_ISSUE = "42"
+POLL_SLUG = "070-foo"
+
+# POLL_BUDGET_SECONDS is deliberately tiny (not production's 8100) so this
+# proves the clamp without a real multi-minute wait: the spec-draft gate
+# goes blocked-pending on the very first observation (SECONDS~=0), the
+# budget expires a couple of real seconds later, and
+# GATE_BLOCKED_ALLOWANCE_SECONDS is left at production's real 1200 to prove
+# elapsed time is nowhere close to it -- exactly the "allowance not clamped
+# to the remaining budget" shape the fold review found.
+POLL_CLAMP_ENV = {
+    "GH_TOKEN": "dummy-gh-token",
+    "HARNESS_TOKEN": "dummy-harness-token",
+    "HARNESS_LOGIN": "machine-acct",
+    "E2E_REPO": POLL_E2E_REPO,
+    "DEFAULT_BRANCH": "main",
+    "ISSUE": POLL_ISSUE,
+    "ISSUE_URL": f"https://github.com/{POLL_E2E_REPO}/issues/{POLL_ISSUE}",
+    "HEAD_SHA": "a" * 40,
+    "POLL_BUDGET_SECONDS": "2",
+    "GATE_BLOCKED_ALLOWANCE_SECONDS": "1200",
+    "MAX_CLARIFICATION_ROUNDS": "3",
+    "MODE": "default-runner",
+}
+
+# Keeps the spec-draft gate permanently BLOCKED with an empty
+# statusCheckRollup (a freshly opened PR, per auto-release-e2e-merge-
+# decision.sh -- "blocked-pending") and the plan/finalize gates absent
+# ("none"); the issue itself never reaches a terminal state. Any `gh`
+# invocation this stub does not recognise fails loudly (Gate 91's own
+# idiom) rather than no-op'ing, so an unstubbed read is a hard error here,
+# not a silently-green pass.
+POLL_CLAMP_STUB_GH = '''#!/usr/bin/env bash
+case "$*" in
+  "api repos/wc-fixture/test-repo/issues/42 --jq .user.id")
+    printf '1\\n'
+    exit 0
+    ;;
+  "api repos/wc-fixture/test-repo/issues/42/comments --paginate --jq"*)
+    exit 0
+    ;;
+  "pr list --repo wc-fixture/test-repo --state open --json headRefName,title")
+    printf '%s\\n' '[{"headRefName":"spec-draft/070-foo","title":"spec-draft: 070-foo (#42)"}]'
+    exit 0
+    ;;
+  "pr list --repo wc-fixture/test-repo --head spec-draft/070-foo --json number,headRefName,baseRefName,mergeable,mergeStateStatus,isDraft,state,statusCheckRollup")
+    printf '%s\\n' '[{"number":7,"headRefName":"spec-draft/070-foo","baseRefName":"main","mergeable":"UNKNOWN","mergeStateStatus":"BLOCKED","isDraft":false,"state":"OPEN","statusCheckRollup":[]}]'
+    exit 0
+    ;;
+  "pr list --repo wc-fixture/test-repo --head plan/070-foo --json number,headRefName,baseRefName,mergeable,mergeStateStatus,isDraft,state,statusCheckRollup")
+    printf '[]\\n'
+    exit 0
+    ;;
+  "pr list --repo wc-fixture/test-repo --head spec/070-foo --json number,headRefName,baseRefName,mergeable,mergeStateStatus,isDraft,state,statusCheckRollup")
+    printf '[]\\n'
+    exit 0
+    ;;
+  "issue view 42 --repo wc-fixture/test-repo --json state,labels")
+    printf '%s\\n' '{"state":"OPEN","labels":[{"name":"stage:implement"}]}'
+    exit 0
+    ;;
+  *)
+    echo "unexpected gh invocation: $*" >&2
+    exit 1
+    ;;
+esac
+'''
+
+# The loop's `sleep 30`/`sleep 60` are stubbed to no-ops so this scenario is
+# bound only by how long real wall-clock time takes to cross the tiny
+# POLL_BUDGET_SECONDS above, not by the production sleep durations.
+POLL_CLAMP_STUB_SLEEP = "#!/usr/bin/env bash\nexit 0\n"
+
+# The step invokes each of these by its repo-root-relative path -- copied
+# into a scratch workdir the same way Gate 91 (verify-auto-release-specs-
+# fallback.py) already does, since run_step executes the extracted step with
+# workdir as its cwd, not the repository root.
+POLL_CLAMP_SHARED_SCRIPTS = [
+    "auto-release-verdict.sh",
+    "auto-release-e2e-clarify-decision.sh",
+    "auto-release-e2e-merge-decision.sh",
+    "auto-release-e2e-gate-allowance-decision.sh",
+]
+
+
+def run_poll_clamp_suite(workflow_path):
+    tag = ("[poll budget clamp: a gate blocked-pending late in the poll "
+           "budget stalls, not the generic timeout]")
+    step = find_step(workflow_path, POLL_STEP_NAME)
+    script = str(step["run"])
+    if "${{" in script:
+        return [f"{tag} the extracted run: block contains an unresolved "
+                f"${{{{ }}}} expression"]
+    tmproot = tempfile.mkdtemp()
+    try:
+        workdir = tempfile.mkdtemp(dir=tmproot)
+        runner_temp = tempfile.mkdtemp(dir=tmproot)
+        bindir = tempfile.mkdtemp(dir=tmproot)
+        shared_dir = os.path.join(workdir, ".github", "actions", "_shared")
+        os.makedirs(shared_dir, exist_ok=True)
+        for name in POLL_CLAMP_SHARED_SCRIPTS:
+            shutil.copyfile(os.path.join(".github", "actions", "_shared", name),
+                             os.path.join(shared_dir, name))
+        gh_path = os.path.join(bindir, "gh")
+        with open(gh_path, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(POLL_CLAMP_STUB_GH)
+        os.chmod(gh_path, 0o755)
+        sleep_path = os.path.join(bindir, "sleep")
+        with open(sleep_path, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(POLL_CLAMP_STUB_SLEEP)
+        os.chmod(sleep_path, 0o755)
+        env = dict(POLL_CLAMP_ENV)
+        env["PATH"] = bindir + os.pathsep + os.environ["PATH"]
+        rc, out, outputs, _summary = run_step(BASH, script, workdir, env, runner_temp)
+    finally:
+        shutil.rmtree(tmproot, ignore_errors=True)
+    if rc != 0:
+        return [f"{tag} the step exited {rc}: {out}"]
+    raw = outputs.get("verdict")
+    verdict = None
+    if raw is not None:
+        try:
+            verdict = json.loads(raw)
+        except ValueError:
+            verdict = None
+    if not verdict:
+        return [f"{tag} no JSON verdict emitted (outputs={outputs!r})"]
+    failures = []
+    if verdict.get("outcome") != "fail-gate-stall":
+        failures.append(f"{tag} expected outcome fail-gate-stall, got "
+                         f"{verdict.get('outcome')!r} (verdict={verdict})")
+    if verdict.get("failing_check") != "spec-draft PR merge":
+        failures.append(f"{tag} expected the spec-draft gate named, got "
+                         f"{verdict.get('failing_check')!r} (verdict={verdict})")
+    if "required checks never reported a result" not in (verdict.get("observed") or ""):
+        failures.append(f"{tag} evidence lacks the expected text (verdict={verdict})")
+    return failures
+
+
+POLL_CLAMP_SCENARIOS = [
+    dict(name="spec-draft gate blocked-pending since the first observation, "
+              "still well within the 1200s allowance when the (tiny, "
+              "fixtured) poll budget expires: fail-gate-stall, not "
+              "fail-timeout"),
+]
+
+# The fold review's own regression, put back: the post-loop block writes the
+# generic fail-timeout with no clamp check at all (this feature's own
+# pre-fix shape).
+POLL_CLAMP_FIXED_TEXT = (
+    '          if [ "$terminal" != "true" ]; then\n'
+    "            # specs/070-blocked-gate-dry-run edge case: a gate's waiting\n"
+    "            # allowance is not clamped to the remaining poll budget, so a\n"
+    "            # gate that first goes blocked-pending late enough that its\n"
+    "            # 1200s allowance cannot fully elapse before the `while`\n"
+    "            # condition above goes false must still end the attempt as that\n"
+    "            # gate's stall here, not fall through to the generic timeout\n"
+    "            # below (FR-007: the generic timeout is the outcome only when no\n"
+    "            # gate is blocked).\n"
+    '            for prefix in "spec-draft/" "plan/" "spec/"; do\n'
+    '              if [ -n "${gate_blocked_since[$prefix]}" ]; then\n'
+    '                write_verdict "fail-gate-stall" "${gate_name[$prefix]}" "gh pr merge succeeds" \\\n'
+    '                  "PR #${gate_pr_number[$prefix]}: required checks never reported a result"\n'
+    "                emit_verdict\n"
+    "                exit 0\n"
+    "              fi\n"
+    "            done\n"
+    '            write_verdict "fail-timeout" "end-to-end run reaching a terminal state" \\\n'
+)
+POLL_CLAMP_ORIGINAL_TEXT = (
+    '          if [ "$terminal" != "true" ]; then\n'
+    '            write_verdict "fail-timeout" "end-to-end run reaching a terminal state" \\\n'
+)
+
+POLL_CLAMP_MUTATIONS = [
+    ("the poll budget's blocked-pending clamp removed (a gate mid-allowance "
+     "when the budget expires falls back to the generic fail-timeout)",
+     POLL_CLAMP_FIXED_TEXT, POLL_CLAMP_ORIGINAL_TEXT),
+]
+
+
+# --------------------------------------------------------------------------
 # Mutations: each puts one documented-branch defect back into a scratch
 # copy of the script, then asserts the suite fails against that copy.
 # --------------------------------------------------------------------------
@@ -472,8 +675,11 @@ def self_test():
         run_mutation(MERGE_SCRIPT, run_merge_suite, label, old, new, failures)
     for label, old, new in ALLOWANCE_MUTATIONS:
         run_mutation(ALLOWANCE_SCRIPT, run_allowance_suite, label, old, new, failures)
+    for label, old, new in POLL_CLAMP_MUTATIONS:
+        run_mutation(POLL_WORKFLOW, run_poll_clamp_suite, label, old, new, failures)
 
-    total = len(CLARIFY_MUTATIONS) + len(MERGE_MUTATIONS) + len(ALLOWANCE_MUTATIONS)
+    total = (len(CLARIFY_MUTATIONS) + len(MERGE_MUTATIONS) + len(ALLOWANCE_MUTATIONS)
+             + len(POLL_CLAMP_MUTATIONS))
     print(f"Gate 66 self-test: {total} mutation(s); {len(failures)} failure(s).")
     return 1 if failures else 0
 
@@ -485,20 +691,20 @@ def main(argv):
     BASH = resolve_bash()
 
     if (not os.path.isfile(CLARIFY_SCRIPT) or not os.path.isfile(MERGE_SCRIPT)
-            or not os.path.isfile(ALLOWANCE_SCRIPT)):
+            or not os.path.isfile(ALLOWANCE_SCRIPT) or not os.path.isfile(POLL_WORKFLOW)):
         sys.exit(f"::error::run this from the repository root; {CLARIFY_SCRIPT}, "
-                 f"{MERGE_SCRIPT}, or {ALLOWANCE_SCRIPT} not found.")
+                 f"{MERGE_SCRIPT}, {ALLOWANCE_SCRIPT}, or {POLL_WORKFLOW} not found.")
 
     if "--self-test" in argv:
         return self_test()
 
-    failures = run_all(CLARIFY_SCRIPT, MERGE_SCRIPT, ALLOWANCE_SCRIPT)
+    failures = run_all(CLARIFY_SCRIPT, MERGE_SCRIPT, ALLOWANCE_SCRIPT) + run_poll_clamp_suite(POLL_WORKFLOW)
     for f in failures:
         print(f"::error::{f}")
 
     total = (len(CLARIFY_DECIDE_SCENARIOS) + len(CLARIFY_SATISFIED_SCENARIOS)
              + len(CLARIFY_MARKERS_SCENARIOS) + len(MERGE_SCENARIOS)
-             + len(ALLOWANCE_SCENARIOS))
+             + len(ALLOWANCE_SCENARIOS) + len(POLL_CLAMP_SCENARIOS))
     print(f"auto-release e2e gate decisions: "
           f"{total} scenario(s); "
           f"{len(failures)} failure(s).")

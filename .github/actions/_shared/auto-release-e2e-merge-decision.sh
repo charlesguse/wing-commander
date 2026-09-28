@@ -77,8 +77,9 @@ fi
 merge_state="$(printf '%s' "$entry" | jq -r '.mergeStateStatus // ""')"
 if [ "$merge_state" = "BLOCKED" ]; then
   # BLOCKED also reports while a required check is still running, not
-  # only once one has definitively failed (maintainer feedback: confirm a
-  # pending-checks PR is never declared a gate stall). A rollup entry
+  # only once one has definitively failed (maintainer feedback: a
+  # pending-checks PR is now declared a gate stall only after the 20-minute
+  # waiting allowance elapses, per FR-004 -- never immediately). A rollup entry
   # still PENDING/QUEUED/IN_PROGRESS -- or COMPLETED with no conclusion
   # yet recorded -- means the wait, not the block, is what's actually
   # happening; only a rollup with nothing left pending is a genuine stall.

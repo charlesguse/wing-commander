@@ -869,6 +869,13 @@ jobs:
           declare -A gate_failures=([spec-draft/]=0 [plan/]=0 [spec/]=0)
           declare -A gate_last_failure=([spec-draft/]="" [plan/]="" [spec/]="")
           declare -A gate_blocked_since=([spec-draft/]="" [plan/]="" [spec/]="")
+          # The PR number last observed for each gate, so the post-loop
+          # budget-clamp check below (specs/070-blocked-gate-dry-run) can
+          # name the pull request of a gate that is still mid-allowance when
+          # the poll budget itself expires, without relying on the `for
+          # prefix` loop's own $pr_number, which only ever holds the last
+          # prefix processed this iteration.
+          declare -A gate_pr_number=([spec-draft/]="" [plan/]="" [spec/]="")
           # A gate-driving read OR write (fetching comments/PR state, a
           # decision-script crash, posting the clarification reply, a PR
           # merge) that fails at the API level -- e.g. the harness
@@ -989,6 +996,7 @@ jobs:
                 else
                   pr_json="$(cat "$RUNNER_TEMP/auto-release-pr-list.json")"
                   pr_number="$(printf '%s' "$pr_json" | jq -r '.[0].number // "?"' 2>/dev/null || echo '?')"
+                  gate_pr_number[$prefix]="$pr_number"
                   if ! merge_decision="$(printf '%s' "$pr_json" \
                       | bash .github/actions/_shared/auto-release-e2e-merge-decision.sh "$prefix" "$slug" "${gate_expected_base[$prefix]}" \
                       2>"$RUNNER_TEMP/auto-release-merge-decision-err.txt")"; then
@@ -1105,6 +1113,22 @@ jobs:
           fi
 
           if [ "$terminal" != "true" ]; then
+            # specs/070-blocked-gate-dry-run edge case: a gate's waiting
+            # allowance is not clamped to the remaining poll budget, so a
+            # gate that first goes blocked-pending late enough that its
+            # 1200s allowance cannot fully elapse before the `while`
+            # condition above goes false must still end the attempt as that
+            # gate's stall here, not fall through to the generic timeout
+            # below (FR-007: the generic timeout is the outcome only when no
+            # gate is blocked).
+            for prefix in "spec-draft/" "plan/" "spec/"; do
+              if [ -n "${gate_blocked_since[$prefix]}" ]; then
+                write_verdict "fail-gate-stall" "${gate_name[$prefix]}" "gh pr merge succeeds" \
+                  "PR #${gate_pr_number[$prefix]}: required checks never reported a result"
+                emit_verdict
+                exit 0
+              fi
+            done
             write_verdict "fail-timeout" "end-to-end run reaching a terminal state" \
               "closed with stage:done, or stage:stalled, within the poll budget" \
               "still open with labels [$labels] after ${POLL_BUDGET_SECONDS}s"
