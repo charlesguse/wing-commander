@@ -2,7 +2,7 @@
   "issue": 491,
   "spec_dir": "specs/064-run-stamped-cost-attribution",
   "feature_num": "064",
-  "stage": "plan",
+  "stage": "tasks",
   "iteration": 0,
   "spec_branch": "spec/064-run-stamped-cost-attribution"
 }
