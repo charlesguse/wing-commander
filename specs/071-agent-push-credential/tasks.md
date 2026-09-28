@@ -223,4 +223,11 @@ Per CLAUDE.md's own cap (concurrent local agents kept to two during this pipelin
 
 ---
 
+## Phase 9: Convergence
+
+- [ ] T053 Make `auto-update-spec-kit.yml`'s `e2e-stage` scratch push actually resolve its credential through `wing-commander-agent-push-credential`'s helper per FR-008 (partial). Today T014's call at "Install fresh-mint push credential (scratch)" is inert at that site for two independent reasons: the composite runs `git config --local credential.<...>.helper` against the job's outer checkout, while "Push agent-produced spec.md to the scratch repository (best-effort)" pushes from inside `cd e2e-scratch` — a different git repository whose local config never received the helper — and that push's remote URL embeds `https://x-access-token:${GH_TOKEN}@github.com/...`, which git prefers over any helper it might have found. The scratch push therefore still authenticates with the single point-in-time `WC_SCRATCH_TOKEN` mint, which is the exact expiry exposure FR-002 exists to remove, so FR-008's "covered on the same terms as the pipeline repository's own remote" does not yet hold. Fix both halves: install the helper into the repository the push actually runs in, and strip the inline credentials from the push URL so the helper is consulted. Keep the step best-effort (`continue-on-error: true`) and keep it unable to flip `passed`, per T014/T012's existing gating note.
+- [ ] T054 Extend Gate 99 (`.github/scripts/verify-agent-push-credential-helper.py`) so its `auto-update-spec-kit.yml` companion clause fails on the T053 condition per FR-020 (partial): the clause today asserts only that a `wing-commander-agent-push-credential` call exists at that site, so it passed against a call that no push ever consults. Add a check that every push this feature claims to cover resolves through the helper — no inline `x-access-token:`/`${...TOKEN}@github.com` credentials in a covered push's URL, and the helper installed in the same working directory the push runs from — and cover both new failure branches with `--self-test` mutations per FR-022. Depends on: T053.
+
+---
+
 Lifecycle issue: #545.
