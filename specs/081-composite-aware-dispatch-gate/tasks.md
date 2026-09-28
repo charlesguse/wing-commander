@@ -192,20 +192,20 @@ job the day it lands, before any repoint happens.
 
 ### Implementation for User Story 2
 
-- [ ] T011 [US2] Add the `uncorrelated-wait-seconds` input (default
+- [X] T011 [US2] Add the `uncorrelated-wait-seconds` input (default
   `"0"`) to `.github/actions/wing-commander-dispatch-and-wait/action.yml`'s
   `inputs:` block (contracts/dispatch-and-wait-outputs.md) — a bounded
   wait applied only when `correlation` never reaches `found`, so a
   caller reading state the dispatched run was expected to change can
   avoid reading it mid-flight. Default `0` preserves every existing
   caller's behaviour unchanged (FR-014).
-- [ ] T012 [US2] Add four new outputs to the composite's `outputs:`
+- [X] T012 [US2] Add four new outputs to the composite's `outputs:`
   block — `dispatch-rejected`, `correlation`, `correlated-run-id`,
   `request-time` — each sourced from `steps.watch.outputs.*` alongside
   the existing `run-url`/`conclusion` (data-model.md, FR-011, FR-026:
   each fact its own named output, no caller ever parses a structured
   value to read one).
-- [ ] T013 [US2] Rewrite the composite's "Dispatch and correlate" step
+- [X] T013 [US2] Rewrite the composite's "Dispatch and correlate" step
   shell in `action.yml` to: (a) set `dispatch-rejected=true` and skip the
   correlation search entirely when `gh workflow run` itself fails
   (currently only echoes `::error::` and falls through); (b) track
@@ -218,7 +218,7 @@ job the day it lands, before any repoint happens.
   after the terminal-status wait, when `correlation` never reached
   `found`, sleep the new `uncorrelated-wait-seconds` input's value before
   returning (FR-014).
-- [ ] T014 [US2] Add the FR-028 deferred-hook paragraph to the composite's
+- [X] T014 [US2] Add the FR-028 deferred-hook paragraph to the composite's
   header comment (research.md D7): state that a generic post-wait
   verification hook — a caller-supplied "does the state I expected to
   change actually show it" check — was considered and deliberately
@@ -227,7 +227,7 @@ job the day it lands, before any repoint happens.
   verification copy. Leave the existing "auto-release.yml is NOT yet
   repointed... T054" paragraph in place for now — User Story 3 removes it
   once the repoint actually lands.
-- [ ] T015 [US2] Widen
+- [X] T015 [US2] Widen
   `.github/scripts/dispatch-and-wait-tests/run-tests.sh` (Gate 88) per
   contracts/dispatch-and-wait-outputs.md's scenario table: extend
   `run_case`/its assertions so the four existing scenarios
@@ -240,7 +240,7 @@ job the day it lands, before any repoint happens.
   `uncorrelated-wait honored` (set `uncorrelated-wait-seconds` and assert
   the composite's own shell actually delays before returning — e.g. by
   having the stub record a timestamp the test compares before/after).
-- [ ] T016 [US2] Run
+- [X] T016 [US2] Run
   `bash .github/scripts/dispatch-and-wait-tests/run-tests.sh` and confirm
   all six scenarios (T015) pass; confirm `board-loop.yml`'s existing
   prove-job call site, which reads only `run-url`/`conclusion` and omits
