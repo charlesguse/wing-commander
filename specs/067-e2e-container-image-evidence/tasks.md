@@ -242,3 +242,9 @@ With two maintainers/agents (CLAUDE.md caps concurrent local agents at two for t
 ## Maintainer Feedback
 
 - [X] Give the `gh variable list --repo ... -q '.[] | select(.name=="WING_COMMANDER_CONTAINER_IMAGE") | .value'` read at auto-release.yml:461 one home: add a shared helper to `.github/scripts/e2e-provisioning/checks.sh` (alongside `this_repo_container_image()`/`check_container_image_pin()`) that also returns the stderr text, and call that helper from the container-evidence-config step instead of re-deriving the query a third time (CLAUDE.md: shared logic has exactly one home).
+
+## Maintainer Feedback
+
+- [ ] Change the container-mode evidence execution check in `.github/workflows/auto-release.yml` (~line 1484-1490) to match a job's containerization exclusion against the suffix of its name after the last ` / ` (reusable-workflow jobs report as `caller / job`, e.g. real run 36484092749's `implement / verify-image-prerequisites`), not an exact-name match, so real container-mode runs are no longer misflagged as non-containerized.
+- [ ] Extend the same exclusion to the wrappers' host-side jobs: `resolve-model` in `wing-commander-5-implement.yml` and `wing-commander-9-pr-conversation.yml`, and `sweep`.
+- [ ] Update Gate 106's (see following item) fixtures to use real `caller / job`-shaped names, including a `resolve-model` wrapper job, so the gate would fail without this fix (i.e. actually exercises the suffix-matching and host-side-job exclusion logic).
