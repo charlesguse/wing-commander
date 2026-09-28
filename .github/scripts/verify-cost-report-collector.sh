@@ -225,6 +225,21 @@ if [ "$(jq -c "$FILTER" <<<"$(jq -c '{stage:"intake",run:"36147839566",cost_avai
   reason "the #617 questionnaire comment must produce no cost-report signal end to end"
 fi
 
+# A questionnaire line that is itself shaped like a cost line, figure and
+# all ("**Cost**: $5 more per run"), above the real one: only a comment's
+# last cost line is its own, so "$5" is never read as the run's figure (a
+# false cost-line-malformed). Found by the code review of #657.
+# shellcheck disable=SC2016 # single-quoted JSON literal, not a shell expansion
+DOLLAR_PROSE='[
+  {"createdAt":"2026-09-25T14:36:19Z","userLogin":"wing-commander-bot[bot]","body":"> | B | Stand the item down. |\n> **Cost**: $5 more per run if we pick B\n>\n> **Cost**: $1.76 · 18/50 turns · claude-opus-5\n"}
+]'
+out="$(jq -c '{comments: ., since: "", until: "", logins: ["wing-commander-bot[bot]"]}' <<<"$DOLLAR_PROSE" | jq -c "$ATTRIBUTION")"
+if [ "$(jq -r '.cost_token' <<<"$out")" != '$1.76' ]; then
+  reason "a '**Cost**: \$5 ...' questionnaire line above the real cost line must not shadow it, got $out"
+else
+  note "a dollar-bearing '**Cost**:' prose line correctly skipped for the comment's last cost line"
+fi
+
 # Prose only -- the questionnaire without its cost line: still missing, and
 # the bolded prose's later "$5" is never read as a malformed figure.
 # shellcheck disable=SC2016 # single-quoted JSON literal, not a shell expansion

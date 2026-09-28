@@ -1498,11 +1498,13 @@ jobs:
           # intake or clarify questionnaire's trade-off column says "Cost: the
           # loop can never fix ...", and the first-match regex this replaced
           # took that for the run's line, found no amount, and filed a false
-          # cost-line-missing (#617). Among the run's cost lines, the first
-          # whose figure is a "$" amount wins, so a "**Cost**:" prose line in
-          # a questionnaire cannot shadow the real one either; with none, the
-          # first cost line is kept as observed text (a "metrics unavailable"
-          # fallback reads as missing). The token is only the figure right
+          # cost-line-missing (#617). Each comment contributes only its LAST
+          # cost line -- every emitter appends the stage's line at the end of
+          # its comment, so a "**Cost**: $5 more per run" line in a
+          # questionnaire above it cannot shadow it. Among those per-comment
+          # lines, the first whose figure is a "$" amount wins; with none, the
+          # first is kept as observed text (a "metrics unavailable" fallback
+          # reads as missing). The token is only the figure right
           # after the prefix, never a "$" later in the line.
           # shellcheck disable=SC2016 # this is a jq program — its $vars must
           # NOT be shell-expanded.
@@ -1513,9 +1515,11 @@ jobs:
                 | select(($in.since // "") == "" or .createdAt >= $in.since)
                 | select(($in.until // "") == "" or .createdAt <= $in.until) ]
             | sort_by(.createdAt) as $own
-            | [ $own[] | (.body // "") | split("\n")[] | sub("\r$"; "")
-                | select(test("^(> ?)*\\*\\*Cost\\*\\*: "))
-                | sub("^(> ?)*\\*\\*Cost\\*\\*: "; "Cost: ") ] as $lines
+            | [ $own[]
+                | [ (.body // "") | split("\n")[] | sub("\r$"; "")
+                    | select(test("^(> ?)*\\*\\*Cost\\*\\*: "))
+                    | sub("^(> ?)*\\*\\*Cost\\*\\*: "; "Cost: ") ]
+                | last // empty ] as $lines
             | (([ $lines[] | select(startswith("Cost: $")) ] + $lines) | .[0] // null) as $observed
             | { comment_found: (($own | length) > 0),
                 observed_text: $observed,
