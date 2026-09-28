@@ -103,8 +103,8 @@ runs:
       run: |
         set -uo pipefail
 
-        request_time_iso="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
         request_time="$(date -u +%s)"
+        request_time_iso="$(date -u -d "@$request_time" +"%Y-%m-%dT%H:%M:%SZ")"
 
         mapfile -t dispatch_args < <(printf '%s' "$WORKFLOW_INPUTS" | jq -r 'to_entries[] | "-f" , (.key + "=" + (.value | tostring))')
 

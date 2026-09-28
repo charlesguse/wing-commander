@@ -14,9 +14,11 @@ separate TDD phase.
 **Gate numbering**: the highest gate number wired into
 `.github/workflows/lint-workflows.yml` as of this branch is Gate 98
 (`grep -n "Gate [0-9]\{2,3\} —" .github/workflows/lint-workflows.yml`).
-This feature's one new gate is **Gate 99** (research.md D8). Re-check
-this at implementation time in case another in-flight branch has since
-claimed it, and renumber if so.
+This feature's one new gate was drafted as **Gate 99** (research.md D8),
+then renumbered to Gate 101, and is now **Gate 117** after a maintainer
+review found Gate 101 reserved for specs/060-self-redrive-concurrency.
+Re-check this at implementation time in case another in-flight branch
+has since claimed it, and renumber if so.
 
 ## Format: `[ID] [P?] [Story] Description`
 
@@ -258,7 +260,7 @@ here — usable by `board-loop.yml` today, before any repoint.
 **Goal**: `auto-release.yml`'s `dispatch-release` job is repointed at the
 shared composite, its `report` job produces byte-identical
 maintainer-facing output for every dispatch outcome, the tag-state
-invariant gains a runtime proof (Gate 99), the `dispatch-and-wait` waiver
+invariant gains a runtime proof (Gate 117), the `dispatch-and-wait` waiver
 is removed, and Gate 60 starts failing if the inline copy ever returns.
 
 **Depends on**: Phase 3 (User Story 1 — Gate 59 must resolve through
@@ -305,7 +307,7 @@ existing structural scan, per research.md D10).
   `dispatch-release`, reads these six names at
   `auto-release.yml:1624-1632`) requires no edit.
 - [X] T019 [US3] Create
-  `.github/scripts/verify-auto-release-tag-state-runtime.py` (Gate 99),
+  `.github/scripts/verify-auto-release-tag-state-runtime.py` (Gate 117),
   following Gate 67's shape
   (`.github/scripts/verify-auto-release-credential-step.py`): use
   `wc_shell_harness.find_step` to extract `dispatch-release`'s "Decide
@@ -318,7 +320,7 @@ existing structural scan, per research.md D10).
   Add a mutation-kill fixture (matching Gate 67's `MUTATIONS` precedent)
   that swaps the tag comparison for a run-conclusion check and confirms
   the suite then fails.
-- [X] T020 [US3] Wire Gate 99 into
+- [X] T020 [US3] Wire Gate 117 into
   `.github/workflows/lint-workflows.yml`'s PR-time gate job, immediately
   after Gate 98's step, with `if: "!cancelled()"` (the same sequential
   convention every other gate uses — never `continue-on-error`). No new
@@ -351,12 +353,12 @@ existing structural scan, per research.md D10).
   called composite (pointing at
   `specs/081-composite-aware-dispatch-gate/contracts/resolving-gate.md`),
   and that runtime proof for all three invariants now exists (pointing at
-  Gate 88 and Gate 99) — superseding that document's "does not
+  Gate 88 and Gate 117) — superseding that document's "does not
   re-implement or simulate" Non-goals framing for checks 3 and 5 only
   (FR-023, research.md D11).
 - [X] T026 [US3] Run `python .github/scripts/run-local-gates.py` and
   confirm every gate passes on the repointed tree, including Gate 59
-  (T002-T010), Gate 88 (T015), and the new Gate 99 (T019), with no gate
+  (T002-T010), Gate 88 (T015), and the new Gate 117 (T019), with no gate
   skipped, waived, or newly excluded (SC-007).
 - [X] T027 [US3] Side-by-side report-text comparison (quickstart.md
   step 4): for each of released / branch-advanced / dispatch-failed /
@@ -493,14 +495,14 @@ With two developers/agents:
 
 ## Maintainer Feedback
 
-- [ ] Renumber the new gate from Gate 101 to **Gate 117** (Gate 101 is reserved for spec 060) everywhere it is wired or named:
-  - [ ] `.github/workflows/lint-workflows.yml`: the comment header above the step, the "Numbered 101, not the 99…" note, and the step `name:` fields.
-  - [ ] `.github/scripts/verify-auto-release-tag-state-runtime.py`: the docstring header (line 2), the "Gate 99 is check 4's counterpart" reference (line 17), and the `print("Gate 99: ...")` summary line (line 182) — all currently still say Gate 99, not even Gate 101.
-  - [ ] `specs/048-correlated-release-dispatch/contracts/regression-gate.md:77` ("a stubbed `git` in Gate 99").
-  - [ ] `specs/081-composite-aware-dispatch-gate/{tasks.md,plan.md,quickstart.md,data-model.md,research.md}`, wherever they name the gate number.
+- [X] Renumber the new gate from Gate 101 to **Gate 117** (Gate 101 is reserved for spec 060) everywhere it is wired or named:
+  - [X] `.github/workflows/lint-workflows.yml`: the comment header above the step, the "Numbered 101, not the 99…" note, and the step `name:` fields.
+  - [X] `.github/scripts/verify-auto-release-tag-state-runtime.py`: the docstring header (line 2), the "Gate 99 is check 4's counterpart" reference (line 17), and the `print("Gate 99: ...")` summary line (line 182) — all currently still say Gate 99, not even Gate 101.
+  - [X] `specs/048-correlated-release-dispatch/contracts/regression-gate.md:77` ("a stubbed `git` in Gate 99").
+  - [X] `specs/081-composite-aware-dispatch-gate/{tasks.md,plan.md,quickstart.md,data-model.md,research.md}`, wherever they name the gate number.
 
 ---
 
 ## Maintainer Feedback (optional)
 
-- [ ] In `.github/actions/wing-commander-dispatch-and-wait/action.yml` (lines 106-107), derive `request_time_iso` from the `request_time` epoch value with a single `date` call instead of two separate `date -u` invocations, so the two values can't drift by up to a second, matching the old inline shell's behavior.
+- [X] In `.github/actions/wing-commander-dispatch-and-wait/action.yml` (lines 106-107), derive `request_time_iso` from the `request_time` epoch value with a single `date` call instead of two separate `date -u` invocations, so the two values can't drift by up to a second, matching the old inline shell's behavior.

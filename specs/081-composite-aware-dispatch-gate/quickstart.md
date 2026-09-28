@@ -21,7 +21,7 @@ interfaces and data-model.md for shapes.
 python .github/scripts/run-local-gates.py
 ```
 Expected: every gate passes, including Gate 59 and its `--self-test`,
-Gate 88 and its widened cases, and the new Gate 99, with no gate
+Gate 88 and its widened cases, and the new Gate 117, with no gate
 skipped, waived, or newly excluded.
 
 ## 2. The gate follows the idiom into a composite (User Story 1, SC-001, SC-003, SC-004)

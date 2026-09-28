@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gate 99 -- auto-release's tag-state decision, proven by execution.
+"""Gate 117 -- auto-release's tag-state decision, proven by execution.
 
 Gate 59 (`verify-correlated-release-dispatch.py`) checks 3-5 are textual:
 they prove the right constructs appear in the right place, never that
@@ -14,7 +14,7 @@ output -- never a hand-typed copy of its logic.
 (Gate 88's `dispatch-and-wait-tests/run-tests.sh` is this same runtime-
 proof shape for the correlation/wait invariants, checks 3 and 5 --
 proving the widened `wing-commander-dispatch-and-wait` composite, not
-this job's own step. Gate 99 is check 4's counterpart: the one invariant
+this job's own step. Gate 117 is check 4's counterpart: the one invariant
 FR-027 keeps out of that composite, proven here instead.)
 
 THE THREE SCENARIOS (FR-025)
@@ -179,7 +179,7 @@ def main():
     finally:
         shutil.rmtree(tmproot, ignore_errors=True)
 
-    print(f"Gate 99: {len(SCENARIOS)} scenario(s), {len(MUTATIONS)} mutation(s); "
+    print(f"Gate 117: {len(SCENARIOS)} scenario(s), {len(MUTATIONS)} mutation(s); "
           f"{len(failures)} failure(s).")
     return 1 if failures else 0
 

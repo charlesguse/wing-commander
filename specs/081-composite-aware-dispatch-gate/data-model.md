@@ -82,8 +82,9 @@ for the same reason a hand-rolled step could fail.
 
 ## New runtime harness for the tag-state invariant
 
-`.github/scripts/verify-auto-release-tag-state-runtime.py` (Gate 99 as
-of this plan — re-check for a collision before claiming it)
+`.github/scripts/verify-auto-release-tag-state-runtime.py` (Gate 117 —
+renumbered from the 99/101 this feature tried in turn, both already
+claimed by other in-flight branches)
 
 | Field | Type | Notes |
 |---|---|---|
@@ -99,4 +100,4 @@ of this plan — re-check for a collision before claiming it)
 | `.github/scripts/single-home-waivers.json` | `dispatch-and-wait` / `auto-release.yml` entry, issue #408, "Remove this waiver when T054 lands" | entry deleted; Gate 60's existing `check_dispatch_and_wait` then fails if the inline copy ever returns (FR-020, FR-021) |
 | `specs/057-autonomous-board-loop/tasks.md` T054 | `[ ] ... **BLOCKED (2026-09-22, cycle 2)**` | `[X]`, one-line pointer to this feature |
 | `specs/057-autonomous-board-loop/tasks.md` T056 | `[ ] ... **PARTIALLY DONE, BLOCKED on T054**` | `[X]`, one-line pointer to this feature |
-| `specs/048-correlated-release-dispatch/contracts/regression-gate.md` | "five checks" table frames checks 3/5 as pure `auto-release.yml` text checks; states the gate "does not re-implement or simulate" (Non-goals) | gains a note that checks 3/5 resolve through a called composite (pointing at `contracts/resolving-gate.md`), and that runtime proof for all three invariants now exists (pointing at Gate 88 and Gate 99) |
+| `specs/048-correlated-release-dispatch/contracts/regression-gate.md` | "five checks" table frames checks 3/5 as pure `auto-release.yml` text checks; states the gate "does not re-implement or simulate" (Non-goals) | gains a note that checks 3/5 resolve through a called composite (pointing at `contracts/resolving-gate.md`), and that runtime proof for all three invariants now exists (pointing at Gate 88 and Gate 117) |

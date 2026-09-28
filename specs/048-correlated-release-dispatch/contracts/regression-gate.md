@@ -74,6 +74,6 @@ correlation/wait invariants (checks 3 and 5) exists by execution against
 a stubbed `gh` in Gate 88
 (`.github/scripts/dispatch-and-wait-tests/run-tests.sh`), and runtime
 proof for the tag-state invariant (check 4) exists by execution against
-a stubbed `git` in Gate 99
+a stubbed `git` in Gate 117
 (`.github/scripts/verify-auto-release-tag-state-runtime.py`) — see
 `specs/081-composite-aware-dispatch-gate/contracts/resolving-gate.md`.

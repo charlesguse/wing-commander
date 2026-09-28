@@ -72,7 +72,7 @@ input. FR-004/SC-004 — an unresolvable composite reference MUST fail
 loudly, never pass and never read as "invariant deleted." FR-013/FR-016 —
 the composite's existing two outputs keep their name and meaning; every
 new fact is additive. Constitution VIII — Gate 59 (amended) and the new
-Gate 99 must each satisfy every clause of "a green check means what it
+Gate 117 must each satisfy every clause of "a green check means what it
 says." Constitution VII — widening the composite's published,
 adopter-pinned surface is a deliberate, recorded act (FR-016), not a
 convenience.
@@ -80,7 +80,7 @@ convenience.
 **Scale/Scope**: 1 gate script amended (Gate 59: resolution logic +
 3-fixture self-test matrix), 1 composite action widened (4 new outputs,
 1 new input, header-comment update), 1 existing behavioral harness
-widened (Gate 88: 2 new scenarios), 1 new gate script + harness (Gate 99,
+widened (Gate 88: 2 new scenarios), 1 new gate script + harness (Gate 117,
 tentative number), 1 workflow edited (`auto-release.yml`'s
 `dispatch-release` job split into two steps + its `outputs:` block), 1
 waiver entry removed (`single-home-waivers.json`), 2 tasks checked off
@@ -147,11 +147,11 @@ No violations requiring Complexity Tracking.
 Design artifacts (data-model.md, contracts/, quickstart.md) introduce
 nothing outside what the initial Constitution Check already covers — no
 new agent invocation, no new interaction surface, no widened token
-scope, no repository name hardcoded. Gate 59 (amended) and Gate 99 (new)
+scope, no repository name hardcoded. Gate 59 (amended) and Gate 117 (new)
 each satisfy Principle VIII's clauses:
 
 - **Reachable through the gate registry**: unchanged script path for
-  Gate 59; Gate 99 follows the standard `verify-*.py` naming
+  Gate 59; Gate 117 follows the standard `verify-*.py` naming
   `wc_gate_registry.py` globs for. Neither needs a manual registration
   step to forget.
 - **Same subject, same arguments, locally and in CI**: `run-local-gates.py`
@@ -170,7 +170,7 @@ each satisfy Principle VIII's clauses:
   other gate in `lint-workflows.yml` uses, not `continue-on-error`.
 - **Every failure branch fixture-covered**: strengthened — Gate 59's
   self-test grows from 4 to 10 cases (research.md D5); Gate 88 grows by
-  2 scenarios; Gate 99 ships with its own mutation-kill fixture, matching
+  2 scenarios; Gate 117 ships with its own mutation-kill fixture, matching
   Gate 67's precedent.
 
 Constitution Check: PASS. Proceeding to Phase 2 (tasks) is authorized by
@@ -205,15 +205,15 @@ src/tests split. The real "source" this feature touches:
 │       └── action.yml                      # EDITED — 4 new outputs, 1 new input, header note (US2)
 ├── scripts/
 │   ├── verify-correlated-release-dispatch.py   # EDITED — Gate 59: resolution + 10-case self-test (US1)
-│   ├── verify-auto-release-tag-state-runtime.py # NEW — Gate 99 (US3)
+│   ├── verify-auto-release-tag-state-runtime.py # NEW — Gate 117 (US3)
 │   ├── dispatch-and-wait-tests/
 │   │   └── run-tests.sh                    # EDITED — Gate 88: 2 new scenarios (US2)
 │   ├── single-home-waivers.json            # EDITED — dispatch-and-wait/auto-release.yml entry removed (US3)
-│   ├── wc_shell_harness.py                 # existing, unchanged — find_step/run_step reused by Gate 99
+│   ├── wc_shell_harness.py                 # existing, unchanged — find_step/run_step reused by Gate 117
 │   └── run-local-gates.py                  # existing, unchanged — auto-derives Gate 59/88/99
 └── workflows/
     ├── auto-release.yml                    # EDITED — dispatch-release job repointed + split (US3)
-    └── lint-workflows.yml                  # EDITED — Gate 99 wiring (US3); Gate 59/88 steps unchanged
+    └── lint-workflows.yml                  # EDITED — Gate 117 wiring (US3); Gate 59/88 steps unchanged
 
 specs/057-autonomous-board-loop/
 └── tasks.md                                # EDITED — T054, T056 checked off with pointers (FR-023)
@@ -226,10 +226,10 @@ specs/048-correlated-release-dispatch/
 *category* — this feature extends two existing conventions in place
 (`.github/scripts/verify-*.py`, registry-derived; the existing
 `wing-commander-dispatch-and-wait` composite's own contract) rather than
-introducing a new one. The one new file, Gate 99's script, follows the
+introducing a new one. The one new file, Gate 117's script, follows the
 same `verify-*.py` + `find_step`/`run_step` shape Gate 67 already
 established for "extract one job step's shell and run it against a
-stub," so a future maintainer reading Gate 99 already knows the pattern
+stub," so a future maintainer reading Gate 117 already knows the pattern
 from Gate 67.
 
 ## Complexity Tracking
