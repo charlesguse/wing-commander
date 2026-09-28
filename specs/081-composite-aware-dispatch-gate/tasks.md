@@ -396,13 +396,13 @@ with nothing newly excluded.
 
 ## Phase 5: Polish & Cross-Cutting Concerns
 
-- [ ] T029 [P] Confirm SC-009: diff
+- [X] T029 [P] Confirm SC-009: diff
   `.github/actions/wing-commander-dispatch-and-wait/action.yml`'s inputs
   and outputs against pre-feature `main` (`git diff origin/main --
   .github/actions/wing-commander-dispatch-and-wait/action.yml`) — every
   existing input/output name and meaning is unchanged; only the five new
   entries from User Story 2 (T011, T012) are additions.
-- [ ] T030 [P] Confirm FR-009: `git diff origin/main --
+- [X] T030 [P] Confirm FR-009: `git diff origin/main --
   .github/scripts/verify-correlated-release-dispatch.py` shows no edits
   inside `run_name_errors` or `tag_time_check_errors` (checks 1 and 2,
   `release.yml`-only) — their behaviour and failure messages are
