@@ -429,15 +429,19 @@ jobs:
               echo "::error::wing-commander auto-release verify-e2e: WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN authenticated as a login other than WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_USERNAME -- see docs/setup.md."
               exit 0
             fi
-            # research.md D6: Issues:write and Pull-requests:write are
-            # proven by attempting a write-shaped call against an id
-            # certain not to exist -- a fine-grained token lacking the
-            # permission is rejected (403) before the resource lookup
-            # (404) even happens. Read-side-effect-free: the id cannot
-            # exist, so neither call creates, modifies, or merges anything.
+            # research.md D6: Issues:write and Contents:write are proven by
+            # attempting a write-shaped call against an id certain not to
+            # exist -- a fine-grained token lacking the permission is
+            # rejected (403) before the resource lookup (404) even
+            # happens. Merging a pull request is gated by GitHub on
+            # Contents:write, not Pull-requests:write (maintainer feedback
+            # on #506), so the merge probe below names Contents, never
+            # Pull-requests, on rejection. Read-side-effect-free: the id
+            # cannot exist, so neither call creates, modifies, or merges
+            # anything.
             issues_status="$(GH_TOKEN="$MAINTAINER_TOKEN" gh api -i -X POST "repos/$E2E_REPO/issues/999999999/comments" -f body=probe 2>/dev/null | head -1 | awk '{print $2}' || true)"
-            prs_status="$(GH_TOKEN="$MAINTAINER_TOKEN" gh api -i -X PUT "repos/$E2E_REPO/pulls/999999999/merge" 2>/dev/null | head -1 | awk '{print $2}' || true)"
-            if [ -z "$issues_status" ] || [ -z "$prs_status" ]; then
+            contents_status="$(GH_TOKEN="$MAINTAINER_TOKEN" gh api -i -X PUT "repos/$E2E_REPO/pulls/999999999/merge" 2>/dev/null | head -1 | awk '{print $2}' || true)"
+            if [ -z "$issues_status" ] || [ -z "$contents_status" ]; then
               echo "ok=false" >> "$GITHUB_OUTPUT"
               {
                 echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
@@ -447,23 +451,28 @@ jobs:
               echo "::error::wing-commander auto-release verify-e2e: a WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN permission probe against $E2E_REPO failed outright -- see docs/setup.md."
               exit 0
             fi
-            if [ "$issues_status" = "403" ] || [ "$prs_status" = "403" ]; then
+            if [ "$issues_status" = "403" ] || [ "$contents_status" = "403" ]; then
               echo "ok=false" >> "$GITHUB_OUTPUT"
               {
                 echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
-                bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "fixture maintainer identity credential" "Issues and Pull-requests write, per research.md D6" "the probe was rejected (issues: $issues_status, pull requests: $prs_status)" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN" "$MODE"
+                bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "fixture maintainer identity credential" "Issues and Contents write, per research.md D6" "the probe was rejected (issues: $issues_status, contents: $contents_status)" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN" "$MODE"
                 echo 'AUTO_RELEASE_VERDICT_EOF'
               } >> "$GITHUB_OUTPUT"
-              echo "::error::wing-commander auto-release verify-e2e: WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN lacks Issues and/or Pull-requests write on $E2E_REPO -- see docs/setup.md."
+              echo "::error::wing-commander auto-release verify-e2e: WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN lacks Issues and/or Contents write on $E2E_REPO -- see docs/setup.md."
               exit 0
             fi
             # research.md D5: the credential itself MUST carry no
             # Administration permission on the test repository -- the
             # account's own Admin, conferred by the FR-002 ownership
-            # transfer, is accepted; the credential's is not (FR-016). A
-            # 200 here means the token grants Administration; a 403 naming
-            # the missing permission passes this probe.
-            admin_status="$(GH_TOKEN="$MAINTAINER_TOKEN" gh api -i "repos/$E2E_REPO/collaborators" 2>/dev/null | head -1 | awk '{print $2}' || true)"
+            # transfer, is accepted; the credential's is not (FR-016).
+            # GET .../actions/permissions is gated on Administration:read;
+            # GET .../collaborators is gated on Metadata:read instead,
+            # which every fine-grained token carries regardless of scope,
+            # so it always returns 200 and would wrongly fail a correctly
+            # scoped token (maintainer feedback on #506). A 200 here means
+            # the token grants Administration; a 403 naming the missing
+            # permission passes this probe.
+            admin_status="$(GH_TOKEN="$MAINTAINER_TOKEN" gh api -i "repos/$E2E_REPO/actions/permissions" 2>/dev/null | head -1 | awk '{print $2}' || true)"
             if [ -z "$admin_status" ]; then
               echo "ok=false" >> "$GITHUB_OUTPUT"
               {
@@ -959,7 +968,7 @@ jobs:
               write_verdict "fail-infra" "polling the test repository for a terminal state" \
                 "gh calls succeed within the poll budget" \
                 "GitHub API rate limit encountered while driving the $1 gate: $3"
-            elif printf '%s' "$3" | grep -qiE 'HTTP 401|Bad credentials|Resource not accessible by integration|requires authentication|insufficient .*scope|missing .*scope'; then
+            elif printf '%s' "$3" | grep -qiE 'HTTP 401|Bad credentials|Resource not accessible by integration|Resource not accessible by personal access token|requires authentication|insufficient .*scope|missing .*scope'; then
               write_verdict "fail-infra" "$1" \
                 "the harness credential authenticates and authorizes every gate-driving act" \
                 "the harness credential was rejected while driving the $1 gate: $3"

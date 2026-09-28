@@ -19,7 +19,10 @@ extracted from the workflow (via `find_step`, never a copy), with a stubbed
 repeatedly:
 
   * a repeated HTTP 401/"Bad credentials"/etc. failure ends `fail-infra`,
-    naming the credential as cause;
+    naming the credential as cause -- including a fine-grained personal
+    access token's own "Resource not accessible by personal access token"
+    text, distinct from a GitHub App token's "...by integration" (maintainer
+    feedback on #506);
   * a repeated failure carrying none of those signatures still ends
     `fail-gate-stall`, unchanged from before this feature (regression
     coverage: the new branch must not swallow every gate stall);
@@ -179,6 +182,15 @@ SCENARIOS = [
      [(1, "API rate limit exceeded for installation ID 12345678.")],
      "fail-infra", "polling the test repository for a terminal state",
      ["rate limit"]),
+    # specs/066-fine-grained-maintainer-token maintainer feedback on #506:
+    # a fine-grained personal access token's own 403 body text differs from
+    # the GitHub App token's ("Resource not accessible by integration"),
+    # so the regex must also catch the PAT's own wording.
+    ("a repeated fine-grained-PAT rejection names the credential",
+     [(1, "HTTP 403: Resource not accessible by personal access token")],
+     "fail-infra", "spec-draft PR merge",
+     ["the harness credential was rejected",
+      "Resource not accessible by personal access token"]),
 ]
 
 
@@ -211,7 +223,8 @@ def mut_drop_credential_branch(script):
     longer matches, so the check falls through to the fail-gate-stall
     `else` arm regardless of what `$3` says."""
     old = ("grep -qiE 'HTTP 401|Bad credentials|Resource not accessible by "
-           "integration|requires authentication|insufficient .*scope|"
+           "integration|Resource not accessible by personal access "
+           "token|requires authentication|insufficient .*scope|"
            "missing .*scope'")
     new = "grep -qiE 'this-signature-can-never-match-anything-xyz'"
     if old not in script:

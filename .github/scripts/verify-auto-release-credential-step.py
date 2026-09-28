@@ -69,9 +69,9 @@ def _rfc(delta_days):
 #     $STUB_EXPIRY, and a JSON body carrying $STUB_LOGIN
 #   gh api -i -X POST .../issues/999999999/comments             D6 Issues probe -> $STUB_ISSUES_STATUS
 #     ($STUB_ISSUES_TRANSPORT_FAIL=1 -> exit 1, no output)
-#   gh api -i -X PUT .../pulls/999999999/merge                  D6 PRs probe -> $STUB_PRS_STATUS
+#   gh api -i -X PUT .../pulls/999999999/merge                  D6 Contents (merge) probe -> $STUB_PRS_STATUS
 #     ($STUB_PRS_TRANSPORT_FAIL=1 -> exit 1, no output)
-#   gh api -i .../collaborators                                  D5 Administration probe -> $STUB_ADMIN_STATUS
+#   gh api -i .../actions/permissions                            D5 Administration probe -> $STUB_ADMIN_STATUS
 #     ($STUB_ADMIN_TRANSPORT_FAIL=1 -> exit 1, no output)
 #   gh api user/repos?... --paginate --jq .full_name             containment (both shapes) -> $STUB_REPOS
 #     ($STUB_REPOS_TRANSPORT_FAIL=1 -> exit 1, no output -- research.md D4)
@@ -107,7 +107,7 @@ if [ "$1" = "api" ] && [ "$2" = "-i" ] && [ "$3" = "-X" ] && [ "$4" = "PUT" ]; t
 fi
 if [ "$1" = "api" ] && [ "$2" = "-i" ]; then
   case "$3" in
-    */collaborators)
+    */actions/permissions)
       if [ "${STUB_ADMIN_TRANSPORT_FAIL-0}" = "1" ]; then exit 1; fi
       printf 'HTTP/2.0 %s Status\r\n\r\n' "${STUB_ADMIN_STATUS:-403}"
       exit 0
@@ -204,7 +204,7 @@ SCENARIOS = [
     # outright rather than returning a permission-denied response.
     ("fine-grained: the login/expiry probe fails outright",
      {**FG, "STUB_LOGIN": ""}, "false", ["gh rejected the token"]),
-    ("fine-grained: the Issues/Pull-requests probe fails outright",
+    ("fine-grained: the Issues/Contents probe fails outright",
      {**FG, "STUB_ISSUES_TRANSPORT_FAIL": "1"}, "false",
      ["a permission probe call failed outright"]),
     ("fine-grained: the Administration probe fails outright",
@@ -215,15 +215,16 @@ SCENARIOS = [
      ["the credential expired at"]),
 
     # data-model.md row #4 (fine-grained variant): D6 rejects Issues and/or
-    # Pull-requests write.
+    # Contents write. The merge probe is gated by GitHub on Contents:write,
+    # not Pull-requests:write (maintainer feedback on #506).
     ("fine-grained: Issues write rejected",
      {**FG, "STUB_ISSUES_STATUS": "403"}, "false",
-     ["Issues and Pull-requests write, per research.md D6",
+     ["Issues and Contents write, per research.md D6",
       "issues: 403"]),
-    ("fine-grained: Pull-requests write rejected",
+    ("fine-grained: Contents write rejected (merge probe)",
      {**FG, "STUB_PRS_STATUS": "403"}, "false",
-     ["Issues and Pull-requests write, per research.md D6",
-      "pull requests: 403"]),
+     ["Issues and Contents write, per research.md D6",
+      "contents: 403"]),
 
     # data-model.md row #5: D5 accepts (200) -- the credential itself grants
     # Administration, never produced for the classic shape (FR-003).
@@ -382,14 +383,14 @@ def mut_malformed_prefix_accepted(script):
 def mut_d6_rejection_accepted(script):
     """research.md D6: a 403 (permission absent) on either write probe no
     longer fails the precheck."""
-    old = 'if [ "$issues_status" = "403" ] || [ "$prs_status" = "403" ]; then'
-    new = 'if [ "$issues_status" = "999" ] || [ "$prs_status" = "999" ]; then'
+    old = 'if [ "$issues_status" = "403" ] || [ "$contents_status" = "403" ]; then'
+    new = 'if [ "$issues_status" = "999" ] || [ "$contents_status" = "999" ]; then'
     return script.replace(old, new)
 
 
 def mut_d5_grant_accepted(script):
-    """research.md D5: a 200 (Administration granted) on the collaborators
-    probe no longer fails the precheck."""
+    """research.md D5: a 200 (Administration granted) on the
+    actions/permissions probe no longer fails the precheck."""
     old = 'if [ "$admin_status" = "200" ]; then'
     new = 'if [ "$admin_status" = "999" ]; then'
     return script.replace(old, new)

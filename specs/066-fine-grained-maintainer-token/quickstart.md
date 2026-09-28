@@ -30,9 +30,9 @@ the same run accepts, not what the run does.
    reachability" or "App installation" `fail-infra` branch (research.md
    D8) — no new check is added for this list, and none is needed.
 3. Issue a **fine-grained personal access token** for the account, scoped
-   to the transferred repository alone, with Contents (read), Issues
-   (read and write), Pull requests (read and write) permissions and no
-   Administration permission, and an expiry no longer than your release
+   to the transferred repository alone, with Contents (read and write),
+   Issues (read and write), Pull requests (read and write) permissions and
+   no Administration permission, and an expiry no longer than your release
    cadence (FR-006). Store it as
    `WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN`, replacing the
    classic token.

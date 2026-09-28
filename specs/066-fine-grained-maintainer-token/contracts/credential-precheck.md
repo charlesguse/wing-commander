@@ -45,7 +45,7 @@ exactly as every credential failure does today.
      b. gh api user --jq .login matches MAINTAINER_USERNAME, else fail-infra (table row #3)
         (viewerPermission is READ ONLY here, as a reachability check -- research.md D6;
         its value is never used as a permission proof for this shape)
-     c. D6 probe: Issues:write AND Pull-requests:write both accepted, else fail-infra (table row #4)
+     c. D6 probe: Issues:write AND Contents:write both accepted, else fail-infra (table row #4)
      d. D5 probe: Administration REJECTED, else fail-infra (table row #5, FR-016)
      e. containment: reachable set == {E2E_REPO}, else fail-infra (table rows #6/#7, same check as 5c)
      f. D2: if github-authentication-token-expiration header present and already
@@ -63,18 +63,15 @@ steps — `auto-release.yml`'s `outputs:` wiring for this job
 
 | Probe | Call | Accepted (fails precheck) | Rejected (passes this probe) |
 |---|---|---|---|
-| Administration absence (D5) | `GET /repos/{owner}/{repo}/collaborators` | 200 — token grants Administration | 403 naming the missing permission |
+| Administration absence (D5) | `GET /repos/{owner}/{repo}/actions/permissions` | 200 — token grants Administration | 403 naming the missing permission |
 | Issues write (D6) | `POST /repos/{owner}/{repo}/issues/999999999/comments` | 404 (permission present, resource absent) | 403 (permission absent, checked before lookup) |
-| Pull-requests write (D6) | a Pull-requests-write-gated call against the same certainly-nonexistent id | 404 | 403 |
+| Contents write (D6) | `PUT /repos/{owner}/{repo}/pulls/999999999/merge` | 404 | 403 |
 
 Every probe is read-only or targets a resource that cannot exist; none
-creates, modifies, or deletes anything in the test repository. The exact
-PR-write-gated endpoint (a merge attempt, a review-request, or a label
-edit against the nonexistent id — several REST endpoints are gated by
-Pull-requests:write) is a task-level implementation choice, not a
-plan-level one; any of them satisfies this contract as long as it is
-read-side-effect-free and returns the same 403-before-404 ordering the
-Issues probe relies on.
+creates, modifies, or deletes anything in the test repository. The merge
+attempt is gated by GitHub on Contents:write, not Pull-requests:write
+(maintainer feedback on #506), so its rejection is reported naming
+Contents.
 
 ## Fixture coverage obligation (FR-015, Constitution VIII)
 

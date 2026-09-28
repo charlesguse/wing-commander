@@ -152,11 +152,11 @@ text already conveys correctly for that case.
 
 ## D5. Verifying the fine-grained shape carries no Administration permission (FR-016)
 
-**Decision**: probe a read-only, list-shaped REST endpoint that GitHub's
-own fine-grained PAT permission model gates behind the repository
-**Administration** permission — `GET /repos/{owner}/{repo}/collaborators`
-is such an endpoint. A fine-grained token that can list collaborators
-carries Administration and fails the precheck with its own distinguishable
+**Decision**: probe a read-only REST endpoint that GitHub's own
+fine-grained PAT permission model gates behind the repository
+**Administration** permission — `GET /repos/{owner}/{repo}/actions/permissions`
+is such an endpoint. A fine-grained token that can read it carries
+Administration and fails the precheck with its own distinguishable
 `fail-infra` verdict (FR-008's "the credential grants Administration
 permission" branch, separate from every other branch); one that gets
 rejected (GitHub's fine-grained tokens return a 403 with a body naming the
@@ -166,6 +166,15 @@ itself is scoped to) passes this check. This probe runs only on the
 fine-grained branch (D1); a classic credential is never subjected to it,
 matching FR-003's stated asymmetry.
 
+**Correction (maintainer feedback on #506)**: this decision originally
+named `GET /repos/{owner}/{repo}/collaborators` as the probe endpoint.
+That endpoint is in fact gated by GitHub on **Metadata:read** — a
+permission every fine-grained token carries regardless of its own
+declared scope — so it always returns 200 and would have wrongly failed
+every correctly scoped fine-grained credential as over-granted.
+`GET /repos/{owner}/{repo}/actions/permissions` is gated on Administration
+itself, which is what this probe must observe.
+
 **Rationale**: GitHub does not publish an endpoint that returns "here is
 the permission set this PAT was granted" the way a GitHub App installation
 token's own installation record does — the only way to observe what a
@@ -173,11 +182,12 @@ fine-grained token can do is to attempt an act gated specifically by the
 permission in question and read whether it was accepted or rejected. This
 is the same "verified rather than merely asserted" posture the spec's own
 Context section calls for (line 39), applied to the one permission this
-feature must prove is *absent* rather than present. Listing collaborators
-is read-only, has no side effect, needs no fabricated resource id, and is
-one of the endpoints GitHub's own fine-grained-PAT permission-requirements
-reference assigns to Administration specifically, so a pass/fail on it is
-a direct read of that one permission and nothing else.
+feature must prove is *absent* rather than present. Reading the
+repository's Actions permissions is read-only, has no side effect, needs
+no fabricated resource id, and is one of the endpoints GitHub's own
+fine-grained-PAT permission-requirements reference assigns to
+Administration specifically, so a pass/fail on it is a direct read of
+that one permission and nothing else.
 
 **Alternatives considered**: read `viewerPermission` via `gh repo view`
 (the existing D2-from-055 call) and treat ADMIN as a failure — rejected:
@@ -187,14 +197,16 @@ the token's own granted permission, and would fail every fine-grained
 credential unconditionally, defeating the very feature this plan builds.
 Attempt a genuinely destructive Administration-gated call (e.g. read
 branch protection, or the repository's own settings) — rejected as a
-riskier probe than listing collaborators for no additional signal; a
+riskier probe than reading Actions permissions for no additional signal; a
 read-only, always-safe-to-call endpoint is preferable whenever the
-permission mapping offers one.
+permission mapping offers one. List collaborators (the original choice) —
+superseded by the correction above: it is gated on Metadata:read, not
+Administration, so it cannot distinguish the two.
 
 ## D6. Verifying the fine-grained shape carries the two write permissions it needs (FR-007)
 
-**Decision**: probe Issues:write and Pull-requests:write the same way as
-D5 — by attempting a write-shaped call gated by that specific permission
+**Decision**: probe Issues:write and Contents:write the same way as D5 —
+by attempting a write-shaped call gated by that specific permission
 against a resource id chosen to certainly not exist (a very large integer,
 e.g. issue/PR number `999999999`), and reading GitHub's response: a
 fine-grained token lacking the permission is rejected before the resource
@@ -206,19 +218,28 @@ reachability/authentication check (not a permission proof) on the
 fine-grained shape, per D5's reasoning that `viewerPermission` reflects the
 account's role, not the token's.
 
+**Correction (maintainer feedback on #506)**: this decision originally
+named the second probed permission as Pull-requests:write, on the premise
+that merging a pull request is gated by that permission. GitHub in fact
+gates `PUT /repos/{owner}/{repo}/pulls/{id}/merge` on **Contents:write**,
+not Pull-requests:write; the probe call is unchanged (the same merge
+attempt against a certainly-nonexistent PR id), but its rejection is
+reported naming Contents, and `docs/setup.md`'s canonical statement now
+requires Contents (read and write) rather than read-only.
+
 **Rationale**: the two acts the harness actually performs — commenting on
 an issue, merging a pull request — are exactly Issues:write and
-Pull-requests:write in GitHub's fine-grained permission model (FR-002,
-FR-007). Probing against a resource that is certain not to exist means the
-probe is free of any real side effect and free of any dependency on
-finding a real target in the (freshly reset) test repository at precheck
-time — the precheck runs before the reset step, so no fixture-scoped
-resource is even guaranteed to exist yet. The permission-before-lookup
-ordering this probe relies on is the same GitHub behavior D5's collaborator
-probe already depends on (a fine-grained PAT's rejection is a property of
-the grant, not of what it's pointed at), so this is not a second unproven
-assumption, just the same one applied to a different permission and a
-different resource shape (write vs. list).
+Contents:write in GitHub's fine-grained permission model (FR-002, FR-007).
+Probing against a resource that is certain not to exist means the probe is
+free of any real side effect and free of any dependency on finding a real
+target in the (freshly reset) test repository at precheck time — the
+precheck runs before the reset step, so no fixture-scoped resource is even
+guaranteed to exist yet. The permission-before-lookup ordering this probe
+relies on is the same GitHub behavior D5's Administration probe already
+depends on (a fine-grained PAT's rejection is a property of the grant, not
+of what it's pointed at), so this is not a second unproven assumption,
+just the same one applied to a different permission and a different
+resource shape (write vs. list).
 
 **Alternatives considered**: skip the up-front write-permission proof for
 the fine-grained shape and let the first real gate-driving act (the
