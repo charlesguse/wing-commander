@@ -23,13 +23,20 @@ Gate 99 for a first collision), those three collided a second time with
 gates main had since claimed (Gate 90 = every applied label has a matching
 gh label create, #488/#493; Gate 91 = auto-release.yml's pass-path specs/
 fallback, #482) and with PR #463's own in-flight Gate 99. Per the
-maintainer's PR #490 review (2026-09-25), they are renumbered to **Gate
-100** (`verify-concurrency-guarantee-statement.py`, SC-006), **Gate 101**
-(`verify-directed-proof-no-item-conflict.py`, FR-017), and **Gate 102**
-(`verify-board-prove-displacement.py`, FR-010b) everywhere they appear.
-Re-check this at implementation time in case another in-flight branch has
-since claimed one of these numbers, and renumber every reference in this
-file if so.
+maintainer's PR #490 review (2026-09-25), they were renumbered to Gate
+100 (`verify-concurrency-guarantee-statement.py`, SC-006), Gate 101
+(`verify-directed-proof-no-item-conflict.py`, FR-017), and Gate 102
+(`verify-board-prove-displacement.py`, FR-010b). Those three collided a
+third time once this branch's rebase landed
+specs/059-converged-means-tasks-done (#587), which had since claimed Gate
+99 and Gate 100 (Gate 100 there is "every published stage's max-turns
+default agrees with its docs/adoption.md row"). They are renumbered again,
+in this cycle, to **Gate 101** (`verify-concurrency-guarantee-statement.py`,
+SC-006), **Gate 102** (`verify-directed-proof-no-item-conflict.py`,
+FR-017), and **Gate 103** (`verify-board-prove-displacement.py`, FR-010b)
+everywhere they appear. Re-check this at implementation time in case
+another in-flight branch has since claimed one of these numbers, and
+renumber every reference in this file if so.
 
 **Limited file-level parallelism**: unlike a feature that touches many
 independent workflow files, almost every task below edits one of two
@@ -91,7 +98,7 @@ checkpoint passes.
   NOT select a board item"); `route` can push a branch/PR for the
   size-and-path backstop's post-push breach case, and `fix` exists to
   open the fix PR — both are mutating actions FR-002 forbids. This
-  constant is read directly (never re-derived) by Gate 101 (T040)'s
+  constant is read directly (never re-derived) by Gate 102 (T040)'s
   structural assertion.
 - [X] T003 `.github/scripts/board_prove.py`: add
   `scan_job_uses_graph(workflow_path)` (research.md D1): parse the one
@@ -161,7 +168,7 @@ checkpoint passes.
   item is in flight repository-wide. A directed proof run, which selects
   no board item and opens no fix PR, is the only run permitted to
   overlap an ordinary board-loop run. Every other pair of board-loop.yml
-  runs queues rather than races or cancels." Gate 100 (T038) diffs this
+  runs queues rather than races or cancels." Gate 101 (T038) diffs this
   text byte-for-byte against contracts/concurrency-groups.md and
   board-loop-workflow.md (T039), so do not paraphrase it.
 - [X] T010 `.github/workflows/board-loop.yml`: `select`'s `if:` (line 84)
@@ -436,8 +443,9 @@ comment for each; each must name its own distinct condition (spec.md).
   calling `find_undetected_merges()` (T032) and posting `"prove run
   displaced"` (data-model.md's `recorded_reason`) on any issue it finds,
   without gating `select`'s own proceed/no-op decision.
-- [X] T034 [P] [US2] New Gate 102 (renumbered from Gate 92, then Gate 99;
-  PR #490 review, 2026-09-25) —
+- [X] T034 [P] [US2] New Gate 103 (renumbered from Gate 92, then Gate 99,
+  then Gate 102; PR #490 review, 2026-09-25, then this branch's rebase past
+  specs/059-converged-means-tasks-done's Gate 99/100) —
   `.github/scripts/verify-board-prove-displacement.py`, wired into
   `.github/workflows/lint-workflows.yml` with `if: "!cancelled()"`.
   Fixtures for `find_undetected_merges()` in both directions: a merged
@@ -488,8 +496,9 @@ collide on the same issue.
 **Independent Test**: state the post-change guarantee and exercise the
 pairs it permits and the pairs it forbids (spec.md).
 
-- [X] T038 [US5] New Gate 100 (renumbered from Gate 90; PR #490 review,
-  2026-09-25) —
+- [X] T038 [US5] New Gate 101 (renumbered from Gate 90, then Gate 100; PR
+  #490 review, 2026-09-25, then this branch's rebase past
+  specs/059-converged-means-tasks-done's Gate 100) —
   `.github/scripts/verify-concurrency-guarantee-statement.py` (SC-006),
   wired into `lint-workflows.yml` with `if: "!cancelled()"`: diffs the
   FR-016 sentence (contracts/concurrency-groups.md "The guarantee") that
@@ -503,8 +512,9 @@ pairs it permits and the pairs it forbids (spec.md).
   sentence and the per-job group table from
   `contracts/concurrency-groups.md`, replacing the single workflow-level
   block it currently documents.
-- [X] T040 [US5] New Gate 101 (renumbered from Gate 91; PR #490 review,
-  2026-09-25) —
+- [X] T040 [US5] New Gate 102 (renumbered from Gate 91, then Gate 101; PR
+  #490 review, 2026-09-25, then this branch's rebase past
+  specs/059-converged-means-tasks-done's Gate 100/101) —
   `.github/scripts/verify-directed-proof-no-item-conflict.py` (FR-017,
   research.md D7), wired into `lint-workflows.yml` with `if:
   "!cancelled()"`:
@@ -537,7 +547,7 @@ feature introduces is proven, not merely asserted, not to violate it.
 **Goal**: any comment a directed proof run posts names itself as one and
 names the merge it proves, and the abandoned-dispatch cost is visible in
 the loop's existing metrics record — both on top of the by-construction
-guarantee Gate 101 (T040) already checks.
+guarantee Gate 102 (T040) already checks.
 
 **Independent Test**: dispatch a proof run, let the caller stop waiting,
 and check both that the dispatched run's eventual behaviour is accounted
@@ -553,7 +563,7 @@ for and that its origin is recoverable from the issue or the run itself
   string (gated on `inputs.directed-stage != ''`) and prepend it, rather
   than writing four separately-worded copies (CLAUDE.md single-home).
 - [X] T043 [US3] Cross-reference note (no new code): FR-011's "selects no
-  board item"/"opens no fix PR" claims are exactly the properties Gate 101
+  board item"/"opens no fix PR" claims are exactly the properties Gate 102
   (T040) checks structurally. This task exists only so a future reader
   does not add a second, redundant gate for the same property.
 - [X] T044 [US3] Confirm that T031's metrics-record `run-label` mapping
@@ -627,13 +637,13 @@ demonstrable.
 
 - [X] T051 Run `python .github/scripts/run-local-gates.py` and confirm
   all gates pass on the real tree, including amended Gate 89 and new
-  Gates 90-92.
+  Gates 101-103.
 - [X] T052 Confirm every gate this feature adds or amends fails on its
   own negative fixture when the behaviour it checks is mutated (SC-008)
   — e.g. temporarily widen `aimable_jobs` (T002) to include `"fix"` and
-  confirm Gate 101 (T040) fails; temporarily point `prove-gate`'s directed
+  confirm Gate 102 (T040) fails; temporarily point `prove-gate`'s directed
   branch at `wing-commander-board-loop` instead of the
-  `-directed-proof` group and confirm Gate 100 (T038) fails. Revert each
+  `-directed-proof` group and confirm Gate 101 (T038) fails. Revert each
   mutation afterward via a matching Edit (this run's tooling has no
   `git checkout`/`git restore`; confirm the revert with `git diff` is
   byte-identical to HEAD before moving on, mirroring spec
@@ -645,7 +655,7 @@ demonstrable.
 - [X] T054 Final full-suite confirmation: re-run
   `python .github/scripts/run-local-gates.py` after T051-T053's edits and
   confirm the count is unchanged from T051 (no gate silently dropped),
-  and that `verify-gate-wiring.py` accounts for Gates 90, 91, and 92.
+  and that `verify-gate-wiring.py` accounts for Gates 101, 102, and 103.
 
 ---
 
@@ -663,7 +673,7 @@ demonstrable.
 - **User Story 5 (Phase 5)**: depends on Phase 2 (specifically T009's
   concurrency comments and T002's `aimable_jobs`); independent of Phases
   3-4.
-- **User Story 3 (Phase 6)**: depends on Phase 2 and on Gate 101 (T040,
+- **User Story 3 (Phase 6)**: depends on Phase 2 and on Gate 102 (T040,
   Phase 5) for its own cross-reference (T043); depends on T030/T031
   (Phase 4) for T044's verification.
 - **User Story 4 (Phase 7)**: depends on Phase 2 (FR-014 "MUST NOT ship
@@ -694,7 +704,7 @@ the new module into `board-loop.yml`.
 # T032 and T034 touch only new, dedicated files -- can be drafted
 # alongside T027 (board_prove.py's outcome_reason(), a different file):
 Task: "New module board_prove_displacement.py: find_undetected_merges()"
-Task: "New Gate 102: verify-board-prove-displacement.py fixtures"
+Task: "New Gate 103: verify-board-prove-displacement.py fixtures"
 ```
 
 ---
