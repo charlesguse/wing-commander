@@ -515,6 +515,11 @@ jobs:
           fetch-depth: 0
           clean: false
 
+      - name: Refuse a branch that tracks .wing-commander-pipeline/
+        shell: bash
+        if: steps.lifecycle-gate.outputs.is-open == 'true'
+        run: git -C .wing-commander-pipeline cat-file blob HEAD:.github/scripts/pipeline-checkout-guard.sh | bash -s
+
       # Acknowledge the reply immediately: an 👀 reaction on the triggering
       # comment says "a run picked this up" without adding comment noise.
       - name: React to the triggering comment

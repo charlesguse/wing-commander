@@ -592,6 +592,10 @@ jobs:
           fetch-depth: 0
           clean: false
 
+      - name: Refuse a branch that tracks .wing-commander-pipeline/
+        shell: bash
+        run: git -C .wing-commander-pipeline cat-file blob HEAD:.github/scripts/pipeline-checkout-guard.sh | bash -s
+
       # The accepted plan must exist on the spec branch; report and stop
       # rather than generating tasks for the wrong thing (the message names
       # the providing stage — FR-009).
@@ -1464,6 +1468,10 @@ jobs:
           token: ${{ env.WC_BOT_TOKEN }}
           fetch-depth: 0
           clean: false
+
+      - name: Refuse a branch that tracks .wing-commander-pipeline/
+        shell: bash
+        run: git -C .wing-commander-pipeline cat-file blob HEAD:.github/scripts/pipeline-checkout-guard.sh | bash -s
 
       # The gate cannot run any earlier: issue-number is not a workflow_call
       # input on this path, only readable once the spec branch's

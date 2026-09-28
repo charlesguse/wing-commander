@@ -540,6 +540,10 @@ jobs:
           fetch-depth: 0
           clean: false
 
+      - name: Refuse a branch that tracks .wing-commander-pipeline/
+        shell: bash
+        run: git -C .wing-commander-pipeline cat-file blob HEAD:.github/scripts/pipeline-checkout-guard.sh | bash -s
+
       # The spec artifacts must exist on the default branch; report and stop
       # rather than planning the wrong thing (FR-009: the message names the
       # step that provides them).
@@ -671,6 +675,11 @@ jobs:
           token: ${{ env.WC_BOT_TOKEN }}
           fetch-depth: 0
           clean: false
+
+      - name: Refuse a branch that tracks .wing-commander-pipeline/
+        shell: bash
+        if: steps.dupe.outputs.skip != 'true'
+        run: git -C .wing-commander-pipeline cat-file blob HEAD:.github/scripts/pipeline-checkout-guard.sh | bash -s
 
       # Auto mode — generate the plan and commit it, with the stage update,
       # directly to the spec branch. No plan/<slug> branch, no PR.

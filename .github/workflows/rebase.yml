@@ -595,6 +595,10 @@ jobs:
           fetch-depth: 0
           clean: false
 
+      - name: Refuse a branch that tracks .wing-commander-pipeline/
+        shell: bash
+        run: git -C .wing-commander-pipeline cat-file blob HEAD:.github/scripts/pipeline-checkout-guard.sh | bash -s
+
       # Fetch ONLY the default branch (never a bare `git fetch origin`, which
       # would refresh the branch's own remote-tracking ref and silently defeat
       # the lease), record the pre-rebase tip and the ordered commit sequence

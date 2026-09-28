@@ -801,6 +801,11 @@ jobs:
           fetch-depth: 0
           clean: false
 
+      - name: Refuse a branch that tracks .wing-commander-pipeline/
+        shell: bash
+        if: steps.identity.outputs.qualifies == 'true' && steps.lifecycle-gate.outputs.is-open == 'true' && steps.actor-gate.outputs.authorized == 'true'
+        run: git -C .wing-commander-pipeline cat-file blob HEAD:.github/scripts/pipeline-checkout-guard.sh | bash -s
+
       # #518: git goes through the pipeline checkout's
       # .github/scripts/git_read.py, not a raw `Bash(git ...)` grant --
       # see implement.yml's "Compose tool args
@@ -1915,6 +1920,11 @@ jobs:
           fetch-depth: 0
           clean: false
 
+      - name: Refuse a branch that tracks .wing-commander-pipeline/
+        shell: bash
+        if: steps.relay-gate.outputs.proceed == 'true' && steps.route.outputs.needs-checkout == 'true'
+        run: git -C .wing-commander-pipeline cat-file blob HEAD:.github/scripts/pipeline-checkout-guard.sh | bash -s
+
       # Drafted-content is already-classified data (T006), but still not
       # fresh instructions — staged to a file, not interpolated (constitution V).
       # Any small-unrelated-change size-backstop reshape (issue-title/
@@ -2680,6 +2690,11 @@ jobs:
           fetch-depth: 0
           clean: false
 
+      - name: Refuse a branch that tracks .wing-commander-pipeline/
+        shell: bash
+        if: steps.tip.outputs.sha != needs.classify-and-announce.outputs.base-sha && steps.tip.outputs.sha != ''
+        run: git -C .wing-commander-pipeline cat-file blob HEAD:.github/scripts/pipeline-checkout-guard.sh | bash -s
+
       # research.md D1/D3 (contracts/fold-dispatch-once.md): the single
       # dispatch point for the whole review. Folded-item evidence (D6's
       # `fold(<id>): <summary>` commit messages) is read from the exact
@@ -2866,6 +2881,11 @@ jobs:
           token: ${{ steps.ctx.outputs.token }}
           fetch-depth: 0
           clean: false
+
+      - name: Refuse a branch that tracks .wing-commander-pipeline/
+        shell: bash
+        if: steps.tip.outputs.sha != ''
+        run: git -C .wing-commander-pipeline cat-file blob HEAD:.github/scripts/pipeline-checkout-guard.sh | bash -s
 
       # data-model.md §4: fetches THIS run's own jobs (Gate 18's established
       # paginated-read shape), filters to each `act (leg-N)` instance

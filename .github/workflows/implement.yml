@@ -576,6 +576,11 @@ jobs:
           fetch-depth: 0
           clean: false
 
+      - name: Refuse a branch that tracks .wing-commander-pipeline/
+        shell: bash
+        if: steps.lifecycle-gate.outputs.is-open == 'true'
+        run: git -C .wing-commander-pipeline cat-file blob HEAD:.github/scripts/pipeline-checkout-guard.sh | bash -s
+
       # The accepted task list must exist on the spec branch and the
       # lifecycle record must agree with the inputs — report and stop rather
       # than building the wrong thing (the message names the providing stage).
@@ -3045,6 +3050,11 @@ jobs:
           fetch-depth: 0
           clean: false
 
+      - name: Refuse a branch that tracks .wing-commander-pipeline/
+        shell: bash
+        if: needs.implement.outputs.final-ok == 'false'
+        run: git -C .wing-commander-pipeline cat-file blob HEAD:.github/scripts/pipeline-checkout-guard.sh | bash -s
+
       - name: Mark lifecycle record stalled
         if: needs.implement.outputs.final-ok == 'false'
         env:
@@ -3200,6 +3210,11 @@ jobs:
           token: ${{ steps.ctx.outputs.token }}
           fetch-depth: 0
           clean: false
+
+      - name: Refuse a branch that tracks .wing-commander-pipeline/
+        shell: bash
+        if: needs.implement.outputs.final-ok != 'false' && needs.implement.outputs.refusal-reason == ''
+        run: git -C .wing-commander-pipeline cat-file blob HEAD:.github/scripts/pipeline-checkout-guard.sh | bash -s
 
       # Same recorded_iteration + 1 formula as "Report stalled on lifecycle
       # issue" above (D7 — implement's restart math is reused, not rebuilt,

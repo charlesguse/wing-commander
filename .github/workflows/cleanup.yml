@@ -572,6 +572,10 @@ jobs:
           fetch-depth: 0
           clean: false
 
+      - name: Refuse a branch that tracks .wing-commander-pipeline/
+        shell: bash
+        run: git -C .wing-commander-pipeline cat-file blob HEAD:.github/scripts/pipeline-checkout-guard.sh | bash -s
+
       # The spec artifacts must exist and self-identify consistently before
       # any write happens — report and stop rather than tearing down the
       # wrong thing.
@@ -662,6 +666,11 @@ jobs:
           token: ${{ steps.ctx.outputs.token }}
           fetch-depth: 0
           clean: false
+
+      - name: Refuse a branch that tracks .wing-commander-pipeline/
+        shell: bash
+        if: steps.idempotency.outputs.skip != 'true'
+        run: git -C .wing-commander-pipeline cat-file blob HEAD:.github/scripts/pipeline-checkout-guard.sh | bash -s
 
       # The one agent step, read-only, deriving its diff from the merge
       # commit itself so it's independent of branch-deletion ordering.
@@ -1107,6 +1116,10 @@ jobs:
           fetch-depth: 0
           clean: false
 
+      - name: Refuse a branch that tracks .wing-commander-pipeline/
+        shell: bash
+        run: git -C .wing-commander-pipeline cat-file blob HEAD:.github/scripts/pipeline-checkout-guard.sh | bash -s
+
       # spec artifacts must self-identify before any write -- don't tear down the wrong thing.
       - name: Verify spec artifacts and resolve lifecycle issue
         id: meta
@@ -1393,6 +1406,10 @@ jobs:
           token: ${{ steps.ctx.outputs.token }}
           fetch-depth: 0
           clean: false
+
+      - name: Refuse a branch that tracks .wing-commander-pipeline/
+        shell: bash
+        run: git -C .wing-commander-pipeline cat-file blob HEAD:.github/scripts/pipeline-checkout-guard.sh | bash -s
 
       # The spec artifacts must exist and self-identify consistently before
       # any write happens — report and stop rather than stalling the wrong

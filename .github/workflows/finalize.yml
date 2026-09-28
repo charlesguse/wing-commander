@@ -483,6 +483,11 @@ jobs:
           fetch-depth: 0
           clean: false
 
+      - name: Refuse a branch that tracks .wing-commander-pipeline/
+        shell: bash
+        if: steps.lifecycle-gate.outputs.is-open == 'true'
+        run: git -C .wing-commander-pipeline cat-file blob HEAD:.github/scripts/pipeline-checkout-guard.sh | bash -s
+
       # The full artifact set must exist on the spec branch and the lifecycle
       # record must agree with the inputs — report and stop rather than
       # finalizing the wrong thing (the message names the providing stages).

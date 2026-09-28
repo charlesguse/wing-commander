@@ -96,6 +96,11 @@ runs:
         fetch-depth: 0
         clean: false
 
+    - name: Refuse a branch that tracks .wing-commander-pipeline/
+      shell: bash
+      if: inputs.spec-dir != ''
+      run: git -C .wing-commander-pipeline cat-file blob HEAD:.github/scripts/pipeline-checkout-guard.sh | bash -s
+
     - name: Mark spec-meta.json stalled
       id: mark
       if: always() && inputs.spec-dir != '' && steps.checkout.outcome == 'success'
