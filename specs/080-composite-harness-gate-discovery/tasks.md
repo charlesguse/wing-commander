@@ -257,3 +257,9 @@ this feature responds to. Treat both P1 stories as the MVP:
 - Every fixture task above is the checked-in artifact FR-010 requires —
   none of this feature's new failure branches may be demonstrated only in
   a PR description.
+
+---
+
+## Phase 7: Convergence
+
+- [ ] T027 Wire `verify-gate-wiring.py --self-test` into `.github/workflows/lint-workflows.yml` as a "Gate 10 self-test" step immediately after Gate 10's existing `python3 .github/scripts/verify-gate-wiring.py` step, matching the two-step check-then-self-test convention every other numbered gate (including Gate 99, T014) already follows. Without this, the five fixtures T004/T007/T008/T015/T022/T023 added to `--self-test` are checked in but never invoked by CI or discoverable by `run-local-gates.py` (which derives its gate list from workflow steps), contradicting plan.md's Testing section ("invoked directly and via `python .github/scripts/run-local-gates.py`") and leaving them unable to catch a future regression — the exact class of defect Constitution Principle VIII exists to prevent. Landing this also unblocks T024, which currently cannot run `verify-gate-wiring.py --self-test` through any wired path. per Constitution VIII (partial)
