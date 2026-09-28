@@ -184,7 +184,13 @@ runs:
 
     - name: Note the closed-check read failure
       id: closed-check-note
-      if: steps.closed-check.outcome == 'failure'
+      # failure() is required, not decorative: closed-check carries no
+      # continue-on-error, so its own failure makes the implicit success()
+      # false and would skip this step before the outcome comparison below
+      # is even reached -- the exact stranding this repo's
+      # review-step-gating skill exists to catch (watchdog.yml:3984 is the
+      # same pairing for the same reason).
+      if: failure() && steps.closed-check.outcome == 'failure'
       shell: bash
       env:
         ISSUE_NUMBER: ${{ inputs.issue-number }}

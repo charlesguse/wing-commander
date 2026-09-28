@@ -443,9 +443,14 @@ def composite_shell_check():
 
 
 def _composite_structural_failures(action):
-    """The reorder's three load-bearing properties: `closed-check` carries
-    no truthy continue-on-error, `check` precedes it in runs.steps, and
-    `check`'s own run: text depends on nothing `closed-check` writes."""
+    """The reorder's four load-bearing properties: `closed-check` carries
+    no truthy continue-on-error, `check` precedes it in runs.steps,
+    `check`'s own run: text depends on nothing `closed-check` writes, and
+    `closed-check-note` (FR-004) actually reaches a `failure()` its own
+    `if:` needs -- a bare `steps.closed-check.outcome == 'failure'` with no
+    status function gets the implicit `&& success()` and is skipped by
+    closed-check's own hard failure, stranding the note it exists to
+    surface (the same defect class review-step-gating exists to catch)."""
     steps = action["runs"]["steps"]
     ids = [s.get("id") for s in steps]
     if "check" not in ids or "closed-check" not in ids:
@@ -464,6 +469,16 @@ def _composite_structural_failures(action):
     if "steps.closed-check" in check_run:
         failures.append("`check`'s run: text still references steps.closed-check "
                          "-- it must not depend on closed-check's output (D1)")
+    if "closed-check-note" in ids:
+        note_if = steps[ids.index("closed-check-note")].get("if") or ""
+        if "steps.closed-check.outcome" in note_if and not re.search(
+                r"\b(?:always|failure|cancelled)\s*\(\s*\)", note_if):
+            failures.append("`closed-check-note`'s if: {0!r} has no status "
+                             "function (always()/failure()/cancelled()) -- a bare "
+                             "steps.closed-check.outcome comparison gets the "
+                             "implicit && success(), which closed-check's own "
+                             "hard failure makes false, stranding the note "
+                             "(FR-004)".format(note_if))
     return failures
 
 
@@ -494,6 +509,26 @@ def structural_mutation_check():
               "to closed-check' was NOT caught by the structural checks.")
         return 1
     print("note: mutation caught (continue-on-error reintroduced on closed-check: "
+          "{0} structural failure(s)).".format(len(caught)))
+    return 0
+
+
+def closed_check_note_mutation_check():
+    """A regression this feature's own implementation hit once: stripping
+    `failure()` back off `closed-check-note`'s if: (leaving the bare
+    steps.closed-check.outcome comparison that the implicit && success()
+    would strand) must be caught."""
+    with open(COMPOSITE, encoding="utf-8") as fh:
+        action = yaml.safe_load(fh)
+    for step in action["runs"]["steps"]:
+        if step.get("id") == "closed-check-note":
+            step["if"] = "steps.closed-check.outcome == 'failure'"
+    caught = _composite_structural_failures(action)
+    if not caught:
+        print("::error::verify-board-stop-check: mutation 'closed-check-note if: "
+              "stripped of failure()' was NOT caught by the structural checks.")
+        return 1
+    print("note: mutation caught (closed-check-note if: stripped of failure(): "
           "{0} structural failure(s)).".format(len(caught)))
     return 0
 
@@ -572,6 +607,7 @@ def run():
     failures += mutation_check()
     failures += composite_structural_checks()
     failures += structural_mutation_check()
+    failures += closed_check_note_mutation_check()
     failures += composite_shell_check()
     failures += composite_paused_output_check()
 
