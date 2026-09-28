@@ -1,0 +1,30 @@
+{
+  "$comment": [
+    "Registered absent-by-design script grants for Gate 27's script-grant",
+    "existence check (.github/scripts/verify-stage-tool-lists.py, check 3).",
+    "See specs/082-script-grant-existence-scope.",
+    "",
+    "Unlike single-home-waivers.json / stage-invariant-waivers.json /",
+    "spec-branch-push-waivers.json, this file has no `pattern` or `count`",
+    "field: FR-006 requires each entry to name the EXACT granted path, not a",
+    "prefix, glob, or regex, so an entry cannot silently widen to cover a",
+    "path it was never reasoned about.",
+    "",
+    "Every entry is stale-checked in the direction that matters here: if the",
+    "named path EXISTS in the working tree, the gate fails, naming the entry",
+    "-- the reason it was recorded as absent has stopped being true, and the",
+    "grant should be checked for real rather than waived."
+  ],
+  "waivers": [
+    {
+      "path": ".wing-commander-pipeline/.github/scripts/git_read.py",
+      "issue": "#599",
+      "reason": "`.wing-commander-pipeline/` is the pipeline's own run-time-checked-out copy of itself, created by a checkout step during a workflow run and never committed to this repository (git status shows it untracked, not gitignored, in exactly the sessions that create it). Four grants resolve here today: implement.yml's implement.post-progress-comment, pr-conversation.yml's pr-conversation.classify, watchdog.yml's watchdog.diagnose (all three composite call sites), and auto-update-spec-kit.yml's evaluate-path job's bare claude_args --allowedTools (see specs/082's research.md D0). One entry covers all four, since FR-006 waives the exact path, not the site."
+    },
+    {
+      "path": "e2e-scratch/.specify/scripts/bash/create-new-feature.sh",
+      "issue": "#436",
+      "reason": "e2e-scratch/ is created at run time by auto-update-spec-kit.yml's e2e provisioning step from a candidate Spec Kit release under test and is never committed. Both spellings of the grant (bare and `bash <path>`, on the 'Run e2e agent-driven stage' step) resolve to this same path; one entry covers both, since FR-006 waives the exact path, not the literal grant string."
+    }
+  ]
+}
