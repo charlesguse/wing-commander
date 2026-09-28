@@ -4,7 +4,7 @@
 
 **Created**: 2026-09-25
 
-**Status**: Draft
+**Status**: Draft — clarifications resolved (see issue #621)
 
 **Input**: User description: "wing-commander-board-stop-check's cancel path reads the target run's status via `gh api .../actions/runs/<id>`, then -- in a separate call moments later -- conditionally calls `gh run cancel` and warns on any failure. If the target run completes in the window between the two calls, `gh run cancel` 409s and the warning fires anyway: the exact spurious-noise case this check exists to eliminate. This mirrors `pr-conversation.yml`'s own stop procedure, which gets the same 'don't warn on an already-completed run' guarantee with no pre-check and no race window: attempt `gh run cancel` unconditionally, then classify a failure from its own stderr (409 / 'already completed' / 'cannot cancel') instead of reading status first. The `gh api` read itself stays -- it also supplies the `path`/`repository` fields the issue #547 defence-in-depth check needs before a cancel is attempted at all -- only the now-redundant `.status` extraction and the status-gated branch are replaced with the pr-conversation.yml-style error classification. Low severity, cosmetic-only (log noise): `paused=true` already fires unconditionally regardless of the cancel outcome, so the kill-switch/stop-request behavior itself is unaffected either way. Fixes #470."
 
@@ -18,8 +18,9 @@ reached a terminal state on its own. Today the check looked up the run's status 
 moment earlier, saw a non-terminal value, attempted the cancellation anyway, and
 then reported the resulting refusal as a warning on the run — the maintainer sees a
 warning annotation describing a failure that is not one. After this change the
-maintainer sees a clean run: the stop took effect, nothing anomalous is reported,
-and the loop stands down exactly as before.
+maintainer sees a clean run: the stop took effect, no warning is raised, a
+non-warning informational line records that the target had already finished, and
+the loop stands down exactly as before.
 
 **Why this priority**: This is the entire defect. The status pre-check exists only to
 suppress this warning, and it suppresses it only when the run happens to be already
@@ -29,20 +30,23 @@ warning for an already-finished run" promise hold in every case rather than most
 
 **Independent Test**: Drive the stop check against a target run whose cancellation is
 refused with an already-terminal response, and confirm the step emits no warning
-annotation, still reports the item as paused, and still exits successfully.
+annotation, emits a non-warning line recording that the run had already finished,
+still reports the item as paused, and still exits successfully.
 
 **Acceptance Scenarios**:
 
 1. **Given** an authorized stop request naming an earlier run of this workflow in this
    repository, **When** the cancellation is refused because that run has already
-   reached a terminal state, **Then** no warning is emitted, the step succeeds, and
-   the paused result is reported.
+   reached a terminal state, **Then** no warning is emitted, a non-warning
+   informational line records that the target had already finished, the step
+   succeeds, and the paused result is reported.
 2. **Given** the same stop request, **When** the run metadata read reports the target
    as already terminal but the cancellation is attempted anyway and refused,
    **Then** the outcome is identical to scenario 1 — the recorded status plays no
    part in whether the cancellation is attempted.
 3. **Given** the same stop request, **When** the cancellation succeeds, **Then** no
-   warning is emitted and the paused result is reported.
+   warning is emitted, no already-finished line is emitted, and the paused result is
+   reported — a maintainer reading the run can tell this case apart from scenario 1.
 
 ---
 
@@ -111,18 +115,28 @@ attempt, the same paused result, and a successful step.
 ### Edge Cases
 
 - The run metadata read succeeds and reports a terminal state, but the cancellation
-  then succeeds anyway (the state was stale in the other direction): no warning, and
-  the item is still reported as paused.
+  then succeeds anyway (the state was stale in the other direction): no warning, no
+  already-finished line, and the item is still reported as paused.
 - The cancellation is refused with an already-terminal response whose wording differs
   in case or surrounding punctuation from the canonical phrasing: still recognised,
-  still silent.
-- The cancellation fails with output that merely *contains* a recognised phrase inside
-  an otherwise unrelated error: treated as already-terminal. This is an accepted
-  trade-off — the canonical classification vocabulary this repository already uses for
-  the same decision accepts it, and the consequence is a suppressed warning about a
-  cosmetic-only path.
+  still no warning, still recorded as the non-warning informational line.
+- The cancellation fails with an error that is not an already-terminal refusal but
+  whose text happens to contain the digits of the already-terminal status code — a
+  permission failure naming a run id or URL containing `409`, for instance: this MUST
+  be warned about. The recognition vocabulary anchors the status code to its protocol
+  prefix (`HTTP 409`) rather than matching the bare digits, precisely so this case
+  cannot collapse into the silent path.
+- The cancellation fails with output that merely *contains* a recognised
+  already-terminal phrase inside an otherwise unrelated error: treated as
+  already-terminal. This is an accepted trade-off for the phrase vocabulary — the
+  canonical classification this repository already uses for the same decision accepts
+  it, and the consequence is a suppressed warning about a cosmetic-only path.
 - The cancellation credential lacks the permission the call needs: warned about, and
   never reported as, or silently treated as, an already-finished run.
+- The cancellation's error output contains newlines or text that would otherwise be
+  read as a workflow command by the runner: the warning still names the run and still
+  conveys the error, and the surrounding annotation cannot be broken or forged by that
+  output.
 - Every outcome — success, already-terminal refusal, real failure — leaves the step
   exit status unchanged and leaves the paused result unchanged. A stop request always
   pauses the job's next durable action regardless of what the cancellation did.
@@ -149,7 +163,13 @@ attempt, the same paused result, and a successful step.
 - **FR-005**: The vocabulary used to recognise an already-terminal refusal MUST be the
   same one this repository already uses for the identical decision in its other stop
   procedure, so the two sites cannot drift into disagreeing about what "already
-  finished" looks like.
+  finished" looks like. While consolidating it, the vocabulary's status-code term MUST
+  be anchored to its protocol prefix (`HTTP 409`) rather than matching the bare digits
+  `409` anywhere in the output, so that a failure that is not an already-terminal
+  refusal — a permission error quoting a run id or URL that happens to contain those
+  digits — is not classified as one. Both consuming sites MUST get the anchored
+  vocabulary; the other stop procedure's present unanchored form is corrected by this
+  change rather than preserved.
 - **FR-006**: No cancellation outcome may change the stop check's other observable
   results: the step MUST still succeed, MUST still report the item as paused whenever
   an authorized stop request was found, and MUST still use the dedicated cancellation
@@ -157,26 +177,38 @@ attempt, the same paused result, and a successful step.
   credential for the issue-comment read.
 - **FR-007**: The change MUST be covered by checked-in fixtures exercising every
   outcome branch it ships — a successful cancellation, an already-terminal refusal
-  producing no warning, and a non-terminal failure producing a warning — and the
+  producing no warning and the informational line, a non-terminal failure producing a
+  warning, and a non-terminal failure whose error text contains the bare digits of the
+  already-terminal status code without its protocol prefix (which MUST warn) — and the
   existing ownership, unreadable-target, forged-marker and self-run fixtures MUST
   continue to pass unchanged.
 - **FR-008**: The gate covering this behaviour MUST fail when the classification is
   removed or inverted — demonstrated by a mutation of the shipped logic that the gate
   catches — so the gate cannot sit green while the behaviour it names is absent.
-- **FR-009**: The already-terminal classification logic MUST have a single home shared
-  by both sites that perform it, OR a deliberate, gated exception MUST be recorded for
-  keeping a second copy. [NEEDS CLARIFICATION: this repository's "shared logic has
-  exactly one home" rule says the second site consolidates rather than pastes; the two
-  sites here are a composite action and a workflow with different reporting surfaces
-  (one emits a warning annotation, the other posts three distinct comment bodies), so
-  what is genuinely shared may be only the recognition vocabulary rather than the
-  whole procedure. Which consolidation is intended?]
-- **FR-010**: The already-terminal path's observability MUST be defined: either it is
-  entirely silent, or it records a non-warning trace of what happened. [NEEDS
-  CLARIFICATION: silence is the minimum that fixes the defect, but it leaves a
-  maintainer reading a run unable to distinguish "the earlier run was cancelled" from
-  "the earlier run had already finished". A non-warning informational line would
-  preserve that distinction without reintroducing noise. Which is wanted?]
+- **FR-009**: What is consolidated is the **recognition vocabulary only**, not the
+  whole procedure. The set of error signatures that identify an already-terminal
+  refusal MUST live in exactly one place — a shared script under the repository's
+  cross-workflow shared-script directory — and both sites that make the decision MUST
+  consume it from there. Each site keeps its own reporting: the stop check emits an
+  annotation-shaped outcome, the other stop procedure keeps its distinct comment
+  bodies. Neither site's reporting is moved, merged, or made configurable by this
+  change.
+- **FR-009a**: The single home established by FR-009 MUST be enforced by a check added
+  to the repository's existing single-home idioms gate, alongside the check that
+  already covers this stop check, so a re-pasted copy of the vocabulary at a third
+  site fails the suite rather than surviving until the first divergent fix.
+- **FR-010**: The already-terminal path MUST record a **non-warning informational
+  line** stating that the named run had already finished and that nothing was
+  cancelled. It MUST NOT be a warning or an error, so that the annotation collector
+  that gathers only warnings and failures does not pick it up, and so that a
+  maintainer reading the run can still tell "the earlier run was cancelled" apart from
+  "the earlier run had already finished".
+- **FR-011**: The error output the warning of FR-004 includes MUST be neutralised
+  before it reaches the run log, so that newlines or workflow-command-shaped text in
+  that output cannot break out of or forge the surrounding annotation. This
+  neutralisation belongs to this feature's classification change and MUST be delivered
+  with it — the adjacent in-flight specification that also touches this error text
+  MUST NOT ship a second rewrite of the same line.
 
 ### Key Entities
 
@@ -189,20 +221,28 @@ attempt, the same paused result, and a successful step.
 - **Cancellation outcome**: The result of attempting the cancellation — cancelled,
   already-terminal, or failed. This feature changes how the outcome is determined
   (from the call's own error output, after the fact) rather than what the outcomes
-  are, and only the failed outcome is reported to the maintainer.
+  are. Only the failed outcome is warned about; the already-terminal outcome is
+  recorded as a non-warning informational line, and the cancelled outcome is recorded
+  by the absence of both.
+- **Already-terminal vocabulary**: The set of error signatures that identify a refusal
+  as "this run can no longer be cancelled". Owned by a single shared script and
+  consumed by both stop procedures; its status-code term is anchored to its protocol
+  prefix so a failure that merely quotes those digits is not mistaken for one.
 
 ## Success Criteria *(mandatory)*
 
 ### Measurable Outcomes
 
 - **SC-001**: A stop request whose target becomes terminal at any point before or
-  during the cancellation attempt produces zero warning annotations — verified by a
-  checked-in case in which the cancellation is refused as already-terminal, with no
-  timing assumption in the check that could make the result depend on when the target
-  finished.
+  during the cancellation attempt produces zero warning annotations and exactly one
+  non-warning informational line naming the run — verified by a checked-in case in
+  which the cancellation is refused as already-terminal, with no timing assumption in
+  the check that could make the result depend on when the target finished.
 - **SC-002**: 100% of cancellation failures that are not already-terminal refusals
   still produce a warning naming the run — verified by at least one checked-in
-  permission-style failure case and one empty-error-output case.
+  permission-style failure case, one empty-error-output case, and one case whose error
+  text contains the already-terminal status code's bare digits without its protocol
+  prefix.
 - **SC-003**: Removing or inverting the already-terminal classification causes the
   governing gate to fail, demonstrated by a mutation run that the gate catches.
 - **SC-004**: Every stop-check case that passes today still passes with identical
@@ -212,6 +252,13 @@ attempt, the same paused result, and a successful step.
 - **SC-006**: No execution-state field of the run metadata read remains anywhere in
   the stop check, and no code path decides whether to attempt a cancellation from a
   value read before the attempt.
+- **SC-007**: The already-terminal recognition vocabulary appears in exactly one file
+  in the repository, both stop procedures read it from there, and introducing a copy
+  of it at a third site fails the single-home gate — demonstrated by a mutation run
+  that the gate catches.
+- **SC-008**: Cancellation error output containing newlines or workflow-command-shaped
+  text produces exactly one warning annotation, with no additional annotation
+  attributable to that output — verified by a checked-in case.
 
 ## Assumptions
 
@@ -233,6 +280,18 @@ attempt, the same paused result, and a successful step.
   feature makes the stop check correct whether or not that property holds, which is
   what a design change to the loop's concurrency (already under consideration) would
   otherwise invalidate.
-- The change is confined to one composite action's stop-check step and the gate that
-  covers it, plus whatever shared home FR-009 resolves to. No stage workflow, no
-  decision helper, and no board-loop job needs to change.
+- The change is confined to one composite action's stop-check step, the gate that
+  covers it, the single-home gate extended by FR-009a, the new shared vocabulary
+  script, and the one line in the other stop procedure that switches to consuming it.
+  No stage workflow, no decision helper, and no board-loop job needs to change.
+- Sharing only the vocabulary (FR-009) rather than the whole procedure is a deliberate
+  scope boundary: the two sites' reporting surfaces genuinely differ, and merging them
+  would reopen already-settled specification and gate work for no behavioural gain.
+- Changing the other stop procedure's status-code match from the bare digits to the
+  anchored form is a behaviour change at that site, and a narrow one: it makes that
+  site stop classifying a non-409 failure that merely quotes those digits as
+  already-completed. It moves that site toward, never away from, its own governing
+  requirement that a permission failure is never reported as a completion.
+- The neutralisation required by FR-011 is claimed by this feature by agreement with
+  the owner, to keep it and the adjacent in-flight specification from both rewriting
+  the same line. That other specification's remaining scope is unaffected.

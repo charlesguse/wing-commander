@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,20 +31,26 @@
 
 ## Notes
 
-- Two [NEEDS CLARIFICATION] markers remain, both deliberate and both owner
-  decisions rather than gaps an informed default could close:
-  - **FR-009** — whether the already-terminal classification consolidates into one
-    shared home across both stop procedures, and if so what exactly is shared (the
-    whole procedure, or only the recognition vocabulary). The repository's
-    single-home rule points at consolidation; the two sites' reporting surfaces
-    differ enough that the right seam is a judgment call.
-  - **FR-010** — whether the already-terminal path is silent or records a
-    non-warning trace. Silence is the minimum fix; a trace preserves a distinction
-    a maintainer reading a run may want.
+- Both [NEEDS CLARIFICATION] markers were resolved by the owner's reply on issue
+  #621:
+  - **FR-009** — only the recognition vocabulary consolidates, into one shared
+    script under the cross-workflow shared-script directory; each site keeps its own
+    reporting surface. FR-009a adds the corresponding check to the existing
+    single-home idioms gate, and FR-005 additionally anchors the status-code term to
+    its protocol prefix so a failure quoting those bare digits is not misclassified.
+  - **FR-010** — the already-terminal path records a non-warning informational line,
+    not silence, so "cancelled" and "had already finished" stay distinguishable
+    without the annotation collector picking it up.
+- The same reply moved one item of adjacent in-flight scope into this feature: the
+  neutralisation of the cancellation error output before it reaches the warning, now
+  **FR-011** with SC-008 covering it, so two specifications do not both rewrite the
+  same line.
 - The "no implementation details" items pass in substance: the spec names the
   observable behaviours (attempt-then-classify, warn only on real failures,
   preserved ownership and self-run protections) without prescribing shell,
   command flags, or file layout. The Input line quotes the original request
   verbatim as the template requires, which is why command names appear there.
-- Items marked incomplete require spec updates before `/speckit-clarify` or
-  `/speckit-plan`.
+  FR-005's `HTTP 409` and FR-009's "shared script directory" are the closest the
+  body comes to implementation, and both are owner decisions recorded verbatim
+  because the requirement is not testable without them.
+- No items remain incomplete; the spec is ready for `/speckit-plan`.
