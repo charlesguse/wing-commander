@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gate 99 -- every agent prompt that instructs a commit renders the
+"""Gate 121 -- every agent prompt that instructs a commit renders the
 canonical commit-message scratch-path guidance (specs/078-plan-tasks-
 commit-scratch-path, FR-001 through FR-013).
 
@@ -432,15 +432,15 @@ def main(argv):
         shutil.rmtree(tmproot, ignore_errors=True)
 
     for site, msg in failures:
-        print(f"::error file={site[0]}::Gate 99: job {site[1]!r} step "
+        print(f"::error file={site[0]}::Gate 121: job {site[1]!r} step "
               f"{site[2]!r}: {msg}")
     if checked == 0:
-        print("::error::Gate 99: found zero agent prompts mentioning "
+        print("::error::Gate 121: found zero agent prompts mentioning "
               "\"commit\" across every .github/workflows/*.yml file. Either "
               "none exist, or this gate's detection is broken -- both are "
               "worth stopping the build over.")
         return 1
-    print(f"Gate 99: {checked} commit-instructing agent prompt(s) checked; "
+    print(f"Gate 121: {checked} commit-instructing agent prompt(s) checked; "
           f"{len(failures)} failure(s).")
     return 1 if failures else 0
 
@@ -653,12 +653,12 @@ jobs:
     shutil.rmtree(root, ignore_errors=True)
 
     if failed:
-        print(f"::error::Gate 99 self-test: {len(failed)} check(s) behaved "
-              f"wrongly: {'; '.join(failed)}. Gate 99's detection logic does "
-              f"not do what its name claims, so a green Gate 99 on the real "
+        print(f"::error::Gate 121 self-test: {len(failed)} check(s) behaved "
+              f"wrongly: {'; '.join(failed)}. Gate 121's detection logic does "
+              f"not do what its name claims, so a green Gate 121 on the real "
               f"fleet means nothing.")
         return 1
-    print("Gate 99 self-test: all checks behaved as expected.")
+    print("Gate 121 self-test: all checks behaved as expected.")
     return 0
 
 

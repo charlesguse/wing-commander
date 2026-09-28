@@ -1930,7 +1930,7 @@ jobs:
 
       - name: Compose commit-message guidance (board-loop.fixer)
         id: commit-guidance-fixer
-        uses: ./.github/actions/wing-commander-commit-message-guidance
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-commit-message-guidance
         with:
           scratch-filename: board-loop-commit-message-fixer.txt
 
@@ -3086,7 +3086,7 @@ jobs:
       - name: Compose commit-message guidance (board-loop.review-fixup)
         id: commit-guidance-review-fixup
         if: steps.round.outputs.outcome == 'continue' && steps.killswitch-recheck.outputs.paused != 'true'
-        uses: ./.github/actions/wing-commander-commit-message-guidance
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-commit-message-guidance
         with:
           scratch-filename: board-loop-commit-message-review-fixup.txt
 
