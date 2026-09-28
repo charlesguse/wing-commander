@@ -21,6 +21,7 @@ import argparse
 import json
 import os
 import re
+import sys
 
 MARKER_RE = re.compile(
     r"<!--\s*wing-commander-board-item:\s*(\{.*?\})\s*-->", re.DOTALL)
@@ -149,6 +150,12 @@ def _resolve_step(value):
 
 
 def main():
+    # `python3 -I` (the board-loop.yml pristine-snapshot invocation shape)
+    # excludes the script's own directory from sys.path, so _resolve_step's
+    # `from board_eligibility import ...` would otherwise raise
+    # ModuleNotFoundError (maintainer review of #607, fold leg-1). The
+    # snapshot directory is trusted (Gate 98), so adding it back is safe.
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     parser = argparse.ArgumentParser()
     parser.add_argument("--step", required=True)
     parser.add_argument("--round", type=int, default=0)

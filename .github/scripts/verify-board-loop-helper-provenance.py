@@ -26,7 +26,14 @@ In each of fix, review and readiness:
      snapshot step and is Gate 104's subject, not this gate's -- Gate 104
      (verify-board-loop-composite-provenance.py) is what holds a step
      bearing that name to `ref: ${{ github.sha }}`, a sidecar `path:` and
-     a fail-closed shape. Any other second checkout still fails here;
+     a fail-closed shape. review and readiness also resolve the PR to
+     check out via a local composite, which needs the workspace populated
+     before it can resolve its own action.yml, so each takes one extra,
+     sparse actions/checkout step (identified by a `sparse-checkout`
+     input, not by position) as their first step; that extra step is never
+     the one this rule's "directly after" and agent-ordering checks anchor
+     on -- the job's real, provenance-critical checkout is (#607). Any
+     other second checkout still fails here;
   2. the three snapshot steps' run: blocks are identical;
   3. an allowlist over every other run: block. Each python call is
      `python3 -I -`, `python3 -I -c`, or `python3 -I` on a script under
@@ -155,6 +162,18 @@ def run_problems(run, is_gate_suite):
     return problems
 
 
+def _is_trusted_actions_precheckout(step):
+    """A local composite call (uses: ./...) as a job's first step needs the
+    workspace populated before it can resolve; review/readiness resolve the
+    PR -- and so their real checkout ref -- via such a composite, so they
+    take an extra, sparse checkout of the trusted commit's .github/actions
+    first (maintainer review of #607, fold leg-0). Distinguished from the
+    real, provenance-critical checkout below by its sparse-checkout input,
+    never by position alone."""
+    with_ = (step or {}).get("with") or {}
+    return bool(with_.get("sparse-checkout"))
+
+
 def structural_problems(doc):
     problems = []
     snapshot_runs = {}
@@ -167,11 +186,23 @@ def structural_problems(doc):
         checkout = [i for i, s in enumerate(steps)
                     if str((s or {}).get("uses", "")).startswith("actions/checkout@")
                     and (s or {}).get("name") != TRUSTED_COPY_NAME]
-        snaps = [i for i, s in enumerate(steps) if (s or {}).get("name") == SNAPSHOT_NAME]
-        if len(checkout) != 1:
+        pre_checkout = [i for i in checkout if _is_trusted_actions_precheckout(steps[i])]
+        main_checkout = [i for i in checkout if i not in pre_checkout]
+        if pre_checkout:
+            if pre_checkout != [0] or len(main_checkout) != 1:
+                problems.append(
+                    "{0}: expected one sparse trusted-actions checkout as step 0 "
+                    "plus one real actions/checkout step besides {1!r}, found "
+                    "sparse={2} at {3}, real={4} at {5}".format(
+                        job_id, TRUSTED_COPY_NAME, len(pre_checkout), pre_checkout,
+                        len(main_checkout), main_checkout))
+                continue
+            checkout = main_checkout
+        elif len(checkout) != 1:
             problems.append("{0}: expected one actions/checkout step besides {1!r}, "
                             "found {2}".format(job_id, TRUSTED_COPY_NAME, len(checkout)))
             continue
+        snaps = [i for i, s in enumerate(steps) if (s or {}).get("name") == SNAPSHOT_NAME]
         if len(snaps) != 1:
             problems.append("{0}: expected one {1!r} step, found {2}".format(
                 job_id, SNAPSHOT_NAME, len(snaps)))

@@ -2431,7 +2431,12 @@ jobs:
           set -uo pipefail
           measured="$(jq -c '.measured' "$RUNNER_TEMP/board-fix-final-diff-decision.json")"
           # A failed post only costs the retry path; the create is still attempted.
-          breach_marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step BREACH_STEP --pr "$PR_NUMBER" --branch "$BRANCH" --base-sha "$BASE_SHA")"
+          # #530: an empty/failed marker here breaks the breach-resume path
+          # silently, so this fails loudly instead of posting an empty one.
+          breach_marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step BREACH_STEP --pr "$PR_NUMBER" --branch "$BRANCH" --base-sha "$BASE_SHA")" \
+            || { echo "::error::board-loop fix (post-push breach): board_item_marker.py failed to render the step=breach marker -- not posting a marker-less comment (#530)."; exit 1; }
+          [ -n "$breach_marker" ] \
+            || { echo "::error::board-loop fix (post-push breach): board_item_marker.py rendered an empty step=breach marker -- not posting a marker-less comment (#530)."; exit 1; }
           gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Post-push backstop breach on %s (measured=%s) -- the PR will not be reviewed; filing a spec-request to cover finishing this at the right size.\n\n%s' "$PR_URL" "$measured" "$breach_marker")" \
             || echo "::warning::board-loop fix (post-push breach): could not post the step=breach marker on issue #$ISSUE_NUMBER -- if the spec-request create below fails too, a later run may resume this PR at review (#530)."
           issue_title="$(gh issue view "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --json title --jq .title)"
@@ -3768,7 +3773,13 @@ jobs:
             "$(jq -r '.head_sha' "$RUNNER_TEMP/board-readiness-decision.json")" "$decision")"
           [ -n "$DIRECTED_ATTRIBUTION" ] && body="$(printf '%s\n\n%s' "$DIRECTED_ATTRIBUTION" "$body")"
           gh pr comment "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --body "$body"
-          marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step AWAITING_MERGE_STEP --pr "$PR_NUMBER")"
+          # An empty/failed marker here causes readiness to re-drive this
+          # item every run instead of handing it off, so this fails loudly
+          # instead of posting an empty one.
+          marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step AWAITING_MERGE_STEP --pr "$PR_NUMBER")" \
+            || { echo "::error::board-loop readiness (ready report): board_item_marker.py failed to render the step=awaiting-merge marker -- not posting a marker-less comment."; exit 1; }
+          [ -n "$marker" ] \
+            || { echo "::error::board-loop readiness (ready report): board_item_marker.py rendered an empty step=awaiting-merge marker -- not posting a marker-less comment."; exit 1; }
           gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf '%s\n\n%s' "$body" "$marker")"
 
       # A backstop breach below files a spec-request whose body carries

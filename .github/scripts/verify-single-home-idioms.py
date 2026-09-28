@@ -132,6 +132,12 @@ Plus a promotion-prevention pass (FR-025): every `workflow_call`-only
 stage workflow and every non-underscore-prefixed composite action scanned
 for any reference resolving into a `_shared/` path.
 
+Plus a composite-checkout-order pass (maintainer review of #607, fold
+leg-0): every workflow job's own step list scanned for a local
+`uses: ./...` step preceding the job's first `actions/checkout@` step --
+such a step cannot resolve its action.yml from the not-yet-checked-out
+workspace and fails at run time, not gate time.
+
 Waivers: `.github/scripts/single-home-waivers.json`, same shape as Gate
 31's `stage-invariant-waivers.json` -- `{file, check, pattern, count,
 issue, reason}`, stale-checked in both directions (`issue` -- open, or
@@ -250,7 +256,7 @@ DECLARED_HOMES = {
     # new site is what this check catches.
     "pr-branch": ".github/actions/_shared/resolve-pr-branch/action.yml",
 }
-CHECK_NAMES = tuple(DECLARED_HOMES) + ("promotion",)
+CHECK_NAMES = tuple(DECLARED_HOMES) + ("promotion", "composite-checkout-order")
 
 ORPHAN_FRAGMENTS = (
     "checkout --quiet --orphan",
@@ -818,6 +824,47 @@ def check_branch_advance_capture(root="."):
 # like any other, rather than a bespoke unconditional skip with no count
 # to keep it honest if this file ever reaches into _shared/ a fourth,
 # unintended way.
+# --------------------------------------------------------------------------
+# Check: composite-checkout-order (structural, no single declared home --
+# maintainer review of #607, fold leg-0: board-loop.yml's review and
+# readiness jobs called the new resolve-pr-branch composite as their first
+# step, before any actions/checkout@ step existed in the job, so the
+# composite's action.yml could not be resolved from the not-yet-checked-out
+# workspace and every review/readiness run failed at run time instead of
+# at gate time)
+# --------------------------------------------------------------------------
+def check_local_action_before_checkout(root="."):
+    """A local `uses: ./...` step resolves its action.yml relative to the
+    checked-out workspace; a workflow job that calls one before any
+    `actions/checkout@` step in that same job fails at run time ("Did you
+    forget to run actions/checkout") instead of failing here. Composite
+    actions' own `runs.steps` execute inside the CALLER's already-checked-
+    out workspace, so only workflow jobs (doc["jobs"]) are scanned -- never
+    an action.yml's own `runs.steps`."""
+    findings = []
+    for path in all_subject_files(root):
+        doc = load_yaml(root, path)
+        if not isinstance(doc, dict) or not doc.get("jobs"):
+            continue
+        text = read(root, path)
+        for job_id, steps in _step_lists(doc):
+            seen_checkout = False
+            for step in steps:
+                uses = str((step or {}).get("uses") or "")
+                if not uses:
+                    continue
+                if uses.startswith("actions/checkout@"):
+                    seen_checkout = True
+                elif uses.startswith("./") and not seen_checkout:
+                    offset = text.find(uses)
+                    findings.append(Finding(
+                        path, "composite-checkout-order",
+                        line_of(text, max(offset, 0)),
+                        f"job {job_id!r}: {uses} resolved before any "
+                        f"actions/checkout@ step"))
+    return findings
+
+
 def check_promotion(root="."):
     findings = []
     for path in _relativize(root, published_stages(root)):
@@ -858,6 +905,7 @@ ALL_CHECKS = {
     "marker-write": check_marker_write,
     "pr-branch": check_pr_branch,
     "promotion": check_promotion,
+    "composite-checkout-order": check_local_action_before_checkout,
 }
 
 
@@ -1443,6 +1491,39 @@ def selftest_missing_declared_home_fails_loud():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def selftest_marker_write_cli_resolves_symbolic_steps_under_dash_i():
+    """Maintainer review of #607 (fold leg-1): board_item_marker.py's CLI
+    must resolve --step BREACH_STEP/AWAITING_MERGE_STEP even under
+    `python3 -I` (which excludes the script's own directory from sys.path)
+    invoked from a cwd other than the script's own -- reproducing
+    board-loop.yml's real `python3 -I
+    "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py"` invocation
+    shape, not the declared-home text scans above (which cannot catch a
+    runtime ModuleNotFoundError)."""
+    case = "marker-write CLI resolves symbolic steps under python3 -I from a foreign cwd"
+    script = os.path.abspath(DECLARED_HOMES["marker-write"])
+    other_cwd = tempfile.mkdtemp(prefix="wc-marker-write-cwd-")
+    env = {"PATH": os.environ.get("PATH", "")}
+    ok = True
+    try:
+        for token, expected in (("BREACH_STEP", "breach"), ("AWAITING_MERGE_STEP", "awaiting-merge")):
+            result = subprocess.run(
+                [sys.executable, "-I", script, "--step", token, "--pr", "1"],
+                cwd=other_cwd, env=env, capture_output=True, text=True)
+            if result.returncode != 0:
+                ok = False
+                fail(f"[{case}] --step {token} exited {result.returncode}: "
+                    f"{result.stderr.strip()[-400:]}")
+            elif '"step": "{0}"'.format(expected) not in result.stdout:
+                ok = False
+                fail(f"[{case}] --step {token} did not resolve to step={expected!r}: "
+                    f"{result.stdout.strip()[:200]!r}")
+        if ok:
+            note(f"[{case}] passed")
+    finally:
+        shutil.rmtree(other_cwd, ignore_errors=True)
+
+
 def run_selftest():
     use_utf8_stdout()
     selftest_clean_tree_passes()
@@ -1623,10 +1704,17 @@ def run_selftest():
         "\"$GITHUB_REPOSITORY\" --json headRefName --jq .headRefName)\"\n"
         "          { echo \"pr-number=$PR_NUMBER\"; echo \"branch=$branch\"; } "
         ">> \"$GITHUB_OUTPUT\"\n")
+    selftest_third_paste_fails(
+        "composite-checkout-order", ".github/workflows/third-checkout-order.yml",
+        "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - id: pr\n        uses: ./.github/actions/_shared/resolve-pr-branch\n"
+        "        with:\n          pr-number: 1\n"
+        "      - uses: actions/checkout@v5\n")
     selftest_waived_copy_passes()
     selftest_stale_waiver_fails()
     selftest_promotion_fails()
     selftest_missing_declared_home_fails_loud()
+    selftest_marker_write_cli_resolves_symbolic_steps_under_dash_i()
     print(f"verify-single-home-idioms --self-test: {len(failures)} failure(s).")
     return 1 if failures else 0
 
