@@ -1158,7 +1158,7 @@ jobs:
 
 | | |
 |---|---|
-| Inputs | `issue-number` (number, required); `comment-id` (number, required); `model` (string, `claude-opus-5`); `max-turns` (number, `40`) |
+| Inputs | `issue-number` (number, required); `comment-id` (number, required); `model` (string, `claude-opus-5`); `max-turns` (number, `65`) |
 | Preconditions | spec-kit present; issue carries a `spec:NNN-slug` label; open `spec-draft/NNN-slug` branch (prefix configurable via `WING_COMMANDER_SPEC_DRAFT_PREFIX`, default `spec-draft/`) |
 | Side effects | commits to the draft branch (PR updates automatically); 👀 reaction on the comment; updated PR body; status comment on the issue |
 | Outputs | none |

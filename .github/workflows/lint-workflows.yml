@@ -3401,7 +3401,8 @@ jobs:
       # the two answers cannot drift (the Gate 31 arrangement). The
       # shellcheck binary is pinned and downloaded by the script itself,
       # not taken from the image, so the local sweep lints with the same
-      # one CI does.
+      # one CI does. It also fails any workflow or composite step naming a
+      # fixed /tmp/<name> scratch path instead of $RUNNER_TEMP (#598).
       - name: Gate 48 — every published stage is shell-linted or knowingly exempt, and the linted ones pass shellcheck
         if: "!cancelled()"
         run: python3 .github/scripts/verify-stage-shell-lint.py
@@ -3667,19 +3668,26 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-auto-release-credential-step.py
 
-      # Gate 68 — specs/052-agent-credential-lifetime: the minted App
-      # installation token has a one-hour lifetime, shorter than some agent
-      # steps run. Every agent-bearing job in the 8 sweep stages relays its
-      # mint into env.WC_BOT_TOKEN / env.WC_SCRATCH_TOKEN and re-mints it
-      # immediately after each agent step; this asserts no post-agent step
-      # reads the stale steps.<id>.outputs.token form (nor a pre-agent step's
-      # $GITHUB_ENV relay of one under a different name), no agent step in a
-      # job runs unrefreshed, every "Report over-budget agent run" copy
-      # carries continue-on-error: true, the agent-ran-signal/refresh-
+      # Gate 68 — specs/052-agent-credential-lifetime, widened by spec 073
+      # (#558): the minted App installation token has a one-hour lifetime,
+      # shorter than some agent steps run. The subject set is DERIVED --
+      # every job in every .github/workflows/*.yml file with an agent step
+      # -- rather than a fixed count of stages, checked against a checked-in
+      # floor (so a disappearing subject fails loudly) and an exemption
+      # record (a wall-clock bound, or adoption of the post-agent
+      # composites) for the jobs that do not carry the full mechanism. Every
+      # full_subject job relays its mint into env.WC_BOT_TOKEN /
+      # env.WC_SCRATCH_TOKEN and re-mints it immediately after each agent
+      # step; this asserts no post-agent step reads the stale
+      # steps.<id>.outputs.token form (nor a pre-agent step's $GITHUB_ENV
+      # relay of one under a different name), no agent step in a job runs
+      # unrefreshed, every "Report over-budget agent run" copy carries
+      # continue-on-error: true, the agent-ran-signal/refresh-
       # remote/failed-post-agent-step/stall-reason steps all resolve through
       # their one shared composite home (never a re-pasted inline block, and
-      # never simply absent), and each agent step's own composite calls are
-      # checked by position, not merely by a job-wide total -- see
+      # never simply absent), each agent step's own composite calls are
+      # checked by position, not merely by a job-wide total, and every
+      # exempt entry's own condition still holds -- see
       # verify-post-agent-credential-refresh.py's own docstring (checks 1-9)
       # for the current, authoritative list.
       - name: Gate 68 — every post-agent step holds a fresh credential and every observability callout is tolerated
@@ -4133,6 +4141,65 @@ jobs:
       - name: "Gate 98 self-test — a working-tree import (incl. pathlib or cd), python3 without -I, a dropped or late snapshot, a snapshot of the working tree, or a writable snapshot each fail"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-loop-helper-provenance.py --self-test
+
+      # Gate 99 — specs/059-converged-means-tasks-done (FR-001/FR-002/
+      # FR-006/FR-018): "Read back cycle outcome" and its retry-arm twin
+      # used to decide `converged` from whether a `converge:` commit
+      # landed, never from whether tasks.md still had unchecked boxes —
+      # spec 057's cycle 1 stopped healthy with 54 of 65 tasks never built
+      # and was reported converged anyway. Drives the shipped read-back
+      # step against a synthetic git repo with a real bare remote, proving
+      # the decision is read from tasks.md's own checkbox state at the
+      # pushed tip, not the agent's verdict. Numbered 99, not the 81
+      # reserved when this branch started (tasks.md T001) or the 90/91 this
+      # branch's own commit picked next: Gates 81-89 (#451, specs/057-
+      # autonomous-board-loop) and Gates 90-91 (#488, #482) claimed those
+      # first, and Gates 92-97 (#499, #525/#526) and Gate 98 (#583) claimed
+      # 92-98 before this branch's rebase landed.
+      - name: Gate 99 — converged means no task is left, and the signal reads tasks.md
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-tasks-checkbox-convergence-signal.py
+
+      # Gate 100 — #587: docs/adoption.md's per-stage `max-turns` default is
+      # prose a human types, not a value derived from the workflow file, so
+      # a stage's re-based turn budget (clarify: 40 -> 65) could move without
+      # its docs row moving with it, and nothing before this gate would have
+      # caught it. For every published stage workflow that declares
+      # workflow_call.inputs.max-turns.default, this compares that literal
+      # against docs/adoption.md's matching `### <stage>` Inputs-row
+      # `max-turns` cell and fails naming the stage and both values on any
+      # disagreement, or on finding zero stage files to check at all.
+      # Numbered 100, not the 99 this branch's own commit picked: Gate 99
+      # (specs/059-converged-means-tasks-done) claimed that number before
+      # this branch's rebase landed (see the comment above).
+      - name: "Gate 100 — every published stage's max-turns default agrees with its docs/adoption.md row"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-stage-turn-budget-docs.py
+      - name: "Gate 100 self-test — a workflow-side drift, a docs-side drift, a docs section missing its cell, and zero discoverable stage files each fail"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-stage-turn-budget-docs.py --self-test
+
+      # Gate 116 — #611: the stages check the pipeline out at
+      # .wing-commander-pipeline/ inside the workspace, then force-check a
+      # consumer branch out into the root with clean: false; a branch that
+      # tracks files there overwrote the pipeline's composites, and later
+      # steps ran them with the App token. Every such checkout (and every
+      # root checkout in a composite) must be followed at once by the
+      # guard step, whose run: block is pinned byte for byte: it first
+      # verifies inline that the directory is still the trusted checkout
+      # (not a symlink, a real .git, its own top level, at the pipeline
+      # ref) and removes it otherwise, then runs
+      # .github/scripts/pipeline-checkout-guard.sh read from that
+      # repository's object store, with shell: bash and the checkout's own
+      # if:. The self-test also drives the shipped guard against scratch
+      # hostile branches, including one that tracks the path as a symlink.
+      # Numbered 116: 101-115 are held by other in-flight PRs.
+      - name: "Gate 116 — every branch checkout after the .wing-commander-pipeline checkout is followed by the pipeline-checkout guard"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-pipeline-checkout-guard.py
+      - name: "Gate 116 self-test — a dropped symlink check, the unverified pre-fix read, a missing pipeline ref, a removed guard, a new unguarded clean: false checkout, a mismatched if:, a working-tree read, a missing shell: bash, continue-on-error, an inline copy, and an unguarded composite checkout each fail; the guard refuses symlinked and overwritten pipelines"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-pipeline-checkout-guard.py --self-test
 
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and

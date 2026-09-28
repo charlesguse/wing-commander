@@ -62,6 +62,33 @@ beside it (FR-054). The select job's PR lookup records such a PR as
 in-flight nor picked by the fallback until the PR closes; the hold is
 reached only on a race, never every run.
 
+## Breach step (#530)
+
+On a post-push final-diff breach (contracts/route-backstop.md, FR-021)
+the fix job never posts its `step=review` marker. It posts a marker with
+step `breach` (`board_eligibility.BREACH_STEP`), carrying the PR, branch
+and base sha, **before** it files the spec-request, then the `stalled`
+marker once the spec-request is filed. When the create fails (#514), the
+newest marker is therefore `breach`, not triage's `route`. Without it the
+next run's resume found the open PR only through the board:owned
+fallback and sent it to `review`, so the reviewer ran on a PR the size
+check had already rejected.
+
+At both breach sites (fix's post-push breach and readiness's backstop
+breach) `board:stalled` is added before the `stalled` marker is posted,
+and a failed label add fails the step. A `stalled` marker (pr null) with
+no label would be re-admitted and adopted by resume's fallback as
+`review`; failing first leaves the `breach` marker newest instead.
+
+`breach` is a fix-or-later step: the item is in flight while its PR
+resolves OPEN, and resume resolves it to step `breach`. That holds even
+when only the board:owned fallback finds the PR
+(specs/061-marker-owned-in-flight/contracts/resume-recovery.md). The
+`readiness` job alone consumes it. It forces the backstop verdict to
+breach and retries only the spec-request, the notice and `board:stalled`,
+reusing a spec-request already filed for the PR
+(contracts/readiness-report.md). `review` never runs on it.
+
 ## Non-maintainer content
 
 The marker itself is written only by the loop's own deterministic code —

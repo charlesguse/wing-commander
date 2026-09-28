@@ -162,9 +162,15 @@ def run_notice(steps, repo, runner_temp, bindir, calls, reason,
         runner_temp)
 
 
-def read_notice_body(work):
-    proc = sh("cat /tmp/wcsn-notice.md 2>/dev/null || true", work)
-    return proc.stdout
+def read_notice_body(runner_temp):
+    """The body the notice step wrote to its own $RUNNER_TEMP (#598: never a
+    fixed /tmp path, which parallel gate runs raced on); "" if none."""
+    try:
+        with open(os.path.join(runner_temp, "wcsn-notice.md"),
+                  encoding="utf-8", errors="replace") as fh:
+            return fh.read()
+    except OSError:
+        return ""
 
 
 def scenario_marked(steps, root):
@@ -218,7 +224,7 @@ def scenario_marked(steps, root):
     if len(comments) != 1:
         failures.append(f"{where}: expected exactly one gh issue comment call, "
                         f"got {len(comments)}: {read_calls(calls)}")
-    body = read_notice_body(work)
+    body = read_notice_body(runner_temp)
     if "stage did not start" not in body:
         failures.append(f"{where}: notice body missing 'stage did not start' "
                         f"template text: {body!r}")
@@ -278,7 +284,7 @@ def scenario_unwritable_push(steps, root):
         failures.append(f"{where}: expected exactly one gh issue comment call "
                         f"even when the record could not be written, got "
                         f"{len(comments)}: {read_calls(calls)}")
-    body = read_notice_body(work)
+    body = read_notice_body(runner_temp)
     if "could not be updated" not in body:
         failures.append(f"{where}: notice body missing the 'could not be "
                         f"updated' wording: {body!r}")
@@ -310,7 +316,7 @@ def scenario_empty_spec_dir(steps, root):
     if rc != 0:
         failures.append(f"{where}: {NOTICE_STEP!r} exited {rc}: {out.strip()}")
         return failures
-    body = read_notice_body(work)
+    body = read_notice_body(runner_temp)
     if "could not be updated" not in body:
         failures.append(f"{where}: notice body missing the 'could not be "
                         f"updated' wording when spec-dir is empty: {body!r}")
@@ -341,7 +347,7 @@ def scenario_agent_ran(steps, root):
     if rc != 0:
         failures.append(f"{where}: {NOTICE_STEP!r} exited {rc}: {out.strip()}")
         return failures
-    body = read_notice_body(work)
+    body = read_notice_body(runner_temp)
     if "the stage did not start" in body:
         failures.append(f"{where}: notice still claims the stage did not "
                         f"start even though agent-ran=true: {body!r}")
@@ -384,7 +390,7 @@ def scenario_agent_ran_success(steps, root):
     if rc != 0:
         failures.append(f"{where}: {NOTICE_STEP!r} exited {rc}: {out.strip()}")
         return failures
-    body = read_notice_body(work)
+    body = read_notice_body(runner_temp)
     if "the agent completed its work" not in body:
         failures.append(f"{where}: notice does not say the agent completed "
                         f"its work when agent-conclusion is 'success': "
@@ -411,7 +417,7 @@ def scenario_restart_command_verbatim(steps, root, stage, restart_command,
     if rc != 0:
         failures.append(f"{where}: {NOTICE_STEP!r} exited {rc}: {out.strip()}")
         return failures
-    body = read_notice_body(work)
+    body = read_notice_body(runner_temp)
     if restart_command not in body:
         failures.append(f"{where}: notice body did not contain {stage}'s "
                         f"restart-command byte-for-byte: {body!r}")

@@ -493,6 +493,16 @@ jobs:
           fetch-depth: 0
           clean: false
 
+      - name: Refuse a branch that tracks .wing-commander-pipeline/
+        shell: bash
+        if: steps.lifecycle-gate.outputs.is-open == 'true'
+        env:
+          WC_PIPELINE_REF: ${{ steps.pipeline-ref.outputs.ref }}
+        run: |
+          p=.wing-commander-pipeline; want="$(cd "$GITHUB_WORKSPACE" && pwd -P)/$p"
+          if [ -L "$p" ] || [ ! -d "$p" ] || [ -L "$p/.git" ] || [ ! -d "$p/.git" ] || [ "$(git -C "$p" rev-parse --show-toplevel 2>/dev/null)" != "$want" ] || { [[ "${WC_PIPELINE_REF:-}" =~ ^[0-9a-f]{40}$ ]] && [ "$(git -C "$p" rev-parse HEAD 2>/dev/null)" != "$WC_PIPELINE_REF" ]; }; then rm -rf -- "$p"; echo "::error::wing-commander: $p is no longer the trusted pipeline checkout (a symlink, a missing or replaced .git, or another commit): the branch just checked out replaced it. Removed it so no later step loads branch code from there (#611)."; exit 1; fi
+          git -C "$p" cat-file blob HEAD:.github/scripts/pipeline-checkout-guard.sh | bash -s
+
       # The /speckit-specify skill numbers features by scanning specs/ on the
       # current checkout, which cannot see specs still in flight on unmerged
       # spec-draft/ branches. Compute the next free number across specs/ AND
@@ -959,6 +969,25 @@ jobs:
           [ -n "$line" ] || line="**Cost**: metrics unavailable"
           echo "line=$line" >> "$GITHUB_OUTPUT"
 
+      # specs/065-intake-silent-path-cost: the single home for posting this
+      # run's cost, independent of which outcome (if any) is announced below
+      # -- never nested inside any outcome branch's own if:. Gated only on
+      # "the agent ran" and "not cancelled", the same is-open/agent-ran gate
+      # "Compute cost line" already uses, plus !cancelled() (research.md
+      # Decision 2). This is what closes intake's four silent paths (US1) and
+      # replaces the cost line embedded in the two callouts below (US2).
+      # FR-009 tolerance: a lost cost comment must not change the run's
+      # conclusion -- see clarify.yml.
+      - name: Report run cost
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && always() && !cancelled() && steps.agent.outcome != 'skipped'
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-cost-report
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
+          issue-number: ${{ inputs.issue-number }}
+          cost-line: ${{ steps.cost-line.outputs.line }}
+          stage-label: Intake
+
       # Deterministic kind decision (contracts/callout-points.md rows 1/2):
       # the agent never decides whether to post an action-required callout,
       # it only authors the clarification-question content when needed.
@@ -1184,21 +1213,6 @@ jobs:
             | join("\n")
           ' > "${{ runner.temp }}/intake-clarification.md"
 
-      # A separate step, deliberately not folded into "Render clarification
-      # questionnaire" above: verify-clarification-gating.py extracts and
-      # re-executes that exact step's script byte-for-byte across both
-      # intake.yml and clarify.yml, and hard-fails on any `${{ }}` it
-      # doesn't already resolve (runner.temp only) — appending here keeps
-      # that contract intact.
-      #
-      # printf via env avoids bash treating a leading `$<digit>` (e.g.
-      # `$1.74`) as an unset positional parameter (#272) -- see clarify.yml.
-      - name: Append cost line to clarification questionnaire
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.needed == 'true'
-        env:
-          COST_LINE: ${{ steps.cost-line.outputs.line }}
-        run: printf '\n%s\n' "$COST_LINE" >> "${{ runner.temp }}/intake-clarification.md"
-
       - name: Announce clarification needed
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.needed == 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
@@ -1249,7 +1263,6 @@ jobs:
           summary: "Review the spec PR"
           pr-url: ${{ steps.spec-pr.outputs.url }}
           pr-label: "the spec PR"
-          body: ${{ steps.cost-line.outputs.line }}
 
       # Pipeline PRs carry the same labels as their lifecycle issue so PR
       # lists are filterable by spec. Deterministic.

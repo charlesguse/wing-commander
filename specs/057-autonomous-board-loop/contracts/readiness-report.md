@@ -57,6 +57,22 @@ the item back to readiness.
 A not-ready outcome leaves the marker as it was, so the next run picks the
 item up at `readiness` again.
 
+## Entry at step `breach` (#530)
+
+Readiness is also entered on a resume at step `breach`: fix's post-push
+breach whose spec-request create failed (contracts/board-item-marker.md
+"Breach step"). That PR was never reviewed, so condition 4 is forced to
+fail there whatever the fresh measure says, and the backstop step reports
+`breach-retry=true`. The outcome is always the breach path, never
+`ready: true`. Before filing, a lookup step lists the issues updated since
+the PR opened. It reuses the oldest one this App authored whose body has
+the footer line `Originating issue: <issue URL>` and names the PR
+(`/pull/<n>` or `PR #<n>`, not followed by a digit). That covers a fix
+job whose create succeeded before a later write failed, so a retry never
+files a second spec-request for the same breach. A failed lookup fails
+the job before anything is filed. The retry itself stays unbounded
+(#527).
+
 ## Gate: `verify-board-readiness.py`
 
 Fixtures (FR-064 bullet 4), each a checked-in `gh pr view` JSON snapshot:

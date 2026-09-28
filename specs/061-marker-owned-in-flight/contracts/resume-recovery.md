@@ -119,6 +119,9 @@ fires only when the ones above it don't apply:
         language: "resumes at whatever step the existing PR's state
         implies"), and the run records that this pr was recovered via the
         label fallback, not a marker (FR-014).
+   (#530) Except when the marker's step is breach (a post-push breach
+   whose spec-request is not yet filed): step = "breach" instead. A PR
+   the size check rejected is never reviewed, whichever lookup found it.
 
 3. No pr resolved by clause 1 or 2, but a branch is re-derived
    (`git ls-remote` finds it)
@@ -157,4 +160,5 @@ live state, not the marker's say-so, decides which clause applies.
 | US2 AS6 (step never empty) | every clause above ends in a named step |
 | #532 (awaiting-merge, PR open or unresolved) | clause 0 → awaiting-merge, no job runs |
 | #532 (awaiting-merge, PR closed/merged, issue open) | clause 1 does not match → clause 4, reason recorded → triage |
+| #530 (breach, PR open: post-push breach whose spec-request create failed) | clause 1 → breach (readiness retries the spec-request, no review); only the fallback finds the PR → clause 2's exception → breach; PR closed/merged → clause 4 → triage |
 | #555 (marker branch not `fix/<issue>-<slug>`, or marker PR not board:owned / from another repository) | foreign marker fields → triage, reason recorded, FR-022 cleared; a foreign PR still OPEN, or an awaiting-merge marker: no-op hold, nothing passed on |

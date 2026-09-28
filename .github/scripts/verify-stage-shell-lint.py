@@ -76,12 +76,26 @@ loudly and so does the gate; it is not skippable by being unreachable.
 The self-test's positive fixture is what proves shellcheck is engaged
 rather than skipped.
 
+FIXED /tmp PATHS (#598)
+-----------------------
+Independent of the two lists, over EVERY workflow, composite action.yml
+and composite shell script: no step's `run:`, `with:` or `env:` value may
+name a fixed `/tmp/<name>` path. implement.yml, finalize.yml and
+cleanup.yml all wrote `/tmp/meta.json`; the harnesses that execute those
+steps raced on it under run-local-gates.py's parallel runner (`mv: cannot
+stat '/tmp/meta.json'`), and a self-hosted runner's concurrent jobs share
+it for real. Scratch goes in "$RUNNER_TEMP" (or `${{ runner.temp }}` in a
+`with:`/`env:` value). FIXED_TMP_ALLOWED names the one deliberate
+exception and why; the self-test reverts the real implement.yml fix and
+requires the scan to name it.
+
 USAGE
 -----
     python3 .github/scripts/verify-stage-shell-lint.py
     python3 .github/scripts/verify-stage-shell-lint.py --self-test
 """
 import concurrent.futures
+import glob
 import hashlib
 import json
 import os
@@ -171,6 +185,102 @@ def closure_errors(stages, linted, exempt, root="."):
                 f"tracking issue -- a new stage must not become exempt by "
                 f"being forgotten (#149).")
     return errors
+
+
+# --------------------------------------------------------------------------
+# Fixed /tmp scratch paths (#598)
+# --------------------------------------------------------------------------
+# A step that writes `/tmp/meta.json` shares that one file with every other
+# job on the same machine: a self-hosted runner's concurrent jobs, and the
+# harnesses run-local-gates.py runs in parallel, which raced on it and
+# failed intermittently with `mv: cannot stat '/tmp/meta.json'`. Scratch
+# belongs in "$RUNNER_TEMP" (per job; /__w/_temp inside a `container:` job)
+# or a `mktemp` under it. `${RUNNER_TEMP:-/tmp}/x` is not matched: the
+# lookbehind skips a `/tmp` that is a fallback operand, not a fixed file.
+FIXED_TMP_RE = re.compile(r"(?<![\w.}$/-])/tmp/[\w.-]+")
+# Path -> why a fixed path there is deliberate. Matched against the whole
+# first component (`/tmp/wing-commander` covers `/tmp/wing-commander/x`,
+# never `/tmp/wing-commander-x`).
+FIXED_TMP_ALLOWED = {
+    "/tmp/wing-commander":
+        "The staging directory agent steps are told to Read "
+        "(wing-commander-issue-context's header): a path the prompt names "
+        "verbatim, which $RUNNER_TEMP is not proven to be for the agent's "
+        "Read tool. Written only by steps whose job also consumes it.",
+}
+
+
+def tmp_subject_files(root="."):
+    """Every workflow, composite action and composite-shared shell script."""
+    pats = (".github/workflows/*.yml", ".github/workflows/*.yaml",
+            ".github/actions/**/action.yml", ".github/actions/**/action.yaml",
+            ".github/actions/**/*.sh")
+    found = set()
+    for p in pats:
+        for f in glob.glob(os.path.join(root, p), recursive=True):
+            found.add(os.path.relpath(f, root).replace(os.sep, "/"))
+    return sorted(found)
+
+
+def _uncommented(text):
+    return "\n".join(l for l in str(text).splitlines()
+                     if not l.lstrip().startswith("#"))
+
+
+def _fixed_tmp_hits(text):
+    hits = []
+    body = _uncommented(text)
+    for m in FIXED_TMP_RE.finditer(body):
+        if m.group(0) not in FIXED_TMP_ALLOWED:
+            hits.append(m.group(0))
+    return hits
+
+
+def fixed_tmp_paths(files, root="."):
+    """-> failure strings: a `run:`/`with:`/`env:` value of any step (or a
+    composite's shell script) naming a fixed /tmp/<name> path outside
+    FIXED_TMP_ALLOWED. Comment lines are skipped; everything else counts,
+    a read included -- a fixed file one step reads is one another job
+    can overwrite."""
+    errors = []
+    for f in files:
+        path = os.path.join(root, f)
+        if f.endswith(".sh"):
+            with open(path, encoding="utf-8") as fh:
+                for hit in _fixed_tmp_hits(fh.read()):
+                    errors.append(f"{f}: names the fixed path {hit}")
+            continue
+        with open(path, encoding="utf-8") as fh:
+            doc = yaml.safe_load(fh) or {}
+        if not isinstance(doc, dict):
+            continue
+        lists = [(f"job {jid}", (job or {}).get("steps") or [])
+                 for jid, job in (doc.get("jobs") or {}).items()]
+        runs = doc.get("runs") or {}
+        if isinstance(runs, dict) and runs.get("steps"):
+            lists.append(("runs", runs["steps"]))
+        for ctx, steps in lists:
+            for i, step in enumerate(steps):
+                if not isinstance(step, dict):
+                    continue
+                values = [("run", step.get("run"))]
+                for key in ("with", "env"):
+                    block = step.get(key)
+                    if isinstance(block, dict):
+                        values += [(f"{key}.{k}", v) for k, v in block.items()]
+                for where, value in values:
+                    if not isinstance(value, str):
+                        continue
+                    for hit in _fixed_tmp_hits(value):
+                        name = step.get("name") or f"step {i + 1}"
+                        errors.append(
+                            f"{f}: {ctx}, {name!r} `{where}` names the fixed "
+                            f"path {hit}")
+    return [f"{e} -- a fixed /tmp file is shared by every job on the "
+            f"machine and every parallel gate harness (#598). Use "
+            f"\"$RUNNER_TEMP/...\" (or mktemp under it) in shell, "
+            f"${{{{ runner.temp }}}}/... in a with:/env: value."
+            for e in errors]
 
 
 def shell_python_steps(files, root="."):
@@ -367,11 +477,21 @@ def run_gate():
                 "the shell-linted files contain no bash/sh run: step -- "
                 "this pass linted nothing. Either every step moved to "
                 "another shell or run_blocks() has broken.")
+    # #598: independent of the lists above, over every workflow and
+    # composite, not only SHELL_LINTED.
+    tmp_files = tmp_subject_files()
+    if not tmp_files:
+        errors.append("the fixed-/tmp scan matched no workflow or composite "
+                      "action at all -- a broken sweep, not a clean tree.")
+    tmp_hits = fixed_tmp_paths(tmp_files)
+    errors.extend(tmp_hits)
     for e in errors:
         print(f"::error::{e}")
     print(f"Gate 48: {len(stages)} published stage(s), {len(SHELL_LINTED)} "
           f"shell-linted file(s) ({blocks} run: step(s)), "
-          f"{len(SHELL_EXEMPT)} exempt, {len(diags)} finding(s).")
+          f"{len(SHELL_EXEMPT)} exempt, {len(diags)} finding(s); "
+          f"{len(tmp_files)} file(s) scanned for fixed /tmp paths, "
+          f"{len(tmp_hits)} found.")
     return 1 if errors else 0
 
 
@@ -458,6 +578,73 @@ def self_test():
               shell_python_steps([".github/workflows/py.yml",
                                   ".github/workflows/s1.yml"], root=td)
               == [".github/workflows/py.yml"])
+
+    # --- fixed /tmp scratch paths (#598) ---------------------------------
+    with tempfile.TemporaryDirectory() as td:
+        def tmp_hits(rel, text):
+            _write(os.path.join(td, rel), text)
+            return fixed_tmp_paths([rel], root=td)
+
+        got = tmp_hits(".github/workflows/w.yml", STAGE_HEAD +
+                       "      - name: mark\n        run: |\n"
+                       "          jq . m.json > /tmp/meta.json\n"
+                       "          mv /tmp/meta.json m.json\n")
+        check("a run: step writing a fixed /tmp file fails, naming it",
+              len(got) == 2 and all("/tmp/meta.json" in g and "'mark'" in g
+                                    for g in got), f"got {got!r}")
+        got = tmp_hits(".github/workflows/w.yml", STAGE_HEAD +
+                       "      - run: |\n"
+                       "          jq . m.json > \"$RUNNER_TEMP/meta.json\"\n"
+                       "          f=\"$(mktemp \"${RUNNER_TEMP:-/tmp}/x.XXXXXX\")\"\n"
+                       "          # a comment may say /tmp/meta.json\n"
+                       "          mkdir -p /tmp/wing-commander\n"
+                       "          echo x > /tmp/wing-commander/ctx.md\n")
+        check("$RUNNER_TEMP, a ${RUNNER_TEMP:-/tmp} fallback, a comment and "
+              "the allow-listed staging dir are clean", got == [],
+              f"got {got!r}")
+        got = tmp_hits(".github/workflows/w.yml", STAGE_HEAD +
+                       "      - run: echo x > /tmp/wing-commander-x.md\n")
+        check("the allow-list is a whole path component, not a prefix",
+              len(got) == 1 and "/tmp/wing-commander-x.md" in got[0],
+              f"got {got!r}")
+        got = tmp_hits(".github/workflows/w.yml", STAGE_HEAD +
+                       "      - uses: ./x\n        with:\n"
+                       "          body-file: /tmp/stall-comment.md\n"
+                       "        env:\n          OUT: /tmp/out.txt\n")
+        check("a with:/env: value naming a fixed /tmp file fails",
+              len(got) == 2 and "with.body-file" in got[0]
+              and "env.OUT" in got[1], f"got {got!r}")
+        got = tmp_hits(".github/actions/x/action.yml",
+                       "name: x\ndescription: x\nruns:\n  using: composite\n"
+                       "  steps:\n    - shell: bash\n"
+                       "      run: gh issue comment 1 --body-file /tmp/n.md\n")
+        check("a composite action's step is scanned too",
+              len(got) == 1 and "/tmp/n.md" in got[0], f"got {got!r}")
+        got = tmp_hits(".github/actions/_shared/s.sh",
+                       "#!/bin/bash\n# /tmp/ok-in-comment\ncat /tmp/s.txt\n")
+        check("a composite-shared shell script is scanned too",
+              len(got) == 1 and "/tmp/s.txt" in got[0], f"got {got!r}")
+        check("discovery finds workflows, action.yml and .sh files",
+              tmp_subject_files(td) == [".github/actions/_shared/s.sh",
+                                        ".github/actions/x/action.yml",
+                                        ".github/workflows/w.yml"],
+              f"got {tmp_subject_files(td)!r}")
+
+    # Mutation over the real tree: revert #598's fix in implement.yml (the
+    # shipped defect) and the scan must name it; the unmutated file is clean.
+    real = ".github/workflows/implement.yml"
+    with open(real, encoding="utf-8") as fh:
+        shipped = fh.read()
+    check("the shipped implement.yml has no fixed /tmp path",
+          fixed_tmp_paths([real]) == [], f"got {fixed_tmp_paths([real])!r}")
+    mutated = shipped.replace('"$RUNNER_TEMP/meta.json"', "/tmp/meta.json")
+    with tempfile.TemporaryDirectory() as td:
+        _write(os.path.join(td, real), mutated)
+        got = fixed_tmp_paths([real], root=td)
+        check("MUTATION: implement.yml writing /tmp/meta.json again is caught "
+              "(the #598 race)",
+              mutated != shipped and len(got) >= 2
+              and all("/tmp/meta.json" in g for g in got), f"got {got!r}")
 
     # --- the pin: a wrong archive never reaches extraction ---------------
     with tempfile.TemporaryDirectory() as td:

@@ -1,0 +1,12 @@
+{
+  "5030": [
+    {
+      "created_at": "2026-01-05T00:00:00Z",
+      "body": "Post-push backstop breach on https://github.com/example/repo/pull/9030 (measured={}) -- the PR will not be reviewed; filing a spec-request to cover finishing this at the right size.\n\n**Run:** https://github.com/example/repo/actions/runs/1\n\n<!-- wing-commander-board-item: {\"base_sha\": \"deadbeef\", \"branch\": \"fix/5030-x\", \"pr\": 9030, \"round\": 0, \"step\": \"breach\"} -->",
+      "user": {
+        "login": "wing-commander-bot[bot]",
+        "type": "Bot"
+      }
+    }
+  ]
+}

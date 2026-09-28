@@ -200,8 +200,10 @@ def scenario(steps, seeded, iteration, root):
         return failures
 
     # 2. The runbook the maintainer is told to follow.
-    stall_md = os.path.join(work, "stall-comment.md")
-    sh("rm -f /tmp/stall-comment.md", work)
+    # The step writes its runbook to $RUNNER_TEMP, which run_step points at
+    # this scenario's own runner_temp -- never a fixed /tmp path, which
+    # parallel gate runs raced on (#598).
+    stall_md = os.path.join(runner_temp, "stall-comment.md")
     rc, out, _, _ = run_step(
         BASH, steps[REPORT_STEP], repo,
         {"GH_TOKEN": "x", "ISSUE": ISSUE, "ITERATION": str(iteration),
@@ -215,9 +217,9 @@ def scenario(steps, seeded, iteration, root):
     if rc != 0:
         failures.append(f"{where}: {REPORT_STEP!r} exited {rc}: {out.strip()}")
         return failures
-    if sh(f"cp /tmp/stall-comment.md '{stall_md}'", work).returncode != 0:
+    if not os.path.isfile(stall_md):
         failures.append(f"{where}: {REPORT_STEP!r} wrote no runbook to "
-                        f"/tmp/stall-comment.md.")
+                        f"$RUNNER_TEMP/stall-comment.md.")
         return failures
     with open(stall_md, encoding="utf-8") as fh:
         advice = parse_runbook(fh.read())

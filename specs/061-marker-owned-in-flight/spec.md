@@ -346,10 +346,11 @@ deliberately broken in-flight rule and confirm a gate fails.
   fix-or-later step whose recorded pull request is closed without merging;
   marker at a fix-or-later step whose recorded pull request is merged;
   marker with a terminal step; marker on an excluded issue; unparsable
-  marker; two issues with non-terminal markers; and an unrelated open pull
-  request citing an eligible issue with no marker present. The gate MUST
-  fail loudly when a fixture file is missing rather than skipping it
-  (Constitution VIII).
+  marker; two issues with non-terminal markers; an unrelated open pull
+  request citing an eligible issue with no marker present; and marker at
+  the `prove` step with no pull request recorded, which must never qualify
+  as in flight (FR-002). The gate MUST fail loudly when a fixture file is
+  missing rather than skipping it (Constitution VIII).
 
 - **FR-013**: The loop MUST mark every pull request it opens as its own
   with an ownership label, applied as part of creating the pull request

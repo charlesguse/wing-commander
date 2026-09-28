@@ -572,6 +572,15 @@ jobs:
           fetch-depth: 0
           clean: false
 
+      - name: Refuse a branch that tracks .wing-commander-pipeline/
+        shell: bash
+        env:
+          WC_PIPELINE_REF: ${{ steps.pipeline-ref.outputs.ref }}
+        run: |
+          p=.wing-commander-pipeline; want="$(cd "$GITHUB_WORKSPACE" && pwd -P)/$p"
+          if [ -L "$p" ] || [ ! -d "$p" ] || [ -L "$p/.git" ] || [ ! -d "$p/.git" ] || [ "$(git -C "$p" rev-parse --show-toplevel 2>/dev/null)" != "$want" ] || { [[ "${WC_PIPELINE_REF:-}" =~ ^[0-9a-f]{40}$ ]] && [ "$(git -C "$p" rev-parse HEAD 2>/dev/null)" != "$WC_PIPELINE_REF" ]; }; then rm -rf -- "$p"; echo "::error::wing-commander: $p is no longer the trusted pipeline checkout (a symlink, a missing or replaced .git, or another commit): the branch just checked out replaced it. Removed it so no later step loads branch code from there (#611)."; exit 1; fi
+          git -C "$p" cat-file blob HEAD:.github/scripts/pipeline-checkout-guard.sh | bash -s
+
       # The spec artifacts must exist and self-identify consistently before
       # any write happens — report and stop rather than tearing down the
       # wrong thing.
@@ -663,6 +672,16 @@ jobs:
           fetch-depth: 0
           clean: false
 
+      - name: Refuse a branch that tracks .wing-commander-pipeline/
+        shell: bash
+        if: steps.idempotency.outputs.skip != 'true'
+        env:
+          WC_PIPELINE_REF: ${{ steps.pipeline-ref.outputs.ref }}
+        run: |
+          p=.wing-commander-pipeline; want="$(cd "$GITHUB_WORKSPACE" && pwd -P)/$p"
+          if [ -L "$p" ] || [ ! -d "$p" ] || [ -L "$p/.git" ] || [ ! -d "$p/.git" ] || [ "$(git -C "$p" rev-parse --show-toplevel 2>/dev/null)" != "$want" ] || { [[ "${WC_PIPELINE_REF:-}" =~ ^[0-9a-f]{40}$ ]] && [ "$(git -C "$p" rev-parse HEAD 2>/dev/null)" != "$WC_PIPELINE_REF" ]; }; then rm -rf -- "$p"; echo "::error::wing-commander: $p is no longer the trusted pipeline checkout (a symlink, a missing or replaced .git, or another commit): the branch just checked out replaced it. Removed it so no later step loads branch code from there (#611)."; exit 1; fi
+          git -C "$p" cat-file blob HEAD:.github/scripts/pipeline-checkout-guard.sh | bash -s
+
       # The one agent step, read-only, deriving its diff from the merge
       # commit itself so it's independent of branch-deletion ordering.
       - name: Compose tool args (cleanup)
@@ -688,6 +707,14 @@ jobs:
         id: summarize
         if: steps.idempotency.outputs.skip != 'true' && steps.tool-args-cleanup.outputs.allowed-tools != ''
         continue-on-error: true
+        # Wall-clock bound, strictly under the ~60-minute credential lifetime
+        # (spec 073, #558): this job MUST NOT receive the post-agent
+        # composites (FR-005) -- the bound alone is this job's Gate 68
+        # exemption condition, mechanically asserted in
+        # .github/scripts/verify-post-agent-credential-refresh.py. This
+        # agent's measured runtime is ~1 minute on every one of 40 sampled
+        # runs, so the bound never fires in practice.
+        timeout-minutes: 10
         uses: anthropics/claude-code-action@v1
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
@@ -821,6 +848,7 @@ jobs:
       # over-budget is observability, not failure (FR-017) -- see clarify.yml.
       - name: Report over-budget agent run
         if: steps.idempotency.outputs.skip != 'true' && steps.summarize-verdict.outputs.verdict == 'healthy' && steps.summarize-verdict.outputs.over-budget == 'true'
+        continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
         with:
           token: ${{ steps.ctx.outputs.token }}
@@ -897,11 +925,11 @@ jobs:
           IMPL_PREFIX: ${{ inputs.impl-prefix }}
         run: |
           delete_branch() {
-            if git push origin --delete "$1" 2>/tmp/delete-err; then
+            if git push origin --delete "$1" 2>"$RUNNER_TEMP/delete-err"; then
               echo "Deleted $1." >> "$GITHUB_STEP_SUMMARY"
             else
               echo "$1 already absent (or could not be deleted) — treated as success:" >> "$GITHUB_STEP_SUMMARY"
-              sed 's/^/  /' /tmp/delete-err >> "$GITHUB_STEP_SUMMARY"
+              sed 's/^/  /' "$RUNNER_TEMP/delete-err" >> "$GITHUB_STEP_SUMMARY"
             fi
           }
           delete_branch "${SPEC_DRAFT_PREFIX}$SLUG"
@@ -1098,6 +1126,15 @@ jobs:
           fetch-depth: 0
           clean: false
 
+      - name: Refuse a branch that tracks .wing-commander-pipeline/
+        shell: bash
+        env:
+          WC_PIPELINE_REF: ${{ steps.pipeline-ref.outputs.ref }}
+        run: |
+          p=.wing-commander-pipeline; want="$(cd "$GITHUB_WORKSPACE" && pwd -P)/$p"
+          if [ -L "$p" ] || [ ! -d "$p" ] || [ -L "$p/.git" ] || [ ! -d "$p/.git" ] || [ "$(git -C "$p" rev-parse --show-toplevel 2>/dev/null)" != "$want" ] || { [[ "${WC_PIPELINE_REF:-}" =~ ^[0-9a-f]{40}$ ]] && [ "$(git -C "$p" rev-parse HEAD 2>/dev/null)" != "$WC_PIPELINE_REF" ]; }; then rm -rf -- "$p"; echo "::error::wing-commander: $p is no longer the trusted pipeline checkout (a symlink, a missing or replaced .git, or another commit): the branch just checked out replaced it. Removed it so no later step loads branch code from there (#611)."; exit 1; fi
+          git -C "$p" cat-file blob HEAD:.github/scripts/pipeline-checkout-guard.sh | bash -s
+
       # spec artifacts must self-identify before any write -- don't tear down the wrong thing.
       - name: Verify spec artifacts and resolve lifecycle issue
         id: meta
@@ -1228,11 +1265,11 @@ jobs:
           SLUG: ${{ steps.spec.outputs.slug }}
           SPEC_DRAFT_PREFIX: ${{ inputs.spec-draft-prefix }}
         run: |
-          if git push origin --delete "${SPEC_DRAFT_PREFIX}$SLUG" 2>/tmp/delete-err; then
+          if git push origin --delete "${SPEC_DRAFT_PREFIX}$SLUG" 2>"$RUNNER_TEMP/delete-err"; then
             echo "Deleted ${SPEC_DRAFT_PREFIX}$SLUG." >> "$GITHUB_STEP_SUMMARY"
           else
             echo "${SPEC_DRAFT_PREFIX}$SLUG already absent (or could not be deleted) — treated as success:" >> "$GITHUB_STEP_SUMMARY"
-            sed 's/^/  /' /tmp/delete-err >> "$GITHUB_STEP_SUMMARY"
+            sed 's/^/  /' "$RUNNER_TEMP/delete-err" >> "$GITHUB_STEP_SUMMARY"
           fi
 
   # Built work rejected (final PR closed unmerged) or a non-final
@@ -1385,6 +1422,15 @@ jobs:
           fetch-depth: 0
           clean: false
 
+      - name: Refuse a branch that tracks .wing-commander-pipeline/
+        shell: bash
+        env:
+          WC_PIPELINE_REF: ${{ steps.pipeline-ref.outputs.ref }}
+        run: |
+          p=.wing-commander-pipeline; want="$(cd "$GITHUB_WORKSPACE" && pwd -P)/$p"
+          if [ -L "$p" ] || [ ! -d "$p" ] || [ -L "$p/.git" ] || [ ! -d "$p/.git" ] || [ "$(git -C "$p" rev-parse --show-toplevel 2>/dev/null)" != "$want" ] || { [[ "${WC_PIPELINE_REF:-}" =~ ^[0-9a-f]{40}$ ]] && [ "$(git -C "$p" rev-parse HEAD 2>/dev/null)" != "$WC_PIPELINE_REF" ]; }; then rm -rf -- "$p"; echo "::error::wing-commander: $p is no longer the trusted pipeline checkout (a symlink, a missing or replaced .git, or another commit): the branch just checked out replaced it. Removed it so no later step loads branch code from there (#611)."; exit 1; fi
+          git -C "$p" cat-file blob HEAD:.github/scripts/pipeline-checkout-guard.sh | bash -s
+
       # The spec artifacts must exist and self-identify consistently before
       # any write happens — report and stop rather than stalling the wrong
       # thing.
@@ -1518,8 +1564,8 @@ jobs:
           ARM: ${{ steps.spec.outputs.arm }}
           BOT_SLUG: ${{ steps.ctx.outputs.bot-slug }}
         run: |
-          jq '.stage = "stalled"' "$SPEC_DIR/spec-meta.json" > /tmp/meta.json
-          mv /tmp/meta.json "$SPEC_DIR/spec-meta.json"
+          jq '.stage = "stalled"' "$SPEC_DIR/spec-meta.json" > "$RUNNER_TEMP/meta.json"
+          mv "$RUNNER_TEMP/meta.json" "$SPEC_DIR/spec-meta.json"
           git config user.name  "${BOT_SLUG}[bot]"
           git config user.email "${BOT_SLUG}[bot]@users.noreply.github.com"
           git add "$SPEC_DIR/spec-meta.json"
@@ -1592,5 +1638,5 @@ jobs:
             echo "gh issue edit $ISSUE --add-label stage:done --remove-label stage:stalled"
             echo "gh issue close $ISSUE --comment \"Specification torn down manually.\""
             echo '```'
-          } > /tmp/stall-comment.md
-          gh issue comment "$ISSUE" --body-file /tmp/stall-comment.md
+          } > "$RUNNER_TEMP/stall-comment.md"
+          gh issue comment "$ISSUE" --body-file "$RUNNER_TEMP/stall-comment.md"
