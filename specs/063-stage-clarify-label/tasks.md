@@ -317,7 +317,27 @@ With two developers (this repository's own concurrency guidance caps concurrent 
 
 ## Maintainer Feedback
 
-- [ ] T031 In `.github/workflows/intake.yml`'s "Flip stage label for clarification" step and `.github/workflows/clarify.yml`'s `needs-clarification` arm, guard the `gh label create "stage:clarify" ... --force` call so a failure cannot abort the step under `set -e` before the questionnaire is rendered/announced (e.g. append `|| echo "::warning::..."` while preserving a visible warning), or move the flip step after the announce/render step so label-create failures can never precede it. Addresses PR #651 review comment: today the create call is unguarded and runs before an announce step with no `!cancelled()`, violating FR-015's "failure to write the label MUST NOT suppress the clarification questionnaire" requirement.
+- [X] T031 In `.github/workflows/intake.yml`'s "Flip stage label for clarification" step and `.github/workflows/clarify.yml`'s `needs-clarification` arm, guard the `gh label create "stage:clarify" ... --force` call so a failure cannot abort the step under `set -e` before the questionnaire is rendered/announced (e.g. append `|| echo "::warning::..."` while preserving a visible warning), or move the flip step after the announce/render step so label-create failures can never precede it. Addresses PR #651 review comment: today the create call is unguarded and runs before an announce step with no `!cancelled()`, violating FR-015's "failure to write the label MUST NOT suppress the clarification questionnaire" requirement.
+  - Done: chose the guard option (kept the flip step's fixed position,
+    which T002's FR-023 ordering note pins between the agent's `stage:spec`
+    add and `Label spec PR to match the issue`). `intake.yml`'s and
+    `clarify.yml`'s `needs-clarification`-arm `gh label create
+    "stage:clarify" ...  --force` calls now end `|| echo
+    "::warning::...could not create the stage:clarify label (the
+    [clarification|follow-up] questionnaire will still be posted)." >>
+    "$GITHUB_STEP_SUMMARY"`, so a create failure can no longer abort the
+    step under the step's default `bash -eo pipefail` before `Render
+    clarification questionnaire` / `Announce remaining clarification
+    questions` run (neither is gated `!cancelled()`). `actionlint` on both
+    files shows only pre-existing, unrelated warnings (credentials/
+    deployment/SC2012, none on the touched lines); the full local gate
+    suite (`python .github/scripts/run-local-gates.py`) passes 155/155.
+    contracts/clarify-label-flip.md's two code blocks and its "Never fails
+    the job" guarantee were updated to match. `clarify.yml`'s `ready`-arm
+    `stage:spec` create call has the same unguarded shape but is outside
+    this task's named scope (PR #651's comment names only the
+    `stage:clarify` create calls) -- filed as a wing-commander-finding
+    rather than fixed here.
 
 ## Maintainer Feedback
 

@@ -27,7 +27,7 @@ PR's mirrored labels, FR-023) reads it.
 
 ```bash
 if [ "$NEEDED" = "true" ]; then
-  gh label create "stage:clarify" --color 1D76DB --description "Open clarification questions" --force
+  gh label create "stage:clarify" --color 1D76DB --description "Open clarification questions" --force || echo "::warning::wing-commander intake: could not create the stage:clarify label (the clarification questionnaire will still be posted)." >> "$GITHUB_STEP_SUMMARY"
   if ! gh issue edit "$ISSUE" --add-label "stage:clarify"; then
     echo "::warning::wing-commander intake: could not add stage:clarify to issue #$ISSUE (the clarification questionnaire was still posted)." >> "$GITHUB_STEP_SUMMARY"
   fi
@@ -48,7 +48,7 @@ steps.created.outputs.spec-dir`, `ISSUE = inputs.issue-number`.
 ```bash
 case "$OUTCOME" in
   needs-clarification)
-    gh label create "stage:clarify" --color 1D76DB --description "Open clarification questions" --force
+    gh label create "stage:clarify" --color 1D76DB --description "Open clarification questions" --force || echo "::warning::wing-commander clarify: could not create the stage:clarify label (the follow-up questionnaire will still be posted)." >> "$GITHUB_STEP_SUMMARY"
     if ! gh issue edit "$ISSUE" --add-label "stage:clarify"; then
       echo "::warning::wing-commander clarify: could not add stage:clarify to issue #$ISSUE (the follow-up questionnaire was still posted)." >> "$GITHUB_STEP_SUMMARY"
     fi
@@ -75,10 +75,15 @@ steps.clarification.outputs.blocked`, `ISSUE = inputs.issue-number`.
 ## Guarantees
 
 - **Never fails the job.** Every `--add-label` failure path is caught
-  explicitly (`if ! gh ...; then warn; fi`); no branch calls `exit 1` or
-  relies on the step's default `bash -eo pipefail` to propagate a label-API
-  failure into a job failure (FR-015). A checked-in fixture proves this per
-  stage (quickstart.md §2).
+  explicitly (`if ! gh ...; then warn; fi`); the `stage:clarify`-creating
+  `gh label create` call is guarded with `|| echo "::warning::..." >>
+  "$GITHUB_STEP_SUMMARY"` so a create failure cannot abort the step under
+  the step's default `bash -eo pipefail` before the questionnaire is
+  rendered or announced (maintainer feedback on PR #651: this step runs
+  before `Render clarification questionnaire`/`Announce remaining
+  clarification questions`, neither of which is gated `!cancelled()`); no
+  branch calls `exit 1`. A checked-in fixture proves this per stage
+  (quickstart.md §2).
 - **Idempotent.** `gh label create --force` never errors on an existing
   label; `gh issue edit --add-label` on an already-present label is a
   no-op; `gh issue edit --remove-label` on an absent label exits non-zero,

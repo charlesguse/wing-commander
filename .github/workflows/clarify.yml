@@ -972,7 +972,7 @@ jobs:
         run: |
           case "$OUTCOME" in
             needs-clarification)
-              gh label create "stage:clarify" --color 1D76DB --description "Open clarification questions" --force
+              gh label create "stage:clarify" --color 1D76DB --description "Open clarification questions" --force || echo "::warning::wing-commander clarify: could not create the stage:clarify label (the follow-up questionnaire will still be posted)." >> "$GITHUB_STEP_SUMMARY"
               if ! gh issue edit "$ISSUE" --add-label "stage:clarify"; then
                 echo "::warning::wing-commander clarify: could not add stage:clarify to issue #$ISSUE (the follow-up questionnaire was still posted)." >> "$GITHUB_STEP_SUMMARY"
               fi

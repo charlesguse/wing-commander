@@ -1186,7 +1186,7 @@ jobs:
           SPEC_DIR: ${{ steps.created.outputs.spec-dir }}
         run: |
           if [ "$NEEDED" = "true" ]; then
-            gh label create "stage:clarify" --color 1D76DB --description "Open clarification questions" --force
+            gh label create "stage:clarify" --color 1D76DB --description "Open clarification questions" --force || echo "::warning::wing-commander intake: could not create the stage:clarify label (the clarification questionnaire will still be posted)." >> "$GITHUB_STEP_SUMMARY"
             if ! gh issue edit "$ISSUE" --add-label "stage:clarify"; then
               echo "::warning::wing-commander intake: could not add stage:clarify to issue #$ISSUE (the clarification questionnaire was still posted)." >> "$GITHUB_STEP_SUMMARY"
             fi
