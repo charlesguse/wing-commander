@@ -1490,6 +1490,22 @@ jobs:
           # taken for the run's own comment. Known limit: two runs
           # overlapping on one issue can each be credited with the other's
           # line; nothing in a comment names the run that posted it.
+          #
+          # A cost line is a whole line that starts with the exact prefix the
+          # wing-commander-metrics-summary composite's cost-line output (and
+          # each caller's one-line fallback) writes, "**Cost**: ", optionally
+          # inside a callout's "> " quoting -- never any "Cost:" in prose. An
+          # intake or clarify questionnaire's trade-off column says "Cost: the
+          # loop can never fix ...", and the first-match regex this replaced
+          # took that for the run's line, found no amount, and filed a false
+          # cost-line-missing (#617). Each comment contributes only its LAST
+          # cost line -- every emitter appends the stage's line at the end of
+          # its comment, so a "**Cost**: $5 more per run" line in a
+          # questionnaire above it cannot shadow it. Among those per-comment
+          # lines, the first whose figure is a "$" amount wins; with none, the
+          # first is kept as observed text (a "metrics unavailable" fallback
+          # reads as missing). The token is only the figure right
+          # after the prefix, never a "$" later in the line.
           # shellcheck disable=SC2016 # this is a jq program — its $vars must
           # NOT be shell-expanded.
           COST_ATTRIBUTION_FILTER='
@@ -1499,11 +1515,15 @@ jobs:
                 | select(($in.since // "") == "" or .createdAt >= $in.since)
                 | select(($in.until // "") == "" or .createdAt <= $in.until) ]
             | sort_by(.createdAt) as $own
-            | ([ $own[] | [(.body // "") | match("\\*{0,2}Cost\\*{0,2}:[^\\r\\n]*").string] | .[0] // empty ] | .[0] // null) as $raw
-            | (if $raw == null then null else ($raw | gsub("\\*"; "") | sub("^ +"; "")) end) as $observed
+            | [ $own[]
+                | [ (.body // "") | split("\n")[] | sub("\r$"; "")
+                    | select(test("^(> ?)*\\*\\*Cost\\*\\*: "))
+                    | sub("^(> ?)*\\*\\*Cost\\*\\*: "; "Cost: ") ]
+                | last // empty ] as $lines
+            | (([ $lines[] | select(startswith("Cost: $")) ] + $lines) | .[0] // null) as $observed
             | { comment_found: (($own | length) > 0),
                 observed_text: $observed,
-                cost_token: (if $observed == null then null else ([$observed | match("\\$[^ ]*").string] | .[0] // null) end) }
+                cost_token: (if $observed == null then null else ([$observed | match("^Cost: (\\$[^ ]*)").captures[0].string] | .[0] // null) end) }
           '
 
           cr_outcome="ok"
