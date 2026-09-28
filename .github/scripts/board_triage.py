@@ -186,15 +186,19 @@ def _uses_values(text):
 
 
 def _uses_pins(text):
-    """{owner/action: ref} for every remote `uses: owner/action@ref` value
-    (_uses_values()). Local (`./...`) and `docker://` refs are not pins."""
+    """{owner/action: sorted list of distinct refs} for every remote
+    `uses: owner/action@ref` value (_uses_values()). Local (`./...`) and
+    `docker://` refs are not pins. Every ref is kept, not the last one: a
+    file pinning one action twice (A@x, A@y) must compare as the SET of its
+    refs, or merely reordering the two steps on main would read as a bump
+    and close an issue on no evidence (#672 review)."""
     pins = {}
     for value in _uses_values(text):
         if value.startswith(("./", "docker://")) or "@" not in value:
             continue
         name, ref = value.rsplit("@", 1)
-        pins[name] = ref
-    return pins
+        pins.setdefault(name, set()).add(ref)
+    return {name: sorted(refs) for name, refs in pins.items()}
 
 
 def _local_refs(text):
@@ -237,18 +241,31 @@ def _first_divergent_pin(workflow_file, run_pins, main_pins):
     """Pure comparison, fixturable without a real git history (contracts/
     triage.md: "each a checked-in transcript/workflow-pin pair"). Returns
     {workflow_file, action_ref, run_pin, main_pin} for the first (sorted by
-    action_ref) pin present in both maps but with a different ref, else
-    None."""
-    for action_ref, run_pin in sorted(run_pins.items()):
-        main_pin = main_pins.get(action_ref)
-        if main_pin is not None and main_pin != run_pin:
+    action_ref) action present in both maps whose SET of refs differs, else
+    None. A map value is one ref (a string) or a list of the refs the file
+    pins that action at (_uses_pins()); order and repeats never matter. In
+    the evidence, run_pin/main_pin are the ref itself when there is one,
+    else the sorted refs joined with ", "."""
+    for action_ref, run_value in sorted(run_pins.items()):
+        main_value = main_pins.get(action_ref)
+        if main_value is None:
+            continue
+        run_refs, main_refs = _ref_set(run_value), _ref_set(main_value)
+        if run_refs != main_refs:
             return {
                 "workflow_file": workflow_file,
                 "action_ref": action_ref,
-                "run_pin": run_pin,
-                "main_pin": main_pin,
+                "run_pin": ", ".join(sorted(run_refs)),
+                "main_pin": ", ".join(sorted(main_refs)),
             }
     return None
+
+
+def _ref_set(value):
+    """A pin map value (one ref, or a list of refs) as a frozenset."""
+    if isinstance(value, str):
+        return frozenset((value,))
+    return frozenset(value)
 
 
 def _normalize_workflow_path(path):

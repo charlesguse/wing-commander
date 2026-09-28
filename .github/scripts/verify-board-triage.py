@@ -64,7 +64,10 @@ closed. Two checks keep that shut:
    repo, tracked_pin_files() must list exactly the fixture's workflows of
    both extensions plus its composite manifests. Mutations restoring the
    pre-#519 line regex, dropping composites from the scope, or dropping
-   `.yaml` workflows must each fail these cases, and board-loop.yml's
+   `.yaml` workflows must each fail these cases. An action pinned twice
+   in one file compares as the set of its refs (#672 review): the two
+   pins reordered on main is no bump, one of them bumped is; a mutation
+   restoring last-pin-wins must fail. board-loop.yml's
    decide step must take workflow_files from tracked_pin_files() with no
    `git ls-files` of its own (the pathspecs have one home).
 2. cite-source (structural, board-loop.yml's triage job):
@@ -181,6 +184,9 @@ DEFAULT_CITED_RUN = "https://github.com/example/example/actions/runs/1"
 PIN_CASES = {
     "action-bump-ahead": "divergent",
     "pins-equal": "none",
+    # #672 review: an action pinned twice compares as the set of its refs.
+    "pins-duplicate-reordered": "none",
+    "pins-duplicate-one-bumped": "divergent",
 }
 EXPECTED = dict.fromkeys(list(TRIAGE_CASES) + list(PIN_CASES))
 
@@ -678,6 +684,13 @@ _SHAPES_TREE = {
                               "    - uses: owner/steady@v1\n",
     AC + "unused/action.yml": "runs:\n  using: composite\n  steps:\n"
                               "    - uses: owner/unused@v1\n",
+    # #672 review: one action pinned twice in one file.
+    WF + "dup-reordered.yml": "jobs:\n  a:\n    steps:\n"
+                              "      - uses: owner/dup@1111111 # v1\n"
+                              "      - uses: owner/dup@2222222 # v2\n",
+    WF + "dup-bumped.yml": "jobs:\n  a:\n    steps:\n"
+                           "      - uses: owner/dup@1111111 # v1\n"
+                           "      - uses: owner/dup@2222222 # v2\n",
 }
 _OLD_TREE.update(_SHAPES_TREE)
 _BUMPS.update({
@@ -690,6 +703,12 @@ _BUMPS.update({
     # and the only real bump is in a composite nothing here calls.
     WF + "negative.yml": ("@2222222 # v4", "@2222222 # v4.0.1"),
     AC + "unused/action.yml": ("@v1", "@v2"),
+    # Same two pins, order swapped on main: no bump.
+    WF + "dup-reordered.yml": (
+        "owner/dup@1111111 # v1\n      - uses: owner/dup@2222222 # v2",
+        "owner/dup@2222222 # v2\n      - uses: owner/dup@1111111 # v1"),
+    # The first of the two pins bumped, the last untouched: a bump.
+    WF + "dup-bumped.yml": ("@1111111 # v1", "@3333333 # v3"),
 })
 
 ALL_WORKFLOWS = sorted(_OLD_TREE)
@@ -723,6 +742,11 @@ SCOPING_CASES = (
      WF + "dot-yaml.yaml", False, WF + "dot-yaml.yaml"),
     ("a comment-only change and an uncalled composite's bump do not count",
      WF + "negative.yml", False, None),
+    # #672 review
+    ("an action pinned twice, reordered on main, does not count",
+     WF + "dup-reordered.yml", False, None),
+    ("an action pinned twice with one pin bumped counts",
+     WF + "dup-bumped.yml", False, WF + "dup-bumped.yml"),
 )
 
 
@@ -824,6 +848,18 @@ def _pre_519_uses_pins(text):
     return pins
 
 
+def _last_wins_uses_pins(text):
+    """The pre-#672-review reader: one ref per action, the last one wins.
+    Used only as a mutation."""
+    pins = {}
+    for value in board_triage._uses_values(text):
+        if value.startswith(("./", "docker://")) or "@" not in value:
+            continue
+        name, ref = value.rsplit("@", 1)
+        pins[name] = ref
+    return pins
+
+
 def _scope_filtered(keep):
     """A _scoped_workflow_files() mutation keeping only paths `keep`
     accepts -- the pre-#521 scope, which never reached composites or
@@ -840,6 +876,8 @@ SCOPING_MUTATIONS = (
                        list(workflow_files or []))),
     ("pre-#519 line regex restored", "_uses_pins",
      lambda original: _pre_519_uses_pins),
+    ("last pin wins for an action pinned twice", "_uses_pins",
+     lambda original: _last_wins_uses_pins),
     ("composites dropped from the scope", "_scoped_workflow_files",
      _scope_filtered(lambda p: not p.startswith(AC))),
     (".yaml workflows dropped from the scope", "_scoped_workflow_files",
