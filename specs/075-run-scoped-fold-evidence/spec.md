@@ -142,8 +142,9 @@ run B's `leg-0` folds; confirm run A's report says `leg-0` was not folded.
    nothing for a leg that really did its work.
 3. **Given** run A's `leg-0` concluded `success` but wrote no fold commit of
    its own, **When** run A reports, **Then** run A reports `leg-0` as
-   **partly folded** even if another run's `fold(leg-0):` commit is present
-   in the range.
+   **not folded** even if another run's `fold(leg-0):` commit is present
+   in the range (a success with no evidence is the existing spurious-success
+   case, which spec 042's table already reports as "not folded" -- FR-012).
 4. **Given** no other run is in flight, **When** a run reports, **Then**
    every outcome it reports is identical to what it reports today — the
    single-run behaviour is unchanged.
@@ -257,10 +258,11 @@ deliberately unscoped fold-evidence read and confirm a gate fails.
   evidence for that leg exists. Neither half alone may silence the report.
 
 - **FR-003**: A fold-route leg with no fold evidence of this run's own MUST
-  be reported as **not folded** when its job conclusion is anything other
-  than `success`, and as **partly folded** when its job conclusion is
-  `success`. These are the outcomes the report uses today; this feature
-  changes what counts as evidence, not the vocabulary.
+  be reported as **not folded**, whatever its job conclusion -- a `success`
+  with no evidence is the existing spurious-success case, which the report
+  already calls "not folded" (FR-012; the Assumptions' conservative
+  direction of error). These are the outcomes the report uses today; this
+  feature changes what counts as evidence, not the vocabulary.
 
 - **FR-004**: Fold evidence MUST be attributable to its producing run by a
   signal a deterministic step records, not by an instruction an agent is
@@ -304,7 +306,7 @@ deliberately unscoped fold-evidence read and confirm a gate fails.
   the same id also present (silent); this run's leg cancelled with no
   commit of its own and another run's commit under the same id present
   (**not folded**); this run's leg succeeded with no commit of its own
-  (**partly folded**); a fold commit bearing no attribution at all (not
+  (**not folded**); a fold commit bearing no attribution at all (not
   this run's); this run folded nothing of its own while another run's fold
   commit sits in its range (no dispatch, and the declined-dispatch notice of
   FR-015); and the single-run baseline (unchanged from today). The gate

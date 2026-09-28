@@ -574,16 +574,14 @@ def scenario_own_success_no_commit_not_folded(steps, root):
     but wrote no fold commit of its own, even though a sibling run's commit
     under the same id is present -> reported "not folded".
 
-    contracts/run-scoped-fold-evidence.md's own prose for this case says
-    "partly folded", but T007/data-model.md §5 keeps the outcome-derivation
-    table byte-for-byte unchanged from spec 042, and that table's own
-    "anything | absent | not folded" row (a `success` conclusion is
-    "anything") makes "partly folded" unreachable whenever this run's own
-    evidence is absent — "partly folded" requires folded=true (data-model.md
-    §5's middle row). This scenario asserts the outcome the shipped,
-    unchanged derivation table actually produces, matching the existing
-    scenario_spurious_success_needs_fold_check case one layer up; see this
-    cycle's reported findings for the contract-wording discrepancy.
+    T007/data-model.md §5 keeps the outcome-derivation table byte-for-byte
+    unchanged from spec 042, and its "anything | absent | not folded" row (a
+    `success` conclusion is "anything") makes "partly folded" unreachable
+    whenever this run's own evidence is absent -- "partly folded" requires
+    folded=true (§5's middle row). spec.md FR-003 and the contract's
+    scenario 3 once said "partly folded"; #637 corrected them to match this
+    shipped behaviour (the existing scenario_spurious_success_needs_fold_check
+    case one layer up).
     """
     return _report_single_leg_scenario(
         steps, root, "new scenario 3 (own success, no own commit)",
