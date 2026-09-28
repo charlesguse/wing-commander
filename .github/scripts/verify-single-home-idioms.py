@@ -197,15 +197,16 @@ DECLARED_HOMES = {
     # THIRD site cannot paste the correlate-and-poll loop a second,
     # independent time while T054 is outstanding.
     "dispatch-and-wait": ".github/actions/wing-commander-dispatch-and-wait/action.yml",
-    # issue #462 (code review of #451): the kill-switch/stop-request
-    # recheck -- paginate the issue's own comments, hand them to
-    # board_stop_check.find_stop_request(), and `gh run cancel` whatever
-    # it names -- was pasted near-verbatim into all six of board-loop.yml's
-    # jobs. board_stop_check.py's own docstring already called
-    # find_stop_request() "the reusable check every job's own... step also
-    # performs," but never the surrounding gh/bash orchestration around it;
-    # this check is the structural scan that catches a THIRD paste the way
-    # every other idiom in this gate already does.
+    # issue #462 (code review of #451), idiom updated by #085: the
+    # kill-switch/stop-request recheck -- paginate the issue's own comments,
+    # obtain a decision from board_stop_check.py's documented CLI (pipe a
+    # payload into it), and `gh run cancel` whatever earlier run it names --
+    # was pasted near-verbatim into all six of board-loop.yml's jobs.
+    # board_stop_check.py's own docstring already called find_stop_request()
+    # "the reusable check every job's own... step also performs," but never
+    # the surrounding gh/bash orchestration around it; this check is the
+    # structural scan that catches a THIRD paste the way every other idiom
+    # in this gate already does.
     "board-stop-check": ".github/actions/wing-commander-board-stop-check/action.yml",
     # #572: the transcript normaliser. count-turns.sh,
     # wing-commander-agent-verdict and wing-commander-metrics-summary all
@@ -253,17 +254,18 @@ DISPATCH_WAIT_FRAGMENTS = (
 )
 VERDICT_FIELDS = ("outcome", "verified_head", "failing_check", "expected",
                   "observed", "evidence_url")
-# issue #462: `gh run cancel` alone is ordinary gh-CLI usage that also
-# appears in pr-conversation.yml's own (unrelated) stop procedure, so
-# co-occurrence with the other two fragments -- both unique to this
-# idiom's own shell -- is what keeps this check from false-positiving
-# there, the same reasoning check_dispatch_and_wait already documents for
-# its own fragment set.
-BOARD_STOP_CHECK_FRAGMENTS = (
-    "from board_stop_check import find_stop_request",
-    "gh run cancel",
-    "board-stop-check-comments.json",
-)
+# issue #462, idiom updated by #085: `gh run cancel` alone is ordinary
+# gh-CLI usage that also appears in pr-conversation.yml's own (unrelated)
+# stop procedure, so co-occurrence with fact 1 below -- unique to this
+# idiom -- is what keeps this check from false-positiving there, the same
+# reasoning check_dispatch_and_wait already documents for its own fragment
+# set. Fact 1 matches either the post-085 CLI invocation
+# (`board_stop_check.py`) or the pre-085 import style (`from
+# board_stop_check import find_stop_request`), so a paste of either idiom
+# is caught regardless of which era it copies (FR-009).
+BOARD_STOP_CHECK_DECISION_RE = re.compile(
+    r"board_stop_check\.py|from board_stop_check import find_stop_request")
+BOARD_STOP_CHECK_CANCEL = "gh run cancel"
 # #572: the splice step of the transcript normaliser. `.[]` in the
 # then-branch is what distinguishes it from the per-document
 # `if type=="array" then . else [.] end` wrap used by fallback reads.
@@ -519,9 +521,8 @@ def check_dispatch_and_wait(root="."):
 
 
 # --------------------------------------------------------------------------
-# Check: board-stop-check (file-wide co-occurrence of the find_stop_request
-# import, the gh run cancel call, and the paginated-comments filename --
-# issue #462)
+# Check: board-stop-check (YAML-structural, per job / composite step-list --
+# issue #462, reworked #085/research.md D7)
 # --------------------------------------------------------------------------
 def check_board_stop_check(root="."):
     home = DECLARED_HOMES["board-stop-check"]
@@ -533,13 +534,20 @@ def check_board_stop_check(root="."):
     for path in all_subject_files(root):
         if path == home or path.startswith(home_dir):
             continue
+        doc = load_yaml(root, path)
+        if doc is None:
+            continue
         text = read(root, path)
-        if all(fragment in text for fragment in BOARD_STOP_CHECK_FRAGMENTS):
-            offset = text.find(BOARD_STOP_CHECK_FRAGMENTS[0])
-            findings.append(Finding(
-                path, "board-stop-check", line_of(text, max(offset, 0)),
-                "from board_stop_check import find_stop_request + gh run "
-                "cancel + board-stop-check-comments.json co-occurrence"))
+        for _ctx, steps in _step_lists(doc):
+            run_text = "\n".join(str((step or {}).get("run") or "") for step in steps)
+            decision_match = BOARD_STOP_CHECK_DECISION_RE.search(run_text)
+            if decision_match and BOARD_STOP_CHECK_CANCEL in run_text:
+                offset = text.find(decision_match.group(0))
+                findings.append(Finding(
+                    path, "board-stop-check", line_of(text, max(offset, 0)),
+                    f"{decision_match.group(0)!r} (obtains a stop decision) + "
+                    f"'gh run cancel' (performs a cancellation), in the same "
+                    f"step list"))
     return findings
 
 
@@ -1010,9 +1018,13 @@ def _clean_tree(root):
           "        gh api \"repos/$GITHUB_REPOSITORY/issues/$N/comments\" "
           "--paginate --jq '.[]' | jq -s '.' > "
           "\"$RUNNER_TEMP/board-stop-check-comments.json\"\n"
-          "        # from board_stop_check import find_stop_request\n"
+          "        stop_decision_json=\"$(jq -n --slurpfile comments "
+          "\"$RUNNER_TEMP/board-stop-check-comments.json\" '{comments: "
+          "$comments[0]}' | python3 .github/scripts/board_stop_check.py)\"\n"
+          "        cancel_run_id=\"$(jq -r '.cancel_run_id // empty' "
+          "<<<\"$stop_decision_json\")\"\n"
           "        GH_TOKEN=\"$CANCEL_TOKEN\" gh run cancel "
-          "\"$stop_run_id\" -R \"$GITHUB_REPOSITORY\" 2>/dev/null || true\n")
+          "\"$cancel_run_id\" -R \"$GITHUB_REPOSITORY\" 2>/dev/null || true\n")
     _write(root, DECLARED_HOMES["transcript-normalise"],
           "#!/usr/bin/env bash\n"
           "jq -cs 'map(if type==\"array\" then .[] else . end) "
@@ -1054,6 +1066,32 @@ def selftest_third_paste_fails(check_key, paste_path, paste_content):
                 f"got: {findings}")
         else:
             note(f"[{case}] passed ({hits[0].path}:{hits[0].line})")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def selftest_board_stop_check_no_cancel_no_finding():
+    case = "board_stop_check.py referenced with no cancellation is not flagged"
+    tmp = tempfile.mkdtemp(prefix="wc-single-home-")
+    try:
+        _clean_tree(tmp)
+        paste_path = ".github/workflows/dry-run-reporter.yml"
+        _write(tmp, paste_path,
+              "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
+              "      - shell: bash\n        run: |\n"
+              "          gh api \"repos/$GITHUB_REPOSITORY/issues/$N/comments\" "
+              "--paginate --jq '.[]' | jq -s '.' > \"$RUNNER_TEMP/comments.json\"\n"
+              "          jq -n --slurpfile comments \"$RUNNER_TEMP/comments.json\" "
+              "'{comments: $comments[0]}' | python3 .github/scripts/board_stop_check.py\n")
+        findings, hard = evaluate(tmp)
+        if hard:
+            fail(f"[{case}] unexpected hard failure(s): {hard}")
+            return
+        hits = [f for f in findings if f.check == "board-stop-check" and f.path == paste_path]
+        if hits:
+            fail(f"[{case}] unexpected board-stop-check finding(s): {hits}")
+        else:
+            note(f"[{case}] passed")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -1223,9 +1261,18 @@ def run_selftest():
         "          gh api \"repos/$GITHUB_REPOSITORY/issues/$N/comments\" "
         "--paginate --jq '.[]' | jq -s '.' > "
         "\"$RUNNER_TEMP/board-stop-check-comments.json\"\n"
-        "          # from board_stop_check import find_stop_request\n"
+        "          stop_decision_json=\"$(jq -n --slurpfile comments "
+        "\"$RUNNER_TEMP/board-stop-check-comments.json\" '{comments: "
+        "$comments[0]}' | python3 .github/scripts/board_stop_check.py)\"\n"
+        "          cancel_run_id=\"$(jq -r '.cancel_run_id // empty' "
+        "<<<\"$stop_decision_json\")\"\n"
         "          GH_TOKEN=\"$CANCEL_TOKEN\" gh run cancel "
-        "\"$stop_run_id\" -R \"$GITHUB_REPOSITORY\" 2>/dev/null || true\n")
+        "\"$cancel_run_id\" -R \"$GITHUB_REPOSITORY\" 2>/dev/null || true\n")
+    # #085 (research.md D7's third named self-test direction): fact 1
+    # (references board_stop_check.py) with no fact 2 (no cancellation) is a
+    # legitimate non-loop consumer -- e.g. a hypothetical dry-run reporter --
+    # and must NOT be flagged.
+    selftest_board_stop_check_no_cancel_no_finding()
     selftest_third_paste_fails(
         "transcript-normalise",
         ".github/actions/wing-commander-third/action.yml",
