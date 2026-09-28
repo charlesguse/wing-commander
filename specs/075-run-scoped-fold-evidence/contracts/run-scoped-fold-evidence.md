@@ -111,7 +111,7 @@ covering FR-010's six enumerated cases:
 2. This run's leg was cancelled with no commit of its own, and a sibling
    run's commit under the same id is present → "not folded."
 3. This run's leg succeeded with no commit of its own (sibling or not) →
-   "partly folded."
+   "not folded" (the spurious-success case; spec.md FR-003, FR-012).
 4. A fold commit with no `Wing-Commander-Run-Id:` trailer at all → not
    this run's evidence, regardless of leg id match.
 5. This run folded nothing of its own while a sibling run's fold commit

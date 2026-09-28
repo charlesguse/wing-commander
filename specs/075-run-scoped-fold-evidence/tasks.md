@@ -66,7 +66,8 @@ Single project — this repository is a GitHub Actions pipeline, not an applicat
 - [X] T007 [US1] In "Report fold-route leg outcomes" (~2874–2954), replace the per-leg evidence check at ~2923–2926 (`folded=false; if [ -n "$range" ] && git log --grep "^fold($id):" ... "$range" | grep -q .; then folded=true; fi`) with a membership test of `id` against the new step's `folded-json` output — parse `folded-json` once into a shell variable before the per-leg `while` loop (read once per job invocation, not re-queried per leg, data-model.md §5) and test membership per leg (e.g. `printf '%s' "$FOLDED_JSON" | jq -e --arg id "$id" 'any(.[]; .id == $id)' >/dev/null`). Leave the job-conclusion read (~2921, #417 caller-prefixed match) and the outcome derivation (~2928–2935) byte-for-byte unchanged. Remove the now-unused `range`/`BASE_SHA`/`TIP_SHA` range computation (~2892–2895) if nothing else in the step reads it. Depends on T002, T006.
 - [X] T008 [P] [US1] Extend Gate 34's `SCENARIOS` with new scenario 1 (contracts/run-scoped-fold-evidence.md "New scenarios" #1, FR-010 case 1): this run's leg succeeded with its own fold commit present (stamped `RUN_ID_UNDER_TEST`) **and** a sibling run's commit under the same id (stamped `RUN_ID_SIBLING`) is also present in range → `report-fold-outcomes` stays silent (healthy). Depends on T005, T007.
 - [X] T009 [P] [US1] Extend Gate 34's `SCENARIOS` with new scenario 2 (contracts #2, FR-010 case 2, SC-001): this run's leg concluded `cancelled` with no commit of its own, while a sibling run's commit under the same id is present in range → reported **not folded**. Depends on T005, T007.
-- [X] T010 [P] [US1] Extend Gate 34's `SCENARIOS` with new scenario 3 (contracts #3, FR-010 case 3): this run's leg concluded `success` but wrote no fold commit of its own (sibling commit present or not) → reported **partly folded**. Depends on T005, T007.
+- [X] T010 [P] [US1] Extend Gate 34's `SCENARIOS` with new scenario 3 (contracts #3, FR-010 case 3): this run's leg concluded `success` but wrote no fold commit of its own (sibling commit present or not) → reported **not folded** (FR-003 as corrected by #637; the shipped
+  Gate 34 scenario asserts "not folded"). Depends on T005, T007.
 - [X] T011 [P] [US1] Extend Gate 34's `SCENARIOS` with new scenario 4 (contracts #4, FR-010 case 4, FR-007): a fold commit under the announced leg id carrying **no** `Wing-Commander-Run-Id:` trailer at all → not counted as this (or any) run's evidence, regardless of the leg-id match. Depends on T005, T007.
 
 **Checkpoint**: A run whose leg was cancelled without folding, while a sibling run's same-id commit exists, reports "not folded" — SC-001/SC-002 hold for `report-fold-outcomes`.
@@ -166,7 +167,7 @@ Task: "Add RUN_ID_UNDER_TEST/RUN_ID_SIBLING + stamp_run_id to make_repo() (T004)
 # Launch all four new Gate 34 scenarios together, once T007 lands:
 Task: "Scenario 1: own-success + sibling-same-id -> silent (T008)"
 Task: "Scenario 2: own-cancelled-no-commit + sibling-same-id -> not folded (T009)"
-Task: "Scenario 3: own-success-no-commit -> partly folded (T010)"
+Task: "Scenario 3: own-success-no-commit -> not folded (T010)"
 Task: "Scenario 4: no-trailer commit -> not this run's evidence (T011)"
 ```
 
