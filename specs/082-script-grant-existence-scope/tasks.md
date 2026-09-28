@@ -230,3 +230,14 @@ Because this feature is a single-file, single-PR change (per plan.md's
 Summary — no workflow file needs editing, the repository is green the day
 this lands), "incremental delivery" here means incremental *task* order
 within one PR, not separately shippable increments across multiple PRs.
+
+---
+
+## Maintainer Feedback
+
+**Source**: PR #636 review, blocking on #630 (`.github/scripts/verify-stage-tool-lists.py` ~:565)
+
+- [ ] T024 Replace the on-disk-only test `_script_exists` performs (`os.path.isfile` + `os.listdir`, `.github/scripts/verify-stage-tool-lists.py:446-463`) with a git-tracked test — either shell out to `git ls-files --error-unmatch <path>` per lookup, or build one `git ls-files` set up front and test membership — so a path that is merely present on disk (e.g. a stage job's untracked `.wing-commander-pipeline/` checkout) is not treated as "exists" for FR-007 purposes. Preserve the existing case-sensitive-on-Ubuntu guarantee the current docstring calls out.
+- [ ] T025 Apply the same git-tracked test to the forward existence check (`check_grant_existence`'s `exists[rel] = _script_exists(root, rel)` at `.github/scripts/verify-stage-tool-lists.py:555`), per the reviewer's 'consider the same change for the forward check' note, keeping the existing per-path memoization (FR-011).
+- [ ] T026 Add a `--self-test` mutation proving the fix: with an untracked file on disk at a waived path, `check_grant_existence` must NOT report the FR-007 staleness failure; with the same file `git add`-tracked (or an equivalent tracked fixture), it MUST report the failure. Reachable through the gate registry per Constitution VIII.
+- [ ] T027 Re-run `python3 .github/scripts/verify-stage-tool-lists.py --self-test`, `python3 .github/scripts/verify-stage-tool-lists.py`, and `python .github/scripts/run-local-gates.py` to confirm the fix and the full suite are green, including with an untracked `.wing-commander-pipeline/` present in the workspace (the reproduction case).
