@@ -801,9 +801,12 @@ jobs:
         with:
           token: ${{ env.WC_BOT_TOKEN }}
 
+      # (canonical copy; do not condense)
       # Deterministic rescue for work the agent could not push itself --
       # runs whether or not a later agent step ever would have carried it
-      # along -- see clarify.yml.
+      # along (specs/071-agent-push-credential, FR-015). Every other
+      # in-scope stage's equivalent step points back at this copy with
+      # "-- see clarify.yml.".
       - name: Publish stranded commits (post-agent)
         id: publish-stranded
         if: "!cancelled() && steps.agent.outcome != 'skipped'"
