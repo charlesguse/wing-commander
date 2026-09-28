@@ -700,6 +700,8 @@ jobs:
           # the action rejects bot actors unless allow-listed.
           # the pipeline's own App bot is allow-listed too (bare slug) -- see clarify.yml.
           allowed_bots: "github-actions,${{ steps.ctx.outputs.bot-slug }}"
+          # the settled anchor rule for gate_or_artifact/file_path the
+          # prompt below states -- see clarify.yml.
           prompt: |
             You are the finalize stage of this repository's spec-driven
             development pipeline, reporting on specification
@@ -745,8 +747,12 @@ jobs:
                                     "gate_or_artifact": "the heading, job, or gate it concerns"}}]
             "detail" is the only optional key. "gate_or_artifact" is half of
             the dedup key, so give it a stable name (a heading, a job name, a
-            gate name), never a sentence. An empty array means nothing to
-            report. Then continue your own task unchanged.
+            gate name), never a sentence. It must occur, verbatim once
+            punctuation, case, and spacing are ignored, in the file named by
+            "file_path"; if it does not, this finding still reaches the
+            board keyed by a fallback route instead of being dropped. An
+            empty array means nothing to report. Then continue your own task
+            unchanged.
 
             Constraints: read-only — do not run git commit, git push, or any
             gh command; do not edit any file other than the two temp files

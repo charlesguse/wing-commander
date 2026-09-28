@@ -100,6 +100,15 @@ STAGE_WORKFLOWS = (
 PARAGRAPH_SUBSTRING = "do not attempt to file it yourself"
 FILING_STEP_NEEDLE = "wing-commander-stage-findings"
 
+# FR-013 (#569): the settled anchor rule -- gate_or_artifact must occur,
+# verbatim once normalized, in the file named by file_path; a value that
+# does not still reaches the board via a fallback route, never dropped.
+# Checked the same way PARAGRAPH_SUBSTRING is: scanning every step's own
+# `with.prompt` field (never a whole-file substring scan -- see this
+# module's docstring on why that form goes blind to the regression it
+# exists to catch).
+ANCHOR_RULE_SUBSTRING = "keyed by a fallback route instead of being dropped"
+
 # #420: the finding's shape has exactly one home. The prompt check and the
 # structured-schema check below both derive their expectations from it.
 SCHEMA_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -176,6 +185,15 @@ def has_paragraph_in_prompt(doc):
         for step in steps:
             prompt = str(((step or {}).get("with") or {}).get("prompt") or "")
             if PARAGRAPH_SUBSTRING in prompt:
+                return True
+    return False
+
+
+def has_anchor_rule_in_prompt(doc):
+    for _job_id, steps in _step_lists(doc):
+        for step in steps:
+            prompt = str(((step or {}).get("with") or {}).get("prompt") or "")
+            if ANCHOR_RULE_SUBSTRING in prompt:
                 return True
     return False
 
@@ -351,6 +369,14 @@ def check_stage(root, path):
 
     if has_paragraph:
         check_prompt_names_keys(path, doc)
+        if not has_anchor_rule_in_prompt(doc):
+            fail(f"{path} carries the FR-003 findings paragraph but no agent "
+                f"prompt states the FR-013 anchor rule (the stable substring "
+                f"{ANCHOR_RULE_SUBSTRING!r}) — an agent left unaware that an "
+                f"unverifiable gate_or_artifact still reaches the board via "
+                f"a fallback route, rather than being dropped (#569).")
+        else:
+            note(f"{path}: an agent prompt states the FR-013 anchor rule.")
     if path in STRUCTURED_STAGES:
         check_structured_schema(path, text)
 
@@ -475,13 +501,15 @@ def _schema_arg(items):
             "{\"type\":\"array\",\"items\":" + items + "}}}'")
 
 
-def _agent_step(prompt_tail=KEYS_CLAUSE, items=GOOD_ITEMS):
+def _agent_step(prompt_tail=KEYS_CLAUSE, items=GOOD_ITEMS, anchor_rule=True):
     lines = ["      - uses: anthropics/claude-code-action@v1",
              "        with:",
              "          prompt: |",
              "            do not attempt to file it yourself"]
     if prompt_tail:
         lines.append("            " + prompt_tail)
+    if anchor_rule:
+        lines.append("            " + ANCHOR_RULE_SUBSTRING)
     if items is not None:
         lines += ["          claude_args: |",
                   "            " + _schema_arg(items)]
@@ -509,6 +537,9 @@ COMMENT_ONLY_PARAGRAPH_WITH_STEP = (
     HEADER
     + "      # do not attempt to file it yourself (stale comment, not a prompt)\n"
     + _filing_step())
+# #569 regression fixture: paragraph and filing step both present, but no
+# prompt states the FR-013 anchor rule.
+PROMPT_MISSING_ANCHOR_RULE = HEADER + _agent_step(anchor_rule=False) + _filing_step()
 # #420 regression fixtures.
 PROMPT_MISSING_KEY = HEADER + _agent_step(
     prompt_tail=KEYS_CLAUSE.replace(' "gate_or_artifact"', "")) + _filing_step()
@@ -601,6 +632,20 @@ def selftest_missing_health_signal_fails():
         hit = [f for f in found if STAGE_WORKFLOWS[0] in f and expected in f]
         if not hit:
             selftest_fail(f"[{case}] expected a finding for {STAGE_WORKFLOWS[0]}, got: {found}")
+        else:
+            note(f"[{case}] passed")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def selftest_prompt_missing_anchor_rule_fails():
+    case = "a prompt carrying the FR-003 paragraph but not the FR-013 anchor-rule sentence fails, naming the stage (#569)"
+    tmp = _tmp_with_stages({2: PROMPT_MISSING_ANCHOR_RULE})
+    try:
+        found = evaluate(tmp)
+        hit = [f for f in found if STAGE_WORKFLOWS[2] in f and "FR-013 anchor rule" in f]
+        if not hit:
+            selftest_fail(f"[{case}] expected a finding for {STAGE_WORKFLOWS[2]}, got: {found}")
         else:
             note(f"[{case}] passed")
     finally:
@@ -776,6 +821,7 @@ def run_selftest():
     selftest_step_without_paragraph_fails()
     selftest_comment_only_paragraph_does_not_satisfy()
     selftest_missing_health_signal_fails()
+    selftest_prompt_missing_anchor_rule_fails()
     selftest_prompt_missing_key_fails()
     selftest_structured_untyped_items_fails()
     selftest_structured_open_items_fails()
