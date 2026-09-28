@@ -25,9 +25,14 @@ WHAT IT CHECKS
    step in a composite under .github/actions/ (a composite is only ever
    loaded from the pipeline checkout, so it always has one). The guard
    step is:
-     - `run:` exactly GUARD_RUN (read from the pipeline repository's object
-       store at HEAD, never its working tree - the working tree is what the
-       branch may just have overwritten);
+     - `run:` exactly GUARD_RUN: first an inline check that the path is
+       still the trusted checkout (not a symlink, a real .git, its own top
+       level, at the pipeline ref), removing it and failing otherwise; then
+       the guard read from that repository's object store at HEAD, never
+       its working tree - the working tree is what the branch may just have
+       overwritten;
+     - in a workflow, env WC_PIPELINE_REF equal to the job's pipeline
+       checkout `ref:`, so HEAD is compared against it;
      - `shell: bash` (pipefail, so a failed read fails the step; and bash
        on a caller-supplied container image);
      - the same `if:` as the checkout (so it runs exactly when the
@@ -43,18 +48,25 @@ WHAT IT CHECKS
 SELF-TEST
 ---------
 `--self-test` runs the check on the real tree (must pass), then on in-memory
-mutations of it, each of which must fail for its own reason: a guard
-removed, a new unguarded `clean: false` checkout added after an existing
+mutations of it, each of which must fail for its own reason: the symlink
+check dropped, the unverified pre-fix one-liner restored, WC_PIPELINE_REF
+dropped, a guard removed, a new unguarded `clean: false` checkout added after an existing
 guard, a guard whose `if:` differs from its checkout's, a guard that runs
 the script from the working tree, a guard without `shell: bash`, a guard
 with continue-on-error, an inline copy of the check in another step, and
 an unguarded root checkout in a composite. It then runs the shipped guard
 script, read exactly as GUARD_RUN reads it, against scratch repositories:
 a branch tracking nothing under the directory (passes), no repository at
-the root (passes), and a hostile branch that overwrote a composite and
+the root (passes), a pipeline at another commit than WC_PIPELINE_REF
+(refused, removed), a hostile branch that overwrote a composite and
 planted a file whose name carries a newline and `::` (fails with the
 ::error::, restores the trusted file, removes the planted one, and prints
-no workflow command but its own).
+no workflow command but its own), and two branches that track the path
+itself as a symlink - to `.` and to a directory of their own - with their
+own passing guard: the pre-fix one-liner must be fooled by each (so the
+scenario is real), and the shipped guard must refuse each and leave
+nothing at the path. Every workspace is built with actions/checkout's own
+`git checkout --force -B`.
 """
 import argparse
 import copy
@@ -69,8 +81,27 @@ import yaml
 
 PIPE = ".wing-commander-pipeline"
 GUARD_SCRIPT = ".github/scripts/pipeline-checkout-guard.sh"
-GUARD_RUN = ("git -C .wing-commander-pipeline cat-file blob "
-             "HEAD:.github/scripts/pipeline-checkout-guard.sh | bash -s")
+# The guard step's whole run: block, pinned byte for byte (stripped). Lines 1-2
+# run BEFORE anything is read from .wing-commander-pipeline and must stay
+# inline: they are the only trusted code left once a branch has replaced
+# the directory. A forced checkout of a branch that tracks the path itself
+# (e.g. a symlink to `.`) deletes the untracked pipeline directory, .git and
+# all, so `git -C .wing-commander-pipeline` would resolve to the root repo -
+# the branch - and read the branch's own guard. So: the path must not be a
+# symlink, must hold a real (non-symlink) .git directory, must be its own
+# repository's top level, and, when the job's pipeline ref is a full SHA,
+# must sit at that commit. Otherwise it is removed (so a later always()-
+# gated `uses: ./.wing-commander-pipeline/...` fails to resolve rather than
+# load branch code) and the step fails. Line 3 then runs the tracked-path
+# check from the verified repository's object store.
+GUARD_RUN = "\n".join([
+    'p=.wing-commander-pipeline; want="$(cd "$GITHUB_WORKSPACE" && pwd -P)/$p"',
+    'if [ -L "$p" ] || [ ! -d "$p" ] || [ -L "$p/.git" ] || [ ! -d "$p/.git" ] || [ "$(git -C "$p" rev-parse --show-toplevel 2>/dev/null)" != "$want" ] || { [[ "${WC_PIPELINE_REF:-}" =~ ^[0-9a-f]{40}$ ]] && [ "$(git -C "$p" rev-parse HEAD 2>/dev/null)" != "$WC_PIPELINE_REF" ]; }; then rm -rf -- "$p"; echo "::error::wing-commander: $p is no longer the trusted pipeline checkout (a symlink, a missing or replaced .git, or another commit): the branch just checked out replaced it. Removed it so no later step loads branch code from there (#611)."; exit 1; fi',
+    'git -C "$p" cat-file blob HEAD:.github/scripts/pipeline-checkout-guard.sh | bash -s',
+])
+# The verification clauses the self-test drops one at a time.
+SYMLINK_CHECK = '[ -L "$p" ] || '
+PIPELINE_REF_ENV = "WC_PIPELINE_REF"
 GUARD_NAME = "Refuse a branch that tracks .wing-commander-pipeline/"
 ROOT_PATHS = (None, "", ".", "./")
 
@@ -100,13 +131,21 @@ def step_label(step, idx):
     return "step {0} ({1!r})".format(idx + 1, step.get("name") or step.get("uses"))
 
 
-def guard_problems(checkout, nxt):
-    """-> list of reasons nxt is not a valid guard for checkout."""
+def guard_problems(checkout, nxt, pipeline_ref):
+    """-> list of reasons nxt is not a valid guard for checkout.
+    pipeline_ref: the job's pipeline checkout `with.ref` expression, or None
+    (a composite, or a pipeline checkout with no ref)."""
     if not isinstance(nxt, dict):
         return ["no step follows it"]
     probs = []
     if str(nxt.get("run", "")).strip() != GUARD_RUN:
-        probs.append("the next step's run: is not exactly `{0}`".format(GUARD_RUN))
+        probs.append("the next step's run: is not exactly GUARD_RUN (the inline "
+                     "verification of {0} followed by the object-store read of {1})".format(
+                         PIPE, GUARD_SCRIPT))
+    env = nxt.get("env") or {}
+    if pipeline_ref is not None and str(env.get(PIPELINE_REF_ENV, "")).strip() != str(pipeline_ref).strip():
+        probs.append("the guard step's env {0} ({1!r}) is not the pipeline checkout's ref ({2!r})".format(
+            PIPELINE_REF_ENV, env.get(PIPELINE_REF_ENV), pipeline_ref))
     if nxt.get("shell") != "bash":
         probs.append("the guard step has no `shell: bash`")
     c_if = checkout.get("if")
@@ -125,18 +164,20 @@ def check_steps(where, steps, require_after_pipeline):
     -> (failures, sites)."""
     failures, sites = [], 0
     seen_pipeline = not require_after_pipeline
+    pipeline_ref = None
     for i, step in enumerate(steps):
         if not is_checkout(step):
             continue
         path = checkout_path(step)
         if path == PIPE:
             seen_pipeline = True
+            pipeline_ref = (step.get("with") or {}).get("ref")
             continue
         if not seen_pipeline or path not in ROOT_PATHS:
             continue
         sites += 1
         nxt = steps[i + 1] if i + 1 < len(steps) else None
-        for prob in guard_problems(step, nxt):
+        for prob in guard_problems(step, nxt, pipeline_ref):
             failures.append("{0}: {1} checks a branch out into the workspace root "
                             "after the {2} checkout but is not guarded: {3}.".format(
                                 where, step_label(step, i), PIPE, prob))
@@ -181,9 +222,9 @@ def check(docs, root="."):
         if body == GUARD_RUN:
             continue
         if "pipeline-checkout-guard.sh" in body:
-            failures.append("{0}: names pipeline-checkout-guard.sh other than as `{1}` -- the "
-                            "guard must be read from the pipeline repository's object store, "
-                            "never its working tree.".format(where, GUARD_RUN))
+            failures.append("{0}: names pipeline-checkout-guard.sh other than as GUARD_RUN -- the "
+                            "guard must be read from the verified pipeline repository's object "
+                            "store, never its working tree.".format(where))
         if PIPE in body and ("ls-files" in body or "ls-tree" in body):
             failures.append("{0}: lists tracked paths under {1} inline -- a pasted copy of the "
                             "check; call {2} instead (CLAUDE.md, one home).".format(
@@ -254,12 +295,27 @@ def mutations(docs):
         steps_of(d).insert(0, {"name": "inline", "shell": "bash",
                                "run": "test -z \"$(git ls-files -- .wing-commander-pipeline)\""})
 
+    def no_symlink_check(d):
+        run = steps_of(d)[i + 1]["run"]
+        assert SYMLINK_CHECK in run
+        steps_of(d)[i + 1]["run"] = run.replace(SYMLINK_CHECK, "", 1)
+
+    def pre_fix_run(d):
+        steps_of(d)[i + 1]["run"] = PRE_FIX_RUN
+
+    def no_pipeline_ref(d):
+        del steps_of(d)[i + 1]["env"][PIPELINE_REF_ENV]
+
     cpath, ci = _composite_with_checkout(docs)
 
     def composite_unguarded(d):
         del d[cpath]["runs"]["steps"][ci + 1]
 
     return [
+        ("a guard that drops the symlink check", no_symlink_check, "is not exactly GUARD_RUN"),
+        ("a guard reverted to the unverified pre-fix one-liner", pre_fix_run, "is not exactly GUARD_RUN"),
+        ("a guard without the pipeline ref to compare HEAD to", no_pipeline_ref,
+         "is not the pipeline checkout's ref"),
         ("a guard removed", remove_guard, "is not guarded"),
         ("a new unguarded clean: false checkout", add_unguarded, "'Checkout another branch'"),
         ("a guard with a different if:", mismatched_if, "differs from the checkout's"),
@@ -277,11 +333,29 @@ def _git(cwd, *args):
                           cwd=cwd, check=True, capture_output=True, text=True)
 
 
-def _run_guard(ws):
+def _run_guard(ws, script=None, pipeline_ref=None):
+    """Run a guard step body the way `shell: bash` does, in workspace ws."""
     env = dict(os.environ)
     env.pop("GITHUB_STEP_SUMMARY", None)
-    return subprocess.run(["bash", "-o", "pipefail", "-ec", GUARD_RUN], cwd=ws,
-                          capture_output=True, text=True, env=env)
+    env.pop(PIPELINE_REF_ENV, None)
+    env["GITHUB_WORKSPACE"] = ws
+    if pipeline_ref is not None:
+        env[PIPELINE_REF_ENV] = pipeline_ref
+    return subprocess.run(["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c",
+                           script or GUARD_RUN], cwd=ws, capture_output=True, text=True, env=env)
+
+
+# The pre-fix one-liner: read the guard from whatever repository
+# `git -C .wing-commander-pipeline` resolves to, with no verification.
+PRE_FIX_RUN = ("git -C .wing-commander-pipeline cat-file blob "
+               "HEAD:.github/scripts/pipeline-checkout-guard.sh | bash -s")
+
+
+def _write(root, rel, text):
+    full = os.path.join(root, rel)
+    os.makedirs(os.path.dirname(full), exist_ok=True)
+    with open(full, "w") as f:
+        f.write(text)
 
 
 def behavioural(repo_root):
@@ -290,65 +364,109 @@ def behavioural(repo_root):
     tmp = tempfile.mkdtemp(prefix="gate116-")
     try:
         src = os.path.join(tmp, "pipe-src")
-        os.makedirs(os.path.join(src, ".github", "scripts"))
-        os.makedirs(os.path.join(src, ".github", "actions", "x"))
-        shutil.copy(os.path.join(repo_root, GUARD_SCRIPT), os.path.join(src, GUARD_SCRIPT))
+        _write(src, GUARD_SCRIPT, open(os.path.join(repo_root, GUARD_SCRIPT)).read())
         trusted = os.path.join(".github", "actions", "x", "action.yml")
-        with open(os.path.join(src, trusted), "w") as f:
-            f.write("trusted\n")
+        _write(src, trusted, "trusted\n")
         _git(src, "init", "-q")
         _git(src, "add", "-A")
         _git(src, "commit", "-qm", "pipeline")
+        pipe_sha = _git(src, "rev-parse", "HEAD").stdout.strip()
 
         # No repository at the root: passes.
         ws0 = os.path.join(tmp, "ws0")
         os.makedirs(ws0)
         _git(ws0, "clone", "-q", src, PIPE)
-        r = _run_guard(ws0)
+        r = _run_guard(ws0, pipeline_ref=pipe_sha)
         if r.returncode != 0:
             bad.append("no root repository: expected a pass, got rc={0}: {1}{2}".format(
                 r.returncode, r.stdout, r.stderr))
 
-        # The consumer repository: a clean branch, and a hostile one that
-        # tracks a composite's path and a crafted name under the directory.
+        # The consumer repository. main is clean. hostile tracks a
+        # composite's path and a crafted name under the directory. The two
+        # symlink branches track the path ITSELF as a symlink (to `.`, and to
+        # a directory of their own) and carry their own guard, which passes.
         consumer = os.path.join(tmp, "consumer")
         os.makedirs(consumer)
         _git(consumer, "init", "-q")
-        with open(os.path.join(consumer, "README"), "w") as f:
-            f.write("consumer\n")
+        _write(consumer, "README", "consumer\n")
         _git(consumer, "add", "README")
         _git(consumer, "commit", "-qm", "consumer")
-        _git(consumer, "checkout", "-q", "-b", "hostile")
+
+        _git(consumer, "checkout", "-q", "-b", "hostile", "main")
         planted = os.path.join(PIPE, "::warning::x\n::error::y")
-        os.makedirs(os.path.join(consumer, PIPE, ".github", "actions", "x"))
-        with open(os.path.join(consumer, PIPE, trusted), "w") as f:
-            f.write("EVIL\n")
-        with open(os.path.join(consumer, planted), "w") as f:
-            f.write("planted\n")
+        _write(consumer, os.path.join(PIPE, trusted), "EVIL\n")
+        _write(consumer, planted, "planted\n")
         _git(consumer, "add", "-f", "--", os.path.join(PIPE, trusted), planted)
         _git(consumer, "commit", "-qm", "hostile")
+        _git(consumer, "checkout", "-q", "-f", "main")
 
-        # The job's workspace, as the stages build it: the pipeline checked
-        # out at PIPE first, then a forced checkout of a consumer branch
-        # into the root with nothing cleaned (actions/checkout, clean: false).
-        ws = os.path.join(tmp, "ws")
-        os.makedirs(ws)
-        _git(ws, "init", "-q")
-        _git(ws, "clone", "-q", src, PIPE)
-        _git(ws, "fetch", "-q", consumer, "main:refs/remotes/origin/main",
-             "hostile:refs/remotes/origin/hostile")
-        _git(ws, "checkout", "-q", "-f", "origin/main")
-        r = _run_guard(ws)
+        for branch, target, prefix in (("symlink-dot", ".", ""),
+                                       ("symlink-other", "evil", "evil")):
+            _git(consumer, "checkout", "-q", "-f", "-b", branch, "main")
+            # `git -C` resolves to the root repository either way, and
+            # `HEAD:<path>` is read from its top level.
+            _write(consumer, GUARD_SCRIPT, "exit 0\n")
+            _write(consumer, os.path.join(prefix, trusted), "EVIL\n")
+            os.symlink(target, os.path.join(consumer, PIPE))
+            _git(consumer, "add", "-f", "-A")
+            _git(consumer, "commit", "-qm", branch)
+            _git(consumer, "checkout", "-q", "-f", "main")
+            _git(consumer, "clean", "-qffdx")
+
+        def workspace(name, branch):
+            """The job's workspace as the stages build it: the pipeline
+            checked out at PIPE, then a forced checkout of a consumer branch
+            into the root with nothing cleaned - actions/checkout with
+            clean: false runs `git checkout --force -B <branch> <ref>`."""
+            ws = os.path.join(tmp, name)
+            os.makedirs(ws)
+            _git(ws, "init", "-q")
+            _git(ws, "clone", "-q", src, PIPE)
+            _git(ws, "fetch", "-q", consumer, "+refs/heads/*:refs/remotes/origin/*")
+            _git(ws, "checkout", "-q", "--force", "-B", "work", "origin/" + branch)
+            return ws
+
+        ws = workspace("ws", "main")
+        r = _run_guard(ws, pipeline_ref=pipe_sha)
         if r.returncode != 0:
             bad.append("clean branch: expected a pass, got rc={0}: {1}{2}".format(
                 r.returncode, r.stdout, r.stderr))
+        r = _run_guard(ws, pipeline_ref="0" * 40)
+        if r.returncode == 0 or os.path.lexists(os.path.join(ws, PIPE)):
+            bad.append("pipeline at another commit than {0}: expected a refusal that removes "
+                       "the directory, got rc={1}: {2}".format(PIPELINE_REF_ENV, r.returncode, r.stdout))
 
-        _git(ws, "checkout", "-q", "-f", "origin/hostile")
+        for branch, target in (("symlink-dot", "."), ("symlink-other", "evil")):
+            # The pre-fix one-liner is fooled: proves the scenario is real.
+            ws = workspace("ws-pre-" + branch, branch)
+            if not os.path.islink(os.path.join(ws, PIPE)):
+                bad.append("{0}: the forced checkout did not replace the pipeline directory "
+                           "with the symlink, so this scenario does not reproduce the "
+                           "finding".format(branch))
+            r = _run_guard(ws, script=PRE_FIX_RUN)
+            if r.returncode != 0:
+                bad.append("{0}: the pre-fix invocation was expected to be fooled (pass), "
+                           "got rc={1}".format(branch, r.returncode))
+            # The shipped guard refuses it and leaves nothing at the path.
+            ws = workspace("ws-" + branch, branch)
+            r = _run_guard(ws, pipeline_ref=pipe_sha)
+            if r.returncode == 0:
+                bad.append("{0}: expected a refusal, got a pass: {1}".format(branch, r.stdout))
+            if "::error::wing-commander: .wing-commander-pipeline is no longer" not in r.stdout:
+                bad.append("{0}: no ::error:: for the replaced pipeline: {1}".format(branch, r.stdout))
+            if os.path.lexists(os.path.join(ws, PIPE)):
+                bad.append("{0}: something still sits at {1} after the refusal, so a later "
+                           "`uses: ./{1}/...` could load branch code".format(branch, PIPE))
+            if not os.path.isfile(os.path.join(ws, "README")) or (
+                    target != "." and not os.path.isdir(os.path.join(ws, target))):
+                bad.append("{0}: the refusal removed more than the path itself".format(branch))
+
+        ws = workspace("ws-hostile", "hostile")
         with open(os.path.join(ws, PIPE, trusted)) as f:
             if f.read() != "EVIL\n":
                 bad.append("hostile branch: the forced checkout did not overwrite the "
                            "pipeline file, so this scenario does not reproduce #611")
-        r = _run_guard(ws)
+        r = _run_guard(ws, pipeline_ref=pipe_sha)
         if r.returncode == 0:
             bad.append("hostile branch: expected a failure, got a pass: " + r.stdout)
         if "::error::wing-commander: the checked-out branch" not in r.stdout:
@@ -405,7 +523,10 @@ def self_test():
         bad += 1
         print("[FAIL] guard script: " + b)
     if not bad:
-        print("[ok] guard script: passes a clean branch and a missing root repo; refuses and restores on a hostile branch")
+        print("[ok] guard: passes a clean branch and a missing root repo; refuses a pipeline at "
+              "another commit; refuses and restores on a branch tracking files under the "
+              "directory; refuses a branch tracking the path as a symlink (to . and to its own "
+              "directory) that fools the pre-fix one-liner, and leaves nothing at the path")
     print("Gate 116 self-test: {0}".format("passed" if not bad else "{0} failure(s)".format(bad)))
     return 1 if bad else 0
 

@@ -4184,16 +4184,20 @@ jobs:
       # consumer branch out into the root with clean: false; a branch that
       # tracks files there overwrote the pipeline's composites, and later
       # steps ran them with the App token. Every such checkout (and every
-      # root checkout in a composite) must be followed at once by the step
-      # that runs .github/scripts/pipeline-checkout-guard.sh, read from the
-      # pipeline repository's object store, with shell: bash and the
-      # checkout's own if:. The self-test also drives the shipped guard
-      # against a scratch hostile branch. Numbered 116: 101-115 are held by
-      # other in-flight PRs.
+      # root checkout in a composite) must be followed at once by the
+      # guard step, whose run: block is pinned byte for byte: it first
+      # verifies inline that the directory is still the trusted checkout
+      # (not a symlink, a real .git, its own top level, at the pipeline
+      # ref) and removes it otherwise, then runs
+      # .github/scripts/pipeline-checkout-guard.sh read from that
+      # repository's object store, with shell: bash and the checkout's own
+      # if:. The self-test also drives the shipped guard against scratch
+      # hostile branches, including one that tracks the path as a symlink.
+      # Numbered 116: 101-115 are held by other in-flight PRs.
       - name: "Gate 116 — every branch checkout after the .wing-commander-pipeline checkout is followed by the pipeline-checkout guard"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-pipeline-checkout-guard.py
-      - name: "Gate 116 self-test — a removed guard, a new unguarded clean: false checkout, a mismatched if:, a working-tree read, a missing shell: bash, continue-on-error, an inline copy, and an unguarded composite checkout each fail; the guard refuses and restores on a hostile branch"
+      - name: "Gate 116 self-test — a dropped symlink check, the unverified pre-fix read, a missing pipeline ref, a removed guard, a new unguarded clean: false checkout, a mismatched if:, a working-tree read, a missing shell: bash, continue-on-error, an inline copy, and an unguarded composite checkout each fail; the guard refuses symlinked and overwritten pipelines"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-pipeline-checkout-guard.py --self-test
 

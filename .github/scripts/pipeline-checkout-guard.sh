@@ -17,19 +17,24 @@
 # the workspace is a later change; this guard closes the hole until then.
 #
 # HOW IT IS INVOKED
-# Directly after every such checkout (Gate 116,
-# verify-pipeline-checkout-guard.py, enforces the placement), always as:
-#
-#   git -C .wing-commander-pipeline cat-file blob HEAD:.github/scripts/pipeline-checkout-guard.sh | bash -s
-#
-# with `shell: bash` (so pipefail fails the step if the read fails) and the
-# same `if:` as the checkout. The guard is read from the pipeline
-# repository's object store at its checked-out commit, never from its
-# working tree: the working tree is exactly what a hostile branch may just
-# have overwritten, so `bash .wing-commander-pipeline/.github/scripts/...`
-# (or a composite under .wing-commander-pipeline/) would run the branch's
-# copy of this guard. Git refuses to track any path with a `.git`
-# component, so no branch can write into .wing-commander-pipeline/.git/.
+# Directly after every such checkout, by a step whose whole run: block is
+# pinned byte for byte by Gate 116 (verify-pipeline-checkout-guard.py,
+# GUARD_RUN), with `shell: bash`, the checkout's own `if:`, and
+# WC_PIPELINE_REF set to the job's resolved pipeline ref. That block first
+# verifies, inline, that .wing-commander-pipeline is still the trusted
+# checkout: not a symlink, holding a real .git directory, its own
+# repository's top level, and (when WC_PIPELINE_REF is a full SHA) at that
+# commit. A branch that tracks the path itself (say, a symlink to `.`)
+# makes the forced checkout delete the whole untracked directory, .git
+# included, and without that check `git -C .wing-commander-pipeline` would
+# resolve to the root repository - the branch - and run the branch's own
+# copy of this file. On any mismatch the block removes whatever sits at the
+# path and fails. Only then does it read this file from the verified
+# repository's object store at HEAD, never from its working tree (which a
+# hostile branch may just have overwritten), and pipe it to `bash -s`;
+# pipefail fails the step if the read fails. Git refuses to track any path
+# with a `.git` component, so no branch can write into
+# .wing-commander-pipeline/.git/ while the directory survives.
 #
 # WHAT IT DOES
 # - No repository at the workspace root (a checkout that failed before
