@@ -23,7 +23,7 @@ In each of fix, review and readiness:
      actions/checkout step counted here: the trusted-copy sidecar checkout
      every board-loop job carries (spec 086; see board-loop.yml's header)
      is excluded by its canonical name, because it lands after the
-     snapshot step and is Gate 100's subject, not this gate's -- Gate 100
+     snapshot step and is Gate 104's subject, not this gate's -- Gate 104
      (verify-board-loop-composite-provenance.py) is what holds a step
      bearing that name to `ref: ${{ github.sha }}`, a sidecar `path:` and
      a fail-closed shape. Any other second checkout still fails here;
@@ -75,7 +75,7 @@ import yaml  # noqa: E402
 WORKFLOW = os.path.join(".github", "workflows", "board-loop.yml")
 JOBS = ("fix", "review", "readiness")
 SNAPSHOT_NAME = "Snapshot helper scripts (before any agent runs)"
-# Gate 100's subject, not this gate's (spec 086): the sidecar checkout that
+# Gate 104's subject, not this gate's (spec 086): the sidecar checkout that
 # every board-loop job takes so its composites resolve from $GITHUB_SHA. It
 # sits after the snapshot step, so it is excluded from this gate's "one job
 # checkout" count by name -- see WHAT IT CHECKS, 1.

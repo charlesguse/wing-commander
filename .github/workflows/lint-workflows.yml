@@ -4139,7 +4139,7 @@ jobs:
       # to the working tree's .github/scripts (the gate-suite call
       # excepted). The snapshot step is also run against a scratch
       # repository whose working tree differs from its commit. The
-      # composite half of this same provenance rule is Gate 101,
+      # composite half of this same provenance rule is Gate 104,
       # two gates below.
       - name: "Gate 98 — board-loop's fix, review and readiness run helpers from a pristine snapshot, never the working tree"
         if: "!cancelled()"
@@ -4185,7 +4185,7 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-stage-turn-budget-docs.py --self-test
 
-      # Gate 101 — #468/#504/#615: board-loop.yml's review, readiness and fix
+      # Gate 104 — #468/#504/#615: board-loop.yml's review, readiness and fix
       # (resume path, and every post-agent step) jobs check out board-item
       # content and then resolve the loop's own shared composites by a
       # relative `uses:` path, which resolves from that same untrusted
@@ -4197,15 +4197,16 @@ jobs:
       # a write-protect step (chmod -R a-w) immediately after each job's
       # trusted-copy checkout, since the fixer and review-fixup agents hold
       # unrestricted Write/Edit on the workspace and could otherwise rewrite
-      # the sidecar before it runs with the App private key. Numbered 101,
-      # not the 100 this branch's own commit picked next: #587's Gate 100
-      # (every published stage's max-turns default agrees with its
-      # docs/adoption.md row, immediately above) claimed 100 first on the
-      # default branch before this branch's rebase landed.
-      - name: "Gate 101 — every uses: ./.github/actions/ reference in board-loop.yml resolves from the trusted copy, never the workspace"
+      # the sidecar before it runs with the App private key. Numbered 104,
+      # not the 99 this branch's own commit first picked (#450/#463's Gate 99,
+      # converged-means-tasks-done, immediately above, claimed 99 first on the
+      # default branch before this branch's rebase landed) nor the 100 this
+      # gate held next (main's own Gate 100, spec 079, claimed 100 first on
+      # the default branch before this branch's second rebase landed).
+      - name: "Gate 104 — every uses: ./.github/actions/ reference in board-loop.yml resolves from the trusted copy, never the workspace"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-loop-composite-provenance.py
-      - name: "Gate 101 self-test — a raw workspace uses:, a moved, dropped, mis-pinned, or continue-on-error checkout, a missing .gitignore entry, a widened ban, or a dropped write-protect step each fail"
+      - name: "Gate 104 self-test — a raw workspace uses:, a moved, dropped, mis-pinned, or continue-on-error checkout, a missing .gitignore entry, a widened ban, or a dropped write-protect step each fail"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-loop-composite-provenance.py --self-test
 

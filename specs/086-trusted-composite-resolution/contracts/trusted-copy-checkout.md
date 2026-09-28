@@ -27,7 +27,7 @@ followed, in the same job, by a provenance line (data-model.md
     echo "board-loop: composites resolved from $(git -C .wc-pristine-repo rev-parse HEAD) at ref ${{ github.sha }}." >> "$GITHUB_STEP_SUMMARY"
 ```
 
-The step's `name:` is the canonical string Gate 100 matches on
+The step's `name:` is the canonical string Gate 104 matches on
 (contracts/gate-99.md rule (b)/(c)/(d)) — it MUST NOT be reworded per call
 site.
 
@@ -60,7 +60,7 @@ Concretely:
 
 Every `uses: ./.github/actions/<name>` anywhere in `board-loop.yml`
 becomes `uses: ./.wc-pristine-repo/.github/actions/<name>`. No exceptions,
-no job-scoped list — Gate 100 bans the raw form file-wide
+no job-scoped list — Gate 104 bans the raw form file-wide
 (contracts/gate-99.md rule (a)).
 
 ## Fail-closed (FR-006)
@@ -81,7 +81,7 @@ workspace-relative `uses:`.
 the fixer and review-fixup agents' own `Bash(git add:*)` tool grant —
 stages it into the item's branch, regardless of whether that invocation
 names the path, uses `-A`, or uses `.`. This is a repository-file fact,
-not a per-step guard; Gate 100 rule (e) checks the `.gitignore` entry
+not a per-step guard; Gate 104 rule (e) checks the `.gitignore` entry
 exists and matches the sidecar path exactly.
 
 ## What this step is not

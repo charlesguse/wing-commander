@@ -28,7 +28,7 @@ This pairs, without replacing, the existing `git archive`-based
 `.github/scripts`/`.github/schemas` snapshot (issue #583, Gate 98) at the
 same commit, so a single run's workflow definition, composites, and
 helper scripts are all provably one provenance (FR-003/FR-004). A new
-gate, Gate 100 (`verify-board-loop-composite-provenance.py`), replaces the
+gate, Gate 104 (`verify-board-loop-composite-provenance.py`), replaces the
 per-job allowlist shape Gate 98 uses for `run:` blocks with an
 unconditional, file-wide rule for `uses:` blocks: no
 `uses: ./.github/actions/` may appear anywhere in `board-loop.yml`, and
@@ -53,7 +53,7 @@ feature adds one more call site per job, never a new action.
 a `$GITHUB_STEP_SUMMARY` line, not a durable store, matching how the
 fix job's branch-cut step already reports its own base SHA.
 
-**Testing**: Gate 100 carries an embedded `--self-test` mode against
+**Testing**: Gate 104 carries an embedded `--self-test` mode against
 mutations of the real workflow text, following Gate 97/98's exact
 convention (a `MUTATIONS` list, each asserted caught, plus a
 clean-on-unmutated-input baseline check) — registered in
@@ -122,7 +122,7 @@ an item (FR-015).
   trigger before or after this feature (FR-062/FR-063 of spec 057
   untouched) — nothing here widens the published, adopter-pinned surface.
   PASS.
-- **VIII. A Green Check Means What It Says**: Gate 100 is reachable through
+- **VIII. A Green Check Means What It Says**: Gate 104 is reachable through
   the gate registry, runs the same subject with the same arguments locally
   and in CI, is triggered by any change to `board-loop.yml`, fails loudly
   when it cannot parse its subject, is not suppressible by an unrelated
@@ -163,7 +163,7 @@ specs/086-trusted-composite-resolution/
 ├── data-model.md                    # Phase 1 output — entities and shapes
 ├── contracts/
 │   ├── trusted-copy-checkout.md     # The sidecar checkout step's exact shape and placement rule
-│   ├── gate-99.md                   # Gate 100's rules, self-test mutations, registration
+│   ├── gate-99.md                   # Gate 104's rules, self-test mutations, registration
 │   └── documentation-updates.md     # FR-014's canonical-statement/pointer map
 ├── quickstart.md                    # Phase 1 output — validation drills
 ├── checklists/requirements.md       # from intake, unchanged by this stage
@@ -184,12 +184,12 @@ scripts, and one ignore-file entry.
 │   │                         # rewritten to uses: ./.wc-pristine-repo/.github/actions/;
 │   │                         # header gains the canonical trusted-copy
 │   │                         # statement (FR-014, contracts/documentation-updates.md)
-│   └── lint-workflows.yml    # EDITED — registers Gate 100 (2 steps + prose
+│   └── lint-workflows.yml    # EDITED — registers Gate 104 (2 steps + prose
 │                             # comment); Gate 98's own comment block gains
-│                             # one pointer line to Gate 100 for the
+│                             # one pointer line to Gate 104 for the
 │                             # composite half of the same provenance rule
 ├── scripts/
-│   └── verify-board-loop-composite-provenance.py   # NEW — Gate 100, --self-test mode (contracts/gate-99.md)
+│   └── verify-board-loop-composite-provenance.py   # NEW — Gate 104, --self-test mode (contracts/gate-99.md)
 └── actions/
     └── wing-commander-context/action.yml           # EDITED — header gains
         # one pointer line to board-loop.yml's own trusted-copy statement,

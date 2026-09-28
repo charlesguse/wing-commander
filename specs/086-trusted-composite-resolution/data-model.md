@@ -1,7 +1,7 @@
 # Data Model: Composite Resolution in board-loop's Item-Branch Jobs
 
 This feature persists nothing in a new storage layer (research.md D9):
-every entity below is either a workflow-file structural shape Gate 100
+every entity below is either a workflow-file structural shape Gate 104
 checks statically, or a fact written to a run's own
 `$GITHUB_STEP_SUMMARY`. This document gives each of the spec's Key
 Entities a concrete, checkable shape.
@@ -12,28 +12,28 @@ The sidecar checkout every covered job establishes.
 
 | Field | Type | Source | Notes |
 |---|---|---|---|
-| `ref` | string, always `${{ github.sha }}` | the checkout step's own `with.ref` | FR-003 — the commit whose `board-loop.yml` is running; Gate 100 rule (c) fails any other expression or a hardcoded ref |
-| `path` | string, always `.wc-pristine-repo` | the checkout step's own `with.path` | research.md D1; must match the `.gitignore` entry Gate 100 rule (e) checks and every rewritten `uses:` prefix |
-| `established_before` | ordered list of step names in the same job | job structure | must include every `uses: ./.wc-pristine-repo/...` reference, every `wing-commander-context` call, and every `anthropics/claude-code-action@` step (FR-002); Gate 100 rule (b) |
-| `fail_closed` | boolean, must be `true` | absence of `continue-on-error: true` and of a skipping `if:` on the checkout step | FR-006; Gate 100 rule (d) |
+| `ref` | string, always `${{ github.sha }}` | the checkout step's own `with.ref` | FR-003 — the commit whose `board-loop.yml` is running; Gate 104 rule (c) fails any other expression or a hardcoded ref |
+| `path` | string, always `.wc-pristine-repo` | the checkout step's own `with.path` | research.md D1; must match the `.gitignore` entry Gate 104 rule (e) checks and every rewritten `uses:` prefix |
+| `established_before` | ordered list of step names in the same job | job structure | must include every `uses: ./.wc-pristine-repo/...` reference, every `wing-commander-context` call, and every `anthropics/claude-code-action@` step (FR-002); Gate 104 rule (b) |
+| `fail_closed` | boolean, must be `true` | absence of `continue-on-error: true` and of a skipping `if:` on the checkout step | FR-006; Gate 104 rule (d) |
 | `resolved_commit` | string (a real SHA) | `$(git -C .wc-pristine-repo rev-parse HEAD)`, echoed at runtime | FR-013 — written to `$GITHUB_STEP_SUMMARY`, not stored; equals `ref` unless the checkout itself is broken, in which case the job already failed (FR-006) before this line runs |
-| `write_protected` | boolean, must be `true` | presence of the canonical `Write-protect board-loop's own trusted copy (composites)` step (`chmod -R a-w .wc-pristine-repo`), after the checkout and before every dependent reference | #640 maintainer review; FR-002/FR-006/FR-007; Gate 100 rule (f) |
+| `write_protected` | boolean, must be `true` | presence of the canonical `Write-protect board-loop's own trusted copy (composites)` step (`chmod -R a-w .wc-pristine-repo`), after the checkout and before every dependent reference | #640 maintainer review; FR-002/FR-006/FR-007; Gate 104 rule (f) |
 
-## Board-Loop Job (Gate 100's subject)
+## Board-Loop Job (Gate 104's subject)
 
-Every job in `board-loop.yml`, as Gate 100 sees it.
+Every job in `board-loop.yml`, as Gate 104 sees it.
 
 | Field | Type | Notes |
 |---|---|---|
 | `name` | string | `select`, `resolve-model`, `triage`, `route`, `fix`, `review`, `readiness`, `prove-gate`, `prove` |
 | `has_item_checkout` | boolean | true for `fix` (resume path onward), `review`, `readiness` — the pre-existing "item-branch job" set (spec.md Key Entities); informational only, since FR-011 makes the rule apply regardless |
-| `composite_refs` | list of `{step_name, uses_path}` | every `uses: ./...` line in the job; Gate 100 rule (a) fails if any `uses_path` starts with `./.github/actions/` rather than `./.wc-pristine-repo/.github/actions/` |
-| `sidecar_checkout_present` | boolean | true iff the job contains the canonical `Checkout board-loop's own trusted copy (composites)` step; required whenever `composite_refs` is non-empty (Gate 100 rule (b)) |
+| `composite_refs` | list of `{step_name, uses_path}` | every `uses: ./...` line in the job; Gate 104 rule (a) fails if any `uses_path` starts with `./.github/actions/` rather than `./.wc-pristine-repo/.github/actions/` |
+| `sidecar_checkout_present` | boolean | true iff the job contains the canonical `Checkout board-loop's own trusted copy (composites)` step; required whenever `composite_refs` is non-empty (Gate 104 rule (b)) |
 | `sidecar_checkout_position` | int (step index) | must be less than the index of every entry in `composite_refs`, every `wing-commander-context` call, and every `anthropics/claude-code-action@` step in the same job |
 
 `resolve-model` is the one job with `composite_refs == []` today
 (research.md D3) — it has no `sidecar_checkout_present` requirement unless
-a future change adds a composite reference, at which point Gate 100's rule
+a future change adds a composite reference, at which point Gate 104's rule
 (b) applies to it exactly as to any other job, with no gate edit.
 
 ## Provenance Record (FR-013)
@@ -46,7 +46,7 @@ Not a stored entity — a run-observable fact.
 | `ref` | string | `$GITHUB_STEP_SUMMARY` line, literal `github.sha` value | e.g. `a34fea2...` |
 | `resolved_commit` | string | same line | `git -C .wc-pristine-repo rev-parse HEAD`, which must equal `ref` |
 
-## Gate 100 Fixture Set
+## Gate 104 Fixture Set
 
 Validated by `verify-board-loop-composite-provenance.py --self-test`
 (research.md D7). Each row is one checked-in mutation of the real
@@ -77,4 +77,4 @@ text for each row).
 | `.github/workflows/board-loop.yml` (file header) | Canonical statement: what the sidecar is, why, and the one provenance rule (D13) covering both the composite checkout and the pre-existing helper/schema snapshot |
 | Each job's sidecar checkout step (8 call sites) | Pointer: "see this file's header" — never repeated prose |
 | `.github/actions/wing-commander-context/action.yml` (header) | Pointer: board-loop.yml is not a published stage and resolves composites the same way from its own repository at `github.sha` — see board-loop.yml's header |
-| `.github/workflows/lint-workflows.yml` (Gate 98's comment block) | Pointer: the composite half of this same provenance property is Gate 100 |
+| `.github/workflows/lint-workflows.yml` (Gate 98's comment block) | Pointer: the composite half of this same provenance property is Gate 104 |

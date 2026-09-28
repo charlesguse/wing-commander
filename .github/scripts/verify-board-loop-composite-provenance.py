@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gate 100 -- every uses: ./.github/actions/ reference in board-loop.yml
+"""Gate 104 -- every uses: ./.github/actions/ reference in board-loop.yml
 resolves from the trusted copy, never the workspace (#468/#504/#615).
 
 WHY THIS EXISTS
@@ -219,7 +219,7 @@ def _checkout_index(steps):
     for i, s in enumerate(steps):
         if (s or {}).get("name") == CHECKOUT_NAME:
             return i
-    sys.exit("::error::Gate 100 self-test: no {0!r} step found; update the self-test "
+    sys.exit("::error::Gate 104 self-test: no {0!r} step found; update the self-test "
              "alongside the workflow.".format(CHECKOUT_NAME))
 
 
@@ -227,7 +227,7 @@ def _first_sidecar_ref(steps):
     for i, s in enumerate(steps):
         if str((s or {}).get("uses", "")).startswith(SIDECAR_PREFIX):
             return i
-    sys.exit("::error::Gate 100 self-test: no sidecar-relative reference found; update "
+    sys.exit("::error::Gate 104 self-test: no sidecar-relative reference found; update "
              "the self-test alongside the workflow.")
 
 
@@ -340,14 +340,14 @@ def main():
     else:
         failures = check(text, gitignore_text)
     for f in failures:
-        print("::error file={0}::Gate 100: {1}".format(WORKFLOW, f))
+        print("::error file={0}::Gate 104: {1}".format(WORKFLOW, f))
     if failures:
         return 1
     if self_test:
-        print("Gate 100 self-test: {0} mutation(s), each caught and attributed to its own "
+        print("Gate 104 self-test: {0} mutation(s), each caught and attributed to its own "
               "rule.".format(len(MUTATIONS)))
     else:
-        print("Gate 100: every uses: ./.github/actions/ reference in board-loop.yml "
+        print("Gate 104: every uses: ./.github/actions/ reference in board-loop.yml "
               "resolves from the trusted copy, never the workspace.")
     return 0
 

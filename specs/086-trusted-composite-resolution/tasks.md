@@ -10,7 +10,7 @@ description: "Task list for The Loop's Own Code Comes From a Trusted Commit — 
 **Prerequisites**: plan.md, spec.md, research.md, data-model.md, contracts/trusted-copy-checkout.md, contracts/gate-99.md, contracts/documentation-updates.md, quickstart.md
 
 **Tests**: Not requested. This feature has no application test suite — its
-verification is Gate 100 itself (Phase 5) plus the local gate suite and the
+verification is Gate 104 itself (Phase 5) plus the local gate suite and the
 quickstart.md drills (some of which need a real dispatched run against a
 disposable/test repository and are called out as such rather than modeled
 as checkbox tasks).
@@ -154,7 +154,7 @@ Check).
 remaining board-loop job (`select`, `triage`, `route`, `prove-gate`,
 `prove`) so that no board-loop job — not just the three US1 touches —
 carries a branch-age precondition for a future composite addition (SC-005),
-and so Gate 100 (Phase 5) can enforce the rule as one unconditional
+and so Gate 104 (Phase 5) can enforce the rule as one unconditional
 file-wide statement with no per-job list to maintain.
 
 **Independent Test**: quickstart.md step 5 — cut an item branch from a
@@ -202,7 +202,7 @@ added to this file inherits it automatically.)
 - [X] T018 [US2] Confirm `resolve-model` gains no checkout step and no
       rewrite: it carries zero `uses: ./.github/actions/...` references
       today and none are added by this feature (research.md D3) — leave it
-      untouched and note that Gate 100's rule (b) applies to it automatically,
+      untouched and note that Gate 104's rule (b) applies to it automatically,
       with no gate edit, the day it ever gains one.
 
 **Checkpoint**: `grep -n 'uses: \./\.github/actions/'
@@ -215,7 +215,7 @@ this feature's own code.
 
 ## Phase 5: User Story 3 - A gate keeps the rule true after this session (Priority: P2)
 
-**Goal**: A registered, self-testing gate (Gate 100) fails when any
+**Goal**: A registered, self-testing gate (Gate 104) fails when any
 reference in `board-loop.yml` resolves from the workspace instead of the
 trusted copy, when the trusted-copy checkout is missing or misplaced, or
 when it is not fail-closed — so a future edit that reintroduces the defect
@@ -229,7 +229,7 @@ checkout, makes the gate fail and name the offending job and reference.
 ### Implementation for User Story 3
 
 - [X] T019 [US3] Create `.github/scripts/verify-board-loop-composite-provenance.py`
-      (Gate 100) implementing, over `.github/workflows/board-loop.yml` and
+      (Gate 104) implementing, over `.github/workflows/board-loop.yml` and
       this repository's own `.gitignore` (contracts/gate-99.md "Rules"):
       (a) no line anywhere in the file matches `uses:
       ./.github/actions/` (the raw, workspace-relative form) —
@@ -248,9 +248,9 @@ checkout, makes the gate fail and name the offending job and reference.
       `verify-board-loop-helper-provenance.py` (Gate 98) module's own
       conventions (`wc_shell_harness` imports, `WORKFLOW` constant, `yaml`
       parsing) where they transfer, but do not inherit its `JOBS = (...)`
-      per-job-allowlist shape (research.md D5) — Gate 100 has no such tuple.
+      per-job-allowlist shape (research.md D5) — Gate 104 has no such tuple.
 - [X] T020 [US3] Add a `--self-test` mode to the same script implementing
-      the 7 mutations of research.md D7 / data-model.md "Gate 100 Fixture
+      the 7 mutations of research.md D7 / data-model.md "Gate 104 Fixture
       Set", each asserted caught and attributed to its own rule, plus a
       baseline assertion that the unmutated, shipped file is clean first:
       1. reintroduce one raw `uses:
@@ -267,19 +267,19 @@ checkout, makes the gate fail and name the offending job and reference.
       6. remove the `.gitignore` entry for the sidecar path — must fail;
       7. widen the file-wide ban in rule (a) to tolerate a second exempted
          pattern — must fail, proving the rule admits no allowlist
-         (FR-010, read onto Gate 100's own design per contracts/gate-99.md
+         (FR-010, read onto Gate 104's own design per contracts/gate-99.md
          "Self-test").
-- [X] T021 [US3] Register Gate 100 in `.github/workflows/lint-workflows.yml`
+- [X] T021 [US3] Register Gate 104 in `.github/workflows/lint-workflows.yml`
       as two steps immediately after Gate 98's block, using exactly the
-      comment and step names in contracts/gate-99.md (the `# Gate 100 —
-      ...` comment block, `Gate 100 — every uses: ./.github/actions/
+      comment and step names in contracts/gate-99.md (the `# Gate 104 —
+      ...` comment block, `Gate 104 — every uses: ./.github/actions/
       reference in board-loop.yml resolves from the trusted copy, never
-      the workspace`, and `Gate 100 self-test — ...`), each with `if:
+      the workspace`, and `Gate 104 self-test — ...`), each with `if:
       "!cancelled()"` and calling the script from T019/T020 with and
       without `--self-test`.
 - [X] T022 [US3] Append one sentence to Gate 98's existing comment block in
-      `.github/workflows/lint-workflows.yml` (immediately before Gate 100's
-      own block) pointing at Gate 100 for the composite half of the same
+      `.github/workflows/lint-workflows.yml` (immediately before Gate 104's
+      own block) pointing at Gate 104 for the composite half of the same
       provenance property (FR-014; contracts/documentation-updates.md
       "Pointer sites"). Do not otherwise edit Gate 98's scope, allowlist,
       or self-test (spec.md Out of Scope).
@@ -306,7 +306,7 @@ checks that span every phase above.
       step, gitignored so no `git add` can stage it into an item's
       branch), that it sits alongside — not instead of — the existing
       `$RUNNER_TEMP/wc-pristine` helper-script/schema snapshot (#583),
-      naming Gate 98 and Gate 100 as the two halves of the same provenance
+      naming Gate 98 and Gate 104 as the two halves of the same provenance
       property, and pointing at
       `specs/086-trusted-composite-resolution/{spec.md,plan.md,research.md}`
       the way the existing header already points at spec 057's own
@@ -335,7 +335,7 @@ checks that span every phase above.
       from T001.
 - [X] T027 Run `python .github/scripts/run-local-gates.py` (the full PR-time
       gate suite, per CLAUDE.md "Before pushing") and confirm every gate,
-      including Gate 98 (unchanged) and Gate 100 (new), passes on the
+      including Gate 98 (unchanged) and Gate 104 (new), passes on the
       shipped tree (quickstart.md step 1, final integration check;
       SC-004).
 
@@ -367,13 +367,13 @@ implementer rather than skipped silently.
   rest," matching spec.md's own framing of the item-branch jobs as the
   primary exposure.
 - **User Story 3 (Phase 5)**: Depends on Phases 3 and 4 being complete —
-  Gate 100 rule (a) is a file-wide, unconditional ban with no allowlist, so
+  Gate 104 rule (a) is a file-wide, unconditional ban with no allowlist, so
   it cannot pass the shipped file (T027) until every `uses:
   ./.github/actions/...` reference anywhere in `board-loop.yml` has been
   rewritten.
 - **Polish (Phase 6)**: Depends on Phases 3-5 all being complete (T023
-  names Gate 98 and Gate 100 both; T027 runs the full suite including Gate
-  100).
+  names Gate 98 and Gate 104 both; T027 runs the full suite including Gate
+  104).
 
 ### Within Each Job (Phases 3-4)
 
@@ -425,7 +425,7 @@ Task: "Add the sidecar checkout step to the fix job in board-loop.yml"
    jobs → the primary deliverable is live.
 3. User Story 2 (T008-T018) → every remaining job carries the same
    guarantee → no board-loop job has a branch-age precondition anywhere.
-4. User Story 3 (T019-T022) → Gate 100 registered and self-tested → the
+4. User Story 3 (T019-T022) → Gate 104 registered and self-tested → the
    rule cannot silently regress.
 5. Polish (T023-T027) → documentation matches shipped behaviour, and the
    full local gate suite is green.
@@ -436,7 +436,7 @@ Task: "Add the sidecar checkout step to the fix job in board-loop.yml"
 
 - `[P]` tasks touch different files with no dependency on an incomplete
   task; everything else in this feature is a sequential edit to one of
-  three files (`board-loop.yml`, the new Gate 100 script, `lint-workflows.yml`)
+  three files (`board-loop.yml`, the new Gate 104 script, `lint-workflows.yml`)
   and is ordered accordingly.
 - `[Story]` labels map every Phase 3/4/5 task to spec.md's User Story 1, 2,
   or 3; Setup and Polish carry no story label per the checklist format
@@ -470,7 +470,7 @@ Task: "Add the sidecar checkout step to the fix job in board-loop.yml"
       snapshot, never the working tree) still held at runtime. Gate 98 now
       excludes that one canonical step from its "one job checkout" count
       by name — any other second checkout still fails it — with the
-      docstring recording that a step bearing that name is Gate 100's
+      docstring recording that a step bearing that name is Gate 104's
       subject (`ref: ${{ github.sha }}`, sidecar `path:`, fail-closed).
       Gate 98's allowlist, `JOBS` scope and mutation set are otherwise
       untouched (spec.md Out of Scope).
@@ -486,4 +486,4 @@ Task: "Add the sidecar checkout step to the fix job in board-loop.yml"
 
 ## Maintainer Feedback
 
-- [ ] **Gate renumbering cleanup (supersedes prior entry):** Main has since claimed Gate 100 for spec 079, colliding with this branch's own Gate 100 (the composite-provenance gate). Spec 086 is reallocated **Gate 104**. Renumber every reference from Gate 99/Gate 100 to Gate 104 across: `lint-workflows.yml`'s two step names and its `# Gate 100 ...` pointer comments (~lines 4135, 4162, 4178, 4181); `.github/scripts/verify-board-loop-composite-provenance.py`'s module docstring and all `::error`/summary messages that print "Gate 100"; `.github/scripts/verify-board-loop-helper-provenance.py`'s two pointer comments naming "Gate 100's subject" (~lines 26, 78); `board-loop.yml`'s file header comment naming "Gate 100" (~line 28) and any per-job pointer comments added by T002/T004/T006/T008/T010/T012/T014/T016; and every spec doc under `specs/086-trusted-composite-resolution/` that names Gate 99 or Gate 100 (`contracts/gate-99.md`, `contracts/documentation-updates.md`, `contracts/trusted-copy-checkout.md`, `research.md`, `plan.md`, `data-model.md`, `quickstart.md`, `tasks.md` itself). Confirm no other spec's Gate 100 reference is touched, and that `python .github/scripts/run-local-gates.py` and `verify-gate-wiring.py` are green afterward.
+- [X] **Gate renumbering cleanup (supersedes prior entry):** Main has since claimed Gate 100 for spec 079, colliding with this branch's own Gate 100 (the composite-provenance gate). Spec 086 is reallocated **Gate 104**. Renumber every reference from Gate 99/Gate 100 to Gate 104 across: `lint-workflows.yml`'s two step names and its `# Gate 100 ...` pointer comments (~lines 4135, 4162, 4178, 4181); `.github/scripts/verify-board-loop-composite-provenance.py`'s module docstring and all `::error`/summary messages that print "Gate 100"; `.github/scripts/verify-board-loop-helper-provenance.py`'s two pointer comments naming "Gate 100's subject" (~lines 26, 78); `board-loop.yml`'s file header comment naming "Gate 100" (~line 28) and any per-job pointer comments added by T002/T004/T006/T008/T010/T012/T014/T016; and every spec doc under `specs/086-trusted-composite-resolution/` that names Gate 99 or Gate 100 (`contracts/gate-99.md`, `contracts/documentation-updates.md`, `contracts/trusted-copy-checkout.md`, `research.md`, `plan.md`, `data-model.md`, `quickstart.md`, `tasks.md` itself). Confirm no other spec's Gate 100 reference is touched, and that `python .github/scripts/run-local-gates.py` and `verify-gate-wiring.py` are green afterward.

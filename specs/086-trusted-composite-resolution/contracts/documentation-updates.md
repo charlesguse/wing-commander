@@ -15,7 +15,7 @@ from a checkout of this repository at `github.sha`
 before any credential mint and any agent step, gitignored so no `git add`
 can stage it into an item's branch, alongside (not instead of) the
 existing `$RUNNER_TEMP/wc-pristine` helper-script/schema snapshot (#583) —
-naming Gate 100 and Gate 98 as the two halves of the same provenance
+naming Gate 104 and Gate 98 as the two halves of the same provenance
 property, and pointing at
 `specs/086-trusted-composite-resolution/{spec.md,plan.md,research.md}`
 the way the existing header already points at spec 057's own documents.
@@ -29,7 +29,7 @@ other site below points here rather than restating it.
 |---|---|
 | Each of the 8 sidecar checkout steps in `board-loop.yml` | A short comment: "see this file's header for why every job does this" — never the full rationale repeated |
 | `.github/actions/wing-commander-context/action.yml` header | One sentence appended after the existing "verified self-checkout snippet": board-loop.yml is not a published stage and is not called through this composite's `pipeline-repo`/OIDC mechanism at all — it resolves its own composites the same way, from its own repository at `github.sha`; see board-loop.yml's own header |
-| `.github/workflows/lint-workflows.yml`, Gate 98's comment block | One sentence appended: the composite half of this same provenance rule is Gate 100, immediately below |
+| `.github/workflows/lint-workflows.yml`, Gate 98's comment block | One sentence appended: the composite half of this same provenance rule is Gate 104, immediately below |
 
 ## What does NOT change
 

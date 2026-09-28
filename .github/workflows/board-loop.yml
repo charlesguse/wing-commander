@@ -25,7 +25,7 @@
 # the same commit resolved two different ways for two structurally
 # different needs (a tar extract for importable Python modules; a real
 # checkout for a `uses:`-addressable composite directory). Gate 98
-# (verify-board-loop-helper-provenance.py) and Gate 100
+# (verify-board-loop-helper-provenance.py) and Gate 104
 # (verify-board-loop-composite-provenance.py) are the two halves of this
 # one provenance property.
 name: "board-loop"
