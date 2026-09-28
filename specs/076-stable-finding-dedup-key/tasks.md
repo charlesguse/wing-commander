@@ -314,7 +314,7 @@ sentence, and confirm a gate fails.
   matching every neighboring gate's shape. No change to
   `.github/scripts/run-local-gates.py` is needed — its gate list is derived
   automatically from this file.
-- [ ] T025 [US4] Extend
+- [X] T025 [US4] Extend
   `.github/scripts/verify-stage-findings-wiring.py` (FR-013,
   contracts/gates.md): add a second stable substring alongside the existing
   `PARAGRAPH_SUBSTRING` check — the clause stating that
@@ -327,7 +327,7 @@ sentence, and confirm a gate fails.
   the FR-003 paragraph but not this new clause fails, naming the stage),
   alongside the existing `selftest_paragraph_without_step_fails`-style
   fixtures.
-- [ ] T026 [US4] In `.github/workflows/clarify.yml`, beside its existing
+- [X] T026 [US4] In `.github/workflows/clarify.yml`, beside its existing
   FR-003 findings paragraph (the "do not attempt to file it yourself..."
   block), add the FR-013 sentence describing the settled anchor rule (the
   value must occur verbatim in the named file; a value that does not still
@@ -335,19 +335,19 @@ sentence, and confirm a gate fails.
   per this repository's Gate 47 canonical-comment discipline, the marker
   comment `(canonical copy; do not condense)` citing issue #569, stating
   the rule this sentence encodes.
-- [ ] T027 [P] [US4] In `.github/workflows/intake.yml`, beside its one
+- [X] T027 [P] [US4] In `.github/workflows/intake.yml`, beside its one
   FR-003 paragraph occurrence, add the same FR-013 sentence T026 added to
   clarify.yml and a `-- see clarify.yml` pointer comment (Gate 47).
-- [ ] T028 [P] [US4] In `.github/workflows/finalize.yml`, beside its one
+- [X] T028 [P] [US4] In `.github/workflows/finalize.yml`, beside its one
   FR-003 paragraph occurrence, add the same FR-013 sentence and a
   `-- see clarify.yml` pointer comment.
-- [ ] T029 [P] [US4] In `.github/workflows/plan.yml`, beside each of its two
+- [X] T029 [P] [US4] In `.github/workflows/plan.yml`, beside each of its two
   FR-003 paragraph occurrences, add the same FR-013 sentence and a
   `-- see clarify.yml` pointer comment.
-- [ ] T030 [P] [US4] In `.github/workflows/tasks.yml`, beside each of its
+- [X] T030 [P] [US4] In `.github/workflows/tasks.yml`, beside each of its
   two FR-003 paragraph occurrences, add the same FR-013 sentence and a
   `-- see clarify.yml` pointer comment.
-- [ ] T031 [P] [US4] In `.github/workflows/implement.yml`, beside each of
+- [X] T031 [P] [US4] In `.github/workflows/implement.yml`, beside each of
   its two FR-003 paragraph occurrences, add the same FR-013 sentence and a
   `-- see clarify.yml` pointer comment.
 
