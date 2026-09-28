@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gate 99 -- the dedup key's rule stays doc-and-code synchronized, and
+"""Gate 120 -- the dedup key's rule stays doc-and-code synchronized, and
 spec 076's key composition stays deliberately split from spec 057's
 (specs/076-stable-finding-dedup-key, FR-012/FR-015, contracts/gates.md).
 
@@ -28,12 +28,9 @@ gate file, per CLAUDE.md's "extend the nearest existing gate" line --
 both checks share the same extraction technique and both hold a
 key-composition question in place, just in opposite directions.
 
-NOTE ON GATE NUMBERING: 98 is the highest gate number in this branch's
-own tree at the time this gate was written (T001). If another spec has
-since registered 99 on `main`, this gate renumbers to the next free
-number, per T001's rule of verifying against the real tree rather than a
-claim about it (see verify-single-home-idioms.py's module docstring for
-the worked precedent).
+NOTE ON GATE NUMBERING: shipped as Gate 120. It was written as Gate 99,
+but main's Gates 99/100/116 and the numbers allocated to other in-flight
+specs (101-119) were taken first; #660 tracks the allocation problem.
 
 WHAT IT CHECKS
 --------------

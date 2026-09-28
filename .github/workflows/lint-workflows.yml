@@ -4232,22 +4232,21 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-pipeline-checkout-guard.py --self-test
 
-      # Gate 117 — #569: the dedup key's rule (data-model.md's Fingerprint
+      # Gate 120 — #569: the dedup key's rule (data-model.md's Fingerprint
       # fenced block) and its shipped implementation
       # (wing-commander-stage-findings's "Extract, validate, cap, and
       # prepare findings" step) must stay literal-for-literal in sync
       # (FR-012), and this feature's own key composition must keep
       # differing from spec 057's board-loop.yml formula, each for its own
-      # distinguishing ingredient (FR-015). Numbered 117, not the 99 this
-      # branch's own commit picked: Gate 99 (specs/059), Gate 100 (#587)
-      # and Gate 116 (#611) each claimed a number before this branch's
-      # rebase landed (see the comments above) — see
+      # distinguishing ingredient (FR-015). Numbered 120: Gates 99, 100 and 116 were already on main
+      # and 101-119 were allocated to other in-flight specs when this one
+      # landed (#660 tracks the allocation problem) — see
       # verify-dedup-key-canonical-rule.py's module docstring for the
       # renumbering precedent.
-      - name: "Gate 117 — the dedup key's doc-vs-code sync (FR-012) and its deliberate split from spec 057's own key (FR-015)"
+      - name: "Gate 120 — the dedup key's doc-vs-code sync (FR-012) and its deliberate split from spec 057's own key (FR-015)"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-dedup-key-canonical-rule.py
-      - name: "Gate 117 self-test — a changed shape tag, an altered norm() line, a converged or issue-segment-missing board-loop formula, or a missing source file each fail"
+      - name: "Gate 120 self-test — a changed shape tag, an altered norm() line, a converged or issue-segment-missing board-loop formula, or a missing source file each fail"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-dedup-key-canonical-rule.py --self-test
 
