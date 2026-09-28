@@ -360,3 +360,9 @@ With two developers (this repository's own concurrency guidance caps concurrent 
     `verify-comment-canonical-pointers.py` (Gate 47) is among the passing
     gates, confirming the renumbered comment stayed consistent everywhere
     it's duplicated.
+
+---
+
+## Phase 8: Convergence
+
+- [ ] T033 Update the stale count in `.github/scripts/verify-lifecycle-label-taxonomy.py:417`'s comment (`# Self-test -- the seven required fixtures ...`) to say "nine" per FR-008 (partial): T030 raised the self-test fixture count to nine (contracts/lifecycle-label-taxonomy-gate.md's fixture list and `self_test()`'s own "all 9 checks behaved as expected" message both already read nine), but this section-header comment was never updated to match.
