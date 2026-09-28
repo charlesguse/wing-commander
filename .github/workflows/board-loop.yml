@@ -2485,7 +2485,7 @@ jobs:
     # pr-number set.
     if: >-
       !cancelled()
-      && needs.select.result == 'success'
+      && (needs.select.result == 'success' || inputs.directed-stage == 'review')
       && needs.resolve-model.result == 'success'
       && (
         (needs.fix.result == 'success' && needs.fix.outputs.pr-number != '' && needs.fix.outputs.breach != 'true')
@@ -3508,7 +3508,7 @@ jobs:
     # files it through its own spec-request site, and review never runs.
     if: >-
       !cancelled()
-      && needs.select.result == 'success'
+      && (needs.select.result == 'success' || inputs.directed-stage == 'readiness')
       && (
         (needs.review.result == 'success' && needs.review.outputs.outcome == 'converged')
         || (needs.select.outputs.step == 'readiness' && needs.select.outputs.pr != '')
