@@ -235,6 +235,20 @@ DECLARED_HOMES = {
     # implement.yml's own former inline step so implement/plan/tasks share
     # one copy.
     "branch-advance-capture": ".github/actions/wing-commander-branch-advance/action.yml",
+    # specs/084-board-loop-single-home-idioms, issue #607: the marker-write
+    # bootstrap (sys.path.insert + `from board_item_marker import
+    # write_marker`) was pasted at 17 call sites across 6 board-loop.yml
+    # jobs; this feature moved every site to a `board_item_marker.py`
+    # command-line entrypoint. A re-paste of the old inline bootstrap at a
+    # new site is what this check catches.
+    "marker-write": ".github/scripts/board_item_marker.py",
+    # specs/084-board-loop-single-home-idioms, issue #607: the PR-branch
+    # resolution idiom (`gh pr view ... --json headRefName` plus the
+    # `pr-number=`/`branch=` GITHUB_OUTPUT write) was pasted at both the
+    # review and readiness jobs' own steps; this feature moved both to the
+    # resolve-pr-branch composite. A re-paste of the old inline read at a
+    # new site is what this check catches.
+    "pr-branch": ".github/actions/_shared/resolve-pr-branch/action.yml",
 }
 CHECK_NAMES = tuple(DECLARED_HOMES) + ("promotion",)
 
@@ -328,6 +342,24 @@ SHARED_REF_RE = re.compile(r"\.github/actions/_shared/[A-Za-z0-9_.\-/]+")
 BRANCH_ADVANCE_FETCH_FRAGMENT = 'git fetch origin "+refs/heads/$'
 BRANCH_ADVANCE_REVLIST_RE = re.compile(
     r'git rev-list --count "\$[A-Za-z_][A-Za-z0-9_]*\.\.')
+# specs/084-board-loop-single-home-idioms research.md D6: the marker-write
+# bootstrap's three fragments, all appearing together in one subject file.
+MARKER_WRITE_FRAGMENTS = (
+    "sys.path.insert",
+    "board_item_marker",
+    "write_marker",
+)
+# specs/084-board-loop-single-home-idioms research.md D5: co-occurrence of
+# the PR-branch read and the pair of GITHUB_OUTPUT writes it feeds, scoped
+# per-step (like check_failure_issue/check_token_mint) so pr-conversation.yml's
+# two structurally similar but conceptually distinct headRefName reads --
+# neither of which writes this pr-number=/branch= pair -- do not false-positive.
+PR_BRANCH_FRAGMENTS = (
+    "gh pr view",
+    "headRefName",
+    'echo "pr-number=',
+    'echo "branch=',
+)
 
 Finding = namedtuple("Finding", ["path", "check", "line", "text"])
 
@@ -607,6 +639,73 @@ def check_board_stop_check(root="."):
 
 
 # --------------------------------------------------------------------------
+# Check: marker-write (per-step co-occurrence of the sys.path/import/call
+# bootstrap -- specs/084-board-loop-single-home-idioms research.md D6).
+# Per-step, NOT file-wide like check_board_stop_check: board-loop.yml still
+# legitimately carries several unrelated `sys.path.insert(0,
+# ".github/scripts")` + `board_item_marker` bootstraps for
+# read_marker_with_timestamp() (a different public function -- reading a
+# marker, never writing one), plus this file's own header comment
+# mentioning "write_marker()" in prose. A file-wide scan false-positives on
+# that combination even with zero inline write-bootstraps left; scoping to
+# one step's own `run:` text (as check_failure_issue/check_pr_branch
+# already do) does not, since neither the unrelated read-bootstraps nor the
+# header comment ever share a step with a `write_marker` mention.
+# --------------------------------------------------------------------------
+def check_marker_write(root="."):
+    home = DECLARED_HOMES["marker-write"]
+    home_dir = home.rsplit("/", 1)[0] + "/"
+    findings = []
+    for path in all_subject_files(root):
+        if path == home or path.startswith(home_dir):
+            continue
+        doc = load_yaml(root, path)
+        if doc is None:
+            continue
+        text = read(root, path)
+        for _ctx, steps in _step_lists(doc):
+            for step in steps:
+                run = str((step or {}).get("run") or "")
+                if not run:
+                    continue
+                if all(fragment in run for fragment in MARKER_WRITE_FRAGMENTS):
+                    offset = text.find(run.splitlines()[0]) if run.splitlines() else 0
+                    findings.append(Finding(
+                        path, "marker-write", line_of(text, max(offset, 0)),
+                        "sys.path.insert + board_item_marker + write_marker "
+                        "co-occurrence"))
+    return findings
+
+
+# --------------------------------------------------------------------------
+# Check: pr-branch (per-step co-occurrence of the headRefName read and the
+# pr-number=/branch= GITHUB_OUTPUT writes -- research.md D5)
+# --------------------------------------------------------------------------
+def check_pr_branch(root="."):
+    home = DECLARED_HOMES["pr-branch"]
+    findings = []
+    for path in all_subject_files(root):
+        if path == home:
+            continue
+        doc = load_yaml(root, path)
+        if doc is None:
+            continue
+        text = read(root, path)
+        for _ctx, steps in _step_lists(doc):
+            for step in steps:
+                run = str((step or {}).get("run") or "")
+                if not run:
+                    continue
+                if all(fragment in run for fragment in PR_BRANCH_FRAGMENTS):
+                    offset = text.find(run.splitlines()[0]) if run.splitlines() else 0
+                    findings.append(Finding(
+                        path, "pr-branch", line_of(text, max(offset, 0)),
+                        "gh pr view ... headRefName + pr-number=/branch= "
+                        "GITHUB_OUTPUT co-occurrence"))
+    return findings
+
+
+# --------------------------------------------------------------------------
 # Check 3: verdict-shape (file-wide, all six field names near a jq call)
 # --------------------------------------------------------------------------
 def check_verdict_shape(root="."):
@@ -756,6 +855,8 @@ ALL_CHECKS = {
     "token-mint": check_token_mint,
     "mode-tag-shape": check_mode_tag_shape,
     "branch-advance-capture": check_branch_advance_capture,
+    "marker-write": check_marker_write,
+    "pr-branch": check_pr_branch,
     "promotion": check_promotion,
 }
 
@@ -1115,6 +1216,42 @@ def _clean_tree(root):
           "origin/$branch\"\n"
           "        commits=\"$(git rev-list --count "
           "\"$BEFORE_SHA..$after_sha\")\"\n")
+    _write(root, DECLARED_HOMES["marker-write"],
+          "#!/usr/bin/env python3\n"
+          "import argparse\n"
+          "\n"
+          "\n"
+          "def write_marker(step, round, pr, branch, base_sha):\n"
+          "    return step\n"
+          "\n"
+          "\n"
+          "def main():\n"
+          "    parser = argparse.ArgumentParser()\n"
+          "    parser.add_argument(\"--step\", required=True)\n"
+          "    parser.add_argument(\"--round\", type=int, default=0)\n"
+          "    parser.add_argument(\"--pr\", type=int, default=None)\n"
+          "    parser.add_argument(\"--branch\", default=None)\n"
+          "    parser.add_argument(\"--base-sha\", default=None)\n"
+          "    args = parser.parse_args()\n"
+          "    print(write_marker(args.step, args.round, args.pr, args.branch, "
+          "args.base_sha))\n"
+          "\n"
+          "\n"
+          "if __name__ == \"__main__\":\n"
+          "    main()\n")
+    _write(root, DECLARED_HOMES["pr-branch"],
+          "inputs:\n  pr-number:\n    required: true\n  token:\n    required: true\n"
+          "  round:\n    required: false\n    default: \"\"\n"
+          "runs:\n  using: composite\n  steps:\n"
+          "    - id: resolve\n      shell: bash\n      env:\n"
+          "        GH_TOKEN: ${{ inputs.token }}\n"
+          "        PR_NUMBER: ${{ inputs.pr-number }}\n"
+          "      run: |\n"
+          "        set -euo pipefail\n"
+          "        branch=\"$(gh pr view \"$PR_NUMBER\" --json headRefName "
+          "--jq .headRefName)\"\n"
+          "        { echo \"pr-number=$PR_NUMBER\"; echo \"branch=$branch\"; } "
+          ">> \"$GITHUB_OUTPUT\"\n")
     _write(root, ".github/workflows/harmless.yml",
           "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
           "      - run: echo hi\n")
@@ -1469,6 +1606,23 @@ def run_selftest():
         "      - shell: bash\n        env:\n"
         "          OUTCOME: ${{ steps.mint.outcome }}\n"
         "        run: echo hi\n")
+    selftest_third_paste_fails(
+        "marker-write", ".github/workflows/third-marker-write.yml",
+        "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - shell: bash\n        run: |\n"
+        "          python3 -c \"import sys; "
+        "sys.path.insert(0, '.github/scripts'); "
+        "from board_item_marker import write_marker; "
+        "print(write_marker('stalled', 0, None, None, None))\"\n")
+    selftest_third_paste_fails(
+        "pr-branch", ".github/workflows/third-pr-branch.yml",
+        "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - id: pr\n        shell: bash\n        run: |\n"
+        "          set -uo pipefail\n"
+        "          branch=\"$(gh pr view \"$PR_NUMBER\" -R "
+        "\"$GITHUB_REPOSITORY\" --json headRefName --jq .headRefName)\"\n"
+        "          { echo \"pr-number=$PR_NUMBER\"; echo \"branch=$branch\"; } "
+        ">> \"$GITHUB_OUTPUT\"\n")
     selftest_waived_copy_passes()
     selftest_stale_waiver_fails()
     selftest_promotion_fails()
