@@ -26,7 +26,11 @@ on:
         description: "Turn budget for the clarification agent"
         type: number
         required: false
-        default: 40
+        # Re-based from 40 to 65 (issue #587's recorded history: 39-61
+        # counted turns accepted range); resulting ceiling ceil(65 * 2.5)
+        # = 163 (up from 100) -- see docs/adoption.md's ### clarify row
+        # and docs/architecture.md's turn-budget-trend procedure.
+        default: 65
       pipeline-repo:
         description: >
           Repository to check out for the pipeline's shared composite actions

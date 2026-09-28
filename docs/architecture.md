@@ -294,6 +294,44 @@ comment-writing step across the fleet and fails unless it excludes
 usage-window outage can never silently reintroduce a `pipeline-defect`-style
 filing.
 
+**Responding to a `turn-budget-trend` signal** (specs/046, `class-hint:
+turn-budget-trend`): the watchdog's turn-budget collector reports a stage's
+consumption trend against its declared budget — a real divergence between a
+declared expectation and observed reality, not a run failure. When it fires,
+follow this procedure rather than re-arguing the options from scratch
+(`specs/079-clarify-turn-budget`):
+
+1. **Read the evidence.** The signal's `facts.history` carries the window's
+   `{run, counted-turns, intended-budget}` triples the collector already
+   emits — this is the only evidence a re-basing decision reads; there is no
+   need to re-derive consumption from transcripts.
+2. **Compute the new budget.** New declared budget = the smallest multiple of
+   5 strictly greater than the window's maximum counted-turns. State it
+   beside the accepted range (the window's min-max) it is derived to cover,
+   so the number is traceable to evidence rather than to a session's
+   judgement.
+3. **State the cost consequence.** The runaway ceiling is
+   `ceil(new_budget * 2.5)` (`wing-commander-turn-ceiling`'s fixed
+   multiplier, unchanged) — compute and state it explicitly in the same
+   change; never leave it an unremarked side effect of raising the budget.
+4. **Or accept the trend instead of moving the number**, when either holds:
+   the window's maximum is a single diagnosed-contaminated run (turns
+   inflated by a cause unrelated to real work — e.g. spec 037's
+   denied-tool-call turn inflation), or the band is `critical` with a rising
+   `consecutive-at-or-over-budget` count that a bigger budget would only
+   relabel rather than explain. Either case closes the `pipeline-defect` as
+   accepted, and the collector's suppression-by-closed-fingerprint mechanism
+   (spec 046) keeps that band quiet for the stage until a later escalation
+   files a new, separate finding.
+
+**Worked example** (the trend this procedure was written for): clarify's
+recorded history was `{39, 45, 61}` counted turns against a declared budget
+of `40`. Applying step 2: the smallest multiple of 5 strictly greater than
+`61` is `65`, covering the accepted range `39-61`. Applying step 3: the
+resulting ceiling is `ceil(65 * 2.5) = 163` (up from `100`). Those are the
+values `clarify.yml`'s `max-turns` default and its inline comment carry —
+applying the stated arithmetic to the cited history reproduces them.
+
 **Bedrock pass-through** (`specs/016-bedrock-support/`): the per-stage
 `use-bedrock` input changes only which backend serves these already-tiered
 `model` inputs — the consumer supplies Bedrock-compatible identifiers directly
