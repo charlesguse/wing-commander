@@ -301,3 +301,7 @@ With two developers (this repository's own concurrency guidance caps concurrent 
 ## Maintainer Feedback
 
 - [ ] T031 In `.github/workflows/intake.yml`'s "Flip stage label for clarification" step and `.github/workflows/clarify.yml`'s `needs-clarification` arm, guard the `gh label create "stage:clarify" ... --force` call so a failure cannot abort the step under `set -e` before the questionnaire is rendered/announced (e.g. append `|| echo "::warning::..."` while preserving a visible warning), or move the flip step after the announce/render step so label-create failures can never precede it. Addresses PR #651 review comment: today the create call is unguarded and runs before an announce step with no `!cancelled()`, violating FR-015's "failure to write the label MUST NOT suppress the clarification questionnaire" requirement.
+
+## Maintainer Feedback
+
+- [ ] T032 Rename this spec's gate from Gate 99/101 to **Gate 105** throughout: `.github/workflows/lint-workflows.yml`'s step names and comment (currently say Gate 101), `.github/scripts/verify-lifecycle-label-taxonomy.py`'s docstring (currently Gate 99), its user-facing messages, and its `verify_gate99_` temp-dir prefix, `.github/scripts/lifecycle-label-taxonomy-waivers.json`'s `$comment`, and this spec's docs (plan.md/tasks.md/contracts/data-model.md references to Gate 99). Addresses PR #651 review comment: main now holds 99/100/116 and other open PRs hold 101-115, so this spec's allocation is 105.
