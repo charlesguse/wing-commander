@@ -4216,6 +4216,22 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-post-review-comment-composite.py --self-test
 
+      # Gate 110 — specs/062-lifecycle-review-gate T031/T032:
+      # wing-commander-fold-commit's shipped step really appends the drafted
+      # section, flips spec-meta.json's stage back to "implement", unions
+      # actor-login into pending_re_review_from, and commits + pushes both
+      # together — proven against a real git clone/remote, not a mock — and
+      # reports folded: false while touching neither file nor the remote
+      # when section-file is empty or missing. Numbered 110, not the
+      # standalone slot tasks.md's T032 first drafted — see Gate 107's
+      # comment above for the Maintainer Feedback renumbering.
+      - name: "Gate 110 — wing-commander-fold-commit composite"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-fold-commit-composite.py
+      - name: "Gate 110 self-test — a false 'always folds' and an overwritten pending_re_review_from are both caught"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-fold-commit-composite.py --self-test
+
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and
       # verify-denied-tool-collector.sh has already shown what happens when

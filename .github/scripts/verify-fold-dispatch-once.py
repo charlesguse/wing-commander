@@ -65,6 +65,7 @@ DISPATCH_STEP = "Dispatch implement once for the whole review"
 REPORT_STEP = "Report fold-route leg outcomes"
 REPLY_STEP = "Reply confirming fold-in (no dispatch)"
 ACT_AGENT_STEP = "Act on this classification"
+FOLD_COMMIT_STEP = "Commit this leg's fold"
 
 REPO = "charlesguse/wing-commander"
 # The shape the jobs API actually reports for a called workflow's matrix
@@ -551,14 +552,22 @@ def test_structural():
                         f"the defect that cancelled leg 4 and iteration 3 "
                         f"against each other on PR #240.")
 
-    agent_step = find_step(STAGE, ACT_AGENT_STEP)
-    prompt = (agent_step.get("with") or {}).get("prompt", "")
-    if "fold(${{ matrix.id }})" not in prompt:
-        failures.append(f"structural: {ACT_AGENT_STEP!r}'s prompt no longer "
-                        f"instructs the fold commit message to start with "
-                        f"fold(<id>): <summary> — report-fold-outcomes' "
-                        f"git-grep evidence check depends on this exact "
-                        f"shape (research.md D6).")
+    # specs/062-lifecycle-review-gate T033: the agent no longer commits the
+    # fold itself (it only drafts the section to a file) — the fold(<id>):
+    # <summary> commit message this check protects is now produced by
+    # wing-commander-fold-commit, called from this deterministic step with
+    # fold-id: matrix.id. Adapted to the extracted composite's call site
+    # per fold-integration.md's own "Regression coverage this delta must
+    # not weaken" — the same real shipped call site, not a second copy.
+    fold_commit_step = find_step(STAGE, FOLD_COMMIT_STEP)
+    fold_id = str((fold_commit_step.get("with") or {}).get("fold-id", ""))
+    if fold_id != "${{ matrix.id }}":
+        failures.append(f"structural: {FOLD_COMMIT_STEP!r} no longer calls "
+                        f"wing-commander-fold-commit with fold-id: "
+                        f"matrix.id — report-fold-outcomes' git-grep "
+                        f"evidence check depends on the fold(<id>): "
+                        f"<summary> commit shape (research.md D6) tracing "
+                        f"back to this exact id.")
     return failures
 
 
