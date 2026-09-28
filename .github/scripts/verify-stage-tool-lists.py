@@ -105,6 +105,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 
@@ -443,24 +444,62 @@ def check_mandated_commands(table):
     return failures
 
 
+def _git_tracked(root, rel):
+    """-> True/False if `root` is a git working tree, else None.
+
+    `git ls-files --error-unmatch` is case-sensitive the same way Actions'
+    Ubuntu runners are, and - unlike a directory listing - answers whether
+    `rel` is actually committed rather than merely sitting on disk. A stage
+    job that checks out the pipeline's own `.wing-commander-pipeline/`
+    workspace copy before running `run-local-gates.py` leaves real,
+    on-disk, untracked files behind; without this check `_script_exists`
+    would call those "existing" and flag their waiver entries as stale
+    (PR #636 review, blocking on #630). None means "can't tell" - `root`
+    is not inside a git working tree at all, which is exactly the shape of
+    this gate's own synthetic `tempfile.mkdtemp()` self-test fixtures; the
+    caller falls back to on-disk existence in that case.
+    """
+    try:
+        proc = subprocess.run(
+            ["git", "-C", root, "ls-files", "--error-unmatch", "--", rel],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    except OSError:
+        return None
+    if proc.returncode == 0:
+        return True
+    if proc.returncode == 1:
+        return False
+    return None
+
+
 def _script_exists(root, rel):
-    """Case-sensitive `os.path.isfile`, keyed off the directory listing.
+    """Case-sensitive `os.path.isfile`, keyed off the directory listing,
+    then narrowed to git-tracked status when `root` is a git working tree.
 
     `os.path.isfile` is case-insensitive on Windows and macOS, but Actions
     runs this gate on Ubuntu. A case-mangled grant (`Setup-Plan.sh` for the
     shipped `setup-plan.sh`) would pass `run-local-gates.py` on this
     repository's own Windows worktrees and then fail only in CI - the exact
     local-pass/CI-fail divergence this gate exists to prevent (#436 review
-    round 2).
+    round 2). On-disk presence alone is not enough, though: an untracked
+    file (this repository's own `.wing-commander-pipeline/` pipeline
+    checkout, among others) can be present without being committed, so a
+    forward grant against it - or a waiver entry naming it - must be judged
+    against git, not the filesystem (T024/T025, PR #636 review on #630).
     """
     path = os.path.join(root, rel)
     if not os.path.isfile(path):
         return False
     directory, filename = os.path.split(path)
     try:
-        return filename in os.listdir(directory or ".")
+        if filename not in os.listdir(directory or "."):
+            return False
     except OSError:
         return False
+    tracked = _git_tracked(root, rel)
+    if tracked is None:
+        return True
+    return tracked
 
 
 def collect_reusable_workflow_grants(docs):
@@ -564,7 +603,7 @@ def check_grant_existence(all_sites, waivers, root="."):
     for rel, entry in waivers.items():
         if _script_exists(root, rel):
             failures.append(
-                "{0} waives {1!r} (#{2}) as absent by design, but it now "
+                "{0} waives {1!r} ({2}) as absent by design, but it now "
                 "exists in the working tree - the waiver has gone stale; "
                 "drop the entry.".format(
                     WAIVER_FILE, rel, entry.get("issue", "?")))
@@ -1014,6 +1053,45 @@ def self_test(root="."):
         print("[FAIL] a stale waiver entry (path now exists) was not caught "
               "(expected 1 failure naming {0}, the path, and the issue): "
               "{1}".format(WAIVER_FILE, found))
+
+    # T024-T026 / PR #636 review, blocking on #630: a waived path that is
+    # merely present on disk but NOT git-tracked (the shape of a stage
+    # job's uncommitted-by-design `.wing-commander-pipeline/` checkout)
+    # must not be reported as a stale waiver; the identical path, once
+    # git-tracked, must be.
+    tmp = tempfile.mkdtemp()
+    try:
+        init = subprocess.run(
+            ["git", "init", "-q", tmp],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        tracked_path = "untracked-then-tracked-waived-script.sh"
+        with io.open(os.path.join(tmp, tracked_path), "w",
+                     encoding="utf-8") as fh:
+            fh.write("#!/bin/sh\n")
+        git_waivers = {tracked_path: {"path": tracked_path, "issue": "#630",
+                                       "reason": "test fixture"}}
+        if init.returncode != 0:
+            found_untracked, found_tracked = None, None
+        else:
+            found_untracked = check_grant_existence([], git_waivers, tmp)
+            subprocess.run(
+                ["git", "-C", tmp, "add", tracked_path],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            found_tracked = check_grant_existence([], git_waivers, tmp)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    if not found_untracked and found_tracked is not None and \
+            len(found_tracked) == 1 and WAIVER_FILE in found_tracked[0] and \
+            tracked_path in found_tracked[0] and "#630" in found_tracked[0]:
+        print("[ok] mutation caught: an untracked on-disk file at a waived "
+              "path is not reported as stale, but the same file once "
+              "git-tracked is")
+    else:
+        bad += 1
+        print("[FAIL] the git-tracked vs untracked distinction for waiver "
+              "staleness was not respected (expected 0 failures while "
+              "untracked, 1 once git-tracked): untracked={0}, "
+              "tracked={1}".format(found_untracked, found_tracked))
 
     for name, m_sites, m_table, expect in _mutations(sites, table):
         found = compare(m_sites, m_table, relative)
