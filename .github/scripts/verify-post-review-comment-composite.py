@@ -35,6 +35,9 @@ BOARD_LOOP_FILE = ".github/workflows/board-loop.yml"
 
 GH_STUB = """#!/usr/bin/env bash
 printf '%s\\n' "$*" > "$GH_STUB_LOG"
+for a in "$@"; do
+  case "$a" in body=@*) cp "${a#body=@}" "$GH_STUB_BODY" ;; esac
+done
 exit 0
 """
 
@@ -46,9 +49,9 @@ def _write_gh_stub(bindir):
     os.chmod(path, os.stat(path).st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
 
 
-def run_composite_step(root="."):
+def run_composite_step(root=".", attribution=""):
     """Runs the shipped 'Post the review on the PR' step against a stubbed
-    `gh`; returns (rc, output, gh_call_line)."""
+    `gh`; returns (rc, output, gh_call_line, posted_body)."""
     bash = resolve_bash()
     step = find_step(os.path.join(root, ACTION), STEP_NAME)
     run = step.get("run") or ""
@@ -63,6 +66,8 @@ def run_composite_step(root="."):
         "PR_NUMBER": "123",
         "BODY_FILE": os.path.join(workdir, "body.md"),
         "GH_STUB_LOG": log_path,
+        "GH_STUB_BODY": os.path.join(workdir, "posted-body.md"),
+        "ATTRIBUTION": attribution,
         "PATH": bindir + os.pathsep + os.environ.get("PATH", ""),
     }
     open(env_extra["BODY_FILE"], "w", encoding="utf-8").write("hello\n")
@@ -73,14 +78,18 @@ def run_composite_step(root="."):
     gh_call = ""
     if os.path.isfile(log_path):
         gh_call = open(log_path, encoding="utf-8").read()
-    return rc, output, gh_call
+    posted = ""
+    if os.path.isfile(env_extra["GH_STUB_BODY"]):
+        posted = open(env_extra["GH_STUB_BODY"], encoding="utf-8").read()
+    return rc, output, gh_call, posted
 
 
 def board_loop_calls_composite(root="."):
     """True if board-loop.yml's reviewer job calls the composite (a
-    `uses: ./.github/actions/wing-commander-post-review-comment` step)
-    rather than its own inline `gh api -X POST .../reviews -f
-    event=COMMENT`."""
+    `uses: ./.wc-pristine-repo/.github/actions/wing-commander-post-review-
+    comment` step -- the trusted copy Gate 104 requires; a bare
+    `./.github/...` path also counts here, Gate 104 rejects it) rather than
+    its own inline `gh api -X POST .../reviews -f event=COMMENT`."""
     path = os.path.join(root, BOARD_LOOP_FILE)
     if not os.path.isfile(path):
         return False, False
@@ -93,8 +102,8 @@ def board_loop_calls_composite(root="."):
     for job in (doc.get("jobs") or {}).values():
         for step in (job or {}).get("steps") or []:
             uses = str((step or {}).get("uses") or "")
-            if uses.strip().lstrip("./") == \
-               "./.github/actions/wing-commander-post-review-comment".lstrip("./"):
+            if uses.strip().endswith(
+                    ".github/actions/wing-commander-post-review-comment"):
                 calls_composite = True
     return calls_composite, has_inline
 
@@ -102,7 +111,7 @@ def board_loop_calls_composite(root="."):
 def run():
     failures = 0
 
-    rc, output, gh_call = run_composite_step()
+    rc, output, gh_call, posted = run_composite_step()
     if rc != 0:
         failures += 1
         print("::error::verify-post-review-comment-composite: the shipped "
@@ -124,6 +133,23 @@ def run():
     if not failures:
         print("[ok] the shipped step calls gh api with exactly "
               "-f event=COMMENT -F body=@<body-file>: {0!r}".format(call_line))
+
+    if posted != "hello\n":
+        failures += 1
+        print("::error::verify-post-review-comment-composite: with no "
+              "attribution the posted body must be the body file unchanged, "
+              "got: {0!r}".format(posted))
+
+    # board-loop.yml's directed-proof-run attribution (FR-011), absorbed
+    # from main's inline prepend: the line, a blank line, then the body.
+    rc, output, _call, posted = run_composite_step(attribution="_Directed._")
+    if rc != 0 or posted != "_Directed._\n\nhello\n":
+        failures += 1
+        print("::error::verify-post-review-comment-composite: attribution "
+              "was not prepended as '<line>\\n\\n<body>' (rc={0}): "
+              "{1!r}".format(rc, posted))
+    else:
+        print("[ok] a non-empty attribution is prepended before the body")
 
     calls_composite, has_inline = board_loop_calls_composite()
     if not calls_composite:

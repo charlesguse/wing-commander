@@ -538,6 +538,13 @@ in the same change that records the evidence — not before.
 
 ## Clarifications
 
+**Superseded in part**: Question 1's classic-only answer below was
+superseded by specs/066-fine-grained-maintainer-token, which accepts a
+repository-scoped fine-grained credential alongside the classic one (dual
+acceptance during a transition). Preserved here as history, per FR-019 of
+that feature -- see specs/066-fine-grained-maintainer-token/spec.md
+Clarifications Q1.
+
 ### Session 2026-09-19
 
 All three open questions were answered by the repository owner on lifecycle

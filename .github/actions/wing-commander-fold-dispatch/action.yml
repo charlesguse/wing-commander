@@ -1,10 +1,9 @@
 # Single home for the fold mechanism's bump/dispatch sequence
 # (specs/062-lifecycle-review-gate T034, data-model.md §7, research.md D9,
-# contracts/fold-integration.md): re-read the spec branch's current tip,
-# compare it against the pre-fold base-sha, and -- if it moved -- read
-# spec-meta.json.iteration off that tip and dispatch the configured
-# implement workflow with iteration + 1, recording the fold evidence a
-# caller's own reply needs. CLAUDE.md's "Shared logic has exactly one
+# contracts/fold-integration.md): given this run's own fold evidence,
+# re-read the spec branch's current tip, read spec-meta.json.iteration
+# off it and dispatch the configured implement workflow with
+# iteration + 1, returning the fold list a caller's own reply needs. CLAUDE.md's "Shared logic has exactly one
 # home" applied to pr-conversation.yml's `dispatch-once` job (one dispatch
 # per whole review) and lifecycle-review-gate.yml's `disposition` job (one
 # dispatch per not-clean round), its two callers.
@@ -20,17 +19,26 @@
 # allowed) preserves that existing, published behavior unchanged rather
 # than forcing a hardcoded target on a caller that never had one.
 #
-# Three further outputs than data-model.md §7's two are exposed for the
-# same reason: `folded` (the tip moved at all, regardless of whether a
-# dispatch followed -- distinct from `dispatched`, which is false in
-# standalone mode even though something did fold), `folded-summary` (the
-# `fold(<id>): <summary>` evidence line list, so a caller's own reply never
-# has to re-run the same `git log --grep` scan this composite already
-# performed to decide whether to dispatch), and `run-url` (the dispatched
-# run's own URL, polled here -- immediately after the `gh workflow run`
-# call this composite itself makes -- rather than by a caller's own later
-# step, whose start-of-window timestamp would otherwise be captured too
-# late relative to a dispatch that already happened in a prior step).
+# The dispatch decision and the fold list come from the caller's
+# `folded-json` input -- THIS run's own fold evidence -- never from "the
+# tip moved" alone (specs/075-run-scoped-fold-evidence FR-014/FR-015,
+# merged into this branch per the maintainer review's F7(a)): a sibling
+# run's fold, or an unrelated push, can move the tip during this run's
+# window, and dispatching off that would fire an implement cycle this run
+# never earned. pr-conversation.yml's `dispatch-once` job passes
+# wing-commander-fold-evidence's `folded-json` (run-id-trailer-scoped --
+# see that composite's own header); lifecycle-review-gate.yml's
+# `disposition` job passes wing-commander-fold-commit's own `folded-json`,
+# since that step made the round's one fold commit itself.
+#
+# Outputs beyond data-model.md §7's two: `folded` (this run folded
+# something of its own, whether or not a dispatch followed -- distinct
+# from `dispatched`, which is false in standalone mode), `tip-moved` (the
+# tip moved past base-sha -- with `folded` false, the caller posts
+# FR-015's declined-dispatch notice), `folded-summary` (one line per
+# folded-json entry, so a caller's reply lists exactly what the dispatch
+# decision was made from), and `run-url` (the dispatched run's own URL,
+# polled here immediately after this composite's own `gh workflow run`).
 #
 # Runs inside the caller's existing checkout, fetching the spec branch
 # straight from `origin` -- this repository is public (CLAUDE.md), so
@@ -40,12 +48,12 @@
 # spec branch out itself.
 name: wing-commander-fold-dispatch
 description: >
-  Re-reads the spec branch's current tip; if it moved past base-sha, reads
-  spec-meta.json.iteration off that tip and dispatches implement-workflow
-  (when configured) with iteration + 1, recording the fold(<id>): <summary>
-  evidence in the compared range. Outputs folded: false when the tip did
-  not move, and dispatched: false when it moved but no implement-workflow
-  is configured (standalone mode).
+  Given THIS run's own fold evidence (folded-json), re-reads the spec
+  branch's current tip, reads spec-meta.json.iteration off it and
+  dispatches implement-workflow (when configured) with iteration + 1.
+  Outputs folded: false (and never dispatches) when folded-json is empty,
+  even if the tip moved, and dispatched: false when something folded but
+  no implement-workflow is configured (standalone mode).
 
 inputs:
   dispatch-token:
@@ -63,6 +71,13 @@ inputs:
   spec-branch:
     description: e.g. spec/062-lifecycle-review-gate
     required: true
+  folded-json:
+    description: >
+      JSON array of {id, summary} -- THIS run's own fold evidence
+      (wing-commander-fold-evidence's folded-json, or
+      wing-commander-fold-commit's). Empty or [] means this run folded
+      nothing of its own: nothing is dispatched.
+    required: true
   implement-workflow:
     description: Workflow file to dispatch (gh workflow run target). Empty means standalone mode -- fold, but never auto-dispatch.
     required: false
@@ -70,8 +85,11 @@ inputs:
 
 outputs:
   folded:
-    description: "'true' if the spec branch's tip moved past base-sha -- something folded, whether or not it was dispatched."
+    description: "'true' if folded-json names at least one of this run's own folds -- whether or not it was dispatched."
     value: ${{ steps.dispatch.outputs.folded }}
+  tip-moved:
+    description: "'true' if the spec branch's tip moved past base-sha. With folded 'false', the tip moved but not from this run's own fold (FR-015's declined-dispatch case)."
+    value: ${{ steps.dispatch.outputs.tip-moved }}
   dispatched:
     description: "'true' only when an implement-workflow run was actually triggered."
     value: ${{ steps.dispatch.outputs.dispatched }}
@@ -79,7 +97,7 @@ outputs:
     description: spec-meta.json's iteration + 1, whenever the tip moved (folded == 'true') -- not only when dispatched, since a standalone-mode caller's reply needs it too. Empty when folded is 'false'.
     value: ${{ steps.dispatch.outputs.new-iteration }}
   folded-summary:
-    description: "One '- <id>: <summary>' line per fold(<id>): <summary> commit in base-sha..tip, or a literal none-found line."
+    description: "One '- <id>: <summary>' line per folded-json entry. Empty when folded is 'false'."
     value: ${{ steps.dispatch.outputs.folded-summary }}
   run-url:
     description: The dispatched run's own URL, when found within this composite's own poll window. Empty when not dispatched, or when the run could not be located.
@@ -88,7 +106,7 @@ outputs:
 runs:
   using: composite
   steps:
-    - name: Re-read the tip and dispatch if it moved
+    - name: Re-read the tip and dispatch this run's own folds
       id: dispatch
       shell: bash
       env:
@@ -98,12 +116,24 @@ runs:
         BASE_SHA: ${{ inputs.base-sha }}
         SPEC_BRANCH: ${{ inputs.spec-branch }}
         IMPLEMENT_WORKFLOW: ${{ inputs.implement-workflow }}
+        FOLDED_JSON: ${{ inputs.folded-json }}
       run: |
         set -euo pipefail
         git fetch --quiet origin "refs/heads/${SPEC_BRANCH}" || true
         tip="$(git rev-parse FETCH_HEAD 2>/dev/null || true)"
 
-        if [ -z "$tip" ] || [ "$tip" = "$BASE_SHA" ]; then
+        tip_moved=false
+        if [ -n "$tip" ] && [ "$tip" != "$BASE_SHA" ]; then
+          tip_moved=true
+        fi
+        echo "tip-moved=$tip_moved" >> "$GITHUB_OUTPUT"
+
+        folded_json="${FOLDED_JSON:-[]}"
+        [ -n "$folded_json" ] || folded_json="[]"
+
+        # FR-014: this run folded nothing of its own -- whether or not the
+        # tip moved, there is nothing of this run's to dispatch.
+        if [ -z "$tip" ] || [ "$(printf '%s' "$folded_json" | jq 'length')" = "0" ]; then
           echo "folded=false" >> "$GITHUB_OUTPUT"
           echo "dispatched=false" >> "$GITHUB_OUTPUT"
           echo "new-iteration=" >> "$GITHUB_OUTPUT"
@@ -112,9 +142,7 @@ runs:
           exit 0
         fi
 
-        folded=$(git log --grep '^fold(' --format='%s' "$BASE_SHA..$tip" \
-          | sed -n 's/^fold(\([^)]*\)): \(.*\)$/- \1: \2/p')
-        [ -n "$folded" ] || folded="(no fold(<id>): commits were found in this range)"
+        folded=$(printf '%s' "$folded_json" | jq -r '.[] | "- " + .id + ": " + .summary')
         {
           echo "folded-summary<<WC_FOLD_DISPATCH_EOF"
           printf '%s\n' "$folded"
@@ -122,7 +150,7 @@ runs:
         } >> "$GITHUB_OUTPUT"
         echo "folded=true" >> "$GITHUB_OUTPUT"
 
-        # Computed whenever the tip moved, not only when dispatched: a
+        # Computed whenever this run folded, not only when dispatched: a
         # standalone-mode caller (implement-workflow empty) still needs to
         # tell its reply which iteration a manual dispatch should use.
         recorded="$(git show "$tip:$SPEC_DIR/spec-meta.json" | jq -r '.iteration // 0')"

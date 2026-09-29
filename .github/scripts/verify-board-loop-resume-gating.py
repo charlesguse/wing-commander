@@ -27,8 +27,12 @@ For each of fix / review / readiness, the job-level `if:` is parsed as a
 GitHub expression and must:
   1. carry `!cancelled()` as a top-level conjunct, and no other status
      function (`always()` would start agent work on a cancelled run);
-  2. carry `needs.select.result == 'success'` as a top-level conjunct, and
-     `needs.resolve-model.result == 'success'` too when the job needs
+  2. carry `needs.select.result == 'success'` as a top-level conjunct
+     (review/readiness may instead carry
+     `(needs.select.result == 'success' || inputs.directed-stage ==
+     '<job>')` -- PR #490 review, 2026-09-28: select is skipped by design
+     on a directed dispatch, so the bare form would always skip the job),
+     and `needs.resolve-model.result == 'success'` too when the job needs
      resolve-model (it runs an agent);
   3. guard every read of `needs.X.outputs.*` (X != select) with
      `needs.X.result == 'success'` in the SAME conjunction -- an OR branch
@@ -130,6 +134,23 @@ on a PR the size check had already rejected. Now:
     which report-unmet reuses in place of a create (static), and the
     lookup's BREACH_SPEC_REQUEST_JQ is run on SPEC_REQUEST_CASES.
 
+WHAT IT CHECKS (#604)
+---------------------
+(a) Every stalled marker board-loop.yml writes goes through
+board_item_marker.py with `--issue "$ISSUE_NUMBER" --add-label
+"board:stalled"` and a `|| { echo "::error::..."; exit 1; }` guard (a
+`--step "$var"` render whose var can be `stalled` must pass them through
+`"${stall_args[@]}"`); no step applies board:stalled with a bare gh call
+or writes a marker inline. The CLI itself is run against a stub gh
+(STALL_CLI_CASES): `--step stalled` without the add is refused, a failed
+add renders nothing and exits non-zero, a successful one calls gh first
+and keeps gh's stdout out of the marker.
+(b) In readiness, every step after `killswitch-recheck` that writes to
+GitHub (gh issue/pr writes, a marker, the cross-link composite) carries
+`steps.killswitch-recheck.outputs.paused == 'false'` as a top-level `if:`
+conjunct, none writes before it, and the re-check itself is neither
+conditional nor tolerated (FR-051/FR-052).
+
 --self-test mutates the shipped workflow text (drops `!cancelled()`, a
 result guard, the breach exclusion, the breach output, restores main's
 pre-#525 conditions, ...) and asserts every mutation fails.
@@ -153,6 +174,14 @@ BOT_LOGIN = "wing-commander-bot[bot]"
 RESUME_JOBS = ("fix", "review", "readiness")
 SIM_JOBS = ("select", "resolve-model", "triage", "route", "fix", "review", "readiness")
 PAUSE_VAR = "vars.WING_COMMANDER_BOARD_LOOP_PAUSED"
+
+# specs/060-self-redrive-concurrency, PR #490 review (2026-09-28): select is
+# skipped by design on a directed dispatch (`inputs.directed-stage != ''`),
+# so review/readiness may OR their `needs.select.result == 'success'` guard
+# with the matching `inputs.directed-stage` value instead of carrying it
+# bare. `fix` has no directed-stage branch (aimable_jobs excludes it,
+# board_prove.py T002) and must keep the bare form.
+DIRECTED_STAGE_BY_JOB = {"review": "review", "readiness": "readiness"}
 STATUS_FUNCS = ("success", "failure", "cancelled", "always")
 
 
@@ -310,8 +339,34 @@ def uses_status_func(node):
 # Static checks
 # ---------------------------------------------------------------------------
 
+def _has_conjunct(cond, node):
+    """True when the `if:` text `cond` carries `node` as a top-level
+    conjunct (#604: readiness's steps now AND the stop gate on)."""
+    if cond is None:
+        return False
+    try:
+        return node in conjuncts(parse_expr(cond))
+    except ValueError:
+        return False
+
+
 def _is_cmp(node, op, path, value):
     return (node[0] == op and node[1] == ("path", path) and node[2] == ("lit", value))
+
+
+def _guards_select_result(node, job_name):
+    """True when `node` is an accepted top-level form of the select guard
+    for `job_name`: the bare `needs.select.result == 'success'`, or (for a
+    job in DIRECTED_STAGE_BY_JOB) an OR of that comparison with
+    `inputs.directed-stage == '<job_name>'` (PR #490 review, 2026-09-28)."""
+    if _is_cmp(node, "==", "needs.select.result", "success"):
+        return True
+    directed = DIRECTED_STAGE_BY_JOB.get(job_name)
+    if directed and node[0] == "or":
+        parts = node[1]
+        return (any(_is_cmp(p, "==", "needs.select.result", "success") for p in parts)
+                and any(_is_cmp(p, "==", "inputs.directed-stage", directed) for p in parts))
+    return False
 
 
 def _output_reads(node, guards, out):
@@ -375,6 +430,25 @@ def _writes_output(run, key):
     return re.search(r"""(?:^|["'\s]){0}=""".format(re.escape(key)), run, re.M) is not None
 
 
+def _writes_marker(run):
+    """True if `run` writes a board item marker anywhere, via either the
+    inline write_marker(...) call or the board_item_marker.py CLI
+    entrypoint (#607)."""
+    return "write_marker(" in run or "board_item_marker.py" in run
+
+
+def _writes_marker_step(run, step):
+    """True if `run` writes a board item marker for the given literal step
+    name (e.g. 'stalled') or symbolic token (BREACH_STEP/AWAITING_MERGE_STEP),
+    via either the inline write_marker(...) call or the board_item_marker.py
+    CLI entrypoint's `--step` flag (#607)."""
+    if "--step {0}".format(step) in run and "board_item_marker.py" in run:
+        return True
+    if step in ("BREACH_STEP", "AWAITING_MERGE_STEP"):
+        return "write_marker({0},".format(step) in run
+    return "write_marker({0!r}".format(step) in run
+
+
 def static_findings(doc):
     findings = []
     jobs = doc.get("jobs") or {}
@@ -410,7 +484,11 @@ def static_findings(doc):
                 "{0}: if: uses a status function other than the one `!cancelled()` "
                 "conjunct".format(name))
         for up in ["select"] + (["resolve-model"] if "resolve-model" in needs else []):
-            if not any(_is_cmp(p, "==", "needs.{0}.result".format(up), "success") for p in top):
+            if up == "select":
+                ok = any(_guards_select_result(p, name) for p in top)
+            else:
+                ok = any(_is_cmp(p, "==", "needs.{0}.result".format(up), "success") for p in top)
+            if not ok:
                 findings.append(
                     "{0}: if: lacks top-level `needs.{1}.result == 'success'`".format(name, up))
         if not any(_is_cmp(p, "!=", PAUSE_VAR, "true") for p in top):
@@ -460,15 +538,14 @@ def static_findings(doc):
     readiness = jobs.get("readiness") or {}
     ready_steps = [s for s in (readiness.get("steps") or [])
                    if isinstance(s, dict)
-                   and str(s.get("if", "")).replace(" ", "") == "steps.decide.outputs.ready=='true'"
-                   and "write_marker(" in str(s.get("run", ""))]
+                   and _has_conjunct(s.get("if"), ("==", ("path", "steps.decide.outputs.ready"), ("lit", "true")))
+                   and _writes_marker(str(s.get("run", "")))]
     if not ready_steps:
         findings.append("readiness: no step gated on `steps.decide.outputs.ready == 'true'` writes "
                         "a board item marker (#532)")
     for s in ready_steps:
         run = str(s.get("run", ""))
-        if ("from board_eligibility import AWAITING_MERGE_STEP" not in run
-                or "write_marker(AWAITING_MERGE_STEP," not in run):
+        if not _writes_marker_step(run, "AWAITING_MERGE_STEP"):
             findings.append(
                 "readiness: ready-report step `{0}` does not write its marker with "
                 "board_eligibility.AWAITING_MERGE_STEP -- a ready item left at any other step "
@@ -502,6 +579,13 @@ def _lookup(path, ctx):
             return ctx.outputs.get(dep, {}).get(parts[3], "")
     if parts[0] == "github" and parts[1] == "event_name":
         return ctx.vars.get("__event", "schedule")
+    if parts[0] == "inputs" and len(parts) == 2:
+        # specs/060-self-redrive-concurrency: every scenario this gate
+        # simulates is an ordinary (non-directed) trigger, so every
+        # `inputs.*` reference (e.g. `inputs.directed-stage`) reads as
+        # empty here -- the same value GitHub Actions gives a
+        # workflow_dispatch input on a schedule/pull_request-triggered run.
+        return (ctx.vars.get("__inputs") or {}).get(parts[1], "")
     raise ValueError("simulator does not model `{0}`".format(path))
 
 
@@ -696,6 +780,20 @@ SCENARIOS = [
      {"vars": {"WING_COMMANDER_BOARD_LOOP_PAUSED": "true"},
       "outputs": {"select": _item("breach", pr="42", branch="fix/396-board-item")}},
      ("select", "resolve-model")),
+    # PR #490 review, 2026-09-28: select is skipped by design on a directed
+    # dispatch (`inputs.directed-stage != ''`), so review/readiness must
+    # reach their job through the `inputs.directed-stage` branch of their
+    # own select guard, not the (always-false-here) `needs.select.result ==
+    # 'success'` branch. This is the exact gap that let a directed
+    # review/readiness dispatch conclude 'success' -- and outcome_reason
+    # record 'proven' -- while cascade-skipping the job it was dispatched
+    # to run.
+    ("directed dispatch: review reaches the job",
+     {"vars": {"__inputs": {"directed-stage": "review", "directed-issue": "396"}}},
+     ("resolve-model", "review")),
+    ("directed dispatch: readiness reaches the job",
+     {"vars": {"__inputs": {"directed-stage": "readiness", "directed-issue": "396"}}},
+     ("resolve-model", "readiness")),
 ]
 
 
@@ -1095,8 +1193,7 @@ def breach_retry_findings(doc, scripts_root=ROOT):
     lines = run.split("\n")
     create_at = next((i for i, l in enumerate(lines) if "gh issue create" in l), None)
     marker_at = next((i for i, l in enumerate(lines)
-                      if "from board_eligibility import BREACH_STEP" in l
-                      and "write_marker(BREACH_STEP, 0, int(os.environ['PR_NUMBER'])" in l), None)
+                      if _writes_marker_step(l, "BREACH_STEP") and "--pr" in l), None)
     post_at = next((i for i, l in enumerate(lines)
                     if "gh issue comment" in l and "$breach_marker" in l), None)
     if create_at is None:
@@ -1107,27 +1204,8 @@ def breach_retry_findings(doc, scripts_root=ROOT):
             "marker before its `gh issue create` -- a failed create leaves step=route newest "
             "and the next run reviews the oversized PR (#530)")
 
-    # Both breach sites: board:stalled is added, failing the step when it
-    # cannot be, BEFORE the stalled marker is posted. A stalled marker
-    # (pr=None) without the label is re-admitted by select and adopted by
-    # resume's fallback as step=review -- the same oversized-PR review.
-    for job, step_id in (("fix", "post-push-breach"), ("readiness", "report-unmet")):
-        logical = re.sub(r"\\\n\s*", " ", str(_step(doc, job, step_id).get("run", ""))).split("\n")
-        label_at = next((i for i, l in enumerate(logical)
-                         if '--add-label "board:stalled"' in l), None)
-        stalled_at = next((i for i, l in enumerate(logical)
-                           if "write_marker('stalled'" in l), None)
-        where = "{0}/{1}".format(job, step_id)
-        if label_at is None or stalled_at is None:
-            findings.append("{0}: no board:stalled label add or no stalled marker found (#530)".format(where))
-            continue
-        label_line = logical[label_at]
-        if label_at > stalled_at or not re.search(
-                r"\|\|\s*\{\s*echo\s+\"::error::.*;\s*exit\s+1;\s*\}\s*$", label_line):
-            findings.append(
-                "{0}: board:stalled is not added (with `|| {{ echo ::error::; exit 1; }}`) before "
-                "the stalled marker is written -- a failed label add leaves a stalled marker with "
-                "no exclusion label, and the next run reviews the oversized PR (#530)".format(where))
+    # Both breach sites' board:stalled-before-marker rule (#530) is now
+    # every stall site's: stall_label_findings() below (#604).
 
     # Readiness: forced breach on step=breach, executed.
     backstop = _step(doc, "readiness", "final-diff-backstop")
@@ -1180,6 +1258,197 @@ def breach_retry_findings(doc, scripts_root=ROOT):
             if proc.returncode != 0 or got != want:
                 findings.append("BREACH_SPEC_REQUEST_JQ `{0}`: expected {1!r}, got {2!r} {3}".format(
                     title, want, got, proc.stderr.strip()))
+    return findings
+
+
+# ---------------------------------------------------------------------------
+# #604 (a): every stalled marker board-loop.yml writes adds board:stalled
+# first, and fails loudly when it cannot. The one home of that sequence is
+# board_item_marker.py's add_stalled_label(); this checks each call site
+# uses it and that the CLI itself refuses to render a stalled marker
+# without the add.
+# ---------------------------------------------------------------------------
+
+_MARKER_CLI = re.compile(r'board_item_marker\.py"?\s+--step\s+("\$\w+"|\$\w+|"?[A-Za-z_-]+)')
+_FAIL_LOUD = re.compile(r'\|\|\s*\{\s*echo\s+"::error::[^\n]*;\s*exit\s+1;\s*\}\s*$')
+_STALL_FLAGS = re.compile(r'--issue\s+"\$ISSUE_NUMBER"\s+--add-label\s+"board:stalled"')
+_BARE_STALLED_APPLY = re.compile(r'\bgh\s+(?:issue|pr|api)\b.*(?:--add-label|--label|labels\[\]).*board:stalled')
+
+
+def _logical_lines(run):
+    return re.sub(r"\\\n\s*", " ", run).split("\n")
+
+
+def _all_steps(doc):
+    for job_name, job in (doc.get("jobs") or {}).items():
+        for i, step in enumerate((job or {}).get("steps") or []):
+            if isinstance(step, dict):
+                yield job_name, i, step
+
+
+def _stub_gh(tmp, rc):
+    bin_dir = os.path.join(tmp, "bin-{0}".format(rc))
+    os.makedirs(bin_dir)
+    gh = os.path.join(bin_dir, "gh")
+    with open(gh, "w", encoding="utf-8") as fh:
+        fh.write('#!/bin/sh\necho "$@" >> "{0}"\necho https://github.com/o/r/issues/7\nexit {1}\n'.format(
+            os.path.join(tmp, "gh-calls.log"), rc))
+    os.chmod(gh, 0o755)
+    return bin_dir
+
+
+def _run_marker_cli(args, gh_rc, scripts_root):
+    """Runs board_item_marker.py as board-loop.yml does (`python3 -I`)
+    against a stub gh exiting gh_rc. Returns (rc, stdout, stderr, gh calls).
+    Memoized on the CLI's own source: workflow mutations never change it."""
+    script = os.path.join(scripts_root, ".github", "scripts", "board_item_marker.py")
+    with open(script, encoding="utf-8") as fh:
+        key = ("marker-cli", fh.read(), tuple(args), gh_rc)
+    if key not in _RUN_CACHE:
+        _RUN_CACHE[key] = _run_marker_cli_uncached(args, gh_rc, scripts_root)
+    return _RUN_CACHE[key]
+
+
+def _run_marker_cli_uncached(args, gh_rc, scripts_root):
+    with tempfile.TemporaryDirectory() as tmp:
+        env = dict(os.environ, GITHUB_REPOSITORY="o/r",
+                   PATH=_stub_gh(tmp, gh_rc) + os.pathsep + os.environ.get("PATH", ""))
+        for key in ("GITHUB_SERVER_URL", "GITHUB_RUN_ID"):
+            env.pop(key, None)
+        proc = subprocess.run(
+            [sys.executable, "-I", os.path.join(scripts_root, ".github", "scripts", "board_item_marker.py")] + args,
+            text=True, capture_output=True, env=env, cwd=tmp)
+        log = os.path.join(tmp, "gh-calls.log")
+        calls = open(log, encoding="utf-8").read().splitlines() if os.path.exists(log) else []
+        return proc.returncode, proc.stdout, proc.stderr, calls
+
+
+STALL_CLI_CASES = [
+    # (title, args, gh exit code, want marker printed, want gh calls)
+    ("--step stalled without --issue/--add-label is refused",
+     ["--step", "stalled"], 0, False, []),
+    ("--step stalled with --issue but no --add-label is refused",
+     ["--step", "stalled", "--issue", "7"], 0, False, []),
+    ("--step stalled --add-label another label is refused",
+     ["--step", "stalled", "--issue", "7", "--add-label", "board:owned"], 0, False, []),
+    ("--issue/--add-label on a non-stalled step are refused",
+     ["--step", "review", "--issue", "7", "--add-label", "board:stalled"], 0, False, []),
+    ("the label add fails -> no marker, non-zero",
+     ["--step", "stalled", "--issue", "7", "--add-label", "board:stalled"], 1, False,
+     ["issue edit 7 -R o/r --add-label board:stalled"]),
+    ("the label add succeeds -> the marker, after the add, and gh's stdout kept out of it",
+     ["--step", "stalled", "--issue", "7", "--add-label", "board:stalled"], 0, True,
+     ["issue edit 7 -R o/r --add-label board:stalled"]),
+    ("regression: a non-stalled step calls no gh",
+     ["--step", "review", "--pr", "42"], 0, True, []),
+]
+
+
+def stall_label_findings(doc, scripts_root=ROOT):
+    findings = []
+    stall_sites = 0
+    for job, i, step in _all_steps(doc):
+        run = str(step.get("run", ""))
+        where = "{0}/{1}".format(job, step.get("id") or step.get("name") or i)
+        if "write_marker(" in run:
+            findings.append("{0}: writes a marker inline with write_marker( -- every board-loop.yml "
+                            "marker goes through the board_item_marker.py CLI, whose --step stalled "
+                            "adds board:stalled first (#604)".format(where))
+        for line in _logical_lines(run):
+            if _BARE_STALLED_APPLY.search(line):
+                findings.append(
+                    "{0}: applies board:stalled with a bare gh call -- the label goes on only "
+                    "through board_item_marker.py --step stalled --issue --add-label, before its "
+                    "marker (#604): `{1}`".format(where, line.strip()[:160]))
+            m = _MARKER_CLI.search(line)
+            if not m:
+                continue
+            arg = m.group(1).strip('"')
+            if arg.startswith("$"):
+                var = arg[1:]
+                can_stall = re.search(r"\b{0}=\"?stalled\"?(?:\s|;|$)".format(re.escape(var)), run, re.M)
+                if not can_stall:
+                    continue
+                stall_sites += 1
+                if not (_STALL_FLAGS.search(run) and "${stall_args[@]}" in line):
+                    findings.append(
+                        "{0}: --step \"${1}\" can be stalled but the invocation does not pass "
+                        "--issue \"$ISSUE_NUMBER\" --add-label \"board:stalled\" for it (#604)".format(where, var))
+            elif arg == "stalled":
+                stall_sites += 1
+                if not _STALL_FLAGS.search(line):
+                    findings.append(
+                        "{0}: renders a stalled marker without --issue \"$ISSUE_NUMBER\" --add-label "
+                        "\"board:stalled\" -- the label must go on before the marker (#604)".format(where))
+            else:
+                continue
+            if not _FAIL_LOUD.search(line):
+                findings.append(
+                    "{0}: a stalled-marker render is not followed by `|| {{ echo \"::error::...\"; exit 1; }}` "
+                    "-- a failed board:stalled add would post a marker-less comment and carry on (#604)".format(where))
+    if stall_sites == 0:
+        findings.append("no stalled-marker site found in board-loop.yml -- the #604 check is vacuous")
+    for title, args, gh_rc, want_marker, want_calls in STALL_CLI_CASES:
+        rc, out, err, calls = _run_marker_cli(args, gh_rc, scripts_root)
+        printed = "wing-commander-board-item:" in out
+        ok = (rc == 0) == want_marker and printed == want_marker and calls == want_calls
+        if want_marker and "issues/7" in out:
+            ok = False
+        if not want_marker and out.strip():
+            ok = False
+        if not ok:
+            findings.append("board_item_marker.py `{0}`: rc={1} stdout={2!r} gh calls={3!r} stderr={4!r} "
+                            "(#604)".format(title, rc, out.strip()[:120], calls, err.strip()[-160:]))
+    return findings
+
+
+# ---------------------------------------------------------------------------
+# #604 (b): readiness's stop re-check gates every durable action it takes
+# (FR-051/FR-052), not only the `ready` decision.
+# ---------------------------------------------------------------------------
+
+_DURABLE_RUN = re.compile(
+    r"\bgh\s+(?:issue\s+(?:comment|create|edit|close|reopen)|pr\s+(?:comment|edit|close|review)"
+    r"|label\s+create)\b|\bgh\s+api\b[^\n]*-X\s+(?:POST|PATCH|PUT|DELETE)|board_item_marker\.py")
+# Composites readiness calls that write to GitHub. The labels composite
+# (repository label setup, idempotent, run before the re-check) is not an
+# item action and stays outside this rule.
+_DURABLE_USES = ("wing-commander-outstanding-task-item",)
+_STOP_GATE = ("==", ("path", "steps.killswitch-recheck.outputs.paused"), ("lit", "false"))
+
+
+def readiness_stop_gate_findings(doc):
+    findings = []
+    steps = ((doc.get("jobs") or {}).get("readiness") or {}).get("steps") or []
+    recheck_at = next((i for i, s in enumerate(steps)
+                       if isinstance(s, dict) and s.get("id") == "killswitch-recheck"), None)
+    if recheck_at is None:
+        return ["readiness: no `killswitch-recheck` step (FR-051/FR-052, #604)"]
+    recheck = steps[recheck_at]
+    if "if" in recheck or recheck.get("continue-on-error"):
+        findings.append("readiness/killswitch-recheck: carries an `if:` or continue-on-error -- the "
+                        "re-check must always run and a failed one must stop the job (#604)")
+    durable = 0
+    for i, step in enumerate(steps):
+        if not isinstance(step, dict):
+            continue
+        name = step.get("id") or step.get("name") or str(i)
+        is_durable = (_DURABLE_RUN.search(str(step.get("run", "")))
+                      or any(u in str(step.get("uses", "")) for u in _DURABLE_USES))
+        if not is_durable:
+            continue
+        if i < recheck_at:
+            findings.append("readiness/{0}: takes a durable action before the stop re-check "
+                            "(FR-051/FR-052, #604)".format(name))
+            continue
+        durable += 1
+        if not _has_conjunct(step.get("if"), _STOP_GATE):
+            findings.append(
+                "readiness/{0}: a durable action whose `if:` does not carry "
+                "`steps.killswitch-recheck.outputs.paused == 'false'` as a top-level conjunct -- "
+                "a stop request that lands mid-run still lets it write (FR-051/FR-052, #604)".format(name))
+    if durable == 0:
+        findings.append("readiness: no durable step found after the stop re-check -- the #604 check is vacuous")
     return findings
 
 
@@ -1537,7 +1806,12 @@ def fetch_behaviour_findings(doc):
                    "STUB_LOG": log, "STUB_COMMENTS": comments,
                    "STUB_COMMENTS_FAIL": fail, "STUB_FAIL_ISSUE": "", "STUB_PULLS": "404",
                    "STUB_OWNED": "", "STUB_OWNED_FAIL": "", "STUB_LS_REMOTE_RC": "2",
-                   "PR_BODY": "Fixes #7", "PR_NUMBER": "42", "MERGED": "true"}
+                   "PR_BODY": "Fixes #7", "PR_NUMBER": "42", "MERGED": "true",
+                   # specs/060-self-redrive-concurrency: prove-gate's "gate"
+                   # step now branches on EVENT_NAME (workflow_dispatch vs.
+                   # the ordinary pull_request: closed trigger these fixtures
+                   # exercise) and reads DIRECTED_ISSUE on that other branch.
+                   "EVENT_NAME": "pull_request", "MERGED_EVENT": "true", "DIRECTED_ISSUE": ""}
             env.update({k: v.replace("{tmp}", tmp) for k, v in env_over.items()})
             rc, out, outputs, _summary = run_step(bash, run, workdir, env, runner_temp)
             with open(log, encoding="utf-8") as fh:
@@ -1562,7 +1836,8 @@ def all_findings(text, table=None, scripts_root=ROOT):
             + resume_findings(doc, scripts_root) + select_lookup_findings(doc, scripts_root)
             + owned_jq_findings(doc, scripts_root) + marker_reader_findings(doc)
             + fetch_handling_findings(doc) + lookup_handling_findings(doc)
-            + fetch_behaviour_findings(doc) + breach_retry_findings(doc, scripts_root))
+            + fetch_behaviour_findings(doc) + breach_retry_findings(doc, scripts_root)
+            + stall_label_findings(doc, scripts_root) + readiness_stop_gate_findings(doc))
 
 
 def print_table(table):
@@ -1649,10 +1924,24 @@ def _mutations(text):
 
     sub("fix without !cancelled()", "      !cancelled()\n      && needs.select.result == 'success'",
         "      needs.select.result == 'success'", after="\n  fix:\n")
-    sub("review without !cancelled()", "      !cancelled()\n      && needs.select.result == 'success'",
-        "      needs.select.result == 'success'", after="\n  review:\n")
-    sub("readiness without !cancelled()", "      !cancelled()\n      && needs.select.result == 'success'",
-        "      needs.select.result == 'success'", after="\n  readiness:\n")
+    sub("review without !cancelled()",
+        "      !cancelled()\n      && (needs.select.result == 'success' || inputs.directed-stage == 'review')",
+        "      (needs.select.result == 'success' || inputs.directed-stage == 'review')", after="\n  review:\n")
+    sub("readiness without !cancelled()",
+        "      !cancelled()\n      && (needs.select.result == 'success' || inputs.directed-stage == 'readiness')",
+        "      (needs.select.result == 'success' || inputs.directed-stage == 'readiness')",
+        after="\n  readiness:\n")
+    # PR #490 review, 2026-09-28: reverting to the bare select guard makes a
+    # directed review/readiness dispatch skip its own job -- select is
+    # skipped by design on that trigger, so `== 'success'` alone is never
+    # true. Caught by simulation (the "directed dispatch" scenarios below),
+    # not by any static shape check.
+    sub("review select guard reverted to the pre-#490-fix bare form",
+        "(needs.select.result == 'success' || inputs.directed-stage == 'review')",
+        "needs.select.result == 'success'", after="\n  review:\n")
+    sub("readiness select guard reverted to the pre-#490-fix bare form",
+        "(needs.select.result == 'success' || inputs.directed-stage == 'readiness')",
+        "needs.select.result == 'success'", after="\n  readiness:\n")
     sub("fix route branch without route.result guard",
         "(needs.route.result == 'success' && needs.route.outputs.decision == 'fix')",
         "needs.route.outputs.decision == 'fix'")
@@ -1667,7 +1956,8 @@ def _mutations(text):
     sub("fix without the breach output",
         "      breach: ${{ steps.final-diff-backstop.outputs.breach }}\n", "")
     sub("review without select.result guard",
-        "      && needs.select.result == 'success'\n", "", after="\n  review:\n")
+        "      && (needs.select.result == 'success' || inputs.directed-stage == 'review')\n", "",
+        after="\n  review:\n")
     sub("fix without resolve-model.result guard",
         "      && needs.resolve-model.result == 'success'\n", "", after="\n  fix:\n")
     sub("readiness without the pause check",
@@ -1682,8 +1972,9 @@ def _mutations(text):
     # always() lifts the implicit success() too, but also runs on a
     # cancelled run -- it is not an accepted substitute.
     sub("readiness with always() in place of !cancelled()",
-        "      !cancelled()\n      && needs.select.result == 'success'",
-        "      always()\n      && needs.select.result == 'success'", after="\n  readiness:\n")
+        "      !cancelled()\n      && (needs.select.result == 'success' || inputs.directed-stage == 'readiness')",
+        "      always()\n      && (needs.select.result == 'success' || inputs.directed-stage == 'readiness')",
+        after="\n  readiness:\n")
     sub("fix with always() in place of !cancelled()",
         "      !cancelled()\n      && needs.select.result == 'success'",
         "      always()\n      && needs.select.result == 'success'", after="\n  fix:\n")
@@ -1695,9 +1986,8 @@ def _mutations(text):
     # #532: the ready report re-recording step=readiness (the pre-#532
     # write), and readiness resuming on an awaiting-merge marker.
     sub("ready report writes step=readiness (pre-#532)",
-        "from board_eligibility import AWAITING_MERGE_STEP; from board_item_marker import "
-        "write_marker; print(write_marker(AWAITING_MERGE_STEP,",
-        "from board_item_marker import write_marker; print(write_marker('readiness',")
+        'board_item_marker.py" --step AWAITING_MERGE_STEP --pr "$PR_NUMBER")"',
+        'board_item_marker.py" --step readiness --pr "$PR_NUMBER")"')
     sub("readiness resumes on an awaiting-merge marker",
         "|| (needs.select.outputs.step == 'readiness' && needs.select.outputs.pr != '')",
         "|| ((needs.select.outputs.step == 'readiness' || needs.select.outputs.step == "
@@ -1801,9 +2091,8 @@ def _mutations(text):
         'backstop breach on %s (measured=%s) -- the PR will not be reviewed;',
         '          : "$(printf \'Post-push backstop breach on %s (measured=%s) -- the PR will not be reviewed;')
     sub("fix step=breach marker written as step=review",
-        "from board_eligibility import BREACH_STEP; from board_item_marker import write_marker; "
-        "print(write_marker(BREACH_STEP,",
-        "from board_item_marker import write_marker; print(write_marker('review',")
+        'board_item_marker.py" --step BREACH_STEP --pr "$PR_NUMBER" --branch "$BRANCH" --base-sha "$BASE_SHA")"',
+        'board_item_marker.py" --step review --pr "$PR_NUMBER" --branch "$BRANCH" --base-sha "$BASE_SHA")"')
     sub("resume fallback sends a breach marker to review",
         'step = BREACH_STEP if marker_step == BREACH_STEP else "review"', 'step = "review"')
     sub("readiness without the step=breach resume branch",
@@ -1821,24 +2110,47 @@ def _mutations(text):
         " && steps.final-diff-backstop.outputs.breach-retry == 'true'", "", after="\n  readiness:\n")
     sub("report-unmet ignores the spec-request already filed",
         'existing_spec_url="$EXISTING_SPEC_URL"', 'existing_spec_url=""')
-    # #530 review: the label add must precede the stalled marker and fail
-    # the step. Each site restored to its pre-review order (marker, then an
-    # unchecked label add), and each with only the failure check dropped.
-    for site, indent, err_head in (
-            ("fix", "          ", "board-loop fix (post-push breach)"),
-            ("readiness", "            ", "board-loop readiness (backstop breach)")):
-        label_start = text.index(indent + 'gh issue edit "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" '
-                                 '--add-label "board:stalled" \\\n' + indent + '  || { echo "::error::'
-                                 + err_head)
-        label_end = text.index("\n", text.index("exit 1; }", label_start)) + 1
-        label_block = text[label_start:label_end]
-        comment_start = text.index(indent + "marker=\"$(python3 -I -c", label_end)
-        comment_end = text.index("\n", text.index(indent + "gh issue comment", comment_start)) + 1
-        bare_label = indent + 'gh issue edit "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --add-label "board:stalled"\n'
-        muts.append(("{0} breach: stalled marker before an unchecked board:stalled (pre-review)".format(site),
-                     text[:label_start] + text[label_end:comment_end] + bare_label + text[comment_end:]))
-        muts.append(("{0} breach: board:stalled label failure not checked".format(site),
-                     text[:label_start] + bare_label + text[label_end:]))
+    # #604 (a): every stall site. Each render loses its label flags, and
+    # each loses its fail-loud check; plus the pre-#604 shape (marker, then
+    # a bare label add) at route, and triage's handover without stall_args.
+    stall_flags = ' --issue "$ISSUE_NUMBER" --add-label "board:stalled")"'
+    render_at = [m.start() for m in re.finditer(r"--step stalled[^\n]*" + re.escape(stall_flags), text)]
+    if len(render_at) != 7:
+        raise AssertionError("self-test: expected 7 literal stalled renders, found {0}".format(len(render_at)))
+    for n, at in enumerate(render_at):
+        flags_at = text.index(stall_flags, at)
+        muts.append(("stalled render #{0}: no --issue/--add-label".format(n + 1),
+                     text[:flags_at] + ')"' + text[flags_at + len(stall_flags):]))
+        guard_start = text.index(" \\\n", flags_at)
+        guard_end = text.index("\n", text.index("exit 1; }", guard_start)) + 1
+        muts.append(("stalled render #{0}: failure not checked".format(n + 1),
+                     text[:guard_start] + "\n" + text[guard_end:]))
+    sub("route: stalled marker, then a bare board:stalled add (pre-#604)",
+        '"$route_verb" "$route_detail" "$marker" "$rationale_comment")"\n',
+        '"$route_verb" "$route_detail" "$marker" "$rationale_comment")"\n'
+        '          gh issue edit "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --add-label "board:stalled"\n')
+    sub("triage handover renders without stall_args",
+        '--step "$marker_step" "${stall_args[@]}")"', '--step "$marker_step")"')
+    sub("an inline write_marker( stalled marker",
+        '          set -uo pipefail\n          # #604: every stall below',
+        '          set -uo pipefail\n          python3 -c "from board_item_marker import write_marker; '
+        'print(write_marker(\'stalled\', 0, None, None, None))"\n          # #604: every stall below')
+    # #604 (b): each durable readiness step without the stop gate, and the
+    # gate spelled `!= 'true'` (an empty output would act).
+    for step_if in (
+            "        if: steps.decide.outputs.ready == 'true' && steps.killswitch-recheck.outputs.paused == 'false'\n",
+            "        id: report-unmet\n        if: steps.decide.outputs.ready != 'true' && steps.killswitch-recheck.outputs.paused == 'false'\n",
+            "        if: steps.report-unmet.outputs.spec-url != '' && steps.killswitch-recheck.outputs.paused == 'false'\n"):
+        sub("readiness step without the stop gate: {0}".format(step_if.strip().splitlines()[-1][:60]),
+            step_if, step_if.replace(" && steps.killswitch-recheck.outputs.paused == 'false'", ""))
+    sub("readiness report-unmet gated `paused != 'true'`",
+        "        id: report-unmet\n        if: steps.decide.outputs.ready != 'true' && steps.killswitch-recheck.outputs.paused == 'false'\n",
+        "        id: report-unmet\n        if: steps.decide.outputs.ready != 'true' && steps.killswitch-recheck.outputs.paused != 'true'\n")
+    sub("readiness stop re-check tolerated (continue-on-error)",
+        "        id: killswitch-recheck\n        uses: ./.wc-pristine-repo/.github/actions/wing-commander-board-stop-check\n",
+        "        id: killswitch-recheck\n        continue-on-error: true\n"
+        "        uses: ./.wc-pristine-repo/.github/actions/wing-commander-board-stop-check\n",
+        after="\n  readiness:\n")
     sub("breach lookup jq ignores the author",
         'select(.user.type == "Bot" and .user.login == $bot)', "select(true)")
     sub("breach lookup jq ignores the PR number",
@@ -1949,6 +2261,35 @@ def run_selftest(text):
             with open(module, "w", encoding="utf-8") as fh:
                 fh.write(src.replace(old, "", 1))
             found = select_lookup_findings(yaml.safe_load(text), tmp)
+            if not found:
+                failures.append("mutation `{0}` was NOT detected".format(label))
+            else:
+                print("  detected: {0} -> {1}".format(label, found[0]))
+    # board_item_marker.py mutations (#604): a CLI that renders a stalled
+    # marker without the label add, or after a failed one, must fail
+    # stall_label_findings()'s executed cases.
+    for label, old, new in (
+            ("board_item_marker renders a stalled marker without --add-label",
+             "        if step != STALLED_STEP or args.issue is None or args.add_label != STALLED_LABEL:\n",
+             "        if False:\n"),
+            ("board_item_marker ignores a failed board:stalled add",
+             "        if not add_stalled_label(args.issue, args.add_label):\n            sys.exit(1)\n",
+             "        add_stalled_label(args.issue, args.add_label)\n"),
+            ("board_item_marker lets gh's stdout into the marker",
+             "                   stdout=sys.stderr)\n", "                   )\n")):
+        with tempfile.TemporaryDirectory() as tmp:
+            scripts = os.path.join(tmp, ".github", "scripts")
+            shutil.copytree(os.path.join(ROOT, ".github", "scripts"), scripts,
+                            ignore=shutil.ignore_patterns("tests", "fixtures", "__pycache__"))
+            module = os.path.join(scripts, "board_item_marker.py")
+            with open(module, encoding="utf-8") as fh:
+                src = fh.read()
+            if old not in src:
+                failures.append("mutation `{0}`: fixture text not found in board_item_marker.py".format(label))
+                continue
+            with open(module, "w", encoding="utf-8") as fh:
+                fh.write(src.replace(old, new, 1))
+            found = stall_label_findings(yaml.safe_load(text), tmp)
             if not found:
                 failures.append("mutation `{0}` was NOT detected".format(label))
             else:

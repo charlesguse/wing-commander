@@ -1079,6 +1079,8 @@ jobs:
       # base-sha is the tip this job's own checkout started from (nothing
       # else pushes to this branch between that checkout and the fold
       # commit above), matching wing-commander-fold-dispatch's contract.
+      # folded-json is the fold commit step's own record of the one commit
+      # it made -- this run's own fold evidence, by construction.
       # wing-commander-5-implement.yml is this repository's own dispatchable
       # implement wrapper (matching wing-commander-9-pr-conversation.yml's
       # own implement-workflow input) -- this workflow is repository-only
@@ -1094,6 +1096,7 @@ jobs:
           base-sha: ${{ needs.select.outputs.head-sha }}
           spec-branch: ${{ steps.pr.outputs.branch }}
           implement-workflow: wing-commander-5-implement.yml
+          folded-json: ${{ steps.commit-fold.outputs.folded-json }}
 
       # T038/T070: nothing folded this round -- either because there was
       # nothing to fold ("clean": every in-scope survivor was already
@@ -1221,6 +1224,18 @@ jobs:
       # (Gate 12; T024's own precedent in `disposition`).
       statuses: write
     steps:
+      # Maintainer review 5355876805 F4: this job had no checkout, so its
+      # first `uses: ./...` step could never resolve and no round outcome
+      # was ever posted (Gate 60's composite-checkout-order). This workflow
+      # runs only on schedule/workflow_dispatch, so the default ref is
+      # github.sha on the default branch -- trusted code, never the PR
+      # branch. F1's trusted-checkout layout (tasks.md Maintainer Feedback)
+      # supersedes this minimal fix across every job.
+      - name: Checkout (trusted, default branch)
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
       - name: Wing Commander context
         id: ctx
         uses: ./.github/actions/wing-commander-context

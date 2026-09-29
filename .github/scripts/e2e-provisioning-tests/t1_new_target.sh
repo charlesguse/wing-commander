@@ -9,12 +9,12 @@ export CLAUDE_CODE_OAUTH_TOKEN="test-oauth-token-value"
 
 OUT="$(bash "$PROVISION_SCRIPT" --repo wc-user/wc-e2e-scratch --profile auto-release 2>"$WORK/stderr.log")"
 RC=$?
-check "T1 exits 1 (not ready until the App is installed)" "$RC" "1"
-check "T1 overall ready is false" "$(jq -r .ready <<<"$OUT")" "false"
+check "T1 exits 2 (unverified until the App is installed)" "$RC" "2"
+check "T1 overall verdict is unverified" "$(jq -r .verdict <<<"$OUT")" "unverified"
 for key in repository claude_credential spec_request_label wrapper_set container_image_pin scratch_marker; do
-  check "T1 $key is ready" "$(jq -r --arg k "$key" '.elements[] | select(.key==$k) | .ready' <<<"$OUT")" "true"
+  check "T1 $key is ready" "$(jq -r --arg k "$key" '.elements[] | select(.key==$k) | .outcome' <<<"$OUT")" "ready"
 done
-check "T1 app_installation is not ready" "$(jq -r '.elements[] | select(.key=="app_installation") | .ready' <<<"$OUT")" "false"
+check "T1 app_installation is not checkable" "$(jq -r '.elements[] | select(.key=="app_installation") | .outcome' <<<"$OUT")" "not_checkable"
 check_contains "T1 app_installation names the install URL" \
   "$(jq -r '.elements[] | select(.key=="app_installation") | .remaining_action' <<<"$OUT")" \
   "https://github.com/settings/installations"

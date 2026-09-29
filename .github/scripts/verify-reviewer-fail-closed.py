@@ -111,8 +111,12 @@ SHARED_SCRIPTS = ("wc_fence_extract.py", "verify-board-review-finding-schema.py"
                   "wc_schema_pattern.py", "board_spec_request_body.py")
 SHARED_SCHEMAS = ("board-review-finding.schema.json",)
 PRISTINE_DIR = "wc-pristine"
-PRISTINE_SCRIPTS = SHARED_SCRIPTS + ("board_item_marker.py", "wc_step_output.py",
-                                     "wc_review_finding_fingerprint.py")
+# board_eligibility.py: board_item_marker.py imports STALLED_LABEL from it
+# for --step stalled (#604); wc_review_finding_fingerprint.py: the reviewer
+# path's finding fingerprint (specs/062-lifecycle-review-gate). The real
+# snapshot copies all of .github/scripts.
+PRISTINE_SCRIPTS = SHARED_SCRIPTS + ("board_item_marker.py", "board_eligibility.py",
+                                     "wc_step_output.py", "wc_review_finding_fingerprint.py")
 
 
 def _fenced_transcript(findings_json_text):
@@ -465,7 +469,7 @@ OOS_BODY = os.path.join("board-review-oos", "board-review-oos-{0}.md")
 BUDGET_STEP = "Post the converged/stalled outcome and marker"
 FIXER_GATE_STEP = "Comment the failing gate on the issue (fixer, gate suite red)"
 FIXUP_GATE_STEP = "Comment the failing gate on the issue (review-fixup, gate suite red)"
-FENCE_SCRIPTS = ("board_spec_request_body.py", "board_item_marker.py")
+FENCE_SCRIPTS = ("board_spec_request_body.py", "board_item_marker.py", "board_eligibility.py")
 CMARK_MAX_FENCE = 255
 
 HOSTILE_TOKENS = ("@hostileuser", "#4242", "<img src=x>",

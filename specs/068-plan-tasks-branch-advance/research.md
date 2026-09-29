@@ -319,7 +319,7 @@ backwards-reset, commits-unavailable, both-unavailable, plus the seven
 wrong-typed negatives) already cover the remaining scenarios FR-020
 lists verbatim — reused unchanged.
 
-## R9 — Gate 53 (`verify-branch-drift-sha-baseline.py`): extended with plan/tasks cases on both arms
+## R9 — Gate 65 (`verify-branch-drift-sha-baseline.py`): extended with plan/tasks cases on both arms
 
 **Decision**: Add four new scenario functions to the existing harness,
 reusing its established `GH_STUB`/local-git-repository fixture

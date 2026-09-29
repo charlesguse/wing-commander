@@ -493,6 +493,16 @@ jobs:
           fetch-depth: 0
           clean: false
 
+      - name: Refuse a branch that tracks .wing-commander-pipeline/
+        shell: bash
+        if: steps.lifecycle-gate.outputs.is-open == 'true'
+        env:
+          WC_PIPELINE_REF: ${{ steps.pipeline-ref.outputs.ref }}
+        run: |
+          p=.wing-commander-pipeline; want="$(cd "$GITHUB_WORKSPACE" && pwd -P)/$p"
+          if [ -L "$p" ] || [ ! -d "$p" ] || [ -L "$p/.git" ] || [ ! -d "$p/.git" ] || [ "$(git -C "$p" rev-parse --show-toplevel 2>/dev/null)" != "$want" ] || { [[ "${WC_PIPELINE_REF:-}" =~ ^[0-9a-f]{40}$ ]] && [ "$(git -C "$p" rev-parse HEAD 2>/dev/null)" != "$WC_PIPELINE_REF" ]; }; then rm -rf -- "$p"; echo "::error::wing-commander: $p is no longer the trusted pipeline checkout (a symlink, a missing or replaced .git, or another commit): the branch just checked out replaced it. Removed it so no later step loads branch code from there (#611)."; exit 1; fi
+          git -C "$p" cat-file blob HEAD:.github/scripts/pipeline-checkout-guard.sh | bash -s
+
       # The /speckit-specify skill numbers features by scanning specs/ on the
       # current checkout, which cannot see specs still in flight on unmerged
       # spec-draft/ branches. Compute the next free number across specs/ AND
@@ -578,6 +588,12 @@ jobs:
             discussion actually settled something the body doesn't capture,
             update the body before this spec is finalized.
 
+      - name: Compose commit-message guidance (intake)
+        id: commit-guidance-intake
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-commit-message-guidance
+        with:
+          scratch-filename: intake-commit-message.txt
+
       - name: Compose tool args (intake)
         id: tool-args-intake
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-tool-args
@@ -621,6 +637,8 @@ jobs:
           # NOTE: only the issue NUMBER is interpolated (an integer input,
           # not attacker-controlled text). The issue title/body are fetched by
           # the agent as data and must never be pasted into this prompt.
+          # the settled anchor rule for gate_or_artifact/file_path the
+          # prompt below states -- see clarify.yml.
           prompt: |
             You are the intake stage of this repository's spec-driven development
             pipeline. Work on GitHub issue #${{ inputs.issue-number }}.
@@ -679,10 +697,18 @@ jobs:
             5. Create branch ${{ inputs.spec-draft-prefix }}<NNN-slug> from
                ${{ steps.defbranch.outputs.name }}, commit ONLY the new
                spec directory (git add <spec-dir>), and push it.
-            6. Open a pull request to ${{ steps.defbranch.outputs.name }}:
+
+               ${{ steps.commit-guidance-intake.outputs.guidance }}
+            6. Open a pull request to ${{ steps.defbranch.outputs.name }}. First
+               write its body (a summary of the spec, then the line
+               'Closes nothing — lifecycle issue: #${{ inputs.issue-number }}')
+               with the Write tool to exactly
+               ${{ runner.temp }}/intake-pr-body.md -- not under the
+               repository; --body-file avoids the quoting hazards of a
+               multi-line --body on the command line -- then run:
                gh pr create --base ${{ steps.defbranch.outputs.name }} --head ${{ inputs.spec-draft-prefix }}<NNN-slug> \
                  --title "Spec: <feature name> (#${{ inputs.issue-number }})" \
-                 --body  "<summary of the spec, link 'Closes nothing — lifecycle issue: #${{ inputs.issue-number }}'>"
+                 --body-file ${{ runner.temp }}/intake-pr-body.md
             7. Update the lifecycle issue #${{ inputs.issue-number }}:
                - Create the spec identity label first (adding a nonexistent label fails):
                  gh label create "spec:<NNN-slug>" --color C5DEF5 --description "Lifecycle: <spec-dir>" --force
@@ -711,11 +737,17 @@ jobs:
             you saw, quoted), and "fingerprint_basis" (an object with
             "file_path" and "gate_or_artifact"). "gate_or_artifact" is half of
             the dedup key, so give it a stable name (a heading, a job name, a
-            gate name), never a sentence. An empty array means nothing to
-            report. Then continue your own task unchanged.
+            gate name), never a sentence. It must occur, verbatim once
+            punctuation, case, and spacing are ignored, in the file named by
+            "file_path"; if it does not, this finding still reaches the
+            board keyed by a fallback route instead of being dropped. An
+            empty array means nothing to report. Then continue your own task
+            unchanged.
 
             Constraints: create at most one spec directory; never edit files outside
-            it; never merge or approve anything; never force-push.
+            it, except the step 5 commit-message and step 6 PR-body scratch
+            files; never merge or approve
+            anything; never force-push.
 
             Shell constraints in this headless run. Each of these cost real
             turns in earlier runs, so read them before your first Bash call:
@@ -1152,6 +1184,31 @@ jobs:
                 echo "::error::wing-commander intake stage: intake reported specified=false (no discernible feature request), yet $SPEC_DIR/spec.md is present in this workspace and still contains colon-form [NEEDS CLARIFICATION: markers. Nothing was announced — specified=false already blocks both callouts — so this run would otherwise have finished green over a marker-carrying spec nobody was told about. Fix the agent's result, or clear the stale spec branch."
               fi
             fi
+          fi
+
+      # Gives stage:clarify a real writer (contracts/clarify-label-flip.md,
+      # research.md D2): a questionnaire just posted or about to post means
+      # the issue is waiting on the requester, and a resolvable spec dir with
+      # no open questions means it is not. Deterministic, reading only this
+      # step's own outputs above — never a second parse of the agent result.
+      - name: Flip stage label for clarification
+        if: steps.lifecycle-gate.outputs.is-open == 'true'
+        env:
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
+          ISSUE: ${{ inputs.issue-number }}
+          NEEDED: ${{ steps.clarification.outputs.needed }}
+          SPECIFIED: ${{ steps.clarification.outputs.specified }}
+          BLOCKED: ${{ steps.clarification.outputs.blocked }}
+          SPEC_DIR: ${{ steps.created.outputs.spec-dir }}
+        run: |
+          if [ "$NEEDED" = "true" ]; then
+            gh label create "stage:clarify" --color 1D76DB --description "Open clarification questions" --force || echo "::warning::wing-commander intake: could not create the stage:clarify label (the clarification questionnaire will still be posted)." >> "$GITHUB_STEP_SUMMARY"
+            if ! gh issue edit "$ISSUE" --add-label "stage:clarify"; then
+              echo "::warning::wing-commander intake: could not add stage:clarify to issue #$ISSUE (the clarification questionnaire was still posted)." >> "$GITHUB_STEP_SUMMARY"
+            fi
+            gh issue edit "$ISSUE" --remove-label "stage:spec" 2>/dev/null || true
+          elif [ "$SPECIFIED" = "true" ] && [ "$BLOCKED" != "true" ] && [ -n "$SPEC_DIR" ]; then
+            gh issue edit "$ISSUE" --remove-label "stage:clarify" 2>/dev/null || true
           fi
 
       # Deterministic render (contracts/clarification-schema.md): turns the

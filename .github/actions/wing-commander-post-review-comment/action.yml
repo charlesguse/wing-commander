@@ -8,6 +8,11 @@
 # reviews share the same App identity as the review itself, so
 # COMMENT is the only review event either caller can use — GitHub rejects
 # APPROVE/REQUEST_CHANGES from a PR's own author identity.
+#
+# `attribution` absorbs board-loop.yml's directed-proof-run prepend
+# (FR-011, contracts/directed-proof-run.md "Attribution"): the caller
+# passes its one canonical attribution string (empty outside a directed
+# run) and this step prepends it, so no caller re-implements the prepend.
 name: wing-commander-post-review-comment
 description: >
   Posts a COMMENT-event pull request review with the given body file — the
@@ -23,6 +28,10 @@ inputs:
   body-file:
     description: Path to a file containing the review body (Markdown)
     required: true
+  attribution:
+    description: Optional line prepended to the body, followed by a blank line. Empty (the default) posts the body unchanged.
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -33,7 +42,13 @@ runs:
         GH_TOKEN: ${{ inputs.token }}
         PR_NUMBER: ${{ inputs.pr-number }}
         BODY_FILE: ${{ inputs.body-file }}
+        ATTRIBUTION: ${{ inputs.attribution }}
       run: |
         set -uo pipefail
+        post_file="$BODY_FILE"
+        if [ -n "${ATTRIBUTION:-}" ]; then
+          post_file="$(mktemp)"
+          { printf '%s\n\n' "$ATTRIBUTION"; cat "$BODY_FILE"; } > "$post_file"
+        fi
         gh api -X POST "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews" \
-          -f event=COMMENT -F body=@"$BODY_FILE" >/dev/null
+          -f event=COMMENT -F body=@"$post_file" >/dev/null

@@ -110,7 +110,7 @@ jobs:
     permissions:
       contents: read
     outputs:
-      verdict: ${{ steps.config.outputs.verdict || steps.reachable.outputs.verdict || steps.maintainer-credential.outputs.verdict || steps.cleanup.outputs.verdict || steps.reset.outputs.verdict || steps.speckit-version.outputs.verdict || steps.scaffold.outputs.verdict || steps.kickoff.outputs.verdict || steps.poll.outputs.verdict }}
+      verdict: ${{ steps.config.outputs.verdict || steps.reachable.outputs.verdict || steps.maintainer-credential.outputs.verdict || steps.container-evidence-config.outputs.verdict || steps.cleanup.outputs.verdict || steps.reset.outputs.verdict || steps.speckit-version.outputs.verdict || steps.scaffold.outputs.verdict || steps.kickoff.outputs.verdict || steps.poll.outputs.verdict }}
       # Carried separately from the verdict's `mode` field (data-model.md
       # "Execution mode") -- true only when the container leg was due by
       # date parity but the pause control (research.md D3) forced this run
@@ -284,19 +284,20 @@ jobs:
           echo "ok=true" >> "$GITHUB_OUTPUT"
           echo "default-branch=$DEFAULT_BRANCH" >> "$GITHUB_OUTPUT"
 
-      # specs/055-unattended-e2e-gates D1/D2: the fixture maintainer
-      # identity is a dedicated GitHub user account (never a bot), invited
-      # as a Write collaborator on the test repository alone, whose PAT
-      # drives the four human gates later in this job. A classic PAT, not
-      # a fine-grained one -- a fine-grained PAT can only reach
-      # repositories the token's own account OWNS, never one it merely
-      # collaborates on, so the runtime containment check below (not
-      # token scoping alone) is what actually enforces "the test
-      # repository alone" for this credential (maintainer feedback on PR
-      # #389; corrects every prior "fine-grained" claim about this
-      # secret). Checked here, before any of those gates are reached, so
-      # a misconfigured credential ends fail-infra before any attempt
-      # spend rather than surfacing as a mysterious gate stall.
+      # research.md D1 (specs/066-fine-grained-maintainer-token): the
+      # fixture maintainer identity is a dedicated GitHub user account
+      # (never a bot), whose credential drives the four human gates later
+      # in this job. The precheck below detects, from the token's own
+      # literal prefix, which of the two accepted shapes the secret holds
+      # -- classic or fine-grained -- and applies that shape's own checks;
+      # both are accepted during the transition (FR-003) -- see
+      # docs/setup.md for the canonical statement of what each shape must
+      # carry (scope, permissions, expiry, rotation). specs/055-
+      # unattended-e2e-gates D1/D2 recorded the now-superseded classic-only
+      # decision this feature replaces. Checked here, before any of those
+      # gates are reached, so a misconfigured credential ends fail-infra
+      # before any attempt spend rather than surfacing as a mysterious
+      # gate stall.
       - name: Confirm the fixture maintainer identity's credential
         id: maintainer-credential
         if: steps.reachable.outputs.ok == 'true'
@@ -304,6 +305,7 @@ jobs:
         env:
           MAINTAINER_TOKEN: ${{ secrets.WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN }}
           MAINTAINER_USERNAME: ${{ secrets.WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_USERNAME }}
+          MAINTAINER_TOKEN_EXPIRY_WARNING_DAYS: ${{ vars.WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN_EXPIRY_WARNING_DAYS }}
           E2E_REPO: ${{ steps.config.outputs.e2e-repo }}
           HEAD_SHA: ${{ needs.detect.outputs.head-sha }}
           MODE: ${{ steps.mode.outputs.mode }}
@@ -320,7 +322,7 @@ jobs:
             echo "ok=false" >> "$GITHUB_OUTPUT"
             {
               echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
-              bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "fixture maintainer identity credential" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN set to a classic PAT for a Write collaborator on the test repository" "unset" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN" "$MODE"
+              bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "fixture maintainer identity credential" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN set to a classic or fine-grained PAT for the test repository -- see docs/setup.md" "unset" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN" "$MODE"
               echo 'AUTO_RELEASE_VERDICT_EOF'
             } >> "$GITHUB_OUTPUT"
             echo "::error::wing-commander auto-release verify-e2e: WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN is unset -- see docs/setup.md."
@@ -336,56 +338,247 @@ jobs:
             echo "::error::wing-commander auto-release verify-e2e: WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_USERNAME is unset -- see docs/setup.md."
             exit 0
           fi
-          permission="$(GH_TOKEN="$MAINTAINER_TOKEN" gh repo view "$E2E_REPO" --json viewerPermission --jq .viewerPermission 2>/dev/null || true)"
-          case "$permission" in
-            WRITE|MAINTAIN|ADMIN) : ;;
+          # research.md D1: the token's own literal prefix says which
+          # accepted shape it is -- a deterministic string match, never a
+          # network round trip -- before any of the shape-specific checks
+          # below can even run. A value matching neither prefix is its own
+          # distinguishable branch, ahead of every other check.
+          case "$MAINTAINER_TOKEN" in
+            ghp_*) shape=classic ;;
+            github_pat_*) shape=fine-grained ;;
             *)
               echo "ok=false" >> "$GITHUB_OUTPUT"
               {
                 echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
-                bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "fixture maintainer identity credential" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN authenticates as a Write (or higher) collaborator on the test repository" "gh rejected the token, or viewerPermission was '${permission:-none}'" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN" "$MODE"
+                bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "fixture maintainer identity credential" "a value matching the classic (ghp_) or fine-grained (github_pat_) token prefix" "matches neither accepted shape" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN" "$MODE"
                 echo 'AUTO_RELEASE_VERDICT_EOF'
               } >> "$GITHUB_OUTPUT"
-              echo "::error::wing-commander auto-release verify-e2e: WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN did not authenticate with Write access to $E2E_REPO -- see docs/setup.md."
+              echo "::error::wing-commander auto-release verify-e2e: WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN does not match either accepted credential shape -- see docs/setup.md."
               exit 0
               ;;
           esac
-          login="$(GH_TOKEN="$MAINTAINER_TOKEN" gh api user --jq .login 2>/dev/null || true)"
-          if [ -z "$login" ]; then
-            echo "ok=false" >> "$GITHUB_OUTPUT"
-            {
-              echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
-              bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "fixture maintainer identity credential" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN authenticates as a Write (or higher) collaborator on the test repository" "gh rejected the token" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN" "$MODE"
-              echo 'AUTO_RELEASE_VERDICT_EOF'
-            } >> "$GITHUB_OUTPUT"
-            echo "::error::wing-commander auto-release verify-e2e: WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN could not resolve a login via gh api user -- see docs/setup.md."
-            exit 0
+          if [ "$shape" = classic ]; then
+            # contracts/credential-precheck.md step 5: every following check
+            # is BYTE-IDENTICAL to specs/055 D2/today's step -- see docs/setup.md
+            permission="$(GH_TOKEN="$MAINTAINER_TOKEN" gh repo view "$E2E_REPO" --json viewerPermission --jq .viewerPermission 2>/dev/null || true)"
+            case "$permission" in
+              WRITE|MAINTAIN|ADMIN) : ;;
+              *)
+                echo "ok=false" >> "$GITHUB_OUTPUT"
+                {
+                  echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
+                  bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "fixture maintainer identity credential" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN authenticates as a Write (or higher) collaborator on the test repository" "gh rejected the token, or viewerPermission was '${permission:-none}'" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN" "$MODE"
+                  echo 'AUTO_RELEASE_VERDICT_EOF'
+                } >> "$GITHUB_OUTPUT"
+                echo "::error::wing-commander auto-release verify-e2e: WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN did not authenticate with Write access to $E2E_REPO -- see docs/setup.md."
+                exit 0
+                ;;
+            esac
+            login="$(GH_TOKEN="$MAINTAINER_TOKEN" gh api user --jq .login 2>/dev/null || true)"
+            if [ -z "$login" ]; then
+              echo "ok=false" >> "$GITHUB_OUTPUT"
+              {
+                echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
+                bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "fixture maintainer identity credential" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN authenticates as a Write (or higher) collaborator on the test repository" "gh rejected the token" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN" "$MODE"
+                echo 'AUTO_RELEASE_VERDICT_EOF'
+              } >> "$GITHUB_OUTPUT"
+              echo "::error::wing-commander auto-release verify-e2e: WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN could not resolve a login via gh api user -- see docs/setup.md."
+              exit 0
+            fi
+            # Compared case-insensitively -- GitHub logins are case-
+            # insensitive, so a differently-cased secret must not produce a
+            # false pass-time failure here (maintainer feedback on PR #389,
+            # second review).
+            if [ "$(printf '%s' "$login" | tr '[:upper:]' '[:lower:]')" != "$(printf '%s' "$MAINTAINER_USERNAME" | tr '[:upper:]' '[:lower:]')" ]; then
+              echo "ok=false" >> "$GITHUB_OUTPUT"
+              {
+                echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
+                bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "fixture maintainer identity credential" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN authenticates as WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_USERNAME" "authenticated as a different login" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN, WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_USERNAME" "$MODE"
+                echo 'AUTO_RELEASE_VERDICT_EOF'
+              } >> "$GITHUB_OUTPUT"
+              echo "::error::wing-commander auto-release verify-e2e: WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN authenticated as a login other than WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_USERNAME -- see docs/setup.md."
+              exit 0
+            fi
+          else
+            # contracts/credential-precheck.md step 6, research.md D5/D6:
+            # viewerPermission is never consulted for this shape -- after
+            # the FR-002 ownership transfer the ACCOUNT is ADMIN on the
+            # repository by construction, so it would report the account's
+            # role, not this token's own granted permission (research.md
+            # D5's rationale) -- see docs/setup.md.
+            login_response="$(GH_TOKEN="$MAINTAINER_TOKEN" gh api -i user 2>/dev/null || true)"
+            login_body="$(printf '%s\n' "$login_response" | awk 'BEGIN{h=1} h==1 && /^\r?$/{h=0; next} h==0{print}')"
+            login="$(printf '%s' "$login_body" | jq -r '.login // empty' 2>/dev/null || true)"
+            if [ -z "$login" ]; then
+              echo "ok=false" >> "$GITHUB_OUTPUT"
+              {
+                echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
+                bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "fixture maintainer identity credential" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN authenticates" "gh rejected the token" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN" "$MODE"
+                echo 'AUTO_RELEASE_VERDICT_EOF'
+              } >> "$GITHUB_OUTPUT"
+              echo "::error::wing-commander auto-release verify-e2e: WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN could not resolve a login via gh api user -- see docs/setup.md."
+              exit 0
+            fi
+            if [ "$(printf '%s' "$login" | tr '[:upper:]' '[:lower:]')" != "$(printf '%s' "$MAINTAINER_USERNAME" | tr '[:upper:]' '[:lower:]')" ]; then
+              echo "ok=false" >> "$GITHUB_OUTPUT"
+              {
+                echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
+                bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "fixture maintainer identity credential" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN authenticates as WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_USERNAME" "authenticated as a different login" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN, WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_USERNAME" "$MODE"
+                echo 'AUTO_RELEASE_VERDICT_EOF'
+              } >> "$GITHUB_OUTPUT"
+              echo "::error::wing-commander auto-release verify-e2e: WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN authenticated as a login other than WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_USERNAME -- see docs/setup.md."
+              exit 0
+            fi
+            # research.md D6: Issues:write and Contents:write are proven by
+            # attempting a write-shaped call against an id certain not to
+            # exist -- a fine-grained token lacking the permission is
+            # rejected (403) before the resource lookup (404) even
+            # happens. Merging a pull request is gated by GitHub on
+            # Contents:write, not Pull-requests:write (maintainer feedback
+            # on #506), so the merge probe below names Contents, never
+            # Pull-requests, on rejection. Read-side-effect-free: the id
+            # cannot exist, so neither call creates, modifies, or merges
+            # anything.
+            issues_status="$(GH_TOKEN="$MAINTAINER_TOKEN" gh api -i -X POST "repos/$E2E_REPO/issues/999999999/comments" -f body=probe 2>/dev/null | head -1 | awk '{print $2}' || true)"
+            contents_status="$(GH_TOKEN="$MAINTAINER_TOKEN" gh api -i -X PUT "repos/$E2E_REPO/pulls/999999999/merge" 2>/dev/null | head -1 | awk '{print $2}' || true)"
+            if [ -z "$issues_status" ] || [ -z "$contents_status" ]; then
+              echo "ok=false" >> "$GITHUB_OUTPUT"
+              {
+                echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
+                bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "fixture maintainer identity credential" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN authenticates" "a permission probe call failed outright" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN" "$MODE"
+                echo 'AUTO_RELEASE_VERDICT_EOF'
+              } >> "$GITHUB_OUTPUT"
+              echo "::error::wing-commander auto-release verify-e2e: a WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN permission probe against $E2E_REPO failed outright -- see docs/setup.md."
+              exit 0
+            fi
+            if [ "$issues_status" = "403" ] || [ "$contents_status" = "403" ]; then
+              echo "ok=false" >> "$GITHUB_OUTPUT"
+              {
+                echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
+                bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "fixture maintainer identity credential" "Issues and Contents write, per research.md D6" "the probe was rejected (issues: $issues_status, contents: $contents_status)" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN" "$MODE"
+                echo 'AUTO_RELEASE_VERDICT_EOF'
+              } >> "$GITHUB_OUTPUT"
+              echo "::error::wing-commander auto-release verify-e2e: WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN lacks Issues and/or Contents write on $E2E_REPO -- see docs/setup.md."
+              exit 0
+            fi
+            # research.md D5: the credential itself MUST carry no
+            # Administration permission on the test repository -- the
+            # account's own Admin, conferred by the FR-002 ownership
+            # transfer, is accepted; the credential's is not (FR-016).
+            # GET .../actions/permissions is gated on Administration:read;
+            # GET .../collaborators is gated on Metadata:read instead,
+            # which every fine-grained token carries regardless of scope,
+            # so it always returns 200 and would wrongly fail a correctly
+            # scoped token (maintainer feedback on #506). A 200 here means
+            # the token grants Administration; a 403 naming the missing
+            # permission passes this probe.
+            admin_status="$(GH_TOKEN="$MAINTAINER_TOKEN" gh api -i "repos/$E2E_REPO/actions/permissions" 2>/dev/null | head -1 | awk '{print $2}' || true)"
+            if [ -z "$admin_status" ]; then
+              echo "ok=false" >> "$GITHUB_OUTPUT"
+              {
+                echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
+                bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "fixture maintainer identity credential" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN authenticates" "a permission probe call failed outright" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN" "$MODE"
+                echo 'AUTO_RELEASE_VERDICT_EOF'
+              } >> "$GITHUB_OUTPUT"
+              echo "::error::wing-commander auto-release verify-e2e: a WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN permission probe against $E2E_REPO failed outright -- see docs/setup.md."
+              exit 0
+            fi
+            if [ "$admin_status" = "200" ]; then
+              echo "ok=false" >> "$GITHUB_OUTPUT"
+              {
+                echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
+                bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "fixture maintainer identity credential" "no Administration permission on the test repository" "the credential grants Administration permission" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN" "$MODE"
+                echo 'AUTO_RELEASE_VERDICT_EOF'
+              } >> "$GITHUB_OUTPUT"
+              echo "::error::wing-commander auto-release verify-e2e: WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN grants Administration permission on $E2E_REPO -- see docs/setup.md."
+              exit 0
+            fi
+            # specs/067-e2e-container-image-evidence FR-003: a container-
+            # mode turn additionally reads the test repository's
+            # WING_COMMANDER_CONTAINER_IMAGE variable and its Actions run/
+            # job data with this same credential -- probed here so a
+            # fine-grained token missing either permission fails at
+            # precheck naming it, rather than later at the evidence read
+            # as an undifferentiated "unreadable" (maintainer review of
+            # #509). Read-only GETs, gated on Variables:read and
+            # Actions:read respectively; a 404 (variable or run not found)
+            # is not a permission failure and passes this probe like any
+            # other non-403 status. Classic shape is untouched -- its
+            # `repo` scope already covers both reads (docs/setup.md).
+            if [ "$MODE" = "container" ]; then
+              variables_status="$(GH_TOKEN="$MAINTAINER_TOKEN" gh api -i "repos/$E2E_REPO/actions/variables/WING_COMMANDER_CONTAINER_IMAGE" 2>/dev/null | head -1 | awk '{print $2}' || true)"
+              actions_status="$(GH_TOKEN="$MAINTAINER_TOKEN" gh api -i "repos/$E2E_REPO/actions/runs?per_page=1" 2>/dev/null | head -1 | awk '{print $2}' || true)"
+              if [ -z "$variables_status" ] || [ -z "$actions_status" ]; then
+                echo "ok=false" >> "$GITHUB_OUTPUT"
+                {
+                  echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
+                  bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "fixture maintainer identity credential" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN authenticates" "a permission probe call failed outright" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN" "$MODE"
+                  echo 'AUTO_RELEASE_VERDICT_EOF'
+                } >> "$GITHUB_OUTPUT"
+                echo "::error::wing-commander auto-release verify-e2e: a WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN permission probe against $E2E_REPO failed outright -- see docs/setup.md."
+                exit 0
+              fi
+              if [ "$variables_status" = "403" ] || [ "$actions_status" = "403" ]; then
+                echo "ok=false" >> "$GITHUB_OUTPUT"
+                {
+                  echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
+                  bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "fixture maintainer identity credential" "Variables and Actions read, per specs/067-e2e-container-image-evidence FR-003" "the probe was rejected (variables: $variables_status, actions: $actions_status)" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN" "$MODE"
+                  echo 'AUTO_RELEASE_VERDICT_EOF'
+                } >> "$GITHUB_OUTPUT"
+                echo "::error::wing-commander auto-release verify-e2e: WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN lacks Variables and/or Actions read on $E2E_REPO -- see docs/setup.md."
+                exit 0
+              fi
+            fi
+            # research.md D2: a fine-grained PAT's own expiry is surfaced
+            # only via this response header, read from the `gh api user`
+            # call already made above -- never a second call. Absent means
+            # unobservable (proceed, as today, classic shape included).
+            # Already past "now" is rejected/expired; within the warning
+            # window is a report-only note on a pass, never a failure.
+            expiry_header="$(printf '%s\n' "$login_response" | grep -i '^github-authentication-token-expiration:' | head -1 | cut -d: -f2- | tr -d '\r' | sed 's/^ *//' || true)"
+            if [ -n "$expiry_header" ]; then
+              expiry_epoch="$(date -u -d "$expiry_header" +%s 2>/dev/null || true)"
+              if [ -n "$expiry_epoch" ]; then
+                now_epoch="$(date -u +%s)"
+                if [ "$expiry_epoch" -le "$now_epoch" ]; then
+                  echo "ok=false" >> "$GITHUB_OUTPUT"
+                  {
+                    echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
+                    bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "fixture maintainer identity credential" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN authenticates" "the credential expired at $expiry_header" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN" "$MODE"
+                    echo 'AUTO_RELEASE_VERDICT_EOF'
+                  } >> "$GITHUB_OUTPUT"
+                  echo "::error::wing-commander auto-release verify-e2e: WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN expired at $expiry_header -- see docs/setup.md."
+                  exit 0
+                fi
+                warning_seconds=$(( ${MAINTAINER_TOKEN_EXPIRY_WARNING_DAYS:-14} * 86400 ))
+                if [ "$expiry_epoch" -le "$(( now_epoch + warning_seconds ))" ]; then
+                  echo "expiry-warning=$expiry_header" >> "$GITHUB_OUTPUT"
+                fi
+              fi
+            fi
           fi
-          # Compared case-insensitively -- GitHub logins are case-
-          # insensitive, so a differently-cased secret must not produce a
-          # false pass-time failure here (maintainer feedback on PR #389,
-          # second review).
-          if [ "$(printf '%s' "$login" | tr '[:upper:]' '[:lower:]')" != "$(printf '%s' "$MAINTAINER_USERNAME" | tr '[:upper:]' '[:lower:]')" ]; then
-            echo "ok=false" >> "$GITHUB_OUTPUT"
-            {
-              echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
-              bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "fixture maintainer identity credential" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN authenticates as WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_USERNAME" "authenticated as a different login" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN, WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_USERNAME" "$MODE"
-              echo 'AUTO_RELEASE_VERDICT_EOF'
-            } >> "$GITHUB_OUTPUT"
-            echo "::error::wing-commander auto-release verify-e2e: WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN authenticated as a login other than WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_USERNAME -- see docs/setup.md."
-            exit 0
-          fi
-          # Runtime containment (maintainer feedback): a classic PAT
-          # carries whatever repository access the account itself has, so
-          # the credential check above cannot on its own prove the
-          # account is contained to the test repository -- only the
-          # account's own memberships can. List every repository this
+          # Runtime containment (maintainer feedback; research.md D3/D4):
+          # neither credential shape proves on its own that it is
+          # contained to the test repository alone -- a classic token
+          # carries whatever access the account itself has, and a
+          # fine-grained token's own selection is never read from a
+          # declarative field, only observed. List every repository this
           # token can reach and require the set to be EXACTLY the
           # configured test repository; any other set -- including empty,
-          # which a `gh api` failure would also produce -- ends the
-          # attempt naming repository names only, never the token
-          # (FR-003a, FR-011).
-          reachable_repos="$(GH_TOKEN="$MAINTAINER_TOKEN" gh api "user/repos?affiliation=owner,collaborator,organization_member" --paginate --jq '.full_name' 2>/dev/null | sort -u)"
+          # which used to be indistinguishable from the `gh api` call
+          # itself failing -- ends the attempt naming repository names
+          # only, never the token (FR-003a, FR-011, FR-012).
+          if ! reachable_raw="$(GH_TOKEN="$MAINTAINER_TOKEN" gh api "user/repos?affiliation=owner,collaborator,organization_member" --paginate --jq '.full_name' 2>/dev/null)"; then
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            {
+              echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
+              bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "fixture maintainer identity containment" "the credential's reachable-repository set can be observed" "the gh api call to list reachable repositories failed" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN" "$MODE"
+              echo 'AUTO_RELEASE_VERDICT_EOF'
+            } >> "$GITHUB_OUTPUT"
+            echo "::error::wing-commander auto-release verify-e2e: could not determine which repositories WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN can reach -- see docs/setup.md."
+            exit 0
+          fi
+          reachable_repos="$(printf '%s' "$reachable_raw" | sort -u)"
           reachable_count="$(printf '%s' "$reachable_repos" | grep -c . || true)"
           if [ "$reachable_count" -ne 1 ] || [ "$(printf '%s' "$reachable_repos" | tr '[:upper:]' '[:lower:]')" != "$(printf '%s' "$E2E_REPO" | tr '[:upper:]' '[:lower:]')" ]; then
             # The login is held in a masked secret, and GitHub drops any step
@@ -412,6 +605,77 @@ jobs:
           # maintainer feedback on PR #389, second review), so this step's
           # own resolved login was dead once that wiring changed.
 
+      # specs/067-e2e-container-image-evidence D1/D2: gates on the
+      # maintainer credential alone (not also on mode) so a default-runner
+      # turn still reaches this step and gets its no-op ok=true -- placed
+      # before cleanup/reset/speckit-version/scaffold so an unconfigured,
+      # drifted, or unreadable container-mode turn never reaches any of
+      # them (FR-011, SC-003). WC_SOURCE_CONTAINER_IMAGE is read straight
+      # from this repository's own vars context (research.md D3's
+      # "generalized readiness-check workflow" idiom): this_repo_container_
+      # image() then just echoes it, needing no gh call and no token to
+      # read this repository's own variable back -- the FR-007 "own pin
+      # unreadable" edge case does not arise via this path, since a vars.*
+      # reference cannot fail to resolve the way a gh call can.
+      - name: Read container-mode configuration evidence
+        id: container-evidence-config
+        if: steps.maintainer-credential.outputs.ok == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN }}
+          WC_SOURCE_CONTAINER_IMAGE: ${{ vars.WING_COMMANDER_CONTAINER_IMAGE }}
+          E2E_REPO: ${{ steps.config.outputs.e2e-repo }}
+          HEAD_SHA: ${{ needs.detect.outputs.head-sha }}
+          MODE: ${{ steps.mode.outputs.mode }}
+        run: |
+          set -uo pipefail
+          if [ "$MODE" != "container" ]; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # shellcheck source=.github/actions/_shared/auto-release-container-evidence-decision.sh
+          source .github/actions/_shared/auto-release-container-evidence-decision.sh
+          # shellcheck source=.github/scripts/e2e-provisioning/checks.sh
+          source .github/scripts/e2e-provisioning/checks.sh
+
+          write_config_fail() { # failing_check expected observed
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            {
+              echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
+              bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "$1" "$2" "$3" "$E2E_REPO" "$MODE" "false"
+              echo 'AUTO_RELEASE_VERDICT_EOF'
+            } >> "$GITHUB_OUTPUT"
+            echo "::error::wing-commander auto-release verify-e2e: $1."
+          }
+
+          expected_image="$(this_repo_container_image)"
+
+          if ! observed_image="$(read_repo_container_image_variable "$E2E_REPO" 2>"$RUNNER_TEMP/auto-release-cec-observed-err.txt")"; then
+            errtext="$(tail -c 300 "$RUNNER_TEMP/auto-release-cec-observed-err.txt" 2>/dev/null)"
+            read_status="$(classify_read_status 1 "$errtext")"
+            decision="$(bash .github/actions/_shared/auto-release-container-evidence-decision.sh config "$read_status" \
+              "a successful read of the test repository's WING_COMMANDER_CONTAINER_IMAGE variable" "$errtext")"
+            failing_check="$(printf '%s\n' "$decision" | sed -n 's/^failing_check=//p')"
+            expected="$(printf '%s\n' "$decision" | sed -n 's/^expected=//p')"
+            observed="$(printf '%s\n' "$decision" | sed -n 's/^observed=//p')"
+            write_config_fail "$failing_check" "$expected" "$observed"
+            exit 0
+          fi
+
+          decision="$(bash .github/actions/_shared/auto-release-container-evidence-decision.sh config ok "$expected_image" "$observed_image")"
+          failing_check="$(printf '%s\n' "$decision" | sed -n 's/^failing_check=//p')"
+          if [ -n "$failing_check" ]; then
+            observed_display="${observed_image:-(unset or empty)}"
+            write_config_fail "$failing_check" "$expected_image" "$observed_display"
+            exit 0
+          fi
+
+          echo "ok=true" >> "$GITHUB_OUTPUT"
+          echo "expected-image=$expected_image" >> "$GITHUB_OUTPUT"
+          echo "observed-image=$observed_image" >> "$GITHUB_OUTPUT"
+          echo "observed-at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
       # Any open issue/PR left by a previous attempt is closed (best-effort)
       # before the reset -- an orphan-reset default branch otherwise leaves
       # a stale open PR pointing at history that no longer exists
@@ -422,7 +686,13 @@ jobs:
       # fire.
       - name: Close prior leftovers
         id: cleanup
-        if: steps.maintainer-credential.outputs.ok == 'true'
+        # specs/067-e2e-container-image-evidence T006: re-pointed from
+        # steps.maintainer-credential.outputs.ok so an unconfigured,
+        # drifted, or unreadable container-mode turn cannot reach cleanup/
+        # reset/speckit-version/scaffold/kickoff (FR-011, SC-003) --
+        # container-evidence-config's own no-op sets ok=true on every
+        # default-runner turn, so this guard is unchanged for that mode.
+        if: steps.container-evidence-config.outputs.ok == 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
@@ -695,6 +965,14 @@ jobs:
           MODE: ${{ steps.mode.outputs.mode }}
         run: |
           set -uo pipefail
+          # specs/067-e2e-container-image-evidence: captured before the
+          # issue-create call below, not at the start of the poll step
+          # (maintainer feedback on PR #628) -- capturing it in poll ran
+          # after this step had already created and labelled the issue, so
+          # the intake run kickoff triggers could start before this
+          # timestamp and fall outside poll's own `gh run list --created
+          # ">=${KICKOFF_TIME}"` filter.
+          kickoff_time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           short_sha="${HEAD_SHA:0:7}"
           {
             echo "Add a single new markdown file under \`docs/\` stating the verified commit and timestamp."
@@ -727,6 +1005,7 @@ jobs:
           echo "ok=true" >> "$GITHUB_OUTPUT"
           echo "issue-number=$issue_number" >> "$GITHUB_OUTPUT"
           echo "issue-url=$url" >> "$GITHUB_OUTPUT"
+          echo "kickoff-time=$kickoff_time" >> "$GITHUB_OUTPUT"
 
       # Poll over the issue's own state/labels/timeline, plus artifact
       # presence -- never agent narration (research.md D10). Bounded by
@@ -763,10 +1042,21 @@ jobs:
           DEFAULT_BRANCH: ${{ steps.reachable.outputs.default-branch }}
           ISSUE: ${{ steps.kickoff.outputs.issue-number }}
           ISSUE_URL: ${{ steps.kickoff.outputs.issue-url }}
+          # specs/067-e2e-container-image-evidence: read from the kickoff
+          # step's own output (captured there, before it created the issue)
+          # rather than recomputed here -- see that step's comment
+          # (maintainer feedback on PR #628).
+          KICKOFF_TIME: ${{ steps.kickoff.outputs.kickoff-time }}
           HEAD_SHA: ${{ needs.detect.outputs.head-sha }}
           POLL_BUDGET_SECONDS: "8100"
+          GATE_BLOCKED_ALLOWANCE_SECONDS: "1200"
           MAX_CLARIFICATION_ROUNDS: "3"
           MODE: ${{ steps.mode.outputs.mode }}
+          # specs/067-e2e-container-image-evidence: the matching image
+          # reference container-evidence-config already observed, carried
+          # into the eventual pass verdict's evidence (T009) -- empty on a
+          # default-runner turn, since that step no-ops without setting it.
+          CEC_OBSERVED_IMAGE: ${{ steps.container-evidence-config.outputs.observed-image }}
         run: |
           set -uo pipefail
           # Same whitespace hazard as the credential step above: the login is
@@ -794,11 +1084,26 @@ jobs:
           # never files it as a gate stall (#391 review). The gate reads above
           # the poll read use the same token, so under a persistent limit they
           # reach their failure bound first.
+          #
+          # specs/066-fine-grained-maintainer-token FR-011: a gate-driving
+          # act (posting the clarification reply, listing or merging a PR)
+          # that keeps failing because the harness credential itself was
+          # rejected -- expired, revoked, or narrowed mid-attempt -- is
+          # equally an infrastructure condition naming the credential as
+          # cause, never an undifferentiated gate stall. Detected from the
+          # same kind of fixed signature as the rate-limit arm above, reusing
+          # the phrase list wing-commander-lifecycle-gate's own credential
+          # check already matches (.github/actions/wing-commander-
+          # lifecycle-gate/action.yml) rather than inventing a second one.
           write_repeated_failure_verdict() { # gate expected observed
             if printf '%s' "$3" | grep -qi 'rate limit'; then
               write_verdict "fail-infra" "polling the test repository for a terminal state" \
                 "gh calls succeed within the poll budget" \
                 "GitHub API rate limit encountered while driving the $1 gate: $3"
+            elif printf '%s' "$3" | grep -qiE 'HTTP 401|Bad credentials|Resource not accessible by integration|Resource not accessible by personal access token|requires authentication|insufficient .*scope|missing .*scope'; then
+              write_verdict "fail-infra" "$1" \
+                "the harness credential authenticates and authorizes every gate-driving act" \
+                "the harness credential was rejected while driving the $1 gate: $3"
             else
               write_verdict "fail-gate-stall" "$1" "$2" "$3"
             fi
@@ -867,6 +1172,14 @@ jobs:
           declare -A gate_name=([spec-draft/]="spec-draft PR merge" [plan/]="plan PR merge" [spec/]="finalize PR merge")
           declare -A gate_failures=([spec-draft/]=0 [plan/]=0 [spec/]=0)
           declare -A gate_last_failure=([spec-draft/]="" [plan/]="" [spec/]="")
+          declare -A gate_blocked_since=([spec-draft/]="" [plan/]="" [spec/]="")
+          # The PR number last observed for each gate, so the post-loop
+          # budget-clamp check below (specs/070-blocked-gate-dry-run) can
+          # name the pull request of a gate that is still mid-allowance when
+          # the poll budget itself expires, without relying on the `for
+          # prefix` loop's own $pr_number, which only ever holds the last
+          # prefix processed this iteration.
+          declare -A gate_pr_number=([spec-draft/]="" [plan/]="" [spec/]="")
           # A gate-driving read OR write (fetching comments/PR state, a
           # decision-script crash, posting the clarification reply, a PR
           # merge) that fails at the API level -- e.g. the harness
@@ -987,6 +1300,7 @@ jobs:
                 else
                   pr_json="$(cat "$RUNNER_TEMP/auto-release-pr-list.json")"
                   pr_number="$(printf '%s' "$pr_json" | jq -r '.[0].number // "?"' 2>/dev/null || echo '?')"
+                  gate_pr_number[$prefix]="$pr_number"
                   if ! merge_decision="$(printf '%s' "$pr_json" \
                       | bash .github/actions/_shared/auto-release-e2e-merge-decision.sh "$prefix" "$slug" "${gate_expected_base[$prefix]}" \
                       2>"$RUNNER_TEMP/auto-release-merge-decision-err.txt")"; then
@@ -997,6 +1311,7 @@ jobs:
                     merge_head="$(printf '%s\n' "$merge_decision" | head -1)"
                     case "$merge_head" in
                       merge)
+                        gate_blocked_since[$prefix]=""
                         merge_number="$(printf '%s\n' "$merge_decision" | tail -n +2)"
                         if merge_err="$(GH_TOKEN="$HARNESS_TOKEN" gh pr merge "$merge_number" --merge --repo "$E2E_REPO" 2>&1 >/dev/null)"; then
                           gate_merged[$prefix]="true"
@@ -1006,22 +1321,43 @@ jobs:
                           gate_last_failure[$prefix]="$merge_err"
                         fi
                         ;;
+                      wait)
+                        gate_blocked_since[$prefix]=""
+                        ;;
+                      blocked-pending)
+                        allowance_decision="$(bash .github/actions/_shared/auto-release-e2e-gate-allowance-decision.sh \
+                          "$merge_head" "${gate_blocked_since[$prefix]}" "$SECONDS" "$GATE_BLOCKED_ALLOWANCE_SECONDS")"
+                        case "$allowance_decision" in
+                          start) gate_blocked_since[$prefix]="$SECONDS" ;;
+                          stall)
+                            write_verdict "fail-gate-stall" "${gate_name[$prefix]}" "gh pr merge succeeds" \
+                              "PR #${pr_number}: required checks never reported a result"
+                            emit_verdict
+                            exit 0
+                            ;;
+                          # wait: nothing to do, blocked_since unchanged.
+                        esac
+                        ;;
                       conflicting)
+                        gate_blocked_since[$prefix]=""
                         write_verdict "fail-gate-stall" "${gate_name[$prefix]}" "gh pr merge succeeds" "PR #${pr_number}: CONFLICTING"
                         emit_verdict
                         exit 0
                         ;;
                       blocked)
+                        gate_blocked_since[$prefix]=""
                         write_verdict "fail-gate-stall" "${gate_name[$prefix]}" "gh pr merge succeeds" "PR #${pr_number}: required check blocked"
                         emit_verdict
                         exit 0
                         ;;
                       wrong-attempt)
+                        gate_blocked_since[$prefix]=""
                         write_verdict "fail-gate-stall" "${gate_name[$prefix]}" "the PR at this branch belongs to the current attempt" "PR #${pr_number} belongs to a previous attempt"
                         emit_verdict
                         exit 0
                         ;;
                       wrong-base)
+                        gate_blocked_since[$prefix]=""
                         write_verdict "fail-gate-stall" "${gate_name[$prefix]}" "the PR at this branch targets ${gate_expected_base[$prefix]}" "PR #${pr_number} targets a different base branch"
                         emit_verdict
                         exit 0
@@ -1081,6 +1417,22 @@ jobs:
           fi
 
           if [ "$terminal" != "true" ]; then
+            # specs/070-blocked-gate-dry-run edge case: a gate's waiting
+            # allowance is not clamped to the remaining poll budget, so a
+            # gate that first goes blocked-pending late enough that its
+            # 1200s allowance cannot fully elapse before the `while`
+            # condition above goes false must still end the attempt as that
+            # gate's stall here, not fall through to the generic timeout
+            # below (FR-007: the generic timeout is the outcome only when no
+            # gate is blocked).
+            for prefix in "spec-draft/" "plan/" "spec/"; do
+              if [ -n "${gate_blocked_since[$prefix]}" ]; then
+                write_verdict "fail-gate-stall" "${gate_name[$prefix]}" "gh pr merge succeeds" \
+                  "PR #${gate_pr_number[$prefix]}: required checks never reported a result"
+                emit_verdict
+                exit 0
+              fi
+            done
             write_verdict "fail-timeout" "end-to-end run reaching a terminal state" \
               "closed with stage:done, or stage:stalled, within the poll budget" \
               "still open with labels [$labels] after ${POLL_BUDGET_SECONDS}s"
@@ -1139,12 +1491,47 @@ jobs:
               "gh api issues/timeline succeeds" "$RUNNER_TEMP/auto-release-timeline-err.txt"
           fi
           timeline="$(printf '%s' "$timeline_raw" | jq -R -s -c 'split("\n") | map(select(length > 0))' 2>/dev/null || echo '[]')"
+
+          # --- Clarification-gate reads, moved up (research.md D5.2) ---
+          # comments_json and markers_json used to be computed after the
+          # label-timeline loop below, alongside the clarification_satisfied
+          # check they were originally read for. FR-021's conditional
+          # stage:clarify assertion needs to know BEFORE that loop runs
+          # whether this run ever posted a clarification questionnaire, so
+          # both reads move up here -- a reordering of two existing reads,
+          # not a new `gh api` call. `clarification_satisfied` (below, at its
+          # original relative position) now consumes this same comments_json
+          # instead of reading the comments a second time.
+          if ! gh api "repos/${E2E_REPO}/issues/${ISSUE}/comments" --paginate --jq \
+              '.[] | {id, user: {login: .user.login, id: .user.id, type: .user.type}, author_association, body, created_at}' \
+              > "$RUNNER_TEMP/auto-release-final-comments.ndjson" 2>"$RUNNER_TEMP/auto-release-final-comments-err.txt"; then
+            fail_infra_on_read "reading the issue's comments for the pass-path clarification assertion" \
+              "gh api issues/comments succeeds" "$RUNNER_TEMP/auto-release-final-comments-err.txt"
+          fi
+          comments_json="$(jq -cs '.' "$RUNNER_TEMP/auto-release-final-comments.ndjson" 2>/dev/null || echo '[]')"
+          markers_json="$(printf '%s' "$comments_json" | bash .github/actions/_shared/auto-release-e2e-clarify-decision.sh markers 2>/dev/null || echo '[]')"
+          if printf '%s' "$markers_json" | jq -e 'length > 0' >/dev/null 2>&1; then
+            questionnaire_posted=true
+          else
+            questionnaire_posted=false
+          fi
+
           missing_stage=""
-          # stage:clarify is never applied as an issue label by any stage
-          # workflow (clarify.yml's only reference is stall-notice prose,
-          # and wing-commander-chain-stop-notice always adds stage:stalled
-          # instead) -- requiring it here made a genuine pass impossible.
-          for s in stage:spec stage:plan stage:tasks stage:implement stage:review; do
+          # stage:clarify is applied while clarification questions are open
+          # and cleared once they're answered (specs/063-stage-clarify-label)
+          # -- so it belongs in the timeline only on a run that actually
+          # posted a questionnaire. An unconditional assertion here would
+          # reproduce the impossible-pass bug this comment used to record:
+          # requiring stage:clarify on every run made a genuine pass
+          # impossible before any workflow ever applied it.
+          stages_to_check="stage:spec stage:plan stage:tasks stage:implement stage:review"
+          if [ "$questionnaire_posted" = "true" ]; then
+            stages_to_check="$stages_to_check stage:clarify"
+            echo "clarification-label assertion: asserting stage:clarify in the timeline (a questionnaire was posted this run)." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "clarification-label assertion: skipped -- no clarification questionnaire was posted this run." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          for s in $stages_to_check; do
             if ! printf '%s' "$timeline" | jq -e --arg s "$s" 'index($s) != null' >/dev/null 2>&1; then
               missing_stage="$s"
               break
@@ -1232,22 +1619,11 @@ jobs:
           # the qualifying-reply rule both live in the clarify-decision
           # script (its `satisfied`/`markers` modes) -- the single home
           # CLAUDE.md requires, not re-derived here a second time
-          # (maintainer feedback on PR #389).
+          # (maintainer feedback on PR #389). `comments_json` was already
+          # read above (moved there for FR-021's stage:clarify assertion,
+          # research.md D5.2); this reuses it rather than reading the
+          # issue's comments a second time.
           #
-          # This is a one-shot read with no retry loop around it (unlike the
-          # per-iteration reads above), so a failure here must not fail OPEN
-          # into an empty file -- that used to make the assertion below
-          # vacuously pass on a transient API error, silently skipping the
-          # very check this pass path exists to make (maintainer feedback on
-          # PR #389, second review). It becomes an infrastructure outcome
-          # instead.
-          if ! gh api "repos/${E2E_REPO}/issues/${ISSUE}/comments" --paginate --jq \
-              '.[] | {id, user: {login: .user.login, id: .user.id, type: .user.type}, author_association, body, created_at}' \
-              > "$RUNNER_TEMP/auto-release-final-comments.ndjson" 2>"$RUNNER_TEMP/auto-release-final-comments-err.txt"; then
-            fail_infra_on_read "reading the issue's comments for the pass-path clarification assertion" \
-              "gh api issues/comments succeeds" "$RUNNER_TEMP/auto-release-final-comments-err.txt"
-          fi
-          comments_json="$(jq -cs '.' "$RUNNER_TEMP/auto-release-final-comments.ndjson" 2>/dev/null || echo '[]')"
           # Fallback for the rare case the loop reached stage:done before
           # author_id was ever resolved above (e.g. its very first attempt
           # failed and the very same iteration's terminal-state check
@@ -1272,7 +1648,6 @@ jobs:
             emit_verdict
             exit 0
           fi
-          markers_json="$(printf '%s' "$comments_json" | bash .github/actions/_shared/auto-release-e2e-clarify-decision.sh markers 2>/dev/null || echo '[]')"
 
           # --- Gate evidence for the report job (research.md D12, FR-017,
           # FR-019) -- presentation-layer only, no verdict schema change. ---
@@ -1331,11 +1706,144 @@ jobs:
             echo "clarification-comment-ids=$clarification_comment_ids"
           } >> "$GITHUB_OUTPUT"
 
+          # --- Execution evidence (FR-006, case (iv); research.md D2/D4,
+          # contracts/container-evidence-decision-script.md) -- read only
+          # for a container-mode turn, only once every pass-path assertion
+          # above already succeeded, and strictly after the chain-stop-
+          # notice branch above (unchanged, FR-005's explicit requirement).
+          # Enumerates every stage-workflow run created since kickoff
+          # (T007's open point: one attempt drives up to eight separate
+          # stage-workflow runs, and this loop never tracked a single
+          # run_id to check instead) rather than assuming one run's job
+          # data is sufficient -- unconfirmed against real run data
+          # pending quickstart.md Scenario 3's live check (research.md D4).
+          execution_pass_observed=""
+          if [ "$MODE" = "container" ]; then
+            # Sourced here, not at the top of this step, so no poll-step
+            # gate other than the container-mode ones needs this script
+            # staged (maintainer review of #509, M1).
+            # shellcheck source=.github/actions/_shared/auto-release-container-evidence-decision.sh
+            source .github/actions/_shared/auto-release-container-evidence-decision.sh
+            write_execution_fail() { # read_status errtext
+              decision="$(bash .github/actions/_shared/auto-release-container-evidence-decision.sh execution "$1" \
+                "a successful read of the test repository's run job data" "$2")"
+              failing_check="$(printf '%s\n' "$decision" | sed -n 's/^failing_check=//p')"
+              expected="$(printf '%s\n' "$decision" | sed -n 's/^expected=//p')"
+              observed="$(printf '%s\n' "$decision" | sed -n 's/^observed=//p')"
+              write_verdict "fail-infra" "$failing_check" "$expected" "$observed"
+              emit_verdict
+              exit 0
+            }
+            # $path is requested alongside $databaseId so the enumeration
+            # below can be limited to the wing-commander-*.yml wrapper
+            # workflows this turn's own scaffold step pushed -- an
+            # unrelated workflow run created in the test repository after
+            # $KICKOFF_TIME must not pollute this check (maintainer
+            # feedback on PR #628). `gh run list --json` has no `path`
+            # field (only the REST run object does) -- the previous read
+            # asked for it via `--json databaseId,path`, which made `gh`
+            # exit 1 on every call, so every container-mode pass ended
+            # "container-mode evidence unreadable" and FR-005(vi)/SC-002
+            # could never be reached (maintainer review of #509). Reads via
+            # `gh api` instead, matching metrics-persist.yml's own
+            # `actions/runs?...&created=...` idiom.
+            if ! runs_raw="$(GH_TOKEN="$HARNESS_TOKEN" gh api "repos/${E2E_REPO}/actions/runs?per_page=100&created=%3E%3D${KICKOFF_TIME}" \
+              --paginate --jq '.workflow_runs[] | {databaseId: .id, path: (.path // "")}' 2>"$RUNNER_TEMP/auto-release-cee-runs-err.txt")"; then
+              errtext="$(tail -c 300 "$RUNNER_TEMP/auto-release-cee-runs-err.txt")"
+              write_execution_fail "$(classify_read_status 1 "$errtext")" "$errtext"
+            fi
+            # A parse failure is unreadable evidence, not an empty-but-valid
+            # run list -- falling back to `[]` on a garbled response used to
+            # read as "no stage runs found, nothing non-containerized"
+            # rather than failing closed (maintainer review of #509).
+            if ! runs_json="$(printf '%s' "$runs_raw" | jq -s -c '.' 2>"$RUNNER_TEMP/auto-release-cee-runs-parse-err.txt")"; then
+              errtext="could not parse the test repository's run list: $(tail -c 300 "$RUNNER_TEMP/auto-release-cee-runs-parse-err.txt" 2>/dev/null)"
+              write_execution_fail "unreadable" "$errtext"
+            fi
+            stage_run_ids="$(printf '%s' "$runs_json" | jq -r '
+              .[]
+              | select(.path | test("^\\.github/workflows/wing-commander-"))
+              | .databaseId')"
+            noncontainerized=""
+            containerized_count=0
+            while IFS= read -r run_id; do
+              [ -n "$run_id" ] || continue
+              if ! jobs_raw="$(GH_TOKEN="$HARNESS_TOKEN" gh api "repos/${E2E_REPO}/actions/runs/${run_id}/jobs" --paginate --jq '.jobs[]' 2>"$RUNNER_TEMP/auto-release-cee-jobs-err.txt")"; then
+                errtext="$(tail -c 300 "$RUNNER_TEMP/auto-release-cee-jobs-err.txt")"
+                write_execution_fail "$(classify_read_status 1 "$errtext")" "$errtext"
+              fi
+              if ! jobs_json="$(printf '%s' "$jobs_raw" | jq -s -c '.' 2>"$RUNNER_TEMP/auto-release-cee-jobs-parse-err.txt")"; then
+                errtext="could not parse job data for run $run_id: $(tail -c 300 "$RUNNER_TEMP/auto-release-cee-jobs-parse-err.txt" 2>/dev/null)"
+                write_execution_fail "unreadable" "$errtext"
+              fi
+              # A skipped job (e.g. the conditional `stalled` job), a queued
+              # job that never started, and a job cancelled by a
+              # concurrency group all report `steps: []` -- none of them
+              # ran anywhere and so never got a chance to initialize a
+              # container. Judged by an empty `steps` array now, not
+              # `.conclusion != "skipped"` alone, which missed the queued
+              # (`conclusion: null`) and cancelled cases (maintainer review
+              # of #509). `verify-image-prerequisites` (every stage
+              # workflow, gated on `if: inputs.container-image != ''`),
+              # `resolve-model` (the wing-commander-5-implement.yml and
+              # wing-commander-9-pr-conversation.yml wrappers), `sweep`
+              # (wing-commander-7-cleanup.yml), and `redispatch`
+              # (wing-commander-rebase.yml -- fires on every push this
+              # attempt's own PR merges and resets make to the test
+              # repository's default branch) are host-side jobs with no
+              # `container:` key that always run on the host. All are
+              # excluded from this enumeration rather than flagged as
+              # non-containerized (maintainer feedback on PR #628, #509;
+              # maintainer review of #509). A reusable-workflow job reports
+              # its name as "caller / job" (e.g. real run 36484092749's
+              # "implement / verify-image-prerequisites"), so the exclusion
+              # matches on the suffix after the last " / ", not the raw
+              # name (maintainer review of #509).
+              eligible_json="$(printf '%s' "$jobs_json" | jq -c '
+                [ .[]
+                  | select((.steps | length) > 0)
+                  | . as $job
+                  | ($job.name | split(" / ") | last) as $short
+                  | select((["verify-image-prerequisites", "resolve-model", "sweep", "redispatch"] | index($short)) | not)
+                  | { name: $job.name, containerized: (([$job.steps[]?.name // empty] | index("Initialize containers")) != null) }
+                ]')"
+              while IFS= read -r job_name; do
+                [ -n "$job_name" ] || continue
+                noncontainerized="${noncontainerized:+$noncontainerized, }${job_name}"
+              done < <(printf '%s' "$eligible_json" | jq -r '.[] | select(.containerized | not) | .name')
+              run_containerized_count="$(printf '%s' "$eligible_json" | jq '[.[] | select(.containerized)] | length')"
+              containerized_count=$((containerized_count + run_containerized_count))
+            done < <(printf '%s\n' "$stage_run_ids")
+
+            # Zero containerized jobs observed is not the same as "none of
+            # the ones we saw failed to containerize" -- an empty run list,
+            # every eligible job excluded, or an enumeration that silently
+            # found nothing must not read as a pass with no positive
+            # evidence at all (FR-001/FR-004/SC-002, maintainer review of
+            # #509).
+            if [ -z "$noncontainerized" ] && [ "$containerized_count" -eq 0 ]; then
+              noncontainerized="(no stage job was observed executing inside a container)"
+            fi
+
+            decision="$(bash .github/actions/_shared/auto-release-container-evidence-decision.sh execution ok "every stage job" "$noncontainerized")"
+            failing_check="$(printf '%s\n' "$decision" | sed -n 's/^failing_check=//p')"
+            if [ -n "$failing_check" ]; then
+              write_verdict "fail-infra" "$failing_check" "every stage job" "$noncontainerized"
+              emit_verdict
+              exit 0
+            fi
+            execution_pass_observed="the stage jobs executed inside a container"
+          fi
+
           # The one call site that has earned container_image_configured:
           # true -- reached only once the full scaffolded chain closed
-          # stage:done, every intermediate stage label was observed, and
-          # the expected spec artifacts exist (specs/054 MF1).
-          write_verdict "pass" "" "" "" "$ISSUE_URL" "true"
+          # stage:done, every intermediate stage label was observed, the
+          # expected spec artifacts exist (specs/054 MF1), and (specs/067)
+          # the execution-evidence check above found every stage job
+          # containerized. $CEC_OBSERVED_IMAGE/$execution_pass_observed are
+          # both empty on a default-runner turn, leaving this call's
+          # expected/observed byte-identical to before this feature.
+          write_verdict "pass" "" "$CEC_OBSERVED_IMAGE" "$execution_pass_observed" "$ISSUE_URL" "true"
           emit_verdict
 
   # Patch-vs-minor signal collection (research.md D5) plus tag-collision
@@ -1442,19 +1950,26 @@ jobs:
     outputs:
       # `found` | `ambiguous` | `not-observed` -- diagnostic only, never
       # itself the release verdict (see `tag-matches` below, FR-007a).
-      correlation: ${{ steps.watch.outputs.correlation }}
-      correlated-run-id: ${{ steps.watch.outputs.correlated-run-id }}
-      correlated-run-url: ${{ steps.watch.outputs.correlated-run-url }}
+      # Passed through step "Decide release outcome from tag state"
+      # (id: decide), never recomputed there.
+      correlation: ${{ steps.decide.outputs.correlation }}
+      correlated-run-id: ${{ steps.decide.outputs.correlated-run-id }}
+      # Sourced directly from the composite step's own `run-url` output
+      # (specs/081-composite-aware-dispatch-gate contracts/
+      # dispatch-and-wait-outputs.md) -- the decide step passes the other
+      # five facts through unrenamed but this one is the composite's
+      # generic name, not the release-specific one.
+      correlated-run-url: ${{ steps.watch.outputs.run-url }}
       # The sole authority for "did this attempt's release happen"
       # (FR-007): the exact version tag exists and points at the verified
       # head, independent of `correlation` and of release.yml's own run
       # conclusion.
-      tag-matches: ${{ steps.watch.outputs.tag-matches }}
+      tag-matches: ${{ steps.decide.outputs.tag-matches }}
       # The report's diagnostic wording (FR-006/SC-004) is written once in
       # specs/048-correlated-release-dispatch/contracts/release-handover-contract.md;
       # request-time and dispatch-rejected feed it, not restated here.
-      request-time: ${{ steps.watch.outputs.request-time }}
-      dispatch-rejected: ${{ steps.watch.outputs.dispatch-rejected }}
+      request-time: ${{ steps.decide.outputs.request-time }}
+      dispatch-rejected: ${{ steps.decide.outputs.dispatch-rejected }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -1462,101 +1977,56 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
 
-      - name: Dispatch release.yml and correlate its run
+      # Single home for the dispatch-correlate-wait idiom
+      # (specs/081-composite-aware-dispatch-gate, closing specs/057
+      # T054): the dispatching run's own id+attempt is unique across this
+      # repository's entire run history (GitHub's own guarantee), so two
+      # attempts can never mint the same attempt-token by construction
+      # (FR-002a) -- no counter or random value is needed. Correlation is
+      # by evidence, never by recency (FR-001): the composite matches a
+      # release.yml run whose title carries this attempt's own token,
+      # started after this attempt's own request (FR-002, FR-002a,
+      # FR-003); zero, one, or more than one match are three distinct
+      # outcomes (FR-004, FR-005), never collapsed by picking "the
+      # newest" among them. uncorrelated-wait-seconds: "90" preserves
+      # this job's own historical fixed uncorrelated-path wait exactly.
+      - name: Dispatch and correlate release.yml
         id: watch
+        uses: ./.github/actions/wing-commander-dispatch-and-wait
+        with:
+          token: ${{ github.token }}
+          workflow-file: release.yml
+          workflow-inputs: >-
+            {"version": "${{ needs.decide-version.outputs.next-version }}",
+            "breaking": false, "breaking-notes": "",
+            "commit": "${{ needs.detect.outputs.head-sha }}"}
+          attempt-token: ${{ github.run_id }}-${{ github.run_attempt }}
+          uncorrelated-wait-seconds: "90"
+
+      # "Released" is decided from tag state alone (FR-007, FR-007a,
+      # research.md D5) -- after the composite's correlation search and
+      # wait above conclude, regardless of either's outcome, and
+      # independent of whether the dispatch itself was rejected. This
+      # invariant stays in this job's own text, never the composite's
+      # (FR-027): the composite gains no release-specific input, and a
+      # relocation of this shell into a composite must read as a
+      # deletion, same as removing it outright (Gate 59 check 4). Every
+      # other fact below is a passthrough of the composite's own output,
+      # never recomputed here.
+      - name: Decide release outcome from tag state
+        id: decide
         shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
+          CORRELATION: ${{ steps.watch.outputs.correlation }}
+          CORRELATED_RUN_ID: ${{ steps.watch.outputs.correlated-run-id }}
+          REQUEST_TIME: ${{ steps.watch.outputs.request-time }}
+          DISPATCH_REJECTED: ${{ steps.watch.outputs.dispatch-rejected }}
           VERSION: ${{ needs.decide-version.outputs.next-version }}
           VERIFIED_HEAD: ${{ needs.detect.outputs.head-sha }}
         run: |
           set -uo pipefail
 
-          # The dispatching run's own id+attempt is unique across this
-          # repository's entire run history (GitHub's own guarantee), so
-          # two attempts can never mint the same token by construction
-          # (FR-002a) -- no counter or random value is needed. Minted once,
-          # reused for the dispatch call, the correlation search, and the
-          # report.
-          token="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          request_time="$(date -u +%s)"
-          request_time_iso="$(date -u -d "@$request_time" +"%Y-%m-%dT%H:%M:%SZ")"
-
-          correlation="not-observed"
-          correlated_run_id=""
-          correlated_run_url=""
-          dispatch_rejected=false
-
-          if ! gh workflow run release.yml -f "version=${VERSION}" -f breaking=false -f breaking-notes= -f "attempt-token=${token}" -f "commit=${VERIFIED_HEAD}"; then
-            dispatch_rejected=true
-            echo "::error::wing-commander auto-release dispatch-release: gh workflow run release.yml was rejected."
-          else
-            # Correlate by evidence, never by recency (FR-001): a
-            # release.yml run whose title carries this attempt's own
-            # token, started after this attempt's own request (FR-002,
-            # FR-002a, FR-003). Zero, one, or more than one match are three
-            # distinct outcomes (FR-004, FR-005), never collapsed by
-            # picking "the newest" among them.
-            attempt=0
-            while [ "$attempt" -lt 12 ]; do
-              rows="$(gh run list --workflow=release.yml --json databaseId,displayTitle,createdAt,url -L 20 2>/dev/null || true)"
-              count=0
-              match_id=""
-              match_url=""
-              while IFS=$'\t' read -r row_id row_title row_created row_url; do
-                [ -n "$row_id" ] || continue
-                case "$row_title" in
-                  *"[attempt:${token}]"*) ;;
-                  *) continue ;;
-                esac
-                created_epoch="$(date -u -d "$row_created" +%s 2>/dev/null || echo 0)"
-                if [ "$created_epoch" -ge "$request_time" ]; then
-                  count=$((count + 1))
-                  match_id="$row_id"
-                  match_url="$row_url"
-                fi
-              done < <(printf '%s' "$rows" | jq -r '.[] | [.databaseId, .displayTitle, .createdAt, .url] | @tsv')
-
-              if [ "$count" -eq 1 ]; then
-                correlation="found"
-                correlated_run_id="$match_id"
-                correlated_run_url="$match_url"
-                break
-              elif [ "$count" -ge 2 ]; then
-                correlation="ambiguous"
-                break
-              fi
-
-              attempt=$((attempt + 1))
-              [ "$attempt" -lt 12 ] && sleep 5
-            done
-          fi
-
-          # A correlated run may still be mid-flight (checkout, lint, tag
-          # creation) the instant the loop above exits; reading tag state
-          # before it reaches a terminal status would file a false
-          # "release dispatch failed" report while the release succeeds
-          # moments later. Wait for that run's status alone -- never its
-          # conclusion, which plays no part in the verdict below -- to go
-          # terminal before ever reading tag state. When no single run was
-          # found to wait on, wait a fixed bounded interval instead.
-          if [ "$correlation" = "found" ]; then
-            wait_attempt=0
-            while [ "$wait_attempt" -lt 60 ]; do
-              run_status="$(gh run view "$correlated_run_id" --json status --jq .status 2>/dev/null || echo "")"
-              [ "$run_status" = "completed" ] && break
-              wait_attempt=$((wait_attempt + 1))
-              sleep 10
-            done
-          else
-            sleep 90
-          fi
-
-          # "Released" is decided from tag state alone (FR-007, FR-007a,
-          # research.md D5) -- after the correlation search concludes and
-          # the wait above, regardless of either's outcome, and
-          # independent of whether the dispatch itself was rejected. A
-          # fresh, post-dispatch fetch, never a value read before the
+          # A fresh, post-dispatch fetch, never a value read before the
           # dispatch.
           git fetch origin "refs/tags/${VERSION}:refs/tags/${VERSION}" --quiet 2>/dev/null || true
           tag_matches=false
@@ -1567,12 +2037,11 @@ jobs:
           fi
 
           {
-            echo "correlation=$correlation"
-            echo "correlated-run-id=$correlated_run_id"
-            echo "correlated-run-url=$correlated_run_url"
+            echo "correlation=$CORRELATION"
+            echo "correlated-run-id=$CORRELATED_RUN_ID"
             echo "tag-matches=$tag_matches"
-            echo "request-time=$request_time_iso"
-            echo "dispatch-rejected=$dispatch_rejected"
+            echo "request-time=$REQUEST_TIME"
+            echo "dispatch-rejected=$DISPATCH_REJECTED"
           } >> "$GITHUB_OUTPUT"
 
   # The only place this feature writes anything maintainer-facing

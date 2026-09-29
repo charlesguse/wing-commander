@@ -95,8 +95,8 @@ stage's outcome for the other's.
 | `branch_advance`: `before_sha`/`before_available:true` is a branch-creation commit (schema-identical to an existing both-present-different fixture, added under its own name) | Gate 39 (FR-020, positive) |
 | `branch_advance` naming a persistent spec branch (`spec/<slug>`) | Gate 39 (FR-020, positive) |
 | `branch_advance` naming a review branch (`plan/<slug>` or `tasks/<slug>`) | Gate 39 (FR-020, positive) |
-| A plan run's downloaded record: `branch_advance.available:true`, `branch:"plan/..."`, SHAs equal | Gate 53 (US1, this feature's case 1) |
-| A tasks run, SHAs differ | Gate 53 (US1, this feature's case 2) |
-| A plan run with no usable record in the downloaded set | Gate 53 (US3/FR-016, this feature's case 3 — asserts NO since-created fallback fires) |
-| A tasks run, same as above | Gate 53 (US3/FR-016, this feature's case 4) |
+| A plan run's downloaded record: `branch_advance.available:true`, `branch:"plan/..."`, SHAs equal | Gate 65 (US1, this feature's case 1) |
+| A tasks run, SHAs differ | Gate 65 (US1, this feature's case 2) |
+| A plan run with no usable record in the downloaded set | Gate 65 (US3/FR-016, this feature's case 3 — asserts NO since-created fallback fires) |
+| A tasks run, same as above | Gate 65 (US3/FR-016, this feature's case 4) |
 | A workflow/composite pasting the refspec-fetch + `..`-range `rev-list --count` fragments outside the declared home | Gate 60 (FR-012, negative — `branch-advance-capture` check) |

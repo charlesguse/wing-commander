@@ -592,6 +592,15 @@ jobs:
           fetch-depth: 0
           clean: false
 
+      - name: Refuse a branch that tracks .wing-commander-pipeline/
+        shell: bash
+        env:
+          WC_PIPELINE_REF: ${{ steps.pipeline-ref.outputs.ref }}
+        run: |
+          p=.wing-commander-pipeline; want="$(cd "$GITHUB_WORKSPACE" && pwd -P)/$p"
+          if [ -L "$p" ] || [ ! -d "$p" ] || [ -L "$p/.git" ] || [ ! -d "$p/.git" ] || [ "$(git -C "$p" rev-parse --show-toplevel 2>/dev/null)" != "$want" ] || { [[ "${WC_PIPELINE_REF:-}" =~ ^[0-9a-f]{40}$ ]] && [ "$(git -C "$p" rev-parse HEAD 2>/dev/null)" != "$WC_PIPELINE_REF" ]; }; then rm -rf -- "$p"; echo "::error::wing-commander: $p is no longer the trusted pipeline checkout (a symlink, a missing or replaced .git, or another commit): the branch just checked out replaced it. Removed it so no later step loads branch code from there (#611)."; exit 1; fi
+          git -C "$p" cat-file blob HEAD:.github/scripts/pipeline-checkout-guard.sh | bash -s
+
       # The accepted plan must exist on the spec branch; report and stop
       # rather than generating tasks for the wrong thing (the message names
       # the providing stage — FR-009).
@@ -713,6 +722,12 @@ jobs:
 
       # Auto mode — generate tasks.md and commit it, with the stage update,
       # directly to the spec branch.
+      - name: Compose commit-message guidance (tasks.direct-commit)
+        id: commit-guidance-tasks-direct
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-commit-message-guidance
+        with:
+          scratch-filename: tasks-commit-message-direct.txt
+
       - name: Compose tool args (tasks.direct-commit)
         id: tool-args-tasks-direct-commit
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-tool-args
@@ -757,6 +772,10 @@ jobs:
           # Only the validated slug and integer issue number are interpolated.
           # The plan/spec content was merged by a maintainer, but is still
           # framed as data, not instructions.
+          # the settled anchor rule for gate_or_artifact/file_path the
+          # prompt below states -- see clarify.yml.
+          # #266: inspect files with the Grep, Glob and Read tools, never
+          # shell loops or unlisted commands, as the prompt below states -- see clarify.yml.
           prompt: |
             You are the tasks stage of this repository's spec-driven
             development pipeline. The accepted plan lives in
@@ -778,6 +797,8 @@ jobs:
                "tasks: ${{ needs.resolve-spec.outputs.slug }} (#${{ steps.meta.outputs.issue }})"
                on the current branch (${{ inputs.spec-prefix }}${{ needs.resolve-spec.outputs.slug }}) and
                push.
+
+               ${{ steps.commit-guidance-tasks-direct.outputs.guidance }}
             4. Comment on issue #${{ steps.meta.outputs.issue }}: total task
                count, per-story task breakdown, suggested MVP scope, and what
                happens next (implementation is dispatched automatically when an
@@ -798,8 +819,12 @@ jobs:
                                     "gate_or_artifact": "the heading, job, or gate it concerns"}}]
             "detail" is the only optional key. "gate_or_artifact" is half of
             the dedup key, so give it a stable name (a heading, a job name, a
-            gate name), never a sentence. An empty array means nothing to
-            report. Then continue your own task unchanged.
+            gate name), never a sentence. It must occur, verbatim once
+            punctuation, case, and spacing are ignored, in the file named by
+            "file_path"; if it does not, this finding still reaches the
+            board keyed by a fallback route instead of being dropped. An
+            empty array means nothing to report. Then continue your own task
+            unchanged.
 
             Constraints: edit files ONLY inside ${{ needs.resolve-spec.outputs.spec-dir }};
             commit and push ONLY to ${{ inputs.spec-prefix }}${{ needs.resolve-spec.outputs.slug }}; open no
@@ -832,6 +857,9 @@ jobs:
               `gh workflow list` will not explain it. `gh api` is not granted
               in this run; read PRs and issues with whichever `gh pr ...` /
               `gh issue ...` verbs this run permits.
+            - Inspect files with the Grep, Glob and Read tools, not shell
+              loops or commands this run does not list (`for f in …; do
+              cat "$f"`, `awk`) — those are denied here.
             - Bash cannot reach paths outside the checkout, but the Write tool
               can. Never mkdir or ls a temp path first to prepare it.
             A denial is not a hint to retry a variant. Switch to the allowed form
@@ -900,6 +928,12 @@ jobs:
       # Pr mode — the task list arrives as a reviewable PR targeting the spec
       # branch; nothing lands on the spec branch directly and implementation
       # does NOT start here.
+      - name: Compose commit-message guidance (tasks.pr)
+        id: commit-guidance-tasks-pr
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-commit-message-guidance
+        with:
+          scratch-filename: tasks-commit-message-pr.txt
+
       - name: Compose tool args (tasks.pr)
         id: tool-args-tasks-pr
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-tool-args
@@ -944,6 +978,10 @@ jobs:
           # See the auto-mode step above.
           # the pipeline's own App bot is allow-listed too (bare slug) -- see clarify.yml.
           allowed_bots: "github-actions,${{ steps.ctx.outputs.bot-slug }}"
+          # the settled anchor rule for gate_or_artifact/file_path the
+          # prompt below states -- see clarify.yml.
+          # #266: inspect files with the Grep, Glob and Read tools, never
+          # shell loops or unlisted commands, as the prompt below states -- see clarify.yml.
           prompt: |
             You are the tasks stage of this repository's spec-driven
             development pipeline, running in review-required mode. The accepted
@@ -965,6 +1003,8 @@ jobs:
             4. Commit tasks.md and spec-meta.json together as
                "tasks: ${{ needs.resolve-spec.outputs.slug }} (#${{ steps.meta.outputs.issue }})"
                and push ${{ inputs.tasks-prefix }}${{ needs.resolve-spec.outputs.slug }}.
+
+               ${{ steps.commit-guidance-tasks-pr.outputs.guidance }}
             5. Open the tasks PR:
                gh pr create --base ${{ inputs.spec-prefix }}${{ needs.resolve-spec.outputs.slug }} \
                  --head ${{ inputs.tasks-prefix }}${{ needs.resolve-spec.outputs.slug }} \
@@ -990,8 +1030,12 @@ jobs:
                                     "gate_or_artifact": "the heading, job, or gate it concerns"}}]
             "detail" is the only optional key. "gate_or_artifact" is half of
             the dedup key, so give it a stable name (a heading, a job name, a
-            gate name), never a sentence. An empty array means nothing to
-            report. Then continue your own task unchanged.
+            gate name), never a sentence. It must occur, verbatim once
+            punctuation, case, and spacing are ignored, in the file named by
+            "file_path"; if it does not, this finding still reaches the
+            board keyed by a fallback route instead of being dropped. An
+            empty array means nothing to report. Then continue your own task
+            unchanged.
 
             Constraints: edit files ONLY inside ${{ needs.resolve-spec.outputs.spec-dir }};
             push ONLY to ${{ inputs.tasks-prefix }}${{ needs.resolve-spec.outputs.slug }}, never to the spec
@@ -1025,6 +1069,9 @@ jobs:
               `gh workflow list` will not explain it. `gh api` is not granted
               in this run; read PRs and issues with whichever `gh pr ...` /
               `gh issue ...` verbs this run permits.
+            - Inspect files with the Grep, Glob and Read tools, not shell
+              loops or commands this run does not list (`for f in …; do
+              cat "$f"`, `awk`) — those are denied here.
             - Bash cannot reach paths outside the checkout, but the Write tool
               can. Never mkdir or ls a temp path first to prepare it.
             A denial is not a hint to retry a variant. Switch to the allowed form
@@ -1577,6 +1624,15 @@ jobs:
           token: ${{ env.WC_BOT_TOKEN }}
           fetch-depth: 0
           clean: false
+
+      - name: Refuse a branch that tracks .wing-commander-pipeline/
+        shell: bash
+        env:
+          WC_PIPELINE_REF: ${{ steps.pipeline-ref.outputs.ref }}
+        run: |
+          p=.wing-commander-pipeline; want="$(cd "$GITHUB_WORKSPACE" && pwd -P)/$p"
+          if [ -L "$p" ] || [ ! -d "$p" ] || [ -L "$p/.git" ] || [ ! -d "$p/.git" ] || [ "$(git -C "$p" rev-parse --show-toplevel 2>/dev/null)" != "$want" ] || { [[ "${WC_PIPELINE_REF:-}" =~ ^[0-9a-f]{40}$ ]] && [ "$(git -C "$p" rev-parse HEAD 2>/dev/null)" != "$WC_PIPELINE_REF" ]; }; then rm -rf -- "$p"; echo "::error::wing-commander: $p is no longer the trusted pipeline checkout (a symlink, a missing or replaced .git, or another commit): the branch just checked out replaced it. Removed it so no later step loads branch code from there (#611)."; exit 1; fi
+          git -C "$p" cat-file blob HEAD:.github/scripts/pipeline-checkout-guard.sh | bash -s
 
       # The gate cannot run any earlier: issue-number is not a workflow_call
       # input on this path, only readable once the spec branch's

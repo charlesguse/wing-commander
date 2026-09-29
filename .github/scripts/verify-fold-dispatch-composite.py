@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Gate 111 - wing-commander-fold-dispatch's own `run:` step re-reads the
-spec branch's tip, dispatches implement-workflow only when it moved and a
-target is configured, and reports which iteration a standalone-mode
-caller should dispatch manually (specs/062-lifecycle-review-gate
-T034/T035).
+"""Gate 111 - wing-commander-fold-dispatch's own `run:` step dispatches
+implement-workflow only when the caller's folded-json names this run's own
+folds (never merely because the tip moved -- specs/075 FR-014) and a target
+is configured, and reports which iteration a standalone-mode caller should
+dispatch manually (specs/062-lifecycle-review-gate T034/T035).
 
 WHY THIS EXISTS
 ---------------
@@ -19,6 +19,7 @@ weeks while checking a sequence that did not ship.
     python3 .github/scripts/verify-fold-dispatch-composite.py
     python3 .github/scripts/verify-fold-dispatch-composite.py --self-test
 """
+import json
 import os
 import subprocess
 import sys
@@ -29,7 +30,7 @@ from wc_shell_harness import (ensure_jq, find_step, resolve_bash, run_step,  # n
                               use_utf8_stdout)
 
 ACTION = ".github/actions/wing-commander-fold-dispatch/action.yml"
-STEP_NAME = "Re-read the tip and dispatch if it moved"
+STEP_NAME = "Re-read the tip and dispatch this run's own folds"
 SPEC_DIR = "specs/999-fold-dispatch-harness"
 SPEC_BRANCH = "spec/999-fold-dispatch-harness"
 ISSUE = "250"
@@ -127,8 +128,14 @@ def gh_call_count(calls_path, *substrings):
     return sum(1 for line in lines if all(s in line for s in substrings))
 
 
+def folded_json_for(fold_commits):
+    """The folded-json a caller would pass for these (id, summary) folds."""
+    return json.dumps([{"id": i, "summary": s} for i, s in fold_commits])
+
+
 def run_dispatch(root, step_script, base_sha, repo, implement_workflow,
-                 run_list_json='[{"url":"https://example.invalid/runs/1"}]'):
+                 run_list_json='[{"url":"https://example.invalid/runs/1"}]',
+                 folded_json="[]"):
     runner_temp = os.path.join(root, "runner_temp_{}".format(os.getpid()))
     os.makedirs(runner_temp, exist_ok=True)
     bindir, calls = _stub_gh(root)
@@ -139,6 +146,7 @@ def run_dispatch(root, step_script, base_sha, repo, implement_workflow,
         "IMPLEMENT_WORKFLOW": implement_workflow,
         "GITHUB_REPOSITORY": REPO, "GH_CALLS": calls,
         "GH_RUN_LIST_JSON": run_list_json, "PATH": path,
+        "FOLDED_JSON": folded_json,
     }
     rc, out, outputs, _summary = run_step(BASH, step_script, repo, env,
                                           runner_temp)
@@ -176,10 +184,11 @@ def run():
 
         # Case 2: tip moved, implement-workflow configured -> dispatched.
         before = len(failures)
-        repo2, base2, tip2 = make_repo(
-            root, 3, [("leg-0", "first item"), ("leg-1", "second item")])
+        folds2 = [("leg-0", "first item"), ("leg-1", "second item")]
+        repo2, base2, tip2 = make_repo(root, 3, folds2)
         rc, out, outputs, calls = run_dispatch(root, script, base2, repo2,
-                                               IMPLEMENT_WORKFLOW)
+                                               IMPLEMENT_WORKFLOW,
+                                               folded_json=folded_json_for(folds2))
         if rc != 0:
             failures.append(f"case 2 (tip moved, dispatch): step exited "
                             f"{rc}: {out}")
@@ -213,8 +222,10 @@ def run():
 
         # Case 3: tip moved, implement-workflow empty (standalone mode).
         before = len(failures)
-        repo3, base3, tip3 = make_repo(root, 7, [("leg-a", "solo item")])
-        rc, out, outputs, calls = run_dispatch(root, script, base3, repo3, "")
+        folds3 = [("leg-a", "solo item")]
+        repo3, base3, tip3 = make_repo(root, 7, folds3)
+        rc, out, outputs, calls = run_dispatch(root, script, base3, repo3, "",
+                                               folded_json=folded_json_for(folds3))
         if rc != 0:
             failures.append(f"case 3 (standalone): step exited {rc}: {out}")
         else:
@@ -239,6 +250,33 @@ def run():
         if len(failures) == before:
             print("[ok] case 3: tip moved + implement-workflow empty -> "
                  "folded=true, dispatched=false, new-iteration still bumped")
+
+        # Case 4 (specs/075 FR-014/FR-015): the tip moved -- a sibling
+        # run's fold, or an unrelated push -- but folded-json is empty:
+        # nothing of this run's own folded, so nothing is dispatched and the
+        # caller is told the tip moved (for its declined-dispatch notice).
+        before = len(failures)
+        repo4, base4, tip4 = make_repo(root, 2, [("leg-s", "sibling item")])
+        rc, out, outputs, calls = run_dispatch(root, script, base4, repo4,
+                                               IMPLEMENT_WORKFLOW,
+                                               folded_json="[]")
+        if rc != 0:
+            failures.append(f"case 4 (tip moved, nothing of own): step "
+                            f"exited {rc}: {out}")
+        else:
+            if outputs.get("folded") != "false":
+                failures.append(f"case 4: expected folded=false, got "
+                                f"{outputs.get('folded')!r}")
+            if outputs.get("tip-moved") != "true":
+                failures.append(f"case 4: expected tip-moved=true, got "
+                                f"{outputs.get('tip-moved')!r}")
+            if gh_call_count(calls, "workflow run") != 0:
+                failures.append("case 4: a gh workflow run call was made "
+                                "although this run folded nothing of its "
+                                "own (FR-014).")
+        if len(failures) == before:
+            print("[ok] case 4: tip moved + folded-json empty -> "
+                 "folded=false, tip-moved=true, nothing dispatched")
     finally:
         import shutil
         shutil.rmtree(root, ignore_errors=True)
@@ -249,12 +287,15 @@ def run():
     return 1 if failures else 0
 
 
-def _mutate_ignores_tip_move(script):
-    needle = 'if [ -z "$tip" ] || [ "$tip" = "$BASE_SHA" ]; then'
+def _mutate_ignores_folded_json(script):
+    needle = ('if [ -z "$tip" ] || [ "$(printf \'%s\' "$folded_json" | '
+              'jq \'length\')" = "0" ]; then')
     if script.count(needle) != 1:
         sys.exit("::error::verify-fold-dispatch-composite --self-test: "
-                 "expected one tip-unchanged guard; update this harness.")
-    return script.replace(needle, 'if true; then', 1)
+                 "expected one nothing-of-own-folded guard; update this "
+                 "harness.")
+    return script.replace(needle,
+                          'if [ -z "$tip" ] || [ "$tip" = "$BASE_SHA" ]; then', 1)
 
 
 def _mutate_always_dispatches(script):
@@ -282,22 +323,25 @@ def self_test():
 
     root = tempfile.mkdtemp(prefix="wc-fold-dispatch-selftest-")
     try:
-        # A mutation that always takes the "tip unchanged" early-exit branch
-        # must be caught: a tip that DID move (a fold commit landed) must
-        # still be reported as folded=true.
-        mutated = _mutate_ignores_tip_move(script)
+        # A mutation that decides on "the tip moved" instead of folded-json
+        # (the pre-specs/075 behaviour) must be caught: a tip moved by a
+        # sibling's fold, with nothing of this run's own, must not dispatch.
+        mutated = _mutate_ignores_folded_json(script)
         repo, base, _tip = make_repo(root, 1, [("leg-z", "z")])
         rc, _out, outputs, calls = run_dispatch(root, mutated, base, repo,
-                                                IMPLEMENT_WORKFLOW)
-        caught = rc != 0 or outputs.get("folded") != "true"
-        check("a mutation that ignores 'tip moved' is caught", caught,
-             f"outputs={outputs!r} rc={rc}")
+                                                IMPLEMENT_WORKFLOW,
+                                                folded_json="[]")
+        caught = (rc != 0 or outputs.get("folded") == "true" or
+                  gh_call_count(calls, "workflow run") > 0)
+        check("a mutation that dispatches on 'tip moved' alone is caught",
+             caught, f"outputs={outputs!r} rc={rc}")
 
         # A mutation that dispatches even in standalone mode must be caught.
         mutated2 = _mutate_always_dispatches(script)
         repo2, base2, _tip2 = make_repo(root, 1, [("leg-x", "x")])
-        rc2, _out2, outputs2, calls2 = run_dispatch(root, mutated2, base2,
-                                                    repo2, "")
+        rc2, _out2, outputs2, calls2 = run_dispatch(
+            root, mutated2, base2, repo2, "",
+            folded_json=folded_json_for([("leg-x", "x")]))
         caught2 = (rc2 != 0 or outputs2.get("dispatched") == "true" or
                   gh_call_count(calls2, "workflow run") > 0)
         check("a mutation that dispatches in standalone mode is caught",
@@ -305,8 +349,9 @@ def self_test():
 
         # Control: the unmutated step still behaves correctly.
         repo3, base3, _tip3 = make_repo(root, 1, [("leg-y", "y")])
-        rc3, _out3, outputs3, calls3 = run_dispatch(root, script, base3,
-                                                    repo3, IMPLEMENT_WORKFLOW)
+        rc3, _out3, outputs3, calls3 = run_dispatch(
+            root, script, base3, repo3, IMPLEMENT_WORKFLOW,
+            folded_json=folded_json_for([("leg-y", "y")]))
         control_ok = (rc3 == 0 and outputs3.get("folded") == "true" and
                      outputs3.get("dispatched") == "true" and
                      gh_call_count(calls3, "workflow run") == 1)

@@ -19,9 +19,11 @@ calendar-date parity, research.md D1), pins a new minimal project-owned
 reference image published to `ghcr.io/charlesguse/wing-commander-e2e-image`
 (research.md D5), and records which mode each run exercised in its verdict
 and report (research.md D9) so a pass states which mode it exercised. That
-narrows the overstatement risk without closing it: a container-mode turn
-whose test-repository image variable is unset still reaches a plain `pass`
-(the accepted gap on FR-004, tracked in #390). The
+narrowed the overstatement risk without closing it: a container-mode turn
+whose test-repository image variable was unset still reached a plain
+`pass` (the gap on FR-004 tracked in #390 — closed by
+`specs/067-e2e-container-image-evidence`, see that feature's
+`contracts/container-evidence-outcomes.md`). The
 technical approach reuses the published stage contract's existing
 `container-image`/registry-credential passthrough verbatim (research.md D2)
 — every published stage already forwards these inputs — so no stage

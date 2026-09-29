@@ -51,7 +51,7 @@ Every gate this feature touches is an extension of an already-wired
 gate — Gate 39 (schema fixtures, no code change needed since the group
 is already stage-neutral), Gate 43 (the real composite proven for both
 new call sites plus a regression proof that implement's own refactor
-changed nothing), Gate 53 (new plan/tasks cases on both the exact-sha
+changed nothing), Gate 65 (new plan/tasks cases on both the exact-sha
 and no-evidence arms), and Gate 60 (a new single-home check for the
 extracted composite, per CLAUDE.md's "add the check to the nearest
 existing gate"). No new gate script, no new `lint-workflows.yml` wiring
@@ -74,7 +74,7 @@ one of these three.
 
 **Primary Dependencies**: `jq`, `git`, `gh` (already the sole
 dependencies of every file this feature touches). `wc_gate_registry.py`,
-`wc_shell_harness.py` (existing, reused unmodified by Gate 53's
+`wc_shell_harness.py` (existing, reused unmodified by Gate 65's
 extension). Gate 60's own `DECLARED_HOMES`/waiver/self-test machinery
 (existing, reused unmodified except for the one new entry).
 
@@ -90,7 +90,7 @@ per plan run and one new record per tasks run this feature adds — same
 (Gate 39, three new fixtures, no code change),
 `.github/scripts/verify-metrics-summary-record-emission.py` (Gate 43,
 extended), `.github/scripts/verify-branch-drift-sha-baseline.py`
-(Gate 53, extended), `.github/scripts/verify-single-home-idioms.py`
+(Gate 65, extended), `.github/scripts/verify-single-home-idioms.py`
 (Gate 60, one new check). All run locally via
 `python .github/scripts/run-local-gates.py`, identically to CI
 (constitution VIII).
@@ -282,7 +282,7 @@ specs/043-durable-metrics-record/contracts/
 | V. Security — untrusted content is never instructions | No new trust boundary: every new input into the new composite and the two new call sites is a literal or a `git`-computed value the stage's own deterministic steps already produce, never issue/comment/PR body text. The watchdog's widened lookup reuses the same artifact-download pattern already in place for implement — no new fork-PR checkout, no new secret, no new web tool. | ✅ Pass |
 | VI. Portability — consuming repo owns its artifacts | Unaffected — every edited/added file already lives under `.github/**`, resolved from the pipeline repository's own checkout; no hardcoded repository name, no new resolution mechanism. | ✅ Pass |
 | VII. Two Interfaces — published contract vs. consuming instrument | `wing-commander-branch-advance`, like `wing-commander-metrics-summary` before it, is an internal implementation detail three published stage workflows resolve through self-checkout — not itself a `workflow_call` input/output of any of them, so its addition is not a compatibility-surface change. The record shape itself (`contracts/metrics-record-schema.md`) IS a published surface and gains only a further, purely additive/widening amendment (rule 1; FR-005/FR-009). No stage gains a new ambient-state read (`github.event.*`/`vars.*`). No deviation to register. | ✅ Pass |
-| VIII. A Green Check Means What It Says | Every gate this feature touches already runs the real shipped subject (the real composite for Gate 43, the real collector step text for Gate 53, a file-system-wide scan for Gate 60) — extended, not duplicated. Gate 60 gains a fixture-backed negative case (a synthetic third paste) proving it can actually fail on the defect it exists to catch, matching the principle's own "every failure branch... exercised by a checked-in fixture" requirement. | ✅ Pass |
+| VIII. A Green Check Means What It Says | Every gate this feature touches already runs the real shipped subject (the real composite for Gate 43, the real collector step text for Gate 65, a file-system-wide scan for Gate 60) — extended, not duplicated. Gate 60 gains a fixture-backed negative case (a synthetic third paste) proving it can actually fail on the defect it exists to catch, matching the principle's own "every failure branch... exercised by a checked-in fixture" requirement. | ✅ Pass |
 | IX. Judgment That Gates a Durable Action Belongs in Deterministic Code | The lost-progress verdict remains a two-string equality check in deterministic bash for all three stages now, not just implement. The one new decision this feature adds — "does this run's stage get a since-created fallback" — is a static `case`/`if` on `RUN_NAME`, not a judgment call. No model is consulted anywhere in the new or widened path. | ✅ Pass |
 | X. Bounded Autonomy — The Pipeline Works Its Own Board | Not directly implicated — this feature is a fix-shaped follow-up to an already-accepted spec's own named gap, filed and routed through the ordinary feature lifecycle (plan/tasks/implement), not the board loop. | ✅ Pass |
 

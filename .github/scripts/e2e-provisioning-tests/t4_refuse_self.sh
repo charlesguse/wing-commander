@@ -32,6 +32,31 @@ check "T4 self-target exits non-zero" "$?" "1"
 check_contains "T4 self-target names the reason" "$OUT" "FR-007"
 check "T4 self-target makes zero gh calls" "$(wc -l < "$GH_CALLS" | tr -d ' ')" "0"
 
+echo "--- FR-014 (research.md D7): GITHUB_REPOSITORY alone resolves a self-target refusal, distinct from the unresolved case (T045) ---"
+new_gh_state
+REAL_GIT="$(command -v git)"
+FAKEGIT_DIR="$(mktemp -d)"
+cat > "$FAKEGIT_DIR/git" <<EOF
+#!/usr/bin/env bash
+for a in "\$@"; do
+  if [ "\$a" = "remote.origin.url" ]; then
+    exit 1
+  fi
+done
+exec "$REAL_GIT" "\$@"
+EOF
+chmod +x "$FAKEGIT_DIR/git"
+export GITHUB_REPOSITORY="wc-user/wc-e2e-self-via-env"
+OUT="$(PATH="$FAKEGIT_DIR:$PATH" bash "$PROVISION_SCRIPT" --repo wc-user/wc-e2e-self-via-env --profile spec-kit-scratch 2>&1)"
+RC=$?
+check "T4 GITHUB_REPOSITORY self-target exits non-zero" "$RC" "1"
+check_contains "T4 GITHUB_REPOSITORY self-target names FR-007, not the unresolved-self message" "$OUT" "FR-007"
+check_not_contains "T4 GITHUB_REPOSITORY self-target is distinct from the unresolved case (T045)" \
+  "$OUT" "could not determine this repository"
+check "T4 GITHUB_REPOSITORY self-target makes zero gh calls" "$(wc -l < "$GH_CALLS" | tr -d ' ')" "0"
+unset GITHUB_REPOSITORY
+rm -rf "$FAKEGIT_DIR"
+
 echo "--- malformed --repo shapes are refused before any gh call ---"
 for bad in "not-a-pair" "too/many/slashes" "/leading-slash" "trailing-slash/"; do
   new_gh_state

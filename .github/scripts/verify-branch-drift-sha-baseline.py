@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gate 53: the branch-drift collector compares the implement run's own
+"""Gate 65: the branch-drift collector compares the implement run's own
 recorded SHAs, not a commits-since-run-created window.
 
 WHY THIS EXISTS
@@ -924,7 +924,7 @@ def main():
         if VERBOSE:
             print(f"::error::{f}")
 
-    print(f"Gate 53: {len(SCENARIOS)} scenario(s), {len(MUTATIONS)} "
+    print(f"Gate 65: {len(SCENARIOS)} scenario(s), {len(MUTATIONS)} "
           f"mutation(s); {len(failures)} failure(s).")
     sys.exit(1 if failures else 0)
 

@@ -171,6 +171,12 @@ SHARED_SCRIPTS = [
     "auto-release-verdict.sh",
     "auto-release-e2e-clarify-decision.sh",
     "auto-release-e2e-merge-decision.sh",
+    # specs/067-e2e-container-image-evidence: the poll step's own preamble
+    # now sources this unconditionally (for classify_read_status), before
+    # any scenario here ever reaches that feature's own execution-evidence
+    # fragment -- every scenario's script fails at that source line without
+    # it, regardless of what this gate is actually testing.
+    "auto-release-container-evidence-decision.sh",
 ]
 
 

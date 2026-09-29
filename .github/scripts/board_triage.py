@@ -29,9 +29,12 @@ transcript's own fields (FR-013), never constants.
 
 Ground 2 (action bump) has no prior art in this repository (research.md D4):
 it diffs the cited run's own workflow file's `uses: owner/action@ref` pins
-(plus those of the local reusable workflows it calls -- never any other
-workflow, #505) as they stood at the cited run's own commit against the
-same file's pins on current `main`.
+(plus those of the local reusable workflows and local composite actions it
+calls, transitively -- never any other workflow, #505/#521) as they stood
+at the cited run's own commit against the same file's pins on current
+`main`. Pins are read by parsing the YAML, not by a line regex (#519): a
+`- uses:` step line, a quoted value and a pin with a trailing `# vX`
+comment are all the same `uses:` value once parsed.
 Because the cited run's commit is (by construction, verified here) an
 ancestor of `main` on a fast-forward-only branch, ANY divergent pin between
 that commit and `main` is, by definition, a pin `main` moved to later --
@@ -45,7 +48,18 @@ import re
 import subprocess
 import sys
 
-USES_RE = re.compile(r"^\s*uses:\s*(\S+)\s*$", re.MULTILINE)
+import yaml
+
+# The files check_action_bump() may read pins from, as `git ls-files`
+# pathspecs: workflows (either extension, #521) and local composite action
+# manifests (#521). The one home for this list -- board-loop.yml's decide
+# step calls tracked_pin_files() rather than spelling its own ls-files.
+PIN_FILE_PATHSPECS = (
+    ".github/workflows/*.yml",
+    ".github/workflows/*.yaml",
+    ".github/actions/*/action.yml",
+    ".github/actions/*/action.yaml",
+)
 
 
 def _last_of_type(records, type_name):
@@ -137,16 +151,74 @@ def check_rate_limit(run_transcript_path):
     }
 
 
+def _uses_values(text):
+    """Every `uses:` string in a workflow or composite action file, parsed
+    structurally (#519): `jobs.<id>.uses` (a reusable-workflow call),
+    `jobs.<id>.steps[*].uses`, and a composite's `runs.steps[*].uses`.
+    YAML itself strips the quotes, the `- ` list marker and any trailing
+    `# comment`, so no line shape can hide a pin. The single home for how
+    triage reads `uses:` -- both _uses_pins() and _local_refs() go through
+    here. Unparsable or non-mapping text yields [] (no pins, so no close:
+    fails safe)."""
+    try:
+        doc = yaml.safe_load(text or "")
+    except yaml.YAMLError:
+        return []
+    if not isinstance(doc, dict):
+        return []
+    values = []
+    step_lists = []
+    jobs = doc.get("jobs")
+    if isinstance(jobs, dict):
+        for job in jobs.values():
+            if not isinstance(job, dict):
+                continue
+            values.append(job.get("uses"))
+            step_lists.append(job.get("steps"))
+    runs = doc.get("runs")
+    if isinstance(runs, dict):
+        step_lists.append(runs.get("steps"))
+    for steps in step_lists:
+        if isinstance(steps, list):
+            values.extend(step.get("uses") for step in steps
+                          if isinstance(step, dict))
+    return [v.strip() for v in values if isinstance(v, str) and v.strip()]
+
+
 def _uses_pins(text):
-    """{owner/action: ref} for every `uses: owner/action@ref` line."""
+    """{owner/action: sorted list of distinct refs} for every remote
+    `uses: owner/action@ref` value (_uses_values()). Local (`./...`) and
+    `docker://` refs are not pins. Every ref is kept, not the last one: a
+    file pinning one action twice (A@x, A@y) must compare as the SET of its
+    refs, or merely reordering the two steps on main would read as a bump
+    and close an issue on no evidence (#672 review)."""
     pins = {}
-    for match in USES_RE.finditer(text or ""):
-        value = match.group(1)
-        if "@" not in value:
+    for value in _uses_values(text):
+        if value.startswith(("./", "docker://")) or "@" not in value:
             continue
         name, ref = value.rsplit("@", 1)
-        pins[name] = ref
-    return pins
+        pins.setdefault(name, set()).add(ref)
+    return {name: sorted(refs) for name, refs in pins.items()}
+
+
+def _local_refs(text):
+    """Repo-relative paths of every local `uses: ./path` value
+    (_uses_values()) -- a reusable workflow file or a composite action
+    directory -- with the `./` and any trailing `/` removed."""
+    return [value[2:].rstrip("/") for value in _uses_values(text)
+            if value.startswith("./") and len(value) > 2]
+
+
+def tracked_pin_files():
+    """Main's tracked files matching PIN_FILE_PATHSPECS (this checkout's
+    `git ls-files`), sorted -- the bound check_action_bump()'s scope is
+    drawn inside. [] when git fails."""
+    proc = subprocess.run(
+        ["git", "ls-files", "--"] + list(PIN_FILE_PATHSPECS),
+        capture_output=True, text=True)
+    if proc.returncode != 0:
+        return []
+    return sorted(line for line in proc.stdout.splitlines() if line)
 
 
 def _git_show(ref, path):
@@ -169,27 +241,31 @@ def _first_divergent_pin(workflow_file, run_pins, main_pins):
     """Pure comparison, fixturable without a real git history (contracts/
     triage.md: "each a checked-in transcript/workflow-pin pair"). Returns
     {workflow_file, action_ref, run_pin, main_pin} for the first (sorted by
-    action_ref) pin present in both maps but with a different ref, else
-    None."""
-    for action_ref, run_pin in sorted(run_pins.items()):
-        main_pin = main_pins.get(action_ref)
-        if main_pin is not None and main_pin != run_pin:
+    action_ref) action present in both maps whose SET of refs differs, else
+    None. A map value is one ref (a string) or a list of the refs the file
+    pins that action at (_uses_pins()); order and repeats never matter. In
+    the evidence, run_pin/main_pin are the ref itself when there is one,
+    else the sorted refs joined with ", "."""
+    for action_ref, run_value in sorted(run_pins.items()):
+        main_value = main_pins.get(action_ref)
+        if main_value is None:
+            continue
+        run_refs, main_refs = _ref_set(run_value), _ref_set(main_value)
+        if run_refs != main_refs:
             return {
                 "workflow_file": workflow_file,
                 "action_ref": action_ref,
-                "run_pin": run_pin,
-                "main_pin": main_pin,
+                "run_pin": ", ".join(sorted(run_refs)),
+                "main_pin": ", ".join(sorted(main_refs)),
             }
     return None
 
 
-# A `uses: ./.github/workflows/<name>.yml` line -- a local reusable
-# workflow the cited workflow calls, and so part of what the cited run
-# executed. A local ref carries no `@ref`, so _uses_pins() never reads it
-# as a pin; this pattern only widens the scope to the callee's own file.
-LOCAL_REUSABLE_RE = re.compile(
-    r"^\s*(?:-\s+)?uses:\s*[\"']?\./(\.github/workflows/[^\s\"'@#]+\.ya?ml)",
-    re.MULTILINE)
+def _ref_set(value):
+    """A pin map value (one ref, or a list of refs) as a frozenset."""
+    if isinstance(value, str):
+        return frozenset((value,))
+    return frozenset(value)
 
 
 def _normalize_workflow_path(path):
@@ -200,16 +276,29 @@ def _normalize_workflow_path(path):
     return str(path).strip().split("@", 1)[0] or None
 
 
+def _local_ref_files(ref, tracked):
+    """The tracked file(s) a local `uses: ./<ref>` names: the ref itself
+    when it is a tracked workflow file, else the composite action manifest
+    `<ref>/action.yml` or `<ref>/action.yaml` that main tracks (#521)."""
+    if ref in tracked:
+        return [ref]
+    return [manifest for manifest in
+            (ref + "/action.yml", ref + "/action.yaml") if manifest in tracked]
+
+
 def _scoped_workflow_files(cited_workflow_path, workflow_files, read_at_run):
     """#505: the only files check_action_bump() may compare -- the cited
-    run's own workflow plus every local reusable workflow it calls
-    (transitively, each as it stood at the run's commit). A bump in an
-    unrelated workflow says nothing about why THIS run failed, so it must
-    never become close evidence for the issue that cites the run.
+    run's own workflow plus every local reusable workflow and local
+    composite action (#521) it calls (transitively, each as it stood at
+    the run's commit). A bump in an unrelated workflow or composite says
+    nothing about why THIS run failed, so it must never become close
+    evidence for the issue that cites the run.
 
-    `workflow_files` is main's own tracked workflow list and only bounds
-    the scope: a cited path not in it (a dynamic workflow such as
-    "dynamic/pages/...", or one since deleted or renamed) yields [] --
+    `workflow_files` is main's own tracked pin-file list
+    (tracked_pin_files(): workflows of either extension plus composite
+    action manifests) and only bounds the scope: a cited path not in it (a
+    dynamic workflow such as "dynamic/pages/...", or one since deleted or
+    renamed) yields [] --
     there is no main-side file to compare against, so no bump can be
     shown. `read_at_run(path)` returns the file's text at the run's
     commit, or None; it is injected so this stays fixturable without a git
@@ -225,24 +314,25 @@ def _scoped_workflow_files(cited_workflow_path, workflow_files, read_at_run):
         if path in scoped or path not in tracked:
             continue
         scoped.append(path)
-        queue.extend(LOCAL_REUSABLE_RE.findall(read_at_run(path) or ""))
+        for ref in _local_refs(read_at_run(path)):
+            queue.extend(_local_ref_files(ref, tracked))
     return scoped
 
 
 def check_action_bump(run_commit_sha, workflow_files, cited_workflow_path):
     """NEW (research.md D4). Runtime wrapper: reads the `uses:` pins of the
     cited run's own workflow file(s) -- cited_workflow_path (the run API's
-    `path` field) plus the local reusable workflows it calls, see
-    _scoped_workflow_files() -- as they stood at run_commit_sha (via
-    `git show`) and on current main (HEAD of this checkout, i.e. the
-    working tree), and returns the first divergence via
-    _first_divergent_pin(). workflow_files (main's tracked workflows)
-    bounds that scope and never widens it (#505). Because run_commit_sha
-    is verified here to be an ancestor of main on a fast-forward-only
-    branch, any divergence found IS main's pin being the newer one --
-    there is no older-pin case once ancestry holds. Returns None when
-    every in-scope pin matches, the cited workflow is unknown or not
-    tracked on main, the commit cannot be confirmed as an ancestor of
+    `path` field) plus the local reusable workflows and composite actions
+    it calls, see _scoped_workflow_files() -- as they stood at
+    run_commit_sha (via `git show`) and on current main (HEAD of this
+    checkout, i.e. the working tree), and returns the first divergence via
+    _first_divergent_pin(). workflow_files (main's tracked pin files,
+    tracked_pin_files()) bounds that scope and never widens it (#505).
+    Because run_commit_sha is verified here to be an ancestor of main on a
+    fast-forward-only branch, any divergence found IS main's pin being the
+    newer one -- there is no older-pin case once ancestry holds. Returns
+    None when every in-scope pin matches, the cited workflow is unknown or
+    not tracked on main, the commit cannot be confirmed as an ancestor of
     main, or a workflow file's content cannot be read at that commit."""
     if _normalize_workflow_path(cited_workflow_path) is None:
         return None
@@ -410,22 +500,95 @@ def find_cited_run(text, repository):
     return match.group(0) if match else None
 
 
+# watchdog.yml's own recurrence comment opens with this line ("Ensure
+# pipeline-defect issue" step), both when it reopens a closed issue and
+# when it comments on an open one.
+OCCURRENCE_LINE = "\U0001F415 New occurrence of this fingerprint \u2014 [this run]("
+
+
+def latest_occurrence(occurrences, repository):
+    """#520: (run_url, created_at) of the newest watchdog occurrence among
+    `occurrences` -- wing-commander-issue-context's bot-occurrences-file, a
+    list of {created_at, body} that composite already restricted to
+    comments authored by this repository's own App bot (login AND
+    user.type, never body text), and to a watchdog issue that App filed
+    (that filter lives only there; the App token is shared, see
+    contracts/triage.md "Remaining risk"). A comment
+    counts only when its FIRST line is watchdog's OCCURRENCE_LINE citing a
+    run of `repository`. None when no comment qualifies."""
+    run_url = r"https://github\.com/{0}/actions/runs/[0-9]+".format(
+        re.escape(repository))
+    line_re = re.compile(
+        re.escape(OCCURRENCE_LINE) + "(" + run_url + r")[^)\s]*\):?$")
+    newest = None
+    for comment in occurrences if isinstance(occurrences, list) else []:
+        if not isinstance(comment, dict):
+            continue
+        body, created_at = comment.get("body"), comment.get("created_at")
+        if not isinstance(body, str) or not isinstance(created_at, str):
+            continue
+        match = line_re.match(body.split("\n", 1)[0].strip())
+        if match and (newest is None or created_at >= newest[1]):
+            newest = (match.group(1), created_at)
+    return newest
+
+
+def cite_run(context_text, occurrences, last_reopened_at, repository):
+    """#520: the run triage reads its close evidence from. Returns
+    (run_url or None, reason or None).
+
+    A: the newest watchdog occurrence (latest_occurrence()) wins over the
+    issue's own cite (find_cited_run()) -- a defect that recurred is
+    judged on its most recent run, not on the `_First seen_` run whose
+    pins main may since have bumped.
+    B: when the issue was reopened AFTER the cited run was recorded (no
+    occurrence at all, or a reopen newer than the newest one), no run is
+    cited: triage then has no close ground and proceeds, so neither an
+    action_bump nor a rate_limit close can rest on a run older than the
+    recurrence. `last_reopened_at` is wing-commander-issue-context's
+    last-reopened-at (an ISO-8601 UTC timestamp, or empty)."""
+    occurrence = latest_occurrence(occurrences, repository)
+    if occurrence is not None:
+        run_url, cited_at = occurrence
+    else:
+        run_url, cited_at = find_cited_run(context_text, repository), None
+    if run_url and last_reopened_at and (
+            cited_at is None or last_reopened_at > cited_at):
+        return None, ("reopened at {0}, after the cited run {1} was recorded"
+                      " -- no run cited".format(last_reopened_at, run_url))
+    return run_url, None
+
+
 def main():
     """Runtime entry point: reads the same shape triage() expects from
     stdin as JSON `{"issue": {...}, "cited_run": str|None}`, prints the
     TriageVerdict as JSON to stdout.
 
-    `find-cited-run --repository OWNER/REPO FILE` instead prints
-    find_cited_run() of FILE (nothing when no run is cited) -- the single
-    home board-loop.yml's triage `cite` step calls."""
+    `find-cited-run --repository OWNER/REPO [--bot-occurrences-file F]
+    [--last-reopened-at TS] FILE` instead prints cite_run() of FILE and
+    the two wing-commander-issue-context outputs (nothing when no run is
+    cited; the reason, if any, on stderr) -- the single home
+    board-loop.yml's triage `cite` step calls. An empty
+    --bot-occurrences-file means that composite staged none."""
     if len(sys.argv) > 1 and sys.argv[1] == "find-cited-run":
         import argparse
         parser = argparse.ArgumentParser(prog="board_triage.py find-cited-run")
         parser.add_argument("--repository", required=True)
+        parser.add_argument("--bot-occurrences-file", default="")
+        parser.add_argument("--last-reopened-at", default="")
         parser.add_argument("context_file")
         args = parser.parse_args(sys.argv[2:])
         with open(args.context_file, encoding="utf-8") as fh:
-            print(find_cited_run(fh.read(), args.repository) or "")
+            context_text = fh.read()
+        occurrences = []
+        if args.bot_occurrences_file:
+            with open(args.bot_occurrences_file, encoding="utf-8") as fh:
+                occurrences = json.load(fh)
+        run_url, reason = cite_run(context_text, occurrences,
+                                   args.last_reopened_at, args.repository)
+        if reason:
+            print("board_triage: " + reason, file=sys.stderr)
+        print(run_url or "")
         return
     payload = json.load(sys.stdin)
     verdict = triage(payload.get("issue") or {}, payload.get("cited_run"))

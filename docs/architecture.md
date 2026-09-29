@@ -372,15 +372,23 @@ change to the tiering above.
   [stage-interfaces.md](../specs/010-reusable-pipeline/contracts/stage-interfaces.md#per-stage-default-tool-lists).
 - Only trusted refs are checked out (main, repo-local `spec*/` branches) — never
   fork PR heads.
-- Humans merge every spec, plan and final PR into main, and every
-  constitution amendment; the bot cannot approve those or merge one. The bot
-  merges two classes only (constitution X): the bounded fix PR, behind a
-  deterministic gate — checks green on the exact head SHA (no checks is not
-  green, and the gate suite must have run on that SHA), zero open findings
-  from an independent review, the size-and-path backstop on the final diff,
-  and a clear `WING_COMMANDER_*_PAUSED` switch — and the Spec Kit upgrade PR
-  the auto-update stage opened, after the verification that stage assigns
-  to the jump passed and the gate suite ran green on the exact head.
+- Humans merge every spec and plan PR into main, every constitution
+  amendment, and — while `WING_COMMANDER_LIFECYCLE_AUTO_MERGE` is off, its
+  default — every final PR; the bot cannot approve those, and never merges a
+  spec PR, a plan PR or an amendment. The bot merges three classes only
+  (constitution X): the bounded fix PR, behind a deterministic gate — checks
+  green on the exact head SHA (no checks is not green, and the gate suite
+  must have run on that SHA), zero open findings from an independent review,
+  the size-and-path backstop on the final diff, and a clear
+  `WING_COMMANDER_*_PAUSED` switch — the Spec Kit upgrade PR the auto-update
+  stage opened, after the verification that stage assigns to the jump passed
+  and the gate suite ran green on the exact head; and the lifecycle pull
+  request merge (spec 062), only while `WING_COMMANDER_LIFECYCLE_AUTO_MERGE`
+  is on — the final PR, squash-merged once eight deterministic conditions
+  hold on the exact head SHA (checks and gate suite green, mergeable, the
+  review round recorded at that head and clean with zero open findings, no
+  standing human changes-requested review, and a clear
+  `WING_COMMANDER_LIFECYCLE_REVIEW_GATE_PAUSED` switch).
 
 ---
 
@@ -409,7 +417,10 @@ The two rules worth carrying in your head:
 
 - Both callouts key off a single output derived from one read of the agent's
   schema-validated result — never two independently computed conditions. That
-  is the structural fix for #159.
+  is the structural fix for #159. The `stage:clarify` label flip
+  (`specs/063-stage-clarify-label/`) is a second consumer of that same
+  output, alongside the callout it accompanies — never a separately derived
+  condition of its own.
 - **A callout that asks for a reply must only fire where a reply can be
   acted on.** `wing-commander-2-clarify.yml` needs a `spec:` label plus
   `stage:spec|clarify`; the agent's `specified` discriminator is what keeps
@@ -739,6 +750,18 @@ billed jobs, `collect` and the always-on `report-unhandled-failure`.
   denial's array position under `record-index`, not `turn` (spec 022,
   FR-008/FR-010: a raw SDK-message-array position that can exceed the run's
   own `num_turns` and must never be presented as a conversation turn).
+
+  Every denial signal also carries the inspected run's `stage` (#266): the
+  `stage` literal the run's own `wing-commander-metrics-summary` call wrote
+  into its metrics record, read by the `wing-commander-inspected-run-identity`
+  composite's `record-stage` output — never the wrapper's display name,
+  which each adopter chooses. A run whose stage cannot be resolved carries
+  the fixed value `unknown`, never a dropped fact. `Stamp signal ids`
+  projects a denial to `{stage, tool}`, so each stage's denials accumulate on
+  their own issue and a reopen means a regression in that stage; the denied
+  commands stay descriptive and never move the key. Before #266 the
+  projection was `{tool}` alone, and every Bash denial from every stage
+  landed on one issue.
 
   `.github/scripts/verify-denied-tool-collector.sh` holds both paths to
   fixtures — including one run described both ways, where the two paths must
@@ -1334,16 +1357,24 @@ than only ever exercised on a bare runner:
 - **Reporting**: both the verdict and `report`'s failure/success output
   always state which mode a run exercised, and `container_image_configured`
   defaults to false on every container-turn verdict except the poll step's
-  own `pass` (data-model.md "Execution mode"). This narrows, but does not
-  close, the overstatement risk: a container-mode turn whose image
-  variable was left unset on the test repository still reaches a plain
-  `pass`, since `verify-image-prerequisites` is **skipped** with no image
-  to pull (before specs/058-per-job-minute-floor it ran and vacuously
-  succeeded; either way it raises no objection) and the run completes
-  outside any container with nothing in the verdict able to tell —
-  detecting that specific case needs a permission (reading the
-  test repository's Actions run data) this verification does not have and
-  has not been granted (FR-017; research.md D7, tasks.md T009).
+  own `pass` (data-model.md "Execution mode"). **Container-mode evidence**
+  (specs/067-e2e-container-image-evidence) closes the overstatement risk
+  this section used to describe as accepted: a new `container-evidence-
+  config` step, gated on the existing `maintainer-credential` check and
+  placed before `cleanup`/`scaffold`/`kickoff`, confirms the test
+  repository's `WING_COMMANDER_CONTAINER_IMAGE` matches this repository's
+  own pin before any kickoff issue is created; a second, execution-evidence
+  check inside the `poll` step, immediately before its sole `pass`-writing
+  call, confirms the stage jobs the run actually drove executed inside a
+  container (read via the test repository's Actions Jobs API, using the
+  same fixture maintainer credential the other human gates already use —
+  a classic credential's `repo` scope already reaches both reads; a
+  fine-grained credential additionally needs Variables (read) and Actions
+  (read), see docs/setup.md). Either check's failure — not
+  configured, drifted, unreadable, rate-limited, or not containerized —
+  ends the attempt with a named `fail-infra` verdict instead of a `pass`;
+  see `specs/067-e2e-container-image-evidence/contracts/container-evidence-
+  outcomes.md` for the exact vocabulary.
 
 ## Reusability (current state — `specs/010-reusable-pipeline/`)
 

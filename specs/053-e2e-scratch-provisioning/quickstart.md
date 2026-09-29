@@ -27,9 +27,11 @@ Expected: the repository is created; the `spec-request` label, the Claude
 credential secret, the eight-file wrapper set (pinned to this checkout's
 commit), and the `WING_COMMANDER_CONTAINER_IMAGE` variable are all written;
 the printed `ReadinessReport` (contracts/readiness-report.schema.json) shows
-every element `ready: true` **except** `app_installation`, whose
-`remaining_action` names installing the wing-commander App at
-`https://github.com/settings/installations`. Exit code `1` (not ready).
+every element `outcome: "ready"` **except** `app_installation`, whose
+`outcome` is `"not_checkable"` and whose `remaining_action` names installing
+the wing-commander App at `https://github.com/settings/installations`.
+Overall `verdict: "unverified"`, exit code `2` (nothing is missing; only
+`app_installation` cannot be checked from this route).
 
 ## 2. Install the App (the one declared manual step)
 
@@ -52,13 +54,19 @@ $ gh workflow run auto-update-spec-kit-scratch-preflight.yml \
     -f target=your-account/wc-e2e-scratch -f profile=auto-release
 ```
 
-Expected: the dispatched run's `GITHUB_STEP_SUMMARY` shows every element
-(including `app_installation`) `ready`, exit code `0`. Re-invoking the
-local command from step 1 still re-checks and re-reports every other
-element correctly, but its own `app_installation` row stays `not ready`
-regardless of the real install state — that is expected, not a bug.
-Elements already written in step 1 are untouched either way — no second
-commit to the wrapper set, no label recreated, no secret rewritten.
+Expected: the dispatched run's `GITHUB_STEP_SUMMARY` shows `app_installation`
+✅ (proven by the run's own successful App-token mint), but
+`claude_credential` and `container_image_pin` ➖ `not_checkable` — the App
+installation token has no Secrets/Variables read permission on the target
+(`docs/setup.md`), so this route can never check those two elements for the
+`auto-release` profile. The aggregate line names `unverified`, exit code
+`2` — never `all_clear`/exit `0` for this profile, on either route (SC-001
+narrows the reachable-`all_clear` claim to the `spec-kit-scratch` profile).
+Re-invoking the local command from step 1 still re-checks and re-reports
+every other element correctly, but its own `app_installation` row stays
+`not_checkable` regardless of the real install state — that is expected,
+not a bug. Elements already written in step 1 are untouched either way — no
+second commit to the wrapper set, no label recreated, no secret rewritten.
 
 ## 4. Re-run against an already-ready target (Acceptance Scenario 3, FR-005, SC-003)
 
@@ -71,8 +79,10 @@ $ .github/scripts/provision-e2e-target.sh \
 Expected: identical `ReadinessReport` to a re-run of step 1's local
 command (not step 3's CI dispatch — see step 3's note on why the local
 path's own `app_installation` row never flips), zero privileged calls
-made. Exit code stays `1` locally, for the same reason as step 1; dispatch
-the readiness check again if you want to see exit code `0`.
+made. Exit code stays `2` locally, for the same reason as step 1; dispatch
+the readiness check again to observe convergence on `app_installation`
+(the `spec-kit-scratch` profile reaches exit `0`; `auto-release` reaches
+`unverified`/exit `2` for the different reason step 3 describes).
 
 ## 5. Dispatch a real verification against the provisioned target (Acceptance Scenario 2)
 
@@ -119,5 +129,7 @@ $ gh workflow run auto-update-spec-kit-scratch-preflight.yml \
     -f target=your-account/wc-e2e-scratch -f profile=auto-release
 ```
 
-Expected: the run's job summary lists every element with a ✅/❌ and, for
-any ❌, the exact remaining action — no agent step runs.
+Expected: the run's job summary lists every element with a ✅ (`ready`), ❌
+(`missing`), or ➖ (`not_checkable`) and, for any non-✅ row, the exact
+remaining action, plus an aggregate line naming the overall verdict — no
+agent step runs.

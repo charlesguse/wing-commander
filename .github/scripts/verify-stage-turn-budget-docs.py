@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gate 99 - a published stage's declared max-turns default agrees with the
+"""Gate 100 - a published stage's declared max-turns default agrees with the
 docs/adoption.md row that describes it (FR-017/FR-018, issue #587).
 
 WHY THIS EXISTS
@@ -199,14 +199,14 @@ def self_test():
                   "got: {2}".format(name, expect, joined))
         else:
             print("[ok] {0}: caught".format(name))
-    print("Gate 99 self-test: {0}/{1} fixtures behaved as specified.".format(
+    print("Gate 100 self-test: {0}/{1} fixtures behaved as specified.".format(
         len(FIXTURES) - bad, len(FIXTURES)))
     return 1 if bad else 0
 
 
 def main():
     ap = argparse.ArgumentParser(
-        description="Gate 99 - stage turn-budget/docs agreement")
+        description="Gate 100 - stage turn-budget/docs agreement")
     ap.add_argument("--self-test", action="store_true",
                      help="run the checked-in fixtures instead of the "
                           "working tree")
@@ -219,9 +219,9 @@ def main():
     docs_path = os.path.join(".", "docs", "adoption.md")
     failures = check(workflows_dir, docs_path)
     for failure in failures:
-        print("::error::Gate 99: {0}".format(failure))
-    print("Gate 99: checked {0} published stage(s)' max-turns default "
-          "against docs/adoption.md; {1} failure(s).".format(
+        print("::error::Gate 100: {0}".format(failure))
+    print("Gate 100: checked the published stages' max-turns defaults in "
+          "{0} workflow file(s) against docs/adoption.md; {1} failure(s).".format(
               len(glob.glob(os.path.join(workflows_dir, "*.yml"))),
               len(failures)))
     return 1 if failures else 0

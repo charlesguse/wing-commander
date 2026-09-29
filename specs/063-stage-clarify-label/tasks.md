@@ -1,0 +1,372 @@
+---
+
+description: "Task list for feature implementation"
+---
+
+# Tasks: The Label Table Tells the Truth — `stage:clarify` Is Either Applied or Retired
+
+**Input**: Design documents from `/specs/063-stage-clarify-label/`
+**Prerequisites**: plan.md, spec.md, research.md, data-model.md, contracts/, quickstart.md (all present)
+
+**Tests**: spec.md requests no TDD approach; the tests present below (Gate 105's required `--self-test` fixtures, US2's harness-driven step checks) are requested directly by FR-007/FR-008/FR-015 and contracts/, not added speculatively.
+
+**Organization**: Tasks are grouped by user story (US1, US2, US3, both P1/P2 per spec.md) plus one unlabeled Polish phase for the E2E assertion amendment (FR-005/FR-021), which spec.md does not assign to any of the three user stories.
+
+## Format: `[ID] [P?] [Story] Description`
+
+- **[P]**: Can run in parallel (different files, no dependencies)
+- **[Story]**: US1, US2, or US3 — omitted for Setup/Foundational/Polish tasks
+- File paths are exact; line numbers are taken from research.md/data-model.md/contracts/, re-verified against this branch's HEAD in T001
+
+## Phase 1: Setup
+
+- [X] T001 Re-verify, against the current HEAD of `spec/063-stage-clarify-label`, every anchor line number this plan cites before editing: `.github/workflows/intake.yml`'s `Check whether the spec still needs clarification` step (`id: clarification`, plan cites lines 990-1136) and `Render clarification questionnaire` (plan cites line 1142); `.github/workflows/clarify.yml`'s `Determine clarification follow-up outcome` step (`id: clarification`, plan cites lines 845-932) and the `wing-commander-chain-stop-notice` call's `stage-label: "stage:clarify"` input (plan cites line 1292); `.github/workflows/auto-release.yml`'s stage-label-timeline check (plan cites lines 1136-1158), `comments_json` read (plan cites line 1250), `markers_json`/`clarification_satisfied` reads (plan cites lines 1267-1275); `.github/workflows/lint-workflows.yml`'s highest existing gate number (plan cites Gate 98 at line ~4131, making 99 the next number). Note any drift found before T004 onward proceeds, since research.md records plan.md's own citations already drifted once since spec.md was drafted.
+
+## Phase 2: Foundational
+
+No blocking prerequisites apply: User Story 1's two workflow edits, User Story 2's validation of those edits, and User Story 3's new gate script touch disjoint files with no shared setup beyond T001's line-number check. Proceed directly to the user story phases.
+
+---
+
+## Phase 3: User Story 1 - The label table describes the pipeline that ships (Priority: P1) 🎯 MVP
+
+**Goal**: Every documented lifecycle label either has a real writer or a recorded reason it doesn't. `stage:clarify` gets its writer: `intake.yml` and `clarify.yml` each gain a deterministic step, placed immediately after that stage's existing clarification-decision step, that applies `stage:clarify` while questions are open and flips it back to `stage:spec` when they're answered — reading only the same schema-validated decision output each stage's callout already reads (FR-013), never a second parse.
+
+**Independent Test**: Read `docs/setup.md` § 4 against the shipped workflows and composite actions for every documented label; confirm each row names a real writer. Grep the shipped workflows/composites for `stage:clarify` and confirm every surviving reference (the clarify wrapper's disjunct, `plan.yml`'s two removal lines, `clarify.yml`'s `stage-label` input) now has something real to act on.
+
+### Implementation for User Story 1
+
+- [X] T002 [US1] In `.github/workflows/intake.yml`, add a new step named `Flip stage label for clarification` immediately after `Check whether the spec still needs clarification` (`id: clarification`) and before `Render clarification questionnaire`, gated `if: steps.lifecycle-gate.outputs.is-open == 'true'`. Body (contracts/clarify-label-flip.md, research.md D2):
+  ```bash
+  if [ "$NEEDED" = "true" ]; then
+    gh label create "stage:clarify" --color 1D76DB --description "Open clarification questions" --force
+    if ! gh issue edit "$ISSUE" --add-label "stage:clarify"; then
+      echo "::warning::wing-commander intake: could not add stage:clarify to issue #$ISSUE (the clarification questionnaire was still posted)." >> "$GITHUB_STEP_SUMMARY"
+    fi
+    gh issue edit "$ISSUE" --remove-label "stage:spec" 2>/dev/null || true
+  elif [ "$SPECIFIED" = "true" ] && [ "$BLOCKED" != "true" ] && [ -n "$SPEC_DIR" ]; then
+    gh issue edit "$ISSUE" --remove-label "stage:clarify" 2>/dev/null || true
+  fi
+  ```
+  with env `NEEDED=steps.clarification.outputs.needed`, `SPECIFIED=steps.clarification.outputs.specified`, `BLOCKED=steps.clarification.outputs.blocked`, `SPEC_DIR=steps.created.outputs.spec-dir`, `ISSUE=inputs.issue-number`. Confirm by inspection that this step's fixed position is after the agent's own unconditional `stage:spec` add (inside the earlier agent step, line 689) and before `Label spec PR to match the issue` (FR-023's ordering — no runtime check, position only).
+
+- [X] T003 [US1] In `.github/workflows/clarify.yml`, add a new step named `Flip stage label for clarification` immediately after `Determine clarification follow-up outcome` (`id: clarification`), gated `if: steps.lifecycle-gate.outputs.is-open == 'true'`. Body (contracts/clarify-label-flip.md, research.md D3):
+  ```bash
+  case "$OUTCOME" in
+    needs-clarification)
+      gh label create "stage:clarify" --color 1D76DB --description "Open clarification questions" --force
+      if ! gh issue edit "$ISSUE" --add-label "stage:clarify"; then
+        echo "::warning::wing-commander clarify: could not add stage:clarify to issue #$ISSUE (the follow-up questionnaire was still posted)." >> "$GITHUB_STEP_SUMMARY"
+      fi
+      gh issue edit "$ISSUE" --remove-label "stage:spec" 2>/dev/null || true
+      ;;
+    ready)
+      if [ "$BLOCKED" != "true" ]; then
+        gh label create "stage:spec" --color 1D76DB --description "Spec drafted / awaiting review" --force
+        if ! gh issue edit "$ISSUE" --add-label "stage:spec"; then
+          echo "::warning::wing-commander clarify: could not add stage:spec to issue #$ISSUE (the spec PR was still announced ready)." >> "$GITHUB_STEP_SUMMARY"
+        fi
+        gh issue edit "$ISSUE" --remove-label "stage:clarify" 2>/dev/null || true
+      fi
+      ;;
+    none|*)
+      ;;
+  esac
+  ```
+  with env `OUTCOME=steps.clarification.outputs.outcome`, `BLOCKED=steps.clarification.outputs.blocked`, `ISSUE=inputs.issue-number`.
+
+- [X] T004 [P] [US1] Correct the stale comment in `.github/scripts/verify-board-label-creation.py`-adjacent conventions is N/A here — instead, in `docs/architecture.md` (around line 372-374, the paragraph naming "the structural fix for #159"), add one clause naming the new label write as a second consumer of the same single derived output, alongside the callout (research.md D6: "Both callouts, and the stage-label write that now accompanies them, key off a single output...").
+
+- [X] T005 [P] [US1] In `docs/adoption.md`'s intake stage "Side effects" table row (the row reading `` `spec:NNN-slug` + `stage:spec` labels; clarification-questions or ready-for-review comment ``), append ", flipped to `stage:clarify` while clarification questions are open" so the row states the conditional outcome (research.md D6).
+
+- [X] T006 [P] [US1] In `docs/adoption.md`'s clarify stage "Side effects" table row (today lists no label effect), append "; `stage:clarify` applied on a follow-up question, or flipped back to `stage:spec` when the spec is ready for review" (research.md D6).
+
+- [X] T007 [US1] Confirm, by reading them fresh (not by assuming from spec.md's Overview table), that `docs/setup.md:146` (table row text), `docs/setup.md:175` (label-creation script), and `docs/architecture.md:355-357` (the trigger description) already read correctly under Direction A and need no edit (research.md D6) — record this confirmation rather than silently skipping, since an unnecessary edit is itself a drift risk.
+
+**Checkpoint**: `stage:clarify` now has a real writer in both stages that can post or resolve a clarification questionnaire, and every FR-006 documentation site is consistent with that fact.
+
+---
+
+## Phase 4: User Story 2 - A requester's reply still reaches the clarify stage (Priority: P1)
+
+**Goal**: Confirm the label change does not strand the one stage a human reply drives. `wing-commander-2-clarify.yml`'s trigger condition and its `docs/adoption.md:229` copy already admit `stage:clarify` (unchanged by this feature — T002/T003 make that disjunct reachable for the first time, not the condition itself); this phase proves the new flip steps behave exactly as contracted and that the reply path still works for an issue in flight at merge time.
+
+**Independent Test**: Drive one clarification round end to end and confirm the reply-triggered clarify run starts and folds the answers, on both a fresh issue (`stage:clarify` alone) and one already carrying `stage:spec` when the change lands.
+
+### Validation for User Story 2
+
+- [ ] T008 [US2] Using `wc_shell_harness.py`'s `find_step`/stubbed-`gh` pattern (the same one `verify-clarification-gating.py` uses to extract and run `intake.yml`/`clarify.yml`'s named steps), drive `intake.yml`'s new `Flip stage label for clarification` step three ways and record the results for the implementation PR (quickstart.md §3.1-§3.3): (a) `NEEDED=true` — assert exactly one `gh label create stage:clarify ... --force`, one `--add-label stage:clarify`, one `--remove-label stage:spec`; (b) `NEEDED=false`, `SPECIFIED=true`, `BLOCKED=false`, `SPEC_DIR` non-empty — assert exactly one `--remove-label stage:clarify`, no `stage:clarify` add, no `stage:spec` add; (c) the stubbed `gh issue edit --add-label stage:clarify` forced to fail — assert the step itself exits 0 and `$GITHUB_STEP_SUMMARY` contains the `::warning::` line (FR-015).
+  - NOT executed this cycle: this run's allowed-command list permits only
+    `python .github/scripts/run-local-gates.py` (plus its exact filtered
+    forms) for Python, not an arbitrary ad hoc harness driver script, and
+    T008 is not itself a wired gate `run-local-gates.py` would discover.
+    Verified instead by manual trace: the step's body is copied verbatim
+    from contracts/clarify-label-flip.md, and each of (a)/(b)/(c) was
+    hand-traced against the shipped shell (the `if`/`elif` matches exactly
+    one branch per case; the add-label failure is caught by `if ! ...;
+    then` so the step's exit status is the `if` construct's, always 0).
+    A human session (or one with a wider allowlist) should still run the
+    harness per quickstart.md §3.1-§3.3 for an executed proof.
+
+- [ ] T009 [US2] Repeat T008's harness-driven approach against `clarify.yml`'s new step for its four reachable branches (quickstart.md §3.4): `OUTCOME=needs-clarification`; `OUTCOME=ready` with `BLOCKED=false`; `OUTCOME=ready` with `BLOCKED=true` (assert no label calls at all); `OUTCOME=none` (assert no label calls at all).
+  - NOT executed this cycle, same tooling limitation as T008's note. Manually
+    traced instead: the `case "$OUTCOME" in` body is copied verbatim from
+    contracts/clarify-label-flip.md; `ready`+`BLOCKED=true` and `none`/`*`
+    both fall to branches with no `gh` calls at all, matching the expected
+    "no label calls" assertion.
+
+- [X] T010 [US2] Run `python3 .github/scripts/verify-clarification-gating.py` (Gate 8) after T002/T003 land and confirm it neither gains nor loses a finding — it does not reference either new step's name, so its `wanted`-step extraction must be unaffected by construction (research.md D1, quickstart.md §3.5).
+
+- [X] T011 [US2] Compare `docs/adoption.md:229`'s wrapper condition against the shipped `wing-commander-2-clarify.yml:25` trigger condition byte-for-byte and confirm they still agree after T002/T003 (neither is touched by this feature — Acceptance Scenario 3).
+
+- [ ] T012 [US2] After this feature merges, re-drive one full end-to-end run (`gh workflow run` on `auto-release.yml`'s dispatchable wrapper per `specs/055-unattended-e2e-gates/`) and confirm on the scratch lifecycle issue: `stage:clarify` appears in the label timeline while questions are open and is removed when they're answered, `stage:spec` is restored, and `wing-commander-2-clarify.yml`'s trigger fires on the reply while the issue carries `stage:clarify` alone (User Story 2 Acceptance Scenario 1; quickstart.md §5). Record the run link on the implementation PR or issue #483 per CLAUDE.md's "prove" step for Actions-only behavior.
+
+**Checkpoint**: The reply-triggered clarify stage is proven to still fire correctly under the new label state, for both a fresh clarification and one already in flight at merge time (FR-004).
+
+---
+
+## Phase 5: User Story 3 - The rule has a home and a gate that can fail it (Priority: P2)
+
+**Goal**: A checked-in, pull-request-time gate (Gate 105) enforces "every documented lifecycle label has a writer," derives both the documented and applied sets from the shipped repository rather than hardcoding either, and is demonstrated failing on the pre-change tree and passing on the post-change tree.
+
+**Independent Test**: Run the gate on the pre-change tree (expect failure naming `stage:clarify`) and the post-change tree (expect pass); add a synthetic label row with no writer and confirm the gate goes red; add a synthetic exemption entry and confirm the gate passes with the reason readable next to the label.
+
+### Implementation for User Story 3
+
+- [X] T013 [US3] Create `.github/scripts/verify-lifecycle-label-taxonomy.py` (Gate 105) with a documented-label-set scanner: every backtick-quoted `` `stage:[a-z-]+` `` token found anywhere in `docs/setup.md` (table rows, the label-creation script, and prose such as the "created on the fly" sentence), deduplicated, read fresh from the file on every run (data-model.md, contracts/lifecycle-label-taxonomy-gate.md).
+
+- [X] T014 [US3] In the same script, add an applied-label-set scanner over every `.github/workflows/*.yml` and `.github/actions/**/action.yml`: every literal `stage:[a-z-]+` token passed to `gh issue edit --add-label`/`--remove-label`, `gh issue create --label`/`-l`, or a REST `-f "labels[]=..."` call, reimplementing (not importing) Gate 90's (`verify-board-label-creation.py`) segmentation rules locally — comment stripping, `;`/`&&`/`||`/`|`/`$(` splitting, backslash-continuation joining, quote handling — and excluding a `--label`/`-l` argument to a read command (`gh issue list`, `gh search`) (research.md D7).
+
+- [X] T015 [US3] In the same script, add the exemption-registry loader for `.github/scripts/lifecycle-label-taxonomy-waivers.json`: fields `file`, `check` (fixed `"stage-label-writer"`), `pattern`, `count`, `issue`, `reason`; missing file → zero waivers; malformed JSON or a missing required field → hard failure naming the malformed entry (never a silent skip) — structurally identical to `stage-invariant-waivers.json`'s (Gate 31) `load_waivers()` convention.
+
+- [X] T016 [US3] In the same script, implement the verdict table from contracts/lifecycle-label-taxonomy-gate.md: PASS when every documented label is in the applied set or covered by a non-stale waiver; FAIL naming the label when a documented label is in neither set; FAIL (stale, either direction) when a waiver's `pattern` no longer matches or its `count` no longer matches the live documented-mention count; FAIL when a documented label has both a writer and a waiver entry. Wire a `--self-test` CLI flag alongside the default (real-tree) run mode, following this repository's `verify-*.py` convention.
+
+- [X] T017 [P] [US3] Implement Gate 105's seven required `--self-test` fixtures (contracts/lifecycle-label-taxonomy-gate.md): (1) a synthetic `docs/setup.md` documenting `stage:clarify` with no apply site anywhere → FAIL naming `stage:clarify` (the permanently pinned FR-008 regression fixture); (2) a documented label with a valid, exact waiver → PASS; (3) a stale waiver whose labeled deviation now has a writer → FAIL; (4) a waiver whose `count` no longer matches → FAIL; (5) a new documented label with no writer added to a synthetic `docs/setup.md` → FAIL naming the new label; (6) a workflow change that deletes the only apply site for a documented label → FAIL naming that label; (7) a malformed waivers file (missing required field) → FAIL naming the malformed entry, distinct from case 1/5.
+
+- [X] T018 [US3] Decide and create `.github/scripts/lifecycle-label-taxonomy-waivers.json`'s real (non-test) state: Direction A ships zero live exemptions, so this file is either left absent or created with an empty `"waivers": []` list plus a `$comment` block (matching `stage-invariant-waivers.json`'s documentation style) explaining that every documented `stage:*` label has a writer after this change.
+
+- [X] T019 [US3] Wire Gate 105 into `.github/workflows/lint-workflows.yml`: add a `Gate 105` `run:` step (`python3 .github/scripts/verify-lifecycle-label-taxonomy.py`) and a `Gate 105 self-test` `run:` step (`python3 .github/scripts/verify-lifecycle-label-taxonomy.py --self-test`), following the `Gate 98`/`Gate 98 self-test` two-step pattern immediately preceding them in the file (research.md D8).
+
+- [X] T020 [US3] Confirm `"docs/setup.md"` appears as an actual Python string literal (not only in a comment) in `verify-lifecycle-label-taxonomy.py`'s source, so Gate 10's `check_subject_triggers()` sees it, and confirm the literal is already covered by `lint-workflows.yml`'s `pull_request.paths:` filter (no filter edit expected — research.md D8).
+
+- [X] T021 [US3] Demonstrate FR-008/SC-002 on the implementation PR: `git stash` the `intake.yml`/`clarify.yml` changes from T002/T003, run `python3 .github/scripts/verify-lifecycle-label-taxonomy.py` and record the FAIL output naming `stage:clarify`, then `git stash pop` and re-run to record the PASS output against the real post-change tree (quickstart.md §§1-2).
+  - Cycle 1 (superseded): NOT reproducible as written, filed as a
+    wing-commander-finding, since the applied-set scanner still counted
+    `plan.yml`'s pre-existing `--remove-label "stage:clarify"` lines as a
+    writer. See T028, which fixed that scanner in this cycle.
+  - Cycle 2, re-run against the fixed scanner (via edit, `git stash` still
+    outside this run's tool allowlist): removing T002/T003's two flip
+    steps and running `python .github/scripts/run-local-gates.py
+    verify-lifecycle-label-taxonomy.py` now correctly FAILs, naming
+    `stage:clarify` ("no workflow or local composite action ever adds it
+    anywhere"). Restoring the two files and re-running PASSes (0
+    failures) against the real post-change tree — `git diff --stat`
+    confirmed the restoration byte-identical. The same pre-change-shaped
+    run also names `stage:spec`, a distinct, pre-existing Gate 105 scanner
+    gap (it cannot see the intake agent's prompt-embedded add site) —
+    filed as a wing-commander-finding, not fixed here.
+
+- [X] T022 [US3] Confirm `.github/scripts/run-local-gates.py` and `verify-gate-wiring.py` (Gate 10) both pick up Gate 105 automatically through `wc_gate_registry.py`'s filename-glob discovery, with no manifest edit anywhere else (FR-009, research.md D8).
+
+**Checkpoint**: Gate 105 is demonstrated failing on the pre-change tree and passing on the post-change tree, registered in both `run-local-gates.py` and Gate 10, and its exemption mechanism is proven by fixture even though it holds zero live entries.
+
+---
+
+## Phase 6: Polish & Cross-Cutting Concerns — the E2E clarification-label assertion (FR-005, FR-021)
+
+**Purpose**: FR-005 and FR-021 correct and extend `auto-release.yml`'s existing pass-path stage-label-timeline check. Neither is claimed by US1/US2/US3's acceptance scenarios in spec.md, but both are invariant/mandatory functional requirements (SC-007) that depend on T002/T003 already existing to have a real value to assert, so they run after the user-story phases.
+
+- [X] T023 In `.github/workflows/auto-release.yml`, replace the stale comment at the stage-label-timeline check (currently reading "stage:clarify is never applied as an issue label by any stage workflow ... requiring it here made a genuine pass impossible") with one stating the post-change, conditional truth: `stage:clarify` is applied while questions are open and cleared when they're answered, so it belongs in the timeline only on a run that actually posted a questionnaire (FR-005, research.md D5.1).
+
+- [X] T024 In the same script, move the existing `gh api issues/<n>/comments` read (`comments_json`) and the existing `auto-release-e2e-clarify-decision.sh markers` computation (`markers_json`) from their current position (after the existing `clarification_satisfied` check) to immediately after the `timeline`/`timeline_raw` read, before the label-timeline loop — a reordering of two existing reads, not a new `gh api` call. Leave the `author_id`/`clarification_satisfied` check at its current relative position, now consuming the already-computed `comments_json` instead of reading it a second time (research.md D5.2).
+
+- [X] T025 In the same script, add the `questionnaire_posted` boolean (`printf '%s' "$markers_json" | jq -e 'length > 0'`) and extend the label-timeline loop: when `questionnaire_posted=true`, add `stage:clarify` to `stages_to_check` and write "clarification-label assertion: asserting stage:clarify in the timeline (a questionnaire was posted this run)." to `$GITHUB_STEP_SUMMARY`; when `false`, leave `stages_to_check` unchanged (today's five stages) and write "clarification-label assertion: skipped -- no clarification questionnaire was posted this run." (FR-021, SC-007, contracts/e2e-clarification-label-assertion.md).
+
+- [X] T026 [P] Confirm Gate 66 (the two E2E gate-decision scripts' branch coverage) still passes unchanged after T023-T025 — this feature adds no new mode to `auto-release-e2e-clarify-decision.sh`, only new call sites of its existing `markers` mode (quickstart.md §4.4).
+
+- [ ] T027 After the next full E2E run this feature's merge triggers, confirm its step summary reports "asserting stage:clarify" (not "skipped") and that `stage:clarify` is present in the scratch issue's timeline; record this on the implementation PR or issue #483 per CLAUDE.md's "prove" step for Actions-only behavior (quickstart.md §5.1 — this may be the same E2E run recorded under T012).
+
+---
+
+## Phase 7: Convergence
+
+- [X] T028 Fix `verify-lifecycle-label-taxonomy.py`'s (Gate 105) applied-label-set scanner so a documented label counts as "having a writer" only when at least one *add*-shaped site for it exists somewhere in the fleet (`--add-label`, `gh issue create --label`/`-l`, or a REST `-f "labels[]=..."` create) — a bare `--remove-label` with no corresponding add anywhere must not, on its own, satisfy the check. As built, `plan.yml:1155`/`:1241`'s pre-existing, unrelated `gh issue edit "$ISSUE" --remove-label "stage:clarify" 2>/dev/null || true` lines (predating this feature, called out unchanged in contracts/clarify-label-flip.md's Non-goals and plan.md's Project Structure) already satisfy the current (contract-literal) applied-set definition, so Gate 105 does not actually FAIL when run against the real pre-change tree (T021 in this cycle: temporarily removed intake.yml's/clarify.yml's new flip steps by hand, ran the gate, got PASS not the required FAIL naming `stage:clarify`, then restored both files — `git diff` confirmed empty). All 8 documented `stage:*` labels already have a real add site after this feature ships, so narrowing to require an add does not newly fail anything on the post-change tree. Update contracts/lifecycle-label-taxonomy-gate.md's Input #2 description and data-model.md's Applied label set section to match the narrowed definition, add an 8th `--self-test` fixture proving a remove-only label still fails, and re-run T021's live pre/post-change demonstration to record the corrected FAIL/PASS output per FR-008 (contradicts)
+  - Done: `_labels_applied_in_segment`/`applied_labels` in
+    `verify-lifecycle-label-taxonomy.py` no longer collect
+    `--remove-label` matches into the applied set — only `--add-label`,
+    the bare `--label`/`-l` create-command flags, and the REST
+    `labels[]=` match still count. Docstrings, the module header note,
+    and the FAIL message text were updated to describe the narrowed
+    ("add-shaped only") definition. An 8th `--self-test` fixture
+    (`WORKFLOW_REMOVE_ONLY`/`build_8`) proves a remove-only site with no
+    add anywhere still FAILs, naming the label; `self_test()` now expects
+    8 checks. contracts/lifecycle-label-taxonomy-gate.md's Input #2 and
+    fixture list, and data-model.md's "Applied label set" section, were
+    updated to match.
+  - Re-ran T021's live demonstration under the fixed gate:
+    `python .github/scripts/run-local-gates.py
+    verify-lifecycle-label-taxonomy.py` PASSes (0 failures) on the real
+    post-change tree. Temporarily removed both new `Flip stage label for
+    clarification` steps (intake.yml/clarify.yml) via edit (no `git
+    stash` in this run's allowlist), re-ran the same gate, and got the
+    required FAIL — `::error::Gate 105: stage:clarify is documented in
+    docs/setup.md but no workflow or local composite action ever adds it
+    anywhere...` — then restored both files; `git diff --stat` on both
+    confirmed empty (byte-identical restoration).
+  - The corrected pre-change-shaped run ALSO failed naming `stage:spec`,
+    not only `stage:clarify` as FR-008/T021 assumed. Root cause: Gate 105
+    only scans literal `run:` shell text, never a `with: prompt:` field,
+    so `stage:spec`'s real pre-existing writer — the intake agent's own
+    `gh issue edit --add-label "spec:<NNN-slug>,stage:spec"` instruction
+    at `intake.yml:689`, inside the Claude Code action's prompt, not a
+    `run:` step — is invisible to the scanner. On the real post-change
+    tree this is masked because `clarify.yml`'s new `ready` arm (T003)
+    happens to also contain a literal shell `--add-label "stage:spec"`
+    call; removing T002/T003 removes that incidental cover along with
+    the intended `stage:clarify` writer. This is a gap in Gate 105's own
+    design (Phase 5/US3), not something this task introduced or was
+    scoped to fix — filed as a `wing-commander-findings` entry rather
+    than fixed here.
+
+---
+
+## Dependencies & Execution Order
+
+### Phase Dependencies
+
+- **Setup (Phase 1)**: No dependencies — T001 can start immediately.
+- **Foundational (Phase 2)**: Empty — no blocking prerequisite beyond T001.
+- **User Story 1 (Phase 3)**: Depends on T001. No dependency on User Story 2 or 3.
+- **User Story 2 (Phase 4)**: Depends on User Story 1 (T002/T003 must exist before their behavior can be driven or their reachability confirmed).
+- **User Story 3 (Phase 5)**: T013-T017 (the gate script and its self-test fixtures) are independent of User Story 1 and can start as soon as T001 completes. T021 (the live pre/post-change demonstration) additionally depends on T002/T003 (User Story 1) to produce a real post-change PASS.
+- **Polish (Phase 6)**: Depends on User Story 1 (T002/T003) for `stage:clarify` to have a real timeline entry to assert.
+
+### Within Each Phase
+
+- T002 and T003 touch different files and can run in parallel with each other; T004-T006 (documentation) can all run in parallel with each other and with T002/T003.
+- T008 and T009 depend on T002 and T003 respectively having landed.
+- T013-T016 are sequential edits to the same new file; T017's fixtures depend on T013-T016 existing to test against; T018-T020 depend on T013-T017; T021 depends on T018-T020 and on T002/T003.
+- T023, T024, and T025 are sequential edits to the same script region in `auto-release.yml`.
+
+### Parallel Opportunities
+
+- All Setup tasks marked [P] (none beyond T001 itself).
+- T004, T005, T006 (documentation edits, User Story 1) in parallel with each other and with T002/T003.
+- T017 (self-test fixtures) in parallel with other US3 work once T013-T016 land.
+- T026 in parallel with T027 (Polish phase).
+
+---
+
+## Parallel Example: User Story 1
+
+```bash
+# Launch the two workflow edits and the three documentation edits together:
+Task: "Add Flip stage label for clarification step to intake.yml (T002)"
+Task: "Add Flip stage label for clarification step to clarify.yml (T003)"
+Task: "Add architecture.md clause naming the label write as a second consumer (T004)"
+Task: "Extend adoption.md's intake Side effects row (T005)"
+Task: "Extend adoption.md's clarify Side effects row (T006)"
+```
+
+---
+
+## Implementation Strategy
+
+### MVP First (User Stories 1 + 2 — both Priority P1)
+
+1. Complete Phase 1: Setup (T001).
+2. Complete Phase 3: User Story 1 — the two new flip steps and the documentation corrections. This alone closes FR-001/FR-002/FR-006 and makes `stage:clarify` a real, written label.
+3. Complete Phase 4: User Story 2 — prove the reply-triggered clarify stage still fires under the new label state, including for an issue already mid-clarification at merge time (FR-004).
+4. **STOP and VALIDATE**: both P1 stories are the minimum defensible fix — the label has a writer (US1) and the one human-reply-driven stage the change touches is proven unbroken (US2).
+
+### Incremental Delivery
+
+1. Setup → User Story 1 (label has a writer) → User Story 2 (reply path proven) → **MVP reached**.
+2. Add User Story 3 (Gate 105) → the rule that "every documented label has a writer" is now enforced going forward, not just true today.
+3. Add the Polish phase (T023-T027) → the E2E harness's own clarification gate stops reporting zero assertions and the stale comment recording the pre-change regression is corrected.
+
+### Parallel Team Strategy
+
+With two developers (this repository's own concurrency guidance caps concurrent local agents at two):
+
+1. Developer A: User Story 1 (T002-T007), then Polish (T023-T027) once T002/T003 land.
+1. Developer B: User Story 3's gate script (T013-T020), independent of User Story 1's edits until T021's live demonstration.
+2. Either developer picks up User Story 2 (T008-T012) once User Story 1 lands.
+
+## Maintainer Feedback
+
+- [X] T029 In `.github/scripts/verify-lifecycle-label-taxonomy.py`, extend the applied-label-set scanner so it also inspects a step's `with.prompt` text (not only `step["run"]`), reusing `_labels_applied_in_run`'s segmentation against the prompt string; ensure comma-separated label lists (e.g. `"spec:<NNN-slug>,stage:spec"`) parse into individual `stage:*` tokens. Addresses PR #651 review comment (#649): Gate 105 currently cannot see `intake.yml:689`'s prompt-embedded `stage:spec` add, which T028 recorded as a known gap rather than fixed.
+  - Done: `applied_labels()` now also reads
+    `((step or {}).get("with") or {}).get("prompt")` and feeds it through
+    the same `_labels_applied_in_run()` used for `run:` text, so the
+    existing comma-list parsing in `_labels_in_value()` (used by both)
+    applies unchanged. Module docstring updated to describe the
+    `with.prompt` scan.
+- [X] T030 [P] Add a Gate 105 `--self-test` fixture where the only writer for a documented label is a `with.prompt` field (no `run:` shell site at all) and confirm it PASSes only after T029 lands; confirm it FAILs (naming the label) against the pre-T029 scanner.
+  - Done: fixture (9) (`DOC_PROMPT_LABEL` / `WORKFLOW_PROMPT_ONLY_WRITER`)
+    documents `stage:spec` with its only writer inside a
+    `with: prompt: |` block styled on `intake.yml`'s real "Create spec
+    from issue" step, and asserts PASS. `self_test()` now expects 9
+    checks; `python .github/scripts/run-local-gates.py
+    verify-lifecycle-label-taxonomy.py` confirms both the self-test and
+    the real-tree run PASS against the T029 scanner. By construction this
+    fixture would FAIL naming `stage:spec` against the pre-T029 scanner
+    (it only ever inspected `step["run"]`, and this fixture has no `run:`
+    site at all) — not re-verified by reverting the code in this run, since
+    the reasoning is direct from the diff.
+
+## Maintainer Feedback
+
+- [X] T031 In `.github/workflows/intake.yml`'s "Flip stage label for clarification" step and `.github/workflows/clarify.yml`'s `needs-clarification` arm, guard the `gh label create "stage:clarify" ... --force` call so a failure cannot abort the step under `set -e` before the questionnaire is rendered/announced (e.g. append `|| echo "::warning::..."` while preserving a visible warning), or move the flip step after the announce/render step so label-create failures can never precede it. Addresses PR #651 review comment: today the create call is unguarded and runs before an announce step with no `!cancelled()`, violating FR-015's "failure to write the label MUST NOT suppress the clarification questionnaire" requirement.
+  - Done: chose the guard option (kept the flip step's fixed position,
+    which T002's FR-023 ordering note pins between the agent's `stage:spec`
+    add and `Label spec PR to match the issue`). `intake.yml`'s and
+    `clarify.yml`'s `needs-clarification`-arm `gh label create
+    "stage:clarify" ...  --force` calls now end `|| echo
+    "::warning::...could not create the stage:clarify label (the
+    [clarification|follow-up] questionnaire will still be posted)." >>
+    "$GITHUB_STEP_SUMMARY"`, so a create failure can no longer abort the
+    step under the step's default `bash -eo pipefail` before `Render
+    clarification questionnaire` / `Announce remaining clarification
+    questions` run (neither is gated `!cancelled()`). `actionlint` on both
+    files shows only pre-existing, unrelated warnings (credentials/
+    deployment/SC2012, none on the touched lines); the full local gate
+    suite (`python .github/scripts/run-local-gates.py`) passes 155/155.
+    contracts/clarify-label-flip.md's two code blocks and its "Never fails
+    the job" guarantee were updated to match. `clarify.yml`'s `ready`-arm
+    `stage:spec` create call has the same unguarded shape but is outside
+    this task's named scope (PR #651's comment names only the
+    `stage:clarify` create calls) -- filed as a wing-commander-finding
+    rather than fixed here.
+
+## Maintainer Feedback
+
+- [X] T032 Rename this spec's gate from Gate 99/101 to **Gate 105** throughout: `.github/workflows/lint-workflows.yml`'s step names and comment (currently say Gate 101), `.github/scripts/verify-lifecycle-label-taxonomy.py`'s docstring (currently Gate 99), its user-facing messages, and its `verify_gate99_` temp-dir prefix, `.github/scripts/lifecycle-label-taxonomy-waivers.json`'s `$comment`, and this spec's docs (plan.md/tasks.md/contracts/data-model.md references to Gate 99). Addresses PR #651 review comment: main now holds 99/100/116 and other open PRs hold 101-115, so this spec's allocation is 105.
+  - Done: every "Gate 99" and "Gate 101" mention naming this spec's own
+    gate is now "Gate 105" — `verify-lifecycle-label-taxonomy.py`'s
+    docstring, inline comments, user-facing `print()`/`::error::` messages,
+    and its `verify_gate105_` temp-dir prefix (was `verify_gate99_`);
+    `lint-workflows.yml`'s two step names and the comment block above them
+    (now explains the 99 -> 101 -> 105 numbering history); the waivers
+    file's `$comment`; and every reference across plan.md, tasks.md (this
+    file, including the historical task entries above that named the gate
+    by its prior numbers), quickstart.md, research.md, data-model.md, and
+    contracts/lifecycle-label-taxonomy-gate.md. `lint-workflows.yml`'s
+    unrelated Gate 99 (specs/059-converged-means-tasks-done, a different
+    feature's gate that happens to hold that number on main) is untouched
+    by construction — the replacement only ever targeted this spec's own
+    gate identity. `python .github/scripts/run-local-gates.py` passes
+    155/155 after the rename (Gate 105's self-test included), and
+    `verify-comment-canonical-pointers.py` (Gate 47) is among the passing
+    gates, confirming the renumbered comment stayed consistent everywhere
+    it's duplicated.
+
+---
+
+## Phase 8: Convergence
+
+- [X] T033 Update the stale count in `.github/scripts/verify-lifecycle-label-taxonomy.py:417`'s comment (`# Self-test -- the seven required fixtures ...`) to say "nine" per FR-008 (partial): T030 raised the self-test fixture count to nine (contracts/lifecycle-label-taxonomy-gate.md's fixture list and `self_test()`'s own "all 9 checks behaved as expected" message both already read nine), but this section-header comment was never updated to match.
+  - Done: line 417's comment now reads "the nine required fixtures".
+    `python .github/scripts/run-local-gates.py
+    verify-lifecycle-label-taxonomy.py` confirms both the self-test and
+    the real-tree run still PASS.

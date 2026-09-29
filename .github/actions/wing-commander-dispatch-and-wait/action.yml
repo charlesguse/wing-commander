@@ -7,14 +7,13 @@
 # correlate-and-poll idiom rather than a second, independently-drifting
 # copy.
 #
-# auto-release.yml's own dispatch-release job is NOT yet repointed at this
-# composite (specs/057-autonomous-board-loop tasks.md T054) -- see that
-# task's own note and the waiver in single-home-waivers.json: its `report`
-# job reads six distinct outputs (correlation, correlated-run-id,
-# correlated-run-url, tag-matches, request-time, dispatch-rejected) this
-# composite's own contracted shape (run-url, conclusion) does not carry, so
-# a byte-identical repoint is a genuine outputs-contract redesign, not a
-# mechanical swap.
+# A generic post-wait verification hook -- a caller-supplied "does the
+# state I expected to change actually show it" check -- was considered
+# and deliberately deferred (specs/081-composite-aware-dispatch-gate
+# research.md D7, contracts/dispatch-and-wait-outputs.md FR-028). This
+# composite stays generic: it dispatches, correlates, and waits, nothing
+# more. A future caller needing that shape should extend this composite's
+# contract rather than paste a second verification copy.
 name: wing-commander-dispatch-and-wait
 description: >
   Dispatches a workflow, correlates the resulting run by an attempt-token
@@ -55,6 +54,16 @@ inputs:
     description: Wait-for-terminal-status attempts (poll-interval-seconds apart)
     required: false
     default: "60"
+  uncorrelated-wait-seconds:
+    description: >
+      Bounded wait, in seconds, applied only when correlation never reaches
+      found (dispatch rejected, or the poll budget exhausted with zero or
+      multiple matches) -- giving a caller that reads state the dispatched
+      run was expected to change a way to avoid reading it mid-flight.
+      Default 0 means no wait, preserving every existing caller's behavior
+      unchanged.
+    required: false
+    default: "0"
 
 outputs:
   run-url:
@@ -63,6 +72,18 @@ outputs:
   conclusion:
     description: The correlated run's terminal conclusion, or 'timeout' if the wait budget was exhausted, or empty if never correlated
     value: ${{ steps.watch.outputs.conclusion }}
+  dispatch-rejected:
+    description: "true iff the gh workflow run dispatch call itself returned non-zero; the correlation search never runs in that case"
+    value: ${{ steps.watch.outputs.dispatch-rejected }}
+  correlation:
+    description: One of found, ambiguous, or not-observed -- never derived from whether run-url is empty
+    value: ${{ steps.watch.outputs.correlation }}
+  correlated-run-id:
+    description: The correlated run's id, set only when correlation is found
+    value: ${{ steps.watch.outputs.correlated-run-id }}
+  request-time:
+    description: ISO-8601 timestamp set before the dispatch call, reported regardless of dispatch-rejected or correlation's outcome
+    value: ${{ steps.watch.outputs.request-time }}
 
 runs:
   using: composite
@@ -78,13 +99,16 @@ runs:
         POLL_ATTEMPTS: ${{ inputs.poll-attempts }}
         POLL_INTERVAL_SECONDS: ${{ inputs.poll-interval-seconds }}
         WAIT_ATTEMPTS: ${{ inputs.wait-attempts }}
+        UNCORRELATED_WAIT_SECONDS: ${{ inputs.uncorrelated-wait-seconds }}
       run: |
         set -uo pipefail
 
         request_time="$(date -u +%s)"
+        request_time_iso="$(date -u -d "@$request_time" +"%Y-%m-%dT%H:%M:%SZ")"
 
         mapfile -t dispatch_args < <(printf '%s' "$WORKFLOW_INPUTS" | jq -r 'to_entries[] | "-f" , (.key + "=" + (.value | tostring))')
 
+        dispatch_rejected="false"
         correlation="not-observed"
         correlated_run_id=""
         run_url=""
@@ -92,6 +116,7 @@ runs:
 
         if ! gh workflow run "$WORKFLOW_FILE" "${dispatch_args[@]}" -f "attempt-token=${ATTEMPT_TOKEN}"; then
           echo "::error::wing-commander-dispatch-and-wait: gh workflow run $WORKFLOW_FILE was rejected."
+          dispatch_rejected="true"
         else
           attempt=0
           while [ "$attempt" -lt "$POLL_ATTEMPTS" ]; do
@@ -144,7 +169,15 @@ runs:
           fi
         fi
 
+        if [ "$correlation" != "found" ] && [ "$UNCORRELATED_WAIT_SECONDS" -gt 0 ]; then
+          sleep "$UNCORRELATED_WAIT_SECONDS"
+        fi
+
         {
           echo "run-url=$run_url"
           echo "conclusion=$conclusion"
+          echo "dispatch-rejected=$dispatch_rejected"
+          echo "correlation=$correlation"
+          echo "correlated-run-id=$correlated_run_id"
+          echo "request-time=$request_time_iso"
         } >> "$GITHUB_OUTPUT"

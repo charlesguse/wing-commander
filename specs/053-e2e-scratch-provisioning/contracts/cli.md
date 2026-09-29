@@ -14,7 +14,7 @@ provision-e2e-target.sh --repo OWNER/NAME --profile auto-release|spec-kit-scratc
 
 | Flag | Required | Description |
 |---|---|---|
-| `--repo OWNER/NAME` | yes | The target repository identifier. Refused if it case-insensitively equals this repository (FR-007), or fails the `scratch_marker` check against a non-empty, unmarked, pre-existing repository (data-model.md D3). |
+| `--repo OWNER/NAME` | yes | The target repository identifier. Refused if it case-insensitively equals this repository (FR-007), or — on the mutating path only, never under `--check-only` — fails the `scratch_marker` check against a non-empty, unmarked, pre-existing repository (data-model.md D3; `specs/069-scratch-readiness-reporting/contracts/cli.md`). |
 | `--profile` | yes | `auto-release` or `spec-kit-scratch` (data-model.md `TargetProfile`). Selects the required-elements list. |
 | `--check-only` | no | Performs zero mutating calls — runs the same `checks.sh` functions the privileged path would, but skips every `remedy: privileged` action. This is what the generalized readiness-check workflow uses (contracts/readiness-workflow.md), and what a maintainer can run locally without `repo` scope, using only read access to the target. |
 
@@ -48,10 +48,21 @@ No other flags. No interactive prompts under any flag combination (FR-013).
    (data-model.md).
 4. Print the `ReadinessReport` as JSON to stdout (contracts/readiness-report.schema.json)
    and a human-readable summary to stderr.
-5. Exit `0` if `ready: true`, exit `1` if `ready: false` — never exit `0`
-   with a not-ready report, so a calling agent session or CI step can act on
-   the exit code alone without re-parsing JSON if it only needs a
-   pass/fail signal (FR-004, FR-008).
+5. Exit status is a faithful summary of `ReadinessReport.verdict`
+   (amended by `specs/069-scratch-readiness-reporting/data-model.md` — the
+   original `ready: bool` no longer exists), never computed any other way:
+
+   | `verdict` | Exit status | Meaning |
+   |---|---|---|
+   | `all_clear` | `0` | Every required element is `ready`. |
+   | `not_clear` | `1` | At least one required element is `missing` — the same code this script already uses for every other failure (bad flags, self-refusal, a failed privileged write). |
+   | `unverified` | `2` | Nothing is `missing`, but at least one required element is `not_checkable` by this route. |
+
+   A run MUST NOT exit `0` for `unverified` or `not_clear`, so a calling
+   agent session or CI step can act on the exit code alone without
+   re-parsing JSON if it only needs a pass/fail signal (FR-004, FR-008) —
+   and one that wants to distinguish "genuinely broken" from "unverified"
+   has a third code to test for (SC-008).
 
 ## Guarantees (contract, not implementation detail)
 
