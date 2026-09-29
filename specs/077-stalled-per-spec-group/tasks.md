@@ -188,3 +188,7 @@ This repository is a GitHub Actions pipeline component — no `src`/`tests` spli
 ## Maintainer Feedback
 
 - [ ] T028 In `specs/077-stalled-per-spec-group/data-model.md`'s survivor-job condition table (~79-92): prepend `needs.verify-image-prerequisites.result != 'failure' && ` to both `if:` strings (rows 79-80) to match the job's actual outer guard (T004). Change row 89 (`success` / `skipped (image check failed upstream)`) and row 92 (`skipped (image check failed)` / `skipped`)'s verdict columns to `No / No (outer guard)`. Then delete row 89 entirely as unreachable — `resolve-identity` cannot reach `success` when `verify-image-prerequisites` has failed, since `resolve-identity`'s own `if:` already requires `needs.verify-image-prerequisites.result != 'failure'`.
+
+## Maintainer Feedback
+
+- [ ] T029 Fix the stall-notice wording for a `resolve-identity` failure: today the notice reads "the pr-conversation stage was skipped because a dependency it needs did not run" (from `wing-commander-stall-reason`'s `entry-result == 'skipped'` branch, since `classify-and-announce` skips when `resolve-identity` fails) — but `resolve-identity` itself ran and failed. Change the reason to say `resolve-identity` failed and point at its job log. Correct `specs/077-stalled-per-spec-group/data-model.md`'s claim (~73, "already covers the resolve-identity-failed case truthfully; no composite edit needed") to match whatever wiring this fix requires, since a composite or call-site change turns out to be needed after all.
