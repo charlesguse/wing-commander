@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -72,3 +72,45 @@ condition being fixed (a pending-slot eviction) is not observable after the
 fact — a displaced run leaves no record at all. That is stated in the Key
 Entities section as the reason detection must work from state the run
 *failed* to change.
+
+### Validation iteration 2 — 2026-09-29 (clarifications resolved)
+
+**All three [NEEDS CLARIFICATION] markers are resolved** from the reply
+@charlesguse posted on lifecycle issue #723, and the Clarifications section
+now records the decisions rather than the questions:
+
+1. **FR-001 (scope)** — actual recovery, specified in this spec and built on
+   spec 060 as merged (PR #490, commit `fa656bc`, 2026-09-29). FR-010b's
+   record remains as the backstop; spec 060 is not amended.
+2. **FR-004 (mechanism)** — mechanism (A): the `pull_request: closed`
+   `prove-gate`/`prove` path gets its own concurrency group, keyed per
+   merged item. FR-048 is read as bounding agent concurrency, which settles
+   the reading the previous iteration flagged as the owner's call.
+3. **FR-011 (breadth)** — recovery reaches only the cases where the loop
+   could not observe a proof: the displacement record itself and an
+   `uncorrelated` re-drive. `failure` and `unfinished` wait for a
+   maintainer. FR-011a adds the starvation bound the question asked for
+   (one attempt per merged PR, durably recorded) and FR-011b keeps a second
+   recoverable item recoverable.
+
+**Spec 060 had landed between drafting and this reply**, which the reply
+states and the repository confirms (`fa656bc`; this feature's branch was
+cut before it). The consequences were folded in rather than left as prose
+that contradicted `main`: the Overview now describes per-job concurrency
+groups and spec 060's shipped displacement detection, the pre-060
+re-triage harm is recorded as history with the present harm restated as
+"recorded and then stranded", FR-002 names spec 060's directed dispatch as
+the recovery's entry (one home), FR-005 and FR-021 name the live spec 060
+contracts this feature must correct — including
+`concurrency-groups.md`'s "What does not change" bullet, which mechanism
+(A) makes false — and FR-014/FR-015/FR-018/FR-019 reuse spec 060's
+recorded reason, taxonomy labels, group-expression reader and Gate 101
+instead of adding second copies.
+
+**One consequence was decided here rather than re-asked.** Mechanism (A) is
+prevention, so it does not by itself reach merges already stranded with a
+`prove` marker, nor Q3's `uncorrelated` case. Both would otherwise stay
+unproven forever, so the spec keeps a bounded recovery for exactly those
+two shapes and says so in "Consequences of Q2 (A) rather than (C),
+recorded rather than re-asked". A fourth question was judged
+disproportionate to that gap.
