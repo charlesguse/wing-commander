@@ -295,7 +295,7 @@ jobs:
           jq -c '.[]' "$RUNNER_TEMP/board-undetected-merges.json" | while read -r row; do
             issue_number="$(printf '%s' "$row" | jq -r '.issue')"
             merged_pr="$(printf '%s' "$row" | jq -r '.merged_pr')"
-            marker="$(python3 -c "import sys; sys.path.insert(0, '.github/scripts'); from board_item_marker import write_marker; print(write_marker('prove', 0, None, None, None))")"
+            marker="$(python3 .github/scripts/board_item_marker.py --step prove)"
             gh issue comment "$issue_number" -R "$GITHUB_REPOSITORY" \
               --body "$(printf 'PR #%s merged, but its proof run never started -- the pull_request: closed run that would have entered prove-gate/prove was itself displaced from the queue before it began. This issue stays open.\n\n%s' "$merged_pr" "$marker")"
           done
@@ -2514,25 +2514,6 @@ jobs:
       pr-number: ${{ steps.pr.outputs.pr-number }}
       outcome: ${{ steps.round.outputs.outcome }}
     steps:
-      # see this file's header for why every job does this. Runs first in
-      # this job, ahead of the generic checkout+snapshot pair below: Gate
-      # 104 forbids a raw, workspace-relative composite reference anywhere
-      # in this file, so this job's composites (this step's own
-      # `./.wc-pristine-repo/...` callers -- "Wing Commander context" and
-      # "Resolve the PR under review" further down) resolve from this same
-      # trusted copy (maintainer review of #607, fold leg-1).
-      - name: Checkout board-loop's own trusted copy (composites)
-        uses: actions/checkout@v5
-        with:
-          ref: ${{ github.sha }}
-          path: .wc-pristine-repo
-          persist-credentials: false
-      - name: Record trusted-copy provenance
-        run: |
-          echo "board-loop: composites resolved from $(git -C .wc-pristine-repo rev-parse HEAD) at ref ${{ github.sha }}." >> "$GITHUB_STEP_SUMMARY"
-      - name: Write-protect board-loop's own trusted copy (composites)
-        run: chmod -R a-w .wc-pristine-repo
-
       # A directed dispatch needs the issue marker read -- and therefore the
       # pristine snapshot below -- before it even knows which PR to check
       # out, so this checkout/snapshot pair runs first here rather than
@@ -2554,6 +2535,19 @@ jobs:
           mkdir "$dest"
           git archive --format=tar "$GITHUB_SHA" .github/scripts .github/schemas | tar -x -C "$dest" --strip-components=1
           chmod -R a-w "$dest"
+
+      # see this file's header for why every job does this
+      - name: Checkout board-loop's own trusted copy (composites)
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          path: .wc-pristine-repo
+          persist-credentials: false
+      - name: Record trusted-copy provenance
+        run: |
+          echo "board-loop: composites resolved from $(git -C .wc-pristine-repo rev-parse HEAD) at ref ${{ github.sha }}." >> "$GITHUB_STEP_SUMMARY"
+      - name: Write-protect board-loop's own trusted copy (composites)
+        run: chmod -R a-w .wc-pristine-repo
 
       - name: Wing Commander context
         id: ctx
@@ -3533,24 +3527,6 @@ jobs:
       group: wing-commander-board-loop
       cancel-in-progress: false
     steps:
-      # see this file's header for why every job does this. Runs first in
-      # this job, ahead of the generic checkout+snapshot pair below: Gate
-      # 104 forbids a raw, workspace-relative composite reference anywhere
-      # in this file, so this job's composites (further down) resolve from
-      # this same trusted copy (maintainer review of #607, fold leg-1) --
-      # see the review job's identical step.
-      - name: Checkout board-loop's own trusted copy (composites)
-        uses: actions/checkout@v5
-        with:
-          ref: ${{ github.sha }}
-          path: .wc-pristine-repo
-          persist-credentials: false
-      - name: Record trusted-copy provenance
-        run: |
-          echo "board-loop: composites resolved from $(git -C .wc-pristine-repo rev-parse HEAD) at ref ${{ github.sha }}." >> "$GITHUB_STEP_SUMMARY"
-      - name: Write-protect board-loop's own trusted copy (composites)
-        run: chmod -R a-w .wc-pristine-repo
-
       # A directed dispatch needs the issue marker read -- and therefore the
       # pristine snapshot below -- before it even knows which PR to check
       # out, so this checkout/snapshot pair runs first here rather than
@@ -3572,6 +3548,19 @@ jobs:
           mkdir "$dest"
           git archive --format=tar "$GITHUB_SHA" .github/scripts .github/schemas | tar -x -C "$dest" --strip-components=1
           chmod -R a-w "$dest"
+
+      # see this file's header for why every job does this
+      - name: Checkout board-loop's own trusted copy (composites)
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          path: .wc-pristine-repo
+          persist-credentials: false
+      - name: Record trusted-copy provenance
+        run: |
+          echo "board-loop: composites resolved from $(git -C .wc-pristine-repo rev-parse HEAD) at ref ${{ github.sha }}." >> "$GITHUB_STEP_SUMMARY"
+      - name: Write-protect board-loop's own trusted copy (composites)
+        run: chmod -R a-w .wc-pristine-repo
 
       - name: Wing Commander context
         id: ctx

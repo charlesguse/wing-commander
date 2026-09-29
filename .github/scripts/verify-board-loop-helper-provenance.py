@@ -22,16 +22,11 @@ In each of fix, review and readiness:
      step that references the snapshot. The job's own checkout is the only
      actions/checkout step counted here: the trusted-copy sidecar checkout
      every board-loop job carries (spec 086; see board-loop.yml's header)
-     is excluded by its canonical name, because Gate 104
+     is excluded by its canonical name, because it lands after the
+     snapshot step and is Gate 104's subject, not this gate's -- Gate 104
      (verify-board-loop-composite-provenance.py) is what holds a step
      bearing that name to `ref: ${{ github.sha }}`, a sidecar `path:` and
-     a fail-closed shape, not this gate. review and readiness resolve the
-     PR to check out via that same trusted-copy composite, so the
-     trusted-copy checkout runs first in those two jobs, ahead of the
-     job's own (real, provenance-critical) checkout of the PR branch --
-     this gate's "directly after" and agent-ordering checks still anchor
-     on the latter (#607, fold leg-1). Any other second checkout still
-     fails here;
+     a fail-closed shape. Any other second checkout still fails here;
   2. the three snapshot steps' run: blocks are identical;
   3. an allowlist over every other run: block. Each python call is
      `python3 -I -`, `python3 -I -c`, or `python3 -I` on a script under
