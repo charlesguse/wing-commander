@@ -217,13 +217,21 @@ def compute_drift_findings(claim, classifications, facts):
 
     for job, c in class_by_job.items():
         fact = facts.get(job)
-        if fact is None or fact.cancel_in_progress is None:
+        if fact is None:
             findings.append(DriftFinding(
                 property="job-missing-from-group", job=job,
                 skill_location=claim.location,
                 workflow_location=(BOARD_LOOP_YML, None),
                 expected="a concurrency: block joining `{0}`".format(c.expected_group_ordinary),
-                actual="no concurrency: block in board-loop.yml"))
+                actual="job '{0}' not found in board-loop.yml".format(job)))
+            continue
+        if fact.cancel_in_progress is None:
+            findings.append(DriftFinding(
+                property="job-missing-from-group", job=job,
+                skill_location=claim.location,
+                workflow_location=(BOARD_LOOP_YML, fact.line),
+                expected="a concurrency: block joining `{0}`".format(c.expected_group_ordinary),
+                actual="no concurrency: block on job '{0}'".format(job)))
             continue
 
         if fact.group_expression is not None:
@@ -291,9 +299,96 @@ def compute_drift_findings(claim, classifications, facts):
     return findings
 
 
+def _loc(path_line):
+    path, line = path_line
+    rel = os.path.relpath(path, REPO_ROOT)
+    return "{0}:{1}".format(rel, line) if line else rel
+
+
+def format_finding(finding):
+    """-> the FR-006 failure message shape (contracts/skill-drift-gate.md
+    "Failure message shape"): names the property, the job, both locations,
+    expected/actual, and the waive-or-fix instruction."""
+    job_clause = " for job '{0}'".format(finding.job) if finding.job else ""
+    return (
+        "::error::verify-skill-board-loop-concurrency-claim: {property}{job_clause} "
+        "-- SKILL.md ({skill_loc}) claims {expected}; board-loop.yml ({workflow_loc}) "
+        "has {actual}. Waive with a skill-example-drift-waivers.json entry "
+        "naming property \"{property}\" and job {job_json}, and a tracking issue, "
+        "or fix the drift.".format(
+            property=finding.property, job_clause=job_clause,
+            skill_loc=_loc(finding.skill_location), expected=finding.expected,
+            workflow_loc=_loc(finding.workflow_location), actual=finding.actual,
+            job_json=("\"{0}\"".format(finding.job) if finding.job else "null")))
+
+
+def evaluate():
+    """-> (findings, ok_properties) for the real tree: reads all three
+    source files, computes the DriftFinding set (contracts/skill-drift-gate.md
+    "Algorithm" steps 1-6). A missing/unreadable source file is itself a loud
+    subject-missing finding, never a silent skip."""
+    findings = []
+    claim = classifications = facts = None
+
+    if not os.path.isfile(SKILL_MD):
+        findings.append(DriftFinding(
+            property="subject-missing", job=None,
+            skill_location=(SKILL_MD, None), workflow_location=(BOARD_LOOP_YML, None),
+            expected="{0} to exist".format(SKILL_MD), actual="file not found"))
+    else:
+        claim, missing = extract_skill_claim(_read(SKILL_MD), SKILL_MD)
+        if missing:
+            findings.append(missing)
+
+    if not os.path.isfile(CONCURRENCY_GROUPS_MD):
+        findings.append(DriftFinding(
+            property="subject-missing", job=None,
+            skill_location=(SKILL_MD, None), workflow_location=(CONCURRENCY_GROUPS_MD, None),
+            expected="{0} to exist".format(CONCURRENCY_GROUPS_MD), actual="file not found"))
+    else:
+        classifications = extract_job_classifications(_read(CONCURRENCY_GROUPS_MD))
+        if not classifications:
+            findings.append(DriftFinding(
+                property="subject-missing", job=None,
+                skill_location=(SKILL_MD, None),
+                workflow_location=(CONCURRENCY_GROUPS_MD, None),
+                expected="a non-empty 'Groups, per job' table",
+                actual="no classification rows found"))
+
+    if not os.path.isfile(BOARD_LOOP_YML):
+        findings.append(DriftFinding(
+            property="subject-missing", job=None,
+            skill_location=(SKILL_MD, None), workflow_location=(BOARD_LOOP_YML, None),
+            expected="{0} to exist".format(BOARD_LOOP_YML), actual="file not found"))
+    else:
+        facts = extract_workflow_concurrency_facts(_read(BOARD_LOOP_YML))
+        if not facts:
+            findings.append(DriftFinding(
+                property="subject-missing", job=None,
+                skill_location=(SKILL_MD, None), workflow_location=(BOARD_LOOP_YML, None),
+                expected="a readable jobs: map", actual="no jobs found"))
+
+    ok_properties = []
+    all_properties = (
+        "job-missing-from-group", "cancel-in-progress-mismatch",
+        "unexpected-job-in-group", "job-range-mismatch", "directed-group-mismatch")
+    if claim is not None and classifications and facts:
+        drift = compute_drift_findings(claim, classifications, facts)
+        findings.extend(drift)
+        drifted = set(f.property for f in drift)
+        ok_properties = [p for p in all_properties if p not in drifted]
+
+    return findings, ok_properties
+
+
 def run():
-    print("verify-skill-board-loop-concurrency-claim: 0 failure(s).")
-    return 0
+    findings, ok_properties = evaluate()
+    for prop in ok_properties:
+        print("[ok] {0}: board-loop.yml matches the skill's claim".format(prop))
+    for finding in findings:
+        print(format_finding(finding))
+    print("verify-skill-board-loop-concurrency-claim: {0} failure(s).".format(len(findings)))
+    return 1 if findings else 0
 
 
 def run_selftest():
