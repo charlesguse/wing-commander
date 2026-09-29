@@ -220,7 +220,10 @@ def load_waivers(root="."):
     return waivers, []
 
 
-REQUIRED_WAIVER_FIELDS = ("file", "check", "pattern", "count", "reason", "issue")
+# `issue` is not here: whether a waiver cites an OPEN issue or is marked
+# permanent is verify-waiver-citations.py's (Gate 124) one rule for every
+# register.
+REQUIRED_WAIVER_FIELDS = ("file", "check", "pattern", "count", "reason")
 
 
 def check_waiver_shape(waivers):

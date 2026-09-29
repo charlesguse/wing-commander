@@ -369,13 +369,17 @@ def _step_text(step):
 # every run -- an entry with no condition, or one that is always True, is
 # not a valid entry (Constitution IX; FR-007 of spec 073).
 # --------------------------------------------------------------------------
-# `issue` is a tuple of OPEN tracking issues, or () with `permanent=True`
-# and a one-line `permanent_reason` -- verify-waiver-citations.py (Gate
-# 124) holds every entry to exactly one of the two.
+# `decided_by` is the provenance FR-007 requires: the issue(s) that
+# DECIDED the exemption, kept even after they close. `issue` is the open
+# TRACKER for retiring it: a tuple of OPEN issues, or () with
+# `permanent=True` and a one-line `permanent_reason`. verify-waiver-
+# citations.py (Gate 124) holds every entry to exactly one of the two and
+# checks only `issue` for openness, never `decided_by`.
 ExemptionEntry = namedtuple(
     "ExemptionEntry",
-    ["reason", "issue", "condition", "permanent", "permanent_reason"],
-    defaults=(False, None))
+    ["reason", "issue", "condition", "permanent", "permanent_reason",
+     "decided_by"],
+    defaults=(False, None, ()))
 
 
 def _wall_clock_bound_ok(job, max_minutes=10):
@@ -463,6 +467,7 @@ EXEMPT_JOBS = {
         permanent_reason=(
             "An agent step bounded by its own 10-minute timeout is the "
             "design for a short job, not debt awaiting a fix."),
+        decided_by=(558,),
         condition=_wall_clock_bound_ok,
     ),
     (".github/workflows/watchdog.yml", "diagnose"): ExemptionEntry(
@@ -474,6 +479,7 @@ EXEMPT_JOBS = {
         permanent_reason=(
             "An agent step bounded by its own 10-minute timeout is the "
             "design for a short job, not debt awaiting a fix."),
+        decided_by=(558,),
         condition=_wall_clock_bound_ok,
     ),
     (".github/workflows/board-loop.yml", "triage"): ExemptionEntry(
@@ -481,36 +487,30 @@ EXEMPT_JOBS = {
             "already consumes wing-commander-context and "
             "wing-commander-post-agent-credential-status after its agent "
             "step voluntarily (spec 057); provisional -- promoting to "
-            "full_subject later is a re-classification, not a new remedy"),
-        issue=(),
-        permanent=True,
-        permanent_reason=(
-            "No open tracker: promoting to full_subject is an unscheduled "
-            "re-classification; the condition keeps the composites adopted."),
+            "full_subject is a re-classification, not a new remedy, and "
+            "is tracked on #733"),
+        issue=(733,),
+        decided_by=(558, 410),
         condition=_composite_adoption_ok,
     ),
     (".github/workflows/board-loop.yml", "route"): ExemptionEntry(
         reason=(
             "already consumes wing-commander-context and "
             "wing-commander-post-agent-credential-status after its agent "
-            "step voluntarily (spec 057); provisional"),
-        issue=(),
-        permanent=True,
-        permanent_reason=(
-            "No open tracker: promoting to full_subject is an unscheduled "
-            "re-classification; the condition keeps the composites adopted."),
+            "step voluntarily (spec 057); provisional, promotion tracked "
+            "on #733"),
+        issue=(733,),
+        decided_by=(558, 410),
         condition=_composite_adoption_ok,
     ),
     (".github/workflows/board-loop.yml", "fix"): ExemptionEntry(
         reason=(
             "already consumes wing-commander-context and "
             "wing-commander-post-agent-credential-status after its agent "
-            "step voluntarily (spec 057); provisional"),
-        issue=(),
-        permanent=True,
-        permanent_reason=(
-            "No open tracker: promoting to full_subject is an unscheduled "
-            "re-classification; the condition keeps the composites adopted."),
+            "step voluntarily (spec 057); provisional, promotion tracked "
+            "on #733"),
+        issue=(733,),
+        decided_by=(558, 410),
         condition=_composite_adoption_ok,
     ),
     (".github/workflows/board-loop.yml", "review"): ExemptionEntry(
@@ -518,12 +518,9 @@ EXEMPT_JOBS = {
             "already consumes wing-commander-context and "
             "wing-commander-post-agent-credential-status after EACH of its "
             "two agent steps (Reviewer, Review-fixup) voluntarily (spec "
-            "057); provisional"),
-        issue=(),
-        permanent=True,
-        permanent_reason=(
-            "No open tracker: promoting to full_subject is an unscheduled "
-            "re-classification; the condition keeps the composites adopted."),
+            "057); provisional, promotion tracked on #733"),
+        issue=(733,),
+        decided_by=(558, 410),
         condition=_composite_adoption_ok,
     ),
     (".github/workflows/auto-update-spec-kit.yml", "evaluate-path"): ExemptionEntry(
@@ -535,6 +532,7 @@ EXEMPT_JOBS = {
         permanent_reason=(
             "An agent step bounded by its own 10-minute timeout is the "
             "design for a short job, not debt awaiting a fix."),
+        decided_by=(558,),
         condition=_wall_clock_bound_ok,
     ),
     (".github/workflows/auto-update-spec-kit.yml", "comment-reply"): ExemptionEntry(
@@ -546,6 +544,7 @@ EXEMPT_JOBS = {
         permanent_reason=(
             "An agent step bounded by its own 10-minute timeout is the "
             "design for a short job, not debt awaiting a fix."),
+        decided_by=(558,),
         condition=_wall_clock_bound_ok,
     ),
 }
@@ -862,8 +861,8 @@ def scan(loaded):
             if not entry.condition(job):
                 failures.append(
                     f"{path} [{job_name}]: exempt entry's condition no "
-                    f"longer holds -- {entry.reason} ("
-                    f"{'permanent' if entry.permanent else 'issue ' + '/'.join('#' + str(n) for n in entry.issue)}"
+                    f"longer holds -- {entry.reason} (decided by "
+                    f"{'/'.join('#' + str(n) for n in entry.decided_by) or '?'}"
                     f") (FR-007)")
         elif disposition == "agentless_in_scope":
             pass
