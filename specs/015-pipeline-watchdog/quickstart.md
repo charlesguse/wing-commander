@@ -241,6 +241,18 @@ never silently repointed at an unrelated scenario.
    force-deleted from git, only removed from the working tree going
    forward.
 
+## Scenario 23 — The `{stage, tool}` denial separation survives partial-overlap matching (US3, SC-003; spec 109)
+
+1. Replay the three runs behind `#761`/`#764`/`#780` (or a fixture with
+   three distinct `{stage, tool}` denial pairs — different stages, or
+   different tools within a stage).
+2. Expected: three separate `pipeline-defect` issues are filed, exactly as
+   before spec 109's overlap matching — confirm the three issues'
+   matchable id sets (data-model.md, Matchable id set) are pairwise
+   disjoint, since each pair's `tool-denial` signal id is unique to its
+   `{stage, tool}` (#266) and overlap matching only ever attaches on a
+   *shared* id.
+
 See `contracts/watchdog-workflow.md` for the exact trigger/job-gate
 contracts and `data-model.md` for the full Finding, fingerprint, and
 triage-decision shapes each scenario above exercises.

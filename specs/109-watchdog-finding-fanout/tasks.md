@@ -115,7 +115,7 @@ No prerequisite is shared by more than one user story. User Stories 1 and 2 edit
 
 ### Implementation for User Story 3
 
-- [ ] T018 [US3] In `specs/015-pipeline-watchdog/quickstart.md`, add the `{stage, tool}` separation validation scenario (three distinct denial pairs replayed produce three separate issues with pairwise-disjoint matchable id sets) — this feature's own `quickstart.md` Scenario E.
+- [X] T018 [US3] In `specs/015-pipeline-watchdog/quickstart.md`, add the `{stage, tool}` separation validation scenario (three distinct denial pairs replayed produce three separate issues with pairwise-disjoint matchable id sets) — this feature's own `quickstart.md` Scenario E.
 
 **Checkpoint**: Nothing in `Stamp signal ids`' `tool-denial` branch changed by T001–T017; the guarantee is documented and awaits T026/T029's automated proof.
 
