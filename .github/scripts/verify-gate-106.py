@@ -561,6 +561,18 @@ EXECUTION_SCENARIOS = [
         reached_pass=False,
         failing_check="container image configured but stage jobs did not execute inside a container",
     ),
+    dict(
+        name="MR(#509) the run list does not parse: unreadable, not an empty run list",
+        env=dict(GH_STUB_RUNS_JSON="{not json"),
+        reached_pass=False,
+        failing_check="container-mode evidence unreadable",
+    ),
+    dict(
+        name="MR(#509) a run's job data does not parse: unreadable, not an empty job list",
+        env=dict(GH_STUB_JOBS_111="{garbled"),
+        reached_pass=False,
+        failing_check="container-mode evidence unreadable",
+    ),
 ]
 
 SENTINEL = "WC_GATE106_FRAGMENT_REACHED_PASS"

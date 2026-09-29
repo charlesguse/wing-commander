@@ -30,10 +30,12 @@ violate CLAUDE.md's single-home rule for shared logic.
 
 **Alternatives considered**: A dedicated validity check scoped to the new
 evidence reads' exact permissions (e.g., confirming `Actions: read` and
-variable-read access specifically) — rejected because the existing check
-already proves Write-collaborator access, which is a superset of what
-reading a variable and the run's job data needs; a narrower check would
-duplicate the broader one for no additional safety.
+variable-read access specifically) — rejected for the classic shape,
+whose `repo` scope already covers both reads, so a narrower check would
+duplicate the broader one for no additional safety. Adopted for the
+fine-grained shape (`specs/066`), whose Contents/Issues/Pull requests set
+covers neither: the `maintainer-credential` step probes Variables (read)
+and Actions (read) in container mode only (maintainer review of #509).
 
 ## D2: Where the two evidence reads run
 

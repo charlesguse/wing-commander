@@ -132,7 +132,7 @@ CI/CD pipeline infrastructure repository — no `src`/`tests` split. Paths below
 
 ## Phase 8: Convergence
 
-- [ ] T033 Correct research.md D1's rationale and "Alternatives considered" text (lines 25-36): it asserts a dedicated check "confirming `Actions: read` and variable-read access specifically" was rejected because Write-collaborator access already covers it, but the fine-grained shape's Contents/Issues/Pull-requests scope does NOT include Variables:read/Actions:read -- `auto-release.yml`'s `maintainer-credential` step (cycle-6 fold of the maintainer review of #509) now adds exactly that narrower probe, gated on container mode, contradicting D1 as written per FR-003 (contradicts).
+- [X] T033 Correct research.md D1's rationale and "Alternatives considered" text (lines 25-36): it asserts a dedicated check "confirming `Actions: read` and variable-read access specifically" was rejected because Write-collaborator access already covers it, but the fine-grained shape's Contents/Issues/Pull-requests scope does NOT include Variables:read/Actions:read -- `auto-release.yml`'s `maintainer-credential` step (cycle-6 fold of the maintainer review of #509) now adds exactly that narrower probe, gated on container mode, contradicting D1 as written per FR-003 (contradicts).
 
 ---
 

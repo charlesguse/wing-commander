@@ -68,9 +68,9 @@ except in what it is used to read.
 
 | Field | Value |
 |---|---|
-| Credential | `WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN` (classic PAT) + `WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_USERNAME` |
-| Scope | Write collaborator on the test repository only |
-| Validity check | Existing `maintainer-credential` step, unchanged (`auto-release.yml` ~lines 300–413) |
+| Credential | `WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN` (classic or fine-grained PAT, specs/066) + `WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_USERNAME` |
+| Scope | Write collaborator on the test repository only (fine-grained: + Variables (read), Actions (read)) |
+| Validity check | Existing `maintainer-credential` step (`auto-release.yml`), extended with the container-mode Variables/Actions read probe |
 | Containment check | Existing: exactly one repository (owner/collaborator/org-member affiliation) matches the test repository, case-insensitively |
-| New usage | Two additional read-only calls: `gh variable list` (test repository's container image variable) and `gh api .../actions/runs/{id}/jobs` (test repository's job data for the driven run) |
+| New usage | Three additional read-only calls: `gh variable list` (test repository's container image variable) `gh api .../actions/runs?created=>=…` (the run enumeration) and `gh api .../actions/runs/{id}/jobs` (test repository's job data for the driven run) |
 | Failure mode | Any read failure (unset secret, revoked access, insufficient permission, rate limit, API error) routes to `fail-infra` with a `failing_check` naming the unreadable evidence (FR-004), never a silent pass |
