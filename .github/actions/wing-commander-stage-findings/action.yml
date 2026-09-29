@@ -223,6 +223,45 @@ runs:
                 dropped_malformed.append(reason)
                 notes.append("dropped (malformed): {0}".format(reason))
 
+        # A merged spec's directory under specs/ is a historical record
+        # (CLAUDE.md "Other repo-specific rules"): errata against it are
+        # never filed. "Merged" is decided deterministically: a
+        # specs/<dir>/ that is present in this run's checkout (every
+        # stage's checkout descends from the default branch, and a spec
+        # directory only reaches it through a merged spec PR) and is not
+        # this run's own SPEC_DIR. A finding is skipped only when EVERY
+        # path it names -- evidence.file_paths and fingerprint_basis's
+        # file_path -- lies inside such a directory; a finding that also
+        # names live code or docs is filed as usual. Recorded in notes
+        # (and so in the step summary), not as a new counter.
+        own_spec = SPEC_DIR.strip().rstrip("/").split("/")[-1] if SPEC_DIR.strip() else ""
+
+        def frozen_spec_dir(path):
+            cwd = os.getcwd()
+            rel = os.path.relpath(os.path.abspath(os.path.join(cwd, path)), cwd)
+            parts = rel.replace(os.sep, "/").split("/")
+            if len(parts) < 3 or parts[0] != "specs" or not re.match(r"^\d{3}-", parts[1]):
+                return None
+            if parts[1] == own_spec:
+                return None
+            if not os.path.isdir(os.path.join(cwd, "specs", parts[1])):
+                return None
+            return parts[1]
+
+        unfrozen = []
+        for item in survivors:
+            paths = list(item["evidence"]["file_paths"]) + [item["fingerprint_basis"]["file_path"]]
+            dirs = [frozen_spec_dir(p) for p in paths]
+            if all(dirs):
+                notes.append(
+                    "skipped (merged spec is a frozen record): \"{0}\" names only "
+                    "files under specs/{1}/ -- correct the code or the live docs "
+                    "instead.".format(item.get("title", "(untitled)"),
+                                      "/, specs/".join(sorted(set(dirs)))))
+            else:
+                unfrozen.append(item)
+        survivors = unfrozen
+
         try:
             cap_val = int(os.environ.get("CAP", "3"))
         except ValueError:

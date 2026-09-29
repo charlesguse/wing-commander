@@ -47,7 +47,7 @@ case "$path" in
   *) exit 0 ;;
 esac
 
-reminder="REMINDER: .specify/memory/constitution.md is amended through the /speckit-constitution skill, not by hand. The skill picks the semver bump, prepends a Sync Impact Report, and runs the propagation audit over .specify/templates/, the README numbered principle list, and docs/. A hand-edit reliably misses one of those: the README list lost principle VI at 1.2.0 and it went unnoticed for two minor versions. Prefer running /speckit-constitution and applying its output. This is advice, not a gate -- proceeding is allowed."
+reminder="REMINDER: .specify/memory/constitution.md is amended through the /speckit-constitution skill, not by hand. The skill picks the semver bump, prepends a Sync Impact Report (move it to the top of .specify/memory/constitution-history.md before committing -- see CLAUDE.md), and runs the propagation audit over .specify/templates/, the README numbered principle list, and docs/. A hand-edit reliably misses one of those: the README list lost principle VI at 1.2.0 and it went unnoticed for two minor versions. Prefer running /speckit-constitution and applying its output. This is advice, not a gate -- proceeding is allowed."
 
 jq -n --arg r "$reminder" '{
   systemMessage: $r,
