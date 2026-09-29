@@ -496,6 +496,190 @@ def run_selftest():
     check("a waiver with no matching divergence is stale",
           not blocking and not waived_lines and stale == [waiver])
 
+    # --- extract_skill_claim: subject-missing in both directions, plus a
+    # reflow/typo-only change leaving extraction unaffected (FR-009). This
+    # and the two extraction fixtures below exercise the functions the
+    # waiver checks above never touch (T021, spec 089 Phase 7). ---
+    canonical_claim_text = (
+        "intro paragraph.\n\n"
+        "- **Over-rated.** A hypothesized race looked plausible in "
+        "isolation. Every job that can select an item or open a fix PR "
+        "(`select` through `readiness`) joins `ordinary-group`, and the "
+        "only run allowed to overlap them is a directed proof run in "
+        "`directed-group`, which selects no item and opens no fix PR.\n\n"
+        "next paragraph."
+    )
+    claim, missing = extract_skill_claim(canonical_claim_text, "fixture-skill.md")
+    check("a well-formed Over-rated paragraph extracts a SkillClaim",
+          missing is None and claim is not None
+          and claim.job_range_start == "select" and claim.job_range_end == "readiness"
+          and claim.ordinary_group == "ordinary-group"
+          and claim.directed_group == "directed-group")
+
+    reflowed_claim_text = (
+        "intro paragraph.\n\n"
+        "- **Over-rated.** A\n  hypothesizd    race looked plausible in "
+        "isolation. Every job  that can select an item or\nopen a fix PR "
+        "(`select`   through\n`readiness`) joins\n`ordinary-group`, and "
+        "the only run allowed to overlap them is a directed  proof run "
+        "in `directed-group`,\nwhich selects no item and opens no fix "
+        "PR.\n\n"
+        "next paragraph."
+    )
+    reflowed_claim, reflowed_missing = extract_skill_claim(
+        reflowed_claim_text, "fixture-skill.md")
+    check("a reflow/typo-only change leaves the extracted claim unaffected",
+          reflowed_missing is None and reflowed_claim is not None
+          and reflowed_claim[:4] == claim[:4])
+
+    no_claim, no_claim_missing = extract_skill_claim(
+        "no over-rated example here at all.", "fixture-skill.md")
+    check("a missing Over-rated anchor is a subject-missing finding",
+          no_claim is None and no_claim_missing is not None
+          and no_claim_missing.property == "subject-missing")
+
+    # --- extract_job_classifications: a synthetic concurrency-groups.md
+    # table extracts the expected per-job rows. ---
+    table_fixture = (
+        "## Groups, per job\n\n"
+        "| Job | Ordinary group | Directed group | cancel-in-progress |\n"
+        "|-----|-----------------|-----------------|---------------------|\n"
+        "| `select` | `ordinary-group` | n/a | `false` |\n"
+        "| `mid` | `ordinary-group` | n/a | `false` |\n"
+        "| `readiness` | `ordinary-group` | n/a | `false` |\n"
+        "| `prove` | `ordinary-group` | `directed-group` | `false` |\n"
+    )
+    fixture_classes = {c.job: c for c in extract_job_classifications(table_fixture)}
+    check("a synthetic classification table extracts all four job rows",
+          set(fixture_classes) == {"select", "mid", "readiness", "prove"})
+    check("a table row with a directed group populates expected_group_directed",
+          fixture_classes["prove"].expected_group_directed == "directed-group"
+          and fixture_classes["select"].expected_group_directed is None)
+
+    # --- extract_workflow_concurrency_facts: a synthetic board-loop.yml
+    # extracts each job's own concurrency: block, keyed by job. ---
+    workflow_fixture = (
+        "name: fixture\n\n"
+        "jobs:\n"
+        "  select:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    concurrency:\n"
+        "      group: ordinary-group\n"
+        "      cancel-in-progress: false\n"
+        "    steps: []\n"
+        "  prove:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    concurrency:\n"
+        "      group: >-\n"
+        "        ${{ (needs.select.outputs.directed-stage != '') && "
+        "'directed-group' || 'ordinary-group' }}\n"
+        "      cancel-in-progress: false\n"
+        "    steps: []\n"
+        "  other-job:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    steps: []\n"
+    )
+    fixture_facts = extract_workflow_concurrency_facts(workflow_fixture)
+    check("a synthetic workflow extracts a literal group for an ordinary job",
+          fixture_facts["select"].group_literal == "ordinary-group"
+          and fixture_facts["select"].cancel_in_progress is False)
+    check("a synthetic workflow extracts a conditional expression for a directed job",
+          fixture_facts["prove"].group_expression is not None
+          and DIRECTED_EXPR_RE.search(fixture_facts["prove"].group_expression) is not None)
+    check("a job with no concurrency: block records cancel_in_progress=None",
+          fixture_facts["other-job"].cancel_in_progress is None)
+
+    # --- compute_drift_findings: a baseline where everything matches
+    # produces no findings; one targeted mutation per property produces
+    # exactly that DriftFinding (contracts/skill-drift-gate.md "Algorithm"
+    # steps 4-6). ---
+    base_claim = SkillClaim(
+        job_range_start="select", job_range_end="readiness",
+        ordinary_group="ordinary-group", directed_group="directed-group",
+        location=("fixture-skill.md", 1))
+    base_classifications = [
+        JobClassification(job="select", can_select_or_open_fix_pr=True,
+                           expected_group_ordinary="ordinary-group",
+                           expected_group_directed=None,
+                           expected_cancel_in_progress=False),
+        JobClassification(job="mid", can_select_or_open_fix_pr=True,
+                           expected_group_ordinary="ordinary-group",
+                           expected_group_directed=None,
+                           expected_cancel_in_progress=False),
+        JobClassification(job="readiness", can_select_or_open_fix_pr=True,
+                           expected_group_ordinary="ordinary-group",
+                           expected_group_directed=None,
+                           expected_cancel_in_progress=False),
+        JobClassification(job="prove", can_select_or_open_fix_pr=True,
+                           expected_group_ordinary="ordinary-group",
+                           expected_group_directed="directed-group",
+                           expected_cancel_in_progress=False),
+    ]
+
+    def make_facts(overrides=None):
+        base = collections.OrderedDict([
+            ("select", WorkflowConcurrencyFact(
+                job="select", group_literal="ordinary-group",
+                group_expression=None, cancel_in_progress=False, line=10)),
+            ("mid", WorkflowConcurrencyFact(
+                job="mid", group_literal="ordinary-group",
+                group_expression=None, cancel_in_progress=False, line=11)),
+            ("readiness", WorkflowConcurrencyFact(
+                job="readiness", group_literal="ordinary-group",
+                group_expression=None, cancel_in_progress=False, line=12)),
+            ("prove", WorkflowConcurrencyFact(
+                job="prove", group_literal=None,
+                group_expression=(
+                    "(needs.select.outputs.directed-stage != '') && "
+                    "'directed-group' || 'ordinary-group'"),
+                cancel_in_progress=False, line=13)),
+            ("other-job", WorkflowConcurrencyFact(
+                job="other-job", group_literal="unrelated-group",
+                group_expression=None, cancel_in_progress=False, line=14)),
+        ])
+        if overrides:
+            base.update(overrides)
+        return base
+
+    baseline_findings = compute_drift_findings(base_claim, base_classifications, make_facts())
+    check("a fully matching tree produces no drift findings", baseline_findings == [])
+
+    missing_facts = make_facts()
+    del missing_facts["mid"]
+    missing_findings = compute_drift_findings(base_claim, base_classifications, missing_facts)
+    check("a job absent from board-loop.yml is job-missing-from-group",
+          [f.property for f in missing_findings] == ["job-missing-from-group"]
+          and missing_findings[0].job == "mid")
+
+    cancel_findings = compute_drift_findings(
+        base_claim, base_classifications,
+        make_facts({"mid": make_facts()["mid"]._replace(cancel_in_progress=True)}))
+    check("a flipped cancel-in-progress is cancel-in-progress-mismatch",
+          [f.property for f in cancel_findings] == ["cancel-in-progress-mismatch"]
+          and cancel_findings[0].job == "mid")
+
+    unexpected_findings = compute_drift_findings(
+        base_claim, base_classifications,
+        make_facts({"other-job": make_facts()["other-job"]._replace(
+            group_literal="ordinary-group")}))
+    check("a non-capable job placed in the claimed group is unexpected-job-in-group",
+          [f.property for f in unexpected_findings] == ["unexpected-job-in-group"]
+          and unexpected_findings[0].job == "other-job")
+
+    range_findings = compute_drift_findings(
+        base_claim._replace(job_range_end="mid"), base_classifications, make_facts())
+    check("a claimed range shorter than the actual last capable job is job-range-mismatch",
+          [f.property for f in range_findings] == ["job-range-mismatch"])
+
+    directed_findings = compute_drift_findings(
+        base_claim, base_classifications,
+        make_facts({"prove": make_facts()["prove"]._replace(group_expression=(
+            "(needs.select.outputs.directed-stage != '') && "
+            "'ordinary-group' || 'directed-group'"))}))
+    check("a swapped conditional expression is directed-group-mismatch",
+          [f.property for f in directed_findings] == ["directed-group-mismatch"]
+          and directed_findings[0].job == "prove")
+
     total = len(failures)
     print("verify-skill-board-loop-concurrency-claim --self-test: {0} failure(s).".format(total))
     return 1 if total else 0
