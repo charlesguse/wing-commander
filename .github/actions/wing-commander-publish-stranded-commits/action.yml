@@ -83,9 +83,19 @@ runs:
         dir="${WORKDIR:-.}"
         (
           cd "$dir"
-          count="$(git rev-list --count "${BEFORE_SHA}..HEAD" 2>/dev/null || echo 0)"
-          echo "commits-published=$count" >> "$GITHUB_OUTPUT"
           branch="$(git rev-parse --abbrev-ref HEAD)"
+          # git push already updates the local remote-tracking ref for the
+          # branch it moved, so a cycle that already pushed cleanly counts
+          # 0 commits ahead of origin here, not every commit since job
+          # start. Fall back to before-sha only when there is no
+          # remote-tracking ref yet to compare against (e.g. a branch this
+          # job's own checkout never fetched).
+          if git rev-parse --verify --quiet "refs/remotes/origin/$branch" >/dev/null; then
+            count="$(git rev-list --count "refs/remotes/origin/${branch}..HEAD" 2>/dev/null || echo 0)"
+          else
+            count="$(git rev-list --count "${BEFORE_SHA}..HEAD" 2>/dev/null || echo 0)"
+          fi
+          echo "commits-published=$count" >> "$GITHUB_OUTPUT"
           target="origin"
           [ -n "$PUSH_TOKEN" ] && target="https://x-access-token:${PUSH_TOKEN}@github.com/${PUSH_REPO}.git"
           if git push "$target" "HEAD:$branch"; then

@@ -24,8 +24,8 @@ replaces the incidental rescue with a deterministic one.
 
 | Output | Meaning |
 |---|---|
-| `commits-published` | Count of commits `git push` actually moved to `origin` this invocation — `0` when the agent had already pushed everything itself (the common case, and the only case FR-004 requires stay silent) |
-| `push-ok` | `"true"`/`"false"` — whether the push attempt itself succeeded. `"false"` covers a genuine race (a concurrent force-push, e.g. from `auto-rebase`), not a credential failure — the credential helper installed by `wing-commander-agent-push-credential` (still active at this point in the job) resolves this step's own credential fresh too |
+| `commits-published` | Count of commits locally ahead of `refs/remotes/origin/<branch>` immediately before this push — `0` when the agent had already pushed everything itself (the common case, and the only case FR-004 requires stay silent), since `git push` already updated that remote-tracking ref. Falls back to `<before-sha>..HEAD` only when the branch has no remote-tracking ref yet to compare against. |
+| `push-ok` | `"true"`/`"false"` — whether the push attempt itself succeeded. `"false"` covers a genuine race (a concurrent force-push, e.g. from `auto-rebase`), not a credential failure — this step's own credential (origin's already-refreshed remote, or an explicit `push-token`/`push-repo`) resolves fresh regardless |
 
 ## Behaviour
 
@@ -34,8 +34,12 @@ replaces the incidental rescue with a deterministic one.
    attempt to reconcile with a remote that moved for an unrelated reason
    (that is `push-ok=false`'s job to surface, not this step's job to
    resolve).
-2. `git rev-list --count <before-sha>..HEAD` — the count of commits this
-   job's own agent step(s) created locally, published or not.
+2. Commits locally ahead of `refs/remotes/origin/<branch>` (falling back to
+   `git rev-list --count <before-sha>..HEAD` only when that remote-tracking
+   ref does not exist) — the count of commits this job's own agent step(s)
+   created locally that the agent's own push did NOT already carry to
+   `origin`, since a successful `git push` updates the local
+   remote-tracking ref as a side effect.
 3. `git push origin HEAD:<branch>`. `push-ok=true` and
    `commits-published=<the count from step 2>` on success; `push-ok=false`
    and `commits-published=<the same count>` on failure (the count is
