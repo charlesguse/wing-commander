@@ -3207,13 +3207,16 @@ jobs:
   # FR-006).
   #
   # Posts the human-facing notice only (mark-record: "false" below) and
-  # stays in the per-PR group so it lands immediately and cannot be
-  # evicted by a busy per-spec group's single pending-run slot; the
-  # spec-meta.json stall-mark write is queued separately by the
-  # stalled-mark job below, in the canonical per-spec group
-  # (specs/077-stalled-per-spec-group). The admission condition (`needs:`/
-  # `if:`) is kept identical to stalled-mark's own below — the same
-  # criteria must admit both jobs.
+  # carries no concurrency block at all (Maintainer Feedback, T032), so
+  # nothing can ever evict its pending run: not a busy per-spec group's
+  # single pending-run slot (that risk belongs to stalled-mark below), and
+  # not the per-PR group this job used to share with classify-and-announce,
+  # where a newer run's classify-and-announce could otherwise evict an
+  # older run's still-pending notice. The spec-meta.json stall-mark write
+  # is queued separately by the stalled-mark job below, in the canonical
+  # per-spec group (specs/077-stalled-per-spec-group). The admission
+  # condition (`needs:`/`if:`) is kept identical to stalled-mark's own
+  # below — the same criteria must admit both jobs.
   stalled:
     needs: [verify-image-prerequisites, resolve-identity, classify-and-announce]
     if: |
@@ -3236,9 +3239,6 @@ jobs:
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
-    concurrency:
-      group: wing-commander-pr-conversation-pr-${{ inputs.pr-number }}
-      cancel-in-progress: false
     permissions:
       contents: read
       issues: write

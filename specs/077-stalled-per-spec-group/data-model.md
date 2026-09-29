@@ -66,7 +66,7 @@ values, same gating, new source).
 |---|---|---|
 | `needs` | `verify-image-prerequisites`, `classify-and-announce` | `verify-image-prerequisites`, `resolve-identity`, `classify-and-announce` |
 | `if` | `needs.verify-image-prerequisites.result != 'failure' && !cancelled() && ( needs.verify-image-prerequisites.result == 'failure' \|\| needs.classify-and-announce.result == 'failure' \|\| needs.classify-and-announce.result == 'skipped' ) && needs.classify-and-announce.outputs.refusal-reason == ''` | Same, plus `needs.resolve-identity.result == 'failure'` as a fourth arm inside the parenthesized group (FR-005, explicit tolerance) — identical on `stalled` and the new `stalled-mark` job below |
-| `concurrency.group` | `wing-commander-pr-conversation-pr-${{ inputs.pr-number }}` (the waived, unordered group) | **T023 split**: `stalled` keeps the static per-PR group `wing-commander-pr-conversation-pr-${{ inputs.pr-number }}` unconditionally (qualifying or not) so its notice can never be evicted by a busy per-spec group's single pending-run slot; the per-spec fallback expression (research.md D3) moves to the new `stalled-mark` job below |
+| `concurrency.group` | `wing-commander-pr-conversation-pr-${{ inputs.pr-number }}` (the waived, unordered group) | **T023 split, then T032**: T023 first moved `stalled` onto the static per-PR group unconditionally, but that group is also `classify-and-announce`'s own, so a newer run's `classify-and-announce` could still evict an older run's still-pending `stalled` notice; T032 (Maintainer Feedback) drops `stalled`'s `concurrency:` block entirely, so nothing can evict its pending run. The per-spec fallback expression (research.md D3) moved to the new `stalled-mark` job below at T023 and is unaffected by T032 |
 | Identity derivation | Own `steps.identity` step, `continue-on-error: true`, independent `gh pr view` | None — reads `needs.resolve-identity.outputs.spec-dir`/`slug` (FR-016) |
 | Lifecycle-issue lookup | Own step, keyed off `steps.identity.outputs.spec-dir`/`slug`; unconditional | Same mechanism, keyed off `needs.resolve-identity.outputs.spec-dir`/`slug`; guarded by `if: needs.resolve-identity.outputs.spec-dir != ''`; duplicated independently in `stalled-mark` (each job runs its own steps; neither can read the other's) |
 | `wing-commander-chain-stop-notice` call | `spec-dir: steps.identity.outputs.spec-dir`, `spec-branch: ${{ inputs.spec-prefix }}${{ steps.identity.outputs.slug }}`, `issue-number: steps.identity.outputs.issue-number \|\| inputs.pr-number` | `spec-dir: needs.resolve-identity.outputs.spec-dir`, `spec-branch: ${{ inputs.spec-prefix }}${{ needs.resolve-identity.outputs.slug }}`, `issue-number: steps.<issue-lookup>.outputs.issue \|\| inputs.pr-number`, plus `mark-record: "false"` (T023) — this job posts the notice only; it never runs the composite's checkout/push effect |
@@ -125,11 +125,16 @@ per-spec group's single pending-run slot), the survivor job is split in two
 — `stalled` (notice-only, `mark-record: "false"`) and `stalled-mark`
 (mark-only, `post-notice: "false"`) — so only the job that actually pushes
 joins the per-spec group; the job that must land immediately never does.
+T023's split still left `stalled` in the per-PR group it shares with
+`classify-and-announce`, where a newer run's `classify-and-announce` could
+evict an older run's still-pending notice (Maintainer Feedback, T032); T032
+drops `stalled`'s `concurrency:` block entirely so nothing can evict it.
 
 | Group string | Who holds it | When |
 |---|---|---|
 | `wing-commander-specs/NNN-slug` | rebase, plan, tasks/tasks-approved, implement, finalize, tasks' `stalled`/`stalled-approved`, cleanup's three jobs, **pr-conversation's `stalled-mark` (new, qualifying case)** | One specification's writers, serialized |
-| `wing-commander-pr-conversation-pr-<n>` | `classify-and-announce` (unchanged), **pr-conversation's `stalled` (new, always — notice-only, stays here regardless of qualification so eviction from a busy per-spec group can never lose the notice)**, **pr-conversation's `stalled-mark` (new, empty-`spec-dir` fallback)** | One PR's conversation-stage work, serialized |
+| `wing-commander-pr-conversation-pr-<n>` | `classify-and-announce` (unchanged), **pr-conversation's `stalled-mark` (new, empty-`spec-dir` fallback)** | One PR's conversation-stage work, serialized |
+| *(no group)* | **pr-conversation's `stalled` (T032, Maintainer Feedback)** — carries no `concurrency:` block at all, so its pending run can never be evicted, including by a newer run's `classify-and-announce` in the per-PR group above, which `stalled` shared before T032 | Not serialized against anything; posts immediately every time it is admitted |
 
 ## Push waiver (existing entity, net unchanged: one removed, one added back for a different job shape)
 

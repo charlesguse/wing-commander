@@ -116,6 +116,14 @@ FR-019). `clarify.yml`'s `stalled` waiver stays: that job has the same wiring
 but its target branch does not exist yet at the clarify stage, so it is
 waived for a different reason that this feature does not address.
 
+### Out of Scope
+
+`tasks.yml`'s `stalled`/`stalled-approved` jobs and `cleanup.yml`'s
+`mark-stalled` job share the same per-PR/per-head-ref-group exposure this
+feature fixes for `pr-conversation.yml`'s survivor job. That is tracked
+separately on #754 and stays out of this PR's scope (Maintainer Feedback,
+T025/T038).
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - A stall mark never lands mid-rebase (Priority: P1)
@@ -262,33 +270,37 @@ strip and slug-format check; each appears once.
 - **The prerequisite job cannot reach the GitHub API.** The head ref is
   unknowable, so the group string is unknowable. The prerequisite job fails
   loudly, and both survivor jobs — whose admission condition tolerates that
-  failure — still run: `stalled` (always in the per-PR group, by design —
-  see the split below) still reports, and `stalled-mark` joins the per-PR
-  fallback group (`spec-dir` is empty, so its mark step is a no-op) rather
-  than blocking on an unknowable per-spec group; see FR-005 and FR-008.
+  failure — still run: `stalled` (carries no concurrency group at all, by
+  design — see the split below, T032) still reports, and `stalled-mark`
+  joins the per-PR fallback group (`spec-dir` is empty, so its mark step is
+  a no-op) rather than blocking on an unknowable per-spec group; see FR-005
+  and FR-008.
 - **The head ref is not a spec branch.** `spec-dir` is legitimately empty
   and the prerequisite job stays green. `stalled-mark`'s group falls back to
   the per-PR spelling rather than degenerating to `wing-commander-`, a
   repository-wide group that would serialize unrelated `stalled-mark` jobs
-  against one another; see FR-008. `stalled` itself is unaffected — its
-  group never depended on `spec-dir` to begin with.
+  against one another; see FR-008. `stalled` itself is unaffected — it
+  carries no concurrency group to depend on `spec-dir` in the first place
+  (T032).
 - **Two pr-conversation runs stall for the same specification at once
-  (Maintainer Feedback, T023).** The human-facing notice and the
+  (Maintainer Feedback, T023, then T032).** The human-facing notice and the
   spec-meta.json stall-mark write are two separate jobs precisely because
-  of this case. `stalled` posts from the per-PR group, keyed by PR number —
-  two different PRs' `stalled` jobs never collide, so both notices land
-  immediately regardless of how busy the specification's own group is. Only
-  the two `stalled-mark` jobs collide, on the shared per-spec slot. With
-  `cancel-in-progress: false` the second queues behind the first only when
-  the first is already running; GitHub keeps at most one PENDING run per
-  concurrency group, so if the first `stalled-mark` is itself still pending
-  (queued behind a running rebase or implement cycle on the same
-  specification) the second's request evicts it rather than queuing behind
-  it. What is lost in that case is a redundant stall-mark write, not the
-  notice — the notice already landed, unconditionally, from the
-  unaffected `stalled` job. This is the residual FR-008 accepts and the
-  reason the split exists: eviction can now only ever cost a duplicate
-  record write, never the maintainer-visible signal.
+  of this case. `stalled` carries no `concurrency:` block at all (T032) —
+  nothing can evict its pending run: not another PR's `stalled` job, not a
+  busy per-spec group's single pending-run slot, and not even a newer run's
+  `classify-and-announce` on the same PR, which shared `stalled`'s old
+  per-PR group before T032 and could otherwise have evicted an older run's
+  still-pending notice. Only the two `stalled-mark` jobs collide, on the
+  shared per-spec slot. With `cancel-in-progress: false` the second queues
+  behind the first only when the first is already running; GitHub keeps at
+  most one PENDING run per concurrency group, so if the first
+  `stalled-mark` is itself still pending (queued behind a running rebase or
+  implement cycle on the same specification) the second's request evicts
+  it rather than queuing behind it. What is lost in that case is a
+  redundant stall-mark write, not the notice — `stalled` is in no group
+  `stalled-mark`'s eviction could ever reach. This is the residual FR-008
+  accepts and the reason the split exists: eviction can now only ever cost
+  a duplicate record write, never the maintainer-visible signal.
 - **The stage stalls while the specification's branch has been deleted.**
   The push cannot land. The chain-stop composite's existing
   "record could not be updated" branch handles this on `stalled-mark`'s
@@ -352,9 +364,10 @@ strip and slug-format check; each appears once.
   MUST fall back to a per-pull-request group (resolved on #581, Q3). It MUST
   NOT degenerate to the constant `wing-commander-`, which every such run
   repository-wide would share, letting one stalled run evict another's
-  pending notice by #415's mechanism. `stalled` itself is unconditionally in
-  the per-PR group, never a fallback — its group never depended on the spec
-  directory to begin with.
+  pending notice by #415's mechanism. `stalled` itself carries no
+  concurrency group at all (Maintainer Feedback, T032) — its group never
+  depended on the spec directory to begin with, and after T032 it depends
+  on no group whatsoever.
 - **FR-009**: The entry job's qualification verdict — the comparison of the
   PR's base ref against the repository default branch and the exclusion of
   plan, tasks, and spec-draft head refs — MUST reach the same result for

@@ -209,18 +209,21 @@ This repository is a GitHub Actions pipeline component — no `src`/`tests` spli
 
 ## Maintainer Feedback
 
-- [ ] T032 Remove the `concurrency:` block from `pr-conversation.yml`'s `stalled` job (~3209-3211). It never pushes and already carries a permanent Gate 80 waiver, so nothing needs ordering it against another job; today it shares `wing-commander-pr-conversation-pr-${{ inputs.pr-number }}` with `classify-and-announce` (~470-471), which means a newer run's `classify-and-announce` job queuing in that group can evict an older run's still-pending `stalled` job before it posts, since GitHub keeps at most one PENDING run per concurrency group. Dropping the block removes `stalled` from any shared group, so no pending-replacement can drop it.
-- [ ] T033 Reword spec.md's Edge Cases section (~278-291) and data-model.md (~66, ~126), plus the `stalled`/`stalled-mark` job header comments in `pr-conversation.yml`, to state what is true after T032: the notice job (`stalled`) is in no concurrency group, so no pending-replacement can drop it. Remove the current "cannot be evicted"/"landed, unconditionally" phrasing, which assumed the per-PR group itself provided that guarantee.
-- [ ] T034 Add a Gate 80 (`.github/scripts/verify-spec-branch-push-concurrency.py`) self-test case, or an equivalent structural assertion, that fails if `pr-conversation.yml`'s `stalled` job regains a `concurrency:` block shared with `classify-and-announce` or any other job.
+- [X] T032 Remove the `concurrency:` block from `pr-conversation.yml`'s `stalled` job (~3209-3211). It never pushes and already carries a permanent Gate 80 waiver, so nothing needs ordering it against another job; today it shares `wing-commander-pr-conversation-pr-${{ inputs.pr-number }}` with `classify-and-announce` (~470-471), which means a newer run's `classify-and-announce` job queuing in that group can evict an older run's still-pending `stalled` job before it posts, since GitHub keeps at most one PENDING run per concurrency group. Dropping the block removes `stalled` from any shared group, so no pending-replacement can drop it.
+- [X] T033 Reword spec.md's Edge Cases section (~278-291) and data-model.md (~66, ~126), plus the `stalled`/`stalled-mark` job header comments in `pr-conversation.yml`, to state what is true after T032: the notice job (`stalled`) is in no concurrency group, so no pending-replacement can drop it. Remove the current "cannot be evicted"/"landed, unconditionally" phrasing, which assumed the per-PR group itself provided that guarantee.
+  Also corrected FR-008's own trailing sentence in spec.md, which made the same now-false "unconditionally in the per-PR group" claim.
+- [X] T034 Add a Gate 80 (`.github/scripts/verify-spec-branch-push-concurrency.py`) self-test case, or an equivalent structural assertion, that fails if `pr-conversation.yml`'s `stalled` job regains a `concurrency:` block shared with `classify-and-announce` or any other job.
+  Implemented as a new self-test case reading the real `pr-conversation.yml`'s `jobs:` mapping directly (`_pr_conversation_jobs()`, mirroring `_resolve_identity_spec_dir_line()`'s pattern of exercising the shipped file) and asserting `stalled` carries no `concurrency:` block, or if it does, that no other job in the same file shares its group value. Verified the case fails when the old shared per-PR group is temporarily reintroduced, then reverted.
 
 ## Maintainer Feedback
 
-- [ ] T036 Mark T026 done-as-withdrawn: keep the `environment:` block on the `resolve-identity` job in `.github/workflows/pr-conversation.yml`. Gate 7 requires an `environment:` binding on every published-stage job; the only existing exemption is `verify-image-prerequisites`, and the extra deployment record `resolve-identity` produces does not justify a second one. No change to `contracts/resolve-identity-job.md` or `data-model.md` is needed — the contract already documents the binding.
+- [X] T036 Mark T026 done-as-withdrawn: keep the `environment:` block on the `resolve-identity` job in `.github/workflows/pr-conversation.yml`. Gate 7 requires an `environment:` binding on every published-stage job; the only existing exemption is `verify-image-prerequisites`, and the extra deployment record `resolve-identity` produces does not justify a second one. No change to `contracts/resolve-identity-job.md` or `data-model.md` is needed — the contract already documents the binding.
+  Confirmed: `resolve-identity`'s `environment:` block is present in `.github/workflows/pr-conversation.yml`, unchanged since T026 restored it. No further action needed.
 
 ## Maintainer Feedback
 
-- [ ] T037 Mark T030 done: `Closes #633` is present in this PR's body outside the finalize markers, confirmed by the maintainer. No further action needed.
+- [X] T037 Mark T030 done: `Closes #633` is present in this PR's body outside the finalize markers, confirmed by the maintainer. No further action needed.
 
 ## Maintainer Feedback
 
-- [ ] T038 Add one line to spec.md's Out of Scope section noting that the same exposure in `tasks.yml`'s `stalled`/`stalled-approved` jobs and `cleanup.yml`'s `mark-stalled` job is tracked separately on #754 and is out of this PR's scope — mirroring T025's note, which currently exists only in tasks.md.
+- [X] T038 Add one line to spec.md's Out of Scope section noting that the same exposure in `tasks.yml`'s `stalled`/`stalled-approved` jobs and `cleanup.yml`'s `mark-stalled` job is tracked separately on #754 and is out of this PR's scope — mirroring T025's note, which currently exists only in tasks.md.

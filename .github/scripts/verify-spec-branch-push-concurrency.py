@@ -306,6 +306,19 @@ FALLBACK_GROUP_NEAR_MISS_IDENTIFIER = (
     "format('pr-conversation-pr-{0}', inputs.pr_number) || '' }}")
 
 
+def _pr_conversation_jobs():
+    """Loads .github/workflows/pr-conversation.yml's `jobs:` mapping straight
+    from the shipped file, for self-test assertions about job *shape*
+    (e.g. whether a job carries a concurrency block at all) that discover()
+    does not surface, since discover() only reports push-capable jobs
+    together with their group string, not the full jobs mapping."""
+    repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    path = os.path.join(repo_root, WORKFLOW_DIR, "pr-conversation.yml")
+    with io.open(path, encoding="utf-8") as fh:
+        doc = yaml.safe_load(fh) or {}
+    return doc.get("jobs") or {}
+
+
 def _resolve_identity_spec_dir_line():
     """Extracts the exact `echo "spec-dir=..."` line from resolve-identity's
     own step in the real .github/workflows/pr-conversation.yml, so this
@@ -502,6 +515,36 @@ def self_test():
     else:
         bad += 1
         print("[FAIL] cleanup.yml mark-stalled back in its old group was not caught")
+
+    # T034 (Maintainer Feedback): stalled must carry no concurrency block at
+    # all -- T023's per-PR group was also classify-and-announce's own, so a
+    # newer run's classify-and-announce could evict an older run's still-
+    # pending stall notice. This is not something evaluate() would ever
+    # catch on its own: stalled is (and stays) permanently waived, so its
+    # group value never enters the per-spec-group check.
+    label = ("pr-conversation.yml's stalled job regains a concurrency block "
+             "shared with classify-and-announce or any other job (T032)")
+    pr_conversation_jobs = _pr_conversation_jobs()
+    stalled_concurrency = (pr_conversation_jobs.get("stalled") or {}).get("concurrency")
+
+    def _group_of(job):
+        conc = (job or {}).get("concurrency")
+        return conc.get("group") if isinstance(conc, dict) else conc
+
+    stalled_group = _group_of({"concurrency": stalled_concurrency})
+    colliding = sorted(
+        name for name, job in pr_conversation_jobs.items()
+        if name != "stalled" and stalled_group is not None
+        and _group_of(job) == stalled_group)
+    if stalled_concurrency is None:
+        print("[ok] {0}".format(label))
+    elif not colliding:
+        print("[ok] {0} (stalled carries a group again, but it collides "
+              "with no other job)".format(label))
+    else:
+        bad += 1
+        print("[FAIL] {0}: stalled's group {1!r} is shared with {2}".format(
+            label, stalled_group, colliding))
 
     print("Gate 80 self-test: {0} failure(s).".format(bad))
     return 1 if bad else 0
