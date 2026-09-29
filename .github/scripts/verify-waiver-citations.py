@@ -49,9 +49,9 @@ covered the day it lands:
     `decided_by=` tuple. Read with `ast`, never imported, so every one of
     those values must be a literal. It fails LOUDLY, rather than skipping,
     on a value that is not a call, a call with no `issue=` keyword
-    (positional included), a `**` spread, or any later subscript write or
-    mutating method call on the table - each is a way for an entry to
-    exist that this gate would otherwise never see.
+    (positional included), a `**` spread, or any later subscript write,
+    augmented assignment (`|=`) or mutating method call on the table - each
+    is a way for an entry to exist that this gate would otherwise never see.
 
     The one opt-out is NAME_ONLY_TABLES below: tables that match the name
     but are string-valued allow-lists of (file, step) sites with no issue
@@ -269,7 +269,8 @@ def _table_assignments(tree):
 
 def _table_mutations(tree, names, rel):
     """Failures for any write into a table after its literal: a subscript
-    assignment/augassign/delete, or a mutating method call, anywhere in the
+    assignment/augassign/delete, an augmented assignment to the table name
+    itself (`EXEMPT_X |= {...}`), or a mutating method call, anywhere in the
     module (a function body included)."""
     out = []
 
@@ -292,6 +293,9 @@ def _table_mutations(tree, names, rel):
             if (isinstance(t, ast.Subscript) and isinstance(t.value, ast.Name)
                     and t.value.id in names):
                 hit(t.value.id, node.lineno, "a subscript write")
+        if (isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name)
+                and node.target.id in names):
+            hit(node.target.id, node.lineno, "an augmented assignment")
         if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
                 and isinstance(node.func.value, ast.Name)
                 and node.func.value.id in names
@@ -611,6 +615,10 @@ def self_test():
         ("Python: a subscript write inside a function fails loudly",
          _GOOD_PY + '\ndef add():\n    EXEMPT_JOBS["k"] = None\n',
          "a subscript write"),
+        ("Python: an |= into the table fails loudly",
+         _GOOD_PY + '\nEXEMPT_JOBS |= {("c.yml", "z"): ExemptionEntry('
+                    'reason="r", issue=(), condition=None)}\n',
+         "an augmented assignment"),
         ("Python: a .update() into the table fails loudly",
          _GOOD_PY + '\nEXEMPT_JOBS.update({})\n', "`.update()`"),
         ("Python: a ** spread in the table fails loudly",

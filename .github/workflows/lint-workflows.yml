@@ -4322,7 +4322,7 @@ jobs:
       - name: "Gate 124 — every waiver cites an issue or is marked permanent with a reason"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-waiver-citations.py
-      - name: "Gate 124 self-test — a missing, malformed or doubled citation, a reasonless or multi-line permanent marker, a non-literal, positional, non-call or later-written Python entry, and a closed or unreadable cited issue each fail"
+      - name: "Gate 124 self-test — a missing, malformed or doubled citation, a reasonless or multi-line permanent marker, a non-literal, positional, non-call, later-written or |=-added Python entry, and a closed or unreadable cited issue each fail"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-waiver-citations.py --self-test
 
