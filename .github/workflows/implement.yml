@@ -417,6 +417,9 @@ jobs:
       # (most-recent-wins `||`, same convention as agent-ran above).
       agent-conclusion: ${{ steps.agent-ran-progress.outputs.conclusion || steps.agent-ran-retry.outputs.conclusion || steps.agent-ran-cycle.outputs.conclusion }}
       credential-refresh-ok: ${{ steps.credential-status-progress.outputs.ok || steps.credential-status-retry.outputs.ok || steps.credential-status-cycle.outputs.ok }}
+      # Most-recent-wins across retry/cycle only, same convention as above.
+      commits-published: ${{ steps.publish-stranded-retry.outputs.commits-published || steps.publish-stranded-cycle.outputs.commits-published }}
+      push-ok: ${{ steps.publish-stranded-retry.outputs.push-ok || steps.publish-stranded-cycle.outputs.push-ok }}
       # Record-only (not read by the stall path): 'true' when ANY chain
       # that ran failed/could not refresh, even one a later chain healed.
       agent-any-failure: ${{ (steps.agent-ran-progress.outputs.conclusion == 'failure' || steps.agent-ran-retry.outputs.conclusion == 'failure' || steps.agent-ran-cycle.outputs.conclusion == 'failure') && 'true' || 'false' }}
@@ -872,6 +875,8 @@ jobs:
         with:
           intended-turns: ${{ inputs.max-turns }}
 
+      # This step's prompt carries the retry-bound paragraph for the
+      # credential-expiry `git push` signature -- see clarify.yml.
       - name: Implement and converge (cycle)
         id: cycle
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true' && steps.tool-args-cycle.outputs.allowed-tools != ''
@@ -1028,6 +1033,12 @@ jobs:
               and never reconstruct an original file to diff warning lists.
             - Tick the tasks.md checkboxes for a whole phase in ONE edit at the end
               of that phase, not one edit per task.
+
+            A `git push` that fails with `remote: Invalid username or token`
+            or `Authentication failed` is a credential problem this
+            pipeline is already handling — retry it at most twice, then
+            commit your work locally if it still fails and continue; do
+            not spend further turns retrying the same push.
           claude_args: |
             --model ${{ steps.effective-model.outputs.model }}
             --max-turns ${{ steps.cycle-ceiling.outputs.ceiling }}
@@ -1062,6 +1073,16 @@ jobs:
         with:
           token: ${{ env.WC_BOT_TOKEN }}
 
+      # Deterministic rescue for work the agent could not push itself --
+      # runs whether or not a later agent step ever would have carried it
+      # along -- see clarify.yml.
+      - name: Publish stranded commits (post-agent, cycle)
+        id: publish-stranded-cycle
+        if: "!cancelled() && steps.cycle.outcome != 'skipped'"
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-publish-stranded-commits
+        with:
+          before-sha: ${{ steps.base.outputs.base-sha }}
 
       # deterministic, transcript-only verdict -- see specs/037-agent-turn-budget-guard/
       # data-model.md. Guarded like the upload/metrics
@@ -1247,10 +1268,13 @@ jobs:
           ref: origin/${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}
           path: ${{ steps.spec.outputs.spec-dir }}/tasks.md
 
-      # FR-008 residual risk (spec 052): the WC_BOT_TOKEN relay above keeps
-      # every step after each agent step credentialed, but not the agent
-      # step's own push credential while it is still running -- see
-      # docs/architecture.md's "Identity & chaining" section.
+      # FR-008 (spec 052): the WC_BOT_TOKEN relay above keeps every step
+      # after each agent step credentialed. The agent step's OWN push
+      # credential while it is still running is covered separately --
+      # specs/071-agent-push-credential's "Publish stranded commits
+      # (post-agent, cycle)"/"(retry)" steps below carry to the branch any
+      # commit the agent could not push itself -- see docs/architecture.md's
+      # "Identity & chaining" section.
       - name: Read back cycle outcome
         id: outcome
         shell: bash
@@ -1579,6 +1603,8 @@ jobs:
           git fetch origin "+refs/heads/${SPEC_PREFIX}$SLUG:refs/remotes/origin/${SPEC_PREFIX}$SLUG"
           echo "base-sha=$(git rev-parse "origin/${SPEC_PREFIX}$SLUG")" >> "$GITHUB_OUTPUT"
 
+      # This step's prompt carries the retry-bound paragraph for the
+      # credential-expiry `git push` signature -- see clarify.yml.
       - name: Implement and converge (retry at escalation model)
         id: retry
         if: >-
@@ -1739,6 +1765,12 @@ jobs:
               and never reconstruct an original file to diff warning lists.
             - Tick the tasks.md checkboxes for a whole phase in ONE edit at the end
               of that phase, not one edit per task.
+
+            A `git push` that fails with `remote: Invalid username or token`
+            or `Authentication failed` is a credential problem this
+            pipeline is already handling — retry it at most twice, then
+            commit your work locally if it still fails and continue; do
+            not spend further turns retrying the same push.
           claude_args: |
             --model ${{ inputs.escalation-model }}
             --max-turns ${{ steps.retry-ceiling.outputs.ceiling }}
@@ -1773,6 +1805,16 @@ jobs:
         with:
           token: ${{ env.WC_BOT_TOKEN }}
 
+      # Deterministic rescue for work the agent could not push itself --
+      # runs whether or not a later agent step ever would have carried it
+      # along -- see clarify.yml.
+      - name: Publish stranded commits (post-agent, retry)
+        id: publish-stranded-retry
+        if: "!cancelled() && steps.retry.outcome != 'skipped'"
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-publish-stranded-commits
+        with:
+          before-sha: ${{ steps.retry-base.outputs.base-sha }}
 
       # See "Compute agent run verdict (cycle)" above — same shared
       # composite, same steps.retry.outcome != 'skipped' guard so this
@@ -2334,6 +2376,9 @@ jobs:
         with:
           intended-turns: 15
 
+      # FR-025 exclusion (specs/071-agent-push-credential): this step's own
+      # default-disallowed-tools already lists Bash(git:*) below -- it
+      # never pushes, so the retry-bound prompt paragraph does not apply.
       - name: Compose progress summary (haiku)
         id: progress
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true' && steps.final.outputs.ok == 'true' && steps.tool-args-post-progress-comment.outputs.allowed-tools != ''
@@ -3118,6 +3163,22 @@ jobs:
       # the whole stall report into a red run with no label, no reason and
       # no restart runbook on the issue.
       #
+      # specs/071-agent-push-credential FR-016/FR-017 (code review of this
+      # PR, CLAUDE.md single-home rule): a published (workflow_call-only)
+      # stage may not resolve .github/actions/_shared/ directly (Gate 60's
+      # promotion check) -- this composite is the one front door onto
+      # _shared/published-commits-line.sh for a caller that is not itself
+      # a composite. wing-commander-chain-stop-notice, already a
+      # composite, reaches the shared script directly on the other stall
+      # path.
+      - name: Compute published-commits line
+        id: published-line
+        if: always() && steps.ctx.outcome == 'success' && needs.implement.outputs.final-ok == 'false'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-published-commits-line
+        with:
+          commits-published: ${{ needs.implement.outputs.commits-published }}
+          push-ok: ${{ needs.implement.outputs.push-ok }}
+
       # Gated on ctx rather than bare: this step needs the App token that
       # step mints, so running it after a failed mint would only add a
       # confusing second error on top of the real one.
@@ -3133,6 +3194,7 @@ jobs:
           AGENT_MSG: ${{ steps.stall-diagnostics.outputs.agent-message }}
           SELF_WORKFLOW: ${{ inputs.self-workflow }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          PUBLISHED_LINE: ${{ steps.published-line.outputs.line }}
         run: |
           gh label create "stage:stalled" --color E99695 --description "Stage did not complete; manual restart required" --force
           gh issue edit "$ISSUE" --add-label "stage:stalled"
@@ -3158,6 +3220,10 @@ jobs:
           recorded=$(jq -r '.iteration // 0' "$SPEC_DIR/spec-meta.json" 2>/dev/null) || recorded=""
           case "$recorded" in ''|*[!0-9]*) recorded="$ITERATION" ;; esac
           restart_iteration=$((recorded + 1))
+          # specs/071-agent-push-credential FR-016/FR-017: rendered by the
+          # "Compute published-commits line" step above -- see its own
+          # comment for why this step cannot resolve _shared/ itself.
+          published_line="$PUBLISHED_LINE"
           {
             echo "⏸️ **Implementation stalled** — iteration $ITERATION of the implement/converge loop failed (last attempt on \`$TIER\`), and no higher model tier remains to escalate to, so this specification is now **stalled** (nothing restarts automatically)."
             echo ""
@@ -3172,6 +3238,10 @@ jobs:
               echo "$fence"
               echo ""
               echo "</details>"
+            fi
+            if [ -n "$published_line" ]; then
+              echo ""
+              echo "$published_line"
             fi
             echo ""
             echo "### Runbook — restarting this specification"
@@ -3337,3 +3407,5 @@ jobs:
           restart-command: ${{ steps.restart.outputs.restart-command }}
           agent-ran: ${{ needs.implement.outputs.agent-ran }}
           agent-conclusion: ${{ needs.implement.outputs.agent-conclusion }}
+          commits-published: ${{ needs.implement.outputs.commits-published }}
+          push-ok: ${{ needs.implement.outputs.push-ok }}
