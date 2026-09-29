@@ -2,8 +2,10 @@
   "issue": 581,
   "spec_dir": "specs/077-stalled-per-spec-group",
   "feature_num": "077",
-  "stage": "implement",
+  "stage": "stalled",
   "iteration": 2,
   "spec_branch": "spec/077-stalled-per-spec-group",
-  "pending_re_review_from": ["charlesguse"]
+  "pending_re_review_from": [
+    "charlesguse"
+  ]
 }
