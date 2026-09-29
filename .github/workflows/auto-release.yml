@@ -1719,21 +1719,31 @@ jobs:
               jobs_json="$(printf '%s' "$jobs_raw" | jq -s -c '.' 2>/dev/null || echo '[]')"
               # A skipped job (e.g. the conditional `stalled` job, which
               # reports `steps: []`) never ran anywhere and so never got a
-              # chance to initialize a container; `verify-image-
-              # prerequisites` is a host-side job every stage workflow
-              # carries (gated on `if: inputs.container-image != ''`) that
-              # has no `container:` key and always runs on the host. Both
-              # are excluded from this enumeration rather than flagged as
-              # non-containerized (maintainer feedback on PR #628).
+              # chance to initialize a container. `verify-image-
+              # prerequisites` (every stage workflow, gated on `if:
+              # inputs.container-image != ''`), `resolve-model` (the
+              # wing-commander-5-implement.yml and wing-commander-9-pr-
+              # conversation.yml wrappers), and `sweep`
+              # (wing-commander-7-cleanup.yml) are host-side jobs with no
+              # `container:` key that always run on the host. All are
+              # excluded from this enumeration rather than flagged as
+              # non-containerized (maintainer feedback on PR #628, #509).
+              # A reusable-workflow job reports its name as "caller / job"
+              # (e.g. real run 36484092749's "implement / verify-image-
+              # prerequisites"), so the exclusion matches on the suffix
+              # after the last " / ", not the raw name (maintainer review
+              # of #509).
               while IFS= read -r job_name; do
                 [ -n "$job_name" ] || continue
                 noncontainerized="${noncontainerized:+$noncontainerized, }${job_name}"
               done < <(printf '%s' "$jobs_json" | jq -r '
                 .[]
                 | select(.conclusion != "skipped")
-                | select(.name != "verify-image-prerequisites")
-                | select(([.steps[]?.name // empty] | index("Initialize containers")) | not)
-                | .name')
+                | . as $job
+                | ($job.name | split(" / ") | last) as $short
+                | select((["verify-image-prerequisites", "resolve-model", "sweep"] | index($short)) | not)
+                | select(([$job.steps[]?.name // empty] | index("Initialize containers")) | not)
+                | $job.name')
             done < <(printf '%s\n' "$stage_run_ids")
 
             decision="$(bash .github/actions/_shared/auto-release-container-evidence-decision.sh execution ok "every stage job" "$noncontainerized")"

@@ -154,7 +154,7 @@ design already treats as `read_status=unreadable` (fail-infra, fail
 closed) rather than a silent pass -- so the risk here is a false
 `fail-infra` on an otherwise-good run, never a false `pass`.
 
-The executed-step gate (Gate 99, `verify-gate-99.py`) exercises the shipped
+The executed-step gate (Gate 106, `verify-gate-106.py`) exercises the shipped
 `steps[]` check against synthetic fixtures only, which proves the shipped
 logic does what it says, not that GitHub's real Jobs API response matches
 the fixture's assumed shape.
@@ -261,6 +261,16 @@ repository, one per half of what FR-015 must prove:
 next available number, Gate 99, as of this writing; the implement stage
 MUST re-check `lint-workflows.yml` immediately before registering, since
 another in-flight spec may claim 99 first.
+
+**2026-09-29 addendum**: The implement stage first registered this gate as
+Gate 99 (`verify-gate-99.py`), matching this reservation. A rebase of
+`lint-workflows.yml` claimed 99 for spec 059's own gate first, so the step
+was renumbered to Gate 101 in `lint-workflows.yml` without renaming the
+script or its internal messages, and 101 in turn collided with spec 060's
+already-claimed Gates 101-103. Maintainer review caught the mismatch; the
+gate is now **Gate 106** consistently — `verify-gate-106.py`, its
+`lint-workflows.yml` step names, and its own internal messages/docstring
+all agree.
 
 **Rationale**: Constitution VIII requires the gate run "the same subject
 with the same arguments locally as it does in CI" — extracting and

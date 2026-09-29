@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Container-mode evidence gates a container-mode `pass` (Gate 99).
+"""Container-mode evidence gates a container-mode `pass` (Gate 106).
 
 WHY THIS EXISTS
 ---------------
@@ -34,7 +34,7 @@ FR-015 requires:
 It ends with a --self-test mode that puts each defect back and asserts the
 suite then fails. A test that cannot fail is not a test (Constitution VIII).
 
-Usage: python3 .github/scripts/verify-gate-99.py [--self-test]
+Usage: python3 .github/scripts/verify-gate-106.py [--self-test]
 Requires: bash, jq. See wc_shell_harness.py for running this on Windows.
 """
 import json
@@ -352,27 +352,46 @@ exit 1
 
 WRAPPER_PATH = ".github/workflows/wing-commander-5-implement.yml"
 
+# Real job names as GitHub's Jobs API reports them (real run 36484092749):
+# a job that a wrapper's own job entry drives via `uses:
+# ./.github/workflows/implement.yml` is reported as "<caller job id> / <callee
+# job id>" (e.g. "implement / verify-image-prerequisites"), not the bare
+# callee job id the old exact-name match assumed (maintainer review of #509).
 JOB_CONTAINERIZED = json.dumps({
-    "name": "implement", "conclusion": "success", "steps": [
+    "name": "implement / implement", "conclusion": "success", "steps": [
         {"name": "Set up job"}, {"name": "Initialize containers"},
         {"name": "Run agent"}, {"name": "Stop containers"}]})
 JOB_NOT_CONTAINERIZED = json.dumps({
-    "name": "implement", "conclusion": "success", "steps": [
+    "name": "implement / implement", "conclusion": "success", "steps": [
         {"name": "Set up job"}, {"name": "Run agent"}]})
 # A conditional job (e.g. `stalled`) that never ran reports `steps: []` and
 # a "skipped" conclusion -- it never got a chance to initialize a container
 # and must not be flagged as non-containerized (maintainer feedback on PR
 # #628).
 JOB_SKIPPED = json.dumps({
-    "name": "stalled", "conclusion": "skipped", "steps": []})
+    "name": "implement / stalled", "conclusion": "skipped", "steps": []})
 # Every stage workflow carries this host-side job (gated on
 # `if: inputs.container-image != ''`); it has no `container:` key and
 # always runs on the host, so it always lacks an `Initialize containers`
 # step even on a genuine container-mode pass (maintainer feedback on PR
-# #628).
+# #628). Named here in its real "caller / job" shape, which the old
+# exact-name match (`.name != "verify-image-prerequisites"`) never matched,
+# wrongly flagging it as non-containerized on every real reusable-workflow
+# run (maintainer review of #509).
 JOB_VERIFY_IMAGE_PREREQUISITES = json.dumps({
-    "name": "verify-image-prerequisites", "conclusion": "success", "steps": [
+    "name": "implement / verify-image-prerequisites", "conclusion": "success", "steps": [
         {"name": "Set up job"}, {"name": "Check image prerequisites"}]})
+# The wrapper's own top-level jobs (not called through a reusable workflow,
+# so reported with their bare id, no "caller / " prefix): resolve-model
+# (wing-commander-5-implement.yml, wing-commander-9-pr-conversation.yml) and
+# sweep (wing-commander-7-cleanup.yml) are host-side and carry no
+# `container:` key (maintainer review of #509).
+JOB_RESOLVE_MODEL = json.dumps({
+    "name": "resolve-model", "conclusion": "success", "steps": [
+        {"name": "Set up job"}, {"name": "Resolve model tier"}]})
+JOB_SWEEP = json.dumps({
+    "name": "sweep", "conclusion": "success", "steps": [
+        {"name": "Set up job"}, {"name": "Find closed pipeline PRs whose close produced no cleanup run"}]})
 
 EXECUTION_BASE_ENV = dict(
     MODE="container", E2E_REPO="owner/e2e-target", HEAD_SHA=HEAD,
@@ -451,9 +470,33 @@ EXECUTION_SCENARIOS = [
         ]), GH_STUB_JOBS_333=JOB_NOT_CONTAINERIZED),
         reached_pass=True,
     ),
+    # Maintainer review of #509: the job-name exclusion used exact matching,
+    # which misses reusable-workflow jobs reported as "caller / job" and
+    # never excluded the wrappers' host-side jobs at all. These fixtures
+    # fail against the pre-fix exact-match/incomplete-exclusion-list logic
+    # (the "caller / job"-shaped verify-image-prerequisites job would not
+    # match the bare exact-name check, and resolve-model/sweep were not
+    # excluded at all) and only pass once the suffix match and full
+    # exclusion list are in place.
+    dict(
+        name="MR(#509) the reusable-workflow-shaped verify-image-prerequisites job ('implement / verify-image-prerequisites') present: still reaches pass",
+        env=dict(GH_STUB_JOBS_111="\n".join(
+            [JOB_CONTAINERIZED, JOB_VERIFY_IMAGE_PREREQUISITES])),
+        reached_pass=True,
+    ),
+    dict(
+        name="MR(#509) the resolve-model wrapper job present: still reaches pass",
+        env=dict(GH_STUB_JOBS_111="\n".join([JOB_CONTAINERIZED, JOB_RESOLVE_MODEL])),
+        reached_pass=True,
+    ),
+    dict(
+        name="MR(#509) the sweep wrapper job present: still reaches pass",
+        env=dict(GH_STUB_JOBS_111="\n".join([JOB_CONTAINERIZED, JOB_SWEEP])),
+        reached_pass=True,
+    ),
 ]
 
-SENTINEL = "WC_GATE99_FRAGMENT_REACHED_PASS"
+SENTINEL = "WC_GATE106_FRAGMENT_REACHED_PASS"
 
 
 def build_execution_script(preamble, fragment):
@@ -518,7 +561,7 @@ def suite_execution(preamble, fragment, tmproot, source_root=REPO_ROOT):
 def mut_config_drift_ignored(text):
     old = 'elif [ "$observed" != "$expected" ]; then'
     if text.count(old) != 1:
-        fail(f"verify-gate-99: expected exactly one {old!r} to mutate in "
+        fail(f"verify-gate-106: expected exactly one {old!r} to mutate in "
              f"the decision script, found {text.count(old)}.")
     return text.replace(old, 'elif false; then', 1)
 
@@ -526,14 +569,14 @@ def mut_config_drift_ignored(text):
 def mut_execution_gate_removed_in_workflow(text):
     old = FRAGMENT_START_MARKER
     if text.count(old) != 1:
-        fail(f"verify-gate-99: expected exactly one {old!r} marker in "
+        fail(f"verify-gate-106: expected exactly one {old!r} marker in "
              f"{WORKFLOW}, found {text.count(old)}.")
     start = text.index(old)
     end = text.index(FRAGMENT_END_MARKER, start)
     fragment = text[start:end]
     needle = 'if [ -n "$failing_check" ]; then'
     if fragment.count(needle) != 1:
-        fail("verify-gate-99: could not locate the execution fragment's "
+        fail("verify-gate-106: could not locate the execution fragment's "
              "failing_check branch to mutate -- update this gate alongside it.")
     mutated_fragment = fragment.replace(needle, 'if false; then', 1)
     return text[:start] + mutated_fragment + text[end:]
@@ -549,7 +592,7 @@ def mut_cleanup_guard_loosened(text):
            '        # default-runner turn, so this guard is unchanged for that mode.\n'
            '        if: steps.container-evidence-config.outputs.ok == \'true\'')
     if text.count(old) != 1:
-        fail("verify-gate-99: could not locate the cleanup step's guard to "
+        fail("verify-gate-106: could not locate the cleanup step's guard to "
              "mutate -- update this gate alongside it.")
     return text.replace(
         old,
@@ -679,7 +722,7 @@ def main():
         shutil.rmtree(tmproot, ignore_errors=True)
 
     n_scenarios = len(CONFIG_SCENARIOS) + len(EXECUTION_SCENARIOS)
-    print(f"container-mode evidence (Gate 99): {n_scenarios} scenario(s); "
+    print(f"container-mode evidence (Gate 106): {n_scenarios} scenario(s); "
           f"{len(failures)} failure(s).")
     sys.exit(1 if failures else 0)
 

@@ -4205,7 +4205,7 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-lifecycle-label-taxonomy.py --self-test
 
-      # Gate 101 — specs/067-e2e-container-image-evidence: a container-mode
+      # Gate 106 — specs/067-e2e-container-image-evidence: a container-mode
       # end-to-end turn used to earn `pass` without ever confirming the
       # test repository was configured to run in a container image
       # matching this repository's pin, or that any stage job it drove
@@ -4217,16 +4217,18 @@ jobs:
       # evidence fragment still checks its own decision and exits before
       # reaching that call. Also executes the shipped container-evidence-
       # config step and the shipped execution-evidence fragment verbatim
-      # under stubbed gh, one fixture per FR-005 branch. Numbered 101, not
-      # the 100 this branch's own commit picked: Gate 100 (#587) claimed
-      # that number before this branch's rebase landed (see the comment
-      # above).
-      - name: "Gate 101 — a container-mode pass requires both container-mode evidence checks to have run and agreed"
+      # under stubbed gh, one fixture per FR-005 branch. Numbered 106, not
+      # the 101 this branch's own commit first picked (which collided with
+      # spec 060's already-claimed 101-103) nor the 99 the gate's own
+      # script/messages said before that rename (maintainer review of
+      # #509) -- this gate's script was also renamed from
+      # verify-gate-99.py to verify-gate-106.py to match.
+      - name: "Gate 106 — a container-mode pass requires both container-mode evidence checks to have run and agreed"
         if: "!cancelled()"
-        run: python3 .github/scripts/verify-gate-99.py
-      - name: "Gate 101 self-test — loosening cleanup's guard, dropping the execution fragment's failing_check branch, or disabling the config decision's drift comparison each fail"
+        run: python3 .github/scripts/verify-gate-106.py
+      - name: "Gate 106 self-test — loosening cleanup's guard, dropping the execution fragment's failing_check branch, or disabling the config decision's drift comparison each fail"
         if: "!cancelled()"
-        run: python3 .github/scripts/verify-gate-99.py --self-test
+        run: python3 .github/scripts/verify-gate-106.py --self-test
 
       # Gate 104 — #468/#504/#615: board-loop.yml's review, readiness and fix
       # (resume path, and every post-agent step) jobs check out board-item
