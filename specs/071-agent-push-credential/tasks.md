@@ -232,3 +232,9 @@ Per CLAUDE.md's own cap (concurrent local agents kept to two during this pipelin
 ---
 
 Lifecycle issue: #545.
+
+---
+
+## Maintainer Feedback
+
+- [ ] T056 **Gate renumbering cleanup (2nd collision):** main has since merged Gate 120 (`verify-dedup-key-canonical-rule.py`) and Gate 121 (`verify-commit-message-scratch-path.py`) for other specs, colliding with this branch's own Gate 120/121 (`verify-agent-push-credential-helper.py` / `verify-agent-push-credential-shell.py`). Confirm the collision by running `python .github/scripts/run-local-gates.py` and checking the two main-side scripts' own self-tests report their `lint-workflows.yml` step no longer invokes them. Reallocate this feature's pair to **Gate 122** and **Gate 123** (the next free numbers after main's Gate 121 and this branch's own highest, per #730 having already claimed 124), following T055's precedent exactly: renumber every reference across `lint-workflows.yml`'s two step-name pairs and pointer comments; `.github/scripts/verify-agent-push-credential-helper.py` and `.github/scripts/verify-agent-push-credential-shell.py`'s module docstrings, `::error`/summary messages, and tempdir-prefix strings; `.github/actions/wing-commander-agent-push-credential/mint-credential.sh`'s single-home pointer comment; and every spec doc under `specs/071-agent-push-credential/` naming Gate 120 or Gate 121 (`contracts/agent-push-credential-gate.md`, `contracts/agent-push-credential-helper.md`, `contracts/stranded-commit-publish.md`, `data-model.md`, `plan.md`, `quickstart.md`, `research.md`). Leave T001's and T055's own historical "Confirmed:"/narrative sentences unrewritten, as accurate records of what was true at those points in the cycle. Confirm no other spec's Gate 120/121 reference is touched, and that `python .github/scripts/run-local-gates.py` and `verify-gate-wiring.py` are green afterward. Cross-reference: #660 (tracks the general gate-allocation collision problem), #730 (claims Gate 124).
