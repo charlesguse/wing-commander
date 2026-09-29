@@ -84,6 +84,18 @@ URL, with the token in env, from a config-derived remote and with whatever
 token or redirect where it is sent. Nothing in the repository currently
 constrains either.
 
+### Scope after clarification
+
+The four paths above were reported against `board-loop.yml`, and its jobs stay
+the feature's primary evidence. The clarification on #737 resolved the scope
+wider than that: the containment property is a property of *every* job in this
+repository that runs an agent and later performs a durable action with the App
+token. The feature-lifecycle stages that do so — `implement`, `converge`,
+`pr-conversation` — carry the same exposure, because code written in an earlier
+cycle runs with the token in env. Since the containment mechanism (FR-006) is
+one reusable pattern, applying it to every such job costs little more than
+applying it to the board loop's two.
+
 ### What this feature does not cover (already closed)
 
 Three of the items carried in on issue #590 and its comments have since been
@@ -122,7 +134,8 @@ mischief".
 of every environment variable it can see and writes what it finds to its
 output; drive the fix job; confirm the loop's App token does not appear, and
 confirm the job still reported the suite's pass/fail correctly and took the
-matching branch (push on green, `board:stalled` comment on red).
+matching branch (push on green, `board:stalled` comment on red). Repeat on one
+feature-lifecycle stage that runs an agent and then pushes with the App token.
 
 **Acceptance Scenarios**:
 
@@ -144,10 +157,10 @@ matching branch (push on green, `board:stalled` comment on red).
 ### User Story 2 - Nothing the agent wrote can take over a later step (Priority: P2)
 
 A maintainer wants the trusted snapshot to still be trusted *after* the gate
-suite has run. Agent-authored code executed anywhere in the loop must not be
-able to rewrite the pristine snapshot or the trusted composite copy, and must
-not be able to change the environment, the `PATH`, or the interpreter that
-later steps in the job use.
+suite has run. Agent-authored code executed anywhere in the pipeline must not
+be able to rewrite the pristine snapshot or the trusted composite copy, and
+must not be able to change the environment, the `PATH`, or the interpreter that
+the steps performing durable actions use.
 
 **Why this priority**: It is what makes #583's and #086's guarantees hold for
 the whole job instead of its first half. Without it, every later "we import
@@ -167,9 +180,9 @@ variable or the shadowed executable.
    content of the trusted commit, or the job fails loudly before the durable
    action.
 2. **Given** agent-authored code that appends to `$GITHUB_ENV` or
-   `$GITHUB_PATH`, **When** a later step in the same job runs, **Then** that
-   step's environment and `PATH` are the ones the workflow established, not the
-   ones the agent's code wrote.
+   `$GITHUB_PATH`, **When** a step that later performs a durable action runs,
+   **Then** that step's environment and `PATH` are the ones the workflow
+   established, not the ones the agent's code wrote.
 3. **Given** agent-authored code that overwrites `.wc-pristine-repo`, **When** a
    later step resolves a composite, **Then** it resolves the trusted commit's
    copy or the job fails loudly.
@@ -234,8 +247,8 @@ confirm the hook did not execute and the push reached the intended remote.
    config, **When** the loop's push step runs, **Then** the push is unaffected
    by it and reaches the intended remote.
 3. **Given** the fixer agent, **When** it attempts to write under `.git/`,
-   **Then** the write is refused, or the plant is neutralised at push time, or
-   both — per the decision recorded against FR-018.
+   **Then** the harness refuses the write, and a plant that arrived by any
+   other route is neutralised at push time — both, per FR-018.
 
 ---
 
@@ -246,7 +259,9 @@ confirm the hook did not execute and the push reached the intended remote.
   that genuinely needs read access to this repository fails. The containment
   must distinguish "cannot write" from "cannot function", and any gate that
   needs a credential must be identified before the containment ships rather
-  than discovered by a red board-loop run.
+  than discovered by a red board-loop run. FR-006's separate job carries
+  `permissions: read`, so read access remains available to such a gate; what it
+  loses is every write-capable credential.
 - **The gate suite never returns a verdict.** A hung, killed or timed-out suite
   must be a failure at the push decision, never an absent value that reads as
   green (Principle VIII).
@@ -273,10 +288,11 @@ confirm the hook did not execute and the push reached the intended remote.
 
 **Containment of agent-authored code**
 
-- **FR-001**: The board loop MUST execute `run-local-gates.py` and the gate
-  scripts from a board item's branch in an execution context that holds no
-  credential able to write to this repository — not the App token, not a
-  checkout credential, not any `GH_TOKEN`.
+- **FR-001**: A job covered by FR-005 MUST execute `run-local-gates.py` and the
+  gate scripts from an agent-written branch in an execution context that holds
+  no credential able to write to this repository — not the App token, not a
+  checkout credential, not any write-capable `GH_TOKEN`. A read-only credential
+  remains permitted.
 - **FR-002**: The gate suite's verdict (pass/fail and the first failing gate's
   text) MUST reach the steps that decide whether to push, comment and label,
   and MUST keep today's downstream behaviour on both outcomes.
@@ -284,31 +300,41 @@ confirm the hook did not execute and the push reached the intended remote.
   untrusted when it is rendered into an issue comment — control characters
   stripped and the body fenced, as today.
 - **FR-004**: A gate suite that produces no verdict — hung, cancelled, crashed,
-  or whose containment could not be established — MUST be treated as a failure
-  at the push decision, never as a pass.
-- **FR-005**: The same containment MUST apply to both call sites: the fix job's
-  gate suite and the review-fixup gate suite. [NEEDS CLARIFICATION: does this
-  containment property extend beyond `board-loop.yml` to the feature-lifecycle
-  stages that also run an agent and then push with the App token — `implement`,
-  `converge`, `pr-conversation` — or is this feature bounded to the board loop,
-  with the lifecycle stages filed separately?]
-- **FR-006**: The mechanism MUST be one of the containment strategies recorded
-  against the decision below, applied uniformly at both call sites rather than
-  chosen per site. [NEEDS CLARIFICATION: which containment strategy — (a) a
-  separate job with `permissions: read` and no App token, results passed back
-  as an artifact; (b) the same job with the credential-bearing variables
-  scrubbed from that step's environment; (c) a stronger isolation boundary
-  (container, separate runner) around the suite?]
+  whose containment could not be established, or whose verdict artifact is
+  absent, unreadable or malformed — MUST be treated as a failure at the push
+  decision, never as a pass.
+- **FR-005**: The containment MUST apply to every job in this repository that
+  runs an agent and later performs a durable action with the App token. That is
+  the board loop's two gate-suite call sites — the `fix` job's and
+  review-fixup's — and the feature-lifecycle stages that run an agent and then
+  push, comment or label with the App token: `implement`, `converge` and
+  `pr-conversation`. *(Resolved on #737: the lifecycle stages carry the same
+  exposure — code from an earlier cycle runs with the token — so bounding the
+  feature to the board loop, or deferring the rest to a named later phase,
+  would leave that exposure as recorded intent rather than a closed path.)*
+- **FR-006**: The containment mechanism MUST be a separate job that holds
+  `permissions: read` and no App token: the gate suite runs there, and its
+  verdict returns to the credential-bearing job as an artifact that fails
+  closed when it is missing or malformed (FR-004). The mechanism MUST be
+  applied uniformly at every call site FR-005 names rather than chosen per
+  site. *(Resolved on #737: a separate credential-free job is the only
+  candidate that also closes FR-007 and FR-008, because the agent's code no
+  longer shares a filesystem, a `$GITHUB_ENV` or a `$GITHUB_PATH` with the
+  steps that push. In-place environment scrubbing and a stronger isolation
+  boundary around the suite were both rejected for leaving those bypasses
+  open or costing more for the same guarantee.)*
 
 **Integrity of the trusted snapshot and the job environment**
 
-- **FR-007**: Code the board loop executes from an item's branch MUST NOT be
-  able to alter what a later step in the same job imports from
-  `$RUNNER_TEMP/wc-pristine` or resolves from `.wc-pristine-repo`.
-- **FR-008**: Code the board loop executes from an item's branch MUST NOT be
-  able to alter the environment variables, the `PATH`, or the interpreter that
-  a later step in the same job uses — specifically, appends to `$GITHUB_ENV`
-  and `$GITHUB_PATH` must not take effect for later steps.
+- **FR-007**: Code a job covered by FR-005 executes from an agent-written
+  branch MUST NOT be able to alter what a later step in a credential-bearing
+  job imports from `$RUNNER_TEMP/wc-pristine` or resolves from
+  `.wc-pristine-repo`.
+- **FR-008**: Code a job covered by FR-005 executes from an agent-written
+  branch MUST NOT be able to alter the environment variables, the `PATH`, or
+  the interpreter that any step which later performs a durable action uses —
+  specifically, appends to `$GITHUB_ENV` and `$GITHUB_PATH` must not reach
+  those steps.
 - **FR-009**: The repository MUST state, in the workflow comment that documents
   the snapshot, exactly which steps the snapshot's guarantee covers and what
   that guarantee rests on, so a future reader cannot mistake "read-only" for
@@ -319,41 +345,50 @@ confirm the hook did not execute and the push reached the intended remote.
 
 **Provenance inside composite actions**
 
-- **FR-011**: A composite action reached from a board-loop job whose workspace
-  holds agent-written content MUST resolve the helper scripts and schemas its
-  own `run:` steps execute from the trusted snapshot, never from a
-  workspace-relative path.
+- **FR-011**: A composite action reached from a job whose workspace holds
+  agent-written content and that performs a durable action with the App token
+  — the board loop's `fix`, `review` and `readiness`, and the lifecycle stages
+  FR-005 names — MUST resolve the helper scripts and schemas its own `run:`
+  steps execute from the trusted snapshot, never from a workspace-relative
+  path.
 - **FR-012**: `wing-commander-board-stop-check` MUST satisfy FR-011 — the
   kill-switch decision MUST NOT be computed by a copy of `board_stop_check.py`
   that an agent could have written.
 - **FR-013**: A gate MUST inspect the `run:` bodies of the composite actions
-  reachable from `fix`, `review` and `readiness`, so that moving a `run:` block
-  from `board-loop.yml` into a composite cannot exit the provenance rule's
-  field of view.
+  reachable from every job FR-011 covers, so that moving a `run:` block out of
+  a workflow and into a composite cannot exit the provenance rule's field of
+  view.
 - **FR-014**: FR-013's gate MUST fail loudly, rather than pass, when it cannot
   determine the set of composites a job reaches (Principle VIII).
 
 **Git hooks and git configuration**
 
 - **FR-015**: A hook file present in the working checkout MUST NOT execute
-  during any git operation the board loop performs with the App token.
+  during any git operation a job covered by FR-005 performs with the App token.
 - **FR-016**: A git configuration value present in the repository-, global- or
-  system-level config MUST NOT be able to redirect where the loop's push sends
-  the App token, nor cause additional code to run during it.
-- **FR-017**: The loop's pushes MUST target an explicitly stated destination
-  rather than one derived from configuration an agent could have written.
-- **FR-018**: The agent's ability to write under `.git/` MUST be addressed at
-  the point the decision below records. [NEEDS CLARIFICATION: deny `.git/**` in
-  the fixer's and review-fixup's disallowed tools, harden the push steps so a
-  plant is inert, or both — and is the tool-level deny alone acceptable given
-  that a tool allowlist is a request the model can fail to honour (Principle
-  IX)?]
+  system-level config MUST NOT be able to redirect where such a push sends the
+  App token, nor cause additional code to run during it.
+- **FR-017**: Those pushes MUST target an explicitly stated destination rather
+  than one derived from configuration an agent could have written.
+- **FR-018**: Both mitigations MUST ship, each behind its own structural gate.
+  First, `.git/**` MUST be denied in the disallowed tools of every agent
+  covered by FR-005 — the fixer, review-fixup and the lifecycle-stage agents —
+  so the agent's `Write` and `Edit` grants cannot reach it. Second, the push
+  steps MUST be hardened so that a plant arriving by any other route is inert:
+  `core.hooksPath` pointed at nothing executable (`/dev/null`), a pristine
+  `GIT_CONFIG_GLOBAL`, `GIT_CONFIG_NOSYSTEM` set, and an explicit push URL.
+  *(Resolved on #737, which also corrected the question's framing: disallowed
+  tools are enforced by the harness, not honoured at the model's discretion, so
+  the deny is a real boundary over the agent's tools rather than a request —
+  Principle IX does not weaken it. The push hardening is still required because
+  it covers plants that arrive by routes the tool allowlist does not govern.)*
 
 **Gates and evidence**
 
-- **FR-019**: Each of FR-001, FR-007/FR-008, FR-011 and FR-015/FR-016/FR-017
-  MUST be held by a gate reachable through the gate registry, running the same
-  subject with the same arguments locally as in CI.
+- **FR-019**: Each of FR-001, FR-007/FR-008, FR-011, FR-015/FR-016/FR-017 and
+  each of FR-018's two mitigations MUST be held by a gate reachable through the
+  gate registry, running the same subject with the same arguments locally as in
+  CI.
 - **FR-020**: Every failure branch each new gate ships MUST be exercised by a
   checked-in fixture, not by a manual demonstration (Principle VIII).
 - **FR-021**: Each new gate MUST be triggered by changes to the workflow,
@@ -383,22 +418,27 @@ confirm the hook did not execute and the push reached the intended remote.
   `$GITHUB_ENV` by `wing-commander-context` and therefore present in every
   later step of the job.
 - **Gate verdict**: the pass/fail outcome and first-failing-gate text the gate
-  suite produces, consumed by the push, comment and label decisions.
+  suite produces, consumed by the push, comment and label decisions. Under
+  FR-006 it crosses a job boundary as an artifact, and its absence or
+  malformation is a failure (FR-004).
+- **Credential-free gate job**: the separate `permissions: read`, no-App-token
+  job FR-006 establishes, where agent-authored gate code executes.
 
 ## Success Criteria *(mandatory)*
 
 ### Measurable Outcomes
 
-- **SC-001**: A gate script placed on a board item's branch that enumerates its
-  own environment finds zero credentials able to write to this repository.
-- **SC-002**: A gate script placed on a board item's branch that attempts to
+- **SC-001**: A gate script placed on an agent-written branch that enumerates
+  its own environment finds zero credentials able to write to this repository,
+  at every call site FR-005 names.
+- **SC-002**: A gate script placed on an agent-written branch that attempts to
   rewrite the pristine snapshot or the trusted copy, or to append to
-  `$GITHUB_ENV` or `$GITHUB_PATH`, changes the behaviour of zero later steps in
-  the job.
-- **SC-003**: Zero composite actions reachable from `fix`, `review` or
-  `readiness` execute a workspace-relative helper script.
-- **SC-004**: A `pre-push` hook and a `url.*.insteadOf` value planted on a fix
-  branch influence zero pushes the loop performs.
+  `$GITHUB_ENV` or `$GITHUB_PATH`, changes the behaviour of zero steps that
+  later perform a durable action.
+- **SC-003**: Zero composite actions reachable from a job FR-011 covers
+  execute a workspace-relative helper script.
+- **SC-004**: A `pre-push` hook and a `url.*.insteadOf` value planted on an
+  agent-written branch influence zero pushes those jobs perform.
 - **SC-005**: A fix PR whose gate suite fails still produces exactly today's
   outcome — no push, no PR, the first failing gate quoted on the issue inside a
   fence, `board:stalled` applied — measured over the feature's fixtures.
@@ -408,9 +448,10 @@ confirm the hook did not execute and the push reached the intended remote.
 - **SC-007**: Each of the four open paths named in the Overview is either
   closed by a requirement above or explicitly deferred with the deferral
   recorded on the lifecycle issue — none is left silently unaddressed.
-- **SC-008**: One board-loop run is re-driven after merge and its evidence
-  recorded, demonstrating the loop still takes an item from `fix` through a
-  green gate suite to a pushed branch and an opened PR.
+- **SC-008**: One board-loop run and one feature-lifecycle stage run are
+  re-driven after merge and their evidence recorded, demonstrating the loop
+  still takes an item from `fix` through a green gate suite to a pushed branch
+  and an opened PR, and that a contained lifecycle stage still pushes.
 
 ## Assumptions
 
@@ -418,9 +459,9 @@ confirm the hook did not execute and the push reached the intended remote.
   open a PR on green; comment the first failing gate and apply `board:stalled`
   on red — is correct and is preserved unchanged; only where the suite runs and
   what it can reach changes.
-- The `fix` and `review-fixup` agents keep their `Write`/`Edit` grants over the
-  workspace; this feature constrains what that access can reach, not whether
-  the agent has it.
+- The agents covered by FR-005 keep their `Write`/`Edit` grants over the
+  workspace, minus `.git/**` (FR-018); this feature constrains what that access
+  can reach, not whether the agent has it.
 - The three items recorded as already closed (composite resolution via spec
   086, the reviewer's `git_read.py` grant, `verify-stage-finding-schema.py`'s
   `\Z` translation via #593) stay closed; this feature does not re-verify them
@@ -431,12 +472,14 @@ confirm the hook did not execute and the push reached the intended remote.
   runs the agent's code.
 - `board-loop.yml` is this repository's own consuming instrument, not a
   published stage (its own header says so), so changes confined to it do not
-  widen the adopter-pinned contract. Changes to composites under
-  `.github/actions/` that adopters resolve do touch the published surface and
-  are treated accordingly (Principle VII).
-- Gate-suite runtime may increase if the suite moves to a separate execution
-  context; a modest increase is acceptable, and no specific budget is asserted
-  here.
+  widen the adopter-pinned contract. The lifecycle stages FR-005 brings into
+  scope, and the composites under `.github/actions/` that adopters resolve, do
+  touch the published surface and are treated accordingly (Principle VII) —
+  widening the scope on #737 means this feature ships a published-surface
+  change, not only an internal one.
+- Gate-suite runtime increases: FR-006's separate job adds job startup and a
+  checkout per call site. A modest increase is acceptable, and no specific
+  budget is asserted here.
 - No checked-in gate today requires a repository-write credential to pass; any
   that requires repository *read* access is identified during planning rather
   than assumed absent.
