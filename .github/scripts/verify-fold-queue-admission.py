@@ -28,11 +28,15 @@ WHAT THIS GATE LOADS (Principle VIII -- verbatim, never restated)
 - `fold-cycle-guard.yml`'s `guard` job, step id `decide` ("Detect a lost
   cycle and react") -- run directly (`wc_shell_harness.run_step`, the same
   technique Gate 34/71 use), never re-typed as a description of what it does.
-- `.github/actions/_shared/fold-queue-ledger.sh`'s `claim-dispatch`
-  transform -- run directly against a throwaway local bare repository
-  (`LEDGER_REMOTE_URL`, the same fixture convention
-  `wing-commander-fold-queue-claim-dispatch/tests/run.sh` already uses; this
-  gate's own value is proving MUTATIONS of that transform, which the manual
+  Step id `react` ("React to the redispatch claim")'s `run:` text is loaded
+  the same way but only pattern-matched (scenario 9), never executed --
+  it calls the real `gh workflow run`, which this gate does not stub.
+- `.github/actions/_shared/fold-queue-ledger.sh`'s `claim-dispatch` and
+  `claim-redispatch` transforms -- run directly against a throwaway local
+  bare repository (`LEDGER_REMOTE_URL`, the same fixture convention
+  `wing-commander-fold-queue-claim-dispatch/tests/run.sh` and
+  `wing-commander-fold-queue-ledger/tests/run.sh` already use; this gate's
+  own value is proving MUTATIONS of those transforms, which the manual
   quickstart drill does not).
 
 The two composites' own step lists (peek, peek-implement-run, claim) are
@@ -76,6 +80,13 @@ SCENARIOS (`suite(subject)`, contracts/gates.md)
 8. Re-dispatch bound -- a round whose peeked `redispatch-count` is already
    `1` must resolve to a report-only outcome, never a second redispatch
    attempt (FR-016a).
+9. Re-dispatch claim enqueues a fresh ticket atomically (T038) -- a winning
+   `claim-redispatch` call must enqueue an `implement`-kind ticket in the
+   SAME write as the `redispatch_count` CAS and return its token, and the
+   `react` step must thread that token onto its `gh workflow run`
+   re-dispatch as `fold_queue_token` -- otherwise the recovered cycle
+   re-enters `implement.yml`'s concurrency group unticketed, exposed to
+   the very eviction FR-016 exists to recover from.
 
 MUTATIONS (each proven to break the gate -- FR-022)
 ----------------------------------------------------
@@ -91,6 +102,12 @@ MUTATIONS (each proven to break the gate -- FR-022)
 - `mut_unbounded_redispatch` -- removes `decide`'s own `redispatch_count ==
   1` fast-path check, so it would attempt a second redispatch instead of
   reporting once and stopping. Fails scenario 8.
+- `mut_redispatch_no_enqueue` -- reverts `claim-redispatch`'s jq filter to
+  only flip `redispatch_count` without enqueueing the implement-kind ticket
+  (the T038 defect restored). Fails scenario 9.
+- `mut_drop_redispatch_token_thread` -- removes the `-f fold_queue_token=`
+  argument from `react`'s `gh workflow run` call (the T038 defect
+  restored). Fails scenario 9.
 
 `main()` runs `suite()` against the untouched subject (must be 0 failures),
 then re-runs it under each mutation and requires a failure -- identical to
@@ -113,6 +130,7 @@ IMPLEMENT = os.path.join(".github", "workflows", "implement.yml")
 GUARD = os.path.join(".github", "workflows", "fold-cycle-guard.yml")
 LEDGER_SH = os.path.join(".github", "actions", "_shared", "fold-queue-ledger.sh")
 DECIDE_STEP_NAME = "Detect a lost cycle and react"
+REACT_STEP_NAME = "React to the redispatch claim"
 
 BASH = None
 
@@ -155,6 +173,12 @@ def load_expr_subject():
     subject["decide:run"] = str(decide.get("run") or "")
     if not subject["decide:run"].strip():
         sys.exit(f"::error file={GUARD}::step {DECIDE_STEP_NAME!r} has no run: -- "
+                 f"nothing to execute.")
+
+    react = find_step(GUARD, REACT_STEP_NAME)
+    subject["react:run"] = str(react.get("run") or "")
+    if not subject["react:run"].strip():
+        sys.exit(f"::error file={GUARD}::step {REACT_STEP_NAME!r} has no run: -- "
                  f"nothing to execute.")
 
     with open(LEDGER_SH, encoding="utf-8") as fh:
@@ -497,6 +521,52 @@ def scenario_guard_classification(subject, root):
     return failures
 
 
+def scenario_redispatch_claim_enqueues_ticket(subject, root):
+    """Scenario 9 (T038): a winning claim-redispatch call enqueues a fresh
+    implement-kind ticket atomically with the redispatch_count CAS and
+    returns its token, so the react step has a real ticket to thread onto
+    its re-dispatch -- not just a returned string with nothing behind it."""
+    failures = []
+    remote = new_bare_remote(root)
+    spec = "specs/999-fixture"
+    run_ledger(LEDGER_SH, "enqueue", remote,
+              {"SPEC_DIR": spec, "KIND": "act", "RUN_ID": "700"})
+    run_ledger(LEDGER_SH, "release", remote,
+              {"SPEC_DIR": spec, "TOKEN": "run-700-act", "RUN_ID": "700",
+               "OUTCOME": "folded", "COMMIT_SHA": "cafe", "LEG_ID": "leg-1",
+               "SUMMARY": "s"})
+
+    proc = run_ledger(LEDGER_SH, "claim-redispatch", remote,
+                      {"SPEC_DIR": spec, "ROUND": "1", "RUN_ID": "900"})
+    result = parse_kv(proc.stdout)
+    if result.get("should-redispatch") != "true":
+        failures.append(f"scenario 9: winning claim-redispatch resolved "
+                        f"should-redispatch={result.get('should-redispatch')!r}; "
+                        f"expected 'true'. stderr: {proc.stderr.strip()}")
+    if result.get("implement-token") != "run-900-implement":
+        failures.append(f"scenario 9: winning claim-redispatch's "
+                        f"implement-token is "
+                        f"{result.get('implement-token')!r}, expected "
+                        f"'run-900-implement'")
+
+    peek_proc = run_ledger(LEDGER_SH, "peek", remote,
+                           {"SPEC_DIR": spec, "PEEK_TOKEN": "run-900-implement"})
+    peek_result = parse_kv(peek_proc.stdout)
+    if peek_result.get("granted") != "true":
+        failures.append(f"scenario 9: claim-redispatch reported "
+                        f"implement-token=run-900-implement but the ledger "
+                        f"shows it was never actually enqueued/granted: "
+                        f"{peek_result!r}")
+
+    needle = '-f fold_queue_token="$implement_token"'
+    if needle not in subject["react:run"]:
+        failures.append("scenario 9: react's gh workflow run call does not "
+                        "thread a fold_queue_token -- the redispatched "
+                        "implement.yml run would re-enter the concurrency "
+                        "group unticketed (the T038 defect)")
+    return failures
+
+
 def scenario_redispatch_bound(subject, root):
     failures = []
     rc, out, outputs, _ = run_decide(
@@ -528,6 +598,7 @@ def suite(subject, root):
     failures += scenario_dispatch_after_round_empties(subject, root)
     failures += scenario_guard_classification(subject, root)
     failures += scenario_redispatch_bound(subject, root)
+    failures += scenario_redispatch_claim_enqueues_ticket(subject, root)
     return failures
 
 
@@ -574,11 +645,35 @@ def mut_unbounded_redispatch(subject):
     return s
 
 
+def mut_redispatch_no_enqueue(subject):
+    s = dict(subject)
+    needle = ('.specs[$spec].queue += [{"token": $impl_token, "kind": '
+              '"implement", "run_id": $run_id, "enqueued_at": $now, '
+              '"granted_at": null}]')
+    replacement = "."
+    if needle not in subject["ledger:text"]:
+        return s
+    s["ledger:text"] = subject["ledger:text"].replace(needle, replacement)
+    return s
+
+
+def mut_drop_redispatch_token_thread(subject):
+    s = dict(subject)
+    needle = ' -f fold_queue_token="$implement_token"'
+    replacement = ""
+    if needle not in subject["react:run"]:
+        return s
+    s["react:run"] = subject["react:run"].replace(needle, replacement)
+    return s
+
+
 MUTATIONS = [
     ("fold-turn-* prerequisite dropped from needs:", mut_drop_fold_turn_needs),
     ("claim-dispatch's round-emptiness check removed", mut_unconditional_dispatch),
     ("decide's correlated-entrant check collapsed to always-true", mut_collapse_manual_and_replaced),
     ("decide's redispatch_count bound removed", mut_unbounded_redispatch),
+    ("claim-redispatch's implement-ticket enqueue removed", mut_redispatch_no_enqueue),
+    ("react's fold_queue_token thread dropped", mut_drop_redispatch_token_thread),
 ]
 
 
@@ -638,7 +733,7 @@ def main():
         import shutil
         shutil.rmtree(root, ignore_errors=True)
 
-    print(f"Gate 99: 8 scenario(s), {len(MUTATIONS)} mutation(s); "
+    print(f"Gate 99: 9 scenario(s), {len(MUTATIONS)} mutation(s); "
           f"{len(failures)} failure(s), {mutation_failures} mutation failure(s).")
     return 1 if failures or mutation_failures else 0
 

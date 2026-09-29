@@ -105,15 +105,27 @@
 #                     fold-cycle-guard.yml reads to know which run it is
 #                     watching for this round. Idempotent: re-setting the
 #                     same value is a no-op write.
-#   claim-redispatch -- SPEC_DIR, ROUND
+#   claim-redispatch -- SPEC_DIR, ROUND, RUN_ID
 #                     FR-016/FR-016a's at-most-once bound, the same single-
 #                     winner CAS shape as claim-dispatch: succeeds
 #                     (should-redispatch: true) only if
 #                     rounds[round].redispatch_count is 0, and in the same
-#                     write sets it to 1; otherwise returns
-#                     should-redispatch: false and mutates nothing. Called
-#                     by fold-cycle-guard.yml (research.md D7) -- never
-#                     incremented past 1.
+#                     write sets it to 1 AND enqueues a fresh `implement`-
+#                     kind ticket (token "run-<RUN_ID>-implement", RUN_ID
+#                     being fold-cycle-guard.yml's OWN run -- the re-
+#                     dispatched implement.yml run doesn't exist yet at
+#                     ticket-creation time, exactly as claim-dispatch's own
+#                     implement-kind ticket carries the DISPATCHING run's
+#                     id) so the recovered cycle re-enters implement.yml's
+#                     concurrency group through the same serialized gate as
+#                     every other entrant, rather than unticketed (the very
+#                     defect FR-016 exists to recover from); otherwise
+#                     returns should-redispatch: false and mutates nothing.
+#                     Idempotent under a repeated call with the same RUN_ID
+#                     (returns the same implement-token again, changed:
+#                     false) even after redispatch_count has advanced to 1.
+#                     Called by fold-cycle-guard.yml (research.md D7) --
+#                     redispatch_count itself is never incremented past 1.
 #
 # Every transform is idempotent under retry: a retried write observes its
 # own prior effect on the freshly re-fetched tip and returns the same
@@ -199,6 +211,7 @@ case "$TRANSFORM" in
     ;;
   claim-redispatch)
     : "${ROUND:?fold-queue-ledger.sh claim-redispatch: ROUND is required}"
+    : "${RUN_ID:?fold-queue-ledger.sh claim-redispatch: RUN_ID is required}"
     ;;
 esac
 
@@ -461,9 +474,24 @@ JQ
   claim-redispatch)
     cat > "$filter_file" <<'JQ'
 .specs[$spec] //= {"round": 0, "queue": [], "rounds": {}}
-| if (.specs[$spec].rounds[$round].redispatch_count // 0) == 0 then
-    .specs[$spec].rounds[$round].redispatch_count = 1
-    | { changed: true, ledger: ., result: { "should-redispatch": "true" } }
+| ("run-" + $run_id + "-implement") as $impl_token
+| (.specs[$spec].queue | map(.token) | index($impl_token)) as $existing_idx
+| if $existing_idx != null then
+    { changed: false, ledger: ., result: { "should-redispatch": "true", "implement-token": $impl_token } }
+  elif (.specs[$spec].rounds[$round].redispatch_count // 0) == 0 then
+    (.specs[$spec].queue | length == 0) as $was_empty
+    | .specs[$spec].rounds[$round].redispatch_count = 1
+    | .specs[$spec].queue += [{"token": $impl_token, "kind": "implement", "run_id": $run_id, "enqueued_at": $now, "granted_at": null}]
+    | (if $was_empty then
+         .specs[$spec].queue[0].granted_at = $now
+       else
+         .
+       end) as $newdoc
+    | {
+        changed: true,
+        ledger: $newdoc,
+        result: { "should-redispatch": "true", "implement-token": $impl_token }
+      }
   else
     { changed: false, ledger: ., result: { "should-redispatch": "false" } }
   end
@@ -542,7 +570,7 @@ while [ "$attempt" -le "$max_attempts" ]; do
         -f "$filter_file" "$current_json" > "$output_file"
       ;;
     claim-redispatch)
-      jq -c --arg spec "$SPEC_DIR" --arg round "$ROUND" --arg now "$now" \
+      jq -c --arg spec "$SPEC_DIR" --arg round "$ROUND" --arg run_id "$RUN_ID" --arg now "$now" \
         -f "$filter_file" "$current_json" > "$output_file"
       ;;
   esac

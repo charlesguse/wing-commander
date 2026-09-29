@@ -29,6 +29,14 @@ inputs:
     description: "Required by peek; unused otherwise."
     required: false
     default: ""
+  run-id:
+    description: >
+      Required by claim-redispatch -- the calling (fold-cycle-guard) run's
+      own id, since the redispatched implement.yml run doesn't exist yet at
+      ticket-creation time. Overridable only for fixture/test use; unused
+      by every other transform.
+    required: false
+    default: ${{ github.run_id }}
 
 outputs:
   output:
@@ -49,6 +57,7 @@ runs:
         ROUND: ${{ inputs.round }}
         IMPLEMENT_RUN_ID: ${{ inputs.implement-run-id }}
         PEEK_TOKEN: ${{ inputs.peek-token }}
+        RUN_ID: ${{ inputs.run-id }}
       run: |
         set -euo pipefail
         LEDGER="$GITHUB_ACTION_PATH/../_shared/fold-queue-ledger.sh"

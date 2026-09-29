@@ -405,7 +405,10 @@ jobs:
           # (never this stage's own judgment about how many times it
           # "already tried", Principle IX) -- performed by the composite
           # step below, since it is a write and must stay conditional on
-          # actually reaching this branch. notice_file (already holding the
+          # actually reaching this branch. That same write also enqueues
+          # this run's implement-kind ticket (fold-queue-ledger.sh
+          # claim-redispatch), so the react step below has a token to
+          # thread onto its re-dispatch. notice_file (already holding the
           # header written above) and the rest of the reaction logic
           # continue in the react step, same $RUNNER_TEMP, same job.
           echo "should-attempt-redispatch=true" >> "$GITHUB_OUTPUT"
@@ -452,8 +455,18 @@ jobs:
             exit 0
           fi
 
+          # The claim step's own atomic write enqueued this run's implement-
+          # kind ticket alongside the redispatch_count CAS (fold-queue-
+          # ledger.sh claim-redispatch) -- threading it here, matching
+          # dispatch-once's own T019 pattern, is what makes the recovered
+          # cycle re-enter implement.yml's concurrency group through the
+          # same serialized gate every other entrant uses, instead of
+          # unticketed (the gap this re-dispatch itself would otherwise
+          # reopen).
+          implement_token="$(printf '%s\n' "$CLAIM_OUT" | grep '^implement-token=' | cut -d= -f2-)"
+
           GH_TOKEN="$GH_TOKEN" gh workflow run "$IMPLEMENT_WORKFLOW" \
-            -R "$GITHUB_REPOSITORY" -f spec_dir="$SPEC_DIR" -f issue="$ISSUE" -f iteration="${ITERATION:-1}"
+            -R "$GITHUB_REPOSITORY" -f spec_dir="$SPEC_DIR" -f issue="$ISSUE" -f iteration="${ITERATION:-1}" -f fold_queue_token="$implement_token"
 
           new_run_url=""
           for _ in 1 2 3 4 5 6; do
