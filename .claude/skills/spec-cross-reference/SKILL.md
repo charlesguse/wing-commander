@@ -21,11 +21,16 @@ spec 057):
   violation, not a plausible edge case — it should outrank findings that
   have no such backing.
 - **Over-rated.** A hypothesized race (two board-loop cycles landing two
-  PRs for the same issue) looked plausible in isolation. FR-048's own
-  concurrency group (`group: wing-commander-board-loop`, one item in flight
-  repository-wide, applied to every trigger in the file) rules the race out
-  structurally. Without checking the spec, that finding would have shipped
-  at full severity instead of being flagged as refuted.
+  PRs for the same issue) looked plausible in isolation. FR-048's
+  one-item-in-flight guarantee, as spec 060 split it into per-job groups
+  (`specs/060-self-redrive-concurrency/contracts/concurrency-groups.md`),
+  rules the race out structurally: every job that can select an item or
+  open a fix PR (`select` through `readiness`) joins
+  `wing-commander-board-loop`, and the only run allowed to overlap them is
+  a directed proof run in `wing-commander-board-loop-directed-proof`,
+  which selects no item and opens no fix PR. Without checking the spec,
+  that finding would have shipped at full severity instead of being
+  flagged as refuted.
 
 A finding can also be *reframed* rather than moved: a missing input on a
 redrive looked like a silent-failure bug until FR-043 turned out to already

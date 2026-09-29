@@ -27,8 +27,12 @@ For each of fix / review / readiness, the job-level `if:` is parsed as a
 GitHub expression and must:
   1. carry `!cancelled()` as a top-level conjunct, and no other status
      function (`always()` would start agent work on a cancelled run);
-  2. carry `needs.select.result == 'success'` as a top-level conjunct, and
-     `needs.resolve-model.result == 'success'` too when the job needs
+  2. carry `needs.select.result == 'success'` as a top-level conjunct
+     (review/readiness may instead carry
+     `(needs.select.result == 'success' || inputs.directed-stage ==
+     '<job>')` -- PR #490 review, 2026-09-28: select is skipped by design
+     on a directed dispatch, so the bare form would always skip the job),
+     and `needs.resolve-model.result == 'success'` too when the job needs
      resolve-model (it runs an agent);
   3. guard every read of `needs.X.outputs.*` (X != select) with
      `needs.X.result == 'success'` in the SAME conjunction -- an OR branch
@@ -153,6 +157,14 @@ BOT_LOGIN = "wing-commander-bot[bot]"
 RESUME_JOBS = ("fix", "review", "readiness")
 SIM_JOBS = ("select", "resolve-model", "triage", "route", "fix", "review", "readiness")
 PAUSE_VAR = "vars.WING_COMMANDER_BOARD_LOOP_PAUSED"
+
+# specs/060-self-redrive-concurrency, PR #490 review (2026-09-28): select is
+# skipped by design on a directed dispatch (`inputs.directed-stage != ''`),
+# so review/readiness may OR their `needs.select.result == 'success'` guard
+# with the matching `inputs.directed-stage` value instead of carrying it
+# bare. `fix` has no directed-stage branch (aimable_jobs excludes it,
+# board_prove.py T002) and must keep the bare form.
+DIRECTED_STAGE_BY_JOB = {"review": "review", "readiness": "readiness"}
 STATUS_FUNCS = ("success", "failure", "cancelled", "always")
 
 
@@ -314,6 +326,21 @@ def _is_cmp(node, op, path, value):
     return (node[0] == op and node[1] == ("path", path) and node[2] == ("lit", value))
 
 
+def _guards_select_result(node, job_name):
+    """True when `node` is an accepted top-level form of the select guard
+    for `job_name`: the bare `needs.select.result == 'success'`, or (for a
+    job in DIRECTED_STAGE_BY_JOB) an OR of that comparison with
+    `inputs.directed-stage == '<job_name>'` (PR #490 review, 2026-09-28)."""
+    if _is_cmp(node, "==", "needs.select.result", "success"):
+        return True
+    directed = DIRECTED_STAGE_BY_JOB.get(job_name)
+    if directed and node[0] == "or":
+        parts = node[1]
+        return (any(_is_cmp(p, "==", "needs.select.result", "success") for p in parts)
+                and any(_is_cmp(p, "==", "inputs.directed-stage", directed) for p in parts))
+    return False
+
+
 def _output_reads(node, guards, out):
     """Collect (job, guards-in-scope) for every needs.X.outputs.* read.
     Descending into an AND lends the sibling conjuncts as guards;
@@ -410,7 +437,11 @@ def static_findings(doc):
                 "{0}: if: uses a status function other than the one `!cancelled()` "
                 "conjunct".format(name))
         for up in ["select"] + (["resolve-model"] if "resolve-model" in needs else []):
-            if not any(_is_cmp(p, "==", "needs.{0}.result".format(up), "success") for p in top):
+            if up == "select":
+                ok = any(_guards_select_result(p, name) for p in top)
+            else:
+                ok = any(_is_cmp(p, "==", "needs.{0}.result".format(up), "success") for p in top)
+            if not ok:
                 findings.append(
                     "{0}: if: lacks top-level `needs.{1}.result == 'success'`".format(name, up))
         if not any(_is_cmp(p, "!=", PAUSE_VAR, "true") for p in top):
@@ -502,6 +533,13 @@ def _lookup(path, ctx):
             return ctx.outputs.get(dep, {}).get(parts[3], "")
     if parts[0] == "github" and parts[1] == "event_name":
         return ctx.vars.get("__event", "schedule")
+    if parts[0] == "inputs" and len(parts) == 2:
+        # specs/060-self-redrive-concurrency: every scenario this gate
+        # simulates is an ordinary (non-directed) trigger, so every
+        # `inputs.*` reference (e.g. `inputs.directed-stage`) reads as
+        # empty here -- the same value GitHub Actions gives a
+        # workflow_dispatch input on a schedule/pull_request-triggered run.
+        return (ctx.vars.get("__inputs") or {}).get(parts[1], "")
     raise ValueError("simulator does not model `{0}`".format(path))
 
 
@@ -696,6 +734,20 @@ SCENARIOS = [
      {"vars": {"WING_COMMANDER_BOARD_LOOP_PAUSED": "true"},
       "outputs": {"select": _item("breach", pr="42", branch="fix/396-board-item")}},
      ("select", "resolve-model")),
+    # PR #490 review, 2026-09-28: select is skipped by design on a directed
+    # dispatch (`inputs.directed-stage != ''`), so review/readiness must
+    # reach their job through the `inputs.directed-stage` branch of their
+    # own select guard, not the (always-false-here) `needs.select.result ==
+    # 'success'` branch. This is the exact gap that let a directed
+    # review/readiness dispatch conclude 'success' -- and outcome_reason
+    # record 'proven' -- while cascade-skipping the job it was dispatched
+    # to run.
+    ("directed dispatch: review reaches the job",
+     {"vars": {"__inputs": {"directed-stage": "review", "directed-issue": "396"}}},
+     ("resolve-model", "review")),
+    ("directed dispatch: readiness reaches the job",
+     {"vars": {"__inputs": {"directed-stage": "readiness", "directed-issue": "396"}}},
+     ("resolve-model", "readiness")),
 ]
 
 
@@ -1537,7 +1589,12 @@ def fetch_behaviour_findings(doc):
                    "STUB_LOG": log, "STUB_COMMENTS": comments,
                    "STUB_COMMENTS_FAIL": fail, "STUB_FAIL_ISSUE": "", "STUB_PULLS": "404",
                    "STUB_OWNED": "", "STUB_OWNED_FAIL": "", "STUB_LS_REMOTE_RC": "2",
-                   "PR_BODY": "Fixes #7", "PR_NUMBER": "42", "MERGED": "true"}
+                   "PR_BODY": "Fixes #7", "PR_NUMBER": "42", "MERGED": "true",
+                   # specs/060-self-redrive-concurrency: prove-gate's "gate"
+                   # step now branches on EVENT_NAME (workflow_dispatch vs.
+                   # the ordinary pull_request: closed trigger these fixtures
+                   # exercise) and reads DIRECTED_ISSUE on that other branch.
+                   "EVENT_NAME": "pull_request", "MERGED_EVENT": "true", "DIRECTED_ISSUE": ""}
             env.update({k: v.replace("{tmp}", tmp) for k, v in env_over.items()})
             rc, out, outputs, _summary = run_step(bash, run, workdir, env, runner_temp)
             with open(log, encoding="utf-8") as fh:
@@ -1649,10 +1706,24 @@ def _mutations(text):
 
     sub("fix without !cancelled()", "      !cancelled()\n      && needs.select.result == 'success'",
         "      needs.select.result == 'success'", after="\n  fix:\n")
-    sub("review without !cancelled()", "      !cancelled()\n      && needs.select.result == 'success'",
-        "      needs.select.result == 'success'", after="\n  review:\n")
-    sub("readiness without !cancelled()", "      !cancelled()\n      && needs.select.result == 'success'",
-        "      needs.select.result == 'success'", after="\n  readiness:\n")
+    sub("review without !cancelled()",
+        "      !cancelled()\n      && (needs.select.result == 'success' || inputs.directed-stage == 'review')",
+        "      (needs.select.result == 'success' || inputs.directed-stage == 'review')", after="\n  review:\n")
+    sub("readiness without !cancelled()",
+        "      !cancelled()\n      && (needs.select.result == 'success' || inputs.directed-stage == 'readiness')",
+        "      (needs.select.result == 'success' || inputs.directed-stage == 'readiness')",
+        after="\n  readiness:\n")
+    # PR #490 review, 2026-09-28: reverting to the bare select guard makes a
+    # directed review/readiness dispatch skip its own job -- select is
+    # skipped by design on that trigger, so `== 'success'` alone is never
+    # true. Caught by simulation (the "directed dispatch" scenarios below),
+    # not by any static shape check.
+    sub("review select guard reverted to the pre-#490-fix bare form",
+        "(needs.select.result == 'success' || inputs.directed-stage == 'review')",
+        "needs.select.result == 'success'", after="\n  review:\n")
+    sub("readiness select guard reverted to the pre-#490-fix bare form",
+        "(needs.select.result == 'success' || inputs.directed-stage == 'readiness')",
+        "needs.select.result == 'success'", after="\n  readiness:\n")
     sub("fix route branch without route.result guard",
         "(needs.route.result == 'success' && needs.route.outputs.decision == 'fix')",
         "needs.route.outputs.decision == 'fix'")
@@ -1667,7 +1738,8 @@ def _mutations(text):
     sub("fix without the breach output",
         "      breach: ${{ steps.final-diff-backstop.outputs.breach }}\n", "")
     sub("review without select.result guard",
-        "      && needs.select.result == 'success'\n", "", after="\n  review:\n")
+        "      && (needs.select.result == 'success' || inputs.directed-stage == 'review')\n", "",
+        after="\n  review:\n")
     sub("fix without resolve-model.result guard",
         "      && needs.resolve-model.result == 'success'\n", "", after="\n  fix:\n")
     sub("readiness without the pause check",
@@ -1682,8 +1754,9 @@ def _mutations(text):
     # always() lifts the implicit success() too, but also runs on a
     # cancelled run -- it is not an accepted substitute.
     sub("readiness with always() in place of !cancelled()",
-        "      !cancelled()\n      && needs.select.result == 'success'",
-        "      always()\n      && needs.select.result == 'success'", after="\n  readiness:\n")
+        "      !cancelled()\n      && (needs.select.result == 'success' || inputs.directed-stage == 'readiness')",
+        "      always()\n      && (needs.select.result == 'success' || inputs.directed-stage == 'readiness')",
+        after="\n  readiness:\n")
     sub("fix with always() in place of !cancelled()",
         "      !cancelled()\n      && needs.select.result == 'success'",
         "      always()\n      && needs.select.result == 'success'", after="\n  fix:\n")
