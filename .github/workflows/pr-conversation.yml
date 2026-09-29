@@ -841,6 +841,11 @@ jobs:
         with:
           intended-turns: ${{ inputs.max-turns }}
 
+      # FR-025 exclusion (specs/071-agent-push-credential): this step's own
+      # default-disallowed-tools above explicitly lists
+      # Bash(git push:*),Bash(git commit:*) -- a deliberately strictly
+      # read-only classifier. The retry-bound prompt paragraph does not
+      # apply here.
       - name: Classify the PR conversation request
         id: agent
         if: steps.identity.outputs.qualifies == 'true' && steps.lifecycle-gate.outputs.is-open == 'true' && steps.actor-gate.outputs.authorized == 'true' && steps.relay-resume.outputs.resumed != 'true' && steps.tool-args-classify.outputs.allowed-tools != ''
@@ -1543,6 +1548,9 @@ jobs:
       # job wrapping it to read one (research.md D4, same status as
       # plan.yml) -- see clarify.yml.
       credential-refresh-ok: ${{ steps.credential-status.outputs.ok }}
+      # No reader either (same status as credential-refresh-ok above).
+      commits-published: ${{ steps.publish-stranded.outputs.commits-published }}
+      push-ok: ${{ steps.publish-stranded.outputs.push-ok }}
     strategy:
       fail-fast: false
       # Legs are NOT run concurrently: two classifications from the SAME
@@ -2051,6 +2059,8 @@ jobs:
         with:
           intended-turns: ${{ inputs.max-turns }}
 
+      # This step's prompt carries the retry-bound paragraph for the
+      # credential-expiry `git push` signature -- see clarify.yml.
       - name: Act on this classification
         id: agent
         if: >-
@@ -2153,6 +2163,12 @@ jobs:
             and `artifact-url` (the created issue/PR URL, or null when none
             was created — e.g. the fold-in routes, or a performed/
             not-performed manual step).
+
+            A `git push` that fails with `remote: Invalid username or token`
+            or `Authentication failed` is a credential problem this
+            pipeline is already handling — retry it at most twice, then
+            commit your work locally if it still fails and continue; do
+            not spend further turns retrying the same push.
           claude_args: |
             --model ${{ inputs.model }}
             --max-turns ${{ steps.agent-ceiling.outputs.ceiling }}
@@ -2187,6 +2203,20 @@ jobs:
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-refresh-remote
         with:
           token: ${{ env.WC_BOT_TOKEN }}
+
+      # Deterministic rescue for work the agent could not push itself --
+      # runs whether or not a later agent step ever would have carried it
+      # along -- see clarify.yml. before-sha reused from
+      # classify-and-announce's own pre-fold tip (research.md D3 -- read
+      # last in that job, immediately before this job starts folding
+      # anything, so it demonstrably predates this job's own checkout).
+      - name: Publish stranded commits (post-agent)
+        id: publish-stranded
+        if: "!cancelled() && steps.agent.outcome != 'skipped'"
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-publish-stranded-commits
+        with:
+          before-sha: ${{ needs.classify-and-announce.outputs.base-sha }}
 
       - name: Compute agent run verdict
         id: agent-verdict

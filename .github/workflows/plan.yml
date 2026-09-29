@@ -448,6 +448,10 @@ jobs:
       # agent-ran above, for the same reason implement.yml does.
       agent-conclusion: ${{ steps.agent-ran-auto.outputs.conclusion || steps.agent-ran-pr.outputs.conclusion }}
       credential-refresh-ok: ${{ steps.credential-status-auto.outputs.ok || steps.credential-status-pr.outputs.ok }}
+      # No stalled job in this file to read this (research.md D4's own
+      # precedent) -- published for symmetry with every other in-scope stage.
+      commits-published: ${{ steps.publish-stranded-auto.outputs.commits-published || steps.publish-stranded-pr.outputs.commits-published }}
+      push-ok: ${{ steps.publish-stranded-auto.outputs.push-ok || steps.publish-stranded-pr.outputs.push-ok }}
       agent-any-failure: ${{ (steps.agent-ran-auto.outputs.conclusion == 'failure' || steps.agent-ran-pr.outputs.conclusion == 'failure') && 'true' || 'false' }}
       credential-any-refresh-failure: ${{ (steps.credential-status-auto.outputs.ok == 'false' || steps.credential-status-pr.outputs.ok == 'false') && 'true' || 'false' }}
     steps:
@@ -726,6 +730,16 @@ jobs:
           echo "before-sha=$before_sha" >> "$GITHUB_OUTPUT"
           echo "before-sha-available=$before_available" >> "$GITHUB_OUTPUT"
 
+      # Recorded before whichever agent step actually runs, so a later
+      # publish call (specs/071-agent-push-credential) can report how many
+      # commits, if any, the agent could not push itself -- see
+      # clarify.yml. Valid as the "before" SHA for both branches: only one
+      # of them runs per dispatch.
+      - name: Record pre-agent SHA
+        id: pre-agent
+        if: steps.dupe.outputs.skip != 'true'
+        run: echo "before-sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
       # Auto mode — generate the plan and commit it, with the stage update,
       # directly to the spec branch. No plan/<slug> branch, no PR.
       - name: Compose commit-message guidance (plan.direct-commit)
@@ -753,6 +767,8 @@ jobs:
         with:
           intended-turns: ${{ inputs.max-turns }}
 
+      # This step's prompt carries the retry-bound paragraph for the
+      # credential-expiry `git push` signature -- see clarify.yml.
       - name: Generate implementation plan (direct commit)
         id: agent-auto
         if: steps.dupe.outputs.skip != 'true' && steps.mode.outputs.mode == 'auto' && steps.tool-args-plan-direct-commit.outputs.allowed-tools != ''
@@ -884,6 +900,12 @@ jobs:
               can. Never mkdir or ls a temp path first to prepare it.
             A denial is not a hint to retry a variant. Switch to the allowed form
             above, or record the limitation for the human and move on.
+
+            A `git push` that fails with `remote: Invalid username or token`
+            or `Authentication failed` is a credential problem this
+            pipeline is already handling — retry it at most twice, then
+            commit your work locally if it still fails and continue; do
+            not spend further turns retrying the same push.
           claude_args: |
             --model ${{ inputs.model }}
             --max-turns ${{ steps.agent-auto-ceiling.outputs.ceiling }}
@@ -918,6 +940,16 @@ jobs:
         with:
           token: ${{ env.WC_BOT_TOKEN }}
 
+      # Deterministic rescue for work the agent could not push itself --
+      # runs whether or not a later agent step ever would have carried it
+      # along -- see clarify.yml.
+      - name: Publish stranded commits (post-agent, auto)
+        id: publish-stranded-auto
+        if: "!cancelled() && steps.agent-auto.outcome != 'skipped'"
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-publish-stranded-commits
+        with:
+          before-sha: ${{ steps.pre-agent.outputs.before-sha }}
 
       # deterministic, transcript-only verdict replacing the raw steps.agent-auto.outcome checks
       # -- see specs/037-agent-turn-budget-guard/data-model.md. Gated on
@@ -974,6 +1006,8 @@ jobs:
         with:
           intended-turns: ${{ inputs.max-turns }}
 
+      # This step's prompt carries the retry-bound paragraph for the
+      # credential-expiry `git push` signature -- see clarify.yml.
       - name: Generate implementation plan
         id: agent-pr
         if: steps.dupe.outputs.skip != 'true' && steps.mode.outputs.mode == 'pr' && steps.tool-args-plan-pr.outputs.allowed-tools != ''
@@ -1100,6 +1134,12 @@ jobs:
               can. Never mkdir or ls a temp path first to prepare it.
             A denial is not a hint to retry a variant. Switch to the allowed form
             above, or record the limitation for the human and move on.
+
+            A `git push` that fails with `remote: Invalid username or token`
+            or `Authentication failed` is a credential problem this
+            pipeline is already handling — retry it at most twice, then
+            commit your work locally if it still fails and continue; do
+            not spend further turns retrying the same push.
           claude_args: |
             --model ${{ inputs.model }}
             --max-turns ${{ steps.agent-pr-ceiling.outputs.ceiling }}
@@ -1134,6 +1174,16 @@ jobs:
         with:
           token: ${{ env.WC_BOT_TOKEN }}
 
+      # Deterministic rescue for work the agent could not push itself --
+      # runs whether or not a later agent step ever would have carried it
+      # along -- see clarify.yml.
+      - name: Publish stranded commits (post-agent, pr)
+        id: publish-stranded-pr
+        if: "!cancelled() && steps.agent-pr.outcome != 'skipped'"
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-publish-stranded-commits
+        with:
+          before-sha: ${{ steps.pre-agent.outputs.before-sha }}
 
       - name: Compute agent run verdict (pr)
         id: agent-pr-verdict

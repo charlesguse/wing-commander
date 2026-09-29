@@ -218,6 +218,10 @@ PIN_CASES = {
     # #672 review: an action pinned twice compares as the set of its refs.
     "pins-duplicate-reordered": "none",
     "pins-duplicate-one-bumped": "divergent",
+    # #678: main adding a further pin the run never used is not bump
+    # evidence; only losing a ref the run actually relied on is.
+    "pins-main-adds-pin": "none",
+    "pins-main-replaces-pin": "divergent",
 }
 EXPECTED = dict.fromkeys(list(TRIAGE_CASES) + list(PIN_CASES))
 
@@ -722,6 +726,9 @@ _SHAPES_TREE = {
     WF + "dup-bumped.yml": "jobs:\n  a:\n    steps:\n"
                            "      - uses: owner/dup@1111111 # v1\n"
                            "      - uses: owner/dup@2222222 # v2\n",
+    # #678: main adds a second step pinning the same action at a new ref.
+    WF + "main-adds-pin.yml": "jobs:\n  a:\n    steps:\n"
+                              "      - uses: owner/grow@1111111 # v1\n",
 }
 _OLD_TREE.update(_SHAPES_TREE)
 _BUMPS.update({
@@ -740,6 +747,10 @@ _BUMPS.update({
         "owner/dup@2222222 # v2\n      - uses: owner/dup@1111111 # v1"),
     # The first of the two pins bumped, the last untouched: a bump.
     WF + "dup-bumped.yml": ("@1111111 # v1", "@3333333 # v3"),
+    # The run's own pin stays; main only adds another: no bump.
+    WF + "main-adds-pin.yml": (
+        "owner/grow@1111111 # v1",
+        "owner/grow@1111111 # v1\n      - uses: owner/grow@2222222 # v2"),
 })
 
 ALL_WORKFLOWS = sorted(_OLD_TREE)
@@ -778,6 +789,9 @@ SCOPING_CASES = (
      WF + "dup-reordered.yml", False, None),
     ("an action pinned twice with one pin bumped counts",
      WF + "dup-bumped.yml", False, WF + "dup-bumped.yml"),
+    # #678
+    ("main adding a second pin for an action the run pinned once does not count",
+     WF + "main-adds-pin.yml", False, None),
 )
 
 
@@ -891,6 +905,26 @@ def _last_wins_uses_pins(text):
     return pins
 
 
+def _set_inequality_divergent_pin(workflow_file, run_pins, main_pins):
+    """The pre-#678 comparison: any difference between the run's and
+    main's ref sets reads as a bump, so main adding a second pin for a new
+    step flags the run's unchanged one. Used only as a mutation."""
+    for action_ref, run_value in sorted(run_pins.items()):
+        main_value = main_pins.get(action_ref)
+        if main_value is None:
+            continue
+        run_refs = board_triage._ref_set(run_value)
+        main_refs = board_triage._ref_set(main_value)
+        if run_refs != main_refs:
+            return {
+                "workflow_file": workflow_file,
+                "action_ref": action_ref,
+                "run_pin": ", ".join(sorted(run_refs)),
+                "main_pin": ", ".join(sorted(main_refs)),
+            }
+    return None
+
+
 def _scope_filtered(keep):
     """A _scoped_workflow_files() mutation keeping only paths `keep`
     accepts -- the pre-#521 scope, which never reached composites or
@@ -909,6 +943,9 @@ SCOPING_MUTATIONS = (
      lambda original: _pre_519_uses_pins),
     ("last pin wins for an action pinned twice", "_uses_pins",
      lambda original: _last_wins_uses_pins),
+    ("pre-#678 set inequality: a pin main added reads as a bump",
+     "_first_divergent_pin",
+     lambda original: _set_inequality_divergent_pin),
     ("composites dropped from the scope", "_scoped_workflow_files",
      _scope_filtered(lambda p: not p.startswith(AC))),
     (".yaml workflows dropped from the scope", "_scoped_workflow_files",
@@ -919,7 +956,8 @@ SCOPING_MUTATIONS = (
 def _mutation_check_scoping():
     """The scoping cases must fail under each of SCOPING_MUTATIONS: the
     scope widened back to every tracked workflow (pre-#505), the pre-#519
-    line regex, and the pre-#521 scope without composites or `.yaml`."""
+    line regex, the pre-#521 scope without composites or `.yaml`, and the
+    pre-#678 set-inequality comparison."""
     failures = []
     for label, name, factory in SCOPING_MUTATIONS:
         original = getattr(board_triage, name)

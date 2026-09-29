@@ -3745,6 +3745,62 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-credential-relay-shell.py --self-test
 
+      # Gate 122 — specs/071-agent-push-credential: an agent step still
+      # running past the minted App installation token's one-hour lifetime
+      # (spec 052) may still see a `git push` fail with "Invalid username
+      # or token" -- this pipeline no longer tries to keep that push itself
+      # alive. Instead, the sole remedy is a deterministic
+      # `wing-commander-publish-stranded-commits` step that runs after the
+      # agent, with its own freshly minted credential, and carries to the
+      # branch any commit the agent could not push itself
+      # (contracts/stranded-commit-publish.md). An earlier design (this
+      # branch's own history) staged the GitHub App private key where a
+      # running agent step could reach it and mint installation tokens
+      # itself -- an owner-directed redesign deleted that composite as a
+      # security defect (agent-reachable App private key, materially worse
+      # than the one-hour token the agent already has) and this gate now
+      # also guards against it reappearing. See
+      # verify-agent-push-credential-helper.py's own docstring (checks 1-5)
+      # for the current, authoritative list. Numbered 122, not the 99 this
+      # branch's own commit first picked (tasks.md T001) nor the 120 it was
+      # renumbered to next (tasks.md T055): Gate 99
+      # (specs/059-converged-means-tasks-done,
+      # verify-tasks-checkbox-convergence-signal.py) and Gate 100
+      # (specs/079, verify-stage-turn-budget-docs.py) claimed those numbers
+      # first; then Gate 120 (specs/#569's dedup-key rule,
+      # verify-dedup-key-canonical-rule.py) and Gate 121
+      # (specs/078-plan-tasks-commit-scratch-path,
+      # verify-commit-message-scratch-path.py) claimed the next pair this
+      # branch had moved to, before this branch's own rebase landed either
+      # time (tasks.md T056). Gate 123 (mint-credential.sh's own behavioural
+      # companion) was retired in the same redesign along with the script it
+      # drove -- tasks.md's Maintainer Feedback section (T057, T063) --
+      # rather than leaving the number reserved for a script with no
+      # remaining subject; the maintainer review of PR #720 then reused the
+      # freed number for a new behavioural companion of its own (T070),
+      # below.
+      - name: Gate 122 — the App private key is never staged where a running agent could reach it, and every push-capable agent step's unpublished work is rescued
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-agent-push-credential-helper.py
+      - name: Gate 122 self-test — each documented mutation fails
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-agent-push-credential-helper.py --self-test
+
+      # Gate 123 — specs/071-agent-push-credential (maintainer review of PR
+      # #720, T070): wing-commander-publish-stranded-commits' commits-
+      # published count (T060's origin-ref comparison, falling back to
+      # before-sha..HEAD only when no remote-tracking ref exists) is driven
+      # against a real bare `origin` plus a clone, not merely asserted from
+      # the rendered notice text verify-chain-stop-notice-body.py already
+      # covers. See verify-stranded-commit-publish-shell.py's own docstring
+      # for the three scenarios and the self-test mutation.
+      - name: Gate 123 — the stranded-commit-publish count is driven against a real git repository, not just its rendered notice text
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-stranded-commit-publish-shell.py
+      - name: Gate 123 self-test — reverting the origin-ref comparison to before-sha..HEAD unconditionally fails
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-stranded-commit-publish-shell.py --self-test
+
       # Gate 70 — the 8b verifier stands down on a skipped stage-8 run only
       # when the run stage 8 was asked to inspect was itself skipped (PR
       # #403). Stage 8 writes its source's conclusion at the end of its

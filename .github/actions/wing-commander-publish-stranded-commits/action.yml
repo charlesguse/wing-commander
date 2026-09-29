@@ -1,0 +1,107 @@
+# Single home for the deterministic "publish whatever the agent could not
+# push itself" step (specs/071-agent-push-credential, research.md D8).
+# Today's rescue of stranded commits is *incidental*: a later agent step's
+# own push happens to carry them along once its credential is fresh
+# again. That path has no rescue when no later agent step runs -- a
+# cycle that converges on its first pass, or an agent step killed before
+# its own final push. This composite replaces the incidental rescue with
+# one that runs whether or not a later agent step ever does. Resolved
+# from the pipeline repository's own checkout -- see the header of
+# .github/actions/wing-commander-context/action.yml.
+name: wing-commander-publish-stranded-commits
+description: >
+  Pushes the local working tree's current branch tip as-is (no
+  `git fetch origin` first -- reconciling with a remote that moved for an
+  unrelated reason is `push-ok=false`'s job to surface, not this step's
+  job to resolve) and reports how many commits, if any, were locally
+  ahead of origin before this push. Runs immediately alongside (same
+  `if:` as) each in-scope agent step's existing post-agent
+  wing-commander-context re-mint and wing-commander-refresh-remote
+  (spec 052) -- origin already carries a token minted seconds earlier by
+  that pair, so this deterministic push authenticates fresh even when the
+  agent step it follows ran for far longer than any credential's
+  lifetime.
+
+inputs:
+  before-sha:
+    description: >
+      The spec branch's HEAD SHA before the agent step this call
+      accompanies ran -- reused from that job's own existing
+      before-SHA capture, never re-derived.
+    required: true
+  workdir:
+    description: >
+      Directory to operate in, when the branch to publish is not the job's
+      own root checkout (auto-update-spec-kit.yml's e2e-stage job clones
+      the scratch repository into its own subdirectory). Empty (the
+      default) means the current directory.
+    required: false
+    default: ""
+  push-token:
+    description: >
+      Already-minted token to build an explicit authenticated push URL
+      from, for a target whose remote carries no stored credential (the
+      same explicit-URL idiom orphan-branch-reset/action.yml uses).
+      Empty (the default) pushes to the `origin` remote as-is -- every
+      in-scope stage's own spec-branch checkout.
+    required: false
+    default: ""
+  push-repo:
+    description: "owner/name to push to, required together with push-token."
+    required: false
+    default: ""
+
+outputs:
+  commits-published:
+    description: >
+      Count of commits git rev-list found locally ahead of
+      refs/remotes/origin/<branch> immediately before this push, falling
+      back to before-sha..HEAD only when that remote-tracking ref does not
+      exist -- 0 when the agent had already pushed everything itself (the
+      common case). Informational either way: it answers "how much was at
+      stake," not "how much succeeded."
+    value: ${{ steps.publish.outputs.commits-published }}
+  push-ok:
+    description: >
+      "true"/"false" -- whether the push attempt itself succeeded.
+      "false" covers a genuine race (e.g. a concurrent force-push), not a
+      credential failure.
+    value: ${{ steps.publish.outputs.push-ok }}
+
+runs:
+  using: composite
+  steps:
+    - name: Publish stranded commits
+      id: publish
+      shell: bash
+      env:
+        BEFORE_SHA: ${{ inputs.before-sha }}
+        WORKDIR: ${{ inputs.workdir }}
+        PUSH_TOKEN: ${{ inputs.push-token }}
+        PUSH_REPO: ${{ inputs.push-repo }}
+      run: |
+        set -uo pipefail
+        dir="${WORKDIR:-.}"
+        (
+          cd "$dir"
+          branch="$(git rev-parse --abbrev-ref HEAD)"
+          # git push already updates the local remote-tracking ref for the
+          # branch it moved, so a cycle that already pushed cleanly counts
+          # 0 commits ahead of origin here, not every commit since job
+          # start. Fall back to before-sha only when there is no
+          # remote-tracking ref yet to compare against (e.g. a branch this
+          # job's own checkout never fetched).
+          if git rev-parse --verify --quiet "refs/remotes/origin/$branch" >/dev/null; then
+            count="$(git rev-list --count "refs/remotes/origin/${branch}..HEAD" 2>/dev/null || echo 0)"
+          else
+            count="$(git rev-list --count "${BEFORE_SHA}..HEAD" 2>/dev/null || echo 0)"
+          fi
+          echo "commits-published=$count" >> "$GITHUB_OUTPUT"
+          target="origin"
+          [ -n "$PUSH_TOKEN" ] && target="https://x-access-token:${PUSH_TOKEN}@github.com/${PUSH_REPO}.git"
+          if git push "$target" "HEAD:$branch"; then
+            echo "push-ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "push-ok=false" >> "$GITHUB_OUTPUT"
+          fi
+        )
