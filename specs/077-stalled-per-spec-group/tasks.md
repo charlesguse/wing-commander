@@ -184,3 +184,7 @@ This repository is a GitHub Actions pipeline component — no `src`/`tests` spli
 ## Maintainer Feedback
 
 - [ ] T027 In `.github/scripts/verify-spec-branch-push-concurrency.py`, replace `_resolve_identity_spec_dir`'s hand-copied bash string (~308-323) with a line extracted from the real `.github/workflows/pr-conversation.yml` (the `resolve-identity` job's `echo "spec-dir=..."` line, currently ~425) so the self-test actually exercises the shipped workflow instead of a second, independently maintained copy of the same logic (CLAUDE.md's single-home rule). Run the extracted line with `slug=""` and `slug="042-x"`. Add a fixture proving the pre-T020 behavior (`echo "spec-dir=specs/$slug"`) fails the assertion, so a future revert of T020 is actually caught by the gate.
+
+## Maintainer Feedback
+
+- [ ] T028 In `specs/077-stalled-per-spec-group/data-model.md`'s survivor-job condition table (~79-92): prepend `needs.verify-image-prerequisites.result != 'failure' && ` to both `if:` strings (rows 79-80) to match the job's actual outer guard (T004). Change row 89 (`success` / `skipped (image check failed upstream)`) and row 92 (`skipped (image check failed)` / `skipped`)'s verdict columns to `No / No (outer guard)`. Then delete row 89 entirely as unreachable — `resolve-identity` cannot reach `success` when `verify-image-prerequisites` has failed, since `resolve-identity`'s own `if:` already requires `needs.verify-image-prerequisites.result != 'failure'`.
