@@ -181,8 +181,7 @@ def add_stalled_label(issue_number, label, run=None):
     and main() then renders no marker at all.
 
     Canonical statement of the stall rule, for every board-loop.yml stall
-    site (triage's hand-over, route's spec verdict, fix's gate-red and
-    post-push-breach, review's three stalls, readiness's backstop breach):
+    site (triage's hand-over, fix's gate-red, review's three stalls):
     board:stalled goes on first and a failed add fails the step, so a
     stalled marker is never posted without the label. A stalled marker
     with no board:stalled label can then only mean a maintainer removed

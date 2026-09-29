@@ -638,7 +638,7 @@ Task: "Add disposition:duplicate to wing-commander-board-labels/action.yml"
 
 ## Phase 7: Convergence
 
-- [ ] T024 Update `.github/scripts/board_item_marker.py`'s
+- [X] T024 Update `.github/scripts/board_item_marker.py`'s
       `add_stalled_label()` docstring: it still names route's spec verdict,
       fix's post-push-breach, and readiness's backstop breach among "every
       board-loop.yml stall site" the function is the canonical statement
