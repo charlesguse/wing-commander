@@ -2216,7 +2216,8 @@ def suite_stepsum(script, env, tmproot):
 # evidence-available's existing behavior (contracts/watchdog-read-outcome.md).
 # --------------------------------------------------------------------------
 AGGREGATE_STEP = "Aggregate signals"
-COLLECTOR_IDS = ["collect-execution-output", "collect-branch-drift",
+COLLECTOR_IDS = ["collect-execution-output", "collect-cycle-outcome",
+                 "collect-branch-drift",
                  "collect-spec-meta", "collect-step-summary",
                  "collect-annotations", "collect-turn-budget",
                  "collect-cost-report", "collect-final-pr-claims",

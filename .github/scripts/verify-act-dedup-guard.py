@@ -165,6 +165,13 @@ def run_ensure_issue(step, decision_outputs, tmproot):
         "DEDUP_ISSUE": decision_outputs.get("dedup-issue", ""),
         "FINGERPRINT": decision_outputs.get("fingerprint", ""),
         "CANONICAL_FACTS": decision_outputs.get("canonical-facts", ""),
+        # spec 109: "Ensure pipeline-defect issue" now also reads these
+        # under `set -uo pipefail` on every branch, so a fixture that omits
+        # them fails on an unrelated unbound-variable error rather than
+        # proving anything about the dedup guard this harness exists for.
+        "CITED_IDS": decision_outputs.get("cited-ids", ""),
+        "DEDUP_MATCHED_ON": decision_outputs.get("matched-on", ""),
+        "DEDUP_OTHER_MATCHES": decision_outputs.get("other-matches", ""),
         "FINDING_CLASS": "denied-tool",
         "FINDING_DESCRIPTION": "test finding",
         "FINDING_EVIDENCE": json.dumps(

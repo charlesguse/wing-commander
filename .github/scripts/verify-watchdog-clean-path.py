@@ -352,7 +352,7 @@ def mut_pass_fallback_drifts(subject):
     # the comparison covers the whole idiom, not just the wording.
     s = dict(subject)
     s["pass:run"] = subject["pass:run"].replace(
-        'total="${COLLECTORS_TOTAL:-9}"', 'total="${COLLECTORS_TOTAL:-10}"')
+        'total="${COLLECTORS_TOTAL:-10}"', 'total="${COLLECTORS_TOTAL:-11}"')
     return s
 
 
