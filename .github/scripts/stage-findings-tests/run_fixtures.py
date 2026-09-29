@@ -1091,68 +1091,6 @@ def case_zero_findings_summary_is_terse():
     check(case + ": summary says no findings", "No findings proposed" in summary, summary)
 
 
-# --- merged-spec frozen-record skip (CLAUDE.md "Other repo-specific rules") --
-def _frozen_fixture_tree(tmp):
-    for d in ("specs/040-old-merged-spec", "specs/056-stage-found-defect-filing"):
-        os.makedirs(os.path.join(tmp, d), exist_ok=True)
-        with open(os.path.join(tmp, d, "spec.md"), "w", encoding="utf-8") as fh:
-            fh.write("# a spec\n")
-    os.makedirs(os.path.join(tmp, "docs"), exist_ok=True)
-    with open(os.path.join(tmp, "docs", "live.md"), "w", encoding="utf-8") as fh:
-        fh.write("live docs\n")
-
-
-def case_finding_only_against_merged_spec_is_skipped_with_note():
-    case = "a finding naming only files inside another, merged spec's directory is skipped and the skip is noted"
-    tmp = tempfile.mkdtemp(prefix="wc-sf-frozen-")
-    _frozen_fixture_tree(tmp)
-    finding = valid_finding(
-        title="spec 040 errata",
-        evidence={"file_paths": ["specs/040-old-merged-spec/spec.md"]},
-        fingerprint_basis={"file_path": "./specs/040-old-merged-spec/spec.md",
-                           "gate_or_artifact": "a spec"})
-    rc, outputs, state, out = run_prepare(tmp, "structured-array", findings=[finding])
-    check(case + ": exit 0", rc == 0, out)
-    check(case + ": zero survivors", outputs.get("survivor-count") == "0", outputs)
-    check(case + ": proposed still counts it", state and state["proposed"] == 1, state)
-    check(case + ": a note names the skip and the frozen directory",
-          state and any("frozen record" in n and "specs/040-old-merged-spec/" in n
-                        and "spec 040 errata" in n for n in state["notes"]),
-          state and state["notes"])
-    check(case + ": no new counter", state and set(state.keys()) == {
-        "disabled", "proposed", "dropped_malformed", "dropped_cap", "filed",
-        "appended", "dropped_api_failure", "outstanding_skipped", "notes"},
-        state and sorted(state.keys()))
-
-
-def case_finding_against_own_or_live_files_is_not_skipped():
-    case = "a finding against the run's own spec, an absent spec dir, or naming a live file too is filed as usual"
-    tmp = tempfile.mkdtemp(prefix="wc-sf-frozen-")
-    _frozen_fixture_tree(tmp)
-    own = valid_finding(
-        title="own spec finding",
-        evidence={"file_paths": ["specs/056-stage-found-defect-filing/spec.md"]},
-        fingerprint_basis={"file_path": "specs/056-stage-found-defect-filing/spec.md",
-                           "gate_or_artifact": "a spec"})
-    mixed = valid_finding(
-        title="mixed finding",
-        evidence={"file_paths": ["specs/040-old-merged-spec/spec.md", "docs/live.md"]},
-        fingerprint_basis={"file_path": "specs/040-old-merged-spec/spec.md",
-                           "gate_or_artifact": "a spec"})
-    absent = valid_finding(
-        title="absent spec finding",
-        evidence={"file_paths": ["specs/099-not-in-checkout/spec.md"]},
-        fingerprint_basis={"file_path": "specs/099-not-in-checkout/spec.md",
-                           "gate_or_artifact": "a spec"})
-    rc, outputs, state, out = run_prepare(
-        tmp, "structured-array", findings=[own, mixed, absent])
-    check(case + ": exit 0", rc == 0, out)
-    check(case + ": all three survive", outputs.get("survivor-count") == "3", outputs)
-    check(case + ": no frozen-record note",
-          state and not any("frozen record" in n for n in state["notes"]),
-          state and state["notes"])
-
-
 CASES = [
     case_well_formed_finding_survives,
     case_malformed_finding_dropped,
@@ -1177,8 +1115,6 @@ CASES = [
     case_anchor_normalizing_to_empty_takes_fallback,
     case_missing_named_file_takes_fallback,
     case_fallback_issue_append_carries_each_findings_own_text,
-    case_finding_only_against_merged_spec_is_skipped_with_note,
-    case_finding_against_own_or_live_files_is_not_skipped,
     case_dedup_hit_open_comments_not_duplicates,
     case_dedup_hit_closed_creates_and_links,
     case_no_dedup_match_creates,

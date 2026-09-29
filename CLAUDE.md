@@ -97,5 +97,8 @@ prove. Each step has a rule.
   the same commit. The vendored skill (Spec Kit v1.0.5+) calls its report
   temporary scratch to be removed before commit; that instruction does not
   apply here -- the report is moved, not deleted.
-- A merged spec's directory under specs/ is a historical record: don't edit
-  it or file errata against it — correct the code or the live docs instead.
+- Once a feature's final PR has merged, its `specs/NNN-*/` spec.md,
+  plan.md, research.md and tasks.md are historical records: don't file or
+  fix errata against them. Correct the code or the live docs instead.
+  Contracts a gate reads (`specs/*/contracts/`) remain live and are fixed
+  like code.
