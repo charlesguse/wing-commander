@@ -227,6 +227,19 @@ With two maintainers/agents (CLAUDE.md caps concurrent local agents at two for t
   but, like D4 itself, this remains unconfirmed against real Jobs API data
   until a session with live dispatch access completes T016-T019/T022 and,
   from that, T032.
+- **2026-09-29 implement-stage status (cycle 5)**: Re-checked against the
+  tip of this branch after cycle 4's maintainer-review fold (Gate 106
+  rename, job-name suffix matching, wrapper host-side job exclusion, all
+  landed). T016, T017, T018, T019, T022, and T032 are still the only
+  unchecked tasks, unchanged from the 2026-09-26 status above, and for the
+  same reason: this session's tooling grants `gh issue view` and
+  `gh issue comment` only, still no `gh workflow run`, `gh api`,
+  `gh run list`, or `gh variable list` against a live repository.
+  `python3 .github/scripts/run-local-gates.py` passes 162/162 against the
+  shipped code (the gate count grew from 150 because unrelated specs added
+  gates on `main` in the interim). No code change was needed or made this
+  cycle; a session with live `gh` dispatch access against the test
+  repository is still required to close out T016-T019, T022, and T032.
 
 ## Maintainer Feedback
 
