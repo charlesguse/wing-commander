@@ -241,17 +241,20 @@ def _first_divergent_pin(workflow_file, run_pins, main_pins):
     """Pure comparison, fixturable without a real git history (contracts/
     triage.md: "each a checked-in transcript/workflow-pin pair"). Returns
     {workflow_file, action_ref, run_pin, main_pin} for the first (sorted by
-    action_ref) action present in both maps whose SET of refs differs, else
-    None. A map value is one ref (a string) or a list of the refs the file
-    pins that action at (_uses_pins()); order and repeats never matter. In
-    the evidence, run_pin/main_pin are the ref itself when there is one,
-    else the sorted refs joined with ", "."""
+    action_ref) action present in both maps where a ref the run actually
+    used is no longer on main (run_refs - main_refs is non-empty), else
+    None. Main adding a further pin the run never used (e.g. a second step
+    added at a new ref) is not bump evidence -- only losing a ref the run
+    relied on is (#678). A map value is one ref (a string) or a list of the
+    refs the file pins that action at (_uses_pins()); order and repeats
+    never matter. In the evidence, run_pin/main_pin are the ref itself when
+    there is one, else the sorted refs joined with ", "."""
     for action_ref, run_value in sorted(run_pins.items()):
         main_value = main_pins.get(action_ref)
         if main_value is None:
             continue
         run_refs, main_refs = _ref_set(run_value), _ref_set(main_value)
-        if run_refs != main_refs:
+        if run_refs - main_refs:
             return {
                 "workflow_file": workflow_file,
                 "action_ref": action_ref,
