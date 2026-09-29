@@ -4782,7 +4782,9 @@ jobs:
           # List what actually exists on the default branch so those can be
           # told apart. Fails CLOSED: if the listing cannot be read, every
           # mismatch is reported exactly as before rather than suppressed.
-          DEFAULT_BRANCH="$(gh api "repos/$GITHUB_REPOSITORY" --jq '.default_branch' 2>/dev/null || true)"
+          if ! DEFAULT_BRANCH="$(gh api "repos/$GITHUB_REPOSITORY" --jq '.default_branch' 2>/dev/null)"; then
+            DEFAULT_BRANCH=""
+          fi
           export DEFAULT_BRANCH
           : > on-default.txt
           DEFAULT_LISTING_OK=false

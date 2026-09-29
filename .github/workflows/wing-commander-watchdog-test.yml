@@ -105,7 +105,9 @@ jobs:
           echo "Stage 8 run: $run_id — waiting for completion"
           conclusion=""
           for i in $(seq 1 80); do   # up to 20 min
-            conclusion="$(gh api "repos/$REPO/actions/runs/$run_id" --jq '.conclusion // empty')"
+            if ! conclusion="$(gh api "repos/$REPO/actions/runs/$run_id" --jq '.conclusion // empty')"; then
+              conclusion=""
+            fi
             [ -n "$conclusion" ] && break
             sleep 15
           done
@@ -168,8 +170,10 @@ jobs:
             # era was silently preempted by an unrelated bug that fired
             # first, giving false confidence the scenario was exercised.
             # Injecting run-id 1 must kill exactly the resolve job.
-            failed_jobs="$(gh api "repos/$REPO/actions/runs/$S8_ID/jobs?per_page=100" \
-              --jq '[.jobs[] | select(.conclusion == "failure") | .name] | join(", ")')"
+            if ! failed_jobs="$(gh api "repos/$REPO/actions/runs/$S8_ID/jobs?per_page=100" \
+              --jq '[.jobs[] | select(.conclusion == "failure") | .name] | join(", ")')"; then
+              failed_jobs=""
+            fi
             case "$failed_jobs" in
               *resolve*) echo "Injected failure landed where expected (failed jobs: $failed_jobs)" ;;
               *) echo "::error::stage 8 failed, but not in the injected way (failed jobs: $failed_jobs) — a different defect preempted the injection"; exit 1 ;;

@@ -1121,14 +1121,18 @@ jobs:
           set -uo pipefail
           # #505: the run's own workflow `path` scopes board_triage.py's
           # action-bump comparison to the workflow this run actually ran.
-          run_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" 2>/dev/null || true)"
+          if ! run_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" 2>/dev/null)"; then
+            run_json=""
+          fi
           commit_sha="$(printf '%s' "$run_json" | jq -r '.head_sha // empty' 2>/dev/null || true)"
           workflow_path="$(printf '%s' "$run_json" | jq -r '.path // empty' 2>/dev/null || true)"
           echo "commit-sha=$commit_sha" >> "$GITHUB_OUTPUT"
           # #583: API text and artifact file names -- control characters removed.
           python3 .github/scripts/wc_step_output.py workflow-path "$workflow_path" >> "$GITHUB_OUTPUT"
 
-          artifact_id="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/artifacts" --jq '.artifacts[] | select(.name | startswith("claude-execution-output")) | .id' 2>/dev/null | head -1 || true)"
+          if ! artifact_id="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/artifacts" --jq '.artifacts[] | select(.name | startswith("claude-execution-output")) | .id' 2>/dev/null | head -1)"; then
+            artifact_id=""
+          fi
           if [ -z "$artifact_id" ]; then
             echo "transcript-path=" >> "$GITHUB_OUTPUT"
             exit 0

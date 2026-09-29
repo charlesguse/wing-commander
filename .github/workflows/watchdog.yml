@@ -1766,7 +1766,9 @@ jobs:
 
           tasks_actual="0"
           if [ -n "$SPEC_DIR" ]; then
-            tasks_actual="$(gh api -X GET "repos/$GITHUB_REPOSITORY/contents/$SPEC_DIR/tasks.md" -F ref="${_spec_prefix}${SLUG}" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null | grep -c '^- \[[xX]\]')" || true
+            if ! tasks_actual="$(gh api -X GET "repos/$GITHUB_REPOSITORY/contents/$SPEC_DIR/tasks.md" -F ref="${_spec_prefix}${SLUG}" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null | grep -c '^- \[[xX]\]')"; then
+              tasks_actual="0"
+            fi
           fi
 
           # grep -c/jq can leave a non-digit or empty capture on a read
@@ -3998,7 +4000,9 @@ jobs:
           FAILED_JOBS: ${{ steps.gate.outputs.failed-jobs }}
         run: |
           set -uo pipefail
-          jobs_json="$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs?per_page=100" 2>/dev/null || echo '{"jobs":[]}')"
+          if ! jobs_json="$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs?per_page=100" 2>/dev/null)"; then
+            jobs_json='{"jobs":[]}'
+          fi
           urls=""
           for pair in $FAILED_JOBS; do
             job="${pair%%:*}"

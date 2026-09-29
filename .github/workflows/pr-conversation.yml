@@ -622,7 +622,9 @@ jobs:
           # request and answers `Not Found (HTTP 404)` — which is exactly what
           # it did, on every run of this stage, until it was measured in run
           # 32671719013. Gate 28 now fails any such call in the tree.
-          issue=$(gh api -X GET "repos/$GITHUB_REPOSITORY/contents/$SPEC_DIR/spec-meta.json" -f ref="$SPEC_BRANCH" --jq '.content' | base64 -d | jq -r '.issue // empty')
+          if ! issue=$(gh api -X GET "repos/$GITHUB_REPOSITORY/contents/$SPEC_DIR/spec-meta.json" -f ref="$SPEC_BRANCH" --jq '.content' | base64 -d | jq -r '.issue // empty'); then
+            issue=''
+          fi
           if [ -z "$issue" ]; then
             msg="wing-commander pr-conversation stage: cannot resolve the lifecycle issue number from $SPEC_DIR/spec-meta.json on $SPEC_BRANCH."
             echo "::error::$msg"
@@ -730,8 +732,12 @@ jobs:
             # job down on any PR with more than 30 comments. Stream one object
             # per line (`'.[] | ...'`) and slurp with `jq -s` instead, the
             # shape intake.yml:399 already uses.
-            issue_comments=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" --paginate --jq '.[] | select(.user.login == env.BOT_LOGIN) | {id, created_at, body, kind: "issue"}' | jq -s '.')
-            review_comments=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/comments" --paginate --jq '.[] | select(.user.login == env.BOT_LOGIN) | {id, created_at, body, kind: "review"}' | jq -s '.')
+            if ! issue_comments=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" --paginate --jq '.[] | select(.user.login == env.BOT_LOGIN) | {id, created_at, body, kind: "issue"}' | jq -s '.'); then
+              issue_comments='[]'
+            fi
+            if ! review_comments=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/comments" --paginate --jq '.[] | select(.user.login == env.BOT_LOGIN) | {id, created_at, body, kind: "review"}' | jq -s '.'); then
+              review_comments='[]'
+            fi
             all=$(jq -n --argjson a "$issue_comments" --argjson b "$review_comments" '$a + $b | sort_by(.created_at) | reverse')
             # T054: scope to the most recent marker belonging to THIS actor's
             # own outstanding classification (structural match on
@@ -1796,8 +1802,12 @@ jobs:
           # array PER PAGE and the `--argjson` below aborts the step on any
           # PR past page 1 (30 comments), making FR-022's confirmation round
           # permanently unreachable there.
-          issue_comments=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" --paginate --jq '.[] | {login: .user.login, body: .body, created_at: .created_at}' | jq -s '.')
-          review_comments=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/comments" --paginate --jq '.[] | {login: .user.login, body: .body, created_at: .created_at}' | jq -s '.')
+          if ! issue_comments=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" --paginate --jq '.[] | {login: .user.login, body: .body, created_at: .created_at}' | jq -s '.'); then
+            issue_comments='[]'
+          fi
+          if ! review_comments=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/comments" --paginate --jq '.[] | {login: .user.login, body: .body, created_at: .created_at}' | jq -s '.'); then
+            review_comments='[]'
+          fi
           comments=$(jq -n --argjson a "$issue_comments" --argjson b "$review_comments" '$a + $b | sort_by(.created_at)')
 
           anchor=$(printf '%s' "$comments" | jq -r --arg bot "$BOT_LOGIN" --arg login "$ACTOR_LOGIN" --argjson cls "$CLASSIFICATION_JSON" '
@@ -2629,8 +2639,12 @@ jobs:
           # `--jq` under `--paginate` emits one array PER PAGE, so this step
           # aborted on exactly the long PRs a maintainer most wants to stop
           # something on (FR-024/SC-009).
-          issue_comments=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" --paginate --jq '.[] | select(.user.login == env.BOT_LOGIN) | {created_at, body}' | jq -s '.')
-          review_comments=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/comments" --paginate --jq '.[] | select(.user.login == env.BOT_LOGIN) | {created_at, body}' | jq -s '.')
+          if ! issue_comments=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" --paginate --jq '.[] | select(.user.login == env.BOT_LOGIN) | {created_at, body}' | jq -s '.'); then
+            issue_comments='[]'
+          fi
+          if ! review_comments=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/comments" --paginate --jq '.[] | select(.user.login == env.BOT_LOGIN) | {created_at, body}' | jq -s '.'); then
+            review_comments='[]'
+          fi
           all=$(jq -n --argjson a "$issue_comments" --argjson b "$review_comments" '$a + $b | sort_by(.created_at) | reverse')
           # T056: skip any announcement this run posted ITSELF. The
           # classify-and-announce job announces EVERY classification,
@@ -3382,7 +3396,9 @@ jobs:
           SPEC_BRANCH: ${{ inputs.spec-prefix }}${{ needs.resolve-identity.outputs.slug }}
         run: |
           set -uo pipefail
-          issue=$(gh api -X GET "repos/$GITHUB_REPOSITORY/contents/$SPEC_DIR/spec-meta.json" -f ref="$SPEC_BRANCH" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null | jq -r '.issue // empty' 2>/dev/null)
+          if ! issue=$(gh api -X GET "repos/$GITHUB_REPOSITORY/contents/$SPEC_DIR/spec-meta.json" -f ref="$SPEC_BRANCH" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null | jq -r '.issue // empty' 2>/dev/null); then
+            issue=''
+          fi
           echo "issue-number=$issue" >> "$GITHUB_OUTPUT"
 
       # FR-004/FR-011: a credential re-establishment failure is named as
@@ -3519,7 +3535,9 @@ jobs:
           SPEC_BRANCH: ${{ inputs.spec-prefix }}${{ needs.resolve-identity.outputs.slug }}
         run: |
           set -uo pipefail
-          issue=$(gh api -X GET "repos/$GITHUB_REPOSITORY/contents/$SPEC_DIR/spec-meta.json" -f ref="$SPEC_BRANCH" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null | jq -r '.issue // empty' 2>/dev/null)
+          if ! issue=$(gh api -X GET "repos/$GITHUB_REPOSITORY/contents/$SPEC_DIR/spec-meta.json" -f ref="$SPEC_BRANCH" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null | jq -r '.issue // empty' 2>/dev/null); then
+            issue=''
+          fi
           echo "issue-number=$issue" >> "$GITHUB_OUTPUT"
 
       - name: Determine which dependency did not start
