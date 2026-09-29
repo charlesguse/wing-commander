@@ -774,6 +774,8 @@ jobs:
           # framed as data, not instructions.
           # the settled anchor rule for gate_or_artifact/file_path the
           # prompt below states -- see clarify.yml.
+          # #266: inspect files with the Grep, Glob and Read tools, never
+          # shell pipelines or loops, as the prompt below states -- see clarify.yml.
           prompt: |
             You are the tasks stage of this repository's spec-driven
             development pipeline. The accepted plan lives in
@@ -855,6 +857,9 @@ jobs:
               `gh workflow list` will not explain it. `gh api` is not granted
               in this run; read PRs and issues with whichever `gh pr ...` /
               `gh issue ...` verbs this run permits.
+            - Inspect files with the Grep, Glob and Read tools, not shell
+              pipelines or loops (`grep … | sort`, `for f in …; do cat`,
+              `awk`) — those are denied here.
             - Bash cannot reach paths outside the checkout, but the Write tool
               can. Never mkdir or ls a temp path first to prepare it.
             A denial is not a hint to retry a variant. Switch to the allowed form
@@ -975,6 +980,8 @@ jobs:
           allowed_bots: "github-actions,${{ steps.ctx.outputs.bot-slug }}"
           # the settled anchor rule for gate_or_artifact/file_path the
           # prompt below states -- see clarify.yml.
+          # #266: inspect files with the Grep, Glob and Read tools, never
+          # shell pipelines or loops, as the prompt below states -- see clarify.yml.
           prompt: |
             You are the tasks stage of this repository's spec-driven
             development pipeline, running in review-required mode. The accepted
@@ -1062,6 +1069,9 @@ jobs:
               `gh workflow list` will not explain it. `gh api` is not granted
               in this run; read PRs and issues with whichever `gh pr ...` /
               `gh issue ...` verbs this run permits.
+            - Inspect files with the Grep, Glob and Read tools, not shell
+              pipelines or loops (`grep … | sort`, `for f in …; do cat`,
+              `awk`) — those are denied here.
             - Bash cannot reach paths outside the checkout, but the Write tool
               can. Never mkdir or ls a temp path first to prepare it.
             A denial is not a hint to retry a variant. Switch to the allowed form

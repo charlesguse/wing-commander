@@ -209,6 +209,16 @@ def case_exact_only():
          "any-arguments form")
 
 
+def case_glob_is_prefix():
+    """#266: Bash(cmd-*) is a whole-command glob, not an exact command."""
+    expect("glob grant",
+           {"ALLOWED_OVERRIDE": "Bash(python3 .github/scripts/verify-*)",
+            "DISALLOWED_OVERRIDE": ""},
+           "This run permits these shell commands: `python3 "
+           ".github/scripts/verify-*`." + STATIC_SUFFIX)
+    note("a glob grant is stated with its wildcard, not as exact-only")
+
+
 def case_prefix_and_exact_together():
     """Acceptance 2.4: both forms granted → stated once, prefix form."""
     expect("prefix and exact together",
@@ -268,6 +278,7 @@ CASES = [
     case_unrestricted_with_exception,
     case_no_shell_entry_at_all,
     case_exact_only,
+    case_glob_is_prefix,
     case_prefix_and_exact_together,
     case_partial_overlap_deny,
     case_prefix_deny_covers_exact_allow,
@@ -293,6 +304,10 @@ MUTATIONS = [
     ("reverts the deduplication (D4)",
      lambda s: s.replace(
          '[ -n "${entry_seen[$cmd]+x}" ] && continue', 'true')),
+    ("reverts the glob-as-PREFIX classification (#266)",
+     lambda s: s.replace(
+         "printf 'PREFIX|%s' \"$(trim \"$cmd\")\"",
+         "printf 'EXACT|%s' \"$(trim \"$cmd\")\"")),
     ("reverts the appended compound-command guidance (D3)",
      lambda s: s.replace(
          'shell_commands="$shell_commands$STATIC_SUFFIX"\n', '')),

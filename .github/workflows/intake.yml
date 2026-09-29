@@ -691,10 +691,16 @@ jobs:
             5. Create branch ${{ inputs.spec-draft-prefix }}<NNN-slug> from
                ${{ steps.defbranch.outputs.name }}, commit ONLY the new
                spec directory (git add <spec-dir>), and push it.
-            6. Open a pull request to ${{ steps.defbranch.outputs.name }}:
+            6. Open a pull request to ${{ steps.defbranch.outputs.name }}. First
+               write its body (a summary of the spec, then the line
+               'Closes nothing — lifecycle issue: #${{ inputs.issue-number }}')
+               with the Write tool to exactly
+               ${{ runner.temp }}/intake-pr-body.md -- not under the
+               repository, and never as a multi-line --body on the command
+               line, which the permission layer denies -- then run:
                gh pr create --base ${{ steps.defbranch.outputs.name }} --head ${{ inputs.spec-draft-prefix }}<NNN-slug> \
                  --title "Spec: <feature name> (#${{ inputs.issue-number }})" \
-                 --body  "<summary of the spec, link 'Closes nothing — lifecycle issue: #${{ inputs.issue-number }}'>"
+                 --body-file ${{ runner.temp }}/intake-pr-body.md
             7. Update the lifecycle issue #${{ inputs.issue-number }}:
                - Create the spec identity label first (adding a nonexistent label fails):
                  gh label create "spec:<NNN-slug>" --color C5DEF5 --description "Lifecycle: <spec-dir>" --force
@@ -731,7 +737,8 @@ jobs:
             unchanged.
 
             Constraints: create at most one spec directory; never edit files outside
-            it; never merge or approve anything; never force-push.
+            it, except the step 6 PR-body scratch file; never merge or approve
+            anything; never force-push.
 
             Shell constraints in this headless run. Each of these cost real
             turns in earlier runs, so read them before your first Bash call:

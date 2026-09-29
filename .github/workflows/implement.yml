@@ -852,7 +852,7 @@ jobs:
           # reached for it. Dropped rather than re-tokened: every Actions
           # interaction this stage performs is already owned by the
           # deterministic dispatch steps further down this job.
-          default-allowed-tools: "Skill,Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git log:*),Bash(git diff:*),Bash(git ls-tree:*),Bash(git branch:*),Bash(echo:*),Bash(git show:*),Bash(ls:*),Bash(cat:*),Bash(grep:*),Bash(head:*),Bash(tail:*),Bash(sort:*),Bash(uniq:*),Bash(wc:*),Bash(cut:*),Bash(yamllint:*),Bash(actionlint:*),Bash(shellcheck:*),Bash(jq:*),Bash(mkdir:*),Bash(.specify/scripts/bash/check-prerequisites.sh:*),Bash(bash .specify/scripts/bash/check-prerequisites.sh:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(git rm:*),Bash(python .github/scripts/run-local-gates.py:*)"
+          default-allowed-tools: "Skill,Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git log:*),Bash(git diff:*),Bash(git ls-tree:*),Bash(git branch:*),Bash(echo:*),Bash(git show:*),Bash(ls:*),Bash(cat:*),Bash(grep:*),Bash(head:*),Bash(tail:*),Bash(sort:*),Bash(uniq:*),Bash(wc:*),Bash(cut:*),Bash(yamllint:*),Bash(actionlint:*),Bash(shellcheck:*),Bash(jq:*),Bash(mkdir:*),Bash(.specify/scripts/bash/check-prerequisites.sh:*),Bash(bash .specify/scripts/bash/check-prerequisites.sh:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(git rm:*),Bash(git mv:*),Bash(python .github/scripts/run-local-gates.py:*),Bash(python3 .github/scripts/run-local-gates.py:*),Bash(python .github/scripts/verify-*),Bash(python3 .github/scripts/verify-*)"
           default-disallowed-tools: "WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage"
           extra-allowed-tools: ${{ inputs.extra-allowed-tools }}
           extra-disallowed-tools: ${{ inputs.extra-disallowed-tools }}
@@ -1004,6 +1004,12 @@ jobs:
               `gh workflow list` will not explain it. `gh api` is not granted
               in this run; read PRs and issues with whichever `gh pr ...` /
               `gh issue ...` verbs this run permits.
+            - Run a gate as one plain command from the repo root, e.g.
+              `python3 .github/scripts/verify-gate-wiring.py` or
+              `python3 .github/scripts/run-local-gates.py` — no `cd`,
+              `timeout`, redirect (`> log 2>&1`) or `;`/`echo` chain around
+              it, each of which is denied even though the gate itself is
+              allowed. Read long output straight from the tool result.
             - Bash cannot reach paths outside the checkout, but the Write tool
               can. Never mkdir or ls a temp path first to prepare it.
             A denial is not a hint to retry a variant. Switch to the allowed form
@@ -1530,7 +1536,7 @@ jobs:
         with:
           # Gate 12 / T065 class — see "Compose tool args (implement.cycle)"
           # above: same dropped, never-referenced, wrong-token grant.
-          default-allowed-tools: "Skill,Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git pull:*),Bash(git fetch:*),Bash(git reset:*),Bash(git log:*),Bash(git diff:*),Bash(git ls-tree:*),Bash(git branch:*),Bash(echo:*),Bash(git show:*),Bash(ls:*),Bash(cat:*),Bash(grep:*),Bash(head:*),Bash(tail:*),Bash(sort:*),Bash(uniq:*),Bash(wc:*),Bash(cut:*),Bash(yamllint:*),Bash(actionlint:*),Bash(shellcheck:*),Bash(jq:*),Bash(mkdir:*),Bash(.specify/scripts/bash/check-prerequisites.sh:*),Bash(bash .specify/scripts/bash/check-prerequisites.sh:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(git rm:*),Bash(python .github/scripts/run-local-gates.py:*)"
+          default-allowed-tools: "Skill,Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git pull:*),Bash(git fetch:*),Bash(git reset:*),Bash(git log:*),Bash(git diff:*),Bash(git ls-tree:*),Bash(git branch:*),Bash(echo:*),Bash(git show:*),Bash(ls:*),Bash(cat:*),Bash(grep:*),Bash(head:*),Bash(tail:*),Bash(sort:*),Bash(uniq:*),Bash(wc:*),Bash(cut:*),Bash(yamllint:*),Bash(actionlint:*),Bash(shellcheck:*),Bash(jq:*),Bash(mkdir:*),Bash(.specify/scripts/bash/check-prerequisites.sh:*),Bash(bash .specify/scripts/bash/check-prerequisites.sh:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(git rm:*),Bash(git mv:*),Bash(python .github/scripts/run-local-gates.py:*),Bash(python3 .github/scripts/run-local-gates.py:*),Bash(python .github/scripts/verify-*),Bash(python3 .github/scripts/verify-*)"
           default-disallowed-tools: "WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage"
           extra-allowed-tools: ${{ inputs.extra-allowed-tools }}
           extra-disallowed-tools: ${{ inputs.extra-disallowed-tools }}
@@ -1706,6 +1712,12 @@ jobs:
               `gh workflow list` will not explain it. `gh api` is not granted
               in this run; read PRs and issues with whichever `gh pr ...` /
               `gh issue ...` verbs this run permits.
+            - Run a gate as one plain command from the repo root, e.g.
+              `python3 .github/scripts/verify-gate-wiring.py` or
+              `python3 .github/scripts/run-local-gates.py` — no `cd`,
+              `timeout`, redirect (`> log 2>&1`) or `;`/`echo` chain around
+              it, each of which is denied even though the gate itself is
+              allowed. Read long output straight from the tool result.
             - Bash cannot reach paths outside the checkout, but the Write tool
               can. Never mkdir or ls a temp path first to prepare it.
             A denial is not a hint to retry a variant. Switch to the allowed form

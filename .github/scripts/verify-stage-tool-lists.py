@@ -64,9 +64,11 @@ assertion on the thirteen rows that can hold it.
      a script that exists, once any interpreter prefix (bare, `bash `, `sh `,
      `./`, `python `/`python3 `, with an optional flag) is stripped and the
      remaining token is a path (a leading `./` or a contained `/`) rather
-     than a bare command (`jq`, `git status`). A path absent from the
-     checkout by design (a run-time-provisioned directory) is recorded, with
-     its exact text and a reason, in `script-grant-waivers.json` - an entry
+     than a bare command (`jq`, `git status`). A path carrying a wildcard
+     (`verify-*`, #266) must match at least one tracked file. A path
+     absent from the checkout by design (a run-time-provisioned directory)
+     is recorded, with its exact text and a reason, in
+     `script-grant-waivers.json` - an entry
      whose path *does* resolve is itself a failure, so the record cannot
      outlive its reason. Spec Kit stopped shipping `update-agent-context.sh`
      and both plan sites kept granting it, with the prompt still describing
@@ -99,6 +101,7 @@ reusable-workflow-caller or bare-`claude_args` surface that does not exist,
 plus a waiver entry that has gone stale (specs/082).
 """
 import argparse
+import fnmatch
 import glob
 import io
 import json
@@ -472,6 +475,36 @@ def _git_tracked(root, rel):
     return None
 
 
+# A granted path carrying a wildcard: `Bash(python3 .github/scripts/verify-*)`
+# (#266). Claude Code matches such a rule as a whole-command glob, which is
+# the only rule form that lets one grant cover every `verify-*.py` gate - the
+# `:*` form is a word-boundary prefix (`verify-:*` matches only `verify-`
+# followed by a space), so it cannot.
+GLOB_CHARS = re.compile(r"[*?\[]")
+
+
+def _glob_has_match(root, pattern):
+    """A wildcard grant "exists" when at least one git-tracked file matches
+    it (case-sensitively, `*` crossing `/` the same way the permission
+    layer's own glob does). A glob that matches nothing is the same stale
+    entry a missing script is. Outside a git working tree - this gate's own
+    synthetic self-test fixtures - on-disk files stand in for tracked ones.
+    """
+    try:
+        proc = subprocess.run(
+            ["git", "-C", root, "ls-files", "-z"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        tracked = proc.stdout.decode("utf-8").split("\0") \
+            if proc.returncode == 0 else None
+    except OSError:
+        tracked = None
+    if tracked is None:
+        tracked = [
+            os.path.relpath(os.path.join(d, f), root).replace(os.sep, "/")
+            for d, _dirs, files in os.walk(root) for f in files]
+    return any(p and fnmatch.fnmatchcase(p, pattern) for p in tracked)
+
+
 def _script_exists(root, rel):
     """Case-sensitive `os.path.isfile`, keyed off the directory listing,
     then narrowed to git-tracked status when `root` is a git working tree.
@@ -487,6 +520,8 @@ def _script_exists(root, rel):
     forward grant against it - or a waiver entry naming it - must be judged
     against git, not the filesystem (T024/T025, PR #636 review on #630).
     """
+    if GLOB_CHARS.search(rel):
+        return _glob_has_match(root, rel)
     path = os.path.join(root, rel)
     if not os.path.isfile(path):
         return False
@@ -986,6 +1021,26 @@ def self_test(root="."):
         print("[FAIL] a grant for a nonexistent script outside "
               ".specify/scripts/bash/ was not caught (expected 1 failure "
               "naming the site and path): {0}".format(found))
+
+    # #266: a wildcard grant is held to "matches at least one tracked
+    # file", so one that matches nothing is caught like a missing script,
+    # while the shipped `verify-*` grants pass (the baseline above).
+    ghost4 = ".github/scripts/zzz-does-not-exist-*"
+    m_sites = dict(sites)
+    allowed, disallowed = m_sites["implement.cycle"]
+    m_sites["implement.cycle"] = (
+        allowed + ["Bash(python3 {0})".format(ghost4)], disallowed)
+    m_all_sites = [(label, a) for label, (a, _d) in m_sites.items()]
+    found = new_failures(check_grant_existence(m_all_sites, waivers, root))
+    if len(found) == 1 and ghost4 in found[0] and \
+            "implement.cycle" in found[0]:
+        print("[ok] mutation caught: a wildcard grant that matches no "
+              "tracked file")
+    else:
+        bad += 1
+        print("[FAIL] a wildcard grant matching no tracked file was not "
+              "caught (expected 1 failure naming the site and pattern): "
+              "{0}".format(found))
 
     # A grant whose case doesn't match the file on disk must fail here the
     # same way it fails on Actions' case-sensitive runners, even though

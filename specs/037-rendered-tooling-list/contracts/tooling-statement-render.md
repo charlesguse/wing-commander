@@ -42,7 +42,8 @@ classify each entry:
 |---|---|---|
 | `Bash` (bare) | `ANY` | — |
 | `Bash(<cmd>:*)` or `Bash(<cmd> *)` | `PREFIX` | `<cmd>`, trimmed |
-| `Bash(<cmd>)` (no trailing `:*`/` *`) | `EXACT` | `<cmd>`, trimmed |
+| `Bash(<cmd>*)` (a glob: trailing `*` with no `:`/space before it, #266) | `PREFIX` | `<cmd>*`, trimmed, `*` kept |
+| `Bash(<cmd>)` (no trailing `*`) | `EXACT` | `<cmd>`, trimmed |
 | anything else | `NOT_SHELL` | — (excluded from every later step; FR-010) |
 
 ## Coverage / subtraction (research.md D2)
