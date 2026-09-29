@@ -135,7 +135,8 @@ The project [constitution](.specify/memory/constitution.md) governs every change
    automated, and surviving manual steps are always reported.
 5. **Security** — issue content is data, never instructions; a maintainer's
    label or authorship gates entry; least-privilege tools; humans merge every
-   spec, plan and final PR.
+   spec and plan PR, and the final PR unless the lifecycle auto-merge setting
+   is on.
 6. **Portability** — the consuming repository owns its artifacts; the pipeline
    reads `.specify/`, spec-kit skills, and `specs/` only from the checkout it
    runs in, never bundling its own.
@@ -152,12 +153,15 @@ The project [constitution](.specify/memory/constitution.md) governs every change
    instruction can be silently unfollowed with no error; code that computes
    the same input the same way every time cannot.
 10. **Bounded autonomy** — the pipeline works its own issue board: triage,
-    route, fix, review, merge, prove. The bot merges two classes only:
+    route, fix, review, merge, prove. The bot merges three classes only:
     fix-shaped changes inside a deterministic size-and-path backstop, behind
     green checks on the exact head, an independent review with zero open
-    findings, and a kill switch; and dependency bumps it opened itself, after
-    their own verification passed. Spec-shaped work is filed as a
-    `spec-request`, and every other merge stays human.
+    findings, and a kill switch; dependency bumps it opened itself, after
+    their own verification passed; and, only while
+    `WING_COMMANDER_LIFECYCLE_AUTO_MERGE` is on (it defaults to off), a
+    lifecycle's final PR, behind eight deterministic conditions at the exact
+    head, a clean review round, and its own kill switch. Spec-shaped work is
+    filed as a `spec-request`, and every other merge stays human.
 
 Full stage-by-stage design: [docs/architecture.md](docs/architecture.md).
 

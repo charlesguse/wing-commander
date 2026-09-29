@@ -372,15 +372,23 @@ change to the tiering above.
   [stage-interfaces.md](../specs/010-reusable-pipeline/contracts/stage-interfaces.md#per-stage-default-tool-lists).
 - Only trusted refs are checked out (main, repo-local `spec*/` branches) — never
   fork PR heads.
-- Humans merge every spec, plan and final PR into main, and every
-  constitution amendment; the bot cannot approve those or merge one. The bot
-  merges two classes only (constitution X): the bounded fix PR, behind a
-  deterministic gate — checks green on the exact head SHA (no checks is not
-  green, and the gate suite must have run on that SHA), zero open findings
-  from an independent review, the size-and-path backstop on the final diff,
-  and a clear `WING_COMMANDER_*_PAUSED` switch — and the Spec Kit upgrade PR
-  the auto-update stage opened, after the verification that stage assigns
-  to the jump passed and the gate suite ran green on the exact head.
+- Humans merge every spec and plan PR into main, every constitution
+  amendment, and — while `WING_COMMANDER_LIFECYCLE_AUTO_MERGE` is off, its
+  default — every final PR; the bot cannot approve those, and never merges a
+  spec PR, a plan PR or an amendment. The bot merges three classes only
+  (constitution X): the bounded fix PR, behind a deterministic gate — checks
+  green on the exact head SHA (no checks is not green, and the gate suite
+  must have run on that SHA), zero open findings from an independent review,
+  the size-and-path backstop on the final diff, and a clear
+  `WING_COMMANDER_*_PAUSED` switch — the Spec Kit upgrade PR the auto-update
+  stage opened, after the verification that stage assigns to the jump passed
+  and the gate suite ran green on the exact head; and the lifecycle pull
+  request merge (spec 062), only while `WING_COMMANDER_LIFECYCLE_AUTO_MERGE`
+  is on — the final PR, squash-merged once eight deterministic conditions
+  hold on the exact head SHA (checks and gate suite green, mergeable, the
+  review round recorded at that head and clean with zero open findings, no
+  standing human changes-requested review, and a clear
+  `WING_COMMANDER_LIFECYCLE_REVIEW_GATE_PAUSED` switch).
 
 ---
 
