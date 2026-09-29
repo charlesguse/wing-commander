@@ -37,7 +37,7 @@ cancelling the holder or being dropped (research.md D4).
 | `implement.yml` | dispatch-next-iteration job | `wing-commander-${{ inputs.spec-dir }}` (**unchanged**) |
 | `finalize.yml` | `finalize` | `wing-commander-${{ inputs.spec-dir }}` (**unchanged**) |
 | `tasks.yml` | `stalled`, `stalled-approved` (survivor jobs; mark spec-meta stalled through the chain-stop notice) | `wing-commander-${{ needs.resolve-spec.outputs.spec-dir }}` (joined 2026-09-21, #397) |
-| `pr-conversation.yml` | `stalled` | `wing-commander-${{ needs.resolve-identity.outputs.spec-dir }}${{ needs.resolve-identity.outputs.spec-dir == '' && format('pr-conversation-pr-{0}', inputs.pr-number) || '' }}` (joined 2026-09-26, #581 — falls back to the per-PR group `wing-commander-pr-conversation-pr-<n>` when `spec-dir` is empty; see `resolve-identity-job.md`) |
+| `pr-conversation.yml` | `stalled-mark` | `wing-commander-${{ needs.resolve-identity.outputs.spec-dir }}${{ needs.resolve-identity.outputs.spec-dir == '' && format('pr-conversation-pr-{0}', inputs.pr-number) || '' }}` (joined 2026-09-26, #581 — falls back to the per-PR group `wing-commander-pr-conversation-pr-<n>` when `spec-dir` is empty; see `resolve-identity-job.md`. Originally the `stalled` job itself; specs/077-stalled-per-spec-group's Maintainer Feedback split `stalled` into a notice-only job that stays in the per-PR group unconditionally, and this `stalled-mark` job, which carries the group above) |
 | `cleanup.yml` | `teardown-done`, `teardown-rejected`, `mark-stalled` | `wing-commander-${{ needs.select.outputs.spec-dir }}` (joined 2026-09-21, #397; `select` derives it from `head-ref`) |
 
 Any future published stage that checks out and publishes to a

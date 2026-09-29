@@ -16,8 +16,9 @@ place of, the three above.
 ## New pattern
 
 ```python
-# The per-PR fallback pr-conversation.yml's stalled job declares when
-# needs.resolve-identity.outputs.spec-dir is empty (specs/077). Distinct
+# The per-PR fallback pr-conversation.yml's stalled-mark job declares when
+# needs.resolve-identity.outputs.spec-dir is empty (specs/077, T023's split
+# of the original stalled job). Distinct
 # from PER_SPEC_GROUP_RE: this is not a per-spec group at all, and its
 # literal "pr-conversation-pr-{0}" / "inputs.pr-number" text is specific
 # to this one job, not a general fourth per-spec spelling other stages

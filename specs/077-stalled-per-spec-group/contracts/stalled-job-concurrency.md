@@ -1,9 +1,18 @@
-# Contract: `pr-conversation.yml`'s `stalled` job joins the per-spec group
+# Contract: `pr-conversation.yml`'s `stalled-mark` job joins the per-spec group
 
 This document is the amendment `specs/013-serialize-rebase-stages/contracts/concurrency-groups.md`
 must receive (FR-004) — written here because this plan's edit scope is
 `specs/077-stalled-per-spec-group` only; the implement stage applies it
 verbatim against that file's then-current text.
+
+**Superseded by Maintainer Feedback (T023)**: the shape below shipped first
+(User Story 1, `stalled` itself joining the group) and was then split —
+`stalled` stays in the per-PR group unconditionally, and a new `stalled-mark`
+job carries the group expression this document originally assigned to
+`stalled`. The group expression, the arm added to the admission condition,
+and the deleted-waiver mechanics are otherwise unchanged; only which job
+they attach to moved. `stalled-job-concurrency.md`'s file name is kept
+for history — it now documents `stalled-mark`.
 
 ## Members table row to add
 
@@ -11,11 +20,11 @@ Immediately after the existing `tasks.yml` `stalled`/`stalled-approved` row:
 
 | Workflow | Job | Group expression after this change |
 |---|---|---|
-| `pr-conversation.yml` | `stalled` | `wing-commander-${{ needs.resolve-identity.outputs.spec-dir }}${{ needs.resolve-identity.outputs.spec-dir == '' && format('pr-conversation-pr-{0}', inputs.pr-number) || '' }}` (joined 2026-09-26, #581 — falls back to the per-PR group `wing-commander-pr-conversation-pr-<n>` when `spec-dir` is empty; see `resolve-identity-job.md`) |
+| `pr-conversation.yml` | `stalled-mark` | `wing-commander-${{ needs.resolve-identity.outputs.spec-dir }}${{ needs.resolve-identity.outputs.spec-dir == '' && format('pr-conversation-pr-{0}', inputs.pr-number) || '' }}` (joined 2026-09-26, #581 — falls back to the per-PR group `wing-commander-pr-conversation-pr-<n>` when `spec-dir` is empty; see `resolve-identity-job.md`) |
 
-## `spec-branch-push-waivers.json` entry to remove
+## `spec-branch-push-waivers.json`: one entry removed, then a differently-shaped one added back
 
-The existing entry:
+The original entry:
 
 ```json
 {
@@ -26,12 +35,20 @@ The existing entry:
 }
 ```
 
-is deleted in the same commit that lands the group above (FR-003) — Gate 80
-stale-checks every waiver, so leaving it in place after the job joins the
-group fails the gate on its own (spec.md Edge Cases: "a waiver outlives its
-exemption").
+was deleted in the commit that landed User Story 1 (FR-003) — Gate 80
+stale-checks every waiver, so leaving it in place after `stalled` joined the
+group failed the gate on its own (spec.md Edge Cases: "a waiver outlives its
+exemption"). T023's split then re-added an entry for `stalled`, for a
+different, durable reason: post-split, `stalled` calls
+`wing-commander-chain-stop-notice` with `mark-record: "false"`, so it calls
+the push-capable composite but structurally never reaches the push —
+Gate 80 has no per-input-value analysis, so this is waived exactly the way
+`intake.yml`'s and `clarify.yml`'s own `stalled` jobs already are. The job
+that actually pushes, `stalled-mark`, carries no waiver — it declares the
+group in the Members table row above directly.
 
-## `stalled` job: `needs`, `if:`, and `concurrency:` after this change
+## `stalled` and `stalled-mark` jobs: `needs:`/`if:` (identical, kept in
+## lockstep) and each job's own `concurrency:` after T023's split
 
 ```yaml
 stalled:
@@ -45,19 +62,39 @@ stalled:
       needs.classify-and-announce.result == 'skipped' ) &&
     needs.classify-and-announce.outputs.refusal-reason == ''
   concurrency:
+    group: wing-commander-pr-conversation-pr-${{ inputs.pr-number }}
+    cancel-in-progress: false
+  # ...calls wing-commander-chain-stop-notice with mark-record: "false"
+
+stalled-mark:
+  needs: [verify-image-prerequisites, resolve-identity, classify-and-announce]
+  if: |
+    needs.verify-image-prerequisites.result != 'failure' &&
+    !cancelled() &&
+    ( needs.verify-image-prerequisites.result == 'failure' ||
+      needs.resolve-identity.result == 'failure' ||
+      needs.classify-and-announce.result == 'failure' ||
+      needs.classify-and-announce.result == 'skipped' ) &&
+    needs.classify-and-announce.outputs.refusal-reason == ''
+  concurrency:
     group: wing-commander-${{ needs.resolve-identity.outputs.spec-dir }}${{ needs.resolve-identity.outputs.spec-dir == '' && format('pr-conversation-pr-{0}', inputs.pr-number) || '' }}
     cancel-in-progress: false
+  # ...calls wing-commander-chain-stop-notice with post-notice: "false"
 ```
 
-The added `needs.resolve-identity.result == 'failure'` arm and the group
-expression are both `if:`/`concurrency:` edits within the meaning of
-CLAUDE.md's rule — this change gets a `review-step-gating` skill pass before
-merge (Assumptions), specifically checking:
-- the widened arm cannot admit `stalled` on a *healthy* run (it only adds a
+The added `needs.resolve-identity.result == 'failure'` arm and both group
+expressions are `if:`/`concurrency:` edits within the meaning of CLAUDE.md's
+rule — each gets a `review-step-gating` skill pass before merge, checking:
+- the widened arm cannot admit either job on a *healthy* run (it only adds a
   `failure` check, never a `success` or absent check);
-- the group expression cannot silently produce the bare `wing-commander-`
-  constant for any reachable value of `needs.resolve-identity.outputs.spec-dir`
-  (data-model.md's condition table enumerates the reachable combinations).
+- `stalled-mark`'s group expression cannot silently produce the bare
+  `wing-commander-` constant for any reachable value of
+  `needs.resolve-identity.outputs.spec-dir` (data-model.md's condition table
+  enumerates the reachable combinations);
+- `stalled`'s group, now a plain per-PR string with no `needs.resolve-identity`
+  reference at all, cannot vary by outcome — it is unconditional by
+  construction, which is the property T023 exists to guarantee (the notice
+  can never be evicted by the per-spec group's single pending-run slot).
 
 ## What does not change
 
@@ -70,5 +107,8 @@ merge (Assumptions), specifically checking:
   spec.md's own waiver-file excerpt shows is waived for an unrelated,
   already-documented reason).
 - The `wing-commander-chain-stop-notice` and `wing-commander-stall-reason`
-  composites — no input, output, or internal step changes; only the values
-  `stalled` passes into them change source (data-model.md).
+  composites' existing inputs, outputs, and behavior for every caller other
+  than `pr-conversation.yml` — T023 widens both additively (new optional
+  inputs, default-`"true"`/default-`""` respectively); only the values
+  `stalled`/`stalled-mark` pass into them, and which new optional inputs
+  they set, are new (data-model.md).

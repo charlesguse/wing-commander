@@ -90,8 +90,9 @@ PER_SPEC_GROUP_RE = re.compile(
     r"^wing-commander-\$\{\{\s*"
     r"(?:inputs\.spec-dir|needs\.[\w-]+\.outputs\.spec-dir|matrix\.spec_dir)"
     r"\s*\}\}$")
-# The per-PR fallback pr-conversation.yml's stalled job declares when
-# needs.resolve-identity.outputs.spec-dir is empty (specs/077). Distinct
+# The per-PR fallback pr-conversation.yml's stalled-mark job declares when
+# needs.resolve-identity.outputs.spec-dir is empty (specs/077, T023's split
+# of the original stalled job). Distinct
 # from PER_SPEC_GROUP_RE: this is not a per-spec group at all, and its
 # literal "pr-conversation-pr-{0}" / "inputs.pr-number" text is specific
 # to this one job, not a general fourth per-spec spelling other stages
@@ -346,8 +347,9 @@ def _resolve_identity_spec_dir(slug):
 def _fallback_group_value(spec_dir, pr_number):
     """Mirrors FALLBACK_GROUP's two `${{ }}` blocks once GitHub Actions has
     substituted spec-dir and, only when it is empty, the per-PR
-    format(...) fallback -- so a caller can check what the stalled job's
-    concurrency group actually resolves to for a given spec-dir value."""
+    format(...) fallback -- so a caller can check what the stalled-mark
+    job's concurrency group actually resolves to for a given spec-dir
+    value."""
     tail = "pr-conversation-pr-{0}".format(pr_number) if spec_dir == "" else ""
     return "wing-commander-" + spec_dir + tail
 
@@ -408,7 +410,7 @@ def self_test():
          _job("a", None, RUN_PUSH), ["a"], expect_substrings=["None"])
     case("a group that merely starts with the per-spec spelling is not the group",
          _job("a", NEAR_GROUP, RUN_PUSH), ["a"])
-    case("the pr-conversation stalled job's per-PR fallback spelling passes",
+    case("the pr-conversation stalled-mark job's per-PR fallback spelling passes",
          _job("a", FALLBACK_GROUP, RUN_PUSH), [])
     case("the fallback spelling with a mismatched needs.<job> name across "
          "its two halves still fails (defeats the backreference)",
@@ -421,8 +423,8 @@ def self_test():
          _job("a", FALLBACK_GROUP_NEAR_MISS_IDENTIFIER, RUN_PUSH), ["a"])
 
     label = ("resolve-identity emits an empty spec-dir for a non-qualifying "
-             "PR (empty slug), so the stalled job's fallback group resolves "
-             "to the per-PR spelling, not wing-commander-specs/")
+             "PR (empty slug), so the stalled-mark job's fallback group "
+             "resolves to the per-PR spelling, not wing-commander-specs/")
     empty_spec_dir = _resolve_identity_spec_dir("")
     empty_group = _fallback_group_value(empty_spec_dir, "42")
     if empty_spec_dir == "" and empty_group == "wing-commander-pr-conversation-pr-42":
