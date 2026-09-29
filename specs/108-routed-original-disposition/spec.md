@@ -150,6 +150,11 @@ feed it the real workflow and confirm it passes.
 
 ### Edge Cases
 
+- **The original is disposed while spec 097's stop point or spec 100's
+  re-admission semantics apply to it.** Disposition supersedes both. A
+  closed original is never a stop-request source (FR-008 directs a
+  maintainer to the spec-request), and re-admission of a disposed original
+  follows FR-006 rather than spec 100's label-removal path.
 - **The spec-request is filed but the disposition step then fails.** The
   request must not end up with zero open issues, and a later run must not
   file a second spec-request for it. The outcome must be a state a
@@ -201,9 +206,12 @@ feed it the real workflow and confirm it passes.
   of its own, an issue it has disposed of under FR-001.
 - **FR-006**: Removing `board:stalled` from a disposed issue MUST NOT, on
   its own, re-admit it to the board. The documented way to reconsider a
-  disposed request is a maintainer reopening the originating issue; that
-  action MUST re-admit it exactly once and MUST NOT cause a second
-  spec-request to be filed for it.
+  disposed request is a maintainer reopening the originating issue. The
+  loop MUST treat an open originating issue whose newest route/stall
+  marker names a closed spec-request as re-admitted, notwithstanding
+  `board:stalled`, and MUST route it afresh at most once per reopen. While
+  the linked spec-request is still open, a reopen MUST NOT file a second
+  spec-request.
 - **FR-007**: Every reader of the originating issue's loop state — step
   markers, the stop-request scan, and the re-admission decision — MUST
   continue to reach a correct answer after the disposition, either by
@@ -253,7 +261,12 @@ feed it the real workflow and confirm it passes.
   disposed originating issue MUST stay closed, and a notice MUST be posted
   on that issue stating that reopening it returns the request to the board
   — the same re-admission path as FR-006, so the surviving manual step is
-  reported on the issue rather than silently assumed.
+  reported on the issue rather than silently assumed. The closure MUST be
+  detected by the board loop's scheduled scan (a spec-request this loop
+  filed that is closed with no merged final PR), and the notice MUST be
+  idempotent: one notice per closure. The same notice MUST also be posted
+  on the closed spec-request, so the surviving manual step is reported
+  where its lifecycle ended (Principle IV).
 
 ### Key Entities
 
@@ -292,7 +305,8 @@ feed it the real workflow and confirm it passes.
   the other in one click, and the closed one states why it was closed.
 - **SC-005**: No routed request can be routed twice: a disposed request
   produces no second spec-request unless a maintainer reopens the
-  originating issue.
+  originating issue after its linked spec-request has closed, and then at
+  most one per reopen.
 - **SC-006**: A maintainer's stop request on a routed request halts the
   loop before its next durable action, as it does today.
 - **SC-007**: The count of open issues attributable to duplicate routing
@@ -316,8 +330,10 @@ feed it the real workflow and confirm it passes.
   ninety-three open issues is a snapshot from the time of filing; the exact
   counts will differ when this ships, and no requirement here depends on
   them.
-- Closing an issue as "not planned" or as a duplicate, and reopening one,
-  are ordinary GitHub actions available to the pipeline's credential.
+- Closing an issue as a duplicate, and reopening one, are ordinary GitHub
+  actions available to the pipeline's credential. The close uses the REST
+  API's `state_reason: duplicate` rather than a `gh issue close` flag whose
+  support varies by gh version.
 - The feature changes this repository's own board behaviour; it does not
   widen or break the published stage-workflow contract.
 
@@ -333,5 +349,6 @@ feed it the real workflow and confirm it passes.
   disposition (Q1a closes the original; it does not relabel it).
 - The existing gate that enumerates the spec-request sites — Gate 93's
   check 3 — which Q1 names as the home for the FR-012 check.
-- The signal that a spec-request was closed without its work landing, which
-  FR-017's notice on the disposed originating issue hangs off.
+- The board loop's scheduled scan, which detects a spec-request it filed
+  that is closed with no merged final PR (no workflow listens for
+  `issues: closed` today), and from which FR-017's notices are posted.
