@@ -180,3 +180,7 @@ This repository is a GitHub Actions pipeline component — no `src`/`tests` spli
 ## Maintainer Feedback
 
 - [ ] T026 Drop the `environment:` block from the `resolve-identity` job in `.github/workflows/pr-conversation.yml` — the job derives identity from `github.token` alone and reads no environment secret or variable, so the binding only adds an unneeded deployment on every run, plus an approval wherever the environment requires reviewers. Amend `specs/077-stalled-per-spec-group/contracts/resolve-identity-job.md`'s job shape and `data-model.md`'s `resolve-identity` table to match (remove the `environment:` references).
+
+## Maintainer Feedback
+
+- [ ] T027 In `.github/scripts/verify-spec-branch-push-concurrency.py`, replace `_resolve_identity_spec_dir`'s hand-copied bash string (~308-323) with a line extracted from the real `.github/workflows/pr-conversation.yml` (the `resolve-identity` job's `echo "spec-dir=..."` line, currently ~425) so the self-test actually exercises the shipped workflow instead of a second, independently maintained copy of the same logic (CLAUDE.md's single-home rule). Run the extracted line with `slug=""` and `slug="042-x"`. Add a fixture proving the pre-T020 behavior (`echo "spec-dir=specs/$slug"`) fails the assertion, so a future revert of T020 is actually caught by the gate.
