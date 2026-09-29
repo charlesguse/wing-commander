@@ -76,6 +76,12 @@ on:
       # adopter forking that wrapper reads. Editing the document alone is
       # the one change that can make it disagree with the file it describes.
       - "specs/058-per-job-minute-floor/contracts/metrics-persist-sweep-delta.md"
+      # Gate 113's subject: the constitution names the classes of merge the
+      # bot may perform, and the gate fails when the pipeline can perform
+      # one the document does not name. An amendment PR editing only this
+      # file is exactly the change that flips that gate from failing to
+      # passing, so it has to run it.
+      - ".specify/memory/constitution.md"
   # Gate 1 only — it reads how GitHub actually registered the workflows on
   # the default branch, which a PR's files cannot tell us.
   push:
@@ -894,6 +900,18 @@ jobs:
               ("pr", "diff"):        frozenset({("pull-requests", "read")}),
               ("pr", "ready"):       frozenset({("pull-requests", "write"),
                                                  ("contents", "write")}),
+              # lifecycle-review-gate.yml's `merge` job squash-merges a
+              # lifecycle PR once every merge precondition holds
+              # (specs/062-lifecycle-review-gate, US4 — off unless
+              # WING_COMMANDER_LIFECYCLE_AUTO_MERGE is set). PUT
+              # /repos/{o}/{r}/pulls/{n}/merge: the REST reference for
+              # "Merge a pull request" lists Pull requests (write) as the
+              # fine-grained requirement, and the squash commit it writes
+              # onto the base branch is a Contents write — the same pairing
+              # `gh pr ready` above already carries, and both are granted in
+              # docs/setup.md.
+              ("pr", "merge"):       frozenset({("pull-requests", "write"),
+                                                 ("contents", "write")}),
               ("search", "issues"):  frozenset({("issues", "read")}),
               ("search", "prs"):     frozenset({("pull-requests", "read")}),
               ("release", "create"): frozenset({("contents", "write")}),
@@ -923,6 +941,12 @@ jobs:
               # "Contents" repository permission as .../commits/... and
               # .../contents/... above.
               "compare": "contents",
+              # specs/062-lifecycle-review-gate T024: POST .../statuses/{sha}
+              # (Create a commit status) -- the REST reference lists
+              # "Commit statuses" as its own fine-grained repository
+              # permission, distinct from "Checks" (which covers
+              # check-runs/check-suites above).
+              "statuses": "statuses",
           }
 
           GH_INVOKE_RE = re.compile(
@@ -4243,6 +4267,126 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-stage-turn-budget-docs.py --self-test
 
+      # Gate 107 — specs/062-lifecycle-review-gate: lifecycle_readiness.py's
+      # five-condition decision (checks_green, gate_suite_green, mergeable,
+      # not_yet_reviewed, kill_switch_clear) resolves correctly on every
+      # documented branch, mirroring Gate 97's own board_readiness.py check.
+      # Numbered 107, not the 101 this branch's own prior rebase picked (nor
+      # the 99 tasks.md's T003/T008 originally reserved): the review that
+      # allocated 107-113 found Gates 99-100 claimed by main
+      # (specs/059-converged-means-tasks-done and #587's turn-budget-docs
+      # gate) and 101-106 claimed by other open finalize PRs, so this
+      # feature's seven gates moved to the next collision-free block.
+      - name: "Gate 107 — Lifecycle readiness"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-lifecycle-readiness.py
+      - name: "Gate 107 self-test — unmet_reason names only the first failing condition, and a null review_gate is not-yet-reviewed"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-lifecycle-readiness.py --self-test
+
+      # Gate 108 — specs/062-lifecycle-review-gate T014: the shipped
+      # wing-commander-post-review-comment step emits exactly
+      # -f event=COMMENT -F body=@<body-file>, and board-loop.yml's
+      # reviewer job now calls the composite rather than its own inline
+      # `gh api` call (CLAUDE.md's shared-logic rule, T012/T013). Numbered
+      # 108, not the 100 tasks.md's T014 reserved — see Gate 107's comment
+      # above.
+      - name: "Gate 108 — wing-commander-post-review-comment composite"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-post-review-comment-composite.py
+      - name: "Gate 108 self-test — a missing composite call and a lingering inline call are both caught"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-post-review-comment-composite.py --self-test
+
+      # Gate 109 — specs/062-lifecycle-review-gate T037/T041: disposition's
+      # findings-partition step and its wing-commander-fold-commit call
+      # travel together — one without the other either folds garbage or
+      # silently strands every not-clean round's in-scope findings.
+      # Numbered 109, not the standalone slot tasks.md's T041 first drafted
+      # — see Gate 107's comment above for the Maintainer Feedback
+      # renumbering.
+      - name: "Gate 109 — lifecycle-review-gate disposition fold-wiring"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-lifecycle-review-gate-fold-wiring.py
+      - name: "Gate 109 self-test — a fold-commit call with no partition step, and a partition step with no fold-commit call, are both caught"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-lifecycle-review-gate-fold-wiring.py --self-test
+
+      # Gate 110 — specs/062-lifecycle-review-gate T031/T032:
+      # wing-commander-fold-commit's shipped step really appends the drafted
+      # section, flips spec-meta.json's stage back to "implement", unions
+      # actor-login into pending_re_review_from, and commits + pushes both
+      # together — proven against a real git clone/remote, not a mock — and
+      # reports folded: false while touching neither file nor the remote
+      # when section-file is empty or missing. Numbered 110, not the
+      # standalone slot tasks.md's T032 first drafted — see Gate 107's
+      # comment above for the Maintainer Feedback renumbering.
+      - name: "Gate 110 — wing-commander-fold-commit composite"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-fold-commit-composite.py
+      - name: "Gate 110 self-test — a false 'always folds' and an overwritten pending_re_review_from are both caught"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-fold-commit-composite.py --self-test
+
+      # Gate 111 — specs/062-lifecycle-review-gate T034/T035:
+      # wing-commander-fold-dispatch's shipped step really re-reads the spec
+      # branch's tip, dispatches implement-workflow only when the caller's
+      # folded-json names this run's own folds (never on a tip-move alone —
+      # specs/075 FR-014) and a target is configured, and still bumps the
+      # reported iteration in standalone mode — proven against a real git
+      # clone/remote, not a mock. Numbered 111, not the standalone slot tasks.md's T035 first
+      # drafted — see Gate 107's comment above for the Maintainer Feedback
+      # renumbering.
+      - name: "Gate 111 — wing-commander-fold-dispatch composite"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-fold-dispatch-composite.py
+      - name: "Gate 111 self-test — a dispatch on a tip-move alone and a standalone-mode dispatch are both caught"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-fold-dispatch-composite.py --self-test
+
+      # Gate 112 — specs/062-lifecycle-review-gate T048/T050:
+      # lifecycle_merge_preconditions.py's eight-condition decision refuses
+      # a merge for its OWN stated reason on every documented branch — a
+      # round clean at a DIFFERENT head SHA, a round that came back with
+      # findings, and a maintainer's standing CHANGES_REQUESTED are three
+      # different refusals, and FR-027 requires the gate to say which.
+      # Auto-merge is the one thing this feature does that a human action
+      # has to undo, so its decision is fixtured, not trusted. Numbered
+      # 112, not the 104 tasks.md's T050 originally reserved — see Gate
+      # 107's comment above for the Maintainer Feedback renumbering.
+      - name: "Gate 112 — Lifecycle merge preconditions"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-lifecycle-merge-preconditions.py
+      - name: "Gate 112 self-test — the bot's own review never blocks its merge, a plain comment never clears a standing CHANGES_REQUESTED, and unmet_reason names only the first failing condition"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-lifecycle-merge-preconditions.py --self-test
+
+      # Gate 113 — specs/062-lifecycle-review-gate T055/T057 (FR-038):
+      # the constitution names every class of merge the pipeline can
+      # actually perform. Principle V says the only merges the bot may
+      # perform are the TWO classes Principle X defines; this feature's
+      # merge job adds a third, and code that merges a class the document
+      # does not name violates V rather than extending X — V says so in
+      # those words. Presence-implies-documented, the inverse of Gate 97's
+      # check_no_merge_invariant: no merge capability in
+      # lifecycle-review-gate.yml, nothing required.
+      #
+      # This gate is EXPECTED to fail on specs/062-lifecycle-review-gate's
+      # own branch and until the amendment merges: FR-033/research.md D16
+      # make the amendment a separate, human-merged PR against main, which
+      # this feature's branch may not carry. That ordering is the point —
+      # the gate is what makes "WING_COMMANDER_LIFECYCLE_AUTO_MERGE can
+      # never safely be true before the amendment" a checked fact rather
+      # than something a maintainer has to remember
+      # (contracts/constitution-amendment.md "Ordering this gate enforces
+      # in practice").
+      - name: "Gate 113 — Constitution merge-class parity"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-constitution-merge-class-parity.py
+      - name: "Gate 113 self-test — merge code with a silent constitution fails, and the Sync Impact Report's own prose never satisfies the check"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-constitution-merge-class-parity.py --self-test
+
       # Gate 105 — specs/063-stage-clarify-label: every `stage:*` label
       # docs/setup.md documents either has a real writer among the shipped
       # workflows and local composite actions, or a registered, reasoned
@@ -4395,7 +4539,7 @@ jobs:
       - name: "Gate 120 — the dedup key's doc-vs-code sync (FR-012) and its deliberate split from spec 057's own key (FR-015)"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-dedup-key-canonical-rule.py
-      - name: "Gate 120 self-test — a changed shape tag, an altered norm() line, a converged or issue-segment-missing board-loop formula, or a missing source file each fail"
+      - name: "Gate 120 self-test — a changed shape tag, an altered norm() line, a converged or issue-segment-missing board-loop formula, a board-loop step that stops calling the fingerprint home, or a missing source file each fail"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-dedup-key-canonical-rule.py --self-test
 
@@ -4454,6 +4598,23 @@ jobs:
       - name: "Gate 124 self-test — a missing, malformed or doubled citation, a reasonless or multi-line permanent marker, a non-literal, positional, non-call, later-written or |=-added Python entry, and a closed or unreadable cited issue each fail"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-waiver-citations.py --self-test
+
+      # Gate 125 — specs/062-lifecycle-review-gate T073 (maintainer review
+      # 5355876805, F1): every `uses: ./.github/actions/` reference and
+      # every bare `.github/scripts` import in lifecycle-review-gate.yml
+      # resolves from a trusted copy (`.wc-pristine-repo`, checked out at
+      # `github.sha`), never the reviewed pull request's own checkout --
+      # the composite-and-script half of the same concern Gate 104 closes
+      # for board-loop.yml (see that gate's own header for the shared
+      # trusted-copy statement). Numbered 125 (124 above is the current
+      # highest; #660 tracks the cross-branch allocation problem both
+      # gates' own numbering comments already note).
+      - name: "Gate 125 — every uses: ./.github/actions/ reference and every .github/scripts import in lifecycle-review-gate.yml resolves from the trusted copy, never the reviewed PR's own checkout"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-lifecycle-review-gate-composite-provenance.py
+      - name: "Gate 125 self-test — a raw workspace uses:, a moved, dropped, mis-pinned, or continue-on-error checkout, a missing .gitignore entry, a dropped write-protect step, or a bare .github/scripts import each fail"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-lifecycle-review-gate-composite-provenance.py --self-test
 
       # Gate 114 — specs/066-fine-grained-maintainer-token FR-017/FR-018: "a
       # classic PAT, not fine-grained" was asserted in at least four places

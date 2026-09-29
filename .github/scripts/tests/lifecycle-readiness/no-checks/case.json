@@ -1,0 +1,10 @@
+{
+  "snapshot": {
+    "headRefOid": "aaaa111",
+    "statusCheckRollup": [],
+    "mergeable": "MERGEABLE"
+  },
+  "review_gate": null,
+  "kill_switch_paused": false,
+  "expected": {"ready": false, "unmet_reason": "checks_green"}
+}

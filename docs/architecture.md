@@ -409,7 +409,9 @@ change to the tiering above.
   hold on the exact head SHA (checks and gate suite green, mergeable, the
   review round recorded at that head and clean with zero open findings, no
   standing human changes-requested review, and a clear
-  `WING_COMMANDER_LIFECYCLE_REVIEW_GATE_PAUSED` switch).
+  `WING_COMMANDER_LIFECYCLE_REVIEW_GATE_PAUSED` switch). See "Lifecycle
+  review gate" below for the job graph, where its round state lives, and
+  its trust-boundary gate.
 
 ---
 
@@ -668,6 +670,75 @@ issue for human help. The escalation comment carries a
 `(branch, main)` pair hasn't changed since it was reported blocked, so a stall
 is only escalated once until either side moves (a subsequent success removes
 the label).
+
+## Lifecycle review gate (`lifecycle-review-gate.yml`, no wrapper — `specs/062-lifecycle-review-gate/`)
+
+**Trigger**: `schedule:` plus manual `workflow_dispatch`. No `workflow_call`
+— like `board-loop.yml` and `auto-release.yml`, it is not part of the
+published, adopter-pinned surface (constitution VII), and not one of the
+eight published lifecycle stages (constraint: none of their `workflow_call`
+interfaces changed for this feature). Single concurrency group so a run
+never overlaps a prior one.
+
+**Job graph**: `kill-switch` (short-circuits the whole run when
+`WING_COMMANDER_LIFECYCLE_REVIEW_GATE_PAUSED` is set) → `select` (the one
+open pull request at `spec-meta.json.stage == "review"`, same repository,
+default base, whose recorded head SHA differs from its current one — the
+cheapest read, so a repository with nothing to review spends nothing) →
+`readiness` (`lifecycle_readiness.py`: checks green, the gate suite green,
+mergeable, not yet reviewed at this head, kill switch clear) → `review`
+(Claude Code's `code-review` capability via the `Skill` tool, an explicit
+model and turn ceiling, a `COMMENT`-only posted review) → `disposition`
+(deterministic: partitions findings by scope, dedupes against the prior
+round's fingerprints, files out-of-scope survivors, folds in-scope
+survivors through the same `wing-commander-fold-commit` /
+`wing-commander-fold-dispatch` composites `pr-conversation.yml`'s own fold
+route uses) → `report` (posts the round's outcome and cost line to the
+lifecycle issue) → `merge` (only when `WING_COMMANDER_LIFECYCLE_AUTO_MERGE`
+is `true`; `lifecycle_merge_preconditions.py` re-derives all eight
+conditions fresh and squash-merges on `may_merge: true`, never `--admin`
+or a second merge method).
+
+**Round budget**: `env.LIFECYCLE_REVIEW_ROUND_BUDGET` (a PR-reviewed
+constant, currently `5`). On exhaustion the run states the reason and the
+still-open findings on the lifecycle issue and does not select that pull
+request again until a human intervenes.
+
+**Where gate state lives**: `review_gate` (round, reviewed head SHA,
+outcome, open finding count, the folded/filed fingerprint sets FR-021's
+dedup needs) is never a `spec-meta.json` field and never a commit to the
+reviewed branch — an earlier design that committed it there made
+auto-merge unreachable, since the recording push always moved the branch's
+real head past the SHA it had just reviewed. It lives on the lifecycle
+issue's own comments instead, the same way the board loop
+(`board_item_marker.py`) records an item's state: `report` appends an
+HTML-comment marker (`wc_lifecycle_review_marker.py`) to the round-outcome
+comment it already posts; `select`, `disposition` and `merge` read it back
+fresh via `gh issue view --json comments`.
+
+**Status context**: a clean round posts `state=success` on the reviewed
+head SHA under the `lifecycle-review-gate` context (suitable for use as a
+required check); a round with open findings, an exhausted budget, or a
+review/parse failure posts `state=failure`/`state=error` on the same
+context, so "not yet reviewed" is always distinguishable from every
+not-clean outcome. Posted with `github.token`'s own `statuses: write` job
+permission, since the App installation carries no Commit statuses grant
+(docs/setup.md §1).
+
+**Trust boundary**: `review` and `disposition` check out the reviewed
+pull request's own branch, so every composite and script those two jobs
+(and, for uniformity, every other job in the file) run resolves from a
+second, trusted checkout at `github.sha` instead — the branch under review
+must never supply the code that reviews or merges it (constitution IX/X).
+Gate 125 enforces this unconditionally, file-wide.
+
+**Gates**: 107 (`lifecycle_readiness.py`), 108
+(`wing-commander-post-review-comment`), 109 (fold-wiring), 110
+(`wing-commander-fold-commit`), 111 (`wing-commander-fold-dispatch`), 112
+(`lifecycle_merge_preconditions.py`), 113 (constitution/capability parity —
+fails if the merge code exists while the constitution does not name the
+third bot-mergeable class), 125 (trusted-copy composite/script
+provenance, above).
 
 ## Stage 9 — Watchdog (`watchdog.yml`, wrapper `wing-commander-8-watchdog.yml`)
 

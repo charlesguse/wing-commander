@@ -1,1 +1,9 @@
-{"issue": 476, "spec_dir": "specs/062-lifecycle-review-gate", "feature_num": "062", "stage": "spec", "iteration": 0, "spec_branch": null}
+{
+  "issue": 476,
+  "spec_dir": "specs/062-lifecycle-review-gate",
+  "feature_num": "062",
+  "stage": "review",
+  "iteration": 6,
+  "spec_branch": "spec/062-lifecycle-review-gate",
+  "pending_re_review_from": []
+}

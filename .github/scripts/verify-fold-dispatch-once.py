@@ -71,9 +71,11 @@ from wc_shell_harness import (ensure_jq, find_job, find_step, resolve_bash,
 STAGE = ".github/workflows/pr-conversation.yml"
 
 DISPATCH_STEP = "Dispatch implement once for the whole review"
+REPLY_TO_FOLD_STEP = "Reply to this review's fold(s)"
 REPORT_STEP = "Report fold-route leg outcomes"
 REPLY_STEP = "Reply confirming fold-in (no dispatch)"
 ACT_AGENT_STEP = "Act on this classification"
+FOLD_COMMIT_STEP = "Commit this leg's fold"
 
 REPO = "charlesguse/wing-commander"
 # The shape the jobs API actually reports for a called workflow's matrix
@@ -96,6 +98,8 @@ RUN_ID_SIBLING = "2002"
 COMPOSITE_ACTION = ".github/actions/wing-commander-fold-evidence/action.yml"
 COMPOSITE_STEP = "Compute run-scoped fold evidence"
 FOLD_EVIDENCE_STEP = "Compute this run's fold evidence"
+FOLD_DISPATCH_ACTION = ".github/actions/wing-commander-fold-dispatch/action.yml"
+FOLD_DISPATCH_STEP = "Re-read the tip and dispatch this run's own folds"
 
 BASH = None
 VERBOSE = "-v" in sys.argv[1:]
@@ -242,12 +246,48 @@ def compute_folded_json(steps, repo, base_sha, tip_sha, run_id, runner_temp,
     return outputs.get("folded-json", "[]")
 
 
+def run_dispatch_once(steps, repo, base_sha, folded_json, calls, last_comment,
+                      path, runner_temp,
+                      run_list_json='[{"url":"https://example.invalid/runs/1"}]'):
+    """Run dispatch-once's two shipped halves in order, as the job does:
+    wing-commander-fold-dispatch's own step (DISPATCH_STEP's `uses:`
+    target, specs/062-lifecycle-review-gate T036), then "Reply to this
+    review's fold(s)" fed that step's outputs. make_repo's remote carries
+    the branch as `main`, so that is the spec-branch the composite fetches.
+    Returns (rc, output) -- the first non-zero rc, or the reply's.
+    """
+    rc, out, outputs, _ = run_step(
+        BASH, steps[FOLD_DISPATCH_STEP], repo,
+        {"DISPATCH_TOKEN": "x", "SPEC_DIR": SPEC_DIR, "ISSUE": ISSUE,
+         "BASE_SHA": base_sha, "SPEC_BRANCH": "main",
+         "IMPLEMENT_WORKFLOW": IMPLEMENT_WORKFLOW,
+         "FOLDED_JSON": folded_json, "GITHUB_REPOSITORY": REPO,
+         "GH_CALLS": calls, "GH_LAST_COMMENT": last_comment,
+         "GH_RUN_LIST_JSON": run_list_json, "PATH": path},
+        runner_temp)
+    if rc != 0:
+        return rc, out
+    rc, out2, _, _ = run_step(
+        BASH, steps[REPLY_TO_FOLD_STEP], repo,
+        {"FOLDED": outputs.get("folded", ""), "GH_TOKEN": "x",
+         "PR_NUMBER": PR_NUMBER, "SPEC_DIR": SPEC_DIR, "ISSUE": ISSUE,
+         "DISPATCHED": outputs.get("dispatched", ""),
+         "NEXT_ITERATION": outputs.get("new-iteration", ""),
+         "FOLDED_SUMMARY": outputs.get("folded-summary", ""),
+         "RUN_URL": outputs.get("run-url", ""),
+         "GH_CALLS": calls, "GH_LAST_COMMENT": last_comment, "PATH": path},
+        runner_temp)
+    return rc, out + out2
+
+
 # --------------------------------------------------------------- scenarios
 
 def scenario_three_clean_legs(steps, root):
     """gate-coverage-042.md scenario 1: three in-scope legs all fold
     cleanly -> dispatch-once computes exactly one `gh workflow run`
-    invocation; report-fold-outcomes posts nothing.
+    invocation; report-fold-outcomes posts nothing. dispatch-once runs
+    through run_dispatch_once(): the shipped wing-commander-fold-dispatch
+    step, then the reply step (specs/062-lifecycle-review-gate T036).
     """
     failures = []
     where = "scenario 1 (three clean legs)"
@@ -263,16 +303,8 @@ def scenario_three_clean_legs(steps, root):
     folded_json = compute_folded_json(steps, repo, base_sha, tip_sha,
                                       RUN_ID_UNDER_TEST, runner_temp, path)
 
-    rc, out, _, _ = run_step(
-        BASH, steps[DISPATCH_STEP], repo,
-        {"GH_TOKEN": "x", "DISPATCH_TOKEN": "x", "PR_NUMBER": PR_NUMBER,
-         "SPEC_DIR": SPEC_DIR, "ISSUE": ISSUE,
-         "IMPLEMENT_WORKFLOW": IMPLEMENT_WORKFLOW,
-         "GITHUB_REPOSITORY": REPO, "FOLDED_JSON": folded_json,
-         "GH_CALLS": calls, "GH_LAST_COMMENT": last_comment,
-         "GH_RUN_LIST_JSON": '[{"url":"https://example.invalid/runs/1"}]',
-         "PATH": path},
-        runner_temp)
+    rc, out = run_dispatch_once(steps, repo, base_sha, folded_json, calls,
+                                last_comment, path, runner_temp)
     if rc != 0:
         failures.append(f"{where}: {DISPATCH_STEP!r} exited {rc}: {out.strip()}")
         return failures
@@ -476,16 +508,8 @@ def scenario_held_leg_timeout(steps, root):
     # leg-0 (ready, non-confirm-gated) folded and succeeded; leg-1 (held)
     # timed out waiting on its environment approval -> GitHub reports its
     # job conclusion as cancelled, with no fold(<id>) evidence.
-    rc, out, _, _ = run_step(
-        BASH, steps[DISPATCH_STEP], repo,
-        {"GH_TOKEN": "x", "DISPATCH_TOKEN": "x", "PR_NUMBER": PR_NUMBER,
-         "SPEC_DIR": SPEC_DIR, "ISSUE": ISSUE,
-         "IMPLEMENT_WORKFLOW": IMPLEMENT_WORKFLOW,
-         "GITHUB_REPOSITORY": REPO, "FOLDED_JSON": folded_json,
-         "GH_CALLS": calls, "GH_LAST_COMMENT": last_comment,
-         "GH_RUN_LIST_JSON": '[{"url":"https://example.invalid/runs/1"}]',
-         "PATH": path},
-        runner_temp)
+    rc, out = run_dispatch_once(steps, repo, base_sha, folded_json, calls,
+                                last_comment, path, runner_temp)
     if rc != 0:
         failures.append(f"{where}: {DISPATCH_STEP!r} exited {rc}: {out.strip()}")
         return failures
@@ -623,16 +647,8 @@ def scenario_dispatch_declines_when_nothing_of_own_folded(steps, root):
     folded_json = compute_folded_json(steps, repo, base_sha, tip_sha,
                                       RUN_ID_UNDER_TEST, runner_temp, path)
 
-    rc, out, _, _ = run_step(
-        BASH, steps[DISPATCH_STEP], repo,
-        {"GH_TOKEN": "x", "DISPATCH_TOKEN": "x", "PR_NUMBER": PR_NUMBER,
-         "SPEC_DIR": SPEC_DIR, "ISSUE": ISSUE,
-         "IMPLEMENT_WORKFLOW": IMPLEMENT_WORKFLOW,
-         "GITHUB_REPOSITORY": REPO, "FOLDED_JSON": folded_json,
-         "GH_CALLS": calls, "GH_LAST_COMMENT": last_comment,
-         "GH_RUN_LIST_JSON": '[{"url":"https://example.invalid/runs/1"}]',
-         "PATH": path},
-        runner_temp)
+    rc, out = run_dispatch_once(steps, repo, base_sha, folded_json, calls,
+                                last_comment, path, runner_temp)
     if rc != 0:
         failures.append(f"{where}: {DISPATCH_STEP!r} exited {rc}: {out.strip()}")
         return failures
@@ -674,16 +690,8 @@ def scenario_single_run_baseline_unchanged(steps, root):
     folded_json = compute_folded_json(steps, repo, base_sha, tip_sha,
                                       RUN_ID_UNDER_TEST, runner_temp, path)
 
-    rc, out, _, _ = run_step(
-        BASH, steps[DISPATCH_STEP], repo,
-        {"GH_TOKEN": "x", "DISPATCH_TOKEN": "x", "PR_NUMBER": PR_NUMBER,
-         "SPEC_DIR": SPEC_DIR, "ISSUE": ISSUE,
-         "IMPLEMENT_WORKFLOW": IMPLEMENT_WORKFLOW,
-         "GITHUB_REPOSITORY": REPO, "FOLDED_JSON": folded_json,
-         "GH_CALLS": calls, "GH_LAST_COMMENT": last_comment,
-         "GH_RUN_LIST_JSON": '[{"url":"https://example.invalid/runs/1"}]',
-         "PATH": path},
-        runner_temp)
+    rc, out = run_dispatch_once(steps, repo, base_sha, folded_json, calls,
+                                last_comment, path, runner_temp)
     if rc != 0:
         failures.append(f"{where}: {DISPATCH_STEP!r} exited {rc}: {out.strip()}")
         return failures
@@ -757,13 +765,19 @@ def suite(steps, root):
 
 def load_steps():
     steps = {name: find_step(STAGE, name)["run"]
-             for name in (DISPATCH_STEP, REPORT_STEP)}
+             for name in (REPORT_STEP, REPLY_TO_FOLD_STEP)}
     # research.md D2/D7c: the composite's own shipped `run:` text joins the
     # extraction, stitched in wherever dispatch-once's/report-fold-outcomes'
     # `uses:` line calls it (test_structural below asserts that wiring), so
     # this harness continues to exercise the exact shipped bash on both
     # sides of the call rather than a copy of the composite's logic.
     steps[COMPOSITE_STEP] = find_step(COMPOSITE_ACTION, COMPOSITE_STEP)["run"]
+    # specs/062-lifecycle-review-gate T036: DISPATCH_STEP is a `uses:` call
+    # of wing-commander-fold-dispatch (no `run:` of its own), so its
+    # shipped composite step and the "Reply to this review's fold(s)" step
+    # after it are what run_dispatch_once() executes in its place.
+    steps[FOLD_DISPATCH_STEP] = find_step(FOLD_DISPATCH_ACTION,
+                                          FOLD_DISPATCH_STEP)["run"]
     return steps
 
 
@@ -845,23 +859,71 @@ def test_structural():
                         f"the defect that cancelled leg 4 and iteration 3 "
                         f"against each other on PR #240.")
 
-    agent_step = find_step(STAGE, ACT_AGENT_STEP)
-    prompt = (agent_step.get("with") or {}).get("prompt", "")
-    if "fold(${{ matrix.id }})" not in prompt:
-        failures.append(f"structural: {ACT_AGENT_STEP!r}'s prompt no longer "
-                        f"instructs the fold commit message to start with "
-                        f"fold(<id>): <summary> — report-fold-outcomes' "
-                        f"git-grep evidence check depends on this exact "
-                        f"shape (research.md D6).")
+    # specs/062-lifecycle-review-gate T033: the agent no longer commits the
+    # fold itself (it only drafts the section to a file) — the fold(<id>):
+    # <summary> commit message this check protects is now produced by
+    # wing-commander-fold-commit, called from this deterministic step with
+    # fold-id: matrix.id. Adapted to the extracted composite's call site
+    # per fold-integration.md's own "Regression coverage this delta must
+    # not weaken" — the same real shipped call site, not a second copy.
+    fold_commit_step = find_step(STAGE, FOLD_COMMIT_STEP)
+    fold_id = str((fold_commit_step.get("with") or {}).get("fold-id", ""))
+    if fold_id != "${{ matrix.id }}":
+        failures.append(f"structural: {FOLD_COMMIT_STEP!r} no longer calls "
+                        f"wing-commander-fold-commit with fold-id: "
+                        f"matrix.id — report-fold-outcomes' git-grep "
+                        f"evidence check depends on the fold(<id>): "
+                        f"<summary> commit shape (research.md D6) tracing "
+                        f"back to this exact id.")
+
+    # specs/062-lifecycle-review-gate T034/T036: dispatch-once is a thin
+    # caller of wing-commander-fold-dispatch, fed THIS run's own fold
+    # evidence (specs/075 FR-014) -- run_dispatch_once() above executes
+    # the composite's shipped step; this pins the call site's wiring.
+    dispatch_step = find_step(STAGE, DISPATCH_STEP)
+    dispatch_uses = str(dispatch_step.get("uses") or "")
+    if "wing-commander-fold-dispatch" not in dispatch_uses:
+        failures.append(f"structural: {DISPATCH_STEP!r} no longer calls "
+                        f"wing-commander-fold-dispatch (uses: "
+                        f"{dispatch_uses!r}) — the bump/dispatch primitive "
+                        f"has exactly one home (CLAUDE.md); a reintroduced "
+                        f"inline body here would duplicate it.")
+    dispatch_with = dispatch_step.get("with") or {}
+    for key in ("base-sha", "spec-branch", "dispatch-token", "folded-json"):
+        if not str(dispatch_with.get(key, "")):
+            failures.append(f"structural: {DISPATCH_STEP!r}'s wing-"
+                            f"commander-fold-dispatch call has no {key!r} "
+                            f"input.")
+    if "steps.fold-evidence.outputs.folded-json" not in str(dispatch_with.get("folded-json", "")):
+        failures.append(f"structural: {DISPATCH_STEP!r}'s folded-json input "
+                        f"is not steps.fold-evidence.outputs.folded-json — "
+                        f"the dispatch decision would no longer narrow to "
+                        f"this run's own fold evidence (specs/075 FR-014).")
+
+    reply_to_fold_step = find_step(STAGE, REPLY_TO_FOLD_STEP)
+    reply_if = str(reply_to_fold_step.get("if") or "")
+    reply_env = reply_to_fold_step.get("env") or {}
+    if ("steps.fold-dispatch" not in reply_if or
+            "steps.fold-dispatch.outputs.folded" not in str(reply_env.get("FOLDED", ""))):
+        failures.append(f"structural: {REPLY_TO_FOLD_STEP!r} is not gated "
+                        f"on the fold-dispatch step (if: {reply_if!r}) or "
+                        f"does not read its `folded` output as FOLDED — it "
+                        f"could not tell a declined dispatch (FR-015) from "
+                        f"a folded one.")
 
     # FR-009 (research.md D2, D7): the range-and-grep must live in exactly
     # ONE place -- the composite -- never copied back into either job's own
-    # step. This is what makes "single home" true by construction rather
-    # than by convention (CLAUDE.md's own worked example for this rule).
-    for step_name in (DISPATCH_STEP, REPORT_STEP):
-        step_text = find_step(STAGE, step_name).get("run") or ""
+    # step, nor into wing-commander-fold-dispatch (which once decided on
+    # "the tip moved" plus its own grep). This is what makes "single home"
+    # true by construction rather than by convention (CLAUDE.md's own
+    # worked example for this rule).
+    for label, step_text in (
+            (DISPATCH_STEP, find_step(STAGE, DISPATCH_STEP).get("run") or ""),
+            (REPORT_STEP, find_step(STAGE, REPORT_STEP).get("run") or ""),
+            (FOLD_DISPATCH_ACTION,
+             find_step(FOLD_DISPATCH_ACTION, FOLD_DISPATCH_STEP).get("run") or "")):
         if "git log --grep" in step_text:
-            failures.append(f"structural: {step_name!r} still calls `git "
+            failures.append(f"structural: {label!r} still calls `git "
                             f"log --grep` directly — the fold-evidence read "
                             f"must live only in "
                             f"wing-commander-fold-evidence (FR-009); a copy "
@@ -934,6 +996,17 @@ def _mut_revert_d2_unscoped_grep(steps):
     )
 
 
+def _mut_dispatch_on_tip_moved(steps):
+    """wing-commander-fold-dispatch reverted to the pre-specs/075 decision:
+    dispatch whenever the tip moved, ignoring folded-json. New scenario 5
+    (a sibling's fold moved the tip; this run folded nothing) must then
+    dispatch -- FR-014's defect.
+    """
+    steps[FOLD_DISPATCH_STEP] = steps[FOLD_DISPATCH_STEP].replace(
+        'if [ -z "$tip" ] || [ "$(printf \'%s\' "$folded_json" | jq \'length\')" = "0" ]; then',
+        'if [ -z "$tip" ] || [ "$tip" = "$BASE_SHA" ]; then')
+
+
 MUTATIONS = [
     ("D1 reverted: per-leg dispatch restored",
      _mut_revert_d1_restore_per_leg_dispatch),
@@ -945,6 +1018,8 @@ MUTATIONS = [
      _mut_collapse_to_fold_evidence_only),
     ("D2 reverted: composite falls back to the unscoped range grep",
      _mut_revert_d2_unscoped_grep),
+    ("fold-dispatch dispatches whenever the tip moved (FR-014)",
+     _mut_dispatch_on_tip_moved),
 ]
 
 
@@ -961,8 +1036,9 @@ def run_mutation(label, apply_mutation, steps, root):
 
     if label.startswith("D1"):
         # Simulate 3 legs each running the mutated (dispatching) reply
-        # step, plus dispatch-once's own single dispatch — total must be
-        # caught as "more than one".
+        # step, plus dispatch-once's own single dispatch (the shipped
+        # wing-commander-fold-dispatch step) — total must be caught as
+        # "more than one".
         repo, base_sha, tip_sha = make_repo(
             root, 1, [("leg-0", "a"), ("leg-1", "b"), ("leg-2", "c")])
         work = os.path.dirname(repo)
@@ -979,16 +1055,8 @@ def run_mutation(label, apply_mutation, steps, root):
                       "GITHUB_REPOSITORY": REPO, "GH_CALLS": calls,
                       "GH_LAST_COMMENT": last_comment, "PATH": path},
                      runner_temp)
-        run_step(BASH, mutated[DISPATCH_STEP], repo,
-                 {"GH_TOKEN": "x", "DISPATCH_TOKEN": "x",
-                  "PR_NUMBER": PR_NUMBER, "SPEC_DIR": SPEC_DIR,
-                  "ISSUE": ISSUE, "IMPLEMENT_WORKFLOW": IMPLEMENT_WORKFLOW,
-                  "GITHUB_REPOSITORY": REPO, "FOLDED_JSON": folded_json,
-                  "GH_CALLS": calls,
-                  "GH_LAST_COMMENT": last_comment,
-                  "GH_RUN_LIST_JSON": '[{"url":"https://example.invalid"}]',
-                  "PATH": path},
-                 runner_temp)
+        run_dispatch_once(mutated, repo, base_sha, folded_json, calls,
+                          last_comment, path, runner_temp)
         return gh_call_count(calls, "workflow run") > 1
 
     if label.startswith("job name matched by bare equality"):
@@ -1015,6 +1083,12 @@ def run_mutation(label, apply_mutation, steps, root):
         return _mutation_now_says_healthy(
             mutated, root, conclusion="cancelled",
             fold_commits=[("leg-0", "spurious")])
+
+    if label.startswith("fold-dispatch dispatches whenever the tip moved"):
+        # New scenario 5 must now fail: a sibling's fold moved the tip,
+        # this run folded nothing, and the mutation dispatches anyway.
+        return bool(scenario_dispatch_declines_when_nothing_of_own_folded(
+            mutated, root))
 
     if label.startswith("D2 reverted"):
         # New scenario 2's setup: this run's leg-0 cancelled with no commit

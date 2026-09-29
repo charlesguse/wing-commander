@@ -138,17 +138,22 @@ AUTHOR_MUTATIONS = (
 )
 
 
-def _last_finditer_match(body):
+def _last_finditer_match(body, marker_re=None, open_re=None):
     last = None
     for match in board_item_marker.MARKER_RE.finditer(body or ""):
         last = match
     return last
 
 
-# (name, replacement for board_item_marker.last_marker_match) -- #580
+# (name, replacement for board_item_marker.last_marker_match) -- #580.
+# find_latest_marker() (T074) always calls last_marker_match() with its
+# marker_re/open_re explicitly, so each replacement below must accept
+# (and, matching the bug it simulates, ignore) those same two positional
+# arguments -- never just `body` alone, which board_eligibility.py's own
+# call would satisfy but find_latest_marker()'s would not.
 MARKER_RULE_MUTATIONS = (
     ("first marker in a comment read (pre-#580)",
-     lambda body: board_item_marker.MARKER_RE.search(body or "")),
+     lambda body, marker_re=None, open_re=None: board_item_marker.MARKER_RE.search(body or "")),
     ("last MARKER_RE.finditer() match read (an unclosed opener swallows the real marker)",
      _last_finditer_match),
 )

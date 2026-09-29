@@ -3034,27 +3034,25 @@ jobs:
               fh.write("\n".join(lines) + "\n")
           PYEOF
 
-      # FR-011, contracts/directed-proof-run.md "Attribution": one
-      # canonical attribution string (CLAUDE.md single-home), gated on
-      # inputs.directed-stage != '', prepended rather than a separately-
-      # worded copy per job -- see triage's own "Act on the verdict" step
-      # above in this file.
+      # specs/062-lifecycle-review-gate T012/T013: the `gh api .../reviews
+      # -f event=COMMENT` idiom now lives solely in
+      # wing-commander-post-review-comment (CLAUDE.md's shared-logic rule)
+      # -- this is its first caller, resolved from the trusted
+      # ./.wc-pristine-repo copy (Gate 104). FR-011, contracts/directed-
+      # proof-run.md "Attribution": one canonical attribution string
+      # (CLAUDE.md single-home), gated on inputs.directed-stage != '',
+      # prepended by the composite rather than a separately-worded copy per
+      # job -- see triage's own "Act on the verdict" step above in this file.
       - name: Post the review on the PR
-        env:
-          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
-          PR_NUMBER: ${{ steps.pr.outputs.pr-number }}
-          DIRECTED_ATTRIBUTION: >-
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-post-review-comment
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
+          pr-number: ${{ steps.pr.outputs.pr-number }}
+          body-file: ${{ runner.temp }}/board-review-body.md
+          attribution: >-
             ${{ inputs.directed-stage != '' && format('_Directed proof run
             (stage: `{0}`), dispatched to prove PR #{1} -- selects no board
             item, opens no fix PR._', inputs.directed-stage, inputs.directed-pr) || '' }}
-        run: |
-          set -uo pipefail
-          if [ -n "$DIRECTED_ATTRIBUTION" ]; then
-            { printf '%s\n\n' "$DIRECTED_ATTRIBUTION"; cat "$RUNNER_TEMP/board-review-body.md"; } > "$RUNNER_TEMP/board-review-body-attributed.md"
-            mv "$RUNNER_TEMP/board-review-body-attributed.md" "$RUNNER_TEMP/board-review-body.md"
-          fi
-          gh api -X POST "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews" \
-            -f event=COMMENT -F body=@"$RUNNER_TEMP/board-review-body.md" >/dev/null
 
       # T043/research.md D12: filed through the EXISTING durable-failure-
       # issue composite (FR-059) -- never a second filing implementation --
@@ -3074,14 +3072,13 @@ jobs:
         run: |
           set -uo pipefail
           python3 -I - <<'PYEOF'
-          import hashlib
           import json
           import os
-          import re
           import sys
 
           sys.path.insert(0, os.path.join(os.environ["RUNNER_TEMP"], "wc-pristine", "scripts"))
           from board_spec_request_body import fenced_section
+          from wc_review_finding_fingerprint import fingerprint
           from wc_step_output import clean_output_value, write_outputs
 
           # #583: wing-commander-durable-failure-issue dedupes by finding
@@ -3095,9 +3092,6 @@ jobs:
               while MARKER_PREFIX in text:
                   text = text.replace(MARKER_PREFIX, "")
               return text
-
-          def norm(value):
-              return " ".join(re.sub(r"[\W_]+", " ", str(value).lower()).split())
 
           runner_temp = os.environ["RUNNER_TEMP"]
           issue_number = os.environ["ISSUE_NUMBER"]
@@ -3114,9 +3108,7 @@ jobs:
           outputs = []
           for i, f in enumerate(out_of_scope):
               basis = f.get("fingerprint_basis") or {}
-              fp = hashlib.sha256("{0}|{1}|{2}".format(
-                  issue_number, norm(f.get("title", "")), norm(basis.get("file_path", ""))
-              ).encode("utf-8")).hexdigest()
+              fp = fingerprint(issue_number, f.get("title", ""), basis.get("file_path", ""))
               marker = "<!-- wing-commander-board-review-finding: fingerprint={0} -->".format(fp)
 
               # #580: the finding is the reviewer agent's own output --

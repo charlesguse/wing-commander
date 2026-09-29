@@ -71,12 +71,24 @@ another finding's dedupe marker does not stop it being filed, run through
 wing-commander-durable-failure-issue's real step against a stub gh. One
 mutation per fix must be caught.
 
+T071 (specs/062-lifecycle-review-gate, FR-037/SC-008): this gate is also
+the established home for lifecycle-review-gate.yml's own two unexercised
+failure branches -- its "Extract and validate the review findings" step
+(the same fail-closed shape as board-loop.yml's own step above, ported by
+T021) and `disposition`'s "Partition, dedup, and render this round's
+findings" step's round-budget short-circuit (which must write
+`outcome: budget-exhausted` and return BEFORE reading the findings
+artifact at all). Extended here rather than a second gate script
+(CLAUDE.md's shared-logic rule; no new gate number registered, per T071).
+
 Usage: python3 .github/scripts/verify-reviewer-fail-closed.py
 Requires: bash. See wc_shell_harness.py for running this on Windows.
 """
+import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 
@@ -90,13 +102,22 @@ ROUND_STEP = "Decide the round outcome"
 COMPOSE_STEP = "Compose the review body"
 BASH = None
 
+# T071: lifecycle-review-gate.yml's own extract step and disposition's
+# budget short-circuit.
+LIFECYCLE_WORKFLOW = os.path.join(".github", "workflows", "lifecycle-review-gate.yml")
+LIFECYCLE_EXTRACT_STEP = "Extract and validate the review findings"
+LIFECYCLE_PARTITION_STEP = "Partition, dedup, and render this round's findings"
+
 SHARED_SCRIPTS = ("wc_fence_extract.py", "verify-board-review-finding-schema.py",
                   "wc_schema_pattern.py", "board_spec_request_body.py")
 SHARED_SCHEMAS = ("board-review-finding.schema.json",)
 PRISTINE_DIR = "wc-pristine"
 # board_eligibility.py: board_item_marker.py imports STALLED_LABEL from it
-# for --step stalled (#604); the real snapshot copies all of .github/scripts.
-PRISTINE_SCRIPTS = SHARED_SCRIPTS + ("board_item_marker.py", "board_eligibility.py", "wc_step_output.py")
+# for --step stalled (#604); wc_review_finding_fingerprint.py: the reviewer
+# path's finding fingerprint (specs/062-lifecycle-review-gate). The real
+# snapshot copies all of .github/scripts.
+PRISTINE_SCRIPTS = SHARED_SCRIPTS + ("board_item_marker.py", "board_eligibility.py",
+                                     "wc_step_output.py", "wc_review_finding_fingerprint.py")
 
 
 def _fenced_transcript(findings_json_text):
@@ -1083,6 +1104,480 @@ def check_step_output_helper(path=HELPER_PATH):
     return failures
 
 
+FINGERPRINT_HELPER_PATH = os.path.join(".github", "scripts", "wc_review_finding_fingerprint.py")
+
+
+def check_review_finding_fingerprint_helper(path=FINGERPRINT_HELPER_PATH):
+    """wc_review_finding_fingerprint itself (specs/062-lifecycle-review-gate
+    T028, loaded from `path`): the fingerprint is stable across case/
+    punctuation/whitespace variance in its normalised inputs, and differs
+    when the issue number or the title actually differs."""
+    import importlib.util
+    import wc_review_finding_fingerprint
+    mod = wc_review_finding_fingerprint
+    if path != FINGERPRINT_HELPER_PATH:
+        spec = importlib.util.spec_from_file_location(
+            "wc_review_finding_fingerprint_under_test", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+    failures = []
+    a = mod.fingerprint("1", "Some Title!!", "a/b.py")
+    b = mod.fingerprint("1", "some   title", "A/B.PY")
+    if a != b:
+        failures.append("fingerprint is not stable across case/punctuation/"
+                        "whitespace variance in title/file_path")
+    if a == mod.fingerprint("2", "Some Title!!", "a/b.py"):
+        failures.append("fingerprint does not vary with the issue number")
+    if a == mod.fingerprint("1", "Different Title", "a/b.py"):
+        failures.append("fingerprint does not vary with the title")
+    if len(a) != 64:
+        failures.append("fingerprint is not a 64-character hex digest")
+    return failures
+
+
+# --- T071: lifecycle-review-gate.yml's own extract step ------------------
+#
+# The same fail-closed shape Gate 95 already proves for board-loop.yml's
+# extract step (missing transcript / non-healthy verdict / every finding
+# malformed -> parse-failed=true, never read as "zero findings"), run here
+# against lifecycle-review-gate.yml's own port of that step. Its output
+# shape differs (in-scope-count/out-of-scope-count/dropped-count/
+# parse-failed -- no "outcome", which this workflow decides later, in
+# disposition, not in this step), so this reuses `_fenced_transcript()`
+# (both workflows fence on the identical "wing-commander-review-findings"
+# name) but not board-loop's own run_pipeline()/SCENARIOS shape.
+
+LIFECYCLE_EXTRACT_SCENARIOS = [
+    ("missing transcript file", dict(transcript=None, review_verdict="healthy"), "true"),
+    ("non-healthy agent verdict",
+     dict(transcript=_fenced_transcript("[]"), review_verdict="rate_limited"), "true"),
+    ("every extracted finding malformed",
+     dict(transcript=_fenced_transcript('[{"not": "a valid finding"}]'), review_verdict="healthy"),
+     "true"),
+    ("control: genuinely zero findings, healthy verdict",
+     dict(transcript=_fenced_transcript("[]"), review_verdict="healthy"), "false"),
+]
+
+
+def run_lifecycle_extract(script, tmproot, transcript=None, review_verdict="healthy"):
+    """lifecycle-review-gate.yml's "Extract and validate the review
+    findings" step alone -- its pristine-snapshot import shape
+    (RUNNER_TEMP/wc-pristine/scripts) is identical to board-loop.yml's own
+    step, so this reuses prepare_workdir()/stage_pristine() unchanged."""
+    workdir, runner_temp = prepare_workdir(tmproot)
+    try:
+        if transcript is not None:
+            with open(os.path.join(runner_temp, "claude-execution-output.json"),
+                      "w", encoding="utf-8") as fh:
+                fh.write(transcript)
+        rc, out, outputs, _ = run_step(
+            BASH, script, workdir, {"REVIEW_VERDICT": review_verdict}, runner_temp)
+        return outputs, (None if rc == 0 else "step exited {0}: {1}".format(rc, out))
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
+        shutil.rmtree(runner_temp, ignore_errors=True)
+
+
+def check_lifecycle_extract(extract_script, tmproot):
+    failures = []
+    for name, kwargs, want_parse_failed in LIFECYCLE_EXTRACT_SCENARIOS:
+        outputs, err = run_lifecycle_extract(extract_script, tmproot, **kwargs)
+        label = "lifecycle extract: {0}".format(name)
+        if err:
+            failures.append("{0}: {1}".format(label, err))
+            continue
+        if outputs.get("parse-failed") != want_parse_failed:
+            failures.append("{0}: parse-failed={1!r}, expected {2!r}".format(
+                label, outputs.get("parse-failed"), want_parse_failed))
+        else:
+            print("[ok] #T071 {0}: parse-failed={1!r}".format(label, outputs.get("parse-failed")))
+    return failures
+
+
+LIFECYCLE_EXTRACT_MISSING_ELSE_RE = re.compile(
+    r"else:\n"
+    r"(?:[ \t]*#[^\n]*\n)*"
+    r'[ \t]*print\("::warning::lifecycle-review-gate reviewer: '
+    r'claude-execution-output\.json does not exist[^\n]*"\)\n'
+    r"[ \t]*parse_failed = True\n")
+
+
+def check_lifecycle_extract_mutation(extract_script, tmproot):
+    """The #499-round-4-shaped regression, put back on lifecycle-review-
+    gate.yml's own port of the fix: the missing-file branch stops setting
+    parse_failed. Must be caught."""
+    new_script, n = LIFECYCLE_EXTRACT_MISSING_ELSE_RE.subn(
+        "else:\n    pass\n", extract_script, count=1)
+    if n != 1:
+        return ["lifecycle extract mutation: expected exactly one match for "
+                "the missing-file branch in {0}, found {1} -- the step text "
+                "may have changed shape; update this harness alongside it.".format(
+                    LIFECYCLE_WORKFLOW, n)]
+    outputs, err = run_lifecycle_extract(new_script, tmproot, transcript=None,
+                                         review_verdict="healthy")
+    if err:
+        return ["lifecycle extract mutation: the mutated step errored instead "
+                "of demonstrating the regression: {0}".format(err)]
+    if outputs.get("parse-failed") == "true":
+        return ["mutation 'lifecycle extract missing-file branch stops setting "
+                "parse_failed' was NOT caught"]
+    print("note: mutation 'lifecycle extract missing-file branch stops setting "
+          "parse_failed' confirmed caught (parse-failed={0!r}).".format(
+              outputs.get("parse-failed")))
+    return []
+
+
+# --- T071: disposition's round-budget short-circuit -----------------------
+#
+# SC-008/FR-037: the budget-exhaustion branch must write
+# `outcome: budget-exhausted` and return BEFORE reading the findings
+# artifact -- proven by never staging that artifact file at all and still
+# expecting the step to succeed.
+
+LIFECYCLE_ISSUE = "42"
+LIFECYCLE_PR = "7"
+LIFECYCLE_HEAD_SHA = "deadbeef0000"
+
+
+def _lifecycle_partition_workdir(tmproot):
+    """A workdir with .wc-pristine-repo/.github/scripts/wc_review_finding_fingerprint.py
+    present -- the partition step imports it from there (T073/F1:
+    `disposition`'s workspace root is the reviewed PR's own untrusted
+    checkout, so it resolves every script from its own trusted copy, the
+    same ".wc-pristine-repo" idiom board-loop.yml uses). T074: review_gate
+    itself is no longer read from a file here -- it arrives as the
+    REVIEW_GATE_JSON env var, the lifecycle issue's own marker as
+    `disposition`'s earlier "Read the current review_gate marker" step
+    would have fetched it."""
+    workdir = tempfile.mkdtemp(dir=tmproot)
+    runner_temp = tempfile.mkdtemp(dir=tmproot)
+    scripts_dir = os.path.join(workdir, ".wc-pristine-repo", ".github", "scripts")
+    os.makedirs(scripts_dir, exist_ok=True)
+    shutil.copyfile(
+        os.path.join(".github", "scripts", "wc_review_finding_fingerprint.py"),
+        os.path.join(scripts_dir, "wc_review_finding_fingerprint.py"))
+    return workdir, runner_temp
+
+
+def _lifecycle_partition_env(review_gate, round_budget="5"):
+    return {"ISSUE": LIFECYCLE_ISSUE, "PR_NUMBER": LIFECYCLE_PR,
+           "ROUND_BUDGET": round_budget,
+           "REVIEW_GATE_JSON": json.dumps(review_gate)}
+
+
+EXHAUSTED_REVIEW_GATE = {"round": 5, "head_sha": "old", "outcome": "findings",
+                         "findings_open": 2, "folded_fingerprints": ["a"],
+                         "filed_fingerprints": ["b"], "updated_at": None}
+
+
+def check_lifecycle_budget_exhaustion(partition_script, tmproot):
+    workdir, runner_temp = _lifecycle_partition_workdir(tmproot)
+    try:
+        rc, out, outputs, _ = run_step(
+            BASH, partition_script, workdir,
+            _lifecycle_partition_env(EXHAUSTED_REVIEW_GATE), runner_temp)
+        if rc != 0:
+            return ["lifecycle budget-exhaustion: step exited {0}: {1} (must "
+                    "succeed WITHOUT the findings artifact ever staged -- "
+                    "proving it returns before reading it)".format(rc, out)]
+        failures = []
+        if outputs.get("outcome") != "budget-exhausted":
+            failures.append("lifecycle budget-exhaustion: outcome={0!r}, "
+                            "expected 'budget-exhausted'".format(outputs.get("outcome")))
+        if outputs.get("findings-open") != "2":
+            failures.append("lifecycle budget-exhaustion: findings-open was not "
+                            "carried over unchanged (got {0!r}, expected '2')".format(
+                                outputs.get("findings-open")))
+        if outputs.get("folded-fingerprints") != "a":
+            failures.append("lifecycle budget-exhaustion: folded-fingerprints was "
+                            "not carried over unchanged (got {0!r}, expected "
+                            "'a')".format(outputs.get("folded-fingerprints")))
+        if outputs.get("filed-fingerprints") != "b":
+            failures.append("lifecycle budget-exhaustion: filed-fingerprints was "
+                            "not carried over unchanged (got {0!r}, expected "
+                            "'b')".format(outputs.get("filed-fingerprints")))
+        if not failures:
+            print("[ok] #T071 lifecycle budget-exhaustion: outcome=budget-exhausted, "
+                  "findings_open/fingerprints carried over, findings artifact never read")
+        return failures
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
+        shutil.rmtree(runner_temp, ignore_errors=True)
+
+
+LIFECYCLE_BUDGET_TEST = "if round_ > budget:\n"
+
+
+def check_lifecycle_budget_exhaustion_mutation(partition_script, tmproot):
+    """The budget short-circuit removed: the step then falls through to
+    reading the findings artifact, which (deliberately never staged) makes
+    it error out instead of succeeding -- proving this check would catch
+    the short-circuit being silently dropped."""
+    if partition_script.count(LIFECYCLE_BUDGET_TEST) != 1:
+        return ["lifecycle budget-exhaustion mutation: expected one {0!r} in "
+                "the partition step; update this harness.".format(LIFECYCLE_BUDGET_TEST)]
+    mutated = partition_script.replace(LIFECYCLE_BUDGET_TEST, "if False:\n", 1)
+    workdir, runner_temp = _lifecycle_partition_workdir(tmproot)
+    try:
+        rc, out, outputs, _ = run_step(
+            BASH, mutated, workdir,
+            _lifecycle_partition_env(EXHAUSTED_REVIEW_GATE), runner_temp)
+        if rc == 0 and outputs.get("outcome") == "budget-exhausted":
+            return ["mutation 'lifecycle budget-exhaustion short-circuit "
+                    "removed' was NOT caught"]
+        print("note: mutation 'lifecycle budget-exhaustion short-circuit "
+              "removed' confirmed caught (rc={0}, outcome={1!r}).".format(
+                  rc, outputs.get("outcome")))
+        return []
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
+        shutil.rmtree(runner_temp, ignore_errors=True)
+
+
+# --- T072: `merge` job's stderr-classification and announcement logic -----
+#
+# FR-030/FR-037: "Squash-merge the lifecycle PR" classifies a failed
+# `gh pr merge` call's stderr into workflow-scope/generic by regex, and
+# "Announce the merge decision on the lifecycle issue" composes one of five
+# message bodies from that classification plus the preconditions outputs --
+# `grep -rn "workflow-scope\|failure-kind" .github/scripts/*.py` finds
+# nothing, so until now neither had ever actually been run. Extended here
+# (Gate 95, no new gate number), matching T071's own precedent for this
+# workflow.
+
+LIFECYCLE_MERGE_STEP = "Squash-merge the lifecycle PR"
+LIFECYCLE_ANNOUNCE_STEP = "Announce the merge decision on the lifecycle issue"
+
+WORKFLOW_SCOPE_STDERR = (
+    "refusing to allow a GitHub App to create or update workflow "
+    "`.github/workflows/lifecycle-review-gate.yml` without `workflows` permission")
+GENERIC_MERGE_STDERR = (
+    "GraphQL: Head branch was modified. Review and try the merge again. "
+    "(mergePullRequest)")
+
+STUB_GH_MERGE = r"""#!/usr/bin/env bash
+if [ "$1 $2" = "pr merge" ]; then
+  if [ "$STUB_MERGE_OK" = "true" ]; then
+    exit 0
+  fi
+  printf '%s\n' "$STUB_MERGE_STDERR" >&2
+  exit 1
+fi
+exit 0
+"""
+
+
+def run_lifecycle_merge(script, tmproot, ok, stderr_text=""):
+    """lifecycle-review-gate.yml's "Squash-merge the lifecycle PR" step
+    alone, against a stub `gh pr merge` that either succeeds or exits 1
+    with the given stderr."""
+    workdir = tempfile.mkdtemp(dir=tmproot)
+    runner_temp = tempfile.mkdtemp(dir=tmproot)
+    try:
+        bindir = os.path.join(workdir, "stub-bin")
+        os.makedirs(bindir)
+        with open(os.path.join(bindir, "gh"), "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(STUB_GH_MERGE)
+        os.chmod(os.path.join(bindir, "gh"), 0o755)
+        env = {"PR_NUMBER": LIFECYCLE_PR, "HEAD_SHA": LIFECYCLE_HEAD_SHA,
+              "GH_TOKEN": "x", "GITHUB_REPOSITORY": "example/example",
+              "STUB_MERGE_OK": "true" if ok else "false",
+              "STUB_MERGE_STDERR": stderr_text,
+              "PATH": bindir + os.pathsep + os.environ["PATH"]}
+        rc, out, outputs, _ = run_step(BASH, script, workdir, env, runner_temp)
+        return rc, outputs, out
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
+        shutil.rmtree(runner_temp, ignore_errors=True)
+
+
+LIFECYCLE_MERGE_SCENARIOS = [
+    ("success", dict(ok=True), {"merged": "true"}),
+    ("workflow-scope refusal", dict(ok=False, stderr_text=WORKFLOW_SCOPE_STDERR),
+     {"merged": "false", "failure-kind": "workflow-scope"}),
+    ("generic failure", dict(ok=False, stderr_text=GENERIC_MERGE_STDERR),
+     {"merged": "false", "failure-kind": "generic"}),
+]
+
+
+def check_lifecycle_merge_classification(merge_script, tmproot):
+    failures = []
+    for name, kwargs, want in LIFECYCLE_MERGE_SCENARIOS:
+        rc, outputs, out = run_lifecycle_merge(merge_script, tmproot, **kwargs)
+        label = "lifecycle merge: {0}".format(name)
+        # continue-on-error is a STEP-level workflow property this harness
+        # does not model; the real job's own "Fail the job on an
+        # attempted-but-failed merge" step reads steps.merge.outcome for
+        # that, not this call's rc -- so only the success scenario, which
+        # must not exit non-zero at all, asserts rc.
+        if name == "success" and rc != 0:
+            failures.append("{0}: step exited {1}: {2}".format(label, rc, out))
+            continue
+        before = len(failures)
+        for key, expect in want.items():
+            if outputs.get(key) != expect:
+                failures.append("{0}: {1}={2!r}, expected {3!r} (outputs={4!r})".format(
+                    label, key, outputs.get(key), expect, outputs))
+        if name != "success" and not outputs.get("failure-detail"):
+            failures.append("{0}: failure-detail was not set (outputs={1!r})".format(
+                label, outputs))
+        if len(failures) == before:
+            print("[ok] #T072 {0}: {1}".format(
+                label, {k: outputs.get(k) for k in want}))
+    return failures
+
+
+LIFECYCLE_MERGE_REGEX_TEST = (
+    "'workflows? (permission|scope)|without .?workflows?.? (permission|scope)"
+    "|refusing to allow'")
+
+
+def check_lifecycle_merge_classification_mutation(merge_script, tmproot):
+    """The workflow-scope regex widened to match nothing: a real
+    workflow-scope refusal must then be misclassified as generic --
+    proving this check would catch the classification being silently
+    broken."""
+    if merge_script.count(LIFECYCLE_MERGE_REGEX_TEST) != 1:
+        return ["lifecycle merge classification mutation: expected one {0!r} "
+                "in the merge step; update this harness alongside it.".format(
+                    LIFECYCLE_MERGE_REGEX_TEST)]
+    mutated = merge_script.replace(
+        LIFECYCLE_MERGE_REGEX_TEST, "'this-pattern-matches-nothing-zzz'", 1)
+    rc, outputs, out = run_lifecycle_merge(
+        mutated, tmproot, ok=False, stderr_text=WORKFLOW_SCOPE_STDERR)
+    if outputs.get("failure-kind") == "workflow-scope":
+        return ["mutation 'lifecycle merge workflow-scope regex widened to "
+                "match nothing' was NOT caught"]
+    print("note: mutation 'lifecycle merge workflow-scope regex widened to "
+          "match nothing' confirmed caught (rc={0}, failure-kind={1!r}).".format(
+              rc, outputs.get("failure-kind")))
+    return []
+
+
+STUB_GH_ANNOUNCE = r"""#!/usr/bin/env bash
+if [ "$1 $2" = "issue comment" ]; then
+  shift 2
+  body=""
+  while [ $# -gt 0 ]; do
+    if [ "$1" = "--body" ]; then
+      body="$2"
+    fi
+    shift
+  done
+  printf '%s' "$body" > "$STUB_BODY_FILE"
+  exit 0
+fi
+exit 0
+"""
+
+
+def _lifecycle_announce_env(body_file, **overrides):
+    env = {"ISSUE": LIFECYCLE_ISSUE, "PR_NUMBER": LIFECYCLE_PR, "ROUND": "3",
+          "HEAD_SHA": LIFECYCLE_HEAD_SHA, "MAY_MERGE": "", "UNMET_REASON": "",
+          "MERGED": "", "FAILURE_KIND": "", "FAILURE_DETAIL": "",
+          "GH_TOKEN": "x", "GITHUB_REPOSITORY": "example/example",
+          "STUB_BODY_FILE": body_file}
+    env.update(overrides)
+    return env
+
+
+def run_lifecycle_announce(script, tmproot, **overrides):
+    """lifecycle-review-gate.yml's "Announce the merge decision on the
+    lifecycle issue" step alone, capturing the `--body` a stub
+    `gh issue comment` was called with."""
+    workdir = tempfile.mkdtemp(dir=tmproot)
+    runner_temp = tempfile.mkdtemp(dir=tmproot)
+    try:
+        bindir = os.path.join(workdir, "stub-bin")
+        os.makedirs(bindir)
+        with open(os.path.join(bindir, "gh"), "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(STUB_GH_ANNOUNCE)
+        os.chmod(os.path.join(bindir, "gh"), 0o755)
+        body_file = os.path.join(workdir, "posted-body.md")
+        open(body_file, "w").close()
+        env = _lifecycle_announce_env(body_file, **overrides)
+        env["PATH"] = bindir + os.pathsep + os.environ["PATH"]
+        rc, out, outputs, _ = run_step(BASH, script, workdir, env, runner_temp)
+        with open(body_file, encoding="utf-8") as fh:
+            body = fh.read()
+        return rc, body, out
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
+        shutil.rmtree(runner_temp, ignore_errors=True)
+
+
+# Each scenario's env mirrors the real job's own output combinations --
+# MAY_MERGE is only ever "true" when the merge step ran at all (its `if:`
+# gates on steps.preconditions.outputs.may-merge == 'true'), so a
+# workflow-scope/generic refusal always carries MAY_MERGE=true alongside
+# FAILURE_KIND, exercising that the FAILURE_KIND branch wins ahead of the
+# plainer "preconditions held" branch below it, not merely that each
+# branch works in isolation.
+LIFECYCLE_ANNOUNCE_SCENARIOS = [
+    ("merged", dict(MERGED="true", MAY_MERGE="true"),
+     ["**merged**", "review round 3"]),
+    ("workflow-scope refusal",
+     dict(MERGED="false", MAY_MERGE="true", FAILURE_KIND="workflow-scope",
+          FAILURE_DETAIL=WORKFLOW_SCOPE_STDERR),
+     ["credential scope reason", "gh auth refresh", WORKFLOW_SCOPE_STDERR]),
+    ("merge attempted, preconditions held",
+     dict(MERGED="false", MAY_MERGE="true", FAILURE_KIND="generic",
+          FAILURE_DETAIL=GENERIC_MERGE_STDERR),
+     ["the merge call itself failed", GENERIC_MERGE_STDERR]),
+    ("unmet condition",
+     dict(MERGED="", MAY_MERGE="false", UNMET_REASON="checks_green"),
+     ["checks_green", "does not hold"]),
+    ("preconditions never evaluated",
+     dict(MERGED="", MAY_MERGE="", UNMET_REASON=""),
+     ["were never evaluated"]),
+]
+
+
+def check_lifecycle_announce(announce_script, tmproot):
+    failures = []
+    for name, overrides, want_substrings in LIFECYCLE_ANNOUNCE_SCENARIOS:
+        rc, body, out = run_lifecycle_announce(announce_script, tmproot, **overrides)
+        label = "lifecycle announce: {0}".format(name)
+        if rc != 0:
+            failures.append("{0}: step exited {1}: {2}".format(label, rc, out))
+            continue
+        before = len(failures)
+        for want in want_substrings:
+            if want not in body:
+                failures.append("{0}: posted body did not contain {1!r}. body={2!r}".format(
+                    label, want, body))
+        if len(failures) == before:
+            print("[ok] #T072 {0}".format(label))
+    return failures
+
+
+LIFECYCLE_ANNOUNCE_KIND_TEST = 'elif [ "$FAILURE_KIND" = "workflow-scope" ]; then'
+
+
+def check_lifecycle_announce_mutation(announce_script, tmproot):
+    """The workflow-scope branch's own condition typo'd into
+    unreachability: a workflow-scope refusal must then fall through to the
+    plainer "preconditions held" body, losing the maintainer hand-off text
+    -- proving this check would catch that misdirection."""
+    if announce_script.count(LIFECYCLE_ANNOUNCE_KIND_TEST) != 1:
+        return ["lifecycle announce mutation: expected one {0!r} in the "
+                "announce step; update this harness alongside it.".format(
+                    LIFECYCLE_ANNOUNCE_KIND_TEST)]
+    mutated = announce_script.replace(
+        LIFECYCLE_ANNOUNCE_KIND_TEST,
+        'elif [ "$FAILURE_KIND" = "zzz-never-matches" ]; then', 1)
+    rc, body, out = run_lifecycle_announce(
+        mutated, tmproot, MERGED="false", MAY_MERGE="true",
+        FAILURE_KIND="workflow-scope", FAILURE_DETAIL=WORKFLOW_SCOPE_STDERR)
+    if rc == 0 and "credential scope reason" not in body:
+        print("note: mutation 'lifecycle announce workflow-scope branch "
+              "unreachable' confirmed caught (body did not name the "
+              "credential scope reason).")
+        return []
+    return ["mutation 'lifecycle announce workflow-scope branch unreachable' "
+            "was NOT caught (rc={0}, body={1!r})".format(rc, body)]
+
+
 def _mut_once(script, old, new, what):
     if script.count(old) != 1:
         sys.exit("::error::verify-reviewer-fail-closed: expected one {0} in its step; "
@@ -1095,6 +1590,8 @@ def check_583(extract_script, round_script, compose_script, oos_script, file_scr
     failures = []
     for label, found in (
             ("wc_step_output removes line breaks and lone surrogates", check_step_output_helper()),
+            ("wc_review_finding_fingerprint is stable and issue/title-sensitive",
+             check_review_finding_fingerprint_helper()),
             ("hostile titles never set other outputs", check_oos_output_sanitised(oos_script, tmproot)),
             ("title flattening and dropped findings",
              check_oos_title_validated(extract_script, oos_script, round_script,
@@ -1148,6 +1645,332 @@ def check_583(extract_script, round_script, compose_script, oos_script, file_scr
     return failures
 
 
+# --- T077: `select`'s fork/cross-repo and non-default-base exclusion ------
+#
+# FR-005/security (maintainer review 5355876805 F5): a fork PR's
+# `headRefName` is not a trust boundary -- a fork branch sharing this
+# repository's own `spec/NNN-...` name would otherwise have origin's own
+# branch of that name reviewed and passed while GitHub renders the status
+# against the fork's own SHA. Run the SHIPPED "Fetch open PRs..." step
+# (via wc_shell_harness.run_step against a real git clone, not a copy of
+# it) so a regression in the shell `[ ... ] || continue` guards is caught
+# against the real script, not a re-derivation of it.
+
+LIFECYCLE_SELECT_STEP = "Fetch open PRs and select the next lifecycle review candidate"
+SELECT_SPEC_SLUG = "999-select-harness"
+SELECT_ISSUE = "77"
+
+SELECT_GH_STUB = """#!/usr/bin/env bash
+# Mimics `gh ... --jq '.[] | @base64'`: the real gh CLI applies --jq itself,
+# so the workflow step never sees raw JSON on stdout -- this stub must
+# apply the same transform, not merely echo the canned array.
+if [ "$1 $2" = "pr list" ]; then
+  cat <<'JSON' | jq -c '.[] | @base64' -r
+[
+  {{"number": 1, "headRefName": "spec/{slug}", "headRefOid": "cross0001", "createdAt": "2026-01-01T00:00:00Z", "isCrossRepository": true, "baseRefName": "main"}},
+  {{"number": 2, "headRefName": "spec/{slug}", "headRefOid": "base00002", "createdAt": "2026-01-02T00:00:00Z", "isCrossRepository": false, "baseRefName": "develop"}},
+  {{"number": 3, "headRefName": "spec/{slug}", "headRefOid": "valid0003", "createdAt": "2026-01-03T00:00:00Z", "isCrossRepository": false, "baseRefName": "main"}}
+]
+JSON
+  exit 0
+fi
+if [ "$1 $2" = "issue view" ]; then
+  echo '[]'
+  exit 0
+fi
+exit 1
+""".format(slug=SELECT_SPEC_SLUG)
+
+
+def _make_select_repo(root):
+    """A real git repo (bare remote + clone) with a spec/999-select-harness
+    branch carrying spec-meta.json at stage: review, issue: SELECT_ISSUE --
+    the one candidate branch every PR fixture in SELECT_GH_STUB names."""
+    work = tempfile.mkdtemp(dir=root)
+    remote = os.path.join(work, "remote.git")
+    repo = os.path.join(work, "repo")
+    spec_dir = "specs/{0}".format(SELECT_SPEC_SLUG)
+    meta = json.dumps({"spec_dir": spec_dir, "issue": int(SELECT_ISSUE), "stage": "review"})
+    setup = """
+git init --bare -q -b main '{remote}'
+git clone -q '{remote}' '{repo}'
+cd '{repo}'
+git config user.email harness@example.invalid
+git config user.name harness
+mkdir -p '{spec_dir}'
+printf '%s\\n' '{meta}' > '{spec_dir}/spec-meta.json'
+git add -A
+git commit -q -m seed
+git branch -q spec/{slug} main
+git push -q origin main spec/{slug}
+""".format(remote=remote, repo=repo, spec_dir=spec_dir, meta=meta, slug=SELECT_SPEC_SLUG)
+    proc = _sh_select(setup, work)
+    if proc.returncode != 0:
+        sys.exit("::error::verify-reviewer-fail-closed: select harness could not "
+                 "seed a git workspace: {0}{1}".format(proc.stdout, proc.stderr))
+    return repo
+
+
+def _sh_select(script, cwd):
+    path = os.path.join(cwd, "_setup.sh")
+    with open(path, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(script)
+    return subprocess.run([BASH, "-e", path.replace("\\", "/")], cwd=cwd,
+                          capture_output=True, text=True, encoding="utf-8",
+                          errors="replace")
+
+
+def _stage_select_trusted_copy(repo):
+    """Copies the real _shared/read-spec-meta.sh and
+    wc_lifecycle_review_marker.py (+ its board_item_marker.py dependency)
+    into .wc-pristine-repo -- the step under test resolves both from
+    there, never the workspace root (T073)."""
+    actions_dir = os.path.join(repo, ".wc-pristine-repo", ".github", "actions", "_shared")
+    scripts_dir = os.path.join(repo, ".wc-pristine-repo", ".github", "scripts")
+    os.makedirs(actions_dir, exist_ok=True)
+    os.makedirs(scripts_dir, exist_ok=True)
+    shutil.copyfile(
+        os.path.join(".github", "actions", "_shared", "read-spec-meta.sh"),
+        os.path.join(actions_dir, "read-spec-meta.sh"))
+    for name in ("wc_lifecycle_review_marker.py", "board_item_marker.py"):
+        shutil.copyfile(os.path.join(".github", "scripts", name),
+                        os.path.join(scripts_dir, name))
+
+
+def run_lifecycle_select(select_script, tmproot):
+    repo = _make_select_repo(tmproot)
+    _stage_select_trusted_copy(repo)
+    bindir = os.path.join(tmproot, "select-bin")
+    os.makedirs(bindir, exist_ok=True)
+    with open(os.path.join(bindir, "gh"), "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(SELECT_GH_STUB)
+    os.chmod(os.path.join(bindir, "gh"), 0o755)
+    runner_temp = tempfile.mkdtemp(dir=tmproot)
+    env = {"GH_TOKEN": "x", "BOT_LOGIN": "wing-commander-bot[bot]",
+          "GITHUB_REPOSITORY": "example/example",
+          "PATH": bindir + os.pathsep + os.environ.get("PATH", "")}
+    rc, out, outputs, _summary = run_step(BASH, select_script, repo, env, runner_temp)
+    return rc, out, outputs
+
+
+def check_lifecycle_select_excludes_forks(select_script, tmproot):
+    rc, out, outputs = run_lifecycle_select(select_script, tmproot)
+    if rc != 0:
+        return ["lifecycle select: step exited {0}: {1}".format(rc, out)]
+    failures = []
+    if outputs.get("pr-number") != "3":
+        failures.append("lifecycle select: pr-number={0!r}, expected '3' (the "
+                        "cross-repo PR #1 and the non-default-base PR #2 must "
+                        "both be skipped)".format(outputs.get("pr-number")))
+    if outputs.get("head-sha") != "valid0003":
+        failures.append("lifecycle select: head-sha={0!r}, expected "
+                        "'valid0003'".format(outputs.get("head-sha")))
+    if not failures:
+        print("[ok] #T077 lifecycle select: cross-repo PR #1 and non-default-base "
+              "PR #2 both skipped; same-repo/default-base PR #3 selected")
+    return failures
+
+
+def check_lifecycle_select_excludes_forks_mutation(select_script, tmproot):
+    """The cross-repo guard removed: PR #1 (a fork) would then be selected
+    instead of PR #3, proving this check exercises the real guard."""
+    marker = '[ "$is_cross_repo" = "false" ] || continue\n'
+    if select_script.count(marker) != 1:
+        return ["lifecycle select mutation: expected one {0!r} in the select "
+                "step; update this harness.".format(marker)]
+    mutated = select_script.replace(marker, "", 1)
+    rc, out, outputs = run_lifecycle_select(mutated, tmproot)
+    if rc == 0 and outputs.get("pr-number") == "3":
+        return ["mutation 'lifecycle select cross-repo guard removed' was NOT caught"]
+    print("note: mutation 'lifecycle select cross-repo guard removed' confirmed "
+          "caught (rc={0}, pr-number={1!r}).".format(rc, outputs.get("pr-number")))
+    return []
+
+
+# --- T079: `report`'s "Compose and post the round's outcome" step ---------
+#
+# FR-014/F8 (maintainer review 5355876805): review can succeed and parse
+# cleanly while `disposition` itself then fails (e.g. a non-fast-forward
+# push) -- DISPOSITION_OUTCOME is then empty, which must not fall through
+# to the "findings" branch and claim a fold/file that never happened.
+
+LIFECYCLE_OUTCOME_STEP = "Compose and post the round's outcome"
+LIFECYCLE_STATUS_STEP = "Report a non-passing status on the reviewed head SHA"
+# The status step's own `if:`, byte-compared: the harness below runs its
+# `run:` only when this guard would have let the step run, so a changed
+# guard is surfaced here rather than silently skipped.
+LIFECYCLE_STATUS_IF = ("steps.outcome.outputs.result != '' && "
+                       "steps.outcome.outputs.result != 'clean'")
+
+STUB_GH_STATUS = r"""#!/usr/bin/env bash
+if [ "$1" = "api" ]; then
+  for arg in "$@"; do
+    case "$arg" in
+      state=*) printf '%s' "${arg#state=}" > "$STUB_STATE_FILE" ;;
+    esac
+  done
+  exit 0
+fi
+exit 0
+"""
+
+
+def _lifecycle_outcome_env(body_file, **overrides):
+    env = {"ISSUE": LIFECYCLE_ISSUE, "PR_NUMBER": LIFECYCLE_PR,
+          "HEAD_SHA": LIFECYCLE_HEAD_SHA, "REVIEW_RESULT": "success",
+          "PARSE_FAILED": "false", "IN_SCOPE_COUNT": "0",
+          "OUT_OF_SCOPE_COUNT": "0", "ROUND": "3",
+          "DISPOSITION_RESULT": "success", "DISPOSITION_OUTCOME": "clean",
+          "FINDINGS_OPEN": "0", "FOLDED_FINGERPRINTS": "", "FILED_FINGERPRINTS": "",
+          "COST_LINE": "", "GH_TOKEN": "x", "GITHUB_REPOSITORY": "example/example",
+          "STUB_BODY_FILE": body_file}
+    env.update(overrides)
+    return env
+
+
+def run_lifecycle_outcome(script, tmproot, **overrides):
+    """lifecycle-review-gate.yml's "Compose and post the round's outcome"
+    step alone, capturing the `--body` a stub `gh issue comment` was
+    called with (STUB_GH_ANNOUNCE's shape -- the same stub, a different
+    step)."""
+    workdir = tempfile.mkdtemp(dir=tmproot)
+    runner_temp = tempfile.mkdtemp(dir=tmproot)
+    try:
+        bindir = os.path.join(workdir, "stub-bin")
+        os.makedirs(bindir)
+        with open(os.path.join(bindir, "gh"), "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(STUB_GH_ANNOUNCE)
+        os.chmod(os.path.join(bindir, "gh"), 0o755)
+        # Staged even for scenarios that never reach the marker-write branch:
+        # a mutated script (or a future scenario) may take the "findings"
+        # path, which imports this from the trusted copy (T074/T073).
+        scripts_dir = os.path.join(workdir, ".wc-pristine-repo", ".github", "scripts")
+        os.makedirs(scripts_dir, exist_ok=True)
+        for name in ("wc_lifecycle_review_marker.py", "board_item_marker.py"):
+            shutil.copyfile(os.path.join(".github", "scripts", name),
+                            os.path.join(scripts_dir, name))
+        body_file = os.path.join(workdir, "posted-body.md")
+        open(body_file, "w").close()
+        env = _lifecycle_outcome_env(body_file, **overrides)
+        env["PATH"] = bindir + os.pathsep + os.environ["PATH"]
+        rc, out, outputs, _ = run_step(BASH, script, workdir, env, runner_temp)
+        with open(body_file, encoding="utf-8") as fh:
+            body = fh.read()
+        return rc, body, outputs, out
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
+        shutil.rmtree(runner_temp, ignore_errors=True)
+
+
+def run_lifecycle_status(script, tmproot, result):
+    """lifecycle-review-gate.yml's "Report a non-passing status on the
+    reviewed head SHA" step alone, capturing the `state=` a stub `gh api`
+    was called with ("" when the step never posted one)."""
+    workdir = tempfile.mkdtemp(dir=tmproot)
+    runner_temp = tempfile.mkdtemp(dir=tmproot)
+    try:
+        bindir = os.path.join(workdir, "stub-bin")
+        os.makedirs(bindir)
+        with open(os.path.join(bindir, "gh"), "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(STUB_GH_STATUS)
+        os.chmod(os.path.join(bindir, "gh"), 0o755)
+        state_file = os.path.join(workdir, "posted-state")
+        open(state_file, "w").close()
+        env = {"GH_TOKEN": "x", "GITHUB_REPOSITORY": "example/example",
+               "HEAD_SHA": LIFECYCLE_HEAD_SHA, "RESULT": result, "ROUND": "3",
+               "FINDINGS_OPEN": "", "STUB_STATE_FILE": state_file,
+               "PATH": bindir + os.pathsep + os.environ["PATH"]}
+        rc, out, _, _ = run_step(BASH, script, workdir, env, runner_temp)
+        with open(state_file, encoding="utf-8") as fh:
+            return rc, fh.read(), out
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
+        shutil.rmtree(runner_temp, ignore_errors=True)
+
+
+def check_lifecycle_disposition_failed_reports_error(outcome_script, tmproot,
+                                                     status_script):
+    rc, body, outputs, out = run_lifecycle_outcome(
+        outcome_script, tmproot, DISPOSITION_RESULT="failure",
+        DISPOSITION_OUTCOME="")
+    failures = []
+    if rc != 0:
+        return ["lifecycle disposition-failed: step exited {0}: {1}".format(rc, out)]
+    if outputs.get("result") != "failed":
+        failures.append("lifecycle disposition-failed: result={0!r}, expected "
+                        "'failed'".format(outputs.get("result")))
+    # The actual claim phrasing the "findings" branch's own detail text
+    # uses -- not a bare "folded"/"filed" substring, which the CORRECT
+    # "Nothing was folded or filed" negation also contains.
+    for claim in ("were folded into tasks.md", "were filed as their own",
+                  "finding(s) were posted on PR"):
+        if claim in body:
+            failures.append("lifecycle disposition-failed: posted body claims "
+                            "{0!r} despite disposition never having reached an "
+                            "outcome: {1!r}".format(claim, body))
+    # F8: the round's `failed` result must reach the PR itself as a
+    # state=error commit status (the gate failed to reach a verdict), never
+    # silence and never state=failure (the review's own verdict on the
+    # code) -- contracts/review-and-findings.md "Clean vs. not-clean".
+    result = outputs.get("result") or ""
+    rc, state, out = run_lifecycle_status(status_script, tmproot, result)
+    if rc != 0:
+        failures.append("lifecycle disposition-failed: status step exited "
+                        "{0}: {1}".format(rc, out))
+    elif state != "error":
+        failures.append("lifecycle disposition-failed: status step posted "
+                        "state={0!r}, expected 'error'".format(state))
+    if not failures:
+        print("[ok] #T079 lifecycle disposition-failed: result='failed', "
+              "posted body makes no fold/file claim, state=error posted")
+    return failures
+
+
+def check_lifecycle_disposition_failed_status_mutation(status_script, tmproot):
+    """The status step's catch-all `state=error` arm rewritten to
+    `state=failure`: a gate that never reached a verdict would then be
+    reported as the review's verdict on the code."""
+    marker = "state=error\n"
+    if status_script.count(marker) != 1:
+        return ["lifecycle status mutation: expected one {0!r} in the status "
+                "step; update this harness.".format(marker)]
+    mutated = status_script.replace(marker, "state=failure\n", 1)
+    rc, state, out = run_lifecycle_status(mutated, tmproot, "failed")
+    if rc != 0:
+        return ["lifecycle status mutation: step exited {0} instead of "
+                "demonstrating the regression: {1}".format(rc, out)]
+    if state == "error":
+        return ["mutation 'lifecycle failed round posts state=failure' was NOT "
+                "caught (state={0!r})".format(state)]
+    print("note: mutation 'lifecycle failed round posts state=failure' "
+          "confirmed caught (state={0!r}).".format(state))
+    return []
+
+
+def check_lifecycle_disposition_failed_mutation(outcome_script, tmproot):
+    """The DISPOSITION_RESULT check removed: an empty DISPOSITION_OUTCOME
+    would then fall through to the "findings" branch and claim a fold/file
+    that never happened."""
+    marker = 'elif [ "$DISPOSITION_RESULT" != "success" ]; then\n'
+    if outcome_script.count(marker) != 1:
+        return ["lifecycle disposition-failed mutation: expected one {0!r} in "
+                "the outcome step; update this harness.".format(marker)]
+    mutated = outcome_script.replace(marker, 'elif false; then\n', 1)
+    rc, body, outputs, out = run_lifecycle_outcome(
+        mutated, tmproot, DISPOSITION_RESULT="failure", DISPOSITION_OUTCOME="")
+    if rc != 0:
+        return ["lifecycle disposition-failed mutation: step exited {0} instead "
+                "of demonstrating the regression: {1}".format(rc, out)]
+    if outputs.get("result") != "findings":
+        return ["mutation 'lifecycle disposition-failed check removed' was NOT "
+                "caught (got result={0!r}, expected the regression's own "
+                "'findings')".format(outputs.get("result"))]
+    print("note: mutation 'lifecycle disposition-failed check removed' confirmed "
+          "caught (result={0!r}, posted body wrongly claims a fold: {1}).".format(
+              outputs.get("result"), "folded" in body))
+    return []
+
+
 def main():
     global BASH
     use_utf8_stdout()
@@ -1187,6 +2010,39 @@ def main():
     file_script = str(find_step(DURABLE_ISSUE_ACTION, DURABLE_ISSUE_STEP)["run"])
     ensure_jq()
 
+    if not os.path.isfile(LIFECYCLE_WORKFLOW):
+        sys.exit(f"::error::run this from the repository root; {LIFECYCLE_WORKFLOW} not found.")
+    lifecycle_extract_step = find_step(LIFECYCLE_WORKFLOW, LIFECYCLE_EXTRACT_STEP)
+    lifecycle_partition_step = find_step(LIFECYCLE_WORKFLOW, LIFECYCLE_PARTITION_STEP)
+    lifecycle_merge_step = find_step(LIFECYCLE_WORKFLOW, LIFECYCLE_MERGE_STEP)
+    lifecycle_announce_step = find_step(LIFECYCLE_WORKFLOW, LIFECYCLE_ANNOUNCE_STEP)
+    lifecycle_select_step = find_step(LIFECYCLE_WORKFLOW, LIFECYCLE_SELECT_STEP)
+    lifecycle_outcome_step = find_step(LIFECYCLE_WORKFLOW, LIFECYCLE_OUTCOME_STEP)
+    lifecycle_status_step = find_step(LIFECYCLE_WORKFLOW, LIFECYCLE_STATUS_STEP)
+    for step_name, step in ((LIFECYCLE_EXTRACT_STEP, lifecycle_extract_step),
+                            (LIFECYCLE_PARTITION_STEP, lifecycle_partition_step),
+                            (LIFECYCLE_MERGE_STEP, lifecycle_merge_step),
+                            (LIFECYCLE_ANNOUNCE_STEP, lifecycle_announce_step),
+                            (LIFECYCLE_SELECT_STEP, lifecycle_select_step),
+                            (LIFECYCLE_OUTCOME_STEP, lifecycle_outcome_step),
+                            (LIFECYCLE_STATUS_STEP, lifecycle_status_step)):
+        if step is None:
+            sys.exit(f"::error file={LIFECYCLE_WORKFLOW}::step {step_name!r} not found.")
+        if "${{" in str(step["run"]):
+            sys.exit(f"::error file={LIFECYCLE_WORKFLOW}::step {step_name!r}'s run: "
+                     f"block contains a ${{{{ }}}} expression this harness "
+                     f"does not resolve.")
+    lifecycle_extract_script = str(lifecycle_extract_step["run"])
+    lifecycle_partition_script = str(lifecycle_partition_step["run"])
+    lifecycle_merge_script = str(lifecycle_merge_step["run"])
+    lifecycle_announce_script = str(lifecycle_announce_step["run"])
+    lifecycle_select_script = str(lifecycle_select_step["run"])
+    lifecycle_outcome_script = str(lifecycle_outcome_step["run"])
+    lifecycle_status_script = str(lifecycle_status_step["run"])
+    if str(lifecycle_status_step.get("if") or "") != LIFECYCLE_STATUS_IF:
+        sys.exit(f"::error file={LIFECYCLE_WORKFLOW}::step {LIFECYCLE_STATUS_STEP!r}'s "
+                 f"if: is no longer {LIFECYCLE_STATUS_IF!r}; update this harness.")
+
     tmproot = tempfile.mkdtemp()
     try:
         failures = check_scenarios(extract_script, round_script, compose_script, tmproot)
@@ -1197,6 +2053,21 @@ def main():
         failures += check_review_body_cap_mutation(compose_script, tmproot)
         failures += check_583(extract_script, round_script, compose_script,
                               fence_scripts["oos"], file_script, tmproot)
+        failures += check_lifecycle_extract(lifecycle_extract_script, tmproot)
+        failures += check_lifecycle_extract_mutation(lifecycle_extract_script, tmproot)
+        failures += check_lifecycle_budget_exhaustion(lifecycle_partition_script, tmproot)
+        failures += check_lifecycle_budget_exhaustion_mutation(lifecycle_partition_script, tmproot)
+        failures += check_lifecycle_merge_classification(lifecycle_merge_script, tmproot)
+        failures += check_lifecycle_merge_classification_mutation(lifecycle_merge_script, tmproot)
+        failures += check_lifecycle_announce(lifecycle_announce_script, tmproot)
+        failures += check_lifecycle_announce_mutation(lifecycle_announce_script, tmproot)
+        failures += check_lifecycle_select_excludes_forks(lifecycle_select_script, tmproot)
+        failures += check_lifecycle_select_excludes_forks_mutation(lifecycle_select_script, tmproot)
+        failures += check_lifecycle_disposition_failed_reports_error(
+            lifecycle_outcome_script, tmproot, lifecycle_status_script)
+        failures += check_lifecycle_disposition_failed_status_mutation(
+            lifecycle_status_script, tmproot)
+        failures += check_lifecycle_disposition_failed_mutation(lifecycle_outcome_script, tmproot)
     finally:
         shutil.rmtree(tmproot, ignore_errors=True)
 

@@ -1930,12 +1930,26 @@ jobs:
               ;;
           esac
 
+          # specs/062-lifecycle-review-gate T033: the ONLY two categories
+          # whose route commits a tasks.md/spec-meta.json fold -- carried as
+          # its own output so "Compose tool args" can narrow the agent's own
+          # tool grant to this route alone (T001's finding: the
+          # small-unrelated-change and manual-step-permission routes still
+          # need Bash(git commit:*)/Bash(git push:*) for their OWN,
+          # unrelated commit+push-to-a-new-branch flow).
+          fold_route=false
+          if [ "$effective_category" = "in-scope-change" ] ||
+             { [ "$effective_category" = "new-functionality" ] && [ "$effective_fold_target" = "current-spec" ]; }; then
+            fold_route=true
+          fi
+
           {
             echo "effective-category=$effective_category"
             echo "effective-fold-target=$effective_fold_target"
             echo "needs-checkout=$needs_checkout"
             echo "checkout-ref=$checkout_ref"
             echo "agent-needed=$agent_needed"
+            echo "fold-route=$fold_route"
             echo "permission-match=$permission_match"
             echo "permission-match-url=$permission_match_url"
             # T081: the earliest point in this leg that precedes any
@@ -1999,6 +2013,11 @@ jobs:
           mkdir -p /tmp/wing-commander
           printf '%s' "$DRAFTED_CONTENT" > /tmp/wing-commander/act-drafted-content.json
 
+      # specs/078's canonical commit-message guidance. Since
+      # specs/062-lifecycle-review-gate T033 the fold route itself no
+      # longer commits (wing-commander-fold-commit does), so the prompt
+      # renders this for the routes that still compose a commit message;
+      # the step id and scratch filename are kept as spec 078 shipped them.
       - name: Compose commit-message guidance (pr-conversation.fold)
         id: commit-guidance-fold
         if: steps.relay-gate.outputs.proceed == 'true' && steps.route.outputs.agent-needed == 'true'
@@ -2006,9 +2025,21 @@ jobs:
         with:
           scratch-filename: pr-conversation-commit-message-fold.txt
 
+      # specs/062-lifecycle-review-gate T033: the fold-route categories
+      # (in-scope-change, new-functionality+current-spec) no longer commit
+      # or push themselves -- wing-commander-fold-commit (a later,
+      # deterministic step) does, once the agent has only drafted the
+      # section to a file. Every OTHER category still performs its own
+      # commit+push (small-unrelated-change to a new branch,
+      # manual-step-permission's needs-permission PR), so the tool
+      # narrowing is scoped to this one route via a SEPARATE tool-args call
+      # with its own step-label -- Gate 27 (verify-stage-tool-lists.py)
+      # reads each call site's `default-allowed-tools:` as a literal list,
+      # so the two routes could not share one call composed with a runtime
+      # ${{ }} ternary without losing that check.
       - name: Compose tool args (pr-conversation.act)
         id: tool-args-act
-        if: steps.relay-gate.outputs.proceed == 'true' && steps.route.outputs.agent-needed == 'true'
+        if: steps.relay-gate.outputs.proceed == 'true' && steps.route.outputs.agent-needed == 'true' && steps.route.outputs.fold-route != 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-tool-args
         with:
           default-allowed-tools: "Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git log:*),Bash(git diff:*),Bash(git checkout:*),Bash(git switch:*),Bash(git branch:*),Bash(cat:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh issue create:*),Bash(gh issue edit:*),Bash(gh pr view:*),Bash(gh pr comment:*),Bash(gh pr create:*),Bash(gh pr edit:*),Bash(gh api:*),Bash(gh label create:*),Bash(gh search issues:*),Bash(gh search prs:*)"
@@ -2019,13 +2050,31 @@ jobs:
           disallowed-tools-override: ${{ inputs.disallowed-tools-override }}
           step-label: "pr-conversation.act"
 
+      # The fold route's own, narrower grant: no Bash(git commit:*)/
+      # Bash(git push:*) (it never touches git — see the note above), and no
+      # gh tools either, since this route creates no issue/PR of its own.
+      - name: Compose tool args (pr-conversation.act.fold)
+        id: tool-args-act-fold
+        if: steps.relay-gate.outputs.proceed == 'true' && steps.route.outputs.agent-needed == 'true' && steps.route.outputs.fold-route == 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-tool-args
+        with:
+          default-allowed-tools: "Read,Write,Glob,Grep,Bash(cat:*)"
+          default-disallowed-tools: "WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage"
+          extra-allowed-tools: ${{ inputs.extra-allowed-tools }}
+          extra-disallowed-tools: ${{ inputs.extra-disallowed-tools }}
+          allowed-tools-override: ${{ inputs.allowed-tools-override }}
+          disallowed-tools-override: ${{ inputs.disallowed-tools-override }}
+          step-label: "pr-conversation.act.fold"
+
       # T010: the shared bounded agent step every mutation route uses. Never
       # merges/approves/closes anything (SC-003) — no such tool is allowed.
       # Performs the drafting content ALREADY produced by classify (T006);
       # it does not re-decide category or content, only executes it.
       - name: Compute agent turn ceiling
         id: agent-ceiling
-        if: steps.relay-gate.outputs.proceed == 'true' && steps.route.outputs.agent-needed == 'true' && steps.tool-args-act.outputs.allowed-tools != ''
+        if: >-
+          steps.relay-gate.outputs.proceed == 'true' && steps.route.outputs.agent-needed == 'true' &&
+          (steps.tool-args-act.outputs.allowed-tools != '' || steps.tool-args-act-fold.outputs.allowed-tools != '')
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-turn-ceiling
         with:
           intended-turns: ${{ inputs.max-turns }}
@@ -2034,7 +2083,9 @@ jobs:
       # credential-expiry `git push` signature -- see clarify.yml.
       - name: Act on this classification
         id: agent
-        if: steps.relay-gate.outputs.proceed == 'true' && steps.route.outputs.agent-needed == 'true' && steps.tool-args-act.outputs.allowed-tools != ''
+        if: >-
+          steps.relay-gate.outputs.proceed == 'true' && steps.route.outputs.agent-needed == 'true' &&
+          (steps.tool-args-act.outputs.allowed-tools != '' || steps.tool-args-act-fold.outputs.allowed-tools != '')
         continue-on-error: true
         uses: anthropics/claude-code-action@v1
         env:
@@ -2069,28 +2120,21 @@ jobs:
             category:
 
             - in-scope-change, or new-functionality with fold-target
-              current-spec: append the drafted `tasks-md-section` (for
+              current-spec: write the drafted `tasks-md-section` (for
               new-functionality, also note `spec-amendment-note` in your
               final summary) to
+              /tmp/wing-commander/act-fold-section.md, ready to append
+              verbatim as a new, top-level section — read the current
               ${{ needs.classify-and-announce.outputs.spec-dir }}/tasks.md
-              as a new, top-level section — append-only, never edit or
-              reorder existing sections. Then set `stage` in
-              ${{ needs.classify-and-announce.outputs.spec-dir }}/spec-meta.json
-              back to "implement" (leave `iteration` unchanged), and set
-              its `pending_re_review_from` field to the union of its
-              existing entries (if any) and
-              "${{ inputs.actor-login }}" (research.md D10 — this records
-              who to ask for re-review once this fold's implementation
-              cycle finalizes again; do not remove any existing entry).
-              Commit BOTH files together in one commit whose message starts
-              with "fold(${{ matrix.id }}): ${{ steps.leg.outputs.summary }}"
-              and push to the current branch.
-
-              ${{ steps.commit-guidance-fold.outputs.guidance }}
-
-              Do NOT run `gh workflow run`
-              yourself — a later job (`dispatch-once`) dispatches implement
-              exactly once, after every item in this review has folded.
+              first so the section you write fits its existing style, but
+              do NOT edit tasks.md, spec-meta.json, or run any `git`
+              command yourself. A later, deterministic step appends this
+              file, flips `spec-meta.json.stage` back to "implement",
+              records `pending_re_review_from`, and commits + pushes both —
+              your only job is to produce the section's content. Do NOT run
+              `gh workflow run` yourself either — a later job
+              (`dispatch-once`) dispatches implement exactly once, after
+              every item in this review has folded.
 
             - new-functionality with fold-target new-spec: run
               `gh issue create` using the drafted `issue-title`/`issue-body`,
@@ -2123,14 +2167,22 @@ jobs:
               needed) and apply the `permission-request` label. Report the
               new PR's URL as `artifact-url`.
 
+            When a route above has you commit (small-unrelated-change,
+            manual-step-permission's needs-permission PR, or a performed
+            manual step that commits) — never the fold route, whose commit
+            a later step makes:
+
+            ${{ steps.commit-guidance-fold.outputs.guidance }}
+
             Never merge, approve, close, or relabel anything except as
             instructed above. Never push to the default branch directly —
             only via a PR. Return your final result matching the provided
             schema: `mutated` true if you made the described change
-            (commit+push, or created an issue/PR), `summary` (one
-            paragraph, written for a PR reply), and `artifact-url` (the
-            created issue/PR URL, or null when none was created — e.g. the
-            fold-in routes, or a performed/not-performed manual step).
+            (wrote the fold section file, committed+pushed, or created an
+            issue/PR), `summary` (one paragraph, written for a PR reply),
+            and `artifact-url` (the created issue/PR URL, or null when none
+            was created — e.g. the fold-in routes, or a performed/
+            not-performed manual step).
 
             A `git push` that fails with `remote: Invalid username or token`
             or `Authentication failed` is a credential problem this
@@ -2141,8 +2193,8 @@ jobs:
             --model ${{ inputs.model }}
             --max-turns ${{ steps.agent-ceiling.outputs.ceiling }}
             --json-schema '{"type":"object","required":["mutated","summary"],"properties":{"mutated":{"type":"boolean"},"summary":{"type":"string"},"artifact-url":{"type":["string","null"]}}}'
-            --allowedTools "${{ steps.tool-args-act.outputs.allowed-tools }}"
-            --disallowedTools "${{ steps.tool-args-act.outputs.disallowed-tools }}"
+            --allowedTools "${{ steps.tool-args-act.outputs.allowed-tools || steps.tool-args-act-fold.outputs.allowed-tools }}"
+            --disallowedTools "${{ steps.tool-args-act.outputs.disallowed-tools || steps.tool-args-act-fold.outputs.disallowed-tools }}"
 
       # !cancelled(), not always() (spec 052, should-fix per maintainer
       # review of PR #407): a run cancelled during the agent step must not
@@ -2298,6 +2350,27 @@ jobs:
             echo "artifact-url=$artifact_url"
           } >> "$GITHUB_OUTPUT"
 
+      # specs/062-lifecycle-review-gate T033: the fold-route agent only
+      # drafted the section (act-result's `mutated` means "wrote a section
+      # to fold" for this route, not "committed" — see the prompt above).
+      # This step performs the actual append/flip/commit/push, through the
+      # single home T031 extracted so lifecycle-review-gate.yml's own
+      # `disposition` job (US2) can become its second caller. The commit is
+      # made in this leg's checkout, so the run-attribution hook installed
+      # above appends its Wing-Commander-Run-Id trailer, and dispatch-once's
+      # wing-commander-fold-evidence read counts it as this run's own.
+      - name: Commit this leg's fold
+        id: fold-commit
+        if: steps.route.outputs.fold-route == 'true' && steps.act-result.outputs.mutated == 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-fold-commit
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
+          spec-dir: ${{ needs.classify-and-announce.outputs.spec-dir }}
+          section-file: /tmp/wing-commander/act-fold-section.md
+          fold-id: ${{ matrix.id }}
+          fold-summary: ${{ steps.leg.outputs.summary }}
+          actor-login: ${{ inputs.actor-login }}
+
       - name: Fail loud on non-healthy agent verdict
         if: always() && steps.agent.outcome != 'skipped' && steps.agent-verdict.outputs.verdict != 'healthy'
         env:
@@ -2378,10 +2451,7 @@ jobs:
       # guarantee it protects, moved out of the per-leg matrix entirely).
       - name: Reply confirming fold-in (no dispatch)
         shell: bash
-        if: >-
-          steps.act-result.outputs.mutated == 'true' &&
-          (steps.route.outputs.effective-category == 'in-scope-change' ||
-           (steps.route.outputs.effective-category == 'new-functionality' && steps.route.outputs.effective-fold-target == 'current-spec'))
+        if: steps.fold-commit.outputs.folded == 'true'
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           PR_NUMBER: ${{ inputs.pr-number }}
@@ -2404,18 +2474,17 @@ jobs:
 
       # T016/T018/T025-27's reply, for every agent-driven route that is NOT
       # a successful fold-in (the dispatch+reply step above already replied
-      # for those). T046/FR-014/SC-005: only `mutated == 'true'` fold-in
-      # legs are excluded here — a fold-in classification whose agent
-      # returned `mutated: false` (a valid schema value, e.g. it could not
-      # complete the tasks.md append/commit/push) still needs a PR reply,
-      # and this is the only step that posts one for a non-dispatch outcome.
+      # for those). T033: keyed on wing-commander-fold-commit's own
+      # `folded` output, not the agent's self-reported `mutated` — for the
+      # fold route, `mutated` now means "wrote a section to fold", so a
+      # fold-route leg whose section was empty (`folded: false`) still
+      # needs a PR reply, and this is the only step that posts one for a
+      # non-dispatch outcome.
       - name: Report mutation outcome
         shell: bash
         if: >-
           steps.agent-verdict.outputs.verdict == 'healthy' && steps.act-result.outputs.mutated != '' &&
-          !(steps.act-result.outputs.mutated == 'true' &&
-            (steps.route.outputs.effective-category == 'in-scope-change' ||
-             (steps.route.outputs.effective-category == 'new-functionality' && steps.route.outputs.effective-fold-target == 'current-spec')))
+          steps.fold-commit.outputs.folded != 'true'
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           PR_NUMBER: ${{ inputs.pr-number }}
@@ -2809,35 +2878,52 @@ jobs:
       # moving the tip during this run's window no longer dispatches an
       # implement cycle on its own (FR-014); this run says so on the PR
       # instead (FR-015).
+      #
+      # The fold/dispatch primitive's second call site
+      # (specs/062-lifecycle-review-gate T034/T036): the composite reads
+      # iteration off the tip and dispatches, but only on folded-json.
       - name: Dispatch implement once for the whole review
-        shell: bash
+        id: fold-dispatch
         if: steps.tip.outputs.sha != needs.classify-and-announce.outputs.base-sha && steps.tip.outputs.sha != ''
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-fold-dispatch
+        with:
+          dispatch-token: ${{ github.token }}
+          spec-dir: ${{ needs.classify-and-announce.outputs.spec-dir }}
+          issue: ${{ needs.classify-and-announce.outputs.issue-number }}
+          base-sha: ${{ needs.classify-and-announce.outputs.base-sha }}
+          spec-branch: ${{ inputs.spec-prefix }}${{ needs.classify-and-announce.outputs.slug }}
+          implement-workflow: ${{ inputs.implement-workflow }}
+          folded-json: ${{ steps.fold-evidence.outputs.folded-json }}
+
+      # The fold list comes straight from the composite's own output, which
+      # it built from the same folded-json its dispatch decision used, so
+      # the PR comment's list and the dispatch decision can never disagree
+      # (research.md D3).
+      - name: Reply to this review's fold(s)
+        shell: bash
+        if: steps.fold-dispatch.outcome == 'success'
         env:
+          FOLDED: ${{ steps.fold-dispatch.outputs.folded }}
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
-          DISPATCH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ inputs.pr-number }}
           SPEC_DIR: ${{ needs.classify-and-announce.outputs.spec-dir }}
           ISSUE: ${{ needs.classify-and-announce.outputs.issue-number }}
-          IMPLEMENT_WORKFLOW: ${{ inputs.implement-workflow }}
-          SPEC_BRANCH: ${{ inputs.spec-prefix }}${{ needs.classify-and-announce.outputs.slug }}
-          FOLDED_JSON: ${{ steps.fold-evidence.outputs.folded-json }}
+          DISPATCHED: ${{ steps.fold-dispatch.outputs.dispatched }}
+          NEXT_ITERATION: ${{ steps.fold-dispatch.outputs.new-iteration }}
+          FOLDED_SUMMARY: ${{ steps.fold-dispatch.outputs.folded-summary }}
+          RUN_URL: ${{ steps.fold-dispatch.outputs.run-url }}
         run: |
           set -euo pipefail
-          recorded=$(jq -r '.iteration // 0' "$SPEC_DIR/spec-meta.json")
-          next=$((recorded + 1))
-          start_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-
-          folded_json="${FOLDED_JSON:-[]}"
-          [ -n "$folded_json" ] || folded_json="[]"
+          body_file="$RUNNER_TEMP/dispatch-once-reply.md"
+          next="$NEXT_ITERATION"
 
           # FR-014/FR-015: this run folded nothing of its own -- the tip
-          # moved (the job-level if: above), but not from this run's own
-          # fold(s). Dispatching here would fire an implement cycle off a
-          # sibling run's commit or an unrelated push; decline instead and
-          # say so on the PR, so the missing cycle reads as this run's
-          # decision, not a lost one.
-          if [ "$(printf '%s' "$folded_json" | jq 'length')" = "0" ]; then
-            body_file="$RUNNER_TEMP/dispatch-once-reply.md"
+          # moved (this step's if: above), but not from this run's own
+          # fold(s), so wing-commander-fold-dispatch declined to dispatch
+          # an implement cycle off a sibling run's commit or an unrelated
+          # push. Say so on the PR, so the missing cycle reads as this
+          # run's decision, not a lost one.
+          if [ "$FOLDED" != "true" ]; then
             {
               echo "This run folded nothing of its own in this review, so no implement cycle was dispatched. The branch tip moved during this run's window, but not from a fold this run made — a sibling run's fold, or an unrelated push, moved it instead."
             } > "$body_file"
@@ -2846,47 +2932,32 @@ jobs:
             exit 0
           fi
 
-          folded=$(printf '%s' "$folded_json" | jq -r '.[] | "- " + .id + ": " + .summary')
-
           # T078 standalone mode, mirroring implement.yml's/plan.yml's own
           # empty-next-workflow shape: the fold(s) are already committed and
           # pushed by the leg(s) above, so an unconfigured chain reports
           # that and stops cleanly rather than a failed step swallowing the
           # reply.
-          if [ -z "$IMPLEMENT_WORKFLOW" ]; then
-            body_file="$RUNNER_TEMP/dispatch-once-reply.md"
+          if [ "$DISPATCHED" != "true" ]; then
             {
               echo "This review's fold(s) are committed and pushed. No implement workflow is configured for automatic re-dispatch (\`implement-workflow\` is empty) — dispatch your implement wrapper manually with \`spec_dir=$SPEC_DIR\`, \`issue=$ISSUE\`, \`iteration=$next\` when ready."
               echo ""
               echo "Folded in this review:"
-              printf '%s\n' "$folded"
+              printf '%s\n' "$FOLDED_SUMMARY"
             } > "$body_file"
             gh pr comment "$PR_NUMBER" --body-file "$body_file"
             echo "Fold(s) committed; no implement-workflow configured — reported on PR #$PR_NUMBER and stopped (standalone mode)." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
 
-          GH_TOKEN="$DISPATCH_TOKEN" gh workflow run "$IMPLEMENT_WORKFLOW" \
-            -R "$GITHUB_REPOSITORY" -f spec_dir="$SPEC_DIR" -f issue="$ISSUE" -f iteration="$next"
-
-          run_url=""
-          for _ in 1 2 3 4 5 6; do
-            sleep 5
-            run_url=$(GH_TOKEN="$DISPATCH_TOKEN" gh run list -R "$GITHUB_REPOSITORY" --workflow "$IMPLEMENT_WORKFLOW" \
-              --created ">=$start_ts" --limit 1 --json url --jq '.[0].url // empty' 2>/dev/null) || run_url=""
-            [ -n "$run_url" ] && break
-          done
-
-          body_file="$RUNNER_TEMP/dispatch-once-reply.md"
           {
-            if [ -n "$run_url" ]; then
-              echo "Implementation cycle $next dispatched: $run_url — note this re-dispatched iteration may hit implement.yml's own iteration cap; if so, that run's own reply on the lifecycle issue is the authoritative outcome."
+            if [ -n "$RUN_URL" ]; then
+              echo "Implementation cycle $NEXT_ITERATION dispatched: $RUN_URL — note this re-dispatched iteration may hit implement.yml's own iteration cap; if so, that run's own reply on the lifecycle issue is the authoritative outcome."
             else
-              echo "Implementation cycle $next dispatched — note this re-dispatched iteration may hit implement.yml's own iteration cap; see the workflow's Actions tab for the new run."
+              echo "Implementation cycle $NEXT_ITERATION dispatched — note this re-dispatched iteration may hit implement.yml's own iteration cap; see the workflow's Actions tab for the new run."
             fi
             echo ""
             echo "Folded in this review:"
-            printf '%s\n' "$folded"
+            printf '%s\n' "$FOLDED_SUMMARY"
           } > "$body_file"
           gh pr comment "$PR_NUMBER" --body-file "$body_file"
 

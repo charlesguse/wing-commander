@@ -439,6 +439,15 @@ READ_ONLY_STEP_LABELS = ("board-loop.triage-propose",
 # the snapshot (#518 review).
 BOARD_LOOP_GIT_GRANTS = {None: GIT_READ_GRANT,
                          "board-loop.reviewer": SNAPSHOT_GIT_READ_GRANT}
+LIFECYCLE_REVIEW_GATE = ".github/workflows/lifecycle-review-gate.yml"
+# specs/062-lifecycle-review-gate T016/T018: the review job's reviewer
+# checks out the lifecycle PR's own head ref -- an already-implemented,
+# agent-written tree, the same reason board-loop.reviewer runs the
+# snapshot rather than the repo-local wrapper (#518 review).
+LIFECYCLE_REVIEW_GATE_GIT_GRANTS = {
+    None: GIT_READ_GRANT,
+    "lifecycle-review-gate.reviewer": SNAPSHOT_GIT_READ_GRANT,
+}
 # Check 4b (#518): the read-only agent steps outside board-loop.yml that
 # read git, by workflow. Each must grant the wrapper. Any other site
 # whose shipped allowed list has neither Write nor Edit is checked too.
@@ -446,6 +455,7 @@ FLEET_READ_ONLY_STEP_LABELS = {
     ".github/workflows/implement.yml": ("implement.post-progress-comment",),
     ".github/workflows/pr-conversation.yml": ("pr-conversation.classify",),
     ".github/workflows/watchdog.yml": ("watchdog.diagnose",),
+    LIFECYCLE_REVIEW_GATE: ("lifecycle-review-gate.reviewer",),
 }
 WRITE_TOOLS = ("Write", "Edit", "MultiEdit", "NotebookEdit")
 TOOL_ARGS_OUTPUT_RE = re.compile(
@@ -737,7 +747,11 @@ def check_read_only_git(path, labels=READ_ONLY_STEP_LABELS,
 
 def fleet_git_grant(path, published):
     """The wrapper grant a workflow's read-only agents must hold: through
-    the pipeline checkout for a published stage, repo-local otherwise."""
+    the pipeline checkout for a published stage, repo-local otherwise --
+    except lifecycle-review-gate.yml's reviewer, whose own tree is
+    agent-written (LIFECYCLE_REVIEW_GATE_GIT_GRANTS)."""
+    if path == LIFECYCLE_REVIEW_GATE:
+        return LIFECYCLE_REVIEW_GATE_GIT_GRANTS
     return PUBLISHED_GIT_READ_GRANT if path in published else GIT_READ_GRANT
 
 

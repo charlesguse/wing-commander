@@ -75,15 +75,18 @@ LINT_WORKFLOW = os.path.join(".github", "workflows", "lint-workflows.yml")
 # they are scanned alongside the workflows the registry already enumerates.
 COMPOSITE_ACTIONS_GLOB = os.path.join(".github", "actions", "*", "action.yml")
 
-# A published document a gate reads as its subject. Two shapes ship today:
-# specs/<feature>/contracts/<file>, and a document under docs/ - Gate 12
+# A published document a gate reads as its subject. Three shapes ship
+# today: specs/<feature>/contracts/<file>; a document under docs/ - Gate 12
 # treats docs/setup.md as the single source of truth for what the App may
-# do and sys.exits if its permissions list moves. Anchored and
-# whitespace-free so a docstring that merely mentions a spec directory
+# do and sys.exits if its permissions list moves; and the constitution
+# under .specify/memory/, which Gate 113 reads to decide whether the
+# document names every class of merge the pipeline can perform. Anchored
+# and whitespace-free so a docstring that merely mentions a spec directory
 # across a line wrap cannot masquerade as one.
 SUBJECT_PATH_RE = re.compile(
     r"^(?:specs/[^\s*?\[\]]+/contracts/[^\s*?\[\]]+"
-    r"|docs/[^\s*?\[\]]+\.md)$")
+    r"|docs/[^\s*?\[\]]+\.md"
+    r"|\.specify/memory/[^\s*?\[\]]+\.md)$")
 
 # `python3 - <<'PYEOF' ... PYEOF` inside a run: block, which is how the
 # larger gates in lint-workflows.yml are written. The opener may carry
@@ -119,10 +122,13 @@ PY_HEREDOC_RE = re.compile(
 # compared. Same technique as _check_heredoc_reader and check_local_runner_parity:
 # one precise reader, one loose one, and disagreement is the failure.
 #
-# Measured against the tree: this finds exactly the four subject documents and
-# nothing else. Restricting it to .md is what keeps it quiet -- gates name
-# fourteen other existing files (workflows, composites, required-tools.txt),
-# all of them code, and all already covered by the tree-wide paths: entries.
+# Measured against the tree: this finds every subject document and nothing
+# else. Restricting it to .md is what keeps it quiet -- gates name many other
+# existing files (workflows, composites, required-tools.txt), all of them
+# code, and all already covered by the tree-wide paths: entries. No literal
+# count here on purpose: the set grows with each gate that takes a document
+# as its subject, and a number nothing maintains is a stale number waiting
+# to happen.
 LOOSE_PATH_RE = re.compile(r"^[A-Za-z0-9_.\-]+(?:/[A-Za-z0-9_.\-]+)+\.md$")
 
 # Markdown a gate names WITHOUT it being that gate's subject -- a fixture it

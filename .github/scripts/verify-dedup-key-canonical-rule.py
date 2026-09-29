@@ -19,8 +19,10 @@ copy (the doc's fenced block) must stay byte-consistent with the SHIPPED
 copy (the action's code), not merely exist once each.
 
 Separately, FR-015 asks for the opposite polarity: spec 057's own
-fingerprint (`board-loop.yml`'s "Prepare out-of-scope findings for
-filing" step, keyed by issue number) and this feature's two shapes must
+fingerprint (keyed by issue number -- computed by `board-loop.yml`'s
+"Prepare out-of-scope findings for filing" step, whose formula's single
+home is `.github/scripts/wc_review_finding_fingerprint.py` since
+specs/062-lifecycle-review-gate T028/T029) and this feature's two shapes must
 NOT converge on one formula, and each must keep its own distinguishing
 ingredient (this feature's `anchor|`/`fallback|` tag; spec 057's
 issue-number segment). Bundled into this one script rather than a fifth
@@ -44,7 +46,10 @@ cannot be found.
 
 check_composition_split (FR-015): extracts this feature's own two shipped
 format-string literals from the action step, and spec 057's shipped
-format-string literal from board-loop.yml. Fails if either extraction
+format-string literal from wc_review_finding_fingerprint.py -- and fails
+if board-loop.yml's step no longer calls that module's fingerprint(), so
+the check still reaches the formula board-loop really runs rather than an
+orphaned file. Fails if either extraction
 cannot find its own distinguishing ingredient (this feature's `anchor|`/
 `fallback|` tag; spec 057's `issue_number` as the first `.format()`
 argument) or if spec 057's literal template is textually identical to
@@ -78,6 +83,11 @@ DATA_MODEL_FILE = os.path.join(
     "specs", "056-stage-found-defect-filing", "data-model.md")
 BOARD_LOOP_FILE = os.path.join(".github", "workflows", "board-loop.yml")
 BOARD_LOOP_STEP_NAME = "Prepare out-of-scope findings for filing"
+# specs/062-lifecycle-review-gate T028: the single home of spec 057's
+# formula; board-loop.yml's step imports fingerprint() from it.
+SPEC057_HOME_FILE = os.path.join(".github", "scripts", "wc_review_finding_fingerprint.py")
+BOARD_LOOP_CALL_RE = re.compile(
+    r'from\s+wc_review_finding_fingerprint\s+import\s+fingerprint\b')
 
 NORM_REGEX_LITERAL = r"[\W_]+"
 ANCHOR_TAG = "anchor|"
@@ -238,9 +248,22 @@ def check_composition_split(root="."):
     board_text, board_path = _board_loop_step_text(root)
     if board_text is None:
         local_fail(f"could not find {BOARD_LOOP_FILE}'s "
-                   f"{BOARD_LOOP_STEP_NAME!r} step to extract spec 057's "
-                   f"own formula from (FR-015).")
+                   f"{BOARD_LOOP_STEP_NAME!r} step, which computes spec "
+                   f"057's own fingerprint (FR-015).")
         return found
+    if not BOARD_LOOP_CALL_RE.search(board_text):
+        local_fail(f"{BOARD_LOOP_FILE}'s {BOARD_LOOP_STEP_NAME!r} step no "
+                   f"longer imports fingerprint() from "
+                   f"{SPEC057_HOME_FILE} -- spec 057's formula has left its "
+                   f"single home, so checking that file would no longer "
+                   f"check what board-loop runs (FR-015).")
+        return found
+    home_path = os.path.join(root, SPEC057_HOME_FILE)
+    if not os.path.isfile(home_path):
+        local_fail(f"could not find {SPEC057_HOME_FILE} to extract spec "
+                   f"057's own formula from (FR-015).")
+        return found
+    home_text = _read(home_path)
 
     anchor_m = ANCHOR_LITERAL_RE.search(code_text)
     fallback_m = FALLBACK_LITERAL_RE.search(code_text)
@@ -251,10 +274,10 @@ def check_composition_split(root="."):
                    f"so FR-015's split cannot be checked (#569).")
         return found
 
-    spec057_m = SPEC057_LITERAL_RE.search(board_text)
+    spec057_m = SPEC057_LITERAL_RE.search(home_text)
     if not spec057_m:
         local_fail(
-            f"{BOARD_LOOP_FILE}'s {BOARD_LOOP_STEP_NAME!r} step no longer "
+            f"{SPEC057_HOME_FILE} no longer "
             f"formats its fingerprint with `issue_number` as the first "
             f".format() argument -- spec 057's own distinguishing "
             f"ingredient (the issue-number segment) is missing, so FR-015 "
@@ -268,7 +291,7 @@ def check_composition_split(root="."):
     if collided:
         local_fail(
             f"FR-015 requires this feature's key composition and spec "
-            f"057's to keep differing, but {BOARD_LOOP_FILE}'s formula "
+            f"057's to keep differing, but {SPEC057_HOME_FILE}'s formula "
             f"{spec057_literal!r} is textually identical to this "
             f"feature's own {collided[0]!r} in {ACTION_FILE} -- the two "
             f"have silently converged.")
@@ -329,9 +352,19 @@ jobs:
     steps:
       - name: Prepare out-of-scope findings for filing
         run: |
-          fp = hashlib.sha256("{spec057_literal}".format(
-              {spec057_format_args}
-          ).encode("utf-8")).hexdigest()
+          {import_line}
+          fp = fingerprint(issue_number, title, file_path)
+"""
+
+GOOD_IMPORT_LINE = "from wc_review_finding_fingerprint import fingerprint"
+
+SPEC057_HOME_TEMPLATE = """import hashlib
+
+
+def fingerprint(issue_number, title, file_path):
+    return hashlib.sha256("{spec057_literal}".format(
+        {spec057_format_args}
+    ).encode("utf-8")).hexdigest()
 """
 
 GOOD_NORM_LINE = r"norm(s) = lowercase(s); regex [\W_]+ collapses to one space; trimmed"
@@ -350,7 +383,8 @@ def _write_fixture(root, norm_regex=r"[\W_]+", anchor_literal=GOOD_ANCHOR_LITERA
                    anchor_formula=GOOD_ANCHOR_FORMULA, fallback_formula=GOOD_FALLBACK_FORMULA,
                    spec057_literal=GOOD_SPEC057_LITERAL,
                    spec057_format_args=GOOD_SPEC057_FORMAT_ARGS, omit_action=False,
-                   omit_data_model=False, omit_board_loop=False):
+                   omit_data_model=False, omit_board_loop=False,
+                   import_line=GOOD_IMPORT_LINE):
     action_dir = os.path.join(root, os.path.dirname(ACTION_FILE))
     os.makedirs(action_dir, exist_ok=True)
     if not omit_action:
@@ -371,9 +405,13 @@ def _write_fixture(root, norm_regex=r"[\W_]+", anchor_literal=GOOD_ANCHOR_LITERA
     os.makedirs(bl_dir, exist_ok=True)
     if not omit_board_loop:
         with open(os.path.join(root, BOARD_LOOP_FILE), "w", encoding="utf-8") as fh:
-            fh.write(BOARD_LOOP_TEMPLATE.format(
-                spec057_literal=spec057_literal,
-                spec057_format_args=spec057_format_args))
+            fh.write(BOARD_LOOP_TEMPLATE.format(import_line=import_line))
+    home_dir = os.path.join(root, os.path.dirname(SPEC057_HOME_FILE))
+    os.makedirs(home_dir, exist_ok=True)
+    with open(os.path.join(root, SPEC057_HOME_FILE), "w", encoding="utf-8") as fh:
+        fh.write(SPEC057_HOME_TEMPLATE.format(
+            spec057_literal=spec057_literal,
+            spec057_format_args=spec057_format_args))
 
 
 selftest_failures = []
@@ -436,6 +474,12 @@ def selftest_board_loop_missing_issue_segment_fails():
              expect_pass=False, needle="issue-number segment")
 
 
+def selftest_board_loop_stops_calling_home_fails():
+    _run_case("board-loop's step no longer importing wc_review_finding_fingerprint fails",
+             lambda tmp: _write_fixture(tmp, import_line="import hashlib"),
+             expect_pass=False, needle="single home")
+
+
 def selftest_missing_action_file_fails_loudly():
     _run_case("a missing action.yml fails loudly, not vacuously",
              lambda tmp: _write_fixture(tmp, omit_action=True),
@@ -464,6 +508,7 @@ def run_selftest():
     selftest_doc_norm_line_altered_fails()
     selftest_board_loop_converged_fails()
     selftest_board_loop_missing_issue_segment_fails()
+    selftest_board_loop_stops_calling_home_fails()
     selftest_missing_action_file_fails_loudly()
     selftest_missing_data_model_fails_loudly()
     selftest_real_files_pass()

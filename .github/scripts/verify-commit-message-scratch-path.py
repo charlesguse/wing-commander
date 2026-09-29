@@ -123,6 +123,12 @@ EXEMPT_SITES = {
         "read-only reviewer -- \"commit\" appears only in staged, "
         "read-only context (this branch's own commits/commit messages), "
         "never as an instruction to compose one.",
+    ("lifecycle-review-gate.yml", "Reviewer"):
+        "read-only reviewer (specs/062-lifecycle-review-gate) -- git is "
+        "reachable only through git_read.py's log/diff/show, and "
+        "\"commit\" appears only in \"this branch's own commit "
+        "messages\" as data to read, never as an instruction to compose "
+        "one.",
     ("cleanup.yml", "Completion summary"):
         "read-only agent (\"Constraints: read-only -- do not run git "
         "commit, git push...\") -- mentions the word but never composes a "

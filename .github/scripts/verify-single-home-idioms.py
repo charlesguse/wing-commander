@@ -247,6 +247,35 @@ DECLARED_HOMES = {
     # implement.yml's own former inline step so implement/plan/tasks share
     # one copy.
     "branch-advance-capture": ".github/actions/wing-commander-branch-advance/action.yml",
+    # specs/062-lifecycle-review-gate T012/T015: the `gh api .../reviews
+    # -f event=COMMENT` review-posting call. board-loop.yml's reviewer job
+    # is repointed at this composite (T013); lifecycle-review-gate.yml's
+    # `review` job (US1) is this check's reason to exist -- a second
+    # caller landing with its own inline copy instead.
+    "post-review-comment": ".github/actions/wing-commander-post-review-comment/action.yml",
+    # specs/062-lifecycle-review-gate T028/T030: the review-finding
+    # fingerprint formula (sha256("<issue>|<norm(title)>|<norm(file_path)>"))
+    # board-loop.yml's out-of-scope filing step computed inline before this
+    # extraction (T029). lifecycle-review-gate.yml's `disposition` job (US2,
+    # T037) is this module's second caller -- the reason a structural check
+    # is worth having, the same way check_post_review_comment protects
+    # wing-commander-post-review-comment. Deliberately distinct from
+    # wing-commander-stage-findings' own similarly-shaped
+    # sha256(STAGE|norm(file_path)|norm(gate_or_artifact)) idiom (spec 056):
+    # REVIEW_FINDING_FINGERPRINT_RE keys on the `issue_number` argument name
+    # that formula never uses, so the two checks do not collide.
+    "review-finding-fingerprint": ".github/scripts/wc_review_finding_fingerprint.py",
+    # specs/062-lifecycle-review-gate T031/T042: the append-tasks.md-
+    # section/flip-stage/union-actor/commit+push fold sequence.
+    # pr-conversation.yml's `act` job (T033) and lifecycle-review-gate.yml's
+    # `disposition` job (T038) are this composite's two callers -- a THIRD,
+    # independent paste of the sequence is what this check catches.
+    "fold-commit": ".github/actions/wing-commander-fold-commit/action.yml",
+    # specs/062-lifecycle-review-gate T034/T042: the re-read-tip/bump-
+    # iteration/dispatch sequence. pr-conversation.yml's `dispatch-once` job
+    # (T036) and lifecycle-review-gate.yml's `disposition` job (T038) are
+    # this composite's two callers.
+    "fold-dispatch": ".github/actions/wing-commander-fold-dispatch/action.yml",
     # specs/084-board-loop-single-home-idioms, issue #607: the marker-write
     # bootstrap (sys.path.insert + `from board_item_marker import
     # write_marker`) was pasted at 17 call sites across 6 board-loop.yml
@@ -289,6 +318,24 @@ ISSUE_LOOKUP_RE = re.compile(
     r"gh issue list\b[^\n]*--label\b[^\n]*--state open\b[^\n]*"
     r"--json number\b[^\n]*--jq\b[^\n]*\.\[0\]\.number // empty")
 OUTSTANDING_TASK_RE = re.compile(r'gh issue comment\b[^\n]*"- \[ \] ')
+POST_REVIEW_COMMENT_RE = re.compile(
+    r'gh\s+api\b[^\n]*reviews\b[^\n]*-f\s+event=COMMENT')
+# specs/062-lifecycle-review-gate T028/T030: keys on the `issue_number`
+# argument name, which spec 056's own similarly-shaped
+# sha256("{0}|{1}|{2}".format(STAGE, ...)) fingerprint idiom never uses.
+REVIEW_FINDING_FINGERPRINT_RE = re.compile(
+    r'hashlib\.sha256\(\s*"\{0\}\|\{1\}\|\{2\}"\.format\(\s*issue_number\b')
+# specs/062-lifecycle-review-gate T031/T042: the actor-tolerant
+# pending_re_review_from union this composite alone performs.
+FOLD_COMMIT_RE = re.compile(
+    r'\.pending_re_review_from\s*=\s*\(\(\(\.pending_re_review_from')
+# specs/062-lifecycle-review-gate T034/T042: fetching the spec branch by
+# name and re-dispatching implement-workflow with a bumped iteration --
+# distinct from every other `git fetch origin "refs/heads/$...` idiom in
+# this repository (branch-advance-capture's own fetch always force-updates
+# with a `+` prefix; this one never does).
+FOLD_DISPATCH_RE = re.compile(
+    r'git fetch --quiet origin "refs/heads/\$\{?SPEC_BRANCH\}?"')
 SIZE_PATH_BACKSTOP_FRAGMENT = r'select(test("^[+-]") and (test("^(\\+\\+\\+|---)") | not))'
 # specs/057-autonomous-board-loop research.md D14: correlating a dispatched
 # run by an attempt-token carried in its own run-name -- never by recency --
@@ -537,6 +584,112 @@ def check_outstanding_task_item(root="."):
                         path, "outstanding-task-item",
                         line_of(text, max(offset, 0)),
                         'gh issue comment ... "- [ ] ..."'))
+    return findings
+
+
+# --------------------------------------------------------------------------
+# Check: post-review-comment (per-step, single-fragment)
+# --------------------------------------------------------------------------
+def check_post_review_comment(root="."):
+    home = DECLARED_HOMES["post-review-comment"]
+    findings = []
+    for path in all_subject_files(root):
+        if path == home:
+            continue
+        doc = load_yaml(root, path)
+        if doc is None:
+            continue
+        text = read(root, path)
+        for _ctx, steps in _step_lists(doc):
+            for step in steps:
+                run = str((step or {}).get("run") or "")
+                if not run:
+                    continue
+                if POST_REVIEW_COMMENT_RE.search(run):
+                    offset = text.find(run.splitlines()[0]) if run.splitlines() else 0
+                    findings.append(Finding(
+                        path, "post-review-comment",
+                        line_of(text, max(offset, 0)),
+                        'gh api -X POST ... reviews ... -f event=COMMENT'))
+    return findings
+
+
+# --------------------------------------------------------------------------
+# Check: review-finding-fingerprint (per-step, single-fragment)
+# --------------------------------------------------------------------------
+def check_review_finding_fingerprint(root="."):
+    home = DECLARED_HOMES["review-finding-fingerprint"]
+    findings = []
+    for path in all_subject_files(root):
+        if path == home:
+            continue
+        doc = load_yaml(root, path)
+        if doc is None:
+            continue
+        text = read(root, path)
+        for _ctx, steps in _step_lists(doc):
+            for step in steps:
+                run = str((step or {}).get("run") or "")
+                if not run:
+                    continue
+                if REVIEW_FINDING_FINGERPRINT_RE.search(run):
+                    offset = text.find(run.splitlines()[0]) if run.splitlines() else 0
+                    findings.append(Finding(
+                        path, "review-finding-fingerprint",
+                        line_of(text, max(offset, 0)),
+                        'hashlib.sha256("{0}|{1}|{2}".format(issue_number, ...))'))
+    return findings
+
+
+# --------------------------------------------------------------------------
+# Check: fold-commit (per-step, single-fragment)
+# --------------------------------------------------------------------------
+def check_fold_commit(root="."):
+    home = DECLARED_HOMES["fold-commit"]
+    findings = []
+    for path in all_subject_files(root):
+        if path == home:
+            continue
+        doc = load_yaml(root, path)
+        if doc is None:
+            continue
+        text = read(root, path)
+        for _ctx, steps in _step_lists(doc):
+            for step in steps:
+                run = str((step or {}).get("run") or "")
+                if not run:
+                    continue
+                if FOLD_COMMIT_RE.search(run):
+                    offset = text.find(run.splitlines()[0]) if run.splitlines() else 0
+                    findings.append(Finding(
+                        path, "fold-commit", line_of(text, max(offset, 0)),
+                        '.pending_re_review_from = (((.pending_re_review_from ...'))
+    return findings
+
+
+# --------------------------------------------------------------------------
+# Check: fold-dispatch (per-step, single-fragment)
+# --------------------------------------------------------------------------
+def check_fold_dispatch(root="."):
+    home = DECLARED_HOMES["fold-dispatch"]
+    findings = []
+    for path in all_subject_files(root):
+        if path == home:
+            continue
+        doc = load_yaml(root, path)
+        if doc is None:
+            continue
+        text = read(root, path)
+        for _ctx, steps in _step_lists(doc):
+            for step in steps:
+                run = str((step or {}).get("run") or "")
+                if not run:
+                    continue
+                if FOLD_DISPATCH_RE.search(run):
+                    offset = text.find(run.splitlines()[0]) if run.splitlines() else 0
+                    findings.append(Finding(
+                        path, "fold-dispatch", line_of(text, max(offset, 0)),
+                        'git fetch --quiet origin "refs/heads/${SPEC_BRANCH}"'))
     return findings
 
 
@@ -926,6 +1079,10 @@ ALL_CHECKS = {
     "extraheader-refresh": check_extraheader_refresh,
     "failure-issue": check_failure_issue,
     "outstanding-task-item": check_outstanding_task_item,
+    "post-review-comment": check_post_review_comment,
+    "review-finding-fingerprint": check_review_finding_fingerprint,
+    "fold-commit": check_fold_commit,
+    "fold-dispatch": check_fold_dispatch,
     "stage-findings": check_stage_findings,
     "size-path-backstop": check_size_path_backstop,
     "dispatch-and-wait": check_dispatch_and_wait,
@@ -1297,6 +1454,35 @@ def _clean_tree(root):
           "origin/$branch\"\n"
           "        commits=\"$(git rev-list --count "
           "\"$BEFORE_SHA..$after_sha\")\"\n")
+    _write(root, DECLARED_HOMES["post-review-comment"],
+          "runs:\n  using: composite\n  steps:\n"
+          "    - shell: bash\n      run: |\n"
+          "        gh api -X POST \"repos/$GITHUB_REPOSITORY/pulls/$PR/"
+          "reviews\" -f event=COMMENT -F body=@\"$BODY_FILE\"\n")
+    _write(root, DECLARED_HOMES["review-finding-fingerprint"],
+          "#!/usr/bin/env python3\n"
+          "import hashlib\n"
+          "import re\n\n\n"
+          "def norm(value):\n"
+          "    return \" \".join(re.sub(r\"[\\W_]+\", \" \", "
+          "str(value).lower()).split())\n\n\n"
+          "def fingerprint(issue_number, title, file_path):\n"
+          "    return hashlib.sha256(\"{0}|{1}|{2}\".format(\n"
+          "        issue_number, norm(title), norm(file_path)\n"
+          "    ).encode(\"utf-8\")).hexdigest()\n")
+    _write(root, DECLARED_HOMES["fold-commit"],
+          "runs:\n  using: composite\n  steps:\n"
+          "    - shell: bash\n      run: |\n"
+          "        jq --arg actor \"$ACTOR_LOGIN\" '\n"
+          "          .stage = \"implement\"\n"
+          "          | .pending_re_review_from = (((.pending_re_review_from "
+          "// []) + (if $actor == \"\" then [] else [$actor] end)) | unique)\n"
+          "        ' \"$SPEC_DIR/spec-meta.json\" > /tmp/m.json\n")
+    _write(root, DECLARED_HOMES["fold-dispatch"],
+          "runs:\n  using: composite\n  steps:\n"
+          "    - shell: bash\n      run: |\n"
+          "        git fetch --quiet origin \"refs/heads/${SPEC_BRANCH}\" "
+          "|| true\n")
     _write(root, DECLARED_HOMES["marker-write"],
           "#!/usr/bin/env python3\n"
           "import argparse\n"
@@ -1720,6 +1906,32 @@ def run_selftest():
         "      - shell: bash\n        env:\n"
         "          OUTCOME: ${{ steps.mint.outcome }}\n"
         "        run: echo hi\n")
+    selftest_third_paste_fails(
+        "review-finding-fingerprint",
+        ".github/workflows/third-review-finding.yml",
+        "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - shell: bash\n        run: |\n"
+        "          python3 - <<'PYEOF'\n"
+        "          import hashlib\n"
+        "          fp = hashlib.sha256(\"{0}|{1}|{2}\".format(\n"
+        "              issue_number, norm(title), norm(file_path)\n"
+        "          ).encode(\"utf-8\")).hexdigest()\n"
+        "          PYEOF\n")
+    selftest_third_paste_fails(
+        "fold-commit", ".github/workflows/third-fold-commit.yml",
+        "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - shell: bash\n        run: |\n"
+        "          jq --arg actor \"$ACTOR_LOGIN\" '\n"
+        "            .stage = \"implement\"\n"
+        "            | .pending_re_review_from = (((.pending_re_review_from "
+        "// []) + (if $actor == \"\" then [] else [$actor] end)) | unique)\n"
+        "          ' \"$SPEC_DIR/spec-meta.json\" > /tmp/m.json\n")
+    selftest_third_paste_fails(
+        "fold-dispatch", ".github/workflows/third-fold-dispatch.yml",
+        "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - shell: bash\n        run: |\n"
+        "          git fetch --quiet origin \"refs/heads/${SPEC_BRANCH}\" "
+        "|| true\n")
     selftest_third_paste_fails(
         "marker-write", ".github/workflows/third-marker-write.yml",
         "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"

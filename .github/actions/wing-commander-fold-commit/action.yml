@@ -1,0 +1,101 @@
+# Single home for the fold mechanism's append/flip/commit sequence
+# (specs/062-lifecycle-review-gate T031, data-model.md §6, contracts/
+# fold-integration.md): append a drafted tasks.md section, flip
+# spec-meta.json's stage back to "implement", union actor-login into
+# pending_re_review_from, and commit+push both files together in one
+# commit -- CLAUDE.md's "Shared logic has exactly one home" applied to
+# pr-conversation.yml's `act` job (a leg's own fold) and
+# lifecycle-review-gate.yml's `disposition` job (a review round's fold),
+# its two callers. Runs inside the caller's existing checkout, on a remote
+# the caller has already authenticated (e.g. via
+# wing-commander-refresh-remote) -- this composite issues a bare `git
+# push`, no remote/credential setup of its own. Resolved from the
+# pipeline repository's own checkout -- see the header of
+# .github/actions/wing-commander-context/action.yml for the verified
+# self-checkout snippet.
+name: wing-commander-fold-commit
+description: >
+  Appends a drafted tasks.md section, flips spec-meta.json's stage back to
+  "implement", unions actor-login into pending_re_review_from, and
+  commits + pushes both files together as one fold(<id>): <summary>
+  commit. Outputs folded: false and commits nothing when section-file is
+  empty or missing.
+
+inputs:
+  token:
+    description: App-scoped token. Used only to read the caller's bot identity via `gh api user` for the commit's author -- the actual push authenticates with whatever remote the caller already configured.
+    required: true
+  spec-dir:
+    description: e.g. specs/062-lifecycle-review-gate
+    required: true
+  section-file:
+    description: Path to a pre-rendered Markdown tasks.md section, ready to append verbatim. Empty or missing means nothing to fold.
+    required: true
+  fold-id:
+    description: Commit-message id -- a leg id (pr-conversation caller) or review-gate-round-<N> (the lifecycle review gate).
+    required: true
+  fold-summary:
+    description: One-line commit-message summary.
+    required: true
+  actor-login:
+    description: Login to union into spec-meta.json's pending_re_review_from. Empty is tolerated (no human actor -- e.g. an automated review round's own fold) and adds nothing.
+    required: true
+
+outputs:
+  folded:
+    description: "'false' if section-file was empty or missing -- nothing was committed."
+    value: ${{ steps.fold.outputs.folded }}
+  commit-sha:
+    description: The fold commit's SHA, when folded is 'true'. Empty otherwise.
+    value: ${{ steps.fold.outputs.commit-sha }}
+  folded-json:
+    description: >
+      [{id, summary}] naming the one fold commit this step made, or [] when
+      folded is 'false' -- the same shape as wing-commander-fold-evidence's
+      folded-json, for a caller that made its fold in this same job and
+      passes it straight to wing-commander-fold-dispatch.
+    value: ${{ steps.fold.outputs.folded-json }}
+
+runs:
+  using: composite
+  steps:
+    - name: Append, flip, and commit the fold
+      id: fold
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        SPEC_DIR: ${{ inputs.spec-dir }}
+        SECTION_FILE: ${{ inputs.section-file }}
+        FOLD_ID: ${{ inputs.fold-id }}
+        FOLD_SUMMARY: ${{ inputs.fold-summary }}
+        ACTOR_LOGIN: ${{ inputs.actor-login }}
+      run: |
+        set -euo pipefail
+        if [ ! -s "$SECTION_FILE" ]; then
+          echo "folded=false" >> "$GITHUB_OUTPUT"
+          echo "commit-sha=" >> "$GITHUB_OUTPUT"
+          echo "folded-json=[]" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        {
+          echo ""
+          cat "$SECTION_FILE"
+        } >> "$SPEC_DIR/tasks.md"
+
+        jq --arg actor "$ACTOR_LOGIN" '
+          .stage = "implement"
+          | .pending_re_review_from = (((.pending_re_review_from // []) + (if $actor == "" then [] else [$actor] end)) | unique)
+        ' "$SPEC_DIR/spec-meta.json" > "$RUNNER_TEMP/wc-fold-commit-meta.json"
+        mv "$RUNNER_TEMP/wc-fold-commit-meta.json" "$SPEC_DIR/spec-meta.json"
+
+        bot_login="$(gh api user --jq .login 2>/dev/null || true)"
+        [ -n "$bot_login" ] || bot_login="wing-commander-bot[bot]"
+        git config user.name  "$bot_login"
+        git config user.email "${bot_login}@users.noreply.github.com"
+        git add "$SPEC_DIR/tasks.md" "$SPEC_DIR/spec-meta.json"
+        git commit -m "fold(${FOLD_ID}): ${FOLD_SUMMARY}"
+        git push
+        echo "folded=true" >> "$GITHUB_OUTPUT"
+        echo "commit-sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+        echo "folded-json=$(jq -cn --arg id "$FOLD_ID" --arg summary "$FOLD_SUMMARY" '[{id: $id, summary: $summary}]')" >> "$GITHUB_OUTPUT"
