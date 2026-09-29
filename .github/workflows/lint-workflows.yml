@@ -4641,6 +4641,19 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-gh-api-error-capture.py --self-test
 
+      # Gate 127 — specs/091-gh-api-error-capture: every harness-driven gate
+      # whose own shipped subject block contains a covered `gh api` capture
+      # must simulate a `gh` failure via the one shared
+      # wc_shell_harness.gh_error_stub_arm helper, never a hand-rolled
+      # literal, and that canonical literal shape must not appear a second
+      # time anywhere else under .github/scripts/ (FR-009-FR-012/FR-015).
+      - name: "Gate 127 — every gh-error-simulating stub in a covered-capture harness uses the one shared home"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-gh-error-stub-conformance.py
+      - name: "Gate 127 self-test — retrofit-set derivation, non-conforming stubs, and duplicate literals are each caught"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-gh-error-stub-conformance.py --self-test
+
       # Gate 114 — specs/066-fine-grained-maintainer-token FR-017/FR-018: "a
       # classic PAT, not fine-grained" was asserted in at least four places
       # (docs/setup.md, auto-release.yml's credential-step comment, Gate
