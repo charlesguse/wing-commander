@@ -1360,7 +1360,9 @@ than only ever exercised on a bare runner:
   call, confirms the stage jobs the run actually drove executed inside a
   container (read via the test repository's Actions Jobs API, using the
   same fixture maintainer credential the other human gates already use —
-  no new App installation permission). Either check's failure — not
+  a classic credential's `repo` scope already reaches both reads; a
+  fine-grained credential additionally needs Variables (read) and Actions
+  (read), see docs/setup.md). Either check's failure — not
   configured, drifted, unreadable, rate-limited, or not containerized —
   ends the attempt with a named `fail-infra` verdict instead of a `pass`;
   see `specs/067-e2e-container-image-evidence/contracts/container-evidence-

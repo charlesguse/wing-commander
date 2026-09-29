@@ -258,11 +258,16 @@ with each site instead stating the detection and its prerequisite.
 - **FR-003**: The verification MUST obtain that evidence with the fixture
   maintainer credential introduced by `specs/055-unattended-e2e-gates`
   (`WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN`, a Write
-  collaborator on the test repository), which already reaches both the
-  test repository's container image variable and that repository's
-  Actions run and job data. No new App installation permission is
-  required, on the test repository or anywhere else, and the
-  verification MUST NOT write the container image configuration itself.
+  collaborator on the test repository). For the classic shape, that
+  credential's `repo` scope already reaches both the test repository's
+  container image variable and that repository's Actions run and job
+  data with no change. For the fine-grained shape, the credential MUST
+  additionally carry Variables (read) and Actions (read) permissions
+  alongside the Contents/Issues/Pull requests set `specs/066-fine-
+  grained-maintainer-token` already documents — the only permission
+  grant this feature adds, on the test repository alone, never on this
+  repository or anywhere else. The verification MUST NOT write the
+  container image configuration itself.
   The credential's validity MUST be verified at the start of the run
   rather than discovered mid-flight, and its reach MUST be confined to
   the test repository per FR-014.

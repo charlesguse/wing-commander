@@ -493,6 +493,42 @@ jobs:
               echo "::error::wing-commander auto-release verify-e2e: WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN grants Administration permission on $E2E_REPO -- see docs/setup.md."
               exit 0
             fi
+            # specs/067-e2e-container-image-evidence FR-003: a container-
+            # mode turn additionally reads the test repository's
+            # WING_COMMANDER_CONTAINER_IMAGE variable and its Actions run/
+            # job data with this same credential -- probed here so a
+            # fine-grained token missing either permission fails at
+            # precheck naming it, rather than later at the evidence read
+            # as an undifferentiated "unreadable" (maintainer review of
+            # #509). Read-only GETs, gated on Variables:read and
+            # Actions:read respectively; a 404 (variable or run not found)
+            # is not a permission failure and passes this probe like any
+            # other non-403 status. Classic shape is untouched -- its
+            # `repo` scope already covers both reads (docs/setup.md).
+            if [ "$MODE" = "container" ]; then
+              variables_status="$(GH_TOKEN="$MAINTAINER_TOKEN" gh api -i "repos/$E2E_REPO/actions/variables/WING_COMMANDER_CONTAINER_IMAGE" 2>/dev/null | head -1 | awk '{print $2}' || true)"
+              actions_status="$(GH_TOKEN="$MAINTAINER_TOKEN" gh api -i "repos/$E2E_REPO/actions/runs?per_page=1" 2>/dev/null | head -1 | awk '{print $2}' || true)"
+              if [ -z "$variables_status" ] || [ -z "$actions_status" ]; then
+                echo "ok=false" >> "$GITHUB_OUTPUT"
+                {
+                  echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
+                  bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "fixture maintainer identity credential" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN authenticates" "a permission probe call failed outright" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN" "$MODE"
+                  echo 'AUTO_RELEASE_VERDICT_EOF'
+                } >> "$GITHUB_OUTPUT"
+                echo "::error::wing-commander auto-release verify-e2e: a WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN permission probe against $E2E_REPO failed outright -- see docs/setup.md."
+                exit 0
+              fi
+              if [ "$variables_status" = "403" ] || [ "$actions_status" = "403" ]; then
+                echo "ok=false" >> "$GITHUB_OUTPUT"
+                {
+                  echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
+                  bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "fixture maintainer identity credential" "Variables and Actions read, per specs/067-e2e-container-image-evidence FR-003" "the probe was rejected (variables: $variables_status, actions: $actions_status)" "WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN" "$MODE"
+                  echo 'AUTO_RELEASE_VERDICT_EOF'
+                } >> "$GITHUB_OUTPUT"
+                echo "::error::wing-commander auto-release verify-e2e: WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN lacks Variables and/or Actions read on $E2E_REPO -- see docs/setup.md."
+                exit 0
+              fi
+            fi
             # research.md D2: a fine-grained PAT's own expiry is surfaced
             # only via this response header, read from the `gh api user`
             # call already made above -- never a second call. Absent means
