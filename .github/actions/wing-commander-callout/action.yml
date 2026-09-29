@@ -87,7 +87,7 @@ runs:
       run: |
         set -uo pipefail
 
-        if ! [[ "$RETRY_DELAYS" =~ ^[[:space:]]*([0-9]+[[:space:]]*)*$ ]]; then
+        if ! [[ "$RETRY_DELAYS" =~ ^[\ $'\t']*([0-9]+[\ $'\t']*)*$ ]]; then
           echo "::error::wing-commander-callout: retry-delays must be space-separated whole seconds; got '$RETRY_DELAYS'."
           exit 1
         fi
@@ -140,9 +140,14 @@ runs:
         max_attempts=$(( ${#delays[@]} + 1 ))
         attempt=1
         until gh issue comment "$ISSUE_NUMBER" --body-file "$out"; do
+          rc=$?
           if [ "$attempt" -ge "$max_attempts" ]; then
-            echo "::error::wing-commander-callout: posting the comment on issue #$ISSUE_NUMBER failed on all $max_attempts attempt(s)."
-            exit 1
+            # With no retries configured (the default) this is exactly the
+            # pre-#662 failure shape: gh's own exit code, no extra annotation.
+            if [ "$max_attempts" -gt 1 ]; then
+              echo "::error::wing-commander-callout: posting the comment on issue #$ISSUE_NUMBER failed on all $max_attempts attempt(s)."
+            fi
+            exit "$rc"
           fi
           delay="${delays[$((attempt - 1))]}"
           echo "::warning::wing-commander-callout: attempt $attempt/$max_attempts to post the comment on issue #$ISSUE_NUMBER failed; retrying in ${delay}s."
