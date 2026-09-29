@@ -99,13 +99,34 @@ inputs:
       caller that predates this input, means success.
     required: false
     default: ""
+  mark-record:
+    description: >
+      Whether this call performs the checkout-and-push effect (mark
+      spec-meta.json stalled, and remove the old stage:<name> label once
+      that mark succeeds). Default "true" keeps every existing caller's
+      exact behavior. A stage whose survivor job wants its human-facing
+      notice to stay in a fast, uncontended concurrency group instead of
+      queuing behind other writers of the per-spec group calls this
+      composite twice from two separate jobs: once with `post-notice:
+      "false"` from a job in the per-spec group (the mark-only call), and
+      once with `mark-record: "false"` from a job that stays outside it
+      (the notice-only call) -- specs/077-stalled-per-spec-group.
+    required: false
+    default: "true"
+  post-notice:
+    description: >
+      Whether this call adds the stage:stalled label and posts the notice
+      comment. Default "true" keeps every existing caller's exact
+      behavior. See mark-record above for the split-call shape.
+    required: false
+    default: "true"
 
 runs:
   using: composite
   steps:
     - name: Checkout spec branch
       id: checkout
-      if: inputs.spec-dir != ''
+      if: inputs.spec-dir != '' && inputs.mark-record == 'true'
       continue-on-error: true
       uses: actions/checkout@v5
       with:
@@ -116,7 +137,7 @@ runs:
 
     - name: Refuse a branch that tracks .wing-commander-pipeline/
       shell: bash
-      if: inputs.spec-dir != ''
+      if: inputs.spec-dir != '' && inputs.mark-record == 'true'
       run: |
         p=.wing-commander-pipeline; want="$(cd "$GITHUB_WORKSPACE" && pwd -P)/$p"
         if [ -L "$p" ] || [ ! -d "$p" ] || [ -L "$p/.git" ] || [ ! -d "$p/.git" ] || [ "$(git -C "$p" rev-parse --show-toplevel 2>/dev/null)" != "$want" ] || { [[ "${WC_PIPELINE_REF:-}" =~ ^[0-9a-f]{40}$ ]] && [ "$(git -C "$p" rev-parse HEAD 2>/dev/null)" != "$WC_PIPELINE_REF" ]; }; then rm -rf -- "$p"; echo "::error::wing-commander: $p is no longer the trusted pipeline checkout (a symlink, a missing or replaced .git, or another commit): the branch just checked out replaced it. Removed it so no later step loads branch code from there (#611)."; exit 1; fi
@@ -124,7 +145,7 @@ runs:
 
     - name: Mark spec-meta.json stalled
       id: mark
-      if: always() && inputs.spec-dir != '' && steps.checkout.outcome == 'success'
+      if: always() && inputs.spec-dir != '' && inputs.mark-record == 'true' && steps.checkout.outcome == 'success'
       shell: bash
       env:
         SPEC_DIR: ${{ inputs.spec-dir }}
@@ -166,16 +187,20 @@ runs:
         ISSUE: ${{ inputs.issue-number }}
         STAGE_LABEL: ${{ inputs.stage-label }}
         RECORD_STATUS: ${{ steps.mark.outputs.record-status }}
+        MARK_RECORD: ${{ inputs.mark-record }}
+        POST_NOTICE: ${{ inputs.post-notice }}
       run: |
         set -uo pipefail
-        gh label create "stage:stalled" --color E99695 --description "Stage did not complete; manual restart required" --force || true
-        gh issue edit "$ISSUE" --add-label "stage:stalled" || true
-        if [ -n "$STAGE_LABEL" ] && [ "$RECORD_STATUS" = "marked" ]; then
+        if [ "$POST_NOTICE" = "true" ]; then
+          gh label create "stage:stalled" --color E99695 --description "Stage did not complete; manual restart required" --force || true
+          gh issue edit "$ISSUE" --add-label "stage:stalled" || true
+        fi
+        if [ "$MARK_RECORD" = "true" ] && [ -n "$STAGE_LABEL" ] && [ "$RECORD_STATUS" = "marked" ]; then
           gh issue edit "$ISSUE" --remove-label "$STAGE_LABEL" || true
         fi
 
     - name: Post the notice
-      if: always()
+      if: always() && inputs.post-notice == 'true'
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.token }}
@@ -189,6 +214,8 @@ runs:
         AGENT_CONCLUSION: ${{ inputs.agent-conclusion }}
         COMMITS_PUBLISHED: ${{ inputs.commits-published }}
         PUSH_OK: ${{ inputs.push-ok }}
+        MARK_RECORD: ${{ inputs.mark-record }}
+        SPEC_DIR: ${{ inputs.spec-dir }}
       run: |
         set -uo pipefail
 
@@ -197,6 +224,21 @@ runs:
 
         restart="$RESTART_COMMAND"
         [ -n "$restart" ] || restart="Re-dispatch this stage once the cause above is resolved."
+
+        # specs/077-stalled-per-spec-group: when this call is the
+        # notice-only half of a split (mark-record != 'true') and a record
+        # actually exists to mark (spec-dir non-empty), the mark itself is
+        # being written by a separate job in the per-spec concurrency group
+        # that this notice does not wait for -- say so, rather than
+        # claiming "could not be updated" for a write that simply hasn't
+        # run yet. A caller that never splits (mark-record defaults "true")
+        # never reaches this branch; wording for it is unchanged.
+        record_clause="**The lifecycle record could not be updated** — a maintainer should confirm the spec branch and the record's \`stage\` field by hand before restarting."
+        if [ "$RECORD_STATUS" = "marked" ]; then
+          record_clause="This specification's lifecycle record has been marked stalled."
+        elif [ "$MARK_RECORD" != "true" ] && [ -n "$SPEC_DIR" ]; then
+          record_clause="This specification's lifecycle record stall-mark is being written by a separate job in the per-specification concurrency group and may land after this notice."
+        fi
 
         # spec 052 FR-011/FR-015 (maintainer review of PR #407): when the
         # agent step ran to some conclusion, "the stage did not start" and
@@ -216,17 +258,13 @@ runs:
             failure) agent_clause="the agent step failed after running; its pushed commits are on the branch" ;;
             *) agent_clause="the agent step ran" ;;
           esac
-          if [ "$RECORD_STATUS" = "marked" ]; then
-            body="The agent step ran (concluded: $AGENT_CONCLUSION) -- $agent_clause; a step after it did not complete. This specification's lifecycle record has been marked stalled."
-          else
-            body="The agent step ran (concluded: $AGENT_CONCLUSION) -- $agent_clause; a step after it did not complete. **The lifecycle record could not be updated** — a maintainer should confirm the spec branch and the record's \`stage\` field by hand before restarting."
-          fi
+          body="The agent step ran (concluded: $AGENT_CONCLUSION) -- $agent_clause; a step after it did not complete. $record_clause"
         else
           headline="⏸️ **Stage stalled — the stage did not start**"
           if [ "$RECORD_STATUS" = "marked" ]; then
-            body="No implementation attempt was made — nothing was escalated, no model tier was used, and no work was lost. This specification's lifecycle record has been marked stalled."
+            body="No implementation attempt was made — nothing was escalated, no model tier was used, and no work was lost. $record_clause"
           else
-            body="No implementation attempt was made. **The lifecycle record could not be updated** — a maintainer should confirm the spec branch and the record's \`stage\` field by hand before restarting."
+            body="No implementation attempt was made. $record_clause"
           fi
         fi
 

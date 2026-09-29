@@ -70,6 +70,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 
@@ -89,6 +90,18 @@ PER_SPEC_GROUP_RE = re.compile(
     r"^wing-commander-\$\{\{\s*"
     r"(?:inputs\.spec-dir|needs\.[\w-]+\.outputs\.spec-dir|matrix\.spec_dir)"
     r"\s*\}\}$")
+# The per-PR fallback pr-conversation.yml's stalled-mark job declares when
+# needs.resolve-identity.outputs.spec-dir is empty (specs/077, T023's split
+# of the original stalled job). Distinct
+# from PER_SPEC_GROUP_RE: this is not a per-spec group at all, and its
+# literal "pr-conversation-pr-{0}" / "inputs.pr-number" text is specific
+# to this one job, not a general fourth per-spec spelling other stages
+# could adopt.
+PR_CONVERSATION_STALLED_FALLBACK_GROUP_RE = re.compile(
+    r"^wing-commander-\$\{\{\s*needs\.([\w-]+)\.outputs\.spec-dir\s*\}\}"
+    r"\$\{\{\s*needs\.\1\.outputs\.spec-dir\s*==\s*''\s*&&\s*"
+    r"format\('pr-conversation-pr-\{0\}',\s*inputs\.pr-number\)\s*\|\|\s*''\s*\}\}$"
+)
 LOCAL_COMPOSITE_RE = re.compile(r"(?:^|/)\.github/actions/([\w-]+)/?$")
 COMMENT_LINE_RE = re.compile(r"^\s*#")
 PRINT_LINE_RE = re.compile(r"^\s*(?:echo|printf)\b")
@@ -210,7 +223,9 @@ def evaluate(found, waivers):
         seen.add((rel, job_name))
         if (rel, job_name) in waived:
             continue
-        if isinstance(group, str) and PER_SPEC_GROUP_RE.match(group.strip()):
+        if isinstance(group, str) and (
+                PER_SPEC_GROUP_RE.match(group.strip())
+                or PR_CONVERSATION_STALLED_FALLBACK_GROUP_RE.match(group.strip())):
             continue
         failures.append(
             "{0} [{1}] can push ({2}) but its concurrency group is {3!r}, not "
@@ -274,6 +289,82 @@ MATRIX_GROUP = "wing-commander-${{ matrix.spec_dir }}"
 NEEDS_GROUP = "wing-commander-${{ needs.resolve-spec.outputs.spec-dir }}"
 BAD_GROUP = "wing-commander-cleanup-${{ inputs.head-ref }}"
 NEAR_GROUP = "wing-commander-${{ inputs.spec-dir }}-extra"
+FALLBACK_GROUP = ("wing-commander-${{ needs.resolve-identity.outputs.spec-dir }}"
+                   "${{ needs.resolve-identity.outputs.spec-dir == '' && "
+                   "format('pr-conversation-pr-{0}', inputs.pr-number) || '' }}")
+FALLBACK_GROUP_MISMATCHED_JOB = (
+    "wing-commander-${{ needs.resolve-identity.outputs.spec-dir }}"
+    "${{ needs.other-job.outputs.spec-dir == '' && "
+    "format('pr-conversation-pr-{0}', inputs.pr-number) || '' }}")
+FALLBACK_GROUP_NEAR_MISS_LITERAL = (
+    "wing-commander-${{ needs.resolve-identity.outputs.spec-dir }}"
+    "${{ needs.resolve-identity.outputs.spec-dir == '' && "
+    "format('pr-conversation-{0}', inputs.pr-number) || '' }}")
+FALLBACK_GROUP_NEAR_MISS_IDENTIFIER = (
+    "wing-commander-${{ needs.resolve-identity.outputs.spec-dir }}"
+    "${{ needs.resolve-identity.outputs.spec-dir == '' && "
+    "format('pr-conversation-pr-{0}', inputs.pr_number) || '' }}")
+
+
+def _pr_conversation_jobs():
+    """Loads .github/workflows/pr-conversation.yml's `jobs:` mapping straight
+    from the shipped file, for self-test assertions about job *shape*
+    (e.g. whether a job carries a concurrency block at all) that discover()
+    does not surface, since discover() only reports push-capable jobs
+    together with their group string, not the full jobs mapping."""
+    repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    path = os.path.join(repo_root, WORKFLOW_DIR, "pr-conversation.yml")
+    with io.open(path, encoding="utf-8") as fh:
+        doc = yaml.safe_load(fh) or {}
+    return doc.get("jobs") or {}
+
+
+def _resolve_identity_spec_dir_line():
+    """Extracts the exact `echo "spec-dir=..."` line from resolve-identity's
+    own step in the real .github/workflows/pr-conversation.yml, so this
+    self-test exercises the shipped workflow rather than a second,
+    independently maintained copy of the same derivation (CLAUDE.md's
+    single-home rule) -- a revert of T020's fix in the real file must be
+    caught here, not just in a hand-copied string."""
+    repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    workflow_path = os.path.join(repo_root, WORKFLOW_DIR, "pr-conversation.yml")
+    with io.open(workflow_path, encoding="utf-8") as fh:
+        for line in fh:
+            stripped = line.strip()
+            if stripped.startswith('echo "spec-dir='):
+                return stripped
+    raise AssertionError(
+        "could not find resolve-identity's 'echo \"spec-dir=...\"' line in "
+        + workflow_path)
+
+
+def _run_spec_dir_line(line, slug):
+    """Runs a single `echo "spec-dir=..."`-shaped bash line against a
+    candidate slug and returns the value after `spec-dir=`."""
+    out = subprocess.run(
+        ["bash", "-c", "slug=$1; " + line, "bash", slug],
+        capture_output=True, text=True, check=True).stdout
+    prefix = "spec-dir="
+    assert out.startswith(prefix), out
+    return out[len(prefix):].rstrip(_NL)
+
+
+def _resolve_identity_spec_dir(slug):
+    """Runs resolve-identity's own `spec-dir=...` line, extracted from the
+    real pr-conversation.yml (pr-conversation.yml, specs/077), against a
+    candidate slug, to prove the non-qualifying (empty-slug) case yields an
+    empty spec-dir rather than the malformed `specs/`."""
+    return _run_spec_dir_line(_resolve_identity_spec_dir_line(), slug)
+
+
+def _fallback_group_value(spec_dir, pr_number):
+    """Mirrors FALLBACK_GROUP's two `${{ }}` blocks once GitHub Actions has
+    substituted spec-dir and, only when it is empty, the per-PR
+    format(...) fallback -- so a caller can check what the stalled-mark
+    job's concurrency group actually resolves to for a given spec-dir
+    value."""
+    tail = "pr-conversation-pr-{0}".format(pr_number) if spec_dir == "" else ""
+    return "wing-commander-" + spec_dir + tail
 
 
 def _tree(jobs_text, waivers=None, composite=True):
@@ -332,6 +423,50 @@ def self_test():
          _job("a", None, RUN_PUSH), ["a"], expect_substrings=["None"])
     case("a group that merely starts with the per-spec spelling is not the group",
          _job("a", NEAR_GROUP, RUN_PUSH), ["a"])
+    case("the pr-conversation stalled-mark job's per-PR fallback spelling passes",
+         _job("a", FALLBACK_GROUP, RUN_PUSH), [])
+    case("the fallback spelling with a mismatched needs.<job> name across "
+         "its two halves still fails (defeats the backreference)",
+         _job("a", FALLBACK_GROUP_MISMATCHED_JOB, RUN_PUSH), ["a"])
+    case("the bare wing-commander- constant still fails",
+         _job("a", "wing-commander-", RUN_PUSH), ["a"])
+    case("a near-miss literal (pr-conversation-{0}, missing -pr-) still fails",
+         _job("a", FALLBACK_GROUP_NEAR_MISS_LITERAL, RUN_PUSH), ["a"])
+    case("a near-miss identifier (inputs.pr_number, underscore) still fails",
+         _job("a", FALLBACK_GROUP_NEAR_MISS_IDENTIFIER, RUN_PUSH), ["a"])
+
+    label = ("resolve-identity emits an empty spec-dir for a non-qualifying "
+             "PR (empty slug), so the stalled-mark job's fallback group "
+             "resolves to the per-PR spelling, not wing-commander-specs/")
+    empty_spec_dir = _resolve_identity_spec_dir("")
+    empty_group = _fallback_group_value(empty_spec_dir, "42")
+    if empty_spec_dir == "" and empty_group == "wing-commander-pr-conversation-pr-42":
+        print("[ok] {0}".format(label))
+    else:
+        bad += 1
+        print("[FAIL] {0}: spec-dir={1!r} group={2!r}".format(
+            label, empty_spec_dir, empty_group))
+
+    label = "resolve-identity emits specs/<slug> for a qualifying PR"
+    qualifying_spec_dir = _resolve_identity_spec_dir("042-example")
+    if qualifying_spec_dir == "specs/042-example":
+        print("[ok] {0}".format(label))
+    else:
+        bad += 1
+        print("[FAIL] {0}: got {1!r}".format(label, qualifying_spec_dir))
+
+    label = ("a pre-T020 fixture (the hand-copied 'echo \"spec-dir=specs/"
+             "$slug\"' line T020 replaced) yields the malformed non-empty "
+             "'specs/' for an empty slug -- proving a future revert of "
+             "T020's fix in the real workflow would be caught by this "
+             "self-test's own assertions, not silently pass")
+    pre_t020_spec_dir = _run_spec_dir_line('echo "spec-dir=specs/$slug"', "")
+    if pre_t020_spec_dir == "specs/":
+        print("[ok] {0}".format(label))
+    else:
+        bad += 1
+        print("[FAIL] {0}: got {1!r}".format(label, pre_t020_spec_dir))
+
     case("an agent grant of Bash(git push:*) outside the group fails",
          _job("a", "wing-commander-intake", AGENT_GRANT), ["a"],
          expect_substrings=["agent grant Bash(git push:*)"])
@@ -380,6 +515,36 @@ def self_test():
     else:
         bad += 1
         print("[FAIL] cleanup.yml mark-stalled back in its old group was not caught")
+
+    # T034 (Maintainer Feedback): stalled must carry no concurrency block at
+    # all -- T023's per-PR group was also classify-and-announce's own, so a
+    # newer run's classify-and-announce could evict an older run's still-
+    # pending stall notice. This is not something evaluate() would ever
+    # catch on its own: stalled is (and stays) permanently waived, so its
+    # group value never enters the per-spec-group check.
+    label = ("pr-conversation.yml's stalled job regains a concurrency block "
+             "shared with classify-and-announce or any other job (T032)")
+    pr_conversation_jobs = _pr_conversation_jobs()
+    stalled_concurrency = (pr_conversation_jobs.get("stalled") or {}).get("concurrency")
+
+    def _group_of(job):
+        conc = (job or {}).get("concurrency")
+        return conc.get("group") if isinstance(conc, dict) else conc
+
+    stalled_group = _group_of({"concurrency": stalled_concurrency})
+    colliding = sorted(
+        name for name, job in pr_conversation_jobs.items()
+        if name != "stalled" and stalled_group is not None
+        and _group_of(job) == stalled_group)
+    if stalled_concurrency is None:
+        print("[ok] {0}".format(label))
+    elif not colliding:
+        print("[ok] {0} (stalled carries a group again, but it collides "
+              "with no other job)".format(label))
+    else:
+        bad += 1
+        print("[FAIL] {0}: stalled's group {1!r} is shared with {2}".format(
+            label, stalled_group, colliding))
 
     print("Gate 80 self-test: {0} failure(s).".format(bad))
     return 1 if bad else 0

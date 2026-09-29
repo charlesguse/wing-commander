@@ -116,6 +116,14 @@ FR-019). `clarify.yml`'s `stalled` waiver stays: that job has the same wiring
 but its target branch does not exist yet at the clarify stage, so it is
 waived for a different reason that this feature does not address.
 
+### Out of Scope
+
+`tasks.yml`'s `stalled`/`stalled-approved` jobs and `cleanup.yml`'s
+`mark-stalled` job share the same per-PR/per-head-ref-group exposure this
+feature fixes for `pr-conversation.yml`'s survivor job. That is tracked
+separately on #754 and stays out of this PR's scope (Maintainer Feedback,
+T025/T038).
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - A stall mark never lands mid-rebase (Priority: P1)
@@ -261,29 +269,55 @@ strip and slug-format check; each appears once.
 
 - **The prerequisite job cannot reach the GitHub API.** The head ref is
   unknowable, so the group string is unknowable. The prerequisite job fails
-  loudly, and the survivor job — whose admission condition tolerates that
-  failure — still runs, joins the per-PR fallback group, and still reports
-  (Story 2); see FR-005 and FR-008.
+  loudly, and both survivor jobs — whose admission condition tolerates that
+  failure — still run: `stalled` (carries no concurrency group at all, by
+  design — see the split below, T032) still reports, and `stalled-mark`
+  joins the per-PR fallback group (`spec-dir` is empty, so its mark step is
+  a no-op) rather than blocking on an unknowable per-spec group; see FR-005
+  and FR-008.
 - **The head ref is not a spec branch.** `spec-dir` is legitimately empty
-  and the prerequisite job stays green. The group falls back to the per-PR
-  spelling rather than degenerating to `wing-commander-`, a repository-wide
-  group that would serialize unrelated survivor jobs against one another;
-  see FR-008.
-- **Two pr-conversation runs stall for the same specification at once.**
-  Both survivor jobs now request the same per-spec slot. With
-  `cancel-in-progress: false` the second queues behind the first rather
-  than being dropped, so both marks land in order.
+  and the prerequisite job stays green. `stalled-mark`'s group falls back to
+  the per-PR spelling rather than degenerating to `wing-commander-`, a
+  repository-wide group that would serialize unrelated `stalled-mark` jobs
+  against one another; see FR-008. `stalled` itself is unaffected — it
+  carries no concurrency group to depend on `spec-dir` in the first place
+  (T032).
+- **Two pr-conversation runs stall for the same specification at once
+  (Maintainer Feedback, T023, then T032).** The human-facing notice and the
+  spec-meta.json stall-mark write are two separate jobs precisely because
+  of this case. `stalled` carries no `concurrency:` block at all (T032) —
+  nothing can evict its pending run: not another PR's `stalled` job, not a
+  busy per-spec group's single pending-run slot, and not even a newer run's
+  `classify-and-announce` on the same PR, which shared `stalled`'s old
+  per-PR group before T032 and could otherwise have evicted an older run's
+  still-pending notice. Only the two `stalled-mark` jobs collide, on the
+  shared per-spec slot. With `cancel-in-progress: false` the second queues
+  behind the first only when the first is already running; GitHub keeps at
+  most one PENDING run per concurrency group, so if the first
+  `stalled-mark` is itself still pending (queued behind a running rebase or
+  implement cycle on the same specification) the second's request evicts
+  it rather than queuing behind it. What is lost in that case is a
+  redundant stall-mark write, not the notice — `stalled` is in no group
+  `stalled-mark`'s eviction could ever reach. This is the residual FR-008
+  accepts and the reason the split exists: eviction can now only ever cost
+  a duplicate record write, never the maintainer-visible signal.
 - **The stage stalls while the specification's branch has been deleted.**
   The push cannot land. The chain-stop composite's existing
-  "record could not be updated" branch handles this; joining a concurrency
-  group does not change it.
-- **The entry job refused with a stated reason.** The survivor job is
+  "record could not be updated" branch handles this on `stalled-mark`'s
+  call (`mark-record: "true"`); joining a concurrency group does not
+  change it. `stalled`'s own call (`mark-record: "false"`) never attempts
+  the push and renders the "written by a separate job" wording instead.
+- **The entry job refused with a stated reason.** Both survivor jobs are
   suppressed today by the `refusal-reason == ''` guard, because the entry
   job already posted a refusal note. That suppression must be unchanged.
 - **A waiver outlives its exemption.** Gate 80 stale-checks every waiver: a
   waiver naming a job that no longer exists or no longer pushes fails the
-  gate. Leaving the `pr-conversation.yml`/`stalled` waiver in place after
-  the job joins the group therefore fails the gate on its own.
+  gate. `pr-conversation.yml`'s `stalled` job carries a permanent waiver
+  (it calls the push-capable composite with `mark-record: "false"`, so it
+  structurally never reaches the push — the same shape `intake.yml`'s and
+  `clarify.yml`'s own `stalled` jobs already use); `stalled-mark`, the job
+  that actually pushes, carries none — it declares the canonical per-spec
+  group directly.
 
 ## Requirements *(mandatory)*
 
@@ -293,7 +327,7 @@ strip and slug-format check; each appears once.
   slug and spec directory as outputs of a job that runs before both its
   entry job and its survivor job, so that a job-level concurrency group can
   read them.
-- **FR-002**: The survivor job's `concurrency.group` MUST be the canonical
+- **FR-002**: `stalled-mark`'s `concurrency.group` MUST be the canonical
   per-specification group in one of the three spellings
   `concurrency-groups.md` and Gate 80 recognise, so that its spec-branch
   write is ordered against every other writer of that branch.
@@ -303,33 +337,37 @@ strip and slug-format check; each appears once.
 - **FR-004**: `specs/013-serialize-rebase-stages/contracts/concurrency-groups.md`
   MUST record the survivor job as a member of the canonical group, in the
   same row form used for the members added for #397.
-- **FR-005**: The survivor job MUST still run, and still post a stall
-  notice, whenever it runs today — including when the new prerequisite job
-  fails or is skipped. A stalled run MUST NOT become silent as a result of
-  this change. The guarantee is wired in two halves (resolved on #581, Q1):
-  the prerequisite job MUST fail loudly when its API read fails — it MUST
-  NOT swallow an unreadable API response and emit empty outputs as if the
-  head ref had been read successfully — and the survivor job's admission
-  condition MUST therefore tolerate a failed or skipped prerequisite
-  explicitly. This follows the fail-loudly precedent of #564/#567 and
-  #557/#563: an error is reported as an error, and the notice still lands.
-- **FR-006**: When the specification's identity cannot be resolved, the
-  stall notice MUST post to the PR number and the chain-stop notice MUST
-  receive an empty spec directory, preserving today's
-  "record could not be updated" behaviour.
+- **FR-005**: `stalled` MUST still run, and still post a stall notice,
+  whenever it runs today — including when the new prerequisite job fails
+  or is skipped. A stalled run MUST NOT become silent as a result of this
+  change. The guarantee is wired in two halves (resolved on #581, Q1): the
+  prerequisite job MUST fail loudly when its API read fails — it MUST NOT
+  swallow an unreadable API response and emit empty outputs as if the head
+  ref had been read successfully — and `stalled`'s and `stalled-mark`'s
+  admission conditions, kept in lockstep, MUST therefore both tolerate a
+  failed or skipped prerequisite explicitly. This follows the fail-loudly
+  precedent of #564/#567 and #557/#563: an error is reported as an error,
+  and the notice still lands.
+- **FR-006**: When the specification's identity cannot be resolved,
+  `stalled`'s notice MUST post to the PR number, and `stalled-mark`'s
+  chain-stop-notice call MUST receive an empty spec directory, preserving
+  today's "record could not be updated" behaviour.
 - **FR-007**: A pull request the stage does not act on MUST continue to
   produce no reply, no comment, and no failed job. The new prerequisite job
   MUST NOT treat a non-spec head ref as an error. FR-005's loud failure is
   scoped to an unreadable API response only: a head ref that reads cleanly
   and simply is not `spec/NNN-slug` is an ordinary, expected event and MUST
   leave the prerequisite job green with an empty spec directory.
-- **FR-008**: The survivor job MUST NOT join a concurrency group that
+- **FR-008**: `stalled-mark` MUST NOT join a concurrency group that
   serializes runs belonging to different specifications. When the spec
-  directory is empty — a non-qualifying PR, or a failed lookup — the group
+  directory is empty — a non-qualifying PR, or a failed lookup — its group
   MUST fall back to a per-pull-request group (resolved on #581, Q3). It MUST
   NOT degenerate to the constant `wing-commander-`, which every such run
   repository-wide would share, letting one stalled run evict another's
-  pending notice by #415's mechanism.
+  pending notice by #415's mechanism. `stalled` itself carries no
+  concurrency group at all (Maintainer Feedback, T032) — its group never
+  depended on the spec directory to begin with, and after T032 it depends
+  on no group whatsoever.
 - **FR-009**: The entry job's qualification verdict — the comparison of the
   PR's base ref against the repository default branch and the exclusion of
   plan, tasks, and spec-draft head refs — MUST reach the same result for
@@ -398,9 +436,18 @@ strip and slug-format check; each appears once.
 
 ### Measurable Outcomes
 
-- **SC-001**: Gate 80 passes over the repository with zero waivers for the
-  pr-conversation survivor job — the count of waived spec-branch writers
-  drops by exactly one, and no other waiver is added.
+- **SC-001**: Gate 80 passes over the repository, and the job that actually
+  writes the stall mark to the specification's branch (`stalled-mark`)
+  declares the canonical per-specification group with zero waivers. The
+  human-facing notice job (`stalled`) declares no concurrency group by
+  design (Edge Cases), so no newer pending run in any group can replace it,
+  and is waived for the same structural reason `intake.yml`'s
+  and `clarify.yml`'s own `stalled` jobs already are: it calls the
+  push-capable composite but never reaches the push, so the original "zero
+  waivers, drops by exactly one" framing no longer holds once the notice
+  and the mark write are two jobs — what matters for the ordering guarantee
+  this feature exists to provide is that the job that actually pushes needs
+  no waiver, which is true.
 - **SC-002**: Every job in the repository that can write a specification's
   working branch and is not waived for an unrelated reason declares the
   canonical per-specification group; the pr-conversation survivor job is

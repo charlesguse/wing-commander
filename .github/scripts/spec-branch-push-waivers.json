@@ -61,9 +61,11 @@
     {
       "file": ".github/workflows/pr-conversation.yml",
       "job": "stalled",
-      "pushes": "a spec-meta stalled mark on spec/<NNN-slug> through wing-commander-chain-stop-notice, when the stage's own classify-and-announce job did not start",
-      "issue": "#581",
-      "reason": "The spec directory is resolved inside this job (steps.identity), which a job-level concurrency group cannot read, and the job that would publish it is the one that did not start. Residual: the mark is unordered against a rebase on the same branch."
+      "pushes": "nothing: it passes mark-record \"false\" to wing-commander-chain-stop-notice, whose mark-and-push step is skipped unconditionally on that call, regardless of spec-dir",
+      "issue": null,
+      "permanent": true,
+      "permanent_reason": "This job posts the notice only; the mark-and-push half is the separate stalled-mark job, which needs no waiver.",
+      "reason": "specs/077-stalled-per-spec-group: the notice-only half of the stalled/stalled-mark split (research.md, data-model.md). It stays in the per-PR group so the notice lands immediately and cannot be evicted by a busy per-spec group's single pending-run slot."
     },
     {
       "file": ".github/workflows/metrics-persist.yml",

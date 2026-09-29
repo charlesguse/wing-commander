@@ -41,6 +41,10 @@ inputs:
     description: needs.<job>.outputs.failed-post-agent-step
     required: false
     default: ""
+  resolve-identity-result:
+    description: needs.resolve-identity.result, when the calling stage has a resolve-identity job ahead of its entry job (pr-conversation only; every other caller omits this and keeps today's behavior -- specs/077-stalled-per-spec-group).
+    required: false
+    default: ""
 
 outputs:
   reason:
@@ -61,6 +65,7 @@ runs:
         AGENT_CONCLUSION: ${{ inputs.agent-conclusion }}
         CREDENTIAL_REFRESH_OK: ${{ inputs.credential-refresh-ok }}
         FAILED_STEP: ${{ inputs.failed-post-agent-step }}
+        RESOLVE_IDENTITY_RESULT: ${{ inputs.resolve-identity-result }}
       run: |
         if [ "$AGENT_RAN" = "true" ] && [ -n "$FAILED_STEP" ] && [ "$CREDENTIAL_REFRESH_OK" = "false" ]; then
           reason="the agent step ran (concluded: $AGENT_CONCLUSION); the credential could not be re-established, and step '$FAILED_STEP' failed after it"
@@ -72,6 +77,8 @@ runs:
           reason="the agent step ran (concluded: $AGENT_CONCLUSION) and a step after it did not complete"
         elif [ "$IMAGE_RESULT" = "failure" ]; then
           reason="the verify-image-prerequisites job failed, so the $STAGE_NAME stage never started"
+        elif [ "$RESOLVE_IDENTITY_RESULT" = "failure" ]; then
+          reason="the resolve-identity job failed, so the $STAGE_NAME stage never started -- see its job log"
         elif [ "$ENTRY_RESULT" = "skipped" ]; then
           reason="the $STAGE_NAME stage was skipped because a dependency it needs did not run"
         else
