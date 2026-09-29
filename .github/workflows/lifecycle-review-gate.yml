@@ -281,12 +281,25 @@ jobs:
           REVIEW_GATE_HEAD_SHA: ${{ needs.select.outputs.review-gate-head-sha }}
           # T059/FR-006: the kill switch, re-read HERE rather than assumed
           # clear. The job-level `if:` on `select` only decides whether this
-          # run starts at all; a step-level `vars.` expression is resolved
-          # when the step runs, so a maintainer who sets the switch after
-          # this run started is seen here -- and by then a PR IS selected,
-          # so the stand-down has a lifecycle issue to be recorded on
-          # (the `kill-switch` job's own header comment names this step as
-          # where that durable record happens).
+          # run starts at all, and by the time THIS step runs a PR IS
+          # selected, so a stand-down has a lifecycle issue to be recorded
+          # on (the `kill-switch` job's own header comment names this step
+          # as where that durable record happens).
+          #
+          # T078/F6, the canonical statement of what this re-read is worth
+          # (the `merge` job's own KILL_SWITCH_PAUSED points here): defence
+          # in depth, NOT a guaranteed mid-run kill. An earlier revision of
+          # this comment claimed a step-level `vars.` expression is resolved
+          # when the step runs, so a switch set mid-run is seen here; that
+          # mechanism is not something GitHub documents, and this is a
+          # `vars.` expression rather than a live Variables API read (one
+          # the App has no permission for, and T078 asks for none), so it
+          # can only ever be as fresh as the context this run was handed. A
+          # maintainer who sets the switch while the run is already in
+          # flight is NOT guaranteed to be seen by it. The bound that always
+          # holds is the one to rely on: the `kill-switch` job plus the
+          # job-level `if:` on every job below it, which is to say a pause
+          # takes effect on the next run.
           KILL_SWITCH_PAUSED: ${{ vars.WING_COMMANDER_LIFECYCLE_REVIEW_GATE_PAUSED }}
         run: |
           set -uo pipefail
@@ -1528,10 +1541,13 @@ jobs:
       #
       # This step's own `env:` is also the kill switch's re-check
       # (contracts job 7's "re-checks the kill switch... immediately before
-      # this durable action"): a step-level `vars.` expression is resolved
-      # when the step runs, so a maintainer who sets
-      # WING_COMMANDER_LIFECYCLE_REVIEW_GATE_PAUSED after this run started
-      # is seen here, and condition 5 refuses by name (kill_switch_clear).
+      # this durable action"): when the switch is set,
+      # WING_COMMANDER_LIFECYCLE_REVIEW_GATE_PAUSED reaches condition 5 and
+      # it refuses by name (kill_switch_clear). What that re-check is and
+      # is not worth (T078/F6: defence in depth, not a guaranteed mid-run
+      # kill; a pause takes effect on the next run) is stated once, at the
+      # `readiness` job's own KILL_SWITCH_PAUSED env -- see above in this
+      # file.
       # wing-commander-board-stop-check is deliberately NOT used: it
       # re-checks a board-loop issue's maintainer stop request and cancels
       # an earlier board-loop run, neither of which exists for a lifecycle

@@ -44,7 +44,11 @@ def evaluate(pr_number: int) -> LifecycleReadinessDecision:
    — that peel matched on commit *subject alone*, a forgeable trust
    boundary anyone who could push to the branch could exploit).
 5. **Kill switch clear**: `WING_COMMANDER_LIFECYCLE_REVIEW_GATE_PAUSED !=
-   'true'`, checked again at this exact moment (FR-006).
+   'true'`, re-read in this step's own `env:` rather than assumed from the
+   job-level `if:` (FR-006). Defence in depth, not a guaranteed mid-run
+   kill (T078/F6): it is a `vars.` expression, not a live Variables read,
+   so a pause reliably takes effect on the next run — the workflow states
+   this once, at the `readiness` job's own `KILL_SWITCH_PAUSED` env.
 
 `ready: true` only when all five hold. Any single failure is a normal
 outcome (FR-001 scenario 4): the unmet condition is stated on the
