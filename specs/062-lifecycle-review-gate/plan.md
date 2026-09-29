@@ -37,9 +37,13 @@ interpreting a human's free-text review remains a judgment call; this
 gate's own findings are already structured, so its own step renders the
 section deterministically and both paths hand the result to the same two
 composites. Round state (round number, reviewed head SHA, outcome, open
-finding count, folded/filed fingerprints) lives in a new `review_gate`
-object on `spec-meta.json`, the same durable-state home `iteration`
-already occupies (data-model.md §1).
+finding count, folded/filed fingerprints) lives in a `review_gate` marker
+on the lifecycle issue's own comments, the way the board loop
+(`board_item_marker.py`) records an item's own state — never a
+`spec-meta.json` field committed to the reviewed branch, which maintainer
+review 5355876805 (F3) found made auto-merge unreachable: the recording
+commit always advances the branch's real head past the SHA it just
+recorded (data-model.md §1, amended).
 
 Auto-merge (User Story 4) is new code with no executable prior art: the
 board loop's own merge invariant check
@@ -76,12 +80,16 @@ existing `claude_args`/tool-allowlist surface, research.md D3), `gh` CLI
 under the existing wing-commander-bot GitHub App token
 (`wing-commander-context`), `git`, `jq`. No new third-party package.
 
-**Storage**: `spec-meta.json` on each spec's persistent branch gains one
-new object, `review_gate` (data-model.md §1) — the same durable-state home
-`iteration` and `pending_re_review_from` already occupy. No new file, no
-database; a review round's own transcript/metrics artifact follows the
-existing `claude-execution-output.json` convention every agent step
-already produces.
+**Storage**: `review_gate` state lives on the lifecycle issue's own
+comments (a `wc_lifecycle_review_marker.py`-shaped HTML-comment marker,
+data-model.md §1, amended by T074/F3) — never a `spec-meta.json` field, and
+never a commit to the reviewed branch. `spec-meta.json` itself is
+untouched by this feature except through the existing fold mechanism
+(`stage`/`pending_re_review_from`, unchanged fields `iteration` and
+`pending_re_review_from` already occupy). No new file, no database; a
+review round's own transcript/metrics artifact follows the existing
+`claude-execution-output.json` convention every agent step already
+produces.
 
 **Testing**: Every new decision script (`lifecycle_readiness.py`,
 `lifecycle_merge_preconditions.py`) carries an embedded self-test mode
@@ -107,10 +115,11 @@ scripts).
 **Performance Goals**: Zero review invocations attributable to an
 implement ⟲ converge cycle or the boundary between cycles (SC-002); at
 most one review round per distinct reviewed head SHA (SC-009, FR-004/005)
-— the selection step's cheapest read (`spec-meta.json.review_gate.head_sha`
-vs. the PR's current `headRefOid`) MUST short-circuit before any billable
-agent invocation, the same discipline `board_eligibility.py` already
-proves for the board loop's own "no eligible issue" case.
+— the selection step's cheapest read (the lifecycle issue's own
+`review_gate` marker's `head_sha` vs. the PR's current `headRefOid`) MUST
+short-circuit before any billable agent invocation, the same discipline
+`board_eligibility.py` already proves for the board loop's own "no
+eligible issue" case.
 
 **Constraints**: The gate MUST NOT attach to the spec or plan pull request
 (FR-002) — enforced by requiring `spec-meta.json.stage == "review"`, a
@@ -137,8 +146,9 @@ checking constitution/capability parity
 (`verify-constitution-merge-class-parity.py`); one new gate checking the
 fold-dispatch wiring travels with the findings-drafting step
 (`verify-lifecycle-review-gate-fold-wiring.py`, mirroring Gate 72's
-shape); one `spec-meta.schema.json` field addition (`review_gate`); two
-new repository variables (`WING_COMMANDER_LIFECYCLE_REVIEW_GATE_PAUSED`,
+shape); one new shared marker module (`wc_lifecycle_review_marker.py`,
+T074/F3 — `review_gate` state lives on the lifecycle issue's own
+comments, never a `spec-meta.schema.json` field); two new repository variables (`WING_COMMANDER_LIFECYCLE_REVIEW_GATE_PAUSED`,
 `WING_COMMANDER_LIFECYCLE_AUTO_MERGE`) plus a model-tier variable
 (`WING_COMMANDER_LIFECYCLE_REVIEW_GATE_MODEL`, default `claude-sonnet-5`);
 a separate, human-merged constitution-amendment PR outside this spec
@@ -159,7 +169,7 @@ lifecycle stages' `workflow_call` interfaces.
 | VI. Portability | Every new artifact lives under this repository's own `.github/{workflows,actions,scripts}`, resolved the same self-checkout way every existing composite is. | ✅ Pass |
 | VII. Two Interfaces | `lifecycle-review-gate.yml` carries no `workflow_call` trigger (research.md D1) — not part of the published surface, the same choice spec 057 made for `board-loop.yml`. The two composites extracted from `pr-conversation.yml` and the one promoted from `board-loop.yml` are new internal composites with no adopter-pinned interface prior to this feature. No published stage's `workflow_call` input/output/secret is removed or renamed. | ✅ Pass |
 | VIII. A Green Check Means What It Says | Every new script is reachable through the gate registry, runs the same subject with the same arguments locally and in CI (`run-local-gates.py`), fails loudly rather than passing vacuously when its subject is unreachable, and ships a checked-in fixture per failure branch (FR-037, contracts/gates.md). | ✅ Pass |
-| IX. Judgment That Gates a Durable Action Belongs in Deterministic Code | Whether a round is clean, whether to fold or file a finding, whether a finding is a duplicate across rounds (FR-021), whether every merge precondition holds (FR-026) — each is deterministic code re-deriving its own answer from a fresh GitHub read or from `spec-meta.json`, never the reviewing agent's own judgment on its findings' disposition. | ✅ Pass |
+| IX. Judgment That Gates a Durable Action Belongs in Deterministic Code | Whether a round is clean, whether to fold or file a finding, whether a finding is a duplicate across rounds (FR-021), whether every merge precondition holds (FR-026) — each is deterministic code re-deriving its own answer from a fresh GitHub read (the PR snapshot, the lifecycle issue's own `review_gate` marker), never the reviewing agent's own judgment on its findings' disposition. | ✅ Pass |
 | X. Bounded Autonomy — The Pipeline Works Its Own Board | This feature is deliberately outside X's own board loop — it operates the feature lifecycle's final PR, not an open issue — and copies X's fix-PR-merge *shape* (checks green on exact head SHA, independent review with zero open findings, kill switch, squash commit one human action reverts) for its own third class rather than reusing X's board-loop code, because X's own merge implementation does not exist yet either (research.md D13). | ✅ Pass |
 
 No violations. **Complexity Tracking is intentionally near-empty**: the
@@ -167,13 +177,16 @@ two extractions from `pr-conversation.yml` and the one from
 `board-loop.yml` are CLAUDE.md's "single home" rule applied at the exact
 point FR-017/FR-035 require it, not complexity invented for this feature.
 
-**Post-Phase-1 re-check**: Unchanged. Phase 1 design confirms every new
-piece of state lives in `spec-meta.json` (already this stage's own
-lifecycle state) or in a job/step output (ephemeral); the one new
-untrusted-input surface (the PR diff/title/body handed to the reviewer)
-is the same surface `board-loop.yml`'s reviewer already reads under the
-same "framed as data" discipline (FR-011); no principle re-opened by the
-concrete shapes Phase 1 chose.
+**Post-Phase-1 re-check (amended by T074/F3)**: every new piece of durable
+state lives either on the lifecycle issue's own comments (the
+`review_gate` marker — the board loop's own item-state pattern, never a
+commit to the reviewed branch) or in `spec-meta.json` through the
+existing fold mechanism (`stage`/`pending_re_review_from`, already this
+stage's own lifecycle state), or in a job/step output (ephemeral); the one
+new untrusted-input surface (the PR diff/title/body handed to the
+reviewer) is the same surface `board-loop.yml`'s reviewer already reads
+under the same "framed as data" discipline (FR-011); no principle
+re-opened by the concrete shapes Phase 1 chose or by this amendment.
 
 ## Project Structure
 
@@ -240,10 +253,18 @@ composite actions, and gate scripts — there is no `src`/`tests` split.
     ├── verify-lifecycle-merge-preconditions.py  # NEW gate
     ├── verify-constitution-merge-class-parity.py  # NEW gate — FR-038
     ├── verify-lifecycle-review-gate-fold-wiring.py  # NEW gate
-    └── verify-single-home-idioms.py      # EXTENDED — 3 new DECLARED_HOMES
+    ├── wc_lifecycle_review_marker.py     # NEW — T074/F3: review_gate's
+    │                                      #   single home, the lifecycle
+    │                                      #   issue's own marker (never
+    │                                      #   spec-meta.json)
+    └── verify-single-home-idioms.py      # EXTENDED — new DECLARED_HOMES
 
 specs/002-plan-stage/contracts/
-└── spec-meta.schema.json                 # EDITED: + review_gate property
+└── spec-meta.schema.json                 # UNCHANGED by this feature as of
+                                           #   T074 (F3): review_gate was
+                                           #   briefly a property here, then
+                                           #   removed when its storage
+                                           #   moved off spec-meta.json
 
 .specify/memory/
 └── constitution.md                       # Amendment PR, separate from

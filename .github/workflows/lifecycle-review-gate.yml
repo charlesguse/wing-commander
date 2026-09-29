@@ -67,15 +67,18 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+      # T074: reads each candidate's lifecycle issue comments for its
+      # review_gate marker (wc_lifecycle_review_marker.py).
+      issues: read
     outputs:
       pr-number: ${{ steps.select.outputs.pr-number }}
       issue: ${{ steps.select.outputs.issue }}
       spec-dir: ${{ steps.select.outputs.spec-dir }}
       head-sha: ${{ steps.select.outputs.head-sha }}
-      # T068: the RECORDED review_gate.head_sha (spec-meta.json's own
-      # value, read via read-spec-meta.sh in this same step) -- threaded
-      # through rather than re-read a second time in `readiness` (Gate 61's
-      # single home). `readiness` compares its own fresh headRefOid against
+      # T068/T074: the RECORDED review_gate.head_sha (the lifecycle issue's
+      # own marker, wc_lifecycle_review_marker.py, read in this same step)
+      # -- threaded through rather than re-read a second time in
+      # `readiness`. `readiness` compares its own fresh headRefOid against
       # THIS value, never against `head-sha` above (which is the PR's
       # current head -- comparing a value against itself always reads
       # "already reviewed").
@@ -86,9 +89,27 @@ jobs:
         with:
           persist-credentials: false
 
+      # T073: this job's workspace root is always github.sha (no PR branch
+      # is ever checked out here), so this second copy is redundant on its
+      # own merits -- kept only for the same file-wide uniformity every
+      # other job in this file follows, matching board-loop.yml's own
+      # "every job, no exceptions" convention (its own `select` job, which
+      # is equally always-trusted, does the same).
+      - name: Checkout this job's own trusted copy (composites)
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          path: .wc-pristine-repo
+          persist-credentials: false
+      - name: Record trusted-copy provenance
+        run: |
+          echo "lifecycle-review-gate: composites resolved from $(git -C .wc-pristine-repo rev-parse HEAD) at ref ${{ github.sha }}." >> "$GITHUB_STEP_SUMMARY"
+      - name: Write-protect this job's own trusted copy (composites)
+        run: chmod -R a-w .wc-pristine-repo
+
       - name: Wing Commander context
         id: ctx
-        uses: ./.github/actions/wing-commander-context
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-context
         with:
           app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
           private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
@@ -106,6 +127,7 @@ jobs:
         id: select
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}[bot]
         run: |
           set -uo pipefail
 
@@ -117,7 +139,7 @@ jobs:
           best_created=""
 
           mapfile -t prs < <(gh pr list --state open \
-            --json number,headRefName,headRefOid,createdAt \
+            --json number,headRefName,headRefOid,createdAt,isCrossRepository,baseRefName \
             --limit 100 --jq '.[] | @base64')
 
           for row in "${prs[@]}"; do
@@ -127,6 +149,18 @@ jobs:
             head_ref="$(printf '%s' "$pr_json" | jq -r '.headRefName')"
             head_sha="$(printf '%s' "$pr_json" | jq -r '.headRefOid')"
             created="$(printf '%s' "$pr_json" | jq -r '.createdAt')"
+            is_cross_repo="$(printf '%s' "$pr_json" | jq -r '.isCrossRepository')"
+            base_ref="$(printf '%s' "$pr_json" | jq -r '.baseRefName')"
+
+            # T077/F5: a fork PR's `headRefName` is meaningless as a trust
+            # boundary -- a fork branch named `spec/062-...` would otherwise
+            # have THIS repository's own origin branch of that name reviewed
+            # and passed, while GitHub renders the status against the
+            # fork's own SHA. Skip any PR this App did not open against this
+            # repository's own default branch, before headRefName is ever
+            # trusted for anything.
+            [ "$is_cross_repo" = "false" ] || continue
+            [ "$base_ref" = "main" ] || continue
 
             case "$head_ref" in
               spec/*) slug="${head_ref#spec/}" ;;
@@ -134,29 +168,31 @@ jobs:
             esac
             printf '%s' "$slug" | grep -Eq '^[0-9]{3}-[a-z0-9][a-z0-9-]*$' || continue
 
-            eval "$(bash .github/actions/_shared/read-spec-meta.sh spec/ "$slug")"
+            eval "$(bash .wc-pristine-repo/.github/actions/_shared/read-spec-meta.sh spec/ "$slug")"
             [ "$meta_found" = "true" ] || continue
             [ "$meta_identity_ok" = "true" ] || continue
             [ "$meta_stage" = "review" ] || continue
 
-            # T069: a head that differs from the recorded round only by
-            # THIS gate's own trailing "review-gate: round ..." recording
-            # commit(s) is not new content to review -- peel those off
-            # before comparing (wc_review_gate_settled_head.py), so
-            # disposition's own round-recording push never makes select
-            # pick this PR back up on the very next run (SC-009's "at most
-            # one round per distinct reviewed head SHA"). The commit
-            # objects are already local: read-spec-meta.sh just fetched
-            # this exact branch.
-            settled_sha="$(python3 .github/scripts/wc_review_gate_settled_head.py "$head_sha")"
-            [ "$meta_review_gate_head_sha" != "$settled_sha" ] || continue
+            # T074/F3: review_gate no longer lives in spec-meta.json -- it
+            # is this App's own marker on the lifecycle issue's comments
+            # (wc_lifecycle_review_marker.py), never a value committed to
+            # the reviewed branch (a branch-authored commit deciding facts
+            # that same branch is judged by was F1/F3's shared concern).
+            # This is a plain equality against the PR's raw current head:
+            # nothing this gate does commits to that branch, so (unlike
+            # T069's now-deleted peel) the head never moves on its own
+            # account.
+            review_gate_json="$(gh issue view "$meta_issue" -R "$GITHUB_REPOSITORY" --json comments --jq '.comments' \
+              | python3 .wc-pristine-repo/.github/scripts/wc_lifecycle_review_marker.py read --bot-login "$BOT_LOGIN")"
+            recorded_head_sha="$(printf '%s' "$review_gate_json" | jq -r '.head_sha // empty')"
+            [ "$recorded_head_sha" != "$head_sha" ] || continue
 
             if [ -z "$best_created" ] || [[ "$created" < "$best_created" ]]; then
               best_number="$number"
               best_issue="$meta_issue"
               best_spec_dir="specs/$slug"
               best_head_sha="$head_sha"
-              best_review_gate_head_sha="$meta_review_gate_head_sha"
+              best_review_gate_head_sha="$recorded_head_sha"
               best_created="$created"
             fi
           done
@@ -195,9 +231,24 @@ jobs:
         with:
           persist-credentials: false
 
+      # T073: this job's workspace root is always github.sha -- kept for
+      # file-wide uniformity with every other job (see `select`'s own
+      # identical note).
+      - name: Checkout this job's own trusted copy (composites)
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          path: .wc-pristine-repo
+          persist-credentials: false
+      - name: Record trusted-copy provenance
+        run: |
+          echo "lifecycle-review-gate: composites resolved from $(git -C .wc-pristine-repo rev-parse HEAD) at ref ${{ github.sha }}." >> "$GITHUB_STEP_SUMMARY"
+      - name: Write-protect this job's own trusted copy (composites)
+        run: chmod -R a-w .wc-pristine-repo
+
       - name: Wing Commander context
         id: ctx
-        uses: ./.github/actions/wing-commander-context
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-context
         with:
           app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
           private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
@@ -207,7 +258,7 @@ jobs:
       # below (contracts "Edge cases": "PR or issue closed mid-round").
       - name: Check lifecycle issue state
         id: lifecycle-gate
-        uses: ./.github/actions/wing-commander-lifecycle-gate
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-lifecycle-gate
         with:
           issue-number: ${{ needs.select.outputs.issue }}
           token: ${{ steps.ctx.outputs.token }}
@@ -218,9 +269,9 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           PR_NUMBER: ${{ needs.select.outputs.pr-number }}
-          # T068: the RECORDED review_gate.head_sha (select's own
-          # `review-gate-head-sha` output, read off spec-meta.json) --
-          # compared below against a FRESH `gh pr view` snapshot's own
+          # T068/T074: the RECORDED review_gate.head_sha (select's own
+          # `review-gate-head-sha` output, read off the lifecycle issue's
+          # own marker) -- compared below against a FRESH `gh pr view` snapshot's own
           # headRefOid. Passing select's `head-sha` (the PR's current head)
           # here instead, as this step originally did, compares that value
           # against itself: not_yet_reviewed would read false on every
@@ -253,7 +304,7 @@ jobs:
             --argjson paused "$paused" \
             '{snapshot: $snapshot, review_gate: {head_sha: $head_sha}, kill_switch_paused: $paused}')"
 
-          decision="$(printf '%s' "$payload" | python3 .github/scripts/lifecycle_readiness.py)"
+          decision="$(printf '%s' "$payload" | python3 .wc-pristine-repo/.github/scripts/lifecycle_readiness.py)"
           ready="$(printf '%s' "$decision" | jq -r '.ready')"
           unmet_reason="$(printf '%s' "$decision" | jq -r '.unmet_reason // empty')"
 
@@ -284,7 +335,7 @@ jobs:
 
       - name: Post the unmet condition on the lifecycle issue
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.decide.outputs.ready == 'false'
-        uses: ./.github/actions/wing-commander-callout
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-callout
         with:
           token: ${{ steps.ctx.outputs.token }}
           issue-number: ${{ needs.select.outputs.issue }}
@@ -315,20 +366,20 @@ jobs:
       dropped-count: ${{ steps.extract.outputs.dropped-count }}
       cost-line: ${{ steps.metrics-summary-review.outputs.cost-line }}
     steps:
-      - name: Resolve the PR's head ref
-        id: pr
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ needs.select.outputs.pr-number }}
-        run: |
-          set -uo pipefail
-          branch="$(gh pr view "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --json headRefName --jq .headRefName)"
-          echo "branch=$branch" >> "$GITHUB_OUTPUT"
-
-      - name: Checkout the PR's head ref
+      # T077/F5: checks out `select`'s own captured SHA, never a branch
+      # name resolved from a fresh `gh pr view` -- a `headRefName` re-read
+      # here would trust whatever the PR's branch currently points at, not
+      # the exact commit `select` decided to review, and (before select's
+      # own same-repo/default-base filter existed) a forked branch sharing
+      # this repository's branch name would have resolved to the wrong
+      # commit entirely. `actions/checkout@v5`'s `ref:` accepts a raw SHA;
+      # the checkout itself is the verification -- it fails outright if
+      # that exact commit is not reachable, rather than silently resolving
+      # a moved branch tip.
+      - name: Checkout the PR's head commit
         uses: actions/checkout@v5
         with:
-          ref: ${{ steps.pr.outputs.branch }}
+          ref: ${{ needs.select.outputs.head-sha }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -346,9 +397,31 @@ jobs:
           git archive --format=tar "$GITHUB_SHA" .github/scripts .github/schemas | tar -x -C "$dest" --strip-components=1
           chmod -R a-w "$dest"
 
+      # T073/F1: the snapshot above covers .github/scripts/.github/schemas
+      # (read by python -I calls and the agent's own restricted Bash tool)
+      # but not .github/actions -- a composite's `uses: ./path` must resolve
+      # under $GITHUB_WORKSPACE, so it cannot point at $RUNNER_TEMP. This
+      # second, independent trusted copy (board-loop.yml's own
+      # ".wc-pristine-repo" idiom, byte-for-byte) is what every composite
+      # below resolves from instead of the workspace root, which is this
+      # PR's own untrusted checkout: a branch under review must never
+      # supply the code (e.g. wing-commander-context, which mints the App's
+      # private key) that reviews it.
+      - name: Checkout this job's own trusted copy (composites)
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          path: .wc-pristine-repo
+          persist-credentials: false
+      - name: Record trusted-copy provenance
+        run: |
+          echo "lifecycle-review-gate: composites resolved from $(git -C .wc-pristine-repo rev-parse HEAD) at ref ${{ github.sha }}." >> "$GITHUB_STEP_SUMMARY"
+      - name: Write-protect this job's own trusted copy (composites)
+        run: chmod -R a-w .wc-pristine-repo
+
       - name: Wing Commander context
         id: ctx
-        uses: ./.github/actions/wing-commander-context
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-context
         with:
           app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
           private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
@@ -363,7 +436,8 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           PR_NUMBER: ${{ needs.select.outputs.pr-number }}
-          SPEC_DIR: ${{ needs.select.outputs.spec-dir }}
+          ISSUE: ${{ needs.select.outputs.issue }}
+          BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}[bot]
         run: |
           set -euo pipefail
           if ! git fetch origin main --quiet; then
@@ -389,12 +463,19 @@ jobs:
             echo "::error::lifecycle-review-gate review: could not stage PR #$PR_NUMBER's title and body."
             exit 1
           fi
-          # data-model.md §1: the round this review, if clean, will record --
-          # `disposition` (T023) re-derives this independently from the same
-          # file at its own checkout, never trusting this job's output for
-          # the write itself; this is display-only (the posted review body,
-          # the issue report).
-          round="$(jq -r '(.review_gate.round // 0) + 1' "$SPEC_DIR/spec-meta.json")"
+          # data-model.md §1/T074: the round this review, if clean, will
+          # record -- `disposition` re-derives this independently from its
+          # own fresh read of the lifecycle issue's marker, never trusting
+          # this job's output for the write itself; this is display-only
+          # (the posted review body, and `report`'s fallback when
+          # disposition never ran at all -- a failed/parse-failed round).
+          # Read via the trusted snapshot ("Snapshot helper scripts" above),
+          # never this checkout's own copy (T073/F1) -- this step runs
+          # before the reviewer agent, but the branch under review must
+          # never supply the code any of this job's own steps execute.
+          round="$(gh issue view "$ISSUE" -R "$GITHUB_REPOSITORY" --json comments --jq '.comments' \
+            | python3 -I "$RUNNER_TEMP/wc-pristine/scripts/wc_lifecycle_review_marker.py" read --bot-login "$BOT_LOGIN" \
+            | jq -r '(.round // 0) + 1')"
           echo "round=$round" >> "$GITHUB_OUTPUT"
 
       # T018/contracts/review-and-findings.md: the same read-only shape
@@ -402,7 +483,7 @@ jobs:
       # Claude Code's packaged code-review capability.
       - name: Compose tool args (reviewer)
         id: tool-args-review
-        uses: ./.github/actions/wing-commander-tool-args
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-tool-args
         with:
           default-allowed-tools: "Skill,Read,Grep,Glob,Bash(python3 -I ${{ runner.temp }}/wc-pristine/scripts/git_read.py:*),Bash(cat:*)"
           default-disallowed-tools: "WebSearch,WebFetch,Write,Edit,Bash(git:*),Bash(cd:*),Bash(pushd:*),Bash(popd:*),Bash(git push:*),Bash(git commit:*)"
@@ -410,7 +491,7 @@ jobs:
 
       - name: Compute agent turn ceiling (reviewer)
         id: review-ceiling
-        uses: ./.github/actions/wing-commander-turn-ceiling
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-turn-ceiling
         with:
           intended-turns: 30
 
@@ -495,7 +576,7 @@ jobs:
       - name: Record agent-ran signal
         id: agent-ran-review
         if: "!cancelled() && steps.reviewer.outcome != 'skipped'"
-        uses: ./.github/actions/wing-commander-agent-ran-signal
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-agent-ran-signal
         with:
           agent-outcome: ${{ steps.reviewer.outcome }}
 
@@ -503,7 +584,7 @@ jobs:
         id: reestablish-review
         if: "!cancelled() && steps.reviewer.outcome != 'skipped'"
         continue-on-error: true
-        uses: ./.github/actions/wing-commander-context
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-context
         with:
           app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
           private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
@@ -511,14 +592,14 @@ jobs:
       - name: Determine post-agent credential status (reviewer)
         id: credential-status-review
         if: "!cancelled() && steps.reviewer.outcome != 'skipped'"
-        uses: ./.github/actions/wing-commander-post-agent-credential-status
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-post-agent-credential-status
         with:
           mint-outcome: ${{ steps.reestablish-review.outcome }}
 
       - name: Compute agent run verdict (reviewer)
         id: review-verdict
         if: always() && steps.reviewer.outcome != 'skipped'
-        uses: ./.github/actions/wing-commander-agent-verdict
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-agent-verdict
         with:
           intended-turns: 30
           run-label: reviewer
@@ -527,7 +608,7 @@ jobs:
         id: metrics-summary-review
         if: always() && steps.reviewer.outcome != 'skipped'
         continue-on-error: true
-        uses: ./.github/actions/wing-commander-metrics-summary
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-metrics-summary
         with:
           model: ${{ steps.model.outputs.model }}
           max-turns: 30
@@ -739,8 +820,16 @@ jobs:
               fh.write("\n".join(lines) + "\n")
           PYEOF
 
+      # `env.WC_BOT_TOKEN`: wing-commander-context's own composite exports
+      # its minted token via $GITHUB_ENV (not only its `token` output), so
+      # every later step in this job sees it without threading a step
+      # output through -- and, critically, "Re-establish Wing Commander
+      # context (post-agent, reviewer)" above re-exports it too, so this
+      # read is the FRESH post-agent token, never the pre-agent one
+      # `steps.ctx.outputs.token` would still name (board-loop.yml's own
+      # reviewer job's identical "Post the review on the PR" step, T012).
       - name: Post the review on the PR
-        uses: ./.github/actions/wing-commander-post-review-comment
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-post-review-comment
         with:
           token: ${{ env.WC_BOT_TOKEN }}
           pr-number: ${{ needs.select.outputs.pr-number }}
@@ -771,6 +860,9 @@ jobs:
     permissions:
       contents: write
       pull-requests: read
+      # T074: reads the lifecycle issue's own review_gate marker
+      # (wc_lifecycle_review_marker.py) -- never spec-meta.json.
+      issues: read
       statuses: write
       # Gate 12: wing-commander-fold-dispatch's `gh workflow run`/`gh run
       # list` calls (T038) run under github.token (dispatch-token) -- the
@@ -780,7 +872,11 @@ jobs:
     outputs:
       outcome: ${{ steps.decide.outputs.outcome || steps.partition.outputs.outcome }}
       round: ${{ steps.decide.outputs.round || steps.partition.outputs.round }}
-      findings-open: ${{ steps.partition.outputs.findings-open }}
+      findings-open: ${{ steps.decide.outputs.findings-open || steps.partition.outputs.findings-open }}
+      # T074: report needs the full post-round fingerprint sets to write
+      # the marker -- disposition itself writes nothing durable anymore.
+      folded-fingerprints: ${{ steps.decide.outputs.folded-fingerprints || steps.partition.outputs.folded-fingerprints }}
+      filed-fingerprints: ${{ steps.decide.outputs.filed-fingerprints || steps.partition.outputs.filed-fingerprints }}
     steps:
       - name: Resolve the PR's head ref
         id: pr
@@ -799,15 +895,36 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      # T073/F1: this job's workspace root is now the PR's own branch --
+      # untrusted. wing-commander-fold-commit needs a real checkout of that
+      # branch to push its own commit (a bare `git push` needs the branch's
+      # upstream tracking, which only a real `actions/checkout` sets up),
+      # so it cannot be replaced the way `merge`'s was (T074); instead,
+      # every composite and script this job loads resolves from this
+      # second, independent trusted copy (board-loop.yml's own
+      # ".wc-pristine-repo" idiom, byte-for-byte), left untouched by
+      # anything that happens to the workspace root after this point.
+      - name: Checkout this job's own trusted copy (composites)
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          path: .wc-pristine-repo
+          persist-credentials: false
+      - name: Record trusted-copy provenance
+        run: |
+          echo "lifecycle-review-gate: composites resolved from $(git -C .wc-pristine-repo rev-parse HEAD) at ref ${{ github.sha }}." >> "$GITHUB_STEP_SUMMARY"
+      - name: Write-protect this job's own trusted copy (composites)
+        run: chmod -R a-w .wc-pristine-repo
+
       - name: Wing Commander context
         id: ctx
-        uses: ./.github/actions/wing-commander-context
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-context
         with:
           app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
           private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
 
       - name: Authenticate the push remote
-        uses: ./.github/actions/wing-commander-refresh-remote
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-refresh-remote
         with:
           token: ${{ steps.ctx.outputs.token }}
 
@@ -816,54 +933,53 @@ jobs:
       # cases": "PR or issue closed mid-round").
       - name: Check lifecycle issue state
         id: lifecycle-gate
-        uses: ./.github/actions/wing-commander-lifecycle-gate
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-lifecycle-gate
         with:
           issue-number: ${{ needs.select.outputs.issue }}
           token: ${{ steps.ctx.outputs.token }}
 
-      # T023: data-model.md §1's invariant -- head_sha and outcome are
-      # always written together, never a head_sha update with a stale
-      # outcome.
-      - name: Record the clean round on spec-meta.json
+      # T074/F3: review_gate's current state, read fresh off the lifecycle
+      # issue's own marker (wc_lifecycle_review_marker.py) -- never
+      # spec-meta.json, and never a value another job captured earlier.
+      - name: Read the current review_gate marker
+        id: review-gate
+        if: steps.lifecycle-gate.outputs.is-open == 'true'
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          ISSUE: ${{ needs.select.outputs.issue }}
+          BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}[bot]
+        run: |
+          set -euo pipefail
+          review_gate_json="$(gh issue view "$ISSUE" -R "$GITHUB_REPOSITORY" --json comments --jq '.comments' \
+            | python3 .wc-pristine-repo/.github/scripts/wc_lifecycle_review_marker.py read --bot-login "$BOT_LOGIN")"
+          echo "json=$review_gate_json" >> "$GITHUB_OUTPUT"
+
+      # T023/T074: the raw-zero fast path. Computes this round's data from
+      # the current marker only -- writes and commits nothing itself.
+      # `report` is the marker's sole writer (data-model.md §1's invariant,
+      # now applied to one write site instead of two: head_sha and outcome
+      # are always written together, never a head_sha update with a stale
+      # outcome).
+      - name: Record the clean round
         id: decide
         if: >-
           steps.lifecycle-gate.outputs.is-open == 'true'
           && needs.review.outputs.in-scope-count == '0'
           && needs.review.outputs.out-of-scope-count == '0'
         env:
-          SPEC_DIR: ${{ needs.select.outputs.spec-dir }}
-          HEAD_SHA: ${{ needs.select.outputs.head-sha }}
-          BOT_SLUG: ${{ steps.ctx.outputs.bot-slug }}
-          BRANCH: ${{ steps.pr.outputs.branch }}
+          REVIEW_GATE_JSON: ${{ steps.review-gate.outputs.json }}
         run: |
           set -euo pipefail
-          meta_path="$SPEC_DIR/spec-meta.json"
-          round="$(jq -r '(.review_gate.round // 0) + 1' "$meta_path")"
-          updated_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          tmp="$(mktemp)"
-          # specs/002-plan-stage/contracts/spec-meta.schema.json's
-          # review_gate object requires folded_fingerprints/
-          # filed_fingerprints too (US2 fields this phase does not yet
-          # populate) -- defaulted to [] here, preserved if already set by
-          # a prior round, never overwritten.
-          jq --arg head_sha "$HEAD_SHA" --arg updated_at "$updated_at" --argjson round "$round" \
-            '.review_gate = ((.review_gate // {}) + {
-               round: $round, head_sha: $head_sha, outcome: "clean",
-               findings_open: 0, updated_at: $updated_at,
-               folded_fingerprints: ((.review_gate.folded_fingerprints // [])),
-               filed_fingerprints: ((.review_gate.filed_fingerprints // []))
-             })' \
-            "$meta_path" > "$tmp"
-          mv "$tmp" "$meta_path"
-
-          git config user.name "${BOT_SLUG}[bot]"
-          git config user.email "${BOT_SLUG}[bot]@users.noreply.github.com"
-          git add "$meta_path"
-          git commit -m "review-gate: round $round clean at ${HEAD_SHA:0:12}"
-          git push origin "HEAD:refs/heads/$BRANCH"
-
-          echo "round=$round" >> "$GITHUB_OUTPUT"
-          echo "outcome=clean" >> "$GITHUB_OUTPUT"
+          round="$(printf '%s' "$REVIEW_GATE_JSON" | jq -r '(.round // 0) + 1')"
+          folded="$(printf '%s' "$REVIEW_GATE_JSON" | jq -r '(.folded_fingerprints // []) | join(",")')"
+          filed="$(printf '%s' "$REVIEW_GATE_JSON" | jq -r '(.filed_fingerprints // []) | join(",")')"
+          {
+            echo "round=$round"
+            echo "outcome=clean"
+            echo "findings-open=0"
+            echo "folded-fingerprints=$folded"
+            echo "filed-fingerprints=$filed"
+          } >> "$GITHUB_OUTPUT"
 
       # T024/FR-013: a gh api commit-status write (state=success) -- this
       # repository has no existing scheduled-workflow status-posting
@@ -904,67 +1020,53 @@ jobs:
           name: lifecycle-review-findings
           path: ${{ runner.temp }}/lifecycle-review-findings-artifact
 
-      # T037/T040: partitions by in_scope, drops anything already folded or
-      # filed in a prior round (FR-021, using T028's single-home fingerprint
-      # formula), renders in-scope survivors into one tasks.md section, and
-      # stages up to 3 out-of-scope survivors for filing (this repository's
-      # MAX_SLOTS unrolled-step precedent -- board-loop.yml's own
-      # out-of-scope filing, spec 056). Writes review_gate onto
-      # spec-meta.json's WORKING TREE here (uncommitted): when something
-      # folds, wing-commander-fold-commit's own jq only ever touches
-      # .stage/.pending_re_review_from, so this survives into its commit
-      # untouched (data-model.md §1's invariant); when nothing folds, "Record
-      # this round on spec-meta.json (no fold)" below commits it directly.
-      # Round-budget exhaustion (research.md D12, FR-022) is checked first
-      # and short-circuits before any fold/file computation.
+      # T037/T040/T074: partitions by in_scope, drops anything already
+      # folded or filed in a prior round (FR-021, using T028's single-home
+      # fingerprint formula), renders in-scope survivors into one tasks.md
+      # section, and stages up to 3 out-of-scope survivors for filing (this
+      # repository's MAX_SLOTS unrolled-step precedent -- board-loop.yml's
+      # own out-of-scope filing, spec 056). Writes nothing durable itself --
+      # `report` is the marker's sole writer (F3). Round-budget exhaustion
+      # (research.md D12, FR-022) is checked first and short-circuits
+      # before any fold/file computation or the findings artifact is read
+      # at all.
       - name: Partition, dedup, and render this round's findings
         id: partition
         if: steps.download-findings.outcome == 'success'
         env:
-          SPEC_DIR: ${{ needs.select.outputs.spec-dir }}
           ISSUE: ${{ needs.select.outputs.issue }}
           PR_NUMBER: ${{ needs.select.outputs.pr-number }}
-          HEAD_SHA: ${{ needs.select.outputs.head-sha }}
           ROUND_BUDGET: ${{ env.LIFECYCLE_REVIEW_ROUND_BUDGET }}
+          REVIEW_GATE_JSON: ${{ steps.review-gate.outputs.json }}
         run: |
           set -euo pipefail
           python3 -I - <<'PYEOF'
-          import datetime
           import json
           import os
           import sys
 
-          sys.path.insert(0, ".github/scripts")
+          # T073/F1: this job's cwd is the PR's own (untrusted) checkout --
+          # import from the trusted copy instead (never the branch under
+          # review's own .github/scripts).
+          sys.path.insert(0, ".wc-pristine-repo/.github/scripts")
           from wc_review_finding_fingerprint import fingerprint
 
           runner_temp = os.environ["RUNNER_TEMP"]
-          spec_dir = os.environ["SPEC_DIR"]
           issue = os.environ["ISSUE"]
-          head_sha = os.environ["HEAD_SHA"]
           budget = int(os.environ["ROUND_BUDGET"])
+          review_gate = json.loads(os.environ["REVIEW_GATE_JSON"] or "{}") or {}
 
-          meta_path = os.path.join(spec_dir, "spec-meta.json")
-          with open(meta_path, encoding="utf-8") as fh:
-              meta = json.load(fh)
-          review_gate = meta.get("review_gate") or {}
           folded_fps = set(review_gate.get("folded_fingerprints") or [])
           filed_fps = set(review_gate.get("filed_fingerprints") or [])
           round_ = (review_gate.get("round") or 0) + 1
-          updated_at = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
           outputs = [("round", str(round_))]
 
           if round_ > budget:
-              meta["review_gate"] = dict(review_gate, round=round_, head_sha=head_sha,
-                                         outcome="budget-exhausted", updated_at=updated_at,
-                                         findings_open=review_gate.get("findings_open") or 0,
-                                         folded_fingerprints=sorted(folded_fps),
-                                         filed_fingerprints=sorted(filed_fps))
-              with open(meta_path, "w", encoding="utf-8") as fh:
-                  json.dump(meta, fh, indent=2)
-                  fh.write("\n")
               outputs.append(("outcome", "budget-exhausted"))
               outputs.append(("findings-open", str(review_gate.get("findings_open") or 0)))
+              outputs.append(("folded-fingerprints", ",".join(sorted(folded_fps))))
+              outputs.append(("filed-fingerprints", ",".join(sorted(filed_fps))))
               with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
                   for k, v in outputs:
                       fh.write("{0}={1}\n".format(k, v))
@@ -1042,18 +1144,11 @@ jobs:
           # (new_folded empty despite a nonzero raw in-scope-count).
           findings_open = len(new_folded)
           outcome = "findings" if new_folded else "clean"
-          meta["review_gate"] = {
-              "round": round_, "head_sha": head_sha, "outcome": outcome,
-              "findings_open": findings_open, "updated_at": updated_at,
-              "folded_fingerprints": sorted(folded_fps | set(new_folded)),
-              "filed_fingerprints": sorted(filed_fps | set(new_filed)),
-          }
-          with open(meta_path, "w", encoding="utf-8") as fh:
-              json.dump(meta, fh, indent=2)
-              fh.write("\n")
 
           outputs.append(("outcome", outcome))
           outputs.append(("findings-open", str(findings_open)))
+          outputs.append(("folded-fingerprints", ",".join(sorted(folded_fps | set(new_folded)))))
+          outputs.append(("filed-fingerprints", ",".join(sorted(filed_fps | set(new_filed)))))
           if new_folded:
               outputs.append(("fold-summary", "round {0}: {1} finding(s) folded".format(round_, len(new_folded))))
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
@@ -1063,14 +1158,16 @@ jobs:
 
       # T038: appends the rendered section (empty when nothing survived
       # dedup) onto tasks.md, flips stage back to "implement", and commits
-      # both files -- including the review_gate write above -- together.
+      # both files together. T074: review_gate is no longer part of this
+      # commit -- it never lives in spec-meta.json at all now, only in the
+      # lifecycle issue's own marker, which `report` writes separately.
       # actor-login is deliberately empty: no human actor triggered this
       # automated round's own fold (wing-commander-fold-commit's own
       # action.yml documents empty as tolerated, adding nothing).
       - name: Commit this round's fold
         id: commit-fold
         if: steps.partition.outcome == 'success' && steps.partition.outputs.outcome == 'findings'
-        uses: ./.github/actions/wing-commander-fold-commit
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-fold-commit
         with:
           token: ${{ steps.ctx.outputs.token }}
           spec-dir: ${{ needs.select.outputs.spec-dir }}
@@ -1092,7 +1189,7 @@ jobs:
       # thread through.
       - name: Dispatch implement for this round's fold
         if: steps.commit-fold.outcome == 'success' && steps.commit-fold.outputs.folded == 'true'
-        uses: ./.github/actions/wing-commander-fold-dispatch
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-fold-dispatch
         with:
           dispatch-token: ${{ github.token }}
           spec-dir: ${{ needs.select.outputs.spec-dir }}
@@ -1101,33 +1198,6 @@ jobs:
           spec-branch: ${{ steps.pr.outputs.branch }}
           implement-workflow: wing-commander-5-implement.yml
           folded-json: ${{ steps.commit-fold.outputs.folded-json }}
-
-      # T038/T070: nothing folded this round -- either because there was
-      # nothing to fold ("clean": every in-scope survivor was already
-      # folded in a prior round, or there were none, possibly alongside a
-      # filed out-of-scope survivor), or the round budget is spent. The
-      # review_gate write above still needs its own commit, since
-      # wing-commander-fold-commit's early exit on an empty section-file
-      # touches neither file. Mirrors "Record the clean round" above, but
-      # records outcome clean/budget-exhausted from THIS step's own
-      # computation instead.
-      - name: Record this round on spec-meta.json (no fold)
-        if: >-
-          steps.partition.outcome == 'success'
-          && (steps.partition.outputs.outcome == 'budget-exhausted' || steps.partition.outputs.outcome == 'clean' || steps.commit-fold.outputs.folded == 'false')
-        env:
-          SPEC_DIR: ${{ needs.select.outputs.spec-dir }}
-          BOT_SLUG: ${{ steps.ctx.outputs.bot-slug }}
-          BRANCH: ${{ steps.pr.outputs.branch }}
-          ROUND: ${{ steps.partition.outputs.round }}
-          OUTCOME: ${{ steps.partition.outputs.outcome }}
-        run: |
-          set -euo pipefail
-          git config user.name "${BOT_SLUG}[bot]"
-          git config user.email "${BOT_SLUG}[bot]@users.noreply.github.com"
-          git add "$SPEC_DIR/spec-meta.json"
-          git commit -m "review-gate: round $ROUND $OUTCOME, nothing new to fold"
-          git push origin "HEAD:refs/heads/$BRANCH"
 
       # T070/FR-013: the other side of "Report a passing status" above --
       # that step only ever reads steps.decide's outcome (the fast "raw
@@ -1160,7 +1230,7 @@ jobs:
         id: file-oos-0
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.partition.outputs.oos-0-title != ''
         continue-on-error: true
-        uses: ./.github/actions/wing-commander-durable-failure-issue
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-durable-failure-issue
         with:
           token: ${{ steps.ctx.outputs.token }}
           operation: report
@@ -1177,7 +1247,7 @@ jobs:
         id: file-oos-1
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.partition.outputs.oos-1-title != ''
         continue-on-error: true
-        uses: ./.github/actions/wing-commander-durable-failure-issue
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-durable-failure-issue
         with:
           token: ${{ steps.ctx.outputs.token }}
           operation: report
@@ -1194,7 +1264,7 @@ jobs:
         id: file-oos-2
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.partition.outputs.oos-2-title != ''
         continue-on-error: true
-        uses: ./.github/actions/wing-commander-durable-failure-issue
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-durable-failure-issue
         with:
           token: ${{ steps.ctx.outputs.token }}
           operation: report
@@ -1233,16 +1303,31 @@ jobs:
       # was ever posted (Gate 60's composite-checkout-order). This workflow
       # runs only on schedule/workflow_dispatch, so the default ref is
       # github.sha on the default branch -- trusted code, never the PR
-      # branch. F1's trusted-checkout layout (tasks.md Maintainer Feedback)
-      # supersedes this minimal fix across every job.
+      # branch, so this job never touches anything untrusted at all. T073
+      # still gives it the same trusted-copy layout every other job in this
+      # file uses (rather than an exception the new provenance gate would
+      # have to special-case), even though the workspace root here is
+      # already trusted on its own.
       - name: Checkout (trusted, default branch)
         uses: actions/checkout@v5
         with:
           persist-credentials: false
 
+      - name: Checkout this job's own trusted copy (composites)
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          path: .wc-pristine-repo
+          persist-credentials: false
+      - name: Record trusted-copy provenance
+        run: |
+          echo "lifecycle-review-gate: composites resolved from $(git -C .wc-pristine-repo rev-parse HEAD) at ref ${{ github.sha }}." >> "$GITHUB_STEP_SUMMARY"
+      - name: Write-protect this job's own trusted copy (composites)
+        run: chmod -R a-w .wc-pristine-repo
+
       - name: Wing Commander context
         id: ctx
-        uses: ./.github/actions/wing-commander-context
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-context
         with:
           app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
           private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
@@ -1250,7 +1335,7 @@ jobs:
       # T026: re-checked immediately before this job's own durable action.
       - name: Check lifecycle issue state
         id: lifecycle-gate
-        uses: ./.github/actions/wing-commander-lifecycle-gate
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-lifecycle-gate
         with:
           issue-number: ${{ needs.select.outputs.issue }}
           token: ${{ steps.ctx.outputs.token }}
@@ -1270,6 +1355,8 @@ jobs:
           ROUND: ${{ needs.disposition.outputs.round || needs.review.outputs.round }}
           DISPOSITION_OUTCOME: ${{ needs.disposition.outputs.outcome }}
           FINDINGS_OPEN: ${{ needs.disposition.outputs.findings-open }}
+          FOLDED_FINGERPRINTS: ${{ needs.disposition.outputs.folded-fingerprints }}
+          FILED_FINGERPRINTS: ${{ needs.disposition.outputs.filed-fingerprints }}
           COST_LINE: ${{ needs.review.outputs.cost-line }}
         run: |
           set -uo pipefail
@@ -1296,6 +1383,23 @@ jobs:
 
           body="$(printf 'lifecycle-review-gate round %s on PR #%s at %s: **%s**.\n\n%s\n\n%s\n' \
             "${ROUND:-?}" "$PR_NUMBER" "$HEAD_SHA" "$result" "$detail" "$line")"
+
+          # T074/F3: this is the review_gate marker's SOLE write site --
+          # never spec-meta.json, never a commit to the reviewed branch.
+          # Only a round disposition actually completed (clean/findings/
+          # budget-exhausted) advances the marker; a failed/parse-failed
+          # round leaves the prior marker untouched so it is retried,
+          # never counted against the round budget or FR-021's dedup
+          # (T021's own discipline, now applied to the write site too).
+          if [ "$result" != "failed" ]; then
+            marker="$(python3 .wc-pristine-repo/.github/scripts/wc_lifecycle_review_marker.py write \
+              --round "$ROUND" --head-sha "$HEAD_SHA" --outcome "$DISPOSITION_OUTCOME" \
+              --findings-open "${FINDINGS_OPEN:-0}" \
+              --folded-fingerprints "$FOLDED_FINGERPRINTS" --filed-fingerprints "$FILED_FINGERPRINTS" \
+              --updated-at "$(date -u +%Y-%m-%dT%H:%M:%SZ)")"
+            body="$(printf '%s\n\n%s\n' "$body" "$marker")"
+          fi
+
           gh issue comment "$ISSUE" -R "$GITHUB_REPOSITORY" --body "$body"
 
           echo "result=$result" >> "$GITHUB_OUTPUT"
@@ -1362,36 +1466,38 @@ jobs:
       pull-requests: write
       issues: write
     steps:
-      # The PR's own branch at its CURRENT tip: spec-meta.json's review_gate
-      # is read off this working tree below, never a `git show origin/...`
-      # of its own (Gate 61's single-home rule -- the shared read-spec-meta.sh
-      # exposes only review_gate.head_sha, not the outcome/findings_open
-      # fields condition 6 and 7 need).
-      - name: Resolve the PR's head ref
-        id: pr
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ needs.select.outputs.pr-number }}
-        run: |
-          set -uo pipefail
-          branch="$(gh pr view "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --json headRefName --jq .headRefName)"
-          echo "branch=$branch" >> "$GITHUB_OUTPUT"
-
-      # T069: full history, not the default shallow depth -- "Evaluate the
-      # merge preconditions" below peels this branch's tip back past this
-      # gate's own trailing "review-gate: round ..." commit(s)
-      # (wc_review_gate_settled_head.settled_head), which needs those
-      # parent commits present locally.
-      - name: Checkout the PR's head ref
+      # T074/F1: this job never reads the PR's own branch content at all --
+      # `lifecycle_merge_preconditions.py` takes review_gate as a fresh read
+      # of the lifecycle issue's own marker (never spec-meta.json, never a
+      # git peel of the reviewed branch's history, T075), and `gh pr merge`
+      # is a pure API call needing no local checkout of that branch. This
+      # checkout is trusted code only -- the default ref on this
+      # schedule/workflow_dispatch-only workflow is github.sha, never the
+      # PR branch -- so every composite and script this job loads is code
+      # the branch under review could never have supplied (F1's whole
+      # concern: a branch must never decide its own merge). T073 still
+      # gives it the same trusted-copy layout every other job in this file
+      # uses, matching `report`'s own reasoning.
+      - name: Checkout (trusted, default branch)
         uses: actions/checkout@v5
         with:
-          ref: ${{ steps.pr.outputs.branch }}
-          fetch-depth: 0
           persist-credentials: false
+
+      - name: Checkout this job's own trusted copy (composites)
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          path: .wc-pristine-repo
+          persist-credentials: false
+      - name: Record trusted-copy provenance
+        run: |
+          echo "lifecycle-review-gate: composites resolved from $(git -C .wc-pristine-repo rev-parse HEAD) at ref ${{ github.sha }}." >> "$GITHUB_STEP_SUMMARY"
+      - name: Write-protect this job's own trusted copy (composites)
+        run: chmod -R a-w .wc-pristine-repo
 
       - name: Wing Commander context
         id: ctx
-        uses: ./.github/actions/wing-commander-context
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-context
         with:
           app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
           private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
@@ -1401,7 +1507,7 @@ jobs:
       # (contracts "Edge cases": "PR or issue closed mid-round").
       - name: Check lifecycle issue state
         id: lifecycle-gate
-        uses: ./.github/actions/wing-commander-lifecycle-gate
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-lifecycle-gate
         with:
           issue-number: ${{ needs.select.outputs.issue }}
           token: ${{ steps.ctx.outputs.token }}
@@ -1423,15 +1529,32 @@ jobs:
       # PR, and its own kill-switch input is resolved by the caller anyway
       # because a composite `run:` cannot read `vars` (its own header says
       # so). This IS that composite's "equivalent minimal re-check".
+      # T074: review_gate is read fresh from the lifecycle issue's own
+      # marker (wc_lifecycle_review_marker.py) here, in this deterministic
+      # step -- never spec-meta.json, and never a value another job or an
+      # earlier step in this same job captured.
+      - name: Read the current review_gate marker
+        id: review-gate
+        if: steps.lifecycle-gate.outputs.is-open == 'true'
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          ISSUE: ${{ needs.select.outputs.issue }}
+          BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}[bot]
+        run: |
+          set -euo pipefail
+          review_gate_json="$(gh issue view "$ISSUE" -R "$GITHUB_REPOSITORY" --json comments --jq '.comments' \
+            | python3 .wc-pristine-repo/.github/scripts/wc_lifecycle_review_marker.py read --bot-login "$BOT_LOGIN")"
+          echo "json=$review_gate_json" >> "$GITHUB_OUTPUT"
+
       - name: Evaluate the merge preconditions against the current head SHA
         id: preconditions
         if: steps.lifecycle-gate.outputs.is-open == 'true'
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           PR_NUMBER: ${{ needs.select.outputs.pr-number }}
-          SPEC_DIR: ${{ needs.select.outputs.spec-dir }}
           BOT_SLUG: ${{ steps.ctx.outputs.bot-slug }}
           KILL_SWITCH_PAUSED: ${{ vars.WING_COMMANDER_LIFECYCLE_REVIEW_GATE_PAUSED }}
+          REVIEW_GATE_JSON: ${{ steps.review-gate.outputs.json }}
         run: |
           set -euo pipefail
           python3 -I - <<'PYEOF'
@@ -1439,12 +1562,10 @@ jobs:
           import os
           import sys
 
-          sys.path.insert(0, ".github/scripts")
+          sys.path.insert(0, ".wc-pristine-repo/.github/scripts")
           from lifecycle_merge_preconditions import evaluate
 
-          with open(os.path.join(os.environ["SPEC_DIR"], "spec-meta.json"),
-                    encoding="utf-8") as fh:
-              review_gate = json.load(fh).get("review_gate")
+          review_gate = json.loads(os.environ["REVIEW_GATE_JSON"] or "{}") or None
 
           decision = evaluate(
               os.environ["PR_NUMBER"], review_gate,

@@ -26,7 +26,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from lifecycle_readiness import evaluate_from_snapshot  # noqa: E402
-from wc_review_gate_settled_head import self_test as _settled_head_self_test  # noqa: E402
+from wc_lifecycle_review_marker import self_test as _marker_self_test  # noqa: E402
 
 FIXTURES_DIR = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "tests", "lifecycle-readiness")
@@ -123,14 +123,14 @@ def self_test():
     check("null-review-gate-is-not-yet-reviewed", got["ready"] is True,
           "got {0!r}".format(got))
 
-    # T069: wc_review_gate_settled_head.py -- the peel that lets `select`
-    # and lifecycle_merge_preconditions.py recognise a PR whose only new
-    # commit is this gate's own "review-gate: round ..." recording push as
-    # still fully reviewed. Folded in here (this repository's gate suite
-    # is discovered from verify-*.py/.sh invocations, wc_gate_registry.py)
-    # rather than its own standalone `--self-test` workflow step, which
-    # would never actually run at PR time.
-    check("settled-head-peeling", _settled_head_self_test() == 0)
+    # T074: wc_lifecycle_review_marker.py -- review_gate's actual storage
+    # now that it no longer lives in spec-meta.json (F3). Folded in here
+    # (this repository's gate suite is discovered from verify-*.py/.sh
+    # invocations, wc_gate_registry.py) rather than its own standalone
+    # `--self-test` workflow step, which would never actually run at PR
+    # time -- the same idiom T069 established for the module this one
+    # replaces (wc_review_gate_settled_head.py, deleted by T075).
+    check("lifecycle-review-marker", _marker_self_test() == 0)
 
     print("{0} failure(s).".format(failures))
     return 1 if failures else 0

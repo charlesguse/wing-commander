@@ -24,27 +24,41 @@ import re
 import subprocess
 import sys
 
-MARKER_RE = re.compile(
-    r"<!--\s*wing-commander-board-item:\s*(\{.*?\})\s*-->", re.DOTALL)
-MARKER_OPEN_RE = re.compile(r"<!--\s*wing-commander-board-item:")
+def marker_regexes(name):
+    """Builds the (marker_re, open_re) pair for a marker named `name`,
+    embedded as an HTML comment `<!-- <name>: {...} -->` in one of this
+    App's own issue comments. This module's own MARKER_RE/MARKER_OPEN_RE
+    (the board item marker) are `marker_regexes("wing-commander-board-item")`;
+    a second marker shape (spec 062's lifecycle review gate state,
+    wc_lifecycle_review_marker.py) is this function's second caller,
+    reusing find_latest_marker() below rather than re-deriving the same
+    "latest bot comment, last opener wins" algorithm a second time
+    (CLAUDE.md's single-home rule)."""
+    marker_re = re.compile(
+        r"<!--\s*" + re.escape(name) + r":\s*(\{.*?\})\s*-->", re.DOTALL)
+    open_re = re.compile(r"<!--\s*" + re.escape(name) + r":")
+    return marker_re, open_re
 
 
-def last_marker_match(body):
-    """The MARKER_RE match that starts at the LAST marker opener in `body`,
+MARKER_RE, MARKER_OPEN_RE = marker_regexes("wing-commander-board-item")
+
+
+def last_marker_match(body, marker_re=MARKER_RE, open_re=MARKER_OPEN_RE):
+    """The marker_re match that starts at the LAST marker opener in `body`,
     or None (issue #580). The one rule every marker reader uses.
 
     Not the first match: agent text earlier in the same bot comment could
-    carry a marker of its own. Not simply the last of MARKER_RE.finditer()
+    carry a marker of its own. Not simply the last of marker_re.finditer()
     either: an unclosed opener in the agent text would make the lazy match
     run on into the real marker and swallow it. write_marker()'s output is
     always the end of the loop's comment, so its opener is the last one."""
     body = body or ""
     start = None
-    for opener in MARKER_OPEN_RE.finditer(body):
+    for opener in open_re.finditer(body):
         start = opener.start()
     if start is None:
         return None
-    return MARKER_RE.match(body, start)
+    return marker_re.match(body, start)
 
 
 def is_loop_marker_author(comment, bot_login):
@@ -70,23 +84,29 @@ def is_loop_branch(branch, issue_number):
     return re.fullmatch(pattern, branch) is not None
 
 
-def read_marker_with_timestamp(issue_comments, bot_login):
+def find_latest_marker(issue_comments, bot_login, marker_re=MARKER_RE, open_re=MARKER_OPEN_RE):
     """issue_comments: a list of {"created_at": "...", "body": "...",
     "user": {"login": "...", "type": "..."}} dicts (an issue's own
     comments, any order). bot_login: the loop's own App login
     (`<slug>[bot]`); required. Returns (created_at, marker) for the most
-    recent well-formed board-item marker in a comment that
-    is_loop_marker_author() accepts -- each comment's last_marker_match(),
-    never an earlier marker in the same comment -- or None when no such comment carries
-    one, or the newest one is not valid JSON (missing/unparsable marker --
-    degrade to None, never raise; the caller falls back to live GitHub
-    state per FR-054)."""
+    recent well-formed marker of the (marker_re, open_re) shape
+    (marker_regexes()) in a comment that is_loop_marker_author() accepts --
+    each comment's last_marker_match(), never an earlier marker in the same
+    comment -- or None when no such comment carries one, or the newest one
+    is not valid JSON (missing/unparsable marker -- degrade to None, never
+    raise; the caller falls back to live GitHub state per FR-054).
+
+    read_marker_with_timestamp() below is this function specialized to
+    this module's own MARKER_RE/MARKER_OPEN_RE (the board item marker);
+    wc_lifecycle_review_marker.py calls this function directly with its
+    own marker_regexes() pair (spec 062's review_gate state) rather than
+    re-deriving the same "latest bot comment, last opener wins" loop."""
     dated_matches = []
     for comment in issue_comments or []:
         if not is_loop_marker_author(comment, bot_login):
             continue
         body = comment.get("body") or ""
-        match = last_marker_match(body)
+        match = last_marker_match(body, marker_re, open_re)
         if not match:
             continue
         dated_matches.append((comment.get("created_at") or "", match.group(1)))
@@ -101,6 +121,12 @@ def read_marker_with_timestamp(issue_comments, bot_login):
     if not isinstance(marker, dict):
         return None
     return created_at, marker
+
+
+def read_marker_with_timestamp(issue_comments, bot_login):
+    """As find_latest_marker(), specialized to this module's own board-item
+    marker shape (MARKER_RE/MARKER_OPEN_RE)."""
+    return find_latest_marker(issue_comments, bot_login)
 
 
 def read_marker(issue_comments, bot_login):

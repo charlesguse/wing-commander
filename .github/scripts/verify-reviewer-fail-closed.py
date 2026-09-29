@@ -1236,35 +1236,32 @@ def check_lifecycle_extract_mutation(extract_script, tmproot):
 LIFECYCLE_ISSUE = "42"
 LIFECYCLE_PR = "7"
 LIFECYCLE_HEAD_SHA = "deadbeef0000"
-LIFECYCLE_SPEC_DIR_REL = os.path.join("specs", "062-fixture")
 
 
-def _lifecycle_partition_workdir(tmproot, review_gate):
-    """A workdir with SPEC_DIR/spec-meta.json carrying `review_gate`, and
-    .github/scripts/wc_review_finding_fingerprint.py present -- the
-    partition step imports it relative to its own cwd (`disposition` is a
-    deterministic job with no agent step before it, so -- unlike `review`
-    -- it trusts its own checkout's .github/scripts directly, never a
-    pristine snapshot)."""
+def _lifecycle_partition_workdir(tmproot):
+    """A workdir with .wc-pristine-repo/.github/scripts/wc_review_finding_fingerprint.py
+    present -- the partition step imports it from there (T073/F1:
+    `disposition`'s workspace root is the reviewed PR's own untrusted
+    checkout, so it resolves every script from its own trusted copy, the
+    same ".wc-pristine-repo" idiom board-loop.yml uses). T074: review_gate
+    itself is no longer read from a file here -- it arrives as the
+    REVIEW_GATE_JSON env var, the lifecycle issue's own marker as
+    `disposition`'s earlier "Read the current review_gate marker" step
+    would have fetched it."""
     workdir = tempfile.mkdtemp(dir=tmproot)
     runner_temp = tempfile.mkdtemp(dir=tmproot)
-    scripts_dir = os.path.join(workdir, ".github", "scripts")
+    scripts_dir = os.path.join(workdir, ".wc-pristine-repo", ".github", "scripts")
     os.makedirs(scripts_dir, exist_ok=True)
     shutil.copyfile(
         os.path.join(".github", "scripts", "wc_review_finding_fingerprint.py"),
         os.path.join(scripts_dir, "wc_review_finding_fingerprint.py"))
-    spec_dir = os.path.join(workdir, LIFECYCLE_SPEC_DIR_REL)
-    os.makedirs(spec_dir, exist_ok=True)
-    with open(os.path.join(spec_dir, "spec-meta.json"), "w", encoding="utf-8") as fh:
-        json.dump({"spec_dir": LIFECYCLE_SPEC_DIR_REL.replace(os.sep, "/"),
-                   "review_gate": review_gate}, fh)
     return workdir, runner_temp
 
 
-def _lifecycle_partition_env(round_budget="5"):
-    return {"SPEC_DIR": LIFECYCLE_SPEC_DIR_REL, "ISSUE": LIFECYCLE_ISSUE,
-           "PR_NUMBER": LIFECYCLE_PR, "HEAD_SHA": LIFECYCLE_HEAD_SHA,
-           "ROUND_BUDGET": round_budget}
+def _lifecycle_partition_env(review_gate, round_budget="5"):
+    return {"ISSUE": LIFECYCLE_ISSUE, "PR_NUMBER": LIFECYCLE_PR,
+           "ROUND_BUDGET": round_budget,
+           "REVIEW_GATE_JSON": json.dumps(review_gate)}
 
 
 EXHAUSTED_REVIEW_GATE = {"round": 5, "head_sha": "old", "outcome": "findings",
@@ -1273,10 +1270,11 @@ EXHAUSTED_REVIEW_GATE = {"round": 5, "head_sha": "old", "outcome": "findings",
 
 
 def check_lifecycle_budget_exhaustion(partition_script, tmproot):
-    workdir, runner_temp = _lifecycle_partition_workdir(tmproot, EXHAUSTED_REVIEW_GATE)
+    workdir, runner_temp = _lifecycle_partition_workdir(tmproot)
     try:
         rc, out, outputs, _ = run_step(
-            BASH, partition_script, workdir, _lifecycle_partition_env(), runner_temp)
+            BASH, partition_script, workdir,
+            _lifecycle_partition_env(EXHAUSTED_REVIEW_GATE), runner_temp)
         if rc != 0:
             return ["lifecycle budget-exhaustion: step exited {0}: {1} (must "
                     "succeed WITHOUT the findings artifact ever staged -- "
@@ -1285,21 +1283,21 @@ def check_lifecycle_budget_exhaustion(partition_script, tmproot):
         if outputs.get("outcome") != "budget-exhausted":
             failures.append("lifecycle budget-exhaustion: outcome={0!r}, "
                             "expected 'budget-exhausted'".format(outputs.get("outcome")))
-        with open(os.path.join(workdir, LIFECYCLE_SPEC_DIR_REL, "spec-meta.json"),
-                  encoding="utf-8") as fh:
-            meta = json.load(fh)
-        written = meta.get("review_gate") or {}
-        if written.get("outcome") != "budget-exhausted":
-            failures.append("lifecycle budget-exhaustion: spec-meta.json's own "
-                            "review_gate.outcome={0!r}, expected "
-                            "'budget-exhausted'".format(written.get("outcome")))
-        if written.get("findings_open") != 2:
-            failures.append("lifecycle budget-exhaustion: findings_open was not "
-                            "carried over unchanged (got {0!r}, expected 2)".format(
-                                written.get("findings_open")))
+        if outputs.get("findings-open") != "2":
+            failures.append("lifecycle budget-exhaustion: findings-open was not "
+                            "carried over unchanged (got {0!r}, expected '2')".format(
+                                outputs.get("findings-open")))
+        if outputs.get("folded-fingerprints") != "a":
+            failures.append("lifecycle budget-exhaustion: folded-fingerprints was "
+                            "not carried over unchanged (got {0!r}, expected "
+                            "'a')".format(outputs.get("folded-fingerprints")))
+        if outputs.get("filed-fingerprints") != "b":
+            failures.append("lifecycle budget-exhaustion: filed-fingerprints was "
+                            "not carried over unchanged (got {0!r}, expected "
+                            "'b')".format(outputs.get("filed-fingerprints")))
         if not failures:
             print("[ok] #T071 lifecycle budget-exhaustion: outcome=budget-exhausted, "
-                  "findings_open carried over, findings artifact never read")
+                  "findings_open/fingerprints carried over, findings artifact never read")
         return failures
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
@@ -1318,10 +1316,11 @@ def check_lifecycle_budget_exhaustion_mutation(partition_script, tmproot):
         return ["lifecycle budget-exhaustion mutation: expected one {0!r} in "
                 "the partition step; update this harness.".format(LIFECYCLE_BUDGET_TEST)]
     mutated = partition_script.replace(LIFECYCLE_BUDGET_TEST, "if False:\n", 1)
-    workdir, runner_temp = _lifecycle_partition_workdir(tmproot, EXHAUSTED_REVIEW_GATE)
+    workdir, runner_temp = _lifecycle_partition_workdir(tmproot)
     try:
         rc, out, outputs, _ = run_step(
-            BASH, mutated, workdir, _lifecycle_partition_env(), runner_temp)
+            BASH, mutated, workdir,
+            _lifecycle_partition_env(EXHAUSTED_REVIEW_GATE), runner_temp)
         if rc == 0 and outputs.get("outcome") == "budget-exhausted":
             return ["mutation 'lifecycle budget-exhaustion short-circuit "
                     "removed' was NOT caught"]

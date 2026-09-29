@@ -1,43 +1,66 @@
 # Phase 1 Data Model: The Lifecycle Review Gate
 
-## §1 — `spec-meta.json` field: `review_gate`
+## §1 — `review_gate` state: the lifecycle issue's own marker
 
-Added to `specs/002-plan-stage/contracts/spec-meta.schema.json` alongside
-the existing `iteration`/`pending_re_review_from` fields. `null` until
-this feature's workflow first evaluates the spec's lifecycle PR.
+**Amended by T074 (maintainer review 5355876805, F3).** `review_gate`
+does **not** live in `spec-meta.json` and is **not** committed to the
+reviewed pull request's branch. The original design (a `spec-meta.json`
+field, written by a commit `disposition` pushed to the lifecycle PR's own
+branch) was fatal for auto-merge: that push necessarily advances the PR's
+real head past the SHA the round just recorded, so `lint-workflows` never
+runs on the bookkeeping commit, `gate_suite_green` is permanently false on
+the real head, and `merge` can never see a clean round at the current tip.
+It also stacked on F1/F2: a branch-authored commit deciding facts that
+same branch is judged by, peeled back by commit *subject* alone, is a
+forgeable trust boundary.
+
+Instead, `review_gate` is recorded on the **lifecycle issue's own
+comments**, the way `board_item_marker.py` (spec 057) records a board loop
+item's state: an HTML comment `<!-- wing-commander-lifecycle-review-gate:
+{...} -->` appended to `report`'s own human-legible round-outcome comment
+(never the comment's only content). `wc_lifecycle_review_marker.py` is the
+single home of this marker's read/write shape, reusing
+`board_item_marker.py`'s own `find_latest_marker()`/
+`is_loop_marker_author()` (the "latest bot-authored comment, last opener
+wins" algorithm) rather than re-deriving it a second time.
 
 ```json
 {
-  "review_gate": {
-    "round": 0,
-    "head_sha": null,
-    "outcome": null,
-    "findings_open": 0,
-    "folded_fingerprints": [],
-    "filed_fingerprints": [],
-    "updated_at": null
-  }
+  "round": 0,
+  "head_sha": null,
+  "outcome": null,
+  "findings_open": 0,
+  "folded_fingerprints": [],
+  "filed_fingerprints": [],
+  "updated_at": null
 }
 ```
 
+A missing marker (no bot-authored comment on the lifecycle issue carries
+one yet) means no round has ever completed — read exactly as the old
+`null` `spec-meta.json.review_gate` was.
+
 | Field | Type | Written by | Read by |
 |---|---|---|---|
-| `round` | integer, ≥ 0 | The gate, once per completed round (clean or not) | Selection step (budget check), round-budget-exhaustion report |
-| `head_sha` | string \| null | The gate, at round completion | Selection step (D2/D5 — "not already reviewed at this head") |
-| `outcome` | enum: `clean`\|`findings`\|`failed`\|`budget-exhausted`\|`paused`\|`null` | The gate | `lifecycle_merge_preconditions.py` (D6 — "round clean at this head") |
-| `findings_open` | integer, ≥ 0 | The gate, at round completion | Lifecycle-issue status line (FR-015), merge preconditions |
-| `folded_fingerprints` | array of string | The gate's fold step (D11), append-only | Same step, next round (FR-021 dedup) |
-| `filed_fingerprints` | array of string | The gate's file step (D11), append-only | Same step, next round (FR-021 dedup) |
-| `updated_at` | string (ISO 8601) \| null | The gate, every write | Diagnostic only; no gate reads it |
+| `round` | integer, ≥ 0 | `report`, once per completed round (clean or not) | `select` (budget check via `disposition`), round-budget-exhaustion report |
+| `head_sha` | string \| null | `report`, at round completion | `select`/`readiness` (D2/D5 — "not already reviewed at this head") |
+| `outcome` | enum: `clean`\|`findings`\|`failed`\|`budget-exhausted`\|`paused`\|`null` | `report` | `lifecycle_merge_preconditions.py` (D6 — "round clean at this head") |
+| `findings_open` | integer, ≥ 0 | `report`, at round completion | Lifecycle-issue status line (FR-015), merge preconditions |
+| `folded_fingerprints` | array of string | `report`, from `disposition`'s fold step (D11), append-only | Same step, next round (FR-021 dedup) |
+| `filed_fingerprints` | array of string | `report`, from `disposition`'s file step (D11), append-only | Same step, next round (FR-021 dedup) |
+| `updated_at` | string (ISO 8601) \| null | `report`, every write | Diagnostic only; no gate reads it |
 
 **Invariant**: `head_sha` and `outcome` are always written together, in
-the same commit that also updates `iteration` if a fold occurred (D8/D9)
-— never a `head_sha` update with a stale `outcome`, which is what would
-let a later reader believe a round covered a SHA it did not (FR-005).
+the same marker write — never a `head_sha` update with a stale `outcome`,
+which is what would let a later reader believe a round covered a SHA it
+did not (FR-005). This invariant is now trivially true: `report` is the
+marker's *only* writer, and writes both fields in one call every time.
 
-**Fingerprint values** reuse spec 076's stable, verbatim-anchor scheme
-(the same function `wing-commander-durable-failure-issue` already calls),
-never a value the reviewing agent supplies (constitution IX, FR-021).
+**Fingerprint values** reuse `wc_review_finding_fingerprint.py` (T028),
+this repository's actual, currently-duplicable idiom — never a value the
+reviewing agent supplies (constitution IX, FR-021). See T028's own module
+docstring for why this is not spec 076's (unplanned) verbatim-anchor
+scheme, which data-model.md originally (incorrectly) cited here.
 
 ## §2 — Review Round (ephemeral, one per workflow run)
 
@@ -159,10 +182,11 @@ neither performs the append/flip/commit sequence any other way.
 
 ```text
 Lifecycle Issue (#N)
+  ├─ review_gate marker (§1, T074) ──┐  (wc_lifecycle_review_marker.py; the
+  │                                  │   issue's own comments, never a commit)
   └─ spec-meta.json
        ├─ iteration ──────────────┐  (unchanged field, read by §7)
-       ├─ pending_re_review_from  │  (unchanged field, written by §6)
-       └─ review_gate (§1) ───────┤
+       └─ pending_re_review_from  │  (unchanged field, written by §6)
                                    │
 Lifecycle PR (final implementation PR, stage: review)
   └─ head_sha ── evaluated by ──> Readiness Decision (§4)

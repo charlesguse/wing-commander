@@ -4543,6 +4543,23 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-waiver-citations.py --self-test
 
+      # Gate 125 — specs/062-lifecycle-review-gate T073 (maintainer review
+      # 5355876805, F1): every `uses: ./.github/actions/` reference and
+      # every bare `.github/scripts` import in lifecycle-review-gate.yml
+      # resolves from a trusted copy (`.wc-pristine-repo`, checked out at
+      # `github.sha`), never the reviewed pull request's own checkout --
+      # the composite-and-script half of the same concern Gate 104 closes
+      # for board-loop.yml (see that gate's own header for the shared
+      # trusted-copy statement). Numbered 125 (124 above is the current
+      # highest; #660 tracks the cross-branch allocation problem both
+      # gates' own numbering comments already note).
+      - name: "Gate 125 — every uses: ./.github/actions/ reference and every .github/scripts import in lifecycle-review-gate.yml resolves from the trusted copy, never the reviewed PR's own checkout"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-lifecycle-review-gate-composite-provenance.py
+      - name: "Gate 125 self-test — a raw workspace uses:, a moved, dropped, mis-pinned, or continue-on-error checkout, a missing .gitignore entry, a dropped write-protect step, or a bare .github/scripts import each fail"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-lifecycle-review-gate-composite-provenance.py --self-test
+
       # Gate 114 — specs/066-fine-grained-maintainer-token FR-017/FR-018: "a
       # classic PAT, not fine-grained" was asserted in at least four places
       # (docs/setup.md, auto-release.yml's credential-step comment, Gate

@@ -16,18 +16,19 @@ window").
    (there is nothing yet to stand down from until a PR is selected).
 
 2. **`select`** — lists open PRs, filters to `spec-meta.json.stage ==
-   "review"` (D2), keeps those whose `review_gate.head_sha` (if any)
-   differs from the PR's current `headRefOid` peeled back past this
-   gate's own trailing "review-gate: round ..." recording commit(s)
-   (`wc_review_gate_settled_head.settled_head`, T069 — without the peel,
-   `disposition`'s own round-recording push would make every reviewed PR
-   qualify again on the very next run, forever), picks the oldest.
-   Outputs `pr-number`, `issue`, `spec-dir`, `head-sha` (the PR's raw
-   current head), `review-gate-head-sha` (the RECORDED value read off
-   spec-meta.json, threaded through for `readiness` to compare against
-   its own fresh snapshot rather than comparing `head-sha` against
-   itself), or nothing (clean exit, the common case — SC-009's "at most
-   one round per SHA" starts here, before any billable step runs).
+   "review"` and same-repository/default-base only (D2, T077/F5 — a fork
+   PR's `headRefName` is never trusted as a same-repository branch), keeps
+   those whose `review_gate.head_sha` (if any) differs from the PR's
+   current `headRefOid` (T074/F3: `review_gate` is read from the lifecycle
+   issue's own marker, `wc_lifecycle_review_marker.py` — nothing this gate
+   does ever commits to the reviewed branch, so no peel is needed;
+   T069/T075's commit-subject peel, `wc_review_gate_settled_head.py`, is
+   deleted), picks the oldest. Outputs `pr-number`, `issue`, `spec-dir`,
+   `head-sha` (the PR's raw current head), `review-gate-head-sha` (the
+   RECORDED value read off the marker, threaded through for `readiness` to
+   compare against its own fresh snapshot rather than comparing `head-sha`
+   against itself), or nothing (clean exit, the common case — SC-009's "at
+   most one round per SHA" starts here, before any billable step runs).
 
 3. **`readiness`** — calls `lifecycle_readiness.py` (contracts/readiness-
    and-merge.md) against `select`'s `head-sha`. `ready: false` → posts
@@ -41,28 +42,34 @@ window").
    `wing-commander-review-findings` block schema-validated against
    `board-review-finding.schema.json`.
 
-5. **`disposition`** — deterministic (D11): partitions findings by
-   `in_scope`, dedupes against `review_gate.folded_fingerprints`/
-   `filed_fingerprints`, files out-of-scope survivors
+5. **`disposition`** — deterministic (D11): reads the current `review_gate`
+   marker (T074), partitions findings by `in_scope`, dedupes against its
+   `folded_fingerprints`/`filed_fingerprints`, files out-of-scope survivors
    (`wing-commander-durable-failure-issue`), renders in-scope survivors
    into a tasks.md section, and — only if that section is non-empty —
    calls `wing-commander-fold-commit` then `wing-commander-fold-dispatch`
-   (contracts/fold-integration.md). Writes the round's outcome to
-   `spec-meta.json.review_gate` (data-model.md §1) in the same commit
-   `wing-commander-fold-commit` produces, or in its own commit when the
-   round is clean. T070/FR-013/FR-020: "clean" here means zero open
-   IN-SCOPE survivors after dedup — a round whose only survivors are
-   out-of-scope (still filed above) records `outcome: "clean"` and gets
+   (contracts/fold-integration.md). Writes nothing durable itself: it
+   outputs this round's data (round, outcome, findings_open, the
+   post-round fingerprint sets) for `report` to write, once, into the
+   marker (T074/F3 — `disposition` no longer commits `review_gate`
+   anywhere, since a commit to the reviewed branch is exactly what made
+   auto-merge unreachable). T070/FR-013/FR-020: "clean" here means zero
+   open IN-SCOPE survivors after dedup — a round whose only survivors are
+   out-of-scope (still filed above) resolves `outcome: "clean"` and gets
    the same passing status as a round with no findings at all, never a
    round whose raw counts alone were nonzero.
 
-6. **`report`** — posts the round's outcome to the lifecycle issue: round
-   number, head SHA, finding count, result (FR-015), and the cost line
-   via `wing-commander-metrics-summary`'s existing `cost-line` output
+6. **`report`** — the review_gate marker's SOLE writer (T074/F3): posts
+   the round's outcome to the lifecycle issue -- round number, head SHA,
+   finding count, result (FR-015) -- and the cost line via
+   `wing-commander-metrics-summary`'s existing `cost-line` output
    (FR-036) — the 8-stage pattern, not `board-loop.yml`'s silent-metrics
    pattern (research finding: board-loop never renders a cost line;
    this gate follows the stages that do, since spec.md US6 scenario 3
-   requires the existing single home).
+   requires the existing single home). Appends the marker
+   (`wc_lifecycle_review_marker.py write`) to that same comment, unless
+   the round failed/parse-failed (in which case nothing is written, so a
+   retryable round never counts against the budget or FR-021's dedup).
 
 7. **`merge`** — `if: vars.WING_COMMANDER_LIFECYCLE_AUTO_MERGE == 'true'`.
    Re-checks the kill switch (`wing-commander-board-stop-check`,

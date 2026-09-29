@@ -24,24 +24,25 @@ def evaluate(pr_number: int) -> LifecycleReadinessDecision:
    board loop never checks this because it never merges, so no existing
    code answers this question for a lifecycle PR yet.
 4. **Not yet reviewed at this head SHA** (new relative to
-   `board_readiness.py` — D5): `spec-meta.json.review_gate.head_sha !=
-   head_sha` (FR-004/FR-005 — a pass never carries over to a head it was
-   not derived on). `head_sha` here is the RECORDED value `select` reads
-   off spec-meta.json (threaded through as its own `review-gate-head-sha`
-   output), compared against a fresh `gh pr view` snapshot's `headRefOid`
-   — never `select`'s own captured PR head compared against itself, which
-   always reads "already reviewed" (T069/#476 this cycle's convergence
-   finding).
+   `board_readiness.py` — D5): `review_gate.head_sha != head_sha`
+   (FR-004/FR-005 — a pass never carries over to a head it was not derived
+   on). `head_sha` here is the RECORDED value `select` reads off the
+   lifecycle issue's own marker (T074/F3, `wc_lifecycle_review_marker.py`,
+   threaded through as its own `review-gate-head-sha` output), compared
+   against a fresh `gh pr view` snapshot's `headRefOid` — never `select`'s
+   own captured PR head compared against itself, which always reads
+   "already reviewed" (T069/#476 this cycle's convergence finding).
 
-   `select`'s own pre-filter (contracts/lifecycle-review-gate-workflow.md
-   job 2) additionally peels a candidate's fresh `headRefOid` back past
-   this gate's own trailing "review-gate: round ..." recording commit(s)
-   (`wc_review_gate_settled_head.settled_head`, T069) before comparing —
-   `disposition`'s own round-recording push necessarily advances the PR's
-   real head past the SHA it just wrote into `review_gate.head_sha` (a
-   commit cannot name its own resulting SHA inside its own content), so
-   without this peel the PR would qualify again on the very next run
-   forever, spending a fresh review on nothing but its own bookkeeping.
+   **T074/F3 amendment**: `review_gate` no longer lives in `spec-meta.json`
+   and is never committed to the reviewed branch — it lives on the
+   lifecycle issue's own marker instead, written once per round by
+   `report` alone. Since nothing this gate does ever commits to the
+   reviewed branch, its head never moves on its own account, and no peel
+   is needed: T069's `wc_review_gate_settled_head.settled_head` (a
+   commit-subject peel `select` and `lifecycle_merge_preconditions.py`
+   both used to recognise this gate's own bookkeeping) is deleted (T075/F2
+   — that peel matched on commit *subject alone*, a forgeable trust
+   boundary anyone who could push to the branch could exploit).
 5. **Kill switch clear**: `WING_COMMANDER_LIFECYCLE_REVIEW_GATE_PAUSED !=
    'true'`, checked again at this exact moment (FR-006).
 
@@ -66,12 +67,11 @@ def evaluate(pr_number: int) -> LifecycleMergePreconditions:
    moved since, spec.md Edge Cases: "the head SHA moves mid-round").
 6. **Round clean at this exact head SHA**:
    `review_gate.head_sha == head_sha and review_gate.outcome == "clean"`.
-   The `head_sha` half is evaluated against the SAME settled (peeled)
-   head condition 4 above uses, not the raw fresh `headRefOid` — T069:
-   `disposition`'s own recording commit always advances the raw head past
-   the reviewed SHA, so comparing against the raw value would refuse
-   every merge of a round that came back clean, forever. `--match-head-
-   commit` below still targets the branch's actual, unpeeled current tip.
+   The `head_sha` half is evaluated against the same raw fresh
+   `headRefOid` condition 4 above uses — T074/F3: `review_gate` never
+   lives on the reviewed branch, so nothing this gate does ever moves that
+   head on its own account, and no peel (T069, deleted by T075) is needed.
+   `--match-head-commit` below targets that same current tip.
 7. **Zero open in-scope findings**: `review_gate.findings_open == 0`
    (redundant with 6 in the common case, but independently checked —
    FR-026 lists it separately, and a finding could in principle be

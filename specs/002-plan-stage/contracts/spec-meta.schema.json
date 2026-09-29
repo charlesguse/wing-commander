@@ -31,40 +31,6 @@
       "type": ["string", "null"],
       "pattern": "^spec/[0-9]{3}-[a-z0-9][a-z0-9-]*$",
       "description": "Set by this stage the first time spec/NNN-slug is created or confirmed to exist (FR-002)."
-    },
-    "review_gate": {
-      "description": "specs/062-lifecycle-review-gate, data-model.md §1. null until lifecycle-review-gate.yml first evaluates this specification's lifecycle PR. Not modified by this (plan) stage.",
-      "type": ["object", "null"],
-      "required": ["round", "head_sha", "outcome", "findings_open", "folded_fingerprints", "filed_fingerprints", "updated_at"],
-      "properties": {
-        "round": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "head_sha": {
-          "type": ["string", "null"]
-        },
-        "outcome": {
-          "type": ["string", "null"],
-          "enum": ["clean", "findings", "failed", "budget-exhausted", "paused", null]
-        },
-        "findings_open": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "folded_fingerprints": {
-          "type": "array",
-          "items": { "type": "string" }
-        },
-        "filed_fingerprints": {
-          "type": "array",
-          "items": { "type": "string" }
-        },
-        "updated_at": {
-          "type": ["string", "null"],
-          "description": "ISO 8601"
-        }
-      }
     }
   }
 }
