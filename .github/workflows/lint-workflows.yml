@@ -4625,6 +4625,22 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-lifecycle-review-gate-composite-provenance.py --self-test
 
+      # Gate 126 — specs/091-gh-api-error-capture: on an HTTP error, `gh api
+      # ... --jq '<filter>'` still prints the raw JSON error body to stdout
+      # while the human-readable line goes to stderr and the filter is
+      # never applied, so a bare command-substitution capture of that read
+      # keeps holding the error body on failure, not empty (#497). This
+      # gate classifies every covered `gh api` command-substitution
+      # capture's failure path and fails on any that does not exit the
+      # step, reassign the captured variable, leave the loop iteration, or
+      # carry a stated-reason `# wc-gh-api-error-exempt: <reason>` marker.
+      - name: "Gate 126 — no gh api capture carries an unhandled error body downstream"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-gh-api-error-capture.py
+      - name: "Gate 126 self-test — every classification branch, including the #497 shape, fails where it should"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-gh-api-error-capture.py --self-test
+
       # Gate 114 — specs/066-fine-grained-maintainer-token FR-017/FR-018: "a
       # classic PAT, not fine-grained" was asserted in at least four places
       # (docs/setup.md, auto-release.yml's credential-step comment, Gate
