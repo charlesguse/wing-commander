@@ -6,8 +6,14 @@
 # dispatch-and-wait-tests/run-tests.sh discipline of executing the shipped
 # shell itself rather than a restatement of it).
 #
-# Covers quickstart.md Drill 2's three scenarios: a clean immediate grant,
-# a queued-then-granted sequence, and one stale-ticket reclaim.
+# Covers quickstart.md Drill 2's three scenarios (a clean immediate grant,
+# a queued-then-granted sequence, and one stale-ticket reclaim) plus two
+# covering the implement-kind stale-reclaim fix (research.md D6): an
+# implement-kind head ticket's own run_id is the DISPATCHING run that
+# enqueued it, not the real implement.yml run holding the ticket, so
+# staleness must be checked against the round's correlated
+# implement_run_id -- not reclaimed while that real run is still
+# in_progress, reclaimed once it has completed.
 #
 # Invoked directly by a `run:` step in lint-workflows.yml (Gate 126
 # fixtures), so CI runs this suite on every PR. run-local-gates.py mirrors
@@ -141,6 +147,95 @@ else
   FAILURES=$((FAILURES + 1))
 fi
 rm -f "$out_file"
+
+# --- Scenarios 4/5 setup: an implement-kind head ticket whose own run_id
+# is the DISPATCHING run (claim-dispatch stamps it that way), never the
+# actual implement.yml run holding the ticket. Build a realistic round so
+# record-implement-run has something to correlate.
+enqueue_out="$(LEDGER_REMOTE_URL="$REMOTE" GH_TOKEN=x GITHUB_REPOSITORY=x/x SPEC_DIR="$SPEC_DIR" \
+  KIND=act RUN_ID=900 bash "$LEDGER_SH" enqueue)"
+round="$(printf '%s\n' "$enqueue_out" | grep '^round=' | cut -d= -f2-)"
+
+LEDGER_REMOTE_URL="$REMOTE" GH_TOKEN=x GITHUB_REPOSITORY=x/x SPEC_DIR="$SPEC_DIR" \
+  TOKEN="run-900-act" RUN_ID=900 OUTCOME=folded COMMIT_SHA=def456 LEG_ID=leg-1 SUMMARY=s \
+  bash "$LEDGER_SH" release >/dev/null
+
+LEDGER_REMOTE_URL="$REMOTE" GH_TOKEN=x GITHUB_REPOSITORY=x/x SPEC_DIR="$SPEC_DIR" \
+  KIND=dispatch RUN_ID=900 bash "$LEDGER_SH" enqueue >/dev/null
+
+LEDGER_REMOTE_URL="$REMOTE" GH_TOKEN=x GITHUB_REPOSITORY=x/x SPEC_DIR="$SPEC_DIR" \
+  ROUND="$round" DISPATCH_TOKEN="run-900-dispatch" ITERATION=5 \
+  bash "$LEDGER_SH" claim-dispatch >/dev/null
+
+LEDGER_REMOTE_URL="$REMOTE" GH_TOKEN=x GITHUB_REPOSITORY=x/x SPEC_DIR="$SPEC_DIR" \
+  TOKEN="run-900-dispatch" RUN_ID=900 OUTCOME=folded \
+  bash "$LEDGER_SH" release >/dev/null
+
+# claim-dispatch enqueued "run-900-implement" (run_id=900, the DISPATCHING
+# run) behind the dispatch ticket; releasing the dispatch ticket makes it
+# head. Correlate it to the REAL implement.yml run (901) the way
+# dispatch-once does once it observes the dispatched run.
+LEDGER_REMOTE_URL="$REMOTE" GH_TOKEN=x GITHUB_REPOSITORY=x/x SPEC_DIR="$SPEC_DIR" \
+  ROUND="$round" IMPLEMENT_RUN_ID=901 bash "$LEDGER_SH" record-implement-run >/dev/null
+
+# --- Scenario 4: implement-kind head ticket NOT reclaimed while its
+# correlated real run (901) is still in_progress, even though the ticket's
+# own run_id (900, the long-finished dispatching run) would report
+# "completed" if the fix wrongly checked that field instead.
+out_file4="$(mktemp)"
+summary_file4="$(mktemp)"
+(
+  PATH="$STUBDIR:$PATH" \
+    GITHUB_ACTION_PATH="$COMPOSITE_DIR" \
+    GH_TOKEN=x GITHUB_REPOSITORY=x/x \
+    LEDGER_REMOTE_URL="$REMOTE" \
+    SPEC_DIR="$SPEC_DIR" KIND=act RUN_ID=105 EXISTING_TOKEN="" \
+    MAX_WAIT_MINUTES=1 POLL_INTERVAL_SECONDS=1 STALE_AFTER_MINUTES=0 \
+    GH_STUB_STATUS=in_progress \
+    GITHUB_OUTPUT="$out_file4" GITHUB_STEP_SUMMARY="$summary_file4" \
+    bash "$SCRIPT"
+) &
+waiter_pid=$!
+sleep 3
+if kill -0 "$waiter_pid" 2>/dev/null; then
+  kill "$waiter_pid" 2>/dev/null
+  wait "$waiter_pid" 2>/dev/null
+  still_position="$(LEDGER_REMOTE_URL="$REMOTE" GH_TOKEN=x GITHUB_REPOSITORY=x/x SPEC_DIR="$SPEC_DIR" PEEK_TOKEN="run-900-implement" bash "$LEDGER_SH" peek | grep '^position=' | cut -d= -f2-)"
+  if [ "$still_position" = "0" ]; then
+    echo "[ok] implement-kind ticket not reclaimed while its correlated run is in_progress"
+  else
+    echo "::error::[implement liveness] expected run-900-implement still at head, position=$still_position"
+    FAILURES=$((FAILURES + 1))
+  fi
+else
+  echo "::error::[implement liveness] waiter exited early (should have blocked behind an in_progress implement run)"
+  FAILURES=$((FAILURES + 1))
+fi
+rm -f "$out_file4" "$summary_file4"
+
+# --- Scenario 5: the same implement-kind head ticket IS reclaimed once its
+# correlated real run (901) is completed/absent.
+out_file5="$(mktemp)"
+summary_file5="$(mktemp)"
+PATH="$STUBDIR:$PATH" \
+  GITHUB_ACTION_PATH="$COMPOSITE_DIR" \
+  GH_TOKEN=x GITHUB_REPOSITORY=x/x \
+  LEDGER_REMOTE_URL="$REMOTE" \
+  SPEC_DIR="$SPEC_DIR" KIND=act RUN_ID=106 EXISTING_TOKEN="" \
+  MAX_WAIT_MINUTES=1 POLL_INTERVAL_SECONDS=1 STALE_AFTER_MINUTES=0 \
+  GH_STUB_STATUS=completed \
+  GITHUB_OUTPUT="$out_file5" GITHUB_STEP_SUMMARY="$summary_file5" \
+  bash "$SCRIPT"
+rc=$?
+token5="$(grep '^token=' "$out_file5" | cut -d= -f2-)"
+granted5="$(grep '^granted=' "$out_file5" | cut -d= -f2-)"
+if [ "$rc" -eq 0 ] && [ "$token5" = "run-106-act" ] && [ "$granted5" = "true" ]; then
+  echo "[ok] implement-kind ticket reclaimed once its correlated run has completed: token=$token5 granted=$granted5"
+else
+  echo "::error::[implement liveness reclaim] rc=$rc token=${token5:-<empty>} granted=${granted5:-<empty>}"
+  FAILURES=$((FAILURES + 1))
+fi
+rm -f "$out_file5" "$summary_file5"
 
 echo "wing-commander-fold-queue-admit tests: $FAILURES failure(s)."
 [ "$FAILURES" -eq 0 ]

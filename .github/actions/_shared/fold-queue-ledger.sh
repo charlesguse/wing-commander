@@ -137,12 +137,21 @@
 # plus a lookup of one token's queue position/grant state, used by
 # wing-commander-fold-queue-admit's wait loop. Each call re-clones the
 # branch fresh -- callers MUST NOT cache a read across poll iterations.
+# Its output includes head-kind: an implement-kind head ticket's own
+# run_id field is the DISPATCHING run's id (see claim-dispatch and
+# claim-redispatch below), never the actual implement.yml run holding the
+# ticket, so a caller checking staleness MUST branch on head-kind and,
+# when it is "implement", resolve liveness through peek-round's
+# implement-run-id instead of head-run-id (research.md D6).
 #
 # A sixth mode, `peek-round` -- SPEC_DIR, ROUND -- is the same kind of
 # read-only lookup, returning a round's folded_items/not_folded_items as
-# compact JSON. Used by report-fold-outcomes (research.md D3) to read THIS
-# run's own completion records instead of the base..tip git-log range scan
-# that could misattribute a concurrent run's fold commits.
+# compact JSON, plus implement-run-id (empty until record-implement-run
+# has fired for this round). Used by report-fold-outcomes (research.md D3)
+# to read THIS run's own completion records instead of the base..tip
+# git-log range scan that could misattribute a concurrent run's fold
+# commits, and by wing-commander-fold-queue-admit to find the real run to
+# check when reclaiming a stale implement-kind head ticket.
 #
 # A seventh mode, `peek-implement-run` -- SPEC_DIR, IMPLEMENT_RUN_ID -- scans
 # every round for this spec-dir for the one whose implement_run_id matches,
@@ -252,6 +261,7 @@ if [ "$TRANSFORM" = "peek" ]; then
         round: (.specs[$spec].round // 0),
         "head-token": (($q[0].token) // ""),
         "head-run-id": (($q[0].run_id) // ""),
+        "head-kind": (($q[0].kind) // ""),
         "head-granted-at": (($q[0].granted_at) // "")
       }
   ' "$current_json" | jq -r 'to_entries[] | "\(.key)=\(.value)"'
@@ -277,7 +287,8 @@ if [ "$TRANSFORM" = "peek-round" ]; then
   jq -c --arg spec "$SPEC_DIR" --arg round "$ROUND" '
     {
       "folded-items": (.specs[$spec].rounds[$round].folded_items // [] | tojson),
-      "not-folded-items": (.specs[$spec].rounds[$round].not_folded_items // [] | tojson)
+      "not-folded-items": (.specs[$spec].rounds[$round].not_folded_items // [] | tojson),
+      "implement-run-id": (.specs[$spec].rounds[$round].implement_run_id // "")
     }
   ' "$current_json" | jq -r 'to_entries[] | "\(.key)=\(.value)"'
   exit 0

@@ -193,17 +193,31 @@ waiter that has been polling behind the current head ticket for longer
 than `stale-after-minutes` (composite input, sized against
 `inputs.confirm-timeout-minutes`-class budgets already in use elsewhere in
 `pr-conversation.yml`) queries `gh api repos/.../actions/runs/<run_id>`
-for the head ticket's owning run. If that run's own status shows it is no
-longer active (completed in any conclusion, having never released its
-ticket — only reachable if a non-ticketed entrant collided with a
-ticket-holder's GitHub-group slot, or a runner/infra failure orphaned the
-ticket), the waiter deterministically removes the stale head ticket from
-the ledger (a CAS write, same idiom as every other ledger mutation) and
-re-checks its own position. This is the FR-018 guarantee, and it is
-expected to be a rare path — D1's design means ordinary ticketed
-contention no longer produces an evicted, un-released ticket at all; this
-reclaim exists for the residual case a non-ticketed dispatch (see D5's
-manual-dispatch carve-out) or an infrastructure failure could still cause.
+for the run that actually owns the head ticket. For an `act`- or
+`dispatch`-kind ticket that is simply the ticket's own `run_id` field. For
+an `implement`-kind ticket it is NOT: `claim-dispatch` and
+`claim-redispatch` both stamp that ticket's `run_id` with the DISPATCHING
+run's id (the enqueuing run, `dispatch-once` or `fold-cycle-guard`) since
+the actual `implement.yml` run doesn't exist yet at ticket-creation time —
+and that dispatching run completes within seconds, long before a real
+implement cycle (which routinely runs past `stale-after-minutes`) does.
+The waiter therefore branches on the head ticket's `kind` (`peek`'s
+`head-kind` field): for `implement`, it resolves the real holder through
+`peek-round`'s `implement-run-id` (set by `record-implement-run` once
+`dispatch-once`/`fold-cycle-guard` correlates the dispatched run) and
+checks that run's liveness instead, skipping reclaim entirely while
+`implement-run-id` is still unset rather than falling back to the wrong
+id. If that run's own status shows it is no longer active (completed in
+any conclusion, having never released its ticket — only reachable if a
+non-ticketed entrant collided with a ticket-holder's GitHub-group slot, or
+a runner/infra failure orphaned the ticket), the waiter deterministically
+removes the stale head ticket from the ledger (a CAS write, same idiom as
+every other ledger mutation) and re-checks its own position. This is the
+FR-018 guarantee, and it is expected to be a rare path — D1's design means
+ordinary ticketed contention no longer produces an evicted, un-released
+ticket at all; this reclaim exists for the residual case a non-ticketed
+dispatch (see D5's manual-dispatch carve-out) or an infrastructure failure
+could still cause.
 
 **Rationale for keeping this deterministic rather than agent-judged**:
 Principle IX names exactly this shape of decision — "is a fingerprint /

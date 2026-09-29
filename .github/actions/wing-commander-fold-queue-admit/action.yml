@@ -104,6 +104,7 @@ runs:
           granted="$(printf '%s\n' "$peek_out" | grep '^granted=' | cut -d= -f2-)"
           head_token="$(printf '%s\n' "$peek_out" | grep '^head-token=' | cut -d= -f2-)"
           head_run_id="$(printf '%s\n' "$peek_out" | grep '^head-run-id=' | cut -d= -f2-)"
+          head_kind="$(printf '%s\n' "$peek_out" | grep '^head-kind=' | cut -d= -f2-)"
           head_granted_at="$(printf '%s\n' "$peek_out" | grep '^head-granted-at=' | cut -d= -f2-)"
 
           if [ "$position" = "0" ] && [ "$granted" = "true" ]; then
@@ -135,9 +136,29 @@ runs:
             if [ "$head_granted_epoch" -gt 0 ]; then
               age_minutes=$(( (now_ts - head_granted_epoch) / 60 ))
               if [ "$age_minutes" -ge "$STALE_AFTER_MINUTES" ]; then
-                head_status="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${head_run_id}" --jq '.status' 2>/dev/null || echo "")"
-                if [ -z "$head_status" ] || [ "$head_status" = "completed" ]; then
-                  SPEC_DIR="$SPEC_DIR" STALE_TOKEN="$head_token" GH_TOKEN="$GH_TOKEN" GITHUB_REPOSITORY="$GITHUB_REPOSITORY" bash "$LEDGER" reclaim-stale >/dev/null || true
+                # An implement-kind head ticket's own run_id is the
+                # DISPATCHING run that enqueued it (claim-dispatch /
+                # claim-redispatch), not the implement.yml run actually
+                # holding the ticket -- that run finishes in seconds, so
+                # checking it here would misreport a long-running
+                # implement cycle as stale (research.md D6). Resolve the
+                # real holder through the round's recorded
+                # implement_run_id instead, and skip reclaiming entirely
+                # until that correlation exists.
+                liveness_run_id="$head_run_id"
+                skip_reclaim="false"
+                if [ "$head_kind" = "implement" ]; then
+                  round_out="$(SPEC_DIR="$SPEC_DIR" ROUND="$round" GH_TOKEN="$GH_TOKEN" GITHUB_REPOSITORY="$GITHUB_REPOSITORY" bash "$LEDGER" peek-round)"
+                  liveness_run_id="$(printf '%s\n' "$round_out" | grep '^implement-run-id=' | cut -d= -f2-)"
+                  if [ -z "$liveness_run_id" ]; then
+                    skip_reclaim="true"
+                  fi
+                fi
+                if [ "$skip_reclaim" != "true" ]; then
+                  head_status="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${liveness_run_id}" --jq '.status' 2>/dev/null || echo "")"
+                  if [ -z "$head_status" ] || [ "$head_status" = "completed" ]; then
+                    SPEC_DIR="$SPEC_DIR" STALE_TOKEN="$head_token" GH_TOKEN="$GH_TOKEN" GITHUB_REPOSITORY="$GITHUB_REPOSITORY" bash "$LEDGER" reclaim-stale >/dev/null || true
+                  fi
                 fi
               fi
             fi
