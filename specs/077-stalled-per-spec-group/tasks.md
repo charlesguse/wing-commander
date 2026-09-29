@@ -202,3 +202,7 @@ This repository is a GitHub Actions pipeline component — no `src`/`tests` spli
 
 - [ ] T030 Add `Closes #633` to this pull request's body — #633 is the pipeline-filed issue ("resolve-identity's spec-dir output is never truly empty for a non-qualifying PR") that T020 already fixed in this PR.
   **Not implemented**: this run's permitted commands include `gh issue view`/`gh issue comment` but no `gh pr` verb, so this agent has no way to read or edit the pull request's body. Left for a maintainer or a differently-privileged step to add `Closes #633` to the PR body by hand.
+
+## Phase 8: Convergence
+
+- [ ] T031 Reword spec.md's FR-002, FR-005, FR-006, and FR-008 to name `stalled` and `stalled-mark` explicitly instead of "the survivor job" (singular), matching the correction SC-001 and the Edge Cases section already received after T023 split the original single `stalled` job in two. FR-002 ("The survivor job's concurrency.group MUST be the canonical per-specification group...") describes `stalled-mark`'s behavior only, not `stalled`'s (which now stays in the per-PR group unconditionally). FR-005/FR-006 ("still post a stall notice") describe `stalled`'s behavior only. FR-008's "falls back to a per-pull-request group" describes `stalled-mark`'s conditional behavior; `stalled` is unconditionally per-PR, not a fallback. (partial, spec.md FR-002/FR-005/FR-006/FR-008)
