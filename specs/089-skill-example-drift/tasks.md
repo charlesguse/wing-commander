@@ -169,3 +169,9 @@ Task: "Create .github/scripts/verify-skill-board-loop-concurrency-claim.py modul
 ### Parallel Team Strategy
 
 Because nearly every task shares one of two files (the gate script or SKILL.md), this feature does not parallelize well across multiple implementers beyond the two Setup tasks and the two Polish read-only checks — a single implementer working the phases in order is the realistic path, not a team split.
+
+---
+
+## Phase 7: Convergence
+
+- [ ] T021 Extend `.github/scripts/verify-skill-board-loop-concurrency-claim.py`'s `--self-test` mode with synthetic SKILL.md/concurrency-groups.md/board-loop.yml-shaped text fixtures that exercise `extract_skill_claim`, `extract_job_classifications`, `extract_workflow_concurrency_facts`, and `compute_drift_findings` directly (not just `apply_waivers`), covering each of the five `DriftFinding` properties (`job-missing-from-group`, `cancel-in-progress-mismatch`, `unexpected-job-in-group`, `job-range-mismatch`, `directed-group-mismatch`) and `subject-missing` in both a failing and a passing direction, plus one fixture proving a reflow/typo-only change leaves extraction unaffected (FR-009) — the self-test currently only exercises the waiver stale-check, so a regression in any of these functions has no checked-in fixture catching it, only the real-tree manual demonstrations this cycle recorded in T010/T014/T020, which Constitution Principle VIII names as "evidence for that reviewer, not coverage for the next one" (CRITICAL, contradicts)
