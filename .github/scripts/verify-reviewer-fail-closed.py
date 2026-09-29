@@ -1787,6 +1787,112 @@ def check_lifecycle_select_excludes_forks_mutation(select_script, tmproot):
     return []
 
 
+# --- T079: `report`'s "Compose and post the round's outcome" step ---------
+#
+# FR-014/F8 (maintainer review 5355876805): review can succeed and parse
+# cleanly while `disposition` itself then fails (e.g. a non-fast-forward
+# push) -- DISPOSITION_OUTCOME is then empty, which must not fall through
+# to the "findings" branch and claim a fold/file that never happened.
+
+LIFECYCLE_OUTCOME_STEP = "Compose and post the round's outcome"
+
+
+def _lifecycle_outcome_env(body_file, **overrides):
+    env = {"ISSUE": LIFECYCLE_ISSUE, "PR_NUMBER": LIFECYCLE_PR,
+          "HEAD_SHA": LIFECYCLE_HEAD_SHA, "REVIEW_RESULT": "success",
+          "PARSE_FAILED": "false", "IN_SCOPE_COUNT": "0",
+          "OUT_OF_SCOPE_COUNT": "0", "ROUND": "3",
+          "DISPOSITION_RESULT": "success", "DISPOSITION_OUTCOME": "clean",
+          "FINDINGS_OPEN": "0", "FOLDED_FINGERPRINTS": "", "FILED_FINGERPRINTS": "",
+          "COST_LINE": "", "GH_TOKEN": "x", "GITHUB_REPOSITORY": "example/example",
+          "STUB_BODY_FILE": body_file}
+    env.update(overrides)
+    return env
+
+
+def run_lifecycle_outcome(script, tmproot, **overrides):
+    """lifecycle-review-gate.yml's "Compose and post the round's outcome"
+    step alone, capturing the `--body` a stub `gh issue comment` was
+    called with (STUB_GH_ANNOUNCE's shape -- the same stub, a different
+    step)."""
+    workdir = tempfile.mkdtemp(dir=tmproot)
+    runner_temp = tempfile.mkdtemp(dir=tmproot)
+    try:
+        bindir = os.path.join(workdir, "stub-bin")
+        os.makedirs(bindir)
+        with open(os.path.join(bindir, "gh"), "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(STUB_GH_ANNOUNCE)
+        os.chmod(os.path.join(bindir, "gh"), 0o755)
+        # Staged even for scenarios that never reach the marker-write branch:
+        # a mutated script (or a future scenario) may take the "findings"
+        # path, which imports this from the trusted copy (T074/T073).
+        scripts_dir = os.path.join(workdir, ".wc-pristine-repo", ".github", "scripts")
+        os.makedirs(scripts_dir, exist_ok=True)
+        for name in ("wc_lifecycle_review_marker.py", "board_item_marker.py"):
+            shutil.copyfile(os.path.join(".github", "scripts", name),
+                            os.path.join(scripts_dir, name))
+        body_file = os.path.join(workdir, "posted-body.md")
+        open(body_file, "w").close()
+        env = _lifecycle_outcome_env(body_file, **overrides)
+        env["PATH"] = bindir + os.pathsep + os.environ["PATH"]
+        rc, out, outputs, _ = run_step(BASH, script, workdir, env, runner_temp)
+        with open(body_file, encoding="utf-8") as fh:
+            body = fh.read()
+        return rc, body, outputs, out
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
+        shutil.rmtree(runner_temp, ignore_errors=True)
+
+
+def check_lifecycle_disposition_failed_reports_error(outcome_script, tmproot):
+    rc, body, outputs, out = run_lifecycle_outcome(
+        outcome_script, tmproot, DISPOSITION_RESULT="failure",
+        DISPOSITION_OUTCOME="")
+    failures = []
+    if rc != 0:
+        return ["lifecycle disposition-failed: step exited {0}: {1}".format(rc, out)]
+    if outputs.get("result") != "failed":
+        failures.append("lifecycle disposition-failed: result={0!r}, expected "
+                        "'failed'".format(outputs.get("result")))
+    # The actual claim phrasing the "findings" branch's own detail text
+    # uses -- not a bare "folded"/"filed" substring, which the CORRECT
+    # "Nothing was folded or filed" negation also contains.
+    for claim in ("were folded into tasks.md", "were filed as their own",
+                  "finding(s) were posted on PR"):
+        if claim in body:
+            failures.append("lifecycle disposition-failed: posted body claims "
+                            "{0!r} despite disposition never having reached an "
+                            "outcome: {1!r}".format(claim, body))
+    if not failures:
+        print("[ok] #T079 lifecycle disposition-failed: result='failed', "
+              "posted body makes no fold/file claim")
+    return failures
+
+
+def check_lifecycle_disposition_failed_mutation(outcome_script, tmproot):
+    """The DISPOSITION_RESULT check removed: an empty DISPOSITION_OUTCOME
+    would then fall through to the "findings" branch and claim a fold/file
+    that never happened."""
+    marker = 'elif [ "$DISPOSITION_RESULT" != "success" ]; then\n'
+    if outcome_script.count(marker) != 1:
+        return ["lifecycle disposition-failed mutation: expected one {0!r} in "
+                "the outcome step; update this harness.".format(marker)]
+    mutated = outcome_script.replace(marker, 'elif false; then\n', 1)
+    rc, body, outputs, out = run_lifecycle_outcome(
+        mutated, tmproot, DISPOSITION_RESULT="failure", DISPOSITION_OUTCOME="")
+    if rc != 0:
+        return ["lifecycle disposition-failed mutation: step exited {0} instead "
+                "of demonstrating the regression: {1}".format(rc, out)]
+    if outputs.get("result") != "findings":
+        return ["mutation 'lifecycle disposition-failed check removed' was NOT "
+                "caught (got result={0!r}, expected the regression's own "
+                "'findings')".format(outputs.get("result"))]
+    print("note: mutation 'lifecycle disposition-failed check removed' confirmed "
+          "caught (result={0!r}, posted body wrongly claims a fold: {1}).".format(
+              outputs.get("result"), "folded" in body))
+    return []
+
+
 def main():
     global BASH
     use_utf8_stdout()
@@ -1833,11 +1939,13 @@ def main():
     lifecycle_merge_step = find_step(LIFECYCLE_WORKFLOW, LIFECYCLE_MERGE_STEP)
     lifecycle_announce_step = find_step(LIFECYCLE_WORKFLOW, LIFECYCLE_ANNOUNCE_STEP)
     lifecycle_select_step = find_step(LIFECYCLE_WORKFLOW, LIFECYCLE_SELECT_STEP)
+    lifecycle_outcome_step = find_step(LIFECYCLE_WORKFLOW, LIFECYCLE_OUTCOME_STEP)
     for step_name, step in ((LIFECYCLE_EXTRACT_STEP, lifecycle_extract_step),
                             (LIFECYCLE_PARTITION_STEP, lifecycle_partition_step),
                             (LIFECYCLE_MERGE_STEP, lifecycle_merge_step),
                             (LIFECYCLE_ANNOUNCE_STEP, lifecycle_announce_step),
-                            (LIFECYCLE_SELECT_STEP, lifecycle_select_step)):
+                            (LIFECYCLE_SELECT_STEP, lifecycle_select_step),
+                            (LIFECYCLE_OUTCOME_STEP, lifecycle_outcome_step)):
         if step is None:
             sys.exit(f"::error file={LIFECYCLE_WORKFLOW}::step {step_name!r} not found.")
         if "${{" in str(step["run"]):
@@ -1849,6 +1957,7 @@ def main():
     lifecycle_merge_script = str(lifecycle_merge_step["run"])
     lifecycle_announce_script = str(lifecycle_announce_step["run"])
     lifecycle_select_script = str(lifecycle_select_step["run"])
+    lifecycle_outcome_script = str(lifecycle_outcome_step["run"])
 
     tmproot = tempfile.mkdtemp()
     try:
@@ -1870,6 +1979,8 @@ def main():
         failures += check_lifecycle_announce_mutation(lifecycle_announce_script, tmproot)
         failures += check_lifecycle_select_excludes_forks(lifecycle_select_script, tmproot)
         failures += check_lifecycle_select_excludes_forks_mutation(lifecycle_select_script, tmproot)
+        failures += check_lifecycle_disposition_failed_reports_error(lifecycle_outcome_script, tmproot)
+        failures += check_lifecycle_disposition_failed_mutation(lifecycle_outcome_script, tmproot)
     finally:
         shutil.rmtree(tmproot, ignore_errors=True)
 

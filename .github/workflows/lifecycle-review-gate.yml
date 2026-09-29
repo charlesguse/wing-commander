@@ -1353,6 +1353,7 @@ jobs:
           IN_SCOPE_COUNT: ${{ needs.review.outputs.in-scope-count }}
           OUT_OF_SCOPE_COUNT: ${{ needs.review.outputs.out-of-scope-count }}
           ROUND: ${{ needs.disposition.outputs.round || needs.review.outputs.round }}
+          DISPOSITION_RESULT: ${{ needs.disposition.result }}
           DISPOSITION_OUTCOME: ${{ needs.disposition.outputs.outcome }}
           FINDINGS_OPEN: ${{ needs.disposition.outputs.findings-open }}
           FOLDED_FINGERPRINTS: ${{ needs.disposition.outputs.folded-fingerprints }}
@@ -1367,6 +1368,14 @@ jobs:
           elif [ "$PARSE_FAILED" = "true" ]; then
             result="failed"
             detail="This round did not produce a parseable findings list (a missing/malformed result, or a non-healthy agent verdict). It is retryable and does not count against the round budget."
+          elif [ "$DISPOSITION_RESULT" != "success" ]; then
+            # T079/F8: review succeeded and parsed cleanly, but disposition
+            # itself then failed (e.g. a non-fast-forward push) before it
+            # could report an outcome at all -- DISPOSITION_OUTCOME is empty
+            # here, which must never fall through to the "findings" branch
+            # below and claim a fold/file that never happened.
+            result="failed"
+            detail="This gate failed to reach a disposition for this round (the disposition job itself did not complete successfully). Nothing was folded or filed; the round is retried on the next run and does not count against the round budget."
           elif [ "$DISPOSITION_OUTCOME" = "clean" ]; then
             result="clean"
             detail="No in-scope findings. A passing status was posted on the reviewed head SHA."
