@@ -3,7 +3,7 @@
   "spec_dir": "specs/071-agent-push-credential",
   "feature_num": "071",
   "stage": "implement",
-  "iteration": 4,
+  "iteration": 5,
   "spec_branch": "spec/071-agent-push-credential",
   "pending_re_review_from": ["charlesguse"]
 }
