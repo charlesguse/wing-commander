@@ -8,6 +8,36 @@
 
 **Input**: User description: "board-loop: routing an issue to a spec-request leaves the original open, so every routed issue counts twice on the board"
 
+## Clarifications
+
+### Session 2026-09-29 — answered on lifecycle issue #791
+
+- Q1: Which disposition — (a) close the originating issue at route time,
+  (b) keep it open and close it when the spec's final PR merges, or (c)
+  relabel the original as the spec-request rather than filing a new issue?
+  → A: **(a) Close the originating issue at route time**, as a duplicate of
+  the new spec-request. Re-admission becomes "a maintainer reopens the
+  original", and the contract text naming the removal of `board:stalled` as
+  the sole re-eligibility condition is updated to name reopening as well.
+  The check that holds every site to the rule extends the existing
+  spec-request-site gate's check rather than standing up a second gate.
+  (FR-001, FR-006, FR-012, FR-014, FR-015, User Stories 1–3)
+- Q2: Is a one-time reconciliation of the existing pairs in scope, or does
+  this feature cover only routings made after it ships? → A: **Out of
+  scope.** The pairs outstanding when the request was filed have already
+  been reconciled by hand — #661, #660, #609, #602, #551, #536 and #527
+  closed as duplicates, #662 and #604 closed by their fixes — and the one
+  pair left, #633/#768, closes when #634 merges. This feature covers
+  routings made after it ships. (FR-016, SC-007)
+- Q3: When a spec-request is closed without its work landing, does the
+  disposed originating issue return to the board, stay disposed, or become
+  a maintainer's manual call? → A: **It stays disposed, under a notice.**
+  The original stays closed and a notice is posted on it stating that
+  reopening it returns the request to the board. This reuses Q1's
+  re-admission path and keeps the surviving manual step visible on the
+  issue rather than silently assumed, as Principle IV requires. (FR-017,
+  Edge Cases)
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - The board counts a routed request once (Priority: P1)
@@ -20,9 +50,9 @@ sees the same request twice and cannot tell, from the list alone, which of
 the two is the live one.
 
 After this feature, one routed request contributes exactly one open issue
-to the board. Whichever issue remains open is the one a maintainer can act
-on; the other is closed with a stated reason and a link to its
-counterpart.
+to the board: the spec-request, which is the live one a maintainer acts
+on. The originating issue is closed as a duplicate of it, with the reason
+stated on the issue and a link to its counterpart.
 
 **Why this priority**: This is the reported defect. Ten of roughly
 ninety-three open issues are duplicate pairs, so the board's size
@@ -36,9 +66,10 @@ one. No other board behaviour needs to change for this to deliver value.
 **Acceptance Scenarios**:
 
 1. **Given** an eligible open issue the board loop's route step judges
-   spec-shaped, **When** the route files its spec-request, **Then** exactly
-   one of the originating issue and the spec-request is open once the route
-   step finishes, and the other is closed with a reason recorded on it.
+   spec-shaped, **When** the route files its spec-request, **Then** the
+   spec-request is the only one of the two open once the route step
+   finishes, and the originating issue is closed as a duplicate of it with
+   that reason recorded on it.
 2. **Given** the fix job's post-push backstop breach files a spec-request
    for the originating issue, **When** that site finishes, **Then** the same
    single-open-issue outcome holds as in scenario 1.
@@ -78,16 +109,16 @@ disposed issue.
    board loop next selects work, **Then** that issue is not selected and
    not treated as an in-flight board item of the loop's.
 2. **Given** an originating issue disposed of by a route, **When** a
-   maintainer removes `board:stalled` from it, **Then** it is still not
-   re-admitted to the board on that ground alone.
+   maintainer removes `board:stalled` from it without reopening it,
+   **Then** it is still not re-admitted to the board on that ground alone.
 3. **Given** a request whose remaining open issue is the live one, **When**
    a maintainer posts a stop request, **Then** the stop is read from an
    issue the loop is still reading, and the loop halts before its next
    durable action.
 4. **Given** a maintainer who wants a disposed request reconsidered,
-   **When** they take the documented re-admission action, **Then** the
-   request re-enters the board exactly once, without a second spec-request
-   being filed for it.
+   **When** they reopen the originating issue — the documented
+   re-admission action — **Then** the request re-enters the board exactly
+   once, without a second spec-request being filed for it.
 
 ---
 
@@ -101,15 +132,15 @@ first site; the gate is what keeps it from drifting back. It is P2 because
 it protects the change rather than delivering it.
 
 **Independent Test**: Feed the gate a fixture workflow whose spec-request
-site omits the disposition step and confirm the gate fails on it; feed it
-the real workflow and confirm it passes.
+site omits the close-the-original step and confirm the gate fails on it;
+feed it the real workflow and confirm it passes.
 
 **Acceptance Scenarios**:
 
 1. **Given** a workflow in which a spec-request site files its request but
-   never disposes of the originating issue, **When** the gate suite runs,
+   never closes the originating issue, **When** the gate suite runs,
    **Then** the gate fails and names the offending site.
-2. **Given** a workflow in which every spec-request site disposes of its
+2. **Given** a workflow in which every spec-request site closes its
    originating issue, **When** the gate suite runs, **Then** the gate
    passes.
 3. **Given** a workflow with no spec-request site at all, **When** the gate
@@ -133,26 +164,30 @@ the real workflow and confirm it passes.
   already-disposed issue is not an error and does not produce a second
   comment or a second spec-request.
 - **The spec-request is closed without its work landing** — a maintainer
-  declines it, or intake cannot produce a specification from it. See
-  Clarification Q3.
+  declines it, or intake cannot produce a specification from it. The
+  originating issue stays closed; a notice is posted on it stating that
+  reopening it returns the request to the board, so the manual step is
+  visible where a maintainer will find it (Clarification Q3).
 - **The originating issue was authored by someone other than a
   maintainer.** Disposing of it is a visible action taken on another
   person's issue, so the reason must be stated on the issue itself, not
   only in the run log.
 - **The originating issue is already closed when a site reaches its
   disposition step** (a maintainer closed it mid-run). The step must treat
-  this as already satisfied rather than failing the job.
+  the close as already satisfied rather than failing the job, while still
+  recording the reason and the cross-link if it has not already done so.
 - **The ten pairs that already exist.** They predate this feature and are
-  not produced by it. See Clarification Q2.
+  not produced by it; they were reconciled by hand outside it, and this
+  feature covers only routings made after it ships (Clarification Q2).
 
 ## Requirements *(mandatory)*
 
 ### Functional Requirements
 
 - **FR-001**: The board loop MUST dispose of the originating issue whenever
-  it files a spec-request for it, so that exactly one open issue — the
-  originating issue or the spec-request, per the disposition option chosen
-  in Q1 — represents that request on the board.
+  it files a spec-request for it, by closing that issue as a duplicate of
+  the spec-request at the time the spec-request is filed, so that exactly
+  one open issue — the spec-request — represents that request on the board.
 - **FR-002**: FR-001 MUST hold at every site from which the loop files a
   spec-request: the route step's spec verdict, the fix job's post-push
   backstop breach, and the readiness job's backstop breach.
@@ -166,8 +201,9 @@ the real workflow and confirm it passes.
   of its own, an issue it has disposed of under FR-001.
 - **FR-006**: Removing `board:stalled` from a disposed issue MUST NOT, on
   its own, re-admit it to the board. The documented way to reconsider a
-  disposed request MUST re-admit it exactly once and MUST NOT cause a
-  second spec-request to be filed for it.
+  disposed request is a maintainer reopening the originating issue; that
+  action MUST re-admit it exactly once and MUST NOT cause a second
+  spec-request to be filed for it.
 - **FR-007**: Every reader of the originating issue's loop state — step
   markers, the stop-request scan, and the re-admission decision — MUST
   continue to reach a correct answer after the disposition, either by
@@ -189,29 +225,35 @@ the real workflow and confirm it passes.
   issue undisposed and retryable, preserving each site's existing
   create-guard behaviour.
 - **FR-012**: A gate MUST fail when any spec-request site in the board-loop
-  workflow files a request without also performing the disposition, MUST
+  workflow files a request without also closing the originating issue, MUST
   fail rather than pass when it finds no spec-request site to check, and
   MUST ship a checked-in fixture for each failure branch it can report.
+  This check MUST extend the existing gate check that already enumerates
+  the spec-request sites, rather than standing up a second gate over the
+  same subject.
 - **FR-013**: The gate in FR-012 MUST be reachable from the gate registry
   and MUST run the same subject with the same arguments locally as it does
   in CI.
 - **FR-014**: The documentation describing the board loop's routing
-  behaviour — including the contract text that states what a route does to
-  the originating issue and what the sole re-eligibility condition is —
-  MUST be updated to match the chosen disposition.
-- **FR-015**: The disposition MUST be one of the three options the request
-  enumerates. [NEEDS CLARIFICATION: Q1 — which option: (a) close the
-  originating issue at route time, (b) keep it open and close it when the
-  spec's final PR merges, or (c) relabel the original as the spec-request
-  rather than filing a new issue?]
+  behaviour MUST be updated to match the chosen disposition: the contract
+  text stating what a route does to the originating issue MUST say the
+  original is closed as a duplicate of the spec-request, and every place
+  naming the removal of `board:stalled` as the sole re-eligibility
+  condition MUST also name a maintainer's reopening of a disposed original.
+- **FR-015**: The disposition MUST be option (a) of the three the request
+  enumerates: the originating issue is closed at route time as a duplicate
+  of the new spec-request. Option (b) — keeping it open until the spec's
+  final PR merges — and option (c) — relabelling the original instead of
+  filing a new issue — MUST NOT be implemented.
 - **FR-016**: Pairs that already exist on the board when this feature ships
-  MUST be handled as decided in [NEEDS CLARIFICATION: Q2 — is a one-time
-  reconciliation of the ten existing pairs in scope for this feature, or
-  does it cover only routings made after it ships?]
-- **FR-017**: When a spec-request is closed without its work landing, the
-  request MUST reach the outcome decided in [NEEDS CLARIFICATION: Q3 —
-  does the disposed originating issue return to the board, stay disposed,
-  or become a maintainer's manual call?]
+  are out of scope: this feature MUST cover routings made after it ships,
+  and MUST NOT ship a one-time reconciliation of the pre-existing pairs,
+  which were reconciled by hand outside it.
+- **FR-017**: When a spec-request is closed without its work landing, its
+  disposed originating issue MUST stay closed, and a notice MUST be posted
+  on that issue stating that reopening it returns the request to the board
+  — the same re-admission path as FR-006, so the surviving manual step is
+  reported on the issue rather than silently assumed.
 
 ### Key Entities
 
@@ -223,13 +265,16 @@ the real workflow and confirm it passes.
   route agent's drafted request or the originating issue's trust-filtered
   context.
 - **Disposition**: the durable action that reduces the pair to one open
-  issue — a close with a reason, a deferred close, or a relabel — together
-  with the cross-link that makes each issue reachable from the other.
+  issue — closing the originating issue as a duplicate of the spec-request,
+  with the reason stated on it — together with the cross-link that makes
+  each issue reachable from the other.
 - **Spec-request site**: one place in the board loop that files a
   spec-request. There are three: route's spec verdict, fix's post-push
   breach, and readiness's backstop breach.
 - **Re-admission**: the condition under which a disposed request returns to
-  the board's eligible set.
+  the board's eligible set — a maintainer reopening the closed originating
+  issue. Removing `board:stalled` alone no longer suffices for a disposed
+  issue.
 
 ## Success Criteria *(mandatory)*
 
@@ -246,8 +291,8 @@ the real workflow and confirm it passes.
 - **SC-004**: A maintainer reading either issue of a routed request reaches
   the other in one click, and the closed one states why it was closed.
 - **SC-005**: No routed request can be routed twice: a disposed request
-  produces no second spec-request without a maintainer's explicit
-  re-admission action.
+  produces no second spec-request unless a maintainer reopens the
+  originating issue.
 - **SC-006**: A maintainer's stop request on a routed request halts the
   loop before its next durable action, as it does today.
 - **SC-007**: The count of open issues attributable to duplicate routing
@@ -284,6 +329,9 @@ the real workflow and confirm it passes.
 - The stop-request scan, which reads a maintainer's stop from an issue's
   comments.
 - The spec-request body builder and the issue-context composite that feeds
-  it, which the relabel option (Q1c) would change the assumptions of.
-- The existing gate that enumerates the spec-request sites, which is the
-  natural home for the FR-012 check.
+  it, which keep building the filed request unchanged under the chosen
+  disposition (Q1a closes the original; it does not relabel it).
+- The existing gate that enumerates the spec-request sites — Gate 93's
+  check 3 — which Q1 names as the home for the FR-012 check.
+- The signal that a spec-request was closed without its work landing, which
+  FR-017's notice on the disposed originating issue hangs off.

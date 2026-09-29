@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -32,13 +32,15 @@
 ## Notes
 
 - Items marked incomplete require spec updates before `/speckit-clarify` or `/speckit-plan`.
-- Three [NEEDS CLARIFICATION] markers remain by design (FR-015, FR-016,
-  FR-017). The request itself is explicit that the fix needs a design
-  decision the owner must make — which of three disposition options to
-  take — and the two follow-on questions (backfill scope, and what happens
-  when a spec-request is closed without its work landing) have no
-  reasonable default: each of the three options leads to a different
-  answer. They are carried into the clarify stage rather than guessed.
+- The three [NEEDS CLARIFICATION] markers carried into the clarify stage
+  (FR-015, FR-016, FR-017) were answered on lifecycle issue #791 and are
+  resolved: the disposition is a close of the originating issue at route
+  time as a duplicate (Q1a), the pre-existing pairs are out of scope (Q2b),
+  and a spec-request closed without its work landing leaves the original
+  closed under a "reopen this issue to return it to the board" notice
+  (Q3c). The answers are recorded in the spec's Clarifications section and
+  folded into FR-001, FR-006, FR-012, FR-014 through FR-017, the affected
+  scenarios and edge cases, and the Key Entities and Dependencies.
 - Vocabulary that names GitHub-visible artifacts a maintainer already sees
   (the `board:stalled` label, the `spec-request` label) is kept: it is the
   product's own user-facing vocabulary, not an implementation detail.
