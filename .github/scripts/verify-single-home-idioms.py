@@ -133,10 +133,16 @@ stage workflow and every non-underscore-prefixed composite action scanned
 for any reference resolving into a `_shared/` path.
 
 Plus a composite-checkout-order pass (maintainer review of #607, fold
-leg-0): every workflow job's own step list scanned for a local
-`uses: ./...` step preceding the job's first `actions/checkout@` step --
-such a step cannot resolve its action.yml from the not-yet-checked-out
-workspace and fails at run time, not gate time.
+leg-0 and leg-1): every workflow job's own step list scanned for a local
+`uses: ./...` step preceding the `actions/checkout@` step that actually
+populates the directory it resolves from -- a root-relative reference
+(`./.github/actions/...`) needs a preceding checkout with no `path:`
+(the workspace root); a sidecar-relative reference (e.g.
+`./.wc-pristine-repo/.github/actions/...`) needs a preceding checkout
+whose `with.path` matches that same first path segment -- an unrelated
+root checkout does not satisfy it, and vice versa. Such a step cannot
+resolve its action.yml from the not-yet-checked-out directory and fails
+at run time, not gate time.
 
 Waivers: `.github/scripts/single-home-waivers.json`, same shape as Gate
 31's `stage-invariant-waivers.json` -- `{file, check, pattern, count,
@@ -831,16 +837,32 @@ def check_branch_advance_capture(root="."):
 # step, before any actions/checkout@ step existed in the job, so the
 # composite's action.yml could not be resolved from the not-yet-checked-out
 # workspace and every review/readiness run failed at run time instead of
-# at gate time)
+# at gate time. Extended in fold leg-1: the original "any checkout@ step
+# seen so far" test passed a sidecar-relative reference
+# (./.wc-pristine-repo/...) merely because an earlier, unrelated
+# root-workspace checkout had already run -- it never confirmed the
+# specific directory the reference resolves from had actually been
+# checked out. A bare `./.github/...` reference (this fleet's only
+# root-relative form) still needs a preceding checkout with no `path:`;
+# every other first path segment names a sidecar directory (e.g.
+# `.wc-pristine-repo`, `.wing-commander-pipeline`) and now needs a
+# preceding checkout whose own `with.path` matches that exact segment --
+# a root checkout, however early, never satisfies it.
 # --------------------------------------------------------------------------
+ROOT_ACTIONS_SEGMENT = ".github"
+
+
 def check_local_action_before_checkout(root="."):
-    """A local `uses: ./...` step resolves its action.yml relative to the
-    checked-out workspace; a workflow job that calls one before any
-    `actions/checkout@` step in that same job fails at run time ("Did you
-    forget to run actions/checkout") instead of failing here. Composite
-    actions' own `runs.steps` execute inside the CALLER's already-checked-
-    out workspace, so only workflow jobs (doc["jobs"]) are scanned -- never
-    an action.yml's own `runs.steps`."""
+    """A local `uses: ./...` step resolves its action.yml relative to
+    whichever checked-out directory its first path segment names -- the
+    workspace root for a bare `./.github/actions/...` reference, or a
+    sidecar directory like `.wc-pristine-repo` for
+    `./.wc-pristine-repo/.github/actions/...` -- and a workflow job that
+    calls one before the checkout that actually populates that directory
+    fails at run time ("Did you forget to run actions/checkout") instead
+    of failing here. Composite actions' own `runs.steps` execute inside
+    the CALLER's already-checked-out workspace, so only workflow jobs
+    (doc["jobs"]) are scanned -- never an action.yml's own `runs.steps`."""
     findings = []
     for path in all_subject_files(root):
         doc = load_yaml(root, path)
@@ -848,20 +870,31 @@ def check_local_action_before_checkout(root="."):
             continue
         text = read(root, path)
         for job_id, steps in _step_lists(doc):
-            seen_checkout = False
+            seen_root = False
+            seen_scoped = set()
             for step in steps:
                 uses = str((step or {}).get("uses") or "")
                 if not uses:
                     continue
                 if uses.startswith("actions/checkout@"):
-                    seen_checkout = True
-                elif uses.startswith("./") and not seen_checkout:
-                    offset = text.find(uses)
-                    findings.append(Finding(
-                        path, "composite-checkout-order",
-                        line_of(text, max(offset, 0)),
-                        f"job {job_id!r}: {uses} resolved before any "
-                        f"actions/checkout@ step"))
+                    scoped_path = (step.get("with") or {}).get("path")
+                    if scoped_path:
+                        seen_scoped.add(scoped_path)
+                    else:
+                        seen_root = True
+                elif uses.startswith("./"):
+                    first_seg = uses[2:].split("/", 1)[0]
+                    if first_seg == ROOT_ACTIONS_SEGMENT:
+                        ok, where = seen_root, "the workspace root"
+                    else:
+                        ok, where = first_seg in seen_scoped, f"path: {first_seg}"
+                    if not ok:
+                        offset = text.find(uses)
+                        findings.append(Finding(
+                            path, "composite-checkout-order",
+                            line_of(text, max(offset, 0)),
+                            f"job {job_id!r}: {uses} resolved before the "
+                            f"actions/checkout@ step for {where}"))
     return findings
 
 
@@ -1710,6 +1743,18 @@ def run_selftest():
         "      - id: pr\n        uses: ./.github/actions/_shared/resolve-pr-branch\n"
         "        with:\n          pr-number: 1\n"
         "      - uses: actions/checkout@v5\n")
+    # fold leg-1: a root-workspace checkout does not populate a sidecar
+    # directory -- a `./.wc-pristine-repo/...` reference preceded only by
+    # an unrelated root checkout must still be caught, not waved through
+    # by the mere presence of some earlier actions/checkout@ step.
+    selftest_third_paste_fails(
+        "composite-checkout-order",
+        ".github/workflows/third-checkout-order-sidecar.yml",
+        "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - uses: actions/checkout@v5\n"
+        "      - id: pr\n"
+        "        uses: ./.wc-pristine-repo/.github/actions/_shared/resolve-pr-branch\n"
+        "        with:\n          pr-number: 1\n")
     selftest_waived_copy_passes()
     selftest_stale_waiver_fails()
     selftest_promotion_fails()
