@@ -409,7 +409,10 @@ The two rules worth carrying in your head:
 
 - Both callouts key off a single output derived from one read of the agent's
   schema-validated result — never two independently computed conditions. That
-  is the structural fix for #159.
+  is the structural fix for #159. The `stage:clarify` label flip
+  (`specs/063-stage-clarify-label/`) is a second consumer of that same
+  output, alongside the callout it accompanies — never a separately derived
+  condition of its own.
 - **A callout that asks for a reply must only fire where a reply can be
   acted on.** `wing-commander-2-clarify.yml` needs a `spec:` label plus
   `stage:spec|clarify`; the agent's `specified` discriminator is what keeps

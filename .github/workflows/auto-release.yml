@@ -1187,12 +1187,47 @@ jobs:
               "gh api issues/timeline succeeds" "$RUNNER_TEMP/auto-release-timeline-err.txt"
           fi
           timeline="$(printf '%s' "$timeline_raw" | jq -R -s -c 'split("\n") | map(select(length > 0))' 2>/dev/null || echo '[]')"
+
+          # --- Clarification-gate reads, moved up (research.md D5.2) ---
+          # comments_json and markers_json used to be computed after the
+          # label-timeline loop below, alongside the clarification_satisfied
+          # check they were originally read for. FR-021's conditional
+          # stage:clarify assertion needs to know BEFORE that loop runs
+          # whether this run ever posted a clarification questionnaire, so
+          # both reads move up here -- a reordering of two existing reads,
+          # not a new `gh api` call. `clarification_satisfied` (below, at its
+          # original relative position) now consumes this same comments_json
+          # instead of reading the comments a second time.
+          if ! gh api "repos/${E2E_REPO}/issues/${ISSUE}/comments" --paginate --jq \
+              '.[] | {id, user: {login: .user.login, id: .user.id, type: .user.type}, author_association, body, created_at}' \
+              > "$RUNNER_TEMP/auto-release-final-comments.ndjson" 2>"$RUNNER_TEMP/auto-release-final-comments-err.txt"; then
+            fail_infra_on_read "reading the issue's comments for the pass-path clarification assertion" \
+              "gh api issues/comments succeeds" "$RUNNER_TEMP/auto-release-final-comments-err.txt"
+          fi
+          comments_json="$(jq -cs '.' "$RUNNER_TEMP/auto-release-final-comments.ndjson" 2>/dev/null || echo '[]')"
+          markers_json="$(printf '%s' "$comments_json" | bash .github/actions/_shared/auto-release-e2e-clarify-decision.sh markers 2>/dev/null || echo '[]')"
+          if printf '%s' "$markers_json" | jq -e 'length > 0' >/dev/null 2>&1; then
+            questionnaire_posted=true
+          else
+            questionnaire_posted=false
+          fi
+
           missing_stage=""
-          # stage:clarify is never applied as an issue label by any stage
-          # workflow (clarify.yml's only reference is stall-notice prose,
-          # and wing-commander-chain-stop-notice always adds stage:stalled
-          # instead) -- requiring it here made a genuine pass impossible.
-          for s in stage:spec stage:plan stage:tasks stage:implement stage:review; do
+          # stage:clarify is applied while clarification questions are open
+          # and cleared once they're answered (specs/063-stage-clarify-label)
+          # -- so it belongs in the timeline only on a run that actually
+          # posted a questionnaire. An unconditional assertion here would
+          # reproduce the impossible-pass bug this comment used to record:
+          # requiring stage:clarify on every run made a genuine pass
+          # impossible before any workflow ever applied it.
+          stages_to_check="stage:spec stage:plan stage:tasks stage:implement stage:review"
+          if [ "$questionnaire_posted" = "true" ]; then
+            stages_to_check="$stages_to_check stage:clarify"
+            echo "clarification-label assertion: asserting stage:clarify in the timeline (a questionnaire was posted this run)." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "clarification-label assertion: skipped -- no clarification questionnaire was posted this run." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          for s in $stages_to_check; do
             if ! printf '%s' "$timeline" | jq -e --arg s "$s" 'index($s) != null' >/dev/null 2>&1; then
               missing_stage="$s"
               break
@@ -1280,22 +1315,11 @@ jobs:
           # the qualifying-reply rule both live in the clarify-decision
           # script (its `satisfied`/`markers` modes) -- the single home
           # CLAUDE.md requires, not re-derived here a second time
-          # (maintainer feedback on PR #389).
+          # (maintainer feedback on PR #389). `comments_json` was already
+          # read above (moved there for FR-021's stage:clarify assertion,
+          # research.md D5.2); this reuses it rather than reading the
+          # issue's comments a second time.
           #
-          # This is a one-shot read with no retry loop around it (unlike the
-          # per-iteration reads above), so a failure here must not fail OPEN
-          # into an empty file -- that used to make the assertion below
-          # vacuously pass on a transient API error, silently skipping the
-          # very check this pass path exists to make (maintainer feedback on
-          # PR #389, second review). It becomes an infrastructure outcome
-          # instead.
-          if ! gh api "repos/${E2E_REPO}/issues/${ISSUE}/comments" --paginate --jq \
-              '.[] | {id, user: {login: .user.login, id: .user.id, type: .user.type}, author_association, body, created_at}' \
-              > "$RUNNER_TEMP/auto-release-final-comments.ndjson" 2>"$RUNNER_TEMP/auto-release-final-comments-err.txt"; then
-            fail_infra_on_read "reading the issue's comments for the pass-path clarification assertion" \
-              "gh api issues/comments succeeds" "$RUNNER_TEMP/auto-release-final-comments-err.txt"
-          fi
-          comments_json="$(jq -cs '.' "$RUNNER_TEMP/auto-release-final-comments.ndjson" 2>/dev/null || echo '[]')"
           # Fallback for the rare case the loop reached stage:done before
           # author_id was ever resolved above (e.g. its very first attempt
           # failed and the very same iteration's terminal-state check
@@ -1320,7 +1344,6 @@ jobs:
             emit_verdict
             exit 0
           fi
-          markers_json="$(printf '%s' "$comments_json" | bash .github/actions/_shared/auto-release-e2e-clarify-decision.sh markers 2>/dev/null || echo '[]')"
 
           # --- Gate evidence for the report job (research.md D12, FR-017,
           # FR-019) -- presentation-layer only, no verdict schema change. ---
