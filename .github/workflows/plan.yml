@@ -782,6 +782,8 @@ jobs:
           # but is still framed as data, not instructions.
           # the settled anchor rule for gate_or_artifact/file_path the
           # prompt below states -- see clarify.yml.
+          # #266: inspect files with the Grep, Glob and Read tools, never
+          # shell loops or unlisted commands, as the prompt below states -- see clarify.yml.
           prompt: |
             You are the plan stage of this repository's spec-driven development
             pipeline, running with Gate 3 (plan review) disabled. The accepted
@@ -875,6 +877,9 @@ jobs:
               `gh workflow list` will not explain it. `gh api` is not granted
               in this run and is never needed for a PR read — use `gh pr view
               <number> --json <fields>`, which this run already permits.
+            - Inspect files with the Grep, Glob and Read tools, not shell
+              loops or commands this run does not list (`for f in …; do
+              cat "$f"`, `awk`) — those are denied here.
             - Bash cannot reach paths outside the checkout, but the Write tool
               can. Never mkdir or ls a temp path first to prepare it.
             A denial is not a hint to retry a variant. Switch to the allowed form
@@ -989,6 +994,8 @@ jobs:
           # only the validated slug and integer issue number are interpolated; spec content is data.
           # the settled anchor rule for gate_or_artifact/file_path the
           # prompt below states -- see clarify.yml.
+          # #266: inspect files with the Grep, Glob and Read tools, never
+          # shell loops or unlisted commands, as the prompt below states -- see clarify.yml.
           prompt: |
             You are the plan stage of this repository's spec-driven development
             pipeline. The accepted specification lives in
@@ -1086,6 +1093,9 @@ jobs:
               `gh workflow list` will not explain it. `gh api` is not granted
               in this run and is never needed for a PR read — use `gh pr view
               <number> --json <fields>`, which this run already permits.
+            - Inspect files with the Grep, Glob and Read tools, not shell
+              loops or commands this run does not list (`for f in …; do
+              cat "$f"`, `awk`) — those are denied here.
             - Bash cannot reach paths outside the checkout, but the Write tool
               can. Never mkdir or ls a temp path first to prepare it.
             A denial is not a hint to retry a variant. Switch to the allowed form

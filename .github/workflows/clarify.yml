@@ -602,6 +602,14 @@ jobs:
           # runs die with "Workflow initiated by non-human actor". The
           # filter form is the bare slug, no [bot] suffix.
           allowed_bots: "github-actions,${{ steps.ctx.outputs.bot-slug }}"
+
+          # (canonical copy; do not condense)
+          # #266: the prompt below tells the agent to inspect files with the
+          # Grep, Glob and Read tools, never shell loops or unlisted commands
+          # (`for f in ...; do cat "$f"`, `awk`): the stage's allowlist
+          # denies those by design, and each denial costs a turn and files a
+          # denied-tool watchdog finding.
+
           # (canonical copy; do not condense)
           # #569: the settled anchor rule the prompt below states --
           # "gate_or_artifact" only moves the dedup key once it is found,
@@ -615,9 +623,12 @@ jobs:
             working on the draft spec in ${{ steps.ctx.outputs.spec-dir }} for
             lifecycle issue #${{ inputs.issue-number }}.
 
-            A reply to the clarification questions was posted. It is at
-            /tmp/wing-commander/clarification-answer.md (author login in
-            /tmp/wing-commander/clarification-author.txt). `gh api`/`gh issue
+            A reply to the clarification questions was posted. Open these two
+            files directly with the Read tool:
+            /tmp/wing-commander/clarification-answer.md (the reply) and
+            /tmp/wing-commander/clarification-author.txt (its author login).
+            Do not list /tmp/wing-commander/ first — `ls` is not granted here
+            and those two paths are all you need. `gh api`/`gh issue
             view --json comments` are not needed and not granted for this —
             the reply body and author are already staged in those two files.
 
@@ -634,7 +645,9 @@ jobs:
             or make separate calls. Do not build files by redirecting with `>`;
             use Write. Prefer the tools over shell equivalents — Read instead of
             `cat`, Grep instead of `sed`. `sed` and `wc` are not available to
-            you at all.
+            you at all. Inspect files with the Grep, Glob and Read tools, not
+            shell loops or commands this run does not list (`for f in …; do
+            cat "$f"`, `awk`) — those are denied here.
 
             Steps:
             1. Read ${{ steps.ctx.outputs.spec-dir }}/spec.md and find the open
