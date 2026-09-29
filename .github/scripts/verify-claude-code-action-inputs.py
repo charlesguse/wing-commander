@@ -59,6 +59,24 @@ never fewer, so hardcoding v1's list is conservative (a false failure on a
 genuinely-new input is possible and should be treated as this list needing
 an update, not as the gate being wrong) rather than silently permissive.
 
+SECOND CHECK: A GITHUB TOKEN OR AN OIDC GRANT (#814)
+----------------------------------------------------
+When a step's `with:` has no `github_token`, claude-code-action@v1 tries to
+exchange an OIDC token for its own App token instead. It does this before
+Claude starts, so without `id-token: write` the step fails. Every such step
+is caught here unless the permissions its job actually runs under (the
+job's own `permissions:`, or the workflow-level block when the job declares
+none; `write-all` counts) grant `id-token: write`. A step inside a
+composite action cannot see its caller's permissions, so it always needs
+`github_token`. The failure names the file and the step.
+Evidence: lifecycle-review-gate.yml's `Reviewer` step had its
+`github_token` removed (T080/F9, #759) in a job with no `id-token: write`.
+On its first live run (36640266298, job 109650842162) the action retried
+the OIDC fetch three times, stopped with `Could not fetch an OIDC token.
+Did you remember to add id-token: write ...`, and never started Claude.
+The step's `continue-on-error: true` made it read as success. The round
+came back Inconclusive with no transcript. Every gate stayed green.
+
 The self-test writes a fixture workflow file to a temp directory and runs
 `check_file()` on it for real, the same function the real fleet is checked
 with, rather than re-implementing the check inline — a second copy of the
@@ -133,6 +151,61 @@ def find_claude_code_action_steps(doc):
     return steps
 
 
+def _grants_id_token_write(permissions):
+    """True when a `permissions:` value grants `id-token: write`."""
+    if isinstance(permissions, str):
+        return permissions.strip() == "write-all"
+    if isinstance(permissions, dict):
+        return str(permissions.get("id-token") or "").strip() == "write"
+    return False
+
+
+def token_problems(path, doc):
+    """#814: every claude-code-action step must either pass `github_token`
+    or run in a job whose effective permissions grant `id-token: write` --
+    without either, the action's OIDC fallback fails before Claude starts.
+    Composite-action steps (and any step not under `jobs.<id>.steps`) have
+    no visible job permissions, so they must pass `github_token`."""
+    problems = []
+    covered = set()
+    if isinstance(doc, dict) and isinstance(doc.get("jobs"), dict):
+        workflow_perms = doc.get("permissions")
+        for job_id, job in doc["jobs"].items():
+            if not isinstance(job, dict):
+                continue
+            perms = job["permissions"] if "permissions" in job else workflow_perms
+            oidc_ok = _grants_id_token_write(perms)
+            for step in find_claude_code_action_steps(job.get("steps") or []):
+                covered.add(id(step))
+                with_block = step.get("with") or {}
+                if isinstance(with_block, dict) and with_block.get("github_token"):
+                    continue
+                if oidc_ok:
+                    continue
+                name = step.get("name") or step.get("id") or "(unnamed step)"
+                problems.append(
+                    f"{path}: job {job_id!r} step {name!r} passes no "
+                    f"github_token and its job does not grant "
+                    f"`id-token: write` -- claude-code-action's OIDC "
+                    f"fallback will fail before Claude starts (#814, run "
+                    f"36640266298). Pass a github_token (a read-only "
+                    f"`${{{{ github.token }}}}` is enough for an agent that "
+                    f"needs no GitHub access).")
+    for step in find_claude_code_action_steps(doc):
+        if id(step) in covered:
+            continue
+        with_block = step.get("with") or {}
+        if isinstance(with_block, dict) and with_block.get("github_token"):
+            continue
+        name = step.get("name") or step.get("id") or "(unnamed step)"
+        problems.append(
+            f"{path}: step {name!r} passes no github_token and has no job "
+            f"permissions this gate can see (composite action) -- "
+            f"claude-code-action's OIDC fallback cannot be assumed to work "
+            f"(#814). Pass a github_token.")
+    return problems
+
+
 def check_file(path):
     """Return a list of human-readable problems found in one YAML file."""
     problems = []
@@ -157,6 +230,7 @@ def check_file(path):
                 f"input(s) it does not accept: {', '.join(bad)}. Move them "
                 f"into claude_args (see intake.yml's 'Create spec from "
                 f"issue' step, intake.yml:622).")
+    problems.extend(token_problems(path, doc))
     return problems
 
 
@@ -202,6 +276,7 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: token
+          github_token: token
           model: claude-sonnet-5
           max_turns: 10
           allowed_tools: Read,Grep
@@ -211,16 +286,38 @@ jobs:
         uses: anthropics/claude-code-action@v1.2.0
         with:
           claude_code_oauth_token: token
+          github_token: token
           model: claude-sonnet-5
           prompt: hello
       - name: Good step
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: token
+          github_token: token
           prompt: hello
           claude_args: |
             --model claude-sonnet-5
             --max-turns 10
+  f9-shape:
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Tokenless reviewer
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: token
+          prompt: hello
+  oidc-granted:
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Tokenless step with an OIDC grant
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: token
+          prompt: hello
 """
 
 
@@ -242,12 +339,14 @@ def main():
     for p in real_problems:
         print(f"::error::Gate 92: {p}")
     if real_problems:
-        print(f"Gate 92: {len(real_problems)} claude-code-action "
-              f"step(s), of {total_steps} checked, pass an input the "
-              f"action does not accept.")
+        print(f"Gate 92: {len(real_problems)} problem(s) across "
+              f"{total_steps} claude-code-action step(s): an input the "
+              f"action does not accept, or no github_token and no "
+              f"id-token: write grant.")
         return 1
     print(f"Gate 92: all {total_steps} claude-code-action step(s)' with: "
-          f"keys are inputs the action accepts.")
+          f"keys are inputs the action accepts, and each passes a "
+          f"github_token or runs under id-token: write.")
 
     # --- self-test -----------------------------------------------------
     self_test_failures = []
@@ -280,6 +379,14 @@ def main():
                 self_test_failures.append(
                     f"fixture's bad step(s) were caught but {expect!r} "
                     f"was not named: {fixture_problems!r}")
+    if "'Tokenless reviewer'" not in joined or "id-token: write" not in joined:
+        self_test_failures.append(
+            f"fixture's F9-shape step (no github_token, job without "
+            f"id-token: write -- #814) was not caught: {fixture_problems!r}")
+    if "'Tokenless step with an OIDC grant'" in joined:
+        self_test_failures.append(
+            f"fixture's tokenless step in a job granting id-token: write "
+            f"was wrongly flagged: {fixture_problems!r}")
     if not self_test_failures:
         print(f"note: fixture bad steps caught: {fixture_problems}")
 
@@ -297,7 +404,8 @@ def main():
         return 1
 
     print("Gate 92 self-test: both bad steps (bare @v1 and @v1.2.0) were "
-          "caught by name, the good step (claude_args only) was not "
+          "caught by name, the F9-shape tokenless step was caught (#814), "
+          "the good step and the OIDC-granted tokenless step were not "
           "flagged, and the real fleet passes.")
     return 0
 
