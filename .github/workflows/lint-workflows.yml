@@ -4739,6 +4739,18 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-duplicate-disposition.py --self-test
 
+      # Gate 126 — specs/108-routed-original-disposition (contracts/
+      # closed-without-landing-notice.md, FR-017): a spec-request this loop
+      # filed that closes without its spec-meta.json ever reaching the
+      # finalize stage's terminal value gets one idempotent notice on both
+      # the spec-request and the originating issue it disposed of.
+      - name: "Gate 126 — closed-without-landing notices are posted once and only when the work never landed (FR-017)"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-board-closed-without-landing.py
+      - name: "Gate 126 self-test — dropping the notice-presence check must make the idempotent-repeat case re-post"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-board-closed-without-landing.py --self-test
+
       # Gate 114 — specs/066-fine-grained-maintainer-token FR-017/FR-018: "a
       # classic PAT, not fine-grained" was asserted in at least four places
       # (docs/setup.md, auto-release.yml's credential-step comment, Gate

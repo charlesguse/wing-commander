@@ -300,6 +300,133 @@ jobs:
               --body "$(printf 'PR #%s merged, but its proof run never started -- the pull_request: closed run that would have entered prove-gate/prove was itself displaced from the queue before it began. This issue stays open.\n\n%s' "$merged_pr" "$marker")"
           done
 
+      # spec 108 (contracts/closed-without-landing-notice.md, FR-017): a
+      # spec-request this loop filed that closed without its linked
+      # specification ever reaching the finalize stage's final PR leaves
+      # an idempotent notice on both it and the originating issue it
+      # disposed of, naming reopening as the path back onto the board.
+      - name: Detect a spec-request that closed without landing (FR-017)
+        id: closed-without-landing
+        if: steps.killswitch.outputs.status != 'paused' && steps.stand-down.outputs.status != 'in-flight'
+        env:
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
+          BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}[bot]
+        run: |
+          set -uo pipefail
+          gh issue list -R "$GITHUB_REPOSITORY" --state closed --label spec-request \
+            --author "$BOT_LOGIN" --json number -L 100 \
+            > "$RUNNER_TEMP/board-closed-spec-requests.json"
+
+          mapfile -t closed_spec_requests < <(jq -r '.[].number' "$RUNNER_TEMP/board-closed-spec-requests.json")
+          echo '{}' > "$RUNNER_TEMP/board-closed-without-landing-comments.json"
+          echo '{}' > "$RUNNER_TEMP/board-disposed-comments.json"
+
+          if [ "${#closed_spec_requests[@]}" -gt 0 ]; then
+            for number in "${closed_spec_requests[@]}"; do
+              # #557 -- see the select step's per-issue comments fetch above.
+              if ! gh api "repos/$GITHUB_REPOSITORY/issues/$number/comments" --paginate \
+                --jq '.[] | {created_at, body, user}' | jq -s '.' \
+                > "$RUNNER_TEMP/board-closed-without-landing-comments-$number.json"; then
+                echo "::error::board-loop: could not fetch the comments of spec-request #$number -- the closed-without-landing scan is not decided for it (FR-017)."
+                exit 1
+              fi
+              jq --arg number "$number" --slurpfile comments "$RUNNER_TEMP/board-closed-without-landing-comments-$number.json" \
+                '. + {($number): $comments[0]}' "$RUNNER_TEMP/board-closed-without-landing-comments.json" \
+                > "$RUNNER_TEMP/board-closed-without-landing-comments.tmp"
+              mv "$RUNNER_TEMP/board-closed-without-landing-comments.tmp" "$RUNNER_TEMP/board-closed-without-landing-comments.json"
+            done
+
+            # Reverse lookup: every disposition:duplicate issue (any state --
+            # the originating issue is itself closed once disposed), so its
+            # own newest marker's spec_request field can be matched back to
+            # a closed spec-request above (data-model.md's Board Item
+            # Marker -- the spec-request itself carries no marker naming it
+            # back, only the reciprocal cross-link comment).
+            gh issue list -R "$GITHUB_REPOSITORY" --state all --label disposition:duplicate \
+              --json number -L 200 > "$RUNNER_TEMP/board-disposed-issues.json"
+            mapfile -t disposed_issues < <(jq -r '.[].number' "$RUNNER_TEMP/board-disposed-issues.json")
+            for number in "${disposed_issues[@]}"; do
+              if ! gh api "repos/$GITHUB_REPOSITORY/issues/$number/comments" --paginate \
+                --jq '.[] | {created_at, body, user}' | jq -s '.' \
+                > "$RUNNER_TEMP/board-disposed-comments-$number.json"; then
+                echo "::error::board-loop: could not fetch the comments of issue #$number (disposition:duplicate) -- the closed-without-landing scan cannot resolve its originating issue (FR-017)."
+                exit 1
+              fi
+              jq --arg number "$number" --slurpfile comments "$RUNNER_TEMP/board-disposed-comments-$number.json" \
+                '. + {($number): $comments[0]}' "$RUNNER_TEMP/board-disposed-comments.json" \
+                > "$RUNNER_TEMP/board-disposed-comments.tmp"
+              mv "$RUNNER_TEMP/board-disposed-comments.tmp" "$RUNNER_TEMP/board-disposed-comments.json"
+            done
+          fi
+
+          CLOSED_SPEC_REQUESTS_PATH="$RUNNER_TEMP/board-closed-spec-requests.json" \
+            SPEC_REQUEST_COMMENTS_PATH="$RUNNER_TEMP/board-closed-without-landing-comments.json" \
+            DISPOSED_COMMENTS_PATH="$RUNNER_TEMP/board-disposed-comments.json" \
+            BOT_LOGIN="$BOT_LOGIN" \
+            python3 - <<'PYEOF'
+          import glob
+          import json
+          import os
+          import sys
+
+          sys.path.insert(0, ".github/scripts")
+          from board_eligibility import DUPLICATE_STEP
+          from board_item_marker import read_marker_with_timestamp
+
+          with open(os.environ["CLOSED_SPEC_REQUESTS_PATH"], encoding="utf-8") as fh:
+              closed_spec_requests = [row["number"] for row in json.load(fh)]
+          with open(os.environ["SPEC_REQUEST_COMMENTS_PATH"], encoding="utf-8") as fh:
+              spec_request_comments = json.load(fh)
+          with open(os.environ["DISPOSED_COMMENTS_PATH"], encoding="utf-8") as fh:
+              disposed_comments = json.load(fh)
+
+          bot_login = os.environ["BOT_LOGIN"]
+
+          originating_by_spec_request = {}
+          for number_str, comments in disposed_comments.items():
+              pair = read_marker_with_timestamp(comments, bot_login)
+              if pair is None:
+                  continue
+              _created_at, marker = pair
+              if marker.get("step") != DUPLICATE_STEP:
+                  continue
+              try:
+                  spec_request_number = int(marker.get("spec_request"))
+              except (TypeError, ValueError):
+                  continue
+              originating_by_spec_request[spec_request_number] = int(number_str)
+
+          def spec_meta_for_issue(issue_number):
+              for path in glob.glob("specs/*/spec-meta.json"):
+                  try:
+                      with open(path, encoding="utf-8") as fh:
+                          meta = json.load(fh)
+                  except (OSError, ValueError):
+                      continue
+                  if meta.get("issue") == issue_number:
+                      return meta
+              return None
+
+          spec_requests = []
+          for number in closed_spec_requests:
+              originating = originating_by_spec_request.get(number)
+              spec_requests.append({
+                  "number": number,
+                  "spec_meta": spec_meta_for_issue(number),
+                  "comments": spec_request_comments.get(str(number)) or [],
+                  "originating_issue": originating,
+                  "originating_comments": (
+                      disposed_comments.get(str(originating)) if originating is not None else None),
+              })
+
+          with open(os.path.join(os.environ["RUNNER_TEMP"], "board-closed-without-landing-input.json"),
+                     "w", encoding="utf-8") as fh:
+              json.dump({"spec_requests": spec_requests}, fh)
+          PYEOF
+
+          python3 .github/scripts/board_closed_without_landing.py \
+            < "$RUNNER_TEMP/board-closed-without-landing-input.json"
+
       # FR-006/FR-008/FR-009/FR-010, contracts/eligibility-and-selection.md.
       # A maintainer-applied label is decided from the `labeled` timeline
       # event's own actor, never from the label's mere presence (FR-008) --
@@ -519,13 +646,79 @@ jobs:
             done <<< "$pr_numbers_to_check"
           fi
 
+          # spec 108 (contracts/eligibility-and-readmission-delta.md,
+          # FR-006): board_eligibility.is_excluded()'s re-admission
+          # carve-out never trusts a cached spec-request state -- resolve
+          # the live state of every spec-request a disposition:duplicate,
+          # OPEN issue's own newest marker names.
+          spec_request_numbers_to_check="$(OPEN_ISSUES_PATH="$RUNNER_TEMP/board-open-issues.json" COMMENTS_BY_ISSUE_PATH="$RUNNER_TEMP/board-comments-by-issue.json" python3 - <<'PYEOF'
+          import json
+          import os
+          import sys
+
+          sys.path.insert(0, ".github/scripts")
+          from board_eligibility import DISPOSITION_LABEL, DUPLICATE_STEP
+          from board_item_marker import read_marker_with_timestamp
+
+          with open(os.environ["OPEN_ISSUES_PATH"], encoding="utf-8") as fh:
+              open_issues = json.load(fh)
+          with open(os.environ["COMMENTS_BY_ISSUE_PATH"], encoding="utf-8") as fh:
+              comments_by_issue = json.load(fh)
+
+          spec_request_numbers = set()
+          for issue in open_issues:
+              if (issue.get("state") or "").upper() != "OPEN":
+                  continue
+              labels = [(label or {}).get("name") or "" for label in issue.get("labels") or []]
+              if DISPOSITION_LABEL not in labels:
+                  continue
+              number = issue.get("number")
+              pair = read_marker_with_timestamp(
+                  comments_by_issue.get(str(number)) or [], os.environ["BOT_LOGIN"])
+              if pair is None:
+                  continue
+              _created_at, marker = pair
+              if marker.get("step") != DUPLICATE_STEP:
+                  continue
+              try:
+                  spec_request_numbers.add(int(marker.get("spec_request")))
+              except (TypeError, ValueError):
+                  continue
+
+          for number in sorted(spec_request_numbers):
+              print(number)
+          PYEOF
+          )"
+
+          echo '{}' > "$RUNNER_TEMP/board-spec-request-state-by-number.json"
+          if [ -n "$spec_request_numbers_to_check" ]; then
+            while IFS= read -r spec_request_number; do
+              [ -z "$spec_request_number" ] && continue
+              # 404 tolerance -- see the PR-state lookup above (#564).
+              if ! state="$(gh issue view "$spec_request_number" -R "$GITHUB_REPOSITORY" --json state --jq .state 2> "$RUNNER_TEMP/board-lookup-spec-request.err")"; then
+                if grep -qE 'HTTP 404' "$RUNNER_TEMP/board-lookup-spec-request.err"; then
+                  continue
+                fi
+                cat "$RUNNER_TEMP/board-lookup-spec-request.err" >&2
+                echo "::error::board-loop: could not look up spec-request #$spec_request_number, named by a disposition:duplicate issue's own marker -- its state cannot be read, so no item is selected this run."
+                exit 1
+              fi
+              [ -z "$state" ] && continue
+              jq --arg n "$spec_request_number" --arg s "$state" '. + {($n): $s}' \
+                "$RUNNER_TEMP/board-spec-request-state-by-number.json" > "$RUNNER_TEMP/board-spec-request-state-by-number.tmp"
+              mv "$RUNNER_TEMP/board-spec-request-state-by-number.tmp" "$RUNNER_TEMP/board-spec-request-state-by-number.json"
+            done <<< "$spec_request_numbers_to_check"
+          fi
+
           jq -n --slurpfile issues "$RUNNER_TEMP/board-open-issues.json" \
             --slurpfile events "$RUNNER_TEMP/board-labeled-events.json" \
             --slurpfile comments "$RUNNER_TEMP/board-comments-by-issue.json" \
             --slurpfile pr_states "$RUNNER_TEMP/board-pr-state-by-number.json" \
+            --slurpfile spec_request_states "$RUNNER_TEMP/board-spec-request-state-by-number.json" \
             --arg bot_login "$BOT_LOGIN" \
             '{open_issues: $issues[0], labeled_events_by_issue: $events[0],
               comments_by_issue: $comments[0], pr_state_by_number: $pr_states[0],
+              spec_request_state_by_number: $spec_request_states[0],
               bot_login: $bot_login}' \
             > "$RUNNER_TEMP/board-eligibility-input.json"
 

@@ -327,13 +327,13 @@ confirm one idempotent notice appears on each issue.
 
 ### Implementation for User Story 2
 
-- [ ] T009 [US2] In `.github/scripts/board_eligibility.py`, add
+- [X] T009 [US2] In `.github/scripts/board_eligibility.py`, add
       `"duplicate"` to `TERMINAL_STEPS` (line 81:
       `frozenset({"closed", "stalled", "proven"})` →
       `frozenset({"closed", "stalled", "proven", "duplicate"})`) — defence
       in depth for the window between a reopen and the loop's next run
       (contracts/eligibility-and-readmission-delta.md).
-- [ ] T010 [US2] In the same file, extend `is_excluded(issue)` (lines
+- [X] T010 [US2] In the same file, extend `is_excluded(issue)` (lines
       141–159) to `is_excluded(issue, spec_request_state_by_number=None)`:
       after the existing `state == "CLOSED"` check and the `STALLED_LABEL`
       check, when the *only* remaining exclusion reason found is a label
@@ -350,7 +350,7 @@ confirm one idempotent notice appears on each issue.
       `board:stalled`, any other `disposition:*` value, `stage:*`/`spec:*`)
       is unaffected (contracts/eligibility-and-readmission-delta.md "Every
       OTHER exclusion reason").
-- [ ] T011 [US2] Thread the new parameter through the call chain in the
+- [X] T011 [US2] Thread the new parameter through the call chain in the
       same file: `in_flight_candidate()` (line 167, its `is_excluded(issue)`
       call at line 200) and `select()`'s fallback scan (line 263, its
       `is_excluded(issue)` call at line 283) both gain a
@@ -363,7 +363,7 @@ confirm one idempotent notice appears on each issue.
       `read_marker_with_timestamp(comments_by_issue.get(number) or [],
       bot_login)` call `in_flight_candidate()`/`select()` already make per
       issue — reuse the already-computed marker rather than re-parsing.
-- [ ] T012 [US2] In `.github/workflows/board-loop.yml`'s `select` job step
+- [X] T012 [US2] In `.github/workflows/board-loop.yml`'s `select` job step
       (the one building `board-eligibility-input.json`), after the
       PR-state-by-number resolution block (ends ~line 520) and before the
       final `jq -n` payload assembly (~lines 522–530), add a new block:
@@ -384,7 +384,7 @@ confirm one idempotent notice appears on each issue.
       "$RUNNER_TEMP/board-spec-request-state-by-number.json"` and add
       `spec_request_state_by_number: $spec_request_states[0]` to the
       constructed object.
-- [ ] T013 [US2] Add three new `issue.json` + `timeline.json` fixture pairs
+- [X] T013 [US2] Add three new `issue.json` + `timeline.json` fixture pairs
       under `.github/scripts/tests/board-eligibility/` (matching the
       existing directory convention) exercising
       contracts/eligibility-and-readmission-delta.md's fixtures 5–7:
@@ -399,7 +399,7 @@ confirm one idempotent notice appears on each issue.
       same way its current cases are enumerated, passing a
       `spec_request_state_by_number` alongside each new fixture's expected
       live spec-request state.
-- [ ] T014 [US2] Create `.github/scripts/board_closed_without_landing.py`
+- [X] T014 [US2] Create `.github/scripts/board_closed_without_landing.py`
       implementing the detection in contracts/closed-without-landing-notice.md
       (research.md D8): given a list of CLOSED, `spec-request`-labelled,
       bot-authored issues and, for each, the `specs/<NNN-slug>/spec-meta.json`
@@ -417,7 +417,7 @@ confirm one idempotent notice appears on each issue.
       HTML-comment marker before posting (mirroring
       `board_item_marker.MARKER_RE`'s own convention, per the contract's
       "Idempotency is checked the same way").
-- [ ] T015 [US2] In `.github/workflows/board-loop.yml`'s `select` job, add a
+- [X] T015 [US2] In `.github/workflows/board-loop.yml`'s `select` job, add a
       new step immediately after the existing "Detect a merge whose proof
       run never started (FR-010b)" step (ends line 301, before the
       eligibility-input-building step that begins ~line 303), named e.g.
@@ -429,7 +429,7 @@ confirm one idempotent notice appears on each issue.
       each's linked `specs/<NNN-slug>/spec-meta.json` (checkout of `main`,
       same as every other content read in this job), and invoking
       `board_closed_without_landing.py` to post the notices.
-- [ ] T016 [US2] Create
+- [X] T016 [US2] Create
       `.github/scripts/verify-board-closed-without-landing.py` (Gate 126,
       provisional) with a `--self-test` covering: (a) a spec-request closed
       with `spec-meta.json` `stage` short of the finalize terminal value →
@@ -438,7 +438,7 @@ confirm one idempotent notice appears on each issue.
       `spec-meta.json` naming it at all → still counted as "closed without
       landing"; (d) a spec-request whose `spec-meta.json` DID reach the
       terminal stage → no notice.
-- [ ] T017 [US2] Register Gate 126 in `.github/workflows/lint-workflows.yml`
+- [X] T017 [US2] Register Gate 126 in `.github/workflows/lint-workflows.yml`
       the same two-step way as T008.
 
 **Checkpoint**: quickstart.md steps 2 and 3 both pass — disposed-issue

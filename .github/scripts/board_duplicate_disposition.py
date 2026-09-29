@@ -34,10 +34,9 @@ import sys
 # directory is trusted (Gate 98), so adding it back is safe.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from board_item_marker import is_loop_marker_author, last_marker_match, write_marker
+from board_eligibility import DISPOSITION_LABEL, DUPLICATE_STEP  # noqa: E402
+from board_item_marker import is_loop_marker_author, last_marker_match, write_marker  # noqa: E402
 
-DISPOSITION_LABEL = "disposition:duplicate"
-DUPLICATE_STEP = "duplicate"
 RECIPROCAL_PHRASE = "Filed for the routed original"
 
 

@@ -78,7 +78,17 @@ AWAITING_MERGE_STEP = "awaiting-merge"
 BREACH_STEP = "breach"
 PRE_FIX_STEPS = frozenset({"triage", "route"})
 FIX_OR_LATER_STEPS = frozenset({"fix", BREACH_STEP, "review", "readiness", AWAITING_MERGE_STEP, "prove"})
-TERMINAL_STEPS = frozenset({"closed", "stalled", "proven"})
+
+# spec 108 (contracts/duplicate-disposition.md, data-model.md): the step
+# board_duplicate_disposition.py's marker write records, and the exact
+# label it applies alongside it -- the canonical registry for both
+# (mirroring STALLED_LABEL/BREACH_STEP/AWAITING_MERGE_STEP's own role
+# here), so board_duplicate_disposition.py imports them from this module
+# rather than defining its own copy.
+DUPLICATE_STEP = "duplicate"
+DISPOSITION_LABEL = DISPOSITION_PREFIX + "duplicate"
+
+TERMINAL_STEPS = frozenset({"closed", "stalled", "proven", DUPLICATE_STEP})
 
 # Issue #555: the select job's PR lookup records an OPEN PR that is not this
 # loop's own (no board:owned label, or its head in another repository) as
@@ -138,10 +148,25 @@ def classify_issue(issue, labeled_events):
     return "ineligible"
 
 
-def is_excluded(issue):
+def is_excluded(issue, spec_request_state_by_number=None, marker=None):
     """FR-010: (True, reason) when the issue is closed, carries a settled
     disposition:* marker, carries board:stalled, or carries any stage:*/
-    spec:* label. (False, None) otherwise."""
+    spec:* label. (False, None) otherwise.
+
+    spec 108 carve-out (contracts/eligibility-and-readmission-delta.md,
+    FR-005/FR-006/FR-007): when the issue is OPEN and DISPOSITION_LABEL
+    is the ONLY exclusion-worthy label it carries (not just any
+    disposition:* match), the caller's already-resolved newest
+    loop-authored marker (`marker` -- in_flight_candidate()/select()
+    already read this per issue via read_marker_with_timestamp(), the
+    same way they always have; this function never re-reads comments
+    itself) is consulted: if its step is DUPLICATE_STEP and its
+    `spec_request` issue number resolves CLOSED in
+    spec_request_state_by_number, the issue is NOT excluded (re-admitted).
+    Still OPEN, or unresolved/missing, keeps the issue excluded -- a
+    reopen while the linked spec-request is still open must not re-admit
+    it. Every OTHER exclusion reason (plain closed, board:stalled, any
+    other disposition:* value, stage:*/spec:*) is unaffected."""
     if (issue.get("state") or "").upper() == "CLOSED":
         return True, "closed"
 
@@ -150,13 +175,20 @@ def is_excluded(issue):
     if STALLED_LABEL in labels:
         return True, STALLED_LABEL
 
-    for name in labels:
-        if name.startswith(DISPOSITION_PREFIX):
-            return True, name
-        if any(name.startswith(prefix) for prefix in LIFECYCLE_PREFIXES):
-            return True, name
+    exclusion_labels = [
+        name for name in labels
+        if name.startswith(DISPOSITION_PREFIX)
+        or any(name.startswith(prefix) for prefix in LIFECYCLE_PREFIXES)
+    ]
+    if not exclusion_labels:
+        return False, None
 
-    return False, None
+    if exclusion_labels == [DISPOSITION_LABEL] and (marker or {}).get("step") == DUPLICATE_STEP:
+        spec_request_number = (marker or {}).get("spec_request")
+        if (spec_request_state_by_number or {}).get(spec_request_number) == "CLOSED":
+            return False, None
+
+    return True, exclusion_labels[0]
 
 
 # FR-011/CLAUDE.md single-home rule: "is this issue an in-flight board item
@@ -164,7 +196,8 @@ def is_excluded(issue):
 # select() that consults it first. Never re-derive this inline in a
 # workflow's run: step or in a second module; point back at this comment
 # instead (contracts/in-flight-detection.md).
-def in_flight_candidate(open_issues, comments_by_issue, pr_state_by_number, bot_login):
+def in_flight_candidate(open_issues, comments_by_issue, pr_state_by_number, bot_login,
+                         spec_request_state_by_number=None):
     """FR-001/FR-002/FR-003/FR-005. Returns (issue_number, multiple_found).
     bot_login: the loop's own App login; only its comments' markers are
     read (board_item_marker.is_loop_marker_author(), issue #555).
@@ -197,11 +230,12 @@ def in_flight_candidate(open_issues, comments_by_issue, pr_state_by_number, bot_
     """
     candidates = []
     for issue in open_issues:
-        excluded, _reason = is_excluded(issue)
-        if excluded:
-            continue
         number = issue.get("number")
         pair = read_marker_with_timestamp(comments_by_issue.get(number) or [], bot_login)
+        excluded, _reason = is_excluded(
+            issue, spec_request_state_by_number, pair[1] if pair else None)
+        if excluded:
+            continue
         if pair is None:
             continue
         created_at, marker = pair
@@ -260,7 +294,8 @@ def _unowned_open_pr_holds(marker, pr_state_by_number):
     return pr_state_by_number.get(pr) == UNOWNED_OPEN_PR_STATE
 
 
-def select(open_issues, labeled_events_by_issue, comments_by_issue, pr_state_by_number, bot_login):
+def select(open_issues, labeled_events_by_issue, comments_by_issue, pr_state_by_number, bot_login,
+           spec_request_state_by_number=None):
     """FR-004/FR-011: consults in_flight_candidate() first; falls through to
     the existing oldest-first/classify_issue/is_excluded scan when it
     returns (None, ...). That fallback carries the same `prove`-marker skip
@@ -274,17 +309,18 @@ def select(open_issues, labeled_events_by_issue, comments_by_issue, pr_state_by_
     issue whose marker's PR is open but not the loop's own
     (_unowned_open_pr_holds(), issue #555)."""
     in_flight, _multiple_found = in_flight_candidate(
-        open_issues, comments_by_issue, pr_state_by_number, bot_login)
+        open_issues, comments_by_issue, pr_state_by_number, bot_login, spec_request_state_by_number)
     if in_flight is not None:
         return in_flight
 
     candidates = sorted(open_issues, key=lambda issue: issue.get("createdAt") or "")
     for issue in candidates:
-        excluded, _reason = is_excluded(issue)
-        if excluded:
-            continue
         number = issue.get("number")
         pair = read_marker_with_timestamp(comments_by_issue.get(number) or [], bot_login)
+        excluded, _reason = is_excluded(
+            issue, spec_request_state_by_number, pair[1] if pair else None)
+        if excluded:
+            continue
         if pair is not None and (pair[1] or {}).get("step") == "prove":
             continue
         if pair is not None and _awaiting_merge_holds(pair[1], pr_state_by_number):
@@ -329,10 +365,14 @@ def main():
         int(number): state
         for number, state in (payload.get("pr_state_by_number") or {}).items()
     }
+    spec_request_state_by_number = {
+        int(number): state
+        for number, state in (payload.get("spec_request_state_by_number") or {}).items()
+    }
     in_flight_issue, multiple_found = in_flight_candidate(
-        open_issues, comments_by_issue, pr_state_by_number, bot_login)
+        open_issues, comments_by_issue, pr_state_by_number, bot_login, spec_request_state_by_number)
     selected = select(open_issues, labeled_events_by_issue, comments_by_issue,
-                      pr_state_by_number, bot_login)
+                      pr_state_by_number, bot_login, spec_request_state_by_number)
     print(json.dumps({
         "decided_by_marker": in_flight_issue is not None and in_flight_issue == selected,
         "multiple_found": multiple_found,
