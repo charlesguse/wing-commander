@@ -613,32 +613,12 @@ dispatched, issue stays open).
   `-f` pairs), `attempt-token`, and `poll-attempts`/
   `poll-interval-seconds` (defaulted to `auto-release.yml`'s existing
   values), returning `run-url` and `conclusion` (research.md D14).
-- [ ] T054 [US6] Repoint `auto-release.yml`'s `dispatch-release` job at
+- [X] T054 [US6] Repoint `auto-release.yml`'s `dispatch-release` job at
   `wing-commander-dispatch-and-wait`, preserving its existing dispatch
   behavior (attempt-token, correlate-by-title, poll `status` to
   `completed`, verify the tag independently) unchanged.
-  **BLOCKED (2026-09-22, cycle 2)**: Gate 59
-  (`verify-correlated-release-dispatch.py`) is a line-based textual gate
-  over `auto-release.yml`'s own raw YAML, and its checks 3, 4 and 5 assert
-  that the correlation search, the tag-state outcome and the
-  wait-for-status all appear **in that file's own text**. Repointing the
-  job moves exactly that shell into the composite and makes Gate 59 fail,
-  so T054 is not a repoint but a coupled redesign of spec 048's own
-  regression gate — and Gate 59 is textual, not an execution harness, so
-  it cannot prove the repoint behaviour-preserving either. Separately,
-  `dispatch-release` emits six outputs its `report` job branches on
-  (`correlation`, `correlated-run-id`, `correlated-run-url`,
-  `tag-matches`, `request-time`, `dispatch-rejected`), including the
-  three-way `found`/`ambiguous`/`not-observed` distinction and the fixed
-  90-second wait on the uncorrelated path, none of which this composite's
-  contracted `run-url`/`conclusion` pair can carry. The composite itself
-  (T053) is built and is board-loop.yml's prove job's single home for the
-  idiom; a waiver in `single-home-waivers.json` (`dispatch-and-wait`
-  check, `auto-release.yml`) records auto-release.yml's own call site as
-  the known, temporary exception, with a pointer back to this task.
-  Recommended follow-up, in its own change: widen the composite's outputs
-  contract to carry the correlation/request-time/rejection detail, teach
-  Gate 59 to resolve the composite, THEN repoint.
+  **Landed via specs/081-composite-aware-dispatch-gate** — see that
+  feature's tasks.md T011-T022.
 - [X] T055 [P] [US6] Create
   `.github/actions/wing-commander-dispatch-and-wait/tests/run-tests.sh`
   with fixtures covering successful correlation, ambiguous/absent
@@ -646,25 +626,17 @@ dispatched, issue stays open).
   (`conclusion: timeout`).
   **Landed at `.github/scripts/dispatch-and-wait-tests/run-tests.sh`, not
   the path above** — same reason as T022; see T062.
-- [ ] T056 [P] [US6] Add `wing-commander-dispatch-and-wait` to
+- [X] T056 [P] [US6] Add `wing-commander-dispatch-and-wait` to
   `.github/scripts/verify-single-home-idioms.py`'s `DECLARED_HOMES`,
   pointing at `.github/actions/wing-commander-dispatch-and-wait/action.yml`,
   failing if the correlation/poll block reappears pasted a second time or
   if `auto-release.yml`'s call site still resolves the old inline path.
-  **PARTIALLY DONE, BLOCKED on T054 (2026-09-22, cycle 2)**: the
-  `DECLARED_HOMES` entry, the `check_dispatch_and_wait` structural scan (a
-  third paste of the `gh workflow run` + `gh run list --workflow=` +
-  `displayTitle` + `[attempt:` co-occurrence anywhere else in the tree
-  fails Gate 60), and its clean-tree and third-paste `--self-test`
-  coverage are done. The second half — failing while `auto-release.yml`'s
-  call site still resolves the old inline path — cannot land honestly
-  while T054 itself is blocked (see its note): doing so would fail Gate 60
-  on every PR, including PRs unrelated to this feature, until a human
-  lands T054. A `single-home-waivers.json` entry (`dispatch-and-wait`
-  check, `auto-release.yml`, issue #408) records that occurrence as the
-  named, temporary exception instead; removing that waiver is the
-  completion signal for both T054 and the rest of this task. This mirrors
-  exactly how T021/T027 are recorded above.
+  The first half (`DECLARED_HOMES`, the `check_dispatch_and_wait`
+  structural scan, and its self-test coverage) landed in this feature's
+  own cycle. **The second half landed via
+  specs/081-composite-aware-dispatch-gate** — see that feature's
+  tasks.md T021-T022, which removed the `single-home-waivers.json`
+  entry this task's own note described.
 - [X] T057 [P] [US6] Create `.github/scripts/board_prove.py` deciding
   `actions_only` from the merged PR's changed paths (research.md D15):
   `docs/**`/`specs/**`-only, or `.github/scripts/verify-*.py`-only
