@@ -87,7 +87,10 @@ WAIVERS_PATH = ".github/scripts/lifecycle-label-taxonomy-waivers.json"
 STAGE_TOKEN_RE = re.compile(r'^stage:[a-z-]+$')
 DOC_MENTION_RE = re.compile(r'`(stage:[a-z-]+)`')
 
-REQUIRED_WAIVER_FIELDS = ("file", "check", "pattern", "count", "issue", "reason")
+# `issue` is not here: whether a waiver cites an OPEN issue or is marked
+# permanent is verify-waiver-citations.py's (Gate 124) one rule for every
+# register.
+REQUIRED_WAIVER_FIELDS = ("file", "check", "pattern", "count", "reason")
 WAIVER_CHECK_NAME = "stage-label-writer"
 
 # --------------------------------------------------------------------------
@@ -330,7 +333,7 @@ def load_waivers(root="."):
                 f"{where} ({waiver.get('pattern', '?')}) is missing "
                 f"{', '.join(missing)}. Every waiver names the file, the "
                 f"check, the exact label pattern, the documented-mention "
-                f"count it covers, the tracking issue and the reason -- an "
+                f"count it covers and the reason -- an "
                 f"exception nobody can inspect is indistinguishable from a "
                 f"bug someone silenced.")
             continue
@@ -373,13 +376,13 @@ def evaluate(root="."):
             failures.append(
                 f"{where} exempts a label that IS in the applied set -- "
                 f"stale by construction, nothing left to exempt. Remove "
-                f"the waiver (tracking issue {waiver['issue']}).")
+                f"the waiver ({waiver.get('issue') or 'permanent'}).")
             continue
         if label not in documented:
             failures.append(
                 f"{where} names a label {DOC_PATH} no longer documents. "
                 f"Stale in the direction of a removed mention -- remove "
-                f"the waiver (tracking issue {waiver['issue']}).")
+                f"the waiver ({waiver.get('issue') or 'permanent'}).")
             continue
         live_count = documented[label]
         if live_count != waiver["count"]:
@@ -387,7 +390,7 @@ def evaluate(root="."):
                 f"{where} declares {waiver['count']} documented mention(s), "
                 f"but {DOC_PATH} currently has {live_count}. Stale either "
                 f"direction -- update the count deliberately or remove the "
-                f"waiver (tracking issue {waiver['issue']}).")
+                f"waiver ({waiver.get('issue') or 'permanent'}).")
             continue
         waived_by_label[label] = waiver
 

@@ -154,7 +154,7 @@ PROSE_FREE_KEYS = {"id", "confirm-environment", "index"}
 # cannot tell an enum write from a prose write without shell dataflow, and
 # a declaration shape for "one of these literals" does not exist yet.
 EXCEPTIONS = {
-    # PROSE
+    # PROSE (tracked on #736)
     (".github/workflows/auto-update-spec-kit.yml", "e2e-stage", "failure-detail"):
         "PROSE: the e2e read-back's diagnostic, built from the agent "
         "verdict's free-text reason.",

@@ -18,12 +18,18 @@
   "waivers": [
     {
       "path": ".wing-commander-pipeline/.github/scripts/git_read.py",
-      "issue": "#599",
+      "issue": null,
+      "permanent": true,
+      "permanent_reason": "The pipeline's own run-time checkout, never committed; absent by design.",
+      "decided_by": "#599",
       "reason": "`.wing-commander-pipeline/` is the pipeline's own run-time-checked-out copy of itself, created by a checkout step during a workflow run and never committed to this repository (git status shows it untracked, not gitignored, in exactly the sessions that create it). Four grants resolve here today: implement.yml's implement.post-progress-comment, pr-conversation.yml's pr-conversation.classify, watchdog.yml's watchdog.diagnose (all three composite call sites), and auto-update-spec-kit.yml's evaluate-path job's bare claude_args --allowedTools (see specs/082's research.md D0). One entry covers all four, since FR-006 waives the exact path, not the site."
     },
     {
       "path": "e2e-scratch/.specify/scripts/bash/create-new-feature.sh",
-      "issue": "#436",
+      "issue": null,
+      "permanent": true,
+      "permanent_reason": "A run-time e2e scratch tree, never committed; absent by design.",
+      "decided_by": "#436",
       "reason": "e2e-scratch/ is created at run time by auto-update-spec-kit.yml's e2e provisioning step from a candidate Spec Kit release under test and is never committed. Both spellings of the grant (bare and `bash <path>`, on the 'Run e2e agent-driven stage' step) resolve to this same path; one entry covers both, since FR-006 waives the exact path, not the literal grant string."
     }
   ]
