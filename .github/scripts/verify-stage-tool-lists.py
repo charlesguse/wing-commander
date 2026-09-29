@@ -1042,6 +1042,25 @@ def self_test(root="."):
               "caught (expected 1 failure naming the site and pattern): "
               "{0}".format(found))
 
+    # The glob match is case-sensitive, like Actions' Ubuntu runners and the
+    # permission layer's own regex: `VERIFY-*` matches none of the shipped
+    # `verify-*.py` gates, so it must fail even on a case-insensitive
+    # filesystem.
+    ghost5 = ".github/scripts/VERIFY-*"
+    m_sites = dict(sites)
+    allowed, disallowed = m_sites["implement.cycle"]
+    m_sites["implement.cycle"] = (
+        allowed + ["Bash(python3 {0})".format(ghost5)], disallowed)
+    m_all_sites = [(label, a) for label, (a, _d) in m_sites.items()]
+    found = new_failures(check_grant_existence(m_all_sites, waivers, root))
+    if len(found) == 1 and ghost5 in found[0]:
+        print("[ok] mutation caught: a wildcard grant matching only by "
+              "case-folding")
+    else:
+        bad += 1
+        print("[FAIL] a wildcard grant matching only by case-folding was "
+              "not caught (expected 1 failure naming it): {0}".format(found))
+
     # A grant whose case doesn't match the file on disk must fail here the
     # same way it fails on Actions' case-sensitive runners, even though
     # this self-test itself may be running on a case-insensitive filesystem.

@@ -605,10 +605,10 @@ jobs:
 
           # (canonical copy; do not condense)
           # #266: the prompt below tells the agent to inspect files with the
-          # Grep, Glob and Read tools, never shell pipelines or loops
-          # (`grep ... | sort`, `for f in ...; do cat`, `awk`): the stage's
-          # allowlist denies those by design, and each denial costs a turn
-          # and files a denied-tool watchdog finding.
+          # Grep, Glob and Read tools, never shell loops or unlisted commands
+          # (`for f in ...; do cat "$f"`, `awk`): the stage's allowlist
+          # denies those by design, and each denial costs a turn and files a
+          # denied-tool watchdog finding.
 
           # (canonical copy; do not condense)
           # #569: the settled anchor rule the prompt below states --
@@ -646,8 +646,8 @@ jobs:
             use Write. Prefer the tools over shell equivalents — Read instead of
             `cat`, Grep instead of `sed`. `sed` and `wc` are not available to
             you at all. Inspect files with the Grep, Glob and Read tools, not
-            shell pipelines or loops (`grep … | sort`, `for f in …; do cat`,
-            `awk`) — those are denied here.
+            shell loops or commands this run does not list (`for f in …; do
+            cat "$f"`, `awk`) — those are denied here.
 
             Steps:
             1. Read ${{ steps.ctx.outputs.spec-dir }}/spec.md and find the open

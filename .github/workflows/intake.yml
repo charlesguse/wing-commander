@@ -696,8 +696,8 @@ jobs:
                'Closes nothing — lifecycle issue: #${{ inputs.issue-number }}')
                with the Write tool to exactly
                ${{ runner.temp }}/intake-pr-body.md -- not under the
-               repository, and never as a multi-line --body on the command
-               line, which the permission layer denies -- then run:
+               repository; --body-file avoids the quoting hazards of a
+               multi-line --body on the command line -- then run:
                gh pr create --base ${{ steps.defbranch.outputs.name }} --head ${{ inputs.spec-draft-prefix }}<NNN-slug> \
                  --title "Spec: <feature name> (#${{ inputs.issue-number }})" \
                  --body-file ${{ runner.temp }}/intake-pr-body.md

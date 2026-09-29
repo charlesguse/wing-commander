@@ -22,8 +22,9 @@ The SHIPPED `Compose tool args` `run:` block, extracted from
 configurations (mirroring gate 11's `shipped_script()`/`run_step()`
 pattern) — there is no copied render logic here to drift out of sync.
 
-It ends with mutation checks that reintroduce each of the four defects and
-assert this suite goes red for each, per FR-015/User Story 4.
+It ends with mutation checks that reintroduce each defect listed in
+MUTATIONS below and assert this suite goes red for each, per FR-015/User
+Story 4.
 """
 import os
 import shutil
@@ -219,6 +220,17 @@ def case_glob_is_prefix():
     note("a glob grant is stated with its wildcard, not as exact-only")
 
 
+def case_space_star_is_prefix():
+    """Bash(cmd *) is the any-arguments form: rendered without the ` *`,
+    so the glob branch must never be tested before it."""
+    expect("space-star grant",
+           {"ALLOWED_OVERRIDE": "Bash(git status *)",
+            "DISALLOWED_OVERRIDE": ""},
+           "This run permits these shell commands: `git status`."
+           + STATIC_SUFFIX)
+    note("Bash(cmd *) renders as the bare command, the same as Bash(cmd:*)")
+
+
 def case_prefix_and_exact_together():
     """Acceptance 2.4: both forms granted → stated once, prefix form."""
     expect("prefix and exact together",
@@ -279,6 +291,7 @@ CASES = [
     case_no_shell_entry_at_all,
     case_exact_only,
     case_glob_is_prefix,
+    case_space_star_is_prefix,
     case_prefix_and_exact_together,
     case_partial_overlap_deny,
     case_prefix_deny_covers_exact_allow,
@@ -287,9 +300,9 @@ CASES = [
 
 
 # --- mutation checks -----------------------------------------------------
-# Each mutation reintroduces one of the four defects this gate exists to
-# catch, and each must turn at least one DISTINCT case red (FR-015, User
-# Story 4 Acceptance 2).
+# Each mutation reintroduces one of the defects this gate exists to catch,
+# and each must turn at least one DISTINCT case red (FR-015, User Story 4
+# Acceptance 2).
 MUTATIONS = [
     ("reverts the subtraction (D2)",
      lambda s: s.replace('[ "$covered" = "1" ] && continue', 'true')),
@@ -308,6 +321,8 @@ MUTATIONS = [
      lambda s: s.replace(
          "printf 'PREFIX|%s' \"$(trim \"$cmd\")\"",
          "printf 'EXACT|%s' \"$(trim \"$cmd\")\"")),
+    ("lets the glob branch shadow the `Bash(cmd *)` branch (#266)",
+     lambda s: s.replace("*' *')", "*'  *')")),
     ("reverts the appended compound-command guidance (D3)",
      lambda s: s.replace(
          'shell_commands="$shell_commands$STATIC_SUFFIX"\n', '')),

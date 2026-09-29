@@ -1009,7 +1009,10 @@ jobs:
               `python3 .github/scripts/run-local-gates.py` — no `cd`,
               `timeout`, redirect (`> log 2>&1`) or `;`/`echo` chain around
               it, each of which is denied even though the gate itself is
-              allowed. Read long output straight from the tool result.
+              allowed. Read long output straight from the tool result. For
+              the full suite, set the Bash tool's own timeout parameter to
+              600000; the suite outlasts the tool's 2-minute default, and a
+              shell `timeout` wrapper is denied.
             - Bash cannot reach paths outside the checkout, but the Write tool
               can. Never mkdir or ls a temp path first to prepare it.
             A denial is not a hint to retry a variant. Switch to the allowed form
@@ -1717,7 +1720,10 @@ jobs:
               `python3 .github/scripts/run-local-gates.py` — no `cd`,
               `timeout`, redirect (`> log 2>&1`) or `;`/`echo` chain around
               it, each of which is denied even though the gate itself is
-              allowed. Read long output straight from the tool result.
+              allowed. Read long output straight from the tool result. For
+              the full suite, set the Bash tool's own timeout parameter to
+              600000; the suite outlasts the tool's 2-minute default, and a
+              shell `timeout` wrapper is denied.
             - Bash cannot reach paths outside the checkout, but the Write tool
               can. Never mkdir or ls a temp path first to prepare it.
             A denial is not a hint to retry a variant. Switch to the allowed form
