@@ -315,7 +315,7 @@ strip and slug-format check; each appears once.
   slug and spec directory as outputs of a job that runs before both its
   entry job and its survivor job, so that a job-level concurrency group can
   read them.
-- **FR-002**: The survivor job's `concurrency.group` MUST be the canonical
+- **FR-002**: `stalled-mark`'s `concurrency.group` MUST be the canonical
   per-specification group in one of the three spellings
   `concurrency-groups.md` and Gate 80 recognise, so that its spec-branch
   write is ordered against every other writer of that branch.
@@ -325,33 +325,36 @@ strip and slug-format check; each appears once.
 - **FR-004**: `specs/013-serialize-rebase-stages/contracts/concurrency-groups.md`
   MUST record the survivor job as a member of the canonical group, in the
   same row form used for the members added for #397.
-- **FR-005**: The survivor job MUST still run, and still post a stall
-  notice, whenever it runs today — including when the new prerequisite job
-  fails or is skipped. A stalled run MUST NOT become silent as a result of
-  this change. The guarantee is wired in two halves (resolved on #581, Q1):
-  the prerequisite job MUST fail loudly when its API read fails — it MUST
-  NOT swallow an unreadable API response and emit empty outputs as if the
-  head ref had been read successfully — and the survivor job's admission
-  condition MUST therefore tolerate a failed or skipped prerequisite
-  explicitly. This follows the fail-loudly precedent of #564/#567 and
-  #557/#563: an error is reported as an error, and the notice still lands.
-- **FR-006**: When the specification's identity cannot be resolved, the
-  stall notice MUST post to the PR number and the chain-stop notice MUST
-  receive an empty spec directory, preserving today's
-  "record could not be updated" behaviour.
+- **FR-005**: `stalled` MUST still run, and still post a stall notice,
+  whenever it runs today — including when the new prerequisite job fails
+  or is skipped. A stalled run MUST NOT become silent as a result of this
+  change. The guarantee is wired in two halves (resolved on #581, Q1): the
+  prerequisite job MUST fail loudly when its API read fails — it MUST NOT
+  swallow an unreadable API response and emit empty outputs as if the head
+  ref had been read successfully — and `stalled`'s and `stalled-mark`'s
+  admission conditions, kept in lockstep, MUST therefore both tolerate a
+  failed or skipped prerequisite explicitly. This follows the fail-loudly
+  precedent of #564/#567 and #557/#563: an error is reported as an error,
+  and the notice still lands.
+- **FR-006**: When the specification's identity cannot be resolved,
+  `stalled`'s notice MUST post to the PR number, and `stalled-mark`'s
+  chain-stop-notice call MUST receive an empty spec directory, preserving
+  today's "record could not be updated" behaviour.
 - **FR-007**: A pull request the stage does not act on MUST continue to
   produce no reply, no comment, and no failed job. The new prerequisite job
   MUST NOT treat a non-spec head ref as an error. FR-005's loud failure is
   scoped to an unreadable API response only: a head ref that reads cleanly
   and simply is not `spec/NNN-slug` is an ordinary, expected event and MUST
   leave the prerequisite job green with an empty spec directory.
-- **FR-008**: The survivor job MUST NOT join a concurrency group that
+- **FR-008**: `stalled-mark` MUST NOT join a concurrency group that
   serializes runs belonging to different specifications. When the spec
-  directory is empty — a non-qualifying PR, or a failed lookup — the group
+  directory is empty — a non-qualifying PR, or a failed lookup — its group
   MUST fall back to a per-pull-request group (resolved on #581, Q3). It MUST
   NOT degenerate to the constant `wing-commander-`, which every such run
   repository-wide would share, letting one stalled run evict another's
-  pending notice by #415's mechanism.
+  pending notice by #415's mechanism. `stalled` itself is unconditionally in
+  the per-PR group, never a fallback — its group never depended on the spec
+  directory to begin with.
 - **FR-009**: The entry job's qualification verdict — the comparison of the
   PR's base ref against the repository default branch and the exclusion of
   plan, tasks, and spec-draft head refs — MUST reach the same result for
