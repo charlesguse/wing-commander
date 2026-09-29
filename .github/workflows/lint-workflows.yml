@@ -900,6 +900,18 @@ jobs:
               ("pr", "diff"):        frozenset({("pull-requests", "read")}),
               ("pr", "ready"):       frozenset({("pull-requests", "write"),
                                                  ("contents", "write")}),
+              # lifecycle-review-gate.yml's `merge` job squash-merges a
+              # lifecycle PR once every merge precondition holds
+              # (specs/062-lifecycle-review-gate, US4 — off unless
+              # WING_COMMANDER_LIFECYCLE_AUTO_MERGE is set). PUT
+              # /repos/{o}/{r}/pulls/{n}/merge: the REST reference for
+              # "Merge a pull request" lists Pull requests (write) as the
+              # fine-grained requirement, and the squash commit it writes
+              # onto the base branch is a Contents write — the same pairing
+              # `gh pr ready` above already carries, and both are granted in
+              # docs/setup.md.
+              ("pr", "merge"):       frozenset({("pull-requests", "write"),
+                                                 ("contents", "write")}),
               ("search", "issues"):  frozenset({("issues", "read")}),
               ("search", "prs"):     frozenset({("pull-requests", "read")}),
               ("release", "create"): frozenset({("contents", "write")}),

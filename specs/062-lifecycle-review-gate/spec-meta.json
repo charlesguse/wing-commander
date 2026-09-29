@@ -2,8 +2,8 @@
   "issue": 476,
   "spec_dir": "specs/062-lifecycle-review-gate",
   "feature_num": "062",
-  "stage": "stalled",
-  "iteration": 2,
+  "stage": "implement",
+  "iteration": 3,
   "spec_branch": "spec/062-lifecycle-review-gate",
   "pending_re_review_from": [
     "charlesguse"
