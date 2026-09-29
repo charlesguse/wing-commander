@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,16 +31,17 @@
 
 ## Notes
 
-- Items marked incomplete require spec updates before `/speckit-clarify` or `/speckit-plan`
-- **Three [NEEDS CLARIFICATION] markers remain by design** (FR-006/Q3,
-  FR-008/Q2, FR-009/Q1). Each is a trade-off the lifecycle issue itself
-  routed to the owner, not an under-specification this stage could resolve:
-  the fallback order between the record's stage and the display name, what
-  the single-spec allowlist becomes, and whether an unrecognised name is
-  warned about. Each carries three suggested answers with implications in
-  the Open Questions section. This is the maximum the specify skill permits
-  and the questions are posted to lifecycle issue #750 for the clarify
-  stage.
+- Items marked incomplete require spec updates before `/speckit-clarify` or `/speckit-plan`; none remain
+- **All three [NEEDS CLARIFICATION] markers are resolved.** The three
+  trade-offs the lifecycle issue routed to the owner were answered on #750
+  and folded into the requirements: Q1-A (record stage first, display name
+  only as the fallback) → FR-009, FR-009a; Q2-B (the record declares whether
+  its spec identity is the run's own, and the allowlist goes) → FR-008,
+  FR-008a; Q3-A (warn only when no stage resolved and the run uploaded a
+  `claude-execution-output*` artifact) → FR-014, SC-007. The Clarifications
+  section records each answer with the rationale given and the consequence
+  carried into the requirements. FR-002, FR-013, SC-002, the edge cases, the
+  Key Entities and the US1/US2 acceptance scenarios were updated to match.
 - **Content Quality note**: the spec names concrete artifacts (the metrics
   record's `stage` field, `docs/adoption.md`, the named collectors). These
   are not implementation choices being smuggled in — they are the subject of
@@ -48,4 +49,6 @@
   who must act on this spec is a pipeline maintainer. The spec still states
   *what* must hold rather than *how* to make it hold: no requirement names a
   file to edit, a step to add, or a mechanism to use.
-- Validation run once; all items except the [NEEDS CLARIFICATION] item pass.
+- Validation run twice: once at specify time, when only the
+  [NEEDS CLARIFICATION] item failed, and once after the clarify stage folded
+  in the answers from #750. All items now pass.

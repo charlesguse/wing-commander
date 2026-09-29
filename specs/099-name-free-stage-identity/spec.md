@@ -47,10 +47,15 @@ finding, same facts.
    measures the spec branch and reports lost progress rather than skipping
    as "not a push-expected stage".
 3. **Given** a dispatched run from a renamed tasks wrapper whose head is the
-   default branch, **When** the inspected-run-identity composite resolves
-   the spec slug, **Then** the metrics-record fallback runs and the slug
-   resolves, so collectors and the diagnose verdict file against the spec's
-   lifecycle issue instead of the bare run URL.
+   default branch, and whose record declares the spec it names as the run's
+   own, **When** the inspected-run-identity composite resolves the spec slug,
+   **Then** the metrics-record fallback runs and the slug resolves, so
+   collectors and the diagnose verdict file against the spec's lifecycle
+   issue instead of the bare run URL.
+6. **Given** an inspected watchdog, rebase, or cleanup run whose record
+   names a spec it did not advance, **When** the composite resolves the spec
+   slug, **Then** the record's own declaration that the spec is not the
+   run's own suppresses the fallback, regardless of that run's display name.
 4. **Given** an inspected run from a renamed finalize wrapper whose final PR
    body overstates its task count, **When** the watchdog inspects it,
    **Then** final-pr-claims runs and the narrative-drift signal is emitted.
@@ -88,8 +93,16 @@ unqualified clean bill of health.
    because the stage could not be identified".
 2. **Given** an inspected run whose display name is unrecognised but whose
    record names its stage, **When** the watchdog finishes, **Then** no
-   warning about the name is required for the inspection to be complete —
-   the stage was identified.
+   warning about the name is emitted — the stage was identified.
+3. **Given** an inspected run with no resolvable stage identity that
+   uploaded a `claude-execution-output*` artifact, **When** the watchdog
+   finishes, **Then** its report warns that the display name was not
+   recognised and no name-free source supplied a stage.
+4. **Given** an inspected run with no resolvable stage identity that
+   uploaded no `claude-execution-output*` artifact — an adopter's unrelated
+   workflow, or a cleanup, rebase or pr-conversation run — **When** the
+   watchdog finishes, **Then** no name warning is emitted, because
+   "unrecognised" is the normal answer for such a run.
 
 ---
 
@@ -120,7 +133,7 @@ my wrappers, and what do I lose?" without opening `watchdog.yml`.
 - **The record is gone.** Artifact retention expired, the artifact was
   never uploaded, or the download failed. The run's stage is then knowable
   only from its name — which is exactly the case the reference-name match
-  handles today. Whether this falls back to the name is Q1.
+  handles today. Per FR-009 this does fall back to the name.
 - **The run emitted no record at all.** A run that was skipped, cancelled,
   or failed before its metrics step never wrote one. Most collectors
   already exit early on `skipped`/`cancelled`, but a run that *failed* mid-
@@ -131,12 +144,14 @@ my wrappers, and what do I lose?" without opening `watchdog.yml`.
 - **The run is not a pipeline stage at all.** An adopter's unrelated
   workflow, or the pipeline's own cleanup, rebase, or pr-conversation runs.
   These have no single spec and no expected stage transition; the correct
-  outcome is still "skip, on purpose". Whether an unrecognised name is
-  worth a warning here — where most unrecognised names will legitimately
-  land — is Q3.
+  outcome is still "skip, on purpose". Per FR-014 no name warning fires
+  here, because such a run uploads no `claude-execution-output*` artifact —
+  which is where most unrecognised names legitimately land.
 - **The record's stage and the name disagree.** A wrapper named
   `Wing Commander · 3 plan` that actually calls the tasks stage, or a single
-  wrapper file that calls two stages. Which one wins follows from Q1.
+  wrapper file that calls two stages. Per FR-009 the record's stage wins:
+  the name is consulted only when the record yields no stage, so a
+  disagreement is never even observed.
 - **Several records, one run.** An implement run writes a cycle record and
   a progress record; a rebase run writes one per matrix slug. Each names the
   same stage, so first-record-wins is safe for the stage field even where it
@@ -144,10 +159,14 @@ my wrappers, and what do I lose?" without opening `watchdog.yml`.
 - **Self-inspection.** The watchdog's own record carries `stage: watchdog`
   *and* borrows the spec of the run it inspected. The stage field is
   therefore trustworthy for self-inspection even though the spec field is
-  not — which is the observation the allowlist question (Q2) turns on.
+  not. Per FR-008 the watchdog's record declares that its spec identity is
+  not the run's own, so the borrowed spec is rejected without any list
+  naming the watchdog.
 - **A record borrowed from another run.** The existing allowlist exists to
   stop the watchdog's, rebase's, and cleanup's records from tying those runs
-  to an arbitrary spec. Any change here must not reopen that.
+  to an arbitrary spec. Any change here must not reopen that; per FR-008
+  each of those stages declares the borrowing in its own record, and per
+  FR-008a a record predating the declaration is treated as borrowing.
 
 ## Requirements *(mandatory)*
 
@@ -158,9 +177,11 @@ my wrappers, and what do I lose?" without opening `watchdog.yml`.
   for every stage that emits a metrics record.
 - **FR-002**: Every site that today identifies the inspected stage by
   matching a reference display name MUST consume the resolved stage
-  identity instead of matching a name. The known sites are: the
-  inspected-run-identity composite's metrics-record slug-fallback allowlist;
-  the branch-drift collector's push-expected-stage gate, its implement-only
+  identity instead of matching a name — except the inspected-run-identity
+  composite's metrics-record slug-fallback allowlist, which per FR-008
+  consumes the record's own spec-identity declaration rather than the
+  resolved stage. The known sites are: that slug-fallback allowlist; the
+  branch-drift collector's push-expected-stage gate, its implement-only
   since-created baseline arms, and its stage label for the summary line; the
   spec-meta collector's expected-stage map; the final-pr-claims finalize
   scope guard; the spec-collision intake scope guard; and the watchdog's own
@@ -178,22 +199,31 @@ my wrappers, and what do I lose?" without opening `watchdog.yml`.
 - **FR-006**: A stage identity that cannot be resolved MUST be surfaced in
   the inspection's report as an evidence class that was not examined, so
   the inspection is not reported as an unqualified clean pass.
-  [NEEDS CLARIFICATION: Q3 — see below; whether an unrecognised display
-  name additionally warrants a warning, and on which runs, is unresolved.]
 - **FR-007**: The mapping from a resolved stage to its expected `spec-meta`
   lifecycle stage (intake→spec, plan→plan, tasks→tasks,
   implement→implement, finalize→review) MUST keep exactly one home, as the
   display-name map does today.
-- **FR-008**: The set of stages whose every run advances exactly one spec —
-  and whose record spec identity is therefore the run's own — MUST remain
-  enforced, so a watchdog, rebase, or cleanup run is still never tied to a
-  borrowed spec. [NEEDS CLARIFICATION: Q2 — see below; whether that set is
-  re-expressed as an allowlist of resolved stage values, replaced by a
-  property the record itself carries, or dropped in favour of a different
-  guard is unresolved.]
+- **FR-008**: The rule that a watchdog, rebase, or cleanup run is never tied
+  to a borrowed spec MUST remain enforced, and MUST be enforced by a
+  property the metrics record itself carries: each record MUST declare
+  whether the spec identity it names is the emitting run's own. The central
+  allowlist of stages is removed, so no list can drift as stages are added.
+  (Q2-A, which re-expressed the allowlist as resolved stage values, was
+  rejected as circular — it would decide whether to trust a record's spec
+  field using a stage read from that same record.)
+- **FR-008a**: A metrics record that carries no such declaration — one
+  written before the field existed — MUST be treated as NOT declaring the
+  spec as the run's own, which is today's safe default.
 - **FR-009**: The precedence between the name-free stage identity and the
-  display name MUST be fixed and documented in one place. [NEEDS
-  CLARIFICATION: Q1 — see below.]
+  display name MUST be fixed and documented in one place, and MUST be:
+  the metrics record's stage first, and the display name only when the
+  record yields no stage (no record, or `stage_available: false`). Runs that
+  failed early, were cancelled, or whose artifacts expired leave no record
+  and are the watchdog's core subject, so the name fallback is retained
+  rather than dropped.
+- **FR-009a**: Because the display name survives as a documented fallback,
+  the FR-012 gate MUST permit a reference display name only in that fallback
+  position and MUST fail it as a primary stage-identification condition.
 - **FR-010**: The published stage workflows MUST NOT require an adopter's
   wrapper to carry any particular display name in order to receive the
   collector coverage FR-002 lists.
@@ -202,12 +232,22 @@ my wrappers, and what do I lose?" without opening `watchdog.yml`.
   still reads them.
 - **FR-012**: A checked-in gate MUST fail if a reference display name
   reappears as a stage-identification condition at any of the FR-002 sites,
-  so the consolidation survives the next edit. (CLAUDE.md: "a rule with no
-  gate behind it lasts until the next session.")
+  the single FR-009 fallback excepted per FR-009a, so the consolidation
+  survives the next edit. (CLAUDE.md: "a rule with no gate behind it lasts
+  until the next session.")
 - **FR-013**: Each failure and fallback branch this feature introduces MUST
   be exercised by a checked-in fixture — a record with no stage, a missing
-  record, an unrecognised name, and a disagreement between the two sources.
-  (Constitution VIII.)
+  record, an unrecognised name, a record carrying no spec-identity
+  declaration, and a disagreement between the two sources. (Constitution
+  VIII.)
+- **FR-014**: A warning about the inspected run's display name MUST be
+  emitted only when no stage was resolved from any source AND the run meets
+  a deterministic condition identifying it as a pipeline stage run. That
+  condition MUST be a checkable property of the run rather than a judgment:
+  the run uploaded a `claude-execution-output*` artifact. (Constitution IX.)
+  A run whose stage resolved MUST NOT produce a name warning, and neither
+  MUST a run that fails the condition — which is where most unrecognised
+  names legitimately land.
 
 ### Key Entities
 
@@ -220,12 +260,15 @@ my wrappers, and what do I lose?" without opening `watchdog.yml`.
   stage's metrics record already carries. The literal is set inside the
   published stage workflow, not by the wrapper, so it is adopter-
   independent by construction.
-- **Wrapper display name**: adopter-owned, free-form, currently load-
-  bearing. After this feature its load-bearing role is whatever Q1 and Q3
-  decide.
-- **Single-spec stage set**: the stages whose every run advances exactly one
-  spec. Today an allowlist of six display names; after this feature,
-  whatever Q2 decides.
+- **Record spec-identity declaration**: a property each metrics record
+  carries stating whether the spec identity it names is the emitting run's
+  own or borrowed from the run it was reporting on. Set inside the published
+  stage workflow, like the stage field. Absent on records written before the
+  field existed, which count as borrowed (FR-008a). This replaces the
+  single-spec stage allowlist.
+- **Wrapper display name**: adopter-owned, free-form. After this feature it
+  is load-bearing only as the fallback stage source when the record yields
+  no stage (FR-009), and as the subject of the narrow warning in FR-014.
 
 ## Success Criteria *(mandatory)*
 
@@ -236,7 +279,9 @@ my wrappers, and what do I lose?" without opening `watchdog.yml`.
   reference display name produce identical collector outcomes and identical
   findings — zero differences across all FR-002 sites.
 - **SC-002**: Zero of the FR-002 sites decide stage scope by comparing
-  against a reference display name, as measured by the FR-012 gate.
+  against a reference display name, as measured by the FR-012 gate. Names
+  survive at exactly one site — the single fallback FR-009 defines, reached
+  only when the record yields no stage.
 - **SC-003**: Zero inspections report an unqualified "passed inspection" for
   a run whose stage could not be identified.
 - **SC-004**: The number of metrics-record downloads per inspection is
@@ -247,42 +292,66 @@ my wrappers, and what do I lose?" without opening `watchdog.yml`.
 - **SC-006**: Every fallback and failure branch introduced has at least one
   checked-in fixture; zero branches are covered only by a manual
   demonstration.
+- **SC-007**: Zero name warnings are emitted on inspections whose stage
+  resolved, and zero on inspected runs that uploaded no
+  `claude-execution-output*` artifact; an inspected run that uploaded one and
+  resolved no stage yields exactly one.
+- **SC-008**: Zero stages that emit a metrics record omit the spec-identity
+  declaration, and zero lists of stage or wrapper names remain in the
+  slug-resolution path.
 
-## Open Questions
+## Clarifications
 
-### Q1 — Precedence between the record's stage and the display name
+All three open questions were answered on lifecycle issue #750. No
+[NEEDS CLARIFICATION] markers remain.
 
-**Context**: FR-009. The issue asks: "record stage first, then name?"
+### Q1 — Precedence between the record's stage and the display name → **A**
 
-| Option | Answer | Implications |
-|--------|--------|--------------|
-| A | Record stage first; display name only when the record yields none | Adopter-neutral in the common case, and keeps today's behaviour intact for runs with no record (cancelled, failed-early, expired artifacts). Cost: two code paths forever, and the reference names stay in the source, so the FR-012 gate must permit them as a fallback while forbidding them as the primary. |
-| B | Record stage only; no name fallback at all | One path, one source of truth, and the reference names leave the published stage entirely. Cost: a run whose record is missing or expired loses coverage it has today even in this repository — a regression for failed-early runs, which are the watchdog's core subject. |
-| C | Display name first; record stage only when the name is unrecognised | Byte-identical behaviour for this repository, so the risk of regressing the worked example is lowest. Cost: the adopter-facing defect is fixed only for renamed wrappers whose runs left a record, and the reference names remain the primary contract in all but name. |
+**Resolved**: the metrics record's stage comes first; the display name is
+consulted only when the record yields no stage (no record at all, or
+`stage_available: false`). Encoded in FR-009 and FR-009a.
 
-### Q2 — What the single-spec allowlist becomes
+**Rationale given**: runs that failed early, were cancelled, or whose
+artifacts expired leave no record, and they are the watchdog's core subject.
+Dropping the name fallback (B) would regress them. C was not chosen: it
+leaves the reference names as the primary contract.
 
-**Context**: FR-008, and the composite's `record_fallback` allowlist. The
-allowlist exists so a watchdog, rebase, or cleanup run — whose record names
-a spec it did not advance — is never tied to that spec.
+**Consequence carried into the requirements**: the reference names stay in
+the source as a fallback, so the FR-012 gate must permit them in that one
+position while failing them as a primary condition (FR-009a), and the
+record-vs-name disagreement edge case resolves in the record's favour
+without ever being observed.
 
-| Option | Answer | Implications |
-|--------|--------|--------------|
-| A | Re-express the same six-member set as resolved stage values | Smallest change; the guard's meaning is unchanged and becomes adopter-independent. Cost: circular for the slug fallback specifically — the stage now comes from the same record whose spec field the allowlist is deciding whether to trust. Needs the plan to confirm that is sound (it is, if the stage field is trustworthy even in a borrowed record, which self-inspection suggests). |
-| B | Have the record itself declare whether its spec identity is the run's own, and drop the name/stage allowlist | Puts the knowledge where it is known — in the stage that writes the record — and no central list can drift out of date as stages are added. Cost: widens the record's shape and touches every stage that emits one; a record written before the field existed must be handled. |
-| C | Keep the allowlist keyed on display names, treating it as out of scope | Minimal blast radius. Cost: leaves the slug-resolution half of the reported defect unfixed, so a renamed dispatched wrapper still files findings against a bare run URL instead of its lifecycle issue. |
+### Q2 — What the single-spec allowlist becomes → **B**
 
-### Q3 — Whether an unrecognised display name is warned about
+**Resolved**: each stage's metrics record declares whether the spec identity
+it names is the emitting run's own, and the central allowlist is removed.
+Encoded in FR-008 and FR-008a.
 
-**Context**: FR-006. Most unrecognised names will legitimately belong to
-runs that are not pipeline stages at all — an adopter's own workflows, plus
-cleanup, rebase and pr-conversation.
+**Rationale given**: the knowledge lives in the stage that writes the
+record, so no central list drifts as stages are added. A was rejected as
+circular — it would decide whether to trust a record's spec field using a
+stage read from that same record.
 
-| Option | Answer | Implications |
-|--------|--------|--------------|
-| A | Warn only when no stage could be resolved from any source, and only on a run that otherwise looks like a pipeline stage | Signal where it matters, silence where "unrecognised" is the normal answer. Cost: "otherwise looks like a pipeline stage" is a judgment that must be reduced to a deterministic condition (constitution IX). |
-| B | Warn whenever the display name is unrecognised, regardless of whether a stage was resolved | Loudest, and an adopter learns immediately. Cost: fires on every non-stage run the watchdog inspects, which in this repository is routine — recurring noise that trains maintainers to ignore it, and under Q1-A it fires even when identity succeeded. |
-| C | Never warn about the name; report only the unresolved-identity state (FR-005/FR-006) | No new noise, and the name stops being something the pipeline has an opinion about. Cost: an adopter who renamed a wrapper *and* whose runs leave no record sees only a generic "evidence class not examined" line, with no hint that the name is the reason. |
+**Consequence carried into the requirements**: the record's shape widens and
+every stage that emits one is touched; a record written before the field
+existed carries no declaration and is treated as not the run's own, which is
+today's safe default (FR-008a). The FR-002 slug-fallback site therefore
+consumes the declaration rather than the resolved stage.
+
+### Q3 — Whether an unrecognised display name is warned about → **A**
+
+**Resolved**: warn only when no stage resolved from any source AND the run
+otherwise looks like a pipeline stage. Encoded in FR-014 and SC-007.
+
+**Rationale given**: signal where it matters, silence where "unrecognised"
+is the normal answer. B fires on every non-stage run, which is routine noise
+in this repository.
+
+**Consequence carried into the requirements**: "looks like a pipeline stage"
+is reduced to the deterministic condition constitution IX demands — the run
+uploaded a `claude-execution-output*` artifact — rather than left as a
+judgment.
 
 ## Assumptions
 
