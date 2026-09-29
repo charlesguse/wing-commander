@@ -1274,6 +1274,7 @@ jobs:
           fi
 
       - name: Report re-review request failure
+        id: report-re-review
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.pr-state == 'open' && steps.re-review.outputs.failed == 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
         with:
@@ -1307,6 +1308,7 @@ jobs:
       # this moment posts no comment at all — a customer-visible silent
       # stall until a human happens to notice the PR.
       - name: Announce the implementation PR for review
+        id: announce-pr
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
         with:
@@ -1326,6 +1328,7 @@ jobs:
       # not re-request (FR-010a). Harmless no-op on the create path, where
       # the field is already absent/empty.
       - name: Commit metadata (stage -> review)
+        id: commit-metadata
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true'
         env:
           SPEC_DIR: ${{ steps.spec.outputs.spec-dir }}
@@ -1362,7 +1365,13 @@ jobs:
             echo "has-remaining=false" >> "$GITHUB_OUTPUT"
           fi
 
+      # Retried (#662): run 36264390069 lost this post to one transient
+      # "GraphQL: Something went wrong" after the PR was already open and
+      # labelled, and stalled the lifecycle. Exhausted retries still fail
+      # the step -- and the job -- and the stall notice names it through the
+      # candidates list below.
       - name: Announce remaining manual work on the lifecycle issue
+        id: announce-remaining
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.remaining.outputs.has-remaining == 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
         with:
@@ -1372,8 +1381,10 @@ jobs:
           summary: "Complete the remaining manual work"
           body-file: ${{ runner.temp }}/finalize-remaining.md
           timing: "after this PR merges"
+          retry-delays: "5 15 45"
 
       - name: Announce no remaining manual work on the lifecycle issue
+        id: announce-no-remaining
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.remaining.outputs.has-remaining == 'false'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
         with:
@@ -1403,6 +1414,11 @@ jobs:
       # continue-on-error (the callout below it must still run for a
       # rate-limited verdict, FR-015a), so its conclusion is always
       # "success" and it can never be this job's actual point of failure.
+      # Every hard-failing step after "Open or update the final pull
+      # request" is listed (#662) -- Gate 35 fails on one that is not.
+      # "Announce finalize failure (PR verification)" is the one exception:
+      # it runs only once "Verify the final pull request was created" has
+      # already failed, and naming it would hide that cause.
       - name: Determine failed post-agent step
         id: failed-step
         if: "!cancelled() && steps.summarize.outcome != 'skipped'"
@@ -1412,7 +1428,14 @@ jobs:
             [
               {"name": "Verify agent output", "conclusion": "${{ steps.verify-agent-output.conclusion }}"},
               {"name": "Verify the final pull request was created", "conclusion": "${{ steps.verify-pr.conclusion }}"},
-              {"name": "Flip stage label", "conclusion": "${{ steps.flip-label.conclusion }}"}
+              {"name": "Flip stage label", "conclusion": "${{ steps.flip-label.conclusion }}"},
+              {"name": "Report re-review request failure", "conclusion": "${{ steps.report-re-review.conclusion }}"},
+              {"name": "Compose review-announcement summary", "conclusion": "${{ steps.announce-summary.conclusion }}"},
+              {"name": "Announce the implementation PR for review", "conclusion": "${{ steps.announce-pr.conclusion }}"},
+              {"name": "Commit metadata (stage -> review)", "conclusion": "${{ steps.commit-metadata.conclusion }}"},
+              {"name": "Check for remaining manual work", "conclusion": "${{ steps.remaining.conclusion }}"},
+              {"name": "Announce remaining manual work on the lifecycle issue", "conclusion": "${{ steps.announce-remaining.conclusion }}"},
+              {"name": "Announce no remaining manual work on the lifecycle issue", "conclusion": "${{ steps.announce-no-remaining.conclusion }}"}
             ]
 
   # Survivor job (the #224 idiom, research.md D4): new for finalize — this

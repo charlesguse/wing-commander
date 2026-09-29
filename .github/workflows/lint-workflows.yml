@@ -3242,7 +3242,9 @@ jobs:
       # finalize run against an existing OPEN final PR refreshes it instead
       # of skipping — body, lifecycle record, label, re-review request —
       # while a merged or closed PR is reported and left untouched, and the
-      # one-PR-per-spec guard's purpose is preserved on every path.
+      # one-PR-per-spec guard's purpose is preserved on every path. Also
+      # (#662): every post-PR step that can fail finalize is a named
+      # failed-step candidate, and the manual-work announcement retries.
       - name: Gate 35 — finalize refreshes an open final PR, and only an open one
         run: python3 .github/scripts/verify-finalize-refresh.py
 

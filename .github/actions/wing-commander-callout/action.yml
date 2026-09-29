@@ -57,6 +57,16 @@ inputs:
       "after this PR merges"). kind: action only
     required: false
     default: ""
+  retry-delays:
+    description: >
+      Space-separated whole seconds to wait before each retry of the
+      comment post, on any non-zero exit (e.g. "5 15 45" = up to three
+      retries after the first attempt). Empty (the default) posts once.
+      Opt-in because a retry after an error the server had in fact
+      applied posts the comment twice -- use it only where a duplicate
+      comment is cheaper than the failed step (#662).
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -73,8 +83,15 @@ runs:
         PR_URL: ${{ inputs.pr-url }}
         PR_LABEL: ${{ inputs.pr-label }}
         TIMING: ${{ inputs.timing }}
+        RETRY_DELAYS: ${{ inputs.retry-delays }}
       run: |
         set -uo pipefail
+
+        if ! [[ "$RETRY_DELAYS" =~ ^[\ $'\t']*([0-9]+[\ $'\t']*)*$ ]]; then
+          echo "::error::wing-commander-callout: retry-delays must be space-separated whole seconds; got '$RETRY_DELAYS'."
+          exit 1
+        fi
+        read -r -a delays <<< "$RETRY_DELAYS"
 
         if [ -n "$BODY" ] && [ -n "$BODY_FILE" ]; then
           echo "::error::wing-commander-callout: both body and body-file were set — exactly one is allowed."
@@ -120,4 +137,20 @@ runs:
         # --body-file only — never shell-interpolate agent-authored content
         # into a --body "$(...)" string (research.md, injection-safety
         # decision). Never edits or deletes a prior comment (FR-012).
-        gh issue comment "$ISSUE_NUMBER" --body-file "$out"
+        max_attempts=$(( ${#delays[@]} + 1 ))
+        attempt=1
+        until gh issue comment "$ISSUE_NUMBER" --body-file "$out"; do
+          rc=$?
+          if [ "$attempt" -ge "$max_attempts" ]; then
+            # With no retries configured (the default) this is exactly the
+            # pre-#662 failure shape: gh's own exit code, no extra annotation.
+            if [ "$max_attempts" -gt 1 ]; then
+              echo "::error::wing-commander-callout: posting the comment on issue #$ISSUE_NUMBER failed on all $max_attempts attempt(s)."
+            fi
+            exit "$rc"
+          fi
+          delay="${delays[$((attempt - 1))]}"
+          echo "::warning::wing-commander-callout: attempt $attempt/$max_attempts to post the comment on issue #$ISSUE_NUMBER failed; retrying in ${delay}s."
+          sleep "$delay"
+          attempt=$((attempt + 1))
+        done

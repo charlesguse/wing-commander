@@ -30,10 +30,22 @@ exact `pr-state` value gate-coverage-042.md's scenarios 2/3 require), which
 is the same class of static check Gate 15 itself already uses for
 job-suppression conditions.
 
+#662 adds two checks here, as the finalize verifier nearest the steps they
+cover. (1) Every step after "Open or update the final pull request" that
+can fail the job is a named candidate of "Determine failed post-agent
+step", read through its own `steps.<id>.conclusion` -- a failed
+remaining-manual-work announcement once stalled a lifecycle whose stall
+notice did not name it. Self-tested by dropping that announcement from the
+list, adding an unlisted hard-failing step, and removing its retry-delays.
+(2) The `wing-commander-callout` composite's shipped post retries per
+retry-delays and still fails once they are spent, driven against a `gh`
+stub that fails a set number of times.
+
 Usage: python3 .github/scripts/verify-finalize-refresh.py [-v]
 Requires: bash, jq, git (all present on ubuntu-latest runners).
 """
 import copy
+import json
 import os
 import shutil
 import subprocess
@@ -56,6 +68,24 @@ REREVIEW_STEP = "Request re-review from the answered reviewer(s)"
 METADATA_STEP = "Commit metadata (stage -> review)"
 REPORT_MERGED_STEP = "Report the final pull request is already merged"
 REPORT_CLOSED_STEP = "Report the final pull request is closed"
+
+# #662: every step after PR_STEP that can fail the job is a named candidate
+# of the failed-step lookup, so the stall notice names it.
+CALLOUT = ".github/actions/wing-commander-callout/action.yml"
+CALLOUT_STEP = "Render and post callout"
+ANNOUNCE_REMAINING_STEP = "Announce remaining manual work on the lifecycle issue"
+FAILED_STEP_STEP = "Determine failed post-agent step"
+# The job's own end-of-job reporters: they compute the stall notice's
+# inputs, so they are not candidates of it.
+CANDIDATE_REPORTERS = ("Determine post-agent credential status",
+                       FAILED_STEP_STEP)
+# name -> the `if:` fragment that keeps the exemption true. Naming this
+# step would replace the cause it reports with itself (the lookup names
+# the LAST failed candidate).
+CANDIDATE_EXEMPT = {
+    "Announce finalize failure (PR verification)":
+        "steps.verify-pr.outputs.failed == 'true'",
+}
 
 REPO = "charlesguse/wing-commander"
 SPEC_DIR = "specs/042-post-review-fold-loop"
@@ -124,6 +154,15 @@ case " $* " in
     ;;
   *" issue "*"view "*)
     printf '{"labels": []}'
+    exit 0
+    ;;
+  *" issue "*"comment "*)
+    # The first GH_COMMENT_FAILS posts fail the way run 36264390069's did.
+    n=$(grep -c " issue comment " "$GH_CALLS")
+    if [ "$n" -le "${GH_COMMENT_FAILS:-0}" ]; then
+      echo "GraphQL: Something went wrong" >&2
+      exit 1
+    fi
     exit 0
     ;;
 esac
@@ -253,7 +292,9 @@ def gh_call_count(calls_path, *substrings):
 def load_steps():
     names = (GUARD_STEP, DIFF_STEP, BODY_STEP, PR_STEP, REREVIEW_STEP,
             METADATA_STEP)
-    return {name: find_step(STAGE, name)["run"] for name in names}
+    steps = {name: find_step(STAGE, name)["run"] for name in names}
+    steps[CALLOUT_STEP] = find_step(CALLOUT, CALLOUT_STEP)["run"]
+    return steps
 
 
 def base_env(work, bindir, calls, runner_temp, extra=None):
@@ -709,6 +750,133 @@ def test_structural():
     return failures
 
 
+def check_post_pr_candidates(doc):
+    """#662: every step after PR_STEP in the finalize job that can fail the
+    job is a candidate of the failed-step lookup, read through its own id.
+    "Can fail" is every step without `continue-on-error: true`, minus the
+    lookup's own reporters and the CANDIDATE_EXEMPT entries, whose `if:`
+    must still hold the fragment that justifies them. Also: the remaining-
+    manual-work announcement still retries its post.
+    """
+    failures = []
+    steps = ((doc.get("jobs") or {}).get("finalize") or {}).get("steps") or []
+    names = [(s or {}).get("name") for s in steps]
+    if PR_STEP not in names or FAILED_STEP_STEP not in names:
+        return [f"candidates: {PR_STEP!r} or {FAILED_STEP_STEP!r} is "
+                f"missing from finalize.yml's finalize job."]
+    lookup = steps[names.index(FAILED_STEP_STEP)]
+    raw = str(((lookup.get("with") or {}).get("candidates-json")) or "")
+    try:
+        candidates = {c["name"]: c["conclusion"] for c in json.loads(raw)}
+    except (ValueError, KeyError, TypeError) as exc:
+        return [f"candidates: {FAILED_STEP_STEP!r}'s candidates-json does "
+                f"not parse as a list of name/conclusion objects ({exc})."]
+
+    for name in candidates:
+        if name not in names:
+            failures.append(f"candidates: {name!r} is listed but no step in "
+                            f"the finalize job has that name.")
+
+    for step in steps[names.index(PR_STEP) + 1:]:
+        name = step.get("name")
+        if name in CANDIDATE_REPORTERS:
+            continue
+        if str(step.get("continue-on-error")).lower() == "true":
+            continue
+        if name in CANDIDATE_EXEMPT:
+            if CANDIDATE_EXEMPT[name] not in (step.get("if") or ""):
+                failures.append(
+                    f"candidates: {name!r} is exempt only while its `if:` "
+                    f"holds {CANDIDATE_EXEMPT[name]!r}; it no longer does, "
+                    f"so it is a candidate like any other.")
+            continue
+        if name not in candidates:
+            failures.append(
+                f"candidates: {name!r} runs after {PR_STEP!r} and can fail "
+                f"the job, but is not in {FAILED_STEP_STEP!r}'s "
+                f"candidates-json -- a failure there stalls the lifecycle "
+                f"with a notice that does not name it (#662).")
+            continue
+        want = f"${{{{ steps.{step.get('id')}.conclusion }}}}"
+        if not step.get("id") or candidates[name] != want:
+            failures.append(
+                f"candidates: {name!r}'s conclusion reads "
+                f"{candidates[name]!r}, not its own step's {want!r}.")
+
+    announce = steps[names.index(ANNOUNCE_REMAINING_STEP)] \
+        if ANNOUNCE_REMAINING_STEP in names else {}
+    if not str((announce.get("with") or {}).get("retry-delays") or "").strip():
+        failures.append(f"candidates: {ANNOUNCE_REMAINING_STEP!r} no longer "
+                        f"passes retry-delays -- one transient API error "
+                        f"stalls the lifecycle again (#662).")
+    return failures
+
+
+def _doc_mut_drop_announce_candidate(doc):
+    step = next(s for s in doc["jobs"]["finalize"]["steps"]
+                if s.get("name") == FAILED_STEP_STEP)
+    entries = json.loads(step["with"]["candidates-json"])
+    step["with"]["candidates-json"] = json.dumps(
+        [c for c in entries if c["name"] != ANNOUNCE_REMAINING_STEP])
+
+
+def _doc_mut_new_unlisted_step(doc):
+    """A hard-failing step added after the PR step and not listed."""
+    steps = doc["jobs"]["finalize"]["steps"]
+    at = next(i for i, s in enumerate(steps) if s.get("name") == PR_STEP)
+    steps.insert(at + 1, {"name": "A new post-PR step", "run": "false"})
+
+
+def _doc_mut_drop_retry(doc):
+    step = next(s for s in doc["jobs"]["finalize"]["steps"]
+                if s.get("name") == ANNOUNCE_REMAINING_STEP)
+    step["with"].pop("retry-delays", None)
+
+
+DOC_MUTATIONS = [
+    ("announce step dropped from the failed-step candidates",
+     _doc_mut_drop_announce_candidate),
+    ("unlisted hard-failing step added after the PR step",
+     _doc_mut_new_unlisted_step),
+    ("announce step's retry-delays removed", _doc_mut_drop_retry),
+]
+
+
+def scenario_callout_retry(steps, root):
+    """#662: with retry-delays set, a post that fails transiently is
+    retried and the step succeeds; a post that fails every attempt still
+    fails the step; with retry-delays empty, it posts exactly once.
+    """
+    failures = []
+    cases = (("0 0 0", 2, 0, 3), ("0 0 0", 9, 1, 4), ("", 1, 1, 1),
+             ("", 0, 0, 1))
+    for i, (delays, fails, want_rc, want_calls) in enumerate(cases):
+        work = os.path.join(root, f"callout-{i}")
+        runner_temp = os.path.join(work, "runner_temp")
+        os.makedirs(runner_temp, exist_ok=True)
+        bindir, calls = new_stub_dir(work)
+        env = base_env(work, bindir, calls, runner_temp, {
+            "ISSUE_NUMBER": ISSUE, "KIND": "action", "SUMMARY": "s",
+            "BODY": "b", "BODY_FILE": "", "PR_URL": "", "PR_LABEL": "",
+            "TIMING": "", "RETRY_DELAYS": delays,
+            "GH_COMMENT_FAILS": str(fails)})
+        rc, out, _, _ = run_step(BASH, steps[CALLOUT_STEP], work, env,
+                                 runner_temp)
+        got = gh_call_count(calls, "issue comment")
+        if (rc == 0) != (want_rc == 0) or got != want_calls:
+            failures.append(
+                f"callout(retry-delays={delays!r}, {fails} failure(s)): "
+                f"exited {rc} after {got} post(s); expected "
+                f"{'success' if want_rc == 0 else 'failure'} after "
+                f"{want_calls}. {out.strip()}")
+    return failures
+
+
+def _mut_drop_callout_retry(steps):
+    steps[CALLOUT_STEP] = steps[CALLOUT_STEP].replace(
+        "max_attempts=$(( ${#delays[@]} + 1 ))", "max_attempts=1")
+
+
 SCENARIOS = [
     scenario_guard_tri_state,
     scenario_diff_propagation,
@@ -719,6 +887,7 @@ SCENARIOS = [
     scenario_pr_open_or_update,
     scenario_re_review_request,
     scenario_metadata_commit_idempotent,
+    scenario_callout_retry,
 ]
 
 
@@ -778,6 +947,8 @@ MUTATIONS = [
     scenario_idempotent_repeat_refresh),
     ("merged/closed guard removed from diff", _mut_remove_merged_closed_guard,
     scenario_diff_propagation),
+    ("callout retry removed", _mut_drop_callout_retry,
+    scenario_callout_retry),
 ]
 
 
@@ -791,6 +962,27 @@ def main():
                  "commit and push, so nothing here can run without it.")
 
     failures = list(test_structural())
+
+    doc = yaml.safe_load(open(STAGE, encoding="utf-8")) or {}
+    candidate_failures = check_post_pr_candidates(doc)
+    failures.extend(candidate_failures)
+    for f in candidate_failures:
+        print(f"::error::{f}")
+    for label, apply_mutation in DOC_MUTATIONS:
+        mutated_doc = copy.deepcopy(doc)
+        apply_mutation(mutated_doc)
+        if mutated_doc == doc:
+            print(f"::error::mutation {label!r} changed nothing — the "
+                  f"code it edits was rewritten. Update the mutation.")
+            failures.append(f"mutation inapplicable: {label}")
+        elif check_post_pr_candidates(mutated_doc):
+            print(f"Mutation OK — {label}: caught.")
+        else:
+            print(f"::error::MUTATION SURVIVED — {label} broke nothing "
+                  f"the candidates check sees. Fix the check, not the "
+                  f"mutation.")
+            failures.append(f"mutation survived: {label}")
+
     steps = load_steps()
     root = tempfile.mkdtemp()
     try:
@@ -821,8 +1013,9 @@ def main():
         if VERBOSE:
             print(f"::error::{f}")
 
-    print(f"Gate 35: {len(SCENARIOS)} scenario(s), {len(MUTATIONS)} "
-          f"mutation(s); {len(failures)} failure(s).")
+    print(f"Gate 35: {len(SCENARIOS)} scenario(s), "
+          f"{len(MUTATIONS) + len(DOC_MUTATIONS)} mutation(s); "
+          f"{len(failures)} failure(s).")
     sys.exit(1 if failures else 0)
 
 

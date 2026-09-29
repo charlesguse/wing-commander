@@ -21,6 +21,7 @@ new design.
 | `pr-url` | no | Direct URL to the related pull request. `kind: action` only |
 | `pr-label` | no | Human label for the PR (e.g. `"the spec PR"`, `"the implementation PR"`). Defaults to `"the pull request"` when `pr-url` is set |
 | `timing` | no | Free-text statement of when the action should be performed (e.g. `"after this PR merges"`). `kind: action` only |
+| `retry-delays` | no | Space-separated whole seconds to wait before each retry of the post on non-zero exit (e.g. `"5 15 45"`). Empty (default) posts once. A retry after a server-applied error can post the comment twice (#662) |
 
 **Contract clauses**:
 - Exactly one of `body`/`body-file` may be set; the action fails fast
@@ -72,12 +73,15 @@ new design.
 
 ## Behavior contract
 
-- Posts exactly one issue comment per invocation (`gh issue comment`) —
+- Posts one issue comment per invocation (`gh issue comment`), or, with
+  `retry-delays` set, may post a duplicate if an attempt the server applied
+  reported failure —
   never edits or deletes a prior comment (FR-012: fresh, append-only).
 - Never fails the calling job on a GitHub API error from the comment post
   itself beyond what `gh issue comment`'s own non-zero exit already causes —
-  same failure shape every existing `gh issue comment` step already has (no
-  new retry/backoff logic is introduced; out of scope).
+  same failure shape every existing `gh issue comment` step already has
+  (opt-in retry via `retry-delays`, #662; exhausted retries still fail the
+  step, with gh's own exit code).
 - Is pure output — it never reads or mutates `spec-meta.json`, labels, or
   any other pipeline state. Callers that also need a label flip (e.g.
   `finalize.yml`'s `stage:review`) keep doing so in their own existing,
