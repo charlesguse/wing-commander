@@ -3205,6 +3205,15 @@ jobs:
   # "started". Split internally on refusal-reason == '' (D3's
   # mutual-exclusion arm — a refusal already posted its own in-job note,
   # FR-006).
+  #
+  # Posts the human-facing notice only (mark-record: "false" below) and
+  # stays in the per-PR group so it lands immediately and cannot be
+  # evicted by a busy per-spec group's single pending-run slot; the
+  # spec-meta.json stall-mark write is queued separately by the
+  # stalled-mark job below, in the canonical per-spec group
+  # (specs/077-stalled-per-spec-group). The admission condition (`needs:`/
+  # `if:`) is kept identical to stalled-mark's own below — the same
+  # criteria must admit both jobs.
   stalled:
     needs: [verify-image-prerequisites, resolve-identity, classify-and-announce]
     if: |
@@ -3228,7 +3237,7 @@ jobs:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
     concurrency:
-      group: wing-commander-${{ needs.resolve-identity.outputs.spec-dir }}${{ needs.resolve-identity.outputs.spec-dir == '' && format('pr-conversation-pr-{0}', inputs.pr-number) || '' }}
+      group: wing-commander-pr-conversation-pr-${{ inputs.pr-number }}
       cancel-in-progress: false
     permissions:
       contents: read
@@ -3320,6 +3329,7 @@ jobs:
           agent-conclusion: ${{ needs.classify-and-announce.outputs.agent-conclusion }}
           credential-refresh-ok: ${{ needs.classify-and-announce.outputs.credential-refresh-ok }}
           failed-post-agent-step: ${{ needs.classify-and-announce.outputs.failed-post-agent-step }}
+          resolve-identity-result: ${{ needs.resolve-identity.result }}
 
       # pr-number is the one identifier FR-003 guarantees present regardless
       # of how early this job died — used as the post target whenever the
@@ -3340,3 +3350,129 @@ jobs:
           restart-command: ${{ needs.classify-and-announce.outputs.agent-ran == 'true' && needs.classify-and-announce.outputs.agent-conclusion == 'success' && 'The classify agent step completed its work; a step after it did not. Re-dispatch the pr-conversation stage for this pull request once the cause above is resolved.' || needs.classify-and-announce.outputs.agent-ran == 'true' && 'The classify agent step failed after running; its pushed commits are on the branch. Re-dispatch the pr-conversation stage for this pull request once the cause above is resolved.' || 'Re-dispatch the pr-conversation stage for this pull request once the cause above is resolved.' }}
           agent-ran: ${{ needs.classify-and-announce.outputs.agent-ran }}
           agent-conclusion: ${{ needs.classify-and-announce.outputs.agent-conclusion }}
+          mark-record: "false"
+
+  # Queues only the spec-meta.json stall-mark write in the canonical
+  # per-spec concurrency group, so it is ordered against every other
+  # writer of this specification's branch (Gate 80) without holding the
+  # human-facing notice above hostage to that group's single pending-run
+  # slot (specs/077-stalled-per-spec-group). The admission condition is
+  # kept identical to stalled's own above — see that job's header comment.
+  stalled-mark:
+    needs: [verify-image-prerequisites, resolve-identity, classify-and-announce]
+    if: |
+      needs.verify-image-prerequisites.result != 'failure' &&
+      !cancelled() &&
+      ( needs.verify-image-prerequisites.result == 'failure' ||
+        needs.resolve-identity.result == 'failure' ||
+        needs.classify-and-announce.result == 'failure' ||
+        needs.classify-and-announce.result == 'skipped' ) &&
+      needs.classify-and-announce.outputs.refusal-reason == ''
+    runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
+    container:
+      image: ${{ inputs.container-image }}
+      credentials: >-
+        ${{
+          (secrets.container-registry-username != '' && secrets.container-registry-password != '')
+            && fromJSON(format('{{"username":{0},"password":{1}}}', toJSON(secrets.container-registry-username), toJSON(secrets.container-registry-password)))
+            || fromJSON('{}')
+        }}
+    environment:
+      name: ${{ inputs.environment }}
+      deployment: ${{ inputs.environment-deployment }}
+    concurrency:
+      group: wing-commander-${{ needs.resolve-identity.outputs.spec-dir }}${{ needs.resolve-identity.outputs.spec-dir == '' && format('pr-conversation-pr-{0}', inputs.pr-number) || '' }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+      id-token: write
+    steps:
+      - name: Checkout consumer repository (bootstrap, default token)
+        if: needs.classify-and-announce.outputs.refusal-reason == ''
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Resolve pipeline ref
+        id: pipeline-ref
+        if: needs.classify-and-announce.outputs.refusal-reason == ''
+        env:
+          JOB_WORKFLOW_SHA: ${{ github.job_workflow_sha }}
+          PIPELINE_REF_INPUT: ${{ inputs.pipeline-ref }}
+        run: |
+          ref="${PIPELINE_REF_INPUT:-$JOB_WORKFLOW_SHA}"
+          if [ -z "$ref" ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            payload=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+              "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=wing-commander-pipeline-ref" \
+              | jq -r '.value' | cut -d. -f2 | tr '_-' '/+')
+            while [ $(( ${#payload} % 4 )) -ne 0 ]; do payload="$payload="; done
+            ref=$(printf '%s' "$payload" | base64 -d 2>/dev/null | jq -r '.job_workflow_sha // empty' || true)
+          fi
+          if [ -z "$ref" ]; then
+            echo "::error::wing-commander pr-conversation stage: cannot determine the pipeline commit to check out — github.job_workflow_sha is empty and no OIDC token is available. Grant the calling job id-token: write, or set the pipeline-ref input to the same ref as your uses: pin."
+            exit 1
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout pipeline repository (shared composite actions)
+        if: needs.classify-and-announce.outputs.refusal-reason == ''
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ inputs.pipeline-repo }}
+          ref: ${{ steps.pipeline-ref.outputs.ref }}
+          token: ${{ secrets.pipeline-repo-token || github.token }}
+          path: .wing-commander-pipeline
+          persist-credentials: false
+
+      - name: Wing Commander context
+        id: ctx
+        if: needs.classify-and-announce.outputs.refusal-reason == ''
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
+        with:
+          app-id: ${{ secrets.speckit-app-id }}
+          private-key: ${{ secrets.speckit-app-private-key }}
+
+      # Same independent lookup as stalled's own step above (this job
+      # cannot read that job's steps) — needed here to remove the stale
+      # stage:<name> label once the mark below succeeds.
+      - name: Look up the lifecycle issue number
+        id: issue-lookup
+        shell: bash
+        if: needs.classify-and-announce.outputs.refusal-reason == '' && needs.resolve-identity.outputs.spec-dir != ''
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SPEC_DIR: ${{ needs.resolve-identity.outputs.spec-dir }}
+          SPEC_BRANCH: ${{ inputs.spec-prefix }}${{ needs.resolve-identity.outputs.slug }}
+        run: |
+          set -uo pipefail
+          issue=$(gh api -X GET "repos/$GITHUB_REPOSITORY/contents/$SPEC_DIR/spec-meta.json" -f ref="$SPEC_BRANCH" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null | jq -r '.issue // empty' 2>/dev/null)
+          echo "issue-number=$issue" >> "$GITHUB_OUTPUT"
+
+      - name: Determine which dependency did not start
+        id: reason
+        if: needs.classify-and-announce.outputs.refusal-reason == ''
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-stall-reason
+        with:
+          stage-name: pr-conversation
+          image-result: ${{ needs.verify-image-prerequisites.result }}
+          entry-result: ${{ needs.classify-and-announce.result }}
+          agent-ran: ${{ needs.classify-and-announce.outputs.agent-ran }}
+          agent-conclusion: ${{ needs.classify-and-announce.outputs.agent-conclusion }}
+          credential-refresh-ok: ${{ needs.classify-and-announce.outputs.credential-refresh-ok }}
+          failed-post-agent-step: ${{ needs.classify-and-announce.outputs.failed-post-agent-step }}
+          resolve-identity-result: ${{ needs.resolve-identity.result }}
+
+      - name: Write the lifecycle record stall-mark
+        if: needs.classify-and-announce.outputs.refusal-reason == ''
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-chain-stop-notice
+        with:
+          token: ${{ steps.ctx.outputs.token }}
+          issue-number: ${{ steps.issue-lookup.outputs.issue-number || inputs.pr-number }}
+          spec-dir: ${{ needs.resolve-identity.outputs.spec-dir }}
+          spec-branch: ${{ inputs.spec-prefix }}${{ needs.resolve-identity.outputs.slug }}
+          reason: ${{ steps.reason.outputs.reason }}
+          mark-record: "true"
+          post-notice: "false"

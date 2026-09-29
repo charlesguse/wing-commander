@@ -305,15 +305,42 @@ FALLBACK_GROUP_NEAR_MISS_IDENTIFIER = (
     "format('pr-conversation-pr-{0}', inputs.pr_number) || '' }}")
 
 
-def _resolve_identity_spec_dir(slug):
-    """Runs resolve-identity's own `spec-dir=${slug:+specs/$slug}` line
-    (pr-conversation.yml, specs/077) against a candidate slug, to prove the
-    non-qualifying (empty-slug) case yields an empty spec-dir rather than
-    the malformed `specs/`."""
+def _resolve_identity_spec_dir_line():
+    """Extracts the exact `echo "spec-dir=..."` line from resolve-identity's
+    own step in the real .github/workflows/pr-conversation.yml, so this
+    self-test exercises the shipped workflow rather than a second,
+    independently maintained copy of the same derivation (CLAUDE.md's
+    single-home rule) -- a revert of T020's fix in the real file must be
+    caught here, not just in a hand-copied string."""
+    repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    workflow_path = os.path.join(repo_root, WORKFLOW_DIR, "pr-conversation.yml")
+    with io.open(workflow_path, encoding="utf-8") as fh:
+        for line in fh:
+            stripped = line.strip()
+            if stripped.startswith('echo "spec-dir='):
+                return stripped
+    raise AssertionError(
+        "could not find resolve-identity's 'echo \"spec-dir=...\"' line in "
+        + workflow_path)
+
+
+def _run_spec_dir_line(line, slug):
+    """Runs a single `echo "spec-dir=..."`-shaped bash line against a
+    candidate slug and returns the value after `spec-dir=`."""
     out = subprocess.run(
-        ["bash", "-c", 'slug=$1; echo "${slug:+specs/$slug}"', "bash", slug],
+        ["bash", "-c", "slug=$1; " + line, "bash", slug],
         capture_output=True, text=True, check=True).stdout
-    return out.rstrip(_NL)
+    prefix = "spec-dir="
+    assert out.startswith(prefix), out
+    return out[len(prefix):].rstrip(_NL)
+
+
+def _resolve_identity_spec_dir(slug):
+    """Runs resolve-identity's own `spec-dir=...` line, extracted from the
+    real pr-conversation.yml (pr-conversation.yml, specs/077), against a
+    candidate slug, to prove the non-qualifying (empty-slug) case yields an
+    empty spec-dir rather than the malformed `specs/`."""
+    return _run_spec_dir_line(_resolve_identity_spec_dir_line(), slug)
 
 
 def _fallback_group_value(spec_dir, pr_number):
@@ -412,6 +439,18 @@ def self_test():
     else:
         bad += 1
         print("[FAIL] {0}: got {1!r}".format(label, qualifying_spec_dir))
+
+    label = ("a pre-T020 fixture (the hand-copied 'echo \"spec-dir=specs/"
+             "$slug\"' line T020 replaced) yields the malformed non-empty "
+             "'specs/' for an empty slug -- proving a future revert of "
+             "T020's fix in the real workflow would be caught by this "
+             "self-test's own assertions, not silently pass")
+    pre_t020_spec_dir = _run_spec_dir_line('echo "spec-dir=specs/$slug"', "")
+    if pre_t020_spec_dir == "specs/":
+        print("[ok] {0}".format(label))
+    else:
+        bad += 1
+        print("[FAIL] {0}: got {1!r}".format(label, pre_t020_spec_dir))
 
     case("an agent grant of Bash(git push:*) outside the group fails",
          _job("a", "wing-commander-intake", AGENT_GRANT), ["a"],
