@@ -53,12 +53,19 @@ reactors observe every completed implement run independently.
 5. On a positive finding, reads the ledger's round record for this
    spec-dir keyed by `implement_run_id == run-id` to find the owning
    round and its `redispatch_count`. Posts the FR-012 notice always; then,
-   only if `redispatch_count == 0`, calls the same claim/enqueue path
-   `dispatch-once` uses (reusing `iteration` unchanged, since this is the
-   same cycle, not a new one) to dispatch a fresh `implement.yml` run,
-   increments `redispatch_count` to `1` in the same ledger write, and
-   names the new run in a second notice line; if `redispatch_count == 1`
-   already, posts the FR-016a line instead and dispatches nothing.
+   only if `redispatch_count == 0`, calls `claim-redispatch` — the same
+   atomic single-winner CAS *shape* as `dispatch-once`'s `claim-dispatch`
+   (reusing `iteration` unchanged, since this is the same cycle, not a new
+   one), but a DISTINCT ledger transform: it recovers a cycle the round has
+   already committed to dispatching, so it carries no `own-folds` gate and
+   is untouched by the 2026-09-29 reconciliation with spec 075
+   (spec.md Clarifications) that reworked `claim-dispatch` alone. A winning
+   `claim-redispatch` call enqueues a fresh `implement`-kind ticket in the
+   same write (T038) and increments `redispatch_count` to `1`; the `react`
+   step threads that ticket's token onto the re-dispatch as
+   `fold_queue_token`; the new run is named in a second notice line. If
+   `redispatch_count == 1` already, posts the FR-016a line instead and
+   dispatches nothing.
 
 ## Behavioral guarantees
 

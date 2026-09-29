@@ -2,11 +2,12 @@
 
 ## Prerequisites
 
-- A checkout of this repository with the tasks-stage implementation
-  applied (the composites under `.github/actions/wing-commander-fold-queue-*`,
-  `.github/actions/_shared/fold-queue-ledger.sh`, the edited
-  `pr-conversation.yml`/`implement.yml`, `fold-cycle-guard.yml` and its
-  wrapper, and Gate 126 registered in `lint-workflows.yml`).
+- A checkout of this repository with the implementation applied (the
+  composites under `.github/actions/wing-commander-fold-queue-*`,
+  `.github/actions/_shared/fold-queue-ledger.sh` and
+  `fold-queue-await.sh`, the edited `pr-conversation.yml`/`implement.yml`,
+  `fold-cycle-guard.yml` and its wrapper, and Gate 126 registered in
+  `lint-workflows.yml`).
 - `gh` authenticated against the disposable end-to-end test repository
   this pipeline already uses for live drills (spec 055's fixture
   environment), so this drill does not touch the real Wing Commander
@@ -20,11 +21,11 @@
 python .github/scripts/run-local-gates.py "fold-queue"
 ```
 
-Expect Gate 126 to pass against the shipped workflows and to report
-`MUTATION SURVIVED` as a failure it deliberately produced and recovered
-from for each of its four mutations (contracts/gates.md) — i.e., the gate
-script's own self-check, not the suite overall, should show each mutation
-breaking and the unmodified subject passing.
+Expect Gate 126 to pass against the shipped workflows (12 scenarios) and
+to report `MUTATION SURVIVED` as a failure it deliberately produced and
+recovered from for each of its nine mutations (contracts/gates.md) — i.e.,
+the gate script's own self-check, not the suite overall, should show each
+mutation breaking and the unmodified subject passing.
 
 ## Drill 2 — composite-level fixtures (fast, no network)
 
@@ -32,12 +33,20 @@ breaking and the unmodified subject passing.
 bash .github/actions/wing-commander-fold-queue-admit/tests/run.sh
 bash .github/actions/wing-commander-fold-queue-release/tests/run.sh
 bash .github/actions/wing-commander-fold-queue-claim-dispatch/tests/run.sh
+bash .github/actions/wing-commander-fold-queue-ledger/tests/run.sh
 ```
 
 Each uses an injectable `git`/`gh` shim (no live network), exercising: a
 clean grant, a queued-then-granted sequence, an idempotent double-release,
-a losing claim (round not empty), a winning claim (round empty, atomic
-`implement`-ticket insertion), and one stale-ticket reclaim.
+one stale-ticket reclaim, and (2026-09-29 reconciliation with spec 075)
+two scenarios proving the implement-kind stale-reclaim check resolves
+liveness through the round's correlated real run rather than the
+ticket's own (dispatching-run) `run_id` — the `wing-commander-fold-queue-admit`
+suite. The `wing-commander-fold-queue-claim-dispatch` suite covers: a
+decline for no own folds (even against an empty, unclaimed round), a
+requeue-then-win once the outstanding `act`-kind ticket clears (with the
+winning `folded-items` naming both contributing runs), a win against an
+already-empty round, and a decline against an already-claimed round.
 
 ## Drill 3 — the reproduced two-run scenario (post-merge, live — FR-023/SC-008)
 
@@ -68,6 +77,34 @@ against a real dispatched run, mirroring PR #414's own timeline:
 5. Record the run URLs (both `pr-conversation.yml` runs, the one
    `implement.yml` run) on the PR or the lifecycle issue, per FR-023.
 
+### Drill 3b — a folding run and a no-fold run (2026-09-29 reconciliation with spec 075)
+
+Reproduces spec.md's acceptance scenario 6 (User Story 2): one run folds,
+the other folds nothing of its own, in the same round.
+
+1. Open a throwaway implementation PR against a disposable spec branch in
+   the e2e test repository.
+2. Post a review with one fold-route comment, triggering `pr-conversation.yml`
+   ("folding run"). Let its `act` fold that item.
+3. While the folding run's `dispatch-once` is still waiting on its
+   `fold-turn-dispatch` ticket (or immediately after, if it already
+   cleared), post a follow-up comment whose classification produces a
+   fold-route leg that ultimately holds/fails/questions without folding
+   anything ("no-fold run") — starting a second `pr-conversation.yml` run
+   on the same PR.
+4. Watch both runs to completion. Confirm:
+   - The no-fold run's `dispatch-once` posts the declined-dispatch notice
+     ("This run folded nothing of its own...") and shows
+     `should-dispatch: false` / `outcome: declined` in its own job log.
+   - The folding run's `dispatch-once` dispatches exactly one implement
+     cycle, and its reply's "Folded in this review" list names only the
+     folding run's own fold — the no-fold run contributed nothing to the
+     round's `folded-items` (FR-011).
+   - No second "Implementation cycle N dispatched" reply appears anywhere
+     for this round (SC-003).
+5. Record both run URLs and the one dispatched `implement.yml` run's URL
+   on the PR or the lifecycle issue.
+
 ## Drill 4 — forcing a lost cycle (post-merge, live — US3's independent test)
 
 1. Bypass the ticket queue deliberately: manually `gh workflow run` the
@@ -92,7 +129,8 @@ against a real dispatched run, mirroring PR #414's own timeline:
 
 | Check | Success criterion |
 |---|---|
-| Local gates | Gate 126 green; suite's own mutation self-check shows all four mutations caught |
-| Composite fixtures | All pass, including the idempotent-release and stale-reclaim cases |
+| Local gates | Gate 126 green (12 scenarios); suite's own mutation self-check shows all nine mutations caught |
+| Composite fixtures | All pass, including the idempotent-release, stale-reclaim, and requeue-then-win cases |
 | Two-run live drill | 11/11 items terminal, 0 cancelled-while-pending, exactly one dispatch reply, implement run non-cancelled |
+| Folding + no-fold live drill (3b) | No-fold run declines and posts spec 075's notice; folding run dispatches once naming only its own fold(s) |
 | Lost-cycle live drill | Notice posted only for the never-started+correlated case; re-dispatch fires exactly once per round; manual in-progress cancel stays silent |
