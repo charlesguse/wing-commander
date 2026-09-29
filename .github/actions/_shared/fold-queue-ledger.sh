@@ -72,17 +72,38 @@
 #                     dequeue. A TOKEN present but not at the queue head is
 #                     a caller error. When a new ticket becomes head as a
 #                     result, it is granted in the same write.
-#   claim-dispatch -- SPEC_DIR, ROUND, DISPATCH_TOKEN, ITERATION
+#   claim-dispatch -- SPEC_DIR, ROUND, DISPATCH_TOKEN, ITERATION, OWN_FOLDS
 #                     Valid only when DISPATCH_TOKEN is at the queue head.
-#                     Succeeds (should-dispatch=true) only when no other
-#                     `act`-kind ticket remains anywhere in the queue and
-#                     this round has not already been claimed; in the same
-#                     write, records dispatch_claimed_by/iteration and
-#                     enqueues an `implement`-kind ticket immediately
-#                     behind the calling dispatch ticket, so it becomes the
-#                     new head the instant the dispatch ticket releases
-#                     (research.md D5 -- no caller-visible gap for a later
-#                     round's ticket to queue ahead of it).
+#                     Per the maintainer's 2026-09-29 reconciliation with
+#                     spec 075 (specs/074-serialized-fold-dispatch spec.md
+#                     Clarifications), resolves to one of three outcomes,
+#                     reported as OUTCOME in the result (should-dispatch
+#                     stays the boolean callers already branch on):
+#                       OWN_FOLDS == 0                       -> outcome=declined
+#                       OWN_FOLDS > 0, another act-kind       -> outcome=requeued
+#                         ticket remains anywhere in the queue    (moves this
+#                         ticket to just behind the last such      ticket, in
+#                         the same write, clearing its granted_at and
+#                         granting whatever becomes the new head)
+#                       OWN_FOLDS > 0, round already claimed -> outcome=declined
+#                       OWN_FOLDS > 0, no act-kind ticket    -> outcome=won
+#                         remains, round unclaimed               (records
+#                         dispatch_claimed_by/iteration, enqueues an
+#                         `implement`-kind ticket immediately behind the
+#                         calling dispatch ticket so it becomes the new head
+#                         the instant the dispatch ticket releases --
+#                         research.md D5 -- and returns the round's WHOLE
+#                         accumulated folded_items/not_folded_items, every
+#                         contributing run's entries, not only the
+#                         caller's own)
+#                     A `requeued` outcome mutates the ledger (a real write)
+#                     but never sets dispatch_claimed_by; the caller
+#                     (wing-commander-fold-queue-claim-dispatch) re-awaits
+#                     its own unchanged token via fold-queue-await.sh and
+#                     re-attempts claim-dispatch, looping internally rather
+#                     than returning `requeued` to ITS OWN caller
+#                     (dispatch-once), since a GitHub Actions job's static
+#                     step list cannot loop across separate `uses:` steps.
 #   reclaim-stale  -- SPEC_DIR, STALE_TOKEN
 #                     Removes STALE_TOKEN from the queue head with no
 #                     completion record (its outcome is unknown by
@@ -210,6 +231,7 @@ case "$TRANSFORM" in
     : "${ROUND:?fold-queue-ledger.sh claim-dispatch: ROUND is required}"
     : "${DISPATCH_TOKEN:?fold-queue-ledger.sh claim-dispatch: DISPATCH_TOKEN is required}"
     : "${ITERATION:?fold-queue-ledger.sh claim-dispatch: ITERATION is required}"
+    : "${OWN_FOLDS:?fold-queue-ledger.sh claim-dispatch: OWN_FOLDS is required}"
     ;;
   reclaim-stale)
     : "${STALE_TOKEN:?fold-queue-ledger.sh reclaim-stale: STALE_TOKEN is required}"
@@ -430,10 +452,33 @@ JQ
 | if (.specs[$spec].queue | length) == 0 or (.specs[$spec].queue[0].token != $token) then
     { error: ("fold-queue-ledger claim-dispatch: dispatch token " + $token + " is not at queue head") }
   else
-    (.specs[$spec].queue[0].run_id) as $run_id
-    | ((.specs[$spec].queue[1:] | map(select(.kind == "act")) | length) == 0) as $round_empty
+    (.specs[$spec].queue[0]) as $ticket
+    | (.specs[$spec].queue[0].run_id) as $run_id
+    | (.specs[$spec].queue[1:]) as $rest
+    | (($rest | map(select(.kind == "act")) | length) == 0) as $round_empty
     | ((.specs[$spec].rounds[$round].dispatch_claimed_by // null) == null) as $unclaimed
-    | if ($round_empty and $unclaimed) then
+    # spec.md Clarifications, "Session 2026-09-29 (maintainer, reconciling
+    # with spec 075)": a run with no folds of its own never claims,
+    # regardless of the round's state (spec 075 FR-014).
+    | if ($own_folds == 0) then
+        { changed: false, ledger: ., result: { "should-dispatch": "false", outcome: "declined" } }
+      elif ($round_empty | not) then
+        # Own folds exist but another run's act-kind ticket is still
+        # outstanding: re-queue this dispatch ticket to just behind the
+        # LAST such ticket (never step aside for a later run to win by
+        # default) and grant whatever becomes the new head. Any act-kind
+        # ticket enqueued AFTER this write appends to the queue's end,
+        # behind this now-repositioned ticket, so it can never cause a
+        # second requeue on its own -- only a subsequent claim attempt
+        # that itself observes a DIFFERENT still-outstanding act ticket can.
+        ($rest | to_entries | map(select(.value.kind == "act")) | last | .key) as $last_act_idx
+        | ($rest[0:($last_act_idx + 1)] + [($ticket | .granted_at = null)] + $rest[($last_act_idx + 1):]) as $requeued
+        | (if ($requeued[0].granted_at == null) then ($requeued | .[0].granted_at = $now) else $requeued end) as $newqueue
+        | .specs[$spec].queue = $newqueue
+        | { changed: true, ledger: ., result: { "should-dispatch": "false", outcome: "requeued" } }
+      elif ($unclaimed | not) then
+        { changed: false, ledger: ., result: { "should-dispatch": "false", outcome: "declined" } }
+      else
         ("run-" + $run_id + "-implement") as $impl_token
         | .specs[$spec].rounds[$round].dispatch_claimed_by = $run_id
         | .specs[$spec].rounds[$round].iteration = ($iteration | tonumber)
@@ -443,14 +488,13 @@ JQ
             ledger: .,
             result: {
               "should-dispatch": "true",
+              outcome: "won",
               "implement-token": $impl_token,
               "iteration": ($iteration),
               "folded-items": (.specs[$spec].rounds[$round].folded_items // [] | tojson),
               "not-folded-items": (.specs[$spec].rounds[$round].not_folded_items // [] | tojson)
             }
           }
-      else
-        { changed: false, ledger: ., result: { "should-dispatch": "false" } }
       end
   end
 JQ
@@ -569,7 +613,7 @@ while [ "$attempt" -le "$max_attempts" ]; do
         -f "$filter_file" "$current_json" > "$output_file"
       ;;
     claim-dispatch)
-      jq -c --arg spec "$SPEC_DIR" --arg token "$DISPATCH_TOKEN" --arg round "$ROUND" --arg iteration "$ITERATION" --arg now "$now" \
+      jq -c --arg spec "$SPEC_DIR" --arg token "$DISPATCH_TOKEN" --arg round "$ROUND" --arg iteration "$ITERATION" --argjson own_folds "$OWN_FOLDS" --arg now "$now" \
         -f "$filter_file" "$current_json" > "$output_file"
       ;;
     reclaim-stale)

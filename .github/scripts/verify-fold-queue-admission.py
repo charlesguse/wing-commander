@@ -87,6 +87,19 @@ SCENARIOS (`suite(subject)`, contracts/gates.md)
    re-dispatch as `fold_queue_token` -- otherwise the recovered cycle
    re-enters `implement.yml`'s concurrency group unticketed, exposed to
    the very eviction FR-016 exists to recover from.
+10. No-own-folds never wins, in any queue order (2026-09-29 reconciliation
+    with spec 075, spec 075 FR-014) -- declines against both an
+    already-empty, unclaimed round and a round with an outstanding
+    act-kind ticket; never `requeued` (own_folds == 0 short-circuits
+    before the round-emptiness check is even reached).
+11. A folding run requeues behind an outstanding act-kind ticket rather
+    than stepping aside (2026-09-29 reconciliation with spec 075) -- the
+    ledger actually reorders the queue (proven via `peek`, not just the
+    outcome label), and the same ticket wins once that act-kind ticket
+    clears.
+12. The winning claim's `folded-items` names every contributing run in the
+    round, each attributed to its own `run_id` -- not only the winning
+    run's own evidence (2026-09-29 reconciliation with spec 075, FR-011).
 
 MUTATIONS (each proven to break the gate -- FR-022)
 ----------------------------------------------------
@@ -108,6 +121,17 @@ MUTATIONS (each proven to break the gate -- FR-022)
 - `mut_drop_redispatch_token_thread` -- removes the `-f fold_queue_token=`
   argument from `react`'s `gh workflow run` call (the T038 defect
   restored). Fails scenario 9.
+- `mut_requeue_replaced_by_stepaside` -- reverts `claim-dispatch`'s requeue
+  branch to a plain decline with no queue mutation, so a folding run facing
+  an outstanding act-kind ticket steps aside instead of requeuing. Fails
+  scenario 11 (and scenario 12, which depends on the requeued ticket
+  surviving to win).
+- `mut_own_folds_check_dropped` -- disables the own-folds gate so a
+  no-fold run can fall through to win (spec 075 FR-014 regression). Fails
+  scenario 10.
+- `mut_round_list_narrowed_to_claimant` -- narrows the winning claim's
+  `folded-items` back to the claimant's own `run_id`, dropping every other
+  contributing run's folds from the reply. Fails scenario 12.
 
 `main()` runs `suite()` against the untouched subject (must be 0 failures),
 then re-runs it under each mutation and requires a failure -- identical to
@@ -115,6 +139,7 @@ Gate 70's own `main()` shape (contracts/gates.md), including no separate
 `--self-test` step: the mutations ARE this gate's self-test, in the same
 single invocation.
 """
+import json
 import os
 import subprocess
 import sys
@@ -328,7 +353,10 @@ def run_ledger(ledger_path, transform, remote, env_extra):
 
 def scenario_dispatch_while_outstanding(subject, root):
     """Scenario 4 (FR-007): a dispatch ticket at the queue head with an
-    act-kind ticket still queued behind it must not be granted."""
+    act-kind ticket still queued behind it, and folds of its own, must
+    requeue (never win) -- should-dispatch stays 'false' either way, but
+    the 2026-09-29 reconciliation with spec 075 distinguishes 'requeued'
+    (own folds, round not empty) from 'declined' (no own folds)."""
     failures = []
     remote = new_bare_remote(root)
     spec = "specs/999-fixture"
@@ -344,7 +372,8 @@ def scenario_dispatch_while_outstanding(subject, root):
               {"SPEC_DIR": spec, "KIND": "act", "RUN_ID": "501"})
     proc = run_ledger(LEDGER_SH, "claim-dispatch", remote,
                       {"SPEC_DIR": spec, "ROUND": "1",
-                       "DISPATCH_TOKEN": "run-500-dispatch", "ITERATION": "2"})
+                       "DISPATCH_TOKEN": "run-500-dispatch", "ITERATION": "2",
+                       "OWN_FOLDS": "1"})
     result = parse_kv(proc.stdout)
     if result.get("should-dispatch") != "false":
         failures.append(f"scenario 4: claim-dispatch resolved "
@@ -352,6 +381,12 @@ def scenario_dispatch_while_outstanding(subject, root):
                         f"while an act-kind ticket remained queued behind "
                         f"the dispatch ticket; expected 'false'. stderr: "
                         f"{proc.stderr.strip()}")
+    if result.get("outcome") != "requeued":
+        failures.append(f"scenario 4: a dispatch ticket with own folds "
+                        f"(own-folds=1) facing an outstanding act-kind "
+                        f"ticket resolved outcome={result.get('outcome')!r}, "
+                        f"expected 'requeued' -- it must not silently step "
+                        f"aside (2026-09-29 reconciliation with spec 075)")
     return failures
 
 
@@ -377,7 +412,8 @@ def scenario_dispatch_after_round_empties(subject, root):
 
     proc = run_ledger(LEDGER_SH, "claim-dispatch", remote,
                       {"SPEC_DIR": spec, "ROUND": "1",
-                       "DISPATCH_TOKEN": "run-600-dispatch", "ITERATION": "2"})
+                       "DISPATCH_TOKEN": "run-600-dispatch", "ITERATION": "2",
+                       "OWN_FOLDS": "1"})
     result = parse_kv(proc.stdout)
     if result.get("should-dispatch") != "true":
         failures.append(f"scenario 5: winning claimant resolved "
@@ -391,7 +427,8 @@ def scenario_dispatch_after_round_empties(subject, root):
 
     proc2 = run_ledger(LEDGER_SH, "claim-dispatch", remote,
                        {"SPEC_DIR": spec, "ROUND": "1",
-                        "DISPATCH_TOKEN": "run-601-dispatch", "ITERATION": "2"})
+                        "DISPATCH_TOKEN": "run-601-dispatch", "ITERATION": "2",
+                        "OWN_FOLDS": "1"})
     result2 = parse_kv(proc2.stdout)
     if result2.get("should-dispatch") == "true":
         failures.append("scenario 5: a SECOND, concurrent dispatch-kind "
@@ -401,6 +438,172 @@ def scenario_dispatch_after_round_empties(subject, root):
         failures.append(f"scenario 5: the second claimant (not at the "
                         f"queue head) neither errored nor reported "
                         f"should-dispatch=false plainly: {proc2.stdout!r}")
+    return failures
+
+
+def scenario_no_own_folds_never_wins(subject, root):
+    """Scenario 10 (c) (spec 075 FR-014, reconciled 2026-09-29): a run with
+    no folds of its own never wins the claim, in any queue order -- neither
+    against an already-empty, unclaimed round (where the pre-reconciliation
+    shape would have won) nor against a round with an outstanding act-kind
+    ticket (where it must decline, never requeue -- requeuing is reserved
+    for a run that DID fold something of its own)."""
+    failures = []
+    remote = new_bare_remote(root)
+    spec = "specs/999-fixture-nofolds-a"
+    run_ledger(LEDGER_SH, "enqueue", remote,
+              {"SPEC_DIR": spec, "KIND": "act", "RUN_ID": "700"})
+    run_ledger(LEDGER_SH, "release", remote,
+              {"SPEC_DIR": spec, "TOKEN": "run-700-act", "RUN_ID": "700",
+               "OUTCOME": "not-folded", "LEG_ID": "leg-1"})
+    run_ledger(LEDGER_SH, "enqueue", remote,
+              {"SPEC_DIR": spec, "KIND": "dispatch", "RUN_ID": "700"})
+    proc = run_ledger(LEDGER_SH, "claim-dispatch", remote,
+                      {"SPEC_DIR": spec, "ROUND": "1",
+                       "DISPATCH_TOKEN": "run-700-dispatch", "ITERATION": "2",
+                       "OWN_FOLDS": "0"})
+    result = parse_kv(proc.stdout)
+    if result.get("should-dispatch") != "false" or result.get("outcome") != "declined":
+        failures.append(f"scenario 10a: a no-own-folds ticket against an "
+                        f"empty, unclaimed round resolved "
+                        f"should-dispatch={result.get('should-dispatch')!r} "
+                        f"outcome={result.get('outcome')!r}, expected "
+                        f"should-dispatch=false outcome=declined")
+
+    spec_b = "specs/999-fixture-nofolds-b"
+    run_ledger(LEDGER_SH, "enqueue", remote,
+              {"SPEC_DIR": spec_b, "KIND": "act", "RUN_ID": "701"})
+    run_ledger(LEDGER_SH, "release", remote,
+              {"SPEC_DIR": spec_b, "TOKEN": "run-701-act", "RUN_ID": "701",
+               "OUTCOME": "not-folded", "LEG_ID": "leg-1"})
+    run_ledger(LEDGER_SH, "enqueue", remote,
+              {"SPEC_DIR": spec_b, "KIND": "dispatch", "RUN_ID": "701"})
+    run_ledger(LEDGER_SH, "enqueue", remote,
+              {"SPEC_DIR": spec_b, "KIND": "act", "RUN_ID": "702"})
+    proc2 = run_ledger(LEDGER_SH, "claim-dispatch", remote,
+                       {"SPEC_DIR": spec_b, "ROUND": "1",
+                        "DISPATCH_TOKEN": "run-701-dispatch", "ITERATION": "2",
+                        "OWN_FOLDS": "0"})
+    result2 = parse_kv(proc2.stdout)
+    if result2.get("should-dispatch") != "false" or result2.get("outcome") != "declined":
+        failures.append(f"scenario 10b: a no-own-folds ticket against a "
+                        f"round with an outstanding act-kind ticket resolved "
+                        f"should-dispatch={result2.get('should-dispatch')!r} "
+                        f"outcome={result2.get('outcome')!r}, expected "
+                        f"should-dispatch=false outcome=declined (never "
+                        f"'requeued' -- that path is reserved for a run "
+                        f"that folded something of its own)")
+    return failures
+
+
+def scenario_requeue_behind_outstanding_then_wins(subject, root):
+    """Scenario 11 (a) (2026-09-29 reconciliation with spec 075): a
+    dispatch ticket with folds of its own, facing another run's
+    outstanding act-kind ticket (itself a run that folds nothing), does
+    NOT step aside -- it requeues behind that ticket (proven by the queue
+    actually reordering, not just the outcome label), then wins once that
+    ticket clears."""
+    failures = []
+    remote = new_bare_remote(root)
+    spec = "specs/999-fixture-requeue"
+    run_ledger(LEDGER_SH, "enqueue", remote,
+              {"SPEC_DIR": spec, "KIND": "act", "RUN_ID": "800"})
+    run_ledger(LEDGER_SH, "release", remote,
+              {"SPEC_DIR": spec, "TOKEN": "run-800-act", "RUN_ID": "800",
+               "OUTCOME": "folded", "COMMIT_SHA": "aaaa", "LEG_ID": "leg-1",
+               "SUMMARY": "s"})
+    run_ledger(LEDGER_SH, "enqueue", remote,
+              {"SPEC_DIR": spec, "KIND": "dispatch", "RUN_ID": "800"})
+    run_ledger(LEDGER_SH, "enqueue", remote,
+              {"SPEC_DIR": spec, "KIND": "act", "RUN_ID": "801"})
+
+    proc1 = run_ledger(LEDGER_SH, "claim-dispatch", remote,
+                       {"SPEC_DIR": spec, "ROUND": "1",
+                        "DISPATCH_TOKEN": "run-800-dispatch", "ITERATION": "2",
+                        "OWN_FOLDS": "1"})
+    result1 = parse_kv(proc1.stdout)
+    if result1.get("outcome") != "requeued":
+        failures.append(f"scenario 11: expected outcome=requeued while "
+                        f"run-801's act ticket was still outstanding, got "
+                        f"{result1.get('outcome')!r}. stderr: "
+                        f"{proc1.stderr.strip()}")
+        return failures
+
+    peek_proc = run_ledger(LEDGER_SH, "peek", remote,
+                           {"SPEC_DIR": spec, "PEEK_TOKEN": "run-800-dispatch"})
+    peek_result = parse_kv(peek_proc.stdout)
+    if peek_result.get("position") == "0":
+        failures.append("scenario 11: run-800-dispatch is still reported at "
+                        "the queue head after a 'requeued' outcome -- it "
+                        "must actually move, not just change its label")
+    if peek_result.get("head-token") != "run-801-act" or peek_result.get("head-granted-at") == "":
+        failures.append(f"scenario 11: expected run-801-act to be the new, "
+                        f"granted queue head after run-800-dispatch "
+                        f"requeued behind it; peek={peek_result!r}")
+
+    run_ledger(LEDGER_SH, "release", remote,
+              {"SPEC_DIR": spec, "TOKEN": "run-801-act", "RUN_ID": "801",
+               "OUTCOME": "not-folded", "LEG_ID": "leg-1"})
+
+    proc2 = run_ledger(LEDGER_SH, "claim-dispatch", remote,
+                       {"SPEC_DIR": spec, "ROUND": "1",
+                        "DISPATCH_TOKEN": "run-800-dispatch", "ITERATION": "2",
+                        "OWN_FOLDS": "1"})
+    result2 = parse_kv(proc2.stdout)
+    if result2.get("should-dispatch") != "true" or result2.get("outcome") != "won":
+        failures.append(f"scenario 11: expected the requeued ticket to win "
+                        f"once run-801's act ticket cleared; got "
+                        f"should-dispatch={result2.get('should-dispatch')!r} "
+                        f"outcome={result2.get('outcome')!r}. stderr: "
+                        f"{proc2.stderr.strip()}")
+    return failures
+
+
+def scenario_won_reply_names_every_contributing_run(subject, root):
+    """Scenario 12 (b) (2026-09-29 reconciliation with spec 075): two
+    folding runs in the same round produce exactly one dispatch, whose
+    folded-items list names BOTH runs' folds, each still attributed to its
+    own run_id -- the deliberate widening from the winning run's own
+    evidence to the round's whole accumulated evidence."""
+    failures = []
+    remote = new_bare_remote(root)
+    spec = "specs/999-fixture-round-list"
+    run_ledger(LEDGER_SH, "enqueue", remote,
+              {"SPEC_DIR": spec, "KIND": "act", "RUN_ID": "900"})
+    run_ledger(LEDGER_SH, "release", remote,
+              {"SPEC_DIR": spec, "TOKEN": "run-900-act", "RUN_ID": "900",
+               "OUTCOME": "folded", "COMMIT_SHA": "1111", "LEG_ID": "leg-1",
+               "SUMMARY": "s"})
+    run_ledger(LEDGER_SH, "enqueue", remote,
+              {"SPEC_DIR": spec, "KIND": "dispatch", "RUN_ID": "900"})
+    run_ledger(LEDGER_SH, "enqueue", remote,
+              {"SPEC_DIR": spec, "KIND": "act", "RUN_ID": "901"})
+    run_ledger(LEDGER_SH, "claim-dispatch", remote,
+              {"SPEC_DIR": spec, "ROUND": "1", "DISPATCH_TOKEN": "run-900-dispatch",
+               "ITERATION": "2", "OWN_FOLDS": "1"})
+    run_ledger(LEDGER_SH, "release", remote,
+              {"SPEC_DIR": spec, "TOKEN": "run-901-act", "RUN_ID": "901",
+               "OUTCOME": "folded", "COMMIT_SHA": "2222", "LEG_ID": "leg-1",
+               "SUMMARY": "s"})
+
+    proc = run_ledger(LEDGER_SH, "claim-dispatch", remote,
+                      {"SPEC_DIR": spec, "ROUND": "1", "DISPATCH_TOKEN": "run-900-dispatch",
+                       "ITERATION": "2", "OWN_FOLDS": "1"})
+    result = parse_kv(proc.stdout)
+    if result.get("should-dispatch") != "true" or result.get("outcome") != "won":
+        failures.append(f"scenario 12: expected the second attempt to win "
+                        f"once run-901's act ticket cleared; got "
+                        f"should-dispatch={result.get('should-dispatch')!r} "
+                        f"outcome={result.get('outcome')!r}. stderr: "
+                        f"{proc.stderr.strip()}")
+        return failures
+    folded_items = json.loads(result.get("folded-items", "[]") or "[]")
+    run_ids = sorted(item.get("run_id") for item in folded_items)
+    if run_ids != ["900", "901"]:
+        failures.append(f"scenario 12: winning claim's folded-items names "
+                        f"run_ids {run_ids!r}, expected ['900', '901'] -- "
+                        f"the round's WHOLE accumulated list, not only the "
+                        f"winning run's own evidence")
     return failures
 
 
@@ -599,6 +802,9 @@ def suite(subject, root):
     failures += scenario_guard_classification(subject, root)
     failures += scenario_redispatch_bound(subject, root)
     failures += scenario_redispatch_claim_enqueues_ticket(subject, root)
+    failures += scenario_no_own_folds_never_wins(subject, root)
+    failures += scenario_requeue_behind_outstanding_then_wins(subject, root)
+    failures += scenario_won_reply_names_every_contributing_run(subject, root)
     return failures
 
 
@@ -616,9 +822,13 @@ def mut_drop_fold_turn_needs(subject):
 
 
 def mut_unconditional_dispatch(subject):
+    """Removes the round-emptiness check from claim-dispatch's own jq
+    filter -- a claim with own folds and an outstanding act-kind ticket
+    would win immediately instead of requeuing (dispatch-once would fire
+    once per run again, not once per round)."""
     s = dict(subject)
-    needle = "if ($round_empty and $unclaimed) then"
-    replacement = "if ($unclaimed) then"
+    needle = "elif ($round_empty | not) then"
+    replacement = "elif false then"
     if needle not in subject["ledger:text"]:
         return s
     s["ledger:text"] = subject["ledger:text"].replace(needle, replacement)
@@ -667,6 +877,47 @@ def mut_drop_redispatch_token_thread(subject):
     return s
 
 
+def mut_requeue_replaced_by_stepaside(subject):
+    """2026-09-29 reconciliation with spec 075: a folding run facing an
+    outstanding act-kind ticket must requeue and re-attempt, never step
+    aside for a later run to win by default. Reverts the requeue branch to
+    a plain decline with no queue mutation -- the exact shape a maintainer
+    reviewing a diff might mistake for a harmless simplification."""
+    s = dict(subject)
+    needle = '| { changed: true, ledger: ., result: { "should-dispatch": "false", outcome: "requeued" } }'
+    replacement = '| { changed: false, ledger: ., result: { "should-dispatch": "false", outcome: "declined" } }'
+    if needle not in subject["ledger:text"]:
+        return s
+    s["ledger:text"] = subject["ledger:text"].replace(needle, replacement)
+    return s
+
+
+def mut_own_folds_check_dropped(subject):
+    """spec 075 FR-014, reconciled 2026-09-29: a run with no folds of its
+    own must never win. Disables the own-folds gate so a no-fold run can
+    fall through to the round-emptiness/unclaimed checks and win."""
+    s = dict(subject)
+    needle = "if ($own_folds == 0) then"
+    replacement = "if false then"
+    if needle not in subject["ledger:text"]:
+        return s
+    s["ledger:text"] = subject["ledger:text"].replace(needle, replacement)
+    return s
+
+
+def mut_round_list_narrowed_to_claimant(subject):
+    """2026-09-29 reconciliation with spec 075: the winning reply must name
+    every contributing run's folds, not only the claimant's own. Narrows
+    the winning claim's folded-items back to the claimant's own run_id."""
+    s = dict(subject)
+    needle = '"folded-items": (.specs[$spec].rounds[$round].folded_items // [] | tojson),'
+    replacement = '"folded-items": (.specs[$spec].rounds[$round].folded_items // [] | map(select(.run_id == $run_id)) | tojson),'
+    if needle not in subject["ledger:text"]:
+        return s
+    s["ledger:text"] = subject["ledger:text"].replace(needle, replacement)
+    return s
+
+
 MUTATIONS = [
     ("fold-turn-* prerequisite dropped from needs:", mut_drop_fold_turn_needs),
     ("claim-dispatch's round-emptiness check removed", mut_unconditional_dispatch),
@@ -674,6 +925,9 @@ MUTATIONS = [
     ("decide's redispatch_count bound removed", mut_unbounded_redispatch),
     ("claim-redispatch's implement-ticket enqueue removed", mut_redispatch_no_enqueue),
     ("react's fold_queue_token thread dropped", mut_drop_redispatch_token_thread),
+    ("claim-dispatch's requeue replaced by a step-aside decline", mut_requeue_replaced_by_stepaside),
+    ("claim-dispatch's own-folds check dropped", mut_own_folds_check_dropped),
+    ("winning claim's round list narrowed to the claimant's own folds", mut_round_list_narrowed_to_claimant),
 ]
 
 
@@ -733,7 +987,7 @@ def main():
         import shutil
         shutil.rmtree(root, ignore_errors=True)
 
-    print(f"Gate 126: 9 scenario(s), {len(MUTATIONS)} mutation(s); "
+    print(f"Gate 126: 12 scenario(s), {len(MUTATIONS)} mutation(s); "
           f"{len(failures)} failure(s), {mutation_failures} mutation failure(s).")
     return 1 if failures or mutation_failures else 0
 

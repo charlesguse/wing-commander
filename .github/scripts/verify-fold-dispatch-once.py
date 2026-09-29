@@ -1012,8 +1012,9 @@ def _mut_dispatch_on_tip_moved(steps):
     dispatch -- FR-014's defect.
     """
     steps[FOLD_DISPATCH_STEP] = steps[FOLD_DISPATCH_STEP].replace(
-        'if [ -z "$tip" ] || [ "$(printf \'%s\' "$folded_json" | jq \'length\')" = "0" ]; then',
-        'if [ -z "$tip" ] || [ "$tip" = "$BASE_SHA" ]; then')
+        'if [ "$using_round_list" != "true" ] && { [ -z "$tip" ] || '
+        '[ "$(printf \'%s\' "$folded_json" | jq \'length\')" = "0" ]; }; then',
+        'if [ "$using_round_list" != "true" ] && [ "$tip" = "$BASE_SHA" ]; then')
 
 
 MUTATIONS = [

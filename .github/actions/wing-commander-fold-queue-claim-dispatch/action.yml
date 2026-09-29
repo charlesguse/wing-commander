@@ -1,11 +1,20 @@
 name: wing-commander-fold-queue-claim-dispatch
 description: >
   Called once by dispatch-once, after its own dispatch-kind ticket has been
-  granted, to decide -- via a single atomic ledger transaction -- whether
+  granted, to decide -- via one or more atomic ledger transactions -- whether
   this run is the one that dispatches the round's implement cycle
-  (research.md D4). Exactly one winner per round; the winning transaction
-  also enqueues the implement-kind ticket for the about-to-be-dispatched
-  cycle in the same write (research.md D5) -- see fold-queue-ledger.sh.
+  (research.md D4). Per the maintainer's 2026-09-29 reconciliation with spec
+  075 (specs/074-serialized-fold-dispatch spec.md Clarifications): a run
+  with no folds of its own (own-folds input) never wins and declines
+  immediately (spec 075 FR-014); a run WITH folds of its own that finds
+  another act-kind ticket still queued re-queues its own ticket and
+  re-awaits it internally (fold-queue-await.sh, single home with
+  wing-commander-fold-queue-admit's own wait) rather than returning that
+  intermediate state to its own caller, since a GitHub Actions job's static
+  step list cannot loop across separate uses: steps. The winning
+  transaction also enqueues the implement-kind ticket for the
+  about-to-be-dispatched cycle in the same write (research.md D5) -- see
+  fold-queue-ledger.sh.
 
 inputs:
   spec-dir:
@@ -16,13 +25,32 @@ inputs:
   dispatch-token:
     description: "This run's own granted dispatch-kind ticket -- proves the caller is entitled to attempt the claim."
     required: true
+  own-folds:
+    description: >
+      Count of THIS run's own fold-route items folded in this round
+      (wing-commander-fold-evidence's folded-json length). Zero declines
+      the claim unconditionally (spec 075 FR-014).
+    required: true
+  max-wait-minutes:
+    description: "Passed through to the internal requeue-reawait loop; irrelevant unless this run's own folds are non-zero and the round is not yet empty."
+    required: false
+    default: "30"
+  poll-interval-seconds:
+    required: false
+    default: "10"
+  stale-after-minutes:
+    required: false
+    default: "10"
 
 outputs:
   should-dispatch:
     description: "'true' only for the single winning run; 'false' for every other run whose round the claim resolved without dispatching."
     value: ${{ steps.claim.outputs.should-dispatch }}
+  outcome:
+    description: "'declined' | 'won' -- never 'requeued' (internalized; see description)."
+    value: ${{ steps.claim.outputs.outcome }}
   folded-items:
-    description: "JSON array of every {run_id, leg_id, summary, commit_sha} the round accumulated. Present only when should-dispatch: true."
+    description: "JSON array of every {run_id, leg_id, summary, commit_sha} the round accumulated -- every contributing run's entries, not only the caller's own. Present only when should-dispatch: true."
     value: ${{ steps.claim.outputs.folded-items }}
   not-folded-items:
     description: "JSON array of every {run_id, leg_id, outcome} the round accumulated. Present only when should-dispatch: true."
@@ -54,17 +82,43 @@ runs:
         SPEC_DIR: ${{ inputs.spec-dir }}
         ROUND: ${{ inputs.round }}
         DISPATCH_TOKEN: ${{ inputs.dispatch-token }}
+        OWN_FOLDS: ${{ inputs.own-folds }}
+        MAX_WAIT_MINUTES: ${{ inputs.max-wait-minutes }}
+        POLL_INTERVAL_SECONDS: ${{ inputs.poll-interval-seconds }}
+        STALE_AFTER_MINUTES: ${{ inputs.stale-after-minutes }}
       run: |
         set -euo pipefail
         LEDGER="$GITHUB_ACTION_PATH/../_shared/fold-queue-ledger.sh"
+        AWAIT="$GITHUB_ACTION_PATH/../_shared/fold-queue-await.sh"
+
+        # See wing-commander-fold-queue-admit's identical definition -- Gate 12
+        # forbids a gh call inside fold-queue-await.sh itself.
+        wc_fold_queue_run_status() {
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/$1" --jq '.status' 2>/dev/null || echo ""
+        }
+        export -f wc_fold_queue_run_status
 
         recorded="$(jq -r '.iteration // 0' "$SPEC_DIR/spec-meta.json")"
         next=$(( recorded + 1 ))
 
-        out="$(ITERATION="$next" bash "$LEDGER" claim-dispatch)"
+        while :; do
+          out="$(ITERATION="$next" OWN_FOLDS="$OWN_FOLDS" bash "$LEDGER" claim-dispatch)"
+          outcome="$(printf '%s\n' "$out" | grep '^outcome=' | cut -d= -f2-)"
+
+          if [ "$outcome" = "requeued" ]; then
+            echo "wing-commander-fold-queue-claim-dispatch: own-folds=$OWN_FOLDS but another act-kind ticket for round $ROUND is still outstanding -- requeued behind it, awaiting regrant." >> "$GITHUB_STEP_SUMMARY"
+            TOKEN="$DISPATCH_TOKEN" bash "$AWAIT" >/dev/null
+            continue
+          fi
+
+          break
+        done
 
         should_dispatch="$(printf '%s\n' "$out" | grep '^should-dispatch=' | cut -d= -f2-)"
-        echo "should-dispatch=$should_dispatch" >> "$GITHUB_OUTPUT"
+        {
+          echo "should-dispatch=$should_dispatch"
+          echo "outcome=$outcome"
+        } >> "$GITHUB_OUTPUT"
 
         if [ "$should_dispatch" = "true" ]; then
           {
@@ -74,6 +128,8 @@ runs:
             printf 'implement-token=%s\n' "$(printf '%s\n' "$out" | grep '^implement-token=' | cut -d= -f2-)"
           } >> "$GITHUB_OUTPUT"
           echo "wing-commander-fold-queue-claim-dispatch: this run won the dispatch claim for round $ROUND (iteration $next)." >> "$GITHUB_STEP_SUMMARY"
+        elif [ "$OWN_FOLDS" = "0" ]; then
+          echo "wing-commander-fold-queue-claim-dispatch: this run folded nothing of its own -- declined without attempting the round's claim (spec 075 FR-014)." >> "$GITHUB_STEP_SUMMARY"
         else
-          echo "wing-commander-fold-queue-claim-dispatch: another act-kind ticket remains, or round $ROUND was already claimed -- this run dispatches nothing." >> "$GITHUB_STEP_SUMMARY"
+          echo "wing-commander-fold-queue-claim-dispatch: round $ROUND was already claimed by another run -- this run dispatches nothing." >> "$GITHUB_STEP_SUMMARY"
         fi

@@ -288,14 +288,17 @@ def run():
 
 
 def _mutate_ignores_folded_json(script):
-    needle = ('if [ -z "$tip" ] || [ "$(printf \'%s\' "$folded_json" | '
-              'jq \'length\')" = "0" ]; then')
+    needle = ('if [ "$using_round_list" != "true" ] && { [ -z "$tip" ] || '
+              '[ "$(printf \'%s\' "$folded_json" | jq \'length\')" = "0" ]; '
+              '}; then')
     if script.count(needle) != 1:
         sys.exit("::error::verify-fold-dispatch-composite --self-test: "
                  "expected one nothing-of-own-folded guard; update this "
                  "harness.")
-    return script.replace(needle,
-                          'if [ -z "$tip" ] || [ "$tip" = "$BASE_SHA" ]; then', 1)
+    return script.replace(
+        needle,
+        'if [ "$using_round_list" != "true" ] && [ "$tip" = "$BASE_SHA" ]; then',
+        1)
 
 
 def _mutate_always_dispatches(script):

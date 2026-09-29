@@ -37,9 +37,11 @@ A cross-product covering, at minimum:
 3. **Three overlapping runs** — same as (2), extended by one more entrant,
    confirming the invariant holds for N, not just two (spec.md's own Edge
    Case).
-4. **Dispatch claim while a fold is still outstanding** — asserts
-   `should-dispatch` resolves `false` for a claim attempted while another
-   run's `act` ticket remains queued (FR-007).
+4. **Dispatch claim while a fold is still outstanding** — a dispatch
+   ticket with folds of its own (`own_folds > 0`) facing another run's
+   outstanding `act` ticket resolves `should-dispatch: false`,
+   `outcome: requeued` — never a silent step-aside (FR-007; 2026-09-29
+   reconciliation with spec 075).
 5. **Dispatch claim after the round empties** — asserts exactly one of two
    simulated concurrent claimants resolves `true` (FR-009/SC-003).
 6. **`stop`-only run alongside a mutating run** — asserts the stop run's
@@ -51,6 +53,24 @@ A cross-product covering, at minimum:
 8. **Re-dispatch bound** — a round with `redispatch_count: 1` already set
    → asserts the guard's expression resolves to "report only, no further
    dispatch" (FR-016a).
+9. **Re-dispatch claim enqueues a fresh ticket atomically** (T038) — a
+   winning `claim-redispatch` call enqueues an `implement`-kind ticket in
+   the SAME write as the `redispatch_count` CAS and returns its token, and
+   the `react` step threads that token onto its `gh workflow run`
+   re-dispatch as `fold_queue_token`.
+10. **No-own-folds never wins, in any queue order** (2026-09-29
+    reconciliation with spec 075, spec 075 FR-014) — a claim with
+    `own_folds == 0` declines against both an already-empty, unclaimed
+    round and a round with an outstanding `act`-kind ticket; never
+    `requeued`.
+11. **A folding run requeues behind an outstanding act-kind ticket rather
+    than stepping aside** (2026-09-29 reconciliation) — the ledger
+    actually reorders the queue (proven via `peek`, not just the outcome
+    label reported), and the same ticket wins once that `act`-kind ticket
+    clears.
+12. **The winning claim's `folded-items` names every contributing run in
+    the round**, each attributed to its own `run_id` — not only the
+    winning run's own evidence (2026-09-29 reconciliation, FR-011).
 
 ## Mutations (`MUTATIONS`, each proven to break the gate — FR-022)
 
@@ -59,8 +79,10 @@ A cross-product covering, at minimum:
   (reintroducing bare concurrency-group contention, defect #1 from
   spec.md's Context section). Must fail scenario 2/3.
 - `mut_unconditional_dispatch` — removes the round-emptiness check from
-  the claim expression (reintroducing "dispatch-once is once per run, not
-  once per PR", defect #2). Must fail scenario 4/5.
+  the claim expression (a claim with own folds and an outstanding `act`
+  ticket would win immediately instead of requeuing — reintroducing
+  "dispatch-once is once per run, not once per PR", defect #2). Must fail
+  scenario 4/5/11.
 - `mut_collapse_manual_and_replaced` — removes the correlated-entrant
   check from the guard's detection expression (reintroducing "a
   concurrency-replaced cancel is invisible" in its collapsed form — every
@@ -68,6 +90,23 @@ A cross-product covering, at minimum:
   Must fail scenario 7.
 - `mut_unbounded_redispatch` — removes the `redispatch_count` check from
   the guard's re-dispatch expression. Must fail scenario 8.
+- `mut_redispatch_no_enqueue` — reverts `claim-redispatch`'s jq filter to
+  only flip `redispatch_count` without enqueueing the implement-kind
+  ticket (the T038 defect restored). Must fail scenario 9.
+- `mut_drop_redispatch_token_thread` — removes the `-f fold_queue_token=`
+  argument from `react`'s `gh workflow run` call (the T038 defect
+  restored). Must fail scenario 9.
+- `mut_requeue_replaced_by_stepaside` — reverts the requeue branch to a
+  plain decline with no queue mutation, so a folding run facing an
+  outstanding `act`-kind ticket steps aside instead of requeuing. Must
+  fail scenario 11 (and 12, which depends on the requeued ticket
+  surviving to win).
+- `mut_own_folds_check_dropped` — disables the own-folds gate so a
+  no-fold run can fall through to win (spec 075 FR-014 regression). Must
+  fail scenario 10.
+- `mut_round_list_narrowed_to_claimant` — narrows the winning claim's
+  `folded-items` back to the claimant's own `run_id`, dropping every
+  other contributing run's folds from the reply. Must fail scenario 12.
 
 `main()` runs `suite()` against the untouched subject (must be 0
 failures) and then, for each mutation, re-runs `suite()` and requires a
