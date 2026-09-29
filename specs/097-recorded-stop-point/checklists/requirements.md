@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,24 +31,25 @@
 
 ## Notes
 
-- **Three `[NEEDS CLARIFICATION]` markers remain by design** (FR-003,
-  FR-010, FR-016), and are the only open item on this checklist. They are
-  the owner trade-offs the lifecycle issue itself named, carried forward
-  for the clarify stage rather than guessed:
-  1. FR-003 — what an honoured stop leaves behind (reuse the terminal
-     `stalled` marker plus `board:stalled`, or a distinct `stopped`
-     state).
-  2. FR-010 — how much in-flight context the record preserves, i.e.
-     whether a released item resumes where it stopped or restarts.
+- **All three `[NEEDS CLARIFICATION]` markers are resolved** (clarify
+  stage, 2026-09-29, answered on lifecycle issue #724 — see the
+  `## Clarifications` section of `spec.md`). They were the owner
+  trade-offs the lifecycle issue itself named, carried forward from
+  intake rather than guessed:
+  1. FR-003 — what an honoured stop leaves behind → the existing terminal
+     `stalled` marker plus `board:stalled`, reason "stopped by maintainer
+     request", released by removing the label. No new vocabulary.
+  2. FR-010 — how much in-flight context the record preserves → branch
+     and base commit only; the pull request is re-found via `board:owned`
+     and the review round restarts.
   3. FR-016 — whether a stop request posted before the loop's first
-     announcement on an item counts at all.
-  Intake runs headless: the markers stay in `spec.md` and the questions
-  are posted to the lifecycle issue instead of being asked here.
+     announcement counts → honoured once, recorded, then never again.
 - The issue's fourth design question — *where* the recording lives (the
-  shared stop-check composite versus each job) — was resolved rather than
-  marked. FR-018 requires exactly one home (CLAUDE.md "Shared logic has
-  exactly one home"); which module that is, and what item context has to
-  be threaded into it, is a plan-stage decision recorded in Assumptions.
+  shared stop-check composite versus each job) — was never marked, since
+  FR-018 already requires exactly one home (CLAUDE.md "Shared logic has
+  exactly one home"). The owner's Q1 answer names that home as the
+  shared stop-check composite; what item context each caller threads
+  into it stays a plan-stage detail.
 - **On "no implementation details"**: the Overview's *Observed facts*
   section deliberately cites named files, constants and current-main
   behaviour as evidence that the defect exists, following this

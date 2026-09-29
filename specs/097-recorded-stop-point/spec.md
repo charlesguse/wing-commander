@@ -95,6 +95,32 @@ the switch went on.
   goes on **before** the stalled marker, so a failure between the two
   leaves the item retryable rather than silently parked.
 
+## Clarifications
+
+### Session 2026-09-29 — answered on lifecycle issue #724
+
+- Q: What shape does an honoured stop's record take — reuse the terminal
+  `stalled` marker plus the `board:stalled` label, or a distinct
+  `stopped` step and/or label with its own release act? → A: **Reuse the
+  existing shape.** A terminal `stalled` marker plus `board:stalled`,
+  with the reason "stopped by maintainer request", released by a
+  maintainer removing the label. No new vocabulary: selection and resume
+  already handle it. The recording itself lives in the stop-check
+  composite, the single place every job already calls. The kill switch
+  keeps writing nothing. (FR-003, FR-018, User Story 1, User Story 3)
+- Q: How much in-flight context does the record preserve — enough to
+  resume where the item stopped, or may a released item restart? → A:
+  **Branch and base commit only**, the fix job's existing stalled shape.
+  A released item re-finds its open loop-owned pull request through the
+  `board:owned` fallback, and its review round restarts, so state a human
+  has touched is reviewed again before anything is reported ready
+  (consistent with the owner's answer on #717). (FR-010, User Story 3)
+- Q: Is a stop request posted before the loop's first announcement on an
+  item ignored entirely, or honoured once? → A: **Honoured once.** With
+  an empty baseline the newest authorized stop command stops the item and
+  the stop point is recorded, so a human sees an explained stall and the
+  board is released rather than wedged. (FR-016, User Story 4)
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - One stop halts one item, and the board keeps moving (Priority: P1)
@@ -182,28 +208,30 @@ instruction are all determinable from the issue alone.
 ### User Story 3 - A maintainer releases a stopped item and it continues (Priority: P2)
 
 Having looked, the maintainer decides the loop should carry on. They
-perform the release act — the same one every other stalled board item
-already uses — and the next scheduled run picks the item back up and
-continues from where it stopped, without re-reading the old stop comment
-as a fresh stop and without opening a second branch or a second pull
-request for the issue.
+remove `board:stalled` — the same release act every other stalled board
+item already uses — and the next scheduled run picks the item back up on
+the branch and base commit it had when it stopped, without re-reading the
+old stop comment as a fresh stop and without opening a second branch or a
+second pull request for the issue. Its review starts again from the first
+round, so the state a human has been in is reviewed afresh.
 
 **Why this priority**: A stop that cannot be undone is a permanent
 exclusion, and a release that immediately re-stops is the original wedge
 wearing a hat. The two halves are only useful together, but the stop
 (P1/P2) is what unfreezes the board even if release is done by hand.
 
-**Independent Test**: Record a stop, release the item, drive one run:
-the item is selected, proceeds past its stop check, and the issue gains no
-second stop-point record.
+**Independent Test**: Record a stop, remove `board:stalled`, drive one
+run: the item is selected, proceeds past its stop check, and the issue
+gains no second stop-point record.
 
 **Acceptance Scenarios**:
 
-1. **Given** an item recorded as stopped, **When** a maintainer performs
-   the release act, **Then** the next run selects the item and its stop
+1. **Given** an item recorded as stopped, **When** a maintainer removes
+   `board:stalled`, **Then** the next run selects the item and its stop
    checks do not stand down on the already-recorded stop command.
 2. **Given** a released item that had an open loop-owned pull request
-   when it stopped, **When** the loop resumes it, **Then** no second
+   when it stopped, **When** the loop resumes it, **Then** it re-finds
+   that pull request through the `board:owned` fallback, and no second
    branch and no second pull request are opened for that issue (FR-054).
 3. **Given** a released item, **When** the maintainer posts a *new*
    authorized stop command, **Then** that new stop is honoured and
@@ -218,10 +246,10 @@ second stop-point record.
 
 A maintainer replied `stop.` in a thread on an issue long before the board
 loop existed, or before the loop ever announced a run on it. That comment
-does not get to silently veto the loop forever: the loop's treatment of a
-stop request that predates its own first announcement on the item is one
-stated rule, and whichever way it falls, the outcome is visible on the
-issue rather than an unexplained repeating stand-down.
+does not get to silently veto the loop forever: it is honoured once — the
+item stands down, the stop point is recorded, and the item waits for a
+human — so the outcome is visible on the issue rather than an unexplained
+repeating stand-down.
 
 **Why this priority**: It is a real freeze (the code review of the #539
 fix found it), but it needs an issue whose history predates the loop, so
@@ -230,18 +258,19 @@ point already converts it from an endless wedge into a one-time,
 explained stall.
 
 **Independent Test**: On an issue with an old authorized stop command and
-no loop `**Run:**` announcement at all, drive one run and confirm the
-stated rule applied and left a legible outcome.
+no loop `**Run:**` announcement at all, drive one run and confirm the item
+stood down once, the stop point was recorded, and the board moved on.
 
 **Acceptance Scenarios**:
 
 1. **Given** an issue the loop has never announced a run on, carrying an
    authorized stop command older than the loop's involvement, **When**
-   the loop selects it and reaches a stop check, **Then** the outcome
-   follows the stated empty-baseline rule and is recorded on the issue if
-   it stops the item.
+   the loop selects it and reaches a stop check, **Then** the newest such
+   stop command is honoured, the item stands down, and the stop point is
+   recorded on the issue.
 2. **Given** that same issue, **When** any later run executes, **Then**
-   the issue is not stood down on repeatedly with no record.
+   it is not selected while unreleased, and the issue is not stood down
+   on repeatedly with no record.
 
 ---
 
@@ -270,8 +299,9 @@ stated rule applied and left a legible outcome.
   at the next check.
 - **Item stopped while it had no branch or PR yet** (during triage or
   route) versus **stopped mid-fix or mid-review with an open loop-owned
-  PR** — both must be recorded, and the second must not lose track of
-  the PR the loop already owns (FR-054).
+  PR** — both must be recorded, and the second must still find the PR the
+  loop already owns when it is released, via the `board:owned` fallback
+  rather than a PR number in the record (FR-010, FR-054).
 - **A non-maintainer posts a stop command** — unchanged: not honoured, so
   nothing is recorded.
 - **Prose containing "stop"** — unchanged: `is_stop_command()`'s
@@ -290,13 +320,15 @@ stated rule applied and left a legible outcome.
   loop's candidate set, so that no later run selects it — neither as the
   in-flight candidate nor by oldest-first — until a maintainer releases
   it.
-- **FR-003**: The record MUST take the shape of
-  [NEEDS CLARIFICATION: does an honoured stop reuse the existing terminal
-  `stalled` marker plus the `board:stalled` label — the same shape
+- **FR-003**: The record MUST take the existing stalled-and-handed-over
+  shape — a terminal `stalled` marker plus the `board:stalled` label,
+  carrying the reason "stopped by maintainer request" — the same shape
   triage's handover, route's spec-request and the fix job's post-push
-  breach already use, released by removing that label — or does it
-  introduce a distinct `stopped` step and/or label that is never a
-  candidate and is released by its own act?].
+  breach already use. It MUST NOT introduce a distinct `stopped` step, a
+  new label, or any other new vocabulary: selection already excludes
+  `board:stalled` and already refuses a `stalled` marker as in-flight,
+  and a maintainer releases the item by removing that label, exactly as
+  for every other stalled board item.
 - **FR-004**: The stop-point record MUST include a human-legible
   statement on the issue that names a maintainer stop request as the
   cause, identifies the stop comment acted on, and states the single
@@ -320,11 +352,15 @@ stated rule applied and left a legible outcome.
   request that was already recorded MUST NOT stand the item down again; a
   *new* authorized stop command posted after the release MUST be honoured
   and recorded afresh.
-- **FR-010**: The stop-point record MUST preserve
-  [NEEDS CLARIFICATION: how much of the item's in-flight context — step,
-  review round, pull request, branch, base commit — so that a released
-  item resumes where it stopped? Or is a released item allowed to restart
-  from triage, provided FR-054's "no second branch or PR" still holds?].
+- **FR-010**: The stop-point record MUST preserve the item's branch and
+  base commit, and only those — the same in-flight context the fix job's
+  existing stalled path already keeps. The review round MUST NOT be
+  preserved: a released item's review starts again from the first round,
+  so that state a human has touched is reviewed afresh before anything is
+  reported ready. A released item MUST re-find its open loop-owned pull
+  request through the existing `board:owned` fallback rather than through
+  a pull request number carried in the record, and FR-054's "no second
+  branch or pull request" MUST continue to hold.
 - **FR-011**: A stand-down caused by the kill switch alone MUST write
   nothing for the item: no comment, no label change, no marker. Clearing
   the switch MUST leave the board exactly as it was.
@@ -340,19 +376,23 @@ stated rule applied and left a legible outcome.
   stop-request stand-down be distinguished from a kill-switch stand-down
   and from a quiet run, from the durable record alone (FR-046/FR-047).
 - **FR-016**: A stop request posted before the loop's first run
-  announcement on an item MUST be handled by one stated rule:
-  [NEEDS CLARIFICATION: is such a pre-loop stop ignored entirely (only a
-  stop posted after the item's first loop announcement counts), or
-  honoured once — recorded, stalling the item for a human — the first
-  time the loop selects the item?].
+  announcement on an item MUST be honoured exactly once. When the
+  baseline is empty, the newest authorized stop command in the issue's
+  history stands the item down the first time the loop reaches a stop
+  check on it, and that stop point MUST be recorded like any other — so
+  the maintainer sees an explained stall and the board is released
+  instead of wedged. No later run may stand the item down again on that
+  same stop command.
 - **FR-017**: A failure to complete the recording MUST NOT leave the item
   silently parked. The run MUST end with the item either fully recorded
   as stopped, or plainly eligible for a later retry, and MUST make the
   partial failure loud rather than exiting green.
 - **FR-018**: The logic that decides a stop has been honoured and records
-  it MUST have exactly one home, reused by every job that re-checks
-  before a durable action, rather than being repeated per job (CLAUDE.md
+  it MUST have exactly one home — the shared stop-check composite every
+  job already calls — rather than being repeated per job (CLAUDE.md
   "Shared logic has exactly one home"; spec 057's reuse requirements).
+  Whatever item context that home needs in order to write the record is
+  passed in by each caller.
 - **FR-019**: A PR-time gate MUST fail on a change that removes the
   recording from the honoured-stop path, that makes the kill-switch-only
   path write to the item, or that lets a recorded stop be re-selected;
@@ -370,17 +410,21 @@ stated rule applied and left a legible outcome.
   baseline. Unchanged by this feature except for FR-016's treatment of
   the empty-baseline case.
 - **Stop baseline**: the timestamp after which a stop command counts —
-  today, the most recent loop-authored run announcement on the item. The
-  fact that an item may have none is what FR-016 resolves.
-- **Stop point record**: the new durable artifact. The item state, plus
-  the human-legible statement, that says the loop honoured a stop here,
-  at this step, and what a human must do next.
+  today, the most recent loop-authored run announcement on the item. When
+  an item has none, FR-016 makes the newest authorized stop command count
+  once.
+- **Stop point record**: the new durable artifact. A `stalled` marker
+  with the reason "stopped by maintainer request" and the `board:stalled`
+  label, plus the human-legible comment that says the loop honoured a
+  stop here, at this step, and what a human must do next (FR-003).
 - **Board item marker**: the loop's existing machine-readable item state
   (step, round, PR, branch, base commit) that the next run reads to
-  resume. What a stop writes into it is FR-003/FR-010.
+  resume. A stop writes a terminal `stalled` step and keeps the branch
+  and base commit, dropping the review round (FR-003/FR-010).
 - **Stalled/awaiting-a-human state**: the existing "this item needs a
-  human before the loop touches it again" condition that removes an item
-  from selection, and the act that releases it.
+  human before the loop touches it again" condition — the `board:stalled`
+  label, which `is_excluded()` already honours — removed by a maintainer
+  to release the item.
 - **Kill switch**: the repository-wide pause. Deliberately leaves no
   per-item trace (FR-011).
 
@@ -406,7 +450,7 @@ stated rule applied and left a legible outcome.
   within one scheduled run, with zero additional branches and zero
   additional pull requests opened for that issue.
 - **SC-007**: An issue with a pre-loop stop command and no loop
-  announcement produces at most one stand-down with a record, never an
+  announcement produces exactly one stand-down, with a record, never an
   unbounded series of silent ones.
 - **SC-008**: Every run's durable metrics record distinguishes the three
   stand-down causes; an auditor can count stop-request stand-downs across
@@ -416,19 +460,14 @@ stated rule applied and left a legible outcome.
 
 ## Assumptions
 
-- **Where the recording lives is a plan-stage decision, constrained by
-  FR-018**: CLAUDE.md's "shared logic has exactly one home" points at the
-  shared stop-check composite rather than six copies in the workflow's
-  jobs, and the issue names this as an owner trade-off only because the
-  composite would then need each caller's item context (step, round, PR,
-  branch, base commit) passed in as inputs. This spec requires one home
-  and leaves the placement to planning rather than spending a
-  clarification on it.
-- **The release act is the existing one** unless FR-003 is answered with
-  a distinct stopped state: every other stalled board path in this
-  repository states that removing `board:stalled` is the sole
-  re-eligibility condition, and a second release convention for stops
-  would be a new thing for maintainers to learn.
+- **The recording lives in the shared stop-check composite** (FR-018),
+  the single place every job already calls. The item context that home
+  needs in order to write the record is passed in by each caller; exactly
+  which inputs those are is a plan-stage detail.
+- **The release act is the existing one**: removing `board:stalled` is
+  the sole re-eligibility condition on every other stalled board path in
+  this repository, and FR-003 keeps stops on that same convention rather
+  than giving maintainers a second one to learn.
 - **A stop is per-item, not board-wide.** The issue states the
   kill-switch case must keep writing nothing "since that is a global
   pause, not an item stop"; the converse is assumed to hold — an
