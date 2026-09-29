@@ -241,7 +241,7 @@ never silently repointed at an unrelated scenario.
    force-deleted from git, only removed from the working tree going
    forward.
 
-## Scenario 23 — The `{stage, tool}` denial separation survives partial-overlap matching (US3, SC-003; spec 109)
+## Scenario 23 — The `{stage, tool}` denial separation survives partial-overlap matching (spec 109's own US3/SC-003)
 
 1. Replay the three runs behind `#761`/`#764`/`#780` (or a fixture with
    three distinct `{stage, tool}` denial pairs — different stages, or
@@ -253,7 +253,7 @@ never silently repointed at an unrelated scenario.
    `{stage, tool}` (#266) and overlap matching only ever attaches on a
    *shared* id.
 
-## Scenario 24 — Partial overlap attaches to the same issue across three citation sets (US1, SC-001; spec 109)
+## Scenario 24 — Partial overlap attaches to the same issue across three citation sets (spec 109's own US1/SC-001)
 
 1. Replay, in order, three findings of one class: citing `{A,B}`, then
    `{A,C,D}`, then `{D}` alone (the `#729`/`#732`/`#765` shape).
@@ -266,14 +266,14 @@ never silently repointed at an unrelated scenario.
    pipeline-defect --state all` shows exactly one issue for this class,
    with two recurrence comments.
 
-## Scenario 25 — Disjoint citation sets file a second issue (US1, Acceptance Scenario 2; spec 109)
+## Scenario 25 — Disjoint citation sets file a second issue (spec 109's own US1, Acceptance Scenario 2)
 
 1. Given the issue from Scenario 24 (matchable set `{A,C,D}` after two
    occurrences), replay a finding of the same class citing `{E,F}`.
 2. Expected: a *new* `pipeline-defect` issue is created — no id in common
    with the existing one's matchable set, so nothing links them.
 
-## Scenario 26 — A converging implement cycle's red gate suite files nothing; a stalled or finalize-red one still files (US2, SC-002; spec 109)
+## Scenario 26 — A converging implement cycle's red gate suite files nothing; a stalled or finalize-red one still files (spec 109's own US2/SC-002)
 
 1. Replay run 36484099706's finding set (or a fixture shaped like it: six
    findings across six classes, every one citing only `gate-suite-failure`
@@ -294,7 +294,7 @@ never silently repointed at an unrelated scenario.
    on a guess (FR-010 of spec 059's cycle-outcome facts, FR-033 of this
    spec).
 
-## Scenario 27 — A run with both gate-suite and unrelated evidence suppresses only the gate-suite findings (US2, Acceptance Scenario 5; spec 109)
+## Scenario 27 — A run with both gate-suite and unrelated evidence suppresses only the gate-suite findings (spec 109's own US2, Acceptance Scenario 5)
 
 1. Replay a converging-cycle run whose findings include four citing only
    `gate-suite-failure` ids and one citing a `tool-denial` id (unrelated
@@ -303,7 +303,7 @@ never silently repointed at an unrelated scenario.
    (`converging-gate-suite`); the `tool-denial` finding is triaged and, if
    it matches nothing, filed exactly as it would be without this feature.
 
-## Scenario 28 — Chained overlap: multi-match attaches to the lowest-numbered issue and names the other (US1/US3, FR-031; spec 109)
+## Scenario 28 — Chained overlap: multi-match attaches to the lowest-numbered issue and names the other (spec 109's own US1/US3, FR-031)
 
 1. Given two open issues of one class, issue X citing `{A,B}` (lower
    number) and issue Y citing `{B,C}` (higher number), replay a finding
@@ -314,7 +314,7 @@ never silently repointed at an unrelated scenario.
    dedup-search step's outcome nor the lifecycle-issue report calls this
    `data-integrity`.
 
-## Scenario 29 — A finding whose only overlap is with a closed issue still files new (US1, FR-014; spec 109)
+## Scenario 29 — A finding whose only overlap is with a closed issue still files new (spec 109's own US1, FR-014)
 
 1. Given a closed `pipeline-defect` issue whose recorded matchable set is
    `{A,B}`, replay a finding of the same class citing `{A,C}` (partial
@@ -323,7 +323,7 @@ never silently repointed at an unrelated scenario.
    not commented on. (Contrast with the *exact*-fingerprint case, which
    still reopens a closed issue exactly as it does today.)
 
-## Scenario 30 — Truncated candidate list reads as `unknown`, never as `none` (US1/US4, FR-028; spec 109)
+## Scenario 30 — Truncated candidate list reads as `unknown`, never as `none` (spec 109's own US1/US4, FR-028)
 
 1. Simulate (fixture) a class label with exactly 200 open+closed
    `pipeline-defect` issues, so `gh issue list --limit 200` returns a
@@ -332,7 +332,7 @@ never silently repointed at an unrelated scenario.
    the 200 fetched candidates would have matched — reported as a lookup
    that could not be trusted, never silently treated as "nothing found."
 
-## Scenario 31 — The mutation fixture proves each of the above can fail its own subject (US4, SC-005; spec 109)
+## Scenario 31 — The mutation fixture proves each of the above can fail its own subject (spec 109's own US4, SC-005)
 
 For each of Scenarios 24, 26, 23, 28, run the checked-in fixture's
 companion mutation (`.github/scripts/verify-watchdog-overlap-fanout.py

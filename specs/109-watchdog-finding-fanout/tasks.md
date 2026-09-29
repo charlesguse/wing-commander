@@ -182,10 +182,10 @@ No prerequisite is shared by more than one user story. User Stories 1 and 2 edit
 
 **Purpose**: Final consistency pass across every phase above.
 
-- [ ] T046 Re-scan `specs/015-pipeline-watchdog/spec.md`, `data-model.md`, `contracts/watchdog-workflow.md`, and `quickstart.md` for any cross-reference broken by the FR-030–FR-035 additions or the FR-012–FR-016/FR-020/FR-028 amendments (a stale FR number, a reworded requirement no longer matching a Key Entity's description) and correct it — the same sweep discipline spec 024's own T050 applied.
-- [ ] T047 Confirm `.github/workflows/lint-workflows.yml`'s gate registry has no duplicate or collided Gate 125 entry (re-grep `Gate \d+` per the Gate-numbering scheme note) and that Gate 10 (`verify-gate-wiring.py`) passes with the new gate wired.
-- [ ] T048 Run `python3 .github/scripts/run-local-gates.py` end-to-end and confirm every gate (including the pre-existing dedup gates, Gate 120 and `verify-act-dedup-guard.py`) still passes alongside the new Gate 125 — no regression in the exact-match/closed-issue path this feature leaves unchanged.
-- [ ] T049 Confirm no task above closes, relabels, comments on, or consolidates any of #729, #732, #765, #708–#713 (FR-025 of spec 109) — this feature is go-forward only; those issues remain for the owner to triage by hand.
+- [X] T046 Re-scan `specs/015-pipeline-watchdog/spec.md`, `data-model.md`, `contracts/watchdog-workflow.md`, and `quickstart.md` for any cross-reference broken by the FR-030–FR-035 additions or the FR-012–FR-016/FR-020/FR-028 amendments (a stale FR number, a reworded requirement no longer matching a Key Entity's description) and correct it — the same sweep discipline spec 024's own T050 applied.
+- [X] T047 Confirm `.github/workflows/lint-workflows.yml`'s gate registry has no duplicate or collided Gate 125 entry (re-grep `Gate \d+` per the Gate-numbering scheme note) and that Gate 10 (`verify-gate-wiring.py`) passes with the new gate wired.
+- [X] T048 Run `python3 .github/scripts/run-local-gates.py` end-to-end and confirm every gate (including the pre-existing dedup gates, Gate 120 and `verify-act-dedup-guard.py`) still passes alongside the new Gate 125 — no regression in the exact-match/closed-issue path this feature leaves unchanged.
+- [X] T049 Confirm no task above closes, relabels, comments on, or consolidates any of #729, #732, #765, #708–#713 (FR-025 of spec 109) — this feature is go-forward only; those issues remain for the owner to triage by hand.
 
 ---
 
