@@ -50,14 +50,14 @@
   treatment" therefore includes that disposition. A give-up stall files
   nothing, so its originating issue is left undisposed (spec 108 FR-011)
   and removing `board:stalled` remains its re-admission (FR-014).
-- **Open conflict with spec 108 — needs a maintainer decision.** FR-003
-  below treats a *closed* prior spec-request as "already filed" with no
-  time bound, so the existence check would reuse it forever. Spec 108
-  FR-006/SC-005 require that a maintainer reopening a disposed original
-  after its linked spec-request has closed be routed afresh, at most once
-  per reopen — a route that can file a new spec-request, which FR-003 would
-  suppress. This spec does not resolve the conflict; the plan stage must
-  not proceed on FR-003 as written until it is decided.
+- **Reconciled with spec 108 (maintainer, 2026-09-29).** FR-003 treats a
+  *closed* prior spec-request as "already filed", which on its own would
+  reuse it forever. Spec 108 FR-006/SC-005 (the owner's #791 answer)
+  require that a maintainer reopening a disposed original after its linked
+  spec-request has closed be routed afresh, at most once per reopen. That
+  reopen is the one deliberate exception: FR-003 now scopes the existence
+  check to spec-requests filed since the originating issue was last
+  reopened, so the reopen is honoured and every other re-run still reuses.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -225,7 +225,10 @@ present; then remove `board:stalled` and confirm the item is selected again.
   agent (Constitution IX).
 - **FR-003**: The existence check MUST consider prior `spec-request`s regardless of whether
   they are currently open or closed, so an artifact a maintainer has already closed is not
-  re-filed on the next run.
+  re-filed on the next run. The check MUST consider only `spec-request`s filed since the
+  originating issue was last reopened: a maintainer reopening a disposed original after its
+  spec-request closed is spec 108's (FR-006) deliberate re-admission, and MUST produce at
+  most one fresh filing per reopen rather than a reuse of the closed one.
 - **FR-004**: When more than one prior `spec-request` matches, the loop MUST reuse exactly
   one of them by a deterministic rule (the oldest), and MUST NOT create, close or modify
   any of the others.
@@ -368,7 +371,8 @@ present; then remove `board:stalled` and confirm the item is selected again.
   than a new state.
 - "The loop's own identity" means the App identity the loop already uses to author its
   markers and comments; artifacts authored by anyone else are not the loop's to reuse.
-- A closed prior `spec-request` counts as "already filed" (FR-003). The issue's own wording
+- A closed prior `spec-request` filed since the originating issue was last reopened counts as
+  "already filed" (FR-003). The issue's own wording
   proposed matching an *open* one, but an open-only match would re-file work a maintainer
   deliberately closed on every subsequent run — the exact duplicate this feature exists to
   prevent. The time-scoped, state-agnostic match the breach-retry lookup already uses is
