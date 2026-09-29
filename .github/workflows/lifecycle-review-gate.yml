@@ -368,9 +368,13 @@ jobs:
     needs: [select, readiness]
     if: needs.readiness.result == 'success' && needs.readiness.outputs.ready == 'true'
     runs-on: ubuntu-latest
+    # #814: read-only -- this job's one PR write (the review post) goes
+    # through env.WC_BOT_TOKEN, never github.token, so github.token (which
+    # the Reviewer step below receives as its github_token) needs no write
+    # scope at all.
     permissions:
       contents: read
-      pull-requests: write
+      pull-requests: read
     outputs:
       round: ${{ steps.gather.outputs.round }}
       parse-failed: ${{ steps.extract.outputs.parse-failed }}
@@ -522,13 +526,23 @@ jobs:
       # transcript/memory with whatever implemented or finalized this PR,
       # structurally true (a separate job has no access to another job's
       # transcript file at all).
-      # T080/F9 (#759): this reviewer has no `gh` grant (its tool-args step
-      # above allows only Skill/Read/Grep/Glob/Bash(python3 -I .../git_read.py:*)/
-      # Bash(cat:*)) and posts nothing itself -- `disposition` posts the
-      # review from its own extracted findings. Neither `GH_TOKEN` (env) nor
-      # `github_token` (with) is passed, so a prompt-injected reviewer has no
-      # credential reachable via its allowed `Bash(cat:*)` (e.g. reading its
-      # own process environment) to echo into its publicly posted findings.
+      # T080/F9 (#759), #814: this reviewer has no `gh` grant (its tool-args
+      # step above allows only Skill/Read/Grep/Glob/Bash(python3 -I
+      # .../git_read.py:*)/Bash(cat:*)) and posts nothing itself -- the
+      # `Post the review on the PR` step below posts from its own extracted
+      # findings. It is not given the App token: its `github_token` is this
+      # job's own github.token, read-only under the job's permissions
+      # above. That token IS readable by the reviewer -- the action sets
+      # GH_TOKEN/GITHUB_TOKEN to it in its own process and writes it into
+      # the checkout's .git/config origin URL -- which is accepted: it is
+      # read-only, expires with the job, and this repository is public.
+      # The action needs SOME github_token -- without one it falls back to
+      # an OIDC exchange this job has no `id-token: write` for, and fails
+      # before Claude starts (run 36640266298, #814; Gate 92 now fails that
+      # shape). Still open: the job-wide WC_BOT_TOKEN (exported via
+      # $GITHUB_ENV by wing-commander-context), a write-capable credential,
+      # is still inherited by this step's process environment -- tracked
+      # separately in #815.
       - name: Reviewer
         id: reviewer
         continue-on-error: true
@@ -536,6 +550,7 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ github.token }}
           allowed_bots: "github-actions,${{ steps.ctx.outputs.bot-slug }}"
           prompt: |
             You are the lifecycle review gate's independent reviewer for PR
