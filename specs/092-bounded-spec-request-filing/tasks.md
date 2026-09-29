@@ -29,7 +29,7 @@ drifted rather than trust the number blindly.
 
 ## Phase 1: Setup
 
-- [ ] T001 Create `.github/scripts/board_spec_request_filing.py` with its module
+- [X] T001 Create `.github/scripts/board_spec_request_filing.py` with its module
   docstring (owning module for research.md D1/D6,
   `contracts/spec-request-existence-check.md`,
   `contracts/spec-request-attempt-bound.md`) and an `argparse`-based `main()`
