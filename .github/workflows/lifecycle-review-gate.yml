@@ -530,15 +530,19 @@ jobs:
       # step above allows only Skill/Read/Grep/Glob/Bash(python3 -I
       # .../git_read.py:*)/Bash(cat:*)) and posts nothing itself -- the
       # `Post the review on the PR` step below posts from its own extracted
-      # findings. It is passed no `GH_TOKEN` (env) and not the App token:
-      # its `github_token` is this job's own github.token, read-only under
-      # the job's permissions above. The action still needs SOME
-      # github_token -- without one it falls back to an OIDC exchange this
-      # job has no `id-token: write` for, and fails before Claude starts
-      # (run 36640266298, #814; Gate 92 now fails that shape). Not yet
-      # true: the job-wide WC_BOT_TOKEN (exported via $GITHUB_ENV by
-      # wing-commander-context) is still inherited by this step's process
-      # environment -- tracked separately in #815.
+      # findings. It is not given the App token: its `github_token` is this
+      # job's own github.token, read-only under the job's permissions
+      # above. That token IS readable by the reviewer -- the action sets
+      # GH_TOKEN/GITHUB_TOKEN to it in its own process and writes it into
+      # the checkout's .git/config origin URL -- which is accepted: it is
+      # read-only, expires with the job, and this repository is public.
+      # The action needs SOME github_token -- without one it falls back to
+      # an OIDC exchange this job has no `id-token: write` for, and fails
+      # before Claude starts (run 36640266298, #814; Gate 92 now fails that
+      # shape). Still open: the job-wide WC_BOT_TOKEN (exported via
+      # $GITHUB_ENV by wing-commander-context), a write-capable credential,
+      # is still inherited by this step's process environment -- tracked
+      # separately in #815.
       - name: Reviewer
         id: reviewer
         continue-on-error: true

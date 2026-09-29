@@ -320,6 +320,50 @@ jobs:
           prompt: hello
 """
 
+# #814: workflow-level permissions -- a job with no permissions block
+# inherits the workflow's id-token grant (passes); a job with
+# `permissions: {}` overrides it and has none (fails).
+FIXTURE_WORKFLOW_PERMS_TEXT = """\
+name: gate-92-fixture-workflow-perms
+permissions:
+  contents: read
+  id-token: write
+jobs:
+  inherits:
+    steps:
+      - name: Tokenless step inheriting a workflow-level OIDC grant
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: token
+          prompt: hello
+  overrides:
+    permissions: {}
+    steps:
+      - name: Tokenless step whose job overrides the OIDC grant
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: token
+          prompt: hello
+"""
+
+# #814: a composite action cannot see its caller's permissions, so a
+# tokenless step inside one always fails.
+FIXTURE_COMPOSITE_TEXT = """\
+name: gate-92-fixture-composite
+description: fixture
+runs:
+  using: composite
+  steps:
+    - name: Tokenless composite step
+      uses: anthropics/claude-code-action@v1
+      with:
+        claude_code_oauth_token: token
+        prompt: hello
+"""
+
+TOKEN_JOB_MSG = "passes no github_token and its job does not grant"
+TOKEN_COMPOSITE_MSG = "passes no github_token and has no job permissions"
+
 
 def main():
     use_utf8_stdout()
@@ -356,6 +400,14 @@ def main():
         with open(fixture_path, "w", encoding="utf-8") as fh:
             fh.write(FIXTURE_TEXT)
         fixture_problems = check_file(fixture_path)
+        wf_perms_path = os.path.join(tmpdir, "gate-92-fixture-wf-perms.yml")
+        with open(wf_perms_path, "w", encoding="utf-8") as fh:
+            fh.write(FIXTURE_WORKFLOW_PERMS_TEXT)
+        wf_perms_problems = check_file(wf_perms_path)
+        composite_path = os.path.join(tmpdir, "action.yml")
+        with open(composite_path, "w", encoding="utf-8") as fh:
+            fh.write(FIXTURE_COMPOSITE_TEXT)
+        composite_problems = check_file(composite_path)
 
     joined = " ".join(fixture_problems)
     if "'Bad step'" not in joined:
@@ -379,14 +431,39 @@ def main():
                 self_test_failures.append(
                     f"fixture's bad step(s) were caught but {expect!r} "
                     f"was not named: {fixture_problems!r}")
-    if "'Tokenless reviewer'" not in joined or "id-token: write" not in joined:
+    # #814: assert on the exact job/step pairing and the token message,
+    # not on a substring every token message shares.
+    def token_flagged(problems, job, step, msg=TOKEN_JOB_MSG):
+        head = (f"job {job!r} step {step!r} " if job else f"step {step!r} ")
+        return any(head + msg in p for p in problems)
+
+    token_expectations = (
+        (fixture_problems, "f9-shape", "Tokenless reviewer", TOKEN_JOB_MSG,
+         True, "F9-shape step (no github_token, job without id-token: write)"),
+        (fixture_problems, "oidc-granted", "Tokenless step with an OIDC grant",
+         TOKEN_JOB_MSG, False, "tokenless step in a job granting id-token: write"),
+        (wf_perms_problems, "inherits",
+         "Tokenless step inheriting a workflow-level OIDC grant", TOKEN_JOB_MSG,
+         False, "tokenless step inheriting a workflow-level id-token: write"),
+        (wf_perms_problems, "overrides",
+         "Tokenless step whose job overrides the OIDC grant", TOKEN_JOB_MSG,
+         True, "tokenless step whose `permissions: {}` overrides a "
+               "workflow-level id-token: write"),
+        (composite_problems, None, "Tokenless composite step",
+         TOKEN_COMPOSITE_MSG, True, "tokenless composite-action step"),
+    )
+    for problems, job, step, msg, expect_flag, what in token_expectations:
+        flagged = token_flagged(problems, job, step, msg)
+        if expect_flag and not flagged:
+            self_test_failures.append(
+                f"fixture's {what} was not caught (#814): {problems!r}")
+        elif not expect_flag and flagged:
+            self_test_failures.append(
+                f"fixture's {what} was wrongly flagged (#814): {problems!r}")
+    if len(wf_perms_problems) != 1 or len(composite_problems) != 1:
         self_test_failures.append(
-            f"fixture's F9-shape step (no github_token, job without "
-            f"id-token: write -- #814) was not caught: {fixture_problems!r}")
-    if "'Tokenless step with an OIDC grant'" in joined:
-        self_test_failures.append(
-            f"fixture's tokenless step in a job granting id-token: write "
-            f"was wrongly flagged: {fixture_problems!r}")
+            f"#814 fixtures produced unexpected extra problems: "
+            f"{wf_perms_problems!r} {composite_problems!r}")
     if not self_test_failures:
         print(f"note: fixture bad steps caught: {fixture_problems}")
 
@@ -404,9 +481,10 @@ def main():
         return 1
 
     print("Gate 92 self-test: both bad steps (bare @v1 and @v1.2.0) were "
-          "caught by name, the F9-shape tokenless step was caught (#814), "
-          "the good step and the OIDC-granted tokenless step were not "
-          "flagged, and the real fleet passes.")
+          "caught by name; the F9-shape, `permissions: {}`-override and "
+          "composite tokenless steps were caught (#814); the good step and "
+          "the job- and workflow-level OIDC-granted tokenless steps were "
+          "not flagged; and the real fleet passes.")
     return 0
 
 
