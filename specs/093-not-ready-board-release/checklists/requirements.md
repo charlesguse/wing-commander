@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -35,15 +35,16 @@
 
 ### Validation iteration 1 — 2026-09-28
 
-- **"No [NEEDS CLARIFICATION] markers remain" — intentionally unchecked.**
-  Three remain: FR-004 (which release mechanism), FR-005 (how a
+- **"No [NEEDS CLARIFICATION] markers remain" — was intentionally
+  unchecked; see the clarify iteration below for why it is now checked.**
+  Three remained at intake: FR-004 (which release mechanism), FR-005 (how a
   self-clearing unmet condition is treated), FR-007 (which step a
   re-admitted item resumes at). The originating issue frames the first as
   an owner trade-off between two competing designs; the other two follow
   from it and carry the same character. Intake runs headless, so the
-  questions are posted on lifecycle issue #717 for the clarify stage rather
-  than asked in-session. Each has a recorded default in **Assumptions**, so
-  every requirement is testable as written and this is the only unchecked
+  questions were posted on lifecycle issue #717 for the clarify stage rather
+  than asked in-session. Each had a recorded default in **Assumptions**, so
+  every requirement was testable as written and this was the only unchecked
   item.
 
 - **"No implementation details" and "Success criteria are
@@ -85,3 +86,51 @@
   conditions, or the review round budget is touched — all are in **Out of
   Scope**, and FR-015 plus SC-008 make "unchanged" a checkable claim rather
   than an assurance.
+
+### Clarify iteration 1 — 2026-09-29
+
+- **All three questions answered on lifecycle issue #717; every item now
+  checked.** The answers are recorded verbatim-in-substance in the spec's
+  **Clarifications** section. Q1 → both mechanisms (threshold 3), Q3 →
+  self-clearing exempt from the hold but still counted. Both match the
+  defaults the draft was written against, so no requirement changed shape.
+  Q2 → resume at **`review`**, not `readiness`, which **replaced** the
+  draft's default and is the only answer that moved the specification.
+
+- **The owner's reply numbered its answers out of order.** Its "Q2" answers
+  this document's Q3 and its "Q3" answers this document's Q2, and its option
+  letters are its own rather than the questionnaire's. Each answer names its
+  own subject in full, so the mapping was made by content and is recorded in
+  the spec's **Clarifications** section for a later reader who compares the
+  two.
+
+- **What Q2's answer propagated to, since it changed a default.** FR-007
+  (resume at `review`, and the general invariant that nothing is reported
+  ready on a head no review has covered); FR-013 (fixtures for the resumed
+  step and for budget continuation); FR-014 (spec 061's
+  `contracts/resume-recovery.md` gains a step-resolution clause and a
+  scenario row); User Story 3's narrative, Independent Test and scenarios 1,
+  5 and 6; User Story 2's scenario 3 and the `board:stalled`-removal edge
+  case, which now distinguish a head a review has covered from one it has
+  not; the two head-movement edge cases; **Assumptions** (the two
+  independent bounds, the accepted per-push review cost, and the fact that
+  the recorded head SHA *is* the reviewed head so no new lookup is needed);
+  **Out of Scope** (the round budget's *value* stays out, its accounting
+  across a re-admission comes in); and **Dependencies** (spec 057 FR-031,
+  spec 061 FR-014).
+
+- **Two success criteria added rather than one amended.** SC-009 bounds the
+  review invocations a repeatedly-pushing human can buy, and SC-010 states
+  the invariant Q2's answer was chosen for. SC-004 gained the resumed step.
+  Both new criteria are measurable and both are covered by FR-013's fixture
+  list, so "All functional requirements have clear acceptance criteria"
+  stays honest after the change.
+
+- **One consistency defect in the draft, fixed here.** FR-001 said a
+  not-ready outcome releases the board in the same run, unqualified, which
+  contradicts FR-005's self-clearing exemption — the case the draft's own
+  Q3 default already chose. FR-001 is now scoped to durable conditions and
+  names the exemption; User Story 1 scenario 1 says "durable", and a new
+  scenario 5 covers the self-clearing contrast. FR-007's citation of "spec
+  057 FR-014" was also corrected to spec **061** FR-014 — 057's FR-014 is a
+  triage evidence-unavailable rule, not a resume provenance rule.

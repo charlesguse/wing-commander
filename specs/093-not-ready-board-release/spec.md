@@ -51,10 +51,13 @@ polled") and FR-009 ("the loop MUST select the oldest eligible open issue …
 so the board drains in filing order") are both satisfiable only while the
 unmet condition is self-clearing. Whenever it is not, they contradict each
 other, and FR-067 wins by construction. This feature resolves that
-contradiction: a not-ready outcome releases the board, re-checks are
-re-admitted on a signal that something actually changed, and an unmet
-condition that will never clear on its own reaches a human once, named,
-instead of being reported hourly to nobody.
+contradiction: a not-ready outcome whose condition is durable releases the
+board, the item is re-admitted on a signal that something actually changed —
+through `review`, so the commits that changed it are reviewed before
+anything is reported ready — and an unmet condition that will never clear on
+its own reaches a human once, named, instead of being reported hourly to
+nobody. A condition that clears itself, which is the common case, keeps
+today's behaviour and is simply bounded.
 
 ### Observed facts (verified against main at c27d0cb)
 
@@ -97,19 +100,41 @@ instead of being reported hourly to nobody.
 
 ## Clarifications
 
-Three decisions in this specification are the owner's, not the pipeline's,
-and are carried as `[NEEDS CLARIFICATION]` markers below. They are posted
-on lifecycle issue #717 as the intake questionnaire. Each has a default
-recorded in **Assumptions** so the specification is complete and testable
-as written; an answer replaces the default, it does not unblock the
-specification.
+Three decisions in this specification were the owner's, not the pipeline's.
+They were posted on lifecycle issue #717 as the intake questionnaire and
+answered there. All three are resolved and no `[NEEDS CLARIFICATION]`
+marker remains.
 
 - **Q1 (FR-004, FR-008)** — which release mechanism: bound the re-checks
   into a terminal stall, hold the item until its PR head moves, or both.
+  **Resolved: both.** The item releases the board from its first not-ready
+  outcome and is passed over while its PR head SHA is unchanged;
+  separately, after **3** not-ready outcomes on the same PR it is handed to
+  a human under `board:stalled`. Holding alone would leave an item nobody
+  was told about; bounding alone would keep starving the board and
+  re-posting until the bound was reached.
 - **Q2 (FR-007)** — when a held item is re-admitted because its PR head
   moved, does it re-enter at `readiness` or go back through `review`?
+  **Resolved: `review`.** A human's new commits get an independent review
+  before anything is reported ready, keeping the constitution's "an
+  independent review … has zero open findings" true of every commit a ready
+  report covers. Re-admission continues the item's existing fix→review
+  round budget rather than resetting it, so repeated human pushes cannot
+  loop review without bound. This is the one answer that replaced the
+  draft's recorded default (resume at `readiness`).
 - **Q3 (FR-005)** — is a self-clearing unmet condition (a check still
-  running on the head) treated the same as a durable one?
+  running on the head) treated the same as a durable one? **Resolved: no —
+  exempt from the hold, still counted toward the threshold.** A check still
+  running is exactly the case where "picked up again on a later run" is the
+  right answer, so holding it would wedge the common case; a check that
+  never leaves `in_progress` still consumes the threshold and so eventually
+  reaches a human.
+
+The owner's reply numbered its answers in a different order from the
+questionnaire above (its "Q2" answers this document's Q3, and its "Q3"
+answers this document's Q2) and lettered the options independently of the
+option lists the questions carried. Each answer names its own subject, so
+the mapping recorded here is by content, not by label.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -132,10 +157,10 @@ asserting the decision returns the second issue. No live run needed.
 
 **Acceptance Scenarios**:
 
-1. **Given** an issue whose newest marker records the not-ready outcome for
-   an `OPEN` PR, and a second, newer eligible issue with no marker,
-   **When** the selection decision runs, **Then** the held item is not the
-   in-flight candidate and the second issue is selected.
+1. **Given** an issue whose newest marker records a **durable** not-ready
+   outcome for an `OPEN` PR, and a second, newer eligible issue with no
+   marker, **When** the selection decision runs, **Then** the held item is
+   not the in-flight candidate and the second issue is selected.
 2. **Given** the same board on the next scheduled run, **When** the run
    completes, **Then** no second "Not ready" comment has been added to the
    held issue and no readiness evaluation was performed on its PR.
@@ -146,6 +171,12 @@ asserting the decision returns the second issue. No live run needed.
 4. **Given** a board on which two separate items are each held not-ready,
    **When** a third eligible issue exists, **Then** the third issue is
    selected; neither held item is chosen and neither blocks the other.
+5. **Given** an item whose newest not-ready record names a **self-clearing**
+   unmet condition — a required check still queued or in progress on the
+   recorded head — **When** the selection decision runs, **Then** the item
+   is *not* held and remains the in-flight candidate, so the common case
+   still clears itself; the outcome is nevertheless counted toward the
+   threshold, so it cannot be re-checked without bound.
 
 ---
 
@@ -180,7 +211,9 @@ FR-030 already defines, with no merge and no second PR.
    no new comment of any kind.
 3. **Given** a maintainer who removes `board:stalled` without touching the
    PR, **When** the next run selects, **Then** the item is eligible again
-   and readiness is re-evaluated on the PR's current head.
+   and readiness is re-evaluated directly on the PR's current head — the
+   head a review has already covered, so FR-007's invariant needs no review
+   round here.
 4. **Given** a not-ready outcome whose unmet condition is the kill switch,
    **When** the run reports it, **Then** no handover occurs and the item is
    not counted toward the handover threshold — an owner pausing the loop
@@ -192,22 +225,30 @@ FR-030 already defines, with no merge and no second PR.
 
 A human pushes the one-line fix that turns the red check green. On the next
 scheduled run the loop notices the PR's head is no longer the head it
-reported not-ready on, picks the item back up, and reports it ready.
+reported not-ready on and picks the item back up — at `review`, because the
+human's commits have never been reviewed. The review returns no open
+findings, readiness runs on that head, and the item is reported ready. No
+label was removed by hand.
 
 **Why this priority**: it is what keeps the release from costing a human
 action in the recoverable case. Without it every not-ready item needs a
 label removed by hand even when the underlying problem is already fixed.
+Resuming at `review` rather than at `readiness` is what keeps the ready
+report covering only commits an independent review has seen.
 
 **Independent Test**: fixture pair over the same held item — one with
 `pr_state_by_number`/head data matching the recorded head SHA (held), one
 with a different head SHA (admitted) — asserting opposite selection
-outcomes from the same decision.
+outcomes from the same decision, and asserting the admitted one resolves to
+the `review` step.
 
 **Acceptance Scenarios**:
 
 1. **Given** a held item whose PR's current head SHA differs from the one
    the not-ready record names, **When** the selection decision runs,
-   **Then** the item is admitted and is the in-flight candidate again.
+   **Then** the item is admitted and is the in-flight candidate again, and
+   the step it resolves to is `review` — not the `readiness` its marker
+   names — with that resolution and its reason recorded.
 2. **Given** a held item whose PR's current head SHA is unchanged, **When**
    the selection decision runs, **Then** the item is passed over by both
    the in-flight path and the oldest-first fallback.
@@ -219,6 +260,13 @@ outcomes from the same decision.
    the selection decision runs, **Then** the existing stale-marker
    handling applies unchanged — the item is not held by this feature's rule
    for a PR that is no longer open.
+5. **Given** a held item re-admitted on a moved head, **When** it resumes at
+   `review`, **Then** it consumes the next round of the fix→review round
+   budget it had already partly spent, rather than starting a fresh budget.
+6. **Given** a held item whose head moves again after its round budget is
+   exhausted, **When** it is re-admitted, **Then** spec 057 FR-030's
+   existing exhausted-budget handover applies and no second, parallel
+   handover is created beside it.
 
 ---
 
@@ -262,8 +310,10 @@ self-test mutation passes or fails on its own.
   job's own push frequently has a `lint-workflows` run in progress. A hold
   that treats this like a red check would wedge nearly every PR the loop
   produces, permanently, because the head never moves again. This is why
-  Q3 exists and why the default in Assumptions does not hold on a
-  self-clearing condition.
+  Q3 was asked, and the owner's answer is that a self-clearing condition is
+  exempt from the hold (FR-005): the item is re-checked, so the common case
+  clears itself, while the threshold still bounds a check that never leaves
+  `in_progress`.
 - **The kill switch is the unmet condition.** An owner who pauses the loop
   for a day must not find every in-flight item stalled and needing a label
   removed by hand. The kill switch is an owner action, not a property of
@@ -271,11 +321,16 @@ self-test mutation passes or fails on its own.
 - **The PR head moves because the loop itself pushed it.** Between a
   not-ready report and the next run the loop does not push to a held item's
   PR (it is not selected). A head that moved was moved by a human, so its
-  new commits have never been through the loop's review — Q2.
+  new commits have never been through the loop's review — which is why Q2's
+  answer resumes the item at `review` (FR-007), not at `readiness`.
 - **The head moves repeatedly without ever going green.** A human pushing
   five failed attempts must not buy five more re-check cycles indefinitely.
   The handover threshold counts not-ready outcomes for the PR, not for a
-  single head SHA.
+  single head SHA. Because Q2's answer resumes at `review`, the same push
+  pattern must also not buy unbounded review invocations: re-admission
+  continues the item's existing fix→review round budget rather than
+  resetting it (FR-007), so two bounds apply to the same PR and whichever
+  is reached first hands the item over.
 - **A backstop breach at readiness.** Already terminal today: it files a
   spec-request, applies `board:stalled`, and writes a `stalled` marker.
   This feature must not add a second, parallel handover beside it.
@@ -290,18 +345,26 @@ self-test mutation passes or fails on its own.
   maintainer comment is data, never a value that changes the recorded step,
   head SHA, or count (spec 057 FR-056).
 - **`board:stalled` removed while the PR is still not ready.** The item is
-  eligible again and readiness re-runs. Whatever it finds, the threshold
-  starts from the re-admission — removing the label is a deliberate "try
-  again", not a request for one more identical comment.
+  eligible again; it resumes at `readiness` if its head is the one the last
+  review covered and at `review` if a human pushed to it as well (FR-007's
+  invariant), and the not-ready threshold starts from the re-admission —
+  removing the label is a deliberate "try again", not a request for one more
+  identical comment. Note the asymmetry with FR-007: a *label removal* is a
+  human's explicit reset of the not-ready count, whereas a *moved head* is
+  not, and continues the round budget. The two are different signals and are
+  counted differently on purpose.
 
 ## Requirements *(mandatory)*
 
 ### Functional Requirements
 
-- **FR-001**: A not-ready readiness outcome MUST release the board in the
-  same run that reports it. On the next scheduled run the item MUST NOT be
-  the in-flight candidate solely because its newest marker records a
-  fix-or-later step with an `OPEN` PR.
+- **FR-001**: A not-ready readiness outcome whose unmet condition is
+  **durable** (FR-005) MUST release the board in the same run that reports
+  it. On the next scheduled run the item MUST NOT be the in-flight
+  candidate solely because its newest marker records a fix-or-later step
+  with an `OPEN` PR. A **self-clearing** unmet condition is FR-005's
+  exemption: the item stays in flight and is re-checked on later runs,
+  bounded by FR-004's threshold rather than released by the hold.
 - **FR-002**: The not-ready outcome MUST be recorded durably on the issue,
   by the loop's own deterministic code, carrying at minimum: the PR, the
   exact head SHA the decision was derived from, the unmet condition, and
@@ -317,38 +380,50 @@ self-test mutation passes or fails on its own.
   exactly one home"). Both the in-flight priority path and the
   oldest-first fallback MUST consult that one rule, never a second,
   parallel copy of it.
-- **FR-004**: The loop MUST release a not-ready item by
-  [NEEDS CLARIFICATION: which mechanism — (a) bounding the re-checks:
-  after a fixed number of not-ready outcomes on the same PR, hand the item
-  to a human and stop re-checking; (b) holding the item while its PR head
-  SHA is unchanged from the one the newest not-ready record names, with no
-  bound; or (c) both, so an item both releases the board immediately and
-  is guaranteed to reach a human eventually]. Whichever mechanism is
-  chosen, FR-001 MUST hold from the first not-ready outcome — the release
-  MUST NOT wait for the threshold to be reached.
+- **FR-004**: The loop MUST release a not-ready item by **both** mechanisms
+  together, so an item both releases the board immediately and is
+  guaranteed to reach a human eventually:
+  - **(a) the bound.** After a fixed number of not-ready outcomes on the
+    same PR — **3**, recorded as a value in **Assumptions** — the loop MUST
+    hand the item to a human (FR-008) and MUST stop re-checking it.
+  - **(b) the hold.** While the PR's current head SHA is unchanged from the
+    one the newest not-ready record names, the item MUST be passed over by
+    both selection paths.
+
+  FR-001 MUST hold from the first not-ready outcome — the release MUST NOT
+  wait for the threshold to be reached. The two mechanisms MUST be one
+  decision in one place (FR-003), not a hold rule and a counting rule with
+  separate homes.
 - **FR-005**: The readiness decision MUST expose, as a code-level value,
   whether the unmet condition is **self-clearing** (no work is required of
   anyone for a later run to reach a different outcome on the same head —
   a check still queued or in progress) or **durable** (a later run on the
   same head reaches the same outcome). A self-clearing unmet condition
-  MUST be [NEEDS CLARIFICATION: treated how — (a) held and threshold-
-  counted identically to a durable one; (b) exempt from the hold, so the
-  item is re-checked on later runs, but still threshold-counted so a check
-  wedged in progress forever is eventually handed over; or (c) exempt from
-  both the hold and the threshold]. The distinction MUST come from the
-  rollup's own per-entry states, never from an agent's reading of them.
+  MUST be **exempt from FR-004(b)'s hold**, so the item is re-checked on
+  later runs, and MUST **still be counted toward FR-004(a)'s threshold**,
+  so a check wedged in progress forever is eventually handed over. A
+  durable unmet condition MUST take both the hold and the count. The
+  distinction MUST come from the rollup's own per-entry states, never from
+  an agent's reading of them.
 - **FR-006**: The kill switch being the unmet condition MUST NOT count
   toward any handover threshold and MUST NOT trigger a handover. A paused
   loop MUST leave the items that were in flight exactly as eligible as
   they were before the pause.
 - **FR-007**: When a held item is re-admitted because its PR head moved,
-  the run MUST resume it at [NEEDS CLARIFICATION: which step — (a)
-  `readiness`, re-evaluating the five conditions directly, accepting that
-  the human's new commits were never reviewed; or (b) `review`, so the new
-  commits go through an independent review before anything is reported
-  ready, at the cost of one review agent invocation per human push].
-  Whichever is chosen, the run MUST record which step it resumed at and
-  why (spec 057 FR-014's existing provenance rule).
+  the run MUST resume it at **`review`**, not at `readiness`: the human's
+  new commits go through an independent review before anything is reported
+  ready, at the cost of one review agent invocation per human push. The
+  invariant behind that choice MUST hold on every re-admission path, not
+  only this one — **nothing is reported ready on a head whose commits no
+  review has covered.** An item re-admitted by a human removing
+  `board:stalled` therefore resumes at `review` too when its head has moved
+  since the last review, and at `readiness` when it has not. Re-admission on
+  a moved head MUST **continue** the item's existing fix→review round budget
+  (spec 057 FR-030) rather than resetting it, so repeated human pushes
+  cannot loop review without bound; an exhausted budget takes FR-030's
+  existing handover and not a second one (FR-012). The run MUST record which
+  step it resumed at and why (spec 061 FR-014's existing provenance rule for
+  a resume that did not come straight from the marker).
 - **FR-008**: When the handover threshold is reached, the loop MUST hand
   the item to a human using the mechanism spec 057 FR-030 already defines
   and no other: the PR is left open and unmerged, the issue carries the
@@ -358,9 +433,9 @@ self-test mutation passes or fails on its own.
   terminal marker is written. The label MUST be applied before the
   terminal marker is written, and a failed label application MUST fail the
   step — the same ordering the two existing breach sites use
-  (spec 057 contracts/board-item-marker.md). Whether a threshold exists at
-  all is FR-004's open question; its numeric value is defaulted in
-  Assumptions and is not an open question.
+  (spec 057 contracts/board-item-marker.md). The threshold exists by
+  FR-004(a); its numeric value is recorded in **Assumptions** as one more
+  checked-in constant, not as a second mechanism.
 - **FR-009**: The loop MUST NOT post an unmet-condition comment that is
   identical to the newest one already on the issue for the same PR, head
   SHA and unmet condition. At most one such comment MUST exist per
@@ -386,15 +461,25 @@ self-test mutation passes or fails on its own.
   where the rule lives in the workflow's own text, by a mutation in the
   existing resume-gating gate's self-test. At minimum: a held item passed
   over with a second issue selected instead; the same item admitted once
-  its head moves; the unknown-head fail-safe; the threshold reached
-  producing the handover; the kill-switch exemption; the self-clearing
-  versus durable distinction; and the backstop-breach path unchanged.
+  its head moves; a re-admitted item resolving to `review` rather than
+  `readiness`, with the resumed step and its reason recorded; a
+  re-admission that continues rather than resets the round budget, and one
+  whose continued budget is already exhausted, taking spec 057 FR-030's
+  handover and not a second one; the unknown-head fail-safe; the threshold
+  reached producing the handover; the kill-switch exemption; the
+  self-clearing versus durable distinction, including a self-clearing item
+  that is re-checked rather than held yet still consumes the threshold; and
+  the backstop-breach path unchanged.
 - **FR-014**: The governing prose MUST be corrected wherever it states the
   superseded behaviour, in the same change: spec 057's FR-067 and its
   `contracts/readiness-report.md` "A not-ready outcome leaves the marker
   as it was" sentence, and spec 061's `contracts/in-flight-detection.md`
   and `contracts/resume-recovery.md` where they enumerate which steps make
-  an item in-flight. The corrected statement MUST be canonical in one
+  an item in-flight. `contracts/resume-recovery.md`'s step-resolution clause
+  list MUST additionally gain the clause FR-007 adds — a re-admitted
+  not-ready item resolves to `review`, not to the marker's own `readiness`
+  step — including its row in that contract's scenario table. The corrected
+  statement MUST be canonical in one
   place, with every other site pointing at it rather than restating it
   (CLAUDE.md). FR-067's reconciliation with FR-009 MUST be stated
   explicitly — "picked up again on a later run" is bounded, not
@@ -416,12 +501,18 @@ self-test mutation passes or fails on its own.
   later run reads to decide whether the item is held — never the issue's
   prose, never a comment's text, never a value captured earlier in the
   same run.
-- **Hold**: the state of an item that has a not-ready record and is
-  currently passed over by both selection paths. A hold is not a
+- **Hold**: the state of an item that has a **durable** not-ready record and
+  is currently passed over by both selection paths. A hold is not a
   disposition and not a label — it is derived on each run from the record
-  plus the PR's live head SHA, and it ends by itself.
+  plus the PR's live head SHA, and it ends by itself. An item whose newest
+  not-ready record is self-clearing is never held (FR-005).
+- **Re-admission**: the end of a hold, on a run that finds the PR's current
+  head SHA different from the one the record names. It resolves the item to
+  the `review` step rather than the `readiness` its marker records (FR-007),
+  and it continues the item's existing fix→review round budget.
 - **Handover**: the terminal state of an item whose not-ready outcomes
-  reached the threshold. Expressed only as spec 057 FR-030's existing
+  reached the threshold, or whose continued round budget was exhausted.
+  Expressed only as spec 057 FR-030's existing
   `board:stalled` label plus notice plus terminal marker; cleared only by
   a human removing the label.
 - **Unmet Condition Class**: `self-clearing` or `durable`, derived by code
@@ -446,7 +537,8 @@ self-test mutation passes or fails on its own.
   re-evaluates it on every run with no change of outcome.
 - **SC-004**: A push that moves a held item's PR head brings the item back
   into selection within **one** scheduled run, with no human label action
-  required.
+  required, and the step it re-enters at is `review` in **100%** of those
+  re-admissions.
 - **SC-005**: A PR whose only unmet condition is a check still in progress
   reaches its ready report without any human action, in **100%** of cases
   where that check eventually goes green on the same head — the
@@ -461,39 +553,38 @@ self-test mutation passes or fails on its own.
   resume-gating self-test mutation passes unchanged, demonstrating **zero**
   regression in the `ready`, `awaiting-merge`, `prove`, `breach` and
   unowned-PR paths.
+- **SC-009**: The number of review invocations one PR can consume across any
+  number of human pushes is bounded by the item's own fix→review round
+  budget, which re-admission continues rather than resets. A human pushing
+  repeatedly to a held PR cannot raise that bound.
+- **SC-010**: Every commit a ready report covers has been through an
+  independent review — **100%** of ready reports, including those on a head
+  a human pushed while the item was held.
 
 ## Assumptions
 
-Each assumption below is the default this specification is written
-against. The three `[NEEDS CLARIFICATION]` markers are the places where an
-owner's answer replaces one; the specification is complete and testable
-without an answer.
+The three questions this specification carried are answered in
+**Clarifications** and folded into the requirements; nothing below is a
+placeholder for a decision still outstanding. The assumptions are the
+remaining things taken as given.
 
-- **Q1 default (FR-004): mechanism (c), both.** The hold releases the board
-  from the first not-ready outcome, which is what fixes the reported
-  defect, and the threshold guarantees the item reaches a human rather than
-  being silently abandoned when its head never moves again. (a) alone would
-  keep re-posting until the threshold; (b) alone would leave an item that
-  nobody was told about.
-- **Q2 default (FR-007): (a), resume at `readiness`.** It matches today's
-  marker behaviour, costs no agent invocation, and keeps the change inside
-  the selection decision. Its cost is that a human's new commits are not
-  independently reviewed before a ready report; the ready report states
-  what was checked on the exact head SHA, never that the change is good,
-  so nothing is claimed that was not verified. (b) is the stronger
-  guarantee and the more expensive one.
-- **Q3 default (FR-005): (b), exempt from the hold, still counted.** A
-  check in progress is exactly the case where "picked up again on a later
-  run" is the right answer, so holding it would wedge the common case; but
-  a check that never leaves `in_progress` must not re-check forever, so it
-  still consumes the threshold.
 - **Threshold value: 3 not-ready outcomes per PR.** Deliberately tighter
   than the fix→review round budget of 5 (spec 057 research.md D18): a
   round does work and can change the answer, whereas a not-ready re-check
   only re-measures, so more of them buys proportionally less. It is a
-  value, not a design decision, so it is defaulted rather than asked; the
-  bound belongs beside the backstop thresholds and the round budget as one
-  more checked-in constant, not a second mechanism.
+  value, not a design decision, so it was defaulted rather than asked, and
+  the owner's Q1 answer named the same number; the bound belongs beside the
+  backstop thresholds and the round budget as one more checked-in constant,
+  not a second mechanism.
+- **The two bounds on one PR are independent and neither is widened.** The
+  not-ready threshold (3) bounds re-measurement; the fix→review round
+  budget (5) bounds review work, and FR-007's re-admission continues it
+  rather than resetting it. Whichever is reached first hands the item over,
+  through spec 057 FR-030's one existing mechanism.
+- **A review invocation per human push is an accepted cost.** Q2's answer
+  buys the stronger guarantee (SC-010) at the price of one review agent
+  invocation each time a human moves a held PR's head. The round budget is
+  what keeps that price bounded, and a human who does not push pays nothing.
 - The not-ready record is carried by the existing board-item marker
   mechanism and the existing issue-comment convention rather than a new
   store; whether that means a new marker field, a new step name, or both
@@ -506,19 +597,28 @@ without an answer.
 - The PR's current head SHA is available to the selection decision from
   the same per-PR lookup the select job already performs for the PR's
   state, so the hold costs no additional API round-trip per item.
+- The head SHA the not-ready record names is also the head the last review
+  covered, because readiness is entered immediately after review converges
+  on that head. FR-007's "has the head moved since the last review?" is
+  therefore answerable from the record plus that same lookup, with no
+  separate record of the reviewed head and no additional round-trip.
 - Scheduled runs are hourly, as today; no requirement here depends on the
   interval.
 
 ## Dependencies
 
-- `specs/057-autonomous-board-loop` — FR-009, FR-030, FR-036, FR-037,
-  FR-044, FR-054, FR-066, FR-067, FR-068; `contracts/readiness-report.md`;
+- `specs/057-autonomous-board-loop` — FR-009, FR-030 (both the round budget
+  FR-007's re-admission continues and the `board:stalled` handover FR-008
+  reuses), FR-031, FR-036, FR-037, FR-044, FR-054, FR-066, FR-067, FR-068;
+  `contracts/readiness-report.md`;
   `contracts/board-item-marker.md`; `contracts/eligibility-and-selection.md`.
   FR-067 and the readiness-report contract are amended by FR-014.
 - `specs/061-marker-owned-in-flight` — `contracts/in-flight-detection.md`
   (the single home for the in-flight decision, and the fixture layout this
-  feature extends) and `contracts/resume-recovery.md` (step resolution,
-  whose clause list this feature adds to).
+  feature extends), `contracts/resume-recovery.md` (step resolution, whose
+  clause list FR-007 adds the re-admitted-at-`review` clause to) and FR-014
+  (the provenance rule for recording a resume that did not come straight
+  from the marker).
 - The existing eligibility gate and resume-gating gate, extended rather
   than duplicated (FR-013 requires no new gate).
 - Constitution X (Bounded Autonomy — the loop hands over rather than
@@ -540,7 +640,11 @@ without an answer.
   after a `ready` report does not bring the item back to readiness. It is
   the mirror image of this feature's re-admission rule and may be worth
   revisiting, but it is a separate decision on a separate path.
-- The review round budget (spec 057 FR-030) and its value.
+- The review round budget's own value (spec 057 FR-030's bounded number of
+  rounds) and the review step's own behaviour. FR-007's resume-at-`review`
+  answer does put the budget's **accounting across a re-admission** in
+  scope — it continues rather than resets — but it changes neither the
+  number nor what a review round does.
 - The backstop-breach path's own behaviour, beyond FR-012's requirement
   that this feature not duplicate it.
 - The watchdog's treatment of board-loop runs, and the metrics record's
