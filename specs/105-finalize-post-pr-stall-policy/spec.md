@@ -45,6 +45,13 @@ it: whatever set of post-PR steps is still allowed to stall the lifecycle
 must be nameable in the stall notice, and the lifecycle state a stall
 leaves behind must not contradict itself.
 
+The policy question is now settled (answered on #777): **retry, then
+stall**. A post-PR announcement gets a bounded retry, and only an
+exhausted retry stalls the lifecycle — with the failing step named. What
+remains open is the reconciliation of the lifecycle record when that stall
+does happen (FR-007) and how far the candidate-list gate reaches beyond
+finalize (FR-012).
+
 ### Observed facts (verified against `main` at `bad1021`)
 
 - `.github/workflows/finalize.yml:1406-1416` — the "Determine failed
@@ -98,6 +105,34 @@ leaves behind must not contradict itself.
   `rebase.yml:1042` each pass a hand-written subset of their own
   hard-failing post-agent steps; `implement.yml` lists two and `rebase.yml`
   one.
+
+### Already landed on main (verified at `2a9d76f`, PR #781 for issue #662)
+
+The #777 answer points at a local fix that merged after the observed facts
+above were read. Verified by reading that commit's diff:
+
+- Every hard-failing step after "Open or update the final pull request"
+  now carries an `id:` and appears in finalize's `candidates-json`, in job
+  order — the seven steps listed above plus "Compose review-announcement
+  summary". "Announce finalize failure (PR verification)" stays out, with
+  the reason stated at the call site. This satisfies **FR-001**,
+  **FR-002** and **FR-003** for finalize.
+- `wing-commander-callout` gained an opt-in `retry-delays` input; the
+  manual-work announcement passes `"5 15 45"`. An exhausted retry still
+  fails the step, and callers that pass nothing retain the old
+  exactly-once shape. This satisfies **FR-009** for the one call site the
+  incident hit; the other announcement sites do not opt in.
+- Gate 35 (`verify-finalize-refresh.py`) asserts finalize's candidate list
+  against the job's steps and drives the callout retry against a `gh`
+  stub, with self-test mutations for a dropped candidate, an unlisted
+  post-PR step, a dropped `retry-delays` and a removed retry. This
+  satisfies **FR-011** and **FR-013** for finalize only.
+
+What that fix did **not** change, and this spec still carries: the
+contradictory lifecycle state after a stall (**FR-006**, **FR-007**), the
+restart instruction's accuracy (**FR-008**), recovering an unpostable
+announcement body from the run (**FR-010**), and the candidate lists of
+the other six consuming stages (**FR-012**).
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -184,7 +219,10 @@ it is not worth a paid agent re-run or two days of a frozen branch.
 symptoms, and it is the part that generalises — every stage's
 announcements go through the same unretried composite. It is P2 because
 Stories 1 and 2 already make the incident survivable and diagnosable
-without it.
+without it. The #777 answer makes this story the resolved FR-004 policy
+rather than an optional extra; the retry itself already exists for the
+manual-work announcement at `2a9d76f`, and what remains here is the other
+call sites and the exhausted-retry disclosure of FR-010.
 
 **Independent Test**: Make the announcement's first API call fail and its
 second succeed. The comment posts, the run stays green, and the lifecycle
@@ -278,12 +316,15 @@ suite, and observe a failure naming the step. Revert and observe a pass.
   remain excluded from the candidates, and the reason MUST stay stated at
   the call site.
 - **FR-004**: A failure of a post-PR announcement step, after the final PR
-  is open and the lifecycle issue is labelled, MUST be handled as
-  [NEEDS CLARIFICATION: should such a failure stall the lifecycle at all?
-  (a) keep today's stall, with the step now named; (b) tolerate it — warn
-  on the run, report it on the issue, and leave the lifecycle at
-  `stage:review`; (c) tolerate it only after a bounded retry, and stall if
-  the retries are exhausted].
+  is open and the lifecycle issue is labelled, MUST be tolerated only
+  after a bounded retry: the post is retried a fixed number of times, and
+  only an exhausted retry fails the step and stalls the lifecycle — with
+  the step named per FR-001. A single transient API error therefore costs
+  no stall; a persistent failure still ends the run red and reaches the
+  survivor job, where FR-006 and FR-007 govern the state it leaves behind.
+  (Resolved from #777: "retry, then stall" — option (c) of the original
+  question. Already implemented for the manual-work announcement at
+  `2a9d76f`; see "Already landed on main".)
 - **FR-005**: Whatever FR-004 resolves to, a finalize failure that occurs
   **before** the final PR is verified open MUST keep today's behaviour:
   the lifecycle is marked stalled and the stage must be re-dispatched.
@@ -373,7 +414,7 @@ suite, and observe a failure naming the step. Revert and observe a pass.
 - The `GraphQL: Something went wrong` seen on run `36264390069` was
   transient GitHub-side flakiness, not a token, permission or rate-limit
   condition — a retry would have succeeded. Persistent failures remain
-  failures under every option FR-004 offers.
+  failures under FR-004's resolved "retry, then stall" policy.
 - `wing-commander-callout` is the single home for lifecycle-issue
   announcements across all stages, so a retry added there covers finalize
   and every other stage at once; no per-stage retry wrappers are wanted.
