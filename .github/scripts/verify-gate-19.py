@@ -2284,7 +2284,11 @@ STAGE_SCENARIOS = [
     dict(name="the download fails (expired, or Actions:read missing): empty, "
               "step still succeeds",
          records=[], download_fail="gh: HTTP 403: Resource not accessible by integration",
-         expect="", expect_download=True),
+         expect="", expect_download=True, expect_warning=True),
+    dict(name="gh's genuine not-found (the run left no record): empty, and "
+              "no warning -- a missing record is data, not a failure",
+         records=[], download_fail="gh: no artifact matches any of the names or patterns provided",
+         expect="", expect_download=True, expect_warning=False),
     dict(name="the slug fallback already downloaded the record: reused, no "
               "second download",
          records=[], preloaded=RECORD_046, expect="rebase", expect_download=False),
@@ -2341,15 +2345,74 @@ def suite_stage(script, env, tmproot):
                 f"{tag} expected the metrics-record artifact "
                 f"{'to be' if sc['expect_download'] else 'NOT to be'} downloaded; "
                 f"gh was invoked as: {gh_calls or '(never)'}")
+        if "expect_warning" in sc:
+            warned = "::warning::record-stage:" in out
+            if warned != sc["expect_warning"]:
+                failures.append(
+                    f"{tag} expected the step "
+                    f"{'to' if sc['expect_warning'] else 'NOT to'} emit a "
+                    f"record-stage download warning -- a real failure (permission, "
+                    f"network) must be visible, a genuine not-found must not be "
+                    f"noise. output:\n{out}")
     return failures
 
 
-def denial_artifact(*commands):
+def stage_output_wiring_failures(action_path=SPEC_SLUG_ACTION):
+    """outputs.record-stage.value must read the `Resolve inspected run's
+    stage` step's own id. A wrong id there makes the output silently empty
+    on every run -- every denial then keys on `unknown` -- and no scenario
+    above can see it, because they run the step, not the output mapping."""
+    import yaml
+    with open(action_path, encoding="utf-8") as fh:
+        doc = yaml.safe_load(fh) or {}
+    steps = ((doc.get("runs") or {}).get("steps")) or []
+    step_id = next((st.get("id") for st in steps
+                    if (st or {}).get("name") == STAGE_STEP), None)
+    value = str(((doc.get("outputs") or {}).get("record-stage") or {}).get("value", ""))
+    if not step_id:
+        return [f"[record-stage wiring] {action_path} has no step named "
+                f"{STAGE_STEP!r} with an id"]
+    want = f"steps.{step_id}.outputs.record-stage"
+    if want not in value.replace(" ", ""):
+        return [f"[record-stage wiring] {action_path} outputs.record-stage.value is "
+                f"{value!r}; it must reference {want} (the {STAGE_STEP!r} step), or "
+                f"the output is empty on every run and every denial keys on `unknown`."]
+    return []
+
+
+def run_stage_output_wiring_check():
+    """The check against the shipped file, then against a copy whose output
+    names a wrong step id, which must fail (a check that cannot fail is not
+    a check)."""
+    failures = stage_output_wiring_failures()
+    with open(SPEC_SLUG_ACTION, encoding="utf-8") as fh:
+        text = fh.read()
+    needle = "value: ${{ steps.stage.outputs.record-stage }}"
+    if text.count(needle) != 1:
+        return failures + [f"[record-stage wiring self-check] could not find {needle!r} "
+                           f"in {SPEC_SLUG_ACTION} to mutate -- update this harness "
+                           f"alongside the action."]
+    tmpdir = tempfile.mkdtemp()
+    try:
+        bad = os.path.join(tmpdir, "action.yml")
+        with open(bad, "w", encoding="utf-8") as fh:
+            fh.write(text.replace(needle, "value: ${{ steps.resolve.outputs.record-stage }}"))
+        if not stage_output_wiring_failures(bad):
+            failures.append("[record-stage wiring self-check] an output naming the wrong "
+                            "step id was NOT detected -- the check is broken.")
+        else:
+            print("Mutation OK - record-stage output wired to the wrong step id: detected.")
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+    return failures
+
+
+def denial_artifact(*commands, tool="Bash"):
     """A claude-execution-output.json whose terminal result record carries
-    one Bash permission denial per command (the SDK's real shape)."""
+    one permission denial of `tool` per command (the SDK's real shape)."""
     return json.dumps([{"type": "result", "num_turns": 3, "is_error": False,
                         "permission_denials": [
-                            {"tool_name": "Bash", "tool_use_id": f"d{i}",
+                            {"tool_name": tool, "tool_use_id": f"d{i}",
                              "tool_input": {"command": c}}
                             for i, c in enumerate(commands)]}])
 
@@ -2375,7 +2438,7 @@ class DedupScripts:
         return clone
 
 
-def denied_tool_fingerprint(scripts, stage, commands, tmproot):
+def denied_tool_fingerprint(scripts, stage, commands, tmproot, tool="Bash"):
     """Run collector -> stamp -> fingerprint for one inspected run. Returns
     (error, signals, fingerprint); error is None on success."""
     workdir = tempfile.mkdtemp(dir=tmproot)
@@ -2395,7 +2458,7 @@ def denied_tool_fingerprint(scripts, stage, commands, tmproot):
         run_env["PATH"] = bindir + os.pathsep + os.environ["PATH"]
         run_env["RUN_CONCLUSION"] = "success"
         run_env["INSPECTED_STAGE"] = stage
-        run_env["GH_STUB_RECORDS"] = denial_artifact(*commands)
+        run_env["GH_STUB_RECORDS"] = denial_artifact(*commands, tool=tool)
         rc, out, _, _ = run_step(BASH, scripts.exec_script, workdir, run_env, runner_temp)
         if rc != 0:
             return f"the collector exited {rc}:\n{out}", None, None
@@ -2445,10 +2508,12 @@ def suite_denied_tool_dedup(scripts, _env, tmproot):
         "unresolved/a": ("", ["git push origin HEAD"]),
         "unresolved/b": ("", ["curl https://example.invalid"]),
         "literal-unknown": ("unknown", ["git push origin HEAD"]),
+        "implement/read": ("implement", ["/etc/hosts"], "Read"),
     }
     fps, sigs = {}, {}
-    for key, (stage, cmds) in runs.items():
-        err, signals, fp = denied_tool_fingerprint(scripts, stage, cmds, tmproot)
+    for key, (stage, cmds, *tool) in runs.items():
+        err, signals, fp = denied_tool_fingerprint(scripts, stage, cmds, tmproot,
+                                                   *tool)
         if err:
             failures.append(f"[denied-tool dedup: {key}] {err}")
             continue
@@ -2480,6 +2545,8 @@ def suite_denied_tool_dedup(scripts, _env, tmproot):
          "an unresolved stage must key on the fixed value `unknown`"),
         ("unresolved/a", "implement/push", False,
          "an unresolved stage must not collapse onto a resolved stage's key"),
+        ("implement/push", "implement/read", False,
+         "two denied TOOLS in one stage must key apart"),
     ]
     for a, b, same, why in checks:
         if (fps[a] == fps[b]) != same:
@@ -2505,6 +2572,12 @@ DEDUP_MUTATIONS = [
      "stamp_script",
      'ident: {stage: ($fx.stage // "" | ascii_downcase | if . == "" then "unknown" else . end),',
      "ident: {"),
+    ("`tool` dropped from Stamp signal ids' tool-denial identity",
+     "stamp_script",
+     # The comma and line break before `tool` go too, so the mutant is still
+     # valid jq and the suite fails on the key, not on a syntax error.
+     ',\n' + ' ' * 19 + 'tool: ($fx.tool // "" | ascii_downcase)}}',
+     "}}"),
     ("the collector no longer stamping the stage onto denial signals",
      "exec_script", "map(.facts = ({stage: $stage} + .facts))", "."),
     ("an unresolved stage emitted as an empty stage instead of `unknown`",
@@ -2523,6 +2596,7 @@ def run_denied_tool_dedup():
         stage_script, stage_env = render_step(
             find_step(SPEC_SLUG_ACTION, STAGE_STEP), SPEC_SLUG_ACTION)
         failures = suite_stage(stage_script, stage_env, tmproot)
+        failures.extend(run_stage_output_wiring_check())
         failures.extend(suite_denied_tool_dedup(scripts, None, tmproot))
         if not failures:
             for label, attr, old, new in DEDUP_MUTATIONS:
