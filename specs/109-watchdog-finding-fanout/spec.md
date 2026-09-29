@@ -63,7 +63,7 @@ counts as "the same underlying failure" — a choice with a false-merge cost
 on one side and a fan-out cost on the other. That is why it is specced
 rather than patched.
 
-### Observed facts (verified against main at 73be417)
+### Observed facts (verified against main at 73be417; re-check cited line numbers at plan time)
 
 - `.github/workflows/watchdog.yml:3142-3170` ("Compute fingerprint")
   intersects the finding's cited `signalId`s with the ids `collect`
@@ -381,8 +381,9 @@ prediction matches the shipped behaviour.
   undeterminable state errs toward filing rather than toward silence.
 - **Issues filed before this change.** Their bodies carry only the opaque
   `fingerprint=` marker and no readable signal ids, so a partial-overlap
-  lookup cannot see into them. They must not be orphaned into a permanent
-  second population that new findings can never match (FR-015).
+  lookup cannot see into them. They stay matchable through the existing
+  exact-fingerprint path, and their bodies are never edited to add ids
+  (FR-015); overlap matching reaches only issues filed after this change.
 - **The lookup's bound.** The candidate set is `--limit 200` within one
   class label. Overlap matching stays inside that filter, so the fetch does
   not widen — but it now has to *read* each candidate's recorded ids rather
@@ -421,7 +422,8 @@ prediction matches the shipped behaviour.
 - **FR-003**: An issue MUST carry, in a form a later run can read back
   without inspecting the original run, the full set of collector signal ids
   its accumulated occurrences have cited — not only those of the first
-  occurrence.
+  occurrence. The ids are recorded at filing and in recurrence comments;
+  the watchdog MUST NOT edit an issue body.
 - **FR-004**: A finding that matches nothing MUST still file a new issue.
   The change MUST NOT convert "no match" into a suppression, and — apart
   from the single stated filing condition of FR-009 — MUST NOT reduce the
@@ -444,7 +446,7 @@ prediction matches the shipped behaviour.
 - **FR-008**: The accumulation in FR-003 MUST be bounded so that an issue's
   matchable identity cannot grow without limit across occurrences, and the
   bound MUST be stated in the shipped code where a reader of the matching
-  step will find it.
+  step will find it. The plan fixes the number.
 
 #### Gate-suite findings from a converging implement cycle
 
@@ -460,7 +462,12 @@ prediction matches the shipped behaviour.
   collector output about the cycle's own state, and MUST NOT depend on the
   diagnose agent's class assignment or prose (Constitution Principle IX).
   When that state cannot be determined, the finding MUST be triaged as
-  normal — the suppression MUST NOT be applied on a guess.
+  normal — the suppression MUST NOT be applied on a guess. The source is
+  the inspected implement run's own recorded cycle outcome (whether it
+  dispatched a further cycle, stalled, or handed off to finalize — the
+  `converged`, `handoff` and `reason` facts implement.yml's cycle-outcome
+  step already emits), together with the spec-meta stage and `stalled`
+  label the watchdog already reads.
 - **FR-011**: A finding suppressed under FR-009 MUST still be reported to
   the lifecycle issue, named, with the reason for the suppression, so the
   outcome is visible rather than silent. It MUST carry its own named
@@ -480,9 +487,9 @@ prediction matches the shipped behaviour.
 - **FR-014**: The `narrative-drift` issue-exempt path MUST be unchanged —
   it reports to the lifecycle issue and files nothing.
 - **FR-015**: `pipeline-defect` issues filed before this change MUST remain
-  matchable by findings produced after it, or the feature MUST state and
-  implement a migration that makes them so. A permanently unmatchable
-  legacy population is not an acceptable outcome.
+  matchable through the existing exact-fingerprint path. Overlap matching
+  applies to issues carrying the new readable id record. No existing issue
+  body is edited.
 - **FR-016**: If the candidate set the lookup fetches is truncated, or the
   matching rule requires candidates the lookup did not fetch, the outcome
   MUST be `unknown` (write suppressed, reported) and MUST NOT be "matched
