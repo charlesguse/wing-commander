@@ -8,13 +8,64 @@
 
 **Input**: User description: "board-loop: bound spec-request filing retries and make filing idempotent — found by the code review of #514 (branch `fix/514-spec-request-create-guard`). Once #514 lands, a failed spec-request create fails the step loudly, leaves the issue unstalled, and a later run retries. That leaves two gaps: (1) no retry cap — every hourly run repeats triage and route (2 agent runs) and posts a fresh `route` marker, starving the rest of the board, which conflicts with spec 057 FR-050; causes include a missing `spec-request` label, a lost `issues:write` permission, and a `pr-title` longer than 256 characters. (2) no idempotency — if the create succeeds but the following comment or `board:stalled` label fails, the step still exits 0 and the issue stays eligible, so a later run files a second spec-request. Options to decide between: count earlier create failures recorded on the issue and stall on the Nth with an explicit 'no spec-request was filed' comment (Gate 93 check 3 would then need to allow that stall); or, before creating, look for an existing open spec-request whose body carries `Originating issue: …/issues/N` and reuse it; and decide what N should be and whether the cap is shared with the review round budget."
 
+## Clarifications
+
+### Session 2026-09-29 — answered on lifecycle issue #701
+
+- Q1 (FR-017): deliver both bounds, only the attempt cap, or only the
+  existence check? → A: **Both.** The two failure modes are disjoint: a
+  reuse check cannot help a create that never succeeds, and a bound cannot
+  stop a duplicate after a create that did succeed.
+- Q2 (FR-010): what is N, and is it shared with the review round budget?
+  → A: **Its own budget, N = 3, as a new `BOARD_LOOP_*` variable.** Filing
+  retries and review rounds have no reason to move together, and three
+  gives a transient failure two chances to heal before a human is asked.
+- Q3 (FR-009): where does the failed-attempt count live? → A: **In the
+  board item marker, as its own field — not the review `round` field**, so
+  the two budgets stay decoupled. Counting failure comments would break the
+  #514 rule that a failed create publishes nothing; run-history counting
+  does not survive renames or log retention. US3's give-up comment is the
+  maintainer-visible record.
+
+### Status update 2026-09-29 — reconciled with current `main` and specs 100/108
+
+- **#782 (label before marker, every stall site).** Each filing site now
+  adds `board:stalled` *before* rendering the stalled marker and posting
+  the closing comment, and a failed add fails the step with no marker. A
+  failed closing comment therefore no longer leaves the item eligible (the
+  label is already on); the post-create window that can still produce a
+  duplicate is a failed label add at route's spec verdict or at
+  readiness's ordinary backstop-breach entry. The fix job's post-push
+  breach already falls through to readiness's `step=breach` retry, which
+  performs the #530 lookup.
+- **Readiness has two filing entries.** Its ordinary backstop-breach entry
+  (a breach measured after review converged) has no existence check today;
+  only the `step=breach` retry entry does. Spec 100 (#752, FR-016–FR-018)
+  defers that ordinary entry's duplicate in full to this feature, so "the
+  readiness site" below means both entries.
+- **Spec 108 (#791, merged) disposes of the originating issue at route
+  time** by closing it as a duplicate of the spec-request, at all three
+  sites, and names a maintainer reopening the original as the
+  re-admission for a disposed issue. FR-005's "identical downstream
+  treatment" therefore includes that disposition. A give-up stall files
+  nothing, so its originating issue is left undisposed (spec 108 FR-011)
+  and removing `board:stalled` remains its re-admission (FR-014).
+- **Open conflict with spec 108 — needs a maintainer decision.** FR-003
+  below treats a *closed* prior spec-request as "already filed" with no
+  time bound, so the existence check would reuse it forever. Spec 108
+  FR-006/SC-005 require that a maintainer reopening a disposed original
+  after its linked spec-request has closed be routed afresh, at most once
+  per reopen — a route that can file a new spec-request, which FR-003 would
+  suppress. This spec does not resolve the conflict; the plan stage must
+  not proceed on FR-003 as written until it is decided.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - One routing decision never produces two spec-requests (Priority: P1)
 
 The board loop decides an issue is spec-shaped and files a `spec-request` for it. The
-create succeeds, but the write that follows — the closing comment, or the `board:stalled`
-label — fails. The issue is therefore still eligible on the next scheduled run, which
+create succeeds, but the write that follows — the `board:stalled` label, which since #782
+is applied before the marker and closing comment — fails. The issue is therefore still eligible on the next scheduled run, which
 repeats triage and route, reaches the same verdict, and files a **second** `spec-request`
 for the same originating issue. The maintainer now has two intake lifecycles for one piece
 of work, each of which will cut its own spec branch and open its own spec PR.
@@ -146,7 +197,8 @@ present; then remove `board:stalled` and confirm the item is selected again.
   but whose label write failed is completed on the next run through the reuse path, not
   re-filed.
 - **Three filing sites, one rule.** Route's spec verdict, the fix job's post-push breach,
-  and readiness's breach retry all file `spec-request`s. The bound and the existence check
+  and readiness's backstop breach (both its ordinary entry and its `step=breach` retry
+  entry) all file `spec-request`s. The bound and the existence check
   apply to all three from one home; a fourth site added later inherits them or fails the
   gate suite.
 - **The bound interacts with the existing create guard.** The guard that makes a failed
@@ -197,9 +249,11 @@ present; then remove `board:stalled` and confirm the item is selected again.
   the count MUST occupy its own dedicated field in it — never the review `round` field, so
   the two budgets stay decoupled as FR-010 requires.
 - **FR-010**: The attempt cap MUST be a single configured value, expressed the same way the
-  loop's existing budgets are and overridable by a consuming repository. It MUST be its own
-  budget — a new `BOARD_LOOP_*` configuration variable, separate from the existing review
-  round budget — with a default of **3**.
+  loop's existing budgets are: a PR-reviewed, workflow-level `env:` constant in
+  `board-loop.yml` beside `BOARD_LOOP_ROUND_BUDGET`. It MUST be its own budget — a new
+  `BOARD_LOOP_*` value, separate from the existing review round budget — with a value of
+  **3**. (`board-loop.yml` is not a published stage and targets only this repository's
+  board, so there is no consuming repository to override it.)
 - **FR-011**: While an item is below the cap, behaviour MUST be unchanged from today: a
   failed create fails the run loudly, nothing is commented, labelled or published on the
   failure, and the item is left eligible so a later run retries it.
@@ -210,7 +264,8 @@ present; then remove `board:stalled` and confirm the item is selected again.
 - **FR-013**: A capped, stalled item MUST NOT be selected by later runs, and MUST NOT be
   left as the in-flight candidate that keeps the rest of the board from being worked.
 - **FR-014**: Removing the stall MUST re-admit the item with a fresh attempt budget, using
-  the loop's existing single re-eligibility condition rather than a new one.
+  the loop's existing re-eligibility condition for an undisposed issue (removing
+  `board:stalled`) rather than a new one.
 - **FR-015**: A successful filing MUST clear the item's accumulated failed-attempt count, so
   an unrelated later routing decision for the same item starts from a full budget.
 - **FR-016**: A title that would exceed the platform's title-length limit MUST be brought
@@ -221,7 +276,8 @@ present; then remove `board:stalled` and confirm the item is selected again.
 
 - **FR-017**: Both the existence check and the attempt bound MUST apply to every site at
   which the loop files a `spec-request` — route's spec verdict, the fix job's post-push
-  breach, and readiness's breach retry. This feature delivers both the bound and the
+  breach, and readiness's backstop breach, including both its ordinary entry and its
+  `step=breach` retry entry (spec 100 FR-016 defers the ordinary entry's duplicate here). This feature delivers both the bound and the
   idempotency: delivering only the bound would leave duplicates possible, and delivering
   only idempotency would leave the board starvable.
 - **FR-018**: The existence check MUST have exactly one implementation, generalising the
@@ -288,12 +344,15 @@ present; then remove `board:stalled` and confirm the item is selected again.
   differently — reuse cannot help when the create never succeeds, and a bound cannot prevent
   a duplicate after a create that did succeed — so delivering only one leaves a live defect.
 - The existence check generalises the lookup the readiness breach-retry path already
-  performs (loop authorship + the originating-issue footer line + a time scope), rather
+  performs (loop authorship + the originating-issue footer line + a reference to the PR +
+  a `since` scope at the PR's creation time — the last two exist only where a PR does, so
+  route's spec verdict needs its own scope), rather
   than introducing a second matching rule; this follows the repository's "shared logic has
   exactly one home" rule.
 - The attempt cap is expressed as a workflow-level configured value in the same family as
-  the loop's existing round budget — a new `BOARD_LOOP_*` variable defaulting to 3 — so a
-  consuming repository can override it without editing the workflow. It is deliberately a
+  the loop's existing round budget — a new `BOARD_LOOP_*` `env:` constant set to 3, changed
+  by a reviewed PR like `BOARD_LOOP_ROUND_BUDGET` (board-loop.yml is not published, so no
+  adopter overrides it). It is deliberately a
   second knob rather than a reuse of the review round budget: filing retries and review
   rounds have no reason to move together, and 3 gives a transient failure (a rate limit, a
   flaky write) two chances to heal before a maintainer is asked to act.
@@ -304,8 +363,9 @@ present; then remove `board:stalled` and confirm the item is selected again.
   workflow renames or log retention. The give-up comment required by FR-012 is the
   maintainer-visible record instead (User Story 3).
 - The give-up stall reuses the loop's existing stall mechanism — the `board:stalled` label
-  plus a stalled marker — and its existing single re-eligibility condition (removing the
-  label), rather than a new state.
+  plus a stalled marker — and its existing re-eligibility condition for an undisposed issue
+  (removing the label; spec 108's reopen path applies only to a disposed original), rather
+  than a new state.
 - "The loop's own identity" means the App identity the loop already uses to author its
   markers and comments; artifacts authored by anyone else are not the loop's to reuse.
 - A closed prior `spec-request` counts as "already filed" (FR-003). The issue's own wording
@@ -346,5 +406,8 @@ present; then remove `board:stalled` and confirm the item is selected again.
   the existence check matches on.
 - Spec 057's board loop: its selection order, its board item marker, its `board:stalled`
   convention, and FR-050's bounded-budget requirement.
+- Spec 108 (routed-original disposition), whose route-time close of the originating issue
+  every filing and reuse here must also perform, and spec 100 (stalled-item re-admission),
+  which defers readiness's ordinary-entry duplicate to this feature.
 - The repository gate that holds every `spec-request` filing site to the shared rules,
   which must be extended rather than duplicated.
