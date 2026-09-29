@@ -20,7 +20,7 @@ That account authenticates with a **classic** personal access token stored as
 `WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN`. The credential's own shape
 therefore says nothing about what it can reach: a classic token carries
 whatever access its account has. "Contained to the test repository alone"
-(FR-011) rests on two things outside the token — the account's own repository
+(specs/055 FR-011; FR-012 here) rests on two things outside the token — the account's own repository
 memberships, and a runtime containment check that lists every repository the
 token can reach and requires the set to be exactly
 `WING_COMMANDER_AUTO_RELEASE_E2E_REPO`.

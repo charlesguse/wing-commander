@@ -12,6 +12,13 @@ related files as of `53e203b` (the branch head this plan starts from).
 
 ## D1. Identity and credential shape (FR-003, FR-003a, FR-011)
 
+**Superseded**: the classic-only decision below was superseded by
+specs/066-fine-grained-maintainer-token, which accepts a repository-scoped
+fine-grained credential alongside the classic one (dual acceptance during a
+transition). Preserved here as history, per FR-019 of that feature -- see
+specs/066-fine-grained-maintainer-token/research.md D1 for the current
+decision.
+
 **Decision**: a dedicated GitHub user account (never a bot identity),
 invited as a collaborator with **Write** access to the test repository
 only, authenticating via a **classic** personal access token with `repo`
@@ -60,6 +67,12 @@ repository list is what actually proves "the test repository alone" for
 this credential shape, not the token type.
 
 ## D2. Runtime containment check for the new credential (FR-014)
+
+**Superseded in part**: specs/066-fine-grained-maintainer-token extended
+this check to also cover the fine-grained shape and fixed a `gh api`
+exit-status swallow (its own D4); the classic-shape mechanism described
+below is otherwise unchanged. Preserved here as history, per FR-019 of that
+feature -- see specs/066-fine-grained-maintainer-token/research.md D3/D4.
 
 **Decision**: a new step immediately after the existing `token`/`reachable`
 steps checks the new secrets are non-empty, that `GH_TOKEN=<secret> gh
