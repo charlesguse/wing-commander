@@ -2714,97 +2714,69 @@ jobs:
           app-id: ${{ secrets.speckit-app-id }}
           private-key: ${{ secrets.speckit-app-private-key }}
 
-      # research.md D3: compares this fresh read of the tip against the
-      # pre-fold tip classify-and-announce captured — unchanged means no
-      # leg folded anything (all held/failed/questions/notes), so there is
-      # nothing to dispatch (US1 AS-none, gate-coverage-042.md scenario 6).
-      - name: Read branch tip after folding
-        id: tip
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          SPEC_BRANCH: ${{ inputs.spec-prefix }}${{ needs.classify-and-announce.outputs.slug }}
-        run: |
-          set -euo pipefail
-          tip=$(git ls-remote "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "refs/heads/${SPEC_BRANCH}" | cut -f1)
-          echo "sha=$tip" >> "$GITHUB_OUTPUT"
-
-      - name: Checkout spec branch at its current tip
-        if: steps.tip.outputs.sha != needs.classify-and-announce.outputs.base-sha && steps.tip.outputs.sha != ''
-        uses: actions/checkout@v5
-        with:
-          ref: ${{ inputs.spec-prefix }}${{ needs.classify-and-announce.outputs.slug }}
-          token: ${{ steps.ctx.outputs.token }}
-          fetch-depth: 0
-          clean: false
-
-      # research.md D1/D3 (contracts/fold-dispatch-once.md): the single
-      # dispatch point for the whole review. Folded-item evidence (D6's
-      # `fold(<id>): <summary>` commit messages) is read from the exact
-      # same range this decision is made from, so the PR comment's list and
-      # the dispatch decision can never disagree.
+      # research.md D1/D9 (contracts/fold-integration.md): the single
+      # dispatch point for the whole review, now the fold/dispatch
+      # primitive's second call site (specs/062-lifecycle-review-gate
+      # T034/T036) -- this step re-reads the spec branch's tip and decides
+      # whether/what to dispatch itself; no separate tip-read or checkout
+      # step is needed beforehand.
       - name: Dispatch implement once for the whole review
+        id: fold-dispatch
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-fold-dispatch
+        with:
+          dispatch-token: ${{ github.token }}
+          spec-dir: ${{ needs.classify-and-announce.outputs.spec-dir }}
+          issue: ${{ needs.classify-and-announce.outputs.issue-number }}
+          base-sha: ${{ needs.classify-and-announce.outputs.base-sha }}
+          spec-branch: ${{ inputs.spec-prefix }}${{ needs.classify-and-announce.outputs.slug }}
+          implement-workflow: ${{ inputs.implement-workflow }}
+
+      # Folded-item evidence (D6's `fold(<id>): <summary>` commit messages)
+      # comes straight from the composite's own output, so the PR comment's
+      # list and the dispatch decision can never disagree (research.md D3).
+      - name: Reply to this review's fold(s)
         shell: bash
-        if: steps.tip.outputs.sha != needs.classify-and-announce.outputs.base-sha && steps.tip.outputs.sha != ''
+        if: steps.fold-dispatch.outputs.folded == 'true'
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
-          DISPATCH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ inputs.pr-number }}
           SPEC_DIR: ${{ needs.classify-and-announce.outputs.spec-dir }}
           ISSUE: ${{ needs.classify-and-announce.outputs.issue-number }}
-          IMPLEMENT_WORKFLOW: ${{ inputs.implement-workflow }}
-          SPEC_BRANCH: ${{ inputs.spec-prefix }}${{ needs.classify-and-announce.outputs.slug }}
-          BASE_SHA: ${{ needs.classify-and-announce.outputs.base-sha }}
-          TIP_SHA: ${{ steps.tip.outputs.sha }}
+          DISPATCHED: ${{ steps.fold-dispatch.outputs.dispatched }}
+          NEXT_ITERATION: ${{ steps.fold-dispatch.outputs.new-iteration }}
+          FOLDED_SUMMARY: ${{ steps.fold-dispatch.outputs.folded-summary }}
+          RUN_URL: ${{ steps.fold-dispatch.outputs.run-url }}
         run: |
           set -euo pipefail
-          recorded=$(jq -r '.iteration // 0' "$SPEC_DIR/spec-meta.json")
-          next=$((recorded + 1))
-          start_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-
-          folded=$(git log --grep '^fold(' --format='%s' "$BASE_SHA..$TIP_SHA" \
-            | sed -n 's/^fold(\([^)]*\)): \(.*\)$/- \1: \2/p')
-          [ -n "$folded" ] || folded="(no fold(<id>): commits were found in this range)"
+          body_file="$RUNNER_TEMP/dispatch-once-reply.md"
+          next="$NEXT_ITERATION"
 
           # T078 standalone mode, mirroring implement.yml's/plan.yml's own
           # empty-next-workflow shape: the fold(s) are already committed and
           # pushed by the leg(s) above, so an unconfigured chain reports
           # that and stops cleanly rather than a failed step swallowing the
           # reply.
-          if [ -z "$IMPLEMENT_WORKFLOW" ]; then
-            body_file="$RUNNER_TEMP/dispatch-once-reply.md"
+          if [ "$DISPATCHED" != "true" ]; then
             {
               echo "This review's fold(s) are committed and pushed. No implement workflow is configured for automatic re-dispatch (\`implement-workflow\` is empty) — dispatch your implement wrapper manually with \`spec_dir=$SPEC_DIR\`, \`issue=$ISSUE\`, \`iteration=$next\` when ready."
               echo ""
               echo "Folded in this review:"
-              printf '%s\n' "$folded"
+              printf '%s\n' "$FOLDED_SUMMARY"
             } > "$body_file"
             gh pr comment "$PR_NUMBER" --body-file "$body_file"
             echo "Fold(s) committed; no implement-workflow configured — reported on PR #$PR_NUMBER and stopped (standalone mode)." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
 
-          GH_TOKEN="$DISPATCH_TOKEN" gh workflow run "$IMPLEMENT_WORKFLOW" \
-            -R "$GITHUB_REPOSITORY" -f spec_dir="$SPEC_DIR" -f issue="$ISSUE" -f iteration="$next"
-
-          run_url=""
-          for _ in 1 2 3 4 5 6; do
-            sleep 5
-            run_url=$(GH_TOKEN="$DISPATCH_TOKEN" gh run list -R "$GITHUB_REPOSITORY" --workflow "$IMPLEMENT_WORKFLOW" \
-              --created ">=$start_ts" --limit 1 --json url --jq '.[0].url // empty' 2>/dev/null) || run_url=""
-            [ -n "$run_url" ] && break
-          done
-
-          body_file="$RUNNER_TEMP/dispatch-once-reply.md"
           {
-            if [ -n "$run_url" ]; then
-              echo "Implementation cycle $next dispatched: $run_url — note this re-dispatched iteration may hit implement.yml's own iteration cap; if so, that run's own reply on the lifecycle issue is the authoritative outcome."
+            if [ -n "$RUN_URL" ]; then
+              echo "Implementation cycle $NEXT_ITERATION dispatched: $RUN_URL — note this re-dispatched iteration may hit implement.yml's own iteration cap; if so, that run's own reply on the lifecycle issue is the authoritative outcome."
             else
-              echo "Implementation cycle $next dispatched — note this re-dispatched iteration may hit implement.yml's own iteration cap; see the workflow's Actions tab for the new run."
+              echo "Implementation cycle $NEXT_ITERATION dispatched — note this re-dispatched iteration may hit implement.yml's own iteration cap; see the workflow's Actions tab for the new run."
             fi
             echo ""
             echo "Folded in this review:"
-            printf '%s\n' "$folded"
+            printf '%s\n' "$FOLDED_SUMMARY"
           } > "$body_file"
           gh pr comment "$PR_NUMBER" --body-file "$body_file"
 

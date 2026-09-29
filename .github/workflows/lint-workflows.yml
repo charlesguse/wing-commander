@@ -4216,6 +4216,20 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-post-review-comment-composite.py --self-test
 
+      # Gate 109 — specs/062-lifecycle-review-gate T037/T041: disposition's
+      # findings-partition step and its wing-commander-fold-commit call
+      # travel together — one without the other either folds garbage or
+      # silently strands every not-clean round's in-scope findings.
+      # Numbered 109, not the standalone slot tasks.md's T041 first drafted
+      # — see Gate 107's comment above for the Maintainer Feedback
+      # renumbering.
+      - name: "Gate 109 — lifecycle-review-gate disposition fold-wiring"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-lifecycle-review-gate-fold-wiring.py
+      - name: "Gate 109 self-test — a fold-commit call with no partition step, and a partition step with no fold-commit call, are both caught"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-lifecycle-review-gate-fold-wiring.py --self-test
+
       # Gate 110 — specs/062-lifecycle-review-gate T031/T032:
       # wing-commander-fold-commit's shipped step really appends the drafted
       # section, flips spec-meta.json's stage back to "implement", unions
@@ -4231,6 +4245,21 @@ jobs:
       - name: "Gate 110 self-test — a false 'always folds' and an overwritten pending_re_review_from are both caught"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-fold-commit-composite.py --self-test
+
+      # Gate 111 — specs/062-lifecycle-review-gate T034/T035:
+      # wing-commander-fold-dispatch's shipped step really re-reads the spec
+      # branch's tip, dispatches implement-workflow only when it moved and a
+      # target is configured, and still bumps the reported iteration in
+      # standalone mode — proven against a real git clone/remote, not a
+      # mock. Numbered 111, not the standalone slot tasks.md's T035 first
+      # drafted — see Gate 107's comment above for the Maintainer Feedback
+      # renumbering.
+      - name: "Gate 111 — wing-commander-fold-dispatch composite"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-fold-dispatch-composite.py
+      - name: "Gate 111 self-test — an ignored tip-move and a standalone-mode dispatch are both caught"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-fold-dispatch-composite.py --self-test
 
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and

@@ -38,7 +38,7 @@ inputs:
     description: One-line commit-message summary.
     required: true
   actor-login:
-    description: Login to union into spec-meta.json's pending_re_review_from.
+    description: Login to union into spec-meta.json's pending_re_review_from. Empty is tolerated (no human actor -- e.g. an automated review round's own fold) and adds nothing.
     required: true
 
 outputs:
@@ -77,7 +77,7 @@ runs:
 
         jq --arg actor "$ACTOR_LOGIN" '
           .stage = "implement"
-          | .pending_re_review_from = (((.pending_re_review_from // []) + [$actor]) | unique)
+          | .pending_re_review_from = (((.pending_re_review_from // []) + (if $actor == "" then [] else [$actor] end)) | unique)
         ' "$SPEC_DIR/spec-meta.json" > "$RUNNER_TEMP/wc-fold-commit-meta.json"
         mv "$RUNNER_TEMP/wc-fold-commit-meta.json" "$SPEC_DIR/spec-meta.json"
 

@@ -699,20 +699,15 @@ jobs:
           body-file: ${{ runner.temp }}/lifecycle-review-body.md
 
   # contracts/lifecycle-review-gate-workflow.md job 5: deterministic
-  # disposition. T023/T024 -- this phase implements only the clean-outcome
-  # path (zero extracted findings, no parse failure, nothing to fold or
-  # file). The not-clean path (partition/dedupe/fold/file, contracts job
-  # 5's fuller shape) is US2's own phase (T028-T045), not yet built; a
-  # not-clean round is fully reported (the review job already posted every
-  # finding on the PR itself) but does not yet advance review_gate, so the
-  # same head SHA is selected again on the next run until US2 lands.
+  # disposition. T023/T024 built the clean-outcome path; T037-T041 (US2)
+  # add the not-clean path (partition/dedupe/fold/file, contracts job 5's
+  # fuller shape) in the same job -- the two paths' steps are mutually
+  # exclusive via their own `if:` guards below.
   disposition:
     needs: [select, review]
     if: >-
       !cancelled() && needs.review.result == 'success'
       && needs.review.outputs.parse-failed == 'false'
-      && needs.review.outputs.in-scope-count == '0'
-      && needs.review.outputs.out-of-scope-count == '0'
     # Gate 80/specs/013: this job pushes spec-meta.json onto spec/<NNN-slug>
     # itself (the lifecycle PR's own branch), so it joins the per-spec group
     # every spec-branch writer shares -- a job-level concurrency: overrides
@@ -729,9 +724,15 @@ jobs:
       contents: write
       pull-requests: read
       statuses: write
+      # Gate 12: wing-commander-fold-dispatch's `gh workflow run`/`gh run
+      # list` calls (T038) run under github.token (dispatch-token) -- the
+      # App installation carries no Actions permission at all (docs/setup.md,
+      # per wing-commander-fold-dispatch/action.yml's own header comment).
+      actions: write
     outputs:
-      outcome: ${{ steps.decide.outputs.outcome }}
-      round: ${{ steps.decide.outputs.round }}
+      outcome: ${{ steps.decide.outputs.outcome || steps.partition.outputs.outcome }}
+      round: ${{ steps.decide.outputs.round || steps.partition.outputs.round }}
+      findings-open: ${{ steps.partition.outputs.findings-open }}
     steps:
       - name: Resolve the PR's head ref
         id: pr
@@ -777,7 +778,10 @@ jobs:
       # outcome.
       - name: Record the clean round on spec-meta.json
         id: decide
-        if: steps.lifecycle-gate.outputs.is-open == 'true'
+        if: >-
+          steps.lifecycle-gate.outputs.is-open == 'true'
+          && needs.review.outputs.in-scope-count == '0'
+          && needs.review.outputs.out-of-scope-count == '0'
         env:
           SPEC_DIR: ${{ needs.select.outputs.spec-dir }}
           HEAD_SHA: ${{ needs.select.outputs.head-sha }}
@@ -835,6 +839,286 @@ jobs:
             -f context="lifecycle-review-gate" \
             -f description="Round $ROUND: clean -- no in-scope findings." >/dev/null
 
+      # T037/data-model.md §1/research.md D11: the not-clean path. Runs
+      # whenever the reviewer reported at least one finding (in-scope or
+      # out-of-scope) -- mutually exclusive with "Record the clean round"
+      # above via its own `if:`.
+      - name: Download the round's extracted findings
+        id: download-findings
+        if: >-
+          steps.lifecycle-gate.outputs.is-open == 'true'
+          && (needs.review.outputs.in-scope-count != '0' || needs.review.outputs.out-of-scope-count != '0')
+        uses: actions/download-artifact@v6
+        with:
+          name: lifecycle-review-findings
+          path: ${{ runner.temp }}/lifecycle-review-findings-artifact
+
+      # T037/T040: partitions by in_scope, drops anything already folded or
+      # filed in a prior round (FR-021, using T028's single-home fingerprint
+      # formula), renders in-scope survivors into one tasks.md section, and
+      # stages up to 3 out-of-scope survivors for filing (this repository's
+      # MAX_SLOTS unrolled-step precedent -- board-loop.yml's own
+      # out-of-scope filing, spec 056). Writes review_gate onto
+      # spec-meta.json's WORKING TREE here (uncommitted): when something
+      # folds, wing-commander-fold-commit's own jq only ever touches
+      # .stage/.pending_re_review_from, so this survives into its commit
+      # untouched (data-model.md §1's invariant); when nothing folds, "Record
+      # this round on spec-meta.json (no fold)" below commits it directly.
+      # Round-budget exhaustion (research.md D12, FR-022) is checked first
+      # and short-circuits before any fold/file computation.
+      - name: Partition, dedup, and render this round's findings
+        id: partition
+        if: steps.download-findings.outcome == 'success'
+        env:
+          SPEC_DIR: ${{ needs.select.outputs.spec-dir }}
+          ISSUE: ${{ needs.select.outputs.issue }}
+          PR_NUMBER: ${{ needs.select.outputs.pr-number }}
+          HEAD_SHA: ${{ needs.select.outputs.head-sha }}
+          ROUND_BUDGET: ${{ env.LIFECYCLE_REVIEW_ROUND_BUDGET }}
+        run: |
+          set -euo pipefail
+          python3 -I - <<'PYEOF'
+          import datetime
+          import json
+          import os
+          import sys
+
+          sys.path.insert(0, ".github/scripts")
+          from wc_review_finding_fingerprint import fingerprint
+
+          runner_temp = os.environ["RUNNER_TEMP"]
+          spec_dir = os.environ["SPEC_DIR"]
+          issue = os.environ["ISSUE"]
+          head_sha = os.environ["HEAD_SHA"]
+          budget = int(os.environ["ROUND_BUDGET"])
+
+          meta_path = os.path.join(spec_dir, "spec-meta.json")
+          with open(meta_path, encoding="utf-8") as fh:
+              meta = json.load(fh)
+          review_gate = meta.get("review_gate") or {}
+          folded_fps = set(review_gate.get("folded_fingerprints") or [])
+          filed_fps = set(review_gate.get("filed_fingerprints") or [])
+          round_ = (review_gate.get("round") or 0) + 1
+          updated_at = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+          outputs = [("round", str(round_))]
+
+          if round_ > budget:
+              meta["review_gate"] = dict(review_gate, round=round_, head_sha=head_sha,
+                                         outcome="budget-exhausted", updated_at=updated_at,
+                                         findings_open=review_gate.get("findings_open") or 0,
+                                         folded_fingerprints=sorted(folded_fps),
+                                         filed_fingerprints=sorted(filed_fps))
+              with open(meta_path, "w", encoding="utf-8") as fh:
+                  json.dump(meta, fh, indent=2)
+                  fh.write("\n")
+              outputs.append(("outcome", "budget-exhausted"))
+              outputs.append(("findings-open", str(review_gate.get("findings_open") or 0)))
+              with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+                  for k, v in outputs:
+                      fh.write("{0}={1}\n".format(k, v))
+              sys.exit(0)
+
+          findings_path = os.path.join(runner_temp, "lifecycle-review-findings-artifact",
+                                       "lifecycle-review-findings.json")
+          with open(findings_path, encoding="utf-8") as fh:
+              findings = json.load(fh)
+
+          in_scope_survivors = []
+          out_of_scope_survivors = []
+          for f in findings:
+              basis = f.get("fingerprint_basis") or {}
+              fp = fingerprint(issue, f.get("title", ""), basis.get("file_path", ""))
+              if fp in folded_fps or fp in filed_fps:
+                  continue
+              if f.get("in_scope") is True:
+                  in_scope_survivors.append((f, fp))
+              elif f.get("in_scope") is False:
+                  out_of_scope_survivors.append((f, fp))
+
+          def render(f):
+              lines = ["", "- [ ] Review finding: {0}".format(f.get("title", "(untitled)")),
+                       "", "  {0}".format(f.get("what", ""))]
+              paths = (f.get("evidence") or {}).get("file_paths") or []
+              if paths:
+                  lines.append("")
+                  lines.extend("  - {0}".format(p) for p in paths)
+              detail = (f.get("evidence") or {}).get("detail")
+              if detail:
+                  lines.extend(["", "  Detail: {0}".format(detail)])
+              return lines
+
+          new_folded = []
+          section_lines = []
+          if in_scope_survivors:
+              section_lines.append("## Review Gate Round {0} Findings".format(round_))
+              for f, fp in in_scope_survivors:
+                  section_lines.extend(render(f))
+                  new_folded.append(fp)
+
+          section_path = os.path.join(runner_temp, "lifecycle-review-fold-section.md")
+          with open(section_path, "w", encoding="utf-8") as fh:
+              if section_lines:
+                  fh.write("\n".join(section_lines) + "\n")
+
+          oos_dir = os.path.join(runner_temp, "lifecycle-review-oos")
+          os.makedirs(oos_dir, exist_ok=True)
+          new_filed = []
+          for i, (f, fp) in enumerate(out_of_scope_survivors[:3]):
+              marker = "<!-- wing-commander-lifecycle-review-finding: fingerprint={0} -->".format(fp)
+              paths = (f.get("evidence") or {}).get("file_paths") or []
+              detail = (f.get("evidence") or {}).get("detail")
+              text = [str(f.get("what", "")), "", "Evidence:", ""]
+              text.extend("- {0}".format(p) for p in paths)
+              if detail:
+                  text.extend(["", "Detail:", str(detail)])
+              body_lines = ["Found by the code review of #{0}.".format(os.environ["PR_NUMBER"]),
+                           "", "\n".join(text), "", marker]
+              body_path = os.path.join(oos_dir, "oos-{0}.md".format(i))
+              with open(body_path, "w", encoding="utf-8") as fh:
+                  fh.write("\n".join(body_lines) + "\n")
+              title = str(f.get("title", "")).strip() or "(untitled)"
+              outputs.append(("oos-{0}-title".format(i), title))
+              outputs.append(("oos-{0}-marker".format(i), marker))
+              new_filed.append(fp)
+
+          findings_open = len(new_folded)
+          meta["review_gate"] = {
+              "round": round_, "head_sha": head_sha, "outcome": "findings",
+              "findings_open": findings_open, "updated_at": updated_at,
+              "folded_fingerprints": sorted(folded_fps | set(new_folded)),
+              "filed_fingerprints": sorted(filed_fps | set(new_filed)),
+          }
+          with open(meta_path, "w", encoding="utf-8") as fh:
+              json.dump(meta, fh, indent=2)
+              fh.write("\n")
+
+          outputs.append(("outcome", "findings"))
+          outputs.append(("findings-open", str(findings_open)))
+          outputs.append(("fold-summary", "round {0}: {1} finding(s) folded".format(round_, len(new_folded))))
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+              for k, v in outputs:
+                  fh.write("{0}={1}\n".format(k, v))
+          PYEOF
+
+      # T038: appends the rendered section (empty when nothing survived
+      # dedup) onto tasks.md, flips stage back to "implement", and commits
+      # both files -- including the review_gate write above -- together.
+      # actor-login is deliberately empty: no human actor triggered this
+      # automated round's own fold (wing-commander-fold-commit's own
+      # action.yml documents empty as tolerated, adding nothing).
+      - name: Commit this round's fold
+        id: commit-fold
+        if: steps.partition.outcome == 'success' && steps.partition.outputs.outcome == 'findings'
+        uses: ./.github/actions/wing-commander-fold-commit
+        with:
+          token: ${{ steps.ctx.outputs.token }}
+          spec-dir: ${{ needs.select.outputs.spec-dir }}
+          section-file: ${{ runner.temp }}/lifecycle-review-fold-section.md
+          fold-id: review-gate-round-${{ steps.partition.outputs.round }}
+          fold-summary: ${{ steps.partition.outputs.fold-summary }}
+          actor-login: ""
+
+      # T038: dispatches the fold this same round just committed --
+      # base-sha is the tip this job's own checkout started from (nothing
+      # else pushes to this branch between that checkout and the fold
+      # commit above), matching wing-commander-fold-dispatch's contract.
+      # wing-commander-5-implement.yml is this repository's own dispatchable
+      # implement wrapper (matching wing-commander-9-pr-conversation.yml's
+      # own implement-workflow input) -- this workflow is repository-only
+      # (no workflow_call), so it has no adopter-configurable equivalent to
+      # thread through.
+      - name: Dispatch implement for this round's fold
+        if: steps.commit-fold.outcome == 'success' && steps.commit-fold.outputs.folded == 'true'
+        uses: ./.github/actions/wing-commander-fold-dispatch
+        with:
+          dispatch-token: ${{ github.token }}
+          spec-dir: ${{ needs.select.outputs.spec-dir }}
+          issue: ${{ needs.select.outputs.issue }}
+          base-sha: ${{ needs.select.outputs.head-sha }}
+          spec-branch: ${{ steps.pr.outputs.branch }}
+          implement-workflow: wing-commander-5-implement.yml
+
+      # T038: nothing folded this round (every in-scope survivor was
+      # already folded in a prior round, or there were none) -- the
+      # review_gate write above still needs its own commit, since
+      # wing-commander-fold-commit's early exit on an empty section-file
+      # touches neither file. Mirrors "Record the clean round" above,
+      # but records outcome findings/budget-exhausted instead.
+      - name: Record this round on spec-meta.json (no fold)
+        if: >-
+          steps.partition.outcome == 'success'
+          && (steps.partition.outputs.outcome == 'budget-exhausted' || steps.commit-fold.outputs.folded == 'false')
+        env:
+          SPEC_DIR: ${{ needs.select.outputs.spec-dir }}
+          BOT_SLUG: ${{ steps.ctx.outputs.bot-slug }}
+          BRANCH: ${{ steps.pr.outputs.branch }}
+          ROUND: ${{ steps.partition.outputs.round }}
+          OUTCOME: ${{ steps.partition.outputs.outcome }}
+        run: |
+          set -euo pipefail
+          git config user.name "${BOT_SLUG}[bot]"
+          git config user.email "${BOT_SLUG}[bot]@users.noreply.github.com"
+          git add "$SPEC_DIR/spec-meta.json"
+          git commit -m "review-gate: round $ROUND $OUTCOME, nothing new to fold"
+          git push origin "HEAD:refs/heads/$BRANCH"
+
+      # T039: out-of-scope survivors, filed through the EXISTING durable-
+      # failure-issue composite (never a second filing implementation),
+      # deduped by the same fingerprint (FR-021) and never counted toward
+      # review_gate.findings_open or held against this PR's readiness
+      # (FR-020). Capped at 3 per round (see "Partition..." above).
+      - name: File out-of-scope finding 0
+        id: file-oos-0
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.partition.outputs.oos-0-title != ''
+        continue-on-error: true
+        uses: ./.github/actions/wing-commander-durable-failure-issue
+        with:
+          token: ${{ steps.ctx.outputs.token }}
+          operation: report
+          label: "found-by:lifecycle-review-gate"
+          label-color: "5319E7"
+          label-description: "Filed by the wing-commander lifecycle review gate: the reviewer met a defect outside the PR's own diff"
+          title: ${{ steps.partition.outputs.oos-0-title }}
+          body-file: ${{ runner.temp }}/lifecycle-review-oos/oos-0.md
+          marker: ${{ steps.partition.outputs.oos-0-marker }}
+          state-scope: all
+          fail-on-api-error: "false"
+
+      - name: File out-of-scope finding 1
+        id: file-oos-1
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.partition.outputs.oos-1-title != ''
+        continue-on-error: true
+        uses: ./.github/actions/wing-commander-durable-failure-issue
+        with:
+          token: ${{ steps.ctx.outputs.token }}
+          operation: report
+          label: "found-by:lifecycle-review-gate"
+          label-color: "5319E7"
+          label-description: "Filed by the wing-commander lifecycle review gate: the reviewer met a defect outside the PR's own diff"
+          title: ${{ steps.partition.outputs.oos-1-title }}
+          body-file: ${{ runner.temp }}/lifecycle-review-oos/oos-1.md
+          marker: ${{ steps.partition.outputs.oos-1-marker }}
+          state-scope: all
+          fail-on-api-error: "false"
+
+      - name: File out-of-scope finding 2
+        id: file-oos-2
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.partition.outputs.oos-2-title != ''
+        continue-on-error: true
+        uses: ./.github/actions/wing-commander-durable-failure-issue
+        with:
+          token: ${{ steps.ctx.outputs.token }}
+          operation: report
+          label: "found-by:lifecycle-review-gate"
+          label-color: "5319E7"
+          label-description: "Filed by the wing-commander lifecycle review gate: the reviewer met a defect outside the PR's own diff"
+          title: ${{ steps.partition.outputs.oos-2-title }}
+          body-file: ${{ runner.temp }}/lifecycle-review-oos/oos-2.md
+          marker: ${{ steps.partition.outputs.oos-2-marker }}
+          state-scope: all
+          fail-on-api-error: "false"
+
   # contracts/lifecycle-review-gate-workflow.md job 6/T025: posts the
   # round's outcome to the lifecycle issue -- round number, head SHA,
   # finding count, result (FR-015) -- plus the cost line via
@@ -877,8 +1161,9 @@ jobs:
           PARSE_FAILED: ${{ needs.review.outputs.parse-failed }}
           IN_SCOPE_COUNT: ${{ needs.review.outputs.in-scope-count }}
           OUT_OF_SCOPE_COUNT: ${{ needs.review.outputs.out-of-scope-count }}
-          ROUND: ${{ needs.review.outputs.round }}
+          ROUND: ${{ needs.disposition.outputs.round || needs.review.outputs.round }}
           DISPOSITION_OUTCOME: ${{ needs.disposition.outputs.outcome }}
+          FINDINGS_OPEN: ${{ needs.disposition.outputs.findings-open }}
           COST_LINE: ${{ needs.review.outputs.cost-line }}
         run: |
           set -uo pipefail
@@ -892,9 +1177,12 @@ jobs:
           elif [ "$DISPOSITION_OUTCOME" = "clean" ]; then
             result="clean"
             detail="No in-scope findings. A passing status was posted on the reviewed head SHA."
+          elif [ "$DISPOSITION_OUTCOME" = "budget-exhausted" ]; then
+            result="budget-exhausted"
+            detail="The round budget is spent with ${FINDINGS_OPEN:-0} in-scope finding(s) still open. This PR is not selected again until a human intervenes."
           else
             result="findings"
-            detail="${IN_SCOPE_COUNT:-0} in-scope and ${OUT_OF_SCOPE_COUNT:-0} out-of-scope finding(s) were posted on PR #$PR_NUMBER. Folding them back through the pipeline is not yet wired up (specs/062-lifecycle-review-gate US2) -- a human should act on them for now."
+            detail="${IN_SCOPE_COUNT:-0} in-scope and ${OUT_OF_SCOPE_COUNT:-0} out-of-scope finding(s) were posted on PR #$PR_NUMBER. In-scope survivors (after dedup) were folded into tasks.md and re-dispatched implement; out-of-scope survivors were filed as their own issue(s). ${FINDINGS_OPEN:-0} in-scope finding(s) from this round remain open."
           fi
 
           line="$COST_LINE"

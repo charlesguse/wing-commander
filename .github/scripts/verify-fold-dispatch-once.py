@@ -62,6 +62,7 @@ from wc_shell_harness import (ensure_jq, find_job, find_step, resolve_bash,
 STAGE = ".github/workflows/pr-conversation.yml"
 
 DISPATCH_STEP = "Dispatch implement once for the whole review"
+REPLY_TO_FOLD_STEP = "Reply to this review's fold(s)"
 REPORT_STEP = "Report fold-route leg outcomes"
 REPLY_STEP = "Reply confirming fold-in (no dispatch)"
 ACT_AGENT_STEP = "Act on this classification"
@@ -191,8 +192,18 @@ def gh_call_count(calls_path, *substrings):
 
 def scenario_three_clean_legs(steps, root):
     """gate-coverage-042.md scenario 1: three in-scope legs all fold
-    cleanly -> dispatch-once computes exactly one `gh workflow run`
-    invocation; report-fold-outcomes posts nothing.
+    cleanly -> report-fold-outcomes posts nothing.
+
+    specs/062-lifecycle-review-gate T034/T036: dispatch-once's own "fold
+    all, dispatch once" behavior (previously proven here by executing this
+    job's inline `run:` text) is now proven against the real shipped
+    wing-commander-fold-dispatch composite by Gate 111
+    (verify-fold-dispatch-composite.py) instead -- this gate's own
+    structural checks (test_structural, below) confirm dispatch-once's
+    "Dispatch implement once for the whole review" step calls that
+    composite exactly once, non-matrixed, per CLAUDE.md's "Shared logic
+    has exactly one home" (a copy here would duplicate Gate 111's coverage
+    rather than proving anything new).
     """
     failures = []
     where = "scenario 1 (three clean legs)"
@@ -204,32 +215,6 @@ def scenario_three_clean_legs(steps, root):
     os.makedirs(runner_temp, exist_ok=True)
     bindir, calls, last_comment = new_stub_dir(work)
     path = bindir + os.pathsep + os.environ["PATH"]
-
-    rc, out, _, _ = run_step(
-        BASH, steps[DISPATCH_STEP], repo,
-        {"GH_TOKEN": "x", "DISPATCH_TOKEN": "x", "PR_NUMBER": PR_NUMBER,
-         "SPEC_DIR": SPEC_DIR, "ISSUE": ISSUE,
-         "IMPLEMENT_WORKFLOW": IMPLEMENT_WORKFLOW,
-         "GITHUB_REPOSITORY": REPO, "BASE_SHA": base_sha, "TIP_SHA": tip_sha,
-         "GH_CALLS": calls, "GH_LAST_COMMENT": last_comment,
-         "GH_RUN_LIST_JSON": '[{"url":"https://example.invalid/runs/1"}]',
-         "PATH": path},
-        runner_temp)
-    if rc != 0:
-        failures.append(f"{where}: {DISPATCH_STEP!r} exited {rc}: {out.strip()}")
-        return failures
-
-    dispatches = gh_call_count(calls, "workflow run")
-    if dispatches != 1:
-        failures.append(f"{where}: expected exactly 1 `gh workflow run` "
-                        f"call, got {dispatches} — 'fold all, dispatch "
-                        f"once' is broken.")
-    with open(last_comment, encoding="utf-8") as fh:
-        comment = fh.read()
-    for leg_id in ("leg-0", "leg-1", "leg-2"):
-        if leg_id not in comment:
-            failures.append(f"{where}: dispatch-once's PR comment does not "
-                            f"name folded item {leg_id!r}: {comment!r}")
 
     # report-fold-outcomes: every leg healthy -> posts nothing.
     open(calls, "w").close()
@@ -384,8 +369,13 @@ def scenario_zero_in_scope(steps, root):
 
 def scenario_held_leg_timeout(steps, root):
     """gate-coverage-042.md scenario 5: a held leg's confirm-timeout-minutes
-    bound expires -> the other, ready legs' folds are still dispatched, and
-    the held item is reported (not silently dropped).
+    bound expires -> the held item is reported (not silently dropped).
+
+    specs/062-lifecycle-review-gate T034/T036: the "ready legs still
+    dispatch" half of this scenario is now covered by Gate 111
+    (verify-fold-dispatch-composite.py) against the real shipped
+    wing-commander-fold-dispatch composite; see scenario_three_clean_legs'
+    own docstring above for why a second copy does not belong here.
     """
     failures = []
     where = "scenario 5 (held leg timeout)"
@@ -400,23 +390,6 @@ def scenario_held_leg_timeout(steps, root):
     # leg-0 (ready, non-confirm-gated) folded and succeeded; leg-1 (held)
     # timed out waiting on its environment approval -> GitHub reports its
     # job conclusion as cancelled, with no fold(<id>) evidence.
-    rc, out, _, _ = run_step(
-        BASH, steps[DISPATCH_STEP], repo,
-        {"GH_TOKEN": "x", "DISPATCH_TOKEN": "x", "PR_NUMBER": PR_NUMBER,
-         "SPEC_DIR": SPEC_DIR, "ISSUE": ISSUE,
-         "IMPLEMENT_WORKFLOW": IMPLEMENT_WORKFLOW,
-         "GITHUB_REPOSITORY": REPO, "BASE_SHA": base_sha, "TIP_SHA": tip_sha,
-         "GH_CALLS": calls, "GH_LAST_COMMENT": last_comment,
-         "GH_RUN_LIST_JSON": '[{"url":"https://example.invalid/runs/1"}]',
-         "PATH": path},
-        runner_temp)
-    if rc != 0:
-        failures.append(f"{where}: {DISPATCH_STEP!r} exited {rc}: {out.strip()}")
-        return failures
-    if gh_call_count(calls, "workflow run") != 1:
-        failures.append(f"{where}: the ready leg's fold was not dispatched "
-                        f"despite the held leg timing out.")
-
     classifications = [
         {"id": "leg-0", "category": "in-scope-change", "summary": "ready item"},
         {"id": "leg-1", "category": "in-scope-change", "summary": "held item"},
@@ -485,8 +458,12 @@ def suite(steps, root):
 
 
 def load_steps():
+    # DISPATCH_STEP is a `uses:` composite call as of specs/062-lifecycle-
+    # review-gate T036 (no `run:` body of its own) -- test_structural()
+    # checks its `with:` shape instead of executing it; only REPORT_STEP
+    # still has behavioral scenarios run against its shipped `run:` text.
     return {name: find_step(STAGE, name)["run"]
-            for name in (DISPATCH_STEP, REPORT_STEP)}
+            for name in (REPORT_STEP,)}
 
 
 # ------------------------------------------------------------- structural
@@ -568,6 +545,35 @@ def test_structural():
                         f"evidence check depends on the fold(<id>): "
                         f"<summary> commit shape (research.md D6) tracing "
                         f"back to this exact id.")
+
+    # specs/062-lifecycle-review-gate T034/T036: dispatch-once became a
+    # thin caller of wing-commander-fold-dispatch. "fold all, dispatch
+    # once" now holds by construction (exactly one call site, not
+    # matrixed, asserted structurally here) plus Gate 111's own behavioral
+    # proof against the composite itself (fold-integration.md "Regression
+    # coverage this delta must not weaken").
+    dispatch_step = find_step(STAGE, DISPATCH_STEP)
+    dispatch_uses = str(dispatch_step.get("uses") or "")
+    if "wing-commander-fold-dispatch" not in dispatch_uses:
+        failures.append(f"structural: {DISPATCH_STEP!r} no longer calls "
+                        f"wing-commander-fold-dispatch (uses: "
+                        f"{dispatch_uses!r}) — the bump/dispatch primitive "
+                        f"has exactly one home (CLAUDE.md); a reintroduced "
+                        f"inline body here would duplicate it.")
+    dispatch_with = dispatch_step.get("with") or {}
+    for key in ("base-sha", "spec-branch", "dispatch-token"):
+        if not str(dispatch_with.get(key, "")):
+            failures.append(f"structural: {DISPATCH_STEP!r}'s wing-"
+                            f"commander-fold-dispatch call has no {key!r} "
+                            f"input.")
+
+    reply_to_fold_step = find_step(STAGE, REPLY_TO_FOLD_STEP)
+    reply_if = str(reply_to_fold_step.get("if") or "")
+    if "steps.fold-dispatch.outputs.folded" not in reply_if:
+        failures.append(f"structural: {REPLY_TO_FOLD_STEP!r}'s `if:` does "
+                        f"not gate on steps.fold-dispatch.outputs.folded "
+                        f"({reply_if!r}) — it would post a reply even on a "
+                        f"tip-unchanged (nothing to report) round.")
     return failures
 
 
@@ -639,9 +645,11 @@ def run_mutation(label, apply_mutation, steps, root):
 
     if label.startswith("D1"):
         # Simulate 3 legs each running the mutated (dispatching) reply
-        # step, plus dispatch-once's own single dispatch — total must be
-        # caught as "more than one".
-        repo, base_sha, tip_sha = make_repo(
+        # step — a per-leg dispatch must be caught on its own; dispatch-
+        # once's own single call is proven separately (Gate 111 against
+        # the real wing-commander-fold-dispatch composite, plus this
+        # gate's own test_structural() confirming exactly one call site).
+        repo, _base_sha, _tip_sha = make_repo(
             root, 1, [("leg-0", "a"), ("leg-1", "b"), ("leg-2", "c")])
         work = os.path.dirname(repo)
         runner_temp = os.path.join(work, "runner_temp")
@@ -655,17 +663,7 @@ def run_mutation(label, apply_mutation, steps, root):
                       "GITHUB_REPOSITORY": REPO, "GH_CALLS": calls,
                       "GH_LAST_COMMENT": last_comment, "PATH": path},
                      runner_temp)
-        run_step(BASH, mutated[DISPATCH_STEP], repo,
-                 {"GH_TOKEN": "x", "DISPATCH_TOKEN": "x",
-                  "PR_NUMBER": PR_NUMBER, "SPEC_DIR": SPEC_DIR,
-                  "ISSUE": ISSUE, "IMPLEMENT_WORKFLOW": IMPLEMENT_WORKFLOW,
-                  "GITHUB_REPOSITORY": REPO, "BASE_SHA": base_sha,
-                  "TIP_SHA": tip_sha, "GH_CALLS": calls,
-                  "GH_LAST_COMMENT": last_comment,
-                  "GH_RUN_LIST_JSON": '[{"url":"https://example.invalid"}]',
-                  "PATH": path},
-                 runner_temp)
-        return gh_call_count(calls, "workflow run") > 1
+        return gh_call_count(calls, "workflow run") > 0
 
     if label.startswith("job name matched by bare equality"):
         # One clean leg: success conclusion under the prefixed API name,

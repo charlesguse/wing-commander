@@ -228,6 +228,29 @@ def run():
         else:
             print("[ok] a missing section-file is treated the same as an "
                  "empty one")
+
+        # Case 4 (specs/062-lifecycle-review-gate T038): an empty
+        # actor-login (an automated round's own fold -- no human actor)
+        # must add nothing to pending_re_review_from, not an empty string.
+        before4 = len(failures)
+        repo4, remote4, base_sha4, rc4, out4, outputs4 = run_fold(
+            root, script, "## s\n", fold_id="leg-d", summary="s",
+            actor="", initial_re_review=("alice",))
+        if rc4 != 0:
+            failures.append("the shipped step exited {0} with an empty "
+                            "actor-login: {1}".format(rc4, out4))
+        else:
+            if outputs4.get("folded") != "true":
+                failures.append("expected folded=true with an empty "
+                                "actor-login, got {0!r}".format(outputs4.get("folded")))
+            meta4 = json.loads(read(repo4, os.path.join(SPEC_DIR, "spec-meta.json")))
+            if meta4.get("pending_re_review_from") != ["alice"]:
+                failures.append("expected pending_re_review_from to stay "
+                                "[alice] with an empty actor-login, got "
+                                "{0!r}".format(meta4.get("pending_re_review_from")))
+        if len(failures) == before4:
+            print("[ok] an empty actor-login adds nothing to "
+                 "pending_re_review_from")
     finally:
         import shutil
         shutil.rmtree(root, ignore_errors=True)
@@ -252,7 +275,8 @@ def _mutate_always_folds(script):
 def _mutate_overwrites_re_review(script):
     """A regression that OVERWRITES pending_re_review_from instead of
     unioning into it -- must be caught by Case 1's union assertion."""
-    needle = '.pending_re_review_from = (((.pending_re_review_from // []) + [$actor]) | unique)'
+    needle = ('.pending_re_review_from = (((.pending_re_review_from // []) '
+              '+ (if $actor == "" then [] else [$actor] end)) | unique)')
     if script.count(needle) != 1:
         sys.exit("::error::verify-fold-commit-composite --self-test: "
                  "expected one pending_re_review_from assignment; update "

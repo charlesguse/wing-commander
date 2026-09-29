@@ -248,6 +248,17 @@ DECLARED_HOMES = {
     # REVIEW_FINDING_FINGERPRINT_RE keys on the `issue_number` argument name
     # that formula never uses, so the two checks do not collide.
     "review-finding-fingerprint": ".github/scripts/wc_review_finding_fingerprint.py",
+    # specs/062-lifecycle-review-gate T031/T042: the append-tasks.md-
+    # section/flip-stage/union-actor/commit+push fold sequence.
+    # pr-conversation.yml's `act` job (T033) and lifecycle-review-gate.yml's
+    # `disposition` job (T038) are this composite's two callers -- a THIRD,
+    # independent paste of the sequence is what this check catches.
+    "fold-commit": ".github/actions/wing-commander-fold-commit/action.yml",
+    # specs/062-lifecycle-review-gate T034/T042: the re-read-tip/bump-
+    # iteration/dispatch sequence. pr-conversation.yml's `dispatch-once` job
+    # (T036) and lifecycle-review-gate.yml's `disposition` job (T038) are
+    # this composite's two callers.
+    "fold-dispatch": ".github/actions/wing-commander-fold-dispatch/action.yml",
 }
 CHECK_NAMES = tuple(DECLARED_HOMES) + ("promotion",)
 
@@ -283,6 +294,17 @@ POST_REVIEW_COMMENT_RE = re.compile(
 # sha256("{0}|{1}|{2}".format(STAGE, ...)) fingerprint idiom never uses.
 REVIEW_FINDING_FINGERPRINT_RE = re.compile(
     r'hashlib\.sha256\(\s*"\{0\}\|\{1\}\|\{2\}"\.format\(\s*issue_number\b')
+# specs/062-lifecycle-review-gate T031/T042: the actor-tolerant
+# pending_re_review_from union this composite alone performs.
+FOLD_COMMIT_RE = re.compile(
+    r'\.pending_re_review_from\s*=\s*\(\(\(\.pending_re_review_from')
+# specs/062-lifecycle-review-gate T034/T042: fetching the spec branch by
+# name and re-dispatching implement-workflow with a bumped iteration --
+# distinct from every other `git fetch origin "refs/heads/$...` idiom in
+# this repository (branch-advance-capture's own fetch always force-updates
+# with a `+` prefix; this one never does).
+FOLD_DISPATCH_RE = re.compile(
+    r'git fetch --quiet origin "refs/heads/\$\{?SPEC_BRANCH\}?"')
 SIZE_PATH_BACKSTOP_FRAGMENT = r'select(test("^[+-]") and (test("^(\\+\\+\\+|---)") | not))'
 # specs/057-autonomous-board-loop research.md D14: correlating a dispatched
 # run by an attempt-token carried in its own run-name -- never by recency --
@@ -552,6 +574,58 @@ def check_review_finding_fingerprint(root="."):
 
 
 # --------------------------------------------------------------------------
+# Check: fold-commit (per-step, single-fragment)
+# --------------------------------------------------------------------------
+def check_fold_commit(root="."):
+    home = DECLARED_HOMES["fold-commit"]
+    findings = []
+    for path in all_subject_files(root):
+        if path == home:
+            continue
+        doc = load_yaml(root, path)
+        if doc is None:
+            continue
+        text = read(root, path)
+        for _ctx, steps in _step_lists(doc):
+            for step in steps:
+                run = str((step or {}).get("run") or "")
+                if not run:
+                    continue
+                if FOLD_COMMIT_RE.search(run):
+                    offset = text.find(run.splitlines()[0]) if run.splitlines() else 0
+                    findings.append(Finding(
+                        path, "fold-commit", line_of(text, max(offset, 0)),
+                        '.pending_re_review_from = (((.pending_re_review_from ...'))
+    return findings
+
+
+# --------------------------------------------------------------------------
+# Check: fold-dispatch (per-step, single-fragment)
+# --------------------------------------------------------------------------
+def check_fold_dispatch(root="."):
+    home = DECLARED_HOMES["fold-dispatch"]
+    findings = []
+    for path in all_subject_files(root):
+        if path == home:
+            continue
+        doc = load_yaml(root, path)
+        if doc is None:
+            continue
+        text = read(root, path)
+        for _ctx, steps in _step_lists(doc):
+            for step in steps:
+                run = str((step or {}).get("run") or "")
+                if not run:
+                    continue
+                if FOLD_DISPATCH_RE.search(run):
+                    offset = text.find(run.splitlines()[0]) if run.splitlines() else 0
+                    findings.append(Finding(
+                        path, "fold-dispatch", line_of(text, max(offset, 0)),
+                        'git fetch --quiet origin "refs/heads/${SPEC_BRANCH}"'))
+    return findings
+
+
+# --------------------------------------------------------------------------
 # Check: stage-findings (file-wide co-occurrence of the fingerprint formula
 # and the schema-validation call -- research.md D13)
 # --------------------------------------------------------------------------
@@ -804,6 +878,8 @@ ALL_CHECKS = {
     "outstanding-task-item": check_outstanding_task_item,
     "post-review-comment": check_post_review_comment,
     "review-finding-fingerprint": check_review_finding_fingerprint,
+    "fold-commit": check_fold_commit,
+    "fold-dispatch": check_fold_dispatch,
     "stage-findings": check_stage_findings,
     "size-path-backstop": check_size_path_backstop,
     "dispatch-and-wait": check_dispatch_and_wait,
@@ -1185,6 +1261,19 @@ def _clean_tree(root):
           "    return hashlib.sha256(\"{0}|{1}|{2}\".format(\n"
           "        issue_number, norm(title), norm(file_path)\n"
           "    ).encode(\"utf-8\")).hexdigest()\n")
+    _write(root, DECLARED_HOMES["fold-commit"],
+          "runs:\n  using: composite\n  steps:\n"
+          "    - shell: bash\n      run: |\n"
+          "        jq --arg actor \"$ACTOR_LOGIN\" '\n"
+          "          .stage = \"implement\"\n"
+          "          | .pending_re_review_from = (((.pending_re_review_from "
+          "// []) + (if $actor == \"\" then [] else [$actor] end)) | unique)\n"
+          "        ' \"$SPEC_DIR/spec-meta.json\" > /tmp/m.json\n")
+    _write(root, DECLARED_HOMES["fold-dispatch"],
+          "runs:\n  using: composite\n  steps:\n"
+          "    - shell: bash\n      run: |\n"
+          "        git fetch --quiet origin \"refs/heads/${SPEC_BRANCH}\" "
+          "|| true\n")
     _write(root, ".github/workflows/harmless.yml",
           "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
           "      - run: echo hi\n")
@@ -1494,6 +1583,21 @@ def run_selftest():
         "              issue_number, norm(title), norm(file_path)\n"
         "          ).encode(\"utf-8\")).hexdigest()\n"
         "          PYEOF\n")
+    selftest_third_paste_fails(
+        "fold-commit", ".github/workflows/third-fold-commit.yml",
+        "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - shell: bash\n        run: |\n"
+        "          jq --arg actor \"$ACTOR_LOGIN\" '\n"
+        "            .stage = \"implement\"\n"
+        "            | .pending_re_review_from = (((.pending_re_review_from "
+        "// []) + (if $actor == \"\" then [] else [$actor] end)) | unique)\n"
+        "          ' \"$SPEC_DIR/spec-meta.json\" > /tmp/m.json\n")
+    selftest_third_paste_fails(
+        "fold-dispatch", ".github/workflows/third-fold-dispatch.yml",
+        "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - shell: bash\n        run: |\n"
+        "          git fetch --quiet origin \"refs/heads/${SPEC_BRANCH}\" "
+        "|| true\n")
     selftest_waived_copy_passes()
     selftest_stale_waiver_fails()
     selftest_promotion_fails()
