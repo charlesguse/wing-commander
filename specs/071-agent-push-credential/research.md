@@ -275,15 +275,17 @@ what makes "same terms" true structurally rather than by two
 independently-maintained implementations drifting apart, the exact
 failure mode CLAUDE.md's single-home section warns about.
 
-## D10 — FR-020–FR-023: a new gate, renumbered to Gate 120, structural + one behavioural companion
+## D10 — FR-020–FR-023: a new gate, renumbered to Gate 122, structural + one behavioural companion
 
 **Decision**: `.github/scripts/verify-agent-push-credential-helper.py`
-(**Gate 120** — provisionally Gate 99 at plan time, since the highest gate
+(**Gate 122** — provisionally Gate 99 at plan time, since the highest gate
 at plan time was Gate 98; per spec 052's own documented renumbering norm,
 by implement time main had already claimed both 99 and 100 for other
 specs (spec 059, spec 079) and the highest gate in use was Gate 119, so
 this gate was renumbered to 120 the same way spec 052's Gate 68 records
-its own collisions). Static,
+its own collisions; main then claimed 120 too, for another spec's dedup-
+key-rule gate, so it was renumbered a second time to 122, tasks.md T056).
+Static,
 structural checks over the 8 in-scope workflow files:
 
 1. Every job containing an agent step whose allowed-tools include

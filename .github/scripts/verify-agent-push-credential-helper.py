@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gate 120 - every push-capable agent step holds a fresh-mint push credential
+"""Gate 122 - every push-capable agent step holds a fresh-mint push credential
 and, where a later push might rescue it, a deterministic publish step too.
 
 WHY THIS EXISTS
@@ -64,7 +64,7 @@ all) -- contains `Bash(git push:*)`.
 Static structural inspection only (`yaml.safe_load`), the same approach
 Gate 68 already uses for the closest-shaped subject in this repository.
 `bash -n` (a separate, existing PR-time gate) already proves
-mint-credential.sh's syntax; Gate 121 proves its behaviour. Neither is this
+mint-credential.sh's syntax; Gate 123 proves its behaviour. Neither is this
 gate's job.
 
 Usage: python3 .github/scripts/verify-agent-push-credential-helper.py [--self-test]
@@ -522,7 +522,7 @@ def self_test(root="."):
     # check 3 -- duplicate the JWT-signing block into a second file.
     import shutil
     import tempfile
-    tmp = tempfile.mkdtemp(prefix="gate99-jwt-")
+    tmp = tempfile.mkdtemp(prefix="gate122-jwt-")
     try:
         shutil.copytree(root, tmp, dirs_exist_ok=True,
                         ignore=shutil.ignore_patterns(".git"))
@@ -558,10 +558,10 @@ def self_test(root="."):
                         f"not caught: {broke}")
 
     for p in problems:
-        print(f"::error::Gate 120 self-test: {p}")
+        print(f"::error::Gate 122 self-test: {p}")
     if problems:
         return 1
-    print("Gate 120 self-test: clean tree passes; each documented mutation fails.")
+    print("Gate 122 self-test: clean tree passes; each documented mutation fails.")
     return 0
 
 
@@ -570,8 +570,8 @@ def main(argv):
         return self_test()
     failures = scan(load_all())
     for f in failures:
-        print(f"::error::Gate 120: {f}")
-    print(f"Gate 120: agent push-credential helper wiring; {len(failures)} failure(s).")
+        print(f"::error::Gate 122: {f}")
+    print(f"Gate 122: agent push-credential helper wiring; {len(failures)} failure(s).")
     return 1 if failures else 0
 
 

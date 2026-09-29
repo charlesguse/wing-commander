@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""Gate 121 - behavioral proof for mint-credential.sh, Gate 120's shell
+"""Gate 123 - behavioral proof for mint-credential.sh, Gate 122's shell
 companion (contracts/agent-push-credential-gate.md).
 
 WHY THIS EXISTS
 ---------------
-Gate 120 is a static structural check: it proves every push-capable agent
+Gate 122 is a static structural check: it proves every push-capable agent
 step is wired to call `wing-commander-agent-push-credential`, but it never
 executes the shell that composite installs as a `git credential.helper` --
 `mint-credential.sh` (specs/071-agent-push-credential, research.md
 D2/D3/D6). That script signs a GitHub App JWT and exchanges it for an
 installation token entirely in plain shell; its success/failure shape is a
-runtime fact Gate 120's structural inspection cannot see. This gate drives
+runtime fact Gate 122's structural inspection cannot see. This gate drives
 the SHIPPED script directly, the same way Gate 69 already does for the
 credential-relay mechanism.
 
@@ -91,7 +91,7 @@ def gen_key(workdir):
     proc = subprocess.run(["openssl", "genrsa", "-out", key_path, "2048"],
                           capture_output=True, text=True)
     if proc.returncode != 0:
-        sys.exit(f"::error::Gate 121: could not generate a throwaway test "
+        sys.exit(f"::error::Gate 123: could not generate a throwaway test "
                  f"RSA key -- {proc.stderr}")
     return key_path
 
@@ -205,14 +205,14 @@ def main(argv):
     use_utf8_stdout()
     BASH = resolve_bash()
     if not shutil.which("openssl"):
-        sys.exit("::error::Gate 121: openssl is not on PATH -- the shipped "
+        sys.exit("::error::Gate 123: openssl is not on PATH -- the shipped "
                  "script under test signs its JWT with it, so nothing here "
                  "can run without it.")
 
     if "--self-test" in argv:
         return self_test()
 
-    root = tempfile.mkdtemp(prefix="gate121-")
+    root = tempfile.mkdtemp(prefix="gate123-")
     try:
         failures = (check_successful_mint(root)
                     + check_mint_failure_401(root)
@@ -221,8 +221,8 @@ def main(argv):
         shutil.rmtree(root, ignore_errors=True)
 
     for f in failures:
-        print(f"::error::Gate 121: {f}")
-    print(f"Gate 121: mint-credential.sh behavior; {len(failures)} failure(s).")
+        print(f"::error::Gate 123: {f}")
+    print(f"Gate 123: mint-credential.sh behavior; {len(failures)} failure(s).")
     return 1 if failures else 0
 
 
@@ -235,7 +235,7 @@ def mut_ignore_mint_status():
         'case "$token_status" in\n  2??) ;;\n  *) fail "token-mint-failed" ;;\nesac\n',
         '')
     if mutated == script:
-        sys.exit("::error::Gate 121 self-test: mut_ignore_mint_status "
+        sys.exit("::error::Gate 123 self-test: mut_ignore_mint_status "
                  "changed nothing -- the shipped script's text was "
                  "rewritten; update the mutation to match.")
     return mutated
@@ -258,7 +258,7 @@ def mut_no_key_check():
         'if [ -z "$signature_b64" ]; then\n  fail "key-unreadable"\nfi\n',
         '')
     if mutated == script:
-        sys.exit("::error::Gate 121 self-test: mut_no_key_check changed "
+        sys.exit("::error::Gate 123 self-test: mut_no_key_check changed "
                  "nothing -- the shipped script's text was rewritten; "
                  "update the mutation to match.")
     return mutated
@@ -266,7 +266,7 @@ def mut_no_key_check():
 
 def self_test():
     problems = []
-    root = tempfile.mkdtemp(prefix="gate121-selftest-")
+    root = tempfile.mkdtemp(prefix="gate123-selftest-")
     try:
         clean = (check_successful_mint(root)
                  + check_mint_failure_401(root)
@@ -298,10 +298,10 @@ def self_test():
         shutil.rmtree(root, ignore_errors=True)
 
     for p in problems:
-        print(f"::error::Gate 121 self-test: {p}")
+        print(f"::error::Gate 123 self-test: {p}")
     if problems:
         return 1
-    print("Gate 121 self-test: clean shipped script passes; each mutation fails.")
+    print("Gate 123 self-test: clean shipped script passes; each mutation fails.")
     return 0
 
 

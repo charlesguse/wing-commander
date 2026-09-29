@@ -1,4 +1,4 @@
-# Contract: Gate 120 — `verify-agent-push-credential-helper.py`, and Gate 121 — `verify-agent-push-credential-shell.py`
+# Contract: Gate 122 — `verify-agent-push-credential-helper.py`, and Gate 123 — `verify-agent-push-credential-shell.py`
 
 **Files**: `.github/scripts/verify-agent-push-credential-helper.py` and
 `.github/scripts/verify-agent-push-credential-shell.py`, both wired into
@@ -14,10 +14,14 @@ norm (Gate 68's contract). By implement time, main had already claimed
 both numbers for other specs (Gate 99: spec 059's
 `verify-tasks-checkbox-convergence-signal.py`; Gate 100: spec 079's
 `verify-stage-turn-budget-docs.py`), and the highest gate actually in use
-was Gate 119, so this pair was renumbered to **Gate 120** and **Gate
-121**.
+was Gate 119, so this pair was renumbered to Gate 120 and Gate 121. Main
+then claimed those two numbers as well, for other specs (Gate 120:
+`verify-dedup-key-canonical-rule.py`; Gate 121:
+`verify-commit-message-scratch-path.py`), before this branch's own rebase
+landed either time, so this pair was renumbered a second time to **Gate
+122** and **Gate 123** (tasks.md T056).
 
-## Gate 120 — structural
+## Gate 122 — structural
 
 ### Subject
 
@@ -71,7 +75,7 @@ locates an agent step already keys on) AND whose composed allowed-tools
 Static structural inspection via `yaml.safe_load` over each of the 8
 files, the same approach Gate 68 already uses for the closest-shaped
 subject in this repository. `bash -n` (an existing, separate PR-time gate)
-already proves `mint-credential.sh`'s syntax; Gate 120 does not re-check
+already proves `mint-credential.sh`'s syntax; Gate 122 does not re-check
 shell syntax.
 
 ### Fixtures (FR-022, applied to a `copy.deepcopy` of the real parsed
@@ -88,7 +92,7 @@ in sync)
 | Point the subject list at a 9th, nonexistent workflow file | FAIL — "could not reach subject" (check 5) |
 | Point the subject list at zero workflow files | FAIL — same, empty-result guard (check 5) |
 
-## Gate 121 — behavioural companion
+## Gate 123 — behavioural companion
 
 Drives `mint-credential.sh` directly via `wc_shell_harness.py` (the same
 harness spec 052's Gate 69 already established for exercising a

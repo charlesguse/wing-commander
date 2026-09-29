@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Single home for the GitHub App JWT sign + installation-token mint this
 # feature adds (specs/071-agent-push-credential, research.md D2/D3/D6).
-# Never referenced from outside this composite's own directory -- Gate 120
+# Never referenced from outside this composite's own directory -- Gate 122
 # check 3 depends on that, and no second copy of this JWT-construction
 # shape may exist anywhere else in this repository.
 #

@@ -61,7 +61,7 @@ only when there is something to report" convention
 `wing-commander-post-agent-credential-status`'s own `ok=false` warning
 already established.
 
-## What Gate 120 checks here
+## What Gate 122 checks here
 
 That every job containing a push-capable agent step has exactly one call
 to this composite positioned immediately alongside (same `if:` shape as)
