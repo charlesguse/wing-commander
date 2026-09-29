@@ -17,10 +17,17 @@ window").
 
 2. **`select`** — lists open PRs, filters to `spec-meta.json.stage ==
    "review"` (D2), keeps those whose `review_gate.head_sha` (if any)
-   differs from the PR's current `headRefOid`, picks the oldest. Outputs
-   `pr-number`, `issue`, `spec-dir`, `head-sha`, or nothing (clean exit,
-   the common case — SC-009's "at most one round per SHA" starts here,
-   before any billable step runs).
+   differs from the PR's current `headRefOid` peeled back past this
+   gate's own trailing "review-gate: round ..." recording commit(s)
+   (`wc_review_gate_settled_head.settled_head`, T069 — without the peel,
+   `disposition`'s own round-recording push would make every reviewed PR
+   qualify again on the very next run, forever), picks the oldest.
+   Outputs `pr-number`, `issue`, `spec-dir`, `head-sha` (the PR's raw
+   current head), `review-gate-head-sha` (the RECORDED value read off
+   spec-meta.json, threaded through for `readiness` to compare against
+   its own fresh snapshot rather than comparing `head-sha` against
+   itself), or nothing (clean exit, the common case — SC-009's "at most
+   one round per SHA" starts here, before any billable step runs).
 
 3. **`readiness`** — calls `lifecycle_readiness.py` (contracts/readiness-
    and-merge.md) against `select`'s `head-sha`. `ready: false` → posts
@@ -43,7 +50,11 @@ window").
    (contracts/fold-integration.md). Writes the round's outcome to
    `spec-meta.json.review_gate` (data-model.md §1) in the same commit
    `wing-commander-fold-commit` produces, or in its own commit when the
-   round is clean.
+   round is clean. T070/FR-013/FR-020: "clean" here means zero open
+   IN-SCOPE survivors after dedup — a round whose only survivors are
+   out-of-scope (still filed above) records `outcome: "clean"` and gets
+   the same passing status as a round with no findings at all, never a
+   round whose raw counts alone were nonzero.
 
 6. **`report`** — posts the round's outcome to the lifecycle issue: round
    number, head SHA, finding count, result (FR-015), and the cost line

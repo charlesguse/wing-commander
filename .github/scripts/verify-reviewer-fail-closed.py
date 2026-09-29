@@ -71,9 +71,20 @@ another finding's dedupe marker does not stop it being filed, run through
 wing-commander-durable-failure-issue's real step against a stub gh. One
 mutation per fix must be caught.
 
+T071 (specs/062-lifecycle-review-gate, FR-037/SC-008): this gate is also
+the established home for lifecycle-review-gate.yml's own two unexercised
+failure branches -- its "Extract and validate the review findings" step
+(the same fail-closed shape as board-loop.yml's own step above, ported by
+T021) and `disposition`'s "Partition, dedup, and render this round's
+findings" step's round-budget short-circuit (which must write
+`outcome: budget-exhausted` and return BEFORE reading the findings
+artifact at all). Extended here rather than a second gate script
+(CLAUDE.md's shared-logic rule; no new gate number registered, per T071).
+
 Usage: python3 .github/scripts/verify-reviewer-fail-closed.py
 Requires: bash. See wc_shell_harness.py for running this on Windows.
 """
+import json
 import os
 import re
 import shutil
@@ -89,6 +100,12 @@ EXTRACT_STEP = "Extract and validate the review findings"
 ROUND_STEP = "Decide the round outcome"
 COMPOSE_STEP = "Compose the review body"
 BASH = None
+
+# T071: lifecycle-review-gate.yml's own extract step and disposition's
+# budget short-circuit.
+LIFECYCLE_WORKFLOW = os.path.join(".github", "workflows", "lifecycle-review-gate.yml")
+LIFECYCLE_EXTRACT_STEP = "Extract and validate the review findings"
+LIFECYCLE_PARTITION_STEP = "Partition, dedup, and render this round's findings"
 
 SHARED_SCRIPTS = ("wc_fence_extract.py", "verify-board-review-finding-schema.py",
                   "wc_schema_pattern.py", "board_spec_request_body.py")
@@ -1113,6 +1130,206 @@ def check_review_finding_fingerprint_helper(path=FINGERPRINT_HELPER_PATH):
     return failures
 
 
+# --- T071: lifecycle-review-gate.yml's own extract step ------------------
+#
+# The same fail-closed shape Gate 95 already proves for board-loop.yml's
+# extract step (missing transcript / non-healthy verdict / every finding
+# malformed -> parse-failed=true, never read as "zero findings"), run here
+# against lifecycle-review-gate.yml's own port of that step. Its output
+# shape differs (in-scope-count/out-of-scope-count/dropped-count/
+# parse-failed -- no "outcome", which this workflow decides later, in
+# disposition, not in this step), so this reuses `_fenced_transcript()`
+# (both workflows fence on the identical "wing-commander-review-findings"
+# name) but not board-loop's own run_pipeline()/SCENARIOS shape.
+
+LIFECYCLE_EXTRACT_SCENARIOS = [
+    ("missing transcript file", dict(transcript=None, review_verdict="healthy"), "true"),
+    ("non-healthy agent verdict",
+     dict(transcript=_fenced_transcript("[]"), review_verdict="rate_limited"), "true"),
+    ("every extracted finding malformed",
+     dict(transcript=_fenced_transcript('[{"not": "a valid finding"}]'), review_verdict="healthy"),
+     "true"),
+    ("control: genuinely zero findings, healthy verdict",
+     dict(transcript=_fenced_transcript("[]"), review_verdict="healthy"), "false"),
+]
+
+
+def run_lifecycle_extract(script, tmproot, transcript=None, review_verdict="healthy"):
+    """lifecycle-review-gate.yml's "Extract and validate the review
+    findings" step alone -- its pristine-snapshot import shape
+    (RUNNER_TEMP/wc-pristine/scripts) is identical to board-loop.yml's own
+    step, so this reuses prepare_workdir()/stage_pristine() unchanged."""
+    workdir, runner_temp = prepare_workdir(tmproot)
+    try:
+        if transcript is not None:
+            with open(os.path.join(runner_temp, "claude-execution-output.json"),
+                      "w", encoding="utf-8") as fh:
+                fh.write(transcript)
+        rc, out, outputs, _ = run_step(
+            BASH, script, workdir, {"REVIEW_VERDICT": review_verdict}, runner_temp)
+        return outputs, (None if rc == 0 else "step exited {0}: {1}".format(rc, out))
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
+        shutil.rmtree(runner_temp, ignore_errors=True)
+
+
+def check_lifecycle_extract(extract_script, tmproot):
+    failures = []
+    for name, kwargs, want_parse_failed in LIFECYCLE_EXTRACT_SCENARIOS:
+        outputs, err = run_lifecycle_extract(extract_script, tmproot, **kwargs)
+        label = "lifecycle extract: {0}".format(name)
+        if err:
+            failures.append("{0}: {1}".format(label, err))
+            continue
+        if outputs.get("parse-failed") != want_parse_failed:
+            failures.append("{0}: parse-failed={1!r}, expected {2!r}".format(
+                label, outputs.get("parse-failed"), want_parse_failed))
+        else:
+            print("[ok] #T071 {0}: parse-failed={1!r}".format(label, outputs.get("parse-failed")))
+    return failures
+
+
+LIFECYCLE_EXTRACT_MISSING_ELSE_RE = re.compile(
+    r"else:\n"
+    r"(?:[ \t]*#[^\n]*\n)*"
+    r'[ \t]*print\("::warning::lifecycle-review-gate reviewer: '
+    r'claude-execution-output\.json does not exist[^\n]*"\)\n'
+    r"[ \t]*parse_failed = True\n")
+
+
+def check_lifecycle_extract_mutation(extract_script, tmproot):
+    """The #499-round-4-shaped regression, put back on lifecycle-review-
+    gate.yml's own port of the fix: the missing-file branch stops setting
+    parse_failed. Must be caught."""
+    new_script, n = LIFECYCLE_EXTRACT_MISSING_ELSE_RE.subn(
+        "else:\n    pass\n", extract_script, count=1)
+    if n != 1:
+        return ["lifecycle extract mutation: expected exactly one match for "
+                "the missing-file branch in {0}, found {1} -- the step text "
+                "may have changed shape; update this harness alongside it.".format(
+                    LIFECYCLE_WORKFLOW, n)]
+    outputs, err = run_lifecycle_extract(new_script, tmproot, transcript=None,
+                                         review_verdict="healthy")
+    if err:
+        return ["lifecycle extract mutation: the mutated step errored instead "
+                "of demonstrating the regression: {0}".format(err)]
+    if outputs.get("parse-failed") == "true":
+        return ["mutation 'lifecycle extract missing-file branch stops setting "
+                "parse_failed' was NOT caught"]
+    print("note: mutation 'lifecycle extract missing-file branch stops setting "
+          "parse_failed' confirmed caught (parse-failed={0!r}).".format(
+              outputs.get("parse-failed")))
+    return []
+
+
+# --- T071: disposition's round-budget short-circuit -----------------------
+#
+# SC-008/FR-037: the budget-exhaustion branch must write
+# `outcome: budget-exhausted` and return BEFORE reading the findings
+# artifact -- proven by never staging that artifact file at all and still
+# expecting the step to succeed.
+
+LIFECYCLE_ISSUE = "42"
+LIFECYCLE_PR = "7"
+LIFECYCLE_HEAD_SHA = "deadbeef0000"
+LIFECYCLE_SPEC_DIR_REL = os.path.join("specs", "062-fixture")
+
+
+def _lifecycle_partition_workdir(tmproot, review_gate):
+    """A workdir with SPEC_DIR/spec-meta.json carrying `review_gate`, and
+    .github/scripts/wc_review_finding_fingerprint.py present -- the
+    partition step imports it relative to its own cwd (`disposition` is a
+    deterministic job with no agent step before it, so -- unlike `review`
+    -- it trusts its own checkout's .github/scripts directly, never a
+    pristine snapshot)."""
+    workdir = tempfile.mkdtemp(dir=tmproot)
+    runner_temp = tempfile.mkdtemp(dir=tmproot)
+    scripts_dir = os.path.join(workdir, ".github", "scripts")
+    os.makedirs(scripts_dir, exist_ok=True)
+    shutil.copyfile(
+        os.path.join(".github", "scripts", "wc_review_finding_fingerprint.py"),
+        os.path.join(scripts_dir, "wc_review_finding_fingerprint.py"))
+    spec_dir = os.path.join(workdir, LIFECYCLE_SPEC_DIR_REL)
+    os.makedirs(spec_dir, exist_ok=True)
+    with open(os.path.join(spec_dir, "spec-meta.json"), "w", encoding="utf-8") as fh:
+        json.dump({"spec_dir": LIFECYCLE_SPEC_DIR_REL.replace(os.sep, "/"),
+                   "review_gate": review_gate}, fh)
+    return workdir, runner_temp
+
+
+def _lifecycle_partition_env(round_budget="5"):
+    return {"SPEC_DIR": LIFECYCLE_SPEC_DIR_REL, "ISSUE": LIFECYCLE_ISSUE,
+           "PR_NUMBER": LIFECYCLE_PR, "HEAD_SHA": LIFECYCLE_HEAD_SHA,
+           "ROUND_BUDGET": round_budget}
+
+
+EXHAUSTED_REVIEW_GATE = {"round": 5, "head_sha": "old", "outcome": "findings",
+                         "findings_open": 2, "folded_fingerprints": ["a"],
+                         "filed_fingerprints": ["b"], "updated_at": None}
+
+
+def check_lifecycle_budget_exhaustion(partition_script, tmproot):
+    workdir, runner_temp = _lifecycle_partition_workdir(tmproot, EXHAUSTED_REVIEW_GATE)
+    try:
+        rc, out, outputs, _ = run_step(
+            BASH, partition_script, workdir, _lifecycle_partition_env(), runner_temp)
+        if rc != 0:
+            return ["lifecycle budget-exhaustion: step exited {0}: {1} (must "
+                    "succeed WITHOUT the findings artifact ever staged -- "
+                    "proving it returns before reading it)".format(rc, out)]
+        failures = []
+        if outputs.get("outcome") != "budget-exhausted":
+            failures.append("lifecycle budget-exhaustion: outcome={0!r}, "
+                            "expected 'budget-exhausted'".format(outputs.get("outcome")))
+        with open(os.path.join(workdir, LIFECYCLE_SPEC_DIR_REL, "spec-meta.json"),
+                  encoding="utf-8") as fh:
+            meta = json.load(fh)
+        written = meta.get("review_gate") or {}
+        if written.get("outcome") != "budget-exhausted":
+            failures.append("lifecycle budget-exhaustion: spec-meta.json's own "
+                            "review_gate.outcome={0!r}, expected "
+                            "'budget-exhausted'".format(written.get("outcome")))
+        if written.get("findings_open") != 2:
+            failures.append("lifecycle budget-exhaustion: findings_open was not "
+                            "carried over unchanged (got {0!r}, expected 2)".format(
+                                written.get("findings_open")))
+        if not failures:
+            print("[ok] #T071 lifecycle budget-exhaustion: outcome=budget-exhausted, "
+                  "findings_open carried over, findings artifact never read")
+        return failures
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
+        shutil.rmtree(runner_temp, ignore_errors=True)
+
+
+LIFECYCLE_BUDGET_TEST = "if round_ > budget:\n"
+
+
+def check_lifecycle_budget_exhaustion_mutation(partition_script, tmproot):
+    """The budget short-circuit removed: the step then falls through to
+    reading the findings artifact, which (deliberately never staged) makes
+    it error out instead of succeeding -- proving this check would catch
+    the short-circuit being silently dropped."""
+    if partition_script.count(LIFECYCLE_BUDGET_TEST) != 1:
+        return ["lifecycle budget-exhaustion mutation: expected one {0!r} in "
+                "the partition step; update this harness.".format(LIFECYCLE_BUDGET_TEST)]
+    mutated = partition_script.replace(LIFECYCLE_BUDGET_TEST, "if False:\n", 1)
+    workdir, runner_temp = _lifecycle_partition_workdir(tmproot, EXHAUSTED_REVIEW_GATE)
+    try:
+        rc, out, outputs, _ = run_step(
+            BASH, mutated, workdir, _lifecycle_partition_env(), runner_temp)
+        if rc == 0 and outputs.get("outcome") == "budget-exhausted":
+            return ["mutation 'lifecycle budget-exhaustion short-circuit "
+                    "removed' was NOT caught"]
+        print("note: mutation 'lifecycle budget-exhaustion short-circuit "
+              "removed' confirmed caught (rc={0}, outcome={1!r}).".format(
+                  rc, outputs.get("outcome")))
+        return []
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
+        shutil.rmtree(runner_temp, ignore_errors=True)
+
+
 def _mut_once(script, old, new, what):
     if script.count(old) != 1:
         sys.exit("::error::verify-reviewer-fail-closed: expected one {0} in its step; "
@@ -1219,6 +1436,21 @@ def main():
     file_script = str(find_step(DURABLE_ISSUE_ACTION, DURABLE_ISSUE_STEP)["run"])
     ensure_jq()
 
+    if not os.path.isfile(LIFECYCLE_WORKFLOW):
+        sys.exit(f"::error::run this from the repository root; {LIFECYCLE_WORKFLOW} not found.")
+    lifecycle_extract_step = find_step(LIFECYCLE_WORKFLOW, LIFECYCLE_EXTRACT_STEP)
+    lifecycle_partition_step = find_step(LIFECYCLE_WORKFLOW, LIFECYCLE_PARTITION_STEP)
+    for step_name, step in ((LIFECYCLE_EXTRACT_STEP, lifecycle_extract_step),
+                            (LIFECYCLE_PARTITION_STEP, lifecycle_partition_step)):
+        if step is None:
+            sys.exit(f"::error file={LIFECYCLE_WORKFLOW}::step {step_name!r} not found.")
+        if "${{" in str(step["run"]):
+            sys.exit(f"::error file={LIFECYCLE_WORKFLOW}::step {step_name!r}'s run: "
+                     f"block contains a ${{{{ }}}} expression this harness "
+                     f"does not resolve.")
+    lifecycle_extract_script = str(lifecycle_extract_step["run"])
+    lifecycle_partition_script = str(lifecycle_partition_step["run"])
+
     tmproot = tempfile.mkdtemp()
     try:
         failures = check_scenarios(extract_script, round_script, compose_script, tmproot)
@@ -1229,6 +1461,10 @@ def main():
         failures += check_review_body_cap_mutation(compose_script, tmproot)
         failures += check_583(extract_script, round_script, compose_script,
                               fence_scripts["oos"], file_script, tmproot)
+        failures += check_lifecycle_extract(lifecycle_extract_script, tmproot)
+        failures += check_lifecycle_extract_mutation(lifecycle_extract_script, tmproot)
+        failures += check_lifecycle_budget_exhaustion(lifecycle_partition_script, tmproot)
+        failures += check_lifecycle_budget_exhaustion_mutation(lifecycle_partition_script, tmproot)
     finally:
         shutil.rmtree(tmproot, ignore_errors=True)
 

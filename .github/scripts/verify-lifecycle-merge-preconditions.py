@@ -37,6 +37,7 @@ FIXTURES_DIR = os.path.join(
 EXPECTED_CASES = {
     "round-not-clean", "unresolved-human-review",
     "head-sha-moved-since-round", "all-clear",
+    "clean-round-own-commit-advanced-head",
 }
 
 
@@ -75,7 +76,8 @@ def run():
         got = evaluate_from_snapshot(
             spec["snapshot"], spec.get("review_gate"),
             spec["kill_switch_paused"], spec.get("reviews") or [],
-            spec.get("bot_login") or "")
+            spec.get("bot_login") or "",
+            settled_head_sha=spec.get("settled_head_sha"))
         expected = spec["expected"]
 
         ok = (got["may_merge"] == expected["may_merge"]
@@ -191,6 +193,23 @@ def self_test():
         _clear_snapshot(), _clear_gate(), True, [], "bot")
     check("kill-switch-stops-the-merge",
           got["unmet_reason"] == "kill_switch_clear", "got {0!r}".format(got))
+
+    # T069: disposition's own round-recording commit advances the PR's raw
+    # head past the SHA it reviewed -- without a peeled settled_head_sha,
+    # this would wrongly refuse every merge of an otherwise-clean round.
+    got = evaluate_from_snapshot(
+        dict(_clear_snapshot(), headRefOid="post-recording-commit-sha"),
+        _clear_gate(), False, [], "bot", settled_head_sha="aaaa111")
+    check("settled-head-recognises-own-recording-commit",
+          got["may_merge"] is True, "got {0!r}".format(got))
+    # Without settled_head_sha (the default), the same raw head is compared
+    # directly -- proving the fixture above is exercising the real fix, not
+    # a fixture that would have passed anyway.
+    got = evaluate_from_snapshot(
+        dict(_clear_snapshot(), headRefOid="post-recording-commit-sha"),
+        _clear_gate(), False, [], "bot")
+    check("no-settled-head-refuses-on-the-raw-moved-head",
+          got["unmet_reason"] == "reviewed_at_this_head", "got {0!r}".format(got))
 
     print("{0} failure(s).".format(failures))
     return 1 if failures else 0

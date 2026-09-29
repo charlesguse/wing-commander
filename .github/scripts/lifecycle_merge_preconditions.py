@@ -31,6 +31,23 @@ the inversion of readiness's `not_yet_reviewed` -- and the contract's
 condition 6 keeps only its outcome half (`round_clean`). The other four
 readiness conditions are taken verbatim from lifecycle_readiness.py's own
 decision, never re-derived here.
+
+`reviewed_at_this_head` AND THE GATE'S OWN RECORDING COMMIT (T069)
+--------------------------------------------------------------
+`disposition`'s round-recording commit necessarily advances the PR's real
+head past the SHA it just wrote into `review_gate.head_sha` (a commit
+cannot name its own resulting SHA inside its own content). Comparing
+`review_gate.head_sha` against the RAW fresh `headRefOid` would therefore
+refuse every merge of a round that already came back clean -- the branch
+would always look "not yet reviewed at this exact head" even though
+nothing but this gate's own bookkeeping changed. `evaluate()` peels the
+fresh head back past this gate's own trailing "review-gate: round ..."
+commits first (`wc_review_gate_settled_head.settled_head`, T069's single
+home, shared with `select`'s own bash use of the same script) and compares
+`review_gate.head_sha` against THAT settled value instead. `head_sha` in
+the returned decision (used for `--match-head-commit`) stays the RAW,
+unpeeled head -- the merge must still target the branch's actual current
+tip.
 """
 import json
 import os
@@ -39,6 +56,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from lifecycle_readiness import evaluate_from_snapshot as _readiness  # noqa: E402
+from wc_review_gate_settled_head import settled_head as _settled_head  # noqa: E402
 
 # In the order unmet_reason names them (contracts/readiness-and-merge.md
 # "Conditions"; data-model.md §5).
@@ -80,17 +98,23 @@ def _no_unresolved_human_review(reviews, bot_login):
 
 
 def evaluate_from_snapshot(snapshot, review_gate, kill_switch_paused,
-                           reviews, bot_login):
+                           reviews, bot_login, settled_head_sha=None):
     """snapshot: the `gh pr view --json
     headRefOid,statusCheckRollup,mergeable,mergeStateStatus` shape, fetched
     fresh by the caller. review_gate: the spec-meta.json review_gate object
     (or None/{} before any round has run). reviews: the `gh pr view --json
     reviews` list. bot_login: this App's own bot identity login, whose
-    reviews never block its own merge. Returns the MergePreconditions dict
-    (data-model.md §5), eight conditions evaluated in order, unmet_reason
-    naming the first failing condition's own name."""
+    reviews never block its own merge. settled_head_sha: the fresh head,
+    peeled back past this gate's own trailing recording commit(s) (T069) --
+    defaults to the raw `snapshot["headRefOid"]` when not given (every
+    existing fixture's behavior, unchanged). Returns the
+    MergePreconditions dict (data-model.md §5), eight conditions evaluated
+    in order, unmet_reason naming the first failing condition's own
+    name."""
     head_sha = snapshot.get("headRefOid")
     review_gate = review_gate or {}
+    if settled_head_sha is None:
+        settled_head_sha = head_sha
 
     readiness = _readiness(snapshot, review_gate, kill_switch_paused)
 
@@ -99,8 +123,10 @@ def evaluate_from_snapshot(snapshot, review_gate, kill_switch_paused,
         "gate_suite_green": readiness["gate_suite_green"],
         "mergeable": readiness["mergeable"],
         # The merge-context polarity of readiness condition 4 -- see this
-        # module's own docstring for why it is inverted here.
-        "reviewed_at_this_head": not readiness["not_yet_reviewed"],
+        # module's own docstring for why it is inverted here, and for why
+        # this compares the SETTLED head, not readiness's own
+        # not_yet_reviewed (which is always computed against the raw head).
+        "reviewed_at_this_head": review_gate.get("head_sha") == settled_head_sha,
         "kill_switch_clear": readiness["kill_switch_clear"],
         "round_clean": review_gate.get("outcome") == "clean",
         "no_open_findings": review_gate.get("findings_open") == 0,
@@ -125,7 +151,10 @@ def evaluate_from_snapshot(snapshot, review_gate, kill_switch_paused,
 def evaluate(pr_number, review_gate, kill_switch_paused, bot_login):
     """Runtime entry point: both `gh pr view` reads happen here, fresh at
     this exact moment, never a value an earlier step or an earlier job
-    captured (FR-026)."""
+    captured (FR-026). Peels the fresh head back past this gate's own
+    trailing recording commit(s) (T069) using the LOCAL git checkout the
+    caller already has in its working directory (the `merge` job checks
+    out the PR's own head ref before calling this)."""
     proc = subprocess.run(
         ["gh", "pr", "view", str(pr_number), "--json",
          "headRefOid,statusCheckRollup,mergeable,mergeStateStatus"],
@@ -135,8 +164,9 @@ def evaluate(pr_number, review_gate, kill_switch_paused, bot_login):
         ["gh", "pr", "view", str(pr_number), "--json", "reviews"],
         capture_output=True, text=True, check=True)
     reviews = json.loads(proc.stdout).get("reviews") or []
+    settled = _settled_head(snapshot.get("headRefOid"))
     return evaluate_from_snapshot(snapshot, review_gate, kill_switch_paused,
-                                  reviews, bot_login)
+                                  reviews, bot_login, settled_head_sha=settled)
 
 
 def main():

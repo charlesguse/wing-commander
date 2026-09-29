@@ -1,0 +1,15 @@
+{
+  "snapshot": {
+    "headRefOid": "dddd444",
+    "statusCheckRollup": [
+      {"name": "lint", "workflowName": "lint · workflows", "status": "COMPLETED", "conclusion": "SUCCESS"}
+    ],
+    "mergeable": "MERGEABLE"
+  },
+  "review_gate": {"round": 1, "head_sha": "aaaa111", "outcome": "clean", "findings_open": 0, "folded_fingerprints": [], "filed_fingerprints": [], "updated_at": "2026-09-01T00:00:00Z"},
+  "settled_head_sha": "aaaa111",
+  "kill_switch_paused": false,
+  "reviews": [],
+  "bot_login": "wing-commander-bot",
+  "expected": {"may_merge": true, "unmet_reason": null}
+}

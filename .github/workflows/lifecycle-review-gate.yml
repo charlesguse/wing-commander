@@ -72,6 +72,14 @@ jobs:
       issue: ${{ steps.select.outputs.issue }}
       spec-dir: ${{ steps.select.outputs.spec-dir }}
       head-sha: ${{ steps.select.outputs.head-sha }}
+      # T068: the RECORDED review_gate.head_sha (spec-meta.json's own
+      # value, read via read-spec-meta.sh in this same step) -- threaded
+      # through rather than re-read a second time in `readiness` (Gate 61's
+      # single home). `readiness` compares its own fresh headRefOid against
+      # THIS value, never against `head-sha` above (which is the PR's
+      # current head -- comparing a value against itself always reads
+      # "already reviewed").
+      review-gate-head-sha: ${{ steps.select.outputs.review-gate-head-sha }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -105,6 +113,7 @@ jobs:
           best_issue=""
           best_spec_dir=""
           best_head_sha=""
+          best_review_gate_head_sha=""
           best_created=""
 
           mapfile -t prs < <(gh pr list --state open \
@@ -129,13 +138,25 @@ jobs:
             [ "$meta_found" = "true" ] || continue
             [ "$meta_identity_ok" = "true" ] || continue
             [ "$meta_stage" = "review" ] || continue
-            [ "$meta_review_gate_head_sha" != "$head_sha" ] || continue
+
+            # T069: a head that differs from the recorded round only by
+            # THIS gate's own trailing "review-gate: round ..." recording
+            # commit(s) is not new content to review -- peel those off
+            # before comparing (wc_review_gate_settled_head.py), so
+            # disposition's own round-recording push never makes select
+            # pick this PR back up on the very next run (SC-009's "at most
+            # one round per distinct reviewed head SHA"). The commit
+            # objects are already local: read-spec-meta.sh just fetched
+            # this exact branch.
+            settled_sha="$(python3 .github/scripts/wc_review_gate_settled_head.py "$head_sha")"
+            [ "$meta_review_gate_head_sha" != "$settled_sha" ] || continue
 
             if [ -z "$best_created" ] || [[ "$created" < "$best_created" ]]; then
               best_number="$number"
               best_issue="$meta_issue"
               best_spec_dir="specs/$slug"
               best_head_sha="$head_sha"
+              best_review_gate_head_sha="$meta_review_gate_head_sha"
               best_created="$created"
             fi
           done
@@ -151,6 +172,7 @@ jobs:
             echo "issue=$best_issue"
             echo "spec-dir=$best_spec_dir"
             echo "head-sha=$best_head_sha"
+            echo "review-gate-head-sha=$best_review_gate_head_sha"
           } >> "$GITHUB_OUTPUT"
 
   # contracts/lifecycle-review-gate-workflow.md job 3: calls
@@ -196,7 +218,16 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           PR_NUMBER: ${{ needs.select.outputs.pr-number }}
-          HEAD_SHA: ${{ needs.select.outputs.head-sha }}
+          # T068: the RECORDED review_gate.head_sha (select's own
+          # `review-gate-head-sha` output, read off spec-meta.json) --
+          # compared below against a FRESH `gh pr view` snapshot's own
+          # headRefOid. Passing select's `head-sha` (the PR's current head)
+          # here instead, as this step originally did, compares that value
+          # against itself: not_yet_reviewed would read false on every
+          # run where the head has not moved since select ran -- the
+          # normal case -- so the gate would stand down on every PR it
+          # ever selects (#476, this cycle's convergence finding).
+          REVIEW_GATE_HEAD_SHA: ${{ needs.select.outputs.review-gate-head-sha }}
           # T059/FR-006: the kill switch, re-read HERE rather than assumed
           # clear. The job-level `if:` on `select` only decides whether this
           # run starts at all; a step-level `vars.` expression is resolved
@@ -212,12 +243,13 @@ jobs:
           snapshot="$(gh pr view "$PR_NUMBER" --json headRefOid,statusCheckRollup,mergeable,mergeStateStatus)"
           paused=false
           [ "${KILL_SWITCH_PAUSED:-}" = "true" ] && paused=true
-          # T006: only head_sha is a condition lifecycle_readiness.py
+          # T006/T068: only head_sha is a condition lifecycle_readiness.py
           # reads (round/outcome/findings_open are US2/US4 concerns, not
-          # yet wired up) -- select's own filter already guarantees this
-          # differs from the PR's current head, so ready:false here (if it
-          # happens at all) is a defensive re-check, not the common path.
-          payload="$(jq -n --argjson snapshot "$snapshot" --arg head_sha "$HEAD_SHA" \
+          # yet wired up) -- select's own filter already guarantees the
+          # RECORDED value differs from the PR's current (settled) head,
+          # so ready:false here (if it happens at all) is a defensive
+          # re-check, not the common path.
+          payload="$(jq -n --argjson snapshot "$snapshot" --arg head_sha "$REVIEW_GATE_HEAD_SHA" \
             --argjson paused "$paused" \
             '{snapshot: $snapshot, review_gate: {head_sha: $head_sha}, kill_switch_paused: $paused}')"
 
@@ -851,10 +883,13 @@ jobs:
             -f context="lifecycle-review-gate" \
             -f description="Round $ROUND: clean -- no in-scope findings." >/dev/null
 
-      # T037/data-model.md §1/research.md D11: the not-clean path. Runs
-      # whenever the reviewer reported at least one finding (in-scope or
-      # out-of-scope) -- mutually exclusive with "Record the clean round"
-      # above via its own `if:`.
+      # T037/data-model.md §1/research.md D11: the partition/dedup/fold/file
+      # path. Runs whenever the reviewer reported at least one raw finding
+      # (in-scope or out-of-scope) -- mutually exclusive with "Record the
+      # clean round" above via its own `if:`. T070/FR-013/FR-020: this does
+      # NOT mean this round's own OUTCOME is "findings" -- an out-of-scope-
+      # only round, or one whose in-scope survivors were all already
+      # folded, still resolves its own outcome to "clean" below.
       - name: Download the round's extracted findings
         id: download-findings
         if: >-
@@ -994,9 +1029,17 @@ jobs:
               outputs.append(("oos-{0}-marker".format(i), marker))
               new_filed.append(fp)
 
+          # T070/FR-013/FR-020: the pass/fail decision keys on open
+          # IN-SCOPE findings alone -- a round whose only survivors are
+          # out-of-scope (still filed above) is "clean" exactly like a
+          # round with no findings at all, never held against the PR's
+          # readiness or gate status. This also covers the case where
+          # every in-scope survivor was already folded in a prior round
+          # (new_folded empty despite a nonzero raw in-scope-count).
           findings_open = len(new_folded)
+          outcome = "findings" if new_folded else "clean"
           meta["review_gate"] = {
-              "round": round_, "head_sha": head_sha, "outcome": "findings",
+              "round": round_, "head_sha": head_sha, "outcome": outcome,
               "findings_open": findings_open, "updated_at": updated_at,
               "folded_fingerprints": sorted(folded_fps | set(new_folded)),
               "filed_fingerprints": sorted(filed_fps | set(new_filed)),
@@ -1005,9 +1048,10 @@ jobs:
               json.dump(meta, fh, indent=2)
               fh.write("\n")
 
-          outputs.append(("outcome", "findings"))
+          outputs.append(("outcome", outcome))
           outputs.append(("findings-open", str(findings_open)))
-          outputs.append(("fold-summary", "round {0}: {1} finding(s) folded".format(round_, len(new_folded))))
+          if new_folded:
+              outputs.append(("fold-summary", "round {0}: {1} finding(s) folded".format(round_, len(new_folded))))
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
               for k, v in outputs:
                   fh.write("{0}={1}\n".format(k, v))
@@ -1051,16 +1095,19 @@ jobs:
           spec-branch: ${{ steps.pr.outputs.branch }}
           implement-workflow: wing-commander-5-implement.yml
 
-      # T038: nothing folded this round (every in-scope survivor was
-      # already folded in a prior round, or there were none) -- the
+      # T038/T070: nothing folded this round -- either because there was
+      # nothing to fold ("clean": every in-scope survivor was already
+      # folded in a prior round, or there were none, possibly alongside a
+      # filed out-of-scope survivor), or the round budget is spent. The
       # review_gate write above still needs its own commit, since
       # wing-commander-fold-commit's early exit on an empty section-file
-      # touches neither file. Mirrors "Record the clean round" above,
-      # but records outcome findings/budget-exhausted instead.
+      # touches neither file. Mirrors "Record the clean round" above, but
+      # records outcome clean/budget-exhausted from THIS step's own
+      # computation instead.
       - name: Record this round on spec-meta.json (no fold)
         if: >-
           steps.partition.outcome == 'success'
-          && (steps.partition.outputs.outcome == 'budget-exhausted' || steps.commit-fold.outputs.folded == 'false')
+          && (steps.partition.outputs.outcome == 'budget-exhausted' || steps.partition.outputs.outcome == 'clean' || steps.commit-fold.outputs.folded == 'false')
         env:
           SPEC_DIR: ${{ needs.select.outputs.spec-dir }}
           BOT_SLUG: ${{ steps.ctx.outputs.bot-slug }}
@@ -1074,6 +1121,28 @@ jobs:
           git add "$SPEC_DIR/spec-meta.json"
           git commit -m "review-gate: round $ROUND $OUTCOME, nothing new to fold"
           git push origin "HEAD:refs/heads/$BRANCH"
+
+      # T070/FR-013: the other side of "Report a passing status" above --
+      # that step only ever reads steps.decide's outcome (the fast "raw
+      # counts both zero" path), so a round whose only survivors were
+      # out-of-scope, or whose in-scope survivors were all already folded
+      # in a prior round, needs its OWN passing-status write once
+      # partition (not decide) is the one that recorded "clean". Text and
+      # write shape match T024's step exactly.
+      - name: Report a passing status on the reviewed head SHA (partition path)
+        if: >-
+          steps.lifecycle-gate.outputs.is-open == 'true'
+          && steps.partition.outputs.outcome == 'clean'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ needs.select.outputs.head-sha }}
+          ROUND: ${{ steps.partition.outputs.round }}
+        run: |
+          set -uo pipefail
+          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA" \
+            -f state=success \
+            -f context="lifecycle-review-gate" \
+            -f description="Round $ROUND: clean -- no in-scope findings." >/dev/null
 
       # T039: out-of-scope survivors, filed through the EXISTING durable-
       # failure-issue composite (never a second filing implementation),
@@ -1289,10 +1358,16 @@ jobs:
           branch="$(gh pr view "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --json headRefName --jq .headRefName)"
           echo "branch=$branch" >> "$GITHUB_OUTPUT"
 
+      # T069: full history, not the default shallow depth -- "Evaluate the
+      # merge preconditions" below peels this branch's tip back past this
+      # gate's own trailing "review-gate: round ..." commit(s)
+      # (wc_review_gate_settled_head.settled_head), which needs those
+      # parent commits present locally.
       - name: Checkout the PR's head ref
         uses: actions/checkout@v5
         with:
           ref: ${{ steps.pr.outputs.branch }}
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Wing Commander context
