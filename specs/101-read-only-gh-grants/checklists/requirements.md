@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -43,7 +43,10 @@
   deliberately does *not* decide is the mechanism: Question 1 leaves the
   replacement route open, and the "extend check 4b rather than add a new
   gate number" judgement is recorded in Assumptions as an assumption for
-  the plan stage to confirm, not as a requirement.
+  the plan stage to confirm, not as a requirement. Question 1 is now
+  answered (remove `gh`, stage the failed jobs' logs), so the replacement
+  route is stated as FR-018–FR-020; the mechanism *inside* that route —
+  which logs, which paths, which script — remains the plan stage's call.
 
 - **"Written for non-technical stakeholders" — satisfied for this
   repository's stakeholders.** The requester is the maintainer of a
@@ -51,23 +54,27 @@
   writes, local file writes, arbitrary command execution) before any
   requirement names a file.
 
-- **Three `[NEEDS CLARIFICATION]` markers remain, deliberately.** The
-  intake stage runs headless in CI and does not wait for answers; the
-  markers stay in `spec.md` and the questions are posted to lifecycle
-  issue #759 for the clarify stage. All three are genuine trade-offs with
-  no defensible default:
-  - **Q1 (FR-002)** — what replaces `Bash(gh:*)` on diagnose. This is the
-    trade-off the route agent named when it classified the issue as
-    spec-shaped: a read-only subcommand allow-list cannot cover
-    API-shaped reads, and removing `gh` entirely shifts cost onto the
-    collectors. Scope-level impact.
+- **All three `[NEEDS CLARIFICATION]` markers are resolved.** They were
+  raised by intake (which runs headless in CI and does not wait for
+  answers), posted to lifecycle issue #759, and answered there on
+  2026-09-29. The answers are folded into the requirements and recorded in
+  `spec.md`'s Clarifications section:
+  - **Q1 (FR-002)** — what replaces `Bash(gh:*)` on diagnose. **Answered:
+    Option C** — remove `gh` outright and stage the failed jobs' logs
+    beforehand, with the fetch failing loudly rather than silently under the
+    App token. Because both named agents now end at zero `gh` grants, the
+    fleet rule is the same total rule board-loop's check 4 applies, and no
+    per-subcommand allow-list ships (FR-002, FR-007, FR-018, FR-019).
   - **Q2 (FR-014)** — whether the rule binds consumer-supplied
-    `extra-allowed-tools`/`allowed-tools-override`. Option B is a
-    published-contract compatibility event under Principle VII; the owner
-    decides that, not the spec.
+    `extra-allowed-tools`/`allowed-tools-override`. **Answered: Option A** —
+    shipped defaults only, because the consuming repository owns its
+    configuration (Principle VI). Option B's published-stage runtime refusal
+    is out of scope, so this feature is not a compatibility event under
+    Principle VII.
   - **Q3 (FR-006)** — what diagnose does when staged evidence cannot
-    adjudicate a signal. Bears on whether a narrowing is acceptable at
-    all, since a watchdog that reaches no verdict is worse than none
-    (Principle II).
+    adjudicate a signal. **Answered: Option A** — reuse the
+    untrusted-collectors mechanism so the verdict names the evidence it
+    could not gather, which keeps a narrowed watchdog reaching a verdict
+    (Principle II) (FR-020, SC-008).
 
-- Items marked incomplete require spec updates before `/speckit-plan`.
+- No items remain incomplete; the spec is ready for `/speckit-plan`.

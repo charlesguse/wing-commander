@@ -50,6 +50,37 @@ being born with the same grant.
 This feature closes that hole at the two known sites and makes the rule
 mechanical for every future one.
 
+## Clarifications
+
+### Session 2026-09-29 — answered on lifecycle issue #759
+
+- Q: What replaces `Bash(gh:*)` on `watchdog.diagnose` — a named read-only
+  subcommand allow-list, removal with everything staged, or removal plus a
+  deterministic job-log fetch? → A: **Remove `gh` entirely and stage the
+  failed jobs' logs** (Question 1, Option C). A deterministic step stages
+  those logs as files before the agent runs, the way `board-loop.reviewer`'s
+  gather step does (#503). That fetch MUST fail loudly rather than silently
+  under the App token, and a fetch that fails is reported through the
+  untrusted-collectors mechanism rather than widening the token. Because
+  both named agents therefore end with zero `gh` grants, the fleet rule is
+  the same total rule board-loop's check 4 already applies — a read-only
+  agent gets no `gh` command at all — and no per-subcommand write review is
+  needed. (FR-002, FR-003, FR-007, FR-018, FR-019, User Story 1, User
+  Story 3)
+- Q: Does the rule bind consumer-supplied
+  `extra-allowed-tools`/`allowed-tools-override`, or only this repository's
+  shipped defaults? → A: **Shipped defaults only**, as Gate 93 does today
+  (Question 2, Option A). The consuming repository owns its configuration
+  (Principle VI), so an adopter who re-grants a write-capable `gh` to a
+  read-only step is making its own call and this repository's gates stay
+  green; no published-stage runtime refusal is added. (FR-014, User Story 3)
+- Q: What does diagnose do when staged evidence cannot adjudicate a signal?
+  → A: **Reuse the existing untrusted-collectors mechanism** (Question 3,
+  Option A): the verdict states which kinds of evidence could not be
+  gathered on that run. The signal is neither dropped silently nor chased
+  through a route the agent no longer holds, and the verdict stays
+  schema-valid. (FR-006, FR-020, User Story 1)
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - A prompt-injected diagnose agent cannot touch the repository (Priority: P1)
@@ -67,22 +98,33 @@ and it holds the App token. Delivering only this story already removes the
 exposure the issue was filed for.
 
 **Independent Test**: Read the composed allowed list for
-`watchdog.diagnose` and confirm no grant in it can write — remotely or
-locally — and that the agent still reaches a verdict on a real watchdog
-run re-driven after merge.
+`watchdog.diagnose` and confirm it grants no `gh` command at all, that the
+failed jobs' logs it used to be able to fetch are staged as files a
+deterministic step wrote, and that the agent still reaches a verdict on a
+real watchdog run re-driven after merge.
 
 **Acceptance Scenarios**:
 
 1. **Given** `watchdog.yml`'s `watchdog.diagnose` tool-args site, **When**
-   its shipped `default-allowed-tools` is read, **Then** `Bash(gh:*)` is
-   absent and every remaining `Bash(...)` grant is one a reviewer can point
-   at as unable to write a file or perform a remote mutation.
+   its shipped `default-allowed-tools` is read, **Then** no `gh` grant
+   remains in any spelling, and every remaining `Bash(...)` grant is one a
+   reviewer can point at as unable to write a file or perform a remote
+   mutation.
 2. **Given** a diagnose agent under the narrowed list, **When** it attempts
-   a write-capable `gh` invocation, **Then** the attempt is denied by the
-   allow-list and the denial is visible in the step's execution output.
+   any `gh` invocation, **Then** the attempt is denied by the allow-list and
+   the denial is visible in the step's execution output.
 3. **Given** a watchdog run re-driven after merge, **When** the diagnose
    step completes, **Then** it produces a schema-valid verdict with
    evidence grounded in signals it could still read.
+4. **Given** a watchdog run over a failed workflow run, **When** the
+   deterministic log-staging step has completed, **Then** the failed jobs'
+   logs are on disk at the literal paths the diagnose prompt names, and the
+   prompt names no fetch the agent would have to perform itself.
+5. **Given** a run in which the log fetch cannot be performed (the App
+   token cannot read the logs, the run is gone, the response is empty),
+   **When** the staging step runs, **Then** the failure is recorded
+   explicitly rather than left as an empty or absent file, and the diagnose
+   verdict states that that kind of evidence could not be gathered.
 
 ---
 
@@ -91,8 +133,8 @@ run re-driven after merge.
 The auto-update stage's evaluate-path agent reads upstream release notes —
 text written by a third party outside this repository entirely — and
 decides whether an upgrade is a clean bump. Its `Bash(gh api:*)` grant is
-removed or replaced by a route that cannot write, so a release note crafted
-to redirect the agent reaches nothing.
+removed outright — its evidence is already staged, so nothing replaces it —
+and a release note crafted to redirect the agent reaches nothing.
 
 **Why this priority**: Same token, same write capability, and the evidence
 it reads has an even weaker provenance than the watchdog's. Its own prompt
@@ -102,14 +144,15 @@ grant is doing no declared work today. Fixing it alongside US1 is what
 makes the gate in US3 able to pass on a clean tree.
 
 **Independent Test**: Read the inline `--allowedTools` on the "Decide
-upgrade path" step and confirm no write-capable `gh` grant remains, then
+upgrade path" step and confirm no `gh` grant remains, then
 confirm the stage still reaches one of its three outcomes with sources
 cited from the staged release-notes file.
 
 **Acceptance Scenarios**:
 
 1. **Given** the "Decide upgrade path" step's inline `--allowedTools`,
-   **When** it is read, **Then** `Bash(gh api:*)` is absent.
+   **When** it is read, **Then** `Bash(gh api:*)` is absent and no other
+   `gh` grant has taken its place.
 2. **Given** that step's prompt, **When** it is read, **Then** it no longer
    describes `gh api` as one of the agent's evidence tools, and every
    evidence route it names is a file a deterministic step staged before the
@@ -136,18 +179,18 @@ narrowings above are exactly the kind of change that a later "the agent
 needed it" commit silently reverses.
 
 **Independent Test**: Run the gate against a fixture that grants a
-read-only agent a write-capable `gh` command and confirm it fails with a
-message naming that grant; run it against the real tree after US1 and US2
-land and confirm it passes.
+read-only agent a `gh` command and confirm it fails with a message naming
+that grant; run it against the real tree after US1 and US2 land and confirm
+it passes.
 
 **Acceptance Scenarios**:
 
 1. **Given** a checked-in fixture whose read-only tool-args site grants a
-   write-capable `gh` command, **When** the gate runs, **Then** it fails
-   and the message names the grant and points at the staged-file route.
-2. **Given** a checked-in fixture whose read-only agent step appends a
-   write-capable `gh` grant to its own `claude_args` `--allowedTools`
-   (bypassing the composite), **When** the gate runs, **Then** it fails.
+   `gh` command, **When** the gate runs, **Then** it fails and the message
+   names the grant and points at the staged-file route.
+2. **Given** a checked-in fixture whose read-only agent step appends a `gh`
+   grant to its own `claude_args` `--allowedTools` (bypassing the
+   composite), **When** the gate runs, **Then** it fails.
 3. **Given** a checked-in fixture whose read-only agent step is inline (no
    tool-args site, the `auto-update-spec-kit.yml` shape), **When** the gate
    runs, **Then** the same rule is applied to its inline list.
@@ -158,6 +201,12 @@ land and confirm it passes.
 5. **Given** a mutation of the real `watchdog.yml` or
    `auto-update-spec-kit.yml` that restores the removed grant, **When** the
    gate's self-test runs, **Then** the mutation is caught.
+6. **Given** a read-only call site that forwards a consumer's
+   `${{ inputs.extra-allowed-tools }}` or
+   `${{ inputs.allowed-tools-override }}`, **When** the gate runs, **Then**
+   it does not fail on the forwarded value — its subject is this
+   repository's shipped defaults — and that scope is stated where the check
+   is defined.
 
 ---
 
@@ -202,22 +251,30 @@ historical note that says so, not a current description.
   today can reach for job logs itself; the collectors that fetch them use a
   separate Actions-scoped token, and under the App token those reads
   already fail silently (a limitation `watchdog.yml` records inline). The
-  feature must state what diagnose does when a signal cannot be
-  adjudicated from staged evidence — see [NEEDS CLARIFICATION #3].
+  resolution is a deterministic staging step that fetches those logs before
+  the agent runs and fails loudly when it cannot, with the failure reported
+  through the untrusted-collectors mechanism so the verdict says what it
+  could not see (FR-018, FR-019, FR-020).
 - **An adopter re-grants the command.** Published stages accept
   `extra-allowed-tools` and `allowed-tools-override`; Gate 93 deliberately
   ignores `${{ inputs.* }}` values and checks shipped defaults only, so an
-  adopter can hand `watchdog.diagnose` back `Bash(gh:*)` at call time — see
-  [NEEDS CLARIFICATION #2].
+  adopter can hand `watchdog.diagnose` back `Bash(gh:*)` at call time. That
+  stays the adopter's call: the rule binds this repository's shipped
+  defaults only (FR-014, Principle VI). A literal grant written at a call
+  site in this repository's own workflows is a shipped default and is
+  gated (FR-009).
 - **A `gh` command that reads but writes a file.** `gh run view --log`
   writes nothing; `gh run download`, `gh release download` and `gh api
-  --cache` do. A per-subcommand allow-list has to be decided one option at
-  a time, and a prefix rule cannot see the option — the same reason #513
-  refused to deny `git --output` by listing its spellings.
+  --cache` do. A per-subcommand allow-list would have to be decided one
+  option at a time, and a prefix rule cannot see the option — the same
+  reason #513 refused to deny `git --output` by listing its spellings. This
+  case does not arise, because no `gh` subcommand survives on a read-only
+  agent; it is why the rule is total rather than per-subcommand.
 - **A `gh` command that reads unfiltered comments.** `gh pr view
   --comments` and `gh issue view --comments` return every comment from
   anyone; board-loop's check 4 forbids both for that reason (FR-056,
-  #503). Any subcommand allow-list this feature ships must not reopen that.
+  #503). The total rule cannot reopen that, since it ships no subcommand
+  allow-list at all.
 - **A read-only agent with no tool-args site at all.** The
   `auto-update-spec-kit.yml` shape: its lists are inline in `claude_args`.
   The gate already handles this shape for git and must for `gh`.
@@ -242,14 +299,16 @@ historical note that says so, not a current description.
   grant `Bash(gh:*)`, nor any other spelling that authorizes every `gh`
   subcommand (`gh*`, `gh *`, bare `Bash`, `Bash(*)`).
 - **FR-002**: `watchdog.diagnose`'s shipped allowed-tools list MUST NOT
-  grant any `gh` command that can perform a remote mutation, write a local
-  file, define an alias, or install an extension. The end state of its
-  `gh` access is [NEEDS CLARIFICATION: narrow the grant to a named
-  read-only subcommand allow-list, or remove `gh` entirely and stage every
-  route it needs as a file? — see Question 1].
+  grant any `gh` command at all — not a subcommand, not an API path, not a
+  path-qualified spelling. The end state of its `gh` access is zero grants;
+  every route it loses is replaced by a file a deterministic step stages
+  before it runs (FR-005, FR-018). This total form is the FR-002 test the
+  requirements below refer to, and it is the same rule board-loop's check 4
+  already applies to its own read-only agents.
 - **FR-003**: The auto-update stage's evaluate-path agent ("Decide upgrade
   path") MUST NOT grant `Bash(gh api:*)`, and MUST NOT grant any `gh`
-  command subject to the same FR-002 test.
+  command subject to the same FR-002 test. Nothing is staged in its place:
+  its evidence (`release-notes.json`) is staged already.
 - **FR-004**: Each narrowed agent's prompt MUST name only evidence routes
   its own composed tool list actually authorizes. A prompt sentence that
   describes `gh` or `gh api` as one of the agent's evidence tools MUST be
@@ -265,23 +324,28 @@ historical note that says so, not a current description.
   outcomes. A narrowing that leaves either unable to produce a verdict is
   not an acceptable outcome of this feature (Constitution II's reason for
   giving diagnose `claude-opus-5` at all: a step that reaches no verdict is
-  worse than no step).
+  worse than no step). When staged evidence is insufficient, the verdict is
+  still produced and carries the gap (FR-020).
 
 #### The gate
 
 - **FR-007**: A gate reachable through the gate registry and run by the
   PR-time suite MUST fail when any read-only agent step in
   `.github/workflows/` — in any workflow, not only `board-loop.yml` — is
-  granted a `gh` command that fails the FR-002 test.
+  granted a `gh` command that fails the FR-002 test, i.e. any `gh` grant at
+  all.
 - **FR-008**: The gate MUST identify read-only agent steps the same way
   Gate 93's existing checks do: the labels it names explicitly, plus any
   tool-args site whose shipped allowed list carries neither `Write` nor
   `Edit` (whole or path-scoped), plus any agent step with no tool-args site
   whose own inline `--allowedTools` carries neither.
 - **FR-009**: The gate MUST read grants from every route that reaches the
-  agent: the tool-args site's `default-allowed-tools`,
-  `extra-allowed-tools` and `allowed-tools-override` inputs, and the agent
-  step's own `claude_args` `--allowedTools` text.
+  agent from this repository's own workflows: the tool-args site's
+  `default-allowed-tools`, `extra-allowed-tools` and
+  `allowed-tools-override` inputs, and the agent step's own `claude_args`
+  `--allowedTools` text. Literal grant text at any of those routes is in
+  scope; a forwarded `${{ inputs.* }}` expression is a consumer value and is
+  not (FR-014).
 - **FR-010**: The gate MUST match on whitespace-split token prefixes of the
   granted command, not on substrings, and MUST treat every open-wildcard
   spelling (`gh:*`, `gh*`, `gh *`, bare `Bash`, `Bash(*)`) and every
@@ -296,18 +360,22 @@ historical note that says so, not a current description.
 - **FR-013**: The gate MUST NOT be suppressible by an unrelated gate's
   failure in the same job, and MUST run the same subject with the same
   arguments locally (`run-local-gates.py`) as in CI.
-- **FR-014**: The gate's scope relative to consumer-supplied tool lists
-  MUST be stated and enforced consistently: [NEEDS CLARIFICATION: does the
-  rule bind only the shipped defaults (as Gate 93 does today, ignoring
-  `${{ inputs.* }}`), or must a published stage also refuse at runtime a
-  consumer `extra-allowed-tools`/`allowed-tools-override` that re-grants a
-  write-capable `gh` to a read-only step? — see Question 2].
+- **FR-014**: The rule MUST bind this repository's shipped defaults only,
+  as Gate 93 does today: the gate ignores `${{ inputs.* }}` values, and no
+  published stage gains a runtime refusal of a consumer
+  `extra-allowed-tools`/`allowed-tools-override` that re-grants `gh` to a
+  read-only step. The consuming repository owns its configuration
+  (Principle VI), and no published-stage behaviour changes, so this feature
+  is not a compatibility event under Principle VII. That scope MUST be
+  stated where the check is defined, so the next author does not read a
+  green gate as a guarantee about adopters.
 
 #### The record
 
 - **FR-015**: `docs/agent-friendly-workflows.md`'s read-only tool-allow-
-  list guidance MUST NOT present a bare `gh` grant as a read-only example,
-  and MUST state why a bare `gh` grant is write-capable.
+  list guidance MUST NOT present any `gh` grant as a read-only example, and
+  MUST state why a bare `gh` grant is write-capable and why the rule is
+  total rather than per-subcommand.
 - **FR-016**: Every live contract under `specs/*/contracts/` that records
   `watchdog.diagnose`'s or evaluate-path's tool lists MUST match the
   shipped lists after this change, including the per-stage table in
@@ -319,6 +387,26 @@ historical note that says so, not a current description.
   extensions — MUST have exactly one canonical home, with every other site
   pointing at it rather than restating it.
 
+#### The replacement route for diagnose
+
+- **FR-018**: A deterministic step in `watchdog.yml` MUST stage the failed
+  jobs' logs for the run under diagnosis as files, at literal paths, before
+  the diagnose agent runs, following the `board-loop.reviewer` gather
+  pattern (#503). The diagnose prompt MUST name those paths exactly and MUST
+  NOT name a fetch the agent would have to perform itself.
+- **FR-019**: That staging step MUST fail loudly rather than silently: an
+  authorization failure, a missing run, or an empty response MUST be
+  recorded as an explicit gather failure that the diagnose step can read,
+  never left as an absent or empty file the agent would read as "there was
+  nothing there". Widening the App token is not the remedy and is out of
+  scope; reporting the failure is.
+- **FR-020**: When the staged evidence cannot adjudicate a signal —
+  including because FR-019 recorded a gather failure — diagnose MUST reuse
+  the existing untrusted-collectors mechanism and state in its verdict which
+  kinds of evidence could not be gathered on that run. It MUST NOT drop the
+  signal without saying so, and MUST NOT be coached toward a route it no
+  longer holds.
+
 ### Key Entities
 
 - **Read-only agent step**: an agent invocation whose composed allowed
@@ -329,7 +417,10 @@ historical note that says so, not a current description.
   `claude_args`.
 - **Write-capable `gh` command**: a `gh` invocation that can mutate a
   remote resource, write a local file, define an alias, or install an
-  extension — including bare `gh`, which authorizes all of them.
+  extension — including bare `gh`, which authorizes all of them. This is the
+  rationale for the rule, not its unit of enforcement: because the write
+  behaviour of several subcommands lives in an option a prefix rule cannot
+  see, the rule forbids `gh` outright on a read-only agent (FR-002).
 - **Staged evidence file**: a literal-path file a deterministic step writes
   before the agent runs, which the agent's prompt names exactly; the
   sanctioned replacement for an agent's own fetch.
@@ -340,9 +431,9 @@ historical note that says so, not a current description.
 
 ### Measurable Outcomes
 
-- **SC-001**: Zero read-only agent steps across `.github/workflows/` hold a
-  write-capable `gh` grant, counted from the shipped allowed lists — down
-  from the two that hold one today.
+- **SC-001**: Zero read-only agent steps across `.github/workflows/` hold
+  any `gh` grant, counted from the shipped allowed lists — down from the two
+  that hold one today.
 - **SC-002**: A maintainer who re-adds either removed grant sees the PR-time
   gate suite fail, with a message naming the grant and the staged-file
   route, before the change can merge.
@@ -360,6 +451,10 @@ historical note that says so, not a current description.
   survive are labelled as historical.
 - **SC-007**: The narrowing rationale appears in full in exactly one file;
   every other mention is a pointer.
+- **SC-008**: A run whose job-log staging cannot fetch its logs ends with a
+  recorded gather failure and a schema-valid diagnose verdict naming the
+  evidence it could not gather — zero runs where the failure is
+  indistinguishable from "there was nothing to read".
 
 ## Assumptions
 
@@ -390,15 +485,15 @@ historical note that says so, not a current description.
   governed by the gates that cover them.
 - `gh` cannot be scoped to read-only by prefix rule alone for the
   subcommands whose write behaviour lives in an option (`gh run download`,
-  `gh api --method`, `gh api --cache`); any allow-list this feature ships
-  is decided per subcommand, with the reasoning recorded per entry, the way
-  `READ_ONLY_BASH_GRANTS` records it today.
+  `gh api --method`, `gh api --cache`). This feature therefore ships no `gh`
+  subcommand allow-list at all, and the per-entry reasoning
+  `READ_ONLY_BASH_GRANTS` records today is not extended with `gh` entries.
 - No transcript of a real diagnose run was available while specifying, so
   which `gh` commands diagnose has actually invoked is unknown. The
-  specification therefore states the required end state and its degradation
-  behaviour rather than assuming a command inventory; establishing that
-  inventory (or establishing that none exists) is planning/implementation
-  work.
+  specification states the required end state (zero `gh`) and the
+  degradation behaviour; deciding exactly which logs FR-018 stages — and
+  confirming that nothing else diagnose used goes unreplaced — is
+  planning/implementation work.
 
 ## Dependencies
 
@@ -421,57 +516,25 @@ historical note that says so, not a current description.
 ## Out of Scope
 
 - Deterministic `run:` steps' use of `gh`/`gh api`, including the watchdog
-  collectors' Actions-token job-log reads.
+  collectors' Actions-token job-log reads and the new log-staging step
+  FR-018 adds — that step is work this feature does, but it is code under
+  review rather than a grant the new rule inspects.
 - `board-loop.yml`'s read-only agents, already covered by check 4.
 - Write-capable agent steps (intake, clarify, plan, tasks, implement,
   finalize, the board-loop fixer), whose `gh` grants are deliberate.
 - Revisiting the git-wrapper route from #518.
-- The App token's own permission scopes. Narrowing what the token can do is
-  a different change with a different blast radius; this feature narrows
-  what the agent can reach.
+- The App token's own permission scopes. Narrowing — or widening — what the
+  token can do is a different change with a different blast radius; this
+  feature narrows what the agent can reach. If the App token cannot read the
+  logs FR-018 stages, the remedy here is the loud, reported failure FR-019
+  requires, not a token change.
+- A runtime refusal in the published stages of a consumer-supplied tool list
+  (Question 2, Option B) and an adopter-facing warning in `docs/adoption.md`
+  (Option C). The rule binds shipped defaults only (FR-014).
 - Errata against merged specs' `spec.md`/`plan.md`/`research.md`/`tasks.md`
   (repository rule); only live contracts and live docs are corrected.
 
 ## Open Questions
 
-These are the three `[NEEDS CLARIFICATION]` markers above, restated for the
-clarify stage.
-
-### Question 1 — What replaces `Bash(gh:*)` on diagnose?
-
-**Context**: FR-002. `Bash(gh:*)` must go; what stands in its place decides
-whether diagnose keeps any ability to confirm a fact the collectors did not
-stage.
-
-| Option | Answer | Implications |
-|--------|--------|--------------|
-| A      | Remove `gh` entirely; diagnose reads only staged files and the git wrapper | Uniform with board-loop's check 4 ("a read-only agent gets no `gh` command at all"), so the gate becomes one rule fleet-wide with no per-subcommand review burden. Diagnose loses every ad-hoc confirmation route; anything it needs must be staged up front at fixed cost on every run. |
-| B      | A named read-only subcommand allow-list (`gh run view`, `gh run list`) | Keeps a confirmation route for run-shaped facts, which is most of what diagnose adjudicates. Requires a per-subcommand write review and a standing rule that each new entry earns one; `gh run view --log` is safe but sits one option away from `gh run download`. Must exclude `gh issue view`/`gh pr view`, whose `--comments` returns unfiltered comments (FR-056, #503). |
-| C      | Remove `gh`, and stage job logs for the failed jobs before the agent runs | Closes the grant and replaces the capability rather than dropping it. Costs an extra deterministic fetch per run, and under the App token that fetch already fails silently today — so it also needs the token question answered, widening the change. |
-| Custom | Provide your own answer | State which `gh` subcommands, if any, survive and what stages the rest. |
-
-### Question 2 — Does the rule bind consumer-supplied tool lists?
-
-**Context**: FR-014 and the "An adopter re-grants the command" edge case.
-Gate 93 checks shipped defaults and ignores `${{ inputs.* }}`; published
-stages accept `extra-allowed-tools` and `allowed-tools-override`.
-
-| Option | Answer | Implications |
-|--------|--------|--------------|
-| A      | Shipped defaults only, as today | Smallest change, consistent with the existing gate's stated scope and with Principle VI (the consuming repository owns its configuration). An adopter can re-grant `Bash(gh:*)` to `watchdog.diagnose` at call time and this repository's gates stay green. |
-| B      | Also refuse at runtime: the tool-args composite fails a read-only step whose composed list carries a write-capable `gh` | Closes the hole for adopters too. Changes published-stage behaviour — a call that works today starts failing — which is a compatibility event under Principle VII and needs a release note. |
-| C      | Shipped defaults are gated; the runtime case is documented as the adopter's own risk in `docs/adoption.md` | No behaviour change, and the next adopter reading the docs is warned. Relies on the adopter reading it — a rule with no gate behind it. |
-| Custom | Provide your own answer | |
-
-### Question 3 — What does diagnose do when staged evidence is not enough?
-
-**Context**: FR-006 and the first edge case. Under Option 1A or 1C,
-diagnose can no longer go looking; a signal it cannot adjudicate needs a
-defined outcome.
-
-| Option | Answer | Implications |
-|--------|--------|--------------|
-| A      | Reuse the existing untrusted-collectors mechanism: the verdict states which evidence could not be gathered | No new machinery; the prompt already has the vocabulary and the verdict already has a place for the caveat. Some findings become less specific. |
-| B      | Drop the signal and record the drop in the verdict | Keeps findings fully grounded and keeps the fingerprint honest. A real problem the collectors under-staged goes unreported until a collector is improved. |
-| C      | Stage more up front so the case does not arise | Strongest diagnosis, highest fixed per-run cost, and it moves the judgment into the collectors where Principle IX wants it. Largest change. |
-| Custom | Provide your own answer | |
+None. All three `[NEEDS CLARIFICATION]` markers were answered on lifecycle
+issue #759 and are recorded in [Clarifications](#clarifications) above.
