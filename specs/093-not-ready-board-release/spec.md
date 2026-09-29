@@ -147,14 +147,16 @@ own, as posted on #717.
   `spec.md` is not edited; FR-014 corrects only the live contracts.
 - **The loop's concurrency is per-job (spec 060, #490)**, still with one
   board item in flight repository-wide.
-- **Open conflict — needs a maintainer decision.** `add_stalled_label()`'s
-  docstring on `main` states today's label-removal re-admission rule:
-  resume re-derives from live state, `review` when an open `board:owned` PR
-  cites the issue, a fresh triage otherwise. Spec 100 (#752, Q1) documents
-  and gates that rule unchanged and gives the re-admitted item a fresh
-  review-round budget. This spec's FR-007 and User Story 2 scenario 3
-  instead resume a label-removed item at `readiness` when its head has not
-  moved. The two cannot both hold; this spec does not choose between them.
+- **Reconciled with spec 100 (maintainer decision, 2026-09-29).**
+  `add_stalled_label()`'s docstring on `main` resumes a label-removed item
+  at `review` whenever an open `board:owned` PR cites the issue, and spec
+  100 (#752) gated that rule. The owner chose this spec's refinement: a
+  label-removed item resumes at `review` when its PR head has moved since
+  the last review, and at `readiness` when it has not (FR-007), so an
+  unchanged, already-reviewed head is never reviewed again. Spec 100's
+  FR-006 and its gate encode this combined rule, and `add_stalled_label()`'s
+  canonical statement is updated to match; the fresh review-round budget on
+  re-admission (spec 100 FR-009) is unchanged.
 
 ## User Scenarios & Testing *(mandatory)*
 
