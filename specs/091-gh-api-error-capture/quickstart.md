@@ -112,7 +112,7 @@ python .github/scripts/run-local-gates.py
 Expected: every gate that passed before this feature still passes (no
 existing gate's subject or arguments changed — FR-004's "no behaviour
 change on a successful read" holds for every corrected site), plus Gate
-125 and Gate 126's four steps (live + self-test each), plus
+126 and Gate 127's four steps (live + self-test each), plus
 `verify-auto-release-specs-fallback.py`'s own steps still passing after
 its stub-arm migration (research.md D9). Compare the reported gate count
 before/after implementation to confirm growth by exactly the two gates
