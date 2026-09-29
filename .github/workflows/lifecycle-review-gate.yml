@@ -197,17 +197,29 @@ jobs:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           PR_NUMBER: ${{ needs.select.outputs.pr-number }}
           HEAD_SHA: ${{ needs.select.outputs.head-sha }}
+          # T059/FR-006: the kill switch, re-read HERE rather than assumed
+          # clear. The job-level `if:` on `select` only decides whether this
+          # run starts at all; a step-level `vars.` expression is resolved
+          # when the step runs, so a maintainer who sets the switch after
+          # this run started is seen here -- and by then a PR IS selected,
+          # so the stand-down has a lifecycle issue to be recorded on
+          # (the `kill-switch` job's own header comment names this step as
+          # where that durable record happens).
+          KILL_SWITCH_PAUSED: ${{ vars.WING_COMMANDER_LIFECYCLE_REVIEW_GATE_PAUSED }}
         run: |
           set -uo pipefail
 
           snapshot="$(gh pr view "$PR_NUMBER" --json headRefOid,statusCheckRollup,mergeable,mergeStateStatus)"
+          paused=false
+          [ "${KILL_SWITCH_PAUSED:-}" = "true" ] && paused=true
           # T006: only head_sha is a condition lifecycle_readiness.py
           # reads (round/outcome/findings_open are US2/US4 concerns, not
           # yet wired up) -- select's own filter already guarantees this
           # differs from the PR's current head, so ready:false here (if it
           # happens at all) is a defensive re-check, not the common path.
           payload="$(jq -n --argjson snapshot "$snapshot" --arg head_sha "$HEAD_SHA" \
-            '{snapshot: $snapshot, review_gate: {head_sha: $head_sha}, kill_switch_paused: false}')"
+            --argjson paused "$paused" \
+            '{snapshot: $snapshot, review_gate: {head_sha: $head_sha}, kill_switch_paused: $paused}')"
 
           decision="$(printf '%s' "$payload" | python3 .github/scripts/lifecycle_readiness.py)"
           ready="$(printf '%s' "$decision" | jq -r '.ready')"
@@ -1134,6 +1146,11 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       issues: write
+      # T067: the not-clean side of T024's commit-status write. github.token,
+      # not the App token -- docs/setup.md grants the App installation no
+      # "Commit statuses" permission at all, so the App token would 403
+      # (Gate 12; T024's own precedent in `disposition`).
+      statuses: write
     steps:
       - name: Wing Commander context
         id: ctx
@@ -1151,6 +1168,7 @@ jobs:
           token: ${{ steps.ctx.outputs.token }}
 
       - name: Compose and post the round's outcome
+        id: outcome
         if: steps.lifecycle-gate.outputs.is-open == 'true'
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
@@ -1191,3 +1209,268 @@ jobs:
           body="$(printf 'lifecycle-review-gate round %s on PR #%s at %s: **%s**.\n\n%s\n\n%s\n' \
             "${ROUND:-?}" "$PR_NUMBER" "$HEAD_SHA" "$result" "$detail" "$line")"
           gh issue comment "$ISSUE" -R "$GITHUB_REPOSITORY" --body "$body"
+
+          echo "result=$result" >> "$GITHUB_OUTPUT"
+
+      # T067/FR-014/SC-008 (contracts/review-and-findings.md "Clean vs.
+      # not-clean outcome": "the failure is never reported as silence -- a
+      # state=failure/state=error distinct from 'no status posted yet'").
+      # T024 writes state=success on a clean round; this is the other side
+      # of the same context, so a not-clean round is distinguishable on the
+      # PR itself from a round that has not happened yet -- which is what a
+      # required check needs in order to mean anything.
+      #
+      # failure vs. error: `failure` is the review's own verdict on the code
+      # (open in-scope findings, or a budget spent with findings still
+      # open); `error` is this gate failing to reach a verdict at all (the
+      # reviewer step failed, or the round produced nothing parseable).
+      # Conflating them would hide a broken gate behind "the PR has
+      # findings".
+      - name: Report a non-passing status on the reviewed head SHA
+        if: steps.outcome.outputs.result != '' && steps.outcome.outputs.result != 'clean'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ needs.select.outputs.head-sha }}
+          RESULT: ${{ steps.outcome.outputs.result }}
+          ROUND: ${{ needs.disposition.outputs.round || needs.review.outputs.round }}
+          FINDINGS_OPEN: ${{ needs.disposition.outputs.findings-open }}
+        run: |
+          set -uo pipefail
+          case "$RESULT" in
+            findings)
+              state=failure
+              description="Round ${ROUND:-?}: ${FINDINGS_OPEN:-0} in-scope finding(s) open."
+              ;;
+            budget-exhausted)
+              state=failure
+              description="Round ${ROUND:-?}: round budget spent with ${FINDINGS_OPEN:-0} finding(s) open."
+              ;;
+            *)
+              state=error
+              description="Round ${ROUND:-?}: the review did not reach a verdict."
+              ;;
+          esac
+          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA" \
+            -f state="$state" \
+            -f context="lifecycle-review-gate" \
+            -f description="$description" >/dev/null
+
+  # contracts/lifecycle-review-gate-workflow.md job 7/T051-T053 (US4):
+  # auto-merge, OFF by the shipped default. With
+  # WING_COMMANDER_LIFECYCLE_AUTO_MERGE unset this job never runs at all
+  # and the pipeline merges nothing (SC-005) -- the whole of US4 is inert
+  # until a maintainer opts in, which is why the `if:` is a plain equality
+  # on the variable rather than anything a run could satisfy by accident.
+  merge:
+    needs: [select, readiness, review, disposition]
+    if: >-
+      !cancelled() && vars.WING_COMMANDER_LIFECYCLE_AUTO_MERGE == 'true'
+      && needs.select.outputs.pr-number != ''
+      && needs.disposition.result == 'success'
+      && needs.disposition.outputs.outcome == 'clean'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+    steps:
+      # The PR's own branch at its CURRENT tip: spec-meta.json's review_gate
+      # is read off this working tree below, never a `git show origin/...`
+      # of its own (Gate 61's single-home rule -- the shared read-spec-meta.sh
+      # exposes only review_gate.head_sha, not the outcome/findings_open
+      # fields condition 6 and 7 need).
+      - name: Resolve the PR's head ref
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ needs.select.outputs.pr-number }}
+        run: |
+          set -uo pipefail
+          branch="$(gh pr view "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --json headRefName --jq .headRefName)"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout the PR's head ref
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ steps.pr.outputs.branch }}
+          persist-credentials: false
+
+      - name: Wing Commander context
+        id: ctx
+        uses: ./.github/actions/wing-commander-context
+        with:
+          app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
+          private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
+
+      # T026/T060: re-checked immediately before this job's own durable
+      # action -- a lifecycle issue or PR closed mid-round stops the merge
+      # (contracts "Edge cases": "PR or issue closed mid-round").
+      - name: Check lifecycle issue state
+        id: lifecycle-gate
+        uses: ./.github/actions/wing-commander-lifecycle-gate
+        with:
+          issue-number: ${{ needs.select.outputs.issue }}
+          token: ${{ steps.ctx.outputs.token }}
+
+      # T051/FR-026: every one of the eight conditions is re-derived HERE,
+      # against a `gh pr view` fetched in this step, never the SHA the
+      # `review` job evaluated -- the head may have moved since (spec.md
+      # Edge Cases: "the head SHA moves mid-round").
+      #
+      # This step's own `env:` is also the kill switch's re-check
+      # (contracts job 7's "re-checks the kill switch... immediately before
+      # this durable action"): a step-level `vars.` expression is resolved
+      # when the step runs, so a maintainer who sets
+      # WING_COMMANDER_LIFECYCLE_REVIEW_GATE_PAUSED after this run started
+      # is seen here, and condition 5 refuses by name (kill_switch_clear).
+      # wing-commander-board-stop-check is deliberately NOT used: it
+      # re-checks a board-loop issue's maintainer stop request and cancels
+      # an earlier board-loop run, neither of which exists for a lifecycle
+      # PR, and its own kill-switch input is resolved by the caller anyway
+      # because a composite `run:` cannot read `vars` (its own header says
+      # so). This IS that composite's "equivalent minimal re-check".
+      - name: Evaluate the merge preconditions against the current head SHA
+        id: preconditions
+        if: steps.lifecycle-gate.outputs.is-open == 'true'
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          PR_NUMBER: ${{ needs.select.outputs.pr-number }}
+          SPEC_DIR: ${{ needs.select.outputs.spec-dir }}
+          BOT_SLUG: ${{ steps.ctx.outputs.bot-slug }}
+          KILL_SWITCH_PAUSED: ${{ vars.WING_COMMANDER_LIFECYCLE_REVIEW_GATE_PAUSED }}
+        run: |
+          set -euo pipefail
+          python3 -I - <<'PYEOF'
+          import json
+          import os
+          import sys
+
+          sys.path.insert(0, ".github/scripts")
+          from lifecycle_merge_preconditions import evaluate
+
+          with open(os.path.join(os.environ["SPEC_DIR"], "spec-meta.json"),
+                    encoding="utf-8") as fh:
+              review_gate = json.load(fh).get("review_gate")
+
+          decision = evaluate(
+              os.environ["PR_NUMBER"], review_gate,
+              os.environ.get("KILL_SWITCH_PAUSED") == "true",
+              os.environ["BOT_SLUG"])
+
+          print(json.dumps(decision, indent=2))
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+              fh.write("may-merge={0}\n".format(
+                  "true" if decision["may_merge"] else "false"))
+              fh.write("unmet-reason={0}\n".format(decision["unmet_reason"] or ""))
+              fh.write("head-sha={0}\n".format(decision["head_sha"] or ""))
+          PYEOF
+
+      # T051/T053: the merge itself, and the ONE refusal this gate is
+      # required to recognise by name. continue-on-error is deliberate --
+      # a refused merge is a reported outcome (T052's announcement below
+      # runs either way), never a red run that hides which condition or
+      # which refusal stopped it.
+      #
+      # --match-head-commit is a second, independent guard beyond the fresh
+      # re-derivation above: if GitHub's own view of the head has moved
+      # between that read and this call, the merge fails rather than
+      # merging a different commit than the one just evaluated
+      # (contracts/readiness-and-merge.md "On may_merge: true").
+      #
+      # Never --admin, never a second merge method, never any other route
+      # to main (FR-030, CLAUDE.md's "Working the issue board" merge-scope
+      # rule): on a workflow-scope refusal this step records the reason and
+      # stops, and the maintainer takes the merge.
+      - name: Squash-merge the lifecycle PR
+        id: merge
+        if: steps.preconditions.outputs.may-merge == 'true'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          PR_NUMBER: ${{ needs.select.outputs.pr-number }}
+          HEAD_SHA: ${{ steps.preconditions.outputs.head-sha }}
+        run: |
+          set -uo pipefail
+          err_file="$RUNNER_TEMP/lifecycle-merge-stderr.txt"
+          gh pr merge --squash "$PR_NUMBER" -R "$GITHUB_REPOSITORY" \
+            --match-head-commit "$HEAD_SHA" 2>"$err_file"
+          status=$?
+          cat "$err_file" >&2
+          if [ "$status" -eq 0 ]; then
+            echo "merged=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "merged=false" >> "$GITHUB_OUTPUT"
+          err="$(cat "$err_file")"
+          # GitHub's own refusal text for a credential without the
+          # workflow scope (research.md D14): detected by this call's own
+          # failure, because GitHub exposes no way to ask whether a token's
+          # scope would allow the merge short of attempting it.
+          if printf '%s' "$err" | grep -qiE 'workflows? (permission|scope)|without .?workflows?.? (permission|scope)|refusing to allow'; then
+            echo "failure-kind=workflow-scope" >> "$GITHUB_OUTPUT"
+          else
+            echo "failure-kind=generic" >> "$GITHUB_OUTPUT"
+          fi
+          {
+            echo "failure-detail<<WCEOF"
+            printf '%s\n' "${err:-(no stderr captured)}"
+            echo "WCEOF"
+          } >> "$GITHUB_OUTPUT"
+          exit 1
+
+      # T052/FR-027/FR-029: one announcement, every branch. A merge names
+      # the head SHA, the round, and the conditions checked; a refusal
+      # names the single condition that failed (never merely that one did);
+      # a workflow-scope refusal names that reason and the hand-off.
+      - name: Announce the merge decision on the lifecycle issue
+        if: "!cancelled() && steps.lifecycle-gate.outputs.is-open == 'true'"
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          ISSUE: ${{ needs.select.outputs.issue }}
+          PR_NUMBER: ${{ needs.select.outputs.pr-number }}
+          ROUND: ${{ needs.disposition.outputs.round }}
+          HEAD_SHA: ${{ steps.preconditions.outputs.head-sha || needs.select.outputs.head-sha }}
+          MAY_MERGE: ${{ steps.preconditions.outputs.may-merge }}
+          UNMET_REASON: ${{ steps.preconditions.outputs.unmet-reason }}
+          MERGED: ${{ steps.merge.outputs.merged }}
+          FAILURE_KIND: ${{ steps.merge.outputs.failure-kind }}
+          FAILURE_DETAIL: ${{ steps.merge.outputs.failure-detail }}
+        run: |
+          set -uo pipefail
+
+          # The printf formats below are DOUBLE-quoted with backslash-escaped
+          # backticks, not single-quoted: every backtick here is a Markdown
+          # code span in the issue comment, and inside single quotes each
+          # one reads as an expansion that never expands (SC2016). No
+          # format carries a `$`, so double-quoting expands nothing.
+          conditions="checks_green, gate_suite_green, mergeable, reviewed_at_this_head, kill_switch_clear, round_clean, no_open_findings, no_unresolved_human_review"
+
+          if [ "$MERGED" = "true" ]; then
+            body="$(printf "lifecycle-review-gate **merged** PR #%s at %s (review round %s).\n\nA squash commit on \`main\`, which one human action reverts.\n\nConditions checked: %s.\n" \
+              "$PR_NUMBER" "$HEAD_SHA" "${ROUND:-?}" "$conditions")"
+          elif [ "$FAILURE_KIND" = "workflow-scope" ]; then
+            body="$(printf "lifecycle-review-gate did **not** merge PR #%s at %s: GitHub refused the merge for a credential scope reason (this PR touches \`.github/workflows/\`, which needs a credential carrying the workflow scope).\n\nNo retry, no second merge method, and no other route to \`main\` was attempted. The merge is handed to a maintainer (\`gh auth refresh -h github.com -s workflow\`).\n\n\`\`\`\n%s\n\`\`\`\n" \
+              "$PR_NUMBER" "$HEAD_SHA" "$FAILURE_DETAIL")"
+          elif [ "$MAY_MERGE" = "true" ]; then
+            body="$(printf "lifecycle-review-gate did **not** merge PR #%s at %s: every precondition held, but the merge call itself failed. The PR is left open for a maintainer; nothing else was attempted.\n\n\`\`\`\n%s\n\`\`\`\n" \
+              "$PR_NUMBER" "$HEAD_SHA" "$FAILURE_DETAIL")"
+          elif [ -n "$UNMET_REASON" ]; then
+            body="$(printf "lifecycle-review-gate did **not** merge PR #%s at %s: the precondition \`%s\` does not hold.\n\nConditions checked, in order: %s. The PR stays open for a maintainer and is re-evaluated on a later run.\n" \
+              "$PR_NUMBER" "$HEAD_SHA" "$UNMET_REASON" "$conditions")"
+          else
+            body="$(printf "lifecycle-review-gate did **not** merge PR #%s at %s: the merge preconditions were never evaluated (the lifecycle issue or PR closed mid-round, or the evaluation step itself failed).\n" \
+              "$PR_NUMBER" "$HEAD_SHA")"
+          fi
+
+          gh issue comment "$ISSUE" -R "$GITHUB_REPOSITORY" --body "$body"
+
+      # The merge step is continue-on-error so the announcement above always
+      # runs; the job's own result must still reflect a merge that was
+      # attempted and failed, so a maintainer sees a red run rather than a
+      # green one whose only evidence is an issue comment.
+      - name: Fail the job on an attempted-but-failed merge
+        if: steps.merge.outcome == 'failure'
+        run: |
+          echo "::error::lifecycle-review-gate: the merge of PR #${{ needs.select.outputs.pr-number }} was attempted and failed (${{ steps.merge.outputs.failure-kind }}); the reason is stated on the lifecycle issue."
+          exit 1

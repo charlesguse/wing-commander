@@ -76,6 +76,12 @@ on:
       # adopter forking that wrapper reads. Editing the document alone is
       # the one change that can make it disagree with the file it describes.
       - "specs/058-per-job-minute-floor/contracts/metrics-persist-sweep-delta.md"
+      # Gate 113's subject: the constitution names the classes of merge the
+      # bot may perform, and the gate fails when the pipeline can perform
+      # one the document does not name. An amendment PR editing only this
+      # file is exactly the change that flips that gate from failing to
+      # passing, so it has to run it.
+      - ".specify/memory/constitution.md"
   # Gate 1 only — it reads how GitHub actually registered the workflows on
   # the default branch, which a PR's files cannot tell us.
   push:
@@ -4260,6 +4266,49 @@ jobs:
       - name: "Gate 111 self-test — an ignored tip-move and a standalone-mode dispatch are both caught"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-fold-dispatch-composite.py --self-test
+
+      # Gate 112 — specs/062-lifecycle-review-gate T048/T050:
+      # lifecycle_merge_preconditions.py's eight-condition decision refuses
+      # a merge for its OWN stated reason on every documented branch — a
+      # round clean at a DIFFERENT head SHA, a round that came back with
+      # findings, and a maintainer's standing CHANGES_REQUESTED are three
+      # different refusals, and FR-027 requires the gate to say which.
+      # Auto-merge is the one thing this feature does that a human action
+      # has to undo, so its decision is fixtured, not trusted. Numbered
+      # 112, not the 104 tasks.md's T050 originally reserved — see Gate
+      # 107's comment above for the Maintainer Feedback renumbering.
+      - name: "Gate 112 — Lifecycle merge preconditions"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-lifecycle-merge-preconditions.py
+      - name: "Gate 112 self-test — the bot's own review never blocks its merge, a plain comment never clears a standing CHANGES_REQUESTED, and unmet_reason names only the first failing condition"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-lifecycle-merge-preconditions.py --self-test
+
+      # Gate 113 — specs/062-lifecycle-review-gate T055/T057 (FR-038):
+      # the constitution names every class of merge the pipeline can
+      # actually perform. Principle V says the only merges the bot may
+      # perform are the TWO classes Principle X defines; this feature's
+      # merge job adds a third, and code that merges a class the document
+      # does not name violates V rather than extending X — V says so in
+      # those words. Presence-implies-documented, the inverse of Gate 97's
+      # check_no_merge_invariant: no merge capability in
+      # lifecycle-review-gate.yml, nothing required.
+      #
+      # This gate is EXPECTED to fail on specs/062-lifecycle-review-gate's
+      # own branch and until the amendment merges: FR-033/research.md D16
+      # make the amendment a separate, human-merged PR against main, which
+      # this feature's branch may not carry. That ordering is the point —
+      # the gate is what makes "WING_COMMANDER_LIFECYCLE_AUTO_MERGE can
+      # never safely be true before the amendment" a checked fact rather
+      # than something a maintainer has to remember
+      # (contracts/constitution-amendment.md "Ordering this gate enforces
+      # in practice").
+      - name: "Gate 113 — Constitution merge-class parity"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-constitution-merge-class-parity.py
+      - name: "Gate 113 self-test — merge code with a silent constitution fails, and the Sync Impact Report's own prose never satisfies the check"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-constitution-merge-class-parity.py --self-test
 
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and
