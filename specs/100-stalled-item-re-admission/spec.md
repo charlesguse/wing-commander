@@ -39,11 +39,14 @@ Two ordinary events open the gap:
 - **The label add fails after the marker was posted.** #603 fixed exactly
   two of the loop's stall sites — the fix job's post-push breach and
   readiness's backstop breach — by applying the label *before* the marker
-  and failing loudly when it cannot. Five arms across three other jobs still
-  post the marker first: triage's already-fixed hand-over, route's
+  and failing loudly when it cannot. Five arms across three other jobs
+  posted the marker first: triage's already-fixed hand-over, route's
   spec-request verdict, and all three of review's stall arms (parse-failed,
   malformed-findings, budget-spent). A transient failure on the label call
-  leaves the stalled marker newest with no label.
+  left the stalled marker newest with no label. #782 has since moved every
+  stall site through one helper that adds the label first and renders no
+  marker when the add fails, so this cause is closed on current `main`;
+  FR-001–FR-005 are what holds it closed.
 - **A maintainer removes the label**, which spec 057's `data-model.md`
   defines as the re-admission path and every review stall notice advertises
   in as many words.
@@ -56,11 +59,13 @@ under review is one a `spec-request` already covers. For a budget-spent
 stall the round budget restarts at zero.
 
 The minimum is not in question: every stall site should apply the label
-before the marker and fail loudly otherwise, which is what #603 established
-and did not finish. What re-admission should then *mean* is an owner
-question, and it is why this is a spec and not a fix PR.
+before the marker and fail loudly otherwise, which is what #603 established,
+did not finish, and #782 finished. What re-admission should then *mean* was
+the owner question, and it is why this is a spec and not a fix PR; the
+answer (below) is that re-admission keeps today's rule, stated and gated
+rather than emergent.
 
-### 2. Readiness's own breach path can file a second spec-request
+### 2. Readiness's own breach path can file a second spec-request (deferred)
 
 Readiness files a `spec-request` on a backstop breach through two entries.
 The `step=breach` retry entry (#530) first looks for a spec-request this App
@@ -70,8 +75,10 @@ review — has no such lookup. Its create runs, and only then are the label
 and the marker written; a failure on either leaves the marker at
 `step=readiness` with its PR, which resumes straight back into readiness, re-
 measures the same oversized diff, and files a second spec-request for the
-same PR. #527 is the open home for bounding these retries and making filing
-idempotent; this one site is the asymmetry #527's design has to cover.
+same PR. #701 (spec 092 — bounded, idempotent `spec-request` filing) is the
+open home for this across every filing site, readiness's breach path
+included. The owner's answer to Q3 defers this defect there in full: it is
+described here for the record and is out of scope for this feature.
 
 ### 3. A stop request does not stop readiness from filing
 
@@ -86,10 +93,25 @@ applies `board:stalled`, and cross-links the artifact. A maintainer who
 types `stop` to keep the loop from filing something gets the filing.
 
 Triage exits early on `PAUSED`; route, fix and review gate their durable
-steps with `paused != 'true'`; readiness alone launders the stand-down
+steps with `paused != 'true'`; readiness alone laundered the stand-down
 through a decision value. FR-051 asks the kill switch to stop the loop
 "before any durable action" and FR-052 asks the same of a maintainer's
-comment.
+comment. #782 gated every readiness durable step on the re-check's `paused`
+answer and records the stand-down on the step summary; FR-012–FR-015 are
+what holds that.
+
+### Where this stands on current `main`
+
+The three defects above are the state of the loop when this spec was
+drafted. Since then #782 has landed the label-before-marker ordering at
+every stall site (defect 1's accidental cause) and readiness's per-write
+stand-down gating (defect 3), each with Gate 97 cases and self-test
+mutations. What remains live for this feature is: FR-006/FR-007's stated,
+contract-visible re-admission rule and its gate, FR-009's budget statement,
+FR-004's derived enumeration of stall sites, and FR-010/FR-011's bounds on
+what a retry or a re-admission may spend and must record. The plan stage
+re-derives what is already built rather than rebuilding it. Defect 2 is
+deferred to #701.
 
 ### Why this is worth doing
 
@@ -104,30 +126,42 @@ gates durable actions is computed correctly and then not consulted.
 
 ### What must not be spent
 
-#530 and #603 already bought the two hardest stall sites the right ordering,
-with error text explaining what a later run will do. Their reasoning is the
-model for the remaining five arms, not something to redesign. Likewise the
-stop check itself — its two-token split, its target guards, its mutation-
-proven decision function (specs 085, 087, 088) — is correct and is not the
-subject; only readiness's consumption of its answer is.
+#530 and #603 bought the two hardest stall sites the right ordering, with
+error text explaining what a later run will do, and #782 carried that
+reasoning to every remaining arm and to one canonical statement of it. None
+of it is to be redesigned here. Likewise the stop check itself — its
+two-token split, its target guards, its mutation-proven decision function
+(specs 085, 087, 088) — is correct and is not the subject; only readiness's
+consumption of its answer is.
 
 ## Clarifications
 
-### Open questions carried to lifecycle issue #752
+### Session 2026-09-29 — resolved on lifecycle issue #752
 
-Three questions are unresolved in this draft and are carried to the
-lifecycle issue for the clarify stage. They are marked in place as
-`[NEEDS CLARIFICATION]` on FR-006, FR-009 and FR-016.
+The three questions this draft carried were answered by the owner on #752.
+No `[NEEDS CLARIFICATION]` marker remains.
 
-- **Q1 (scope/behaviour, FR-006)**: What does re-admission after a stall
-  *do*? Nothing in the loop today makes that choice deliberately — the step
-  a re-admitted item resumes at is a side effect of whether an open
-  `board:owned` PR happens to exist.
-- **Q2 (cost, FR-009)**: When a review-budget stall is re-admitted, what
-  happens to the round budget? It restarts at zero today, which lets one
-  label removal buy a whole fresh budget.
-- **Q3 (scope, FR-016)**: Does readiness's own-breach duplicate lookup land
-  in this feature, or is defect 2 left entirely to #527?
+- **Q1 (scope/behaviour, FR-006) — what re-admission after a stall does.**
+  **Answer: option (b), today's behaviour, made explicit and gated.** A
+  stalled item whose `board:stalled` label a maintainer removed resumes by
+  the resume step's ordinary re-derivation from live state: `review` when an
+  open `board:owned` pull request cites the issue, a fresh triage otherwise.
+  What makes that safe is #782: every stall site now applies the label
+  before it writes the marker and renders no marker when the add fails, so a
+  `stalled` marker with no label can only mean a deliberate removal. The
+  rule's canonical statement already lives at `add_stalled_label()` in
+  `board_item_marker.py`. This feature documents and gates the rule; it does
+  not change it.
+- **Q2 (cost, FR-009) — the budget a re-admitted item may spend.**
+  **Answer: a fresh review-round budget.** Re-admitting is the maintainer
+  authorizing more spend, which is the same call the owner made on #717
+  (Q3: B) and #724 (Q2: B), where re-admitted or human-touched work gets a
+  fresh independent review.
+- **Q3 (scope, FR-016) — where readiness's own-breach duplicate lookup
+  lands.** **Answer: deferred entirely to #701** (spec 092, bounded and
+  idempotent `spec-request` filing), which covers every `spec-request`
+  filing site, readiness's breach path included. Defect 2 is therefore out
+  of scope here, and US4 and its success criterion are removed with it.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -167,10 +201,12 @@ the marker comment.
 4. **Given** triage hands over an already-fixed-on-`main` proposal, **When**
    the stall is recorded, **Then** the label precedes the marker on the same
    terms.
-5. **Given** a stalled marker that nonetheless exists with no label — from a
-   pre-existing item, or a write the loop did not make — **When** the next
-   run resumes that item, **Then** it does not spend a reviewer invocation on
-   the open PR before FR-006's re-admission rule has decided what to do.
+5. **Given** a stalled item whose `board:stalled` label is still in place,
+   **When** a later run selects, **Then** the item is not selected by either
+   the in-flight path or the oldest-first fallback, so no reviewer
+   invocation is spent on its open PR while the stall holds. A `stalled`
+   marker with no label is a maintainer's deliberate re-admission and is
+   governed by FR-006, not by this story.
 
 ---
 
@@ -216,58 +252,54 @@ assert zero durable calls in both.
 
 A maintainer removes `board:stalled` from a stalled item. What the loop does
 next is a rule the loop states, not an accident of which artifacts happen to
-exist: it resumes at the step FR-006 names, it never opens a second branch or
-PR beside the one already open, and the run summary says which rule fired and
-why. Whatever that step is, a re-admitted item cannot consume more agent
-budget than FR-009 allows.
+exist: it resumes at the step FR-006 names — `review` when an open
+`board:owned` pull request cites the issue, a fresh triage against current
+`main` otherwise — it never opens a second branch or PR beside the one
+already open, and the run summary says which rule fired and why. A
+re-admitted review-budget stall starts a fresh round budget (FR-009),
+because the removal is the maintainer authorizing that spend.
 
-**Why this priority**: It is the owner question. It can only be built after
-Q1 and Q2 are answered, and US1 and US2 are correct without it.
+**Why this priority**: It was the owner question, now answered — the rule is
+today's behaviour, stated and gated rather than emergent. US1 and US2 are
+correct without it, so it ships last.
 
-**Independent Test**: With the answer to Q1 encoded, drive resume against a
-stalled marker plus an open loop-owned PR and assert the resolved step, the
-absence of a second branch or PR, and the summary line.
+**Independent Test**: Drive resume against a stalled marker plus an open
+loop-owned PR and assert the resolved step is `review`; drive it against a
+stalled marker with no open PR and assert a fresh triage. In both, assert
+the absence of a second branch or PR and the summary line.
 
 **Acceptance Scenarios**:
 
 1. **Given** an item stalled by review's spent budget with its PR still
    open, **When** the label is removed and the next run selects it, **Then**
-   the item resumes at the step FR-006 names and the run summary records that
-   it was re-admitted from a stall.
-2. **Given** an item stalled by readiness's backstop breach, **When** it is
-   re-admitted, **Then** the loop does not review the oversized PR the
-   existing `spec-request` already covers.
+   the item resumes at `review` on that pull request and the run summary
+   records that it was re-admitted from a stall and which clause resolved
+   the step.
+2. **Given** an item stalled by readiness's backstop breach with its PR
+   still open, **When** the label is removed, **Then** the same rule applies
+   and the loop resumes review of that pull request — the removal is a
+   deliberate instruction, and a maintainer who does not want the oversized
+   PR reviewed leaves the label in place.
 3. **Given** an item stalled by route with no PR ever opened, **When** it is
-   re-admitted, **Then** the loop does not adopt an unrelated PR.
+   re-admitted, **Then** the loop triages it afresh against current `main`
+   and does not adopt an unrelated PR.
 4. **Given** any re-admitted item whose own PR is still open, **When** the
    resolved step would ordinarily cut a branch, **Then** no second branch or
    PR is created (FR-054 of spec 057 is preserved).
+5. **Given** an item stalled by review's spent budget, **When** it is
+   re-admitted, **Then** the round budget starts fresh, and **When** that
+   fresh budget is spent with findings still open, **Then** the item stalls
+   again on the same terms.
 
 ---
 
-### User Story 4 - A retried readiness breach files one spec-request, not two (Priority: P4)
+### Removed: a retried readiness breach files one spec-request, not two
 
-Readiness breaches the backstop on a converged PR's final diff and files a
-`spec-request`. A later write fails, and a later run resumes readiness on the
-same PR. It finds the `spec-request` already filed for this issue and PR,
-reuses it, and files nothing new.
-
-**Why this priority**: It is the smallest of the three and the one already
-half-built — the retry entry's lookup is the shape to reuse. It is also the
-one whose home is itself a question (Q3).
-
-**Independent Test**: Run readiness's breach path twice against the same
-issue and PR with a stubbed issue-search and assert exactly one create call.
-
-**Acceptance Scenarios**:
-
-1. **Given** readiness's own backstop breach with a `spec-request` already
-   filed for this issue and PR, **When** readiness breaches again, **Then**
-   the existing request is reused and named in the run summary and no second
-   one is created.
-2. **Given** the same breach, **When** the lookup for an existing request
-   cannot be performed, **Then** nothing is filed and the run fails, so a
-   later run retries rather than risking a duplicate.
+This draft carried a fourth user story for defect 2 — readiness's own
+backstop-breach filing performing the "already filed for this issue and this
+pull request" lookup its `step=breach` retry entry performs. Q3 defers it
+entirely to #701 (spec 092), which covers every `spec-request` filing site
+at once. It is not built here; see Out of Scope.
 
 ---
 
@@ -280,17 +312,20 @@ issue and PR with a stubbed issue-search and assert exactly one create call.
   this: the retry must reach the stall decision without spending another
   agent invocation.
 - **A stalled marker exists with no label and no open PR.** The fallback
-  finds nothing, so the item resolves to a fresh triage today. FR-006's rule
-  must say whether that is still correct.
+  finds nothing, so the item resolves to a fresh triage. FR-006 keeps that
+  and states it: a fresh triage against current `main` is the re-admission
+  rule for a stalled item with no open pull request, at every stall site.
 - **The label is removed while a run is mid-flight on the item.** The run
   holds the item under the global concurrency group; the removal takes
   effect on the next run, not this one. Nothing in this feature re-reads the
   label mid-run.
 - **The loop cannot distinguish "the label add failed" from "a maintainer
   removed it".** FR-030 of spec 057 rejects deciding eligibility from a
-  timeline event, so resume sees one state with two causes. Whatever FR-006
-  names must be safe for both, or FR-001/FR-002 must make the first cause
-  unreachable and FR-006 may then assume the second.
+  timeline event, so resume would see one state with two causes. FR-001 and
+  FR-002 resolve this by making the first cause unreachable — no marker is
+  ever posted without the label — and FR-006 therefore reads a label-less
+  `stalled` marker as the second cause: a deliberate re-admission. This is
+  what lets FR-006 keep today's live-state re-derivation.
 - **A stop lands between readiness's re-check and its first write.** The
   re-check is a point sample; this feature does not add a second one. The
   window is bounded by the same reasoning the other five jobs accept.
@@ -298,8 +333,9 @@ issue and PR with a stubbed issue-search and assert exactly one create call.
   genuinely mergeable but no report is posted. The item is not lost: its
   marker still says `readiness`, so the next unpaused run reports it.
 - **A `spec-request` search that returns more than one match for the same
-  issue and PR.** The oldest is reused, matching the retry entry's existing
-  rule; the extras are not closed by this feature.
+  issue and PR.** The retry entry's existing rule — reuse the oldest —
+  stands unchanged; how filing becomes idempotent everywhere is #701's
+  subject, not this feature's.
 
 ## Requirements *(mandatory)*
 
@@ -309,9 +345,10 @@ issue and PR with a stubbed issue-search and assert exactly one create call.
 
 - **FR-001**: Every site at which the loop records a `stalled` board-item
   marker MUST apply the `board:stalled` label before posting that marker.
-  This MUST hold at all of them: triage's already-fixed hand-over, route's
-  `spec-request` verdict, each of review's stall arms, the fix job's
-  post-push backstop breach, and readiness's backstop breach.
+  This MUST hold at all of them — eight on current `main`: triage's
+  already-fixed hand-over, route's `spec-request` verdict, the fix job's
+  gate-suite-red stall and its post-push backstop breach, each of review's
+  three stall arms, and readiness's backstop breach.
 - **FR-002**: When the label cannot be applied, the site MUST fail the run
   loudly and MUST NOT post a `stalled` marker. The error MUST name what a
   later run will do with the item, and — at sites that already filed a
@@ -332,28 +369,33 @@ issue and PR with a stubbed issue-search and assert exactly one create call.
 #### Re-admission — one stated rule, not a side effect
 
 - **FR-006**: The loop MUST resolve a re-admitted stalled item to a step by
-  a stated rule, and MUST NOT resolve it to a step merely because an open
-  `board:owned` pull request citing the issue happens to exist.
-  [NEEDS CLARIFICATION: what re-admission after a stall does — (a) a fresh
-  triage against current `main`, adopting the existing PR rather than cutting
-  a second; (b) review of the existing PR, today's behaviour, made explicit
-  and documented; (c) the step the stall itself came from, recorded on the
-  stall marker so a review stall resumes review, a readiness breach resumes
-  readiness, and a route or triage stall resumes triage; (d) a hold that
-  requires an explicit maintainer instruction, which would amend spec 057's
-  FR-030 rule that removing the label is the sole re-eligibility condition]
-- **FR-007**: The rule MUST be stated for every stall site, and MUST produce
-  a defined step for a stalled item with no open PR as well as one with an
-  open PR.
+  a stated rule, and that rule is the resume step's ordinary re-derivation
+  from live state (Q1, option (b)): `review` when an open `board:owned` pull
+  request cites the issue, and a fresh triage against current `main`
+  otherwise. The rule MUST be stated in one canonical place and MUST be
+  reachable from the contracts a maintainer reads, rather than left to be
+  inferred from the resume fallback's clause order.
+- **FR-006a**: The rule MUST rest on FR-001/FR-002 explicitly: because no
+  stall site can post a `stalled` marker without the label, a label-less
+  `stalled` marker means a maintainer removed the label deliberately, and
+  the loop MUST treat it as that instruction. A change that weakens
+  FR-001/FR-002 therefore invalidates FR-006, and the statement of the rule
+  MUST say so.
+- **FR-007**: The rule MUST hold for every stall site — no site's stall gets
+  a different re-admission — and MUST produce a defined step for a stalled
+  item with no open PR as well as one with an open PR.
 - **FR-008**: A re-admitted item MUST NOT cause a second branch or a second
   pull request to be opened while its own pull request is still open (spec
   057's FR-054 is preserved whatever FR-006 resolves to).
 - **FR-009**: The agent budget a re-admitted item may consume MUST be
-  bounded and stated. [NEEDS CLARIFICATION: on re-admission of a
-  budget-spent review stall, does the round budget restart at zero (today's
-  behaviour: one label removal buys a full fresh budget), continue from the
-  spent count (the item re-stalls immediately, with no reviewer invocation
-  spent), or grant a smaller, named number of additional rounds?]
+  bounded and stated: a re-admitted item gets a full fresh review-round
+  budget (Q2), the same bound a newly selected item gets, and MUST stall
+  again on the same terms when that fresh budget is spent with findings
+  still open. Removing `board:stalled` is the maintainer authorizing that
+  spend, consistent with #717 (Q3) and #724 (Q2), where re-admitted or
+  human-touched work gets a fresh independent review. The loop MUST NOT
+  carry the spent count across a re-admission, and MUST NOT grant an
+  unbounded or repeating budget within one re-admission.
 - **FR-010**: Re-entering a job after FR-002's loud failure MUST NOT spend
   an additional agent invocation per attempt. The stall decision MUST be
   reachable from the marker's own recorded state before any agent runs.
@@ -381,36 +423,37 @@ issue and PR with a stubbed issue-search and assert exactly one create call.
   fail, and that failure MUST be attributable to the missing gate and not to
   the decision's refusal (Constitution VIII/IX).
 
-#### One spec-request per breach
+#### One spec-request per breach — deferred to #701
 
-- **FR-016**: Readiness's own backstop-breach `spec-request` create MUST be
-  preceded by the same "already filed for this issue and this pull request"
-  lookup its `step=breach` retry entry performs, and MUST reuse a match
-  rather than create a second request. [NEEDS CLARIFICATION: does this land
-  in this feature — the asymmetry is one step and the lookup already exists
-  next to it — or is every filing-idempotency change deferred to #527 so one
-  design covers all spec-request sites at once?]
-- **FR-017**: If FR-016 lands here, a lookup that cannot be performed MUST
-  fail the step with nothing filed, matching the retry entry's existing
-  rule, and the reuse MUST be recorded on the run summary.
-- **FR-018**: Whatever FR-016 resolves to, this feature MUST NOT introduce a
-  second, differently-shaped duplicate check beside the retry entry's — one
-  home, consumed by both entries (CLAUDE.md "Shared logic has exactly one
-  home").
+- **FR-016**: This feature MUST NOT change how readiness's own
+  backstop-breach `spec-request` is filed. Making that create idempotent —
+  the "already filed for this issue and this pull request" lookup its
+  `step=breach` retry entry performs — is deferred in full to #701 (spec
+  092), which covers every `spec-request` filing site at once (Q3).
+- **FR-017**: The `step=breach` retry entry's existing lookup MUST keep
+  working exactly as it does today; nothing here may remove, narrow or
+  duplicate it.
+- **FR-018**: This feature MUST NOT introduce a second, differently-shaped
+  duplicate check beside the retry entry's — one home, consumed by every
+  entry, so that #701 has one thing to generalize (CLAUDE.md "Shared logic
+  has exactly one home").
 
 #### Contracts and scope
 
 - **FR-019**: The live contracts that describe the behaviour changed here
   MUST be updated in the same change — the resume step-resolution contract,
-  the board-item-marker contract if FR-006 extends what a stall marker
-  records, and the labels/readiness/review/route/triage contracts that
-  describe a stall's two moves. The merged `spec.md`, `plan.md`,
+  which is where FR-006's rule is stated, and the
+  labels/readiness/review/route/triage contracts that describe a stall's two
+  moves. FR-006 does not extend what a stall marker records, so the
+  board-item-marker contract's schema is unchanged. The merged `spec.md`,
+  `plan.md`,
   `research.md` and `tasks.md` of specs 057 and 061 MUST NOT be edited
   (CLAUDE.md: they are historical records).
-- **FR-020**: If FR-006's answer contradicts spec 057's stated re-eligibility
-  rule, the contradiction MUST be resolved explicitly in the live contract
-  and named in the implementation PR, never left as two documents
-  disagreeing.
+- **FR-020**: FR-006 does not contradict spec 057's FR-030 — removing
+  `board:stalled` remains the sole re-eligibility condition, and FR-006 only
+  states what happens next. The live contract MUST record the two together
+  so no later reader has to re-derive the relationship, and no second
+  exclusion label or second re-eligibility mechanism may be introduced.
 - **FR-021**: The published contract MUST be unchanged: no stage workflow's
   `workflow_call` inputs, outputs or secrets, and no published composite
   action's interface, may change (Constitution VII). `board-loop.yml` is the
@@ -421,12 +464,16 @@ issue and PR with a stubbed issue-search and assert exactly one create call.
 - **Stall**: the loop's hand-to-human. Two moves — the `board:stalled` label
   and a `stalled` board-item marker — which this feature makes ordered and
   atomic-or-loud.
-- **Stall site**: one arm of one job that performs a stall. There are seven
-  today across five jobs — triage's hand-over, route's spec verdict, review's
-  three stall arms, the fix job's post-push breach and readiness's backstop
-  breach; FR-004 makes the set derivable rather than remembered.
-- **Re-admission**: what happens after `board:stalled` is removed. Currently
-  an emergent property of the resume fallback; FR-006 makes it a rule.
+- **Stall site**: one arm of one job that performs a stall. There are eight
+  on current `main` across five jobs — triage's hand-over, route's spec
+  verdict, the fix job's gate-red stall and its post-push breach, review's
+  three stall arms, and readiness's backstop breach; FR-004 makes the set
+  derivable rather than remembered, which is why no requirement here rests
+  on the count.
+- **Re-admission**: what happens after `board:stalled` is removed. An
+  emergent property of the resume fallback today; FR-006 keeps the same
+  outcome and states it as a rule, resting on FR-001/FR-002 for the
+  guarantee that a label-less stall is always deliberate.
 - **Resume step resolution**: the ordered clauses that turn a marker plus
   live state into the step a run will execute. The `board:owned` fallback
   clause is the one this feature constrains.
@@ -434,31 +481,35 @@ issue and PR with a stubbed issue-search and assert exactly one create call.
   correctly; FR-012 makes readiness consume it at every write rather than at
   one decision.
 - **Already-filed lookup**: the search for a `spec-request` this App filed
-  for a given issue and pull request. One home, two breach entries.
+  for a given issue and pull request. One home today, at the `step=breach`
+  retry entry; generalizing it to every filing site is #701's subject, not
+  this feature's.
 
 ## Success Criteria *(mandatory)*
 
 ### Measurable Outcomes
 
-- **SC-001**: For all seven stall sites, a checked-in case shows the
-  `board:stalled` label applied before the `stalled` marker, and a second
-  case shows a failed label application producing no marker and a failed
-  run.
+- **SC-001**: For every stall site the workflow has (eight on current
+  `main`), a checked-in case shows the `board:stalled` label applied before
+  the `stalled` marker, and a second case shows a failed label application
+  producing no marker and a failed run.
 - **SC-002**: Reverting any one stall site to marker-before-label causes the
   gate suite to fail and to name that site; no site is covered by narrative
   alone.
-- **SC-003**: Adding an eighth stall site that posts the marker first is
+- **SC-003**: Adding one more stall site that posts the marker first is
   caught without editing a list of sites.
-- **SC-004**: No board-loop run spends a reviewer invocation, a fix
-  invocation, a push, or a second pull request on an item whose newest
-  marker is `stalled` — provable from the resolved step alone, with no
-  reference to whether the label happens to be present.
-- **SC-005**: A maintainer can predict, from one stated rule, what removing
-  `board:stalled` will make the loop do next, for a stall at any site and
-  with or without an open pull request.
-- **SC-006**: A re-admitted item's maximum additional agent budget is a
-  stated number, and a checked-in case shows the item stalling again once it
-  is spent.
+- **SC-004**: While a stall holds — the `stalled` marker newest and
+  `board:stalled` present — no board-loop run spends a reviewer invocation,
+  a fix invocation, a push, or a second pull request on that item. Once the
+  label is removed, what the run spends is what FR-006's stated rule and
+  FR-009's budget allow, and nothing more.
+- **SC-005**: A maintainer can predict, from one stated rule read in one
+  place, what removing `board:stalled` will make the loop do next, for a
+  stall at any site and with or without an open pull request — `review` on
+  the open loop-owned PR, a fresh triage otherwise.
+- **SC-006**: A re-admitted item's additional agent budget is a stated
+  number — one full round budget, the same as a newly selected item — and a
+  checked-in case shows the item stalling again once it is spent.
 - **SC-007**: With the stop check answering stand down, a readiness run
   makes zero durable GitHub writes — no comment, no issue created, no label
   applied, no cross-link — in both the backstop-holds and backstop-breaches
@@ -466,14 +517,12 @@ issue and PR with a stubbed issue-search and assert exactly one create call.
 - **SC-008**: Removing the stand-down gate from any one of readiness's
   durable steps causes at least one checked-in case to fail, and the failure
   names that step.
-- **SC-009**: Two readiness runs that both breach on the same pull request
-  produce exactly one `spec-request` for it.
-- **SC-010**: Every re-admission, every FR-002 retry, and every readiness
+- **SC-009**: Every re-admission, every FR-002 retry, and every readiness
   stand-down appears on the run summary; a maintainer reconstructing what the
   loop did needs no log archaeology.
-- **SC-011**: `python .github/scripts/run-local-gates.py` passes with no gate
+- **SC-010**: `python .github/scripts/run-local-gates.py` passes with no gate
   skipped, waived, or weakened to accommodate this change.
-- **SC-012**: An adopter pinning the published release sees no interface
+- **SC-011**: An adopter pinning the published release sees no interface
   change.
 
 ## Assumptions
@@ -487,12 +536,13 @@ issue and PR with a stubbed issue-search and assert exactly one create call.
   `specs/061-marker-owned-in-flight/contracts/` are live documents fixed like
   code (CLAUDE.md), while those features' `spec.md`/`plan.md`/`tasks.md` are
   frozen records. FR-019 follows that split.
-- The seven stall sites enumerated in FR-001 are the complete set on current
-  `main`. The implementation re-derives the set rather than trusting this
-  count, which is what FR-004 asks for.
-- #527 remains the home for *bounding* spec-request filing retries. This
-  feature touches filing idempotency at one site only, and only if Q3
-  resolves that way; it does not adopt #527's scope.
+- The eight stall sites enumerated in FR-001 are the complete set on current
+  `main` (#782 moved all of them through one helper). The implementation
+  re-derives the set rather than trusting this count, which is what FR-004
+  asks for.
+- #701 (spec 092) is the home for bounding `spec-request` filing retries and
+  making filing idempotent at every site, readiness's breach path included.
+  This feature files nothing new and changes no filing path (Q3).
 - The stop check's own decision function and composite are correct and out of
   scope (specs 085, 087, 088). Only readiness's consumption of the `paused`
   answer changes.
@@ -506,18 +556,19 @@ issue and PR with a stubbed issue-search and assert exactly one create call.
 
 ## Dependencies
 
-- `.github/workflows/board-loop.yml` — the resume step's step resolution, the
-  six stall sites, and the readiness job's durable steps.
+- `.github/workflows/board-loop.yml` — the resume step's step resolution,
+  every stall site, and the readiness job's durable steps.
 - `.github/scripts/board_eligibility.py` — `PRE_FIX_STEPS`,
   `FIX_OR_LATER_STEPS`, `TERMINAL_STEPS`, `select()` and
   `in_flight_candidate()`, which together decide that a `stalled` marker
   keeps an item out of the in-flight path but not out of the oldest-first
   fallback.
 - `.github/scripts/board_item_marker.py` — `write_marker`/`read_marker`, and
-  the marker schema FR-006 option (c) would extend.
-- `.github/scripts/board_readiness.py` — the decision function whose
-  `kill_switch_paused` parameter is the only consumer of the stand-down
-  today (FR-013/FR-015).
+  `add_stalled_label()`, which is where #782 put the canonical statement of
+  the stall rule and of the re-admission FR-006 now states.
+- `.github/scripts/board_readiness.py` — the readiness decision, whose
+  `kill_switch_paused` parameter FR-015 keeps as redundant defence behind
+  the per-write gating (FR-012/FR-013).
 - `.github/actions/wing-commander-board-stop-check/action.yml` — the
   `paused` output readiness must gate on; unchanged by this feature.
 - `specs/061-marker-owned-in-flight/contracts/resume-recovery.md` — the "Step
@@ -533,13 +584,16 @@ issue and PR with a stubbed issue-search and assert exactly one create call.
   (Gate 93) whose rules the stall sites already answer to.
 - Prior art this change must not undo: #530 (the `breach` step and its
   fallback carve-out), #603 (label-before-marker at the two hardest sites),
-  #532 (`awaiting-merge`), #555 (marker ownership), #526, #499, #583
-  (review's inconclusive stall arms), #462/#461/#465 (the stop-check idiom).
+  #782 (label-before-marker at every site, the readiness stand-down gating,
+  and Gate 97's cases for both — the work US1 and US2 describe), #532
+  (`awaiting-merge`), #555 (marker ownership), #526, #499, #583 (review's
+  inconclusive stall arms), #462/#461/#465 (the stop-check idiom).
 
 ## Out of Scope
 
-- Bounding spec-request filing retries in general, or making every
-  spec-request site idempotent — #527's subject.
+- Bounding `spec-request` filing retries, and making any filing site
+  idempotent — including readiness's own backstop-breach create (defect 2,
+  the draft's US4). Deferred in full to #701 / spec 092 (Q3).
 - Changing what counts as a stop request, who may issue one, or how the stop
   baseline is computed.
 - Any change to the size-and-path backstop's thresholds or to what counts as
@@ -547,8 +601,10 @@ issue and PR with a stubbed issue-search and assert exactly one create call.
 - Changing the round budget's default value; FR-009 is about what a
   re-admitted item may spend, not about the budget itself.
 - Introducing a second exclusion label or a second re-eligibility mechanism
-  beside `board:stalled`, unless FR-006 resolves to option (d), in which case
-  FR-020 governs how the contradiction with spec 057's FR-030 is recorded.
+  beside `board:stalled`. FR-006 resolved to today's behaviour, so spec 057's
+  FR-030 stands unamended (FR-020).
+- Changing what a re-admitted item does — FR-006 states the existing rule and
+  gates it; a different rule is a separate feature.
 - The wording of stall notices, including whether each states the
   re-eligibility condition FR-030 requires.
 - Closing or de-duplicating `spec-request` issues already filed in duplicate

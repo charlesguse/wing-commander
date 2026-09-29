@@ -80,3 +80,46 @@
   actions lives in code — FR-003/FR-012) are each carried by a named
   requirement. No principle needs amending unless FR-006 resolves to option
   (d), which FR-020 covers.
+
+### Validation iteration 2 — clarify, 2026-09-29
+
+The owner answered all three questions on lifecycle issue #752. Iteration
+1's notes above stand as the record of the draft; this iteration supersedes
+them where they conflict.
+
+- **"No [NEEDS CLARIFICATION] markers remain"**: now literally true. All
+  three markers are resolved and the answers are recorded in the spec's
+  Clarifications section.
+  - **FR-006 (Q1) — option (b)**: re-admission keeps the resume step's
+    ordinary re-derivation from live state (`review` when an open
+    `board:owned` PR cites the issue, a fresh triage otherwise), stated in
+    one place and gated rather than emergent. Spec 057's FR-030 is not
+    amended, so FR-020 no longer records a contradiction; it records the two
+    rules sitting together. Option (c) is not taken, so the stall marker's
+    schema is unchanged and FR-019 says so.
+  - **FR-009 (Q2) — a fresh round budget**: the removal of `board:stalled`
+    is the maintainer authorizing the spend, matching #717 (Q3) and #724
+    (Q2). The bound is stated and the item re-stalls when it is spent, which
+    is what Principle II needs; FR-010 still forbids an extra invocation per
+    FR-002 retry.
+  - **FR-016 (Q3) — deferred to #701** (spec 092), not #527 as the draft
+    guessed. Defect 2 leaves this feature entirely: US4 and its success
+    criterion are removed, FR-016–FR-018 become "change nothing here, and
+    leave #701 one thing to generalize", and SC-010/SC-011 are the old
+    SC-011/SC-012 renumbered.
+- **Restated against current `main`**: #782 (issue #604) merged after this
+  draft was written. It landed label-before-marker at every stall site and
+  readiness's per-write stand-down gating — the substance of US1 and US2 —
+  with Gate 97 cases and self-test mutations. The spec now carries a "Where
+  this stands on current `main`" section naming what is left: FR-006/FR-007's
+  stated rule and its gate, FR-009's budget, FR-004's derived site
+  enumeration, and FR-010/FR-011. US1 and US2 are kept as the statement of
+  required behaviour, not as unbuilt work.
+- **Stall-site count corrected**: the draft named seven sites and omitted the
+  fix job's gate-suite-red stall; `board-loop.yml` on `main` has eight
+  (triage's hand-over, route's spec verdict, fix's gate-red and post-push
+  breach, review's three arms, readiness's backstop breach). FR-001, the Key
+  Entities entry, SC-001 and the Assumptions now say eight, and no
+  requirement rests on the count — FR-004 requires the set to be re-derived.
+- **Priorities**: US1 and US2 remain P1/P2 and independently shippable; US3
+  is now buildable, its open questions answered. There is no P4.
