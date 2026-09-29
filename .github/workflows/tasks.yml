@@ -476,7 +476,6 @@ jobs:
       # agent-ran above, for the same reason implement.yml does.
       agent-conclusion: ${{ steps.agent-ran-auto.outputs.conclusion || steps.agent-ran-pr.outputs.conclusion }}
       credential-refresh-ok: ${{ steps.credential-status-auto.outputs.ok || steps.credential-status-pr.outputs.ok }}
-      push-credential-mint-failed: ${{ steps.push-cred-status-auto.outputs.mint-failure-detected || steps.push-cred-status-pr.outputs.mint-failure-detected }}
       commits-published: ${{ steps.publish-stranded-auto.outputs.commits-published || steps.publish-stranded-pr.outputs.commits-published }}
       agent-any-failure: ${{ (steps.agent-ran-auto.outputs.conclusion == 'failure' || steps.agent-ran-pr.outputs.conclusion == 'failure') && 'true' || 'false' }}
       credential-any-refresh-failure: ${{ (steps.credential-status-auto.outputs.ok == 'false' || steps.credential-status-pr.outputs.ok == 'false') && 'true' || 'false' }}
@@ -758,17 +757,6 @@ jobs:
         with:
           intended-turns: ${{ inputs.max-turns }}
 
-      # A fresh-mint credential for the agent step's own `git push` calls
-      # -- see clarify.yml.
-      - name: Install fresh-mint push credential (agent-auto)
-        id: push-cred-auto
-        if: steps.guard.outputs.skip != 'true' && steps.mode.outputs.mode == 'auto' && steps.tool-args-tasks-direct-commit.outputs.allowed-tools != ''
-        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-push-credential
-        with:
-          app-id: ${{ secrets.speckit-app-id }}
-          private-key: ${{ secrets.speckit-app-private-key }}
-          owner: ${{ github.repository_owner }}
-
       # This step's prompt carries the retry-bound paragraph for a credential-
       # expiry/mint-failure `git push` signature -- see clarify.yml.
       - name: Generate task list (direct commit)
@@ -997,21 +985,6 @@ jobs:
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-turn-ceiling
         with:
           intended-turns: ${{ inputs.max-turns }}
-
-      # A fresh-mint credential for the agent step's own `git push` calls
-      # -- see clarify.yml.
-      - name: Install fresh-mint push credential (agent-pr)
-        id: push-cred-pr
-        if: >-
-          steps.guard.outputs.skip != 'true' &&
-          steps.mode.outputs.mode == 'pr' &&
-          steps.dupe.outputs.skip != 'true' &&
-          steps.tool-args-tasks-pr.outputs.allowed-tools != ''
-        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-push-credential
-        with:
-          app-id: ${{ secrets.speckit-app-id }}
-          private-key: ${{ secrets.speckit-app-private-key }}
-          owner: ${{ github.repository_owner }}
 
       # This step's prompt carries the retry-bound paragraph for a credential-
       # expiry/mint-failure `git push` signature -- see clarify.yml.
@@ -1553,12 +1526,6 @@ jobs:
           mint-outcome: ${{ steps.reestablish-auto.outcome }}
           refresh-outcome: ${{ steps.refresh-remote-auto.outcome }}
 
-      # FR-006 (specs/071-agent-push-credential) -- see clarify.yml.
-      - name: Detect agent push-credential mint failure (auto)
-        id: push-cred-status-auto
-        if: "!cancelled() && steps.agent-auto.outcome != 'skipped'"
-        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-push-credential-status
-
       - name: Determine post-agent credential status (pr)
         id: credential-status-pr
         if: "!cancelled() && steps.agent-pr.outcome != 'skipped'"
@@ -1566,12 +1533,6 @@ jobs:
         with:
           mint-outcome: ${{ steps.reestablish-pr.outcome }}
           refresh-outcome: ${{ steps.refresh-remote-pr.outcome }}
-
-      # FR-006 (specs/071-agent-push-credential) -- see clarify.yml.
-      - name: Detect agent push-credential mint failure (pr)
-        id: push-cred-status-pr
-        if: "!cancelled() && steps.agent-pr.outcome != 'skipped'"
-        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-push-credential-status
 
       # candidates-json lists this job's own hard-failing (non-continue-on-
       # error) post-agent steps, each read via `.conclusion` -- see
@@ -1919,7 +1880,6 @@ jobs:
           agent-ran: ${{ needs.tasks.outputs.agent-ran }}
           agent-conclusion: ${{ needs.tasks.outputs.agent-conclusion }}
           credential-refresh-ok: ${{ needs.tasks.outputs.credential-refresh-ok }}
-          push-credential-mint-failed: ${{ needs.tasks.outputs.push-credential-mint-failed }}
           failed-post-agent-step: ${{ needs.tasks.outputs.failed-post-agent-step }}
 
       - name: Report the stage did not start

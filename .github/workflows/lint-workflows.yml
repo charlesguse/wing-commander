@@ -3721,22 +3721,25 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-credential-relay-shell.py --self-test
 
-      # Gate 122 — specs/071-agent-push-credential: the minted App
-      # installation token this pipeline already relies on (spec 052) has a
-      # one-hour lifetime, and an agent step still pushing past it starts
-      # failing every `git push` with "Invalid username or token" — the
-      # remedy is a `git credential.helper` that resolves fresh at push
-      # time (contracts/agent-push-credential-helper.md), wired into all 8
-      # in-scope stages' push-capable agent steps, plus a deterministic
-      # rescue for whatever a step still could not push itself. This checks
-      # the wiring structurally: every push-capable agent step has the
-      # credential-helper call before it and, where it also has spec 052's
-      # own post-agent re-mint, the stranded-commit-publish call alongside
-      # it; nothing not push-capable spends either; the minting shell has
-      # exactly one home -- see verify-agent-push-credential-helper.py's own
-      # docstring (checks 1-5) for the current, authoritative list. Numbered
-      # 122, not the 99 this branch's own commit first picked (tasks.md
-      # T001) nor the 120 it was renumbered to next (tasks.md T055): Gate 99
+      # Gate 122 — specs/071-agent-push-credential: an agent step still
+      # running past the minted App installation token's one-hour lifetime
+      # (spec 052) may still see a `git push` fail with "Invalid username
+      # or token" -- this pipeline no longer tries to keep that push itself
+      # alive. Instead, the sole remedy is a deterministic
+      # `wing-commander-publish-stranded-commits` step that runs after the
+      # agent, with its own freshly minted credential, and carries to the
+      # branch any commit the agent could not push itself
+      # (contracts/stranded-commit-publish.md). An earlier design (this
+      # branch's own history) staged the GitHub App private key where a
+      # running agent step could reach it and mint installation tokens
+      # itself -- an owner-directed redesign deleted that composite as a
+      # security defect (agent-reachable App private key, materially worse
+      # than the one-hour token the agent already has) and this gate now
+      # also guards against it reappearing. See
+      # verify-agent-push-credential-helper.py's own docstring (checks 1-5)
+      # for the current, authoritative list. Numbered 122, not the 99 this
+      # branch's own commit first picked (tasks.md T001) nor the 120 it was
+      # renumbered to next (tasks.md T055): Gate 99
       # (specs/059-converged-means-tasks-done,
       # verify-tasks-checkbox-convergence-signal.py) and Gate 100
       # (specs/079, verify-stage-turn-budget-docs.py) claimed those numbers
@@ -3745,28 +3748,17 @@ jobs:
       # (specs/078-plan-tasks-commit-scratch-path,
       # verify-commit-message-scratch-path.py) claimed the next pair this
       # branch had moved to, before this branch's own rebase landed either
-      # time (tasks.md T056).
-      - name: Gate 122 — every push-capable agent step holds a fresh-mint push credential and rescues what it could not push itself
+      # time (tasks.md T056). Gate 123 (mint-credential.sh's own behavioural
+      # companion) was retired in the same redesign along with the script it
+      # drove -- tasks.md's Maintainer Feedback section (T057, T063) --
+      # rather than leaving the number reserved for a script with no
+      # remaining subject.
+      - name: Gate 122 — the App private key is never staged where a running agent could reach it, and every push-capable agent step's unpublished work is rescued
         if: "!cancelled()"
         run: python3 .github/scripts/verify-agent-push-credential-helper.py
       - name: Gate 122 self-test — each documented mutation fails
         if: "!cancelled()"
         run: python3 .github/scripts/verify-agent-push-credential-helper.py --self-test
-
-      # Gate 123 — specs/071-agent-push-credential's behavioural companion
-      # to Gate 122: `mint-credential.sh` signs a GitHub App JWT and
-      # exchanges it for an installation token entirely in plain shell, so
-      # its success/failure shape is a runtime fact Gate 122's structural
-      # check cannot see (the same reason Gate 69 exists alongside Gate 68).
-      # Drives the shipped script directly against a throwaway RSA key and
-      # a stubbed `curl`. Numbered 123, not the 100 or 121 this branch's own
-      # commits picked before it, for the same reason given above Gate 122.
-      - name: Gate 123 — mint-credential.sh mints, fails loud on a 401, and never calls the network with an unreadable key
-        if: "!cancelled()"
-        run: python3 .github/scripts/verify-agent-push-credential-shell.py
-      - name: Gate 123 self-test — both regressions this gate exists to catch fail
-        if: "!cancelled()"
-        run: python3 .github/scripts/verify-agent-push-credential-shell.py --self-test
 
       # Gate 70 — the 8b verifier stands down on a skipped stage-8 run only
       # when the run stage 8 was asked to inspect was itself skipped (PR

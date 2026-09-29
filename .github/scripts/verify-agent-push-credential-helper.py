@@ -1,61 +1,67 @@
 #!/usr/bin/env python3
-"""Gate 122 - every push-capable agent step holds a fresh-mint push credential
-and, where a later push might rescue it, a deterministic publish step too.
+"""Gate 122 - the App private key is never staged where a running agent
+step could reach it, and every push-capable agent step's unpublished work
+is rescued after the fact.
 
 WHY THIS EXISTS
 ---------------
-specs/071-agent-push-credential fixes a defect only visible on a long-running
-agent step: the minted App installation token has a one-hour lifetime, and an
-agent step running past it starts failing every `git push` with "Invalid
-username or token." The fix -- a `wing-commander-agent-push-credential` call
-installing a `git config credential.helper` that mints fresh at push time,
-plus a deterministic `wing-commander-publish-stranded-commits` rescue for
-whatever the agent still could not push itself -- is wiring, and wiring is
-exactly the kind of thing a later edit silently drops. This gate catches
-that, structurally, on every PR that touches a workflow file.
+specs/071-agent-push-credential set out to fix a defect only visible on a
+long-running agent step: the minted App installation token this pipeline
+already relies on (spec 052) has a one-hour lifetime, and an agent step
+still pushing past it starts failing every `git push` with "Invalid
+username or token." An earlier design on this branch (tasks.md T003-T004,
+T007-T014) fixed that by installing a `git credential.helper` that minted
+a fresh installation token on demand -- which meant staging the GitHub
+App's PRIVATE KEY itself, not a derived token, in a file a running agent
+step's own shell could read, and exporting its path via $GITHUB_ENV. An
+owner-directed redesign (tasks.md's "Maintainer Feedback" section, T057)
+deleted that composite as a security defect: a script the agent runs, or a
+prompt injection it processes, could read the key and mint installation
+tokens for every installation the App is on -- materially worse than the
+one-hour, one-repository token the agent already has. The shipped remedy
+is narrower: a mid-cycle push may still fail, but
+`wing-commander-publish-stranded-commits` -- which runs AFTER the agent
+step, with its own credential the agent never saw -- carries anything the
+agent could not push itself to the branch. This gate holds both halves of
+that redesign in place structurally, on every PR that touches a workflow
+or composite-action file.
 
 WHAT THIS CHECKS
 ----------------
-Over the 8 stages FR-007 names (SUBJECTS below; auto-update-spec-kit.yml
-scoped to its `e2e-stage` job only), a step is "push-capable" when it is an
-agent step (`uses: anthropics/claude-code-action@*`) whose composed
-`--allowedTools` text -- resolved either through a referenced
-`wing-commander-tool-args` call's own `default-allowed-tools` input, or from
-a literal `--allowedTools "..."` in the agent step's own `claude_args`
-(auto-update-spec-kit.yml's e2e-stage never calls wing-commander-tool-args at
-all) -- contains `Bash(git push:*)`.
-
-1. Every push-capable agent step has a `wing-commander-agent-push-credential`
-   call somewhere between the previous agent step in the same job (or the
-   job's start) and itself. Absent -> FAIL, naming the workflow, job, and
-   agent step.
-2. Every push-capable agent step that also has a post-agent
+1. The App private key (`secrets.speckit-app-private-key`) is never handed
+   to anything except `actions/create-github-app-token@*` (directly, or
+   through the two composites that wrap it and expose only a derived
+   token -- `wing-commander-context`, `_shared/scoped-app-token`). Any
+   other consumer -- a plain shell step, a different action, a `run:`
+   block that writes the key to a file or to `$GITHUB_ENV` -- fails the
+   gate by name. Checked across the whole job, not just the steps ahead of
+   an agent step: once written to $GITHUB_ENV or a $RUNNER_TEMP file, the
+   material outlives the step that wrote it, so a write positioned AFTER
+   an agent step in job-step order is no safer than one positioned
+   directly ahead of it.
+2. Over the 8 stages FR-007 names (SUBJECTS below; auto-update-spec-kit.yml
+   scoped to its `e2e-stage` job only), every push-capable agent step
+   (`uses: anthropics/claude-code-action@*` whose composed `--allowedTools`
+   contains `Bash(git push:*)`) that also has a post-agent
    `wing-commander-context` (or `scoped-app-token`) re-mint in its own
-   window (between it and the next agent step, or the job's end) has a
-   `wing-commander-publish-stranded-commits` call in that SAME window,
-   sharing that re-mint's exact `if:` condition. Absent -> FAIL, naming the
-   workflow, job, and agent step.
+   window has a `wing-commander-publish-stranded-commits` call in that
+   SAME window, sharing that re-mint's exact `if:` condition. Absent ->
+   FAIL, naming the workflow, job, and agent step.
    Companion clause (auto-update-spec-kit.yml only): its scratch-repository
    publish call attaches to a deterministic step ("Re-mint scratch-
    repository App token (post-agent)"), not an agent step -- `decide` itself
-   never pushes (FR-025) -- so it is checked on its own terms: that named
-   remint step must exist, and a publish call sharing its exact `if:` must
-   exist alongside it. A second companion clause covers the credential
-   helper itself: existence of a wing-commander-agent-push-credential call
-   is not enough -- the scratch push it exists to cover must carry no
-   inline x-access-token credential in its URL, and the helper must be
-   installed into the SAME working directory the push runs from, or the
-   mint is never actually consulted (T054).
-3. No file outside `.github/actions/wing-commander-agent-push-credential/`
-   contains a JWT-header/payload construction matching the same structural
-   shape (`"alg":"RS256"` co-occurring with `"typ":"JWT"` in one file) --
-   structural, not a byte-identical diff check, so a rewritten copy is still
-   caught. A match elsewhere -> FAIL, naming the file.
+   never pushes at all (FR-025) -- so it is checked on its own terms: that
+   named remint step must exist, and a publish call sharing its exact
+   `if:` must exist alongside it.
+3. No file anywhere in the repository contains a JWT-header/payload
+   construction (`"alg":"RS256"` co-occurring with `"typ":"JWT"` in one
+   file) -- the on-demand JWT-signing shape the deleted composite used has
+   no legitimate home left in this repository at all. A match -> FAIL,
+   naming the file.
 4. Negative check (FR-025): an agent step in a SUBJECTS job that is NOT
-   push-capable must have neither a `wing-commander-agent-push-credential`
-   call in its own preceding window NOR the retry-bound prompt paragraph
-   (matched by its distinguishing substring) anywhere in its own text. A
-   match -> FAIL.
+   push-capable must not carry the retry-bound prompt paragraph (matched
+   by its distinguishing substring) -- a step that never pushes has no
+   push to retry. A match -> FAIL.
 5. Loud failure on an unreachable subject (FR-022, Constitution Principle
    VIII): a missing file, an unlocatable job, or zero push-capable agent
    steps found across all 8 files combined all fail the gate by name,
@@ -63,9 +69,12 @@ all) -- contains `Bash(git push:*)`.
 
 Static structural inspection only (`yaml.safe_load`), the same approach
 Gate 68 already uses for the closest-shaped subject in this repository.
-`bash -n` (a separate, existing PR-time gate) already proves
-mint-credential.sh's syntax; Gate 123 proves its behaviour. Neither is this
-gate's job.
+
+Gate 123 (a behavioural companion that drove the deleted composite's own
+mint-credential.sh directly) was retired in the same redesign, along with
+the script it drove -- see tasks.md's Maintainer Feedback section (T057,
+T063) -- rather than leaving the number reserved for a script with no
+remaining subject.
 
 Usage: python3 .github/scripts/verify-agent-push-credential-helper.py [--self-test]
 """
@@ -78,8 +87,6 @@ import sys
 import yaml
 
 AGENT_ACTION_RE = re.compile(r"^anthropics/claude-code-action@")
-TOOL_ARGS_MARKER = "wing-commander-tool-args"
-CRED_HELPER_MARKER = "wing-commander-agent-push-credential"
 PUBLISH_MARKER = "wing-commander-publish-stranded-commits"
 CONTEXT_REMINT_MARKERS = ("wing-commander-context", "scoped-app-token")
 # The canonical retry-bound paragraph's own distinguishing substring
@@ -93,11 +100,19 @@ INLINE_ALLOWED_TOOLS_RE = re.compile(r"--allowedTools\s+\"([^\"]*)\"")
 
 JWT_ALG_RE = re.compile(r'"alg"\s*:\s*"RS256"')
 JWT_TYP_RE = re.compile(r'"typ"\s*:\s*"JWT"')
-CREDENTIAL_HELPER_DIR = ".github/actions/wing-commander-agent-push-credential"
 # This gate's own source quotes the same two literal strings to detect
-# them -- excluded from its own scan the same way CREDENTIAL_HELPER_DIR is,
-# never a second construction site.
+# them -- excluded from its own scan.
 SELF_PATH = ".github/scripts/verify-agent-push-credential-helper.py"
+
+# check 1: the only things ever allowed to see the raw private key.
+PRIVATE_KEY_SECRET_RE = re.compile(r"secrets\.speckit-app-private-key")
+TRUSTED_KEY_CONSUMER_RES = (
+    re.compile(r"^actions/create-github-app-token@"),
+    re.compile(r"/wing-commander-context$"),
+    re.compile(r"/_shared/scoped-app-token$"),
+)
+
+SINGLE_HOME_SCAN_EXTENSIONS = (".sh", ".yml", ".yaml", ".py")
 
 # path -> job names in scope (FR-007's eight named stages, same scope Gate
 # 68 already established for the closest-shaped subject).
@@ -111,7 +126,6 @@ SUBJECTS = {
     ".github/workflows/pr-conversation.yml": ["classify-and-announce", "act"],
     ".github/workflows/auto-update-spec-kit.yml": ["e2e-stage"],
 }
-
 
 
 def _is_agent_step(step):
@@ -152,6 +166,54 @@ def is_push_capable(step, steps_by_id):
     return bool(PUSH_GRANT_RE.search(composed_allowed_tools(step, steps_by_id)))
 
 
+def _is_trusted_key_consumer(uses):
+    return any(p.search(uses) for p in TRUSTED_KEY_CONSUMER_RES)
+
+
+def check_private_key_containment(loaded):
+    """check 1: the App private key must never be handed to anything except
+    actions/create-github-app-token@* (directly, or through
+    wing-commander-context/_shared/scoped-app-token, the two composites
+    that wrap it and expose only a derived, short-lived token through
+    their own `token` output). This is the structural guard against the
+    exact defect the redesign removed: a step that stages the raw key (or
+    a path to a file holding it) somewhere a running agent step's own
+    shell -- or a script/prompt injection it processes -- could read it,
+    whether via $GITHUB_ENV or a file under $RUNNER_TEMP the agent's tool
+    allowlist can reach. Scoped to the whole job, not just the steps ahead
+    of an agent step: once written to $GITHUB_ENV or a file, the material
+    outlives the step that wrote it.
+    """
+    failures = []
+    for path, job_names in SUBJECTS.items():
+        wf = loaded.get(path)
+        if wf is None:
+            continue
+        jobs = wf.get("jobs") or {}
+        for job_name in job_names:
+            job = jobs.get(job_name)
+            if job is None:
+                continue
+            for step in (job or {}).get("steps") or []:
+                if not PRIVATE_KEY_SECRET_RE.search(_step_text(step)):
+                    continue
+                uses = str((step or {}).get("uses", ""))
+                if _is_trusted_key_consumer(uses):
+                    continue
+                name = (step or {}).get("name", "<unnamed step>")
+                failures.append(
+                    f"{path} [{job_name}] step {name!r} references "
+                    f"secrets.speckit-app-private-key through "
+                    f"{uses or '(no uses: -- inline run:/env:)'} -- the App "
+                    f"private key must never be staged to a file or "
+                    f"exported anywhere except as the direct input to "
+                    f"actions/create-github-app-token@* or the two "
+                    f"composites that wrap it (FR-023 security guard, "
+                    f"specs/071-agent-push-credential Maintainer "
+                    f"Feedback).")
+    return failures
+
+
 def check_job(path, job_name, job):
     """-> (failures, push_capable_count)."""
     failures = []
@@ -160,26 +222,15 @@ def check_job(path, job_name, job):
     agent_idxs = [i for i, s in enumerate(steps) if _is_agent_step(s)]
 
     push_capable_count = 0
-    prev_boundaries = [-1] + agent_idxs[:-1]
     next_boundaries = agent_idxs[1:] + [len(steps)]
-    for idx, prev, nxt in zip(agent_idxs, prev_boundaries, next_boundaries):
+    for idx, nxt in zip(agent_idxs, next_boundaries):
         step = steps[idx]
         name = (step or {}).get("name", "<unnamed step>")
-        before = steps[prev + 1:idx]
         after = steps[idx + 1:nxt]
         push_capable = is_push_capable(step, steps_by_id)
-        has_cred_helper = any(
-            CRED_HELPER_MARKER in str((s or {}).get("uses", "")) for s in before)
 
         if push_capable:
             push_capable_count += 1
-            # check 1
-            if not has_cred_helper:
-                failures.append(
-                    f"{path} [{job_name}] agent step {name!r} is push-"
-                    f"capable (Bash(git push:*) in its composed allowed-"
-                    f"tools) but has no {CRED_HELPER_MARKER} call before it "
-                    f"(FR-020 care point 1).")
             # check 2
             remint = next(
                 (s for s in after if any(
@@ -196,13 +247,6 @@ def check_job(path, job_name, job):
                         f"condition {remint_if!r} (FR-020 care point 2).")
         else:
             # check 4 -- negative: nothing spent where nothing can push.
-            if has_cred_helper:
-                failures.append(
-                    f"{path} [{job_name}] agent step {name!r} is not push-"
-                    f"capable (no Bash(git push:*) in its composed allowed-"
-                    f"tools) but has a {CRED_HELPER_MARKER} call before it "
-                    f"(FR-025 -- this feature must spend nothing where the "
-                    f"spec says it must not).")
             if RETRY_PARAGRAPH_MARKER in _step_text(step):
                 failures.append(
                     f"{path} [{job_name}] agent step {name!r} is not push-"
@@ -214,10 +258,6 @@ def check_job(path, job_name, job):
 
 AUTO_UPDATE_SPEC_KIT = ".github/workflows/auto-update-spec-kit.yml"
 SCRATCH_REMINT_STEP_NAME = "Re-mint scratch-repository App token (post-agent)"
-SCRATCH_PUSH_STEP_NAME = "Push agent-produced spec.md to the scratch repository (best-effort)"
-SCRATCH_CRED_HELPER_STEP_NAME = "Install fresh-mint push credential (scratch)"
-INLINE_CRED_URL_RE = re.compile(r"x-access-token:[^\s\"]*@github\.com")
-CD_DIR_RE = re.compile(r"(?:^|\n)\s*cd\s+([^\s;&|]+)")
 
 
 def check_e2e_scratch_companion(loaded):
@@ -259,80 +299,14 @@ def check_e2e_scratch_companion(loaded):
     return []
 
 
-def check_e2e_scratch_push_resolves_via_helper(loaded):
-    """T054/FR-020 (partial): the companion clause above only proved a
-    wing-commander-agent-push-credential call EXISTS somewhere in the job --
-    it passed even against a call that no push ever consulted (an inline
-    x-access-token URL always wins over a credential helper, and a helper
-    installed into one working directory's git config is never consulted by
-    a push issued from a different one). This closes that gap for the one
-    push this feature claims to cover: it must carry no inline credential in
-    its URL, and the credential-helper call feeding it must be installed
-    into the SAME working directory the push actually runs from.
+def check_no_jwt_construction(root="."):
+    """check 3 -- no JWT-header/payload construction anywhere in the
+    repository. The deleted wing-commander-agent-push-credential composite
+    was the one legitimate site that ever needed this shape (signing a
+    GitHub App JWT to mint installation tokens on demand, reachable by a
+    running agent step); the redesign has no legitimate site left at all,
+    so any match anywhere is a regression, not a location to relocate to.
     """
-    wf = loaded.get(AUTO_UPDATE_SPEC_KIT)
-    if wf is None:
-        return []
-    job = (wf.get("jobs") or {}).get("e2e-stage")
-    if job is None:
-        return []
-    steps = (job or {}).get("steps") or []
-    push_step = next((s for s in steps if (s or {}).get("name") == SCRATCH_PUSH_STEP_NAME), None)
-    if push_step is None:
-        return [f"{AUTO_UPDATE_SPEC_KIT} [e2e-stage]: no {SCRATCH_PUSH_STEP_NAME!r} "
-                f"step found -- cannot check whether the scratch push "
-                f"resolves through the credential helper (FR-020 care point "
-                f"2 companion clause, T054)."]
-    cred_step = next(
-        (s for s in steps if (s or {}).get("name") == SCRATCH_CRED_HELPER_STEP_NAME
-         and CRED_HELPER_MARKER in str((s or {}).get("uses", ""))),
-        None)
-    failures = []
-    push_text = _step_text(push_step)
-    if INLINE_CRED_URL_RE.search(push_text):
-        failures.append(
-            f"{AUTO_UPDATE_SPEC_KIT} [e2e-stage]: {SCRATCH_PUSH_STEP_NAME!r} "
-            f"still embeds an x-access-token credential directly in its push "
-            f"URL -- an inline-credentialed URL always wins over a "
-            f"credential helper, so {SCRATCH_CRED_HELPER_STEP_NAME!r}'s mint "
-            f"is never actually consulted (FR-020 care point 2 companion "
-            f"clause, T054).")
-    if cred_step is None:
-        failures.append(
-            f"{AUTO_UPDATE_SPEC_KIT} [e2e-stage]: no {SCRATCH_CRED_HELPER_STEP_NAME!r} "
-            f"step found -- cannot confirm the scratch push resolves via the "
-            f"helper (T054).")
-    else:
-        cred_workdir = str((cred_step.get("with") or {}).get("workdir", ""))
-        cd_match = CD_DIR_RE.search(push_text)
-        push_dir = cd_match.group(1) if cd_match else ""
-        if not cred_workdir or cred_workdir != push_dir:
-            failures.append(
-                f"{AUTO_UPDATE_SPEC_KIT} [e2e-stage]: {SCRATCH_CRED_HELPER_STEP_NAME!r} "
-                f"installs the credential helper into workdir {cred_workdir!r} "
-                f"but {SCRATCH_PUSH_STEP_NAME!r} pushes from working "
-                f"directory {push_dir!r} -- a helper installed into a "
-                f"different working directory's git config is never "
-                f"consulted by the push (FR-020 care point 2 companion "
-                f"clause, T054).")
-    return failures
-
-
-SINGLE_HOME_SCAN_EXTENSIONS = (".sh", ".yml", ".yaml", ".py")
-
-
-def check_single_home(root="."):
-    """check 3 -- no JWT-header/payload construction outside the composite.
-
-    Scoped to files that could actually IMPLEMENT the construction (shell,
-    workflow/action YAML, Python) -- this feature's own spec/plan/tasks
-    prose (specs/071-agent-push-credential/*.md) quotes the same literal
-    header/payload strings to DESCRIBE the mechanism, which would otherwise
-    read as a second construction site and false-positive on every PR.
-    """
-    # os.walk, not glob -- glob's `**`/`*` wildcards skip dot-prefixed
-    # entries by default, which would silently never descend into
-    # `.github/` at all (the one directory this check most needs to see).
     failures = []
     paths = []
     for dirpath, dirnames, filenames in os.walk(root):
@@ -342,9 +316,7 @@ def check_single_home(root="."):
             paths.append(os.path.join(dirpath, filename))
     for path in sorted(paths):
         rel = os.path.relpath(path, root).replace(os.sep, "/")
-        if rel.startswith(CREDENTIAL_HELPER_DIR) or rel.startswith(".git/"):
-            continue
-        if rel == SELF_PATH:
+        if rel == SELF_PATH or rel.startswith(".git/"):
             continue
         if not rel.endswith(SINGLE_HOME_SCAN_EXTENSIONS):
             continue
@@ -356,9 +328,10 @@ def check_single_home(root="."):
         if JWT_ALG_RE.search(text) and JWT_TYP_RE.search(text):
             failures.append(
                 f"{rel}: contains a JWT header/payload construction "
-                f"(\"alg\":\"RS256\" and \"typ\":\"JWT\") outside "
-                f"{CREDENTIAL_HELPER_DIR}/ -- the minting shell has exactly "
-                f"one home (FR-023, CLAUDE.md single-home rule).")
+                f"(\"alg\":\"RS256\" and \"typ\":\"JWT\") -- the on-demand "
+                f"JWT-signing shape the deleted "
+                f"wing-commander-agent-push-credential composite used has "
+                f"no legitimate home left in this repository (FR-023).")
     return failures
 
 
@@ -402,31 +375,16 @@ def scan(loaded, subjects=None, root="."):
             "unreachable, never a silent pass over an empty result set "
             "(FR-022).")
 
-    failures += check_e2e_scratch_companion(loaded)
-    failures += check_e2e_scratch_push_resolves_via_helper(loaded)
-    failures += check_single_home(root)
+    if subjects is SUBJECTS:
+        failures += check_private_key_containment(loaded)
+        failures += check_e2e_scratch_companion(loaded)
+        failures += check_no_jwt_construction(root)
     return failures
 
 
 # --------------------------------------------------------------------------
 # Self-test (fixtures per contracts/agent-push-credential-gate.md)
 # --------------------------------------------------------------------------
-def _find_step(job, name):
-    for step in (job or {}).get("steps") or []:
-        if (step or {}).get("name") == name:
-            return step
-    return None
-
-
-def mut_delete_cred_helper_before_retry(loaded):
-    job = loaded[".github/workflows/implement.yml"]["jobs"]["implement"]
-    steps = job["steps"]
-    idx = next((i for i, s in enumerate(steps)
-               if (s or {}).get("name") == "Install fresh-mint push credential (retry)"), None)
-    assert idx is not None, "fixture assumption broken: step renamed"
-    del steps[idx]
-
-
 def mut_delete_publish_after_clarify_agent(loaded):
     job = loaded[".github/workflows/clarify.yml"]["jobs"]["clarify"]
     steps = job["steps"]
@@ -436,44 +394,36 @@ def mut_delete_publish_after_clarify_agent(loaded):
     del steps[idx]
 
 
-def mut_no_grant_gets_cred_helper(loaded):
-    """check 4: attach the credential-helper call to a fixture agent step
-    whose allowed-tools carry no Bash(git push:*) -- finalize's summarize."""
+def mut_non_push_capable_gets_retry_paragraph(loaded):
+    """check 4: attach the retry-bound prompt paragraph to a fixture step
+    whose allowed-tools carry no Bash(git push:*) -- finalize's summarize
+    step, which never pushes (FR-025)."""
     job = loaded[".github/workflows/finalize.yml"]["jobs"]["finalize"]
     steps = job["steps"]
     idx = next((i for i, s in enumerate(steps)
                if (s or {}).get("name") == "Summarize change and extract remaining manual work"), None)
     assert idx is not None, "fixture assumption broken: step renamed"
-    fake = {"name": "Install fresh-mint push credential (finalize, fixture)",
-            "uses": "./.wing-commander-pipeline/.github/actions/wing-commander-agent-push-credential",
-            "with": {"app-id": "x"}}
+    step = steps[idx]
+    with_block = step.setdefault("with", {})
+    prompt = str(with_block.get("prompt", ""))
+    with_block["prompt"] = prompt + "\n" + RETRY_PARAGRAPH_MARKER + "\n"
+
+
+def mut_private_key_leaked_to_untrusted_step(loaded):
+    """check 1 (T059): insert a step ahead of implement.yml's cycle agent
+    step that hands the App private key to something other than
+    actions/create-github-app-token@*/wing-commander-context/
+    _shared/scoped-app-token -- the exact shape the deleted
+    wing-commander-agent-push-credential composite had."""
+    job = loaded[".github/workflows/implement.yml"]["jobs"]["implement"]
+    steps = job["steps"]
+    idx = next((i for i, s in enumerate(steps)
+               if (s or {}).get("name") == "Implement and converge (cycle)"), None)
+    assert idx is not None, "fixture assumption broken: step renamed"
+    fake = {"name": "Stage App private key for on-demand minting (fixture)",
+            "uses": "./.wing-commander-pipeline/.github/actions/some-other-composite",
+            "with": {"private-key": "${{ secrets.speckit-app-private-key }}"}}
     steps.insert(idx, fake)
-
-
-def mut_scratch_push_reintroduces_inline_credential(loaded):
-    job = loaded[AUTO_UPDATE_SPEC_KIT]["jobs"]["e2e-stage"]
-    steps = job["steps"]
-    idx = next((i for i, s in enumerate(steps)
-               if (s or {}).get("name") == SCRATCH_PUSH_STEP_NAME), None)
-    assert idx is not None, "fixture assumption broken: step renamed"
-    original = steps[idx]["run"]
-    replaced = original.replace(
-        'git push --quiet origin "HEAD:refs/heads/$BRANCH"',
-        'git push --quiet "https://x-access-token:${GH_TOKEN}@github.com/'
-        '${FULL_NAME}.git" "HEAD:refs/heads/$BRANCH"')
-    assert replaced != original, "fixture assumption broken: push line changed"
-    steps[idx]["run"] = replaced
-
-
-def mut_scratch_cred_helper_wrong_workdir(loaded):
-    job = loaded[AUTO_UPDATE_SPEC_KIT]["jobs"]["e2e-stage"]
-    steps = job["steps"]
-    idx = next((i for i, s in enumerate(steps)
-               if (s or {}).get("name") == SCRATCH_CRED_HELPER_STEP_NAME), None)
-    assert idx is not None, "fixture assumption broken: step renamed"
-    assert "workdir" in (steps[idx].get("with") or {}), \
-        "fixture assumption broken: workdir input removed"
-    steps[idx]["with"].pop("workdir")
 
 
 def self_test(root="."):
@@ -487,21 +437,16 @@ def self_test(root="."):
         print("[ok] clean tree passes")
 
     mutations = [
-        ("the credential-helper call ahead of implement.yml's retry agent "
-         "step deleted", mut_delete_cred_helper_before_retry,
-         ["implement.yml", "implement", "retry"]),
+        ("the App private key handed to an untrusted composite ahead of "
+         "implement.yml's cycle agent step",
+         mut_private_key_leaked_to_untrusted_step,
+         ["implement.yml", "must never be staged"]),
         ("the stranded-commit-publish call after clarify.yml's agent step "
          "deleted", mut_delete_publish_after_clarify_agent,
          ["clarify.yml"]),
-        ("the credential-helper call attached to a fixture agent step "
+        ("the retry-bound prompt paragraph attached to a fixture step "
          "whose allowed-tools carry no Bash(git push:*)",
-         mut_no_grant_gets_cred_helper, ["finalize.yml", "FR-025"]),
-        ("the scratch-repository push reverted to an inline x-access-token "
-         "URL", mut_scratch_push_reintroduces_inline_credential,
-         ["never actually consulted"]),
-        ("the scratch-repository credential-helper call's workdir input "
-         "removed", mut_scratch_cred_helper_wrong_workdir,
-         ["different working directory"]),
+         mut_non_push_capable_gets_retry_paragraph, ["finalize.yml", "FR-025"]),
     ]
     for label, apply_mutation, expect_substrings in mutations:
         mutated = copy.deepcopy(base)
@@ -529,14 +474,13 @@ def self_test(root="."):
         rogue = os.path.join(tmp, ".github", "scripts", "rogue-jwt-copy.sh")
         with io.open(rogue, "w", encoding="utf-8") as fh:
             fh.write('header=\'{"alg":"RS256","typ":"JWT"}\'\n')
-        broke = check_single_home(tmp)
+        broke = check_no_jwt_construction(tmp)
         if any("rogue-jwt-copy.sh" in f for f in broke):
-            print("[ok] duplicated JWT-signing block outside the composite "
-                  "directory: caught, naming the file.")
+            print("[ok] a JWT-signing block anywhere in the repository: "
+                  "caught, naming the file.")
         else:
-            problems.append("MUTATION SURVIVED -- a duplicated JWT-signing "
-                            f"block outside the composite directory was not "
-                            f"caught: {broke}")
+            problems.append("MUTATION SURVIVED -- a JWT-signing block "
+                            f"introduced anywhere was not caught: {broke}")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

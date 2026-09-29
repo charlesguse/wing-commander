@@ -417,10 +417,7 @@ jobs:
       # (most-recent-wins `||`, same convention as agent-ran above).
       agent-conclusion: ${{ steps.agent-ran-progress.outputs.conclusion || steps.agent-ran-retry.outputs.conclusion || steps.agent-ran-cycle.outputs.conclusion }}
       credential-refresh-ok: ${{ steps.credential-status-progress.outputs.ok || steps.credential-status-retry.outputs.ok || steps.credential-status-cycle.outputs.ok }}
-      # progress never pushes (FR-025) so it has no push-cred-status step;
-      # most-recent-wins across retry/cycle only, same convention as above.
-      push-credential-mint-failed: ${{ steps.push-cred-status-retry.outputs.mint-failure-detected || steps.push-cred-status-cycle.outputs.mint-failure-detected }}
-      # Same most-recent-wins convention as push-credential-mint-failed above.
+      # Most-recent-wins across retry/cycle only, same convention as above.
       commits-published: ${{ steps.publish-stranded-retry.outputs.commits-published || steps.publish-stranded-cycle.outputs.commits-published }}
       push-ok: ${{ steps.publish-stranded-retry.outputs.push-ok || steps.publish-stranded-cycle.outputs.push-ok }}
       # Record-only (not read by the stall path): 'true' when ANY chain
@@ -878,17 +875,6 @@ jobs:
         with:
           intended-turns: ${{ inputs.max-turns }}
 
-      # A fresh-mint credential for the agent step's own `git push` calls
-      # -- see clarify.yml.
-      - name: Install fresh-mint push credential (cycle)
-        id: push-cred-cycle
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true' && steps.tool-args-cycle.outputs.allowed-tools != ''
-        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-push-credential
-        with:
-          app-id: ${{ secrets.speckit-app-id }}
-          private-key: ${{ secrets.speckit-app-private-key }}
-          owner: ${{ github.repository_owner }}
-
       # This step's prompt carries the retry-bound paragraph for a credential-
       # expiry/mint-failure `git push` signature -- see clarify.yml.
       - name: Implement and converge (cycle)
@@ -1286,9 +1272,10 @@ jobs:
       # FR-008 (spec 052): the WC_BOT_TOKEN relay above keeps every step
       # after each agent step credentialed. The agent step's OWN push
       # credential while it is still running is covered separately --
-      # specs/071-agent-push-credential's wing-commander-agent-push-
-      # credential call ahead of "Implement and converge (cycle)"/"(retry)"
-      # above -- see docs/architecture.md's "Identity & chaining" section.
+      # specs/071-agent-push-credential's "Publish stranded commits
+      # (post-agent, cycle)"/"(retry)" steps below carry to the branch any
+      # commit the agent could not push itself -- see docs/architecture.md's
+      # "Identity & chaining" section.
       - name: Read back cycle outcome
         id: outcome
         shell: bash
@@ -1616,22 +1603,6 @@ jobs:
         run: |
           git fetch origin "+refs/heads/${SPEC_PREFIX}$SLUG:refs/remotes/origin/${SPEC_PREFIX}$SLUG"
           echo "base-sha=$(git rev-parse "origin/${SPEC_PREFIX}$SLUG")" >> "$GITHUB_OUTPUT"
-
-      # A fresh-mint credential for the agent step's own `git push` calls
-      # -- see clarify.yml.
-      - name: Install fresh-mint push credential (retry)
-        id: push-cred-retry
-        if: >-
-          steps.lifecycle-gate.outputs.is-open == 'true' &&
-          steps.guard.outputs.skip != 'true' &&
-          steps.outcome.outputs.ok == 'false' &&
-          steps.effective-model.outputs.model != inputs.escalation-model &&
-          steps.tool-args-retry.outputs.allowed-tools != ''
-        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-push-credential
-        with:
-          app-id: ${{ secrets.speckit-app-id }}
-          private-key: ${{ secrets.speckit-app-private-key }}
-          owner: ${{ github.repository_owner }}
 
       # This step's prompt carries the retry-bound paragraph for a credential-
       # expiry/mint-failure `git push` signature -- see clarify.yml.
@@ -2977,12 +2948,6 @@ jobs:
           mint-outcome: ${{ steps.reestablish-cycle.outcome }}
           refresh-outcome: ${{ steps.refresh-remote-cycle.outcome }}
 
-      # FR-006 (specs/071-agent-push-credential) -- see clarify.yml.
-      - name: Detect agent push-credential mint failure (cycle)
-        id: push-cred-status-cycle
-        if: "!cancelled() && steps.cycle.outcome != 'skipped'"
-        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-push-credential-status
-
       - name: Determine post-agent credential status (retry)
         id: credential-status-retry
         if: "!cancelled() && steps.retry.outcome != 'skipped'"
@@ -2990,12 +2955,6 @@ jobs:
         with:
           mint-outcome: ${{ steps.reestablish-retry.outcome }}
           refresh-outcome: ${{ steps.refresh-remote-retry.outcome }}
-
-      # FR-006 (specs/071-agent-push-credential) -- see clarify.yml.
-      - name: Detect agent push-credential mint failure (retry)
-        id: push-cred-status-retry
-        if: "!cancelled() && steps.retry.outcome != 'skipped'"
-        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-push-credential-status
 
       - name: Determine post-agent credential status (progress)
         id: credential-status-progress
@@ -3436,7 +3395,6 @@ jobs:
           agent-ran: ${{ needs.implement.outputs.agent-ran }}
           agent-conclusion: ${{ needs.implement.outputs.agent-conclusion }}
           credential-refresh-ok: ${{ needs.implement.outputs.credential-refresh-ok }}
-          push-credential-mint-failed: ${{ needs.implement.outputs.push-credential-mint-failed }}
           failed-post-agent-step: ${{ needs.implement.outputs.failed-post-agent-step }}
 
       - name: Report the stage did not start

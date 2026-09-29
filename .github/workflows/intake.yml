@@ -365,7 +365,6 @@ jobs:
       agent-ran: ${{ steps.agent-ran.outputs.ran }}
       agent-conclusion: ${{ steps.agent-ran.outputs.conclusion }}
       credential-refresh-ok: ${{ steps.credential-status.outputs.ok }}
-      push-credential-mint-failed: ${{ steps.push-cred-status.outputs.mint-failure-detected }}
       commits-published: ${{ steps.publish-stranded.outputs.commits-published }}
       failed-post-agent-step: ${{ steps.failed-step.outputs.step }}
     steps:
@@ -622,20 +621,6 @@ jobs:
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-turn-ceiling
         with:
           intended-turns: ${{ inputs.max-turns }}
-
-      # A fresh-mint credential for the agent step's own `git push` calls,
-      # resolved at the moment of each push rather than fixed at job start
-      # -- see clarify.yml. repo-name omitted: this pipeline's own remote,
-      # derived by the composite itself from $GITHUB_REPOSITORY (code
-      # review of this PR -- see clarify.yml).
-      - name: Install fresh-mint push credential (agent)
-        id: push-cred
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.tool-args-intake.outputs.allowed-tools != ''
-        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-push-credential
-        with:
-          app-id: ${{ secrets.speckit-app-id }}
-          private-key: ${{ secrets.speckit-app-private-key }}
-          owner: ${{ github.repository_owner }}
 
       # This step's prompt carries the retry-bound paragraph for a credential-
       # expiry/mint-failure `git push` signature -- see clarify.yml.
@@ -1463,14 +1448,6 @@ jobs:
           mint-outcome: ${{ steps.reestablish.outcome }}
           refresh-outcome: ${{ steps.refresh-remote.outcome }}
 
-      # FR-006 (specs/071-agent-push-credential): attributes a mid-cycle
-      # push-credential mint failure to the credential -- see clarify.yml
-      # for the composite.
-      - name: Detect agent push-credential mint failure
-        id: push-cred-status
-        if: "!cancelled() && steps.agent.outcome != 'skipped'"
-        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-push-credential-status
-
       # candidates-json lists this job's own hard-failing (non-continue-on-
       # error) post-agent steps, each read via `.conclusion` -- see
       # clarify.yml for the single-homed composite.
@@ -1582,7 +1559,6 @@ jobs:
           agent-ran: ${{ needs.intake.outputs.agent-ran }}
           agent-conclusion: ${{ needs.intake.outputs.agent-conclusion }}
           credential-refresh-ok: ${{ needs.intake.outputs.credential-refresh-ok }}
-          push-credential-mint-failed: ${{ needs.intake.outputs.push-credential-mint-failed }}
           failed-post-agent-step: ${{ needs.intake.outputs.failed-post-agent-step }}
 
       - name: Report the stage did not start

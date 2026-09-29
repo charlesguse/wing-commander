@@ -16,10 +16,11 @@ description: >
   job to resolve) and reports how many commits, if any, were locally
   ahead of origin before this push. Runs immediately alongside (same
   `if:` as) each in-scope agent step's existing post-agent
-  wing-commander-context re-mint -- the credential helper
-  wing-commander-agent-push-credential installed earlier in the job is
-  still active, so this deterministic push also resolves its own
-  credential fresh.
+  wing-commander-context re-mint and wing-commander-refresh-remote
+  (spec 052) -- origin already carries a token minted seconds earlier by
+  that pair, so this deterministic push authenticates fresh even when the
+  agent step it follows ran for far longer than any credential's
+  lifetime.
 
 inputs:
   before-sha:

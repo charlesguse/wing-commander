@@ -449,10 +449,7 @@ jobs:
       agent-conclusion: ${{ steps.agent-ran-auto.outputs.conclusion || steps.agent-ran-pr.outputs.conclusion }}
       credential-refresh-ok: ${{ steps.credential-status-auto.outputs.ok || steps.credential-status-pr.outputs.ok }}
       # No stalled job in this file to read this (research.md D4's own
-      # precedent, matching credential-refresh-ok above) -- published for
-      # symmetry with every other in-scope stage.
-      push-credential-mint-failed: ${{ steps.push-cred-status-auto.outputs.mint-failure-detected || steps.push-cred-status-pr.outputs.mint-failure-detected }}
-      # Same no-reader precedent as push-credential-mint-failed above.
+      # precedent) -- published for symmetry with every other in-scope stage.
       commits-published: ${{ steps.publish-stranded-auto.outputs.commits-published || steps.publish-stranded-pr.outputs.commits-published }}
       agent-any-failure: ${{ (steps.agent-ran-auto.outputs.conclusion == 'failure' || steps.agent-ran-pr.outputs.conclusion == 'failure') && 'true' || 'false' }}
       credential-any-refresh-failure: ${{ (steps.credential-status-auto.outputs.ok == 'false' || steps.credential-status-pr.outputs.ok == 'false') && 'true' || 'false' }}
@@ -769,17 +766,6 @@ jobs:
         with:
           intended-turns: ${{ inputs.max-turns }}
 
-      # A fresh-mint credential for the agent step's own `git push` calls
-      # -- see clarify.yml.
-      - name: Install fresh-mint push credential (agent-auto)
-        id: push-cred-auto
-        if: steps.dupe.outputs.skip != 'true' && steps.mode.outputs.mode == 'auto' && steps.tool-args-plan-direct-commit.outputs.allowed-tools != ''
-        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-push-credential
-        with:
-          app-id: ${{ secrets.speckit-app-id }}
-          private-key: ${{ secrets.speckit-app-private-key }}
-          owner: ${{ github.repository_owner }}
-
       # This step's prompt carries the retry-bound paragraph for a credential-
       # expiry/mint-failure `git push` signature -- see clarify.yml.
       - name: Generate implementation plan (direct commit)
@@ -1019,17 +1005,6 @@ jobs:
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-turn-ceiling
         with:
           intended-turns: ${{ inputs.max-turns }}
-
-      # A fresh-mint credential for the agent step's own `git push` calls
-      # -- see clarify.yml.
-      - name: Install fresh-mint push credential (agent-pr)
-        id: push-cred-pr
-        if: steps.dupe.outputs.skip != 'true' && steps.mode.outputs.mode == 'pr' && steps.tool-args-plan-pr.outputs.allowed-tools != ''
-        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-push-credential
-        with:
-          app-id: ${{ secrets.speckit-app-id }}
-          private-key: ${{ secrets.speckit-app-private-key }}
-          owner: ${{ github.repository_owner }}
 
       # This step's prompt carries the retry-bound paragraph for a credential-
       # expiry/mint-failure `git push` signature -- see clarify.yml.
@@ -1573,12 +1548,6 @@ jobs:
           mint-outcome: ${{ steps.reestablish-auto.outcome }}
           refresh-outcome: ${{ steps.refresh-remote-auto.outcome }}
 
-      # FR-006 (specs/071-agent-push-credential) -- see clarify.yml.
-      - name: Detect agent push-credential mint failure (auto)
-        id: push-cred-status-auto
-        if: "!cancelled() && steps.agent-auto.outcome != 'skipped'"
-        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-push-credential-status
-
       - name: Determine post-agent credential status (pr)
         id: credential-status-pr
         if: "!cancelled() && steps.agent-pr.outcome != 'skipped'"
@@ -1586,9 +1555,3 @@ jobs:
         with:
           mint-outcome: ${{ steps.reestablish-pr.outcome }}
           refresh-outcome: ${{ steps.refresh-remote-pr.outcome }}
-
-      # FR-006 (specs/071-agent-push-credential) -- see clarify.yml.
-      - name: Detect agent push-credential mint failure (pr)
-        id: push-cred-status-pr
-        if: "!cancelled() && steps.agent-pr.outcome != 'skipped'"
-        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-push-credential-status
