@@ -823,7 +823,7 @@ jobs:
 
       - name: Refuse a branch that tracks .wing-commander-pipeline/
         shell: bash
-        if: steps.identity.outputs.qualifies == 'true' && steps.lifecycle-gate.outputs.is-open == 'true' && steps.actor-gate.outputs.authorized == 'true'
+        if: needs.resolve-identity.outputs.qualifies == 'true' && steps.lifecycle-gate.outputs.is-open == 'true' && steps.actor-gate.outputs.authorized == 'true'
         env:
           WC_PIPELINE_REF: ${{ steps.pipeline-ref.outputs.ref }}
         run: |
