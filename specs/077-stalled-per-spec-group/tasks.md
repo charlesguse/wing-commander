@@ -227,3 +227,9 @@ This repository is a GitHub Actions pipeline component — no `src`/`tests` spli
 ## Maintainer Feedback
 
 - [X] T038 Add one line to spec.md's Out of Scope section noting that the same exposure in `tasks.yml`'s `stalled`/`stalled-approved` jobs and `cleanup.yml`'s `mark-stalled` job is tracked separately on #754 and is out of this PR's scope — mirroring T025's note, which currently exists only in tasks.md.
+
+## Phase 9: Convergence
+
+- [ ] T039 Reword spec.md's SC-001 (~439-449) per SC-001 (contradicts): "The human-facing notice job (`stalled`) stays in the per-PR group by design (Edge Cases)" is false after T032 — `stalled` carries no `concurrency:` block at all. State that `stalled` is in no concurrency group (by design) and is waived for the same structural reason `intake.yml`'s and `clarify.yml`'s own `stalled` jobs already are.
+- [ ] T040 Correct `specs/013-serialize-rebase-stages/contracts/concurrency-groups.md`'s Members table row for `pr-conversation.yml`/`stalled-mark` (~line 40) per FR-004 (contradicts): its parenthetical still says the split gave `stalled` "the per-PR group unconditionally", which stopped being true at T032 (`stalled` now carries no concurrency block at all). Reword the aside to record T032's further change.
+- [ ] T041 Correct `specs/077-stalled-per-spec-group/contracts/stalled-job-concurrency.md`'s "Superseded by Maintainer Feedback (T023)" note (~line 10) per FR-004/T006 (contradicts): it still says `stalled` "stays in the per-PR group unconditionally" post-split; T032 later dropped that group entirely. Extend the note to record T032.
