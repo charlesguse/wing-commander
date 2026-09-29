@@ -41,8 +41,8 @@ its own — a `lint-workflows` run still in progress on the head the fix job
 just pushed, which is the *common* case, since readiness is entered
 immediately after review converges. It is a permanent wedge when the unmet
 condition is one the loop cannot clear: a red required check that needs a
-human's judgment, a finding filed against the PR after review converged, or
-a kill switch an owner left set overnight. The item holds the board, the
+human's judgment, or a finding filed against the PR after review converged.
+The item holds the board, the
 issue accumulates one identical comment per hour, and the board stops
 draining.
 
@@ -59,7 +59,7 @@ its own reaches a human once, named, instead of being reported hourly to
 nobody. A condition that clears itself, which is the common case, keeps
 today's behaviour and is simply bounded.
 
-### Observed facts (verified against main at c27d0cb)
+### Observed facts (verified against main at c27d0cb; line numbers re-verified at c80476f)
 
 - `.github/scripts/board_eligibility.py:209` skips only
   `TERMINAL_STEPS`, `"prove"` and `AWAITING_MERGE_STEP` when building the
@@ -67,10 +67,10 @@ today's behaviour and is simply bounded.
   (line 80), so a `readiness` marker whose PR resolves `OPEN` is an
   in-flight candidate, and `in_flight_candidate()`'s result is returned by
   `select()` before the oldest-first scan is reached (line 278).
-- `.github/workflows/board-loop.yml:3565` (the `else` branch of the
+- `.github/workflows/board-loop.yml:3919` (the `else` branch of the
   "Report the unmet condition (not ready)" step) posts
   `'Not ready on PR #%s: %s. Picked up again on a later run.'` and posts
-  no marker. Compare the ready path at line 3446, which writes an
+  no marker. Compare the ready path at line 3792, which writes an
   `AWAITING_MERGE_STEP` marker precisely so the item stops being
   in-flight.
 - `specs/057-autonomous-board-loop/contracts/readiness-report.md:57-58`
@@ -86,7 +86,7 @@ today's behaviour and is simply bounded.
   code-level signal today tells a self-clearing unmet condition from a
   durable one.
 - The readiness job emits a metrics record on every run with
-  `run-label: 'not ready'` (board-loop.yml:3595). A wedged item therefore
+  `run-label: 'not ready'` (board-loop.yml:3951). A wedged item therefore
   produces one durable "not ready" record per scheduled run, indefinitely.
 - The precedent for the terminal hand-to-human already exists and is
   named: spec 057 FR-030's `board:stalled` is "the loop's single
@@ -113,28 +113,48 @@ marker remains.
   a human under `board:stalled`. Holding alone would leave an item nobody
   was told about; bounding alone would keep starving the board and
   re-posting until the bound was reached.
-- **Q2 (FR-007)** — when a held item is re-admitted because its PR head
+- **Q2 (FR-005)** — is a self-clearing unmet condition (a check still
+  running on the head) treated the same as a durable one? **Resolved (A):
+  no — exempt from the hold, still counted toward the threshold.** A check
+  still running is exactly the case where "picked up again on a later run"
+  is the right answer, so holding it would wedge the common case; a check
+  that never leaves `in_progress` still consumes the threshold and so
+  eventually reaches a human.
+- **Q3 (FR-007)** — when a held item is re-admitted because its PR head
   moved, does it re-enter at `readiness` or go back through `review`?
-  **Resolved: `review`.** A human's new commits get an independent review
-  before anything is reported ready, keeping the constitution's "an
+  **Resolved (B): `review`.** A human's new commits get an independent
+  review before anything is reported ready, keeping the constitution's "an
   independent review … has zero open findings" true of every commit a ready
   report covers. Re-admission continues the item's existing fix→review
   round budget rather than resetting it, so repeated human pushes cannot
   loop review without bound. This is the one answer that replaced the
   draft's recorded default (resume at `readiness`).
-- **Q3 (FR-005)** — is a self-clearing unmet condition (a check still
-  running on the head) treated the same as a durable one? **Resolved: no —
-  exempt from the hold, still counted toward the threshold.** A check still
-  running is exactly the case where "picked up again on a later run" is the
-  right answer, so holding it would wedge the common case; a check that
-  never leaves `in_progress` still consumes the threshold and so eventually
-  reaches a human.
 
-The owner's reply numbered its answers in a different order from the
-questionnaire above (its "Q2" answers this document's Q3, and its "Q3"
-answers this document's Q2) and lettered the options independently of the
-option lists the questions carried. Each answer names its own subject, so
-the mapping recorded here is by content, not by label.
+Q1 was answered A. The numbering and letters above are the questionnaire's
+own, as posted on #717.
+
+### Status update 2026-09-29 — reconciled with current `main`
+
+- **Stand-down at readiness writes nothing (#782).** Every readiness
+  durable step, the not-ready comment included, is now gated on the kill
+  switch / stop-request re-check, so a paused run posts no "Not ready"
+  comment and no record. FR-006 therefore already holds on `main` and must
+  be preserved, not built; a kill switch is no longer a cause of the wedge.
+- **`board:stalled` ordering is single-homed (#782).** Every stall site
+  applies the label through `board_item_marker.add_stalled_label()` before
+  rendering a marker; FR-008's handover uses that helper.
+- **Merged specs are frozen records (#725, CLAUDE.md).** Spec 057's
+  `spec.md` is not edited; FR-014 corrects only the live contracts.
+- **The loop's concurrency is per-job (spec 060, #490)**, still with one
+  board item in flight repository-wide.
+- **Open conflict — needs a maintainer decision.** `add_stalled_label()`'s
+  docstring on `main` states today's label-removal re-admission rule:
+  resume re-derives from live state, `review` when an open `board:owned` PR
+  cites the issue, a fresh triage otherwise. Spec 100 (#752, Q1) documents
+  and gates that rule unchanged and gives the re-admitted item a fresh
+  review-round budget. This spec's FR-007 and User Story 2 scenario 3
+  instead resume a label-removed item at `readiness` when its head has not
+  moved. The two cannot both hold; this spec does not choose between them.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -214,10 +234,11 @@ FR-030 already defines, with no merge and no second PR.
    and readiness is re-evaluated directly on the PR's current head — the
    head a review has already covered, so FR-007's invariant needs no review
    round here.
-4. **Given** a not-ready outcome whose unmet condition is the kill switch,
-   **When** the run reports it, **Then** no handover occurs and the item is
-   not counted toward the handover threshold — an owner pausing the loop
-   never stalls the items that were in flight.
+4. **Given** a readiness run that stands down on the kill switch or a stop
+   request, **When** the run ends, **Then** no handover occurs and the item
+   is not counted toward the handover threshold — an owner pausing the loop
+   never stalls the items that were in flight (already true on `main`
+   since #782, which writes nothing on a stand-down; preserved here).
 
 ---
 
@@ -310,23 +331,24 @@ self-test mutation passes or fails on its own.
   job's own push frequently has a `lint-workflows` run in progress. A hold
   that treats this like a red check would wedge nearly every PR the loop
   produces, permanently, because the head never moves again. This is why
-  Q3 was asked, and the owner's answer is that a self-clearing condition is
+  Q2 was asked, and the owner's answer is that a self-clearing condition is
   exempt from the hold (FR-005): the item is re-checked, so the common case
   clears itself, while the threshold still bounds a check that never leaves
   `in_progress`.
 - **The kill switch is the unmet condition.** An owner who pauses the loop
   for a day must not find every in-flight item stalled and needing a label
   removed by hand. The kill switch is an owner action, not a property of
-  the item.
+  the item. Since #782 a stand-down at readiness posts nothing, so this
+  holds today and must stay true.
 - **The PR head moves because the loop itself pushed it.** Between a
   not-ready report and the next run the loop does not push to a held item's
   PR (it is not selected). A head that moved was moved by a human, so its
-  new commits have never been through the loop's review — which is why Q2's
+  new commits have never been through the loop's review — which is why Q3's
   answer resumes the item at `review` (FR-007), not at `readiness`.
 - **The head moves repeatedly without ever going green.** A human pushing
   five failed attempts must not buy five more re-check cycles indefinitely.
   The handover threshold counts not-ready outcomes for the PR, not for a
-  single head SHA. Because Q2's answer resumes at `review`, the same push
+  single head SHA. Because Q3's answer resumes at `review`, the same push
   pattern must also not buy unbounded review invocations: re-admission
   continues the item's existing fix→review round budget rather than
   resetting it (FR-007), so two bounds apply to the same PR and whichever
@@ -432,8 +454,8 @@ self-test mutation passes or fails on its own.
   label is the sole condition that makes the item eligible again, and a
   terminal marker is written. The label MUST be applied before the
   terminal marker is written, and a failed label application MUST fail the
-  step — the same ordering the two existing breach sites use
-  (spec 057 contracts/board-item-marker.md). The threshold exists by
+  step — the ordering every stall site uses through
+  `board_item_marker.add_stalled_label()` (#782). The threshold exists by
   FR-004(a); its numeric value is recorded in **Assumptions** as one more
   checked-in constant, not as a second mechanism.
 - **FR-009**: The loop MUST NOT post an unmet-condition comment that is
@@ -471,9 +493,10 @@ self-test mutation passes or fails on its own.
   that is re-checked rather than held yet still consumes the threshold; and
   the backstop-breach path unchanged.
 - **FR-014**: The governing prose MUST be corrected wherever it states the
-  superseded behaviour, in the same change: spec 057's FR-067 and its
-  `contracts/readiness-report.md` "A not-ready outcome leaves the marker
-  as it was" sentence, and spec 061's `contracts/in-flight-detection.md`
+  superseded behaviour, in the same change, in the live contracts (spec
+  057's `spec.md` is a frozen record and is not edited — CLAUDE.md, #725):
+  spec 057's `contracts/readiness-report.md` "A not-ready outcome leaves the
+  marker as it was" sentence, and spec 061's `contracts/in-flight-detection.md`
   and `contracts/resume-recovery.md` where they enumerate which steps make
   an item in-flight. `contracts/resume-recovery.md`'s step-resolution clause
   list MUST additionally gain the clause FR-007 adds — a re-admitted
@@ -482,7 +505,7 @@ self-test mutation passes or fails on its own.
   statement MUST be canonical in one
   place, with every other site pointing at it rather than restating it
   (CLAUDE.md). FR-067's reconciliation with FR-009 MUST be stated
-  explicitly — "picked up again on a later run" is bounded, not
+  explicitly in that contract — "picked up again on a later run" is bounded, not
   unconditional.
 - **FR-015**: Existing behaviour that this feature does not govern MUST be
   unchanged and MUST be shown unchanged by the existing fixtures passing
@@ -581,7 +604,7 @@ remaining things taken as given.
   budget (5) bounds review work, and FR-007's re-admission continues it
   rather than resetting it. Whichever is reached first hands the item over,
   through spec 057 FR-030's one existing mechanism.
-- **A review invocation per human push is an accepted cost.** Q2's answer
+- **A review invocation per human push is an accepted cost.** Q3's answer
   buys the stronger guarantee (SC-010) at the price of one review agent
   invocation each time a human moves a held PR's head. The round budget is
   what keeps that price bounded, and a human who does not push pays nothing.
@@ -589,8 +612,8 @@ remaining things taken as given.
   mechanism and the existing issue-comment convention rather than a new
   store; whether that means a new marker field, a new step name, or both
   is the plan stage's decision, not this specification's.
-- The loop continues to work one item at a time under its global
-  concurrency group; this feature changes which item is chosen, never how
+- The loop continues to work one item at a time — one board item in flight
+  repository-wide, under spec 060's per-job concurrency groups; this feature changes which item is chosen, never how
   many run at once.
 - `board:stalled` remains the loop's single hand-to-human marker. This
   feature adds a reason for applying it, never a second label.
@@ -612,7 +635,8 @@ remaining things taken as given.
   reuses), FR-031, FR-036, FR-037, FR-044, FR-054, FR-066, FR-067, FR-068;
   `contracts/readiness-report.md`;
   `contracts/board-item-marker.md`; `contracts/eligibility-and-selection.md`.
-  FR-067 and the readiness-report contract are amended by FR-014.
+  The readiness-report contract is amended by FR-014, which states there
+  how FR-067 is superseded; spec 057's frozen `spec.md` is not edited.
 - `specs/061-marker-owned-in-flight` — `contracts/in-flight-detection.md`
   (the single home for the in-flight decision, and the fixture layout this
   feature extends), `contracts/resume-recovery.md` (step resolution, whose
