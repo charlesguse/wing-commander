@@ -2,7 +2,7 @@
   "issue": 701,
   "spec_dir": "specs/092-bounded-spec-request-filing",
   "feature_num": "092",
-  "stage": "plan",
+  "stage": "tasks",
   "iteration": 0,
   "spec_branch": "spec/092-bounded-spec-request-filing"
 }
