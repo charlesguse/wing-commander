@@ -460,7 +460,7 @@ zero-site fixture still fails.
 
 ### Implementation for User Story 3
 
-- [ ] T018 [US3] In
+- [X] T018 [US3] In
       `.github/scripts/verify-issue-context-single-home.py`'s
       `check_spec_request_bodies()` (lines 1106–1307), add
       `_has_disposition_call(where, lines, create_idx)`
@@ -475,7 +475,7 @@ zero-site fixture still fails.
       other problem in this function already uses. The existing `sites ==
       0` vacuous-pass guard (lines 1302–1306) is unchanged and needs no new
       code (FR-012's third clause is already met).
-- [ ] T019 [US3] Extend the self-test harness's
+- [X] T019 [US3] Extend the self-test harness's
       `_site_fixture()`/`_create_guard_cases()` (lines 1346–1475) and
       `_self_test_spec_request_sites()`'s case list (lines 1478–1592) with
       the four fixtures contracts/gate-93-check-3-delta.md names: (1) a
