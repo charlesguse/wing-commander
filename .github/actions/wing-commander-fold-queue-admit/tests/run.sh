@@ -9,7 +9,7 @@
 # Covers quickstart.md Drill 2's three scenarios: a clean immediate grant,
 # a queued-then-granted sequence, and one stale-ticket reclaim.
 #
-# Invoked directly by a `run:` step in lint-workflows.yml (Gate 99
+# Invoked directly by a `run:` step in lint-workflows.yml (Gate 126
 # fixtures), so CI runs this suite on every PR. run-local-gates.py mirrors
 # CI by deriving its gate list from wc_gate_registry.gate_scripts(), which
 # only recognizes .github/scripts/verify-*.{py,sh} and

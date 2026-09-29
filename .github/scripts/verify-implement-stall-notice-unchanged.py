@@ -64,9 +64,15 @@ FIXTURE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
 
 STEP_NAMES = [
     "Mark lifecycle record stalled",
-    "Report stalled on lifecycle issue",
     "Announce the stall on the lifecycle issue",
 ]
+
+# specs/071-agent-push-credential: this step's `run:` block now carries a
+# conditional "commits published" line (FR-016/FR-017) and so can no longer
+# byte-pin against the frozen fixture above -- checked behaviorally instead
+# (check_commits_published_branch), the same way DEPENDENCY_STEP_NAME below
+# already is.
+COMMITS_STEP_NAME = "Report stalled on lifecycle issue"
 
 DEPENDENCY_STEP_NAME = "Determine which dependency did not start"
 NEVER_STARTED_PHRASE = "the implement stage failed before it could run its own steps"
@@ -266,11 +272,131 @@ def check_dependency_reason_branch(script=None):
     return failures
 
 
+def check_commits_published_branch(script=None):
+    """Execute the "Report stalled on lifecycle issue" script (COMMITS_STEP_NAME).
+
+    specs/071-agent-push-credential FR-016/FR-017: this step consumes an
+    already-rendered $PUBLISHED_LINE (computed by the separate "Compute
+    published-commits line" step, which fronts the single-homed
+    _shared/published-commits-line.sh -- a published stage may not resolve
+    _shared/ directly, Gate 60's promotion check; wing-commander-published-
+    commits-line/action.yml is the one composite that does, and its own
+    construction logic is covered where it is actually exercised,
+    verify-chain-stop-notice-body.py's scenario_commits_published). This
+    check's own job is narrower: given a rendered line (or none), does the
+    notice embed it correctly, without disturbing anything around it --
+    the regression pin for "the notice is unchanged from today"
+    (research.md D7's "adds a case, the current wording for the current
+    case stays" rule, applied to this step the same way spec 052 already
+    applied it to DEPENDENCY_STEP_NAME above).
+
+    `script` overrides the shipped block; the self-test hands in drifted
+    copies so the assertions below are proven to fire.
+    """
+    if script is None:
+        step = find_step(STAGE, COMMITS_STEP_NAME)
+        script = step.get("run")
+        if not script:
+            return [f"{COMMITS_STEP_NAME!r} has no `run:` block in {STAGE} — "
+                    f"the exhausted-retry notice step was removed or reshaped."]
+
+    bash = resolve_bash()
+    failures = []
+    base_env = {
+        "GH_TOKEN": "x", "ISSUE": "231", "ITERATION": "2",
+        "TIER": "sonnet", "REASON": "agent exhausted its turn budget",
+        "AGENT_MSG": "", "SELF_WORKFLOW": "wing-commander-5-implement.yml",
+        "RUN_URL": "https://example.invalid/actions/runs/1",
+        "GITHUB_REPOSITORY": "example/example",
+    }
+    with tempfile.TemporaryDirectory() as workdir, \
+         tempfile.TemporaryDirectory() as runner_temp:
+        spec_dir = os.path.join(workdir, "specs", "041-implement-stall-notice")
+        os.makedirs(spec_dir, exist_ok=True)
+        with open(os.path.join(spec_dir, "spec-meta.json"), "w", encoding="utf-8") as fh:
+            fh.write('{"iteration": 2}')
+        # The script's own first four lines are `gh label create`/`gh issue
+        # edit` calls, unconditional -- stub gh on PATH so those become
+        # no-ops instead of "command not found" under this step's own
+        # `bash -e` (production always has a real gh).
+        bindir = os.path.join(workdir, "bin")
+        os.makedirs(bindir, exist_ok=True)
+        with open(os.path.join(bindir, "gh"), "w", encoding="utf-8", newline="\n") as fh:
+            fh.write("#!/bin/sh\nexit 0\n")
+        os.chmod(os.path.join(bindir, "gh"), 0o755)
+        env = dict(base_env)
+        env["SPEC_DIR"] = "specs/041-implement-stall-notice"
+        env["PATH"] = bindir + os.pathsep + os.environ["PATH"]
+
+        published_line = ("3 commit(s) the agent could not push during the "
+                          "run were published after it.")
+        # A generic marker, not the exact expected string: a mutation that
+        # renders SOME (wrong) line regardless of PUBLISHED_LINE must still
+        # be caught even though its wording differs from the fixture value
+        # below (code review of this PR).
+        any_line_marker = "the agent could not push during the run"
+        for line, expect_present in (("", False), (published_line, True)):
+            env_run = dict(env)
+            env_run["PUBLISHED_LINE"] = line
+            run_step(bash, script, workdir, env_run, runner_temp, path_prepend=bindir)
+            try:
+                with open(os.path.join(runner_temp, "stall-comment.md"),
+                          encoding="utf-8") as fh:
+                    body = fh.read()
+            except OSError:
+                body = ""
+            where = f"{COMMITS_STEP_NAME!r} with PUBLISHED_LINE={line!r}"
+            has_line = any_line_marker in body
+            if expect_present and published_line not in body:
+                failures.append(f"{where} did not embed the "
+                                f"published-commits line: {body!r}")
+            if not expect_present and has_line:
+                failures.append(f"{where} embedded a published-commits "
+                                f"line it was not given (regression, "
+                                f"research.md D7): {body!r}")
+            # Broader regression pin (code review of this PR): the runbook
+            # heading alone left the diagnose/fix/restart steps and the
+            # restart-table rows entirely uncovered.
+            for expected_fragment in (
+                "### Runbook — restarting this specification",
+                "1. **Diagnose**", "2. **Fix the cause**", "3. **Restart**",
+                "| `spec_dir` | `specs/041-implement-stall-notice` |",
+                "| `issue` | `231` |", "| `iteration` | `3` |",
+                "gh workflow run wing-commander-5-implement.yml",
+            ):
+                if expected_fragment not in body:
+                    failures.append(f"{where} dropped pinned runbook "
+                                    f"content {expected_fragment!r}: {body!r}")
+
+        # The <details> block only renders with a non-empty agent message --
+        # a separate pass covers it (code review of this PR).
+        env_msg = dict(env)
+        env_msg["PUBLISHED_LINE"] = ""
+        env_msg["AGENT_MSG"] = "the agent could not find spec.md"
+        run_step(bash, script, workdir, env_msg, runner_temp, path_prepend=bindir)
+        try:
+            with open(os.path.join(runner_temp, "stall-comment.md"), encoding="utf-8") as fh:
+                body = fh.read()
+        except OSError:
+            body = ""
+        for expected_fragment in (
+            "<details><summary><b>Agent's final message</b>",
+            "````", "the agent could not find spec.md", "</details>",
+        ):
+            if expected_fragment not in body:
+                failures.append(f"{COMMITS_STEP_NAME!r} with a non-empty "
+                                f"agent message dropped {expected_fragment!r}: "
+                                f"{body!r}")
+    return failures
+
+
 def run():
     baseline = load_baseline()
     with open(STAGE, encoding="utf-8") as fh:
         new_text = fh.read()
-    return check_pinned_steps(new_text, baseline) + check_dependency_reason_branch()
+    return (check_pinned_steps(new_text, baseline)
+            + check_dependency_reason_branch()
+            + check_commits_published_branch())
 
 
 # --------------------------------------------------------------------------
@@ -365,6 +491,31 @@ def self_test():
            "agent-ran-unset branch",
            check_dependency_reason_branch(NEVER_NEVER_STARTED),
            "changed from the pinned never-started phrase")
+
+    commits_script = find_step(STAGE, COMMITS_STEP_NAME).get("run") or ""
+    passthrough_line = 'published_line="$PUBLISHED_LINE"'
+    always_published = commits_script.replace(
+        passthrough_line,
+        'published_line="always shown commit(s) the agent could not push '
+        'during the run were published after it."')
+    if always_published == commits_script:
+        problems.append("self-test setup: the always-published mutation's "
+                        "target text was not found in the shipped script — "
+                        "update the mutation together with the step.")
+    expect("a stall-comment script that always renders a published-commits "
+           "line, even when PUBLISHED_LINE is empty",
+           check_commits_published_branch(always_published),
+           "embedded a published-commits line it was not given")
+
+    never_published = commits_script.replace(passthrough_line, 'published_line=""')
+    if never_published == commits_script:
+        problems.append("self-test setup: the never-published mutation's "
+                        "target text was not found in the shipped script — "
+                        "update the mutation together with the step.")
+    expect("a stall-comment script that ignores PUBLISHED_LINE and never "
+           "embeds it",
+           check_commits_published_branch(never_published),
+           "did not embed the published-commits line")
 
     for p in problems:
         print(f"::error::{p}")

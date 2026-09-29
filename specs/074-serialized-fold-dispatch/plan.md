@@ -66,7 +66,7 @@ what `git`/`gh` already give every other stage.
 **Testing**: Composite-level bash fixtures under each new composite's own
 `tests/` directory (matching `wing-commander-stage-findings`'s precedent —
 an injectable `git`/`gh` shim, no live network), plus a new gate,
-provisionally Gate 99 (`verify-fold-queue-admission.py`, the next
+provisionally Gate 126 (`verify-fold-queue-admission.py`, the next
 unclaimed gate number as of this plan; the tasks stage fixes the final
 number against `lint-workflows.yml` at merge time), built on Gate 70's
 load-the-real-expression-and-mutate recipe (research.md D8), plus the
@@ -138,7 +138,7 @@ required inputs.
   published stage widen the contract deliberately, not accidentally — a
   MINOR release change, tracked in contracts/workflow-changes.md. No
   existing input, secret, or output is removed or renamed. PASS.
-- **VIII. A Green Check Means What It Says**: Gate 99 is reachable through
+- **VIII. A Green Check Means What It Says**: Gate 126 is reachable through
   the existing registry derivation (`run-local-gates.py` from
   `lint-workflows.yml`, research.md finding #6), is triggered by the
   existing `.github/workflows/**`/`.github/actions/**`/`.github/scripts/**`
@@ -211,9 +211,9 @@ frontend/backend split applies.
 │   │                               #   unchanged concurrency block + needs:
 │   ├── fold-cycle-guard.yml        # NEW: workflow_call stage, no agent step — the lost-cycle observer
 │   ├── wing-commander-9b-fold-cycle-guard.yml  # NEW: workflow_run wrapper, mirrors watchdog's wiring
-│   └── lint-workflows.yml          # EDITED: register Gate 99
+│   └── lint-workflows.yml          # EDITED: register Gate 126
 └── scripts/
-    └── verify-fold-queue-admission.py         # NEW: Gate 99
+    └── verify-fold-queue-admission.py         # NEW: Gate 126
 
 docs/
 └── architecture.md                # EDITED if the concurrency-group description needs the new admission layer noted

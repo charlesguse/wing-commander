@@ -88,8 +88,17 @@ prove. Each step has a rule.
 - This repository is public. Never reference private downstream consumers
   (repo names, orgs, customers) in code, comments, commits, PRs, or
   issues.
-- The Sync Impact Report comments stacked at the top of
-  `.specify/memory/constitution.md` are this repository's amendment
-  history. Keep them. The vendored `speckit-constitution` skill (Spec Kit
-  v1.0.5+) calls its report temporary scratch to be removed before commit;
-  that instruction does not apply here.
+- This repository's amendment history is the stack of Sync Impact Reports
+  in `.specify/memory/constitution-history.md`, newest first. Keep them.
+  `constitution.md` itself carries only a one-line pointer to that file, so
+  every agent that reads the constitution doesn't pay for the history. A
+  new amendment moves the report the `speckit-constitution` skill writes at
+  the top of `constitution.md` to the top of the history file's list, in
+  the same commit. The vendored skill (Spec Kit v1.0.5+) calls its report
+  temporary scratch to be removed before commit; that instruction does not
+  apply here -- the report is moved, not deleted.
+- Once a feature's final PR has merged, its `specs/NNN-*/` spec.md,
+  plan.md, research.md and tasks.md are historical records: don't file or
+  fix errata against them. Correct the code or the live docs instead.
+  Contracts a gate reads (`specs/*/contracts/`) remain live and are fixed
+  like code.

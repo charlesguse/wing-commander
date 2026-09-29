@@ -46,8 +46,17 @@ remaining_action_repository() {
 # convergence is observed by dispatching the readiness check (Story 2)
 # after installing the App, not by this script re-verifying it under a
 # maintainer's own credential.
+# This element's check() never has a missing-shaped failure (research.md
+# D5): the one route that could ever prove non-installation -- the
+# readiness workflow's own App-token mint failing -- already exits before
+# checks.sh runs at all, so a failure here is always a property of the
+# checking credential, never a proven-absent installation.
 check_app_installation() { # check_app_installation OWNER NAME
-  [ "${WC_APP_INSTALLATION_KNOWN_READY:-}" = "true" ]
+  if [ "${WC_APP_INSTALLATION_KNOWN_READY:-}" = "true" ]; then
+    return 0
+  fi
+  APP_INSTALLATION_NOT_CHECKABLE=true
+  return 1
 }
 remaining_action_app_installation() {
   printf 'Install the wing-commander App on %s/%s: https://github.com/settings/installations -- this cannot be verified with a maintainer'\''s own credential (T043); confirm it by dispatching the readiness check (auto-update-spec-kit-scratch-preflight.yml) once installed.' "$1" "$2"
@@ -149,6 +158,16 @@ remaining_action_wrapper_set() {
 }
 
 # ---- container_image_pin (auto-release only) ---------------------------
+# The "read a repository's WING_COMMANDER_CONTAINER_IMAGE variable" query is
+# one home (CLAUDE.md): this_repo_container_image()'s own local-repository
+# fallback, check_container_image_pin() below, and auto-release.yml's
+# container-evidence-config step (specs/067-e2e-container-image-evidence,
+# maintainer feedback on PR #628) all call this instead of each re-deriving
+# the `gh variable list` query. stdout carries the value; stderr carries
+# whatever `gh` wrote, for a caller that needs to classify a failure.
+read_repo_container_image_variable() { # read_repo_container_image_variable OWNER/NAME
+  gh variable list --repo "$1" --json name,value -q '.[] | select(.name=="WING_COMMANDER_CONTAINER_IMAGE") | .value'
+}
 # "This repository's own pinned value" is read once (research.md D4) so the
 # two cannot drift into a second literal. `WC_SOURCE_CONTAINER_IMAGE`, when
 # SET (even to an empty string -- FR-017: no pinned image is itself a valid
@@ -168,19 +187,19 @@ this_repo_container_image() {
   if [ -z "$self" ]; then
     self="$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null)" || return 1
   fi
-  gh variable list --repo "$self" --json name,value -q '.[] | select(.name=="WING_COMMANDER_CONTAINER_IMAGE") | .value' 2>/dev/null
+  read_repo_container_image_variable "$self" 2>/dev/null
 }
 check_container_image_pin() { # check_container_image_pin OWNER NAME
   local owner="$1" name="$2" want got rc err
   want="$(this_repo_container_image)" || return 1
-  got="$(gh variable list --repo "$owner/$name" --json name,value -q '.[] | select(.name=="WING_COMMANDER_CONTAINER_IMAGE") | .value' 2>/dev/null)"; rc=$?
+  got="$(read_repo_container_image_variable "$owner/$name" 2>/dev/null)"; rc=$?
   if [ "$rc" -ne 0 ]; then
     # Re-run once, capturing stderr alone, purely to classify the failure
     # (T047): folding stderr into $got via `2>&1` on the first attempt let a
     # successful call's incidental stderr noise corrupt the compared value
     # into a false not-ready mismatch, so the value used for the comparison
     # above is always stdout-only.
-    err="$(gh variable list --repo "$owner/$name" --json name,value -q '.[] | select(.name=="WING_COMMANDER_CONTAINER_IMAGE") | .value' 2>&1 1>/dev/null)"
+    err="$(read_repo_container_image_variable "$owner/$name" 2>&1 1>/dev/null)"
     gh_permission_denied "$err" && CONTAINER_IMAGE_PIN_NOT_CHECKABLE=true
     return 1
   fi
@@ -195,22 +214,49 @@ remaining_action_container_image_pin() {
 }
 
 # ---- ReadinessReport assembly (data-model.md, contracts/readiness-report.schema.json) --
+# Classifies each element's outcome as ready (check_$key returned 0),
+# not_checkable (check_$key returned 1 and its own <KEY>_NOT_CHECKABLE flag
+# is true -- the failure is a property of the checking credential, not the
+# target, research.md D1), or missing (check_$key returned 1, flag unset or
+# false). verdict precedence (research.md D2, FR-003): any element missing
+# outranks any element not_checkable; all_clear only when every element is
+# ready.
 assemble_report() { # assemble_report OWNER NAME PROFILE
-  local owner="$1" name="$2" profile="$3" key ready action entry
-  local elements_json="[]" all_ready=true
+  local owner="$1" name="$2" profile="$3" key outcome action entry
+  local elements_json="[]" any_missing=false any_not_checkable=false
+  APP_INSTALLATION_NOT_CHECKABLE=false
+  CLAUDE_CREDENTIAL_NOT_CHECKABLE=false
+  CONTAINER_IMAGE_PIN_NOT_CHECKABLE=false
   while IFS= read -r key; do
     [ -n "$key" ] || continue
     if "check_$key" "$owner" "$name"; then
-      ready=true; action=""
+      outcome="ready"; action=""
     else
-      ready=false; all_ready=false
+      case "$key" in
+        app_installation)
+          [ "$APP_INSTALLATION_NOT_CHECKABLE" = "true" ] && outcome="not_checkable" || outcome="missing" ;;
+        claude_credential)
+          [ "$CLAUDE_CREDENTIAL_NOT_CHECKABLE" = "true" ] && outcome="not_checkable" || outcome="missing" ;;
+        container_image_pin)
+          [ "$CONTAINER_IMAGE_PIN_NOT_CHECKABLE" = "true" ] && outcome="not_checkable" || outcome="missing" ;;
+        *) outcome="missing" ;;
+      esac
+      if [ "$outcome" = "not_checkable" ]; then any_not_checkable=true; else any_missing=true; fi
       action="$("remaining_action_$key" "$owner" "$name")"
     fi
-    entry="$(jq -n --arg key "$key" --argjson ready "$ready" --arg action "$action" \
-      '{key: $key, ready: $ready, remaining_action: (if $ready then null else $action end)}')"
+    entry="$(jq -n --arg key "$key" --arg outcome "$outcome" --arg action "$action" \
+      '{key: $key, outcome: $outcome, remaining_action: (if $outcome == "ready" then null else $action end)}')"
     elements_json="$(jq --argjson e "$entry" '. + [$e]' <<<"$elements_json")"
   done < <(profile_elements "$profile") || return 1
+  local verdict
+  if [ "$any_missing" = "true" ]; then
+    verdict="not_clear"
+  elif [ "$any_not_checkable" = "true" ]; then
+    verdict="unverified"
+  else
+    verdict="all_clear"
+  fi
   jq -n --arg target "$owner/$name" --arg profile "$profile" --argjson elements "$elements_json" \
-    --argjson ready "$all_ready" --arg generated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    '{target: $target, profile: $profile, elements: $elements, ready: $ready, generated_at: $generated_at}'
+    --arg verdict "$verdict" --arg generated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    '{target: $target, profile: $profile, elements: $elements, verdict: $verdict, generated_at: $generated_at}'
 }

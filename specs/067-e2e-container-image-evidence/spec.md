@@ -257,12 +257,17 @@ with each site instead stating the detection and its prerequisite.
   not configured, and MUST NOT dispatch a release.
 - **FR-003**: The verification MUST obtain that evidence with the fixture
   maintainer credential introduced by `specs/055-unattended-e2e-gates`
-  (`WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN`, a Write
-  collaborator on the test repository), which already reaches both the
-  test repository's container image variable and that repository's
-  Actions run and job data. No new App installation permission is
-  required, on the test repository or anywhere else, and the
-  verification MUST NOT write the container image configuration itself.
+  (`WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN`, in either shape
+  `specs/066-fine-grained-maintainer-token` accepts). For the classic shape, that
+  credential's `repo` scope already reaches both the test repository's
+  container image variable and that repository's Actions run and job
+  data with no change. For the fine-grained shape, the credential MUST
+  additionally carry Variables (read) and Actions (read) permissions
+  alongside the Contents/Issues/Pull requests set `specs/066-fine-
+  grained-maintainer-token` already documents — the only permission
+  grant this feature adds, on the test repository alone, never on this
+  repository or anywhere else. The verification MUST NOT write the
+  container image configuration itself.
   The credential's validity MUST be verified at the start of the run
   rather than discovered mid-flight, and its reach MUST be confined to
   the test repository per FR-014.
@@ -317,8 +322,11 @@ with each site instead stating the detection and its prerequisite.
   without manual cleanup.
 - **FR-013**: The fixture maintainer credential this route uses MUST be
   documented as a setup prerequisite of the container leg as well as of
-  the unattended human gates, with its least-privilege scope — a Write
-  collaborator on the test repository and nothing more — stated, and its
+  the unattended human gates, with its least-privilege scope stated — for the
+  classic shape a Write collaborator on the test repository and nothing
+  more, for the fine-grained shape the specs/066 permission set plus
+  Variables (read) and Actions (read) on the test repository alone
+  (FR-003) — and its
   absence or insufficiency MUST surface as the named
   infrastructure-class verdict of FR-004 rather than as an unexplained
   failure.

@@ -1,0 +1,65 @@
+# The PR-branch resolution idiom, in one home.
+#
+# Extracted from board-loop.yml's "Resolve the PR under review" and
+# "Resolve the PR under readiness" steps -- both read a PR number's head
+# branch via `gh pr view ... --json headRefName --jq .headRefName` and
+# wrote it to GITHUB_OUTPUT alongside a pass-through pr-number/round. See
+# specs/084-board-loop-single-home-idioms/contracts/pr-branch-resolution.md
+# and research.md D4.
+#
+# This composite is internal to this repository, per constitution VII's
+# underscore-prefixed-directory clarification (specs/049): it is never
+# resolved by a workflow_call-only stage or a published (non-underscore)
+# composite action, and Gate 60's promotion-prevention check enforces that.
+# board-loop.yml is this composite's only caller.
+name: resolve-pr-branch
+description: >
+  Resolves a PR number's head branch via `gh pr view`, failing loudly on a
+  failed or empty read rather than writing an empty branch output.
+
+inputs:
+  pr-number:
+    description: The PR to resolve
+    required: true
+  token:
+    description: Token for the `gh pr view` call (GH_TOKEN)
+    required: true
+  round:
+    description: Pass-through only -- never derived from the PR itself
+    required: false
+    default: ""
+
+outputs:
+  pr-number:
+    description: Echoes the pr-number input
+    value: ${{ steps.resolve.outputs.pr-number }}
+  branch:
+    description: The PR's head branch
+    value: ${{ steps.resolve.outputs.branch }}
+  round:
+    description: Echoes the round input
+    value: ${{ steps.resolve.outputs.round }}
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve the PR's head branch
+      id: resolve
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        PR_NUMBER: ${{ inputs.pr-number }}
+        ROUND: ${{ inputs.round }}
+        REPO: ${{ github.repository }}
+      run: |
+        set -euo pipefail
+        branch="$(gh pr view "$PR_NUMBER" -R "$REPO" --json headRefName --jq .headRefName)"
+        if [ -z "$branch" ]; then
+          echo "::error::resolve-pr-branch: PR #$PR_NUMBER resolved an empty head branch" >&2
+          exit 1
+        fi
+        {
+          echo "pr-number=$PR_NUMBER"
+          echo "branch=$branch"
+          echo "round=$ROUND"
+        } >> "$GITHUB_OUTPUT"

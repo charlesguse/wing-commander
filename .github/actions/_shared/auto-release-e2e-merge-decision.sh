@@ -25,12 +25,14 @@
 # merged, since a retargeted PR could otherwise land unreviewed content.
 #
 # Prints one of `none` / `wrong-attempt` / `wrong-base` / `wait` /
-# `conflicting` / `blocked` / `merge` on stdout; `merge` is followed on
-# the next line by the PR number. `conflicting`, `blocked`,
-# `wrong-attempt`, and `wrong-base` are each a distinct fail-gate-stall
-# reason (FR-023) -- the caller never retries after receiving one of
-# them. Never sourced, matching auto-release-verdict.sh's invocation
-# idiom.
+# `conflicting` / `blocked` / `blocked-pending` / `merge` on stdout;
+# `merge` is followed on the next line by the PR number.
+# `blocked-pending` is not itself a terminal decision -- the caller times
+# it against a waiting allowance (specs/070-blocked-gate-dry-run) before
+# treating it as a stall. `conflicting`, `blocked`, `wrong-attempt`, and
+# `wrong-base` are each a distinct fail-gate-stall reason (FR-023) -- the
+# caller never retries after receiving one of them. Never sourced,
+# matching auto-release-verdict.sh's invocation idiom.
 set -uo pipefail
 
 head_ref_prefix="${1:?head ref prefix required}"
@@ -75,8 +77,9 @@ fi
 merge_state="$(printf '%s' "$entry" | jq -r '.mergeStateStatus // ""')"
 if [ "$merge_state" = "BLOCKED" ]; then
   # BLOCKED also reports while a required check is still running, not
-  # only once one has definitively failed (maintainer feedback: confirm a
-  # pending-checks PR is never declared a gate stall). A rollup entry
+  # only once one has definitively failed (maintainer feedback: a
+  # pending-checks PR is now declared a gate stall only after the 20-minute
+  # waiting allowance elapses, per FR-004 -- never immediately). A rollup entry
   # still PENDING/QUEUED/IN_PROGRESS -- or COMPLETED with no conclusion
   # yet recorded -- means the wait, not the block, is what's actually
   # happening; only a rollup with nothing left pending is a genuine stall.
@@ -98,10 +101,11 @@ if [ "$merge_state" = "BLOCKED" ]; then
   # context has been created yet, has an EMPTY statusCheckRollup while
   # still reporting BLOCKED -- indistinguishable, from this data alone,
   # from a genuinely misconfigured required check that will never
-  # report. Treated as still-pending (wait), not a stall, since a false
-  # "wait" costs one more poll tick while a false "blocked" ends the
-  # attempt outright (maintainer feedback on PR #389, second review,
-  # Verify item).
+  # report. Printed as blocked-pending, not an immediate stall, since a
+  # false immediate stall ends the attempt outright while a false
+  # blocked-pending costs at most one waiting allowance
+  # (specs/070-blocked-gate-dry-run) before the caller ends it the same
+  # way (maintainer feedback on PR #389, second review, Verify item).
   still_pending="$(printf '%s' "$entry" | jq -r '
     (.statusCheckRollup // []) as $rollup
     | if ($rollup | length) == 0 then true
@@ -114,7 +118,7 @@ if [ "$merge_state" = "BLOCKED" ]; then
       end
   ')"
   if [ "$still_pending" = "true" ]; then
-    echo "wait"
+    echo "blocked-pending"
     exit 0
   fi
   echo "blocked"

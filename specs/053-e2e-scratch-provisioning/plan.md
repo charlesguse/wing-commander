@@ -70,8 +70,9 @@ contract is touched, widened, or versioned by this feature.
 and ≤1 runner-minute, matching the cost of today's single-element preflight.
 
 **Constraints**: SC-001 — one provisioning invocation, the one declared
-manual App-install step, and one re-invocation complete in under 15 minutes
-wall-clock. FR-003/FR-009 — no App installation token gains a new
+manual App-install step, and dispatching the readiness check to observe
+convergence complete in under 15 minutes wall-clock. FR-003/FR-009 — no App
+installation token gains a new
 permission; no credential value is ever written to a log, summary, commit,
 issue comment, or PR body.
 

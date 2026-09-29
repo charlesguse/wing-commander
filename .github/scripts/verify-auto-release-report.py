@@ -134,6 +134,9 @@ GATE_STALL_PLAN = gate_stall(
 GATE_STALL_FINALIZE = gate_stall(
     "finalize PR merge", "the PR at this branch belongs to the current attempt",
     "PR #14 belongs to a previous attempt")
+GATE_STALL_BLOCKED_PENDING = gate_stall(
+    "plan PR merge", "gh pr merge succeeds",
+    "PR #15: required checks never reported a result")
 
 # Every scenario starts from a run where nothing has happened yet -- every
 # result `skipped`, every output empty -- and overrides what its situation
@@ -466,6 +469,18 @@ SCENARIOS = [
         action="report",
         body_contains=["gate stall", "finalize PR merge",
                        "PR #14 belongs to a previous attempt"],
+        body_excludes=["**Classification**: infrastructure",
+                       "**Classification**: pipeline defect"],
+    ),
+    dict(
+        name="specs/070: fail-gate-stall, plan PR merge blocked-pending "
+             "with no resolved check for longer than the waiting allowance",
+        env=dict(DETECT_RESULT="success", HAS_NEW_WORK="true", TAG_EXISTS="true",
+                 LATEST_TAG="v2.7.2", HEAD_SHA=HEAD, VERIFY_RESULT="success",
+                 VERDICT_JSON=GATE_STALL_BLOCKED_PENDING),
+        action="report",
+        body_contains=["gate stall", "plan PR merge",
+                       "PR #15: required checks never reported a result"],
         body_excludes=["**Classification**: infrastructure",
                        "**Classification**: pipeline defect"],
     ),

@@ -271,22 +271,67 @@ runs:
             # survives); underscores go with the punctuation.
             return " ".join(re.sub(r"[\W_]+", " ", str(value).lower()).split())
 
-        def compose_recap():
-            return "Seen again in run {0}.\n".format(RUN_URL)
+        def verify_anchor(file_path, gate_or_artifact):
+            # contracts/anchor-verification.md steps 1-4: resolve file_path
+            # against this step's own working directory (the same tree
+            # evidence.file_paths is implicitly read against, research.md
+            # D3); a path outside that tree (e.g. via `..`) or that is not a
+            # readable regular file is unverifiable, never a hard failure.
+            cwd = os.getcwd()
+            resolved = os.path.abspath(os.path.join(cwd, file_path))
+            try:
+                within = os.path.commonpath([cwd, resolved]) == cwd
+            except ValueError:
+                within = False
+            if not within or not os.path.isfile(resolved):
+                return False, None
+            try:
+                with open(resolved, encoding="utf-8", errors="replace") as fh:
+                    file_text = fh.read()
+            except OSError:
+                return False, None
+            norm_gate = normalize_basis(gate_or_artifact)
+            if not norm_gate:
+                # research.md D1: an anchor that normalizes to empty (e.g.
+                # only punctuation) is never treated as verified -- an empty
+                # string is trivially "contained" in everything.
+                return False, None
+            if norm_gate in normalize_basis(file_text):
+                return True, norm_gate
+            return False, None
+
+        def compose_recap(finding):
+            return "Seen again in run {0}.\n\n{1}\n\n{2}\n".format(
+                RUN_URL, finding["title"], finding["what"])
 
         outputs = [("survivor-count", str(len(kept)))]
         for i in range(MAX_SLOTS):
             if i < len(kept):
                 finding = kept[i]
                 basis = finding["fingerprint_basis"]
-                # #424: both basis fields are agent prose, so the key is hashed
-                # from a normalized form -- see data-model.md "Fingerprint" for
-                # the rule, the twin it stops, and the word-level variance it
-                # cannot stop.
-                fp = hashlib.sha256("{0}|{1}|{2}".format(
-                    STAGE, normalize_basis(basis["file_path"]),
-                    normalize_basis(basis["gate_or_artifact"])
-                ).encode("utf-8")).hexdigest()
+                # #569: the fingerprint's gate_or_artifact segment is only
+                # ever the agent's own normalized wording when that wording
+                # is checked against the named file's content (anchor
+                # verifies); otherwise the finding is keyed under the
+                # fallback shape (data-model.md "Fingerprint", both shapes)
+                # rather than trusting agent prose directly into the key.
+                norm_path = normalize_basis(basis["file_path"])
+                verified, norm_gate = verify_anchor(
+                    basis["file_path"], basis["gate_or_artifact"])
+                if verified:
+                    fp = hashlib.sha256("anchor|{0}|{1}|{2}".format(
+                        STAGE, norm_path, norm_gate
+                    ).encode("utf-8")).hexdigest()
+                else:
+                    fp = hashlib.sha256("fallback|{0}|{1}".format(
+                        STAGE, norm_path
+                    ).encode("utf-8")).hexdigest()
+                    notes.append(
+                        "anchor unverifiable for \"{0}\": \"{1}\" was not "
+                        "found (verbatim, normalized) in {2}; keyed via the "
+                        "fallback route rather than dropped.".format(
+                            finding["title"], basis["gate_or_artifact"],
+                            basis["file_path"]))
                 marker = "<!-- wing-commander-finding: fingerprint={0} -->".format(fp)
                 label = "{0}:{1}".format(LABEL_PREFIX, STAGE)
                 body_path = os.path.join(OUT_DIR, "body-{0}.md".format(i))
@@ -294,7 +339,7 @@ runs:
                 with open(body_path, "w", encoding="utf-8") as fh:
                     fh.write(compose_body(finding, fp))
                 with open(recap_path, "w", encoding="utf-8") as fh:
-                    fh.write(compose_recap())
+                    fh.write(compose_recap(finding))
                 outputs += [
                     ("survivor-{0}-present".format(i), "true"),
                     ("survivor-{0}-title".format(i), finding["title"]),

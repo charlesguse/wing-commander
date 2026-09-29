@@ -46,5 +46,5 @@ exists as the backstop.
    (Principle VIII).
 3. For `kind: act`, every `leg-id` this run's `act` job actually executed
    MUST have exactly one release call recording its outcome before the
-   ticket itself is removed — Gate 99 checks this invariant against
+   ticket itself is removed — Gate 126 checks this invariant against
    `act`'s own matrix definition (contracts/gates.md).

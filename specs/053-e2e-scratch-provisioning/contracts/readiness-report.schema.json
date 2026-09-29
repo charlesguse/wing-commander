@@ -1,10 +1,10 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "ReadinessReport",
-  "description": "Emitted on stdout by provision-e2e-target.sh (with or without --check-only) and rendered into the GITHUB_STEP_SUMMARY of the generalized auto-update-spec-kit-scratch-preflight.yml workflow. See data-model.md.",
+  "description": "Emitted on stdout by provision-e2e-target.sh (with or without --check-only) and rendered into the GITHUB_STEP_SUMMARY of the generalized auto-update-spec-kit-scratch-preflight.yml workflow. See data-model.md. Tri-state outcome/verdict shape amended by specs/069-scratch-readiness-reporting/contracts/readiness-report.schema.json (FR-010/FR-011): elements[].ready (bool) is replaced by elements[].outcome (tri-state), and top-level ready (bool) is replaced by verdict (tri-state).",
   "type": "object",
   "additionalProperties": false,
-  "required": ["target", "profile", "elements", "ready", "generated_at"],
+  "required": ["target", "profile", "elements", "verdict", "generated_at"],
   "properties": {
     "target": {
       "type": "string",
@@ -21,7 +21,7 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["key", "ready", "remaining_action"],
+        "required": ["key", "outcome", "remaining_action"],
         "properties": {
           "key": {
             "type": "string",
@@ -35,17 +35,22 @@
               "container_image_pin"
             ]
           },
-          "ready": { "type": "boolean" },
+          "outcome": {
+            "type": "string",
+            "enum": ["ready", "missing", "not_checkable"],
+            "description": "The three outcomes a machine consumer must be able to tell apart without parsing remaining_action. not_checkable means the checking route's credential cannot answer this element at all -- never folded into missing."
+          },
           "remaining_action": {
             "type": ["string", "null"],
-            "description": "Null iff ready is true. Never null when ready is false (FR-006)."
+            "description": "Null iff outcome is 'ready'. Never null otherwise (FR-006). For outcome 'not_checkable', names the route that can check this element instead (FR-005)."
           }
         }
       }
     },
-    "ready": {
-      "type": "boolean",
-      "description": "True iff every entry in elements has ready == true. FR-004: never true otherwise."
+    "verdict": {
+      "type": "string",
+      "enum": ["all_clear", "not_clear", "unverified"],
+      "description": "all_clear iff every element is ready; not_clear if any element is missing (checked-and-missing outranks unverified); unverified iff nothing is missing but at least one element is not_checkable. Never all_clear with a missing or not_checkable element present. Maps 1:1 to provision-e2e-target.sh's exit status: 0 / 1 / 2 respectively (see contracts/cli.md)."
     },
     "generated_at": {
       "type": "string",

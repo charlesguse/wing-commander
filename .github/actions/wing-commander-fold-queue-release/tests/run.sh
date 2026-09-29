@@ -7,7 +7,7 @@
 # Covers quickstart.md Drill 2: a normal release-with-outcome and an
 # idempotent double-release.
 #
-# Invoked directly by a `run:` step in lint-workflows.yml (Gate 99
+# Invoked directly by a `run:` step in lint-workflows.yml (Gate 126
 # fixtures), so CI runs this suite on every PR; not yet mirrored by
 # run-local-gates.py, whose gate list only covers .github/scripts paths --
 # see wing-commander-fold-queue-admit/tests/run.sh for why. Invoke

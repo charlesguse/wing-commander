@@ -31,6 +31,13 @@ with `wc_shell_harness.run_step` — against three shapes (quickstart.md §3):
      never invoked at all (mirrors production: its own `if:` on
      inputs.spec-dir), and the notice still renders the "could not be
      updated" wording.
+  4. A split call (specs/077-stalled-per-spec-group: mark-record/
+     post-notice) — the notice-only half (mark-record: "false") renders
+     neither the "marked" nor the "could not be updated" wording for a
+     non-empty spec-dir, since the mark is merely queued by a separate
+     job it never waited on; the mark-only half (post-notice: "false")
+     still removes the stale stage:<name> label on a successful mark but
+     never adds the stage:stalled label itself.
 
 Also asserts (T019): restart-command is rendered byte-for-byte as the
 caller supplied it — the composite treats it as an opaque, fully
@@ -138,18 +145,20 @@ def run_mark(steps, repo, runner_temp, spec_dir, agent_ran=""):
 
 
 def run_labels(steps, repo, runner_temp, bindir, calls, stage_label,
-               record_status):
+               record_status, mark_record="true", post_notice="true"):
     return run_step(
         BASH, steps[LABELS_STEP], repo,
         {"GH_TOKEN": "x", "ISSUE": ISSUE, "STAGE_LABEL": stage_label,
          "RECORD_STATUS": record_status, "GH_CALLS": calls,
+         "MARK_RECORD": mark_record, "POST_NOTICE": post_notice,
          "PATH": bindir + os.pathsep + os.environ["PATH"]},
         runner_temp)
 
 
 def run_notice(steps, repo, runner_temp, bindir, calls, reason,
                restart_command, record_status, run_url="", agent_ran="",
-               agent_conclusion=""):
+               agent_conclusion="", commits_published="", push_ok="",
+               mark_record="true", spec_dir=SPEC_DIR):
     return run_step(
         BASH, steps[NOTICE_STEP], repo,
         {"GH_TOKEN": "x", "ISSUE": ISSUE, "REASON": reason,
@@ -157,6 +166,18 @@ def run_notice(steps, repo, runner_temp, bindir, calls, reason,
          "DEFAULT_RUN_URL": "https://example.invalid/actions/runs/1",
          "RESTART_COMMAND": restart_command, "RECORD_STATUS": record_status,
          "AGENT_RAN": agent_ran, "AGENT_CONCLUSION": agent_conclusion,
+         # specs/071-agent-push-credential: always supplied, empty by
+         # default, matching the composite's own input default -- `set -u`
+         # inside the step under test would otherwise reject a truly unset
+         # env var, a gap production never hits (the input always resolves
+         # to at least "").
+         "COMMITS_PUBLISHED": commits_published,
+         "PUSH_OK": push_ok,
+         # The step under test resolves _shared/published-commits-line.sh
+         # relative to $GITHUB_ACTION_PATH, exactly as Actions sets it for
+         # a real composite invocation of this file.
+         "GITHUB_ACTION_PATH": os.path.abspath(os.path.dirname(COMPOSITE)),
+         "MARK_RECORD": mark_record, "SPEC_DIR": spec_dir,
          "GH_CALLS": calls,
          "PATH": bindir + os.pathsep + os.environ["PATH"]},
         runner_temp)
@@ -312,7 +333,7 @@ def scenario_empty_spec_dir(steps, root):
                                "no specification exists yet for this run",
                                "Re-dispatch the intake stage for this "
                                "specification once the cause above is "
-                               "resolved.", "")
+                               "resolved.", "", spec_dir="")
     if rc != 0:
         failures.append(f"{where}: {NOTICE_STEP!r} exited {rc}: {out.strip()}")
         return failures
@@ -324,6 +345,86 @@ def scenario_empty_spec_dir(steps, root):
         failures.append(f"{where}: notice body did not reproduce intake's "
                         f"plain re-dispatch restart-command byte-for-byte "
                         f"(T019): {body!r}")
+    return failures
+
+
+def scenario_split_notice_only(steps, root):
+    """specs/077-stalled-per-spec-group: a caller that splits its notice
+    from its stall-mark write (mark-record: "false") gets neither the
+    'marked' nor the 'could not be updated' wording — the mark is being
+    written by a separate job this call never waited on, and the notice
+    must say so rather than implying the write failed."""
+    failures = []
+    where = "scenario: split call, notice-only (specs/077)"
+    work, repo = make_workspace(root, reachable_remote=True)
+    runner_temp = os.path.join(work, "runner_temp")
+    os.makedirs(runner_temp, exist_ok=True)
+    bindir, calls = new_gh_stub(work)
+
+    # Production never invokes the mark step at all on the notice-only call
+    # (mark-record: "false") -- mirrored here the same way as the
+    # empty-spec-dir scenario above: no run_mark call, empty record-status.
+    rc, out, _, _ = run_notice(steps, repo, runner_temp, bindir, calls,
+                               "the pr-conversation stage never started",
+                               "Re-dispatch the pr-conversation stage for "
+                               "this pull request once the cause above is "
+                               "resolved.", "", mark_record="false",
+                               spec_dir=SPEC_DIR)
+    if rc != 0:
+        failures.append(f"{where}: {NOTICE_STEP!r} exited {rc}: {out.strip()}")
+        return failures
+    body = read_notice_body(runner_temp)
+    if "could not be updated" in body:
+        failures.append(f"{where}: notice body used the 'could not be "
+                        f"updated' wording for a mark that is merely queued "
+                        f"elsewhere, not one that actually failed: {body!r}")
+    if "marked stalled" in body:
+        failures.append(f"{where}: notice body claimed the record was "
+                        f"marked, but this call never ran the mark step: "
+                        f"{body!r}")
+    if "separate job" not in body:
+        failures.append(f"{where}: notice body does not say the stall-mark "
+                        f"is being written by a separate job: {body!r}")
+    return failures
+
+
+def scenario_split_mark_only_labels(steps, root):
+    """specs/077-stalled-per-spec-group: the mark-only call (post-notice:
+    "false") still removes the stale stage:<name> label once its own mark
+    succeeds, but never adds the stage:stalled label -- that is the
+    notice-only call's job, and adding it twice would just be redundant,
+    not wrong, but a survivor that never posts a notice at all (a caller
+    that only ever makes the mark-only call) must not silently also flip
+    that label as a side effect of the split."""
+    failures = []
+    where = "scenario: split call, mark-only labels (specs/077)"
+    work, repo = make_workspace(root, reachable_remote=True)
+    runner_temp = os.path.join(work, "runner_temp")
+    os.makedirs(runner_temp, exist_ok=True)
+    bindir, calls = new_gh_stub(work)
+
+    rc, out, outputs, _ = run_mark(steps, repo, runner_temp, SPEC_DIR)
+    if rc != 0:
+        failures.append(f"{where}: {MARK_STEP!r} exited {rc}: {out.strip()}")
+        return failures
+
+    rc, out, _, _ = run_labels(steps, repo, runner_temp, bindir, calls,
+                               "stage:implement", outputs.get("record-status"),
+                               mark_record="true", post_notice="false")
+    if rc != 0:
+        failures.append(f"{where}: {LABELS_STEP!r} exited {rc}: {out.strip()}")
+        return failures
+    calls_text = read_calls(calls)
+    adds = [c for c in calls_text if "--add-label stage:stalled" in c]
+    removes = [c for c in calls_text if "--remove-label stage:implement" in c]
+    if adds:
+        failures.append(f"{where}: the mark-only call (post-notice: "
+                        f"'false') added the stage:stalled label -- that is "
+                        f"the notice-only call's job: {calls_text}")
+    if len(removes) != 1:
+        failures.append(f"{where}: expected exactly one stage:implement "
+                        f"label removal (the mark succeeded), got "
+                        f"{len(removes)}: {calls_text}")
     return failures
 
 
@@ -401,6 +502,63 @@ def scenario_agent_ran_success(steps, root):
     return failures
 
 
+def scenario_commits_published(steps, root):
+    """specs/071-agent-push-credential FR-016/FR-017: a nonzero
+    commits-published count names it; zero/empty renders no such line.
+    push-ok=false (code review of that PR) renders the honest "could not
+    be published either" wording instead of claiming success."""
+    failures = []
+    where = "scenario: commits-published line (071)"
+    work, repo = make_workspace(root, reachable_remote=True)
+    runner_temp = os.path.join(work, "runner_temp")
+    os.makedirs(runner_temp, exist_ok=True)
+    bindir, calls = new_gh_stub(work)
+
+    cases = [
+        ("", "", False, False),
+        ("0", "", False, False),
+        ("3", "true", True, False),
+        ("3", "", True, False),
+        ("3", "false", False, True),
+    ]
+    for commits, push_ok, expect_published, expect_failed in cases:
+        rc, out, _, _ = run_notice(
+            steps, repo, runner_temp, bindir, calls,
+            "the clarify stage never started",
+            "Re-dispatch the clarify stage for this specification once "
+            "the cause above is resolved.", "marked",
+            commits_published=commits, push_ok=push_ok)
+        if rc != 0:
+            failures.append(f"{where} (commits-published={commits!r}, "
+                            f"push-ok={push_ok!r}): {NOTICE_STEP!r} exited "
+                            f"{rc}: {out.strip()}")
+            continue
+        body = read_notice_body(runner_temp)
+        has_published = "were published after it" in body
+        has_failed = "could not be published either" in body
+        if expect_published and not has_published:
+            failures.append(f"{where}: commits-published={commits!r} "
+                            f"push-ok={push_ok!r} did not render the "
+                            f"published-commits line: {body!r}")
+        if expect_failed and not has_failed:
+            failures.append(f"{where}: commits-published={commits!r} "
+                            f"push-ok={push_ok!r} did not render the "
+                            f"rescue-push-failed line: {body!r}")
+        if (expect_published or expect_failed) and "3 commit(s)" not in body:
+            failures.append(f"{where}: commits-published={commits!r} "
+                            f"push-ok={push_ok!r} did not name the count: "
+                            f"{body!r}")
+        if not expect_published and has_published:
+            failures.append(f"{where}: commits-published={commits!r} "
+                            f"push-ok={push_ok!r} rendered the published-"
+                            f"commits line when it should not have: {body!r}")
+        if not expect_failed and has_failed:
+            failures.append(f"{where}: commits-published={commits!r} "
+                            f"push-ok={push_ok!r} rendered the rescue-push-"
+                            f"failed line when it should not have: {body!r}")
+    return failures
+
+
 def scenario_restart_command_verbatim(steps, root, stage, restart_command,
                                        forbid_substrings=()):
     """T019: restart-command is opaque to the composite — echoed verbatim."""
@@ -453,8 +611,11 @@ def suite(steps, root):
     failures += scenario_marked(steps, root)
     failures += scenario_unwritable_push(steps, root)
     failures += scenario_empty_spec_dir(steps, root)
+    failures += scenario_split_notice_only(steps, root)
+    failures += scenario_split_mark_only_labels(steps, root)
     failures += scenario_agent_ran(steps, root)
     failures += scenario_agent_ran_success(steps, root)
+    failures += scenario_commits_published(steps, root)
     for stage, cmd in PLAIN_RESTART_FIXTURES:
         failures += scenario_restart_command_verbatim(
             steps, root, stage, cmd,
@@ -508,9 +669,27 @@ def _mut_notice_ignores_agent_conclusion(steps):
         'agent_clause="the agent completed its work"')
 
 
+def _mut_notice_ignores_commits_published(steps):
+    """specs/071-agent-push-credential regression: the notice stops naming
+    a nonzero commits-published count (the eval of the single-homed
+    _shared/published-commits-line.sh short-circuited to always-empty)."""
+    original = steps[NOTICE_STEP]
+    mutated = original.replace(
+        'eval "$(bash "$GITHUB_ACTION_PATH/../_shared/published-commits-line.sh" "$COMMITS_PUBLISHED" "$PUSH_OK")"',
+        'published_line=""')
+    if mutated == original:
+        sys.exit("::error::self-test setup: "
+                 "_mut_notice_ignores_commits_published's target text was "
+                 "not found in the shipped step -- update the mutation "
+                 "together with the step.")
+    steps[NOTICE_STEP] = mutated
+
+
 MUTATIONS = [
     ("notice renders the same wording regardless of record-status",
      _mut_notice_ignores_record_status),
+    ("notice ignores commits-published and never names a nonzero count",
+     _mut_notice_ignores_commits_published),
     ("labels step removes stage-label even when the mark never landed",
      _mut_labels_removes_regardless_of_status),
     ("notice ignores the caller's restart-command",
@@ -560,7 +739,7 @@ def main():
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
-    print(f"chain-stop-notice composite body: 3 base scenario(s), "
+    print(f"chain-stop-notice composite body: 5 base scenario(s), "
           f"{len(PLAIN_RESTART_FIXTURES)} restart-command fixture(s), "
           f"{len(MUTATIONS)} mutation(s); {len(failures)} failure(s).")
     sys.exit(1 if failures else 0)

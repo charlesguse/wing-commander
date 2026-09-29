@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gate 48 -- the shellcheck pass over the opt-in list, and the list's closure.
+"""Gate 48 -- the shellcheck pass over every published stage, and the list's closure.
 
 Two checks that used to run only on a workflow_dispatch release, as
 inline bash in release.yml's Gate 1a ("pass 2"), now run on every pull
@@ -19,17 +19,17 @@ drift (the Gate 31 arrangement). Issue #291; the gap bit twice:
 
 THE CLOSURE CHECK (#149)
 ------------------------
-The shellcheck pass is an opt-IN: SHELL_LINTED names the files it
-covers, and #149 is the ticket for widening it. An opt-in list is
-exactly the shape #149 was about, so the exemption is stated rather
-than implied: every published stage (wc_published_stages.py, the same
-derivation Gate 7 and release.yml use -- a hardcoded stage list is what
-caused #149) must be in SHELL_LINTED or in SHELL_EXEMPT with a reason,
-and a new stage cannot become exempt by being forgotten. Both lists are
-stale-checked the way stage-invariant-waivers.json is: an exemption for
-a file that is no longer a published stage fails, a linted file that no
-longer exists fails, a file on both lists fails, and an empty
-derivation fails rather than reading as a clean pass.
+SHELL_LINTED names the files the shellcheck pass covers. A named list
+is exactly the shape #149 was about, so it is closed over the fleet:
+every published stage (wc_published_stages.py, the same derivation
+Gate 7 and release.yml use -- a hardcoded stage list is what caused
+#149) must be in SHELL_LINTED, and a new stage cannot go unlinted by
+being forgotten. There is no exemption list: the three stages that once
+waited on #149 (watchdog, auto-update-spec-kit, pr-conversation) joined
+the pass with zero findings after #149 closed. The list is stale-checked
+the way stage-invariant-waivers.json is: a linted file that no longer
+exists fails, and an empty derivation fails rather than reading as a
+clean pass.
 
 THE SHELLCHECK PASS (release.yml pass 2)
 ----------------------------------------
@@ -51,10 +51,10 @@ Why not just call actionlint with -shellcheck: its process runner
 writes the whole script into the child's stdin pipe BEFORE starting
 the child (process.go, cmdExecution.run), and a Windows anonymous pipe
 holds 4 KiB, so every run: block over 4 KiB blocks forever on a
-maintainer's machine -- five of the eleven linted files do -- while
+maintainer's machine -- five of the then-eleven linted files did -- while
 the 64 KiB Linux pipe hides it on the runner. Measured 2026-09-11;
 the threshold is exact. Nothing is lost by the move: pass 2's
-actionlint schema/expression lint over these eleven files was a
+actionlint schema/expression lint over those files was a
 strict subset of pass 1 (verify-actionlint.py, every workflow file),
 and with actionlint out of pass 2 there is no second -ignore list for
 pass 1's counted allowances to drift from. That was the second half
@@ -113,34 +113,14 @@ from wc_published_stages import published_stages  # noqa: E402
 from wc_shell_harness import use_utf8_stdout  # noqa: E402
 from wc_shell_pin import effective_shell  # noqa: E402
 
-# The opt-in. release.yml is not a published stage (workflow_dispatch),
-# but it is release-blocking bash and has always been linted here.
+# Every published stage, plus release.yml: not a published stage
+# (workflow_dispatch), but release-blocking bash, and always linted here.
 SHELL_LINTED = tuple(
     f".github/workflows/{name}.yml" for name in (
         "intake", "clarify", "plan", "tasks", "implement", "finalize",
         "cleanup", "rebase", "metrics-persist", "private-image-dogfood",
+        "watchdog", "auto-update-spec-kit", "pr-conversation",
         "release", "fold-cycle-guard"))
-
-# Published stages knowingly outside the shellcheck pass (issue #149).
-# Anything published and NOT in SHELL_LINTED must be here, with the
-# reason, so the exemption is a decision someone wrote down rather than a
-# file nobody added.
-SHELL_EXEMPT = {
-    ".github/workflows/watchdog.yml":
-        "Agent-bearing stage predating the opt-in; widening the pass to "
-        "it is #149's scope, not a release-blocking gate's.",
-    ".github/workflows/auto-update-spec-kit.yml":
-        "Same as watchdog.yml: waits on #149 rather than opting into "
-        "shellcheck untested in a release-blocking gate.",
-    ".github/workflows/pr-conversation.yml":
-        "specs/033. Exempt because this check caught it: it shipped as a "
-        "published stage without joining either list, and turned every "
-        "release dispatch red from that merge onwards -- the 2026-08-20 "
-        "attempt included, which is how it was found. Exempting it changed "
-        "nothing about what is linted (pass 2 had never seen it); it wrote "
-        "the decision down and unblocked releases. An agent-bearing stage of "
-        "watchdog's size and shape, so it waits on #149 with the other two.",
-}
 
 SHELLCHECK_OPTS = "--severity=warning"
 # actionlint 1.7.7 rule_shellcheck.go, verbatim: the codes its
@@ -151,12 +131,12 @@ SHELL_PYTHON_RE = re.compile(r"^[ \t]*(?:-[ \t]+)?shell:[ \t]*[\"']?python", re.
 EXPR_RE = re.compile(r"\$\{\{.*?\}\}", re.S)
 
 
-def closure_errors(stages, linted, exempt, root="."):
-    """The list-closure rules, as a pure function over the three sets.
+def closure_errors(stages, linted, root="."):
+    """The list-closure rules, as a pure function over the two sets.
 
-    `stages` is the derived published-stage set; `linted` and `exempt`
-    are the two opt lists. Returns the failure strings; empty means the
-    lists are closed over the fleet and stale-free.
+    `stages` is the derived published-stage set; `linted` is the
+    shellcheck list. Returns the failure strings; empty means the list
+    is closed over the fleet and stale-free.
     """
     errors = []
     if not stages:
@@ -164,26 +144,16 @@ def closure_errors(stages, linted, exempt, root="."):
             "no workflow declares on.workflow_call -- the closure check "
             "checked nothing. Either the published stages moved or the "
             "derivation (wc_published_stages.py) has broken.")
-    both = sorted(set(linted) & set(exempt))
-    for f in both:
-        errors.append(f"{f} is in both SHELL_LINTED and SHELL_EXEMPT; "
-                      f"pick one.")
     for f in linted:
         if not os.path.isfile(os.path.join(root, f)):
             errors.append(f"{f} is in SHELL_LINTED but does not exist -- "
                           f"a stale entry; remove it or fix the path.")
-    for f in exempt:
-        if f not in stages:
-            errors.append(f"{f} is in SHELL_EXEMPT but is not a published "
-                          f"stage -- a stale exemption; remove it.")
     for f in stages:
-        if f not in linted and f not in exempt:
+        if f not in linted:
             errors.append(
-                f"{f} is a published stage but is in neither the shellcheck "
-                f"list nor the declared exemption list. Add it to "
-                f"SHELL_LINTED, or to SHELL_EXEMPT with a note on the "
-                f"tracking issue -- a new stage must not become exempt by "
-                f"being forgotten (#149).")
+                f"{f} is a published stage but is not in SHELL_LINTED. Add "
+                f"it and fix what shellcheck reports -- a new stage must not "
+                f"go unlinted by being forgotten (#149).")
     return errors
 
 
@@ -453,7 +423,7 @@ def lint_files(shellcheck, files, jobs=8):
 
 def run_gate():
     stages = published_stages()
-    errors = closure_errors(stages, SHELL_LINTED, SHELL_EXEMPT)
+    errors = closure_errors(stages, SHELL_LINTED)
     for f in shell_python_steps([f for f in SHELL_LINTED
                                  if os.path.isfile(f)]):
         errors.append(
@@ -489,7 +459,7 @@ def run_gate():
         print(f"::error::{e}")
     print(f"Gate 48: {len(stages)} published stage(s), {len(SHELL_LINTED)} "
           f"shell-linted file(s) ({blocks} run: step(s)), "
-          f"{len(SHELL_EXEMPT)} exempt, {len(diags)} finding(s); "
+          f"{len(diags)} finding(s); "
           f"{len(tmp_files)} file(s) scanned for fixed /tmp paths, "
           f"{len(tmp_hits)} found.")
     return 1 if errors else 0
@@ -544,32 +514,20 @@ def self_test():
                          ".github/workflows/s2.yml",
                          ".github/workflows/s3.yml"], f"got {stages!r}")
         linted = (".github/workflows/s1.yml", ".github/workflows/dispatch.yml")
-        exempt = {".github/workflows/s2.yml": "reason"}
-        errs = closure_errors(stages, linted, exempt, root=td)
+        errs = closure_errors(stages, linted + (".github/workflows/s2.yml",),
+                              root=td)
         check("an unlisted published stage fails the closure",
               len(errs) == 1 and "s3.yml is a published stage" in errs[0],
               f"got {errs!r}")
-        errs = closure_errors(stages, linted + (".github/workflows/s3.yml",),
-                              exempt, root=td)
+        full = linted + (".github/workflows/s2.yml", ".github/workflows/s3.yml")
+        errs = closure_errors(stages, full, root=td)
         check("listing it (a non-stage dispatch file alongside) is clean",
               not errs, f"got {errs!r}")
-        errs = closure_errors(stages, linted + (".github/workflows/s3.yml",),
-                              dict(exempt, **{".github/workflows/dispatch.yml": "r"}),
+        errs = closure_errors(stages, full + (".github/workflows/gone.yml",),
                               root=td)
-        check("an exemption for a non-stage is a stale exemption",
-              any("stale exemption" in e for e in errs), f"got {errs!r}")
-        errs = closure_errors(stages, linted + (".github/workflows/s3.yml",
-                                                ".github/workflows/gone.yml"),
-                              exempt, root=td)
         check("a linted file missing from disk is a stale entry",
               any("stale entry" in e for e in errs), f"got {errs!r}")
-        errs = closure_errors(stages, linted + (".github/workflows/s2.yml",
-                                                ".github/workflows/s3.yml"),
-                              exempt, root=td)
-        check("a file on both lists is refused",
-              any("both SHELL_LINTED and SHELL_EXEMPT" in e for e in errs),
-              f"got {errs!r}")
-        errs = closure_errors([], linted, exempt, root=td)
+        errs = closure_errors([], linted, root=td)
         check("an empty derivation is a failure, not a clean pass",
               any("checked nothing" in e for e in errs), f"got {errs!r}")
         _write(os.path.join(wf, "py.yml"),

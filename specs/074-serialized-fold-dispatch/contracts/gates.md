@@ -1,4 +1,4 @@
-# Contract: Gate 99 — `verify-fold-queue-admission.py`
+# Contract: Gate 126 — `verify-fold-queue-admission.py`
 
 (Working number — the tasks stage confirms the actual next-available gate
 number against `lint-workflows.yml` at implementation time, per

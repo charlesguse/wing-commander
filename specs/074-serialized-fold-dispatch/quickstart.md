@@ -6,7 +6,7 @@
   applied (the composites under `.github/actions/wing-commander-fold-queue-*`,
   `.github/actions/_shared/fold-queue-ledger.sh`, the edited
   `pr-conversation.yml`/`implement.yml`, `fold-cycle-guard.yml` and its
-  wrapper, and Gate 99 registered in `lint-workflows.yml`).
+  wrapper, and Gate 126 registered in `lint-workflows.yml`).
 - `gh` authenticated against the disposable end-to-end test repository
   this pipeline already uses for live drills (spec 055's fixture
   environment), so this drill does not touch the real Wing Commander
@@ -20,7 +20,7 @@
 python .github/scripts/run-local-gates.py "fold-queue"
 ```
 
-Expect Gate 99 to pass against the shipped workflows and to report
+Expect Gate 126 to pass against the shipped workflows and to report
 `MUTATION SURVIVED` as a failure it deliberately produced and recovered
 from for each of its four mutations (contracts/gates.md) — i.e., the gate
 script's own self-check, not the suite overall, should show each mutation
@@ -92,7 +92,7 @@ against a real dispatched run, mirroring PR #414's own timeline:
 
 | Check | Success criterion |
 |---|---|
-| Local gates | Gate 99 green; suite's own mutation self-check shows all four mutations caught |
+| Local gates | Gate 126 green; suite's own mutation self-check shows all four mutations caught |
 | Composite fixtures | All pass, including the idempotent-release and stale-reclaim cases |
 | Two-run live drill | 11/11 items terminal, 0 cancelled-while-pending, exactly one dispatch reply, implement run non-cancelled |
 | Lost-cycle live drill | Notice posted only for the never-started+correlated case; re-dispatch fires exactly once per round; manual in-progress cancel stays silent |

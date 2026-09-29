@@ -107,10 +107,9 @@ failed inside the image".
 1. **Given** the reference image is unset or empty in the test
    repository's configuration, **When** the container-mode leg runs,
    **Then** the run reports an infrastructure-class failure naming the
-   missing configuration, and does not report the leg as passed.
-   *(Not met today: a variable left unset on the test repository is the
-   accepted gap on FR-004, tracked in #390. That run cannot be told apart
-   from a real container run and is reported as a pass.)*
+   missing configuration, and does not report the leg as passed. *(Met by
+   specs/067-e2e-container-image-evidence, which closed the gap #390
+   tracked; see that feature's contracts/container-evidence-outcomes.md.)*
 2. **Given** the reference image cannot be pulled (registry unavailable,
    rate-limited, reference deleted, or credentials rejected), **When** the
    container-mode leg runs, **Then** the run reports an
@@ -261,18 +260,12 @@ what the verification does in the interval.
   run in which the container-mode leg was configured to run but did not
   actually execute inside a container. Silent degradation to a hosted
   runner MUST be reported as a failure of the leg.
-  **Accepted gap** (repository owner's decision on #373, tracked in #390):
-  one case cannot be told apart today. A container-mode turn whose
-  `WING_COMMANDER_CONTAINER_IMAGE` variable is unset on the test repository
-  still reaches a plain `pass`, because `verify-image-prerequisites`
-  vacuously succeeds and the run completes on a hosted runner. That pass
-  even carries `container_image_configured: true`, because the poll step's
-  own `pass` sets it once the chain closes `stage:done`, so the verdict
-  claims something it did not observe. Detecting it needs a permission
-  (reading the test repository's variable or Actions run data) that this
-  verification has not been granted. Every other route to a silent
-  fallback is reported, and `container_image_configured` defaults to false
-  on every verdict except that `pass`.
+  The case the repository owner's decision on #373 (tracked in #390) once
+  left undetected — a container-mode turn whose `WING_COMMANDER_CONTAINER_
+  IMAGE` variable is unset on the test repository reaching a plain `pass`
+  — is now detected; see `specs/067-e2e-container-image-evidence/
+  contracts/container-evidence-outcomes.md` for the current behavior and
+  vocabulary.
 - **FR-005**: Every failure mode of the container leg MUST degrade to a
   named verdict the reporting step can render, never to an unreported
   crash or an empty verdict.
@@ -280,8 +273,9 @@ what the verification does in the interval.
   obtaining or inspecting the image (unset reference, pull failure,
   rejected credentials, missing prerequisite tool) from failures of the
   pipeline running inside the image, and MUST classify the former as
-  infrastructure-class. (The unset-reference case is the accepted gap on
-  FR-004, tracked in #390; the others are classified as stated.)
+  infrastructure-class. (The unset-reference case is classified this way
+  too, per `specs/067-e2e-container-image-evidence/contracts/container-
+  evidence-outcomes.md`.)
 - **FR-007**: When the container leg fails, the report MUST name the
   stage at which it failed and identify the failure as belonging to the
   container leg specifically.
@@ -375,8 +369,8 @@ what the verification does in the interval.
   against a real run before the feature is considered complete.
 - **SC-003**: 100% of verification runs report which execution mode(s)
   were exercised; no run reports an unqualified pass while having skipped
-  or silently degraded a configured container leg (except the accepted gap
-  on FR-004, tracked in #390).
+  or silently degraded a configured container leg (the gap #390 tracked
+  against this SC is closed by specs/067-e2e-container-image-evidence).
 - **SC-004**: 100% of container-leg failures are classified as either
   infrastructure-class (image could not be obtained or inspected) or
   pipeline-class (the pipeline failed inside the image), and name the
@@ -475,8 +469,9 @@ test repository, configured once, matching how the test repository's own
 identity is configured today. The verification's token gains no permission
 to write repository configuration. The variable's absence must produce a
 named infrastructure-class verdict, never a silent fallback to
-hosted-runner mode. *(Not yet met: detecting it needs a permission the
-verification does not have; see the accepted gap on FR-004, #390.)*
+hosted-runner mode. *(Met by specs/067-e2e-container-image-evidence, using
+the existing fixture maintainer credential rather than a new permission —
+see that feature's research.md D1.)*
 
 **Question 3 — Cadence, and whether the container leg gates the release**
 (FR-018, FR-020, FR-011, User Story 3)

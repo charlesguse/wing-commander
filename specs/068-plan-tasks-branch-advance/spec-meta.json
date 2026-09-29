@@ -2,7 +2,8 @@
   "issue": 511,
   "spec_dir": "specs/068-plan-tasks-branch-advance",
   "feature_num": "068",
-  "stage": "spec",
-  "iteration": 0,
-  "spec_branch": null
+  "stage": "review",
+  "iteration": 1,
+  "spec_branch": "spec/068-plan-tasks-branch-advance",
+  "pending_re_review_from": []
 }

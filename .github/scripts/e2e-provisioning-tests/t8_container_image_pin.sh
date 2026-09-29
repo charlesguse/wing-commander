@@ -15,9 +15,9 @@ seed_fully_onboarded "wc-user/wc-e2e-pin" true
 
 CHECK="$(bash "$PROVISION_SCRIPT" --repo wc-user/wc-e2e-pin --profile auto-release --check-only 2>/dev/null)"
 check "T8 check-only exits 1 (image not yet pinned)" "$?" "1"
-check "T8 check-only reports not ready" "$(jq -r .ready <<<"$CHECK")" "false"
-check "T8 check-only: container_image_pin is not ready" \
-  "$(jq -r '.elements[] | select(.key=="container_image_pin") | .ready' <<<"$CHECK")" "false"
+check "T8 check-only reports not_clear" "$(jq -r .verdict <<<"$CHECK")" "not_clear"
+check "T8 check-only: container_image_pin is missing" \
+  "$(jq -r '.elements[] | select(.key=="container_image_pin") | .outcome' <<<"$CHECK")" "missing"
 check_contains "T8 check-only names WING_COMMANDER_CONTAINER_IMAGE in remaining_action" \
   "$(jq -r '.elements[] | select(.key=="container_image_pin") | .remaining_action' <<<"$CHECK")" \
   "WING_COMMANDER_CONTAINER_IMAGE"
@@ -26,16 +26,16 @@ check_not_contains "T8 check-only performs no variable set" "$(cat "$GH_CALLS")"
 : > "$GH_CALLS"
 FIRST="$(bash "$PROVISION_SCRIPT" --repo wc-user/wc-e2e-pin --profile auto-release 2>/dev/null)"
 check "T8 first real run exits 0 (converges the pin)" "$?" "0"
-check "T8 first real run reports ready" "$(jq -r .ready <<<"$FIRST")" "true"
+check "T8 first real run reports all_clear" "$(jq -r .verdict <<<"$FIRST")" "all_clear"
 check "T8 first real run: container_image_pin is ready" \
-  "$(jq -r '.elements[] | select(.key=="container_image_pin") | .ready' <<<"$FIRST")" "true"
+  "$(jq -r '.elements[] | select(.key=="container_image_pin") | .outcome' <<<"$FIRST")" "ready"
 check_contains "T8 first real run sets WING_COMMANDER_CONTAINER_IMAGE to the pinned value" \
   "$(cat "$GH_CALLS")" "variable set WING_COMMANDER_CONTAINER_IMAGE --repo wc-user/wc-e2e-pin --body ghcr.io/example/wc-image:v3"
 
 : > "$GH_CALLS"
 SECOND="$(bash "$PROVISION_SCRIPT" --repo wc-user/wc-e2e-pin --profile auto-release 2>/dev/null)"
 check "T8 second real run exits 0" "$?" "0"
-check "T8 second real run reports ready" "$(jq -r .ready <<<"$SECOND")" "true"
+check "T8 second real run reports all_clear" "$(jq -r .verdict <<<"$SECOND")" "all_clear"
 check_not_contains "T8 second real run sets no further variable" "$(cat "$GH_CALLS")" "variable set"
 
 report "T8 container_image_pin"

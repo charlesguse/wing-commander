@@ -1,0 +1,18 @@
+{
+  "snapshot": {
+    "headRefOid": "aaaa111",
+    "statusCheckRollup": [
+      {"name": "lint", "workflowName": "lint · workflows", "status": "COMPLETED", "conclusion": "SUCCESS"},
+      {"name": "harness-tests", "workflowName": "lint · workflows", "status": "COMPLETED", "conclusion": "SUCCESS"}
+    ],
+    "mergeable": "MERGEABLE"
+  },
+  "review_gate": {"round": 2, "head_sha": "aaaa111", "outcome": "clean", "findings_open": 0, "folded_fingerprints": ["f1"], "filed_fingerprints": [], "updated_at": "2026-09-01T00:00:00Z"},
+  "kill_switch_paused": false,
+  "reviews": [
+    {"author": {"login": "wing-commander-bot"}, "state": "COMMENTED", "submittedAt": "2026-09-01T00:00:00Z"},
+    {"author": {"login": "a-maintainer"}, "state": "APPROVED", "submittedAt": "2026-09-01T01:00:00Z"}
+  ],
+  "bot_login": "wing-commander-bot",
+  "expected": {"may_merge": true, "unmet_reason": null}
+}

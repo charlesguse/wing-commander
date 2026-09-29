@@ -205,9 +205,30 @@ unrelated step happens to run next — but a named post-agent step failure
 always outranks the credential-only diagnosis, mentioning the credential
 only as context when both are known (third maintainer review of PR #407).
 
-This remedy does not cover the credential an agent step itself pushes with
-while it is still running — only the steps that run after it. That residual
-risk is tracked in [issue #402](https://github.com/charlesguse/wing-commander/issues/402).
+The credential an agent step itself pushes with while it is still running —
+the gap the remedy above does not cover, tracked as
+[issue #402](https://github.com/charlesguse/wing-commander/issues/402) (now
+closed) — is addressed by specs/071-agent-push-credential, not by keeping
+the agent's own pushes succeeding past the credential's one-hour lifetime.
+An earlier design tried exactly that (a `git credential.helper` minting a
+fresh App installation token on demand), but it required staging the App's
+own private key where a running agent step's shell — or a script/prompt
+injection it processes — could read it and mint installation tokens for
+every installation the App is on; the owner rejected it as a security
+defect strictly worse than the one-hour, one-repository token the agent
+already has, and it was deleted before merge. The shipped remedy instead
+accepts that an agent's own mid-cycle `git push` MAY still fail past the
+credential lifetime — an agent that meets the credential-expiry signature
+retries at most twice, then commits locally and continues rather than
+spending further turns on a push that cannot succeed (the canonical
+retry-bound paragraph, home in `clarify.yml`'s agent step) — and
+guarantees only that every commit the agent creates, pushed or not,
+reaches the spec branch: a deterministic `wing-commander-publish-
+stranded-commits` call alongside each agent step's own post-agent re-mint,
+authenticated with a credential the agent never saw, whose published
+count — when nonzero — is named on the stall notice a maintainer reads
+(FR-016/FR-017). Gate 122 guards against the deleted mechanism's exact
+shape (an agent-reachable App private key) reappearing.
 
 ### State model
 - **`specs/NNN-slug/spec-meta.json`** — durable source of truth:
@@ -307,6 +328,44 @@ comment-writing step across the fleet and fails unless it excludes
 usage-window outage can never silently reintroduce a `pipeline-defect`-style
 filing.
 
+**Responding to a `turn-budget-trend` signal** (specs/046, `class-hint:
+turn-budget-trend`): the watchdog's turn-budget collector reports a stage's
+consumption trend against its declared budget — a real divergence between a
+declared expectation and observed reality, not a run failure. When it fires,
+follow this procedure rather than re-arguing the options from scratch
+(`specs/079-clarify-turn-budget`):
+
+1. **Read the evidence.** The signal's `facts.history` carries the window's
+   `{run, counted-turns, intended-budget}` triples the collector already
+   emits — this is the only evidence a re-basing decision reads; there is no
+   need to re-derive consumption from transcripts.
+2. **Compute the new budget.** New declared budget = the smallest multiple of
+   5 strictly greater than the window's maximum counted-turns. State it
+   beside the accepted range (the window's min-max) it is derived to cover,
+   so the number is traceable to evidence rather than to a session's
+   judgement.
+3. **State the cost consequence.** The runaway ceiling is
+   `ceil(new_budget * 2.5)` (`wing-commander-turn-ceiling`'s fixed
+   multiplier, unchanged) — compute and state it explicitly in the same
+   change; never leave it an unremarked side effect of raising the budget.
+4. **Or accept the trend instead of moving the number**, when either holds:
+   the window's maximum is a single diagnosed-contaminated run (turns
+   inflated by a cause unrelated to real work — e.g. spec 037's
+   denied-tool-call turn inflation), or the band is `critical` with a rising
+   `consecutive-at-or-over-budget` count that a bigger budget would only
+   relabel rather than explain. Either case closes the `pipeline-defect` as
+   accepted, and the collector's suppression-by-closed-fingerprint mechanism
+   (spec 046) keeps that band quiet for the stage until a later escalation
+   files a new, separate finding.
+
+**Worked example** (the trend this procedure was written for): clarify's
+recorded history was `{39, 45, 61}` counted turns against a declared budget
+of `40`. Applying step 2: the smallest multiple of 5 strictly greater than
+`61` is `65`, covering the accepted range `39-61`. Applying step 3: the
+resulting ceiling is `ceil(65 * 2.5) = 163` (up from `100`). Those are the
+values `clarify.yml`'s `max-turns` default and its inline comment carry —
+applying the stated arithmetic to the cited history reproduces them.
+
 **Bedrock pass-through** (`specs/016-bedrock-support/`): the per-stage
 `use-bedrock` input changes only which backend serves these already-tiered
 `model` inputs — the consumer supplies Bedrock-compatible identifiers directly
@@ -347,15 +406,25 @@ change to the tiering above.
   [stage-interfaces.md](../specs/010-reusable-pipeline/contracts/stage-interfaces.md#per-stage-default-tool-lists).
 - Only trusted refs are checked out (main, repo-local `spec*/` branches) — never
   fork PR heads.
-- Humans merge every spec, plan and final PR into main, and every
-  constitution amendment; the bot cannot approve those or merge one. The bot
-  merges two classes only (constitution X): the bounded fix PR, behind a
-  deterministic gate — checks green on the exact head SHA (no checks is not
-  green, and the gate suite must have run on that SHA), zero open findings
-  from an independent review, the size-and-path backstop on the final diff,
-  and a clear `WING_COMMANDER_*_PAUSED` switch — and the Spec Kit upgrade PR
-  the auto-update stage opened, after the verification that stage assigns
-  to the jump passed and the gate suite ran green on the exact head.
+- Humans merge every spec and plan PR into main, every constitution
+  amendment, and — while `WING_COMMANDER_LIFECYCLE_AUTO_MERGE` is off, its
+  default — every final PR; the bot cannot approve those, and never merges a
+  spec PR, a plan PR or an amendment. The bot merges three classes only
+  (constitution X): the bounded fix PR, behind a deterministic gate — checks
+  green on the exact head SHA (no checks is not green, and the gate suite
+  must have run on that SHA), zero open findings from an independent review,
+  the size-and-path backstop on the final diff, and a clear
+  `WING_COMMANDER_*_PAUSED` switch — the Spec Kit upgrade PR the auto-update
+  stage opened, after the verification that stage assigns to the jump passed
+  and the gate suite ran green on the exact head; and the lifecycle pull
+  request merge (spec 062), only while `WING_COMMANDER_LIFECYCLE_AUTO_MERGE`
+  is on — the final PR, squash-merged once eight deterministic conditions
+  hold on the exact head SHA (checks and gate suite green, mergeable, the
+  review round recorded at that head and clean with zero open findings, no
+  standing human changes-requested review, and a clear
+  `WING_COMMANDER_LIFECYCLE_REVIEW_GATE_PAUSED` switch). See "Lifecycle
+  review gate" below for the job graph, where its round state lives, and
+  its trust-boundary gate.
 
 ---
 
@@ -384,7 +453,10 @@ The two rules worth carrying in your head:
 
 - Both callouts key off a single output derived from one read of the agent's
   schema-validated result — never two independently computed conditions. That
-  is the structural fix for #159.
+  is the structural fix for #159. The `stage:clarify` label flip
+  (`specs/063-stage-clarify-label/`) is a second consumer of that same
+  output, alongside the callout it accompanies — never a separately derived
+  condition of its own.
 - **A callout that asks for a reply must only fire where a reply can be
   acted on.** `wing-commander-2-clarify.yml` needs a `spec:` label plus
   `stage:spec|clarify`; the agent's `specified` discriminator is what keeps
@@ -498,13 +570,28 @@ vars.WING_COMMANDER_MAX_ITERATIONS`).
    `## Phase N: Convergence` section appended to tasks.md (committed with a
    `converge:` prefix); converged ⇒ tasks.md byte-identical + "✅ Converged"
    report. So the loop condition is machine-checkable — the implementation
-   realizes it as a deterministic commit-range walk (a `converge:`-prefixed
+   reads it as a deterministic checkbox scan of tasks.md's own state at the
+   cycle's pushed tip (`specs/059-converged-means-tasks-done`): zero
+   unchecked task-list boxes ⇒ converged, regardless of whether a
+   `converge:`-prefixed commit landed this cycle; any remain ⇒ not
+   converged. A checked-task-count comparison against the cycle's own base
+   (reusing the same comparison the truncated-cycle classification below
+   already performs) tells "a later cycle will finish this" apart from "no
+   cycle ever will": progress made ⇒ another cycle is dispatched; no
+   progress and no `converge:` commit ⇒ the loop hands off to finalize
+   early (item 3) rather than grinding to the cap. Before this feature the
+   signal was instead the commit-range walk alone (a `converge:`-prefixed
    commit touching tasks.md landed this cycle ⇒ not converged; none ⇒
-   converged), since implement's own checkbox edits to tasks.md make a raw
-   working-tree diff ambiguous across the job boundary
-   (`specs/005-implement-converge/research.md`).
-3. On hitting the iteration cap: post the remaining tasks + final converge
-   report to the lifecycle issue and dispatch finalize with `converged=false`.
+   converged) — dropped because a cycle that stopped healthy with real
+   tasks left unchecked, but whose own convergence pass never ran or found
+   nothing to append, read as converged anyway
+   (`specs/005-implement-converge/research.md`'s original rationale for
+   avoiding a raw working-tree diff — implement's own checkbox edits make
+   that ambiguous across the job boundary — still holds; only the signal
+   built on top of it changed).
+3. On hitting the iteration cap, or on the FR-010 early hand-off above: post
+   the remaining tasks + final convergence-pass report to the lifecycle
+   issue and dispatch finalize with `converged=false`.
 4. Post a brief progress comment (`claude-haiku-4-5` summary) each iteration.
 5. **Failure ≠ non-convergence** (FR-013): an outright pass failure (step
    fails, or `spec-meta.json` didn't advance as instructed — read through the
@@ -596,6 +683,75 @@ issue for human help. The escalation comment carries a
 `(branch, main)` pair hasn't changed since it was reported blocked, so a stall
 is only escalated once until either side moves (a subsequent success removes
 the label).
+
+## Lifecycle review gate (`lifecycle-review-gate.yml`, no wrapper — `specs/062-lifecycle-review-gate/`)
+
+**Trigger**: `schedule:` plus manual `workflow_dispatch`. No `workflow_call`
+— like `board-loop.yml` and `auto-release.yml`, it is not part of the
+published, adopter-pinned surface (constitution VII), and not one of the
+eight published lifecycle stages (constraint: none of their `workflow_call`
+interfaces changed for this feature). Single concurrency group so a run
+never overlaps a prior one.
+
+**Job graph**: `kill-switch` (short-circuits the whole run when
+`WING_COMMANDER_LIFECYCLE_REVIEW_GATE_PAUSED` is set) → `select` (the one
+open pull request at `spec-meta.json.stage == "review"`, same repository,
+default base, whose recorded head SHA differs from its current one — the
+cheapest read, so a repository with nothing to review spends nothing) →
+`readiness` (`lifecycle_readiness.py`: checks green, the gate suite green,
+mergeable, not yet reviewed at this head, kill switch clear) → `review`
+(Claude Code's `code-review` capability via the `Skill` tool, an explicit
+model and turn ceiling, a `COMMENT`-only posted review) → `disposition`
+(deterministic: partitions findings by scope, dedupes against the prior
+round's fingerprints, files out-of-scope survivors, folds in-scope
+survivors through the same `wing-commander-fold-commit` /
+`wing-commander-fold-dispatch` composites `pr-conversation.yml`'s own fold
+route uses) → `report` (posts the round's outcome and cost line to the
+lifecycle issue) → `merge` (only when `WING_COMMANDER_LIFECYCLE_AUTO_MERGE`
+is `true`; `lifecycle_merge_preconditions.py` re-derives all eight
+conditions fresh and squash-merges on `may_merge: true`, never `--admin`
+or a second merge method).
+
+**Round budget**: `env.LIFECYCLE_REVIEW_ROUND_BUDGET` (a PR-reviewed
+constant, currently `5`). On exhaustion the run states the reason and the
+still-open findings on the lifecycle issue and does not select that pull
+request again until a human intervenes.
+
+**Where gate state lives**: `review_gate` (round, reviewed head SHA,
+outcome, open finding count, the folded/filed fingerprint sets FR-021's
+dedup needs) is never a `spec-meta.json` field and never a commit to the
+reviewed branch — an earlier design that committed it there made
+auto-merge unreachable, since the recording push always moved the branch's
+real head past the SHA it had just reviewed. It lives on the lifecycle
+issue's own comments instead, the same way the board loop
+(`board_item_marker.py`) records an item's state: `report` appends an
+HTML-comment marker (`wc_lifecycle_review_marker.py`) to the round-outcome
+comment it already posts; `select`, `disposition` and `merge` read it back
+fresh via `gh issue view --json comments`.
+
+**Status context**: a clean round posts `state=success` on the reviewed
+head SHA under the `lifecycle-review-gate` context (suitable for use as a
+required check); a round with open findings, an exhausted budget, or a
+review/parse failure posts `state=failure`/`state=error` on the same
+context, so "not yet reviewed" is always distinguishable from every
+not-clean outcome. Posted with `github.token`'s own `statuses: write` job
+permission, since the App installation carries no Commit statuses grant
+(docs/setup.md §1).
+
+**Trust boundary**: `review` and `disposition` check out the reviewed
+pull request's own branch, so every composite and script those two jobs
+(and, for uniformity, every other job in the file) run resolves from a
+second, trusted checkout at `github.sha` instead — the branch under review
+must never supply the code that reviews or merges it (constitution IX/X).
+Gate 125 enforces this unconditionally, file-wide.
+
+**Gates**: 107 (`lifecycle_readiness.py`), 108
+(`wing-commander-post-review-comment`), 109 (fold-wiring), 110
+(`wing-commander-fold-commit`), 111 (`wing-commander-fold-dispatch`), 112
+(`lifecycle_merge_preconditions.py`), 113 (constitution/capability parity —
+fails if the merge code exists while the constitution does not name the
+third bot-mergeable class), 125 (trusted-copy composite/script
+provenance, above).
 
 ## Stage 9 — Watchdog (`watchdog.yml`, wrapper `wing-commander-8-watchdog.yml`)
 
@@ -699,6 +855,18 @@ billed jobs, `collect` and the always-on `report-unhandled-failure`.
   denial's array position under `record-index`, not `turn` (spec 022,
   FR-008/FR-010: a raw SDK-message-array position that can exceed the run's
   own `num_turns` and must never be presented as a conversation turn).
+
+  Every denial signal also carries the inspected run's `stage` (#266): the
+  `stage` literal the run's own `wing-commander-metrics-summary` call wrote
+  into its metrics record, read by the `wing-commander-inspected-run-identity`
+  composite's `record-stage` output — never the wrapper's display name,
+  which each adopter chooses. A run whose stage cannot be resolved carries
+  the fixed value `unknown`, never a dropped fact. `Stamp signal ids`
+  projects a denial to `{stage, tool}`, so each stage's denials accumulate on
+  their own issue and a reopen means a regression in that stage; the denied
+  commands stay descriptive and never move the key. Before #266 the
+  projection was `{tool}` alone, and every Bash denial from every stage
+  landed on one issue.
 
   `.github/scripts/verify-denied-tool-collector.sh` holds both paths to
   fixtures — including one run described both ways, where the two paths must
@@ -1294,16 +1462,24 @@ than only ever exercised on a bare runner:
 - **Reporting**: both the verdict and `report`'s failure/success output
   always state which mode a run exercised, and `container_image_configured`
   defaults to false on every container-turn verdict except the poll step's
-  own `pass` (data-model.md "Execution mode"). This narrows, but does not
-  close, the overstatement risk: a container-mode turn whose image
-  variable was left unset on the test repository still reaches a plain
-  `pass`, since `verify-image-prerequisites` is **skipped** with no image
-  to pull (before specs/058-per-job-minute-floor it ran and vacuously
-  succeeded; either way it raises no objection) and the run completes
-  outside any container with nothing in the verdict able to tell —
-  detecting that specific case needs a permission (reading the
-  test repository's Actions run data) this verification does not have and
-  has not been granted (FR-017; research.md D7, tasks.md T009).
+  own `pass` (data-model.md "Execution mode"). **Container-mode evidence**
+  (specs/067-e2e-container-image-evidence) closes the overstatement risk
+  this section used to describe as accepted: a new `container-evidence-
+  config` step, gated on the existing `maintainer-credential` check and
+  placed before `cleanup`/`scaffold`/`kickoff`, confirms the test
+  repository's `WING_COMMANDER_CONTAINER_IMAGE` matches this repository's
+  own pin before any kickoff issue is created; a second, execution-evidence
+  check inside the `poll` step, immediately before its sole `pass`-writing
+  call, confirms the stage jobs the run actually drove executed inside a
+  container (read via the test repository's Actions Jobs API, using the
+  same fixture maintainer credential the other human gates already use —
+  a classic credential's `repo` scope already reaches both reads; a
+  fine-grained credential additionally needs Variables (read) and Actions
+  (read), see docs/setup.md). Either check's failure — not
+  configured, drifted, unreadable, rate-limited, or not containerized —
+  ends the attempt with a named `fail-infra` verdict instead of a `pass`;
+  see `specs/067-e2e-container-image-evidence/contracts/container-evidence-
+  outcomes.md` for the exact vocabulary.
 
 ## Reusability (current state — `specs/010-reusable-pipeline/`)
 
@@ -1342,6 +1518,6 @@ The shape that shipped (details in the Foundations section above and in
 | Slash/skill invocation in `prompt` regresses (action issue #523, fixed v1.0.10) | Pin `@v1`; prompts name the skill file path explicitly as fallback context |
 | spec-kit moves fast (v0.12 changed feature resolution & dropped git from scripts) | Version pinned in `.specify/init-options.json`; re-verify scripts on upgrade |
 | `pull_request: closed` + `paths:` false-triggers | Head-branch prefix guards in every stage's `if:` |
-| Converge "unchanged tasks.md" is syntactic, not semantic | Iteration cap + final converge report always posted to the issue |
+| A commit-range proxy for "converged" (no `converge:` commit landed) can't tell "no cycle will ever finish this" apart from "another cycle will" (spec 057's cycle 1: 11 of 65 tasks ticked, no converge commit, wrongly reported converged) | Fixed at the root, not mitigated after the fact: the signal reads tasks.md's own checkbox state at the pushed tip, gated by a checked-task progress test (`specs/059-converged-means-tasks-done`) |
 | Prompt injection via issue/comment bodies | Never interpolated; framed as data; least-privilege tools; no web tools; maintainer label gate |
 | Rate-limit exhaustion (subscription auth) | `--max-turns` everywhere; Sonnet default; Opus is explicit opt-in |

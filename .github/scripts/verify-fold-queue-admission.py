@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gate 99 -- the fold-queue admission wiring actually serializes stage-9's
+"""Gate 126 -- the fold-queue admission wiring actually serializes stage-9's
 concurrency contenders and bounds fold-cycle-guard's automatic re-dispatch.
 
 WHY THIS EXISTS
@@ -733,7 +733,7 @@ def main():
         import shutil
         shutil.rmtree(root, ignore_errors=True)
 
-    print(f"Gate 99: 9 scenario(s), {len(MUTATIONS)} mutation(s); "
+    print(f"Gate 126: 9 scenario(s), {len(MUTATIONS)} mutation(s); "
           f"{len(failures)} failure(s), {mutation_failures} mutation failure(s).")
     return 1 if failures or mutation_failures else 0
 

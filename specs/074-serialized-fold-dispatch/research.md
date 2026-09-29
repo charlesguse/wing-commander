@@ -269,7 +269,7 @@ repository positioned to observe a cancelled run from outside itself
 ## D8 — Gate design: Gate 70's load-the-real-expression-and-mutate recipe, applied to the new admission/claim/observer expressions
 
 **Decision**: The new gate (`verify-fold-queue-admission.py`, this plan's
-working name Gate 99) follows `verify-watchdog-self-skip-guard.py`'s shape
+working name Gate 126) follows `verify-watchdog-self-skip-guard.py`'s shape
 exactly: load the real `concurrency:`/`needs:`/`if:` expressions for
 `fold-turn-act`, `act`, `fold-turn-dispatch`, `dispatch-once`,
 `fold-turn-implement`, `implement`, and `fold-cycle-guard.yml`'s

@@ -32,7 +32,7 @@ One independently checkable precondition of a target.
 | Field | Type | Description |
 |---|---|---|
 | `key` | string | Stable identifier: `repository`, `app_installation`, `scratch_marker`, `claude_credential`, `spec_request_label`, `wrapper_set`, `container_image_pin`. |
-| `check` | function `(owner, name) -> ready\|not_ready` | Deterministic; makes only read calls (`gh repo view`, `gh api .../installation`, `gh secret list` for presence-only, `gh label view`, `gh api .../contents/.github/workflows`, `gh variable list`). Never inspects a secret's value (FR-009). |
+| `check` | function `(owner, name) -> ready\|not_ready` | Deterministic; makes only read calls (`gh repo view`, `gh secret list` for presence-only, `gh api repos/.../labels/spec-request`, `gh api .../contents/.github/workflows`, `gh variable list`). `app_installation`'s check makes no `gh` call at all — `GET /repos/{owner}/{repo}/installation` is App-JWT-only and can never succeed for either caller, so it trusts the `WC_APP_INSTALLATION_KNOWN_READY` hint alone (research.md D5, `specs/069-scratch-readiness-reporting/data-model.md`). Never inspects a secret's value (FR-009). |
 | `remedy` | `privileged` \| `manual` | `privileged`: `provision-e2e-target.sh` can perform it under the maintainer's local credential. `manual`: only `app_installation` — the Declared Manual Step. |
 | `remaining_action` | string template | Human-readable instruction emitted when `check` returns `not_ready`, naming the exact step and where to take it (FR-006). For `app_installation`: "Install the wing-commander App on `<owner>/<name>`: https://github.com/settings/installations". |
 
@@ -40,20 +40,27 @@ One independently checkable precondition of a target.
 is empty (no commits) or its description matches the fixed marker string
 this script writes on first successful provisioning; it is what makes
 FR-007's refusal ("cannot establish as a reusable scratch verification
-target") deterministic rather than heuristic.
+target") deterministic rather than heuristic. On the `--check-only` path
+(`WC_CHECK_ONLY=true`) this element is exempt and always reports ready: the
+refusal it exists to gate only applies to the mutating path, since nothing
+mutates on a read-only run (`specs/069-scratch-readiness-reporting/contracts/cli.md`).
 
-## ReadinessReport
+## ReadinessReport (amended, `specs/069-scratch-readiness-reporting/data-model.md`)
 
-The per-element ready/not-ready verdict produced by both callers (spec's
-Key Entities), emitted as JSON on stdout and as a `GITHUB_STEP_SUMMARY`
-table when run in the CI workflow.
+The per-element verdict produced by both callers (spec's Key Entities),
+emitted as JSON on stdout and as a `GITHUB_STEP_SUMMARY` table when run in
+the CI workflow. `ready: bool` (053's original shape) is replaced by the
+tri-state `outcome`/`verdict` fields 069 introduced, because a boolean plus
+a text-matched `remaining_action` cannot separately identify "genuinely
+missing" from "this route's credential cannot check it" (FR-001/FR-002 of
+069).
 
 | Field | Type | Description |
 |---|---|---|
 | `target` | string `OWNER/NAME` | The repository provisioning or the readiness check was pointed at. |
 | `profile` | `TargetProfile.name` | Which profile's element set was evaluated. |
-| `elements` | list of `{key, ready: bool, remaining_action: string \| null}` | One entry per element in `TargetProfile.required_elements`, in order. |
-| `ready` | bool | `true` iff every entry in `elements` is `ready` — never computed any other way (FR-004: "MUST NOT report the target as ready while any element for the chosen profile is missing"). |
+| `elements` | list of `{key, outcome: "ready"\|"missing"\|"not_checkable", remaining_action: string \| null}` | One entry per element in `TargetProfile.required_elements`, in order. `remaining_action` is non-null iff `outcome != "ready"`; for `not_checkable` it names the route that can check the element instead. |
+| `verdict` | `"all_clear"\|"not_clear"\|"unverified"` | `all_clear` iff every element is `ready`; `not_clear` if any element is `missing` (outranks `unverified`); `unverified` iff nothing is `missing` but at least one element is `not_checkable`. Maps 1:1 to the exit status (`0`/`1`/`2`). |
 | `generated_at` | ISO-8601 timestamp | For the CI job summary and for correlating a report with a specific dispatch. |
 
 No field ever carries a credential value (FR-009) — `claude_credential`'s
@@ -78,35 +85,41 @@ its presence is inferred only from whether `gh auth status` and the
 privileged calls it attempts succeed. This is what FR-014 requires: the
 identity is never a payload this feature's code carries.
 
-## Relationships
+## Relationships (amended, `specs/069-scratch-readiness-reporting/data-model.md`)
 
 ```text
-TargetProfile 1 ── * OnboardingElement   (required_elements, ordered, superset relationship)
-ReadinessReport 1 ── * elements entry    (one per required OnboardingElement, same order)
-ReadinessReport * ── 1 TargetProfile     (the profile evaluated)
+TargetProfile 1 ── * OnboardingElement        (required_elements, ordered, superset relationship)
+ReadinessReport 1 ── * elements entry         (one per required OnboardingElement, same order)
+ReadinessReport * ── 1 TargetProfile          (the profile evaluated)
+elements entry 1 ── 1 ElementCheckOutcome     (ready | missing | not_checkable)
+ReadinessReport 1 ── 1 AggregateVerdict       (all_clear | not_clear | unverified, replaces ready: bool)
 OnboardingElement "app_installation" ── DeclaredManualStep  (singleton, remedy = manual)
 ```
 
-## State transitions
+## State transitions (amended, `specs/069-scratch-readiness-reporting/data-model.md`)
 
 There is no stored state machine — "state" is always re-derived from the
-target repository. The only transition worth naming is the convergence
-path User Story 1's acceptance scenarios 4 and 5 describe:
+target repository, and the local command still cannot itself observe an
+App installation. The convergence path User Story 1's acceptance scenarios
+4 and 5 describe now moves through the tri-state verdict, not a boolean:
 
 ```text
-not-ready (app_installation missing)
-   │  [human installs the App in the GitHub UI — the only external event]
+unverified (app_installation not_checkable; every other required element ready)
+   │  [human installs the App in the GitHub UI — the only external event, then
+   │   dispatch auto-update-spec-kit-scratch-preflight.yml against the same
+   │   target — not a re-invocation of provision-e2e-target.sh: GET
+   │   /repos/{owner}/{repo}/installation is App-JWT-only, so the local
+   │   command can never itself observe the install and always reports
+   │   app_installation as not_checkable (T043); the readiness workflow
+   │   proves installation instead, from its own successful App-token mint]
    ▼
-dispatch auto-update-spec-kit-scratch-preflight.yml (same target) — not a
-re-invocation of provision-e2e-target.sh: GET /repos/{owner}/{repo}/installation
-is App-JWT-only, so the local command can never itself observe the install
-and always reports app_installation as the outstanding manual step (T043);
-the readiness workflow proves installation instead, from its own successful
-App-token mint
-   │  [claude_credential / spec_request_label / wrapper_set / container_image_pin
-   │   were already completed on the first local run, independent of
-   │   app_installation]
-   ▼
-ready (all elements ready) — idempotent from here: a further dispatch, or a
-further local re-invocation, changes nothing (FR-005, SC-003)
+all_clear (spec-kit-scratch) — or unverified-with-different-elements
+   (auto-release, whose claude_credential/container_image_pin stay
+   not_checkable to the dispatched route by design, SC-007)
 ```
+
+A further local re-invocation never changes `app_installation`'s row — it
+stays `not_checkable` regardless of the real install state (idempotent
+otherwise, FR-005, SC-003); convergence on that one element is only ever
+observed by dispatching the readiness check, never by re-running the local
+command a second time.

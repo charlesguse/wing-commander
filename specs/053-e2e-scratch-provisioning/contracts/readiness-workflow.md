@@ -40,9 +40,24 @@ paused).
    (Contents read/write for the scratch profile; whatever the auto-release
    profile's checks need to read) are sufficient without any grant change
    (FR-003, SC-005).
-4. Write the `ReadinessReport` as a `GITHUB_STEP_SUMMARY` table (one row per
-   element, ✅/❌, remaining action for each ❌) and exit non-zero if
-   `ready` is `false` — same "loud failure, not a silent pass" contract the
+4. Write the `ReadinessReport` (amended by
+   `specs/069-scratch-readiness-reporting/data-model.md` — the original
+   `ready: bool` no longer exists) as a `GITHUB_STEP_SUMMARY` table, one row
+   per element, rendering `outcome` as three visually and textually distinct
+   states, never a two-valued ✅/❌:
+
+   | `outcome` | Rendering |
+   |---|---|
+   | `ready` | ✅ |
+   | `missing` | ❌ |
+   | `not_checkable` | ➖ (or an equivalently distinct glyph — never ✅ or ❌) |
+
+   Each row's remaining-action column is populated for both `missing` and
+   `not_checkable`; a reader must be able to tell the two apart from the
+   status glyph alone. The summary's aggregate line names which of
+   `all_clear`/`not_clear`/`unverified` the run reached, and the step exits
+   with `provision-e2e-target.sh`'s own exit status (`0`/`1`/`2` —
+   `contracts/cli.md`) — same "loud failure, not a silent pass" contract the
    existing preflight job already honors (User Story 2, Acceptance
    Scenario 3; Constitution VIII).
 
@@ -55,7 +70,11 @@ checkout, no clone, no push, no agent step, no writes of any kind."
 
 ## Compatibility
 
-A dispatch with no inputs reproduces today's exact behaviour byte-for-byte
-(same target resolution, same single-element scratch check, same summary
-shape) — this is what keeps FR-011 satisfied while the job is generalized
-to also accept `profile: auto-release`.
+A dispatch with no inputs reproduces today's exact behaviour (same target
+resolution, same single-element scratch check) — this is what keeps FR-011
+satisfied while the job is generalized to also accept
+`profile: auto-release`. The summary's rendering itself changed (069:
+three glyphs instead of two, a named verdict instead of an implicit
+pass/fail), but a target that was `ready: true` under 053's original
+contract is `verdict: all_clear` under the amended one, with the same exit
+code (`0`).

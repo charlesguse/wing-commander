@@ -109,16 +109,45 @@ SIX CHECKS, per contracts/single-home-gate.md (plus a spec 052 addition)
    wing-commander-agent-verdict (#551) and then needed by count-turns.sh
    and wing-commander-metrics-summary too; it now lives solely in
    `_shared/normalise-transcript.sh`. Matched by regex, whitespace- and
-   quote-tolerant. The per-document `then . else [.] end` wrap is a
-   different, legitimate idiom and is not matched.
+   quote-tolerant, and tolerant of equivalent rewrites (#575): a
+   parenthesised or reversed condition (`(type=="array")`,
+   `"array"==type`), the test in an `elif` arm, and an optional or
+   parenthesised splice (`.[]?`, `(.[])`). The per-document
+   `then . else [.] end` wrap is a different, legitimate idiom and is
+   not matched.
+
+7. branch-advance-capture (specs/068-plan-tasks-branch-advance research.md
+   R10): the "after"/"commits" branch-advance git plumbing -- co-occurrence,
+   file-wide, of the refspec-form `git fetch origin "+refs/heads/$...` fetch
+   (its `+` force-update prefix is what distinguishes it from several
+   other, unrelated `git fetch origin "refs/heads/$..."` idioms elsewhere
+   in the fleet) and a `..`-range `git rev-list --count "$..."` read
+   (watchdog.yml's own since-created/head-sha arms use this shape too, but
+   never alongside the refspec fetch, so co-occurrence -- not either
+   fragment alone -- is what the declared home uniquely carries). Extracted
+   from implement.yml's former inline step so implement, plan, and tasks
+   share one copy (FR-011/FR-012).
 
 Plus a promotion-prevention pass (FR-025): every `workflow_call`-only
 stage workflow and every non-underscore-prefixed composite action scanned
 for any reference resolving into a `_shared/` path.
 
+Plus a composite-checkout-order pass (maintainer review of #607, fold
+leg-0 and leg-1): every workflow job's own step list scanned for a local
+`uses: ./...` step preceding the `actions/checkout@` step that actually
+populates the directory it resolves from -- a root-relative reference
+(`./.github/actions/...`) needs a preceding checkout with no `path:`
+(the workspace root); a sidecar-relative reference (e.g.
+`./.wc-pristine-repo/.github/actions/...`) needs a preceding checkout
+whose `with.path` matches that same first path segment -- an unrelated
+root checkout does not satisfy it, and vice versa. Such a step cannot
+resolve its action.yml from the not-yet-checked-out directory and fails
+at run time, not gate time.
+
 Waivers: `.github/scripts/single-home-waivers.json`, same shape as Gate
 31's `stage-invariant-waivers.json` -- `{file, check, pattern, count,
-issue, reason}`, stale-checked in both directions.
+issue, reason}`, stale-checked in both directions (`issue` -- open, or
+null with a permanent marker -- is Gate 124's to check).
 
 Byte-identity check (FR-009, contracts/verdict-helper.md): runs the
 shipped `_shared/auto-release-verdict.sh` against each of the 15 sites'
@@ -202,22 +231,72 @@ DECLARED_HOMES = {
     # THIRD site cannot paste the correlate-and-poll loop a second,
     # independent time while T054 is outstanding.
     "dispatch-and-wait": ".github/actions/wing-commander-dispatch-and-wait/action.yml",
-    # issue #462 (code review of #451): the kill-switch/stop-request
-    # recheck -- paginate the issue's own comments, hand them to
-    # board_stop_check.find_stop_request(), and `gh run cancel` whatever
-    # it names -- was pasted near-verbatim into all six of board-loop.yml's
-    # jobs. board_stop_check.py's own docstring already called
-    # find_stop_request() "the reusable check every job's own... step also
-    # performs," but never the surrounding gh/bash orchestration around it;
-    # this check is the structural scan that catches a THIRD paste the way
-    # every other idiom in this gate already does.
+    # issue #462 (code review of #451), idiom updated by #085: the
+    # kill-switch/stop-request recheck -- paginate the issue's own comments,
+    # obtain a decision from board_stop_check.py's documented CLI (pipe a
+    # payload into it), and `gh run cancel` whatever earlier run it names --
+    # was pasted near-verbatim into all six of board-loop.yml's jobs.
+    # board_stop_check.py's own docstring already called find_stop_request()
+    # "the reusable check every job's own... step also performs," but never
+    # the surrounding gh/bash orchestration around it; this check is the
+    # structural scan that catches a THIRD paste the way every other idiom
+    # in this gate already does.
     "board-stop-check": ".github/actions/wing-commander-board-stop-check/action.yml",
     # #572: the transcript normaliser. count-turns.sh,
     # wing-commander-agent-verdict and wing-commander-metrics-summary all
     # call it; a fourth inline copy is what this check catches.
     "transcript-normalise": ".github/actions/_shared/normalise-transcript.sh",
+    # specs/068-plan-tasks-branch-advance research.md R10 (CLAUDE.md: "add
+    # the 'single home' check to the nearest existing gate"): the
+    # "after"/"commits" branch-advance git plumbing, extracted from
+    # implement.yml's own former inline step so implement/plan/tasks share
+    # one copy.
+    "branch-advance-capture": ".github/actions/wing-commander-branch-advance/action.yml",
+    # specs/062-lifecycle-review-gate T012/T015: the `gh api .../reviews
+    # -f event=COMMENT` review-posting call. board-loop.yml's reviewer job
+    # is repointed at this composite (T013); lifecycle-review-gate.yml's
+    # `review` job (US1) is this check's reason to exist -- a second
+    # caller landing with its own inline copy instead.
+    "post-review-comment": ".github/actions/wing-commander-post-review-comment/action.yml",
+    # specs/062-lifecycle-review-gate T028/T030: the review-finding
+    # fingerprint formula (sha256("<issue>|<norm(title)>|<norm(file_path)>"))
+    # board-loop.yml's out-of-scope filing step computed inline before this
+    # extraction (T029). lifecycle-review-gate.yml's `disposition` job (US2,
+    # T037) is this module's second caller -- the reason a structural check
+    # is worth having, the same way check_post_review_comment protects
+    # wing-commander-post-review-comment. Deliberately distinct from
+    # wing-commander-stage-findings' own similarly-shaped
+    # sha256(STAGE|norm(file_path)|norm(gate_or_artifact)) idiom (spec 056):
+    # REVIEW_FINDING_FINGERPRINT_RE keys on the `issue_number` argument name
+    # that formula never uses, so the two checks do not collide.
+    "review-finding-fingerprint": ".github/scripts/wc_review_finding_fingerprint.py",
+    # specs/062-lifecycle-review-gate T031/T042: the append-tasks.md-
+    # section/flip-stage/union-actor/commit+push fold sequence.
+    # pr-conversation.yml's `act` job (T033) and lifecycle-review-gate.yml's
+    # `disposition` job (T038) are this composite's two callers -- a THIRD,
+    # independent paste of the sequence is what this check catches.
+    "fold-commit": ".github/actions/wing-commander-fold-commit/action.yml",
+    # specs/062-lifecycle-review-gate T034/T042: the re-read-tip/bump-
+    # iteration/dispatch sequence. pr-conversation.yml's `dispatch-once` job
+    # (T036) and lifecycle-review-gate.yml's `disposition` job (T038) are
+    # this composite's two callers.
+    "fold-dispatch": ".github/actions/wing-commander-fold-dispatch/action.yml",
+    # specs/084-board-loop-single-home-idioms, issue #607: the marker-write
+    # bootstrap (sys.path.insert + `from board_item_marker import
+    # write_marker`) was pasted at 17 call sites across 6 board-loop.yml
+    # jobs; this feature moved every site to a `board_item_marker.py`
+    # command-line entrypoint. A re-paste of the old inline bootstrap at a
+    # new site is what this check catches.
+    "marker-write": ".github/scripts/board_item_marker.py",
+    # specs/084-board-loop-single-home-idioms, issue #607: the PR-branch
+    # resolution idiom (`gh pr view ... --json headRefName` plus the
+    # `pr-number=`/`branch=` GITHUB_OUTPUT write) was pasted at both the
+    # review and readiness jobs' own steps; this feature moved both to the
+    # resolve-pr-branch composite. A re-paste of the old inline read at a
+    # new site is what this check catches.
+    "pr-branch": ".github/actions/_shared/resolve-pr-branch/action.yml",
 }
-CHECK_NAMES = tuple(DECLARED_HOMES) + ("promotion",)
+CHECK_NAMES = tuple(DECLARED_HOMES) + ("promotion", "composite-checkout-order")
 
 ORPHAN_FRAGMENTS = (
     "checkout --quiet --orphan",
@@ -244,38 +323,107 @@ ISSUE_LOOKUP_RE = re.compile(
     r"gh issue list\b[^\n]*--label\b[^\n]*--state open\b[^\n]*"
     r"--json number\b[^\n]*--jq\b[^\n]*\.\[0\]\.number // empty")
 OUTSTANDING_TASK_RE = re.compile(r'gh issue comment\b[^\n]*"- \[ \] ')
+POST_REVIEW_COMMENT_RE = re.compile(
+    r'gh\s+api\b[^\n]*reviews\b[^\n]*-f\s+event=COMMENT')
+# specs/062-lifecycle-review-gate T028/T030: keys on the `issue_number`
+# argument name, which spec 056's own similarly-shaped
+# sha256("{0}|{1}|{2}".format(STAGE, ...)) fingerprint idiom never uses.
+REVIEW_FINDING_FINGERPRINT_RE = re.compile(
+    r'hashlib\.sha256\(\s*"\{0\}\|\{1\}\|\{2\}"\.format\(\s*issue_number\b')
+# specs/062-lifecycle-review-gate T031/T042: the actor-tolerant
+# pending_re_review_from union this composite alone performs.
+FOLD_COMMIT_RE = re.compile(
+    r'\.pending_re_review_from\s*=\s*\(\(\(\.pending_re_review_from')
+# specs/062-lifecycle-review-gate T034/T042: fetching the spec branch by
+# name and re-dispatching implement-workflow with a bumped iteration --
+# distinct from every other `git fetch origin "refs/heads/$...` idiom in
+# this repository (branch-advance-capture's own fetch always force-updates
+# with a `+` prefix; this one never does).
+FOLD_DISPATCH_RE = re.compile(
+    r'git fetch --quiet origin "refs/heads/\$\{?SPEC_BRANCH\}?"')
 SIZE_PATH_BACKSTOP_FRAGMENT = r'select(test("^[+-]") and (test("^(\\+\\+\\+|---)") | not))'
 # specs/057-autonomous-board-loop research.md D14: correlating a dispatched
 # run by an attempt-token carried in its own run-name -- never by recency --
 # and then polling it to a terminal status. All four fragments together are
-# the idiom; any one alone is ordinary gh-CLI usage (release.yml's run-name
-# carries "[attempt:" and nothing else here, and is not a second copy).
+# the idiom; any subset alone is ordinary gh-CLI usage (release.yml's
+# run-name carries "[attempt:" and nothing else here, and is not a second
+# copy). The `--json` field list is matched as displayTitle,createdAt --
+# specifically the composite's own correlate-by-recency-among-same-titled-
+# rows field set, not just "a gh run list call that reads displayTitle" --
+# because specs/060-self-redrive-concurrency research.md D4's
+# directed_proof_group_busy() reads a databaseId/displayTitle/status trio
+# (an occupancy check, board_stand_down.py's own idiom generalized, never a
+# run's recency) and board-loop.yml's own select job already reads
+# createdAt for an unrelated reason (issue listing), so createdAt alone
+# would false-positive on the real tree even before this feature.
 DISPATCH_WAIT_FRAGMENTS = (
     "gh workflow run",
     "gh run list --workflow=",
-    "displayTitle",
+    "displayTitle,createdAt",
     "[attempt:",
 )
 VERDICT_FIELDS = ("outcome", "verified_head", "failing_check", "expected",
                   "observed", "evidence_url")
-# issue #462: `gh run cancel` alone is ordinary gh-CLI usage that also
-# appears in pr-conversation.yml's own (unrelated) stop procedure, so
-# co-occurrence with the other two fragments -- both unique to this
-# idiom's own shell -- is what keeps this check from false-positiving
-# there, the same reasoning check_dispatch_and_wait already documents for
-# its own fragment set.
-BOARD_STOP_CHECK_FRAGMENTS = (
-    "from board_stop_check import find_stop_request",
-    "gh run cancel",
-    "board-stop-check-comments.json",
-)
+# issue #462, idiom updated by #085: `gh run cancel` alone is ordinary
+# gh-CLI usage that also appears in pr-conversation.yml's own (unrelated)
+# stop procedure, so co-occurrence with fact 1 below -- unique to this
+# idiom -- is what keeps this check from false-positiving there, the same
+# reasoning check_dispatch_and_wait already documents for its own fragment
+# set. Fact 1 matches either the post-085 CLI invocation
+# (`board_stop_check.py`) or the pre-085 import style (`from
+# board_stop_check import find_stop_request`), so a paste of either idiom
+# is caught regardless of which era it copies (FR-009).
+BOARD_STOP_CHECK_DECISION_RE = re.compile(
+    r"board_stop_check\.py|from board_stop_check import find_stop_request")
+BOARD_STOP_CHECK_CANCEL = "gh run cancel"
 # #572: the splice step of the transcript normaliser. `.[]` in the
 # then-branch is what distinguishes it from the per-document
 # `if type=="array" then . else [.] end` wrap used by fallback reads.
+# #575: equivalent rewrites are matched too -- the condition parenthesised
+# or reversed (`(type=="array")`, `"array"==type`), the splice optional or
+# parenthesised (`.[]?`, `(.[])`), the else-branch parenthesised, and the
+# array test moved into an `elif` arm.
+_TN_ARRAY = r'["\']array["\']'
+_TN_COND = (r'\(?\s*(?:type\s*==\s*' + _TN_ARRAY + r'|' + _TN_ARRAY +
+            r'\s*==\s*type)\s*\)?')
+_TN_SPLICE = r'\(?\s*\.\[\]\??\s*\)?'
+_TN_SELF = r'\(?\s*\.\s*\)?'
 TRANSCRIPT_NORMALISE_RE = re.compile(
-    r'if\s+type\s*==\s*["\']array["\']\s+then\s+\.\[\]\s+else\s+\.\s+end')
+    r'\b(?:el)?if\s*' + _TN_COND + r'\s*then\s+' + _TN_SPLICE + r'\s*else\s+'
+    + _TN_SELF + r'\s*end\b')
 MODE_TAG_FRAGMENT_RE = re.compile(r"\{\s*mode\s*:\s*\$[A-Za-z_][A-Za-z0-9_]*\s*\}")
 SHARED_REF_RE = re.compile(r"\.github/actions/_shared/[A-Za-z0-9_.\-/]+")
+# specs/068-plan-tasks-branch-advance research.md R10: the branch-advance
+# capture's "after"/"commits" git plumbing. The refspec-form fetch (the `+`
+# force-update prefix is what distinguishes it from the fleet's several
+# other, unrelated `git fetch origin "refs/heads/$..."` idioms, e.g.
+# implement.yml's/plan.yml's/tasks.yml's default-branch-divergence checks,
+# none of which use the `+` prefix) co-occurring with a `..`-range
+# `git rev-list --count "$..."` read (watchdog.yml's own since-created/
+# head-sha arms use this shape too, but never alongside the refspec fetch
+# above -- verified empirically against the tree once this feature's own
+# T003 refactor landed) is what only the declared home carries.
+BRANCH_ADVANCE_FETCH_FRAGMENT = 'git fetch origin "+refs/heads/$'
+BRANCH_ADVANCE_REVLIST_RE = re.compile(
+    r'git rev-list --count "\$[A-Za-z_][A-Za-z0-9_]*\.\.')
+# specs/084-board-loop-single-home-idioms research.md D6: the marker-write
+# bootstrap's three fragments, all appearing together in one subject file.
+MARKER_WRITE_FRAGMENTS = (
+    "sys.path.insert",
+    "board_item_marker",
+    "write_marker",
+)
+# specs/084-board-loop-single-home-idioms research.md D5: co-occurrence of
+# the PR-branch read and the pair of GITHUB_OUTPUT writes it feeds, scoped
+# per-step (like check_failure_issue/check_token_mint) so pr-conversation.yml's
+# two structurally similar but conceptually distinct headRefName reads --
+# neither of which writes this pr-number=/branch= pair -- do not false-positive.
+PR_BRANCH_FRAGMENTS = (
+    "gh pr view",
+    "headRefName",
+    'echo "pr-number=',
+    'echo "branch=',
+)
 
 Finding = namedtuple("Finding", ["path", "check", "line", "text"])
 
@@ -445,6 +593,112 @@ def check_outstanding_task_item(root="."):
 
 
 # --------------------------------------------------------------------------
+# Check: post-review-comment (per-step, single-fragment)
+# --------------------------------------------------------------------------
+def check_post_review_comment(root="."):
+    home = DECLARED_HOMES["post-review-comment"]
+    findings = []
+    for path in all_subject_files(root):
+        if path == home:
+            continue
+        doc = load_yaml(root, path)
+        if doc is None:
+            continue
+        text = read(root, path)
+        for _ctx, steps in _step_lists(doc):
+            for step in steps:
+                run = str((step or {}).get("run") or "")
+                if not run:
+                    continue
+                if POST_REVIEW_COMMENT_RE.search(run):
+                    offset = text.find(run.splitlines()[0]) if run.splitlines() else 0
+                    findings.append(Finding(
+                        path, "post-review-comment",
+                        line_of(text, max(offset, 0)),
+                        'gh api -X POST ... reviews ... -f event=COMMENT'))
+    return findings
+
+
+# --------------------------------------------------------------------------
+# Check: review-finding-fingerprint (per-step, single-fragment)
+# --------------------------------------------------------------------------
+def check_review_finding_fingerprint(root="."):
+    home = DECLARED_HOMES["review-finding-fingerprint"]
+    findings = []
+    for path in all_subject_files(root):
+        if path == home:
+            continue
+        doc = load_yaml(root, path)
+        if doc is None:
+            continue
+        text = read(root, path)
+        for _ctx, steps in _step_lists(doc):
+            for step in steps:
+                run = str((step or {}).get("run") or "")
+                if not run:
+                    continue
+                if REVIEW_FINDING_FINGERPRINT_RE.search(run):
+                    offset = text.find(run.splitlines()[0]) if run.splitlines() else 0
+                    findings.append(Finding(
+                        path, "review-finding-fingerprint",
+                        line_of(text, max(offset, 0)),
+                        'hashlib.sha256("{0}|{1}|{2}".format(issue_number, ...))'))
+    return findings
+
+
+# --------------------------------------------------------------------------
+# Check: fold-commit (per-step, single-fragment)
+# --------------------------------------------------------------------------
+def check_fold_commit(root="."):
+    home = DECLARED_HOMES["fold-commit"]
+    findings = []
+    for path in all_subject_files(root):
+        if path == home:
+            continue
+        doc = load_yaml(root, path)
+        if doc is None:
+            continue
+        text = read(root, path)
+        for _ctx, steps in _step_lists(doc):
+            for step in steps:
+                run = str((step or {}).get("run") or "")
+                if not run:
+                    continue
+                if FOLD_COMMIT_RE.search(run):
+                    offset = text.find(run.splitlines()[0]) if run.splitlines() else 0
+                    findings.append(Finding(
+                        path, "fold-commit", line_of(text, max(offset, 0)),
+                        '.pending_re_review_from = (((.pending_re_review_from ...'))
+    return findings
+
+
+# --------------------------------------------------------------------------
+# Check: fold-dispatch (per-step, single-fragment)
+# --------------------------------------------------------------------------
+def check_fold_dispatch(root="."):
+    home = DECLARED_HOMES["fold-dispatch"]
+    findings = []
+    for path in all_subject_files(root):
+        if path == home:
+            continue
+        doc = load_yaml(root, path)
+        if doc is None:
+            continue
+        text = read(root, path)
+        for _ctx, steps in _step_lists(doc):
+            for step in steps:
+                run = str((step or {}).get("run") or "")
+                if not run:
+                    continue
+                if FOLD_DISPATCH_RE.search(run):
+                    offset = text.find(run.splitlines()[0]) if run.splitlines() else 0
+                    findings.append(Finding(
+                        path, "fold-dispatch", line_of(text, max(offset, 0)),
+                        'git fetch --quiet origin "refs/heads/${SPEC_BRANCH}"'))
+    return findings
+
+
+# --------------------------------------------------------------------------
 # Check: stage-findings (file-wide co-occurrence of the fingerprint formula
 # and the schema-validation call -- research.md D13)
 # --------------------------------------------------------------------------
@@ -524,9 +778,8 @@ def check_dispatch_and_wait(root="."):
 
 
 # --------------------------------------------------------------------------
-# Check: board-stop-check (file-wide co-occurrence of the find_stop_request
-# import, the gh run cancel call, and the paginated-comments filename --
-# issue #462)
+# Check: board-stop-check (YAML-structural, per job / composite step-list --
+# issue #462, reworked #085/research.md D7)
 # --------------------------------------------------------------------------
 def check_board_stop_check(root="."):
     home = DECLARED_HOMES["board-stop-check"]
@@ -538,13 +791,87 @@ def check_board_stop_check(root="."):
     for path in all_subject_files(root):
         if path == home or path.startswith(home_dir):
             continue
+        doc = load_yaml(root, path)
+        if doc is None:
+            continue
         text = read(root, path)
-        if all(fragment in text for fragment in BOARD_STOP_CHECK_FRAGMENTS):
-            offset = text.find(BOARD_STOP_CHECK_FRAGMENTS[0])
-            findings.append(Finding(
-                path, "board-stop-check", line_of(text, max(offset, 0)),
-                "from board_stop_check import find_stop_request + gh run "
-                "cancel + board-stop-check-comments.json co-occurrence"))
+        for _ctx, steps in _step_lists(doc):
+            run_text = "\n".join(str((step or {}).get("run") or "") for step in steps)
+            decision_match = BOARD_STOP_CHECK_DECISION_RE.search(run_text)
+            if decision_match and BOARD_STOP_CHECK_CANCEL in run_text:
+                offset = text.find(decision_match.group(0))
+                findings.append(Finding(
+                    path, "board-stop-check", line_of(text, max(offset, 0)),
+                    f"{decision_match.group(0)!r} (obtains a stop decision) + "
+                    f"'gh run cancel' (performs a cancellation), in the same "
+                    f"step list"))
+    return findings
+
+
+# --------------------------------------------------------------------------
+# Check: marker-write (per-step co-occurrence of the sys.path/import/call
+# bootstrap -- specs/084-board-loop-single-home-idioms research.md D6).
+# Per-step, NOT file-wide like check_board_stop_check: board-loop.yml still
+# legitimately carries several unrelated `sys.path.insert(0,
+# ".github/scripts")` + `board_item_marker` bootstraps for
+# read_marker_with_timestamp() (a different public function -- reading a
+# marker, never writing one), plus this file's own header comment
+# mentioning "write_marker()" in prose. A file-wide scan false-positives on
+# that combination even with zero inline write-bootstraps left; scoping to
+# one step's own `run:` text (as check_failure_issue/check_pr_branch
+# already do) does not, since neither the unrelated read-bootstraps nor the
+# header comment ever share a step with a `write_marker` mention.
+# --------------------------------------------------------------------------
+def check_marker_write(root="."):
+    home = DECLARED_HOMES["marker-write"]
+    home_dir = home.rsplit("/", 1)[0] + "/"
+    findings = []
+    for path in all_subject_files(root):
+        if path == home or path.startswith(home_dir):
+            continue
+        doc = load_yaml(root, path)
+        if doc is None:
+            continue
+        text = read(root, path)
+        for _ctx, steps in _step_lists(doc):
+            for step in steps:
+                run = str((step or {}).get("run") or "")
+                if not run:
+                    continue
+                if all(fragment in run for fragment in MARKER_WRITE_FRAGMENTS):
+                    offset = text.find(run.splitlines()[0]) if run.splitlines() else 0
+                    findings.append(Finding(
+                        path, "marker-write", line_of(text, max(offset, 0)),
+                        "sys.path.insert + board_item_marker + write_marker "
+                        "co-occurrence"))
+    return findings
+
+
+# --------------------------------------------------------------------------
+# Check: pr-branch (per-step co-occurrence of the headRefName read and the
+# pr-number=/branch= GITHUB_OUTPUT writes -- research.md D5)
+# --------------------------------------------------------------------------
+def check_pr_branch(root="."):
+    home = DECLARED_HOMES["pr-branch"]
+    findings = []
+    for path in all_subject_files(root):
+        if path == home:
+            continue
+        doc = load_yaml(root, path)
+        if doc is None:
+            continue
+        text = read(root, path)
+        for _ctx, steps in _step_lists(doc):
+            for step in steps:
+                run = str((step or {}).get("run") or "")
+                if not run:
+                    continue
+                if all(fragment in run for fragment in PR_BRANCH_FRAGMENTS):
+                    offset = text.find(run.splitlines()[0]) if run.splitlines() else 0
+                    findings.append(Finding(
+                        path, "pr-branch", line_of(text, max(offset, 0)),
+                        "gh pr view ... headRefName + pr-number=/branch= "
+                        "GITHUB_OUTPUT co-occurrence"))
     return findings
 
 
@@ -630,6 +957,26 @@ def check_token_mint(root="."):
 
 
 # --------------------------------------------------------------------------
+# Check: branch-advance-capture (file-wide co-occurrence, specs/068-plan-
+# tasks-branch-advance research.md R10)
+# --------------------------------------------------------------------------
+def check_branch_advance_capture(root="."):
+    home = DECLARED_HOMES["branch-advance-capture"]
+    findings = []
+    for path in all_subject_files(root):
+        if path == home:
+            continue
+        text = read(root, path)
+        if BRANCH_ADVANCE_FETCH_FRAGMENT in text and \
+                BRANCH_ADVANCE_REVLIST_RE.search(text):
+            offset = text.index(BRANCH_ADVANCE_FETCH_FRAGMENT)
+            findings.append(Finding(
+                path, "branch-advance-capture", line_of(text, offset),
+                BRANCH_ADVANCE_FETCH_FRAGMENT))
+    return findings
+
+
+# --------------------------------------------------------------------------
 # Promotion-prevention pass (FR-025)
 # --------------------------------------------------------------------------
 # research.md D1/D2: auto-update-spec-kit.yml IS a workflow_call-only
@@ -641,6 +988,74 @@ def check_token_mint(root="."):
 # like any other, rather than a bespoke unconditional skip with no count
 # to keep it honest if this file ever reaches into _shared/ a fourth,
 # unintended way.
+# --------------------------------------------------------------------------
+# Check: composite-checkout-order (structural, no single declared home --
+# maintainer review of #607, fold leg-0: board-loop.yml's review and
+# readiness jobs called the new resolve-pr-branch composite as their first
+# step, before any actions/checkout@ step existed in the job, so the
+# composite's action.yml could not be resolved from the not-yet-checked-out
+# workspace and every review/readiness run failed at run time instead of
+# at gate time. Extended in fold leg-1: the original "any checkout@ step
+# seen so far" test passed a sidecar-relative reference
+# (./.wc-pristine-repo/...) merely because an earlier, unrelated
+# root-workspace checkout had already run -- it never confirmed the
+# specific directory the reference resolves from had actually been
+# checked out. A bare `./.github/...` reference (this fleet's only
+# root-relative form) still needs a preceding checkout with no `path:`;
+# every other first path segment names a sidecar directory (e.g.
+# `.wc-pristine-repo`, `.wing-commander-pipeline`) and now needs a
+# preceding checkout whose own `with.path` matches that exact segment --
+# a root checkout, however early, never satisfies it.
+# --------------------------------------------------------------------------
+ROOT_ACTIONS_SEGMENT = ".github"
+
+
+def check_local_action_before_checkout(root="."):
+    """A local `uses: ./...` step resolves its action.yml relative to
+    whichever checked-out directory its first path segment names -- the
+    workspace root for a bare `./.github/actions/...` reference, or a
+    sidecar directory like `.wc-pristine-repo` for
+    `./.wc-pristine-repo/.github/actions/...` -- and a workflow job that
+    calls one before the checkout that actually populates that directory
+    fails at run time ("Did you forget to run actions/checkout") instead
+    of failing here. Composite actions' own `runs.steps` execute inside
+    the CALLER's already-checked-out workspace, so only workflow jobs
+    (doc["jobs"]) are scanned -- never an action.yml's own `runs.steps`."""
+    findings = []
+    for path in all_subject_files(root):
+        doc = load_yaml(root, path)
+        if not isinstance(doc, dict) or not doc.get("jobs"):
+            continue
+        text = read(root, path)
+        for job_id, steps in _step_lists(doc):
+            seen_root = False
+            seen_scoped = set()
+            for step in steps:
+                uses = str((step or {}).get("uses") or "")
+                if not uses:
+                    continue
+                if uses.startswith("actions/checkout@"):
+                    scoped_path = (step.get("with") or {}).get("path")
+                    if scoped_path:
+                        seen_scoped.add(scoped_path)
+                    else:
+                        seen_root = True
+                elif uses.startswith("./"):
+                    first_seg = uses[2:].split("/", 1)[0]
+                    if first_seg == ROOT_ACTIONS_SEGMENT:
+                        ok, where = seen_root, "the workspace root"
+                    else:
+                        ok, where = first_seg in seen_scoped, f"path: {first_seg}"
+                    if not ok:
+                        offset = text.find(uses)
+                        findings.append(Finding(
+                            path, "composite-checkout-order",
+                            line_of(text, max(offset, 0)),
+                            f"job {job_id!r}: {uses} resolved before the "
+                            f"actions/checkout@ step for {where}"))
+    return findings
+
+
 def check_promotion(root="."):
     findings = []
     for path in _relativize(root, published_stages(root)):
@@ -669,6 +1084,10 @@ ALL_CHECKS = {
     "extraheader-refresh": check_extraheader_refresh,
     "failure-issue": check_failure_issue,
     "outstanding-task-item": check_outstanding_task_item,
+    "post-review-comment": check_post_review_comment,
+    "review-finding-fingerprint": check_review_finding_fingerprint,
+    "fold-commit": check_fold_commit,
+    "fold-dispatch": check_fold_dispatch,
     "stage-findings": check_stage_findings,
     "size-path-backstop": check_size_path_backstop,
     "dispatch-and-wait": check_dispatch_and_wait,
@@ -677,14 +1096,21 @@ ALL_CHECKS = {
     "verdict-shape": check_verdict_shape,
     "token-mint": check_token_mint,
     "mode-tag-shape": check_mode_tag_shape,
+    "branch-advance-capture": check_branch_advance_capture,
+    "marker-write": check_marker_write,
+    "pr-branch": check_pr_branch,
     "promotion": check_promotion,
+    "composite-checkout-order": check_local_action_before_checkout,
 }
 
 
 # --------------------------------------------------------------------------
 # Waivers -- same shape as stage-invariant-waivers.json (Gate 31)
 # --------------------------------------------------------------------------
-REQUIRED_WAIVER_FIELDS = ("file", "check", "pattern", "count", "reason", "issue")
+# `issue` is not here: whether a waiver cites an OPEN issue or is marked
+# permanent is verify-waiver-citations.py's (Gate 124) one rule for every
+# register.
+REQUIRED_WAIVER_FIELDS = ("file", "check", "pattern", "count", "reason")
 
 
 def load_waivers(root="."):
@@ -1015,13 +1441,89 @@ def _clean_tree(root):
           "        gh api \"repos/$GITHUB_REPOSITORY/issues/$N/comments\" "
           "--paginate --jq '.[]' | jq -s '.' > "
           "\"$RUNNER_TEMP/board-stop-check-comments.json\"\n"
-          "        # from board_stop_check import find_stop_request\n"
+          "        stop_decision_json=\"$(jq -n --slurpfile comments "
+          "\"$RUNNER_TEMP/board-stop-check-comments.json\" '{comments: "
+          "$comments[0]}' | python3 .github/scripts/board_stop_check.py)\"\n"
+          "        cancel_run_id=\"$(jq -r '.cancel_run_id // empty' "
+          "<<<\"$stop_decision_json\")\"\n"
           "        GH_TOKEN=\"$CANCEL_TOKEN\" gh run cancel "
-          "\"$stop_run_id\" -R \"$GITHUB_REPOSITORY\" 2>/dev/null || true\n")
+          "\"$cancel_run_id\" -R \"$GITHUB_REPOSITORY\" 2>/dev/null || true\n")
     _write(root, DECLARED_HOMES["transcript-normalise"],
           "#!/usr/bin/env bash\n"
           "jq -cs 'map(if type==\"array\" then .[] else . end) "
           "| map(objects)' \"$1\"\n")
+    _write(root, DECLARED_HOMES["branch-advance-capture"],
+          "runs:\n  using: composite\n  steps:\n"
+          "    - shell: bash\n      run: |\n"
+          "        git fetch origin \"+refs/heads/$branch:refs/remotes/"
+          "origin/$branch\"\n"
+          "        commits=\"$(git rev-list --count "
+          "\"$BEFORE_SHA..$after_sha\")\"\n")
+    _write(root, DECLARED_HOMES["post-review-comment"],
+          "runs:\n  using: composite\n  steps:\n"
+          "    - shell: bash\n      run: |\n"
+          "        gh api -X POST \"repos/$GITHUB_REPOSITORY/pulls/$PR/"
+          "reviews\" -f event=COMMENT -F body=@\"$BODY_FILE\"\n")
+    _write(root, DECLARED_HOMES["review-finding-fingerprint"],
+          "#!/usr/bin/env python3\n"
+          "import hashlib\n"
+          "import re\n\n\n"
+          "def norm(value):\n"
+          "    return \" \".join(re.sub(r\"[\\W_]+\", \" \", "
+          "str(value).lower()).split())\n\n\n"
+          "def fingerprint(issue_number, title, file_path):\n"
+          "    return hashlib.sha256(\"{0}|{1}|{2}\".format(\n"
+          "        issue_number, norm(title), norm(file_path)\n"
+          "    ).encode(\"utf-8\")).hexdigest()\n")
+    _write(root, DECLARED_HOMES["fold-commit"],
+          "runs:\n  using: composite\n  steps:\n"
+          "    - shell: bash\n      run: |\n"
+          "        jq --arg actor \"$ACTOR_LOGIN\" '\n"
+          "          .stage = \"implement\"\n"
+          "          | .pending_re_review_from = (((.pending_re_review_from "
+          "// []) + (if $actor == \"\" then [] else [$actor] end)) | unique)\n"
+          "        ' \"$SPEC_DIR/spec-meta.json\" > /tmp/m.json\n")
+    _write(root, DECLARED_HOMES["fold-dispatch"],
+          "runs:\n  using: composite\n  steps:\n"
+          "    - shell: bash\n      run: |\n"
+          "        git fetch --quiet origin \"refs/heads/${SPEC_BRANCH}\" "
+          "|| true\n")
+    _write(root, DECLARED_HOMES["marker-write"],
+          "#!/usr/bin/env python3\n"
+          "import argparse\n"
+          "\n"
+          "\n"
+          "def write_marker(step, round, pr, branch, base_sha):\n"
+          "    return step\n"
+          "\n"
+          "\n"
+          "def main():\n"
+          "    parser = argparse.ArgumentParser()\n"
+          "    parser.add_argument(\"--step\", required=True)\n"
+          "    parser.add_argument(\"--round\", type=int, default=0)\n"
+          "    parser.add_argument(\"--pr\", type=int, default=None)\n"
+          "    parser.add_argument(\"--branch\", default=None)\n"
+          "    parser.add_argument(\"--base-sha\", default=None)\n"
+          "    args = parser.parse_args()\n"
+          "    print(write_marker(args.step, args.round, args.pr, args.branch, "
+          "args.base_sha))\n"
+          "\n"
+          "\n"
+          "if __name__ == \"__main__\":\n"
+          "    main()\n")
+    _write(root, DECLARED_HOMES["pr-branch"],
+          "inputs:\n  pr-number:\n    required: true\n  token:\n    required: true\n"
+          "  round:\n    required: false\n    default: \"\"\n"
+          "runs:\n  using: composite\n  steps:\n"
+          "    - id: resolve\n      shell: bash\n      env:\n"
+          "        GH_TOKEN: ${{ inputs.token }}\n"
+          "        PR_NUMBER: ${{ inputs.pr-number }}\n"
+          "      run: |\n"
+          "        set -euo pipefail\n"
+          "        branch=\"$(gh pr view \"$PR_NUMBER\" --json headRefName "
+          "--jq .headRefName)\"\n"
+          "        { echo \"pr-number=$PR_NUMBER\"; echo \"branch=$branch\"; } "
+          ">> \"$GITHUB_OUTPUT\"\n")
     _write(root, ".github/workflows/harmless.yml",
           "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
           "      - run: echo hi\n")
@@ -1059,6 +1561,63 @@ def selftest_third_paste_fails(check_key, paste_path, paste_content):
                 f"got: {findings}")
         else:
             note(f"[{case}] passed ({hits[0].path}:{hits[0].line})")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def selftest_per_document_wrap_passes():
+    """#575: loosening the transcript-normalise regex must not start
+    flagging the per-document wrap -- the legitimate fallback read the
+    agent-verdict composite and implement.yml's refusal probe both keep --
+    in any of the spellings the loosened pattern tolerates for the splice."""
+    case = "the per-document `then . else [.] end` wrap is not flagged"
+    tmp = tempfile.mkdtemp(prefix="wc-single-home-")
+    try:
+        _clean_tree(tmp)
+        paste_path = ".github/workflows/per-document.yml"
+        _write(tmp, paste_path,
+              "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
+              "      - shell: bash\n        run: |\n"
+              "          jq -r 'if type==\"array\" then . else [.] end "
+              "| map(objects)' \"$T\"\n"
+              "          jq -r 'if (type == \"array\") then . else [.] end' "
+              "\"$T\"\n"
+              "          jq -r 'if \"array\"==type then (.) else [.] end' "
+              "\"$T\"\n")
+        findings, hard = evaluate(tmp)
+        hits = [f for f in findings if f.check == "transcript-normalise"]
+        if hard:
+            fail(f"[{case}] unexpected hard failure(s): {hard}")
+        elif hits:
+            fail(f"[{case}] the per-document wrap was flagged: {hits}")
+        else:
+            note(f"[{case}] passed")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def selftest_board_stop_check_no_cancel_no_finding():
+    case = "board_stop_check.py referenced with no cancellation is not flagged"
+    tmp = tempfile.mkdtemp(prefix="wc-single-home-")
+    try:
+        _clean_tree(tmp)
+        paste_path = ".github/workflows/dry-run-reporter.yml"
+        _write(tmp, paste_path,
+              "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
+              "      - shell: bash\n        run: |\n"
+              "          gh api \"repos/$GITHUB_REPOSITORY/issues/$N/comments\" "
+              "--paginate --jq '.[]' | jq -s '.' > \"$RUNNER_TEMP/comments.json\"\n"
+              "          jq -n --slurpfile comments \"$RUNNER_TEMP/comments.json\" "
+              "'{comments: $comments[0]}' | python3 .github/scripts/board_stop_check.py\n")
+        findings, hard = evaluate(tmp)
+        if hard:
+            fail(f"[{case}] unexpected hard failure(s): {hard}")
+            return
+        hits = [f for f in findings if f.check == "board-stop-check" and f.path == paste_path]
+        if hits:
+            fail(f"[{case}] unexpected board-stop-check finding(s): {hits}")
+        else:
+            note(f"[{case}] passed")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -1156,6 +1715,39 @@ def selftest_missing_declared_home_fails_loud():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def selftest_marker_write_cli_resolves_symbolic_steps_under_dash_i():
+    """Maintainer review of #607 (fold leg-1): board_item_marker.py's CLI
+    must resolve --step BREACH_STEP/AWAITING_MERGE_STEP even under
+    `python3 -I` (which excludes the script's own directory from sys.path)
+    invoked from a cwd other than the script's own -- reproducing
+    board-loop.yml's real `python3 -I
+    "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py"` invocation
+    shape, not the declared-home text scans above (which cannot catch a
+    runtime ModuleNotFoundError)."""
+    case = "marker-write CLI resolves symbolic steps under python3 -I from a foreign cwd"
+    script = os.path.abspath(DECLARED_HOMES["marker-write"])
+    other_cwd = tempfile.mkdtemp(prefix="wc-marker-write-cwd-")
+    env = {"PATH": os.environ.get("PATH", "")}
+    ok = True
+    try:
+        for token, expected in (("BREACH_STEP", "breach"), ("AWAITING_MERGE_STEP", "awaiting-merge")):
+            result = subprocess.run(
+                [sys.executable, "-I", script, "--step", token, "--pr", "1"],
+                cwd=other_cwd, env=env, capture_output=True, text=True)
+            if result.returncode != 0:
+                ok = False
+                fail(f"[{case}] --step {token} exited {result.returncode}: "
+                    f"{result.stderr.strip()[-400:]}")
+            elif '"step": "{0}"'.format(expected) not in result.stdout:
+                ok = False
+                fail(f"[{case}] --step {token} did not resolve to step={expected!r}: "
+                    f"{result.stdout.strip()[:200]!r}")
+        if ok:
+            note(f"[{case}] passed")
+    finally:
+        shutil.rmtree(other_cwd, ignore_errors=True)
+
+
 def run_selftest():
     use_utf8_stdout()
     selftest_clean_tree_passes()
@@ -1228,9 +1820,18 @@ def run_selftest():
         "          gh api \"repos/$GITHUB_REPOSITORY/issues/$N/comments\" "
         "--paginate --jq '.[]' | jq -s '.' > "
         "\"$RUNNER_TEMP/board-stop-check-comments.json\"\n"
-        "          # from board_stop_check import find_stop_request\n"
+        "          stop_decision_json=\"$(jq -n --slurpfile comments "
+        "\"$RUNNER_TEMP/board-stop-check-comments.json\" '{comments: "
+        "$comments[0]}' | python3 .github/scripts/board_stop_check.py)\"\n"
+        "          cancel_run_id=\"$(jq -r '.cancel_run_id // empty' "
+        "<<<\"$stop_decision_json\")\"\n"
         "          GH_TOKEN=\"$CANCEL_TOKEN\" gh run cancel "
-        "\"$stop_run_id\" -R \"$GITHUB_REPOSITORY\" 2>/dev/null || true\n")
+        "\"$cancel_run_id\" -R \"$GITHUB_REPOSITORY\" 2>/dev/null || true\n")
+    # #085 (research.md D7's third named self-test direction): fact 1
+    # (references board_stop_check.py) with no fact 2 (no cancellation) is a
+    # legitimate non-loop consumer -- e.g. a hypothetical dry-run reporter --
+    # and must NOT be flagged.
+    selftest_board_stop_check_no_cancel_no_finding()
     selftest_third_paste_fails(
         "transcript-normalise",
         ".github/actions/wing-commander-third/action.yml",
@@ -1245,6 +1846,31 @@ def run_selftest():
         "      - shell: bash\n        run: |\n"
         "          jq -s '[.[] | if type == \"array\"  then .[] else . end]' "
         "\"$T\"\n")
+    # #575: equivalent rewrites of the same splice -- each is a paste the
+    # literal-spelling regex let through.
+    for label, program in (
+        ("parenthesised condition",
+         "map(if (type==\"array\") then .[] else . end)"),
+        ("reversed condition",
+         "map(if \"array\"==type then .[] else . end)"),
+        ("optional splice",
+         "map(if type==\"array\" then .[]? else . end)"),
+        ("parenthesised splice",
+         "map(if type==\"array\" then (.[]) else . end)"),
+        ("all four at once",
+         "map(if (\"array\" == type) then (.[]?) else (.) end)"),
+        ("elif arm",
+         "map(if type==\"object\" then . "
+         "elif type==\"array\" then .[] else . end)"),
+    ):
+        slug = label.replace(" ", "-")
+        selftest_third_paste_fails(
+            "transcript-normalise",
+            f".github/workflows/third-normalise-{slug}.yml",
+            "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n"
+            "    steps:\n      - shell: bash\n        run: |\n"
+            f"          jq -cs '{program}' \"$T\"\n")
+    selftest_per_document_wrap_passes()
     selftest_third_paste_fails(
         "verdict-shape", ".github/workflows/third-verdict.yml",
         "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
@@ -1272,6 +1898,12 @@ def run_selftest():
         "jq --arg tag_mode \"$MODE\" '. + {mode:$tag_mode} + (if $tag_mode == "
         "\"container\" then {container_image_configured: true} else {} end)'\n")
     selftest_third_paste_fails(
+        "branch-advance-capture", ".github/workflows/third-branch-advance.yml",
+        "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - shell: bash\n        run: |\n"
+        "          git fetch origin \"+refs/heads/$b:refs/remotes/origin/$b\"\n"
+        "          commits=\"$(git rev-list --count \"$before..$after\")\"\n")
+    selftest_third_paste_fails(
         "token-mint", ".github/workflows/third-token.yml",
         "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
         "      - id: mint\n        continue-on-error: true\n"
@@ -1279,10 +1911,72 @@ def run_selftest():
         "      - shell: bash\n        env:\n"
         "          OUTCOME: ${{ steps.mint.outcome }}\n"
         "        run: echo hi\n")
+    selftest_third_paste_fails(
+        "review-finding-fingerprint",
+        ".github/workflows/third-review-finding.yml",
+        "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - shell: bash\n        run: |\n"
+        "          python3 - <<'PYEOF'\n"
+        "          import hashlib\n"
+        "          fp = hashlib.sha256(\"{0}|{1}|{2}\".format(\n"
+        "              issue_number, norm(title), norm(file_path)\n"
+        "          ).encode(\"utf-8\")).hexdigest()\n"
+        "          PYEOF\n")
+    selftest_third_paste_fails(
+        "fold-commit", ".github/workflows/third-fold-commit.yml",
+        "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - shell: bash\n        run: |\n"
+        "          jq --arg actor \"$ACTOR_LOGIN\" '\n"
+        "            .stage = \"implement\"\n"
+        "            | .pending_re_review_from = (((.pending_re_review_from "
+        "// []) + (if $actor == \"\" then [] else [$actor] end)) | unique)\n"
+        "          ' \"$SPEC_DIR/spec-meta.json\" > /tmp/m.json\n")
+    selftest_third_paste_fails(
+        "fold-dispatch", ".github/workflows/third-fold-dispatch.yml",
+        "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - shell: bash\n        run: |\n"
+        "          git fetch --quiet origin \"refs/heads/${SPEC_BRANCH}\" "
+        "|| true\n")
+    selftest_third_paste_fails(
+        "marker-write", ".github/workflows/third-marker-write.yml",
+        "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - shell: bash\n        run: |\n"
+        "          python3 -c \"import sys; "
+        "sys.path.insert(0, '.github/scripts'); "
+        "from board_item_marker import write_marker; "
+        "print(write_marker('stalled', 0, None, None, None))\"\n")
+    selftest_third_paste_fails(
+        "pr-branch", ".github/workflows/third-pr-branch.yml",
+        "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - id: pr\n        shell: bash\n        run: |\n"
+        "          set -uo pipefail\n"
+        "          branch=\"$(gh pr view \"$PR_NUMBER\" -R "
+        "\"$GITHUB_REPOSITORY\" --json headRefName --jq .headRefName)\"\n"
+        "          { echo \"pr-number=$PR_NUMBER\"; echo \"branch=$branch\"; } "
+        ">> \"$GITHUB_OUTPUT\"\n")
+    selftest_third_paste_fails(
+        "composite-checkout-order", ".github/workflows/third-checkout-order.yml",
+        "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - id: pr\n        uses: ./.github/actions/_shared/resolve-pr-branch\n"
+        "        with:\n          pr-number: 1\n"
+        "      - uses: actions/checkout@v5\n")
+    # fold leg-1: a root-workspace checkout does not populate a sidecar
+    # directory -- a `./.wc-pristine-repo/...` reference preceded only by
+    # an unrelated root checkout must still be caught, not waved through
+    # by the mere presence of some earlier actions/checkout@ step.
+    selftest_third_paste_fails(
+        "composite-checkout-order",
+        ".github/workflows/third-checkout-order-sidecar.yml",
+        "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - uses: actions/checkout@v5\n"
+        "      - id: pr\n"
+        "        uses: ./.wc-pristine-repo/.github/actions/_shared/resolve-pr-branch\n"
+        "        with:\n          pr-number: 1\n")
     selftest_waived_copy_passes()
     selftest_stale_waiver_fails()
     selftest_promotion_fails()
     selftest_missing_declared_home_fails_loud()
+    selftest_marker_write_cli_resolves_symbolic_steps_under_dash_i()
     print(f"verify-single-home-idioms --self-test: {len(failures)} failure(s).")
     return 1 if failures else 0
 

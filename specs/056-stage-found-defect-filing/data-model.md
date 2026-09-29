@@ -40,26 +40,38 @@ defaulted or guessed (FR-009).
 ## Fingerprint
 
 Derived value, never itself proposed or stored as a distinct entity beyond
-the computation:
+the computation. Spec 076 (#569) replaced the single three-segment formula
+this section used to state with the two shapes below, chosen per finding
+by whether its anchor verifies — see spec 076's Key Anchor entity and
+`specs/076-stable-finding-dedup-key/contracts/anchor-verification.md` for
+the full check: `fingerprint_basis.gate_or_artifact` enters the key only
+after its normalized form is found, as a substring, in the normalized
+content of the file `fingerprint_basis.file_path` names; when it is not
+found — including when the named file does not exist, or the anchor
+normalizes to the empty string — the finding is keyed under the fallback
+shape instead of being dropped:
 
 ```
-fingerprint = sha256("<stage>|<norm(fingerprint_basis.file_path)>|<norm(fingerprint_basis.gate_or_artifact)>")
-norm(s)     = lowercase(s), every run of non-word characters or underscores -> one space, trimmed (letters and digits in any script survive)
+norm(s)          = lowercase(s); every match of the regex [\W_]+ collapses to one space; trimmed (letters and digits in any script survive)
+with-anchor key  = sha256("anchor|<stage>|<norm(fingerprint_basis.file_path)>|<norm(fingerprint_basis.gate_or_artifact)>")
+fallback key     = sha256("fallback|<stage>|<norm(fingerprint_basis.file_path)>")
 ```
 
 `<stage>` is the filing composite's own `stage` input, not agent prose
 (research.md D6). `norm` exists because both basis fields are agent
 prose (#424): two runs meeting one defect wrote `Principle III: Test-First
 (NON-NEGOTIABLE)` and `Principle III. Test-First (NON-NEGOTIABLE)` and
-filed a twin. Punctuation, case and spacing no longer move the key; a
-different word still does (a third run wrote `Constitution Principle III
-(Test-First (NON-NEGOTIABLE))` and filed another twin), and markers filed
-before the normalization no longer match afterwards. Whether the key
-should stop depending on agent wording at all is an open design
-question on #424. Embedded in a filed issue's body as an HTML comment
-marker: `<!-- wing-commander-finding: fingerprint=<hex> -->`, the same
-marker-in-body idiom the watchdog already uses, read back by
-`wing-commander-durable-failure-issue`'s marker-mode lookup (D7).
+filed a twin. Punctuation, case and spacing no longer move either shape's
+key; under the pre-076 formula a different word still would, which is what
+spec 076's anchor check now closes off. Embedded in a filed issue's body
+as an HTML comment marker: `<!-- wing-commander-finding: fingerprint=<hex>
+-->`, the same marker-in-body idiom the watchdog already uses, read back
+by `wing-commander-durable-failure-issue`'s marker-mode lookup (D7).
+
+**Compatibility (FR-014, #569)**: an issue filed under this pre-076
+single-shape formula carries a marker that matches neither new shape. No
+migration is performed; that issue's next encounter files once more, under
+whichever of the two new shapes the encounter now produces.
 
 ## Finding Label
 

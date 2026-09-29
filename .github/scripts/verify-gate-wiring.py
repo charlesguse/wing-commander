@@ -49,20 +49,24 @@ names — see wc_gate_registry.py for why a list would recreate issue #149.
 
 Usage: python3 .github/scripts/verify-gate-wiring.py
 """
+import argparse
 import ast
 import glob
 import os
 import re
+import shutil
 import sys
+import tempfile
 import textwrap
 
 import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wc_gate_registry import (  # noqa: E402
-    LOOSE_PY_HEREDOC_RE, SCRIPTS_DIR, _self_check, invocations,
+    LOOSE_PY_HEREDOC_RE, SCRIPTS_DIR, _self_check, gate_label, invocations,
     pr_time_gates, pr_time_inline_steps, pr_time_invocations,
-    referenced_script_paths, shared_modules, workflow_files)
+    referenced_actions_script_paths, referenced_script_paths, shared_modules,
+    workflow_files)
 
 
 LINT_WORKFLOW = os.path.join(".github", "workflows", "lint-workflows.yml")
@@ -71,15 +75,18 @@ LINT_WORKFLOW = os.path.join(".github", "workflows", "lint-workflows.yml")
 # they are scanned alongside the workflows the registry already enumerates.
 COMPOSITE_ACTIONS_GLOB = os.path.join(".github", "actions", "*", "action.yml")
 
-# A published document a gate reads as its subject. Two shapes ship today:
-# specs/<feature>/contracts/<file>, and a document under docs/ - Gate 12
+# A published document a gate reads as its subject. Three shapes ship
+# today: specs/<feature>/contracts/<file>; a document under docs/ - Gate 12
 # treats docs/setup.md as the single source of truth for what the App may
-# do and sys.exits if its permissions list moves. Anchored and
-# whitespace-free so a docstring that merely mentions a spec directory
+# do and sys.exits if its permissions list moves; and the constitution
+# under .specify/memory/, which Gate 113 reads to decide whether the
+# document names every class of merge the pipeline can perform. Anchored
+# and whitespace-free so a docstring that merely mentions a spec directory
 # across a line wrap cannot masquerade as one.
 SUBJECT_PATH_RE = re.compile(
     r"^(?:specs/[^\s*?\[\]]+/contracts/[^\s*?\[\]]+"
-    r"|docs/[^\s*?\[\]]+\.md)$")
+    r"|docs/[^\s*?\[\]]+\.md"
+    r"|\.specify/memory/[^\s*?\[\]]+\.md)$")
 
 # `python3 - <<'PYEOF' ... PYEOF` inside a run: block, which is how the
 # larger gates in lint-workflows.yml are written. The opener may carry
@@ -115,10 +122,13 @@ PY_HEREDOC_RE = re.compile(
 # compared. Same technique as _check_heredoc_reader and check_local_runner_parity:
 # one precise reader, one loose one, and disagreement is the failure.
 #
-# Measured against the tree: this finds exactly the four subject documents and
-# nothing else. Restricting it to .md is what keeps it quiet -- gates name
-# fourteen other existing files (workflows, composites, required-tools.txt),
-# all of them code, and all already covered by the tree-wide paths: entries.
+# Measured against the tree: this finds every subject document and nothing
+# else. Restricting it to .md is what keeps it quiet -- gates name many other
+# existing files (workflows, composites, required-tools.txt), all of them
+# code, and all already covered by the tree-wide paths: entries. No literal
+# count here on purpose: the set grows with each gate that takes a document
+# as its subject, and a number nothing maintains is a stale number waiting
+# to happen.
 LOOSE_PATH_RE = re.compile(r"^[A-Za-z0-9_.\-]+(?:/[A-Za-z0-9_.\-]+)+\.md$")
 
 # Markdown a gate names WITHOUT it being that gate's subject -- a fixture it
@@ -392,7 +402,7 @@ def check_subject_triggers():
     return failures
 
 
-def check_local_runner_parity():
+def check_local_runner_parity(root="."):
     """-> list of failure strings.
 
     `pr_time_gates` finds a gate by substring; `pr_time_invocations`
@@ -403,8 +413,8 @@ def check_local_runner_parity():
     thing. Neither reader can notice that alone; comparing them can.
     """
     failures = []
-    invoked = {script for script, _ in pr_time_invocations()}
-    for script in pr_time_gates():
+    invoked = {script for script, _ in pr_time_invocations(root)}
+    for script in pr_time_gates(root):
         if script not in invoked:
             failures.append(
                 f"{script} runs in the PR-time lint suite, but the local "
@@ -413,8 +423,8 @@ def check_local_runner_parity():
                 f"registry's tokenizer cannot read - the local sweep is "
                 f"quietly rehearsing less than CI runs.")
     if not failures:
-        print(f"ok    all {len(pr_time_gates())} PR-time gate(s) are "
-              f"reproducible locally ({len(pr_time_invocations())} invocation(s))")
+        print(f"ok    all {len(pr_time_gates(root))} PR-time gate(s) are "
+              f"reproducible locally ({len(pr_time_invocations(root))} invocation(s))")
 
     # The same promise for the heredoc gates (Gate 12's live scan among
     # them). pr_time_inline_steps and LOOSE_PY_HEREDOC_RE share one grammar
@@ -422,7 +432,7 @@ def check_local_runner_parity():
     # verbatim is reported here rather than dropped, and a lint-workflows.yml
     # with no runnable heredoc gate at all means the reader broke, not that
     # the gates went away.
-    runnable, unrunnable = pr_time_inline_steps()
+    runnable, unrunnable = pr_time_inline_steps(root)
     for name, reason in unrunnable:
         failures.append(
             f"lint-workflows.yml step {name!r} runs a python heredoc in the "
@@ -441,12 +451,82 @@ def check_local_runner_parity():
     return failures
 
 
+def check_forward_wiring(root="."):
+    """-> (wiring dict, failures). Every check is invoked by some workflow.
+
+    Split out of `main` (T004) so `--self-test` can exercise this direction
+    alone, against a fixture tree, without also requiring the rest of the
+    tree the other checks need (a subject document, a real lint-workflows.yml).
+    """
+    wiring = invocations(root)
+    failures = []
+    for script, workflows in wiring.items():
+        if not workflows:
+            failures.append(
+                f"{script} is not invoked by any workflow. A verifier nothing "
+                f"runs is not a verifier: it will drift out of sync with the "
+                f"code it checks and keep reporting success (this is exactly "
+                f"what happened to verify-denied-tool-collector.sh). Wire it "
+                f"into a gate, or delete it.")
+    return wiring, failures
+
+
+def check_reverse_wiring(root="."):
+    """-> list of failure strings. Every invoked path -- .github/scripts/...
+    and .github/actions/... alike -- exists on disk."""
+    failures = []
+    for path, workflows in referenced_script_paths(root).items():
+        if not os.path.exists(os.path.join(root, path)):
+            failures.append(
+                f"{path} is run by {', '.join(workflows)} but does not exist. "
+                f"That step will fail the moment it is reached, and until "
+                f"then its name in the job list implies a check that is not "
+                f"happening.")
+    for path, workflows in referenced_actions_script_paths(root).items():
+        if not os.path.exists(os.path.join(root, path)):
+            failures.append(
+                f"{path} is run by {', '.join(workflows)} but does not exist. "
+                f"That step will fail the moment it is reached, and until "
+                f"then its name in the job list implies a check that is not "
+                f"happening.")
+    return failures
+
+
+def check_shared_wiring(root="."):
+    """-> ({module: [importer, ...]}, failures). Every wc_*.py shared
+    module is imported by something -- an empty importer list is the
+    failure."""
+    scripts_dir = os.path.join(root, SCRIPTS_DIR)
+    sources = {}
+    for name in os.listdir(scripts_dir):
+        if name.endswith(".py"):
+            sources[name] = open(os.path.join(scripts_dir, name),
+                                 encoding="utf-8").read()
+    importers_by_module = {}
+    failures = []
+    for module in shared_modules(root):
+        stem = module[:-3]
+        importers = sorted(
+            n for n, src in sources.items()
+            if n != module
+            and re.search(rf"^\s*(from {stem} import|import {stem})\b",
+                          src, re.M))
+        importers_by_module[module] = importers
+        if not importers:
+            failures.append(
+                f"{SCRIPTS_DIR}/{module} is a shared module that nothing "
+                f"imports. It is exempt from the invocation rule because "
+                f"nothing runs it directly, which makes an unused one "
+                f"invisible. Use it or delete it.")
+    return importers_by_module, failures
+
+
 def main():
     failures = []
     _self_check()
 
     # --- forward: every check is invoked -----------------------------------
-    wiring = invocations()
+    wiring, forward_failures = check_forward_wiring()
     if not wiring:
         print("::error::found no verify-* scripts at all. Either they moved "
               "or this gate's discovery has broken; either way it is about "
@@ -455,44 +535,17 @@ def main():
     for script, workflows in wiring.items():
         if workflows:
             print(f"ok    {script} <- {', '.join(workflows)}")
-        else:
-            failures.append(
-                f"{script} is not invoked by any workflow. A verifier nothing "
-                f"runs is not a verifier: it will drift out of sync with the "
-                f"code it checks and keep reporting success (this is exactly "
-                f"what happened to verify-denied-tool-collector.sh). Wire it "
-                f"into a gate, or delete it.")
+    failures.extend(forward_failures)
 
     # --- reverse: every invoked path exists --------------------------------
-    for path, workflows in referenced_script_paths().items():
-        if not os.path.exists(path):
-            failures.append(
-                f"{path} is run by {', '.join(workflows)} but does not exist. "
-                f"That step will fail the moment it is reached, and until "
-                f"then its name in the job list implies a check that is not "
-                f"happening.")
+    failures.extend(check_reverse_wiring())
 
     # --- modules: every shared module has an importer ----------------------
-    sources = {}
-    for name in os.listdir(SCRIPTS_DIR):
-        if name.endswith(".py"):
-            sources[name] = open(os.path.join(SCRIPTS_DIR, name),
-                                 encoding="utf-8").read()
-    for module in shared_modules():
-        stem = module[:-3]
-        importers = sorted(
-            n for n, src in sources.items()
-            if n != module
-            and re.search(rf"^\s*(from {stem} import|import {stem})\b",
-                          src, re.M))
+    importers_by_module, module_failures = check_shared_wiring()
+    for module, importers in importers_by_module.items():
         if importers:
             print(f"ok    {module} <- imported by {', '.join(importers)}")
-        else:
-            failures.append(
-                f"{SCRIPTS_DIR}/{module} is a shared module that nothing "
-                f"imports. It is exempt from the invocation rule because "
-                f"nothing runs it directly, which makes an unused one "
-                f"invisible. Use it or delete it.")
+    failures.extend(module_failures)
 
     # --- argv: CI's gate set and the local runner's agree -----------------
     failures.extend(check_local_runner_parity())
@@ -513,5 +566,143 @@ def main():
     return 1 if failures else 0
 
 
+# ----------------------------------------------------------------------------
+# Self-test
+# ----------------------------------------------------------------------------
+# Gate 10 ran live-only against the real tree from the day it shipped (#158)
+# until this feature (research.md D6) -- every check above predates fixture
+# coverage. Rather than backfilling every existing branch at once, each
+# fixture below is appended by the task that introduces or extends the
+# failure branch it proves, in the same in-tempdir _write shape
+# verify-actions-layer-invariants.py already uses. `FIXTURES` starts empty:
+# this scaffold alone must run and exit 0 with zero fixtures asserted
+# (checkpoint after this task), and the live (no-flag) run above is
+# unchanged by anything in this section.
+def _write(root, relpath, content):
+    full = os.path.join(root, *relpath.split("/"))
+    os.makedirs(os.path.dirname(full), exist_ok=True)
+    with open(full, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(content)
+
+
+def _fixture_orphaned_composite_harness():
+    """A composite harness with no invoking workflow reports as orphaned
+    (FR-003 -- already-true behaviour; this fixture proves it, research.md
+    D6 first bullet)."""
+    root = tempfile.mkdtemp(prefix="wc-gate-wiring-")
+    try:
+        _write(root, ".github/scripts/widget-tests/run-tests.sh", "echo hi\n")
+        _, failures = check_forward_wiring(root)
+        found = any(".github/scripts/widget-tests/run-tests.sh" in f
+                   for f in failures)
+        return found, f"got {failures!r}"
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def _fixture_distinct_gate_labels():
+    """Two run-tests.sh harnesses sharing a basename under different
+    .github/scripts/<name>-tests/ directories get distinct gate_label()
+    identities (FR-007, research.md D6 fifth bullet)."""
+    a = gate_label(".github/scripts/foo-tests/run-tests.sh", [])
+    b = gate_label(".github/scripts/bar-tests/run-tests.sh", [])
+    return a != b, f"got {a!r} == {b!r}"
+
+
+def _fixture_actions_harness_not_gate10_subject():
+    """A run-tests.sh under .github/actions/ (outside _shared/), invoked by
+    some workflow but not lint-workflows.yml, never enters gate_scripts()'s
+    .github/scripts/-only notion of "a gate" (D2) -- Gate 10's forward check
+    has nothing to say about it either way, so it cannot double-report or
+    contradict the placement gate's (verify-actions-no-gate-scripts.py) own
+    failure for the same file (research.md D6, fourth bullet; spec.md Edge
+    Case; quickstart.md §4)."""
+    root = tempfile.mkdtemp(prefix="wc-gate-wiring-")
+    try:
+        path = ".github/actions/widget/run-tests.sh"
+        _write(root, path, "echo hi\n")
+        _write(root, ".github/workflows/other.yml",
+               "on: push\njobs:\n  a:\n    steps:\n"
+               f"      - run: {path}\n")
+        wiring, failures = check_forward_wiring(root)
+        ok = path not in wiring and not any(path in f for f in failures)
+        return ok, f"got wiring keys={list(wiring)!r} failures={failures!r}"
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def _fixture_missing_actions_path():
+    """A run: block naming a .github/actions/ script path with no file on
+    disk is reported as missing, the same way a missing .github/scripts/
+    path already is (FR-004, research.md D6 second bullet)."""
+    root = tempfile.mkdtemp(prefix="wc-gate-wiring-")
+    try:
+        path = ".github/actions/widget/missing.sh"
+        _write(root, ".github/workflows/fake.yml",
+               "on: push\njobs:\n  a:\n    steps:\n"
+               f"      - run: ./{path}\n")
+        failures = check_reverse_wiring(root)
+        ok = any(path in f and "does not exist" in f for f in failures)
+        return ok, f"got {failures!r}"
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def _fixture_actions_self_checkout_dedup():
+    """A pair of run: blocks -- one ./.github/actions/_shared/x.sh, one
+    ./.wing-commander-pipeline/.github/actions/_shared/x.sh -- with the same
+    file existing once on disk report as ONE path, not a spurious second
+    entry (FR-013, research.md D6 third bullet)."""
+    root = tempfile.mkdtemp(prefix="wc-gate-wiring-")
+    try:
+        _write(root, ".github/actions/_shared/x.sh", "echo hi\n")
+        _write(root, ".github/workflows/fake.yml",
+               "on: push\njobs:\n  a:\n    steps:\n"
+               "      - run: |\n"
+               "          ./.github/actions/_shared/x.sh\n"
+               "          ./.wing-commander-pipeline/.github/actions/_shared/x.sh\n")
+        refs = referenced_actions_script_paths(root)
+        ok = list(refs.keys()) == [".github/actions/_shared/x.sh"]
+        return ok, f"got {refs!r}"
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+# Each entry: (name, fixture_fn), fixture_fn() -> (ok: bool, detail: str).
+# A fixture builds and tears down its own tempdir, so a FAILing fixture never
+# leaves scratch state for the next one to trip over.
+FIXTURES = [
+    ("an unwired composite harness reports as orphaned",
+     _fixture_orphaned_composite_harness),
+    ("two run-tests.sh harnesses under different directories get distinct "
+     "gate_label identities", _fixture_distinct_gate_labels),
+    ("a run-tests.sh under .github/actions/ is never Gate 10's forward-check "
+     "subject", _fixture_actions_harness_not_gate10_subject),
+    ("a missing .github/actions/ path named by a run: block is reported",
+     _fixture_missing_actions_path),
+    ("the self-checkout .github/actions/ prefix dedups to one path",
+     _fixture_actions_self_checkout_dedup),
+]
+
+
+def self_test():
+    bad = 0
+    for name, fixture_fn in FIXTURES:
+        ok, detail = fixture_fn()
+        if ok:
+            print(f"[ok] {name}")
+        else:
+            bad += 1
+            print(f"[FAIL] {name}: {detail}")
+    print(f"verify-gate-wiring self-test: {len(FIXTURES) - bad}/{len(FIXTURES)} "
+          f"fixtures behaved as specified.")
+    return 1 if bad else 0
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    parser = argparse.ArgumentParser(
+        description="Assert every check in .github/scripts is wired to a "
+                    "workflow, and every wire lands.")
+    parser.add_argument("--self-test", action="store_true")
+    cli_args = parser.parse_args()
+    sys.exit(self_test() if cli_args.self_test else main())

@@ -1,0 +1,12 @@
+{
+  "snapshot": {
+    "headRefOid": "aaaa111",
+    "statusCheckRollup": [
+      {"name": "lint", "workflowName": "lint · workflows", "status": "COMPLETED", "conclusion": "SUCCESS"}
+    ],
+    "mergeable": "MERGEABLE"
+  },
+  "review_gate": null,
+  "kill_switch_paused": true,
+  "expected": {"ready": false, "unmet_reason": "kill_switch_clear"}
+}
