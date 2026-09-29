@@ -88,6 +88,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 
@@ -1644,6 +1645,148 @@ def check_583(extract_script, round_script, compose_script, oos_script, file_scr
     return failures
 
 
+# --- T077: `select`'s fork/cross-repo and non-default-base exclusion ------
+#
+# FR-005/security (maintainer review 5355876805 F5): a fork PR's
+# `headRefName` is not a trust boundary -- a fork branch sharing this
+# repository's own `spec/NNN-...` name would otherwise have origin's own
+# branch of that name reviewed and passed while GitHub renders the status
+# against the fork's own SHA. Run the SHIPPED "Fetch open PRs..." step
+# (via wc_shell_harness.run_step against a real git clone, not a copy of
+# it) so a regression in the shell `[ ... ] || continue` guards is caught
+# against the real script, not a re-derivation of it.
+
+LIFECYCLE_SELECT_STEP = "Fetch open PRs and select the next lifecycle review candidate"
+SELECT_SPEC_SLUG = "999-select-harness"
+SELECT_ISSUE = "77"
+
+SELECT_GH_STUB = """#!/usr/bin/env bash
+# Mimics `gh ... --jq '.[] | @base64'`: the real gh CLI applies --jq itself,
+# so the workflow step never sees raw JSON on stdout -- this stub must
+# apply the same transform, not merely echo the canned array.
+if [ "$1 $2" = "pr list" ]; then
+  cat <<'JSON' | jq -c '.[] | @base64' -r
+[
+  {{"number": 1, "headRefName": "spec/{slug}", "headRefOid": "cross0001", "createdAt": "2026-01-01T00:00:00Z", "isCrossRepository": true, "baseRefName": "main"}},
+  {{"number": 2, "headRefName": "spec/{slug}", "headRefOid": "base00002", "createdAt": "2026-01-02T00:00:00Z", "isCrossRepository": false, "baseRefName": "develop"}},
+  {{"number": 3, "headRefName": "spec/{slug}", "headRefOid": "valid0003", "createdAt": "2026-01-03T00:00:00Z", "isCrossRepository": false, "baseRefName": "main"}}
+]
+JSON
+  exit 0
+fi
+if [ "$1 $2" = "issue view" ]; then
+  echo '[]'
+  exit 0
+fi
+exit 1
+""".format(slug=SELECT_SPEC_SLUG)
+
+
+def _make_select_repo(root):
+    """A real git repo (bare remote + clone) with a spec/999-select-harness
+    branch carrying spec-meta.json at stage: review, issue: SELECT_ISSUE --
+    the one candidate branch every PR fixture in SELECT_GH_STUB names."""
+    work = tempfile.mkdtemp(dir=root)
+    remote = os.path.join(work, "remote.git")
+    repo = os.path.join(work, "repo")
+    spec_dir = "specs/{0}".format(SELECT_SPEC_SLUG)
+    meta = json.dumps({"spec_dir": spec_dir, "issue": int(SELECT_ISSUE), "stage": "review"})
+    setup = """
+git init --bare -q -b main '{remote}'
+git clone -q '{remote}' '{repo}'
+cd '{repo}'
+git config user.email harness@example.invalid
+git config user.name harness
+mkdir -p '{spec_dir}'
+printf '%s\\n' '{meta}' > '{spec_dir}/spec-meta.json'
+git add -A
+git commit -q -m seed
+git branch -q spec/{slug} main
+git push -q origin main spec/{slug}
+""".format(remote=remote, repo=repo, spec_dir=spec_dir, meta=meta, slug=SELECT_SPEC_SLUG)
+    proc = _sh_select(setup, work)
+    if proc.returncode != 0:
+        sys.exit("::error::verify-reviewer-fail-closed: select harness could not "
+                 "seed a git workspace: {0}{1}".format(proc.stdout, proc.stderr))
+    return repo
+
+
+def _sh_select(script, cwd):
+    path = os.path.join(cwd, "_setup.sh")
+    with open(path, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(script)
+    return subprocess.run([BASH, "-e", path.replace("\\", "/")], cwd=cwd,
+                          capture_output=True, text=True, encoding="utf-8",
+                          errors="replace")
+
+
+def _stage_select_trusted_copy(repo):
+    """Copies the real _shared/read-spec-meta.sh and
+    wc_lifecycle_review_marker.py (+ its board_item_marker.py dependency)
+    into .wc-pristine-repo -- the step under test resolves both from
+    there, never the workspace root (T073)."""
+    actions_dir = os.path.join(repo, ".wc-pristine-repo", ".github", "actions", "_shared")
+    scripts_dir = os.path.join(repo, ".wc-pristine-repo", ".github", "scripts")
+    os.makedirs(actions_dir, exist_ok=True)
+    os.makedirs(scripts_dir, exist_ok=True)
+    shutil.copyfile(
+        os.path.join(".github", "actions", "_shared", "read-spec-meta.sh"),
+        os.path.join(actions_dir, "read-spec-meta.sh"))
+    for name in ("wc_lifecycle_review_marker.py", "board_item_marker.py"):
+        shutil.copyfile(os.path.join(".github", "scripts", name),
+                        os.path.join(scripts_dir, name))
+
+
+def run_lifecycle_select(select_script, tmproot):
+    repo = _make_select_repo(tmproot)
+    _stage_select_trusted_copy(repo)
+    bindir = os.path.join(tmproot, "select-bin")
+    os.makedirs(bindir, exist_ok=True)
+    with open(os.path.join(bindir, "gh"), "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(SELECT_GH_STUB)
+    os.chmod(os.path.join(bindir, "gh"), 0o755)
+    runner_temp = tempfile.mkdtemp(dir=tmproot)
+    env = {"GH_TOKEN": "x", "BOT_LOGIN": "wing-commander-bot[bot]",
+          "GITHUB_REPOSITORY": "example/example",
+          "PATH": bindir + os.pathsep + os.environ.get("PATH", "")}
+    rc, out, outputs, _summary = run_step(BASH, select_script, repo, env, runner_temp)
+    return rc, out, outputs
+
+
+def check_lifecycle_select_excludes_forks(select_script, tmproot):
+    rc, out, outputs = run_lifecycle_select(select_script, tmproot)
+    if rc != 0:
+        return ["lifecycle select: step exited {0}: {1}".format(rc, out)]
+    failures = []
+    if outputs.get("pr-number") != "3":
+        failures.append("lifecycle select: pr-number={0!r}, expected '3' (the "
+                        "cross-repo PR #1 and the non-default-base PR #2 must "
+                        "both be skipped)".format(outputs.get("pr-number")))
+    if outputs.get("head-sha") != "valid0003":
+        failures.append("lifecycle select: head-sha={0!r}, expected "
+                        "'valid0003'".format(outputs.get("head-sha")))
+    if not failures:
+        print("[ok] #T077 lifecycle select: cross-repo PR #1 and non-default-base "
+              "PR #2 both skipped; same-repo/default-base PR #3 selected")
+    return failures
+
+
+def check_lifecycle_select_excludes_forks_mutation(select_script, tmproot):
+    """The cross-repo guard removed: PR #1 (a fork) would then be selected
+    instead of PR #3, proving this check exercises the real guard."""
+    marker = '[ "$is_cross_repo" = "false" ] || continue\n'
+    if select_script.count(marker) != 1:
+        return ["lifecycle select mutation: expected one {0!r} in the select "
+                "step; update this harness.".format(marker)]
+    mutated = select_script.replace(marker, "", 1)
+    rc, out, outputs = run_lifecycle_select(mutated, tmproot)
+    if rc == 0 and outputs.get("pr-number") == "3":
+        return ["mutation 'lifecycle select cross-repo guard removed' was NOT caught"]
+    print("note: mutation 'lifecycle select cross-repo guard removed' confirmed "
+          "caught (rc={0}, pr-number={1!r}).".format(rc, outputs.get("pr-number")))
+    return []
+
+
 def main():
     global BASH
     use_utf8_stdout()
@@ -1689,10 +1832,12 @@ def main():
     lifecycle_partition_step = find_step(LIFECYCLE_WORKFLOW, LIFECYCLE_PARTITION_STEP)
     lifecycle_merge_step = find_step(LIFECYCLE_WORKFLOW, LIFECYCLE_MERGE_STEP)
     lifecycle_announce_step = find_step(LIFECYCLE_WORKFLOW, LIFECYCLE_ANNOUNCE_STEP)
+    lifecycle_select_step = find_step(LIFECYCLE_WORKFLOW, LIFECYCLE_SELECT_STEP)
     for step_name, step in ((LIFECYCLE_EXTRACT_STEP, lifecycle_extract_step),
                             (LIFECYCLE_PARTITION_STEP, lifecycle_partition_step),
                             (LIFECYCLE_MERGE_STEP, lifecycle_merge_step),
-                            (LIFECYCLE_ANNOUNCE_STEP, lifecycle_announce_step)):
+                            (LIFECYCLE_ANNOUNCE_STEP, lifecycle_announce_step),
+                            (LIFECYCLE_SELECT_STEP, lifecycle_select_step)):
         if step is None:
             sys.exit(f"::error file={LIFECYCLE_WORKFLOW}::step {step_name!r} not found.")
         if "${{" in str(step["run"]):
@@ -1703,6 +1848,7 @@ def main():
     lifecycle_partition_script = str(lifecycle_partition_step["run"])
     lifecycle_merge_script = str(lifecycle_merge_step["run"])
     lifecycle_announce_script = str(lifecycle_announce_step["run"])
+    lifecycle_select_script = str(lifecycle_select_step["run"])
 
     tmproot = tempfile.mkdtemp()
     try:
@@ -1722,6 +1868,8 @@ def main():
         failures += check_lifecycle_merge_classification_mutation(lifecycle_merge_script, tmproot)
         failures += check_lifecycle_announce(lifecycle_announce_script, tmproot)
         failures += check_lifecycle_announce_mutation(lifecycle_announce_script, tmproot)
+        failures += check_lifecycle_select_excludes_forks(lifecycle_select_script, tmproot)
+        failures += check_lifecycle_select_excludes_forks_mutation(lifecycle_select_script, tmproot)
     finally:
         shutil.rmtree(tmproot, ignore_errors=True)
 
