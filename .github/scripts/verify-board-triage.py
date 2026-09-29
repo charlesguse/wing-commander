@@ -218,6 +218,10 @@ PIN_CASES = {
     # #672 review: an action pinned twice compares as the set of its refs.
     "pins-duplicate-reordered": "none",
     "pins-duplicate-one-bumped": "divergent",
+    # #678: main adding a further pin the run never used is not bump
+    # evidence; only losing a ref the run actually relied on is.
+    "pins-main-adds-pin": "none",
+    "pins-main-replaces-pin": "divergent",
 }
 EXPECTED = dict.fromkeys(list(TRIAGE_CASES) + list(PIN_CASES))
 
