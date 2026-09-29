@@ -673,8 +673,8 @@ jobs:
               if DISPOSITION_LABEL not in labels:
                   continue
               number = issue.get("number")
-              pair = read_marker_with_timestamp(
-                  comments_by_issue.get(str(number)) or [], os.environ["BOT_LOGIN"])
+              comments = comments_by_issue.get(str(number)) or []
+              pair = read_marker_with_timestamp(comments, os.environ["BOT_LOGIN"])
               if pair is None:
                   continue
               _created_at, marker = pair

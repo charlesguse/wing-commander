@@ -12,10 +12,14 @@ def classify_issue(issue: dict, labeled_events: list[dict]) -> str:
                      --paginate --jq '.[] | select(.event=="labeled")'
     """
 
-def is_excluded(issue: dict) -> tuple[bool, str | None]:
+def is_excluded(issue: dict, spec_request_state_by_number: dict[int, str] | None = None) -> tuple[bool, str | None]:
     """FR-010: True + reason when the issue is closed, carries a
     disposition:* settled marker, carries board:stalled, or carries any
-    stage:* / spec:* label."""
+    stage:* / spec:* label. spec 108 carve-out: an OPEN issue whose ONLY
+    exclusion reason is disposition:duplicate is NOT excluded when its
+    newest board-item marker names a spec-request that
+    spec_request_state_by_number resolves CLOSED (contracts/
+    eligibility-and-readmission-delta.md)."""
 
 def select(open_issues: list[dict], labeled_events_by_issue: dict) -> int | None:
     """Oldest (by createdAt asc) issue where classify_issue() != "ineligible"
@@ -45,6 +49,12 @@ Excluded regardless of eligibility: `state == closed`; any
 `board:stalled`; any `stage:*` or `spec:*` label (the feature lifecycle
 already owns it, including this feature's own lifecycle issue #408 on its
 first run).
+
+The one exception (spec 108, contracts/eligibility-and-readmission-delta.md):
+an OPEN issue whose only exclusion reason is `disposition:duplicate` is
+re-admitted once its linked spec-request (named by the issue's own newest
+board-item marker) resolves `CLOSED` — a maintainer's reopen while that
+spec-request is still open does NOT re-admit it.
 
 ## Gate: `verify-board-eligibility.py`
 

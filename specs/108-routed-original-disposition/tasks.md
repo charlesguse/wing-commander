@@ -500,7 +500,7 @@ matching any of T019's bad fixtures fails by name.
 reads, per CLAUDE.md, so these remain live and are fixed like code) and the
 final integration check.
 
-- [ ] T020 [P] In `docs/setup.md`'s label table (~line 172), add a new row
+- [X] T020 [P] In `docs/setup.md`'s label table (~line 172), add a new row
       for `disposition:duplicate` immediately after the existing
       `disposition:false-positive` row, describing it as applied by the
       board loop at spec-request time, re-admitted only by reopening the
@@ -513,7 +513,7 @@ final integration check.
       (FR-006)." Add a matching `gh label create disposition:duplicate
       ...` line to the quick-script block (~line 199), matching T002's
       chosen color/description.
-- [ ] T021 [P] In
+- [X] T021 [P] In
       `specs/057-autonomous-board-loop/contracts/eligibility-and-selection.md`:
       update the `is_excluded()` code-shape block (lines 15–18) to add the
       `spec_request_state_by_number` parameter and one sentence describing
@@ -523,7 +523,7 @@ final integration check.
       resolves closed. This is a live contract (CLAUDE.md:
       `verify-board-eligibility.py` reads the behaviour it describes), so
       this edit is required, not historical-record cleanup.
-- [ ] T022 [P] In
+- [X] T022 [P] In
       `specs/057-autonomous-board-loop/contracts/labels-and-cross-links.md`:
       edit the `board:stalled` row's "Cleared by" column (the "sole
       condition FR-010 reads for re-eligibility" phrase) the same way as
@@ -532,7 +532,7 @@ final integration check.
       never programmatically). Add a new row to the cross-links table:
       `| Reciprocal spec-request link | Filed for the routed original |`
       matching T004's chosen phrase exactly.
-- [ ] T023 Run `python .github/scripts/run-local-gates.py` (the full
+- [X] T023 Run `python .github/scripts/run-local-gates.py` (the full
       PR-time gate suite, per CLAUDE.md "Before pushing") and confirm every
       gate — including the newly registered Gate 125/126 and the extended
       Gate 93 — passes on the shipped tree.
