@@ -158,6 +158,16 @@ remaining_action_wrapper_set() {
 }
 
 # ---- container_image_pin (auto-release only) ---------------------------
+# The "read a repository's WING_COMMANDER_CONTAINER_IMAGE variable" query is
+# one home (CLAUDE.md): this_repo_container_image()'s own local-repository
+# fallback, check_container_image_pin() below, and auto-release.yml's
+# container-evidence-config step (specs/067-e2e-container-image-evidence,
+# maintainer feedback on PR #628) all call this instead of each re-deriving
+# the `gh variable list` query. stdout carries the value; stderr carries
+# whatever `gh` wrote, for a caller that needs to classify a failure.
+read_repo_container_image_variable() { # read_repo_container_image_variable OWNER/NAME
+  gh variable list --repo "$1" --json name,value -q '.[] | select(.name=="WING_COMMANDER_CONTAINER_IMAGE") | .value'
+}
 # "This repository's own pinned value" is read once (research.md D4) so the
 # two cannot drift into a second literal. `WC_SOURCE_CONTAINER_IMAGE`, when
 # SET (even to an empty string -- FR-017: no pinned image is itself a valid
@@ -177,19 +187,19 @@ this_repo_container_image() {
   if [ -z "$self" ]; then
     self="$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null)" || return 1
   fi
-  gh variable list --repo "$self" --json name,value -q '.[] | select(.name=="WING_COMMANDER_CONTAINER_IMAGE") | .value' 2>/dev/null
+  read_repo_container_image_variable "$self" 2>/dev/null
 }
 check_container_image_pin() { # check_container_image_pin OWNER NAME
   local owner="$1" name="$2" want got rc err
   want="$(this_repo_container_image)" || return 1
-  got="$(gh variable list --repo "$owner/$name" --json name,value -q '.[] | select(.name=="WING_COMMANDER_CONTAINER_IMAGE") | .value' 2>/dev/null)"; rc=$?
+  got="$(read_repo_container_image_variable "$owner/$name" 2>/dev/null)"; rc=$?
   if [ "$rc" -ne 0 ]; then
     # Re-run once, capturing stderr alone, purely to classify the failure
     # (T047): folding stderr into $got via `2>&1` on the first attempt let a
     # successful call's incidental stderr noise corrupt the compared value
     # into a false not-ready mismatch, so the value used for the comparison
     # above is always stdout-only.
-    err="$(gh variable list --repo "$owner/$name" --json name,value -q '.[] | select(.name=="WING_COMMANDER_CONTAINER_IMAGE") | .value' 2>&1 1>/dev/null)"
+    err="$(read_repo_container_image_variable "$owner/$name" 2>&1 1>/dev/null)"
     gh_permission_denied "$err" && CONTAINER_IMAGE_PIN_NOT_CHECKABLE=true
     return 1
   fi

@@ -54,21 +54,22 @@ as optional.
    `mode: "container"`, and `report`'s failure body identifies the leg as
    container-mode (FR-007) — and `dispatch-release` does not run (SC-002).
 
-## Scenario C — an unset image reference is a known gap, not yet a failure (User Story 2, Acceptance Scenario 1; FR-004 accepted gap, #390)
+## Scenario C — an unset image reference now fails closed (User Story 2, Acceptance Scenario 1; FR-004, #390 — superseded by `specs/067-e2e-container-image-evidence`)
 
-This scenario documents what the verification does NOT catch today; it is
-not a pass/fail check. Do not run it expecting `fail-infra`.
+This scenario originally documented an accepted gap: the verification did
+not catch an unset image reference on a container-mode turn, and the run
+reported a plain `pass` claiming an image was resolved that never was.
+`specs/067-e2e-container-image-evidence` closes that gap with two new
+evidence reads (see that feature's `contracts/container-evidence-
+outcomes.md` for the exact vocabulary); this scenario is retained here
+only as the historical record of what FR-004 originally accepted.
 
 1. Unset `WING_COMMANDER_CONTAINER_IMAGE` on the test repository.
 2. Dispatch `auto-release.yml` on a day whose mode resolves to `container`.
-3. **Observed today**: the wrappers fall back to hosted runners,
-   `verify-image-prerequisites` succeeds vacuously, the chain completes, and
-   the run reports `outcome: "pass"`, `mode: "container"` with
-   `container_image_configured: true` -- indistinguishable from a real
-   container run, and claiming an image was resolved that never was. Closing
-   this needs read access to the test
-   repository's variable or Actions run data (#390); once it exists, this
-   scenario becomes `outcome: "fail-infra"` naming the unset variable.
+3. **Expected now**: `outcome: "fail-infra"` naming the unset variable
+   (`container image not configured on the test repository`), `mode:
+   "container"`, `container_image_configured: false`, and no kickoff issue
+   created (specs/067-e2e-container-image-evidence FR-002, FR-011).
 
 ## Scenario D — pausing the container leg (User Story 3, Acceptance Scenario 1)
 

@@ -73,6 +73,12 @@ def _rfc(delta_days):
 #     ($STUB_PRS_TRANSPORT_FAIL=1 -> exit 1, no output)
 #   gh api -i .../actions/permissions                            D5 Administration probe -> $STUB_ADMIN_STATUS
 #     ($STUB_ADMIN_TRANSPORT_FAIL=1 -> exit 1, no output)
+#   gh api -i .../actions/variables/WING_COMMANDER_CONTAINER_IMAGE
+#     specs/067 FR-003 Variables:read probe (container mode only) -> $STUB_VARIABLES_STATUS
+#     ($STUB_VARIABLES_TRANSPORT_FAIL=1 -> exit 1, no output)
+#   gh api -i .../actions/runs?per_page=1                         specs/067 FR-003 Actions:read
+#     probe (container mode only) -> $STUB_ACTIONS_STATUS
+#     ($STUB_ACTIONS_TRANSPORT_FAIL=1 -> exit 1, no output)
 #   gh api user/repos?... --paginate --jq .full_name             containment (both shapes) -> $STUB_REPOS
 #     ($STUB_REPOS_TRANSPORT_FAIL=1 -> exit 1, no output -- research.md D4)
 STUB_GH = r'''#!/usr/bin/env bash
@@ -110,6 +116,16 @@ if [ "$1" = "api" ] && [ "$2" = "-i" ]; then
     */actions/permissions)
       if [ "${STUB_ADMIN_TRANSPORT_FAIL-0}" = "1" ]; then exit 1; fi
       printf 'HTTP/2.0 %s Status\r\n\r\n' "${STUB_ADMIN_STATUS:-403}"
+      exit 0
+      ;;
+    */actions/variables/*)
+      if [ "${STUB_VARIABLES_TRANSPORT_FAIL-0}" = "1" ]; then exit 1; fi
+      printf 'HTTP/2.0 %s Status\r\n\r\n' "${STUB_VARIABLES_STATUS:-200}"
+      exit 0
+      ;;
+    */actions/runs\?*)
+      if [ "${STUB_ACTIONS_TRANSPORT_FAIL-0}" = "1" ]; then exit 1; fi
+      printf 'HTTP/2.0 %s Status\r\n\r\n' "${STUB_ACTIONS_STATUS:-200}"
       exit 0
       ;;
   esac
@@ -236,6 +252,27 @@ SCENARIOS = [
     # A correctly scoped fine-grained credential passes exactly like a
     # classic one -- same containment mechanism, different shape.
     ("fine-grained: exactly the test repository passes", FG, "true", None),
+
+    # specs/067-e2e-container-image-evidence FR-003: a container-mode turn
+    # additionally probes Variables:read and Actions:read for the
+    # fine-grained shape -- gated on MODE, so a default-runner turn (every
+    # scenario above) never calls these two endpoints at all.
+    ("fine-grained, container mode: Variables/Actions read granted, passes",
+     {**FG, "MODE": "container"}, "true", None),
+    ("fine-grained, default-runner mode: Variables/Actions are never probed",
+     {**FG, "STUB_VARIABLES_STATUS": "403", "STUB_ACTIONS_STATUS": "403"},
+     "true", None),
+    ("fine-grained, container mode: Variables read rejected",
+     {**FG, "MODE": "container", "STUB_VARIABLES_STATUS": "403"}, "false",
+     ["Variables and Actions read, per specs/067-e2e-container-image-evidence FR-003",
+      "variables: 403"]),
+    ("fine-grained, container mode: Actions read rejected",
+     {**FG, "MODE": "container", "STUB_ACTIONS_STATUS": "403"}, "false",
+     ["Variables and Actions read, per specs/067-e2e-container-image-evidence FR-003",
+      "actions: 403"]),
+    ("fine-grained, container mode: the Variables/Actions probe fails outright",
+     {**FG, "MODE": "container", "STUB_VARIABLES_TRANSPORT_FAIL": "1"}, "false",
+     ["a permission probe call failed outright"]),
 
     # data-model.md rows #6/#7 under the fine-grained shape (User Story 3):
     # over-scoped fails naming the extra repository; a `gh api` call that
@@ -404,6 +441,15 @@ def mut_expiry_check_dropped(script):
     return script.replace(old, new)
 
 
+def mut_container_permission_probe_removed(script):
+    """specs/067-e2e-container-image-evidence FR-003: a fine-grained
+    credential missing Variables:read or Actions:read no longer fails the
+    precheck on a container-mode turn."""
+    old = 'if [ "$variables_status" = "403" ] || [ "$actions_status" = "403" ]; then'
+    new = 'if [ "$variables_status" = "999" ] || [ "$actions_status" = "999" ]; then'
+    return script.replace(old, new)
+
+
 def mut_containment_exit_status_swallowed(script):
     """research.md D4 reverted: the `gh api` call's own exit status folded
     back into the same `2>/dev/null` swallow into `sort -u`, so a call that
@@ -434,6 +480,8 @@ MUTATIONS = [
      mut_d5_grant_accepted),
     ("the expiry check dropped -- an expired credential no longer fails",
      mut_expiry_check_dropped),
+    ("specs/067 FR-003: a Variables/Actions read rejection no longer fails "
+     "the container-mode precheck", mut_container_permission_probe_removed),
     ("research.md D4 reverted: a gh api failure folded back into 'reached 0 repositories'",
      mut_containment_exit_status_swallowed),
 ]
