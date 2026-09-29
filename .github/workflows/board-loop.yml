@@ -1421,7 +1421,12 @@ jobs:
             # route.
             *) marker_step="route" ;;
           esac
-          marker="$(python3 .github/scripts/board_item_marker.py --step "$marker_step")"
+          # #604: a stalled marker (the handover arm) adds board:stalled
+          # first and fails the step when it cannot -- see board_item_marker.py.
+          stall_args=()
+          [ "$marker_step" = "stalled" ] && stall_args=(--issue "$ISSUE_NUMBER" --add-label "board:stalled")
+          marker="$(python3 .github/scripts/board_item_marker.py --step "$marker_step" "${stall_args[@]}")" \
+            || { echo "::error::board-loop triage ($outcome): could not render the step=$marker_step marker for issue #$ISSUE_NUMBER -- nothing is posted, so a later run re-triages it (#604)."; exit 1; }
 
           case "$outcome" in
             closed)
@@ -1441,7 +1446,6 @@ jobs:
                 "$evidence" "$marker")"
               [ -n "$DIRECTED_ATTRIBUTION" ] && body="$(printf '%s\n\n%s' "$DIRECTED_ATTRIBUTION" "$body")"
               gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$body"
-              gh issue edit "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --add-label "board:stalled"
               ;;
             proceed)
               # An unsupported close proposal is the agent's own reasoning
@@ -1898,9 +1902,10 @@ jobs:
           [[ "$spec_url" =~ ^https?://[^[:space:]]+/issues/[0-9]+$ ]] || { echo "::error::board-loop route (spec verdict): creating the spec-request returned no issue URL (got '$spec_url') -- no spec-request was filed; the issue is left without board:stalled so a later run retries it."; exit 1; }
           echo "spec-url=$spec_url" >> "$GITHUB_OUTPUT"
 
-          marker="$(python3 .github/scripts/board_item_marker.py --step stalled)"
+          # #604: board:stalled before the stalled marker -- see board_item_marker.py.
+          marker="$(python3 .github/scripts/board_item_marker.py --step stalled --issue "$ISSUE_NUMBER" --add-label "board:stalled")" \
+            || { echo "::error::board-loop route (spec verdict): spec-request $spec_url was filed but board:stalled could not be added to issue #$ISSUE_NUMBER -- no stalled marker is posted; a later run re-routes it and may file a second spec-request (#527, #604)."; exit 1; }
           gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Route %s this issue to a spec request (%s) -- a fix-shaped PR was never opened.\n\n%s%s' "$route_verb" "$route_detail" "$marker" "$rationale_comment")"
-          gh issue edit "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --add-label "board:stalled"
 
       # research.md D9: every artifact this loop spins off outside the
       # originating issue is cross-linked through this one composite
@@ -2254,14 +2259,15 @@ jobs:
           FIRST_FAILURE: ${{ steps.gate-suite.outputs.first-failure }}
         run: |
           set -uo pipefail
-          marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step stalled --branch "$FIX_BRANCH" --base-sha "$BASE_SHA")"
+          # #604: board:stalled before the stalled marker -- see board_item_marker.py.
+          marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step stalled --branch "$FIX_BRANCH" --base-sha "$BASE_SHA" --issue "$ISSUE_NUMBER" --add-label "board:stalled")" \
+            || { echo "::error::board-loop fix (gate suite red): board:stalled could not be added to issue #$ISSUE_NUMBER -- no stalled marker is posted (#604)."; exit 1; }
           # #580: the failing line comes from the gate suite on the fixer
           # agent's own branch, so it is posted inside a fence
           # (fenced_section(), #562's one fencing helper).
           failure="$(python3 -I -c "import os, sys; sys.path.insert(0, os.path.join(os.environ['RUNNER_TEMP'], 'wc-pristine', 'scripts')); from board_spec_request_body import fenced_section; print(fenced_section('First failing gate (gate suite output, shown as text):', os.environ['FIRST_FAILURE'], 4000))")" \
             || failure="(the failing gate could not be rendered)"
           gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'The fixer'"'"'s branch failed the local gate suite before any push -- nothing was pushed, no PR was opened:\n\n%s\n\n%s' "$failure" "$marker")"
-          gh issue edit "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --add-label "board:stalled"
 
       - name: Re-check kill switch and stop requests before any durable action
         id: killswitch-recheck
@@ -2455,14 +2461,11 @@ jobs:
           echo "spec-url=$spec_url" >> "$GITHUB_OUTPUT"
           echo "measured=$measured" >> "$GITHUB_OUTPUT"
 
-          # #530: board:stalled goes on BEFORE the stalled marker. A stalled
-          # marker (pr=None) with no label would let select re-admit the
-          # item and resume adopt the PR as step=review; failing here
-          # instead leaves the breach marker newest, and readiness retries
-          # (reusing the spec-request just filed).
-          gh issue edit "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --add-label "board:stalled" \
+          # #530/#604: board:stalled before the stalled marker -- see
+          # board_item_marker.py. A failed add leaves the breach marker
+          # newest, and readiness retries (reusing the spec-request just filed).
+          marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step stalled --issue "$ISSUE_NUMBER" --add-label "board:stalled")" \
             || { echo "::error::board-loop fix (post-push breach): spec-request $spec_url was filed but board:stalled could not be added to issue #$ISSUE_NUMBER -- the breach marker stays newest, so a later run retries through readiness (#530)."; exit 1; }
-          marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step stalled)"
           gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Post-push backstop breach on %s (measured=%s) -- the branch/PR are left open, unmerged; a spec-request now covers finishing this at the right size.\n\n%s' "$PR_URL" "$measured" "$marker")"
 
       - name: Cross-link the post-push-breach spec-request onto the originating issue
@@ -3298,6 +3301,8 @@ jobs:
           DROPPED_COUNT: ${{ steps.extract.outputs.dropped-count }}
         run: |
           set -uo pipefail
+          # #604: every stall below adds board:stalled before its marker --
+          # see board_item_marker.py.
           if [ "$OUTCOME" = "converged" ]; then
             marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step readiness --pr "$PR_NUMBER" --branch "$BRANCH")"
             gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Review round %s converged -- zero open in-scope findings on PR #%s. Proceeding to readiness.\n\n%s' "$ROUND" "$PR_NUMBER" "$marker")"
@@ -3306,22 +3311,22 @@ jobs:
             # round never produced a trustworthy findings list at all, so
             # it must not be described as "findings still open" (there may
             # be none, or the reviewer may not have run to completion).
-            marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step stalled)"
+            marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step stalled --issue "$ISSUE_NUMBER" --add-label "board:stalled")" \
+              || { echo "::error::board-loop review ($STALL_REASON): board:stalled could not be added to issue #$ISSUE_NUMBER -- no stalled marker is posted (#604)."; exit 1; }
             gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Review round %s on PR #%s could not be read -- the reviewer did not return a parseable findings block. Treating this as inconclusive, never as a clean review. The PR is left open, unmerged, pending a maintainer look. Removing board:stalled is the sole re-eligibility condition.\n\n%s' "$ROUND" "$PR_NUMBER" "$marker")"
-            gh issue edit "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --add-label "board:stalled"
           elif [ "$STALL_REASON" = "malformed-findings" ]; then
             # #583: see "Decide the round outcome".
-            marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step stalled)"
+            marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step stalled --issue "$ISSUE_NUMBER" --add-label "board:stalled")" \
+              || { echo "::error::board-loop review ($STALL_REASON): board:stalled could not be added to issue #$ISSUE_NUMBER -- no stalled marker is posted (#604)."; exit 1; }
             gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Review round %s on PR #%s returned no valid in-scope finding, but dropped %s malformed finding(s) that may have been in scope. Treating this as inconclusive, never as a clean review. The PR is left open, unmerged, pending a maintainer look. Removing board:stalled is the sole re-eligibility condition.\n\n%s' "$ROUND" "$PR_NUMBER" "${DROPPED_COUNT:-an unknown number of}" "$marker")"
-            gh issue edit "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --add-label "board:stalled"
           else
             # #580: the titles are the reviewer agent's own text -- fenced,
             # as in "Compose the review body" above.
             remaining="$(python3 -I -c "import json, os, sys; sys.path.insert(0, os.path.join(os.environ['RUNNER_TEMP'], 'wc-pristine', 'scripts')); from board_spec_request_body import fenced_section; f = json.load(open(os.path.join(os.environ['RUNNER_TEMP'], 'board-review-findings.json'), encoding='utf-8')); print(fenced_section('Open in-scope findings (reviewer agent titles, shown as text):', '\n'.join(str(x.get('title', '')) for x in f if x.get('in_scope') is True), 20000))")" \
               || remaining="(the open findings could not be rendered)"
-            marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step stalled)"
+            marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step stalled --issue "$ISSUE_NUMBER" --add-label "board:stalled")" \
+              || { echo "::error::board-loop review ($STALL_REASON): board:stalled could not be added to issue #$ISSUE_NUMBER -- no stalled marker is posted (#604)."; exit 1; }
             gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Review round budget (%s) spent on PR #%s with in-scope findings still open. The PR is left open, unmerged. Removing board:stalled is the sole re-eligibility condition.\n\n%s\n\n%s' "$ROUND_BUDGET" "$PR_NUMBER" "$remaining" "$marker")"
-            gh issue edit "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --add-label "board:stalled"
           fi
 
       - name: Compose tool args (review-fixup)
@@ -3692,6 +3697,14 @@ jobs:
               fh.write("breach-retry={0}\n".format("true" if breach_retry else "false"))
           PYEOF
 
+      # FR-051/FR-052 (#604): this re-check gates EVERY durable action
+      # below -- the ready report, the not-ready report, the spec-request
+      # and its cross-link, board:stalled and every marker -- not only the
+      # `ready` decision. Each such step's `if:` carries
+      # `steps.killswitch-recheck.outputs.paused == 'false'`: `== 'false'`,
+      # not `!= 'true'`, so an empty output (the re-check never ran) acts
+      # on nothing. Gate 97 (verify-board-loop-resume-gating.py) holds
+      # every durable readiness step to that conjunct.
       - name: Re-check kill switch and stop requests
         id: killswitch-recheck
         uses: ./.wc-pristine-repo/.github/actions/wing-commander-board-stop-check
@@ -3701,6 +3714,14 @@ jobs:
           bot-login: ${{ steps.ctx.outputs.bot-slug }}[bot]
           issue-number: ${{ needs.select.outputs.issue-number || inputs.directed-issue }}
           initial-paused: ${{ vars.WING_COMMANDER_BOARD_LOOP_PAUSED == 'true' }}
+
+      # FR-052: the stop point is recorded; nothing durable is written.
+      - name: Record the stand-down (readiness)
+        if: steps.killswitch-recheck.outputs.paused == 'true'
+        env:
+          ISSUE_NUMBER: ${{ needs.select.outputs.issue-number || inputs.directed-issue }}
+        run: |
+          echo "board-loop: kill switch or stop request found immediately before readiness's durable actions on issue #$ISSUE_NUMBER -- standing down without acting (#604)." >> "$GITHUB_STEP_SUMMARY"
 
       # Zero open in-scope findings is trusted from the state machine
       # itself, not re-derived: readiness is entered ONLY when review's own
@@ -3757,7 +3778,7 @@ jobs:
       # worded copy per job -- see triage's own "Act on the verdict" step
       # above in this file.
       - name: Post the readiness report (ready)
-        if: steps.decide.outputs.ready == 'true'
+        if: steps.decide.outputs.ready == 'true' && steps.killswitch-recheck.outputs.paused == 'false'
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           ISSUE_NUMBER: ${{ needs.select.outputs.issue-number || inputs.directed-issue }}
@@ -3791,7 +3812,7 @@ jobs:
       # skipping the report-unmet step below.
       - name: Fetch issue context (readiness-breach spec-request)
         id: issue-context-readiness
-        if: steps.decide.outputs.ready != 'true'
+        if: steps.decide.outputs.ready != 'true' && steps.killswitch-recheck.outputs.paused == 'false'
         continue-on-error: true
         uses: ./.wc-pristine-repo/.github/actions/wing-commander-issue-context
         with:
@@ -3817,7 +3838,7 @@ jobs:
       # bounds the retries themselves).
       - name: Look for a spec-request already filed for this breach
         id: breach-retry-lookup
-        if: steps.decide.outputs.ready != 'true' && steps.final-diff-backstop.outputs.breach-retry == 'true'
+        if: steps.decide.outputs.ready != 'true' && steps.final-diff-backstop.outputs.breach-retry == 'true' && steps.killswitch-recheck.outputs.paused == 'false'
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           ISSUE_NUMBER: ${{ needs.select.outputs.issue-number }}
@@ -3848,7 +3869,7 @@ jobs:
 
       - name: Report the unmet condition (not ready)
         id: report-unmet
-        if: steps.decide.outputs.ready != 'true'
+        if: steps.decide.outputs.ready != 'true' && steps.killswitch-recheck.outputs.paused == 'false'
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           ISSUE_NUMBER: ${{ needs.select.outputs.issue-number || inputs.directed-issue }}
@@ -3895,11 +3916,10 @@ jobs:
             fi
             echo "spec-url=$spec_url" >> "$GITHUB_OUTPUT"
             echo "measured=$MEASURED" >> "$GITHUB_OUTPUT"
-            # #530: label before the stalled marker -- see the fix job's
-            # post-push-breach step.
-            gh issue edit "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --add-label "board:stalled" \
+            # #530/#604: board:stalled before the stalled marker -- see
+            # board_item_marker.py.
+            marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step stalled --issue "$ISSUE_NUMBER" --add-label "board:stalled")" \
               || { echo "::error::board-loop readiness (backstop breach): spec-request $spec_url was filed but board:stalled could not be added to issue #$ISSUE_NUMBER -- no stalled marker is posted, so a later run retries (#530)."; exit 1; }
-            marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step stalled)"
             body="$(printf '%s on PR #%s (measured: %s) -- the branch/PR are left open, unmerged; a spec-request now covers finishing this at the right size.\n\n%s' "$breach_what" "$PR_NUMBER" "$MEASURED" "$marker")"
             [ -n "$DIRECTED_ATTRIBUTION" ] && body="$(printf '%s\n\n%s' "$DIRECTED_ATTRIBUTION" "$body")"
             gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$body"
@@ -3914,7 +3934,7 @@ jobs:
       # same way -- never a second, hand-written link format for the same
       # spec-request-artifact shape.
       - name: Cross-link the readiness-backstop-breach spec-request onto the originating issue
-        if: steps.report-unmet.outputs.spec-url != ''
+        if: steps.report-unmet.outputs.spec-url != '' && steps.killswitch-recheck.outputs.paused == 'false'
         uses: ./.wc-pristine-repo/.github/actions/wing-commander-outstanding-task-item
         with:
           token: ${{ env.WC_BOT_TOKEN }}
