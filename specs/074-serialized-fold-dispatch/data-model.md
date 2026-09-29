@@ -63,7 +63,11 @@ output, or secret (contracts/workflow-changes.md covers those separately).
 - `rounds.<n>.dispatch_claimed_by` — `null` until one run's
   `wing-commander-fold-queue-claim-dispatch` call wins the atomic claim
   (D4); thereafter the winning `run_id`. A second claim attempt for the
-  same round is a no-op read, never a second write.
+  same round is a no-op read, never a second write. A run whose own
+  `folded_items` entries for this round are empty (spec 075 FR-014,
+  reconciled 2026-09-29 — spec.md Clarifications) never attempts this
+  branch at all: its `claim-dispatch` call resolves `outcome: declined`
+  without touching `dispatch_claimed_by`.
 - `rounds.<n>.iteration` / `implement_run_id` — set by the winning claim
   once it reads `spec-meta.json`'s `iteration` and computes `next`;
   `implement_run_id` is filled in once the dispatched run is correlated
@@ -85,7 +89,21 @@ transitions: `enqueued` (`granted_at: null`) → `granted` (`granted_at`
 set, the holder may now attempt the GitHub concurrency group) →
 *removed from `queue`* (released, by the holder's own
 `wing-commander-fold-queue-release` step, or reclaimed by a later waiter
-per research.md D6 if stale).
+per research.md D6 if stale). A granted `dispatch`-kind ticket has one
+more transition available to it: `granted` → `requeued` (`granted_at`
+reset to `null` and the ticket moved to just behind the last remaining
+`act`-kind ticket in the same write) → `granted` again once that ticket
+reaches the head a second time, per the maintainer's 2026-09-29
+reconciliation with spec 075 (spec.md Clarifications). A `dispatch`-kind
+ticket only ever takes this transition when its own run folded at least
+one item of its own for this round (own-folds > 0) *and* the round is not
+yet empty of `act`-kind tickets; a ticket may be requeued more than once
+in principle (a fresh review can land and enqueue a new `act`-kind ticket
+behind it while it waits, which the ticket's own claim attempt discovers
+the next time it reaches the head), but each requeue is itself a bounded,
+self-resolving wait on the same `wing-commander-fold-queue-admit`-class
+poll primitive research.md D6 already covers, never a second, independent
+wait mechanism.
 
 ## Round
 
@@ -95,6 +113,22 @@ successful re-dispatch. A round that never accumulates a `folded_items`
 entry still resolves (its claim fires with an empty `folded_items` list
 and the claiming run posts the existing "nothing folded" reply, unchanged
 from today's `dispatch-once` behavior for that case).
+
+A round may accumulate `folded_items` from more than one run's `act`
+phase (US1's whole point — every run's `act` legs release into the SAME
+round while the queue stays non-empty between them). Per the maintainer's
+2026-09-29 reconciliation with spec 075: the round's one winning dispatch
+is claimed by whichever contributing run reaches an empty, unclaimed round
+last, but ONLY a run whose own `folded_items` entries (filtered by that
+run's own `run_id`) are non-empty may attempt to win the claim at all — a
+run with none of its own declines immediately regardless of what the rest
+of the round contains (spec 075 FR-014). The winning run's reply publishes
+the round's WHOLE accumulated `folded_items`/`not_folded_items` (every
+contributing run's entries, each still bearing its own `run_id`) rather
+than only the winning run's own evidence — the one deliberate widening
+this reconciliation makes to FR-011's published list. Every other run's
+`report-fold-outcomes` report and every declined-dispatch notice stay
+scoped to that run's own items, unaffected (FR-006/spec 075 FR-015).
 
 ## Lost-Cycle Notice (new field on the lifecycle-issue record, not a new artifact)
 

@@ -54,16 +54,31 @@ very next poll.
   as `::error::`, since a ticket only performs real work once granted).
   Appends a completion record to the current round's `folded_items` (when
   `commit_sha` is present) or `not_folded_items` (otherwise).
-- **`claim-dispatch(spec_dir, round, implement_workflow)`**: only valid
-  when the calling ticket (`kind: dispatch`) is at the head. Succeeds
-  (returns `should-dispatch: true`) only if `queue` contains no other
-  `act`-kind ticket for this spec_dir and `rounds[round].dispatch_claimed_by`
-  is `null`; in the same write, sets `dispatch_claimed_by`, reads
-  `spec-meta.json`'s `iteration` (fresh checkout, not cached), sets
-  `rounds[round].iteration`, and enqueues an `implement`-kind ticket at the
-  new queue head. Any other outcome (an `act` ticket still present, or the
-  round already claimed) returns `should-dispatch: false` and mutates
-  nothing.
+- **`claim-dispatch(spec_dir, round, dispatch_token, iteration, own_folds)`**:
+  only valid when the calling ticket (`kind: dispatch`) is at the head.
+  Per the maintainer's 2026-09-29 reconciliation with spec 075 (spec.md
+  Clarifications), resolves to one of three outcomes:
+  - `own_folds == 0` → `outcome: declined`, `should-dispatch: false`,
+    mutates nothing (spec 075 FR-014: a run with no folds of its own never
+    claims, regardless of the round's state).
+  - `own_folds > 0` and another `act`-kind ticket remains anywhere in the
+    queue → `outcome: requeued`, `should-dispatch: false`: in the same
+    write, moves the calling ticket from the queue head to just behind the
+    last `act`-kind ticket remaining, clears its `granted_at`, and grants
+    whatever ticket becomes the new head. The caller awaits its own
+    (unchanged) token again and re-attempts the claim once it is regranted.
+  - `own_folds > 0`, no `act`-kind ticket remains, and
+    `rounds[round].dispatch_claimed_by` is `null` → `outcome: won`,
+    `should-dispatch: true`: sets `dispatch_claimed_by`, reads
+    `spec-meta.json`'s `iteration` (fresh checkout, not cached), sets
+    `rounds[round].iteration`, enqueues an `implement`-kind ticket at the
+    new queue head, and returns the round's WHOLE accumulated
+    `folded_items`/`not_folded_items` (every contributing run's entries,
+    not only the caller's own).
+  - `own_folds > 0` but `rounds[round].dispatch_claimed_by` is already set
+    (another run already won this round) → `outcome: declined`,
+    `should-dispatch: false`, mutates nothing — the existing "exactly one
+    winner" guarantee, unchanged.
 - **`reclaim-stale(spec_dir, stale_token)`**: only valid when
   `stale_token` is at index 0 and its `granted_at` is older than
   `stale-after-minutes` and the caller has independently confirmed (via
