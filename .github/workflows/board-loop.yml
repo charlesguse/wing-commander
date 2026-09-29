@@ -1823,6 +1823,7 @@ jobs:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           ISSUE_NUMBER: ${{ needs.select.outputs.issue-number }}
           ISSUE_CONTEXT_FILE: ${{ steps.issue-context-route.outputs.context-file }}
+          BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}[bot]
         run: |
           set -uo pipefail
           verdict="$(jq -r '.decision.backstop_verdict' "$RUNNER_TEMP/board-route-decision.json")"
@@ -1853,35 +1854,25 @@ jobs:
           # the marker so it can never precede a line code rendered.
           rationale="$(jq -r '.rationale // empty' "$RUNNER_TEMP/board-route-decision.json")"
           rationale_footer=""
-          rationale_comment=""
           if [ -n "$rationale" ]; then
             rationale_line="$(printf 'Route agent'"'"'s rationale: `%s`' "$rationale")"
             rationale_footer="$rationale_line"$'\n'
-            rationale_comment=$'\n\n'"$rationale_line"
           fi
           agent_proposal="$(jq -r '.decision.agent_proposal' "$RUNNER_TEMP/board-route-decision.json")"
           proposal_extracted="$(jq -r '.proposal_extracted' "$RUNNER_TEMP/board-route-decision.json")"
           agent_judged="the route agent judged this spec-shaped"
           no_proposal="route-propose returned no usable proposal, so the route defaulted to spec"
           if [ "$reason" = "agent_proposed_spec" ]; then
-            route_verb="sent"
-            route_detail="$agent_judged; reason: $reason"
             footer_detail="reason=$reason ($agent_judged)"
           elif [ "$reason" = "no_usable_proposal" ]; then
-            route_verb="sent"
-            route_detail="$no_proposal; reason: $reason"
             footer_detail="reason=$reason ($no_proposal)"
           elif [ "$agent_proposal" = "spec" ]; then
             # Spec was never narrowed from fix here, so not "re-routed";
             # the backstop condition that also fired is named alongside.
             origin="$agent_judged"
             [ "$proposal_extracted" = "true" ] || origin="$no_proposal"
-            route_verb="sent"
-            route_detail="$origin; the backstop also flagged: $reason, measured=$measured"
             footer_detail="reason=$reason, measured=$measured ($origin; the backstop also flagged it)"
           else
-            route_verb="re-routed"
-            route_detail="reason: $reason, measured=$measured"
             footer_detail="reason=$reason, measured=$measured"
           fi
           footer="$(printf 'Routed from board-loop.yml (issue #%s): %s.\n%sOriginating issue: %s/%s/issues/%s' \
@@ -1906,10 +1897,17 @@ jobs:
           [[ "$spec_url" =~ ^https?://[^[:space:]]+/issues/[0-9]+$ ]] || { echo "::error::board-loop route (spec verdict): creating the spec-request returned no issue URL (got '$spec_url') -- no spec-request was filed; the issue is left without board:stalled so a later run retries it."; exit 1; }
           echo "spec-url=$spec_url" >> "$GITHUB_OUTPUT"
 
-          # #604: board:stalled before the stalled marker -- see board_item_marker.py.
-          marker="$(python3 .github/scripts/board_item_marker.py --step stalled --issue "$ISSUE_NUMBER" --add-label "board:stalled")" \
-            || { echo "::error::board-loop route (spec verdict): spec-request $spec_url was filed but board:stalled could not be added to issue #$ISSUE_NUMBER -- no stalled marker is posted; a later run re-routes it and may file a second spec-request (#527, #604)."; exit 1; }
-          gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Route %s this issue to a spec request (%s) -- a fix-shaped PR was never opened.\n\n%s%s' "$route_verb" "$route_detail" "$marker" "$rationale_comment")"
+          # spec 108 (contracts/duplicate-disposition.md): dispose of the
+          # originating issue as a duplicate of the spec-request just filed
+          # -- one open issue per routed request, instead of leaving this
+          # issue open under board:stalled (#527, #604's own stall rule
+          # does not apply at this site any longer; see research.md D1).
+          spec_request_number="${spec_url##*/issues/}"
+          echo "spec-request-number=$spec_request_number" >> "$GITHUB_OUTPUT"
+          python3 .github/scripts/board_duplicate_disposition.py --originating "$ISSUE_NUMBER" \
+            --spec-request-issue "$spec_request_number" --spec-request-url "$spec_url" \
+            --reason "Routed to $spec_url" \
+            || { echo "::error::board-loop route (spec verdict): spec-request $spec_url was filed but disposing of issue #$ISSUE_NUMBER as a duplicate failed -- a later run resumes from its own pre-check."; exit 1; }
 
       # research.md D9: every artifact this loop spins off outside the
       # originating issue is cross-linked through this one composite
@@ -1924,6 +1922,19 @@ jobs:
           phrase: "Routed to spec-request"
           artifact-url: ${{ steps.spec_request.outputs.spec-url }}
           context: "(reason: ${{ steps.spec_request.outputs.reason }})"
+
+      # research.md D5: the reciprocal half of the same cross-link, on the
+      # spec-request itself (contracts/duplicate-disposition.md step 6) --
+      # gated on board_duplicate_disposition.py's own pre-check finding so
+      # a later run does not re-post it once it exists.
+      - name: Cross-link the originating issue onto the spec-request
+        if: steps.spec_request.outputs.needs-reciprocal-link == 'true'
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-outstanding-task-item
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
+          issue-number: ${{ steps.spec_request.outputs.spec-request-number }}
+          phrase: "Filed for the routed original"
+          artifact-url: ${{ github.server_url }}/${{ github.repository }}/issues/${{ needs.select.outputs.issue-number }}
 
   # Phase 5 (User Story 3, contracts/fix-step.md): the fixer works from a
   # `main` fetched in this same run, the full local gate suite must be
@@ -2437,6 +2448,7 @@ jobs:
           BRANCH: ${{ steps.base.outputs.branch }}
           BASE_SHA: ${{ steps.base.outputs.base-sha }}
           ISSUE_CONTEXT_FILE: ${{ steps.issue-context-breach.outputs.context-file }}
+          BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}[bot]
         run: |
           set -uo pipefail
           measured="$(jq -c '.measured' "$RUNNER_TEMP/board-fix-final-diff-decision.json")"
@@ -2464,13 +2476,17 @@ jobs:
           [[ "$spec_url" =~ ^https?://[^[:space:]]+/issues/[0-9]+$ ]] || { echo "::error::board-loop fix (post-push breach): creating the spec-request returned no issue URL (got '$spec_url') -- no spec-request was filed; the issue is left without board:stalled so a later run retries it."; exit 1; }
           echo "spec-url=$spec_url" >> "$GITHUB_OUTPUT"
           echo "measured=$measured" >> "$GITHUB_OUTPUT"
+          spec_request_number="${spec_url##*/issues/}"
+          echo "spec-request-number=$spec_request_number" >> "$GITHUB_OUTPUT"
 
-          # #530/#604: board:stalled before the stalled marker -- see
-          # board_item_marker.py. A failed add leaves the breach marker
-          # newest, and readiness retries (reusing the spec-request just filed).
-          marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step stalled --issue "$ISSUE_NUMBER" --add-label "board:stalled")" \
-            || { echo "::error::board-loop fix (post-push breach): spec-request $spec_url was filed but board:stalled could not be added to issue #$ISSUE_NUMBER -- the breach marker stays newest, so a later run retries through readiness (#530)."; exit 1; }
-          gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Post-push backstop breach on %s (measured=%s) -- the branch/PR are left open, unmerged; a spec-request now covers finishing this at the right size.\n\n%s' "$PR_URL" "$measured" "$marker")"
+          # spec 108 (contracts/duplicate-disposition.md): dispose of the
+          # originating issue as a duplicate of the spec-request just filed
+          # -- one open issue per routed request, instead of leaving this
+          # issue open under board:stalled (research.md D1).
+          python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_duplicate_disposition.py" --originating "$ISSUE_NUMBER" \
+            --spec-request-issue "$spec_request_number" --spec-request-url "$spec_url" \
+            --reason "Post-push backstop breach on $PR_URL (measured=$measured)" \
+            || { echo "::error::board-loop fix (post-push breach): spec-request $spec_url was filed but disposing of issue #$ISSUE_NUMBER as a duplicate failed -- a later run resumes from its own pre-check."; exit 1; }
 
       - name: Cross-link the post-push-breach spec-request onto the originating issue
         if: steps.post-push-breach.outputs.spec-url != ''
@@ -2480,6 +2496,16 @@ jobs:
           issue-number: ${{ needs.select.outputs.issue-number }}
           phrase: "Routed to spec-request"
           artifact-url: ${{ steps.post-push-breach.outputs.spec-url }}
+          context: "(post-push backstop breach, measured=${{ steps.post-push-breach.outputs.measured }})"
+
+      - name: Cross-link the originating issue onto the post-push-breach spec-request
+        if: steps.post-push-breach.outputs.needs-reciprocal-link == 'true'
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-outstanding-task-item
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
+          issue-number: ${{ steps.post-push-breach.outputs.spec-request-number }}
+          phrase: "Filed for the routed original"
+          artifact-url: ${{ github.server_url }}/${{ github.repository }}/issues/${{ needs.select.outputs.issue-number }}
           context: "(post-push backstop breach, measured=${{ steps.post-push-breach.outputs.measured }})"
 
   # Phase 6 (User Story 4, contracts/review-and-findings.md): a
@@ -3875,6 +3901,7 @@ jobs:
           EXISTING_SPEC_URL: ${{ steps.breach-retry-lookup.outputs.existing-spec-url }}
           MEASURED: ${{ steps.final-diff-backstop.outputs.measured }}
           ISSUE_CONTEXT_FILE: ${{ steps.issue-context-readiness.outputs.context-file }}
+          BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}[bot]
           DIRECTED_ATTRIBUTION: >-
             ${{ inputs.directed-stage != '' && format('_Directed proof run
             (stage: `{0}`), dispatched to prove PR #{1} -- selects no board
@@ -3912,13 +3939,17 @@ jobs:
             fi
             echo "spec-url=$spec_url" >> "$GITHUB_OUTPUT"
             echo "measured=$MEASURED" >> "$GITHUB_OUTPUT"
-            # #530/#604: board:stalled before the stalled marker -- see
-            # board_item_marker.py.
-            marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step stalled --issue "$ISSUE_NUMBER" --add-label "board:stalled")" \
-              || { echo "::error::board-loop readiness (backstop breach): spec-request $spec_url was filed but board:stalled could not be added to issue #$ISSUE_NUMBER -- no stalled marker is posted, so a later run retries (#530)."; exit 1; }
-            body="$(printf '%s on PR #%s (measured: %s) -- the branch/PR are left open, unmerged; a spec-request now covers finishing this at the right size.\n\n%s' "$breach_what" "$PR_NUMBER" "$MEASURED" "$marker")"
-            [ -n "$DIRECTED_ATTRIBUTION" ] && body="$(printf '%s\n\n%s' "$DIRECTED_ATTRIBUTION" "$body")"
-            gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$body"
+            spec_request_number="${spec_url##*/issues/}"
+            echo "spec-request-number=$spec_request_number" >> "$GITHUB_OUTPUT"
+
+            # spec 108 (contracts/duplicate-disposition.md): dispose of the
+            # originating issue as a duplicate of the spec-request (fresh
+            # or reused) -- one open issue per routed request, instead of
+            # leaving this issue open under board:stalled (research.md D1).
+            python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_duplicate_disposition.py" --originating "$ISSUE_NUMBER" \
+              --spec-request-issue "$spec_request_number" --spec-request-url "$spec_url" \
+              --reason "$(printf '%s on PR #%s (measured: %s)' "$breach_what" "$PR_NUMBER" "$MEASURED")" \
+              || { echo "::error::board-loop readiness (backstop breach): spec-request $spec_url was filed but disposing of issue #$ISSUE_NUMBER as a duplicate failed -- a later run resumes from its own pre-check."; exit 1; }
           else
             body="$(printf 'Not ready on PR #%s: %s. Picked up again on a later run.' "$PR_NUMBER" "$unmet")"
             [ -n "$DIRECTED_ATTRIBUTION" ] && body="$(printf '%s\n\n%s' "$DIRECTED_ATTRIBUTION" "$body")"
@@ -3937,6 +3968,16 @@ jobs:
           issue-number: ${{ needs.select.outputs.issue-number || inputs.directed-issue }}
           phrase: "Routed to spec-request"
           artifact-url: ${{ steps.report-unmet.outputs.spec-url }}
+          context: "(readiness backstop breach, measured=${{ steps.report-unmet.outputs.measured }})"
+
+      - name: Cross-link the originating issue onto the readiness-backstop-breach spec-request
+        if: steps.report-unmet.outputs.needs-reciprocal-link == 'true' && steps.killswitch-recheck.outputs.paused == 'false'
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-outstanding-task-item
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
+          issue-number: ${{ steps.report-unmet.outputs.spec-request-number }}
+          phrase: "Filed for the routed original"
+          artifact-url: ${{ github.server_url }}/${{ github.repository }}/issues/${{ needs.select.outputs.issue-number || inputs.directed-issue }}
           context: "(readiness backstop breach, measured=${{ steps.report-unmet.outputs.measured }})"
 
       # T067/FR-047/SC-010: no agent runs in this job, but readiness still

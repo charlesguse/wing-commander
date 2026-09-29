@@ -136,7 +136,7 @@ def read_marker(issue_comments, bot_login):
     return pair[1] if pair else None
 
 
-def write_marker(step, round, pr, branch, base_sha):
+def write_marker(step, round, pr, branch, base_sha, spec_request=None):
     """Renders the run announcement plus the HTML-comment marker line.
     Appended to the loop's own human-legible status comment -- never the
     comment's only content (FR-044) -- by the caller.
@@ -148,11 +148,18 @@ def write_marker(step, round, pr, branch, base_sha):
     skipping this run's own announcement by GITHUB_RUN_ID) finds this
     comment without a second announcement convention. GITHUB_SERVER_URL/
     GITHUB_REPOSITORY/GITHUB_RUN_ID are ambient in every Actions step, so
-    every existing write_marker() call site gets this for free."""
-    payload = json.dumps(
-        {"step": step, "round": round, "pr": pr, "branch": branch,
-         "base_sha": base_sha},
-        sort_keys=True)
+    every existing write_marker() call site gets this for free.
+
+    `spec_request` (spec 108, data-model.md "Board Item Marker"): the
+    linked spec-request issue number, included only when not None -- the
+    one caller is the duplicate-disposition write (`step="duplicate"`);
+    every other existing call site omits it and keeps its current five-key
+    payload."""
+    payload_dict = {"step": step, "round": round, "pr": pr, "branch": branch,
+                     "base_sha": base_sha}
+    if spec_request is not None:
+        payload_dict["spec_request"] = spec_request
+    payload = json.dumps(payload_dict, sort_keys=True)
     marker = "<!-- wing-commander-board-item: {0} -->".format(payload)
 
     server_url = os.environ.get("GITHUB_SERVER_URL")

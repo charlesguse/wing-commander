@@ -143,7 +143,7 @@ comment linking back. Repeat for the fix and readiness sites.
 
 ### Implementation for User Story 1
 
-- [ ] T001 [P] [US1] In `.github/scripts/board_item_marker.py`, extend
+- [X] T001 [P] [US1] In `.github/scripts/board_item_marker.py`, extend
       `write_marker()` (lines 113–138) to accept an additional optional
       `spec_request=None` parameter; when not `None`, include
       `"spec_request": spec_request` in the JSON payload dict (line
@@ -151,7 +151,7 @@ comment linking back. Repeat for the fix and readiness sites.
       Existing callers that omit the argument are unaffected (data-model.md
       "Board Item Marker": `spec_request` is additive and only ever
       populated by the disposition write).
-- [ ] T002 [P] [US1] In
+- [X] T002 [P] [US1] In
       `.github/actions/wing-commander-board-labels/action.yml`, add a
       fourth `gh label create "disposition:duplicate" ... --force` call
       (after the existing `spec-request` block, ~line 64), following the
@@ -164,7 +164,7 @@ comment linking back. Repeat for the fix and readiness sites.
       one) where the label was never created by hand — this composite is
       the single home for board-loop.yml's own label creation (D1;
       #488/#493's precedent, per the composite's own header).
-- [ ] T003 [US1] Create `.github/scripts/board_duplicate_disposition.py`
+- [X] T003 [US1] Create `.github/scripts/board_duplicate_disposition.py`
       implementing `dispose_as_duplicate(originating_issue,
       spec_request_issue, spec_request_url, reason) -> bool`
       (contracts/duplicate-disposition.md "Operation shape") plus an
@@ -208,7 +208,7 @@ comment linking back. Repeat for the fix and readiness sites.
       request-comment finding) to `$GITHUB_OUTPUT` and exits 0; on failure
       it prints `::error::` naming which step failed and exits 1 with no
       `$GITHUB_OUTPUT` written.
-- [ ] T004 [US1] In the `route` job's spec-verdict step (id `spec_request`,
+- [X] T004 [US1] In the `route` job's spec-verdict step (id `spec_request`,
       `.github/workflows/board-loop.yml`), replace lines 1905–1907 (the
       `#604` comment + `python3 .github/scripts/board_item_marker.py --step
       stalled --issue "$ISSUE_NUMBER" --add-label "board:stalled"` call)
@@ -234,7 +234,7 @@ comment linking back. Repeat for the fix and readiness sites.
       T020/T022's doc updates match code), `artifact-url:
       ${{ github.server_url }}/${{ github.repository }}/issues/${{
       needs.select.outputs.issue-number }}`.
-- [ ] T005 [US1] In the `fix` job's post-push-breach step (id
+- [X] T005 [US1] In the `fix` job's post-push-breach step (id
       `post-push-breach`), replace lines 2464–2469 (the `#530/#604` comment
       + `python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py"
       --step stalled ...` call + its trailing `gh issue comment`) with a
@@ -249,7 +249,7 @@ comment linking back. Repeat for the fix and readiness sites.
       pattern as T004, gated on `steps.post-push-breach.outputs.needs-
       reciprocal-link == 'true'`, `context: "(post-push backstop breach,
       measured=${{ steps.post-push-breach.outputs.measured }})"`.
-- [ ] T006 [US1] In the `readiness` job's `report-unmet` step, replace
+- [X] T006 [US1] In the `readiness` job's `report-unmet` step, replace
       lines 3919–3922 (the `#530/#604` comment + `board_item_marker.py
       --step stalled` call) with the same
       `board_duplicate_disposition.py` call as T005 (snapshot path,
@@ -269,7 +269,7 @@ comment linking back. Repeat for the fix and readiness sites.
       `steps.report-unmet.outputs.needs-reciprocal-link == 'true'`,
       `context: "(readiness backstop breach, measured=${{
       steps.report-unmet.outputs.measured }})"`.
-- [ ] T007 [US1] Create
+- [X] T007 [US1] Create
       `.github/scripts/verify-board-duplicate-disposition.py` (Gate 125,
       provisional): a `--self-test` mode exercising
       contracts/duplicate-disposition.md's failure-semantics table as
@@ -295,7 +295,7 @@ comment linking back. Repeat for the fix and readiness sites.
       Also assert the plain, no-fixture baseline: a bare `gh` stub that
       succeeds at every call produces `disposed=true`,
       `needs-reciprocal-link=true` end to end.
-- [ ] T008 [US1] Register Gate 125 in `.github/workflows/lint-workflows.yml`
+- [X] T008 [US1] Register Gate 125 in `.github/workflows/lint-workflows.yml`
       as two steps (mirroring Gate 103/104's placement pattern): `name:
       "Gate 125 — dispose_as_duplicate's idempotency and failure semantics
       (FR-009/FR-010/FR-011)"` running
