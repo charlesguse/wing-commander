@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -32,12 +32,10 @@
 ## Notes
 
 - Items marked incomplete require spec updates before `/speckit-clarify` or `/speckit-plan`.
-- Three [NEEDS CLARIFICATION] markers remain by design (FR-013 surface
-  scope, FR-014 rollout of existing sites, FR-015 rollout of existing
-  harness stubs). Each is a scope/effort trade-off the owner should decide;
-  none has a reasonable default, because each changes the size of the
-  change by a large factor. They are posted to the lifecycle issue rather
-  than resolved here — this run is non-interactive.
+- The three [NEEDS CLARIFICATION] markers (FR-013 surface scope, FR-014
+  rollout of existing sites, FR-015 rollout of existing harness stubs) were
+  answered by the maintainer on #689 and are recorded in the spec's
+  `## Clarifications` section and folded into the requirements.
 - "Technology-agnostic" is read here as "free of the mechanism by which the
   check is implemented". The subject of this feature is the repository's own
   automation, so naming the directories under audit and the `gh` tool whose

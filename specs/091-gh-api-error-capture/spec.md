@@ -1,12 +1,58 @@
 # Feature Specification: A Failed `gh api` Read Never Becomes Data
 
-**Feature Branch**: `091-gh-api-error-capture`
+**Feature Branch**: `spec-draft/091-gh-api-error-capture`
 
 **Created**: 2026-09-28
 
 **Status**: Draft
 
 **Input**: User description: "Audit gh api --jq captures: on an HTTP error the JSON error body lands on stdout. On an HTTP error, `gh api ... --jq '<filter>'` exits non-zero and still prints the raw JSON error body (`{\"message\":\"Not Found\",...,\"status\":\"404\"}`) to stdout. The filter is not applied, and only the `gh: Not Found (HTTP 404)` line goes to stderr. The review of #497 confirmed this with gh 2.63.2 and 2.81.0. So `x=\"$(gh api ... --jq ...)\"` leaves `x` holding the error JSON, not an empty string. This is only harmless when the failure branch exits or resets `x`. #497 fixed this for auto-release's slug fallback and audited the other captures in that step. Two gaps remain: the rest of `.github/workflows/` and `.github/actions/` have not been audited — any capture whose failure path continues without resetting the variable (e.g. `|| true`, or an `if !` branch that only logs) can carry the error JSON downstream as data; and the lifecycle-gate diagnostic at `wing-commander-lifecycle-gate/action.yml:118` was flagged by the reviewer as worth checking. A gate could flag `x=\"$(gh api ...)\"` captures whose failure path neither exits nor reassigns `x`. It could also require the harness stubs (`wc_shell_harness`) to print a JSON error body on stdout, as real gh does, so other harness-driven gates stop passing vacuously the way #497's first stub did."
+
+## Clarifications
+
+### Session 2026-09-29 — answered on lifecycle issue #689
+
+*(Recorded by the maintainer's spec review: the clarify run for these answers
+failed after running and pushed nothing, so the answers are encoded here by
+hand.)*
+
+- Q: Which `gh` reads must the audit and the new check cover? → A: **`gh api`
+  reads only (with or without `--jq`), through one named list of covered
+  subcommands.** The stdout-error-body behaviour has only been observed for
+  `gh api`, and the existing `gh` gates (Gates 18 and 28) cover `gh api`
+  only. Widening the list later is a one-line change (the "Shared logic has
+  exactly one home" rule; Principle VIII — no coverage that hasn't been
+  earned). (FR-013)
+- Q: How should capture sites that already exist when this feature lands be
+  handled? → A: **Correct or annotate every existing site before the check is
+  turned on, using per-site exempt markers that must carry a reason, as
+  Gates 18 and 28 already require.** No baseline file: it would be a second
+  home that can drift, and it would pass on sites already known to be
+  unsafe. (FR-001, FR-008, FR-014)
+- Q: How should existing harness `gh` stubs be brought to the new
+  error-response behaviour? → A: **Retrofit only the stubs whose gates run a
+  shipped block containing a covered `gh` capture, with that set derived
+  mechanically** (Principle IX), so FR-011 fails on it rather than depending
+  on a hand-kept list. Other stubs take the shared shape only when new or
+  modified. (FR-011, FR-015)
+
+### Status update (2026-09-29, re-verified against `main` at eb0e5a71)
+
+- The lifecycle-gate capture the #497 review flagged
+  (`wing-commander-lifecycle-gate/action.yml`, the classifier at `:118`;
+  the capture itself at `:75`) is a `gh issue view --json state --jq .state`
+  read, not a `gh api` read, so it lies outside the covered list FR-013 now
+  sets. It is also already safe as written: its diagnostic is built from the
+  captured stderr only, and every failure path either exits or reaches
+  `state=""` (`:136`) before the retry loop continues, with `[ -z "$state" ]`
+  failing the step after the last attempt. The file is unchanged on `main`
+  since 2026-09-14. FR-003 is updated to record that resolution rather than
+  to leave the site open.
+- `gh api` appears on 167 lines across 22 files under `.github/workflows/`
+  and `.github/actions/` on `main` (the clarify question's "~309 across 49
+  files" counted a wider tree), and 76 gate scripts use `wc_shell_harness`
+  (63 when the question was drafted). The spec's "roughly fifty files" is
+  corrected to match.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -33,7 +79,7 @@ is the kind of thing that only surfaces during an incident. Everything else
 in this feature exists to keep this state from returning.
 
 **Independent Test**: Enumerate every command-substitution capture of a
-`gh` read in `.github/workflows/` and `.github/actions/`, and for each one
+covered `gh` read (FR-013: `gh api`) in `.github/workflows/` and `.github/actions/`, and for each one
 show that a non-zero exit leads to a path that exits the step, reassigns the
 captured variable, or documents at the site why holding the error body is
 intended. Delivers value on its own: the audit's corrections ship even if no
@@ -53,8 +99,9 @@ gate is ever written.
 3. **Given** the lifecycle-gate diagnostic capture flagged by the #497
    reviewer, **When** the underlying read fails, **Then** the diagnostic
    text it builds is the one the classification branches below it are
-   written to match, and the site records whether the error body is
-   deliberately part of that diagnostic.
+   written to match. *(Verified on `main`: the diagnostic reads stderr only
+   and the captured value is reset on every failure path — see the status
+   update under Clarifications.)*
 4. **Given** a corrected site, **When** the same read succeeds, **Then** the
    step's existing successful behaviour is unchanged.
 
@@ -68,7 +115,7 @@ and line, names the variable, and explains what the failure path must do
 instead. The contributor fixes it in the same PR.
 
 **Why this priority**: The audit in User Story 1 is a point-in-time sweep
-across roughly fifty files. Without an enforcing check, the next capture
+across roughly two dozen files. Without an enforcing check, the next capture
 written by a human or by the implement agent restores the defect and nothing
 goes red — the repository's own rule is that a rule with no gate behind it
 lasts until the next session.
@@ -86,8 +133,9 @@ introduce a capture whose failure path does reassign and see it pass.
 2. **Given** a capture whose failure path reassigns the variable before any
    further use, **When** the gate suite runs, **Then** it passes.
 3. **Given** a site where holding the error body is deliberate, **When** the
-   site carries the project's explicit opt-in marker, **Then** the gate
-   passes and the marker is discoverable by a reader of that step.
+   site carries the project's explicit opt-in marker with a stated reason,
+   **Then** the gate passes and the marker is discoverable by a reader of
+   that step; a marker without a reason fails the gate.
 4. **Given** the gate itself, **When** its self-test runs, **Then** each
    regression it exists to catch — including the exact shape the #497 review
    found — is shown to make it fail, so it cannot pass while checking
@@ -155,18 +203,23 @@ confirm the gate now fails where before it passed.
 
 ### Functional Requirements
 
-- **FR-001**: Every command-substitution capture of a `gh` read in
-  `.github/workflows/` and `.github/actions/` MUST be audited, and each one
-  recorded as either already safe, corrected, or deliberately holding the
-  error body with the reason stated at the site.
+- **FR-001**: Every command-substitution capture of a covered `gh` read
+  (FR-013) in `.github/workflows/` and `.github/actions/` MUST be audited,
+  and each one found to be already safe, corrected, or deliberately holding
+  the error body with the reason stated at the site in the FR-008 marker. No
+  separate list of audited sites is checked in for the check to read
+  (FR-014).
 - **FR-002**: A capture site MUST be treated as safe only when a non-zero
   exit from the read leads to a path that exits the step, reassigns the
   captured variable before any further use of it, or carries the project's
   explicit opt-in marker for intentionally retaining the error body.
 - **FR-003**: The lifecycle-gate diagnostic capture flagged by the #497
-  review MUST be resolved explicitly — corrected if the error body can
-  corrupt the diagnostic it builds, or annotated as intentional if the
-  classification branches below it depend on that text.
+  review MUST be resolved explicitly. *(Resolved at review, 2026-09-29: it
+  is a `gh issue view` read outside FR-013's covered list, its diagnostic
+  reads stderr only, and its captured value is reset on every failure path,
+  so it is already safe and needs no change. The audit records this; if
+  `gh issue view` is ever added to the covered list, the site is re-checked
+  then.)*
 - **FR-004**: Correcting a site MUST NOT change its behaviour when the read
   succeeds.
 - **FR-005**: A PR-time check MUST fail when a capture site does not meet
@@ -179,38 +232,45 @@ confirm the gate now fails where before it passed.
   each regression it exists to catch, including the specific shape the #497
   review found (a failure branch taken but the captured variable left
   holding what the read printed on its way to a non-zero exit).
-- **FR-008**: The check MUST offer an explicit, discoverable opt-in for a
-  site that intends to retain the error body, so that suppressing the check
-  is visible to a reader of the step rather than silent.
+- **FR-008**: The check MUST offer an explicit, discoverable per-site opt-in
+  marker for a site that intends to retain the error body, so that
+  suppressing the check is visible to a reader of the step rather than
+  silent. The marker MUST carry a reason, and a marker without one MUST fail
+  the check, as Gates 18 and 28 already require of their exemptions.
 - **FR-009**: Harness stubs that simulate a failing `gh` read MUST emit a
   JSON error body on stdout, the human-readable error line on stderr, and a
   non-zero exit status, matching the real tool's observed behaviour.
 - **FR-010**: The error-response shape used by FR-009 MUST have exactly one
   home, with every harness taking it from there rather than retyping it, and
   a check MUST fail if a second copy of that shape appears.
-- **FR-011**: A check MUST report any harness-driven gate whose `gh` stub
-  simulates an error without meeting FR-009.
+- **FR-011**: A check MUST fail on any harness-driven gate in FR-015's
+  mechanically derived set whose `gh` stub simulates an error without
+  meeting FR-009, naming the gate script.
 - **FR-012**: The system MUST record, at the single home for the
   error-response shape, the `gh` versions against which the two-stream
   behaviour was observed, so a future change in that behaviour is traceable
   rather than invisible.
-- **FR-013**: The surface the checks cover MUST include [NEEDS
-  CLARIFICATION: only `gh api` captures, or every `gh` read that can print a
-  body to stdout on failure — `gh api` with and without `--jq`, `gh pr list
-  --json`, `gh issue view --json`, `gh run view --json`?]
-- **FR-014**: Capture sites that exist at the time this feature lands MUST
-  be handled by [NEEDS CLARIFICATION: correcting every site before the check
-  is turned on, or recording a reviewed baseline of existing sites that the
-  check accepts while failing on any new or modified one?]
-- **FR-015**: Existing harness stubs that predate FR-009 MUST be handled by
-  [NEEDS CLARIFICATION: retrofitting all of them in this feature, or
-  publishing the shared shape and requiring it only of new and modified
-  stubs, with the rest reported as a known list?]
+- **FR-013**: The surface the checks cover MUST be `gh api` reads, with and
+  without `--jq`, and nothing else. The covered subcommands MUST be named in
+  exactly one list that the capture check (and FR-011's derivation) reads,
+  so that widening coverage to another subcommand (`gh pr list --json`,
+  `gh issue view --json`, `gh run view --json`) later is a one-line change
+  rather than a rewrite. Other subcommands are not audited in this feature.
+- **FR-014**: Every capture site that exists when this feature lands MUST be
+  corrected or annotated with an FR-008 marker before the check is turned
+  on, so the check runs clean from its first run. There MUST NOT be a
+  baseline or allowlist file of accepted existing sites.
+- **FR-015**: An existing harness stub that predates FR-009 MUST be
+  retrofitted in this feature if, and only if, its gate executes a shipped
+  block containing a capture of a covered `gh` read (FR-013). That set MUST
+  be derived mechanically from the gates and the blocks they execute, never
+  kept as a hand-maintained list. Every other stub adopts the FR-009 shape
+  when it is next added or modified.
 
 ### Key Entities
 
 - **Capture site**: One place in a workflow or composite action where the
-  output of a `gh` read is assigned to a shell variable via command
+  output of a covered `gh` read (FR-013) is assigned to a shell variable via command
   substitution. Identified by file, line, and variable name.
 - **Failure path**: The code a capture site reaches when the read exits
   non-zero. Classified as exiting, reassigning, opted-in, or unsafe.
@@ -226,14 +286,15 @@ confirm the gate now fails where before it passed.
 
 - **SC-001**: 100% of capture sites in `.github/workflows/` and
   `.github/actions/` are classified as exiting, reassigning, or explicitly
-  opted-in; zero remain unsafe.
+  opted-in with a stated reason; zero remain unsafe, and no baseline file
+  exists.
 - **SC-002**: A newly introduced unsafe capture is caught before merge in
   100% of cases, evidenced by the check failing on a deliberately introduced
   example.
 - **SC-003**: The check's self-test shows it failing on every regression it
   claims to catch, with zero mutations passing.
-- **SC-004**: For every harness-driven gate whose stub simulates a failing
-  `gh` read, that stub emits the error body on stdout; a mutation that
+- **SC-004**: For every harness-driven gate in FR-015's derived set, its
+  stub emits the error body on stdout when simulating a failing read; a mutation that
   removes a variable reset from the shipped block one of those gates
   executes makes that gate fail.
 - **SC-005**: The canonical error-response shape appears exactly once in the
@@ -257,7 +318,8 @@ confirm the gate now fails where before it passed.
   workflow or composite action sources or invokes them as part of a capture
   site's failure path.
 - The `.github/scripts/` gate scripts themselves, and their fixtures, are in
-  scope only for the harness-stub requirements (FR-009 through FR-011).
+  scope only for the harness-stub requirements (FR-009 through FR-011,
+  FR-015).
 - The check is deterministic and static — it reads the shipped text rather
   than executing every workflow — and so is expected to be conservative:
   it may require an explicit opt-in at a site a human would call safe, and
