@@ -325,26 +325,42 @@ def suite_config(script, env, tmproot, source_root=REPO_ROOT):
 # Executed-step half: poll step's execution-evidence fragment (T012)
 # --------------------------------------------------------------------------
 STUB_GH_EXECUTION = r'''#!/usr/bin/env bash
-if [ "$1 $2" = "run list" ]; then
-  if [ "${GH_STUB_RUNS_FAIL:-}" = "true" ]; then
-    echo "${GH_STUB_RUNS_ERR:-unexpected error}" >&2
-    exit 1
-  fi
-  printf '%s' "${GH_STUB_RUNS_JSON:-[]}"
-  exit 0
-fi
 if [ "$1" = "api" ]; then
-  if [ "${GH_STUB_JOBS_FAIL:-}" = "true" ]; then
-    echo "${GH_STUB_JOBS_ERR:-unexpected error}" >&2
-    exit 1
-  fi
   case "$2" in
-    repos/*/actions/runs/111/jobs) printf '%s\n' "${GH_STUB_JOBS_111:-}" ;;
-    repos/*/actions/runs/222/jobs) printf '%s\n' "${GH_STUB_JOBS_222:-}" ;;
-    repos/*/actions/runs/333/jobs) printf '%s\n' "${GH_STUB_JOBS_333:-}" ;;
+    repos/*/actions/runs\?*)
+      if [ "${GH_STUB_RUNS_FAIL:-}" = "true" ]; then
+        echo "${GH_STUB_RUNS_ERR:-unexpected error}" >&2
+        exit 1
+      fi
+      printf '%s' "${GH_STUB_RUNS_JSON:-}"
+      exit 0
+      ;;
+    repos/*/actions/runs/111/jobs)
+      if [ "${GH_STUB_JOBS_FAIL:-}" = "true" ]; then
+        echo "${GH_STUB_JOBS_ERR:-unexpected error}" >&2
+        exit 1
+      fi
+      printf '%s\n' "${GH_STUB_JOBS_111:-}"
+      exit 0
+      ;;
+    repos/*/actions/runs/222/jobs)
+      if [ "${GH_STUB_JOBS_FAIL:-}" = "true" ]; then
+        echo "${GH_STUB_JOBS_ERR:-unexpected error}" >&2
+        exit 1
+      fi
+      printf '%s\n' "${GH_STUB_JOBS_222:-}"
+      exit 0
+      ;;
+    repos/*/actions/runs/333/jobs)
+      if [ "${GH_STUB_JOBS_FAIL:-}" = "true" ]; then
+        echo "${GH_STUB_JOBS_ERR:-unexpected error}" >&2
+        exit 1
+      fi
+      printf '%s\n' "${GH_STUB_JOBS_333:-}"
+      exit 0
+      ;;
     *) echo "unexpected gh api invocation: $*" >&2; exit 1 ;;
   esac
-  exit 0
 fi
 echo "unexpected gh invocation: $*" >&2
 exit 1
@@ -392,14 +408,33 @@ JOB_RESOLVE_MODEL = json.dumps({
 JOB_SWEEP = json.dumps({
     "name": "sweep", "conclusion": "success", "steps": [
         {"name": "Set up job"}, {"name": "Find closed pipeline PRs whose close produced no cleanup run"}]})
+# wing-commander-rebase.yml's push-triggered job: fires on every push this
+# attempt's own PR merges and resets make to the test repository's default
+# branch, host-side, no `container:` key (maintainer review of #509).
+JOB_REDISPATCH = json.dumps({
+    "name": "redispatch", "conclusion": "success", "steps": [
+        {"name": "Set up job"},
+        {"name": "Redispatch via workflow_dispatch (a supported event for the conflict-resolution agent)"}]})
+# A job GitHub never started (concurrency queue, or the run ended before it
+# was scheduled) reports `steps: []` and `conclusion: null` -- the old
+# `.conclusion != "skipped"` filter let this class through unexcluded
+# (maintainer review of #509).
+JOB_QUEUED = json.dumps({"name": "implement / stalled", "conclusion": None, "steps": []})
+# A job a concurrency group cancelled before it ran also reports
+# `steps: []`, with `conclusion: "cancelled"` rather than "skipped"
+# (maintainer review of #509).
+JOB_CANCELLED = json.dumps({"name": "implement / implement", "conclusion": "cancelled", "steps": []})
 
 EXECUTION_BASE_ENV = dict(
     MODE="container", E2E_REPO="owner/e2e-target", HEAD_SHA=HEAD,
     HARNESS_TOKEN="dummy-token", HARNESS_LOGIN="dummy-login",
     ISSUE="1", ISSUE_URL="https://example.invalid/issues/1",
     KICKOFF_TIME="2026-01-01T00:00:00Z",
-    GH_STUB_RUNS_JSON=json.dumps(
-        [{"databaseId": 111, "path": WRAPPER_PATH}]),
+    # Newline-joined individual JSON objects, matching what `gh api
+    # --paginate --jq '.workflow_runs[] | {...}'` actually streams (one
+    # value per matched item, not one aggregate array) -- see JOB_*'s own
+    # multi-job fixtures below for the same shape.
+    GH_STUB_RUNS_JSON=json.dumps({"databaseId": 111, "path": WRAPPER_PATH}),
     GH_STUB_JOBS_111=JOB_CONTAINERIZED, GH_STUB_JOBS_222="",
     GH_STUB_JOBS_333="",
     GH_STUB_RUNS_FAIL="", GH_STUB_RUNS_ERR="",
@@ -419,13 +454,13 @@ EXECUTION_SCENARIOS = [
         failing_check="container image configured but stage jobs did not execute inside a container",
     ),
     dict(
-        name="FR-005(v) unreadable: gh run list fails, not rate-limited",
+        name="FR-005(v) unreadable: the run list read fails, not rate-limited",
         env=dict(GH_STUB_RUNS_FAIL="true", GH_STUB_RUNS_ERR="HTTP 403: access denied"),
         reached_pass=False,
         failing_check="container-mode evidence unreadable",
     ),
     dict(
-        name="FR-005(v, rate-limited) gh run list fails, rate limit text",
+        name="FR-005(v, rate-limited) the run list read fails, rate limit text",
         env=dict(GH_STUB_RUNS_FAIL="true", GH_STUB_RUNS_ERR="API rate limit exceeded"),
         reached_pass=False,
         failing_check="container-mode evidence rate-limited",
@@ -464,9 +499,9 @@ EXECUTION_SCENARIOS = [
     ),
     dict(
         name="MF(PR#628) an unrelated workflow run created after kickoff_time: excluded, still reaches pass",
-        env=dict(GH_STUB_RUNS_JSON=json.dumps([
-            {"databaseId": 111, "path": WRAPPER_PATH},
-            {"databaseId": 333, "path": ".github/workflows/unrelated.yml"},
+        env=dict(GH_STUB_RUNS_JSON="\n".join([
+            json.dumps({"databaseId": 111, "path": WRAPPER_PATH}),
+            json.dumps({"databaseId": 333, "path": ".github/workflows/unrelated.yml"}),
         ]), GH_STUB_JOBS_333=JOB_NOT_CONTAINERIZED),
         reached_pass=True,
     ),
@@ -493,6 +528,38 @@ EXECUTION_SCENARIOS = [
         name="MR(#509) the sweep wrapper job present: still reaches pass",
         env=dict(GH_STUB_JOBS_111="\n".join([JOB_CONTAINERIZED, JOB_SWEEP])),
         reached_pass=True,
+    ),
+    dict(
+        name="MR(#509) the redispatch wrapper job present: still reaches pass",
+        env=dict(GH_STUB_JOBS_111="\n".join([JOB_CONTAINERIZED, JOB_REDISPATCH])),
+        reached_pass=True,
+    ),
+    dict(
+        name="MR(#509) a queued job (steps: [], conclusion: null) present: still reaches pass",
+        env=dict(GH_STUB_JOBS_111="\n".join([JOB_CONTAINERIZED, JOB_QUEUED])),
+        reached_pass=True,
+    ),
+    dict(
+        name="MR(#509) a job cancelled by a concurrency group present: still reaches pass",
+        env=dict(GH_STUB_JOBS_111="\n".join([JOB_CONTAINERIZED, JOB_CANCELLED])),
+        reached_pass=True,
+    ),
+    # Maintainer review of #509's fail-open finding: zero containerized jobs
+    # observed must not silently read as "nothing non-containerized found"
+    # -- an empty run list and a run whose only jobs are all excluded both
+    # carry NO positive evidence that anything ran in a container.
+    dict(
+        name="MR(#509) an empty run list observed: fails rather than passing on no evidence",
+        env=dict(GH_STUB_RUNS_JSON=""),
+        reached_pass=False,
+        failing_check="container image configured but stage jobs did not execute inside a container",
+    ),
+    dict(
+        name="MR(#509) every job in the run is excluded: fails rather than passing on no evidence",
+        env=dict(GH_STUB_JOBS_111="\n".join(
+            [JOB_VERIFY_IMAGE_PREREQUISITES, JOB_RESOLVE_MODEL, JOB_SWEEP, JOB_REDISPATCH])),
+        reached_pass=False,
+        failing_check="container image configured but stage jobs did not execute inside a container",
     ),
 ]
 

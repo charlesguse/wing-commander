@@ -1023,8 +1023,6 @@ jobs:
           CEC_OBSERVED_IMAGE: ${{ steps.container-evidence-config.outputs.observed-image }}
         run: |
           set -uo pipefail
-          # shellcheck source=.github/actions/_shared/auto-release-container-evidence-decision.sh
-          source .github/actions/_shared/auto-release-container-evidence-decision.sh
           # Same whitespace hazard as the credential step above: the login is
           # compared with `==` and used as a jq argument, so a secret stored
           # with a trailing newline would never match (#396 review).
@@ -1685,6 +1683,11 @@ jobs:
           # pending quickstart.md Scenario 3's live check (research.md D4).
           execution_pass_observed=""
           if [ "$MODE" = "container" ]; then
+            # Sourced here, not at the top of this step, so no poll-step
+            # gate other than the container-mode ones needs this script
+            # staged (maintainer review of #509, M1).
+            # shellcheck source=.github/actions/_shared/auto-release-container-evidence-decision.sh
+            source .github/actions/_shared/auto-release-container-evidence-decision.sh
             write_execution_fail() { # read_status errtext
               decision="$(bash .github/actions/_shared/auto-release-container-evidence-decision.sh execution "$1" \
                 "a successful read of the test repository's run job data" "$2")"
@@ -1700,51 +1703,91 @@ jobs:
             # workflows this turn's own scaffold step pushed -- an
             # unrelated workflow run created in the test repository after
             # $KICKOFF_TIME must not pollute this check (maintainer
-            # feedback on PR #628).
-            if ! runs_json="$(GH_TOKEN="$HARNESS_TOKEN" gh run list --repo "$E2E_REPO" --created ">=${KICKOFF_TIME}" --json databaseId,path --limit 100 2>"$RUNNER_TEMP/auto-release-cee-runs-err.txt")"; then
+            # feedback on PR #628). `gh run list --json` has no `path`
+            # field (only the REST run object does) -- the previous read
+            # asked for it via `--json databaseId,path`, which made `gh`
+            # exit 1 on every call, so every container-mode pass ended
+            # "container-mode evidence unreadable" and FR-005(vi)/SC-002
+            # could never be reached (maintainer review of #509). Reads via
+            # `gh api` instead, matching metrics-persist.yml's own
+            # `actions/runs?...&created=...` idiom.
+            if ! runs_raw="$(GH_TOKEN="$HARNESS_TOKEN" gh api "repos/${E2E_REPO}/actions/runs?per_page=100&created=%3E%3D${KICKOFF_TIME}" \
+              --paginate --jq '.workflow_runs[] | {databaseId: .id, path: (.path // "")}' 2>"$RUNNER_TEMP/auto-release-cee-runs-err.txt")"; then
               errtext="$(tail -c 300 "$RUNNER_TEMP/auto-release-cee-runs-err.txt")"
               write_execution_fail "$(classify_read_status 1 "$errtext")" "$errtext"
+            fi
+            # A parse failure is unreadable evidence, not an empty-but-valid
+            # run list -- falling back to `[]` on a garbled response used to
+            # read as "no stage runs found, nothing non-containerized"
+            # rather than failing closed (maintainer review of #509).
+            if ! runs_json="$(printf '%s' "$runs_raw" | jq -s -c '.' 2>"$RUNNER_TEMP/auto-release-cee-runs-parse-err.txt")"; then
+              errtext="could not parse the test repository's run list: $(tail -c 300 "$RUNNER_TEMP/auto-release-cee-runs-parse-err.txt" 2>/dev/null)"
+              write_execution_fail "unreadable" "$errtext"
             fi
             stage_run_ids="$(printf '%s' "$runs_json" | jq -r '
               .[]
               | select(.path | test("^\\.github/workflows/wing-commander-"))
               | .databaseId')"
             noncontainerized=""
+            containerized_count=0
             while IFS= read -r run_id; do
               [ -n "$run_id" ] || continue
               if ! jobs_raw="$(GH_TOKEN="$HARNESS_TOKEN" gh api "repos/${E2E_REPO}/actions/runs/${run_id}/jobs" --paginate --jq '.jobs[]' 2>"$RUNNER_TEMP/auto-release-cee-jobs-err.txt")"; then
                 errtext="$(tail -c 300 "$RUNNER_TEMP/auto-release-cee-jobs-err.txt")"
                 write_execution_fail "$(classify_read_status 1 "$errtext")" "$errtext"
               fi
-              jobs_json="$(printf '%s' "$jobs_raw" | jq -s -c '.' 2>/dev/null || echo '[]')"
-              # A skipped job (e.g. the conditional `stalled` job, which
-              # reports `steps: []`) never ran anywhere and so never got a
-              # chance to initialize a container. `verify-image-
-              # prerequisites` (every stage workflow, gated on `if:
-              # inputs.container-image != ''`), `resolve-model` (the
-              # wing-commander-5-implement.yml and wing-commander-9-pr-
-              # conversation.yml wrappers), and `sweep`
-              # (wing-commander-7-cleanup.yml) are host-side jobs with no
+              if ! jobs_json="$(printf '%s' "$jobs_raw" | jq -s -c '.' 2>"$RUNNER_TEMP/auto-release-cee-jobs-parse-err.txt")"; then
+                errtext="could not parse job data for run $run_id: $(tail -c 300 "$RUNNER_TEMP/auto-release-cee-jobs-parse-err.txt" 2>/dev/null)"
+                write_execution_fail "unreadable" "$errtext"
+              fi
+              # A skipped job (e.g. the conditional `stalled` job), a queued
+              # job that never started, and a job cancelled by a
+              # concurrency group all report `steps: []` -- none of them
+              # ran anywhere and so never got a chance to initialize a
+              # container. Judged by an empty `steps` array now, not
+              # `.conclusion != "skipped"` alone, which missed the queued
+              # (`conclusion: null`) and cancelled cases (maintainer review
+              # of #509). `verify-image-prerequisites` (every stage
+              # workflow, gated on `if: inputs.container-image != ''`),
+              # `resolve-model` (the wing-commander-5-implement.yml and
+              # wing-commander-9-pr-conversation.yml wrappers), `sweep`
+              # (wing-commander-7-cleanup.yml), and `redispatch`
+              # (wing-commander-rebase.yml -- fires on every push this
+              # attempt's own PR merges and resets make to the test
+              # repository's default branch) are host-side jobs with no
               # `container:` key that always run on the host. All are
               # excluded from this enumeration rather than flagged as
-              # non-containerized (maintainer feedback on PR #628, #509).
-              # A reusable-workflow job reports its name as "caller / job"
-              # (e.g. real run 36484092749's "implement / verify-image-
-              # prerequisites"), so the exclusion matches on the suffix
-              # after the last " / ", not the raw name (maintainer review
-              # of #509).
+              # non-containerized (maintainer feedback on PR #628, #509;
+              # maintainer review of #509). A reusable-workflow job reports
+              # its name as "caller / job" (e.g. real run 36484092749's
+              # "implement / verify-image-prerequisites"), so the exclusion
+              # matches on the suffix after the last " / ", not the raw
+              # name (maintainer review of #509).
+              eligible_json="$(printf '%s' "$jobs_json" | jq -c '
+                [ .[]
+                  | select((.steps | length) > 0)
+                  | . as $job
+                  | ($job.name | split(" / ") | last) as $short
+                  | select((["verify-image-prerequisites", "resolve-model", "sweep", "redispatch"] | index($short)) | not)
+                  | { name: $job.name, containerized: (([$job.steps[]?.name // empty] | index("Initialize containers")) != null) }
+                ]')"
               while IFS= read -r job_name; do
                 [ -n "$job_name" ] || continue
                 noncontainerized="${noncontainerized:+$noncontainerized, }${job_name}"
-              done < <(printf '%s' "$jobs_json" | jq -r '
-                .[]
-                | select(.conclusion != "skipped")
-                | . as $job
-                | ($job.name | split(" / ") | last) as $short
-                | select((["verify-image-prerequisites", "resolve-model", "sweep"] | index($short)) | not)
-                | select(([$job.steps[]?.name // empty] | index("Initialize containers")) | not)
-                | $job.name')
+              done < <(printf '%s' "$eligible_json" | jq -r '.[] | select(.containerized | not) | .name')
+              run_containerized_count="$(printf '%s' "$eligible_json" | jq '[.[] | select(.containerized)] | length')"
+              containerized_count=$((containerized_count + run_containerized_count))
             done < <(printf '%s\n' "$stage_run_ids")
+
+            # Zero containerized jobs observed is not the same as "none of
+            # the ones we saw failed to containerize" -- an empty run list,
+            # every eligible job excluded, or an enumeration that silently
+            # found nothing must not read as a pass with no positive
+            # evidence at all (FR-001/FR-004/SC-002, maintainer review of
+            # #509).
+            if [ -z "$noncontainerized" ] && [ "$containerized_count" -eq 0 ]; then
+              noncontainerized="(no stage job was observed executing inside a container)"
+            fi
 
             decision="$(bash .github/actions/_shared/auto-release-container-evidence-decision.sh execution ok "every stage job" "$noncontainerized")"
             failing_check="$(printf '%s\n' "$decision" | sed -n 's/^failing_check=//p')"
