@@ -56,6 +56,25 @@ declares must distinguish them.
 
 ### Observed facts (verified against `main` at b2e982c)
 
+> **Status update (2026-09-29, maintainer spec review, re-verified against
+> `main` at eb0e5a71).** The facts below still hold in substance, but
+> `implement.yml` has grown, so the line numbers have moved. On current
+> `main`: the composed tool lists are at `:858-859` (cycle) and `:1566-1567`
+> (retry); the Constraints/Tooling paragraphs at `:970-982` and `:1702-1714`;
+> the convergence/progress/hand-off computation in "Read back cycle outcome"
+> at `:1278-1445` (`converged` at `:1402-1406`, hand-off at `:1413-1414`) and
+> its retry twin at `:1987-2130`; the `wing-commander-stage-findings` call at
+> `:2263`; finalize's remaining-manual-work prompt at `finalize.yml:732-738`;
+> and the auto-update change check at `auto-update-spec-kit.yml:1615-1622`
+> (unchanged). Nothing on `main` yet states or enforces a write boundary or
+> routes out-of-boundary tasks, so the defect this spec addresses is still
+> present. One subject instance is resolved: spec 060's `T055` was completed
+> by hand in a maintainer session and merged in #490 (the updated
+> `.claude/skills/spec-cross-reference/SKILL.md` is on `main`, and `T055` is
+> checked in `specs/060-self-redrive-concurrency/tasks.md`). FR-017 and
+> SC-006 are updated to match. Line numbers cited below are as drafted
+> against b2e982c.
+
 - `implement.yml:839` (the cycle arm) and `implement.yml:1506` (the retry arm)
   both compose `default-allowed-tools` beginning `Skill,Read,Write,Edit,...`
   — the `Write` and `Edit` grants carry no path scope. Both arms'
@@ -153,8 +172,8 @@ declares must distinguish them.
   understands, or by leaving the task unchecked and having a deterministic
   step route it and end the loop? → A: **Leave the task unchecked and route it
   deterministically, outside the checkbox loop.** The checkbox format is
-  vendored Spec Kit and belongs to the pin rather than to the consuming
-  repository (Principle VI), and a new marker would reach every reader of the
+  vendored Spec Kit, owned by the consuming repository (Principle VI) rather
+  than by this pipeline, and a new marker would reach every reader of the
   checkbox count. FR-011's distinct reason line already explains the
   non-converged verdict, so no new `tasks.md` state is introduced.
   (FR-010, FR-011, User Story 3)
@@ -400,8 +419,9 @@ the mechanism itself.
   routed MUST terminate the loop. The discharge MUST leave the task's
   `tasks.md` line unchecked and untouched: a deterministic step routes it
   (FR-007) and ends the loop, and NO new `tasks.md` state or checkbox marker
-  is introduced. The checkbox format belongs to the vendored Spec Kit pin
-  (Principle VI), and a new marker would reach every reader of the checkbox
+  is introduced. The checkbox format is vendored Spec Kit, owned by the
+  consuming repository (Principle VI) rather than by this pipeline, and a new
+  marker would reach every reader of the checkbox
   count; the honest terminal verdict is carried by FR-011's reason line
   instead.
 
@@ -436,7 +456,10 @@ the mechanism itself.
 
 - **FR-017**: Spec 060's `T055` — the task that produced this issue — MUST end
   in a tracked, owned state rather than as an unchecked line in a `tasks.md`
-  on a spec branch.
+  on a spec branch. *(Status 2026-09-29: satisfied on `main` — `T055` was
+  completed by hand in a maintainer session and merged in #490. `T055`
+  remains this feature's worked example and a regression fixture subject;
+  no further action on it is required here.)*
 
 - **FR-018**: FR-002's policy — no agent write under `.claude/`, deterministic
   non-agent writes unaffected — MUST be recorded where a future change will
@@ -507,9 +530,12 @@ the mechanism itself.
 - **SC-005**: Zero out-of-boundary tasks reach the final PR as untracked
   prose: every item in the final PR's remaining-manual-work list that was
   routed carries a pointer to its tracked item.
-- **SC-006**: Spec 060's `T055` is closed out as tracked, routed work — FR-002's
-  policy puts its path beyond any agent's reach, so it cannot be completed by
-  the stage — with the outcome recorded on issue #675.
+- **SC-006**: Spec 060's `T055` is closed out, with the outcome recorded on
+  issue #675. *(Status 2026-09-29: `T055` was completed by a maintainer
+  session and merged in #490, the outcome FR-002 prescribes for `.claude/`
+  work. What remains is recording that on #675; the routing mechanism is
+  proven on a fixture shaped like `T055` (SC-004) rather than on `T055`
+  itself.)*
 - **SC-007**: A mutation that disables the boundary check, and a mutation that
   makes the boundary statement drift from the run's real permissions, are each
   caught by the gate suite; the full suite
@@ -551,7 +577,11 @@ the mechanism itself.
 - Deferring a routed item to a human or to the board loop's fix track is
   acceptable: the board loop already works filed issues in a fixed order, and
   a `.claude/` documentation edit is well within the fix-shaped bound
-  Principle X defines.
+  Principle X defines. The board loop's fix track is itself an automated
+  agent, though, so FR-002 binds it too: for a path in the no-write set, the
+  routed item's owner is a human (as `T055`'s was in #490). The plan must
+  make sure the routing label does not hand such an item to an agent fixer
+  that FR-002 forbids to write it.
 
 ## Dependencies
 
@@ -578,8 +608,8 @@ the mechanism itself.
   must not disturb.
 - `.github/workflows/lint-workflows.yml` and
   `.github/scripts/run-local-gates.py` — where FR-020's gate is registered.
-- `specs/060-self-redrive-concurrency/tasks.md` (on its spec branch) — `T053`
-  and `T055`, the subject instances (FR-017).
+- `specs/060-self-redrive-concurrency/tasks.md` (on `main` since #490) —
+  `T053` and `T055`, the subject instances (FR-017); `T055` is now checked.
 - `.specify/memory/constitution.md` — Principles IV, VI, VII, VIII, IX, X; and
   FR-018's possible amendment target if FR-002 narrows or widens what an agent
   may do to its own control surface.
@@ -600,6 +630,5 @@ the mechanism itself.
   time is a separate question from discharge at implement time, and would need
   its own decision about where the judgement lives.
 - The completion of `T055`'s actual content — whatever guidance it asked to add
-  to `spec-cross-reference/SKILL.md`. This feature ensures that work is owned
-  and tracked; doing it is the owner's.
+  to `spec-cross-reference/SKILL.md`. (Done by hand in #490.)
 - Any change to how findings are fingerprinted or deduplicated by the watchdog.
