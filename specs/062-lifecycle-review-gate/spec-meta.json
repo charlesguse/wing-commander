@@ -2,10 +2,8 @@
   "issue": 476,
   "spec_dir": "specs/062-lifecycle-review-gate",
   "feature_num": "062",
-  "stage": "implement",
+  "stage": "review",
   "iteration": 5,
   "spec_branch": "spec/062-lifecycle-review-gate",
-  "pending_re_review_from": [
-    "charlesguse"
-  ]
+  "pending_re_review_from": []
 }
