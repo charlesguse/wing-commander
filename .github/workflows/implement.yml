@@ -1560,6 +1560,48 @@ jobs:
             echo "WING_COMMANDER_REMAINING_EOF"
           } >> "$GITHUB_OUTPUT"
 
+      # contracts/watchdog-dedup-fanout-delta.md (spec 109): converged/
+      # handoff exist today only as this job's own $GITHUB_OUTPUT values —
+      # invisible to watchdog.yml inspecting this run after the fact over
+      # the API (only logs/artifacts are retrievable then, not step
+      # outputs). This step is the missing visibility step: an artifact,
+      # mirroring the claude-execution-output-* convention just above.
+      # Never gates or fails this job — an upload failure here is simply a
+      # future collect-cycle-outcome empty contribution.
+      - name: Record cycle outcome for watchdog (cycle)
+        id: cycle-outcome-artifact
+        shell: bash
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true'
+        continue-on-error: true
+        env:
+          CONVERGED: ${{ steps.outcome.outputs.converged }}
+          HANDOFF: ${{ steps.outcome.outputs.handoff }}
+          GATE_OUTCOME: ${{ steps.gate-suite-cycle.outputs.outcome }}
+          FIRST_FAILURE: ${{ steps.gate-suite-cycle.outputs.first-failure }}
+        run: |
+          set -uo pipefail
+          outcome="$GATE_OUTCOME"
+          case "$outcome" in
+            pass|fail) : ;;
+            *) outcome=skipped ;;
+          esac
+          jq -n \
+            --arg converged "${CONVERGED:-}" \
+            --arg handoff "${HANDOFF:-}" \
+            --arg outcome "$outcome" \
+            --arg firstfailure "${FIRST_FAILURE:-}" \
+            '{converged: $converged, handoff: $handoff, "gate-suite-outcome": $outcome, "gate-suite-first-failure": (if $firstfailure == "" then null else $firstfailure end)}' \
+            > "${{ runner.temp }}/wing-commander-cycle-outcome.json"
+
+      - name: Upload cycle outcome artifact (cycle)
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true'
+        continue-on-error: true
+        uses: actions/upload-artifact@v6
+        with:
+          name: wing-commander-cycle-outcome
+          path: ${{ runner.temp }}/wing-commander-cycle-outcome.json
+          if-no-files-found: warn
+
       # Deferred verdict annotation for an exhausted run (FR-013, FR-015) —
       # see "Fail loud on non-healthy agent verdict (cycle)" above, which
       # skips this classification entirely. Now that "Read back cycle
@@ -2241,6 +2283,45 @@ jobs:
             [ -z "$REMAINING_TIP" ] || printf '%s\n' "$REMAINING_TIP"
             echo "WING_COMMANDER_REMAINING_EOF"
           } >> "$GITHUB_OUTPUT"
+
+      # Mirrors "Record cycle outcome for watchdog (cycle)" above — see its
+      # comment. Mutually exclusive with that step's upload within one job
+      # run: at most one of the cycle/retry "Read back ... outcome" steps
+      # actually runs per attempt, so at most one of these two uploads the
+      # `wing-commander-cycle-outcome` artifact.
+      - name: Record cycle outcome for watchdog (retry)
+        id: retry-outcome-artifact
+        shell: bash
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && (steps.retry.outcome == 'success' || steps.retry.outcome == 'failure')
+        continue-on-error: true
+        env:
+          CONVERGED: ${{ steps.retry-outcome.outputs.converged }}
+          HANDOFF: ${{ steps.retry-outcome.outputs.handoff }}
+          GATE_OUTCOME: ${{ steps.gate-suite-retry.outputs.outcome }}
+          FIRST_FAILURE: ${{ steps.gate-suite-retry.outputs.first-failure }}
+        run: |
+          set -uo pipefail
+          outcome="$GATE_OUTCOME"
+          case "$outcome" in
+            pass|fail) : ;;
+            *) outcome=skipped ;;
+          esac
+          jq -n \
+            --arg converged "${CONVERGED:-}" \
+            --arg handoff "${HANDOFF:-}" \
+            --arg outcome "$outcome" \
+            --arg firstfailure "${FIRST_FAILURE:-}" \
+            '{converged: $converged, handoff: $handoff, "gate-suite-outcome": $outcome, "gate-suite-first-failure": (if $firstfailure == "" then null else $firstfailure end)}' \
+            > "${{ runner.temp }}/wing-commander-cycle-outcome.json"
+
+      - name: Upload cycle outcome artifact (retry)
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && (steps.retry.outcome == 'success' || steps.retry.outcome == 'failure')
+        continue-on-error: true
+        uses: actions/upload-artifact@v6
+        with:
+          name: wing-commander-cycle-outcome
+          path: ${{ runner.temp }}/wing-commander-cycle-outcome.json
+          if-no-files-found: warn
 
       # Deferred verdict annotation for an exhausted retry — mirrors "Report
       # exhausted cycle classification (cycle)" above, one step further on.
