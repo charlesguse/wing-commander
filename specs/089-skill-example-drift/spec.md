@@ -57,6 +57,21 @@ re-drive path interacts with it. The skill's example is therefore one merge
 away from being wrong, in a file that is currently scheduled to change, with
 no mechanism that will say so.
 
+## Status update (2026-09-29): spec 060 has landed
+
+Spec 060 merged in #490. `board-loop.yml` no longer carries the
+workflow-level block quoted above: every job that can select an item or
+open a fix PR (`select` through `readiness`) now declares its own
+`concurrency:` block in group `wing-commander-board-loop` with
+`cancel-in-progress: false`, and the only run allowed to overlap them is a
+directed proof run in `wing-commander-board-loop-directed-proof`, which
+selects no item and opens no fix PR. The same PR rewrote the skill's
+Over-rated example (#685) to describe that per-job split. The exposure this
+spec addresses is unchanged — the example is still a quote of a file the
+skill does not own, with nothing to fail when they diverge — so the
+requirements below gate the example as it now reads against the per-job
+shape on `main`. The sections above record the state at filing.
+
 ## Why a stale example here is worse than an ordinary stale comment
 
 The skill's job is to *downgrade* findings. Its Over-rated example is a
@@ -144,20 +159,21 @@ undo than an unrated finding.
 
 **Independent Test**: Take the skill as written, a finding that depends on
 the loop's concurrency, and two variants of `board-loop.yml` — the current
-workflow-level block and a per-job split. Following the skill produces the
+per-job split and one where a selecting job has left the shared group.
+Following the skill produces the
 correct verdict in both cases without the reviewer needing prior knowledge
 of which variant is checked out.
 
 **Acceptance Scenarios**:
 
-1. **Given** `board-loop.yml` as it stands on `main` (one workflow-level
-   group, `cancel-in-progress: false`), **When** a reviewer follows the
+1. **Given** `board-loop.yml` as it stands on `main` (every selecting job
+   in `wing-commander-board-loop`, `cancel-in-progress: false`), **When** a reviewer follows the
    Over-rated example against a two-cycles-race finding, **Then** the
    finding is refuted and the report quotes a guarantee that is present in
    the file.
-2. **Given** a branch where the workflow-level block has been replaced by
-   per-job groups, **When** the same reviewer follows the same example,
-   **Then** they do not refute the finding on the strength of a
+2. **Given** a branch where a job that can select an item or open a fix PR
+   has left the shared group, **When** the same reviewer follows the same
+   example, **Then** they do not refute the finding on the strength of a
    repository-wide group, and the skill itself is what tells them the
    example's premise no longer holds.
 3. **Given** a finding about some other subject entirely, **When** the
@@ -185,8 +201,9 @@ that names the skill line and the workflow line that disagree.
 
 **Acceptance Scenarios**:
 
-1. **Given** a branch that replaces the workflow-level concurrency block
-   with per-job groups and leaves the skill untouched, **When** the PR-time
+1. **Given** a branch that changes `board-loop.yml`'s concurrency
+   configuration so the skill's claim no longer holds (for example, a
+   selecting job leaves the shared group) and leaves the skill untouched, **When** the PR-time
    gate suite runs, **Then** it fails with a message naming both the skill
    location and the workflow location.
 2. **Given** the same branch with the skill updated to match, **When** the
@@ -278,11 +295,11 @@ or the issue history.
   arriving at the Over-rated example MUST be told to confirm the guarantee
   against the live file before letting it downgrade a finding.
 
-- **FR-004**: The change MUST follow the code, not anticipate it. While
-  `main` carries the single workflow-level block at
-  `.github/workflows/board-loop.yml:40-46`, the skill MUST NOT be edited to
-  describe per-job concurrency groups, and MUST NOT be written as though
-  spec 060 had landed.
+- **FR-004**: The change MUST follow the code, not anticipate it. The
+  gate compares the skill's example as it reads on `main` (the per-job
+  split spec 060 shipped in #490) against `board-loop.yml` on the branch
+  under review; this feature MUST NOT rewrite the example beyond what
+  FR-003 and FR-008 require.
 
 - **FR-005**: The skill MUST remain a concrete, checkable illustration — a
   named requirement plus the specific structural guarantee that refuted a
@@ -324,11 +341,14 @@ or the issue history.
   later, the gate is extended then.
 
 - **FR-012**: The comparison MUST cover the properties the refutation
-  actually leans on, not merely the group's name: that the concurrency
-  block is workflow-level (so it applies to every trigger in the file),
-  that its group is repository-wide, and that a second run queues rather
-  than cancelling (`cancel-in-progress: false`). A change that keeps the
-  group name while dropping any of these MUST fail the check.
+  actually leans on, not merely the group's name: that every job which can
+  select an item or open a fix PR joins the repository-wide group
+  `wing-commander-board-loop`; that each such job queues rather than
+  cancels (`cancel-in-progress: false`); and that any other concurrency
+  group in the file contains only jobs that select no item and open no fix
+  PR. A change that keeps the group name while dropping any of these — a
+  selecting job leaving the group, a `cancel-in-progress: true`, or a
+  selecting job placed in another group — MUST fail the check.
 
 - **FR-013**: A PR that outdates the example MUST be able to land behind a
   recorded waiver rather than being stuck, because the implement stage
@@ -385,11 +405,10 @@ or the issue history.
 
 ## Assumptions
 
-- The workflow-level concurrency block at
-  `.github/workflows/board-loop.yml:40-46` is the state of `main` as of
-  2026-09-28, and spec 060 (`stage: spec`, unmerged) is the change expected
-  to alter it. This spec does not depend on spec 060 landing, and does not
-  block on it.
+- The per-job concurrency groups spec 060 shipped (#490) are the state of
+  `main` as of 2026-09-29, and the skill's Over-rated example already
+  describes them. The workflow-level block quoted in the background was
+  the state at filing (2026-09-28).
 - FR-048 of spec 057 ("The loop MUST run under a global concurrency group:
   one item in flight repository-wide, with a second run queuing rather than
   cancelling or racing") is the requirement the skill's example cites, and
