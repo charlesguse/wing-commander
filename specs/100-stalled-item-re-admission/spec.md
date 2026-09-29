@@ -151,7 +151,12 @@ No `[NEEDS CLARIFICATION]` marker remains.
   `stalled` marker with no label can only mean a deliberate removal. The
   rule's canonical statement already lives at `add_stalled_label()` in
   `board_item_marker.py`. This feature documents and gates the rule; it does
-  not change it.
+  not change it. **Refined 2026-09-29 (maintainer, reconciling with spec
+  093 / #717):** when the open `board:owned` PR's head has not moved since
+  its last review, the item resumes at `readiness` instead of `review`, so
+  an already-reviewed head is not reviewed again; a moved head still
+  resumes at `review`. The canonical statement at `add_stalled_label()` is
+  updated to this combined rule.
 - **Q2 (cost, FR-009) — the budget a re-admitted item may spend.**
   **Answer: a fresh review-round budget.** Re-admitting is the maintainer
   authorizing more spend, which is the same call the owner made on #717
@@ -252,9 +257,10 @@ assert zero durable calls in both.
 
 A maintainer removes `board:stalled` from a stalled item. What the loop does
 next is a rule the loop states, not an accident of which artifacts happen to
-exist: it resumes at the step FR-006 names — `review` when an open
-`board:owned` pull request cites the issue, a fresh triage against current
-`main` otherwise — it never opens a second branch or PR beside the one
+exist: it resumes at the step FR-006 names — for an open `board:owned` pull
+request citing the issue, `review` when its head moved since the last review
+and `readiness` when it did not; a fresh triage against current `main`
+otherwise — it never opens a second branch or PR beside the one
 already open, and the run summary says which rule fired and why. A
 re-admitted review-budget stall starts a fresh round budget (FR-009),
 because the removal is the maintainer authorizing that spend.
@@ -264,15 +270,18 @@ today's behaviour, stated and gated rather than emergent. US1 and US2 are
 correct without it, so it ships last.
 
 **Independent Test**: Drive resume against a stalled marker plus an open
-loop-owned PR and assert the resolved step is `review`; drive it against a
+loop-owned PR whose head moved since its last review and assert the
+resolved step is `review`; with an unmoved head, assert `readiness`; drive it against a
 stalled marker with no open PR and assert a fresh triage. In both, assert
 the absence of a second branch or PR and the summary line.
 
 **Acceptance Scenarios**:
 
 1. **Given** an item stalled by review's spent budget with its PR still
-   open, **When** the label is removed and the next run selects it, **Then**
-   the item resumes at `review` on that pull request and the run summary
+   open and a human push since its last review, **When** the label is
+   removed and the next run selects it, **Then** the item resumes at
+   `review` on that pull request (at `readiness` if the head has not moved)
+   and the run summary
    records that it was re-admitted from a stall and which clause resolved
    the step.
 2. **Given** an item stalled by readiness's backstop breach with its PR
@@ -370,9 +379,10 @@ at once. It is not built here; see Out of Scope.
 
 - **FR-006**: The loop MUST resolve a re-admitted stalled item to a step by
   a stated rule, and that rule is the resume step's ordinary re-derivation
-  from live state (Q1, option (b)): `review` when an open `board:owned` pull
-  request cites the issue, and a fresh triage against current `main`
-  otherwise. The rule MUST be stated in one canonical place and MUST be
+  from live state (Q1, option (b), as refined with spec 093): when an open
+  `board:owned` pull request cites the issue, `review` if its head has moved
+  since the last review and `readiness` if it has not; a fresh triage
+  against current `main` otherwise. The rule MUST be stated in one canonical place and MUST be
   reachable from the contracts a maintainer reads, rather than left to be
   inferred from the resume fallback's clause order.
 - **FR-006a**: The rule MUST rest on FR-001/FR-002 explicitly: because no
@@ -505,8 +515,9 @@ at once. It is not built here; see Out of Scope.
   FR-009's budget allow, and nothing more.
 - **SC-005**: A maintainer can predict, from one stated rule read in one
   place, what removing `board:stalled` will make the loop do next, for a
-  stall at any site and with or without an open pull request — `review` on
-  the open loop-owned PR, a fresh triage otherwise.
+  stall at any site and with or without an open pull request — on the open
+  loop-owned PR, `review` if its head moved since the last review and
+  `readiness` if not; a fresh triage otherwise.
 - **SC-006**: A re-admitted item's additional agent budget is a stated
   number — one full round budget, the same as a newly selected item — and a
   checked-in case shows the item stalling again once it is spent.
