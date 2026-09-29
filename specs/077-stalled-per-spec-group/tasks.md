@@ -216,3 +216,7 @@ This repository is a GitHub Actions pipeline component — no `src`/`tests` spli
 ## Maintainer Feedback
 
 - [ ] T036 Mark T026 done-as-withdrawn: keep the `environment:` block on the `resolve-identity` job in `.github/workflows/pr-conversation.yml`. Gate 7 requires an `environment:` binding on every published-stage job; the only existing exemption is `verify-image-prerequisites`, and the extra deployment record `resolve-identity` produces does not justify a second one. No change to `contracts/resolve-identity-job.md` or `data-model.md` is needed — the contract already documents the binding.
+
+## Maintainer Feedback
+
+- [ ] T037 Mark T030 done: `Closes #633` is present in this PR's body outside the finalize markers, confirmed by the maintainer. No further action needed.
