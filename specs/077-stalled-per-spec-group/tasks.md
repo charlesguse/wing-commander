@@ -220,3 +220,7 @@ This repository is a GitHub Actions pipeline component — no `src`/`tests` spli
 ## Maintainer Feedback
 
 - [ ] T037 Mark T030 done: `Closes #633` is present in this PR's body outside the finalize markers, confirmed by the maintainer. No further action needed.
+
+## Maintainer Feedback
+
+- [ ] T038 Add one line to spec.md's Out of Scope section noting that the same exposure in `tasks.yml`'s `stalled`/`stalled-approved` jobs and `cleanup.yml`'s `mark-stalled` job is tracked separately on #754 and is out of this PR's scope — mirroring T025's note, which currently exists only in tasks.md.
