@@ -750,7 +750,7 @@ Task: "New Gate 103: verify-board-prove-displacement.py fixtures"
 
 ## Phase 9: Convergence
 
-- [ ] T055 Update `.claude/skills/spec-cross-reference/SKILL.md`'s
+- [X] T055 Update `.claude/skills/spec-cross-reference/SKILL.md`'s
   "Over-rated" example (lines 23-28), which still describes
   `group: wing-commander-board-loop` as "applied to every trigger in the
   file" — the single workflow-level block T009 replaced with per-job
@@ -774,7 +774,7 @@ Task: "New Gate 103: verify-board-prove-displacement.py fixtures"
 
 ## Maintainer Feedback (PR #490 review, 2026-09-25, @charlesguse)
 
-- [ ] Finish T055 (still unchecked): update `.claude/skills/spec-cross-reference/SKILL.md`'s "Over-rated" example (lines 23-28), which still describes `group: wing-commander-board-loop` as "applied to every trigger in the file" — the single workflow-level block T009 replaced with per-job groups. Restate it in terms of the per-job split (the refutation itself still stands) and point at `specs/060-self-redrive-concurrency/contracts/concurrency-groups.md`.
+- [X] Finish T055 (still unchecked): update `.claude/skills/spec-cross-reference/SKILL.md`'s "Over-rated" example (lines 23-28), which still describes `group: wing-commander-board-loop` as "applied to every trigger in the file" — the single workflow-level block T009 replaced with per-job groups. Restate it in terms of the per-job split (the refutation itself still stands) and point at `specs/060-self-redrive-concurrency/contracts/concurrency-groups.md`.
 
 ---
 
@@ -788,7 +788,7 @@ Task: "New Gate 103: verify-board-prove-displacement.py fixtures"
 
 ## Maintainer Feedback (PR #490 review, 2026-09-28, @charlesguse)
 
-- [ ] T055 remains unchecked (specs/060-self-redrive-concurrency/tasks.md:743). `.claude/skills/spec-cross-reference/SKILL.md`'s "Over-rated" example (lines 23-28) still describes `group: wing-commander-board-loop` as applied to every trigger in the file, which T009 replaced with per-job concurrency groups. Update the example to describe the per-job split (the refutation itself still stands), and point at `specs/060-self-redrive-concurrency/contracts/concurrency-groups.md`.
+- [X] T055 remains unchecked (specs/060-self-redrive-concurrency/tasks.md:743). `.claude/skills/spec-cross-reference/SKILL.md`'s "Over-rated" example (lines 23-28) still describes `group: wing-commander-board-loop` as applied to every trigger in the file, which T009 replaced with per-job concurrency groups. Update the example to describe the per-job split (the refutation itself still stands), and point at `specs/060-self-redrive-concurrency/contracts/concurrency-groups.md`.
 
 ---
 

@@ -4252,20 +4252,19 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-pipeline-checkout-guard.py --self-test
 
-      # Gate 117 — specs/060-self-redrive-concurrency (FR-010b, research.md
+      # Gate 103 — specs/060-self-redrive-concurrency (FR-010b, research.md
       # D8): a merge whose own pull_request: closed run never reached
       # prove-gate/prove at all -- displaced from wing-commander-board-loop's
       # own pending slot before it began -- is a distinct, detectable
       # condition from anything the directed-proof mechanism itself
       # produces, since that mechanism only ever runs once prove-gate has
-      # already executed. Numbered 117: originally Gate 99, renumbered to
+      # already executed. Numbered 103: originally Gate 99, renumbered to
       # Gate 102 for the collision with the Gate 99 PR #463 claimed (PR #490
-      # review, 2026-09-25), renumbered to Gate 103 for the collision with
-      # Gates 99 and 100 that specs/059-converged-means-tasks-done (#587)
-      # claimed, and renumbered again here for the collision with Gate 116
-      # (#611), which claimed 101-115 as reserved and 116 as used, before
-      # this branch's rebase landed.
-      - name: Gate 117 — board loop prove-displacement detects a merge whose proof run never started
+      # review, 2026-09-25), then to Gate 103 for the collision with Gates
+      # 99 and 100 that specs/059-converged-means-tasks-done (#587) claimed.
+      # 101-103 are reserved for this spec; Gate 117 belongs to
+      # specs/081-composite-aware-dispatch-gate (#660 tracks allocation).
+      - name: Gate 103 — board loop prove-displacement detects a merge whose proof run never started
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-prove-displacement.py
 
