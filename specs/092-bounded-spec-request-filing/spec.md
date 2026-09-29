@@ -64,10 +64,10 @@ the next run too. The rest of the board is never reached, and the item carries n
 all — which is what spec 057 FR-050 ("each item MUST carry a bounded round budget") asks
 for.
 
-With this feature, consecutive failed filings for an item are counted. On the Nth, the
-loop stops retrying: it stalls the item with an explicit comment saying that **no
-`spec-request` was filed**, why, and what the maintainer must do. The board moves on to the
-next eligible item on the very next run.
+With this feature, consecutive failed filings for an item are counted. On the third — the
+configured cap — the loop stops retrying: it stalls the item with an explicit comment
+saying that **no `spec-request` was filed**, why, and what the maintainer must do. The
+board moves on to the next eligible item on the very next run.
 
 **Why this priority**: Unbounded retry is a live board-starvation bug with a per-run agent
 cost, and it is the requirement spec 057 already states but does not enforce for this path.
@@ -76,16 +76,16 @@ succeeds.
 
 **Independent Test**: Make the create fail deterministically (for example, with the
 `spec-request` label absent) and drive the loop repeatedly against a board holding that
-item and one other eligible item. Confirm the failing item is attempted no more than N
+item and one other eligible item. Confirm the failing item is attempted no more than three
 times and that the other item is selected on the run after the cap is reached.
 
 **Acceptance Scenarios**:
 
-1. **Given** an item whose `spec-request` create has failed fewer than N times, **When** a
-   scheduled run reaches a spec verdict for it, **Then** the create is attempted again and
+1. **Given** an item whose `spec-request` create has failed fewer than three times, **When**
+   a scheduled run reaches a spec verdict for it, **Then** the create is attempted again and
    a failure fails the run loudly, leaving the item eligible.
-2. **Given** an item whose `spec-request` create has now failed N times, **When** that Nth
-   failure occurs, **Then** the item is stalled with a comment that states no
+2. **Given** an item whose `spec-request` create has now failed three times, **When** that
+   third failure occurs, **Then** the item is stalled with a comment that states no
    `spec-request` was filed, names the last failure, and names the maintainer action that
    clears it; the run does not report the item as routed.
 3. **Given** a stalled, capped item, **When** the next scheduled run starts, **Then** that
@@ -193,15 +193,13 @@ present; then remove `board:stalled` and confirm the item is selected again.
   satisfying spec 057 FR-050's requirement that every item carry a bounded budget.
 - **FR-009**: The count of prior failed filing attempts for an item MUST be derived from
   durable state a later run can read, computed in deterministic code rather than inferred
-  by an agent. [NEEDS CLARIFICATION: where should the count live — a counter carried in the
-  board item marker the loop already writes and reads, a count of the failure comments the
-  loop has posted on the issue, or a count of the loop's own prior failed runs for that
-  item? Each differs in visibility to a maintainer and in what resets it.]
+  by an agent. That state is the board item marker the loop already writes and reads, and
+  the count MUST occupy its own dedicated field in it — never the review `round` field, so
+  the two budgets stay decoupled as FR-010 requires.
 - **FR-010**: The attempt cap MUST be a single configured value, expressed the same way the
-  loop's existing budgets are and overridable by a consuming repository. [NEEDS
-  CLARIFICATION: what is N, and is it its own budget or shared with the existing review
-  round budget (currently 5)? A shared budget means one knob but couples two unrelated
-  loops; a separate one means a second knob to document.]
+  loop's existing budgets are and overridable by a consuming repository. It MUST be its own
+  budget — a new `BOARD_LOOP_*` configuration variable, separate from the existing review
+  round budget — with a default of **3**.
 - **FR-011**: While an item is below the cap, behaviour MUST be unchanged from today: a
   failed create fails the run loudly, nothing is commented, labelled or published on the
   failure, and the item is left eligible so a later run retries it.
@@ -223,10 +221,9 @@ present; then remove `board:stalled` and confirm the item is selected again.
 
 - **FR-017**: Both the existence check and the attempt bound MUST apply to every site at
   which the loop files a `spec-request` — route's spec verdict, the fix job's post-push
-  breach, and readiness's breach retry. [NEEDS CLARIFICATION: should this feature deliver
-  both the bound and the idempotency (assumed here, since they close different failure
-  modes), or only one of them? Delivering only the bound leaves duplicates possible;
-  delivering only idempotency leaves the board starvable.]
+  breach, and readiness's breach retry. This feature delivers both the bound and the
+  idempotency: delivering only the bound would leave duplicates possible, and delivering
+  only idempotency would leave the board starvable.
 - **FR-018**: The existence check MUST have exactly one implementation, generalising the
   one the breach-retry path already performs rather than adding a parallel copy, and the
   same MUST hold for the attempt bound.
@@ -249,7 +246,8 @@ present; then remove `board:stalled` and confirm the item is selected again.
   issue. It either files a new artifact, reuses an existing one, or fails. Attempts are
   counted per item.
 - **Attempt budget**: The bounded number of consecutive failed filing attempts an item may
-  accumulate before the loop gives up on it and stalls it.
+  accumulate before the loop gives up on it and stalls it — its own configured value,
+  defaulting to 3, distinct from the review round budget.
 - **Prior-filing record**: The evidence that lets a later run answer "have I already filed
   for this issue?" — the loop's own authorship plus the canonical originating-issue
   reference carried in every `spec-request` body.
@@ -257,15 +255,17 @@ present; then remove `board:stalled` and confirm the item is selected again.
   "no `spec-request` was filed" statement on the issue and one maintainer action that
   reverses it.
 - **Board item marker**: The loop's existing per-issue durable state comment, which records
-  the item's step and is read by selection on the next run.
+  the item's step and is read by selection on the next run. It gains one new field for this
+  feature: the item's failed filing-attempt count, held separately from the review `round`
+  field.
 
 ## Success Criteria *(mandatory)*
 
 ### Measurable Outcomes
 
 - **SC-001**: Across repeated runs in which the filing create fails deterministically, the
-  same item is attempted at most N times; the number of agent invocations spent on that
-  item is bounded at N × 2 rather than growing with time.
+  same item is attempted at most three times (the configured cap); the number of agent
+  invocations spent on that item is bounded at six rather than growing with time.
 - **SC-002**: On the first scheduled run after an item reaches its cap, a different
   eligible item is selected — measured as: a board holding one capped item and one ordinary
   item makes progress on the ordinary item.
@@ -284,17 +284,25 @@ present; then remove `board:stalled` and confirm the item is selected again.
 
 ## Assumptions
 
-- Both gaps in the issue are closed by this feature. They fail differently — reuse cannot
-  help when the create never succeeds, and a bound cannot prevent a duplicate after a
-  create that did succeed — so specifying only one leaves a live defect. FR-017 records the
-  alternative.
+- Both gaps in the issue are closed by this feature (confirmed at clarification). They fail
+  differently — reuse cannot help when the create never succeeds, and a bound cannot prevent
+  a duplicate after a create that did succeed — so delivering only one leaves a live defect.
 - The existence check generalises the lookup the readiness breach-retry path already
   performs (loop authorship + the originating-issue footer line + a time scope), rather
   than introducing a second matching rule; this follows the repository's "shared logic has
   exactly one home" rule.
 - The attempt cap is expressed as a workflow-level configured value in the same family as
-  the loop's existing round budget, so a consuming repository can override it without
-  editing the workflow.
+  the loop's existing round budget — a new `BOARD_LOOP_*` variable defaulting to 3 — so a
+  consuming repository can override it without editing the workflow. It is deliberately a
+  second knob rather than a reuse of the review round budget: filing retries and review
+  rounds have no reason to move together, and 3 gives a transient failure (a rate limit, a
+  flaky write) two chances to heal before a maintainer is asked to act.
+- The failed-attempt count is carried in the board item marker rather than counted from
+  comments or from prior run history. Counting posted failure comments would require the
+  loop to publish something on a failed create, which the #514 guard (FR-011, FR-020)
+  forbids; counting prior runs depends on run-history attribution that does not survive
+  workflow renames or log retention. The give-up comment required by FR-012 is the
+  maintainer-visible record instead (User Story 3).
 - The give-up stall reuses the loop's existing stall mechanism — the `board:stalled` label
   plus a stalled marker — and its existing single re-eligibility condition (removing the
   label), rather than a new state.
@@ -319,8 +327,8 @@ present; then remove `board:stalled` and confirm the item is selected again.
 
 - Changing how triage or route reach their verdicts, or how the size-and-path backstop
   measures a change.
-- Changing the semantics or value of the existing review round budget, beyond the question
-  of whether the new cap shares it.
+- Changing the semantics or value of the existing review round budget, which the new cap is
+  separate from and does not touch.
 - Bounding or deduplicating the loop's other artifacts — fix PRs, review-finding issues,
   watchdog reports — which have their own existing mechanisms.
 - Making the label-bootstrap composite fail instead of warn when it cannot create a label;

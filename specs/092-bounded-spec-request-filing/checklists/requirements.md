@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -32,17 +32,18 @@
 ## Notes
 
 - Items marked incomplete require spec updates before `/speckit-clarify` or `/speckit-plan`
-- Three `[NEEDS CLARIFICATION]` markers remain deliberately, at the repository owner's
-  decision points named in the originating issue. They are posted to the lifecycle issue
-  as questions rather than resolved here:
-  - **FR-017 (scope)** — deliver both the attempt bound and the idempotent filing, or only
-    one of the two options the issue lists.
-  - **FR-010 (bound)** — what N is, and whether the cap is its own budget or shares the
-    existing review round budget.
-  - **FR-009 (state)** — where the failed-attempt count lives, which determines what a
-    maintainer can see and what resets it.
+- Three `[NEEDS CLARIFICATION]` markers were posted to the lifecycle issue as questions and
+  are all now resolved by the owner's reply on #701:
+  - **FR-017 (scope)** — deliver **both** the attempt bound and the idempotent filing; the
+    two failure modes are disjoint, so either alone leaves one live.
+  - **FR-010 (bound)** — the cap is **its own budget, N = 3**, a new `BOARD_LOOP_*`
+    variable, not shared with the existing review round budget.
+  - **FR-009 (state)** — the failed-attempt count lives in the **board item marker, in its
+    own field**, never the review `round` field. Comment-counting would breach the #514
+    rule that a failed create publishes nothing; run-history counting does not survive
+    renames or log retention.
 - One further question the issue raised — whether a *closed* prior `spec-request` counts as
   "already filed" — was resolved by informed guess (FR-003) and recorded in Assumptions
   rather than spent as a fourth marker, since re-filing a deliberately closed artifact is
   the duplicate this feature exists to prevent.
-- Validation run once; no failing items outside the markers above.
+- Validation re-run after the clarification reply was folded in; no failing items remain.
