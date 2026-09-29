@@ -49,11 +49,14 @@ YAML-parsed, per Gate 7/23/51's stated rationale, so a step in flow style
 or unusual indentation is not silently missed, and env/with/run text that
 happens to contain "commit" outside a prompt is never mistaken for one).
 Applied across every .github/workflows/*.yml file (not just the five this
-feature touched), that scan finds exactly the nine real sites plus three
-sites that mention "commit" without needing this feature's guidance --
-carried in EXEMPT_SITES below, each with the reason -- proving the
-regression protection reaches a future eleventh site automatically rather
-than trusting a hand-count.
+feature touched), that scan finds the nine real sites plus the sites that
+mention "commit" without needing this feature's guidance -- carried in
+EXEMPT_SITES below, each with the reason -- proving the regression
+protection reaches a future site automatically rather than trusting a
+hand-count. #761 later wired intake.yml's "Create spec from issue" and
+clarify.yml's "Fold answers into the draft spec" in as covered sites (both
+commit, and both agents were denied a multi-line `git commit -m
+"$(...)"`), so neither is exempt any more.
 
 WHAT EACH DISCOVERED SITE MUST HAVE, ONE OF TWO
 --------------------------------------------------
@@ -107,10 +110,6 @@ EXEMPT_SITES = {
         "read-only agent (\"Constraints: read-only -- do not run git "
         "commit, git push...\") -- mentions the word but never composes a "
         "commit message at all.",
-    ("clarify.yml", "Fold answers into the draft spec"):
-        "commits, but always the fixed one-line \"spec: resolve "
-        "clarifications from #<issue>\" -- deterministic, never "
-        "multi-line, so the scratch-path convention has nothing to add.",
     ("board-loop.yml", "Triage-propose"):
         "read-only (\"You are read-only: you never close, label, or "
         "comment on anything yourself\") -- mentions \"commit\" only when "
@@ -132,20 +131,6 @@ EXEMPT_SITES = {
         "pure analysis agent -- \"commit\" appears only inside descriptive "
         "evidence vocabulary (\"tool name, branch, commit counts, matched "
         "sentinel\"), never as an instruction to compose one.",
-    ("intake.yml", "Create spec from issue"):
-        "a genuine gap, not a deterministic one-liner: step 5 instructs "
-        "\"commit ONLY the new spec directory ... and push it\" with an "
-        "unspecified message, and Write plus Bash(git commit:*) are both "
-        "granted (intake.yml:585) -- an intake agent composing a "
-        "multi-line message here hits the same silent denial this "
-        "feature exists to fix (#440). spec.md/research.md's nine-site "
-        "enumeration never surveyed intake.yml, and wiring it in is "
-        "outside specs/078-plan-tasks-commit-scratch-path's task list "
-        "(tasks.md T003-T011 name only plan.yml/tasks.yml/board-loop.yml/"
-        "pr-conversation.yml/implement.yml). Recorded here as an "
-        "explicit, auditable exemption per FR-010 (\"MUST be an explicit "
-        "exemption under FR-012, not an omission\") rather than left as "
-        "a silent gap; reported separately as a follow-up finding.",
 }
 
 # implement.yml's two sites: FR-013's deeper, render-executing check.
@@ -377,7 +362,7 @@ def scan(workflows_glob, root, check_exempt_staleness=True):
 
     check_exempt_staleness is False for self-test fixtures scanning an
     isolated tempdir that was never going to contain rebase.yml's/
-    finalize.yml's/clarify.yml's real exempt steps in the first place --
+    finalize.yml's/cleanup.yml's real exempt steps in the first place --
     the staleness question only means something against the real tree."""
     failures = []
     sites, parse_failures = discover(workflows_glob)

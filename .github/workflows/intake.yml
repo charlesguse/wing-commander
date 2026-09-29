@@ -588,6 +588,12 @@ jobs:
             discussion actually settled something the body doesn't capture,
             update the body before this spec is finalized.
 
+      - name: Compose commit-message guidance (intake)
+        id: commit-guidance-intake
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-commit-message-guidance
+        with:
+          scratch-filename: intake-commit-message.txt
+
       - name: Compose tool args (intake)
         id: tool-args-intake
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-tool-args
@@ -691,6 +697,8 @@ jobs:
             5. Create branch ${{ inputs.spec-draft-prefix }}<NNN-slug> from
                ${{ steps.defbranch.outputs.name }}, commit ONLY the new
                spec directory (git add <spec-dir>), and push it.
+
+               ${{ steps.commit-guidance-intake.outputs.guidance }}
             6. Open a pull request to ${{ steps.defbranch.outputs.name }}. First
                write its body (a summary of the spec, then the line
                'Closes nothing — lifecycle issue: #${{ inputs.issue-number }}')
@@ -737,7 +745,8 @@ jobs:
             unchanged.
 
             Constraints: create at most one spec directory; never edit files outside
-            it, except the step 6 PR-body scratch file; never merge or approve
+            it, except the step 5 commit-message and step 6 PR-body scratch
+            files; never merge or approve
             anything; never force-push.
 
             Shell constraints in this headless run. Each of these cost real
