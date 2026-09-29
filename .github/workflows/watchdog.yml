@@ -521,6 +521,7 @@ jobs:
           ACTIONS_TOKEN: ${{ github.token }}
           RUN_ID: ${{ inputs.run-id }}
           RUN_CONCLUSION: ${{ steps.run-meta.outputs.conclusion }}
+          INSPECTED_STAGE: ${{ steps.spec-slug.outputs.record-stage }}
         run: |
           set -uo pipefail
           # Attribution invariant (spec 024 FR-004/FR-005): a run that
@@ -590,8 +591,8 @@ jobs:
           #
           # tool_input.command is carried through as descriptive facts so a
           # Finding can name what was denied. It is deliberately not part of
-          # the signal identity (#118 projects tool-denial to {tool} alone),
-          # so this does not move any fingerprint.
+          # the signal identity (#118; since #266 tool-denial projects to
+          # {stage, tool}), so this does not move any fingerprint.
           # shellcheck disable=SC2016 # this is a jq program — its $vars must
           # NOT be shell-expanded.
           filter='
@@ -637,6 +638,13 @@ jobs:
             # silently read as a successful empty contribution the way
             # `2>/dev/null || echo '[]'` alone would.
             entries=$(jq -c "$filter" "$f" 2>/dev/null) || { eo_outcome="failed"; entries='[]'; }
+            # #266: every denial signal carries the inspected run's stage —
+            # the metrics record's own `stage` literal (the run-identity
+            # composite's record-stage), never the wrapper's display name
+            # nor agent wording. An unresolved stage is the fixed value
+            # `unknown`, never a dropped fact, so the signal identity stays
+            # deterministic instead of collapsing back to {tool}.
+            entries=$(jq -c --arg stage "${INSPECTED_STAGE:-unknown}" 'map(.facts = ({stage: $stage} + .facts))' <<<"$entries" 2>/dev/null) || { eo_outcome="failed"; entries='[]'; }
             jq -c --argjson new "$entries" '. + $new' "$RUNNER_TEMP/signals.json" > "$RUNNER_TEMP/signals.json.tmp" && mv "$RUNNER_TEMP/signals.json.tmp" "$RUNNER_TEMP/signals.json"
           done
           if [ "$found" = "false" ]; then
@@ -1912,8 +1920,14 @@ jobs:
             | (.source // "") as $src
             | (.facts // {}) as $fx
             | (if   ($src | startswith("result-record")) or ($src | startswith("execution-output"))
+               # #266: keyed by stage AND tool, so the denials of each stage
+               # accumulate on their own issue and a reopen means a regression
+               # in that stage. A missing stage is `unknown`, never dropped.
+               # (No apostrophes in this comment: it sits inside the single-
+               # quoted jq program.)
                then {kind: "tool-denial",
-                     ident: {tool: ($fx.tool // "" | ascii_downcase)}}
+                     ident: {stage: ($fx.stage // "" | ascii_downcase | if . == "" then "unknown" else . end),
+                             tool: ($fx.tool // "" | ascii_downcase)}}
                elif ($src | startswith("branch-drift"))
                then {kind: "branch-drift",
                      ident: {branch: ($fx.branch // "" | ascii_downcase | sub("^(spec-draft|spec|plan|tasks|impl)/"; ""))}}
@@ -2473,7 +2487,9 @@ jobs:
               making it stable. Draw keys ONLY from this fixed vocabulary:
               tool, branch, spec, file, job, step, workflow, stage,
               expected, actual. The schema rejects every other key, so use
-              the ones that fit and omit the rest. Values must be short
+              the ones that fit and omit the rest; a denied-tool Finding
+              must carry both stage and tool, copied from its signal's
+              facts, or it is dropped as ungrounded. Values must be short
               lowercase strings. Still keep run IDs, timestamps and turn
               numbers out of it — they age badly on an issue that may be
               reported against many times — but a count or a specific path
@@ -3069,7 +3085,7 @@ jobs:
             # projects to — kept in agreement deliberately, since both are
             # asking "what identifies this class of problem."
             case "$FINDING_CLASS" in
-              denied-tool)           keys='["tool"]' ;;
+              denied-tool)           keys='["stage","tool"]' ;;
               lost-progress)         keys='["branch"]' ;;
               stage-mismatch)        keys='["expected","actual"]' ;;
               missing-spec-artifact) keys='["branch"]' ;;
