@@ -428,16 +428,20 @@ jobs:
       # transcript/memory with whatever implemented or finalized this PR,
       # structurally true (a separate job has no access to another job's
       # transcript file at all).
+      # T080/F9 (#759): this reviewer has no `gh` grant (its tool-args step
+      # above allows only Skill/Read/Grep/Glob/Bash(python3 -I .../git_read.py:*)/
+      # Bash(cat:*)) and posts nothing itself -- `disposition` posts the
+      # review from its own extracted findings. Neither `GH_TOKEN` (env) nor
+      # `github_token` (with) is passed, so a prompt-injected reviewer has no
+      # credential reachable via its allowed `Bash(cat:*)` (e.g. reading its
+      # own process environment) to echo into its publicly posted findings.
       - name: Reviewer
         id: reviewer
         continue-on-error: true
         uses: anthropics/claude-code-action@v1
-        env:
-          GH_TOKEN: ${{ steps.ctx.outputs.token }}
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          github_token: ${{ steps.ctx.outputs.token }}
           allowed_bots: "github-actions,${{ steps.ctx.outputs.bot-slug }}"
           prompt: |
             You are the lifecycle review gate's independent reviewer for PR
