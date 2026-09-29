@@ -192,3 +192,7 @@ This repository is a GitHub Actions pipeline component — no `src`/`tests` spli
 ## Maintainer Feedback
 
 - [ ] T029 Fix the stall-notice wording for a `resolve-identity` failure: today the notice reads "the pr-conversation stage was skipped because a dependency it needs did not run" (from `wing-commander-stall-reason`'s `entry-result == 'skipped'` branch, since `classify-and-announce` skips when `resolve-identity` fails) — but `resolve-identity` itself ran and failed. Change the reason to say `resolve-identity` failed and point at its job log. Correct `specs/077-stalled-per-spec-group/data-model.md`'s claim (~73, "already covers the resolve-identity-failed case truthfully; no composite edit needed") to match whatever wiring this fix requires, since a composite or call-site change turns out to be needed after all.
+
+## Maintainer Feedback
+
+- [ ] T030 Add `Closes #633` to this pull request's body — #633 is the pipeline-filed issue ("resolve-identity's spec-dir output is never truly empty for a non-qualifying PR") that T020 already fixed in this PR.
