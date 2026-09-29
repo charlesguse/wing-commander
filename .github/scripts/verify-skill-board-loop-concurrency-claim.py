@@ -339,7 +339,8 @@ def evaluate():
         findings.append(DriftFinding(
             property="subject-missing", job=None,
             skill_location=(SKILL_MD, None), workflow_location=(BOARD_LOOP_YML, None),
-            expected="{0} to exist".format(SKILL_MD), actual="file not found"))
+            expected="{0} to exist".format(os.path.relpath(SKILL_MD, REPO_ROOT)),
+            actual="file not found"))
     else:
         claim, missing = extract_skill_claim(_read(SKILL_MD), SKILL_MD)
         if missing:
@@ -349,7 +350,8 @@ def evaluate():
         findings.append(DriftFinding(
             property="subject-missing", job=None,
             skill_location=(SKILL_MD, None), workflow_location=(CONCURRENCY_GROUPS_MD, None),
-            expected="{0} to exist".format(CONCURRENCY_GROUPS_MD), actual="file not found"))
+            expected="{0} to exist".format(os.path.relpath(CONCURRENCY_GROUPS_MD, REPO_ROOT)),
+            actual="file not found"))
     else:
         classifications = extract_job_classifications(_read(CONCURRENCY_GROUPS_MD))
         if not classifications:
@@ -364,7 +366,8 @@ def evaluate():
         findings.append(DriftFinding(
             property="subject-missing", job=None,
             skill_location=(SKILL_MD, None), workflow_location=(BOARD_LOOP_YML, None),
-            expected="{0} to exist".format(BOARD_LOOP_YML), actual="file not found"))
+            expected="{0} to exist".format(os.path.relpath(BOARD_LOOP_YML, REPO_ROOT)),
+            actual="file not found"))
     else:
         facts = extract_workflow_concurrency_facts(_read(BOARD_LOOP_YML))
         if not facts:
