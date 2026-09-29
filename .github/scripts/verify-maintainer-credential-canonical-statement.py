@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gate 99 -- exactly one canonical statement of the accepted maintainer
+"""Gate 114 -- exactly one canonical statement of the accepted maintainer
 credential shape; every other site points at it (FR-017/FR-018,
 specs/066-fine-grained-maintainer-token).
 

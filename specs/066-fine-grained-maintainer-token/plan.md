@@ -116,8 +116,8 @@ specs/066-fine-grained-maintainer-token/
     ├── verify-auto-release-credential-step.py    # MODIFIED: scenarios and mutations for
     │                                               #   both credential shapes and every new probe
     └── verify-<canonical-statement-gate>.py       # NEW — contracts/canonical-statement-gate.md
-                                                     #   (numbered at implementation time; Gate 99
-                                                     #   is the next free slot as of this plan)
+                                                     #   (numbered at implementation time; landed as Gate 114
+                                                     #   after the 99-101 collisions, #660)
 
 docs/
 └── setup.md                       # MODIFIED: §2's existing secret row becomes the canonical

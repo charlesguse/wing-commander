@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gate 100 -- a gate-driving act that keeps failing because the harness
+"""Gate 115 -- a gate-driving act that keeps failing because the harness
 credential itself was rejected ends fail-infra naming the credential, not an
 undifferentiated fail-gate-stall.
 
@@ -276,7 +276,7 @@ def main():
     finally:
         shutil.rmtree(tmproot, ignore_errors=True)
 
-    print(f"Gate 100: {len(SCENARIOS)} scenario(s), {len(MUTATIONS)} mutation(s); "
+    print(f"Gate 115: {len(SCENARIOS)} scenario(s), {len(MUTATIONS)} mutation(s); "
           f"{len(failures)} failure(s).")
     return 1 if failures else 0
 

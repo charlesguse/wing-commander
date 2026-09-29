@@ -4372,7 +4372,7 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-waiver-citations.py --self-test
 
-      # Gate 125 — specs/066-fine-grained-maintainer-token FR-017/FR-018: "a
+      # Gate 114 — specs/066-fine-grained-maintainer-token FR-017/FR-018: "a
       # classic PAT, not fine-grained" was asserted in at least four places
       # (docs/setup.md, auto-release.yml's credential-step comment, Gate
       # 67's own docstring/scenario text, and specs/055-unattended-e2e-
@@ -4384,19 +4384,19 @@ jobs:
       # phrase. A new, topic-specific gate rather than an extension of Gate
       # 47 (research.md D7): Gate 47's declared scope is `#` comments in
       # .github/workflows/*.yml only, and never scans docs/*.md or
-      # specs/*/research.md as a pointer source. Numbered 125, not the 101
-      # this branch's own commit picked: Gate 101 is reserved for
-      # specs/060-self-redrive-concurrency, and this rebase's "onto" tip
-      # already claims up to Gate 124 with its own new gate (the waiver
-      # citations entry above).
-      - name: "Gate 125 — one canonical statement of the accepted maintainer-credential shape, every other site a pointer"
+      # specs/*/research.md as a pointer source. Numbered 114 (and its
+      # sibling below 115), not the 99/100/101 this branch's own commits
+      # picked in turn: those collided with gates main or other in-flight
+      # specs held, and 114-115 were reserved for this spec (#660 tracks
+      # the allocation problem).
+      - name: "Gate 114 — one canonical statement of the accepted maintainer-credential shape, every other site a pointer"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-maintainer-credential-canonical-statement.py
-      - name: "Gate 125 self-test — an unqualified contradicting phrase with no pointer, a removed pointer, a pointer aimed elsewhere, or a missing FR-019 annotation each fail"
+      - name: "Gate 114 self-test — an unqualified contradicting phrase with no pointer, a removed pointer, a pointer aimed elsewhere, or a missing FR-019 annotation each fail"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-maintainer-credential-canonical-statement.py --self-test
 
-      # Gate 100 — specs/066-fine-grained-maintainer-token FR-011 (Edge Case
+      # Gate 115 — specs/066-fine-grained-maintainer-token FR-011 (Edge Case
       # "Expiry during a long attempt"): a gate-driving read or write that
       # keeps failing at runtime because the harness credential itself was
       # rejected (expired, revoked, or narrowed mid-attempt) must end
@@ -4407,7 +4407,7 @@ jobs:
       # signature, a plain repeated failure still gate-stalls, and the
       # pre-existing rate-limit branch still takes precedence over it; a
       # mutation dropping the new branch must fail the first assertion.
-      - name: "Gate 100 — a repeated gate-driving failure caused by the harness credential ends fail-infra, naming the credential"
+      - name: "Gate 115 — a repeated gate-driving failure caused by the harness credential ends fail-infra, naming the credential"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-auto-release-poll-credential-failure.py
 
