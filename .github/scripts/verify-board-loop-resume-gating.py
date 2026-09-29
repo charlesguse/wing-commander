@@ -402,6 +402,25 @@ def _writes_output(run, key):
     return re.search(r"""(?:^|["'\s]){0}=""".format(re.escape(key)), run, re.M) is not None
 
 
+def _writes_marker(run):
+    """True if `run` writes a board item marker anywhere, via either the
+    inline write_marker(...) call or the board_item_marker.py CLI
+    entrypoint (#607)."""
+    return "write_marker(" in run or "board_item_marker.py" in run
+
+
+def _writes_marker_step(run, step):
+    """True if `run` writes a board item marker for the given literal step
+    name (e.g. 'stalled') or symbolic token (BREACH_STEP/AWAITING_MERGE_STEP),
+    via either the inline write_marker(...) call or the board_item_marker.py
+    CLI entrypoint's `--step` flag (#607)."""
+    if "--step {0}".format(step) in run and "board_item_marker.py" in run:
+        return True
+    if step in ("BREACH_STEP", "AWAITING_MERGE_STEP"):
+        return "write_marker({0},".format(step) in run
+    return "write_marker({0!r}".format(step) in run
+
+
 def static_findings(doc):
     findings = []
     jobs = doc.get("jobs") or {}
@@ -492,14 +511,13 @@ def static_findings(doc):
     ready_steps = [s for s in (readiness.get("steps") or [])
                    if isinstance(s, dict)
                    and str(s.get("if", "")).replace(" ", "") == "steps.decide.outputs.ready=='true'"
-                   and "write_marker(" in str(s.get("run", ""))]
+                   and _writes_marker(str(s.get("run", "")))]
     if not ready_steps:
         findings.append("readiness: no step gated on `steps.decide.outputs.ready == 'true'` writes "
                         "a board item marker (#532)")
     for s in ready_steps:
         run = str(s.get("run", ""))
-        if ("from board_eligibility import AWAITING_MERGE_STEP" not in run
-                or "write_marker(AWAITING_MERGE_STEP," not in run):
+        if not _writes_marker_step(run, "AWAITING_MERGE_STEP"):
             findings.append(
                 "readiness: ready-report step `{0}` does not write its marker with "
                 "board_eligibility.AWAITING_MERGE_STEP -- a ready item left at any other step "
@@ -1147,8 +1165,7 @@ def breach_retry_findings(doc, scripts_root=ROOT):
     lines = run.split("\n")
     create_at = next((i for i, l in enumerate(lines) if "gh issue create" in l), None)
     marker_at = next((i for i, l in enumerate(lines)
-                      if "from board_eligibility import BREACH_STEP" in l
-                      and "write_marker(BREACH_STEP, 0, int(os.environ['PR_NUMBER'])" in l), None)
+                      if _writes_marker_step(l, "BREACH_STEP") and "--pr" in l), None)
     post_at = next((i for i, l in enumerate(lines)
                     if "gh issue comment" in l and "$breach_marker" in l), None)
     if create_at is None:
@@ -1168,7 +1185,7 @@ def breach_retry_findings(doc, scripts_root=ROOT):
         label_at = next((i for i, l in enumerate(logical)
                          if '--add-label "board:stalled"' in l), None)
         stalled_at = next((i for i, l in enumerate(logical)
-                           if "write_marker('stalled'" in l), None)
+                           if _writes_marker_step(l, "stalled")), None)
         where = "{0}/{1}".format(job, step_id)
         if label_at is None or stalled_at is None:
             findings.append("{0}: no board:stalled label add or no stalled marker found (#530)".format(where))
@@ -1768,9 +1785,8 @@ def _mutations(text):
     # #532: the ready report re-recording step=readiness (the pre-#532
     # write), and readiness resuming on an awaiting-merge marker.
     sub("ready report writes step=readiness (pre-#532)",
-        "from board_eligibility import AWAITING_MERGE_STEP; from board_item_marker import "
-        "write_marker; print(write_marker(AWAITING_MERGE_STEP,",
-        "from board_item_marker import write_marker; print(write_marker('readiness',")
+        'board_item_marker.py" --step AWAITING_MERGE_STEP --pr "$PR_NUMBER")"',
+        'board_item_marker.py" --step readiness --pr "$PR_NUMBER")"')
     sub("readiness resumes on an awaiting-merge marker",
         "|| (needs.select.outputs.step == 'readiness' && needs.select.outputs.pr != '')",
         "|| ((needs.select.outputs.step == 'readiness' || needs.select.outputs.step == "
@@ -1874,9 +1890,8 @@ def _mutations(text):
         'backstop breach on %s (measured=%s) -- the PR will not be reviewed;',
         '          : "$(printf \'Post-push backstop breach on %s (measured=%s) -- the PR will not be reviewed;')
     sub("fix step=breach marker written as step=review",
-        "from board_eligibility import BREACH_STEP; from board_item_marker import write_marker; "
-        "print(write_marker(BREACH_STEP,",
-        "from board_item_marker import write_marker; print(write_marker('review',")
+        'board_item_marker.py" --step BREACH_STEP --pr "$PR_NUMBER" --branch "$BRANCH" --base-sha "$BASE_SHA")"',
+        'board_item_marker.py" --step review --pr "$PR_NUMBER" --branch "$BRANCH" --base-sha "$BASE_SHA")"')
     sub("resume fallback sends a breach marker to review",
         'step = BREACH_STEP if marker_step == BREACH_STEP else "review"', 'step = "review"')
     sub("readiness without the step=breach resume branch",
@@ -1905,7 +1920,7 @@ def _mutations(text):
                                  + err_head)
         label_end = text.index("\n", text.index("exit 1; }", label_start)) + 1
         label_block = text[label_start:label_end]
-        comment_start = text.index(indent + "marker=\"$(python3 -I -c", label_end)
+        comment_start = text.index(indent + 'marker="$(python3 -I "', label_end)
         comment_end = text.index("\n", text.index(indent + "gh issue comment", comment_start)) + 1
         bare_label = indent + 'gh issue edit "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --add-label "board:stalled"\n'
         muts.append(("{0} breach: stalled marker before an unchecked board:stalled (pre-review)".format(site),

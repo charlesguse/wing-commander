@@ -84,6 +84,15 @@ AGENT_USES = "anthropics/claude-code-action@"
 GATE_SUITE_IDS = ("gate-suite", "gate-suite-review-fixup")
 GATE_SUITE_CALL = "python3 .github/scripts/run-local-gates.py"
 PRISTINE = "wc-pristine"
+# The $RUNNER_TEMP/wc-pristine helper-script snapshot this gate is about,
+# never the unrelated .wc-pristine-repo composite sidecar (Gate 104's
+# subject) that shares the same "wc-pristine" substring -- a real snapshot
+# reference is always followed by `/` or a closing quote, never `-repo`
+# (maintainer review of #607, fold leg-1: the trusted-copy checkout's own
+# "Record trusted-copy provenance"/"Write-protect ..." steps, once moved
+# ahead of the snapshot step to satisfy Gate 104, false-positived here on
+# their `.wc-pristine-repo` text alone).
+PRISTINE_REFERENCE_RE = re.compile(re.escape(PRISTINE) + r"(?!-repo)")
 WORKTREE_SCRIPTS_RE = re.compile(
     r"\.github/scripts|\.github['\"]\s*,\s*['\"]scripts")
 # Every spelling of a python interpreter: an optional path before it
@@ -167,11 +176,11 @@ def structural_problems(doc):
         checkout = [i for i, s in enumerate(steps)
                     if str((s or {}).get("uses", "")).startswith("actions/checkout@")
                     and (s or {}).get("name") != TRUSTED_COPY_NAME]
-        snaps = [i for i, s in enumerate(steps) if (s or {}).get("name") == SNAPSHOT_NAME]
         if len(checkout) != 1:
             problems.append("{0}: expected one actions/checkout step besides {1!r}, "
                             "found {2}".format(job_id, TRUSTED_COPY_NAME, len(checkout)))
             continue
+        snaps = [i for i, s in enumerate(steps) if (s or {}).get("name") == SNAPSHOT_NAME]
         if len(snaps) != 1:
             problems.append("{0}: expected one {1!r} step, found {2}".format(
                 job_id, SNAPSHOT_NAME, len(snaps)))
@@ -188,7 +197,7 @@ def structural_problems(doc):
             if i == snap or "run" not in step:
                 continue
             run = str(step["run"])
-            if PRISTINE in run and i < snap:
+            if PRISTINE_REFERENCE_RE.search(run) and i < snap:
                 problems.append("{0} reads the snapshot before it is taken".format(label))
             for p in run_problems(run, step.get("id") in GATE_SUITE_IDS):
                 problems.append("{0}: {1}".format(label, p))
