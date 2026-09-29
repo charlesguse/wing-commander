@@ -65,9 +65,12 @@ only when there is something to report" convention
 `wing-commander-post-agent-credential-status`'s own `ok=false` warning
 already established.
 
-## What Gate 122 checks here
+## What Gate 122 / Gate 123 check here
 
-That every job containing a push-capable agent step has exactly one call
-to this composite positioned immediately alongside (same `if:` shape as)
-that agent step's existing post-agent `wing-commander-context` re-mint. See
-`agent-push-credential-gate.md`.
+Gate 122: that every job containing a push-capable agent step has exactly
+one call to this composite positioned immediately alongside (same `if:`
+shape as) that agent step's existing post-agent `wing-commander-context`
+re-mint. Gate 123 (T070, maintainer review of PR #720): that the
+`commits-published` count above is computed correctly, driven against a
+real bare `origin` plus a clone rather than merely asserted from a fixture
+string. See `agent-push-credential-gate.md`.

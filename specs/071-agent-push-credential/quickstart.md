@@ -1,20 +1,33 @@
 # Quickstart: Validating the Agent's Own Push Credential Fix
 
 This feature has no user-facing UI — validation means driving the shipped
-GitHub Actions structure and the two new gates against modelled cases,
-plus one recommended live drill, matching this repository's existing
+GitHub Actions structure and the two gates against modelled cases, plus
+one recommended live drill, matching this repository's existing
 convention for CI-only features (specs/038, specs/041, specs/052).
+
+**Superseded 2026-09-29** (tasks.md T057, Maintainer Feedback): the
+originally shipped mechanism — a `git credential.helper` minting a fresh
+App installation token on demand (`wing-commander-agent-push-credential`,
+`mint-credential.sh`) — was deleted as a security defect before merge (it
+staged the App's own private key where a running agent step could reach
+it). The remedy that actually shipped accepts that an agent's own
+mid-cycle pushes may still fail past the credential lifetime and
+guarantees only that every commit the agent creates reaches the spec
+branch via a deterministic post-agent step
+(`wing-commander-publish-stranded-commits`), authenticated with a
+credential the agent never saw. Every section below describes that
+shipped remedy, not the deleted one.
 
 ## Prerequisites
 
-- Python 3, `bash`, `git`, `curl`, `jq`, `openssl`, `yaml` (PyYAML) on
-  `PATH`. `openssl` is the one new dependency this feature adds beyond
-  what every existing `verify-*.py` gate already requires — confirm it is
-  present on every runner/container image this pipeline's 8 in-scope
-  stages target before relying on the credential helper in production
-  (research.md D2 explicitly declines to assume this silently).
+- Python 3, `bash`, `git`, `jq` (PyYAML) on `PATH` — the same set every
+  existing `verify-*.py` gate already requires. No new tool dependency:
+  the shipped remedy's only new shell (`wing-commander-publish-stranded-
+  commits/action.yml`) is plain `git`, and neither `curl` nor `openssl`
+  is invoked anywhere this feature added.
 - No live GitHub API access needed for either gate check itself (Gate 122
-  is static YAML inspection; Gate 123 stubs `curl`, per its own contract).
+  is static YAML inspection; Gate 123 drives a real local git repository,
+  no network calls).
 
 ## 1. Run the full PR-time gate suite (per CLAUDE.md)
 
@@ -22,10 +35,12 @@ convention for CI-only features (specs/038, specs/041, specs/052).
 python .github/scripts/run-local-gates.py
 ```
 
-Expected: all gates pass, including the new Gate 122 and Gate 123
-(renumbered twice — a provisional 99/100 at merge time, then 120/121,
-after main claimed both pairs first; see
-contracts/agent-push-credential-gate.md), once implemented.
+Expected: all gates pass, including Gate 122 and Gate 123. Both were
+renumbered more than once as other specs landed first on the numbers this
+branch provisionally claimed (see contracts/agent-push-credential-gate.md
+for the full history); Gate 123 was retired once, when its original
+subject (`mint-credential.sh`) was deleted, then reused for a new,
+unrelated behavioural check (T070) rather than left reserved.
 
 ## 2. Prove Gate 122 catches every structural care point FR-020/FR-023 name
 
@@ -33,71 +48,52 @@ contracts/agent-push-credential-gate.md), once implemented.
 python3 .github/scripts/verify-agent-push-credential-helper.py --self-test
 ```
 
-Expected: PASS on the clean tree; PASS (meaning: correctly fails) on each
-of the six mutations in contracts/agent-push-credential-gate.md's table —
-a missing credential-helper install, a missing stranded-commit-publish
-call, a duplicated minting shell outside its one composite, a credential-
-helper call wrongly attached to a non-pushing agent step, and the two
-unreachable-subject cases.
+Expected: PASS on the clean tree; PASS (meaning: correctly fails) on
+every mutation `verify-agent-push-credential-helper.py`'s own self-test
+applies — the App private key handed to an untrusted consumer (at step,
+job, or workflow level, including bracket-syntax secret references and
+staging outside the 8 named SUBJECTS files), a missing stranded-commit-
+publish call, a duplicated JWT-signing shell anywhere in the repository,
+the retry-bound prompt paragraph attached to a non-push-capable step, and
+the two unreachable-subject cases.
 
-## 3. Prove Gate 123 exercises `mint-credential.sh` itself, not just its presence
+## 3. Prove Gate 123 drives the stranded-commit-publish count against a real repository
 
 ```bash
-python3 .github/scripts/verify-agent-push-credential-shell.py --self-test
+python3 .github/scripts/verify-stranded-commit-publish-shell.py --self-test
 ```
 
-Expected: PASS on the success path (a stubbed 2xx installation lookup and
-token mint produce the exact `username=`/`password=` pair a git
-credential helper contract requires); PASS (meaning: correctly fails, i.e.
-recognises the expected failure shape) on the stubbed 401 mint and the
-unreadable-key-file cases, asserting the `mint failed: <reason>` stderr
-signature research.md D6 depends on.
+Expected: PASS on all three scenarios (everything already pushed directly
+by the agent, two commits stranded locally, no remote-tracking ref to
+compare against) driven against a real bare `origin` plus a clone; PASS
+(meaning: correctly fails) on the self-test mutation that reverts the
+origin-ref comparison to `before-sha..HEAD` unconditionally, which must
+break the "everything already pushed" scenario.
 
 ## 4. Confirm the step-gating and container-shell changes pass a second review
 
 Per CLAUDE.md: any change touching `if:`, `continue-on-error:`, or a
 `run:` step inside a job carrying a `container:` block gets a pass from
 the `review-step-gating` and `container-shell-safety` skills before
-merging. This feature adds 16 new call sites across the two composites
-(2 per in-scope stage × 8, three of them inside `implement.yml`'s
-`container:`-bearing job) — run both skills over the diff before opening
-the PR.
+merging. This feature adds one or more `wing-commander-publish-stranded-
+commits` call sites to each of the 8 in-scope stages, including two inside
+`implement.yml`'s `container:`-bearing job (`cycle` and `retry`) — run
+both skills over the diff before opening the PR.
 
-## 5. Drive the credential helper's shell directly against a real (throwaway) App installation, no live agent needed
-
-Using `wc_shell_harness.py`'s existing `run_step`/stubbed-environment
-pattern:
-
-1. Extract `wing-commander-agent-push-credential`'s setup step and run it
-   inside a scratch git checkout with a stale
-   `http.https://github.com/.extraheader` entry already present; assert
-   that entry is gone afterward and `git config credential.https://
-   github.com.helper` names `mint-credential.sh`'s absolute path.
-2. With a real (but disposable, scoped-down) App installation's ID/key
-   available in a test environment, invoke `mint-credential.sh get`
-   directly with a `protocol=https\nhost=github.com\n` stdin payload;
-   assert the emitted token, when used immediately with `curl -H
-   "Authorization: token <it>" https://api.github.com/repos/<owner>/
-   <repo>`, succeeds — proving the mint is not just well-formed but
-   actually authenticates (research.md D2's claim, not just its shape).
-3. Re-run step 2 a second time in the same shell session; assert the
-   installation-id cache file from research.md D3 exists and that the
-   second run makes one fewer HTTP call than the first (observable via a
-   request-count wrapper around `curl`).
-
-## 6. Confirm the retry-bound prompt paragraph's presence and wording
+## 5. Confirm the retry-bound prompt paragraph's presence and wording
 
 ```bash
-grep -A5 "mint failed:" .github/workflows/clarify.yml
+grep -A4 "is a credential problem this pipeline is already handling" .github/workflows/clarify.yml
 ```
 
-Expected: the canonical paragraph (research.md D7) is present verbatim,
-and every other in-scope stage's `prompt:` block either quotes it
-verbatim or is checked by Gate 47
-(`verify-comment-canonical-pointers.py`) to point at `clarify.yml`'s copy,
-per CLAUDE.md's single-home rule as applied to prompt prose.
+Expected: the canonical paragraph (research.md D7, minus the mint-failure
+clause the T057 redesign made moot) is present verbatim, and every other
+in-scope stage's `prompt:` block either quotes it verbatim or is checked
+by Gate 47 (`verify-comment-canonical-pointers.py`) to point at
+`clarify.yml`'s copy, per CLAUDE.md's single-home rule as applied to
+prompt prose.
 
-## 7. Manual / integration confirmation (documented, not automated by this feature)
+## 6. Manual / integration confirmation (documented, not automated by this feature)
 
 A live drill proving the actual defect (a push made after the credential's
 one-hour lifetime) is fixed cannot be produced by a fast unit-style test —
@@ -108,26 +104,32 @@ provisioning (specs/053):
 1. Dispatch one stage (e.g. `clarify`, cheaper than `implement`) with an
    artificially inflated turn budget forcing a run past 60 minutes wall
    clock, in a scratch adopter repository.
-2. Confirm every `git push` the agent makes succeeds — no `remote: Invalid
-   username or token` / `Authentication failed` line anywhere in the
-   agent step's own transcript — including at least one push issued after
-   the 60-minute mark (User Story 1, Acceptance Scenario 1).
-3. Confirm behaviour for a cycle that finishes well inside the hour is
-   byte-for-byte unchanged from a `main`-built run of the same stage (User
-   Story 1, Acceptance Scenario 2; SC-002).
-4. Re-drive the same scenario with the App private key deliberately
-   invalidated mid-run (if the test harness can simulate a mint failure —
-   e.g. by revoking the test App installation) and confirm: the agent's
-   transcript shows at most two further retries of the failing push
-   before it moves on (User Story 2, SC-004), and the run's own reporting
-   attributes the failure to the credential rather than to the agent or a
-   "stage never started" diagnosis (User Story 1, Acceptance Scenario 4;
-   FR-006).
+2. Confirm the agent's transcript shows no more than two further retries
+   of a failing push once it meets the credential-expiry signature (User
+   Story 2, SC-004), and that it commits its work locally and continues
+   rather than spending further turns on a push that cannot succeed.
+3. Confirm every commit the agent created — whether or not its own push
+   of it succeeded — reaches the spec branch before the job ends: the
+   "Publish stranded commits (post-agent)" step's own `commits-published`
+   output is nonzero and its `push-ok` output is `true` when the agent
+   met the credential-expiry signature; both are absent/zero when the
+   agent finished well inside the hour (User Story 1, Acceptance
+   Scenarios 1 and 2; SC-001, SC-002).
+4. Confirm behaviour for a cycle that finishes well inside the hour is
+   byte-for-byte unchanged from a `main`-built run of the same stage
+   (User Story 1, Acceptance Scenario 2; SC-002).
 5. In `implement.yml` specifically, force a cycle to end with local,
    unpushed commits and no retry agent scheduled (a healthy-but-truncated
-   cycle with a simulated late-stage mint failure); confirm the stranded-
-   commit publish step (research.md D8) still moves those commits to the
-   branch before the job ends (User Story 4, Acceptance Scenario 1).
-6. Record the run URL as this feature's proof-after-merge, per CLAUDE.md's
+   cycle); confirm the stranded-commit publish step still moves those
+   commits to the branch before the job ends (User Story 4, Acceptance
+   Scenario 1).
+6. If the test harness can simulate the publish step's own mint failing
+   or being throttled (e.g. by revoking the test App installation
+   immediately before that step runs), confirm the run's own reporting
+   attributes the failure to the publish step rather than to the agent or
+   a "stage never started" diagnosis (FR-006) — a scenario distinct from
+   step 2 above, since the publish step's mint and the agent's own
+   mid-cycle pushes are now independent failure points.
+7. Record the run URL as this feature's proof-after-merge, per CLAUDE.md's
    "a fix to behaviour that only runs in Actions is proven after merge by
    re-driving one run" rule.

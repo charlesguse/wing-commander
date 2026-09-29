@@ -6,6 +6,30 @@ Nothing below reopens those; each decision here is the plan-level "how" for
 an FR the spec already fixed the "what" of. No `[NEEDS CLARIFICATION]`
 marker remains in spec.md.
 
+**Superseded 2026-09-29 (D1–D9, D10's gate design, D11's site list;
+tasks.md T057, Maintainer Feedback)**: the owner rejected the credential-
+helper mechanism D1–D9 design as a security defect — it staged the GitHub
+App's own private key where a running agent step's shell (or a script/
+prompt injection it processes) could read it and mint installation tokens
+for every installation the App is on. That composite and its
+`mint-credential.sh` script were deleted; nothing in this repository
+builds them anymore. D1–D9 below are kept as the historical record of the
+rejected design and the alternatives it weighed, per this repository's
+convention that a merged feature's own research is not errata-fixed once
+superseded, only marked as such. The shipped remedy going forward is
+narrower: it accepts that an agent's own mid-cycle pushes may still fail
+past the credential lifetime and guarantees only that every commit the
+agent creates reaches the spec branch via `wing-commander-publish-
+stranded-commits` (D8's step, which survives — it was always a
+deterministic step independent of the credential-helper mechanism around
+it), a deterministic post-agent push authenticated with a credential the
+agent never saw. D10's structural gate (Gate 122, later renumbered again)
+survives with a rewritten check 1 guarding against the deleted mechanism's
+exact shape reappearing, plus a new Gate 123 (maintainer review of PR
+#720, T070) driving D8's own commits-published count against a real git
+repository. D12 (teardown accounting) is unaffected — it was already true
+of the mints this shipped remedy still performs.
+
 ## D1 — Mechanism: a git credential helper script, not a periodic remote rewrite
 
 **Decision**: Every agent-bearing job's spec-branch checkout gets one new

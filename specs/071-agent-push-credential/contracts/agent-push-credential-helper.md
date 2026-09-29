@@ -1,8 +1,27 @@
-# Contract: `wing-commander-agent-push-credential` + `mint-credential.sh`
+# Contract: `wing-commander-agent-push-credential` + `mint-credential.sh` (SUPERSEDED)
 
-**Files**: `.github/actions/wing-commander-agent-push-credential/action.yml`
-(composite, new), `.github/actions/wing-commander-agent-push-credential/
-mint-credential.sh` (shell script, new, colocated — never referenced from
+**Superseded 2026-09-29** (tasks.md T057, Maintainer Feedback): the owner
+rejected the mechanism this contract describes as a security defect — it
+staged the GitHub App's own private key where a running agent step's
+shell (or a script/prompt injection it processes) could read it and mint
+installation tokens for every installation the App is on. The composite
+and script named below were deleted; nothing in this repository builds
+them anymore. The shipped remedy instead accepts that an agent's own
+mid-cycle pushes may still fail past the credential lifetime and
+guarantees only that every commit the agent creates reaches the spec
+branch via a deterministic post-agent step (`wing-commander-publish-
+stranded-commits`, contracts/stranded-commit-publish.md) authenticated
+with a credential the agent never saw. Gate 122
+(`.github/scripts/verify-agent-push-credential-helper.py`) now guards
+against this exact shape reappearing (its own docstring, checks 1 and 3).
+This document is kept as a historical record of the rejected design, per
+CLAUDE.md's rule that a merged feature's own spec artifacts are not
+errata-fixed once superseded prose is marked as such — everything below
+this notice describes code that no longer exists.
+
+**Files (deleted)**: `.github/actions/wing-commander-agent-push-credential/action.yml`
+(composite), `.github/actions/wing-commander-agent-push-credential/
+mint-credential.sh` (shell script, colocated — never referenced from
 outside its own composite's directory, per Gate 122 check 3).
 
 ## Composite interface

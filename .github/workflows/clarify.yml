@@ -742,10 +742,10 @@ jobs:
             Never merge, approve, close, or relabel anything except as stated.
 
             A `git push` that fails with `remote: Invalid username or token`
-            or `Authentication failed` is a credential problem this
-            pipeline is already handling — retry it at most twice, then
-            commit your work locally if it still fails and continue; do
-            not spend further turns retrying the same push.
+            or `Authentication failed` is a credential problem this pipeline is already handling —
+            retry it at most twice, then commit your work locally if it
+            still fails and continue; do not spend further turns retrying
+            the same push.
           claude_args: |
             --model ${{ inputs.model }}
             --max-turns ${{ steps.agent-ceiling.outputs.ceiling }}

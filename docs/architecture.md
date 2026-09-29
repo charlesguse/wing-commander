@@ -208,19 +208,27 @@ only as context when both are known (third maintainer review of PR #407).
 The credential an agent step itself pushes with while it is still running —
 the gap the remedy above does not cover, tracked as
 [issue #402](https://github.com/charlesguse/wing-commander/issues/402) (now
-closed) — is covered by `wing-commander-agent-push-credential`
-(specs/071-agent-push-credential): a `git credential.helper` installed
-ahead of every push-capable agent step in the same 8-stage sweep, which
-resolves a fresh App installation token from `mint-credential.sh` at the
-moment of each `git push` rather than relying on one minted at job start.
-An agent step that meets the credential-expiry (or mint-failure) signature
-on a `git push` retries at most twice, then commits locally and continues
-rather than spending further turns on a push that cannot succeed (the
-canonical retry-bound paragraph, home in `clarify.yml`'s agent step). What
-the agent still could not push itself is rescued by a deterministic
-`wing-commander-publish-stranded-commits` call alongside each agent step's
-own post-agent re-mint, whose count — when nonzero — is named on the
-stall notice a maintainer reads (FR-016/FR-017).
+closed) — is addressed by specs/071-agent-push-credential, not by keeping
+the agent's own pushes succeeding past the credential's one-hour lifetime.
+An earlier design tried exactly that (a `git credential.helper` minting a
+fresh App installation token on demand), but it required staging the App's
+own private key where a running agent step's shell — or a script/prompt
+injection it processes — could read it and mint installation tokens for
+every installation the App is on; the owner rejected it as a security
+defect strictly worse than the one-hour, one-repository token the agent
+already has, and it was deleted before merge. The shipped remedy instead
+accepts that an agent's own mid-cycle `git push` MAY still fail past the
+credential lifetime — an agent that meets the credential-expiry signature
+retries at most twice, then commits locally and continues rather than
+spending further turns on a push that cannot succeed (the canonical
+retry-bound paragraph, home in `clarify.yml`'s agent step) — and
+guarantees only that every commit the agent creates, pushed or not,
+reaches the spec branch: a deterministic `wing-commander-publish-
+stranded-commits` call alongside each agent step's own post-agent re-mint,
+authenticated with a credential the agent never saw, whose published
+count — when nonzero — is named on the stall notice a maintainer reads
+(FR-016/FR-017). Gate 122 guards against the deleted mechanism's exact
+shape (an agent-reachable App private key) reappearing.
 
 ### State model
 - **`specs/NNN-slug/spec-meta.json`** — durable source of truth:

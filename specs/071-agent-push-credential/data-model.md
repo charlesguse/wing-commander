@@ -6,6 +6,25 @@ gone when the runner is destroyed) or a static reference-shape rule a gate
 checks against the shipped YAML/shell. `spec-meta.json`'s schema is
 untouched.
 
+**Superseded 2026-09-29 (everything up to "Stranded-commit publish step";
+tasks.md T057, Maintainer Feedback)**: the credential-helper mechanism
+described below (`WC_AGENT_PUSH_*` env vars, the installation-id cache
+file, the `credential.https://github.com.helper` git-config entry, the
+mint attempt/mint-failure shapes, `mint-credential.sh` itself) was deleted
+as a security defect — it staged the GitHub App's own private key where a
+running agent step's shell could read it. Kept below as the historical
+record of the rejected design. The retry-bound prompt paragraph and the
+"Stranded-commit publish step" section both survive largely as described
+(the paragraph dropped its now-nonexistent mint-failure clause; the
+publish step was always a deterministic step independent of the
+credential-helper mechanism around it, and gained a `push-ok`-aware
+consumer at 3 more call sites and an origin-ref-based count, per the
+maintainer review of PR #720). "Mint-failure attribution" has no
+remaining subject — there is no agent-visible mint failure once nothing
+mints on the agent's behalf — and was removed along with the composite
+that produced it. The Gate registry table at the bottom is rewritten to
+match what actually shipped.
+
 ## `WC_AGENT_PUSH_APP_ID` / `WC_AGENT_PUSH_KEY_PATH` / `WC_AGENT_PUSH_OWNER` / `WC_AGENT_PUSH_REPO` (job-scoped environment variables, new)
 
 | Property | Value |
@@ -75,24 +94,22 @@ not push during the run were published after it" — following the same
 `wing-commander-post-agent-credential-status`'s `ok=false` warning already
 established (FR-016/FR-017).
 
-## Mint-failure attribution (new — FR-006)
+## Mint-failure attribution (SUPERSEDED — removed, no remaining subject)
 
-| Field | Type | Meaning |
-|---|---|---|
-| `mint-failure-detected` (job output, per in-scope job) | `"true"` \| unset | Set by a deterministic grep over the agent step's uploaded execution-output artifact (or, if the implement stage instead realizes research.md D6's structured-file alternative, a direct file read) for the literal `wing-commander-agent-push-credential: mint failed:` prefix |
-| Consumed by | The stall path's existing ok-first check (docs/architecture.md), extended to read this output on the same terms it already reads `credential-refresh-ok` (spec 052) — attributing a later real failure to a mint failure rather than to the agent or an unrelated downstream step |
+Described a `mint-failure-detected` job output, grepped from the agent
+step's transcript for the deleted composite's own stderr signature. Once
+nothing mints an installation token on the agent's behalf, there is no
+agent-visible mint failure left to detect — the composite that would have
+produced this output (`wing-commander-agent-push-credential-status`) and
+`wing-commander-stall-reason`'s `push-credential-mint-failed` input/branch
+were both removed in the same redesign (tasks.md T057, T062).
 
-No prose field, matching spec 052's own `agent-ran`/`agent-conclusion`
-precedent (FR-014's cross-feature analogue): the diagnostics artifact each
-stage's stall path already downloads remains the sole carrier of
-model-authored text.
-
-## Gate registry entries (new)
+## Gate registry entries
 
 | Gate | Script | Wired into | Proves |
 |---|---|---|---|
-| 122 (renumbered twice: a provisional 99 at plan time — highest at plan time was 98 — became 120 when main claimed 99 for spec 059 and 100 for spec 079 before this branch first landed, per spec 052's Gate 68 precedent for renumbering; then main claimed 120 too, for the dedup-key-rule gate, so this pair moved again to 122/123, tasks.md T056) | `.github/scripts/verify-agent-push-credential-helper.py` | `.github/workflows/lint-workflows.yml`, PR-time job | FR-020 (every push-capable agent step has the credential-helper install and the stranded-commit publish step), FR-021 (reachable, same subject/arguments locally and in CI), FR-022 (fails loudly on an unreachable subject, triggered by the paths it already covers), FR-023 (single-home: no second minting-shell copy outside its own composite directory) |
-| 123 (renumbered twice, alongside 122 above; mirrors the Gate 68/69 split) | `.github/scripts/verify-agent-push-credential-shell.py` | `.github/workflows/lint-workflows.yml`, PR-time job | Behavioural proof Gate 122 cannot provide statically: `mint-credential.sh`'s JWT construction against a fixed test keypair and a stubbed `curl`, asserting the emitted `username=`/`password=` pair is well-formed |
+| 122 (renumbered three times: a provisional 99 at plan time — highest at plan time was 98 — became 120 when main claimed 99 for spec 059 and 100 for spec 079 before this branch first landed, per spec 052's Gate 68 precedent for renumbering; main then claimed 120 too, for the dedup-key-rule gate, so this pair moved again to 122/123 (tasks.md T056); Gate 123 was then retired (T063) when the redesign (T057) deleted its subject, leaving 122 as the sole survivor with a rewritten check 1) | `.github/scripts/verify-agent-push-credential-helper.py` | `.github/workflows/lint-workflows.yml`, PR-time job | FR-020 (every push-capable agent step has a stranded-commit publish step; the App private key is never staged where a running agent step could reach it, across every workflow file — T069), FR-021 (reachable, same subject/arguments locally and in CI), FR-022 (fails loudly on an unreachable subject, triggered by the paths it already covers), FR-023 (single-home: no JWT-signing shell anywhere in the repository) |
+| 123 (retired T063, then reused for a new, unrelated subject by the maintainer review of PR #720 — T070 — rather than left reserved) | `.github/scripts/verify-stranded-commit-publish-shell.py` | `.github/workflows/lint-workflows.yml`, PR-time job | Behavioural proof no static check can provide: `wing-commander-publish-stranded-commits`' own `commits-published` count (the origin-ref comparison, falling back to before-sha..HEAD) driven against a real bare `origin` plus a clone |
 
 See `contracts/agent-push-credential-gate.md` for each check's exact
 structure and required mutations.
