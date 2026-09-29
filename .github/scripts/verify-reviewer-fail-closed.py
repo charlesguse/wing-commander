@@ -1330,6 +1330,250 @@ def check_lifecycle_budget_exhaustion_mutation(partition_script, tmproot):
         shutil.rmtree(runner_temp, ignore_errors=True)
 
 
+# --- T072: `merge` job's stderr-classification and announcement logic -----
+#
+# FR-030/FR-037: "Squash-merge the lifecycle PR" classifies a failed
+# `gh pr merge` call's stderr into workflow-scope/generic by regex, and
+# "Announce the merge decision on the lifecycle issue" composes one of five
+# message bodies from that classification plus the preconditions outputs --
+# `grep -rn "workflow-scope\|failure-kind" .github/scripts/*.py` finds
+# nothing, so until now neither had ever actually been run. Extended here
+# (Gate 95, no new gate number), matching T071's own precedent for this
+# workflow.
+
+LIFECYCLE_MERGE_STEP = "Squash-merge the lifecycle PR"
+LIFECYCLE_ANNOUNCE_STEP = "Announce the merge decision on the lifecycle issue"
+
+WORKFLOW_SCOPE_STDERR = (
+    "refusing to allow a GitHub App to create or update workflow "
+    "`.github/workflows/lifecycle-review-gate.yml` without `workflows` permission")
+GENERIC_MERGE_STDERR = (
+    "GraphQL: Head branch was modified. Review and try the merge again. "
+    "(mergePullRequest)")
+
+STUB_GH_MERGE = r"""#!/usr/bin/env bash
+if [ "$1 $2" = "pr merge" ]; then
+  if [ "$STUB_MERGE_OK" = "true" ]; then
+    exit 0
+  fi
+  printf '%s\n' "$STUB_MERGE_STDERR" >&2
+  exit 1
+fi
+exit 0
+"""
+
+
+def run_lifecycle_merge(script, tmproot, ok, stderr_text=""):
+    """lifecycle-review-gate.yml's "Squash-merge the lifecycle PR" step
+    alone, against a stub `gh pr merge` that either succeeds or exits 1
+    with the given stderr."""
+    workdir = tempfile.mkdtemp(dir=tmproot)
+    runner_temp = tempfile.mkdtemp(dir=tmproot)
+    try:
+        bindir = os.path.join(workdir, "stub-bin")
+        os.makedirs(bindir)
+        with open(os.path.join(bindir, "gh"), "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(STUB_GH_MERGE)
+        os.chmod(os.path.join(bindir, "gh"), 0o755)
+        env = {"PR_NUMBER": LIFECYCLE_PR, "HEAD_SHA": LIFECYCLE_HEAD_SHA,
+              "GH_TOKEN": "x", "GITHUB_REPOSITORY": "example/example",
+              "STUB_MERGE_OK": "true" if ok else "false",
+              "STUB_MERGE_STDERR": stderr_text,
+              "PATH": bindir + os.pathsep + os.environ["PATH"]}
+        rc, out, outputs, _ = run_step(BASH, script, workdir, env, runner_temp)
+        return rc, outputs, out
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
+        shutil.rmtree(runner_temp, ignore_errors=True)
+
+
+LIFECYCLE_MERGE_SCENARIOS = [
+    ("success", dict(ok=True), {"merged": "true"}),
+    ("workflow-scope refusal", dict(ok=False, stderr_text=WORKFLOW_SCOPE_STDERR),
+     {"merged": "false", "failure-kind": "workflow-scope"}),
+    ("generic failure", dict(ok=False, stderr_text=GENERIC_MERGE_STDERR),
+     {"merged": "false", "failure-kind": "generic"}),
+]
+
+
+def check_lifecycle_merge_classification(merge_script, tmproot):
+    failures = []
+    for name, kwargs, want in LIFECYCLE_MERGE_SCENARIOS:
+        rc, outputs, out = run_lifecycle_merge(merge_script, tmproot, **kwargs)
+        label = "lifecycle merge: {0}".format(name)
+        # continue-on-error is a STEP-level workflow property this harness
+        # does not model; the real job's own "Fail the job on an
+        # attempted-but-failed merge" step reads steps.merge.outcome for
+        # that, not this call's rc -- so only the success scenario, which
+        # must not exit non-zero at all, asserts rc.
+        if name == "success" and rc != 0:
+            failures.append("{0}: step exited {1}: {2}".format(label, rc, out))
+            continue
+        before = len(failures)
+        for key, expect in want.items():
+            if outputs.get(key) != expect:
+                failures.append("{0}: {1}={2!r}, expected {3!r} (outputs={4!r})".format(
+                    label, key, outputs.get(key), expect, outputs))
+        if name != "success" and not outputs.get("failure-detail"):
+            failures.append("{0}: failure-detail was not set (outputs={1!r})".format(
+                label, outputs))
+        if len(failures) == before:
+            print("[ok] #T072 {0}: {1}".format(
+                label, {k: outputs.get(k) for k in want}))
+    return failures
+
+
+LIFECYCLE_MERGE_REGEX_TEST = (
+    "'workflows? (permission|scope)|without .?workflows?.? (permission|scope)"
+    "|refusing to allow'")
+
+
+def check_lifecycle_merge_classification_mutation(merge_script, tmproot):
+    """The workflow-scope regex widened to match nothing: a real
+    workflow-scope refusal must then be misclassified as generic --
+    proving this check would catch the classification being silently
+    broken."""
+    if merge_script.count(LIFECYCLE_MERGE_REGEX_TEST) != 1:
+        return ["lifecycle merge classification mutation: expected one {0!r} "
+                "in the merge step; update this harness alongside it.".format(
+                    LIFECYCLE_MERGE_REGEX_TEST)]
+    mutated = merge_script.replace(
+        LIFECYCLE_MERGE_REGEX_TEST, "'this-pattern-matches-nothing-zzz'", 1)
+    rc, outputs, out = run_lifecycle_merge(
+        mutated, tmproot, ok=False, stderr_text=WORKFLOW_SCOPE_STDERR)
+    if outputs.get("failure-kind") == "workflow-scope":
+        return ["mutation 'lifecycle merge workflow-scope regex widened to "
+                "match nothing' was NOT caught"]
+    print("note: mutation 'lifecycle merge workflow-scope regex widened to "
+          "match nothing' confirmed caught (rc={0}, failure-kind={1!r}).".format(
+              rc, outputs.get("failure-kind")))
+    return []
+
+
+STUB_GH_ANNOUNCE = r"""#!/usr/bin/env bash
+if [ "$1 $2" = "issue comment" ]; then
+  shift 2
+  body=""
+  while [ $# -gt 0 ]; do
+    if [ "$1" = "--body" ]; then
+      body="$2"
+    fi
+    shift
+  done
+  printf '%s' "$body" > "$STUB_BODY_FILE"
+  exit 0
+fi
+exit 0
+"""
+
+
+def _lifecycle_announce_env(body_file, **overrides):
+    env = {"ISSUE": LIFECYCLE_ISSUE, "PR_NUMBER": LIFECYCLE_PR, "ROUND": "3",
+          "HEAD_SHA": LIFECYCLE_HEAD_SHA, "MAY_MERGE": "", "UNMET_REASON": "",
+          "MERGED": "", "FAILURE_KIND": "", "FAILURE_DETAIL": "",
+          "GH_TOKEN": "x", "GITHUB_REPOSITORY": "example/example",
+          "STUB_BODY_FILE": body_file}
+    env.update(overrides)
+    return env
+
+
+def run_lifecycle_announce(script, tmproot, **overrides):
+    """lifecycle-review-gate.yml's "Announce the merge decision on the
+    lifecycle issue" step alone, capturing the `--body` a stub
+    `gh issue comment` was called with."""
+    workdir = tempfile.mkdtemp(dir=tmproot)
+    runner_temp = tempfile.mkdtemp(dir=tmproot)
+    try:
+        bindir = os.path.join(workdir, "stub-bin")
+        os.makedirs(bindir)
+        with open(os.path.join(bindir, "gh"), "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(STUB_GH_ANNOUNCE)
+        os.chmod(os.path.join(bindir, "gh"), 0o755)
+        body_file = os.path.join(workdir, "posted-body.md")
+        open(body_file, "w").close()
+        env = _lifecycle_announce_env(body_file, **overrides)
+        env["PATH"] = bindir + os.pathsep + os.environ["PATH"]
+        rc, out, outputs, _ = run_step(BASH, script, workdir, env, runner_temp)
+        with open(body_file, encoding="utf-8") as fh:
+            body = fh.read()
+        return rc, body, out
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
+        shutil.rmtree(runner_temp, ignore_errors=True)
+
+
+# Each scenario's env mirrors the real job's own output combinations --
+# MAY_MERGE is only ever "true" when the merge step ran at all (its `if:`
+# gates on steps.preconditions.outputs.may-merge == 'true'), so a
+# workflow-scope/generic refusal always carries MAY_MERGE=true alongside
+# FAILURE_KIND, exercising that the FAILURE_KIND branch wins ahead of the
+# plainer "preconditions held" branch below it, not merely that each
+# branch works in isolation.
+LIFECYCLE_ANNOUNCE_SCENARIOS = [
+    ("merged", dict(MERGED="true", MAY_MERGE="true"),
+     ["**merged**", "review round 3"]),
+    ("workflow-scope refusal",
+     dict(MERGED="false", MAY_MERGE="true", FAILURE_KIND="workflow-scope",
+          FAILURE_DETAIL=WORKFLOW_SCOPE_STDERR),
+     ["credential scope reason", "gh auth refresh", WORKFLOW_SCOPE_STDERR]),
+    ("merge attempted, preconditions held",
+     dict(MERGED="false", MAY_MERGE="true", FAILURE_KIND="generic",
+          FAILURE_DETAIL=GENERIC_MERGE_STDERR),
+     ["the merge call itself failed", GENERIC_MERGE_STDERR]),
+    ("unmet condition",
+     dict(MERGED="", MAY_MERGE="false", UNMET_REASON="checks_green"),
+     ["checks_green", "does not hold"]),
+    ("preconditions never evaluated",
+     dict(MERGED="", MAY_MERGE="", UNMET_REASON=""),
+     ["were never evaluated"]),
+]
+
+
+def check_lifecycle_announce(announce_script, tmproot):
+    failures = []
+    for name, overrides, want_substrings in LIFECYCLE_ANNOUNCE_SCENARIOS:
+        rc, body, out = run_lifecycle_announce(announce_script, tmproot, **overrides)
+        label = "lifecycle announce: {0}".format(name)
+        if rc != 0:
+            failures.append("{0}: step exited {1}: {2}".format(label, rc, out))
+            continue
+        before = len(failures)
+        for want in want_substrings:
+            if want not in body:
+                failures.append("{0}: posted body did not contain {1!r}. body={2!r}".format(
+                    label, want, body))
+        if len(failures) == before:
+            print("[ok] #T072 {0}".format(label))
+    return failures
+
+
+LIFECYCLE_ANNOUNCE_KIND_TEST = 'elif [ "$FAILURE_KIND" = "workflow-scope" ]; then'
+
+
+def check_lifecycle_announce_mutation(announce_script, tmproot):
+    """The workflow-scope branch's own condition typo'd into
+    unreachability: a workflow-scope refusal must then fall through to the
+    plainer "preconditions held" body, losing the maintainer hand-off text
+    -- proving this check would catch that misdirection."""
+    if announce_script.count(LIFECYCLE_ANNOUNCE_KIND_TEST) != 1:
+        return ["lifecycle announce mutation: expected one {0!r} in the "
+                "announce step; update this harness alongside it.".format(
+                    LIFECYCLE_ANNOUNCE_KIND_TEST)]
+    mutated = announce_script.replace(
+        LIFECYCLE_ANNOUNCE_KIND_TEST,
+        'elif [ "$FAILURE_KIND" = "zzz-never-matches" ]; then', 1)
+    rc, body, out = run_lifecycle_announce(
+        mutated, tmproot, MERGED="false", MAY_MERGE="true",
+        FAILURE_KIND="workflow-scope", FAILURE_DETAIL=WORKFLOW_SCOPE_STDERR)
+    if rc == 0 and "credential scope reason" not in body:
+        print("note: mutation 'lifecycle announce workflow-scope branch "
+              "unreachable' confirmed caught (body did not name the "
+              "credential scope reason).")
+        return []
+    return ["mutation 'lifecycle announce workflow-scope branch unreachable' "
+            "was NOT caught (rc={0}, body={1!r})".format(rc, body)]
+
+
 def _mut_once(script, old, new, what):
     if script.count(old) != 1:
         sys.exit("::error::verify-reviewer-fail-closed: expected one {0} in its step; "
@@ -1440,8 +1684,12 @@ def main():
         sys.exit(f"::error::run this from the repository root; {LIFECYCLE_WORKFLOW} not found.")
     lifecycle_extract_step = find_step(LIFECYCLE_WORKFLOW, LIFECYCLE_EXTRACT_STEP)
     lifecycle_partition_step = find_step(LIFECYCLE_WORKFLOW, LIFECYCLE_PARTITION_STEP)
+    lifecycle_merge_step = find_step(LIFECYCLE_WORKFLOW, LIFECYCLE_MERGE_STEP)
+    lifecycle_announce_step = find_step(LIFECYCLE_WORKFLOW, LIFECYCLE_ANNOUNCE_STEP)
     for step_name, step in ((LIFECYCLE_EXTRACT_STEP, lifecycle_extract_step),
-                            (LIFECYCLE_PARTITION_STEP, lifecycle_partition_step)):
+                            (LIFECYCLE_PARTITION_STEP, lifecycle_partition_step),
+                            (LIFECYCLE_MERGE_STEP, lifecycle_merge_step),
+                            (LIFECYCLE_ANNOUNCE_STEP, lifecycle_announce_step)):
         if step is None:
             sys.exit(f"::error file={LIFECYCLE_WORKFLOW}::step {step_name!r} not found.")
         if "${{" in str(step["run"]):
@@ -1450,6 +1698,8 @@ def main():
                      f"does not resolve.")
     lifecycle_extract_script = str(lifecycle_extract_step["run"])
     lifecycle_partition_script = str(lifecycle_partition_step["run"])
+    lifecycle_merge_script = str(lifecycle_merge_step["run"])
+    lifecycle_announce_script = str(lifecycle_announce_step["run"])
 
     tmproot = tempfile.mkdtemp()
     try:
@@ -1465,6 +1715,10 @@ def main():
         failures += check_lifecycle_extract_mutation(lifecycle_extract_script, tmproot)
         failures += check_lifecycle_budget_exhaustion(lifecycle_partition_script, tmproot)
         failures += check_lifecycle_budget_exhaustion_mutation(lifecycle_partition_script, tmproot)
+        failures += check_lifecycle_merge_classification(lifecycle_merge_script, tmproot)
+        failures += check_lifecycle_merge_classification_mutation(lifecycle_merge_script, tmproot)
+        failures += check_lifecycle_announce(lifecycle_announce_script, tmproot)
+        failures += check_lifecycle_announce_mutation(lifecycle_announce_script, tmproot)
     finally:
         shutil.rmtree(tmproot, ignore_errors=True)
 

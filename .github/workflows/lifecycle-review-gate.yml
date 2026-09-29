@@ -1467,9 +1467,18 @@ jobs:
         run: |
           set -uo pipefail
           err_file="$RUNNER_TEMP/lifecycle-merge-stderr.txt"
-          gh pr merge --squash "$PR_NUMBER" -R "$GITHUB_REPOSITORY" \
-            --match-head-commit "$HEAD_SHA" 2>"$err_file"
-          status=$?
+          # T072: this workflow's default shell is `bash -e {0}` (no
+          # `shell:` override anywhere in this file) -- a bare
+          # `gh ...; status=$?` would have errexit kill the script AT the
+          # failing gh call, before `status=$?` ever runs, leaving every
+          # output below unset. The if/else keeps the exit status tested,
+          # which is one of the contexts -e does not abort on.
+          if gh pr merge --squash "$PR_NUMBER" -R "$GITHUB_REPOSITORY" \
+              --match-head-commit "$HEAD_SHA" 2>"$err_file"; then
+            status=0
+          else
+            status=$?
+          fi
           cat "$err_file" >&2
           if [ "$status" -eq 0 ]; then
             echo "merged=true" >> "$GITHUB_OUTPUT"
