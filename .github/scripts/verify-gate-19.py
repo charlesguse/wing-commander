@@ -7,11 +7,16 @@ artifacts", "Collect: branch drift"), the "Aggregate signals" step
 untrusted-collectors, and (#322) the "Resolve inspected run's spec slug and
 lifecycle issue" step's metrics-record fallback that branch-drift's
 dispatched-implement measurement depends on. Since #330 that step is the
-single step of the wing-commander-inspected-run-identity composite, which
+first step of the wing-commander-inspected-run-identity composite, which
 watchdog.yml's collect AND report-unhandled-failure jobs both call; this
 harness runs the composite's step, and a SINGLE-HOME check fails if a copy
 of the derivation (the branch-prefix case statement) reappears in
 watchdog.yml or either job stops calling the composite.
+
+#266 adds the composite's second step ("Resolve inspected run's stage") and
+an end-to-end check that denied-tool signals are keyed by {stage, tool}:
+collector -> "Stamp signal ids" -> "Compute fingerprint", plus the
+evidence-validity gate's key list, each with a mutation dropping `stage`.
 
 WHY THIS EXISTS
 ---------------
@@ -42,6 +47,7 @@ annotations it should. A test that cannot fail is not a test.
 Usage: python3 .github/scripts/verify-gate-19.py
 Requires: bash, jq. See wc_shell_harness.py for running this on Windows.
 """
+import copy
 import json
 import os
 import re
@@ -2236,6 +2242,298 @@ def run_aggregate_suite():
     return failures
 
 
+# --------------------------------------------------------------------------
+# #266: denied-tool findings are keyed by {stage, tool}, not {tool} alone.
+# Before this, every Bash denial from every stage and every command hashed to
+# one signal id, so one issue (#266) collected them all and a reopen said
+# nothing about which stage regressed.
+#
+# Two halves, both executed from the shipped files:
+#
+#   1. The composite's "Resolve inspected run's stage" step reads the stage
+#      literal from the inspected run's own metrics record (the identity the
+#      pipeline defines -- never the wrapper's display name, which adopters
+#      choose), or yields empty when there is none.
+#   2. End to end through watchdog.yml: "Collect: execution-output
+#      artifacts" -> "Stamp signal ids" -> "Compute fingerprint", plus the
+#      "Evidence validity gate". Different stages must key apart, the same
+#      stage with different denied commands must key together, and an
+#      unresolved stage must key on the fixed value `unknown` -- a dropped
+#      fact would collapse every stage back onto one fingerprint.
+#
+# Mutations drop `stage` from each place the key is built and assert the
+# suite notices.
+# --------------------------------------------------------------------------
+STAGE_STEP = "Resolve inspected run's stage"
+STAMP_STEP = "Stamp signal ids"
+FINGERPRINT_STEP = "Compute fingerprint"
+EVIDENCE_STEP = "Evidence validity gate"
+
+STAGE_SCENARIOS = [
+    dict(name="the run's metrics record names its stage: that literal is used",
+         records=[RECORD_045], expect="implement", expect_download=True),
+    dict(name="a record with no stage is skipped for the next one that has one",
+         records=[json.dumps({"schema_version": 1, "stage": None}),
+                  json.dumps({"schema_version": 1, "stage": "Plan"})],
+         expect="plan", expect_download=True),
+    dict(name="the stage literal is lowercased and reduced to one token",
+         records=[json.dumps({"schema_version": 1, "stage": "Pr-Conversation $(x)"})],
+         expect="pr-conversationx", expect_download=True),
+    dict(name="no record at all: empty (the collector substitutes `unknown`)",
+         records=[], expect="", expect_download=True),
+    dict(name="the download fails (expired, or Actions:read missing): empty, "
+              "step still succeeds",
+         records=[], download_fail="gh: HTTP 403: Resource not accessible by integration",
+         expect="", expect_download=True),
+    dict(name="the slug fallback already downloaded the record: reused, no "
+              "second download",
+         records=[], preloaded=RECORD_046, expect="rebase", expect_download=False),
+]
+
+
+def run_stage_one(script, env, sc, tmproot):
+    workdir = tempfile.mkdtemp(dir=tmproot)
+    runner_temp = tempfile.mkdtemp(dir=tmproot)
+    bindir = tempfile.mkdtemp(dir=tmproot)
+    gh_path = os.path.join(bindir, "gh")
+    with open(gh_path, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(STUB_GH_SPECSLUG_TEMPLATE)
+    os.chmod(gh_path, 0o755)
+    stub_jq(bindir)
+    if sc.get("preloaded"):
+        d = os.path.join(runner_temp, "spec-slug-metrics-record", "metrics-record")
+        os.makedirs(d)
+        with open(os.path.join(d, "wing-commander-metrics-record.json"), "w",
+                  encoding="utf-8") as fh:
+            fh.write(sc["preloaded"])
+    run_env = with_actions_defaults(env)
+    run_env["PATH"] = bindir + os.pathsep + os.environ["PATH"]
+    run_env["GH_STUB_RECORDS"] = "\n".join(sc["records"])
+    if sc.get("download_fail"):
+        run_env["GH_STUB_DOWNLOAD_FAIL"] = sc["download_fail"]
+    gh_log = os.path.join(runner_temp, "gh-stub.log")
+    run_env["GH_STUB_LOG"] = gh_log.replace("\\", "/")
+    rc, out, outputs, _ = run_step(BASH, script, workdir, run_env, runner_temp)
+    gh_calls = []
+    if os.path.exists(gh_log):
+        with open(gh_log, encoding="utf-8") as fh:
+            gh_calls = [ln.rstrip("\r\n") for ln in fh if ln.strip()]
+    for d in (workdir, runner_temp, bindir):
+        shutil.rmtree(d, ignore_errors=True)
+    return rc, out, outputs, gh_calls
+
+
+def suite_stage(script, env, tmproot):
+    failures = []
+    for sc in STAGE_SCENARIOS:
+        tag = f"[record-stage: {sc['name']}]"
+        rc, out, outputs, gh_calls = run_stage_one(script, env, sc, tmproot)
+        if rc != 0:
+            failures.append(f"{tag} the step exited {rc} -- it is best-effort and "
+                            f"must never fail the calling job:\n{out}")
+            continue
+        if outputs.get("record-stage", None) != sc["expect"]:
+            failures.append(f"{tag} record-stage reads {outputs.get('record-stage')!r}, "
+                            f"expected {sc['expect']!r}. outputs: {outputs}")
+        downloaded = any(c.startswith("run download ") for c in gh_calls)
+        if downloaded != sc["expect_download"]:
+            failures.append(
+                f"{tag} expected the metrics-record artifact "
+                f"{'to be' if sc['expect_download'] else 'NOT to be'} downloaded; "
+                f"gh was invoked as: {gh_calls or '(never)'}")
+    return failures
+
+
+def denial_artifact(*commands):
+    """A claude-execution-output.json whose terminal result record carries
+    one Bash permission denial per command (the SDK's real shape)."""
+    return json.dumps([{"type": "result", "num_turns": 3, "is_error": False,
+                        "permission_denials": [
+                            {"tool_name": "Bash", "tool_use_id": f"d{i}",
+                             "tool_input": {"command": c}}
+                            for i, c in enumerate(commands)]}])
+
+
+class DedupScripts:
+    """The four watchdog.yml steps the denied-tool key passes through,
+    rendered once and mutable one at a time."""
+
+    def __init__(self):
+        self.exec_script, self.exec_env = render_step(find_step(WATCHDOG, EXEC_STEP))
+        self.stamp_script, _ = render_step(find_step(WATCHDOG, STAMP_STEP))
+        self.fp_script, self.fp_env = render_step(find_step(WATCHDOG, FINGERPRINT_STEP))
+        self.ev_script, self.ev_env = render_step(find_step(WATCHDOG, EVIDENCE_STEP))
+
+    def replaced(self, attr, old, new, what):
+        text = getattr(self, attr)
+        if text.count(old) != 1:
+            sys.exit(f"::error::verify-gate-19: could not locate {what} to mutate "
+                     f"(#266) -- the step text changed shape; update this harness "
+                     f"alongside it.")
+        clone = copy.copy(self)
+        setattr(clone, attr, text.replace(old, new, 1))
+        return clone
+
+
+def denied_tool_fingerprint(scripts, stage, commands, tmproot):
+    """Run collector -> stamp -> fingerprint for one inspected run. Returns
+    (error, signals, fingerprint); error is None on success."""
+    workdir = tempfile.mkdtemp(dir=tmproot)
+    runner_temp = tempfile.mkdtemp(dir=tmproot)
+    bindir = tempfile.mkdtemp(dir=tmproot)
+    try:
+        for name in ("signals.json", "collector-outcomes.json"):
+            with open(os.path.join(runner_temp, name), "w", encoding="utf-8") as fh:
+                fh.write("[]")
+        gh_path = os.path.join(bindir, "gh")
+        with open(gh_path, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(STUB_GH_SPECSLUG_TEMPLATE)
+        os.chmod(gh_path, 0o755)
+        stub_jq(bindir)
+
+        run_env = with_actions_defaults(scripts.exec_env)
+        run_env["PATH"] = bindir + os.pathsep + os.environ["PATH"]
+        run_env["RUN_CONCLUSION"] = "success"
+        run_env["INSPECTED_STAGE"] = stage
+        run_env["GH_STUB_RECORDS"] = denial_artifact(*commands)
+        rc, out, _, _ = run_step(BASH, scripts.exec_script, workdir, run_env, runner_temp)
+        if rc != 0:
+            return f"the collector exited {rc}:\n{out}", None, None
+
+        rc, out, _, _ = run_step(BASH, scripts.stamp_script, workdir, {}, runner_temp)
+        if rc != 0:
+            return f"Stamp signal ids exited {rc}:\n{out}", None, None
+        with open(os.path.join(runner_temp, "signals.json"), encoding="utf-8") as fh:
+            signals = json.load(fh)
+        if not signals:
+            return "the collector emitted no denial signal", signals, None
+
+        fp_env = dict(scripts.fp_env)
+        fp_env.update(FINDING_CLASS="denied-tool",
+                      SIGNALS=json.dumps(signals),
+                      EVIDENCE=json.dumps([{"signalId": s["id"]} for s in signals]))
+        rc, out, outputs, _ = run_step(BASH, scripts.fp_script, workdir, fp_env, runner_temp)
+        if rc != 0 or not outputs.get("fingerprint"):
+            return f"Compute fingerprint exited {rc} with no fingerprint:\n{out}", signals, None
+        return None, signals, outputs["fingerprint"]
+    finally:
+        for d in (workdir, runner_temp, bindir):
+            shutil.rmtree(d, ignore_errors=True)
+
+
+def evidence_gate_valid(scripts, facts, tmproot):
+    workdir = tempfile.mkdtemp(dir=tmproot)
+    runner_temp = tempfile.mkdtemp(dir=tmproot)
+    try:
+        env = dict(scripts.ev_env)
+        env.update(FINDING_CLASS="denied-tool", FACTS=json.dumps(facts),
+                   SIGNALS=json.dumps([{"id": "abc"}]),
+                   EVIDENCE=json.dumps([{"signalId": "abc"}]))
+        rc, out, outputs, _ = run_step(BASH, scripts.ev_script, workdir, env, runner_temp)
+        return rc, out, outputs.get("valid")
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
+        shutil.rmtree(runner_temp, ignore_errors=True)
+
+
+def suite_denied_tool_dedup(scripts, _env, tmproot):
+    failures = []
+    runs = {
+        "implement/push": ("implement", ["git push origin HEAD"]),
+        "implement/rm": ("implement", ["rm -rf build", "echo $HOME"]),
+        "plan/push": ("plan", ["git push origin HEAD"]),
+        "unresolved/a": ("", ["git push origin HEAD"]),
+        "unresolved/b": ("", ["curl https://example.invalid"]),
+        "literal-unknown": ("unknown", ["git push origin HEAD"]),
+    }
+    fps, sigs = {}, {}
+    for key, (stage, cmds) in runs.items():
+        err, signals, fp = denied_tool_fingerprint(scripts, stage, cmds, tmproot)
+        if err:
+            failures.append(f"[denied-tool dedup: {key}] {err}")
+            continue
+        fps[key], sigs[key] = fp, signals
+    if failures:
+        return failures
+
+    want_stage = {"implement/push": "implement", "plan/push": "plan",
+                  "unresolved/a": "unknown"}
+    for key, stage in want_stage.items():
+        got = [s.get("facts", {}).get("stage") for s in sigs[key]]
+        if got != [stage]:
+            failures.append(
+                f"[denied-tool dedup: {key}] the denial signal's facts.stage reads "
+                f"{got}, expected [{stage!r}] -- every denial signal must carry the "
+                f"inspected run's stage, and an unresolved one the fixed value "
+                f"`unknown` rather than no stage at all.")
+
+    checks = [
+        ("implement/push", "plan/push", False,
+         "two denials of the same tool from DIFFERENT stages must key apart, or "
+         "every stage's routine denials bury a real regression in one (#266)"),
+        ("implement/push", "implement/rm", True,
+         "two denials from the SAME stage with different commands must key "
+         "together -- the denied command is descriptive, not identity"),
+        ("unresolved/a", "unresolved/b", True,
+         "an unresolved stage must still key deterministically"),
+        ("unresolved/a", "literal-unknown", True,
+         "an unresolved stage must key on the fixed value `unknown`"),
+        ("unresolved/a", "implement/push", False,
+         "an unresolved stage must not collapse onto a resolved stage's key"),
+    ]
+    for a, b, same, why in checks:
+        if (fps[a] == fps[b]) != same:
+            failures.append(
+                f"[denied-tool dedup: {a} vs {b}] fingerprints "
+                f"{'differ' if same else 'are equal'} ({fps[a][:12]} / {fps[b][:12]}); "
+                f"{why}.")
+
+    for facts, want in (({"stage": "implement", "tool": "bash"}, "true"),
+                        ({"tool": "bash"}, "false")):
+        rc, out, valid = evidence_gate_valid(scripts, facts, tmproot)
+        if rc != 0 or valid != want:
+            failures.append(
+                f"[denied-tool dedup: evidence gate] normalizedFacts {facts} read "
+                f"valid={valid!r} (rc {rc}), expected {want!r} -- the evidence "
+                f"gate's denied-tool key list must be [stage, tool], the same "
+                f"identity the signal is keyed on.\n{out}")
+    return failures
+
+
+DEDUP_MUTATIONS = [
+    ("`stage` dropped from Stamp signal ids' tool-denial identity",
+     "stamp_script",
+     'ident: {stage: ($fx.stage // "" | ascii_downcase | if . == "" then "unknown" else . end),',
+     "ident: {"),
+    ("the collector no longer stamping the stage onto denial signals",
+     "exec_script", "map(.facts = ({stage: $stage} + .facts))", "."),
+    ("an unresolved stage emitted as an empty stage instead of `unknown`",
+     "exec_script", '--arg stage "${INSPECTED_STAGE:-unknown}"',
+     '--arg stage "${INSPECTED_STAGE:-}"'),
+    ("the evidence gate's denied-tool key list reverted to [tool]",
+     "ev_script", """denied-tool)           keys='["stage","tool"]' ;;""",
+     """denied-tool)           keys='["tool"]' ;;"""),
+]
+
+
+def run_denied_tool_dedup():
+    scripts = DedupScripts()
+    tmproot = tempfile.mkdtemp()
+    try:
+        stage_script, stage_env = render_step(
+            find_step(SPEC_SLUG_ACTION, STAGE_STEP), SPEC_SLUG_ACTION)
+        failures = suite_stage(stage_script, stage_env, tmproot)
+        failures.extend(suite_denied_tool_dedup(scripts, None, tmproot))
+        if not failures:
+            for label, attr, old, new in DEDUP_MUTATIONS:
+                failures.extend(run_script_mutation(
+                    label, suite_denied_tool_dedup,
+                    scripts.replaced(attr, old, new, label), None, tmproot))
+    finally:
+        shutil.rmtree(tmproot, ignore_errors=True)
+    return failures
+
+
 def run_attribution_mutation(label, suite_fn, script, env, tmproot, var_name):
     """Common tail for the collectors whose attribution guard (spec 024
     FR-026) is a `case "$var_name" in skipped|cancelled) ... esac` block:
@@ -2406,6 +2704,11 @@ def main():
         print(f"::error::{f}")
     failures.extend(aggregate_failures)
 
+    dedup_failures = run_denied_tool_dedup()
+    for f in dedup_failures:
+        print(f"::error::{f}")
+    failures.extend(dedup_failures)
+
     print(f"annotation collector: {len(SCENARIOS)} scenario(s); "
           f"execution-output collector: {len(EXEC_SCENARIOS)} scenario(s); "
           f"branch-drift collector: {len(BD_SCENARIOS)} scenario(s); "
@@ -2414,6 +2717,8 @@ def main():
           f"step-summary collector: {len(STEPSUM_SCENARIOS)} scenario(s); "
           f"cost-report collector: {len(COST_SCENARIOS)} scenario(s); "
           f"aggregate: {len(AGGREGATE_CASES)} case(s); "
+          f"record-stage step: {len(STAGE_SCENARIOS)} scenario(s) + denied-tool "
+          f"stage-keyed dedup (#266); "
           f"{len(failures)} failure(s).")
     sys.exit(1 if failures else 0)
 

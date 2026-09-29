@@ -743,6 +743,18 @@ billed jobs, `collect` and the always-on `report-unhandled-failure`.
   FR-008/FR-010: a raw SDK-message-array position that can exceed the run's
   own `num_turns` and must never be presented as a conversation turn).
 
+  Every denial signal also carries the inspected run's `stage` (#266): the
+  `stage` literal the run's own `wing-commander-metrics-summary` call wrote
+  into its metrics record, read by the `wing-commander-inspected-run-identity`
+  composite's `record-stage` output — never the wrapper's display name,
+  which each adopter chooses. A run whose stage cannot be resolved carries
+  the fixed value `unknown`, never a dropped fact. `Stamp signal ids`
+  projects a denial to `{stage, tool}`, so each stage's denials accumulate on
+  their own issue and a reopen means a regression in that stage; the denied
+  commands stay descriptive and never move the key. Before #266 the
+  projection was `{tool}` alone, and every Bash denial from every stage
+  landed on one issue.
+
   `.github/scripts/verify-denied-tool-collector.sh` holds both paths to
   fixtures — including one run described both ways, where the two paths must
   agree on the per-tool counts — and `lint-workflows.yml` gate 5 runs it on

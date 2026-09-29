@@ -51,6 +51,15 @@
 # finding over each one). Without a slug, or when neither branch has a
 # record, the issue stays empty and the caller reports against the run URL.
 #
+# #266: it is also the one home of "which pipeline stage was the inspected
+# run". The answer is the `stage` literal the run's own
+# wing-commander-metrics-summary call wrote into its metrics record -- the
+# stage identity the pipeline itself defines, never the wrapper's display
+# name, which differs per adopter. Every record one run writes carries the
+# same literal, so unlike the slug this needs no single-spec allowlist.
+# The collect job keys denied-tool signals on it; empty when the run left
+# no record (the caller substitutes a fixed `unknown`).
+#
 # Tokens (docs/setup.md): `gh run view` and `gh run download` need
 # Actions:read, which the App token does not have, so both run under the
 # caller's default token (`actions-token`). `gh issue view` for the
@@ -139,6 +148,12 @@ outputs:
   stalled-label:
     description: "`true` when the lifecycle issue already carries stage:stalled; otherwise `false`."
     value: ${{ steps.resolve.outputs.stalled-label }}
+  record-stage:
+    description: >
+      The `stage` literal from the inspected run's own metrics record
+      (lowercased, restricted to [a-z0-9._-]), or empty when the run left
+      no readable record (#266).
+    value: ${{ steps.stage.outputs.record-stage }}
 
 runs:
   using: composite
@@ -261,3 +276,35 @@ runs:
           echo "meta-stage=$meta_stage"
           echo "stalled-label=$stalled_label"
         } >> "$GITHUB_OUTPUT"
+
+    # #266 -- see the header. Reuses the record the slug fallback above
+    # already downloaded when it ran; otherwise downloads it here, under the
+    # default token (Actions:read -- header). Best-effort like the step
+    # above: a missing/expired artifact or a failed download yields an empty
+    # stage, never a failed job.
+    - name: Resolve inspected run's stage
+      id: stage
+      shell: bash
+      env:
+        ACTIONS_TOKEN: ${{ inputs.actions-token }}
+        RUN_ID: ${{ inputs.run-id }}
+      run: |
+        set -uo pipefail
+        mr_dir="$RUNNER_TEMP/spec-slug-metrics-record"
+        mkdir -p "$mr_dir" 2>/dev/null || true
+        if [ -z "$(find "$mr_dir" -type f -name '*.json' 2>/dev/null)" ] && [ -n "$RUN_ID" ]; then
+          GH_TOKEN="$ACTIONS_TOKEN" gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" -p 'metrics-record*' -D "$mr_dir" >"$RUNNER_TEMP/stage-mr-dl.log" 2>&1 || true
+        fi
+        # First record, in sorted path order, that names a stage. Sanitised
+        # before it reaches GITHUB_OUTPUT: the value becomes part of a
+        # signal identity, so it must be one token and stable in case.
+        record_stage=""
+        while IFS= read -r rec; do
+          s="$(jq -r '.stage // empty | strings' "$rec" 2>/dev/null || true)"
+          s="$(printf '%s' "$s" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9._-')"
+          if [ -n "$s" ]; then record_stage="$s"; break; fi
+        done < <(find "$mr_dir" -type f -name '*.json' 2>/dev/null | sort)
+        if [ -z "$record_stage" ]; then
+          echo "stage: no metrics record of run ${RUN_ID:-?} names a stage -- the inspected run's stage is unresolved." >> "$GITHUB_STEP_SUMMARY"
+        fi
+        echo "record-stage=$record_stage" >> "$GITHUB_OUTPUT"
