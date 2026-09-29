@@ -633,3 +633,16 @@ Task: "Add disposition:duplicate to wing-commander-board-labels/action.yml"
   in this run's `wing-commander-findings` block per this stage's own
   instructions, since they are gaps in already-accepted contract text, not
   new scope this list invented.
+
+---
+
+## Phase 7: Convergence
+
+- [ ] T024 Update `.github/scripts/board_item_marker.py`'s
+      `add_stalled_label()` docstring: it still names route's spec verdict,
+      fix's post-push-breach, and readiness's backstop breach among "every
+      board-loop.yml stall site" the function is the canonical statement
+      for, but T004–T006 removed those three call sites entirely,
+      replacing them with `board_duplicate_disposition.py` (they no longer
+      apply `board:stalled` or render a `stalled` marker at all). Drop the
+      three from the enumeration, per FR-014 (contradicts).
