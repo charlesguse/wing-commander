@@ -20,6 +20,7 @@ specs/089-skill-example-drift/contracts/skill-drift-gate.md.
 """
 import argparse
 import collections
+import json
 import os
 import re
 import sys
@@ -29,7 +30,8 @@ SKILL_MD = os.path.join(REPO_ROOT, ".claude", "skills", "spec-cross-reference", 
 CONCURRENCY_GROUPS_MD = os.path.join(
     REPO_ROOT, "specs", "060-self-redrive-concurrency", "contracts", "concurrency-groups.md")
 BOARD_LOOP_YML = os.path.join(REPO_ROOT, ".github", "workflows", "board-loop.yml")
-WAIVERS_JSON = os.path.join(REPO_ROOT, ".github", "scripts", "skill-example-drift-waivers.json")
+DRIFT_WAIVERS_PATH = os.path.join(
+    REPO_ROOT, ".github", "scripts", "skill-example-drift-waivers.json")
 
 # The Over-rated example's anchor phrase (spec-cross-reference/SKILL.md).
 ANCHOR = "**Over-rated.**"
@@ -50,6 +52,9 @@ WorkflowConcurrencyFact = collections.namedtuple(
 DriftFinding = collections.namedtuple(
     "DriftFinding",
     ["property", "job", "skill_location", "workflow_location", "expected", "actual"])
+
+WaiverEntry = collections.namedtuple(
+    "WaiverEntry", ["index", "property", "job", "issue", "permanent", "reason"])
 
 # The conditional group shape prove-gate/prove use (research.md D5): resolves
 # to the directed-proof group when a directed dispatch names a stage, the
@@ -381,19 +386,116 @@ def evaluate():
     return findings, ok_properties
 
 
+def load_waiver_entries(path):
+    """-> [WaiverEntry, ...] from skill-example-drift-waivers.json
+    (data-model.md WaiverEntry). Schema validity (issue XOR permanent) is
+    Gate 124's job; this only reads the two fields this gate's own
+    stale-check keys on."""
+    if not os.path.isfile(path):
+        return []
+    with open(path, encoding="utf-8") as fh:
+        data = json.load(fh)
+    entries = []
+    for index, w in enumerate(data.get("waivers", [])):
+        entries.append(WaiverEntry(
+            index=index, property=w.get("property"), job=w.get("job"),
+            issue=w.get("issue"), permanent=w.get("permanent"), reason=w.get("reason")))
+    return entries
+
+
+def apply_waivers(findings, waivers):
+    """-> (blocking, waived_lines, stale) (contracts/skill-drift-gate.md
+    "Algorithm" step 7): a finding matching a waiver's {property, job} is
+    waived (still reported, not blocking); a waiver matching no current
+    finding is itself a blocking stale-waiver failure (FR-014)."""
+    blocking = []
+    waived_lines = []
+    matched = set()
+    for finding in findings:
+        match = next(
+            (w for w in waivers if w.property == finding.property and w.job == finding.job),
+            None)
+        if match is None:
+            blocking.append(finding)
+            continue
+        matched.add(match.index)
+        label = match.issue if match.issue else "a permanent waiver"
+        waived_lines.append("waived: {0} ({1}), see {2}".format(
+            finding.property, finding.job, label))
+    stale = [w for w in waivers if w.index not in matched]
+    return blocking, waived_lines, stale
+
+
+def format_stale_waiver(waiver):
+    return (
+        "::error::verify-skill-board-loop-concurrency-claim: stale waiver -- "
+        "{0} entry {1} ({2}, job={3}) no longer matches any current divergence; "
+        "remove it now that the skill and board-loop.yml agree again.".format(
+            os.path.relpath(DRIFT_WAIVERS_PATH, REPO_ROOT), waiver.index,
+            waiver.property, waiver.job))
+
+
 def run():
     findings, ok_properties = evaluate()
+    waivers = load_waiver_entries(DRIFT_WAIVERS_PATH)
+    blocking, waived_lines, stale = apply_waivers(findings, waivers)
+
     for prop in ok_properties:
         print("[ok] {0}: board-loop.yml matches the skill's claim".format(prop))
-    for finding in findings:
+    for finding in blocking:
         print(format_finding(finding))
-    print("verify-skill-board-loop-concurrency-claim: {0} failure(s).".format(len(findings)))
-    return 1 if findings else 0
+    for line in waived_lines:
+        print(line)
+    for waiver in stale:
+        print(format_stale_waiver(waiver))
+
+    total = len(blocking) + len(stale)
+    print("verify-skill-board-loop-concurrency-claim: {0} failure(s).".format(total))
+    return 1 if total else 0
 
 
 def run_selftest():
-    print("verify-skill-board-loop-concurrency-claim --self-test: 0 failure(s).")
-    return 0
+    """Synthetic fixtures only, never the real SKILL.md/board-loop.yml
+    (contracts/skill-drift-gate.md "Self-test"): the waiver stale-check in
+    both directions (research.md D9's waiver bullet, "Waiver interaction")."""
+    failures = []
+
+    def check(label, condition):
+        if condition:
+            print("[ok] self-test: {0}".format(label))
+        else:
+            failures.append(label)
+            print("::error::verify-skill-board-loop-concurrency-claim --self-test: "
+                  "{0} failed.".format(label))
+
+    fixture_finding = DriftFinding(
+        property="job-missing-from-group", job="fix",
+        skill_location=("fixture-skill.md", 1), workflow_location=("fixture-workflow.yml", 1),
+        expected="job 'fix' joins `wing-commander-board-loop`",
+        actual="job 'fix' has no concurrency: block")
+
+    # An empty waiver set: the divergence blocks.
+    blocking, waived_lines, stale = apply_waivers([fixture_finding], [])
+    check("an unwaived divergence blocks",
+          blocking == [fixture_finding] and not waived_lines and not stale)
+
+    # A matching waiver: the divergence is waived (still reported), not blocking.
+    waiver = WaiverEntry(index=0, property="job-missing-from-group", job="fix",
+                          issue="#1", permanent=None, reason="fixture")
+    blocking, waived_lines, stale = apply_waivers([fixture_finding], [waiver])
+    check("a matching waiver waives the divergence",
+          not blocking and waived_lines == ["waived: job-missing-from-group (fix), see #1"]
+          and not stale)
+
+    # The fixture reverts to match (divergence closes) with the same waiver
+    # entry still present: it is now stale and fails the gate.
+    blocking, waived_lines, stale = apply_waivers([], [waiver])
+    check("a waiver with no matching divergence is stale",
+          not blocking and not waived_lines and stale == [waiver])
+
+    total = len(failures)
+    print("verify-skill-board-loop-concurrency-claim --self-test: {0} failure(s).".format(total))
+    return 1 if total else 0
 
 
 def main():

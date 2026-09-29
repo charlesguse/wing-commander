@@ -4720,6 +4720,27 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-gh-error-stub-conformance.py --self-test
 
+      # Gate 128 -- specs/089-skill-example-drift: spec-cross-reference/
+      # SKILL.md's Over-rated example quotes a structural claim about
+      # board-loop.yml's concurrency configuration (the job range that joins
+      # wing-commander-board-loop, and the directed-proof group). Nothing
+      # failed when spec 060 changed that shape (#490) until this gate
+      # existed (issue #658). This is the mechanical owner FR-002 requires
+      # for that one quote, not a registry (FR-011) -- a
+      # skill-example-drift-waivers.json entry, stale-checked in both
+      # directions the same as Gate 124's own registers, covers a PR that
+      # cannot also edit .claude/ (FR-013). Numbered 128, not the 125 this
+      # branch's own commits picked in turn: specs/062-lifecycle-review-gate
+      # claimed 125 and specs/091-gh-api-error-capture claimed 126-127 on
+      # main before this branch's rebase landed (#660 tracks the allocation
+      # problem).
+      - name: "Gate 128 — spec-cross-reference's Over-rated example matches board-loop.yml's actual concurrency shape"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-skill-board-loop-concurrency-claim.py
+      - name: "Gate 128 self-test — each structural mismatch fails its own mutation, and a stale waiver fails too"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-skill-board-loop-concurrency-claim.py --self-test
+
       # Gate 130 — specs/108-routed-original-disposition (contracts/
       # duplicate-disposition.md, FR-009/FR-010/FR-011): dispose_as_
       # duplicate()'s own idempotency pre-check and failure-semantics table,
