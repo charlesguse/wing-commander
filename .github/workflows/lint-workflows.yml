@@ -4787,6 +4787,28 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-closed-without-landing.py --self-test
 
+      # Gate 132 — specs/109-watchdog-finding-fanout: the dedup search's
+      # overlap-matching rule (any shared signal id on an open issue is a
+      # match, capped at the 30 most-recently-added distinct ids) and the
+      # FR-009 gate-suite filing condition, both proven by executing the
+      # real `triage` steps against stubbed input, plus the pre-existing
+      # #266 `{stage, tool}` denial separation proven against ids the real
+      # `collect`-job steps actually stamp. Numbered 132, not the 125 this
+      # branch's own tasks.md originally claimed nor the 128 this branch's
+      # own commit last picked: Gates 126-127 claimed those numbers on main
+      # first, for specs/091-gh-api-error-capture, and
+      # specs/108-routed-original-disposition's own merge (maintainer
+      # review, fold leg-4) directed 130/131 to itself, leaving 128 to spec
+      # 074, 129 to spec 089, and 132 here (#660 tracks the cross-branch
+      # allocation problem both gates' own numbering comments already
+      # note).
+      - name: "Gate 132 — dedup search's overlap matching, the FR-009 converging-cycle filing suppression, and the #266 stage/tool separation surviving both"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-watchdog-overlap-fanout.py
+      - name: "Gate 132 self-test — reverting overlap matching to exact-set equality, reverting FR-009 to \"always file\", or reverting the tool-denial key to drop stage each fail"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-watchdog-overlap-fanout.py --self-test
+
       # Gate 134 — specs/100-stalled-item-re-admission FR-006/FR-006b: every
       # stall site posts a marker with no pr (#604), so a maintainer who
       # removes board:stalled always reaches resume's board:owned fallback
