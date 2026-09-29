@@ -451,6 +451,7 @@ jobs:
       # No stalled job in this file to read this (research.md D4's own
       # precedent) -- published for symmetry with every other in-scope stage.
       commits-published: ${{ steps.publish-stranded-auto.outputs.commits-published || steps.publish-stranded-pr.outputs.commits-published }}
+      push-ok: ${{ steps.publish-stranded-auto.outputs.push-ok || steps.publish-stranded-pr.outputs.push-ok }}
       agent-any-failure: ${{ (steps.agent-ran-auto.outputs.conclusion == 'failure' || steps.agent-ran-pr.outputs.conclusion == 'failure') && 'true' || 'false' }}
       credential-any-refresh-failure: ${{ (steps.credential-status-auto.outputs.ok == 'false' || steps.credential-status-pr.outputs.ok == 'false') && 'true' || 'false' }}
     steps:
@@ -766,8 +767,8 @@ jobs:
         with:
           intended-turns: ${{ inputs.max-turns }}
 
-      # This step's prompt carries the retry-bound paragraph for a credential-
-      # expiry/mint-failure `git push` signature -- see clarify.yml.
+      # This step's prompt carries the retry-bound paragraph for the
+      # credential-expiry `git push` signature -- see clarify.yml.
       - name: Generate implementation plan (direct commit)
         id: agent-auto
         if: steps.dupe.outputs.skip != 'true' && steps.mode.outputs.mode == 'auto' && steps.tool-args-plan-direct-commit.outputs.allowed-tools != ''
@@ -901,11 +902,10 @@ jobs:
             above, or record the limitation for the human and move on.
 
             A `git push` that fails with `remote: Invalid username or token`
-            or `Authentication failed`, or with a message beginning
-            `wing-commander-agent-push-credential: mint failed:`, is a
-            credential problem this pipeline is already handling — retry it
-            at most twice, then commit your work locally if it still fails
-            and continue; do not spend further turns retrying the same push.
+            or `Authentication failed` is a credential problem this
+            pipeline is already handling — retry it at most twice, then
+            commit your work locally if it still fails and continue; do
+            not spend further turns retrying the same push.
           claude_args: |
             --model ${{ inputs.model }}
             --max-turns ${{ steps.agent-auto-ceiling.outputs.ceiling }}
@@ -1006,8 +1006,8 @@ jobs:
         with:
           intended-turns: ${{ inputs.max-turns }}
 
-      # This step's prompt carries the retry-bound paragraph for a credential-
-      # expiry/mint-failure `git push` signature -- see clarify.yml.
+      # This step's prompt carries the retry-bound paragraph for the
+      # credential-expiry `git push` signature -- see clarify.yml.
       - name: Generate implementation plan
         id: agent-pr
         if: steps.dupe.outputs.skip != 'true' && steps.mode.outputs.mode == 'pr' && steps.tool-args-plan-pr.outputs.allowed-tools != ''
@@ -1136,11 +1136,10 @@ jobs:
             above, or record the limitation for the human and move on.
 
             A `git push` that fails with `remote: Invalid username or token`
-            or `Authentication failed`, or with a message beginning
-            `wing-commander-agent-push-credential: mint failed:`, is a
-            credential problem this pipeline is already handling — retry it
-            at most twice, then commit your work locally if it still fails
-            and continue; do not spend further turns retrying the same push.
+            or `Authentication failed` is a credential problem this
+            pipeline is already handling — retry it at most twice, then
+            commit your work locally if it still fails and continue; do
+            not spend further turns retrying the same push.
           claude_args: |
             --model ${{ inputs.model }}
             --max-turns ${{ steps.agent-pr-ceiling.outputs.ceiling }}

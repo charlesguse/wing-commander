@@ -54,11 +54,12 @@ inputs:
 outputs:
   commits-published:
     description: >
-      Count of commits git rev-list found locally ahead of the recorded
-      before-sha immediately before this push -- 0 when the agent had
-      already pushed everything itself (the common case). Informational
-      either way: it answers "how much was at stake," not "how much
-      succeeded."
+      Count of commits git rev-list found locally ahead of
+      refs/remotes/origin/<branch> immediately before this push, falling
+      back to before-sha..HEAD only when that remote-tracking ref does not
+      exist -- 0 when the agent had already pushed everything itself (the
+      common case). Informational either way: it answers "how much was at
+      stake," not "how much succeeded."
     value: ${{ steps.publish.outputs.commits-published }}
   push-ok:
     description: >

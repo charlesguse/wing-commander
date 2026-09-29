@@ -333,6 +333,7 @@ jobs:
       agent-conclusion: ${{ steps.agent-ran.outputs.conclusion }}
       credential-refresh-ok: ${{ steps.credential-status.outputs.ok }}
       commits-published: ${{ steps.publish-stranded.outputs.commits-published }}
+      push-ok: ${{ steps.publish-stranded.outputs.push-ok }}
       failed-post-agent-step: ${{ steps.failed-step.outputs.step }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
@@ -597,8 +598,8 @@ jobs:
 
       # (canonical copy; do not condense)
       # This step's prompt below carries the retry-bound paragraph for a
-      # `git push` that fails with the credential-expiry or mint-failure
-      # signature (specs/071-agent-push-credential, research.md D7).
+      # `git push` that fails with the credential-expiry signature
+      # (specs/071-agent-push-credential, research.md D7).
       # Every other in-scope stage's prompt either quotes this paragraph
       # verbatim or points back at this copy with "-- see clarify.yml.".
       - name: Fold answers into the draft spec
@@ -741,11 +742,10 @@ jobs:
             Never merge, approve, close, or relabel anything except as stated.
 
             A `git push` that fails with `remote: Invalid username or token`
-            or `Authentication failed`, or with a message beginning
-            `wing-commander-agent-push-credential: mint failed:`, is a
-            credential problem this pipeline is already handling — retry it
-            at most twice, then commit your work locally if it still fails
-            and continue; do not spend further turns retrying the same push.
+            or `Authentication failed` is a credential problem this
+            pipeline is already handling — retry it at most twice, then
+            commit your work locally if it still fails and continue; do
+            not spend further turns retrying the same push.
           claude_args: |
             --model ${{ inputs.model }}
             --max-turns ${{ steps.agent-ceiling.outputs.ceiling }}
@@ -787,12 +787,12 @@ jobs:
       # runs whether or not a later agent step ever would have carried it
       # along (specs/071-agent-push-credential, FR-015). Every other
       # in-scope stage's equivalent step points back at this copy with
-      # "-- see clarify.yml.". Gated on !cancelled() rather than always():
-      # a cancelled run must perform no network mint and no remote rewrite
-      # inside the cancellation window, so this step (like every other
-      # post-agent step here) must not run when the job itself was
-      # cancelled, even though it would otherwise run on a failed agent
-      # step (FR-019).
+      # "-- see clarify.yml.". Gated on !cancelled() rather than always()
+      # -- spec 052's own reason: a cancelled run must perform no network
+      # mint and no remote rewrite inside the cancellation window, so this
+      # step (like every other post-agent step here) must not run when the
+      # job itself was cancelled, even though it would otherwise run on a
+      # failed agent step (FR-019).
       - name: Publish stranded commits (post-agent)
         id: publish-stranded
         if: "!cancelled() && steps.agent.outcome != 'skipped'"
@@ -1420,3 +1420,4 @@ jobs:
           agent-ran: ${{ needs.clarify.outputs.agent-ran }}
           agent-conclusion: ${{ needs.clarify.outputs.agent-conclusion }}
           commits-published: ${{ needs.clarify.outputs.commits-published }}
+          push-ok: ${{ needs.clarify.outputs.push-ok }}

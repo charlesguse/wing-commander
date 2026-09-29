@@ -366,6 +366,7 @@ jobs:
       agent-conclusion: ${{ steps.agent-ran.outputs.conclusion }}
       credential-refresh-ok: ${{ steps.credential-status.outputs.ok }}
       commits-published: ${{ steps.publish-stranded.outputs.commits-published }}
+      push-ok: ${{ steps.publish-stranded.outputs.push-ok }}
       failed-post-agent-step: ${{ steps.failed-step.outputs.step }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
@@ -622,8 +623,8 @@ jobs:
         with:
           intended-turns: ${{ inputs.max-turns }}
 
-      # This step's prompt carries the retry-bound paragraph for a credential-
-      # expiry/mint-failure `git push` signature -- see clarify.yml.
+      # This step's prompt carries the retry-bound paragraph for the
+      # credential-expiry `git push` signature -- see clarify.yml.
       - name: Create spec from issue
         id: agent
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.tool-args-intake.outputs.allowed-tools != ''
@@ -785,11 +786,10 @@ jobs:
             above, or record the limitation for the human and move on.
 
             A `git push` that fails with `remote: Invalid username or token`
-            or `Authentication failed`, or with a message beginning
-            `wing-commander-agent-push-credential: mint failed:`, is a
-            credential problem this pipeline is already handling — retry it
-            at most twice, then commit your work locally if it still fails
-            and continue; do not spend further turns retrying the same push.
+            or `Authentication failed` is a credential problem this
+            pipeline is already handling — retry it at most twice, then
+            commit your work locally if it still fails and continue; do
+            not spend further turns retrying the same push.
           claude_args: |
             --model ${{ inputs.model }}
             --max-turns ${{ steps.agent-ceiling.outputs.ceiling }}
@@ -1576,3 +1576,4 @@ jobs:
           agent-ran: ${{ needs.intake.outputs.agent-ran }}
           agent-conclusion: ${{ needs.intake.outputs.agent-conclusion }}
           commits-published: ${{ needs.intake.outputs.commits-published }}
+          push-ok: ${{ needs.intake.outputs.push-ok }}

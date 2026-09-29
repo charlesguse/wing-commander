@@ -3752,13 +3752,30 @@ jobs:
       # companion) was retired in the same redesign along with the script it
       # drove -- tasks.md's Maintainer Feedback section (T057, T063) --
       # rather than leaving the number reserved for a script with no
-      # remaining subject.
+      # remaining subject; the maintainer review of PR #720 then reused the
+      # freed number for a new behavioural companion of its own (T070),
+      # below.
       - name: Gate 122 — the App private key is never staged where a running agent could reach it, and every push-capable agent step's unpublished work is rescued
         if: "!cancelled()"
         run: python3 .github/scripts/verify-agent-push-credential-helper.py
       - name: Gate 122 self-test — each documented mutation fails
         if: "!cancelled()"
         run: python3 .github/scripts/verify-agent-push-credential-helper.py --self-test
+
+      # Gate 123 — specs/071-agent-push-credential (maintainer review of PR
+      # #720, T070): wing-commander-publish-stranded-commits' commits-
+      # published count (T060's origin-ref comparison, falling back to
+      # before-sha..HEAD only when no remote-tracking ref exists) is driven
+      # against a real bare `origin` plus a clone, not merely asserted from
+      # the rendered notice text verify-chain-stop-notice-body.py already
+      # covers. See verify-stranded-commit-publish-shell.py's own docstring
+      # for the three scenarios and the self-test mutation.
+      - name: Gate 123 — the stranded-commit-publish count is driven against a real git repository, not just its rendered notice text
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-stranded-commit-publish-shell.py
+      - name: Gate 123 self-test — reverting the origin-ref comparison to before-sha..HEAD unconditionally fails
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-stranded-commit-publish-shell.py --self-test
 
       # Gate 70 — the 8b verifier stands down on a skipped stage-8 run only
       # when the run stage 8 was asked to inspect was itself skipped (PR

@@ -875,8 +875,8 @@ jobs:
         with:
           intended-turns: ${{ inputs.max-turns }}
 
-      # This step's prompt carries the retry-bound paragraph for a credential-
-      # expiry/mint-failure `git push` signature -- see clarify.yml.
+      # This step's prompt carries the retry-bound paragraph for the
+      # credential-expiry `git push` signature -- see clarify.yml.
       - name: Implement and converge (cycle)
         id: cycle
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true' && steps.tool-args-cycle.outputs.allowed-tools != ''
@@ -1035,11 +1035,10 @@ jobs:
               of that phase, not one edit per task.
 
             A `git push` that fails with `remote: Invalid username or token`
-            or `Authentication failed`, or with a message beginning
-            `wing-commander-agent-push-credential: mint failed:`, is a
-            credential problem this pipeline is already handling — retry it
-            at most twice, then commit your work locally if it still fails
-            and continue; do not spend further turns retrying the same push.
+            or `Authentication failed` is a credential problem this
+            pipeline is already handling — retry it at most twice, then
+            commit your work locally if it still fails and continue; do
+            not spend further turns retrying the same push.
           claude_args: |
             --model ${{ steps.effective-model.outputs.model }}
             --max-turns ${{ steps.cycle-ceiling.outputs.ceiling }}
@@ -1604,8 +1603,8 @@ jobs:
           git fetch origin "+refs/heads/${SPEC_PREFIX}$SLUG:refs/remotes/origin/${SPEC_PREFIX}$SLUG"
           echo "base-sha=$(git rev-parse "origin/${SPEC_PREFIX}$SLUG")" >> "$GITHUB_OUTPUT"
 
-      # This step's prompt carries the retry-bound paragraph for a credential-
-      # expiry/mint-failure `git push` signature -- see clarify.yml.
+      # This step's prompt carries the retry-bound paragraph for the
+      # credential-expiry `git push` signature -- see clarify.yml.
       - name: Implement and converge (retry at escalation model)
         id: retry
         if: >-
@@ -1768,11 +1767,10 @@ jobs:
               of that phase, not one edit per task.
 
             A `git push` that fails with `remote: Invalid username or token`
-            or `Authentication failed`, or with a message beginning
-            `wing-commander-agent-push-credential: mint failed:`, is a
-            credential problem this pipeline is already handling — retry it
-            at most twice, then commit your work locally if it still fails
-            and continue; do not spend further turns retrying the same push.
+            or `Authentication failed` is a credential problem this
+            pipeline is already handling — retry it at most twice, then
+            commit your work locally if it still fails and continue; do
+            not spend further turns retrying the same push.
           claude_args: |
             --model ${{ inputs.escalation-model }}
             --max-turns ${{ steps.retry-ceiling.outputs.ceiling }}
@@ -2380,8 +2378,7 @@ jobs:
 
       # FR-025 exclusion (specs/071-agent-push-credential): this step's own
       # default-disallowed-tools already lists Bash(git:*) below -- it
-      # never pushes, so it gets neither the credential-helper call nor
-      # the retry-bound prompt paragraph.
+      # never pushes, so the retry-bound prompt paragraph does not apply.
       - name: Compose progress summary (haiku)
         id: progress
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true' && steps.final.outputs.ok == 'true' && steps.tool-args-post-progress-comment.outputs.allowed-tools != ''

@@ -844,8 +844,8 @@ jobs:
       # FR-025 exclusion (specs/071-agent-push-credential): this step's own
       # default-disallowed-tools above explicitly lists
       # Bash(git push:*),Bash(git commit:*) -- a deliberately strictly
-      # read-only classifier. Neither the credential-helper call nor the
-      # retry-bound prompt paragraph applies here.
+      # read-only classifier. The retry-bound prompt paragraph does not
+      # apply here.
       - name: Classify the PR conversation request
         id: agent
         if: steps.identity.outputs.qualifies == 'true' && steps.lifecycle-gate.outputs.is-open == 'true' && steps.actor-gate.outputs.authorized == 'true' && steps.relay-resume.outputs.resumed != 'true' && steps.tool-args-classify.outputs.allowed-tools != ''
@@ -1550,6 +1550,7 @@ jobs:
       credential-refresh-ok: ${{ steps.credential-status.outputs.ok }}
       # No reader either (same status as credential-refresh-ok above).
       commits-published: ${{ steps.publish-stranded.outputs.commits-published }}
+      push-ok: ${{ steps.publish-stranded.outputs.push-ok }}
     strategy:
       fail-fast: false
       # Legs are NOT run concurrently: two classifications from the SAME
@@ -2009,8 +2010,8 @@ jobs:
         with:
           intended-turns: ${{ inputs.max-turns }}
 
-      # This step's prompt carries the retry-bound paragraph for a credential-
-      # expiry/mint-failure `git push` signature -- see clarify.yml.
+      # This step's prompt carries the retry-bound paragraph for the
+      # credential-expiry `git push` signature -- see clarify.yml.
       - name: Act on this classification
         id: agent
         if: steps.relay-gate.outputs.proceed == 'true' && steps.route.outputs.agent-needed == 'true' && steps.tool-args-act.outputs.allowed-tools != ''
@@ -2112,11 +2113,10 @@ jobs:
             fold-in routes, or a performed/not-performed manual step).
 
             A `git push` that fails with `remote: Invalid username or token`
-            or `Authentication failed`, or with a message beginning
-            `wing-commander-agent-push-credential: mint failed:`, is a
-            credential problem this pipeline is already handling — retry it
-            at most twice, then commit your work locally if it still fails
-            and continue; do not spend further turns retrying the same push.
+            or `Authentication failed` is a credential problem this
+            pipeline is already handling — retry it at most twice, then
+            commit your work locally if it still fails and continue; do
+            not spend further turns retrying the same push.
           claude_args: |
             --model ${{ inputs.model }}
             --max-turns ${{ steps.agent-ceiling.outputs.ceiling }}

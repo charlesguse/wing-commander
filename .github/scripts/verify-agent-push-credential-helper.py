@@ -28,17 +28,24 @@ or composite-action file.
 
 WHAT THIS CHECKS
 ----------------
-1. The App private key (`secrets.speckit-app-private-key`) is never handed
-   to anything except `actions/create-github-app-token@*` (directly, or
-   through the two composites that wrap it and expose only a derived
-   token -- `wing-commander-context`, `_shared/scoped-app-token`). Any
-   other consumer -- a plain shell step, a different action, a `run:`
-   block that writes the key to a file or to `$GITHUB_ENV` -- fails the
-   gate by name. Checked across the whole job, not just the steps ahead of
-   an agent step: once written to $GITHUB_ENV or a $RUNNER_TEMP file, the
-   material outlives the step that wrote it, so a write positioned AFTER
-   an agent step in job-step order is no safer than one positioned
-   directly ahead of it.
+1. The App private key (`secrets.speckit-app-private-key`, or an
+   adopter-facing wrapper's own `secrets.WING_COMMANDER_APP_PRIVATE_KEY`,
+   dotted or bracket-syntax) is never handed to anything except
+   `actions/create-github-app-token@*` (directly, or through the two
+   composites that wrap it and expose only a derived token --
+   `wing-commander-context`, `_shared/scoped-app-token`). Any other
+   consumer -- a plain shell step, a different action, a `run:` block
+   that writes the key to a file or to `$GITHUB_ENV` -- fails the gate by
+   name. Checked across every `.github/workflows/*.yml` file (not only
+   the 8 SUBJECTS below -- watchdog, cleanup, rebase, board-loop and the
+   adopter-facing wrappers all stage this same secret), at step level, job
+   level and workflow level (a job- or workflow-level `env:` block exposes
+   the secret to every step underneath it, with no `uses:` of its own to
+   judge trust against), and across the whole job rather than just the
+   steps ahead of an agent step: once written to $GITHUB_ENV or a
+   $RUNNER_TEMP file, the material outlives the step that wrote it, so a
+   write positioned AFTER an agent step in job-step order is no safer
+   than one positioned directly ahead of it.
 2. Over the 8 stages FR-007 names (SUBJECTS below; auto-update-spec-kit.yml
    scoped to its `e2e-stage` job only), every push-capable agent step
    (`uses: anthropics/claude-code-action@*` whose composed `--allowedTools`
@@ -104,8 +111,13 @@ JWT_TYP_RE = re.compile(r'"typ"\s*:\s*"JWT"')
 # them -- excluded from its own scan.
 SELF_PATH = ".github/scripts/verify-agent-push-credential-helper.py"
 
-# check 1: the only things ever allowed to see the raw private key.
-PRIVATE_KEY_SECRET_RE = re.compile(r"secrets\.speckit-app-private-key")
+# check 1: the only things ever allowed to see the raw private key. Matches
+# both the reusable workflows' own secret name (speckit-app-private-key)
+# and the adopter-facing wrappers' secret name
+# (WING_COMMANDER_APP_PRIVATE_KEY), dotted (secrets.NAME) or bracket
+# (secrets['NAME'] / secrets["NAME"]) syntax.
+PRIVATE_KEY_SECRET_RE = re.compile(
+    r"secrets(?:\.|\[\s*['\"])(?:speckit-app-private-key|WING_COMMANDER_APP_PRIVATE_KEY)")
 TRUSTED_KEY_CONSUMER_RES = (
     re.compile(r"^actions/create-github-app-token@"),
     re.compile(r"/wing-commander-context$"),
@@ -180,20 +192,31 @@ def check_private_key_containment(loaded):
     a path to a file holding it) somewhere a running agent step's own
     shell -- or a script/prompt injection it processes -- could read it,
     whether via $GITHUB_ENV or a file under $RUNNER_TEMP the agent's tool
-    allowlist can reach. Scoped to the whole job, not just the steps ahead
-    of an agent step: once written to $GITHUB_ENV or a file, the material
-    outlives the step that wrote it.
+    allowlist can reach. Scoped to every `.github/workflows/*.yml` file
+    (T069 -- not only the 8 SUBJECTS below, since watchdog/cleanup/rebase/
+    board-loop and the adopter-facing wrappers stage the same secret), at
+    workflow level, job level, and step level, and across the whole job
+    rather than just the steps ahead of an agent step: once written to
+    $GITHUB_ENV or a file, the material outlives the step that wrote it.
     """
     failures = []
-    for path, job_names in SUBJECTS.items():
-        wf = loaded.get(path)
-        if wf is None:
+    for path, wf in sorted(loaded.items()):
+        if wf is None or not path.startswith(".github/workflows/"):
             continue
+        if PRIVATE_KEY_SECRET_RE.search(_step_text(wf.get("env") or {})):
+            failures.append(
+                f"{path}: workflow-level env: exposes the App private key "
+                f"secret to every job and step in the workflow (FR-023 "
+                f"security guard, specs/071-agent-push-credential "
+                f"Maintainer Feedback).")
         jobs = wf.get("jobs") or {}
-        for job_name in job_names:
-            job = jobs.get(job_name)
-            if job is None:
-                continue
+        for job_name, job in jobs.items():
+            if PRIVATE_KEY_SECRET_RE.search(_step_text((job or {}).get("env") or {})):
+                failures.append(
+                    f"{path} [{job_name}]: job-level env: exposes the App "
+                    f"private key secret to every step in the job (FR-023 "
+                    f"security guard, specs/071-agent-push-credential "
+                    f"Maintainer Feedback).")
             for step in (job or {}).get("steps") or []:
                 if not PRIVATE_KEY_SECRET_RE.search(_step_text(step)):
                     continue
@@ -203,7 +226,7 @@ def check_private_key_containment(loaded):
                 name = (step or {}).get("name", "<unnamed step>")
                 failures.append(
                     f"{path} [{job_name}] step {name!r} references "
-                    f"secrets.speckit-app-private-key through "
+                    f"the App private key secret through "
                     f"{uses or '(no uses: -- inline run:/env:)'} -- the App "
                     f"private key must never be staged to a file or "
                     f"exported anywhere except as the direct input to "
@@ -335,15 +358,26 @@ def check_no_jwt_construction(root="."):
     return failures
 
 
+def _iter_workflow_paths(root="."):
+    """-> every `.github/workflows/*.yml` path, repo-root-relative -- the
+    full scan surface for check 1 (T069), wider than SUBJECTS below."""
+    wf_dir = os.path.join(root, ".github", "workflows")
+    if not os.path.isdir(wf_dir):
+        return []
+    return sorted(
+        "/".join((".github", "workflows", name))
+        for name in os.listdir(wf_dir)
+        if name.endswith((".yml", ".yaml")))
+
+
 def load_all(root="."):
     out = {}
-    for path in SUBJECTS:
+    for path in _iter_workflow_paths(root):
         full = os.path.join(root, path)
-        if not os.path.isfile(full):
-            out[path] = None
-            continue
         with io.open(full, encoding="utf-8") as fh:
             out[path] = yaml.safe_load(fh) or {}
+    for path in SUBJECTS:
+        out.setdefault(path, None)
     return out
 
 
@@ -426,6 +460,42 @@ def mut_private_key_leaked_to_untrusted_step(loaded):
     steps.insert(idx, fake)
 
 
+def mut_private_key_in_job_env(loaded):
+    """check 1 (T069): a job-level env: block exposing the App private key
+    has no uses: of its own to judge trust against, so it must fail
+    unconditionally."""
+    job = loaded[".github/workflows/clarify.yml"]["jobs"]["clarify"]
+    env = job.setdefault("env", {})
+    env["FIXTURE_LEAKED_KEY"] = "${{ secrets.speckit-app-private-key }}"
+
+
+def mut_private_key_bracket_syntax(loaded):
+    """check 1 (T069): bracket-syntax secret reference
+    (secrets['WING_COMMANDER_APP_PRIVATE_KEY']) handed to an untrusted
+    step, ahead of implement.yml's cycle agent step."""
+    job = loaded[".github/workflows/implement.yml"]["jobs"]["implement"]
+    steps = job["steps"]
+    idx = next((i for i, s in enumerate(steps)
+               if (s or {}).get("name") == "Implement and converge (cycle)"), None)
+    assert idx is not None, "fixture assumption broken: step renamed"
+    fake = {"name": "Stage App private key via bracket syntax (fixture)",
+            "uses": "./.wing-commander-pipeline/.github/actions/some-other-composite",
+            "with": {"private-key": "${{ secrets['WING_COMMANDER_APP_PRIVATE_KEY'] }}"}}
+    steps.insert(idx, fake)
+
+
+def mut_private_key_out_of_subjects_workflow(loaded):
+    """check 1 (T069): staging in a workflow outside the 8 named SUBJECTS
+    files -- watchdog.yml's collect job -- must still be caught, since
+    check 1 now scans every .github/workflows/*.yml file."""
+    job = loaded[".github/workflows/watchdog.yml"]["jobs"]["collect"]
+    steps = job["steps"]
+    fake = {"name": "Stage App private key (fixture, out-of-SUBJECTS)",
+            "uses": "./.wing-commander-pipeline/.github/actions/some-other-composite",
+            "with": {"private-key": "${{ secrets.speckit-app-private-key }}"}}
+    steps.insert(0, fake)
+
+
 def self_test(root="."):
     base = load_all(root)
     problems = []
@@ -447,6 +517,17 @@ def self_test(root="."):
         ("the retry-bound prompt paragraph attached to a fixture step "
          "whose allowed-tools carry no Bash(git push:*)",
          mut_non_push_capable_gets_retry_paragraph, ["finalize.yml", "FR-025"]),
+        ("the App private key exposed via a job-level env: block",
+         mut_private_key_in_job_env,
+         ["clarify.yml", "job-level env:"]),
+        ("the App private key referenced via bracket syntax "
+         "(secrets['WING_COMMANDER_APP_PRIVATE_KEY']) to an untrusted step",
+         mut_private_key_bracket_syntax,
+         ["implement.yml", "must never be staged"]),
+        ("the App private key staged in a workflow outside the 8 named "
+         "SUBJECTS files (watchdog.yml)",
+         mut_private_key_out_of_subjects_workflow,
+         ["watchdog.yml", "must never be staged"]),
     ]
     for label, apply_mutation, expect_substrings in mutations:
         mutated = copy.deepcopy(base)

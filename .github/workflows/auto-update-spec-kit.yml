@@ -1968,9 +1968,8 @@ jobs:
       # FR-025 exclusion (specs/071-agent-push-credential): this step's own
       # --disallowedTools below explicitly lists Bash(git push:*), and its
       # prompt (below) instructs it not to push at all -- the workflow's
-      # own deterministic steps (T009/T012 above) do all pushing. Neither
-      # the credential-helper call nor the retry-bound prompt paragraph
-      # applies to this step itself.
+      # own deterministic steps (T009/T012 above) do all pushing. The
+      # retry-bound prompt paragraph does not apply to this step itself.
       - name: Run e2e agent-driven stage
         id: decide
         continue-on-error: true
