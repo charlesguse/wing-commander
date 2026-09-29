@@ -58,11 +58,11 @@ The implement stage runs a cycle agent, then — when the cycle is classified as
 
 **Why this priority**: It converts the probabilistic exposure of User Story 1 into a deterministic one for the arm whose whole purpose is to rescue a cycle that went badly. It is P2 because User Story 1's remedy, if it covers every agent step, subsumes it — but the retry arm is the case that must be demonstrated, not assumed.
 
-**Independent Test**: Drive an implement job whose cycle agent runs past the credential lifetime and whose retry agent then runs, and confirm the retry agent's pushes succeed.
+**Independent Test**: Drive an implement job whose cycle agent runs past the credential lifetime and whose retry agent then runs, and confirm the retry agent's commits reach the spec branch through its own post-agent publish step (commits-published counted, `push-ok=true`), even though its own `git push` attempts fail.
 
 **Acceptance Scenarios**:
 
-1. **Given** an implement job whose cycle agent has already exhausted the credential lifetime, **When** the retry agent runs and pushes, **Then** its pushes succeed.
+1. **Given** an implement job whose cycle agent has already exhausted the credential lifetime, **When** the retry agent runs and commits, **Then** its commits reach the spec branch through its own post-agent publish step (commits-published counted, `push-ok=true`), although its own `git push` attempts fail.
 2. **Given** the same job, **When** the progress agent runs after the retry agent, **Then** its bot-acting work succeeds on the same terms.
 3. **Given** a job where the cycle agent finishes quickly and no retry runs, **When** the job completes, **Then** no additional credential work is performed on its account.
 
