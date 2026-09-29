@@ -134,7 +134,8 @@ for any reference resolving into a `_shared/` path.
 
 Waivers: `.github/scripts/single-home-waivers.json`, same shape as Gate
 31's `stage-invariant-waivers.json` -- `{file, check, pattern, count,
-issue, reason}`, stale-checked in both directions.
+issue, reason}`, stale-checked in both directions (`issue` -- open, or
+null with a permanent marker -- is Gate 124's to check).
 
 Byte-identity check (FR-009, contracts/verdict-helper.md): runs the
 shipped `_shared/auto-release-verdict.sh` against each of the 15 sites'
@@ -753,7 +754,10 @@ ALL_CHECKS = {
 # --------------------------------------------------------------------------
 # Waivers -- same shape as stage-invariant-waivers.json (Gate 31)
 # --------------------------------------------------------------------------
-REQUIRED_WAIVER_FIELDS = ("file", "check", "pattern", "count", "reason", "issue")
+# `issue` is not here: whether a waiver cites an OPEN issue or is marked
+# permanent is verify-waiver-citations.py's (Gate 124) one rule for every
+# register.
+REQUIRED_WAIVER_FIELDS = ("file", "check", "pattern", "count", "reason")
 
 
 def load_waivers(root="."):

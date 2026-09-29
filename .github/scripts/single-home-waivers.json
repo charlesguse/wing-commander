@@ -7,7 +7,8 @@
     "Each of the four idioms (orphan-reset, failure-issue, verdict-shape,",
     "token-mint) plus the promotion-prevention pass has exactly one home",
     "under .github/actions/_shared/. Every deviation from that lives here,",
-    "in the open, with a reason and a tracking issue -- never as a name",
+    "in the open, with a reason and either an OPEN tracking issue or a",
+    "permanent marker (Gate 124) -- never as a name",
     "missing from a list, and never as a code comment alone.",
     "",
     "Every entry is STALE-CHECKED in both directions, the same as Gate 31's",
@@ -31,7 +32,9 @@
       "check": "token-mint",
       "pattern": "target-token",
       "count": 1,
-      "issue": "#326",
+      "issue": null,
+      "permanent": true,
+      "permanent_reason": "Deliberate duplication: the diagnostic must not share the composite it tests independently.",
       "reason": "This workflow's own header comment documents the duplication as deliberate: it exists to test the raw actions/create-github-app-token@v3 call independently of e2e-stage, so a regression in the shared scoped-app-token composite cannot silently pass both the diagnostic and the real stage the same way. Routing it through the composite would defeat that independence -- the composite's own bug would then read as 'reachable' in both places at once."
     },
     {
@@ -39,7 +42,9 @@
       "check": "failure-issue",
       "pattern": "gh label create \\.\\.\\. --force \\+ gh issue list \\.\\.\\. --jq",
       "count": 1,
-      "issue": "#326",
+      "issue": null,
+      "permanent": true,
+      "permanent_reason": "A different feature that shares two generic gh-CLI fragments; no consolidation is planned.",
       "reason": "watchdog.yml's usage-limit tracking (create the usage-limit label if absent, look up the one open issue carrying it) is a conceptually different feature from this repository's auto-release:failed/auto-update:failed durable-failure-issue idiom -- a different label, a different lifecycle, no create-or-comment/close split -- that happens to share the same two generic gh-CLI fragments this structural check keys on. Out of scope for specs/049's consolidation; folding it into durable-failure-issue is a separate, future decision."
     },
     {
@@ -47,7 +52,9 @@
       "check": "promotion",
       "pattern": "\\.github/actions/_shared/",
       "count": 3,
-      "issue": "#326",
+      "issue": null,
+      "permanent": true,
+      "permanent_reason": "auto-update-spec-kit.yml is the declared consumer of the _shared composites; the count guards growth.",
       "reason": "research.md D1/D2 of specs/049-single-home-release-idioms: auto-update-spec-kit.yml IS a workflow_call-only published stage, and it is ALSO this feature's own declared consumer of the remaining shared composites (scoped-app-token, orphan-branch-reset), reached deliberately through its existing self-checkout convention -- the exact wiring specs/049's own tasks (T011-T013) add. specs/052-agent-credential-lifetime (research.md D8) adds a second, independent call to scoped-app-token immediately after the e2e-stage agent step, to re-mint WC_SCRATCH_TOKEN the same way the pre-agent mint does -- the same declared consumer, not a new promotion. specs/056-stage-found-defect-filing promoted durable-failure-issue out of _shared/ entirely (research.md D8), dropping this count from 4 to 3; a fourth, unrelated _shared/ reference in this file would change it again and fail the gate."
     },
     {
@@ -55,7 +62,9 @@
       "check": "size-path-backstop",
       "pattern": "select\\(test",
       "count": 1,
-      "issue": "#408",
+      "issue": null,
+      "permanent": true,
+      "permanent_reason": "No open tracker: the inline jq stays until a behavioural harness can prove a repoint byte-identical.",
       "reason": "specs/057-autonomous-board-loop tasks.md T021 (repoint pr-conversation.yml's classify-and-announce job at the new wing-commander-size-path-backstop composite) is NOT done in this cycle: the inline jq formula sits inside a per-classification-leg `map()` pipeline that also rewrites category/drafted-content based on the over-threshold result, with no existing behavioral test harness (unlike Gate 4's auto-update-spec-kit-tests) to prove a refactor byte-identical -- repointing it blind, under this cycle's own turn budget, was judged too large a regression risk for a live, production routing decision. board-loop.yml's own route job reaches the formula only through the composite. Remove this waiver when T021 lands."
     },
     {
@@ -63,7 +72,9 @@
       "check": "stage-findings",
       "pattern": "sha256\\(\\.\\.\\.\\) \\+ fingerprint_basis \\+ validate_finding co-occurrence",
       "count": 1,
-      "issue": "#408",
+      "issue": null,
+      "permanent": true,
+      "permanent_reason": "A conceptually distinct fingerprint and schema (spec 057 D11/D12), not a copy to consolidate.",
       "reason": "specs/057-autonomous-board-loop research.md D12: the review job's out-of-scope filing uses its OWN fingerprint formula, sha256(\"<issue>|<norm(title)>|<norm(file_path)>\") -- deliberately distinct from spec 056's stage-finding formula (sha256(STAGE|norm(file_path)|norm(gate_or_artifact))) per D11's own explanation for why board review needed a second schema/channel in the first place -- and separately calls verify-board-review-finding-schema.py's validate_finding() (T041) to filter malformed findings, the same discipline spec 056's own D5/D11 use, but against a DIFFERENT schema (board-review-finding.schema.json, not stage-finding.schema.json). The three fragments Gate 60 keys on (sha256, fingerprint_basis, validate_finding) are each genuinely present for a genuinely different, unrelated reason than spec 056's mechanism -- structurally similar shell, conceptually distinct feature, exactly the case this waiver mechanism exists for."
     }
   ]

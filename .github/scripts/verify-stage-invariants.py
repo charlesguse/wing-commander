@@ -59,8 +59,9 @@ so line numbers stay true.
 
 WAIVERS (.github/scripts/stage-invariant-waivers.json)
 ------------------------------------------------------
-Each waiver names the file, the exact pattern, why, and the tracking issue,
-and declares HOW MANY findings it covers. It is stale-checked in both
+Each waiver names the file, the exact pattern, why, and either an open
+tracking issue or a permanent marker (Gate 124, verify-waiver-citations.py,
+holds that half), and declares HOW MANY findings it covers. It is stale-checked in both
 directions, on the model of Gate 26's grandfathered tag:
 
   - a pattern matching nothing fails the gate. An exception nobody can
@@ -361,8 +362,10 @@ def stage_workflows(loaded):
 # --------------------------------------------------------------------------
 # Waivers
 # --------------------------------------------------------------------------
-REQUIRED_WAIVER_FIELDS = ("file", "check", "pattern", "count", "reason",
-                          "issue")
+# `issue` is not here: whether a waiver cites an OPEN issue or is marked
+# permanent is verify-waiver-citations.py's (Gate 124) one rule for every
+# register.
+REQUIRED_WAIVER_FIELDS = ("file", "check", "pattern", "count", "reason")
 
 
 def load_waivers(root="."):
@@ -403,7 +406,7 @@ def check_waiver_shape(waivers):
         if missing:
             failures.append(
                 "{0} ({1}) is missing {2}. Every waiver names the file, the "
-                "exact pattern, the reason, the tracking issue and the number "
+                "exact pattern, the reason and the number "
                 "of findings it covers - an exception whose reason nobody "
                 "recorded is indistinguishable from a bug someone "
                 "silenced.".format(where, waiver.get("file", "?"),
@@ -460,7 +463,7 @@ def apply_waivers(findings, waivers, stages):
                 "exception for a violation nobody can inspect suppresses the "
                 "next one that reuses its shape.".format(
                     where, waiver["check"], waiver["file"], waiver["pattern"],
-                    waiver["issue"]))
+                    waiver.get("issue") or waiver.get("permanent_reason")))
             continue
         if len(matched) != waiver["count"]:
             direction = ("MORE" if len(matched) > waiver["count"] else "FEWER")

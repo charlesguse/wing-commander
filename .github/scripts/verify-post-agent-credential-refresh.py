@@ -369,7 +369,13 @@ def _step_text(step):
 # every run -- an entry with no condition, or one that is always True, is
 # not a valid entry (Constitution IX; FR-007 of spec 073).
 # --------------------------------------------------------------------------
-ExemptionEntry = namedtuple("ExemptionEntry", ["reason", "issue", "condition"])
+# `issue` is a tuple of OPEN tracking issues, or () with `permanent=True`
+# and a one-line `permanent_reason` -- verify-waiver-citations.py (Gate
+# 124) holds every entry to exactly one of the two.
+ExemptionEntry = namedtuple(
+    "ExemptionEntry",
+    ["reason", "issue", "condition", "permanent", "permanent_reason"],
+    defaults=(False, None))
 
 
 def _wall_clock_bound_ok(job, max_minutes=10):
@@ -452,14 +458,22 @@ EXEMPT_JOBS = {
             "wall-clock bound (timeout-minutes: 10) instead of the full "
             "post-agent mechanism -- the agent measured ~1 minute on all "
             "40 sampled runs (FR-005)"),
-        issue=(558,),
+        issue=(),
+        permanent=True,
+        permanent_reason=(
+            "An agent step bounded by its own 10-minute timeout is the "
+            "design for a short job, not debt awaiting a fix."),
         condition=_wall_clock_bound_ok,
     ),
     (".github/workflows/watchdog.yml", "diagnose"): ExemptionEntry(
         reason=(
             "agent step already carries timeout-minutes: 10, the same "
             "bound cleanup.yml adopts (research.md D6)"),
-        issue=(558,),
+        issue=(),
+        permanent=True,
+        permanent_reason=(
+            "An agent step bounded by its own 10-minute timeout is the "
+            "design for a short job, not debt awaiting a fix."),
         condition=_wall_clock_bound_ok,
     ),
     (".github/workflows/board-loop.yml", "triage"): ExemptionEntry(
@@ -468,7 +482,11 @@ EXEMPT_JOBS = {
             "wing-commander-post-agent-credential-status after its agent "
             "step voluntarily (spec 057); provisional -- promoting to "
             "full_subject later is a re-classification, not a new remedy"),
-        issue=(558, 410),
+        issue=(),
+        permanent=True,
+        permanent_reason=(
+            "No open tracker: promoting to full_subject is an unscheduled "
+            "re-classification; the condition keeps the composites adopted."),
         condition=_composite_adoption_ok,
     ),
     (".github/workflows/board-loop.yml", "route"): ExemptionEntry(
@@ -476,7 +494,11 @@ EXEMPT_JOBS = {
             "already consumes wing-commander-context and "
             "wing-commander-post-agent-credential-status after its agent "
             "step voluntarily (spec 057); provisional"),
-        issue=(558, 410),
+        issue=(),
+        permanent=True,
+        permanent_reason=(
+            "No open tracker: promoting to full_subject is an unscheduled "
+            "re-classification; the condition keeps the composites adopted."),
         condition=_composite_adoption_ok,
     ),
     (".github/workflows/board-loop.yml", "fix"): ExemptionEntry(
@@ -484,7 +506,11 @@ EXEMPT_JOBS = {
             "already consumes wing-commander-context and "
             "wing-commander-post-agent-credential-status after its agent "
             "step voluntarily (spec 057); provisional"),
-        issue=(558, 410),
+        issue=(),
+        permanent=True,
+        permanent_reason=(
+            "No open tracker: promoting to full_subject is an unscheduled "
+            "re-classification; the condition keeps the composites adopted."),
         condition=_composite_adoption_ok,
     ),
     (".github/workflows/board-loop.yml", "review"): ExemptionEntry(
@@ -493,21 +519,33 @@ EXEMPT_JOBS = {
             "wing-commander-post-agent-credential-status after EACH of its "
             "two agent steps (Reviewer, Review-fixup) voluntarily (spec "
             "057); provisional"),
-        issue=(558, 410),
+        issue=(),
+        permanent=True,
+        permanent_reason=(
+            "No open tracker: promoting to full_subject is an unscheduled "
+            "re-classification; the condition keeps the composites adopted."),
         condition=_composite_adoption_ok,
     ),
     (".github/workflows/auto-update-spec-kit.yml", "evaluate-path"): ExemptionEntry(
         reason=(
             "mechanizes spec 052's existing prose-only exclusion -- agent "
             "step already carries timeout-minutes: 10"),
-        issue=(558,),
+        issue=(),
+        permanent=True,
+        permanent_reason=(
+            "An agent step bounded by its own 10-minute timeout is the "
+            "design for a short job, not debt awaiting a fix."),
         condition=_wall_clock_bound_ok,
     ),
     (".github/workflows/auto-update-spec-kit.yml", "comment-reply"): ExemptionEntry(
         reason=(
             "mechanizes spec 052's existing prose-only exclusion -- agent "
             "step already carries timeout-minutes: 10"),
-        issue=(558,),
+        issue=(),
+        permanent=True,
+        permanent_reason=(
+            "An agent step bounded by its own 10-minute timeout is the "
+            "design for a short job, not debt awaiting a fix."),
         condition=_wall_clock_bound_ok,
     ),
 }
@@ -824,9 +862,9 @@ def scan(loaded):
             if not entry.condition(job):
                 failures.append(
                     f"{path} [{job_name}]: exempt entry's condition no "
-                    f"longer holds -- {entry.reason} (issue "
-                    f"{'/'.join('#' + str(n) for n in entry.issue)}) "
-                    f"(FR-007)")
+                    f"longer holds -- {entry.reason} ("
+                    f"{'permanent' if entry.permanent else 'issue ' + '/'.join('#' + str(n) for n in entry.issue)}"
+                    f") (FR-007)")
         elif disposition == "agentless_in_scope":
             pass
         elif disposition == "full_subject":
