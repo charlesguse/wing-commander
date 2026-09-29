@@ -858,7 +858,7 @@ jobs:
     if: >-
       !cancelled() && needs.review.result == 'success'
       && needs.review.outputs.parse-failed == 'false'
-    # Gate 80/specs/013: this job pushes spec-meta.json onto spec/<NNN-slug>
+    # Gate 80/specs/013: this job pushes the fold commit onto spec/<NNN-slug>
     # itself (the lifecycle PR's own branch), so it joins the per-spec group
     # every spec-branch writer shares -- a job-level concurrency: overrides
     # the workflow-level one above for this job only, ordering this push
@@ -1475,13 +1475,26 @@ jobs:
   # and the pipeline merges nothing (SC-005) -- the whole of US4 is inert
   # until a maintainer opts in, which is why the `if:` is a plain equality
   # on the variable rather than anything a run could satisfy by accident.
+  #
+  # T082: `report` is in `needs:` (and its success in the `if:`) because
+  # `report` is the review_gate marker's SOLE write site and this job's
+  # "Read the current review_gate marker" step reads it back. Without the
+  # edge the two jobs are siblings that start together, so this read can
+  # land before this round's marker does, see the PREVIOUS round's
+  # head_sha, refuse with reviewed_at_this_head -- and `select` never
+  # picks the PR again once the new marker lands, so no merge ever
+  # completes. `needs.report.result == 'success'` rather than the bare
+  # edge: under `!cancelled()` a failed `report` would otherwise still let
+  # this job run against a marker that was never written. Gate 112's
+  # structural check fails if this edge is ever dropped.
   merge:
-    needs: [select, readiness, review, disposition]
+    needs: [select, readiness, review, disposition, report]
     if: >-
       !cancelled() && vars.WING_COMMANDER_LIFECYCLE_AUTO_MERGE == 'true'
       && needs.select.outputs.pr-number != ''
       && needs.disposition.result == 'success'
       && needs.disposition.outputs.outcome == 'clean'
+      && needs.report.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write

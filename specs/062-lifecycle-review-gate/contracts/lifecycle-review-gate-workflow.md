@@ -71,10 +71,21 @@ window").
    the round failed/parse-failed (in which case nothing is written, so a
    retryable round never counts against the budget or FR-021's dedup).
 
-7. **`merge`** — `if: vars.WING_COMMANDER_LIFECYCLE_AUTO_MERGE == 'true'`.
-   Re-checks the kill switch (`wing-commander-board-stop-check`,
-   immediately before this durable action, matching the established
-   idiom), calls `lifecycle_merge_preconditions.py` fresh against the
+7. **`merge`** — `if: vars.WING_COMMANDER_LIFECYCLE_AUTO_MERGE == 'true'`,
+   and needs `report` (and its success, T082): `report` is the
+   `review_gate` marker's sole writer, so `merge` never reads the marker
+   before this round's value has landed. Re-checks the kill switch
+   immediately before this durable action through its own step `env:`
+   (`KILL_SWITCH_PAUSED` from `vars.WING_COMMANDER_LIFECYCLE_REVIEW_GATE_PAUSED`),
+   which is the "equivalent minimal re-check" `wing-commander-board-stop-check`
+   names — that composite itself is NOT used: it re-checks a board-loop
+   issue's maintainer stop request and cancels an earlier board-loop run,
+   neither of which exists for a lifecycle PR, and its paused input has to
+   be resolved by the caller anyway because a composite `run:` cannot read
+   `vars`. Per T078 this re-check is defence in depth, not a guaranteed
+   mid-run kill (a `vars.` expression is only as fresh as the context the
+   run was handed): a pause reliably takes effect on the next run, bounded
+   by the `kill-switch` job and every job's job-level `if:`. It then calls `lifecycle_merge_preconditions.py` fresh against the
    *current* head SHA (not the SHA `review` evaluated, in case it moved —
    FR-026), and on `may_merge: true` runs
    `gh pr merge --squash "$PR" --match-head-commit "$SHA"`, then announces
@@ -100,8 +111,10 @@ equivalent to apply).
 - **PR or issue closed mid-round** (spec.md Edge Cases): every job
   re-checks `wing-commander-lifecycle-gate`'s `is-open` output
   immediately before its own next durable action; a closed PR/issue mid-
-  round stops the round without posting findings, matching
-  `wing-commander-board-stop-check`'s established re-check discipline.
+  round stops the round without posting findings — the same
+  re-check-before-a-durable-action discipline
+  `wing-commander-board-stop-check` applies to board-loop issues (that
+  composite itself is not used here; see job 7).
 - **Two lifecycle PRs ready at once**: the single concurrency group
   serializes them; `select` picks the oldest each run.
 - **Human changes-requested review during a round**: `disposition` and

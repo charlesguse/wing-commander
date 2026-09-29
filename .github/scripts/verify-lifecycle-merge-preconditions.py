@@ -14,6 +14,14 @@ FR-027 requires the gate to say which. This pins all four documented
 branches (mirroring verify-lifecycle-readiness.py's own EXPECTED_CASES
 shape).
 
+It also pins the job ORDERING that lets production reach those states
+(T082): every lifecycle-review-gate.yml job that reads the review_gate
+marker (`wc_lifecycle_review_marker.py read`) and is not itself upstream
+of the marker's writer (`... write`, `report`) must depend on that writer,
+directly or transitively, and require its success in its own `if:`. A
+fixture that asserts "clean round at this head merges" means nothing if
+`merge` can read the marker before this round's value lands.
+
 Fixtures, each a checked-in snapshot under
 .github/scripts/tests/lifecycle-merge-preconditions/<case>/case.json.
 Fails loudly, not vacuously, if any fixture file is missing.
@@ -21,10 +29,14 @@ Fails loudly, not vacuously, if any fixture file is missing.
     python3 .github/scripts/verify-lifecycle-merge-preconditions.py
     python3 .github/scripts/verify-lifecycle-merge-preconditions.py --self-test
 """
+import copy
 import glob
 import json
 import os
+import re
 import sys
+
+import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from lifecycle_merge_preconditions import (  # noqa: E402
@@ -33,6 +45,77 @@ from lifecycle_merge_preconditions import (  # noqa: E402
 FIXTURES_DIR = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "tests",
     "lifecycle-merge-preconditions")
+
+WORKFLOW = os.path.join(".github", "workflows", "lifecycle-review-gate.yml")
+MARKER_SCRIPT = "wc_lifecycle_review_marker.py"
+
+
+def _needs(job):
+    needs = (job or {}).get("needs") or []
+    return [needs] if isinstance(needs, str) else list(needs)
+
+
+def _ancestors(jobs, job_id):
+    seen, stack = set(), list(_needs(jobs.get(job_id)))
+    while stack:
+        dep = stack.pop()
+        if dep not in seen:
+            seen.add(dep)
+            stack.extend(_needs(jobs.get(dep)))
+    return seen
+
+
+def _marker_jobs(jobs, verb):
+    pattern = re.compile(re.escape(MARKER_SCRIPT) + r"\s+" + verb + r"\b")
+    return sorted(
+        job_id for job_id, job in jobs.items()
+        if any(pattern.search(str((step or {}).get("run") or ""))
+               for step in (job or {}).get("steps") or []))
+
+
+def ordering_problems(doc):
+    """T082: every marker reader downstream of the writer waits for it."""
+    jobs = (doc or {}).get("jobs") or {}
+    writers = _marker_jobs(jobs, "write")
+    readers = _marker_jobs(jobs, "read")
+    problems = []
+    if len(writers) != 1:
+        return ["expected exactly one review_gate marker writer job, found "
+                "{0!r}".format(writers)]
+    if "merge" not in readers:
+        problems.append("the merge job no longer reads the review_gate "
+                        "marker -- this check has lost its subject")
+    writer = writers[0]
+    upstream_of_writer = _ancestors(jobs, writer)
+    for reader in readers:
+        if reader == writer or reader in upstream_of_writer:
+            continue  # reads the PRIOR round by design (select/review/...)
+        if writer not in _ancestors(jobs, reader):
+            problems.append("job {0!r} reads the review_gate marker but does "
+                            "not depend on its writer {1!r}".format(
+                                reader, writer))
+            continue
+        cond = str(jobs[reader].get("if") or "")
+        if not re.search(r"needs\.{0}\.result\s*==\s*'success'".format(
+                re.escape(writer)), cond):
+            problems.append("job {0!r} reads the review_gate marker but its "
+                            "if: does not require needs.{1}.result == "
+                            "'success'".format(reader, writer))
+    return problems
+
+
+def run_ordering():
+    with open(WORKFLOW, encoding="utf-8") as fh:
+        doc = yaml.safe_load(fh)
+    problems = ordering_problems(doc)
+    for problem in problems:
+        print("::error::verify-lifecycle-merge-preconditions: {0}: {1}".format(
+            WORKFLOW, problem))
+    if not problems:
+        print("[ok] marker-ordering: every downstream review_gate reader "
+              "waits for its writer")
+    return len(problems)
+
 
 EXPECTED_CASES = {
     "round-not-clean", "unresolved-human-review",
@@ -47,7 +130,7 @@ def _load(path):
 
 
 def run():
-    failures = 0
+    failures = run_ordering()
 
     if not os.path.isdir(FIXTURES_DIR):
         print("::error::verify-lifecycle-merge-preconditions: fixtures "
@@ -203,6 +286,31 @@ def self_test():
         _clear_gate(), False, [], "bot")
     check("moved-head-refuses-directly-with-no-peel",
           got["unmet_reason"] == "reviewed_at_this_head", "got {0!r}".format(got))
+
+    # T082: the shipped workflow orders merge after report, and dropping
+    # either half of that ordering (the needs: edge, or the success check
+    # in the if:) is caught.
+    with open(WORKFLOW, encoding="utf-8") as fh:
+        shipped = yaml.safe_load(fh)
+    check("marker-ordering-shipped-clean", ordering_problems(shipped) == [],
+          "got {0!r}".format(ordering_problems(shipped)))
+
+    dropped_edge = copy.deepcopy(shipped)
+    dropped_edge["jobs"]["merge"]["needs"] = [
+        n for n in _needs(dropped_edge["jobs"]["merge"]) if n != "report"]
+    got = ordering_problems(dropped_edge)
+    check("marker-ordering-dropped-needs-edge-caught",
+          any("does not depend on its writer" in p for p in got),
+          "got {0!r}".format(got))
+
+    dropped_if = copy.deepcopy(shipped)
+    dropped_if["jobs"]["merge"]["if"] = re.sub(
+        r"\s*&&\s*needs\.report\.result\s*==\s*'success'", "",
+        str(dropped_if["jobs"]["merge"]["if"]))
+    got = ordering_problems(dropped_if)
+    check("marker-ordering-dropped-success-check-caught",
+          any("does not require needs.report.result" in p for p in got),
+          "got {0!r}".format(got))
 
     print("{0} failure(s).".format(failures))
     return 1 if failures else 0

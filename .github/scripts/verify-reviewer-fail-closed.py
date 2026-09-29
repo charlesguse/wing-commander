@@ -1795,6 +1795,24 @@ def check_lifecycle_select_excludes_forks_mutation(select_script, tmproot):
 # to the "findings" branch and claim a fold/file that never happened.
 
 LIFECYCLE_OUTCOME_STEP = "Compose and post the round's outcome"
+LIFECYCLE_STATUS_STEP = "Report a non-passing status on the reviewed head SHA"
+# The status step's own `if:`, byte-compared: the harness below runs its
+# `run:` only when this guard would have let the step run, so a changed
+# guard is surfaced here rather than silently skipped.
+LIFECYCLE_STATUS_IF = ("steps.outcome.outputs.result != '' && "
+                       "steps.outcome.outputs.result != 'clean'")
+
+STUB_GH_STATUS = r"""#!/usr/bin/env bash
+if [ "$1" = "api" ]; then
+  for arg in "$@"; do
+    case "$arg" in
+      state=*) printf '%s' "${arg#state=}" > "$STUB_STATE_FILE" ;;
+    esac
+  done
+  exit 0
+fi
+exit 0
+"""
 
 
 def _lifecycle_outcome_env(body_file, **overrides):
@@ -1844,7 +1862,34 @@ def run_lifecycle_outcome(script, tmproot, **overrides):
         shutil.rmtree(runner_temp, ignore_errors=True)
 
 
-def check_lifecycle_disposition_failed_reports_error(outcome_script, tmproot):
+def run_lifecycle_status(script, tmproot, result):
+    """lifecycle-review-gate.yml's "Report a non-passing status on the
+    reviewed head SHA" step alone, capturing the `state=` a stub `gh api`
+    was called with ("" when the step never posted one)."""
+    workdir = tempfile.mkdtemp(dir=tmproot)
+    runner_temp = tempfile.mkdtemp(dir=tmproot)
+    try:
+        bindir = os.path.join(workdir, "stub-bin")
+        os.makedirs(bindir)
+        with open(os.path.join(bindir, "gh"), "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(STUB_GH_STATUS)
+        os.chmod(os.path.join(bindir, "gh"), 0o755)
+        state_file = os.path.join(workdir, "posted-state")
+        open(state_file, "w").close()
+        env = {"GH_TOKEN": "x", "GITHUB_REPOSITORY": "example/example",
+               "HEAD_SHA": LIFECYCLE_HEAD_SHA, "RESULT": result, "ROUND": "3",
+               "FINDINGS_OPEN": "", "STUB_STATE_FILE": state_file,
+               "PATH": bindir + os.pathsep + os.environ["PATH"]}
+        rc, out, _, _ = run_step(BASH, script, workdir, env, runner_temp)
+        with open(state_file, encoding="utf-8") as fh:
+            return rc, fh.read(), out
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
+        shutil.rmtree(runner_temp, ignore_errors=True)
+
+
+def check_lifecycle_disposition_failed_reports_error(outcome_script, tmproot,
+                                                     status_script):
     rc, body, outputs, out = run_lifecycle_outcome(
         outcome_script, tmproot, DISPOSITION_RESULT="failure",
         DISPOSITION_OUTCOME="")
@@ -1863,10 +1908,43 @@ def check_lifecycle_disposition_failed_reports_error(outcome_script, tmproot):
             failures.append("lifecycle disposition-failed: posted body claims "
                             "{0!r} despite disposition never having reached an "
                             "outcome: {1!r}".format(claim, body))
+    # F8: the round's `failed` result must reach the PR itself as a
+    # state=error commit status (the gate failed to reach a verdict), never
+    # silence and never state=failure (the review's own verdict on the
+    # code) -- contracts/review-and-findings.md "Clean vs. not-clean".
+    result = outputs.get("result") or ""
+    rc, state, out = run_lifecycle_status(status_script, tmproot, result)
+    if rc != 0:
+        failures.append("lifecycle disposition-failed: status step exited "
+                        "{0}: {1}".format(rc, out))
+    elif state != "error":
+        failures.append("lifecycle disposition-failed: status step posted "
+                        "state={0!r}, expected 'error'".format(state))
     if not failures:
         print("[ok] #T079 lifecycle disposition-failed: result='failed', "
-              "posted body makes no fold/file claim")
+              "posted body makes no fold/file claim, state=error posted")
     return failures
+
+
+def check_lifecycle_disposition_failed_status_mutation(status_script, tmproot):
+    """The status step's catch-all `state=error` arm rewritten to
+    `state=failure`: a gate that never reached a verdict would then be
+    reported as the review's verdict on the code."""
+    marker = "state=error\n"
+    if status_script.count(marker) != 1:
+        return ["lifecycle status mutation: expected one {0!r} in the status "
+                "step; update this harness.".format(marker)]
+    mutated = status_script.replace(marker, "state=failure\n", 1)
+    rc, state, out = run_lifecycle_status(mutated, tmproot, "failed")
+    if rc != 0:
+        return ["lifecycle status mutation: step exited {0} instead of "
+                "demonstrating the regression: {1}".format(rc, out)]
+    if state == "error":
+        return ["mutation 'lifecycle failed round posts state=failure' was NOT "
+                "caught (state={0!r})".format(state)]
+    print("note: mutation 'lifecycle failed round posts state=failure' "
+          "confirmed caught (state={0!r}).".format(state))
+    return []
 
 
 def check_lifecycle_disposition_failed_mutation(outcome_script, tmproot):
@@ -1940,12 +2018,14 @@ def main():
     lifecycle_announce_step = find_step(LIFECYCLE_WORKFLOW, LIFECYCLE_ANNOUNCE_STEP)
     lifecycle_select_step = find_step(LIFECYCLE_WORKFLOW, LIFECYCLE_SELECT_STEP)
     lifecycle_outcome_step = find_step(LIFECYCLE_WORKFLOW, LIFECYCLE_OUTCOME_STEP)
+    lifecycle_status_step = find_step(LIFECYCLE_WORKFLOW, LIFECYCLE_STATUS_STEP)
     for step_name, step in ((LIFECYCLE_EXTRACT_STEP, lifecycle_extract_step),
                             (LIFECYCLE_PARTITION_STEP, lifecycle_partition_step),
                             (LIFECYCLE_MERGE_STEP, lifecycle_merge_step),
                             (LIFECYCLE_ANNOUNCE_STEP, lifecycle_announce_step),
                             (LIFECYCLE_SELECT_STEP, lifecycle_select_step),
-                            (LIFECYCLE_OUTCOME_STEP, lifecycle_outcome_step)):
+                            (LIFECYCLE_OUTCOME_STEP, lifecycle_outcome_step),
+                            (LIFECYCLE_STATUS_STEP, lifecycle_status_step)):
         if step is None:
             sys.exit(f"::error file={LIFECYCLE_WORKFLOW}::step {step_name!r} not found.")
         if "${{" in str(step["run"]):
@@ -1958,6 +2038,10 @@ def main():
     lifecycle_announce_script = str(lifecycle_announce_step["run"])
     lifecycle_select_script = str(lifecycle_select_step["run"])
     lifecycle_outcome_script = str(lifecycle_outcome_step["run"])
+    lifecycle_status_script = str(lifecycle_status_step["run"])
+    if str(lifecycle_status_step.get("if") or "") != LIFECYCLE_STATUS_IF:
+        sys.exit(f"::error file={LIFECYCLE_WORKFLOW}::step {LIFECYCLE_STATUS_STEP!r}'s "
+                 f"if: is no longer {LIFECYCLE_STATUS_IF!r}; update this harness.")
 
     tmproot = tempfile.mkdtemp()
     try:
@@ -1979,7 +2063,10 @@ def main():
         failures += check_lifecycle_announce_mutation(lifecycle_announce_script, tmproot)
         failures += check_lifecycle_select_excludes_forks(lifecycle_select_script, tmproot)
         failures += check_lifecycle_select_excludes_forks_mutation(lifecycle_select_script, tmproot)
-        failures += check_lifecycle_disposition_failed_reports_error(lifecycle_outcome_script, tmproot)
+        failures += check_lifecycle_disposition_failed_reports_error(
+            lifecycle_outcome_script, tmproot, lifecycle_status_script)
+        failures += check_lifecycle_disposition_failed_status_mutation(
+            lifecycle_status_script, tmproot)
         failures += check_lifecycle_disposition_failed_mutation(lifecycle_outcome_script, tmproot)
     finally:
         shutil.rmtree(tmproot, ignore_errors=True)
