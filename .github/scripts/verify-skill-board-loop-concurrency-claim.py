@@ -19,7 +19,9 @@ fails loudly on any divergence, per
 specs/089-skill-example-drift/contracts/skill-drift-gate.md.
 """
 import argparse
+import collections
 import os
+import re
 import sys
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -28,6 +30,265 @@ CONCURRENCY_GROUPS_MD = os.path.join(
     REPO_ROOT, "specs", "060-self-redrive-concurrency", "contracts", "concurrency-groups.md")
 BOARD_LOOP_YML = os.path.join(REPO_ROOT, ".github", "workflows", "board-loop.yml")
 WAIVERS_JSON = os.path.join(REPO_ROOT, ".github", "scripts", "skill-example-drift-waivers.json")
+
+# The Over-rated example's anchor phrase (spec-cross-reference/SKILL.md).
+ANCHOR = "**Over-rated.**"
+
+SkillClaim = collections.namedtuple(
+    "SkillClaim",
+    ["job_range_start", "job_range_end", "ordinary_group", "directed_group", "location"])
+
+JobClassification = collections.namedtuple(
+    "JobClassification",
+    ["job", "can_select_or_open_fix_pr", "expected_group_ordinary",
+     "expected_group_directed", "expected_cancel_in_progress"])
+
+WorkflowConcurrencyFact = collections.namedtuple(
+    "WorkflowConcurrencyFact",
+    ["job", "group_literal", "group_expression", "cancel_in_progress", "line"])
+
+DriftFinding = collections.namedtuple(
+    "DriftFinding",
+    ["property", "job", "skill_location", "workflow_location", "expected", "actual"])
+
+# The conditional group shape prove-gate/prove use (research.md D5): resolves
+# to the directed-proof group when a directed dispatch names a stage, the
+# ordinary group otherwise. Matched structurally, not evaluated generically.
+DIRECTED_EXPR_RE = re.compile(
+    r"directed-stage\s*!=\s*''\s*\)\s*&&\s*'([\w.-]+)'\s*\|\|\s*'([\w.-]+)'")
+
+
+def _read(path):
+    with open(path, encoding="utf-8") as fh:
+        return fh.read()
+
+
+def _collapse_ws(text):
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def extract_skill_claim(text, path):
+    """-> (SkillClaim, None) or (None, DriftFinding) -- a missing anchor or
+    any missing token is a loud subject-missing finding, never a raise
+    (research.md D3, contracts/skill-example-claim.md "Verification")."""
+    idx = text.find(ANCHOR)
+    if idx == -1:
+        return None, DriftFinding(
+            property="subject-missing", job=None,
+            skill_location=(path, None), workflow_location=(BOARD_LOOP_YML, None),
+            expected="an Over-rated example paragraph ({0!r}) naming the job "
+                     "range and both concurrency groups".format(ANCHOR),
+            actual="no {0!r} anchor found in {1}".format(ANCHOR, path))
+
+    line_no = text.count("\n", 0, idx) + 1
+    end = text.find("\n\n", idx)
+    paragraph = text[idx:end if end != -1 else len(text)]
+    collapsed = _collapse_ws(paragraph)
+
+    range_match = re.search(r"`([\w.-]+)`\s+through\s+`([\w.-]+)`", collapsed)
+    ordinary_match = re.search(r"joins\s+`([\w.-]+)`", collapsed)
+    directed_match = re.search(r"directed proof run in\s+`([\w.-]+)`", collapsed)
+
+    missing = []
+    if not range_match:
+        missing.append("a job-range phrase shaped '`X` through `Y`'")
+    if not ordinary_match:
+        missing.append("an ordinary group token shaped 'joins `GROUP`'")
+    if not directed_match:
+        missing.append("a directed group token shaped 'directed proof run in `GROUP`'")
+    if missing:
+        return None, DriftFinding(
+            property="subject-missing", job=None,
+            skill_location=(path, line_no), workflow_location=(BOARD_LOOP_YML, None),
+            expected="the Over-rated paragraph starting at {0}:{1} to carry {2}".format(
+                path, line_no, "; ".join(missing)),
+            actual="not found in that paragraph")
+
+    return SkillClaim(
+        job_range_start=range_match.group(1),
+        job_range_end=range_match.group(2),
+        ordinary_group=ordinary_match.group(1),
+        directed_group=directed_match.group(1),
+        location=(path, line_no),
+    ), None
+
+
+# The "Groups, per job" table's data rows (contracts/concurrency-groups.md):
+# job names in column 1, ordinary/directed group tokens and the
+# cancel-in-progress literal in columns 2-4. Read as-is -- never re-derived
+# from board-loop.yml's own job names (research.md D4).
+TABLE_ROW_RE = re.compile(
+    r"^\|(?P<jobs>[^|]+)\|(?P<ordinary>[^|]+)\|(?P<directed>[^|]+)\|(?P<cancel>[^|]+)\|\s*$",
+    re.MULTILINE)
+
+
+def extract_job_classifications(text):
+    """-> [JobClassification, ...] from concurrency-groups.md's "Groups, per
+    job" table (research.md D4, data-model.md JobClassification)."""
+    heading_idx = text.find("## Groups, per job")
+    if heading_idx == -1:
+        return []
+    table_text = text[heading_idx:]
+
+    classifications = []
+    for match in TABLE_ROW_RE.finditer(table_text):
+        jobs = re.findall(r"`([\w.-]+)`", match.group("jobs"))
+        if not jobs:
+            continue  # header/separator row
+        ordinary_tokens = re.findall(r"`([\w.-]+)`", match.group("ordinary"))
+        if not ordinary_tokens:
+            continue
+        directed_cell = match.group("directed")
+        directed_tokens = re.findall(r"`([\w.-]+)`", directed_cell)
+        expected_directed = (
+            directed_tokens[0] if directed_tokens and "n/a" not in directed_cell.lower()
+            else None)
+        cancel_tokens = re.findall(r"`(true|false)`", match.group("cancel"))
+        expected_cancel = cancel_tokens[0] == "true" if cancel_tokens else False
+        for job in jobs:
+            classifications.append(JobClassification(
+                job=job,
+                can_select_or_open_fix_pr=True,
+                expected_group_ordinary=ordinary_tokens[0],
+                expected_group_directed=expected_directed,
+                expected_cancel_in_progress=expected_cancel,
+            ))
+    return classifications
+
+
+# Each job's own top-level key under board-loop.yml's `jobs:` map (2-space
+# indented). Restricted to text after `jobs:` so `on:`'s own 2-space-indented
+# trigger keys (schedule:, workflow_dispatch:, ...) are never mistaken for
+# job blocks.
+JOB_KEY_RE = re.compile(r"^  ([A-Za-z0-9_-]+):\s*$", re.MULTILINE)
+CONCURRENCY_BLOCK_RE = re.compile(
+    r"\n {4}concurrency:\n {6}group:(?P<group>.*?)\n {6}cancel-in-progress:\s*(?P<cancel>true|false)",
+    re.DOTALL)
+
+
+def extract_workflow_concurrency_facts(text):
+    """-> {job: WorkflowConcurrencyFact} for every job board-loop.yml
+    declares (research.md D5, data-model.md WorkflowConcurrencyFact) --
+    parsed from each job's own `concurrency:` block, never its preceding
+    comment (Gate 101 already owns the comment text)."""
+    jobs_idx = text.find("\njobs:\n")
+    if jobs_idx == -1:
+        return {}
+    base_offset = jobs_idx + 1
+    jobs_text = text[base_offset:]
+    base_line = text.count("\n", 0, base_offset)
+
+    job_starts = [(m.group(1), m.start()) for m in JOB_KEY_RE.finditer(jobs_text)]
+    facts = collections.OrderedDict()
+    for i, (job, start) in enumerate(job_starts):
+        end = job_starts[i + 1][1] if i + 1 < len(job_starts) else len(jobs_text)
+        block = jobs_text[start:end]
+        line_no = base_line + jobs_text.count("\n", 0, start) + 1
+
+        match = CONCURRENCY_BLOCK_RE.search(block)
+        if not match:
+            facts[job] = WorkflowConcurrencyFact(
+                job=job, group_literal=None, group_expression=None,
+                cancel_in_progress=None, line=line_no)
+            continue
+
+        concurrency_line = line_no + block.count("\n", 0, match.start())
+        raw_group = match.group("group").strip()
+        cancel_in_progress = match.group("cancel") == "true"
+        if raw_group.startswith(">-") or raw_group.startswith("|"):
+            expr = _collapse_ws(raw_group[2:])
+            facts[job] = WorkflowConcurrencyFact(
+                job=job, group_literal=None, group_expression=expr,
+                cancel_in_progress=cancel_in_progress, line=concurrency_line)
+        else:
+            literal = raw_group.strip("'\"")
+            facts[job] = WorkflowConcurrencyFact(
+                job=job, group_literal=literal, group_expression=None,
+                cancel_in_progress=cancel_in_progress, line=concurrency_line)
+    return facts
+
+
+def compute_drift_findings(claim, classifications, facts):
+    """-> [DriftFinding, ...] (contracts/skill-drift-gate.md "Algorithm"
+    steps 4-6)."""
+    findings = []
+    class_by_job = {c.job: c for c in classifications}
+    capable_jobs = set(class_by_job)
+
+    for job, c in class_by_job.items():
+        fact = facts.get(job)
+        if fact is None or fact.cancel_in_progress is None:
+            findings.append(DriftFinding(
+                property="job-missing-from-group", job=job,
+                skill_location=claim.location,
+                workflow_location=(BOARD_LOOP_YML, None),
+                expected="a concurrency: block joining `{0}`".format(c.expected_group_ordinary),
+                actual="no concurrency: block in board-loop.yml"))
+            continue
+
+        if fact.group_expression is not None:
+            expr_match = DIRECTED_EXPR_RE.search(fact.group_expression)
+            if not expr_match or expr_match.group(1) != c.expected_group_directed \
+                    or expr_match.group(2) != c.expected_group_ordinary:
+                findings.append(DriftFinding(
+                    property="directed-group-mismatch", job=job,
+                    skill_location=claim.location,
+                    workflow_location=(BOARD_LOOP_YML, fact.line),
+                    expected="a conditional expression resolving to `{0}` when directed, "
+                             "`{1}` otherwise".format(
+                                 c.expected_group_directed, c.expected_group_ordinary),
+                    actual=fact.group_expression))
+        elif fact.group_literal != c.expected_group_ordinary:
+            findings.append(DriftFinding(
+                property="job-missing-from-group", job=job,
+                skill_location=claim.location,
+                workflow_location=(BOARD_LOOP_YML, fact.line),
+                expected="group `{0}`".format(c.expected_group_ordinary),
+                actual="group `{0}`".format(fact.group_literal)))
+
+        if fact.cancel_in_progress != c.expected_cancel_in_progress:
+            findings.append(DriftFinding(
+                property="cancel-in-progress-mismatch", job=job,
+                skill_location=claim.location,
+                workflow_location=(BOARD_LOOP_YML, fact.line),
+                expected="cancel-in-progress: {0}".format(
+                    str(c.expected_cancel_in_progress).lower()),
+                actual="cancel-in-progress: {0}".format(str(fact.cancel_in_progress).lower())))
+
+    for job, fact in facts.items():
+        if job in capable_jobs:
+            continue
+        group_value = fact.group_literal or fact.group_expression or ""
+        if claim.ordinary_group in group_value or claim.directed_group in group_value:
+            findings.append(DriftFinding(
+                property="unexpected-job-in-group", job=job,
+                skill_location=claim.location,
+                workflow_location=(BOARD_LOOP_YML, fact.line),
+                expected="neither `{0}` nor `{1}`".format(
+                    claim.ordinary_group, claim.directed_group),
+                actual="group `{0}`".format(group_value)))
+
+    # Job-range comparison (step 6): the unconditional (literal-group)
+    # capable jobs only -- prove-gate/prove are conditionally split and are
+    # covered by the directed-group-mismatch check above instead, per
+    # research.md D4's three-way split.
+    unconditional_capable_order = [
+        job for job in facts
+        if job in capable_jobs and facts[job].group_expression is None
+    ]
+    if unconditional_capable_order:
+        actual_first = unconditional_capable_order[0]
+        actual_last = unconditional_capable_order[-1]
+        if claim.job_range_start != actual_first or claim.job_range_end != actual_last:
+            findings.append(DriftFinding(
+                property="job-range-mismatch", job=None,
+                skill_location=claim.location,
+                workflow_location=(BOARD_LOOP_YML, None),
+                expected="`{0}` through `{1}`".format(
+                    claim.job_range_start, claim.job_range_end),
+                actual="`{0}` through `{1}`".format(actual_first, actual_last)))
+
+    return findings
 
 
 def run():
