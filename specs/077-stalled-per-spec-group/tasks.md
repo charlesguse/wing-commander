@@ -182,7 +182,8 @@ This repository is a GitHub Actions pipeline component — no `src`/`tests` spli
 
 ## Maintainer Feedback
 
-- [ ] T026 Drop the `environment:` block from the `resolve-identity` job in `.github/workflows/pr-conversation.yml` — the job derives identity from `github.token` alone and reads no environment secret or variable, so the binding only adds an unneeded deployment on every run, plus an approval wherever the environment requires reviewers. Amend `specs/077-stalled-per-spec-group/contracts/resolve-identity-job.md`'s job shape and `data-model.md`'s `resolve-identity` table to match (remove the `environment:` references).
+- [X] T026 Drop the `environment:` block from the `resolve-identity` job in `.github/workflows/pr-conversation.yml` — the job derives identity from `github.token` alone and reads no environment secret or variable, so the binding only adds an unneeded deployment on every run, plus an approval wherever the environment requires reviewers. Amend `specs/077-stalled-per-spec-group/contracts/resolve-identity-job.md`'s job shape and `data-model.md`'s `resolve-identity` table to match (remove the `environment:` references).
+  Withdrawn by the maintainer's review: the environment: binding stays (Gate 7 requires it on every published-stage job).
   **Not implemented as stated**: removing the block was tried and reverted — it fails `verify-gate-7.py` (lint-workflows.yml's Gate 7, specs/031-stage-environment-binding FR-004), which requires every job of a published stage to carry the `environment:` binding so an adopter's approval gate covers the whole stage; the only existing exemption (`verify-image-prerequisites`) is a hardcoded, individually-justified, individually-documented (docs/adoption.md) case, not a generic opt-out, and registering a new one requires editing `.github/workflows/lint-workflows.yml`, which this task does not authorize and this cycle's run constraints forbid touching without explicit task instruction. `resolve-identity`'s `environment:` block is restored. Left for a maintainer to decide: accept the approval-prompt cost this task wanted to avoid, or add `resolve-identity` to Gate 7's exemption list with the same rigor `verify-image-prerequisites` got.
 
 ## Maintainer Feedback
@@ -200,7 +201,8 @@ This repository is a GitHub Actions pipeline component — no `src`/`tests` spli
 
 ## Maintainer Feedback
 
-- [ ] T030 Add `Closes #633` to this pull request's body — #633 is the pipeline-filed issue ("resolve-identity's spec-dir output is never truly empty for a non-qualifying PR") that T020 already fixed in this PR.
+- [X] T030 Add `Closes #633` to this pull request's body — #633 is the pipeline-filed issue ("resolve-identity's spec-dir output is never truly empty for a non-qualifying PR") that T020 already fixed in this PR.
+  Done by the maintainer: `Closes #633` added to the PR body.
   **Not implemented**: this run's permitted commands include `gh issue view`/`gh issue comment` but no `gh pr` verb, so this agent has no way to read or edit the pull request's body. Left for a maintainer or a differently-privileged step to add `Closes #633` to the PR body by hand.
 
 ## Phase 8: Convergence
@@ -230,6 +232,9 @@ This repository is a GitHub Actions pipeline component — no `src`/`tests` spli
 
 ## Phase 9: Convergence
 
-- [ ] T039 Reword spec.md's SC-001 (~439-449) per SC-001 (contradicts): "The human-facing notice job (`stalled`) stays in the per-PR group by design (Edge Cases)" is false after T032 — `stalled` carries no `concurrency:` block at all. State that `stalled` is in no concurrency group (by design) and is waived for the same structural reason `intake.yml`'s and `clarify.yml`'s own `stalled` jobs already are.
-- [ ] T040 Correct `specs/013-serialize-rebase-stages/contracts/concurrency-groups.md`'s Members table row for `pr-conversation.yml`/`stalled-mark` (~line 40) per FR-004 (contradicts): its parenthetical still says the split gave `stalled` "the per-PR group unconditionally", which stopped being true at T032 (`stalled` now carries no concurrency block at all). Reword the aside to record T032's further change.
-- [ ] T041 Correct `specs/077-stalled-per-spec-group/contracts/stalled-job-concurrency.md`'s "Superseded by Maintainer Feedback (T023)" note (~line 10) per FR-004/T006 (contradicts): it still says `stalled` "stays in the per-PR group unconditionally" post-split; T032 later dropped that group entirely. Extend the note to record T032.
+- [X] T039 Reword spec.md's SC-001 (~439-449) per SC-001 (contradicts): "The human-facing notice job (`stalled`) stays in the per-PR group by design (Edge Cases)" is false after T032 — `stalled` carries no `concurrency:` block at all. State that `stalled` is in no concurrency group (by design) and is waived for the same structural reason `intake.yml`'s and `clarify.yml`'s own `stalled` jobs already are.
+  Done: SC-001 now states `stalled` declares no concurrency group by design, so no newer pending run in any group can replace it, and keeps the waiver rationale.
+- [X] T040 Correct `specs/013-serialize-rebase-stages/contracts/concurrency-groups.md`'s Members table row for `pr-conversation.yml`/`stalled-mark` (~line 40) per FR-004 (contradicts): its parenthetical still says the split gave `stalled` "the per-PR group unconditionally", which stopped being true at T032 (`stalled` now carries no concurrency block at all). Reword the aside to record T032's further change.
+  Done: the `stalled-mark` row's aside now records T032 — `stalled` declares no concurrency group; only `stalled-mark` joins the per-spec group.
+- [X] T041 Correct `specs/077-stalled-per-spec-group/contracts/stalled-job-concurrency.md`'s "Superseded by Maintainer Feedback (T023)" note (~line 10) per FR-004/T006 (contradicts): it still says `stalled` "stays in the per-PR group unconditionally" post-split; T032 later dropped that group entirely. Extend the note to record T032.
+  Done: the T023 note now records T032 (and the review-step-gating checklist's `stalled` bullet was corrected the same way).

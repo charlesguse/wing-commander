@@ -439,8 +439,9 @@ strip and slug-format check; each appears once.
 - **SC-001**: Gate 80 passes over the repository, and the job that actually
   writes the stall mark to the specification's branch (`stalled-mark`)
   declares the canonical per-specification group with zero waivers. The
-  human-facing notice job (`stalled`) stays in the per-PR group by design
-  (Edge Cases) and is waived for the same structural reason `intake.yml`'s
+  human-facing notice job (`stalled`) declares no concurrency group by
+  design (Edge Cases), so no newer pending run in any group can replace it,
+  and is waived for the same structural reason `intake.yml`'s
   and `clarify.yml`'s own `stalled` jobs already are: it calls the
   push-capable composite but never reaches the push, so the original "zero
   waivers, drops by exactly one" framing no longer holds once the notice

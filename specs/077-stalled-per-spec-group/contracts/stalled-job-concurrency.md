@@ -7,9 +7,12 @@ verbatim against that file's then-current text.
 
 **Superseded by Maintainer Feedback (T023)**: the shape below shipped first
 (User Story 1, `stalled` itself joining the group) and was then split —
-`stalled` stays in the per-PR group unconditionally, and a new `stalled-mark`
+`stalled` first stayed in the per-PR group, and a new `stalled-mark`
 job carries the group expression this document originally assigned to
-`stalled`. The group expression, the arm added to the admission condition,
+`stalled`. Maintainer Feedback (T032) then removed `stalled`'s
+`concurrency:` block entirely: the notice job `stalled` declares no
+concurrency group, so no newer pending run in any group can replace it;
+only `stalled-mark` (the spec-branch write) joins the per-spec group. The group expression, the arm added to the admission condition,
 and the deleted-waiver mechanics are otherwise unchanged; only which job
 they attach to moved. `stalled-job-concurrency.md`'s file name is kept
 for history — it now documents `stalled-mark`.
@@ -91,10 +94,10 @@ rule — each gets a `review-step-gating` skill pass before merge, checking:
   `wing-commander-` constant for any reachable value of
   `needs.resolve-identity.outputs.spec-dir` (data-model.md's condition table
   enumerates the reachable combinations);
-- `stalled`'s group, now a plain per-PR string with no `needs.resolve-identity`
-  reference at all, cannot vary by outcome — it is unconditional by
-  construction, which is the property T023 exists to guarantee (the notice
-  can never be evicted by the per-spec group's single pending-run slot).
+- `stalled` declares no concurrency group at all (T032), so no newer
+  pending run in any group can replace it — the property T023 and T032
+  exist to guarantee; only `stalled-mark` (the spec-branch write) joins the
+  per-spec group.
 
 ## What does not change
 
