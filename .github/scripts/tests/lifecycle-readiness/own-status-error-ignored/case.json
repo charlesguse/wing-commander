@@ -1,0 +1,32 @@
+{
+  "snapshot": {
+    "headRefOid": "aaaa111",
+    "statusCheckRollup": [
+      {
+        "name": "lint",
+        "workflowName": "lint · workflows",
+        "status": "COMPLETED",
+        "conclusion": "SUCCESS"
+      },
+      {
+        "context": "lifecycle-review-gate",
+        "state": "ERROR"
+      }
+    ],
+    "mergeable": "MERGEABLE"
+  },
+  "review_gate": {
+    "round": 1,
+    "head_sha": "bbbb222",
+    "outcome": "inconclusive",
+    "findings_open": 0,
+    "folded_fingerprints": [],
+    "filed_fingerprints": [],
+    "updated_at": "2026-09-01T00:00:00Z"
+  },
+  "kill_switch_paused": false,
+  "expected": {
+    "ready": true,
+    "unmet_reason": null
+  }
+}

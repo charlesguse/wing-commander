@@ -22,10 +22,21 @@ CONDITIONS = ("checks_green", "gate_suite_green", "mergeable",
               "not_yet_reviewed", "kill_switch_clear")
 
 
+# The commit-status context this gate itself posts on the PR head
+# (lifecycle-review-gate.yml's `-f context=` writes). It is this gate's
+# own output from an earlier round, never an input to whether a round
+# may start: counting it made an inconclusive round's `error` status
+# stand every later run down on that head for good.
+OWN_STATUS_CONTEXT = "lifecycle-review-gate"
+
+
 def _checks_green(rollup):
     """Mirrors board_readiness.py's own _checks_green: an empty rollup is
     not green, and every entry must have reached a terminal, non-failing
-    state."""
+    state. This gate's own status (OWN_STATUS_CONTEXT) is left out before
+    either test, so it can neither block a round nor stand in for a real
+    check on an otherwise empty rollup."""
+    rollup = [e for e in rollup if e.get("context") != OWN_STATUS_CONTEXT]
     if not rollup:
         return False
     for entry in rollup:
