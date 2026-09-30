@@ -136,7 +136,7 @@ def read_marker(issue_comments, bot_login):
     return pair[1] if pair else None
 
 
-def write_marker(step, round, pr, branch, base_sha):
+def write_marker(step, round, pr, branch, base_sha, spec_request_attempts=0):
     """Renders the run announcement plus the HTML-comment marker line.
     Appended to the loop's own human-legible status comment -- never the
     comment's only content (FR-044) -- by the caller.
@@ -148,10 +148,15 @@ def write_marker(step, round, pr, branch, base_sha):
     skipping this run's own announcement by GITHUB_RUN_ID) finds this
     comment without a second announcement convention. GITHUB_SERVER_URL/
     GITHUB_REPOSITORY/GITHUB_RUN_ID are ambient in every Actions step, so
-    every existing write_marker() call site gets this for free."""
+    every existing write_marker() call site gets this for free.
+
+    `spec_request_attempts` (specs/092-bounded-spec-request-filing,
+    research.md D4): consecutive failed spec-request filing attempts for
+    this issue, since the last successful filing or re-admission. Threaded
+    exactly like `round` -- see contracts/board-item-marker.md."""
     payload = json.dumps(
         {"step": step, "round": round, "pr": pr, "branch": branch,
-         "base_sha": base_sha},
+         "base_sha": base_sha, "spec_request_attempts": spec_request_attempts},
         sort_keys=True)
     marker = "<!-- wing-commander-board-item: {0} -->".format(payload)
 
@@ -242,6 +247,9 @@ def main():
                         help="with --step stalled: the issue --add-label is applied to first (#604)")
     parser.add_argument("--add-label", default=None,
                         help="with --step stalled: must be board_eligibility.STALLED_LABEL (#604)")
+    parser.add_argument("--spec-request-attempts", type=int, default=0,
+                        help="consecutive failed spec-request filing attempts for this issue "
+                             "(specs/092-bounded-spec-request-filing, research.md D4)")
     args = parser.parse_args()
     step = _resolve_step(args.step)
     if step == STALLED_STEP or args.issue is not None or args.add_label is not None:
@@ -251,7 +259,8 @@ def main():
                          "--step {0} -- see add_stalled_label() (#604)".format(STALLED_STEP, STALLED_LABEL))
         if not add_stalled_label(args.issue, args.add_label):
             sys.exit(1)
-    print(write_marker(step, args.round, args.pr, args.branch, args.base_sha))
+    print(write_marker(step, args.round, args.pr, args.branch, args.base_sha,
+                        args.spec_request_attempts))
 
 
 if __name__ == "__main__":

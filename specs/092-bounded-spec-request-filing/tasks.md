@@ -47,18 +47,18 @@ the attempt-budget constant and the marker field it lives in.
 **⚠️ CRITICAL**: Both P1 stories touch the marker's new field; extend it once
 here rather than duplicating the threading per story.
 
-- [ ] T002 Add `BOARD_LOOP_SPEC_REQUEST_ATTEMPT_BUDGET: 3` to
+- [X] T002 Add `BOARD_LOOP_SPEC_REQUEST_ATTEMPT_BUDGET: 3` to
   `.github/workflows/board-loop.yml`'s top-level `env:` block (line 93, beside
   `BOARD_LOOP_ROUND_BUDGET: 5`) — a new, separate `BOARD_LOOP_*` constant,
   never merged with or derived from the round budget (FR-010).
-- [ ] T003 Extend `.github/scripts/board_item_marker.py`'s `write_marker()`
+- [X] T003 Extend `.github/scripts/board_item_marker.py`'s `write_marker()`
   (line 139) to accept a sixth field, `spec_request_attempts` (int, default
   `0`), add it to the JSON payload dict (lines 152-155) alongside `step`/
   `round`/`pr`/`branch`/`base_sha`, and add a `--spec-request-attempts N`
   CLI flag (`type=int, default=0`) to `main()`'s `argparse.ArgumentParser`
   (lines 236-245), passed through to `write_marker()` at line 254 (FR-009,
   data-model.md "Board Item Marker").
-- [ ] T004 Thread `spec_request_attempts` through the `select` job's `resume`
+- [X] T004 Thread `spec_request_attempts` through the `select` job's `resume`
   step in `.github/workflows/board-loop.yml` (lines ~589-871) exactly as
   `round` is threaded: read `marker_json | jq -r '.spec_request_attempts //
   0'` alongside `marker_round` (line 606); pass it into the step-resolution
@@ -74,7 +74,7 @@ here rather than duplicating the threading per story.
   to the `select` job's `outputs:` block (line 145, beside `round:`), so
   route/fix/readiness read it as `needs.select.outputs.spec-request-attempts`
   the same way they already read `needs.select.outputs.round`.
-- [ ] T005 [P] Update
+- [X] T005 [P] Update
   `specs/057-autonomous-board-loop/contracts/board-item-marker.md`'s
   documented payload shape to list the new `spec_request_attempts` field
   (plan.md Project Structure note: this contract is updated in the same PR

@@ -91,6 +91,13 @@ env:
   # precedent for how many fix -> review rounds one board item may spend
   # before it stalls rather than converging.
   BOARD_LOOP_ROUND_BUDGET: 5
+  # specs/092-bounded-spec-request-filing (research.md D4): how many
+  # consecutive failed spec-request filing attempts one issue may spend
+  # before it stalls with a give-up comment rather than retrying forever
+  # (#527). A separate, PR-reviewed constant -- never merged with or
+  # derived from BOARD_LOOP_ROUND_BUDGET, which bounds fix -> review
+  # rounds instead.
+  BOARD_LOOP_SPEC_REQUEST_ATTEMPT_BUDGET: 3
   # research.md D5/data-model.md "Configuration Constants": the board's own
   # size-and-path backstop thresholds, a separate PR-reviewed constant with
   # the same narrow-only shape as pr-conversation.yml's 3/40 -- never that
@@ -147,6 +154,7 @@ jobs:
       pr-state: ${{ steps.resume.outputs.pr-state }}
       branch: ${{ steps.resume.outputs.branch }}
       base-sha: ${{ steps.resume.outputs.base-sha }}
+      spec-request-attempts: ${{ steps.resume.outputs.spec-request-attempts }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -606,6 +614,10 @@ jobs:
           marker_round="$(printf '%s' "$marker_json" | jq -r '.round // 0')"
           marker_base_sha="$(printf '%s' "$marker_json" | jq -r '.base_sha // empty')"
           marker_pr="$(printf '%s' "$marker_json" | jq -r '.pr // empty')"
+          # specs/092-bounded-spec-request-filing (research.md D4): threaded
+          # exactly like marker_round -- never reset by the "stale marker"
+          # branches below (FR-009).
+          marker_spec_request_attempts="$(printf '%s' "$marker_json" | jq -r '.spec_request_attempts // 0')"
 
           # Issue #564: each live lookup below fails the step on error --
           # see the select step's per-issue comments fetch above in this
@@ -689,7 +701,7 @@ jobs:
           step_resolution_json="$(MARKER_STEP="$marker_step" MARKER_JSON="$marker_json" BRANCH="$branch" \
               MARKER_PR="$marker_pr" PR_FROM_MARKER="$pr_from_marker" PR_FROM_FALLBACK="$pr_from_fallback" PR_OWNED="$pr_owned" \
               PR_STATE="$pr_state" PR_NUMBER="$pr_number" MARKER_ROUND="$marker_round" \
-              MARKER_BASE_SHA="$marker_base_sha" python3 - <<'PYEOF'
+              MARKER_BASE_SHA="$marker_base_sha" MARKER_SPEC_REQUEST_ATTEMPTS="$marker_spec_request_attempts" python3 - <<'PYEOF'
           import json
           import os
           import sys
@@ -708,6 +720,10 @@ jobs:
           marker_present = os.environ.get("MARKER_JSON") != "null"
           round_ = os.environ.get("MARKER_ROUND") or "0"
           base_sha = os.environ.get("MARKER_BASE_SHA") or ""
+          # specs/092-bounded-spec-request-filing (research.md D4): never
+          # reset by any branch below -- it tracks a budget orthogonal to
+          # whatever happened to this fix attempt (FR-009).
+          spec_request_attempts = os.environ.get("MARKER_SPEC_REQUEST_ATTEMPTS") or "0"
           pr_owned = os.environ.get("PR_OWNED") == "true"
           issue_number = os.environ.get("ISSUE_NUMBER") or ""
 
@@ -837,6 +853,7 @@ jobs:
               "branch": branch,
               "round": round_,
               "base_sha": base_sha,
+              "spec_request_attempts": spec_request_attempts,
           }))
           PYEOF
           )"
@@ -850,6 +867,7 @@ jobs:
           branch="$(printf '%s' "$step_resolution_json" | jq -r '.branch')"
           marker_round="$(printf '%s' "$step_resolution_json" | jq -r '.round')"
           marker_base_sha="$(printf '%s' "$step_resolution_json" | jq -r '.base_sha')"
+          marker_spec_request_attempts="$(printf '%s' "$step_resolution_json" | jq -r '.spec_request_attempts')"
 
           if [ "$recovered_via_fallback" = "true" ]; then
             echo "board-loop: resume recovered PR #$pr_number for issue #$ISSUE_NUMBER via the board:owned label fallback (no board item marker named it)." >> "$GITHUB_STEP_SUMMARY"
@@ -868,6 +886,7 @@ jobs:
             echo "step=$step"
             echo "round=$marker_round"
             echo "base-sha=$marker_base_sha"
+            echo "spec-request-attempts=$marker_spec_request_attempts"
           } >> "$GITHUB_OUTPUT"
 
       # T067/FR-047/SC-010: this job runs no agent, but every run of this

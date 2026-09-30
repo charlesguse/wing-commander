@@ -7,12 +7,19 @@ At the end of every job that changes a board item's step, the loop posts
 appending a duplicate) a comment on the issue whose body ends with:
 
 ```html
-<!-- wing-commander-board-item: {"step":"<step>","round":<n>,"pr":<n|null>,"branch":"<name|null>","base_sha":"<sha|null>"} -->
+<!-- wing-commander-board-item: {"step":"<step>","round":<n>,"pr":<n|null>,"branch":"<name|null>","base_sha":"<sha|null>","spec_request_attempts":<n>} -->
 ```
 
 The visible part of the comment is the human-legible outcome (FR-044);
 the marker is never the only content — a maintainer reading the comment
 sees the same information the marker encodes.
+
+`spec_request_attempts` (specs/092-bounded-spec-request-filing) is
+consecutive failed spec-request filing attempts for this issue, since the
+last successful filing or re-admission. It is threaded exactly like
+`round` (see "Read (resume)" below) and is never reset by the "stale
+marker" branches that clear `round`/`branch`/`base_sha` (FR-009) — only a
+successful filing or a give-up stall's own write clears it to `0`.
 
 ## Read (resume)
 
