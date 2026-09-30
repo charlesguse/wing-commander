@@ -4224,8 +4224,9 @@ jobs:
       # to the working tree's .github/scripts (the gate-suite call
       # excepted). The snapshot step is also run against a scratch
       # repository whose working tree differs from its commit. The
-      # composite half of this same provenance rule is Gate 104,
-      # two gates below.
+      # composite half of this same provenance rule is Gate 104 (every
+      # uses: ./.github/actions/ reference in board-loop.yml resolves from
+      # the trusted copy), later in this file.
       - name: "Gate 98 — board-loop's fix, review and readiness run helpers from a pristine snapshot, never the working tree"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-loop-helper-provenance.py
@@ -4449,7 +4450,7 @@ jobs:
       # unrestricted Write/Edit on the workspace and could otherwise rewrite
       # the sidecar before it runs with the App private key. Numbered 104,
       # not the 99 this branch's own commit first picked (#450/#463's Gate 99,
-      # converged-means-tasks-done, immediately above, claimed 99 first on the
+      # converged-means-tasks-done, claimed 99 first on the
       # default branch before this branch's rebase landed) nor the 100 this
       # gate held next (main's own Gate 100, spec 079, claimed 100 first on
       # the default branch before this branch's second rebase landed).
