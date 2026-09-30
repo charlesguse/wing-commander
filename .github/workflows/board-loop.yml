@@ -322,13 +322,27 @@ jobs:
           BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}[bot]
         run: |
           set -uo pipefail
-          gh issue list -R "$GITHUB_REPOSITORY" --state closed --label spec-request \
+          # maintainer review, fold leg-2: `set -uo pipefail` has no `-e`,
+          # so this `gh issue list` call's own exit code is never checked
+          # on its own -- an explicit `if` around it is required, matching
+          # the per-issue comment fetches below.
+          if ! gh issue list -R "$GITHUB_REPOSITORY" --state closed --label spec-request \
             --author "$BOT_LOGIN" --json number -L 100 \
-            > "$RUNNER_TEMP/board-closed-spec-requests.json"
+            > "$RUNNER_TEMP/board-closed-spec-requests.json"; then
+            echo "::error::board-loop: could not list closed spec-request issues -- the closed-without-landing scan cannot run this time (FR-017)."
+            exit 1
+          fi
 
           mapfile -t closed_spec_requests < <(jq -r '.[].number' "$RUNNER_TEMP/board-closed-spec-requests.json")
           echo '{}' > "$RUNNER_TEMP/board-closed-without-landing-comments.json"
           echo '{}' > "$RUNNER_TEMP/board-disposed-comments.json"
+          # maintainer review, fold leg-3: a single failed comment fetch
+          # below no longer exits the step outright -- it is counted and
+          # skipped, so every other spec-request/disposed issue this run
+          # still gets evaluated; the count fails the step at the very end
+          # (after the notices for everything that DID resolve are
+          # posted), so the failure stays visible without hiding the rest.
+          fetch_errors=0
 
           if [ "${#closed_spec_requests[@]}" -gt 0 ]; then
             for number in "${closed_spec_requests[@]}"; do
@@ -337,7 +351,8 @@ jobs:
                 --jq '.[] | {created_at, body, user}' | jq -s '.' \
                 > "$RUNNER_TEMP/board-closed-without-landing-comments-$number.json"; then
                 echo "::error::board-loop: could not fetch the comments of spec-request #$number -- the closed-without-landing scan is not decided for it (FR-017)."
-                exit 1
+                fetch_errors=$((fetch_errors + 1))
+                continue
               fi
               jq --arg number "$number" --slurpfile comments "$RUNNER_TEMP/board-closed-without-landing-comments-$number.json" \
                 '. + {($number): $comments[0]}' "$RUNNER_TEMP/board-closed-without-landing-comments.json" \
@@ -351,15 +366,21 @@ jobs:
             # a closed spec-request above (data-model.md's Board Item
             # Marker -- the spec-request itself carries no marker naming it
             # back, only the reciprocal cross-link comment).
-            gh issue list -R "$GITHUB_REPOSITORY" --state all --label disposition:duplicate \
-              --json number -L 200 > "$RUNNER_TEMP/board-disposed-issues.json"
+            # maintainer review, fold leg-2: same unchecked-call problem as
+            # the closed-spec-request list above -- checked explicitly.
+            if ! gh issue list -R "$GITHUB_REPOSITORY" --state all --label disposition:duplicate \
+              --json number -L 200 > "$RUNNER_TEMP/board-disposed-issues.json"; then
+              echo "::error::board-loop: could not list disposition:duplicate issues -- the closed-without-landing scan cannot resolve originating issues this time (FR-017)."
+              exit 1
+            fi
             mapfile -t disposed_issues < <(jq -r '.[].number' "$RUNNER_TEMP/board-disposed-issues.json")
             for number in "${disposed_issues[@]}"; do
               if ! gh api "repos/$GITHUB_REPOSITORY/issues/$number/comments" --paginate \
                 --jq '.[] | {created_at, body, user}' | jq -s '.' \
                 > "$RUNNER_TEMP/board-disposed-comments-$number.json"; then
                 echo "::error::board-loop: could not fetch the comments of issue #$number (disposition:duplicate) -- the closed-without-landing scan cannot resolve its originating issue (FR-017)."
-                exit 1
+                fetch_errors=$((fetch_errors + 1))
+                continue
               fi
               jq --arg number "$number" --slurpfile comments "$RUNNER_TEMP/board-disposed-comments-$number.json" \
                 '. + {($number): $comments[0]}' "$RUNNER_TEMP/board-disposed-comments.json" \
@@ -445,6 +466,15 @@ jobs:
 
           python3 .github/scripts/board_closed_without_landing.py \
             < "$RUNNER_TEMP/board-closed-without-landing-input.json"
+
+          # maintainer review, fold leg-3: notices above are posted for
+          # everything the fetches above DID resolve; now make any skipped
+          # fetch visible by failing the step (continue-on-error keeps
+          # select() unaffected).
+          if [ "$fetch_errors" -gt 0 ]; then
+            echo "::error::board-loop: $fetch_errors comment fetch(es) failed during the closed-without-landing scan -- some spec-requests/disposed issues were skipped this run (FR-017)."
+            exit 1
+          fi
 
       # FR-006/FR-008/FR-009/FR-010, contracts/eligibility-and-selection.md.
       # A maintainer-applied label is decided from the `labeled` timeline

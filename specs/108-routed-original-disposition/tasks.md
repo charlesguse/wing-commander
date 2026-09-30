@@ -724,9 +724,14 @@ Task: "Add disposition:duplicate to wing-commander-board-labels/action.yml"
 
 ## Maintainer Feedback
 
-- [ ] Wrap the two unchecked `gh issue list` calls in the "Detect a spec-request that closed without landing" step (`board-loop.yml:325`, `:354`) in `if ! ...; then echo "::error::..."; exit 1; fi`, matching the per-issue comment fetches directly below them. The step runs under `set -uo pipefail` (no `-e`): if the call at `:354` fails, the scan finishes "successfully" having posted nothing for that run; if the call at `:325` fails, it crashes with an unhandled traceback instead of a clean `::error::`. (FR-017)
+- [X] Wrap the two unchecked `gh issue list` calls in the "Detect a spec-request that closed without landing" step (`board-loop.yml:325`, `:354`) in `if ! ...; then echo "::error::..."; exit 1; fi`, matching the per-issue comment fetches directly below them. The step runs under `set -uo pipefail` (no `-e`): if the call at `:354` fails, the scan finishes "successfully" having posted nothing for that run; if the call at `:325` fails, it crashes with an unhandled traceback instead of a clean `::error::`. (FR-017)
+      Fixed: both `gh issue list` calls are now wrapped in `if ! ...; then
+      echo "::error::..."; exit 1; fi`.
 
 
 ## Maintainer Feedback
 
-- [ ] Make the per-issue comment fetch loops in the closed-without-landing step (`board-loop.yml` ~lines 341, 361) `continue` past a single failed fetch (tracking an error count) instead of exiting the whole step on the first failure, so one bad fetch doesn't skip every other spec-request or disposed issue in that run. Fail the step at the end if any errors were recorded, so the failure is still visible. (FR-017)
+- [X] Make the per-issue comment fetch loops in the closed-without-landing step (`board-loop.yml` ~lines 341, 361) `continue` past a single failed fetch (tracking an error count) instead of exiting the whole step on the first failure, so one bad fetch doesn't skip every other spec-request or disposed issue in that run. Fail the step at the end if any errors were recorded, so the failure is still visible. (FR-017)
+      Fixed: both loops now `continue` past a failed fetch, incrementing a
+      `fetch_errors` counter; the step exits 1 after posting notices for
+      everything that did resolve, only if `fetch_errors` is nonzero.
