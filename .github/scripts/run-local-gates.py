@@ -82,9 +82,27 @@ across gates:
     just created under its own temp dir (verify-stall-restart-runbook.py,
     the auto-update-spec-kit-tests harness, etc.) — the real checkout is
     read from, at most (e.g. `cp "$REPO"/.specify ...`), never written to.
+    This is a claim about the fleet as audited, not a guarantee this
+    script itself can make about a gate not yet written that way — see
+    the tracked-file backstop below, which catches a violation of it
+    directly rather than trusting the audit to still hold (#756).
   * Neither this runner nor any gate calls `os.chdir`. Gates that `cd`
     do so inside a bash subprocess of their own, which cannot change this
     process's (or a sibling thread's) working directory.
+
+TRACKED-FILE BACKSTOP
+----------------------
+`git status --porcelain` is captured once before any gate runs and once
+after the last one finishes. A gate concurrently reading a workflow file
+another gate is mid-mutation-and-restore of would see a torn read without
+either endpoint's `git status` ever going dirty — that race is a false
+FAIL on whichever gate did the reading, not on the mutator, so this
+cannot name the culprit (issue #756). What it catches instead is the
+easier, worse case: a gate that mutates a tracked file and, for any
+reason (an exception before its own restore step, or no restore step at
+all), leaves it that way. A suite that ended with every gate green but
+the tracked tree dirty would otherwise report success over results that
+came from a workflow file no commit ever produced.
 
 `--jobs 1` does not go through the pool at all — it keeps running the
 original sequential loop verbatim, so its output and behavior stay
@@ -222,6 +240,25 @@ def _save_timing_cache(measured):
         pass
 
 
+def _tracked_tree_status():
+    """Sorted `git status --porcelain` lines, or None on any reason it
+    could not be read (no git on PATH, not a git checkout) -- the caller
+    treats None as "cannot check," never as "clean," so a broken git
+    never manufactures a false pass. Sorted because porcelain's own order
+    is directory-walk order, not a stable diff key -- two calls that see
+    the exact same set of dirty paths must compare equal regardless of
+    which order the filesystem happened to hand them back in.
+    """
+    try:
+        proc = subprocess.run(["git", "status", "--porcelain"],
+                              capture_output=True, text=True)
+    except OSError:
+        return None
+    if proc.returncode != 0:
+        return None
+    return sorted(proc.stdout.splitlines())
+
+
 def command_for(script, bash, args=()):
     """How to invoke one gate, with the arguments CI gives it.
 
@@ -332,6 +369,8 @@ def main(argv):
     ensure_jq()
     bash = resolve_bash()
 
+    tree_status_before = _tracked_tree_status()
+
     all_gates = pr_time_invocations() + _inline_gate_files(bash)
 
     jobs, argv = _parse_jobs_flag(argv)
@@ -437,7 +476,21 @@ def main(argv):
         print(f"{len(results) - len(failed)}/{len(results)} passed, "
               f"{wall_elapsed:.1f}s wall-clock total "
               f"({sum(r[2] for r in results):.1f}s summed across gates)")
-    return 1 if failed else 0
+
+    tree_status_after = _tracked_tree_status()
+    tree_dirtied = (tree_status_before is not None
+                    and tree_status_after is not None
+                    and tree_status_before != tree_status_after)
+    if tree_dirtied:
+        print(f"::error::a gate mutated the tracked working tree: "
+              f"`git status --porcelain` differs from before this run to "
+              f"after it (before: {tree_status_before!r}, after: "
+              f"{tree_status_after!r}). Every gate's PASS/FAIL above ran "
+              f"against a moving target and cannot be trusted -- find the "
+              f"gate that wrote to a tracked path instead of a temp copy "
+              f"and fix that instead of rerunning (#756).")
+
+    return 1 if failed or tree_dirtied else 0
 
 
 if __name__ == "__main__":
