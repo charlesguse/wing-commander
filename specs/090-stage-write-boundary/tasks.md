@@ -683,3 +683,12 @@ and evaporating into PR-body prose) that this feature exists to end.
 
 - [ ] In `wing-commander-tool-args`'s `compose` step, derive the disallowed `Edit`/`Write` tool-list entries (e.g. `Edit(X**)`/`Write(X**)`) from `no-write-paths`, so the rendered "may not write: X" statement and the composed tool grant share one source
 - [ ] Add the prompt sentence User Story 1 Acceptance Scenario 2 needs: instruct the agent to leave an out-of-boundary task unchecked rather than attempt it, since such tasks are routed deterministically
+
+## Maintainer Feedback — Gate's --self-test is vacuous and misses real regressions (PR #836 review, item 4)
+
+- [ ] Rewrite each `check_mutation_N` in `verify-write-boundary.py` (:764-894) to re-run the real matching `check_*` pass condition against the mutated input and assert it fails, not merely assert the mutation changed the text (currently deleting the `check_statement_fidelity`/`check_termination_and_reason` calls from `main()` still passes `--self-test`)
+- [ ] Add retry-arm scenarios: `RETRY_STEP` is loaded but never exercised, and condition (a) doesn't check the write-boundary-cycle/-retry call sites — extend it to cover them
+- [ ] Assert both prompts (cycle and retry) actually interpolate `write-paths-statement`
+- [ ] Assert the Route step's `findings-json` and `finding-kind: routed-task` wiring
+- [ ] Confirm, as a regression check, that each of these now fails the gate: the retry arm's routed condition hard-coded to `if false`; either prompt's `write-paths-statement` interpolation deleted; the Route step's `findings-json` set to `'[]'`
+- [ ] Extend condition (f) beyond proving the hash is deterministic to also prove SC-004's "two cycles → one issue"
