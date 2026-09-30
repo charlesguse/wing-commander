@@ -1045,7 +1045,15 @@ def check_local_action_before_checkout(root="."):
         if not isinstance(doc, dict) or not doc.get("jobs"):
             continue
         text = read(root, path)
+        job_search_from = 0
         for job_id, steps in _step_lists(doc):
+            job_match = re.search(
+                r"(?m)^  " + re.escape(str(job_id)) + r":",
+                text[job_search_from:])
+            job_offset = (job_search_from + job_match.start()
+                          if job_match else job_search_from)
+            if job_match:
+                job_search_from = job_offset + 1
             seen_root = False
             seen_scoped = set()
             scoped_before_root = None
@@ -1075,7 +1083,7 @@ def check_local_action_before_checkout(root="."):
                             f"job {job_id!r}: {uses} resolved before the "
                             f"actions/checkout@ step for {where}"))
             if seen_root and scoped_before_root is not None:
-                offset = text.find(f"path: {scoped_before_root}")
+                offset = text.find(f"path: {scoped_before_root}", job_offset)
                 findings.append(Finding(
                     path, "composite-checkout-order",
                     line_of(text, max(offset, 0)),
@@ -1595,6 +1603,61 @@ def selftest_third_paste_fails(check_key, paste_path, paste_content):
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def selftest_composite_checkout_order_line_attribution():
+    """Issue #757 fold leg-2 follow-up: when the same sidecar `path:`
+    literal recurs across jobs (as `.wc-pristine-repo` does across
+    board-loop.yml's own jobs), the scoped_before_root finding must point
+    at the offending job's own step, not at the first occurrence of the
+    literal anywhere earlier in the file."""
+    case = "composite-checkout-order line attribution survives a repeated path literal"
+    tmp = tempfile.mkdtemp(prefix="wc-single-home-")
+    try:
+        _clean_tree(tmp)
+        paste_path = ".github/workflows/third-checkout-order-repeated-literal.yml"
+        content = (
+            "on: push\n"
+            "jobs:\n"
+            "  a:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    steps:\n"
+            "      - uses: actions/checkout@v5\n"
+            "      - uses: actions/checkout@v5\n"
+            "        with:\n"
+            "          path: .wc-pristine-repo\n"
+            "  b:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    steps:\n"
+            "      - uses: actions/checkout@v5\n"
+            "        with:\n"
+            "          path: .wc-pristine-repo\n"
+            "      - uses: actions/checkout@v5\n"
+        )
+        lines = content.splitlines()
+        first_occurrence = lines.index("          path: .wc-pristine-repo")
+        second_occurrence = lines.index(
+            "          path: .wc-pristine-repo", first_occurrence + 1)
+        expected_line = second_occurrence + 1
+        _write(tmp, paste_path, content)
+        findings, hard = evaluate(tmp)
+        if hard:
+            fail(f"[{case}] unexpected hard failure(s): {hard}")
+            return
+        hits = [f for f in findings
+                if f.check == "composite-checkout-order" and f.path == paste_path
+                and "job 'b'" in f.text]
+        if not hits:
+            fail(f"[{case}] expected a composite-checkout-order finding for "
+                f"job 'b' at {paste_path}, got: {findings}")
+        elif hits[0].line != expected_line:
+            fail(f"[{case}] job 'b' finding pointed at line {hits[0].line}, "
+                f"expected {expected_line} (job 'b' own step, not the earlier "
+                f"use of the same path literal in job 'a')")
+        else:
+            note(f"[{case}] passed ({hits[0].path}:{hits[0].line})")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def selftest_per_document_wrap_passes():
     """#575: loosening the transcript-normalise regex must not start
     flagging the per-document wrap -- the legitimate fallback read the
@@ -2014,6 +2077,7 @@ def run_selftest():
         "      - uses: actions/checkout@v5\n"
         "        with:\n          path: .wc-pristine-repo\n"
         "      - uses: actions/checkout@v5\n")
+    selftest_composite_checkout_order_line_attribution()
     selftest_waived_copy_passes()
     selftest_stale_waiver_fails()
     selftest_promotion_fails()
