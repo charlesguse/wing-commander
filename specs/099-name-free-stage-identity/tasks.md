@@ -33,10 +33,10 @@ fresh against the current branch).
 
 ## Phase 1: Setup
 
-- [ ] T001 [P] Run `python .github/scripts/run-local-gates.py` from the
+- [X] T001 [P] Run `python .github/scripts/run-local-gates.py` from the
       repo root to confirm the pre-change baseline is green, so any gate
       failure introduced later is attributable to this feature.
-- [ ] T002 Re-confirm the next unclaimed gate number in
+- [X] T002 Re-confirm the next unclaimed gate number in
       `.github/workflows/lint-workflows.yml` immediately before claiming
       it for the FR-012 gate (T032/T033). As of this writing the highest
       claimed gate is 125 (header comment at lines 4611-4620, steps at
