@@ -208,6 +208,77 @@ def write_marker(step, round, pr, branch, base_sha, spec_request=None):
 STALLED_STEP = "stalled"
 
 
+_REVIEW_CONVERGED_RE = re.compile(r"Review round \d+ converged -- .*?PR #(\d+)")
+_REVIEW_BUDGET_SPENT_RE = re.compile(r"Review round budget \(\d+\) spent on PR #(\d+)")
+
+
+def _resolved_review_round_pr(body):
+    """The PR number named by a review round's *resolved* verdict comment
+    (converged, board-loop.yml:3300, or budget-spent, :3321) in `body`, or
+    None. Deliberately does not match the inconclusive parse-failed
+    (:3308) or malformed-findings (:3313) wording, which shares the same
+    generic "Review round N on PR #P" prefix but names no verdict
+    (contracts/reviewed-head-determination.md, FR-006b)."""
+    for pattern in (_REVIEW_CONVERGED_RE, _REVIEW_BUDGET_SPENT_RE):
+        match = pattern.search(body or "")
+        if match:
+            return match.group(1)
+    return None
+
+
+def head_moved_since_last_review(pr_number, comments, bot_login, run=None):
+    """FR-006/FR-006b, contracts/reviewed-head-determination.md: whether
+    `pr_number`'s live head commit postdates the loop's own most recent
+    *resolved* review-round verdict comment for that PR (the converged or
+    budget-spent wording -- never the inconclusive parse-failed or
+    malformed-findings wording, which is treated as no verdict at all).
+    `comments` is the resume step's own already-fetched flat per-issue
+    comments array (read_marker()'s own argument shape), not the earlier
+    select step's comments_by_issue map -- a different step's own file.
+
+    Returns True (moved -- the safe default) when no resolved verdict
+    comment names this PR, or when the live `gh pr view` lookup fails or
+    its output cannot be read; otherwise True when the PR's head commit was
+    committed strictly after the matched comment's `created_at`, False when
+    the head is that same commit (or older, which cannot happen in
+    practice but is treated as "unmoved" rather than erroring).
+
+    The single shared computation this rule needs (CLAUDE.md "shared logic
+    has exactly one home") -- spec 093's own FR-007, when it reaches its
+    plan stage, calls this function rather than deriving a second one."""
+    run = run or subprocess.run
+    latest_created_at = None
+    for comment in comments or []:
+        if not is_loop_marker_author(comment, bot_login):
+            continue
+        if _resolved_review_round_pr(comment.get("body")) != str(pr_number):
+            continue
+        created_at = comment.get("created_at") or ""
+        if latest_created_at is None or created_at > latest_created_at:
+            latest_created_at = created_at
+    if latest_created_at is None:
+        return True
+    try:
+        proc = run(["gh", "pr", "view", str(pr_number), "--json", "headRefOid,commits"],
+                   capture_output=True, text=True)
+    except OSError:
+        return True
+    if proc.returncode != 0:
+        return True
+    try:
+        data = json.loads(proc.stdout)
+    except ValueError:
+        return True
+    head_sha = data.get("headRefOid")
+    commits = data.get("commits") or []
+    committed_date = next(
+        (commit.get("committedDate") for commit in commits if commit.get("oid") == head_sha),
+        commits[-1].get("committedDate") if commits else None)
+    if not committed_date:
+        return True
+    return committed_date > latest_created_at
+
+
 def add_stalled_label(issue_number, label, run=None):
     """Adds `label` (board_eligibility.STALLED_LABEL) to `issue_number`
     BEFORE a stalled marker is rendered (issue #604). Returns True on
@@ -221,8 +292,14 @@ def add_stalled_label(issue_number, label, run=None):
     with no board:stalled label can then only mean a maintainer removed
     the label on purpose -- the re-admission spec 057 data-model.md
     defines. Re-admission keeps the resume step's ordinary re-derivation
-    from live state: review when an open board:owned PR cites the issue,
-    otherwise a fresh triage. Before #604 a failed add after the marker
+    from live state: review when an open board:owned PR cites the issue AND
+    its head has moved since the loop's own last resolved review verdict
+    (or none is resolvable), readiness when it has not, otherwise a fresh
+    triage (FR-006/FR-006a/FR-006b, contracts/resume-recovery-readmission.md
+    folded into specs/061-marker-owned-in-flight/contracts/resume-recovery.md)
+    -- head_moved_since_last_review() above is the one shared determination
+    of "moved", consumed by board-loop.yml's resume step so the rule lives
+    in one canonical place. Before #604 a failed add after the marker
     had already been posted looked identical to that re-admission, and
     resume walked a stalled PR straight back into review (#530 fixed the
     two breach sites; #604 moved every site here).
