@@ -544,7 +544,7 @@ list entry on `no-write-paths`, never a second mechanism (FR-019).
   (FR-018, FR-021) — same defaults as T002/T003.
   Confirm no existing input, secret, or output row in either table changed
   name or default.
-- [ ] T038 Comment on issue #675 recording SC-006: spec 060's `T055` was
+- [x] T038 Comment on issue #675 recording SC-006: spec 060's `T055` was
   completed by hand in #490 (FR-002's prescribed outcome for a `.claude/`
   task); this feature's routing mechanism is proven on the T055-shaped
   fixture in Gate 126 (T020) rather than on `T055` itself, since `T055` is
