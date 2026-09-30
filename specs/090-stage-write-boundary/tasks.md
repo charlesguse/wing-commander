@@ -698,3 +698,8 @@ and evaporating into PR-body prose) that this feature exists to end.
 - [ ] In `wing-commander-write-boundary-lookup/action.yml`:62, stop swallowing `gh issue list` failures into "(none)" via `2>/dev/null || true`; emit `::warning::` on failure so a routed item doesn't silently reach the PR as orphan prose
 - [ ] Reuse the filer's existing list-by-label-then-client-side-`contains(marker)` lookup instead of relying on unproven full-text search over an HTML-comment marker
 - [ ] Add gate coverage exercising this lookup path, since the gate currently stubs `gh` and never tests it
+
+## Maintainer Feedback — routing can be silently disabled or truncated (PR #836 review, item 6)
+
+- [ ] Make the "Route out-of-boundary tasks" step run regardless of `findings-filing-enabled`, or give routing its own enablement toggle, so disabling defect filing doesn't also silently disable FR-007 routing while the loop still reports "routed"
+- [ ] Surface `findings-cap`'s clamp-to-3 limit so a 4th out-of-boundary task in one cycle isn't silently dropped (FR-007/SC-005)
