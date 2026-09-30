@@ -90,7 +90,9 @@ The four paths above were reported against `board-loop.yml`, and its jobs stay
 the feature's primary evidence. The clarification on #737 resolved the scope
 wider than that: the containment property is a property of *every* job in this
 repository that runs an agent and later performs a durable action with the App
-token. The feature-lifecycle stages that do so — `implement`, `converge`,
+token. The feature-lifecycle stages that do so — `implement` (whose single
+workflow, `implement.yml`, runs both `/speckit-implement` and
+`/speckit-converge`; there is no separate converge workflow) and
 `pr-conversation` — carry the same exposure, because code written in an earlier
 cycle runs with the token in env. Since the containment mechanism (FR-006) is
 one reusable pattern, applying it to every such job costs little more than
@@ -112,6 +114,39 @@ re-opens them:
   #593, which moved the `$` → `\Z` translation into `wc_schema_pattern.py`;
   `verify-stage-finding-schema.py` imports `python_pattern` from it and Gate
   "single home" holds it there.
+
+## Clarifications
+
+### Session 2026-09-29 (answered on #737)
+
+- Q1: Is containment bounded to `board-loop.yml`, or does it cover every job
+  that runs an agent and then acts with the App token? → A: **B**. It covers
+  every such job, board loop and lifecycle stages alike. Code from earlier
+  cycles runs with the token in `implement` too, and the FR-006 mechanism is
+  one reusable pattern. Carried into FR-005, FR-011, FR-018, SC-001 and
+  SC-008.
+- Q2: Which containment strategy? → A: **A**. A separate job with
+  `permissions: read` and no App token, which returns its verdict as an
+  artifact that fails closed when missing or malformed. It is the only option
+  that also closes the snapshot-rewrite and `$GITHUB_ENV`/`$GITHUB_PATH`
+  bypasses. Carried into FR-004, FR-006, FR-007 and FR-008.
+- Q3: How is the agents' ability to write under `.git/` addressed? → A:
+  **C**. Both, each behind a structural gate: deny `.git/**` in the agents'
+  disallowed tools, and harden the push steps (`core.hooksPath=/dev/null`, a
+  pristine `GIT_CONFIG_GLOBAL`, `GIT_CONFIG_NOSYSTEM`, an explicit push URL).
+  The owner corrected the question's framing: the harness enforces disallowed
+  tools; the model does not honour them at its discretion. Carried into
+  FR-018.
+
+### Scope note 2026-09-29 (owner comment on #737) — OPEN
+
+The owner later noted two things. Composite resolution and the reviewer's git
+tool are already closed on `main`; both are recorded under *What this feature
+does not cover*. And "clarify should scope to" the gate suite and the `.git`
+hardening. The clarify stage then asked two follow-ups: which of the four
+paths that keeps (paths 2 and 3 in particular), and whether FR-005's widening
+stands. Neither is answered yet. Until they are, this spec keeps all four
+paths and the Q1 widening. See the 2026-09-30 status update.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -307,7 +342,8 @@ confirm the hook did not execute and the push reached the intended remote.
   runs an agent and later performs a durable action with the App token. That is
   the board loop's two gate-suite call sites — the `fix` job's and
   review-fixup's — and the feature-lifecycle stages that run an agent and then
-  push, comment or label with the App token: `implement`, `converge` and
+  push, comment or label with the App token: `implement` (including its
+  converge half, which runs in the same `implement.yml` job) and
   `pr-conversation`. *(Resolved on #737: the lifecycle stages carry the same
   exposure — code from an earlier cycle runs with the token — so bounding the
   feature to the board loop, or deferring the rest to a named later phase,
@@ -373,7 +409,10 @@ confirm the hook did not execute and the push reached the intended remote.
 - **FR-018**: Both mitigations MUST ship, each behind its own structural gate.
   First, `.git/**` MUST be denied in the disallowed tools of every agent
   covered by FR-005 — the fixer, review-fixup and the lifecycle-stage agents —
-  so the agent's `Write` and `Edit` grants cannot reach it. Second, the push
+  so the agent's `Write` and `Edit` grants cannot reach it. For the implement
+  stage, the deny is an entry in the single definition of the paths a stage's
+  agent may not write, which spec 090 FR-003 establishes. It is not a second
+  literal list. Second, the push
   steps MUST be hardened so that a plant arriving by any other route is inert:
   `core.hooksPath` pointed at nothing executable (`/dev/null`), a pristine
   `GIT_CONFIG_GLOBAL`, `GIT_CONFIG_NOSYSTEM` set, and an explicit push URL.
@@ -400,8 +439,9 @@ confirm the hook did not execute and the push reached the intended remote.
 - **FR-023**: The already-closed items listed in this spec's Overview MUST NOT
   be re-implemented; the feature's scope is the four open paths only.
 - **FR-024**: The behaviour this feature changes runs only in Actions, so it
-  MUST be proven after merge by re-driving one board-loop run, with the
-  evidence recorded on the PR or the lifecycle issue.
+  MUST be proven after merge by re-driving one board-loop run and one
+  feature-lifecycle stage run (SC-008), with the evidence recorded on the PR
+  or the lifecycle issue.
 
 ### Key Entities
 
@@ -452,6 +492,70 @@ confirm the hook did not execute and the push reached the intended remote.
   re-driven after merge and their evidence recorded, demonstrating the loop
   still takes an item from `fix` through a green gate suite to a pushed branch
   and an opened PR, and that a contained lifecycle stage still pushes.
+
+### Status update 2026-09-30 — reconciled with current `main` (maintainer spec review)
+
+- **Gate-suite call sites on `main`.** Four workflow steps run the working
+  tree's `run-local-gates.py` while `WC_BOT_TOKEN` is in the job environment:
+  - fixer: `board-loop.yml:2236-2240`;
+  - review-fixup: `board-loop.yml:3449-3454`;
+  - cycle: `implement.yml:796-803`;
+  - retry: `implement.yml:1510-1517`.
+
+  The token reaches them through `wing-commander-context/action.yml:81`.
+  `pr-conversation.yml` has no gate-suite step, so FR-001 and FR-006 have no
+  site to apply to there; FR-018 still applies.
+- **`converge` is not a separate workflow.** It runs inside `implement.yml`
+  (header, lines 1-9). FR-005 and the Scope section are corrected.
+- **The implement gate steps run *before* the agent** and are
+  `continue-on-error`. Their verdict feeds the agent's prompt rather than
+  deciding a push. At those sites, FR-002's "today's downstream behaviour" is
+  that prompt input. The credential-free job must therefore finish before the
+  implement job's agent step reads the verdict.
+- **Path 3 is still live.** `wing-commander-board-stop-check/action.yml:113`
+  still runs `python3 .github/scripts/board_stop_check.py` from the
+  workspace. It is the only composite `run:` body on `main` that does so.
+  Spec 086's resolution fix (Gate 104) does not cover it, so the owner's
+  2026-09-29 scope note does not close it.
+- **Push steps on `main`.** FR-015-FR-018's hardening governs these workflow
+  push steps: `board-loop.yml:2294` and `3476`, and `implement.yml:2674` and
+  `3153`. Two agents also hold `Bash(git push:*)` and push from inside the
+  agent step: the implement agent (`implement.yml:858`, `1566`) and
+  `pr-conversation.act` (`pr-conversation.yml:2045`). The workflow-step
+  hardening does not reach their pushes; see the open owner questions below.
+- **Spec 090 (merged).** Its FR-003 requires one definition of the paths a
+  stage's agent may not write. FR-018's `.git/**` deny joins that set for the
+  implement stage instead of adding a second list. Spec 090 records that the
+  harness already refuses `.git/`. FR-018 still requires the deny
+  explicitly, so the refusal does not depend on a harness default.
+- **Boundary with spec 111 (#815, in clarify).**
+  - Spec 111 governs which credential an *agent step's own* environment
+    holds. It removes the relayed `WC_BOT_TOKEN` from agent steps that need
+    no write credential.
+  - This spec governs:
+    - the *non-agent* steps that execute agent-authored code (the gate
+      suite);
+    - the integrity of the snapshot, the trusted copy and the job
+      environment after those steps run;
+    - composite `run:` bodies;
+    - git hook and config state at push time.
+  - The two specs share no requirement. Neither may restate the other's, and
+    a gate added by either must not assert the other's property.
+  - Neither covers agent-authored code that a *credential-bearing* agent step
+    runs itself (open owner question 2 below).
+- **Spec 101 (#760, open)** concerns read-only agents' `gh` grants. It adds
+  no call site to FR-005.
+- **Open owner questions** (not resolved here):
+  1. *Scope narrowing.* Does the 2026-09-29 note drop path 2 (FR-007-FR-010)
+     and path 3 (FR-011-FR-014)? Does FR-005's widening stand?
+  2. *Agent-invoked gates and agent-issued pushes.* The implement agent
+     steps hold `github_token: ${{ env.WC_BOT_TOKEN }}` (`implement.yml:894`,
+     `1626`). They are also granted
+     `Bash(python3 .github/scripts/run-local-gates.py:*)` and
+     `Bash(python3 .github/scripts/verify-*)` (`implement.yml:858`, `1566`). So
+     agent-authored gate code still runs beside the token, and FR-006's
+     separate job cannot contain it. The same agent steps, and
+     `pr-conversation.act`, also push without the FR-018 hardening.
 
 ## Assumptions
 

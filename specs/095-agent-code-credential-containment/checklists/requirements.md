@@ -38,7 +38,7 @@
   - **FR-005** (scope) — **widened beyond the board loop.** The containment
     applies to every job that runs an agent and later performs a durable
     action with the App token: the board loop's two gate-suite call sites plus
-    `implement`, `converge` and `pr-conversation`. Bounding it to the board
+    `implement` (converge runs inside `implement.yml`) and `pr-conversation`. Bounding it to the board
     loop would have left a known equivalent exposure recorded but open. The
     consequence to carry into planning: the feature now touches the published
     stage surface, not only `board-loop.yml` (recorded in Assumptions).
@@ -87,3 +87,7 @@
   spec is ready for `/speckit-plan`.
 </content>
 </invoke>
+- 2026-09-30 maintainer spec review: the owner's later scope note on #737 and
+  one scope gap found against `main` (agent-invoked gates and agent-issued
+  pushes) are recorded as open owner questions in the spec's 2026-09-30
+  status update. The spec is not ready for planning until they are answered.
