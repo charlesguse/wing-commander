@@ -215,3 +215,9 @@ Because nearly every task shares one of two files (the gate script or SKILL.md),
 
 - [ ] T031 In `.github/scripts/verify-skill-board-loop-concurrency-claim.py`'s group-name comparison (lines 291-316), swap `expected`/`actual` for both `ordinary-group-name-mismatch` and `directed-group-name-mismatch` so `expected` carries `SKILL.md`'s claimed token (`claim.ordinary_group`/`claim.directed_group`) and `actual` carries the name `concurrency-groups.md`/`board-loop.yml` actually use (`real_ordinary`/`real_directed`), matching the convention every other `DriftFinding` property already follows (FR-006, SC-004).
 - [ ] T032 Extend the two rename `--self-test` fixtures (lines ~737-740, ~754-757) to assert on the rendered `format_finding(...)` message text (e.g. that it reads "claims `wing-commander-board-loop`" and "has `renamed-ordinary-group`", not the reverse), not only `[f.property for f in ...]`, so a future swap of `expected`/`actual` fails a checked-in fixture instead of passing silently (Constitution Principle VIII).
+
+## Phase 12: Maintainer Feedback (PR #813 Review — Stale Gate Numbers, #812)
+
+**Purpose**: T027 scoped its renumbering to `tasks.md` (T002, T015) and `contracts/skill-drift-gate.md` only. Issue #812 names `contracts/skill-example-claim.md` explicitly, and that file still reads "Gate 125" at lines 32, 34, 45, 51, 66; `.github/scripts/skill-example-drift-waivers.json`'s live `$comment` at lines 3 and 19 still reads "Gate 126". #812 is therefore still open.
+
+- [ ] T033 Update the remaining stale gate-number references to "Gate 129": `contracts/skill-example-claim.md` (lines 32, 34, 45, 51, 66 — the file #812 names explicitly) and `.github/scripts/skill-example-drift-waivers.json`'s `$comment` (lines 3, 19). Optionally also update `data-model.md`, `plan.md`, `quickstart.md`, and `research.md`, which still say "Gate 125" throughout, for consistency.
