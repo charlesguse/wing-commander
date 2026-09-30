@@ -58,24 +58,27 @@ def _view_issue(issue_number, json_fields, repository, run):
 
 def _fetch_comments(issue_number, repository, run):
     """`gh api repos/<repository>/issues/<issue_number>/comments
-    --paginate`, parsed -- the REST shape (`user: {login, type}`), never
+    --paginate --jq '.[]'`, one JSON object per line across every page,
+    parsed and collected into a list -- the REST shape (`user: {login,
+    type}`), never
     `gh issue view --json comments`'s GraphQL shape (`author: {login}`,
     no `type`), which is_loop_marker_author() cannot read at all
     (maintainer review, fold leg-1: reading comments via `gh issue view
     --json comments` meant a loop-authored duplicate-disposition comment
     was never recognized as already present, so every re-run re-posted
-    it). `--paginate` merges every response page's JSON array into one
-    array, so this needs no second `jq -s` the way board-loop.yml's own
-    shell steps do. Returns (parsed_list_or_None, ok)."""
+    it). The `--jq '.[]'` filter is required, not cosmetic (Gate 18): under
+    `--paginate`, `gh api` applies its filter to EACH page separately and
+    concatenates the raw outputs rather than slurping first, so a bare
+    `--paginate` with no per-item filter resolves to invalid JSON the
+    moment a read passes its first page. Returns (parsed_list_or_None,
+    ok)."""
     proc = run(["gh", "api", "repos/{0}/issues/{1}/comments".format(repository, issue_number),
-                "--paginate"], capture_output=True, text=True)
+                "--paginate", "--jq", ".[]"], capture_output=True, text=True)
     if proc.returncode != 0:
         return None, False
     try:
-        parsed = json.loads(proc.stdout)
+        parsed = [json.loads(line) for line in proc.stdout.splitlines() if line.strip()]
     except ValueError:
-        return None, False
-    if not isinstance(parsed, list):
         return None, False
     return parsed, True
 
