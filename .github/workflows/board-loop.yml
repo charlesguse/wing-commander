@@ -1840,6 +1840,15 @@ jobs:
         run: |
           set -uo pipefail
           python3 .github/scripts/board_spec_request_filing.py lookup --issue "$ISSUE_NUMBER" --bot-login "$BOT_LOGIN"
+          # specs/092-bounded-spec-request-filing (FR-016): truncated here,
+          # its own step, rather than inside the create step below (which
+          # Gate 93 check 3 restricts to a single board_spec_request_body.py
+          # body-building call).
+          pr_title="$(jq -r '.proposal["pr-title"] // empty' "$RUNNER_TEMP/board-route-decision.json")"
+          issue_title="$(gh issue view "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --json title --jq .title)"
+          spec_title="${pr_title:-$issue_title}"
+          spec_title="$(python3 .github/scripts/board_spec_request_body.py --truncate-title "$spec_title")"
+          echo "title=$spec_title" >> "$GITHUB_OUTPUT"
 
       # Board Item Marker (T014). A `spec` verdict ends the run for this
       # item with no branch cut (FR-021); a `fix` verdict proceeds to the
@@ -1859,6 +1868,7 @@ jobs:
           ISSUE_NUMBER: ${{ needs.select.outputs.issue-number }}
           ISSUE_CONTEXT_FILE: ${{ steps.issue-context-route.outputs.context-file }}
           EXISTING_SPEC_URL: ${{ steps.spec-request-lookup.outputs.existing-spec-url }}
+          SPEC_TITLE: ${{ steps.spec-request-lookup.outputs.title }}
         run: |
           set -uo pipefail
           verdict="$(jq -r '.decision.backstop_verdict' "$RUNNER_TEMP/board-route-decision.json")"
@@ -1872,11 +1882,9 @@ jobs:
           fi
 
           measured="$(jq -c '.decision.measured' "$RUNNER_TEMP/board-route-decision.json")"
-          pr_title="$(jq -r '.proposal["pr-title"] // empty' "$RUNNER_TEMP/board-route-decision.json")"
           jq -r '.proposal["pr-body"] // empty' "$RUNNER_TEMP/board-route-decision.json" > "$RUNNER_TEMP/board-spec-request-drafted.md"
-          issue_title="$(gh issue view "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --json title --jq .title)"
-
-          spec_title="${pr_title:-$issue_title}"
+          # specs/092-bounded-spec-request-filing (FR-016): SPEC_TITLE is
+          # already truncated by the lookup step above.
           # #534: only the backstop narrowing a fix proposal to spec reads
           # "re-routed". A spec that was never fix -- the agent's own call
           # (agent_proposed_spec) or the default (no_usable_proposal) --
@@ -1936,7 +1944,7 @@ jobs:
               --drafted-body-file "$RUNNER_TEMP/board-spec-request-drafted.md" --footer "$footer" --out "$spec_body_file" \
               || printf 'No drafted body.\n\n---\n%s\n' "$footer" > "$spec_body_file"
 
-            spec_url="$(gh issue create -R "$GITHUB_REPOSITORY" --title "$spec_title" --body-file "$spec_body_file" --label spec-request)"
+            spec_url="$(gh issue create -R "$GITHUB_REPOSITORY" --title "$SPEC_TITLE" --body-file "$spec_body_file" --label spec-request)"
             # #514: this step runs without -e, so a failed create would
             # otherwise still post the re-route comment, add board:stalled
             # and cross-link an empty URL, dropping the issue from
@@ -2482,6 +2490,13 @@ jobs:
         run: |
           set -uo pipefail
           python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_spec_request_filing.py" lookup --issue "$ISSUE_NUMBER" --bot-login "$BOT_LOGIN"
+          # specs/092-bounded-spec-request-filing (FR-016): truncated here,
+          # its own step, rather than inside the create step below (which
+          # Gate 93 check 3 restricts to a single board_spec_request_body.py
+          # body-building call).
+          issue_title="$(gh issue view "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --json title --jq .title)"
+          issue_title="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_spec_request_body.py" --truncate-title "$issue_title")"
+          echo "title=$issue_title" >> "$GITHUB_OUTPUT"
 
       # FR-021: a newly introduced breach on the final diff leaves the
       # branch/PR open under a notice and spins off a spec-request pointing
@@ -2509,6 +2524,7 @@ jobs:
           BASE_SHA: ${{ steps.base.outputs.base-sha }}
           ISSUE_CONTEXT_FILE: ${{ steps.issue-context-breach.outputs.context-file }}
           EXISTING_SPEC_URL: ${{ steps.spec-request-lookup.outputs.existing-spec-url }}
+          ISSUE_TITLE: ${{ steps.spec-request-lookup.outputs.title }}
         run: |
           set -uo pipefail
           measured="$(jq -c '.measured' "$RUNNER_TEMP/board-fix-final-diff-decision.json")"
@@ -2527,7 +2543,8 @@ jobs:
           if [ -n "$EXISTING_SPEC_URL" ]; then
             spec_url="$EXISTING_SPEC_URL"
           else
-            issue_title="$(gh issue view "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --json title --jq .title)"
+            # specs/092-bounded-spec-request-filing (FR-016): ISSUE_TITLE
+            # is already truncated by the lookup step above.
             notice="$(printf 'The fix at %s grew past the board'"'"'s size-and-path backstop on its final diff (measured=%s). The branch/PR are left open, unmerged, under a notice -- this spec request covers finishing the work at the size a human plan should decide.' "$PR_URL" "$measured")"
             footer="$(printf 'Originating issue: %s/%s/issues/%s' "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$ISSUE_NUMBER")"
             spec_body_file="$RUNNER_TEMP/board-spec-request-body.md"
@@ -2535,7 +2552,7 @@ jobs:
               --notice "$notice" --footer "$footer" --out "$spec_body_file" \
               || printf '%s\n\nNo drafted body.\n\n---\n%s\n' "$notice" "$footer" > "$spec_body_file"
             spec_url="$(gh issue create -R "$GITHUB_REPOSITORY" \
-              --title "$issue_title" \
+              --title "$ISSUE_TITLE" \
               --body-file "$spec_body_file" \
               --label spec-request)"
             # #514 -- see route's spec-request site.
@@ -3929,6 +3946,13 @@ jobs:
         run: |
           set -uo pipefail
           python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_spec_request_filing.py" lookup --issue "$ISSUE_NUMBER" --bot-login "$BOT_LOGIN"
+          # specs/092-bounded-spec-request-filing (FR-016): truncated here,
+          # its own step, rather than inside report-unmet (which Gate 93
+          # check 3 restricts to a single board_spec_request_body.py
+          # body-building call).
+          issue_title="$(gh issue view "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --json title --jq .title)"
+          issue_title="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_spec_request_body.py" --truncate-title "$issue_title")"
+          echo "title=$issue_title" >> "$GITHUB_OUTPUT"
 
       - name: Report the unmet condition (not ready)
         id: report-unmet
@@ -3940,6 +3964,7 @@ jobs:
           BACKSTOP_HOLDS: ${{ steps.final-diff-backstop.outputs.holds }}
           BREACH_RETRY: ${{ steps.final-diff-backstop.outputs.breach-retry }}
           EXISTING_SPEC_URL: ${{ steps.breach-retry-lookup.outputs.existing-spec-url }}
+          ISSUE_TITLE: ${{ steps.breach-retry-lookup.outputs.title }}
           MEASURED: ${{ steps.final-diff-backstop.outputs.measured }}
           ISSUE_CONTEXT_FILE: ${{ steps.issue-context-readiness.outputs.context-file }}
           DIRECTED_ATTRIBUTION: >-
@@ -3964,7 +3989,8 @@ jobs:
               spec_url="$EXISTING_SPEC_URL"
               echo "board-loop: issue #$ISSUE_NUMBER -- reusing spec-request $spec_url, already filed for this issue." >> "$GITHUB_STEP_SUMMARY"
             else
-              issue_title="$(gh issue view "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --json title --jq .title)"
+              # specs/092-bounded-spec-request-filing (FR-016): ISSUE_TITLE
+              # is already truncated by the lookup step above.
               notice="$(printf 'PR #%s grew past the board'"'"'s size-and-path backstop by readiness time (measured: %s). The branch/PR are left open, unmerged, under a notice -- this spec request covers finishing the work at the size a human plan should decide.' "$PR_NUMBER" "$MEASURED")"
               if [ "$BREACH_RETRY" = "true" ]; then
                 notice="$(printf 'PR #%s grew past the board'"'"'s size-and-path backstop on its final diff at the fix step (measured now: %s); the fix job could not file this spec request, so readiness retried it (#530). The branch/PR are left open, unmerged, under a notice -- this spec request covers finishing the work at the size a human plan should decide.' "$PR_NUMBER" "$MEASURED")"
@@ -3973,7 +3999,7 @@ jobs:
               python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_spec_request_body.py" --context-file "$ISSUE_CONTEXT_FILE" \
                 --notice "$notice" --footer "$footer" --out "$spec_body_file" \
                 || printf '%s\n\nNo drafted body.\n\n---\n%s\n' "$notice" "$footer" > "$spec_body_file"
-              spec_url="$(gh issue create -R "$GITHUB_REPOSITORY" --title "$issue_title" \
+              spec_url="$(gh issue create -R "$GITHUB_REPOSITORY" --title "$ISSUE_TITLE" \
                 --body-file "$spec_body_file" \
                 --label spec-request)"
               # #514 -- see route's spec-request site.

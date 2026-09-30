@@ -206,28 +206,28 @@ worked on the next run (quickstart.md Section 3).
 
 ### Implementation for User Story 2
 
-- [ ] T017 [US2] Implement `record_attempt(attempts_before, budget)` in
+- [X] T017 [US2] Implement `record_attempt(attempts_before, budget)` in
   `.github/scripts/board_spec_request_filing.py`: returns `{"attempts":
   attempts_before + 1, "stall": attempts_before + 1 >= budget}` — a pure
   function, no I/O (FR-018; research.md D6;
   contracts/spec-request-attempt-bound.md).
-- [ ] T018 [US2] Implement the `record-attempt --attempts N --budget B`
+- [X] T018 [US2] Implement the `record-attempt --attempts N --budget B`
   subcommand in `.github/scripts/board_spec_request_filing.py`'s `main()`:
   calls `record_attempt()` and prints the result as one JSON object to
   stdout, for the calling step's shell to branch on with `jq`.
-- [ ] T019 [P] [US2] Fixture/unit tests for `record_attempt()` under
+- [X] T019 [P] [US2] Fixture/unit tests for `record_attempt()` under
   `.github/scripts/tests/board-spec-request-filing/`: below-cap
   (`attempts_before + 1 < budget` → `stall: false`), exactly-at-cap
   (`attempts_before + 1 == budget` → `stall: true`), and past-cap
   (`attempts_before >= budget` → still `stall: true`).
-- [ ] T020 [P] [US2] Add `truncate_title(title, limit=256)` to
+- [X] T020 [P] [US2] Add `truncate_title(title, limit=256)` to
   `.github/scripts/board_spec_request_body.py` (its existing single home for
   spec-request shaping), deterministically shortening a title longer than
   `limit` before it reaches `gh issue create --title` (FR-016).
-- [ ] T021 [P] [US2] Unit tests for `truncate_title()`: a title under the
+- [X] T021 [P] [US2] Unit tests for `truncate_title()`: a title under the
   limit is returned unchanged, a title exactly at the limit is unchanged,
   and a title over the limit is cut to exactly `limit` characters.
-- [ ] T022 [US2] Pipe the drafted/issue title through `truncate_title()` at
+- [X] T022 [US2] Pipe the drafted/issue title through `truncate_title()` at
   all three `gh issue create ... --title` call sites before T011/T013/T014
   file: route's `$spec_title` (computed line 1839, used at the `--title`
   argument on line 1890), the fix job's post-push-breach `$issue_title`

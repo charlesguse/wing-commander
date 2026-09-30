@@ -177,6 +177,15 @@ def fenced_section(heading, text, budget):
     return opening + kept + closing + note
 
 
+def truncate_title(title, limit=256):
+    """`title`, deterministically shortened to at most `limit` characters
+    (specs/092-bounded-spec-request-filing FR-016) -- removes an
+    over-long-title `gh issue create --title` failure at its source,
+    before any of the three sites' filing attempts spend the bound on it
+    (contracts/spec-request-attempt-bound.md)."""
+    return title[:limit]
+
+
 def read_text(path):
     """The file's text, or "" when `path` is empty, missing or
     unreadable (the composite never ran, or its step failed)."""
@@ -223,8 +232,19 @@ def main(argv=None):
     parser.add_argument("--drafted-body-file", default="")
     parser.add_argument("--notice", default="")
     parser.add_argument("--footer", default="")
-    parser.add_argument("--out", required=True)
+    parser.add_argument("--out", default="")
+    parser.add_argument("--truncate-title", default=None,
+                        help="print truncate_title(TEXT) to stdout and exit, "
+                             "ignoring every other argument "
+                             "(specs/092-bounded-spec-request-filing FR-016)")
     args = parser.parse_args(argv)
+
+    if args.truncate_title is not None:
+        print(truncate_title(args.truncate_title))
+        return 0
+
+    if not args.out:
+        parser.error("--out is required unless --truncate-title is given")
 
     body = build_body(
         drafted=read_text(args.drafted_body_file),

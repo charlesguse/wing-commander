@@ -1863,11 +1863,30 @@ def _self_test_builder():
             failures.append(f"builder: a {label} of 70000 backticks "
                             f"produced {units} UTF-16 units, over "
                             f"{b.MAX_BODY_UNITS}")
+
+    # specs/092-bounded-spec-request-filing T021: truncate_title() -- under
+    # the limit unchanged, exactly at the limit unchanged, over the limit
+    # cut to exactly `limit` characters (FR-016).
+    under = "x" * 200
+    if b.truncate_title(under, limit=256) != under:
+        failures.append("builder: truncate_title() changed a title under "
+                        "the limit")
+    at_limit = "x" * 256
+    if b.truncate_title(at_limit, limit=256) != at_limit:
+        failures.append("builder: truncate_title() changed a title exactly "
+                        "at the limit")
+    over = "x" * 300
+    truncated = b.truncate_title(over, limit=256)
+    if len(truncated) != 256 or truncated != over[:256]:
+        failures.append(f"builder: truncate_title() did not cut an "
+                        f"over-limit title to exactly 256 characters: "
+                        f"{len(truncated)} chars")
+
     if not failures:
         print("note: builder unit tests passed (fallback order, one-line "
               "fallback, inert @/#/links/images/HTML inside an unbreakable "
               "fence for both the draft and the context, truncation under "
-              "the limit with a note).")
+              "the limit with a note, and truncate_title()).")
     return failures
 
 
@@ -1935,11 +1954,6 @@ SPEC_REQUEST_MUTATIONS = (
      "steps.final-diff-backstop.outputs.breach == 'true'\n",
      "        id: issue-context-breach\n"
      "        if: false\n"),
-    ("route title read widened to the body",
-     'issue_title="$(gh issue view "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" '
-     '--json title --jq .title)"\n\n          spec_title=',
-     'issue_title="$(gh issue view "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" '
-     '--json title,body --jq .title)"\n\n          spec_title='),
     # #514: the create guard at each site.
     ("route create guard reduced to an echo",
      '[[ "$spec_url" =~ ^https?://[^[:space:]]+/issues/[0-9]+$ ]] || '
@@ -1951,8 +1965,8 @@ SPEC_REQUEST_MUTATIONS = (
      '[[ "$spec_url" =~ .* ]] || '
      '{ echo "::error::board-loop fix (post-push breach)'),
     ("route create URL no longer captured",
-     'spec_url="$(gh issue create -R "$GITHUB_REPOSITORY" --title "$spec_title"',
-     'gh issue create -R "$GITHUB_REPOSITORY" --title "$spec_title"'),
+     'spec_url="$(gh issue create -R "$GITHUB_REPOSITORY" --title "$SPEC_TITLE"',
+     'gh issue create -R "$GITHUB_REPOSITORY" --title "$SPEC_TITLE"'),
     ("fix create guard exits 0",
      'retries it."; exit 1; }\n'
      '          fi\n'

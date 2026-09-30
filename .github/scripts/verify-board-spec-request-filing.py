@@ -25,6 +25,10 @@ Fixtures:
   reopened-since/<case>/{events.json,params.json,expected.json}
     - never-reopened (falls back to the issue's own created_at),
       reopened-once, reopened-twice (the *last* reopening wins).
+  record-attempt/<case>/{params.json,expected.json}
+    - below-cap (attempts_before + 1 < budget -> stall: false),
+      exactly-at-cap (attempts_before + 1 == budget -> stall: true),
+      past-cap (attempts_before already >= budget -> still stall: true).
 
 Fails loudly, not vacuously, if any fixture file is missing.
 """
@@ -34,7 +38,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from board_spec_request_filing import find_existing, reopened_since  # noqa: E402
+from board_spec_request_filing import find_existing, reopened_since, record_attempt  # noqa: E402
 
 FIXTURES_DIR = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "tests", "board-spec-request-filing")
@@ -54,6 +58,14 @@ REOPENED_SINCE_CASES = {
     "never-reopened",
     "reopened-once",
     "reopened-twice",
+}
+
+RECORD_ATTEMPT_DIR = os.path.join(FIXTURES_DIR, "record-attempt")
+
+RECORD_ATTEMPT_CASES = {
+    "below-cap",
+    "exactly-at-cap",
+    "past-cap",
 }
 
 
@@ -118,6 +130,18 @@ def _run_reopened_since_case(case, loaded):
     return 0
 
 
+def _run_record_attempt_case(case, loaded):
+    params = loaded["params.json"]
+    expected = loaded["expected.json"]
+    got = record_attempt(params["attempts_before"], params["budget"])
+    if got != expected:
+        print("::error::verify-board-spec-request-filing: record-attempt/{0}: "
+              "expected {1!r}, got {2!r}.".format(case, expected, got))
+        return 1
+    print("[ok] record-attempt/{0}: record_attempt() == {1!r}".format(case, got))
+    return 0
+
+
 def run():
     failures = 0
     failures += _run_case_set(
@@ -128,6 +152,10 @@ def run():
         REOPENED_SINCE_DIR, REOPENED_SINCE_CASES,
         ("events.json", "params.json", "expected.json"),
         _run_reopened_since_case, "reopened-since")
+    failures += _run_case_set(
+        RECORD_ATTEMPT_DIR, RECORD_ATTEMPT_CASES,
+        ("params.json", "expected.json"),
+        _run_record_attempt_case, "record-attempt")
 
     print("verify-board-spec-request-filing: {0} failure(s).".format(failures))
     return 1 if failures else 0

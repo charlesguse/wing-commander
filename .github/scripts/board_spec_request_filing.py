@@ -65,7 +65,8 @@ def record_attempt(attempts_before, budget):
     """{"attempts": attempts_before + 1, "stall": attempts_before + 1 >=
     budget} -- a pure function, no I/O (FR-018; research.md D6;
     contracts/spec-request-attempt-bound.md)."""
-    raise NotImplementedError
+    attempts = attempts_before + 1
+    return {"attempts": attempts, "stall": attempts >= budget}
 
 
 def _gh_api_jq_lines(path, extra_args, jq_filter, paginate=True):
@@ -152,7 +153,12 @@ def _cmd_lookup(args):
 
 
 def _cmd_record_attempt(args):
-    raise NotImplementedError
+    """record-attempt --attempts N --budget B
+    (contracts/spec-request-attempt-bound.md). Prints the result as one
+    JSON object to stdout, for the calling step's shell to branch on with
+    `jq`."""
+    print(json.dumps(record_attempt(args.attempts, args.budget)))
+    return 0
 
 
 def main(argv=None):
