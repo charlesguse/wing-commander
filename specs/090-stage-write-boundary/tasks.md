@@ -522,7 +522,7 @@ list entry on `no-write-paths`, never a second mechanism (FR-019).
   99's): confirm the "Gate 126 — ..." step exists in `.github/workflows/
   lint-workflows.yml`, is not `if: false`, and its `run:` line names
   `verify-write-boundary.py`'s exact path.
-- [ ] T036 Record FR-002's policy decision — "no agent write under
+- [x] T036 Record FR-002's policy decision — "no agent write under
   `.claude/`, for any of its three parts (vendored `speckit-*`, this
   repository's own skills, the control surface); deterministic non-agent
   writes (`auto-update-spec-kit.yml`) unaffected" — where a future change
