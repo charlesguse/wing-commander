@@ -250,3 +250,7 @@ Because nearly every task shares one of two files (the gate script or SKILL.md),
 ## Maintainer Feedback (PR #813 Review — Self-Test Crash on Empty Findings)
 
 - [ ] T038 Fix `run_selftest`'s rename-fixture assertions (verify-skill-board-loop-concurrency-claim.py:821, 843): `format_finding(renamed_ordinary_findings[0])` and `format_finding(renamed_directed_findings[0])` raise `IndexError` when the group-name check is removed or broken and the list is empty, aborting the self-test before it prints every later check or the summary line. Guard each access so an empty list is recorded as a failed `check(...)` instead of raising (Constitution Principle VIII; PR #813 review item 3).
+
+## Maintainer Feedback (PR #813 Review — Tautological Self-Test Check)
+
+- [ ] T039 Fix the tautological self-test check at verify-skill-board-loop-concurrency-claim.py:652-654 ("a paragraph carrying both the queuing word and the Gate pointer sentence extracts queues_not_cancels=True"): since `extract_skill_claim` only returns a non-None `SkillClaim` when `has_queue_word` already held (line 113, 123-125), `claim.queues_not_cancels` is `True` on every code path that reaches this assertion, so it cannot fail on its own. Delete it or replace it with an assertion that distinguishes a real regression (Constitution Principle VIII; PR #813 review item 4).
