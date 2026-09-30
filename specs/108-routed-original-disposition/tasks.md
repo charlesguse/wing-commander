@@ -650,3 +650,9 @@ Task: "Add disposition:duplicate to wing-commander-board-labels/action.yml"
 ## Maintainer Feedback
 
 - [ ] Fix `is_excluded()`'s re-admission carve-out (`.github/scripts/board_eligibility.py:186`) so a re-admitted issue (disposition:duplicate label present, linked spec-request resolved CLOSED) stays re-admitted once a later route/fix/review marker becomes the newest marker, instead of falling back to excluded because the carve-out only fires while the newest marker's step is still `duplicate`. Remove or reset the exclusion basis on re-admission rather than gating solely on the newest marker's step. Add a checked-in fixture: issue re-admitted, then a new triage or fix marker posted, still not excluded (FR-005, FR-006, FR-007, SC-005).
+
+## Maintainer Feedback
+
+- [ ] In `board_duplicate_disposition.py`, read the originating/spec-request issue's comments via REST (`gh api repos/{owner}/{repo}/issues/{n}/comments --paginate`, which nests `user`) instead of `gh issue view --json comments` (GraphQL `author`, no `user.type`), so `is_loop_marker_author()` actually matches the loop's own comments in production instead of never matching and re-posting the reason comment on every call (FR-003, FR-004, FR-009).
+- [ ] Make the duplicate-comment/reciprocal-link pre-check match on `marker.get("spec_request") == spec_request_issue`, not just `step == "duplicate"`, so a re-route to a new spec-request after re-admission posts its own reason comment and marker naming the new spec-request instead of being treated as already-disposed.
+- [ ] Update `verify-board-duplicate-disposition.py`'s stubbed `gh` fixtures to return the real REST comment shape (`user.login`/`user.type`) instead of the GraphQL/`author`-shaped stub that currently hides this bug.
