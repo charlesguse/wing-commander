@@ -198,3 +198,13 @@ Because nearly every task shares one of two files (the gate script or SKILL.md),
 - [ ] T028 BLOCKED this cycle: updating the PR body/description needs a `gh pr edit`-family command, which this run's tool allowlist does not grant (only `gh issue view`/`gh issue comment` are permitted, no `gh pr *`). Needs a session with PR-edit access, or the maintainer, to set the PR body to reference Gate 129 and note that this resolves #812.
 
 **Checkpoint**: Gate 129 is the feature's only remaining gate number — no "Gate 125" reference survives in the script, the workflow, this file, or the contract — and the coordinated cross-spec renumbering lands without collision.
+
+
+## Phase 10: Convergence
+
+**Purpose**: `contracts/skill-example-claim.md`'s Verification section documents two checks Gate 129's own extraction never performs, and `data-model.md`'s `SkillClaim` entity carries a field the code never populates.
+
+- [ ] T029 Extend `extract_skill_claim` in `.github/scripts/verify-skill-board-loop-concurrency-claim.py` to test the two properties `contracts/skill-example-claim.md`'s Verification section already documents as gate-checked but the current extraction (which only pulls the three backtick tokens) never tests: a queuing/cancellation word (`queue`/`cancel`) present in the Over-rated paragraph (contract item 4), and the literal script path `verify-skill-board-loop-concurrency-claim.py` present within two paragraphs of the anchor (contract item 5); record the queuing result as `SkillClaim.queues_not_cancels`, the field `data-model.md`'s SkillClaim table already names but the code has never populated; emit `subject-missing` when either is absent, so an edit that drops the queuing clause or the Gate pointer sentence T009/T015 added is caught by the gate rather than silently passing (FR-003, FR-005, FR-008, SC-003, SC-004; contracts/skill-example-claim.md "Verification") (missing)
+- [ ] T030 Add `--self-test` fixtures demonstrating T029's two new checks: a paragraph missing the queuing word fails as `subject-missing`, a paragraph missing the Gate pointer sentence fails as `subject-missing`, and a paragraph carrying both passes, per FR-007/SC-005 (missing)
+
+**Checkpoint**: `extract_skill_claim` enforces every property `contracts/skill-example-claim.md` documents as gate-checked, and `SkillClaim`'s shape matches `data-model.md` exactly.
