@@ -175,3 +175,14 @@ Because nearly every task shares one of two files (the gate script or SKILL.md),
 ## Phase 7: Convergence
 
 - [x] T021 Extend `.github/scripts/verify-skill-board-loop-concurrency-claim.py`'s `--self-test` mode with synthetic SKILL.md/concurrency-groups.md/board-loop.yml-shaped text fixtures that exercise `extract_skill_claim`, `extract_job_classifications`, `extract_workflow_concurrency_facts`, and `compute_drift_findings` directly (not just `apply_waivers`), covering each of the five `DriftFinding` properties (`job-missing-from-group`, `cancel-in-progress-mismatch`, `unexpected-job-in-group`, `job-range-mismatch`, `directed-group-mismatch`) and `subject-missing` in both a failing and a passing direction, plus one fixture proving a reflow/typo-only change leaves extraction unaffected (FR-009) — the self-test currently only exercises the waiver stale-check, so a regression in any of these functions has no checked-in fixture catching it, only the real-tree manual demonstrations this cycle recorded in T010/T014/T020, which Constitution Principle VIII names as "evidence for that reviewer, not coverage for the next one" (CRITICAL, contradicts)
+
+
+## Phase 8: Maintainer Feedback (PR #813 Review)
+
+**Purpose**: The `DriftFinding` comparison built in T006 checks that `SkillClaim.ordinary_group`/`SkillClaim.directed_group` are used to spot non-capable jobs wrongly joining a group, but never checks whether those claimed group names themselves still match what `concurrency-groups.md` and `board-loop.yml` actually use for capable jobs — so a consistent rename of the group (e.g. `wing-commander-board-loop` → something else) across the workflow and the contract table would pass Gate 125 even though `SKILL.md`'s claim is now stale.
+
+- [ ] T022 In `.github/scripts/verify-skill-board-loop-concurrency-claim.py`'s `DriftFinding` comparison (around `verify-skill-board-loop-concurrency-claim.py:254,275`), fail when `SkillClaim.ordinary_group`/`SkillClaim.directed_group` differ from the group names actually present in both `concurrency-groups.md`'s table and `board-loop.yml`'s real `concurrency:` blocks for capable jobs — today `ordinary_group`/`directed_group` are used only to spot non-capable jobs joining a group, never to check whether the claimed group names themselves still match (FR-001, FR-012, SC-001)
+- [ ] T023 [P] Update `contracts/skill-drift-gate.md`'s Algorithm steps 4-6 to document the new group-name comparison
+- [ ] T024 Add a `--self-test` fixture that renames `wing-commander-board-loop` consistently across a synthetic `board-loop.yml` and `concurrency-groups.md` while leaving `SKILL.md`'s claim unchanged, demonstrating the gate now fails on the stale skill claim (depends on T022; same file as T022, sequential)
+
+**Checkpoint**: Gate 125 now also fails when the claimed group names drift from the workflow/contract, not just when membership drifts — closing the gap PR #813's review identified.
