@@ -678,3 +678,8 @@ and evaporating into PR-body prose) that this feature exists to end.
 - [ ] File out-of-boundary tasks whenever the loop ends for any reason (iteration cap or stall reached), not only on the routed hand-off path
 - [ ] Add a Gate 133 fixture reproducing the shipped read-back step with every unchecked task under `.claude/` plus one `converge:` commit that re-appends it, asserting the fix now routes instead of `handoff=false routed=false reason="converge appended new work"`
 - [ ] Add a Gate 133 fixture for a cycle that ticks the last in-reach task (`progressed=true`) on what turns out to be the final iteration, asserting the out-of-boundary task is still filed instead of reaching the PR as orphan prose (SC-005)
+
+## Maintainer Feedback — write boundary is stated but not enforced (PR #836 review, item 3)
+
+- [ ] In `wing-commander-tool-args`'s `compose` step, derive the disallowed `Edit`/`Write` tool-list entries (e.g. `Edit(X**)`/`Write(X**)`) from `no-write-paths`, so the rendered "may not write: X" statement and the composed tool grant share one source
+- [ ] Add the prompt sentence User Story 1 Acceptance Scenario 2 needs: instruct the agent to leave an out-of-boundary task unchecked rather than attempt it, since such tasks are routed deterministically
