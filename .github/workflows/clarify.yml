@@ -672,7 +672,7 @@ jobs:
             `&&`, which keeps the permission (`git commit ... && git push ...`),
             or make separate calls. Do not build files by redirecting with `>`;
             use Write. Prefer the tools over shell equivalents — Read instead of
-            `cat`, Grep instead of `sed`. `sed` and `wc` are not available to
+            `cat`, Grep instead of `sed`. `sed` is not available to
             you at all. Inspect files with the Grep, Glob and Read tools, not
             shell loops or commands this run does not list (`for f in …; do
             cat "$f"`, `awk`) — those are denied here.
@@ -756,7 +756,7 @@ jobs:
       # !cancelled(), not always() (spec 052, should-fix per maintainer
       # review of PR #407): a run cancelled during the agent step must not
       # still perform a network mint and a remote rewrite in the cancel
-      # window -- see clarify.yml.
+      # window (the rescue step's canonical copy below gives the full reason).
       - name: Record agent-ran signal
         if: "!cancelled() && steps.agent.outcome != 'skipped'"
         id: agent-ran
@@ -1260,7 +1260,7 @@ jobs:
       # error) post-agent steps in execution order, each read via
       # `.conclusion` (not `.outcome`) so a continue-on-error step that
       # raw-failed is never misnamed as the cause (second maintainer review
-      # of PR #407, FR-011, SC-003) -- see clarify.yml for the composite.
+      # of PR #407, FR-011, SC-003).
       - name: Determine failed post-agent step
         id: failed-step
         if: "!cancelled() && steps.agent.outcome != 'skipped'"
@@ -1411,12 +1411,12 @@ jobs:
           # after it is what stalled the job -- not a from-scratch restart.
           # Worded from agent-conclusion, not asserted as "ran to
           # completion" regardless of outcome (second maintainer review of
-          # PR #407, FR-011) -- see clarify.yml's own copy of this note in
-          # wing-commander-chain-stop-notice/action.yml.
+          # PR #407, FR-011); the wing-commander-chain-stop-notice composite
+          # carries the same note on its own agent clause.
           restart-command: ${{ needs.clarify.outputs.agent-ran == 'true' && needs.clarify.outputs.agent-conclusion == 'success' && 'The clarify agent step completed its work; a step after it did not. Re-dispatch the clarify stage for this specification once the cause above is resolved.' || needs.clarify.outputs.agent-ran == 'true' && 'The clarify agent step failed after running; its pushed commits are on the branch. Re-dispatch the clarify stage for this specification once the cause above is resolved.' || 'Re-dispatch the clarify stage for this specification once the cause above is resolved.' }}
           # FR-011/FR-015: drops the composite's default "stage did not
           # start" / "no work was lost" wording, which is false once the
-          # agent ran -- see clarify.yml.
+          # agent ran.
           agent-ran: ${{ needs.clarify.outputs.agent-ran }}
           agent-conclusion: ${{ needs.clarify.outputs.agent-conclusion }}
           commits-published: ${{ needs.clarify.outputs.commits-published }}
