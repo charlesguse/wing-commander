@@ -2989,17 +2989,18 @@ jobs:
   # Survivor job (the #224 idiom, research.md D4/D7): reaches two mutually
   # exclusive arms. The exhausted-retry arm (final-ok == 'false') is today's
   # original case, its three steps' wording untouched. The abnormal-
-  # termination arm (verify-image-prerequisites failed, or implement itself
-  # failed/skipped) is this feature's addition — guarded also on
-  # refusal-reason being empty, since a refusal already posted its own
-  # in-job note and must not double-post here (FR-006).
+  # termination arm (implement itself failed/skipped) is this feature's
+  # addition — guarded also on refusal-reason being empty, since a refusal
+  # already posted its own in-job note and must not double-post here
+  # (FR-006). A failed verify-image-prerequisites reaches neither arm: the
+  # leading `!= 'failure'` conjunct excludes it, since this job would run
+  # inside the very image that failed validation (spec 041 D11).
   stalled:
     needs: [verify-image-prerequisites, implement]
     if: |
       needs.verify-image-prerequisites.result != 'failure' &&
       !cancelled() &&
-      ( needs.verify-image-prerequisites.result == 'failure' ||
-        needs.implement.result == 'failure' ||
+      ( needs.implement.result == 'failure' ||
         needs.implement.result == 'skipped' ||
         needs.implement.outputs.final-ok == 'false' ) &&
       needs.implement.outputs.refusal-reason == ''
