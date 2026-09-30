@@ -9,8 +9,10 @@ Five conditions gate whether a lifecycle PR is reviewed at all: a check
 that ran on a stale push, a merge conflict, or a round that already
 reviewed this exact head SHA must never read as "ready" — that would
 either waste a review on a PR nobody can merge yet, or skip re-review
-after a genuine new push. This gate pins all six documented branches, plus two cases for the
-gate's own commit status, which is never an input to readiness
+after a genuine new push. This gate pins all six documented branches,
+plus two cases for the gate's own commit status, which is never an
+input to readiness; context_pin_problems() ties that status's name to
+the workflow's own status writes
 (mirroring verify-board-readiness.py's own EXPECTED_CASES shape).
 
 Fixtures, each a checked-in snapshot under
@@ -23,14 +25,34 @@ not vacuously, if any fixture file is missing.
 import glob
 import json
 import os
+import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from lifecycle_readiness import evaluate_from_snapshot  # noqa: E402
+from lifecycle_readiness import OWN_STATUS_CONTEXT, evaluate_from_snapshot  # noqa: E402
 from wc_lifecycle_review_marker import self_test as _marker_self_test  # noqa: E402
 
 FIXTURES_DIR = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "tests", "lifecycle-readiness")
+
+WORKFLOW = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "workflows",
+    "lifecycle-review-gate.yml")
+CONTEXT_WRITE_RE = re.compile(r'-f\s+context=["\']?([^"\'\s\\]+)')
+
+
+def context_pin_problems(workflow_text):
+    """Every commit status the workflow writes must use the context
+    lifecycle_readiness.py filters out as the gate's own. A rename on one
+    side only would silently bring back the deadlock the filter exists to
+    prevent, with every snapshot fixture still green."""
+    found = CONTEXT_WRITE_RE.findall(workflow_text)
+    if not found:
+        return ["no `-f context=` status write found in lifecycle-review-gate.yml"]
+    return ["status write uses context {0!r}, but lifecycle_readiness."
+            "OWN_STATUS_CONTEXT is {1!r}".format(c, OWN_STATUS_CONTEXT)
+            for c in found if c != OWN_STATUS_CONTEXT]
+
 
 EXPECTED_CASES = {
     "stale-check-summary", "no-checks", "not-mergeable",
@@ -86,6 +108,15 @@ def run():
             print("[ok] {0}: ready={1!r} unmet_reason={2!r}".format(
                 case, got["ready"], got.get("unmet_reason")))
 
+    with open(WORKFLOW, encoding="utf-8") as fh:
+        problems = context_pin_problems(fh.read())
+    for problem in problems:
+        failures += 1
+        print("::error::verify-lifecycle-readiness: {0}".format(problem))
+    if not problems:
+        print("[ok] every status write uses context {0!r}".format(
+            OWN_STATUS_CONTEXT))
+
     print("verify-lifecycle-readiness: {0} failure(s).".format(failures))
     return 1 if failures else 0
 
@@ -133,6 +164,14 @@ def self_test():
     # time -- the same idiom T069 established for the module this one
     # replaces (wc_review_gate_settled_head.py, deleted by T075).
     check("lifecycle-review-marker", _marker_self_test() == 0)
+
+    # The own-status pin: a renamed status write, or none at all, fails.
+    good = '            -f context="{0}" \\\n'.format(OWN_STATUS_CONTEXT)
+    check("context-pin-clean", context_pin_problems(good * 3) == [])
+    check("context-pin-renamed-write-caught",
+          len(context_pin_problems(good + good.replace(
+              OWN_STATUS_CONTEXT, "lifecycle-review")))== 1)
+    check("context-pin-no-write-caught", len(context_pin_problems("")) == 1)
 
     print("{0} failure(s).".format(failures))
     return 1 if failures else 0
