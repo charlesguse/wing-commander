@@ -4123,7 +4123,10 @@ jobs:
       # step, at any ref (not only a bare @v1 tag -- a code review found a
       # step pinned @v1.2.0 passing green under the original exact-ref
       # match), anywhere in workflows/ or actions/, that passes an input
-      # the action does not accept.
+      # the action does not accept. #814: also fails any such step with no
+      # github_token whose job lacks `id-token: write` -- the action's OIDC
+      # fallback fails before Claude starts (lifecycle-review-gate.yml's
+      # Reviewer, run 36640266298).
       - name: "Gate 92 — every claude-code-action step's with: keys are inputs the action accepts"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-claude-code-action-inputs.py
