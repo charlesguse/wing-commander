@@ -47,7 +47,7 @@ those steps.
 
 ## Phase 1: Setup
 
-- [ ] T001 Confirm the gate-number reservation above is still accurate:
+- [x] T001 Confirm the gate-number reservation above is still accurate:
   `grep -oE "Gate [0-9]+" .github/workflows/lint-workflows.yml | sort -t' ' -k2 -n -u | tail -1`
   must show Gate 125. If a higher gate now exists, shift every "Gate 126"
   reference in this file, and in the files T012/T034/T035 create, to the
@@ -63,7 +63,7 @@ fingerprint helper (consumed by US2's routing call and US3's finalize
 lookup) all have to exist, callable in isolation, before any user-story
 phase wires them into `implement.yml`'s or `finalize.yml`'s actual flow.
 
-- [ ] T002 [P] `.github/workflows/implement.yml`: add two new optional
+- [x] T002 [P] `.github/workflows/implement.yml`: add two new optional
   `workflow_call` inputs to the `inputs:` block, next to `findings-cap`
   (~line 229-235): `no-write-paths` (`type: string`, `required: false`,
   `default: ".claude/"`, description per contracts/write-boundary-mechanism.md
@@ -74,20 +74,20 @@ phase wires them into `implement.yml`'s or `finalize.yml`'s actual flow.
   see research.md D4). This is the one declaration FR-003 requires; every
   other site below reads `${{ inputs.no-write-paths }}` / `${{
   inputs.write-boundary-label-prefix }}`, never a second literal default.
-- [ ] T003 [P] `.github/workflows/finalize.yml`: add the same
+- [x] T003 [P] `.github/workflows/finalize.yml`: add the same
   `write-boundary-label-prefix` optional input (identical default,
   identical description) to its `inputs:` block. `finalize.yml` gets no
   `no-write-paths` input — it never classifies a task, only looks up an
   already-filed one by fingerprint (contracts/write-boundary-mechanism.md
   §1).
-- [ ] T004 [P] `.github/workflows/wing-commander-5-implement.yml`: wire
+- [x] T004 [P] `.github/workflows/wing-commander-5-implement.yml`: wire
   `no-write-paths: ${{ vars.WING_COMMANDER_IMPLEMENT_NO_WRITE_PATHS ||
   '.claude/' }}` and `write-boundary-label-prefix: ${{
   vars.WING_COMMANDER_WRITE_BOUNDARY_LABEL_PREFIX || 'route-out-of-boundary'
   }}` into the `uses: ./.github/workflows/implement.yml` call's `with:`
   block, mirroring `findings-label-prefix`'s existing wiring at
   `wing-commander-5-implement.yml:99-100`.
-- [ ] T005 [P] `.github/workflows/wing-commander-6-finalize.yml`: wire
+- [x] T005 [P] `.github/workflows/wing-commander-6-finalize.yml`: wire
   `write-boundary-label-prefix: ${{
   vars.WING_COMMANDER_WRITE_BOUNDARY_LABEL_PREFIX || 'route-out-of-boundary'
   }}` into the `uses: ./.github/workflows/finalize.yml` call's `with:`
@@ -95,7 +95,7 @@ phase wires them into `implement.yml`'s or `finalize.yml`'s actual flow.
   `wing-commander-6-finalize.yml:44-45`. Reads the SAME repo var as T004 —
   one var, two wrappers, never a second var name (FR-003's rule extended to
   the wrapper layer).
-- [ ] T006 Create `.github/actions/_shared/classify-out-of-boundary-tasks.sh`
+- [x] T006 Create `.github/actions/_shared/classify-out-of-boundary-tasks.sh`
   (research.md D3, data-model.md's classification table) — the one home of
   the per-task boundary check. Invocation shape mirrors
   `count-tasks-checkboxes.sh`'s convention: reads the unchecked-items text
@@ -129,7 +129,7 @@ phase wires them into `implement.yml`'s or `finalize.yml`'s actual flow.
   through to "ordinary" is a valid, expected output (FR-015), not an error
   condition; only a genuinely malformed invocation (missing required arg)
   should fail loudly.
-- [ ] T007 Create
+- [x] T007 Create
   `.github/actions/wing-commander-write-boundary/action.yml` — the
   published front-door composite (contracts/write-boundary-mechanism.md §3),
   mirroring `wing-commander-tasks-checkbox-count/action.yml`'s shape.
@@ -143,7 +143,7 @@ phase wires them into `implement.yml`'s or `finalize.yml`'s actual flow.
   output straight to `$GITHUB_OUTPUT`. Header comment records the
   Constitution VII minor-version-addition note (plan.md's Complexity
   Tracking table).
-- [ ] T008 `.github/actions/wing-commander-stage-findings/action.yml`:
+- [x] T008 `.github/actions/wing-commander-stage-findings/action.yml`:
   extract the anchor/fallback fingerprint computation currently inline in
   the "Extract, validate, cap, and prepare findings" step's Python
   (`normalize_basis` ~line 269-272, `verify_anchor` ~line 274-301, and the
@@ -180,7 +180,7 @@ answer matches what the run actually permits.
 
 **Depends on**: Phase 2 (the `no-write-paths` input T002 declares).
 
-- [ ] T009 [US1] `.github/actions/wing-commander-tool-args/action.yml`: add
+- [x] T009 [US1] `.github/actions/wing-commander-tool-args/action.yml`: add
   a new optional input `no-write-paths` (default `""`) and a new output
   `write-paths-statement`. In the existing `compose` step, immediately
   after the `shell_commands` render (~line 355-366), add the identical
@@ -192,19 +192,19 @@ answer matches what the run actually permits.
   Emit `write-paths-statement=<sentence>` alongside the existing
   `shell-commands` output. No existing input, output, or the
   `shell-commands` render's own text changes.
-- [ ] T010 [US1] `.github/workflows/implement.yml`: add
+- [x] T010 [US1] `.github/workflows/implement.yml`: add
   `no-write-paths: ${{ inputs.no-write-paths }}` to both `tool-args-cycle`'s
   (~line 848-864) and `tool-args-retry`'s (~line 1561) `with:` blocks. The
   third, read-only tool-args call site (~line 2336, which denies
   `Write,Edit` outright) is unaffected — leave it untouched, per
   contracts/write-boundary-mechanism.md §2.
-- [ ] T011 [US1] `.github/workflows/implement.yml`: add
+- [x] T011 [US1] `.github/workflows/implement.yml`: add
   `${{ steps.tool-args-cycle.outputs.write-paths-statement }}` to the cycle
   prompt's Tooling paragraph (~line 975), immediately after the existing
   `Tooling: ${{ steps.tool-args-cycle.outputs.shell-commands }}` sentence.
   Mirror for the retry prompt's Tooling paragraph (~line 1707) using
   `steps.tool-args-retry.outputs.write-paths-statement`.
-- [ ] T012 [US1] Create `.github/scripts/verify-write-boundary.py` (Gate
+- [x] T012 [US1] Create `.github/scripts/verify-write-boundary.py` (Gate
   126, contracts/write-boundary-gate.md), modeled on
   `verify-tasks-checkbox-convergence-signal.py`'s structure: import
   `ensure_jq, find_step, resolve_bash, run_step, use_utf8_stdout` from
@@ -232,7 +232,7 @@ answer matches what the run actually permits.
   every check script be named by some `run:` line or it is reported
   orphaned; do not leave it unwired even mid-feature. The `--self-test` flag
   can exit 0 with zero reintroduced mutations for now — T034 fills it in.
-- [ ] T013 [US1] Run `python .github/scripts/run-local-gates.py`; confirm
+- [x] T013 [US1] Run `python .github/scripts/run-local-gates.py`; confirm
   Gate 126's (a)/(b) fixtures and every pre-existing gate pass.
 
 **Checkpoint**: An agent in an implement cycle can now answer "may I write
@@ -260,7 +260,7 @@ produce a second one.
 fingerprint helper) and Phase 3 (this phase's read-back changes sit beside
 US1's, in the same steps).
 
-- [ ] T014 [US2] `.github/workflows/implement.yml`, cycle arm: add a new
+- [x] T014 [US2] `.github/workflows/implement.yml`, cycle arm: add a new
   step `write-boundary-cycle`, `uses: ./.wing-commander-pipeline/.github/
   actions/wing-commander-write-boundary`, immediately after `Count tasks.md
   checkboxes at tip (cycle)` (id `checkbox-tip-cycle`, ~line 1263-1269),
@@ -269,10 +269,10 @@ US1's, in the same steps).
   `no-write-paths: ${{ inputs.no-write-paths }}`,
   `spec-dir: ${{ steps.spec.outputs.spec-dir }}`,
   `tasks-path: ${{ steps.spec.outputs.spec-dir }}/tasks.md`.
-- [ ] T015 [US2] `.github/workflows/implement.yml`, retry arm: mirror T014
+- [x] T015 [US2] `.github/workflows/implement.yml`, retry arm: mirror T014
   — add `write-boundary-retry` immediately after `Count tasks.md checkboxes
   at tip (retry)` (id `checkbox-tip-retry`, ~line 1959-1961).
-- [ ] T016 [US2] `.github/workflows/implement.yml`, both `Read back cycle
+- [x] T016 [US2] `.github/workflows/implement.yml`, both `Read back cycle
   outcome` (~line 1278-1456) and `Read back retry outcome` (~line
   1966-...): after the existing `handoff` computation (~line 1413-1415),
   add a new step-local output `routed = handoff && all-unchecked-out-of-
@@ -282,14 +282,14 @@ US1's, in the same steps).
   findings-json` (resp. retry) through as a new step output,
   `write-boundary-findings-json`, unmodified — never re-derived. Emit both
   alongside the existing `echo "handoff=$handoff"` line.
-- [ ] T017 [US2] `.github/workflows/implement.yml`, `Consolidate final
+- [x] T017 [US2] `.github/workflows/implement.yml`, `Consolidate final
   outcome` (~line 2164-2244): carry `routed` and `write-boundary-findings-
   json` through the existing `RETRY_RAN` selection (same shape as the
   existing `progressed`/`handoff` selection at ~line 2189/2191) and add
   them to the output-emission block (~line 2233-2244). These remain
   step-local outputs, never `workflow_call` outputs of `implement.yml`
   (mirrors spec 059's own scope note for `progressed`/`handoff`).
-- [ ] T018 [US2] `.github/actions/wing-commander-stage-findings/action.yml`:
+- [x] T018 [US2] `.github/actions/wing-commander-stage-findings/action.yml`:
   add a new optional input `finding-kind` (allowed `defect`|`routed-task`,
   default `defect`). When `routed-task`, swap the three hardcoded strings
   contracts/write-boundary-mechanism.md §5 tables — the "created" recap
@@ -305,7 +305,7 @@ US1's, in the same steps).
   `verify-stage-finding-schema.py`/`verify-stage-findings-wiring.py`. No
   other input, output, the fingerprint formula (now T008's shared helper),
   the cap, or the dedup call changes for either kind.
-- [ ] T019 [US2] `.github/workflows/implement.yml`: add a new step "Route
+- [x] T019 [US2] `.github/workflows/implement.yml`: add a new step "Route
   out-of-boundary tasks" beside the existing "File findings from this run"
   (~line 2260-2274), guarded
   `if: ${{ !cancelled() && steps.final.outputs.ok == 'true' &&
@@ -325,7 +325,7 @@ US1's, in the same steps).
   §5 — reusing `findings-cap`/`findings-filing-enabled` rather than adding
   parallel inputs, since this channel is not configurably distinct along
   those axes).
-- [ ] T020 [US2] Extend Gate 126 (`verify-write-boundary.py`) with pass
+- [x] T020 [US2] Extend Gate 126 (`verify-write-boundary.py`) with pass
   condition (c), classification correctness, driving T006's shipped script
   directly: a single path, fully out-of-boundary → out-of-boundary; several
   paths, one in-reach → falls through; no path in the text → falls through;
@@ -333,7 +333,7 @@ US1's, in the same steps).
   `.claude/` boundary) → falls through (prefix match, not substring); the
   boundary is empty → nothing classifies out-of-boundary, ever. Cover every
   Edge Case spec.md names for this rule.
-- [ ] T021 [US2] Extend Gate 126 with pass conditions (f) idempotency and
+- [x] T021 [US2] Extend Gate 126 with pass conditions (f) idempotency and
   (g) fingerprint single-home: the same out-of-boundary unchecked line,
   fingerprinted twice via T008's shared helper (simulating two cycles),
   produces byte-identical fingerprints; a line reworded by even one
@@ -343,20 +343,20 @@ US1's, in the same steps).
   shaped string literal outside `compute-finding-fingerprint.sh` and its
   two callers (the findings composite, and — once T027 lands —
   `finalize.yml`'s lookup step) and assert none exists.
-- [ ] T022 [US2] Extend Gate 126 with pass condition (e), no filing on a
+- [x] T022 [US2] Extend Gate 126 with pass condition (e), no filing on a
   truncated run: build a synthetic truncated cycle (`ok=true,
   truncated=true`) with an out-of-boundary-shaped `tasks.md` at the tip,
   and assert the "Route out-of-boundary tasks" step's own `if:` expression
   evaluates false when `truncated=true` even with `routed=true` — evaluate
   the compiled `if:` expression directly, never a live filing call
   (FR-013).
-- [ ] T023 [US2] Extend Gate 126 with pass condition (h), board-loop label
+- [x] T023 [US2] Extend Gate 126 with pass condition (h), board-loop label
   separation: a static assertion that `write-boundary-label-prefix`'s
   default (`route-out-of-boundary`) is not equal to `findings-label-
   prefix`'s default (`found-by`) and is not the literal string
   `spec-request` — failing loudly if a future edit collapses them
   (research.md D4, Assumptions section).
-- [ ] T024 [US2] Run `python .github/scripts/run-local-gates.py`; confirm
+- [x] T024 [US2] Run `python .github/scripts/run-local-gates.py`; confirm
   Gate 126's US2 fixtures ((c), (e), (f), (g), (h)) plus every pre-existing
   gate — including `verify-stage-finding-schema.py`/`verify-stage-findings-
   wiring.py`, unaffected by T018's additive `finding-kind` input — pass
@@ -392,7 +392,7 @@ describes; this phase only changes what the `reason` text says for that
 branch, per research.md D5. Do not re-derive or short-circuit spec 059's
 `converged`/`progressed`/`handoff` decision table (Out of Scope).
 
-- [ ] T025 [US3] `.github/workflows/implement.yml`, both `Read back cycle
+- [x] T025 [US3] `.github/workflows/implement.yml`, both `Read back cycle
   outcome` and `Read back retry outcome`'s existing reason-narrative branch
   (~line 1421-1438, and its retry mirror): when `routed=true` (T016's new
   output), set `reason` to name each out-of-boundary task (from
@@ -406,7 +406,7 @@ branch, per research.md D5. Do not re-derive or short-circuit spec 059's
   hand-off for the cases those already cover" — the other direction: a
   cycle where `progressed=true` still uses the unchanged narrative,
   because `handoff` (and therefore `routed`) requires `progressed=false`).
-- [ ] T026 [US3] Extend Gate 126 with pass condition (d), termination and
+- [x] T026 [US3] Extend Gate 126 with pass condition (d), termination and
   reason, executing the shipped read-back `run:` bodies against synthetic
   repos: only unchecked task is out-of-boundary, nothing else progressed →
   `handoff=true, routed=true`, `reason` names the task; same, but another
@@ -416,7 +416,7 @@ branch, per research.md D5. Do not re-derive or short-circuit spec 059's
   must still win); a mixed unchecked set (one out-of-boundary, one
   ordinary) → `all-unchecked-out-of-boundary=false`, `routed=false` even at
   hand-off time, existing narrative unchanged.
-- [ ] T027 [US3] `.github/workflows/finalize.yml`: add a new deterministic
+- [x] T027 [US3] `.github/workflows/finalize.yml`: add a new deterministic
   step "Look up routed write-boundary items", before "Summarize change and
   extract remaining manual work" (~line 686). For each unchecked line in
   the tip's `tasks.md`: compute its fingerprint by calling T008's
@@ -429,19 +429,19 @@ branch, per research.md D5. Do not re-derive or short-circuit spec 059's
   --json url,state`. Emit a mapping (line text → issue URL) for every
   match, as a step output the next step's prompt can render (contracts/
   write-boundary-mechanism.md §6, data-model.md's "Routed-item lookup").
-- [ ] T028 [US3] `.github/workflows/finalize.yml`: extend the "Summarize
+- [x] T028 [US3] `.github/workflows/finalize.yml`: extend the "Summarize
   change and extract remaining manual work" prompt (~line 732-738) with:
   "For any item in the lookup mapping below, write `<item> — routed, see
   <issue url>` instead of composing your own description of it; write
   every other item as today." Render T027's mapping into the prompt from
   its step output — never let the agent re-derive which unchecked line
   "looks routed" (Principle IX).
-- [ ] T029 [US3] Extend Gate 126 with a fixture for SC-005: a synthetic
+- [x] T029 [US3] Extend Gate 126 with a fixture for SC-005: a synthetic
   `tasks.md` with one routed (fingerprint-matching, per T027's formula)
   unchecked line and one ordinary unchecked line → T027's lookup mapping
   contains only the routed line's fingerprint match, and the rendered
   prompt instruction references it by URL; the ordinary line is untouched.
-- [ ] T030 [US3] Run `python .github/scripts/run-local-gates.py`; confirm
+- [x] T030 [US3] Run `python .github/scripts/run-local-gates.py`; confirm
   Gate 126's US3 fixtures ((d), SC-005) plus every pre-existing gate pass.
 
 **Checkpoint**: a `tasks.md` whose only unchecked item is out-of-boundary
@@ -466,7 +466,7 @@ change to the mechanism itself.
 a property Phases 3-5's implementation must already satisfy by
 construction, per the same reasoning spec 059's US2 phase used).
 
-- [ ] T031 [US4] Extend Gate 126 with a second-path fixture: drive the
+- [x] T031 [US4] Extend Gate 126 with a second-path fixture: drive the
   shipped `compose`/classification/lookup bodies with
   `no-write-paths=".claude/,.git/"` and confirm (i) the rendered
   `write-paths-statement` states both prefixes, (ii) a task naming a
@@ -475,7 +475,7 @@ construction, per the same reasoning spec 059's US2 phase used).
   path-specific text — all with zero changes to `classify-out-of-boundary-
   tasks.sh` or `wing-commander-tool-args`'s `compose` step beyond what
   Phases 2-3 already shipped.
-- [ ] T032 [US4] Confirm (read-only; no code change unless a gap is found)
+- [x] T032 [US4] Confirm (read-only; no code change unless a gap is found)
   that `no-write-paths` has exactly one declared definition per FR-003 and
   pass condition (a): `implement.yml`'s own `workflow_call` input is the
   sole default; `wing-commander-tool-args`'s call site (T010) and
@@ -485,7 +485,7 @@ construction, per the same reasoning spec 059's US2 phase used).
   .github/actions/wing-commander-write-boundary/action.yml` shows the
   literal default exactly once (the `workflow_call` input declaration in
   T002).
-- [ ] T033 [US4] Run `python .github/scripts/run-local-gates.py`; confirm
+- [x] T033 [US4] Run `python .github/scripts/run-local-gates.py`; confirm
   Gate 126's US4 fixture passes alongside every prior phase's.
 
 **Checkpoint**: the next unwritable path this repository identifies is a
@@ -495,7 +495,7 @@ list entry on `no-write-paths`, never a second mechanism (FR-019).
 
 ## Phase 7: Polish & Cross-Cutting Concerns
 
-- [ ] T034 Add a `MUTATIONS` table to Gate 126 (mirroring
+- [x] T034 Add a `MUTATIONS` table to Gate 126 (mirroring
   `verify-tasks-checkbox-convergence-signal.py`'s `_mut_*`/`MUTATIONS`
   pattern, FR-020, SC-007), reintroducing and asserting each one is caught
   by `--self-test` (contracts/write-boundary-gate.md's 7-item list): (1)
@@ -518,7 +518,7 @@ list entry on `no-write-paths`, never a second mechanism (FR-019).
   `verify-tasks-checkbox-convergence-signal.py`'s `main()` already does: if
   the mutation's target text no longer exists in the current shipped step,
   error "mutation inapplicable" rather than silently pass.
-- [ ] T035 Add a `check_gate_wired()` self-test to Gate 126 (mirroring Gate
+- [x] T035 Add a `check_gate_wired()` self-test to Gate 126 (mirroring Gate
   99's): confirm the "Gate 126 — ..." step exists in `.github/workflows/
   lint-workflows.yml`, is not `if: false`, and its `run:` line names
   `verify-write-boundary.py`'s exact path.
@@ -538,7 +538,7 @@ list entry on `no-write-paths`, never a second mechanism (FR-019).
   leaving only a one-line pointer in `constitution.md` itself. Also record
   the decision in `no-write-paths`'s own input description on
   `implement.yml` (T002), the single definition FR-003 requires.
-- [ ] T037 Update `docs/adoption.md`'s per-stage input tables: add
+- [x] T037 Update `docs/adoption.md`'s per-stage input tables: add
   `no-write-paths` and `write-boundary-label-prefix` to `implement.yml`'s
   table, and `write-boundary-label-prefix` to `finalize.yml`'s table
   (FR-018, FR-021) — same defaults as T002/T003.
@@ -550,7 +550,7 @@ list entry on `no-write-paths`, never a second mechanism (FR-019).
   fixture in Gate 126 (T020) rather than on `T055` itself, since `T055` is
   already checked in `specs/060-self-redrive-concurrency/tasks.md`. No code
   change to `T055`'s own content is required (Out of Scope).
-- [ ] T039 Run `python .github/scripts/run-local-gates.py` for the full
+- [x] T039 Run `python .github/scripts/run-local-gates.py` for the full
   suite: confirm Gate 126 (complete scenario table across (a)-(h) plus the
   7-item mutation battery) and every other gate pass together (SC-007).
 - [ ] T040 Replay a `T055`-shaped fixture end-to-end against the real
