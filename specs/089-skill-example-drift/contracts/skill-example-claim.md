@@ -2,7 +2,7 @@
 
 This is the contract between whoever edits
 `.claude/skills/spec-cross-reference/SKILL.md`'s Over-rated example and Gate
-125, the check that keeps it honest (FR-002, FR-003, FR-005). It does not
+129, the check that keeps it honest (FR-002, FR-003, FR-005). It does not
 constrain the example's prose beyond the tokens below — FR-005 requires the
 example to stay a natural, concrete illustration, not a copy of this
 contract's boilerplate the way Gate 101's canonical sentence is deliberately
@@ -29,9 +29,9 @@ freely; keep the tokens and the one clause below.
    Verification below), because unlike the three backtick tokens this
    clause has no single canonical token to anchor on.
 5. Immediately following the example (same paragraph or the next one): one
-   sentence naming Gate 125 by its script path, so a reader can run one
+   sentence naming Gate 129 by its script path, so a reader can run one
    command to settle currency (FR-008, research.md D8). Example: "This
-   claim is mechanically checked against `board-loop.yml` by Gate 125
+   claim is mechanically checked against `board-loop.yml` by Gate 129
    (`python3 .github/scripts/verify-skill-board-loop-concurrency-claim.py`)."
 
 ## What the paragraph must NOT do
@@ -42,13 +42,13 @@ freely; keep the tokens and the one clause below.
   four tokens/clause above are load-bearing for the gate.
 - Get reduced to a generic "a structural guarantee can refute a race"
   statement with the concrete tokens removed — FR-005 forbids this
-  explicitly; Gate 125 would then report `subject-missing` (D-1 in
+  explicitly; Gate 129 would then report `subject-missing` (D-1 in
   data-model.md's `DriftFinding` vocabulary), which is a deliberate,
   loud failure, not a silent pass.
 
 ## Verification
 
-Gate 125's extraction (research.md D3) is a bounded scan: find the
+Gate 129's extraction (research.md D3) is a bounded scan: find the
 Over-rated bullet's anchor phrase, read forward to the next paragraph
 break, and pull out items 1-3 as literal backtick-quoted substrings. Item 4
 (the queuing clause) is checked by a narrower substring test — the
@@ -63,7 +63,7 @@ unaffected.
 
 ## Ownership
 
-This file is not itself a subject Gate 125 reads at runtime (unlike
+This file is not itself a subject Gate 129 reads at runtime (unlike
 `concurrency-groups.md`, which the gate's `JobClassification` extraction
 does read, per data-model.md). It documents the shape so a human editing
 the skill (or a future implement-stage agent) knows what the gate expects

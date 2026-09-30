@@ -1,6 +1,6 @@
 {
   "$comment": [
-    "Registered exceptions to Gate 126's skill-board-loop-concurrency-claim",
+    "Registered exceptions to Gate 129's skill-board-loop-concurrency-claim",
     "check, enforced by",
     ".github/scripts/verify-skill-board-loop-concurrency-claim.py at",
     "pull-request time -- see",
@@ -16,7 +16,7 @@
     "",
     "Every entry is STALE-CHECKED in both directions, the same as",
     "single-home-waivers.json and stage-invariant-waivers.json: an entry",
-    "whose {property, job} pair matches no divergence Gate 126 currently",
+    "whose {property, job} pair matches no divergence Gate 129 currently",
     "computes fails the gate as stale, so a waiver cannot outlive the skill",
     "update it was waiting on. A divergence with no matching entry fails the",
     "gate as blocking, unwaived drift.",
