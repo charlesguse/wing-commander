@@ -670,3 +670,11 @@ and evaporating into PR-body prose) that this feature exists to end.
 - [ ] Fix `constitution-history.md`:25 — the Sync Impact Report is new in this PR, so fix the number before merge rather than treat it as historical
 - [ ] Renumber all 23 occurrences in `tasks.md`, and optionally the placeholders in `contracts/write-boundary-gate.md` and `quickstart.md`
 - [ ] Update the PR body's gate-number references
+
+## Maintainer Feedback — routing never fires when converge commits or the last in-reach task ticks (PR #836 review, item 2)
+
+- [ ] In `implement.yml`'s "Read back cycle outcome" (~:1459-1468) and "Read back retry outcome" (~:2184-2189), derive `routed` from `all-unchecked-out-of-boundary && ok && !truncated` and no in-reach progress this cycle, instead of requiring spec 059's `handoff` (which requires no `converge:` commit)
+- [ ] Treat a `converge:` commit whose appended lines are all out-of-boundary as not disqualifying `routed`
+- [ ] File out-of-boundary tasks whenever the loop ends for any reason (iteration cap or stall reached), not only on the routed hand-off path
+- [ ] Add a Gate 133 fixture reproducing the shipped read-back step with every unchecked task under `.claude/` plus one `converge:` commit that re-appends it, asserting the fix now routes instead of `handoff=false routed=false reason="converge appended new work"`
+- [ ] Add a Gate 133 fixture for a cycle that ticks the last in-reach task (`progressed=true`) on what turns out to be the final iteration, asserting the out-of-boundary task is still filed instead of reaching the PR as orphan prose (SC-005)
