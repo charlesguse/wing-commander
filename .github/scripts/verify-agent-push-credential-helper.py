@@ -357,12 +357,12 @@ def _repo_files(root="."):
         # Only when root IS the top: a fixture directory nested inside some
         # other repository's work tree is not that repository.
         if top.returncode == 0 and os.path.realpath(
-                top.stdout.decode("utf-8").strip()) == os.path.realpath(root):
+                os.fsdecode(top.stdout).strip()) == os.path.realpath(root):
             proc = subprocess.run(
                 ["git", "-C", root, "ls-files", "-z"],
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             if proc.returncode == 0:
-                return sorted(p for p in proc.stdout.decode("utf-8").split("\0") if p)
+                return sorted(os.fsdecode(p) for p in proc.stdout.split(b"\0") if p)
     except OSError:
         pass
     rels = []
@@ -387,9 +387,9 @@ def check_no_jwt_construction(root="."):
     failures = []
     for rel in _repo_files(root):
         path = os.path.join(root, rel)
-        if rel.startswith(".git/") or _is_self(path, rel):
-            continue
         if not rel.endswith(SINGLE_HOME_SCAN_EXTENSIONS):
+            continue
+        if rel.startswith(".git/") or _is_self(path, rel):
             continue
         try:
             with io.open(path, encoding="utf-8") as fh:
