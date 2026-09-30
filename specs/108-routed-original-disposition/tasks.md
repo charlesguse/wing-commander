@@ -660,3 +660,7 @@ Task: "Add disposition:duplicate to wing-commander-board-labels/action.yml"
 ## Maintainer Feedback
 
 - [ ] Narrow the closed-without-landing scan (`.github/workflows/board-loop.yml` ~line 316, `board_closed_without_landing.py:39-48`) to only consider spec-requests named by a `step=duplicate` marker (reuse `originating_by_spec_request`) instead of every closed, bot-authored `spec-request` issue — the current scope would post false FR-017 notices on closed spec-requests the loop never filed under this feature's disposition (#768, #605, #577, #574, #502, #487, #549). (FR-016, FR-017)
+
+## Maintainer Feedback
+
+- [ ] Add `continue-on-error: true` to the "Detect a spec-request that closed without landing (FR-017)" step in `.github/workflows/board-loop.yml` (~line 308), or move it to run after `select`, so a lasting comment failure (a locked issue, a 403) doesn't skip `select` on every scheduled run — keep the `::error::` annotations for visibility.
