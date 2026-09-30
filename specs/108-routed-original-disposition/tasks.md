@@ -709,7 +709,11 @@ Task: "Add disposition:duplicate to wing-commander-board-labels/action.yml"
 
 ## Maintainer Feedback
 
-- [ ] Reorder `dispose_as_duplicate()` in `board_duplicate_disposition.py:185-204` so the `disposition:duplicate` label and the reason/marker comment are applied *before* the close, not after. Today the order is close, then label, then comment; if the close succeeds and the `gh issue edit --add-label` call fails, the issue ends up CLOSED with no label and no marker. `is_excluded()` returns `"closed"` first (`board_eligibility.py:193`), so no later run ever selects it to retry, the route/fix/readiness `::error::` texts claiming "a later run resumes from its own pre-check" are false for this case, and the FR-017 closed-without-landing scan can't find it either since the label is missing. Left alone, a maintainer reopening the issue routes it again and can file a second spec-request while the first is still open, violating FR-006 and FR-010. Update `contracts/duplicate-disposition.md`'s failure-semantics table to reflect the new step order. (FR-006, FR-010, FR-017)
+- [X] Reorder `dispose_as_duplicate()` in `board_duplicate_disposition.py:185-204` so the `disposition:duplicate` label and the reason/marker comment are applied *before* the close, not after. Today the order is close, then label, then comment; if the close succeeds and the `gh issue edit --add-label` call fails, the issue ends up CLOSED with no label and no marker. `is_excluded()` returns `"closed"` first (`board_eligibility.py:193`), so no later run ever selects it to retry, the route/fix/readiness `::error::` texts claiming "a later run resumes from its own pre-check" are false for this case, and the FR-017 closed-without-landing scan can't find it either since the label is missing. Left alone, a maintainer reopening the issue routes it again and can file a second spec-request while the first is still open, violating FR-006 and FR-010. Update `contracts/duplicate-disposition.md`'s failure-semantics table to reflect the new step order. (FR-006, FR-010, FR-017)
+      Fixed: `dispose_as_duplicate()` now runs label, then comment, then
+      close (was close, label, comment); `verify-board-duplicate-
+      disposition.py`'s cases 2-4 and `contracts/duplicate-disposition.md`'s
+      sequence/failure-semantics table updated to match the new order.
 
 ## Maintainer Feedback
 

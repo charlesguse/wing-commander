@@ -27,19 +27,19 @@ def dispose_as_duplicate(originating_issue: int, spec_request_issue: int,
    invariant): read `originating_issue`'s current `state` and `labels`
    (`gh issue view`). If `state == CLOSED` and `disposition:duplicate` is
    already present, return `True` without any further call.
-2. **Close** (FR-001, FR-015, research.md D2):
+2. **Label** (idempotent on GitHub's side regardless of the other steps'
+   outcome): `gh issue edit <originating_issue> --add-label
+   disposition:duplicate`.
+3. **Reason comment on the originating issue** (FR-003): one comment
+   stating `reason` and linking `spec_request_url`, posted only if step 1
+   found it were not already present.
+4. **Close** (FR-001, FR-015, research.md D2):
    `gh api -X PATCH repos/OWNER/REPO/issues/<originating_issue> -f
    state=closed -f state_reason=duplicate`. If `state` was already `CLOSED`
    for any other reason (edge case: a maintainer closed it mid-run), this
    step is skipped rather than attempted (GitHub allows re-closing but this
    contract treats "already closed" as satisfied per the edge case's own
-   wording), and the sequence continues to step 3.
-3. **Label**: `gh issue edit <originating_issue> --add-label
-   disposition:duplicate` (idempotent on GitHub's side regardless of step
-   1's outcome).
-4. **Reason comment on the originating issue** (FR-003): one comment
-   stating `reason` and linking `spec_request_url`, posted only if step 1
-   found it were not already present.
+   wording).
 5. **Cross-link on the originating issue** (unchanged, FR-004): the
    existing `wing-commander-outstanding-task-item` "Routed to spec-request"
    checklist item, posted by the site exactly as it is today — this
@@ -58,11 +58,18 @@ def dispose_as_duplicate(originating_issue: int, spec_request_issue: int,
 
 Any failure at steps 2–7 returns `False`; the caller's step fails the job
 (no `continue-on-error`), so a later run re-enters at step 1 and finishes
-whatever step 1's pre-check finds incomplete (FR-010). Step order matters:
-closing before commenting means a crash between steps 2 and 4 still leaves
-the issue excluded from selection (`state == CLOSED` alone already excludes
-it — data-model.md), so a maintainer reading it mid-failure sees a closed
-issue that is not yet explained, never an open issue silently orphaned.
+whatever step 1's pre-check finds incomplete (FR-010). Step order matters
+the other way from an earlier draft of this contract: labelling and
+commenting BEFORE closing means a crash after a successful close never
+strands the issue CLOSED with no `disposition:duplicate` label and no
+marker. `is_excluded()` (`board_eligibility.py`) returns `(True, "closed")`
+on `state == CLOSED` alone, before it ever looks at labels
+(`board_eligibility.py`'s exclusion order) — so a closed-but-unlabelled
+issue is never re-selected for a later run's pre-check to resume, and the
+FR-017 closed-without-landing scan also can't find it without the label.
+Closing last means the only way an issue ends up CLOSED is with its label
+and marker already in place (maintainer review, fold leg-0: FR-006,
+FR-010, FR-017).
 
 ## Guard interaction with Gate 93 check 3 (#514)
 
@@ -80,7 +87,7 @@ guard" side of that boundary.
 | Scenario | State left behind | Next run's behaviour |
 |---|---|---|
 | Create guard fails (spec-request never filed) | Originating issue untouched, no `disposition:duplicate`, no marker change | Retries the create from scratch (unchanged create-guard behaviour, FR-011) |
-| Spec-request filed, close call fails | Originating issue still OPEN, no label, no comment | Idempotency pre-check finds `state != CLOSED`; re-runs from step 2 |
-| Spec-request filed, close succeeds, label call fails | Originating issue CLOSED, no `disposition:duplicate` label yet | Pre-check's "already disposed" test requires BOTH closed AND labelled, so it re-enters at step 3 |
-| Spec-request filed, close+label succeed, comment fails | Originating issue CLOSED + labelled, no reason comment | Pre-check treats closed+labelled as the "already disposed" signal for skipping steps 2–3, but comment-presence is checked independently per FR-009's "no duplicate comment" wording — the module checks for its own comment marker before posting, not merely closed+labelled, so a missing comment is still added |
+| Spec-request filed, label call fails | Originating issue still OPEN, no label, no comment | Pre-check finds `disposition:duplicate` absent; re-runs from step 2 (label) |
+| Spec-request filed, label succeeds, comment call fails | Originating issue OPEN + labelled, no reason comment | Pre-check's own comment-presence check (independent of labelled/closed state, per FR-009's "no duplicate comment" wording) finds it missing; re-enters at step 3 (comment) |
+| Spec-request filed, label+comment succeed, close call fails | Originating issue OPEN + labelled + commented | Pre-check finds `state != CLOSED`; re-enters at step 4 (close) — never re-posts a second comment, since the comment-presence check already found its own marker |
 | Everything succeeds, run re-executes disposition on the same issue anyway (idempotency drill, FR-009) | No change | Pre-check finds everything present; no-op `True` |

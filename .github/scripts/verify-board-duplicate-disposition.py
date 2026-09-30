@@ -118,36 +118,37 @@ def _case_1_already_disposed():
 _case("1: already disposed is a no-op with zero gh calls", _case_1_already_disposed)
 
 
-def _case_2_close_fails_then_resumes():
-    first_ok, first_steps = _call(_originating("OPEN"), _spec_request(), fail_step="close")
-    second_ok, second_steps = _call(_originating("OPEN"), _spec_request(), fail_step=None)
-    return (first_ok is False and first_steps == ["close"]
-            and second_ok is True and second_steps == ["close", "label", "comment"])
-
-
-_case("2: close fails -> False; a later attempt re-enters at close", _case_2_close_fails_then_resumes)
-
-
-def _case_3_label_fails_then_resumes():
+def _case_2_label_fails_then_resumes():
     first_ok, first_steps = _call(_originating("OPEN"), _spec_request(), fail_step="label")
-    second_ok, second_steps = _call(_originating("CLOSED", labelled=False), _spec_request(), fail_step=None)
-    return (first_ok is False and first_steps == ["close", "label"]
-            and second_ok is True and second_steps == ["label", "comment"])
+    second_ok, second_steps = _call(_originating("OPEN"), _spec_request(), fail_step=None)
+    return (first_ok is False and first_steps == ["label"]
+            and second_ok is True and second_steps == ["label", "comment", "close"])
 
 
-_case("3: close ok, label fails -> False; a later attempt re-enters at label, not a second close",
-      _case_3_label_fails_then_resumes)
+_case("2: label fails -> False; a later attempt re-enters at label", _case_2_label_fails_then_resumes)
 
 
-def _case_4_comment_fails_then_resumes():
+def _case_3_comment_fails_then_resumes():
     first_ok, first_steps = _call(_originating("OPEN"), _spec_request(), fail_step="comment")
-    second_ok, second_steps = _call(_originating("CLOSED", labelled=True), _spec_request(), fail_step=None)
-    return (first_ok is False and first_steps == ["close", "label", "comment"]
-            and second_ok is True and second_steps == ["comment"])
+    second_ok, second_steps = _call(_originating("OPEN", labelled=True), _spec_request(), fail_step=None)
+    return (first_ok is False and first_steps == ["label", "comment"]
+            and second_ok is True and second_steps == ["comment", "close"])
 
 
-_case("4: close+label ok, comment fails -> False; a later attempt posts only the missing comment",
-      _case_4_comment_fails_then_resumes)
+_case("3: label ok, comment fails -> False; a later attempt re-enters at comment, not a second label",
+      _case_3_comment_fails_then_resumes)
+
+
+def _case_4_close_fails_then_resumes():
+    first_ok, first_steps = _call(_originating("OPEN"), _spec_request(), fail_step="close")
+    second_ok, second_steps = _call(_originating("OPEN", labelled=True, own_comment=True), _spec_request(),
+                                     fail_step=None)
+    return (first_ok is False and first_steps == ["label", "comment", "close"]
+            and second_ok is True and second_steps == ["close"])
+
+
+_case("4: label+comment ok, close fails -> False; a later attempt closes only, posts no second comment",
+      _case_4_close_fails_then_resumes)
 
 
 def _case_5_idempotency_drill():

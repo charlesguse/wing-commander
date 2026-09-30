@@ -182,21 +182,11 @@ def dispose_as_duplicate(originating_issue, spec_request_issue, spec_request_url
     comment_needed = not _has_own_duplicate_comment(
         originating.get("comments"), bot_login, spec_request_issue)
 
-    if close_needed:
-        proc = run(["gh", "api", "-X", "PATCH", "repos/{0}/issues/{1}".format(repository, originating_issue),
-                    "-f", "state=closed", "-f", "state_reason=duplicate"],
-                   capture_output=True, text=True)
-        if proc.returncode != 0:
-            print("::error::board_duplicate_disposition: could not close issue #{0} as a duplicate of "
-                  "#{1} (step 2) -- {2}".format(originating_issue, spec_request_issue,
-                                                 (proc.stderr or "").strip()), file=sys.stderr)
-            return False
-
     if label_needed:
         proc = run(["gh", "issue", "edit", str(originating_issue), "-R", repository,
                     "--add-label", DISPOSITION_LABEL], capture_output=True, text=True)
         if proc.returncode != 0:
-            print("::error::board_duplicate_disposition: could not add {0} to issue #{1} (step 3) -- "
+            print("::error::board_duplicate_disposition: could not add {0} to issue #{1} (step 2) -- "
                   "{2}".format(DISPOSITION_LABEL, originating_issue, (proc.stderr or "").strip()),
                   file=sys.stderr)
             return False
@@ -204,13 +194,23 @@ def dispose_as_duplicate(originating_issue, spec_request_issue, spec_request_url
     if comment_needed:
         marker = write_marker(DUPLICATE_STEP, round=0, pr=None, branch=None, base_sha=None,
                                spec_request=spec_request_issue)
-        body = "Closed as a duplicate of {0} -- {1}\n\n{2}".format(spec_request_url, reason, marker)
+        body = "Closing as a duplicate of {0} -- {1}\n\n{2}".format(spec_request_url, reason, marker)
         proc = run(["gh", "issue", "comment", str(originating_issue), "-R", repository, "--body", body],
                    capture_output=True, text=True)
         if proc.returncode != 0:
             print("::error::board_duplicate_disposition: could not post the reason/marker comment on "
-                  "issue #{0} (step 4) -- {1}".format(originating_issue, (proc.stderr or "").strip()),
+                  "issue #{0} (step 3) -- {1}".format(originating_issue, (proc.stderr or "").strip()),
                   file=sys.stderr)
+            return False
+
+    if close_needed:
+        proc = run(["gh", "api", "-X", "PATCH", "repos/{0}/issues/{1}".format(repository, originating_issue),
+                    "-f", "state=closed", "-f", "state_reason=duplicate"],
+                   capture_output=True, text=True)
+        if proc.returncode != 0:
+            print("::error::board_duplicate_disposition: could not close issue #{0} as a duplicate of "
+                  "#{1} (step 4) -- {2}".format(originating_issue, spec_request_issue,
+                                                 (proc.stderr or "").strip()), file=sys.stderr)
             return False
 
     return True
