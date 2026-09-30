@@ -9,7 +9,8 @@ Five conditions gate whether a lifecycle PR is reviewed at all: a check
 that ran on a stale push, a merge conflict, or a round that already
 reviewed this exact head SHA must never read as "ready" — that would
 either waste a review on a PR nobody can merge yet, or skip re-review
-after a genuine new push. This gate pins all six documented branches
+after a genuine new push. This gate pins all six documented branches, plus two cases for the
+gate's own commit status, which is never an input to readiness
 (mirroring verify-board-readiness.py's own EXPECTED_CASES shape).
 
 Fixtures, each a checked-in snapshot under
@@ -34,6 +35,7 @@ FIXTURES_DIR = os.path.join(
 EXPECTED_CASES = {
     "stale-check-summary", "no-checks", "not-mergeable",
     "already-reviewed-at-this-sha", "kill-switch-set", "all-clear",
+    "own-status-error-ignored", "own-status-only",
 }
 
 
