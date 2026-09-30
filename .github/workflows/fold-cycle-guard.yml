@@ -298,7 +298,10 @@ jobs:
             exit 0
           fi
 
-          jobs_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs?per_page=100")"
+          if ! jobs_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs?per_page=100")"; then
+            echo "::error::fold-cycle-guard: could not read run $RUN_ID's jobs -- cannot tell a never-started cancellation from a manual one."
+            exit 1
+          fi
           never_started=true
           if printf '%s' "$jobs_json" | jq -e '[.jobs[] | select(.started_at != null)] | length > 0' >/dev/null 2>&1; then
             never_started=false
@@ -318,7 +321,10 @@ jobs:
             exit 0
           fi
 
-          run_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID")"
+          if ! run_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID")"; then
+            echo "::error::fold-cycle-guard: could not read run $RUN_ID -- cannot place its cancellation time against the fold queue."
+            exit 1
+          fi
           cancelled_at="$(printf '%s' "$run_json" | jq -r '.updated_at')"
           cancelled_epoch=$(date -u -d "$cancelled_at" +%s 2>/dev/null || echo 0)
 
