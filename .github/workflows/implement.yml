@@ -1565,7 +1565,13 @@ jobs:
       # invisible to watchdog.yml inspecting this run after the fact over
       # the API (only logs/artifacts are retrievable then, not step
       # outputs). This step is the missing visibility step: an artifact,
-      # mirroring the claude-execution-output-* convention just above.
+      # mirroring the claude-execution-output-* convention just above —
+      # including that convention's -cycle/-retry name suffixes (Review
+      # Gate Round 1): "Read back cycle outcome" runs on every active job
+      # run and "Read back retry outcome" runs additionally whenever a
+      # retry fires, so both this step and its (retry) counterpart below
+      # can upload within the same job run, and upload-artifact@v6 refuses
+      # a name that already exists once per run.
       # Never gates or fails this job — an upload failure here is simply a
       # future collect-cycle-outcome empty contribution.
       - name: Record cycle outcome for watchdog (cycle)
@@ -1591,15 +1597,15 @@ jobs:
             --arg outcome "$outcome" \
             --arg firstfailure "${FIRST_FAILURE:-}" \
             '{converged: $converged, handoff: $handoff, "gate-suite-outcome": $outcome, "gate-suite-first-failure": (if $firstfailure == "" then null else $firstfailure end)}' \
-            > "${{ runner.temp }}/wing-commander-cycle-outcome.json"
+            > "${{ runner.temp }}/wing-commander-cycle-outcome-cycle.json"
 
       - name: Upload cycle outcome artifact (cycle)
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true'
         continue-on-error: true
         uses: actions/upload-artifact@v6
         with:
-          name: wing-commander-cycle-outcome
-          path: ${{ runner.temp }}/wing-commander-cycle-outcome.json
+          name: wing-commander-cycle-outcome-cycle
+          path: ${{ runner.temp }}/wing-commander-cycle-outcome-cycle.json
           if-no-files-found: warn
 
       # Deferred verdict annotation for an exhausted run (FR-013, FR-015) —
@@ -2285,10 +2291,15 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       # Mirrors "Record cycle outcome for watchdog (cycle)" above — see its
-      # comment. Mutually exclusive with that step's upload within one job
-      # run: at most one of the cycle/retry "Read back ... outcome" steps
-      # actually runs per attempt, so at most one of these two uploads the
-      # `wing-commander-cycle-outcome` artifact.
+      # comment. "Read back cycle outcome" runs on every active job run and
+      # "Read back retry outcome" runs additionally whenever a retry fires,
+      # so this step's own upload can land in the same job run as the
+      # (cycle) step's above — hence the distinct `-retry` artifact name
+      # (Review Gate Round 1), the same convention
+      # claude-execution-output-cycle/-retry and metrics-record-cycle/-retry
+      # already use. watchdog.yml's collector prefers this artifact over
+      # the (cycle) one when both are present, since a retry's outcome is
+      # the job's final word.
       - name: Record cycle outcome for watchdog (retry)
         id: retry-outcome-artifact
         shell: bash
@@ -2312,15 +2323,15 @@ jobs:
             --arg outcome "$outcome" \
             --arg firstfailure "${FIRST_FAILURE:-}" \
             '{converged: $converged, handoff: $handoff, "gate-suite-outcome": $outcome, "gate-suite-first-failure": (if $firstfailure == "" then null else $firstfailure end)}' \
-            > "${{ runner.temp }}/wing-commander-cycle-outcome.json"
+            > "${{ runner.temp }}/wing-commander-cycle-outcome-retry.json"
 
       - name: Upload cycle outcome artifact (retry)
         if: steps.lifecycle-gate.outputs.is-open == 'true' && (steps.retry.outcome == 'success' || steps.retry.outcome == 'failure')
         continue-on-error: true
         uses: actions/upload-artifact@v6
         with:
-          name: wing-commander-cycle-outcome
-          path: ${{ runner.temp }}/wing-commander-cycle-outcome.json
+          name: wing-commander-cycle-outcome-retry
+          path: ${{ runner.temp }}/wing-commander-cycle-outcome-retry.json
           if-no-files-found: warn
 
       # Deferred verdict annotation for an exhausted retry — mirrors "Report

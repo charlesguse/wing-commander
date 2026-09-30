@@ -14,9 +14,14 @@ evidence-validity gate are unchanged.
 each an empty-is-success attribution-guarded read.
 
 **Amended contract**: A sixth collector, `Collect: cycle outcome`,
-downloads the `wing-commander-cycle-outcome` artifact the inspected run's
-`implement.yml` job uploaded (same `gh run download` mechanism, same
-attribution guard, as `collect-execution-output`). Its two effects:
+downloads the `wing-commander-cycle-outcome-*` artifact(s) the inspected
+run's `implement.yml` job uploaded (same `gh run download` mechanism, same
+attribution guard, as `collect-execution-output`) — `-cycle` and `-retry`
+are distinct artifact names (Review Gate Round 1: the two "Record cycle
+outcome for watchdog" steps can both run within one job, and
+`upload-artifact@v6` refuses a name already used once in a run), and when
+both are present the `-retry` one is read, since a retry's outcome is the
+job's final word. Its two effects:
 
 1. It records the run's `{converged, handoff, gate-suite-outcome,
    gate-suite-first-failure}` state for `triage`'s FR-009 condition
@@ -37,20 +42,27 @@ never a step failure.
 watchdog's contract surface for the first time — it was previously only a
 *subject* the `spec-meta`/`branch-drift` collectors read state about, never
 a producer of an artifact `watchdog.yml` consumes): immediately after
-"Read back cycle outcome" (both the `(cycle)` and `(retry)` legs), a new
-step uploads:
+"Read back cycle outcome" (each of the `(cycle)` and `(retry)` legs
+separately), a new step uploads:
 
 ```json
 {"converged": <bool>, "handoff": <bool>,
  "gate-suite-outcome": "pass"|"fail"|"skipped",
  "gate-suite-first-failure": <string|null>}
 ```
-as artifact `wing-commander-cycle-outcome`. This step runs whenever "Read
-back cycle outcome" ran (`always()`-adjacent to it, mirroring how
-`Persist triage decision` in `watchdog.yml` already runs whenever its
-sibling ran) — it never gates or fails the `implement` job; an upload
-failure here is invisible to `implement.yml`'s own success/failure and is
-simply a future `collect-cycle-outcome` empty contribution.
+as artifact `wing-commander-cycle-outcome-cycle` (from the `(cycle)` leg)
+or `wing-commander-cycle-outcome-retry` (from the `(retry)` leg) — distinct
+names, not one shared name, because "Read back cycle outcome" runs on
+every active job run while "Read back retry outcome" runs additionally
+whenever a retry fires, so both legs' upload steps can execute within the
+same job run (the same reason `claude-execution-output-cycle`/`-retry` and
+`metrics-record-cycle`/`-retry` are already suffixed rather than shared).
+Each step runs whenever its own "Read back ... outcome" ran
+(`always()`-adjacent to it, mirroring how `Persist triage decision` in
+`watchdog.yml` already runs whenever its sibling ran) — neither ever gates
+or fails the `implement` job; an upload failure here is invisible to
+`implement.yml`'s own success/failure and is simply a future
+`collect-cycle-outcome` empty contribution.
 
 ## `triage` — one new pre-fingerprint branch (FR-009); dedup search reads back accumulated ids; multi-match is named, not `data-integrity`
 

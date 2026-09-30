@@ -705,14 +705,21 @@ jobs:
 
       # FR-009/FR-010 (spec 109): the gate-suite filing condition needs to
       # know whether the inspected run's own implement cycle is already
-      # converging — read back from the `wing-commander-cycle-outcome`
-      # artifact implement.yml's "Record cycle outcome for watchdog" step
-      # uploads (contracts/watchdog-dedup-fanout-delta.md). A missing
-      # artifact (not an implement run, predates this feature, or the
-      # upload never happened) is a successful empty contribution, same
-      # attribution guard as collect-execution-output above. When the
-      # artifact's own gate-suite-outcome is "fail", this is also the one
-      # new signal source diagnose can cite (data-model.md).
+      # converging — read back from the `wing-commander-cycle-outcome-*`
+      # artifacts implement.yml's "Record cycle outcome for watchdog
+      # (cycle)"/"(retry)" steps upload
+      # (contracts/watchdog-dedup-fanout-delta.md). A missing artifact (not
+      # an implement run, predates this feature, or the upload never
+      # happened) is a successful empty contribution, same attribution
+      # guard as collect-execution-output above. When the artifact's own
+      # gate-suite-outcome is "fail", this is also the one new signal
+      # source diagnose can cite (data-model.md).
+      #
+      # Review Gate Round 1: the two artifacts are named -cycle/-retry
+      # (mirroring claude-execution-output-cycle/-retry) precisely because
+      # both can be present in one run — when a retry fired, its own
+      # outcome is the job's final word, so it is preferred below over the
+      # (cycle) artifact rather than left to shell glob ordering.
       - name: "Collect: cycle outcome"
         id: collect-cycle-outcome
         shell: bash
@@ -732,8 +739,8 @@ jobs:
           esac
           dl_dir="$RUNNER_TEMP/cycle-outcome"
           mkdir -p "$dl_dir"
-          if ! GH_TOKEN="$ACTIONS_TOKEN" gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" -p 'wing-commander-cycle-outcome*' -D "$dl_dir" >"$RUNNER_TEMP/co-dl.log" 2>&1; then
-            echo "No wing-commander-cycle-outcome artifact found for run $RUN_ID (not an implement run, predates this feature, or the upload never happened) — treated as a successful empty contribution." >> "$GITHUB_STEP_SUMMARY"
+          if ! GH_TOKEN="$ACTIONS_TOKEN" gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" -p 'wing-commander-cycle-outcome-*' -D "$dl_dir" >"$RUNNER_TEMP/co-dl.log" 2>&1; then
+            echo "No wing-commander-cycle-outcome-* artifact found for run $RUN_ID (not an implement run, predates this feature, or the upload never happened) — treated as a successful empty contribution." >> "$GITHUB_STEP_SUMMARY"
             co_outcome="ok"
             grep -qiE "no artifact|no valid artifacts|no artifacts" "$RUNNER_TEMP/co-dl.log" 2>/dev/null || co_outcome="failed"
             jq -c --arg c "collect-cycle-outcome" --arg o "$co_outcome" '. + [{"collector":$c,"outcome":$o}]' "$RUNNER_TEMP/collector-outcomes.json" > "$RUNNER_TEMP/collector-outcomes.json.tmp" && mv "$RUNNER_TEMP/collector-outcomes.json.tmp" "$RUNNER_TEMP/collector-outcomes.json"
@@ -741,16 +748,27 @@ jobs:
           fi
           found=false
           f=""
-          for cand in "$dl_dir"/*/*.json "$dl_dir"/*.json; do
+          # A retry's outcome supersedes the cycle attempt's when both
+          # uploaded (the retry ran later and is the job's final word) —
+          # checked first, ahead of the generic glob fallback below.
+          for cand in "$dl_dir/wing-commander-cycle-outcome-retry"/*.json; do
             [ -e "$cand" ] || continue
             found=true
             f="$cand"
             break
           done
+          if [ "$found" = "false" ]; then
+            for cand in "$dl_dir"/*/*.json "$dl_dir"/*.json; do
+              [ -e "$cand" ] || continue
+              found=true
+              f="$cand"
+              break
+            done
+          fi
           if [ "$found" = "false" ] || ! jq -e . "$f" >/dev/null 2>&1; then
             co_outcome="ok"
             [ "$found" = "false" ] || co_outcome="failed"
-            echo "wing-commander-cycle-outcome artifact download produced no readable JSON file — treated as a successful empty contribution." >> "$GITHUB_STEP_SUMMARY"
+            echo "wing-commander-cycle-outcome-* artifact download produced no readable JSON file — treated as a successful empty contribution." >> "$GITHUB_STEP_SUMMARY"
             jq -c --arg c "collect-cycle-outcome" --arg o "$co_outcome" '. + [{"collector":$c,"outcome":$o}]' "$RUNNER_TEMP/collector-outcomes.json" > "$RUNNER_TEMP/collector-outcomes.json.tmp" && mv "$RUNNER_TEMP/collector-outcomes.json.tmp" "$RUNNER_TEMP/collector-outcomes.json"
             exit 0
           fi

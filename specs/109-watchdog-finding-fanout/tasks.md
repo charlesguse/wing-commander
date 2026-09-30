@@ -246,7 +246,7 @@ With two contributors (this run's shared-usage-window constraint caps concurrent
 
 ## Review Gate Round 1 Findings
 
-- [ ] Review finding: cycle/retry cycle-outcome artifacts collide under one name
+- [X] Review finding: cycle/retry cycle-outcome artifacts collide under one name
 
   implement.yml's new (cycle) and (retry) 'Record/Upload cycle outcome for watchdog' steps both upload artifact name wing-commander-cycle-outcome and both run in the same job when a retry fires, so the retry leg's upload silently fails and watchdog reads stale pre-retry converged/handoff/gate-suite-outcome state.
 
@@ -254,7 +254,7 @@ With two contributors (this run's shared-usage-window constraint caps concurrent
 
   Detail: 'Read back cycle outcome' (id: outcome) runs whenever steps.lifecycle-gate.outputs.is-open=='true' && steps.guard.outputs.skip!='true' (i.e. essentially every active job run); 'Read back retry outcome' (id: retry-outcome) runs additionally whenever steps.retry.outcome is 'success' or 'failure' -- these are not mutually exclusive, contradicting the PR's own comment above the (retry) upload step. Elsewhere in the same file the established convention for artifacts producible twice per job (claude-execution-output-cycle/-retry, metrics-record-cycle/-retry, see implement.yml ~lines 1135-1167 and 1895-1926) uses distinct suffixed names specifically to avoid this; a nearby comment at implement.yml:2384 confirms the team already knows 'upload-artifact v4+ refuses a name that already exists' in one run.
 
-- [ ] Review finding: stale collector-count wording in Gate 19 fixture
+- [X] Review finding: stale collector-count wording in Gate 19 fixture
 
   verify-gate-19.py's AGGREGATE_CASES still say 'the other eight succeeded' and 'all nine collector STEPS outright error' after this PR bumped COLLECTOR_IDS from 9 to 10 entries by adding collect-cycle-outcome.
 

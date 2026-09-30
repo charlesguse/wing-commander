@@ -2251,7 +2251,7 @@ AGGREGATE_CASES = [
         expect_signals=SIGNALS_FIXTURE,
     ),
     dict(
-        name="one collector's read failed, the other eight succeeded",
+        name="one collector's read failed, the other nine succeeded",
         why="Acceptance Scenario 3 — untrusted-collectors names exactly the "
             "failed collector, evidence-available stays true (a partial "
             "failure still reaches a verdict), and this is true even though "
@@ -2268,7 +2268,7 @@ AGGREGATE_CASES = [
         expect_signals=SIGNALS_FIXTURE,
     ),
     dict(
-        name="all nine collector STEPS outright error: evidence-available "
+        name="all ten collector STEPS outright error: evidence-available "
              "flips to false",
         why="specs/046-watchdog-supervision-collectors leg-1 — the "
             "collectors-failed >= collectors-total comparison must track "

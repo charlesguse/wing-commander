@@ -70,9 +70,12 @@ proceed in parallel:
    to consume.
 
 **`Collect: cycle outcome` (spec 109, new)**: downloads the
-`wing-commander-cycle-outcome` artifact `implement.yml`'s "Record cycle
-outcome for watchdog" step uploads (contracts/watchdog-dedup-fanout-delta.md
-in that feature's own spec directory). A missing artifact (inspected run
+`wing-commander-cycle-outcome-*` artifact(s) `implement.yml`'s "Record
+cycle outcome for watchdog (cycle)"/"(retry)" steps upload — distinct
+`-cycle`/`-retry` names, since both can be uploaded within one job run;
+the `-retry` one is read when both are present, as a retry's outcome is
+the job's final word (contracts/watchdog-dedup-fanout-delta.md in that
+feature's own spec directory). A missing artifact (inspected run
 predates this feature, is not an implement run, or the upload never
 happened) is a successful empty contribution, same attribution guard as
 every other collector. Two effects: (1) records `{converged, handoff,
