@@ -38,7 +38,8 @@ ANCHOR = "**Over-rated.**"
 
 SkillClaim = collections.namedtuple(
     "SkillClaim",
-    ["job_range_start", "job_range_end", "ordinary_group", "directed_group", "location"])
+    ["job_range_start", "job_range_end", "ordinary_group", "directed_group",
+     "queues_not_cancels", "location"])
 
 JobClassification = collections.namedtuple(
     "JobClassification",
@@ -61,6 +62,14 @@ WaiverEntry = collections.namedtuple(
 # ordinary group otherwise. Matched structurally, not evaluated generically.
 DIRECTED_EXPR_RE = re.compile(
     r"directed-stage\s*!=\s*''\s*\)\s*&&\s*'([\w.-]+)'\s*\|\|\s*'([\w.-]+)'")
+
+# Item 4 (contracts/skill-example-claim.md "Verification"): a queuing/
+# cancellation word in the same paragraph as the group tokens.
+QUEUE_WORD_RE = re.compile(r"queue|cancel", re.IGNORECASE)
+
+# Item 5: the literal script path, required within two paragraphs of the
+# anchor (contracts/skill-example-claim.md "Verification").
+SCRIPT_PATH_TOKEN = ".github/scripts/verify-skill-board-loop-concurrency-claim.py"
 
 
 def _read(path):
@@ -90,9 +99,19 @@ def extract_skill_claim(text, path):
     paragraph = text[idx:end if end != -1 else len(text)]
     collapsed = _collapse_ws(paragraph)
 
+    # Item 5's window: the anchor paragraph plus the one after it (contracts/
+    # skill-example-claim.md "Verification" -- "within two paragraphs").
+    if end != -1:
+        second_end = text.find("\n\n", end + 2)
+        two_paragraph_window = text[idx:second_end if second_end != -1 else len(text)]
+    else:
+        two_paragraph_window = paragraph
+
     range_match = re.search(r"`([\w.-]+)`\s+through\s+`([\w.-]+)`", collapsed)
     ordinary_match = re.search(r"joins\s+`([\w.-]+)`", collapsed)
     directed_match = re.search(r"directed proof run in\s+`([\w.-]+)`", collapsed)
+    has_queue_word = QUEUE_WORD_RE.search(collapsed) is not None
+    has_script_pointer = SCRIPT_PATH_TOKEN in two_paragraph_window
 
     missing = []
     if not range_match:
@@ -101,6 +120,12 @@ def extract_skill_claim(text, path):
         missing.append("an ordinary group token shaped 'joins `GROUP`'")
     if not directed_match:
         missing.append("a directed group token shaped 'directed proof run in `GROUP`'")
+    if not has_queue_word:
+        missing.append("a queuing/cancellation word ('queue' or 'cancel') in the "
+                        "Over-rated paragraph")
+    if not has_script_pointer:
+        missing.append("the literal script path '{0}' within two paragraphs of "
+                        "the anchor".format(SCRIPT_PATH_TOKEN))
     if missing:
         return None, DriftFinding(
             property="subject-missing", job=None,
@@ -114,6 +139,7 @@ def extract_skill_claim(text, path):
         job_range_end=range_match.group(2),
         ordinary_group=ordinary_match.group(1),
         directed_group=directed_match.group(1),
+        queues_not_cancels=has_queue_word,
         location=(path, line_no),
     ), None
 
@@ -294,8 +320,8 @@ def compute_drift_findings(claim, classifications, facts):
                 property="ordinary-group-name-mismatch", job=None,
                 skill_location=claim.location,
                 workflow_location=(CONCURRENCY_GROUPS_MD, None),
-                expected="ordinary group `{0}`".format(real_ordinary),
-                actual="claim names `{0}`".format(claim.ordinary_group)))
+                expected="ordinary group `{0}`".format(claim.ordinary_group),
+                actual="ordinary group `{0}`".format(real_ordinary)))
         # Sourced only from jobs board-loop.yml itself gives a conditional
         # `group:` expression (prove-gate/prove): other capable rows' own
         # "directed" table cell carries directed-*reachability* footnote
@@ -312,8 +338,8 @@ def compute_drift_findings(claim, classifications, facts):
                 property="directed-group-name-mismatch", job=None,
                 skill_location=claim.location,
                 workflow_location=(CONCURRENCY_GROUPS_MD, None),
-                expected="directed group `{0}`".format(real_directed),
-                actual="claim names `{0}`".format(claim.directed_group)))
+                expected="directed group `{0}`".format(claim.directed_group),
+                actual="directed group `{0}`".format(real_directed)))
 
     # Job-range comparison (step 6): the unconditional (literal-group)
     # capable jobs only -- prove-gate/prove are conditionally split and are
@@ -541,7 +567,11 @@ def run_selftest():
         "isolation. Every job that can select an item or open a fix PR "
         "(`select` through `readiness`) joins `ordinary-group`, and the "
         "only run allowed to overlap them is a directed proof run in "
-        "`directed-group`, which selects no item and opens no fix PR.\n\n"
+        "`directed-group`, which selects no item and opens no fix PR. A "
+        "second run in that group queues rather than racing or "
+        "cancelling it.\n\n"
+        "Run .github/scripts/verify-skill-board-loop-concurrency-claim.py "
+        "to settle currency.\n\n"
         "next paragraph."
     )
     claim, missing = extract_skill_claim(canonical_claim_text, "fixture-skill.md")
@@ -549,7 +579,8 @@ def run_selftest():
           missing is None and claim is not None
           and claim.job_range_start == "select" and claim.job_range_end == "readiness"
           and claim.ordinary_group == "ordinary-group"
-          and claim.directed_group == "directed-group")
+          and claim.directed_group == "directed-group"
+          and claim.queues_not_cancels is True)
 
     reflowed_claim_text = (
         "intro paragraph.\n\n"
@@ -558,7 +589,10 @@ def run_selftest():
         "(`select`   through\n`readiness`) joins\n`ordinary-group`, and "
         "the only run allowed to overlap them is a directed  proof run "
         "in `directed-group`,\nwhich selects no item and opens no fix "
-        "PR.\n\n"
+        "PR. A second  run in that\ngroup queues rather than racing or "
+        "cancelling it.\n\n"
+        "Run\n.github/scripts/verify-skill-board-loop-concurrency-claim.py "
+        "to  settle currency.\n\n"
         "next paragraph."
     )
     reflowed_claim, reflowed_missing = extract_skill_claim(
@@ -572,6 +606,52 @@ def run_selftest():
     check("a missing Over-rated anchor is a subject-missing finding",
           no_claim is None and no_claim_missing is not None
           and no_claim_missing.property == "subject-missing")
+
+    # --- extract_skill_claim: the two FR-008-driven checks contracts/
+    # skill-example-claim.md's "Verification" adds as items 4-5 (T029) -- a
+    # queuing/cancellation word in the same paragraph as the group tokens,
+    # and the literal script path within two paragraphs of the anchor. Each
+    # is required: absent either one, extraction itself fails loudly rather
+    # than returning a SkillClaim with a false queues_not_cancels (T030). ---
+    missing_queue_text = (
+        "intro paragraph.\n\n"
+        "- **Over-rated.** Every job that can select an item or open a "
+        "fix PR (`select` through `readiness`) joins `ordinary-group`, "
+        "and the only run allowed to overlap them is a directed proof "
+        "run in `directed-group`, which selects no item and opens no "
+        "fix PR.\n\n"
+        "Run .github/scripts/verify-skill-board-loop-concurrency-claim.py "
+        "to settle currency.\n\n"
+        "next paragraph."
+    )
+    missing_queue_claim, missing_queue_missing = extract_skill_claim(
+        missing_queue_text, "fixture-skill.md")
+    check("a paragraph missing the queuing/cancellation word is a "
+          "subject-missing finding",
+          missing_queue_claim is None and missing_queue_missing is not None
+          and missing_queue_missing.property == "subject-missing")
+
+    missing_pointer_text = (
+        "intro paragraph.\n\n"
+        "- **Over-rated.** Every job that can select an item or open a "
+        "fix PR (`select` through `readiness`) joins `ordinary-group`, "
+        "and the only run allowed to overlap them is a directed proof "
+        "run in `directed-group`, which selects no item and opens no "
+        "fix PR. A second run in that group queues rather than racing "
+        "or cancelling it.\n\n"
+        "No script pointer sentence here at all.\n\n"
+        "next paragraph."
+    )
+    missing_pointer_claim, missing_pointer_missing = extract_skill_claim(
+        missing_pointer_text, "fixture-skill.md")
+    check("a paragraph missing the Gate pointer sentence is a "
+          "subject-missing finding",
+          missing_pointer_claim is None and missing_pointer_missing is not None
+          and missing_pointer_missing.property == "subject-missing")
+
+    check("a paragraph carrying both the queuing word and the Gate "
+          "pointer sentence extracts queues_not_cancels=True",
+          claim.queues_not_cancels is True)
 
     # --- extract_job_classifications: a synthetic concurrency-groups.md
     # table extracts the expected per-job rows. ---
@@ -631,7 +711,7 @@ def run_selftest():
     base_claim = SkillClaim(
         job_range_start="select", job_range_end="readiness",
         ordinary_group="ordinary-group", directed_group="directed-group",
-        location=("fixture-skill.md", 1))
+        queues_not_cancels=True, location=("fixture-skill.md", 1))
     base_classifications = [
         JobClassification(job="select", can_select_or_open_fix_pr=True,
                            expected_group_ordinary="ordinary-group",
@@ -738,6 +818,11 @@ def run_selftest():
           "and board-loop.yml leaves SKILL.md's stale claim caught as "
           "ordinary-group-name-mismatch",
           [f.property for f in renamed_ordinary_findings] == ["ordinary-group-name-mismatch"])
+    renamed_ordinary_message = format_finding(renamed_ordinary_findings[0])
+    check("the rendered ordinary-group-name-mismatch message states SKILL.md's "
+          "stale claim as the disagreement, not the reverse (T031)",
+          "claims ordinary group `ordinary-group`" in renamed_ordinary_message
+          and "has ordinary group `renamed-ordinary-group`" in renamed_ordinary_message)
 
     renamed_directed_classifications = [
         c._replace(expected_group_directed=(
@@ -755,6 +840,11 @@ def run_selftest():
           "and board-loop.yml leaves SKILL.md's stale claim caught as "
           "directed-group-name-mismatch",
           [f.property for f in renamed_directed_findings] == ["directed-group-name-mismatch"])
+    renamed_directed_message = format_finding(renamed_directed_findings[0])
+    check("the rendered directed-group-name-mismatch message states SKILL.md's "
+          "stale claim as the disagreement, not the reverse (T031)",
+          "claims directed group `directed-group`" in renamed_directed_message
+          and "has directed group `renamed-directed-group`" in renamed_directed_message)
 
     total = len(failures)
     print("verify-skill-board-loop-concurrency-claim --self-test: {0} failure(s).".format(total))
