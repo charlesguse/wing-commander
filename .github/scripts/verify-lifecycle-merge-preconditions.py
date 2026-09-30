@@ -33,8 +33,10 @@ unmoved-head skip never engage. Three checks:
     "repos/$GITHUB_REPOSITORY/issues/$N/comments" --paginate --jq '.[]' |
     jq -s '.'` (the pages merged into one array), as the condition of an
     `if ! var="$(...)"; then` whose branch emits ::error:: and exits 1 --
-    a failed read is not "no round yet". select, review, disposition and
-    merge must each carry one.
+    a failed read is not "no round yet" -- under a `set` line carrying
+    pipefail (without it the guard tests only the reader's status). select,
+    review, disposition and merge must each carry one. select's 404/410 and
+    empty-issue skips are run by Gate 95.
   - json-comments-feeds-author-predicate (every workflow and composite):
     no step both reads `gh issue|pr view ... --json ...comments` and runs
     a reader built on is_loop_marker_author().
@@ -151,7 +153,11 @@ MARKER_READ_RE = re.compile(re.escape(MARKER_SCRIPT) + r'"?\s+read\b')
 REST_READ_RE = re.compile(
     r'if ! [A-Za-z_][A-Za-z0-9_]*="\$\(gh api '
     r'"repos/\$GITHUB_REPOSITORY/issues/\$[A-Za-z_][A-Za-z0-9_]*/comments" '
-    r"--paginate --jq '\.\[\]' \\\n\s*\| jq -s '\.' \\\n")
+    r"--paginate --jq '\.\[\]' \\\n(?:\s*2> \"[^\"\n]*\" \\\n)?\s*\| jq -s '\.' \\\n")
+# The step's own `set` line must carry pipefail: without it the pipeline's
+# status is the reader's, so a failed gh api reads as an empty comment list
+# and the `if !` guard never fires.
+SET_LINE_RE = re.compile(r"^\s*set\s+(-[^\n#]*)", re.M)
 # `gh issue view` / `gh pr view` whose --json field list names comments,
 # across `\`-continued lines.
 GH_VIEW_COMMENTS_RE = re.compile(
@@ -193,6 +199,13 @@ def reader_shape_problems(doc):
                             "`gh ... view --json comments`, which has no "
                             "user.type -- the marker always reads as {{}} "
                             "(#826)".format(where))
+        first_read = MARKER_READ_RE.search(run).start()
+        set_lines = [m.group(1) for m in SET_LINE_RE.finditer(run[:first_read])]
+        if not any("pipefail" in flags for flags in set_lines) or re.search(
+                r"set\s+\+o\s+pipefail", run[:first_read]):
+            problems.append("{0}: the marker read runs without `set -o "
+                            "pipefail`, so a failed gh api reads as an empty "
+                            "comment list (#826)".format(where))
         fetches = list(REST_READ_RE.finditer(run))
         if len(fetches) != reads:
             problems.append("{0} runs the marker reader {1} time(s) but has {2} "
@@ -662,6 +675,23 @@ def self_test():
     got = reader_shape_problems(bare)
     check("mutation-bare-capture-caught", any("time(s) but has 0" in p for p in got),
           "got {0!r}".format(got))
+
+    # pipefail dropped from select's and review's reader steps.
+    for job_id, step_name in (
+            ("select", "Fetch open PRs and select the next lifecycle review candidate"),
+            ("review", "Gather review inputs (diff, commit messages, PR title/body)")):
+        doc = copy.deepcopy(shipped)
+        hit = 0
+        for step in doc["jobs"][job_id]["steps"]:
+            if isinstance(step, dict) and step.get("name") == step_name:
+                run = str(step["run"])
+                hit = len(re.findall(r"^set -(\w*)o pipefail$", run, flags=re.M))
+                step["run"] = re.sub(r"^set -(\w*)o pipefail$", r"set -\1", run,
+                                     count=1, flags=re.M)
+        got = reader_shape_problems(doc)
+        check("mutation-pipefail-dropped-caught[{0}]".format(job_id),
+              hit == 1 and any("without `set -o pipefail`" in p for p in got),
+              "hit={0} got {1!r}".format(hit, got))
 
     # Anywhere in the repository: a --json comments read feeding a reader.
     synthetic = {".github/workflows/synthetic.yml": {"jobs": {"j": {"steps": [
