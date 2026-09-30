@@ -2,10 +2,8 @@
   "issue": 658,
   "spec_dir": "specs/089-skill-example-drift",
   "feature_num": "089",
-  "stage": "implement",
+  "stage": "review",
   "iteration": 5,
   "spec_branch": "spec/089-skill-example-drift",
-  "pending_re_review_from": [
-    "charlesguse"
-  ]
+  "pending_re_review_from": []
 }
