@@ -111,6 +111,19 @@ questions below.
   entirely outside Gate 47's declared scope. Gate 114's registration
   comment (`lint-workflows.yml:4632`) records that scope explicitly: "Gate
   47's declared scope is `#` comments in .github/workflows/*.yml only".
+- `.github/scripts/**` carries **65** `-- see` occurrences across 31 files.
+  About 29 of those are the two pointer gates' own docstrings explaining the
+  convention rather than pointers, leaving roughly 36 real ones — also
+  unscanned. Three sit in shell test harnesses
+  (`size-path-backstop-tests/run-tests.sh:15`,
+  `dispatch-and-wait-tests/run-tests.sh:12`,
+  `stage-findings-tests/run-tests.sh`) and each names
+  `verify-actions-no-gate-scripts.py`. `specs/080-composite-harness-gate-
+  discovery` created them (T016-T018) and its quickstart §5 / T019 tell a
+  maintainer to confirm them by running Gate 47 — which never reads those
+  files, so it can neither confirm nor fail them. FR-016 is the question
+  that decides whether they come under the rule; until it does, they are
+  pointers no gate checks.
 - Gate 47's self-test builds synthetic fixtures in a tempdir and currently
   exercises four defects: a pointer to a nonexistent file, a pointer with
   no topic overlap, an orphan canonical marker, and the aux
@@ -345,10 +358,11 @@ section and write a conforming pointer without opening the gate script.
   workflow-to-workflow pointers?]
 - **FR-016**: The set of files scanned as pointer sources MUST be stated and
   enforced. [NEEDS CLARIFICATION: does this feature bring the 27 `-- see`
-  pointers in `.github/actions/**` (and those in gate scripts) into scope, or
-  does the gate keep its declared `.github/workflows/*.yml`-only scope,
-  leaving canonical blocks whose only consumers live there needing a
-  registered exemption?]
+  pointers in `.github/actions/**` and the roughly 36 in
+  `.github/scripts/**` — including three `run-tests.sh` pointers spec 080
+  believes Gate 47 already validates — into scope, or does the gate keep its
+  declared `.github/workflows/*.yml`-only scope, leaving canonical blocks
+  whose only consumers live there needing a registered exemption?]
 - **FR-017**: Whatever scope FR-015 and FR-016 settle on MUST be recorded in
   the gate's docstring as its declared scope, so the next reader learns the
   boundary from the gate rather than from a spec.
@@ -445,7 +459,8 @@ section and write a conforming pointer without opening the gate script.
   the convention to maintainers.
 - Whatever FR-015 and FR-016 admit: `docs/setup.md`, `docs/adoption.md`,
   `docs/architecture.md`, `specs/*/{research,data-model,plan}.md`, the `.py`
-  pointer targets, and `.github/actions/**`.
+  pointer targets, `.github/actions/**`, and `.github/scripts/**` (including
+  the three `*-tests/run-tests.sh` harnesses).
 - Gate 114 (`verify-maintainer-credential-canonical-statement.py`) — a
   sibling single-statement gate whose registration comment records Gate 47's
   declared scope. If that scope moves, its note must move with it.
