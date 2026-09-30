@@ -1,0 +1,60 @@
+# wing-commander-write-boundary -- classify a tasks.md's unchecked items
+# against the implement stage's write boundary (specs/090-stage-write-
+# boundary). The front door to `_shared/classify-out-of-boundary-tasks.sh`,
+# the one home of the per-task classification rule (FR-006), mirroring how
+# wing-commander-tasks-checkbox-count is the front door to
+# count-tasks-checkboxes.sh.
+#
+# Constitution VII: this composite is part of the published surface;
+# adding it is a minor-version change at the next release (plan.md's
+# Complexity Tracking table).
+#
+# Unlike wing-commander-tasks-checkbox-count, this composite's step never
+# fails the job -- a task text it cannot confidently classify falls
+# through to "ordinary", which is a valid, expected output (FR-015), not
+# an error condition.
+name: wing-commander-write-boundary
+description: >-
+  Classifies a tasks.md's unchecked items against the implement stage's
+  write boundary (no-write-paths), reporting an out-of-boundary finding
+  per matching line and whether every unchecked line is out of reach.
+inputs:
+  unchecked-items:
+    description: >-
+      The literal multi-line text wing-commander-tasks-checkbox-count's
+      own unchecked-items output already produced for the ref being
+      classified.
+    required: true
+  no-write-paths:
+    description: Same value as implement.yml's own input, comma-separated, unsplit.
+    required: true
+  spec-dir:
+    description: e.g. specs/090-stage-write-boundary
+    required: true
+  tasks-path:
+    description: e.g. specs/090-stage-write-boundary/tasks.md
+    required: true
+outputs:
+  findings-json:
+    description: JSON array, one entry per out-of-boundary unchecked task; [] when none.
+    value: ${{ steps.classify.outputs.findings-json }}
+  all-unchecked-out-of-boundary:
+    description: "true iff at least one unchecked line exists and every one classified out-of-boundary."
+    value: ${{ steps.classify.outputs.all-unchecked-out-of-boundary }}
+  out-of-boundary-count:
+    description: Count of out-of-boundary entries in findings-json.
+    value: ${{ steps.classify.outputs.out-of-boundary-count }}
+runs:
+  using: composite
+  steps:
+    - name: Classify unchecked tasks against the write boundary
+      id: classify
+      shell: bash
+      env:
+        UNCHECKED_ITEMS: ${{ inputs.unchecked-items }}
+        NO_WRITE_PATHS: ${{ inputs.no-write-paths }}
+        TASKS_PATH: ${{ inputs.tasks-path }}
+        SPEC_DIR: ${{ inputs.spec-dir }}
+      run: |
+        bash "$GITHUB_ACTION_PATH/../_shared/classify-out-of-boundary-tasks.sh" \
+          "$UNCHECKED_ITEMS" "$NO_WRITE_PATHS" "$TASKS_PATH" "$SPEC_DIR" >> "$GITHUB_OUTPUT"

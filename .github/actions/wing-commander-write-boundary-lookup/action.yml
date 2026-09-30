@@ -1,0 +1,85 @@
+# wing-commander-write-boundary-lookup -- for each unchecked tasks.md line,
+# look up whether a routed write-boundary item already carries its
+# fingerprint (specs/090-stage-write-boundary §6, FR-009, SC-005).
+#
+# A published stage workflow may not resolve `.github/actions/_shared/`
+# itself (Gate 60's promotion-prevention check, spec 049 FR-022) -- this
+# composite is finalize.yml's front door to `_shared/compute-finding-
+# fingerprint.sh`, the SAME formula wing-commander-stage-findings uses to
+# file a routed item, so both sides compute the identical value (research.md
+# D6). Loops over however many unchecked lines exist in ONE step (mirroring
+# wing-commander-write-boundary's own single-call-does-the-whole-text
+# shape) -- a composite cannot be invoked once per line, since GitHub
+# Actions has no loop construct over `uses:` steps.
+#
+# Constitution VII: this composite is part of the published surface; adding
+# it is a minor-version change at the next release.
+name: wing-commander-write-boundary-lookup
+description: >-
+  For each unchecked tasks.md line, recomputes its fingerprint via the
+  shared compute-finding-fingerprint.sh formula and looks up whether a
+  routed write-boundary item already carries it.
+inputs:
+  token:
+    description: The pipeline's existing GitHub App identity token, for `gh issue list`
+    required: true
+  unchecked-items:
+    description: The literal multi-line text wing-commander-tasks-checkbox-count's own unchecked-items output already produced
+    required: true
+  tasks-path:
+    description: e.g. specs/090-stage-write-boundary/tasks.md -- the fingerprint basis's file_path
+    required: true
+  label-prefix:
+    description: Wired from write-boundary-label-prefix
+    required: false
+    default: "route-out-of-boundary"
+outputs:
+  mapping:
+    description: JSON array of {line, url} for every unchecked line that matched a routed item; [] when none.
+    value: ${{ steps.lookup.outputs.mapping }}
+  rendered:
+    description: One "- <line> — routed, see <url>" per matched line, for the finalize prompt to relay verbatim.
+    value: ${{ steps.lookup.outputs.rendered }}
+runs:
+  using: composite
+  steps:
+    - name: Look up routed write-boundary items
+      id: lookup
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        UNCHECKED_ITEMS: ${{ inputs.unchecked-items }}
+        TASKS_PATH: ${{ inputs.tasks-path }}
+        LABEL_PREFIX: ${{ inputs.label-prefix }}
+      run: |
+        set -uo pipefail
+        FP_SCRIPT="$GITHUB_ACTION_PATH/../_shared/compute-finding-fingerprint.sh"
+        mapping_file="$(mktemp)"
+        echo "[]" > "$mapping_file"
+        if [ -n "$UNCHECKED_ITEMS" ]; then
+          while IFS= read -r line; do
+            [ -z "$line" ] && continue
+            fp_out="$(bash "$FP_SCRIPT" implement "$TASKS_PATH" "$line")"
+            fp="$(printf '%s\n' "$fp_out" | sed -n 's/^fingerprint=//p')"
+            [ -z "$fp" ] && continue
+            marker="<!-- wing-commander-finding: fingerprint=$fp -->"
+            found_url="$(gh issue list --search "\"$marker\"" --label "${LABEL_PREFIX}:implement" --state all --json url --jq '.[0].url // empty' 2>/dev/null || true)"
+            if [ -n "$found_url" ]; then
+              tmp="$(mktemp)"
+              jq --arg line "$line" --arg url "$found_url" '. + [{"line": $line, "url": $url}]' "$mapping_file" > "$tmp" && mv "$tmp" "$mapping_file"
+            fi
+          done <<< "$UNCHECKED_ITEMS"
+        fi
+        rendered=""
+        count=$(jq -r 'length' "$mapping_file")
+        if [ "$count" -gt 0 ]; then
+          rendered="$(jq -r '.[] | "- \(.line) — routed, see \(.url)"' "$mapping_file")"
+        fi
+        {
+          echo "mapping<<WING_COMMANDER_WRITE_BOUNDARY_LOOKUP_EOF"
+          cat "$mapping_file"
+          echo "WING_COMMANDER_WRITE_BOUNDARY_LOOKUP_EOF"
+          echo "rendered<<WING_COMMANDER_WRITE_BOUNDARY_RENDERED_EOF"
+          printf '%s\n' "$rendered"
+          echo "WING_COMMANDER_WRITE_BOUNDARY_RENDERED_EOF"
+        } >> "$GITHUB_OUTPUT"

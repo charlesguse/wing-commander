@@ -177,6 +177,16 @@ on:
         type: number
         required: false
         default: 3
+      write-boundary-label-prefix:
+        description: >
+          Label prefix a routed out-of-boundary task carries, as
+          "<prefix>:<stage>" (specs/090-stage-write-boundary, FR-007). Used
+          only for this stage's routed-item lookup — finalize.yml never
+          classifies a task, only looks up one already filed by the
+          implement stage under this label.
+        type: string
+        required: false
+        default: "route-out-of-boundary"
     secrets:
       claude-code-oauth-token:
         description: "Claude OAuth token (claude setup-token) — one of the two credentials"
@@ -678,6 +688,41 @@ jobs:
         with:
           intended-turns: ${{ inputs.max-turns }}
 
+      # specs/090-stage-write-boundary §6: the tip's own unchecked-item
+      # text, the same read wing-commander-tasks-checkbox-count already
+      # gives implement.yml's read-back steps (never a second copy of the
+      # fence-aware extraction). The spec branch is already checked out at
+      # its tip (the "Check out the spec branch" step above), so `HEAD`
+      # resolves to it.
+      - name: Count tasks.md checkboxes at tip (finalize)
+        id: checkbox-tip-finalize
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-tasks-checkbox-count
+        with:
+          ref: HEAD
+          path: ${{ steps.spec.outputs.spec-dir }}/tasks.md
+
+      # specs/090-stage-write-boundary §6 (FR-009, SC-005): for each
+      # unchecked line at the tip, recomputes its fingerprint via the SAME
+      # shared helper wing-commander-stage-findings uses to file a routed
+      # item (never a second copy of that formula -- research.md D6, Gate
+      # 126 (g)) and looks up whether a routed issue already carries it, so
+      # the remaining-manual-work prompt below can point at the tracked
+      # issue instead of losing it as an orphan line. Deterministic code
+      # decides the mapping; the agent below only renders it (Principle IX).
+      # A published stage may not resolve _shared/ itself (Gate 60's
+      # promotion-prevention check), so this goes through
+      # wing-commander-write-boundary-lookup, the published front door.
+      - name: Look up routed write-boundary items
+        id: write-boundary-lookup
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-write-boundary-lookup
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
+          unchecked-items: ${{ steps.checkbox-tip-finalize.outputs.unchecked-items }}
+          tasks-path: ${{ steps.spec.outputs.spec-dir }}/tasks.md
+          label-prefix: ${{ inputs.write-boundary-label-prefix }}
+
       # FR-025 exclusion (specs/071-agent-push-credential): this step's own
       # default-allowed-tools has no Bash(git push:*) -- it only reads the
       # diff and writes a summary; PR creation is a later deterministic
@@ -735,7 +780,15 @@ jobs:
                any checked item whose text marks it as inherently human-only
                work (e.g. review, merge, deploy, credential/secret setup)
                that no agent can complete. Leave the file empty if none
-               remain. Do not invent items that aren't in tasks.md.
+               remain. Do not invent items that aren't in tasks.md. For any
+               item below in the routed write-boundary lookup, write exactly
+               `<item> — routed, see <issue url>` instead of composing your
+               own description of it; write every other item as today.
+
+               Routed write-boundary lookup (deterministic, computed before
+               this step — never re-derive which unchecked line "looks
+               routed" yourself):
+               ${{ steps.write-boundary-lookup.outputs.rendered != '' && steps.write-boundary-lookup.outputs.rendered || '(none)' }}
 
             If, while doing your own task, you notice a defect that is not your
             own task to fix — a gate that cannot fail its subject, a contract

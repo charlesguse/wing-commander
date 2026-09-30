@@ -244,6 +244,29 @@ on:
         type: number
         required: false
         default: 3
+      no-write-paths:
+        description: >
+          Comma-separated path prefixes this run's agent may not target
+          with Edit/Write (specs/090-stage-write-boundary, FR-002, FR-019).
+          The one declared definition FR-003 requires: the rendered prompt
+          statement, the per-task classification, and the routing label all
+          read this input, never a second literal default. Default
+          (.claude/) covers this repository's vendored speckit-* skills,
+          its own skills, and its control surface — deterministic non-agent
+          writes (auto-update-spec-kit.yml) are unaffected (FR-002, FR-018).
+        type: string
+        required: false
+        default: ".claude/"
+      write-boundary-label-prefix:
+        description: >
+          Label prefix a routed out-of-boundary task carries, as
+          "<prefix>:<stage>" (specs/090-stage-write-boundary, FR-007).
+          Distinct from findings-label-prefix by design — this label is not
+          one the board loop treats as fix-shaped authorization
+          (research.md D4).
+        type: string
+        required: false
+        default: "route-out-of-boundary"
     secrets:
       claude-code-oauth-token:
         description: "Claude OAuth token (claude setup-token) — one of the two credentials"
@@ -965,6 +988,7 @@ jobs:
           extra-disallowed-tools: ${{ inputs.extra-disallowed-tools }}
           allowed-tools-override: ${{ inputs.allowed-tools-override }}
           disallowed-tools-override: ${{ inputs.disallowed-tools-override }}
+          no-write-paths: ${{ inputs.no-write-paths }}
           step-label: "implement.cycle"
 
       # The intended budget (inputs.max-turns) keeps its public meaning; the
@@ -1092,6 +1116,8 @@ jobs:
             introduce. A task that says to run a validation suite is asking
             you to run it, not to desk-read it: when its command is on the
             list above, execute it and report what it printed.
+
+            ${{ steps.tool-args-cycle.outputs.write-paths-statement }}
 
             Shell constraints in this headless run. Each of these cost real
             turns in earlier runs, so read them before your first Bash call:
@@ -1373,6 +1399,21 @@ jobs:
           ref: origin/${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}
           path: ${{ steps.spec.outputs.spec-dir }}/tasks.md
 
+      # specs/090-stage-write-boundary (FR-006): classifies the tip's own
+      # unchecked items (checkbox-tip-cycle's own text, never a second read
+      # of tasks.md) against the write boundary, so "Read back cycle
+      # outcome" below can tell "the only remaining work is out of reach"
+      # apart from ordinary outstanding work.
+      - name: Classify write-boundary tasks (cycle)
+        id: write-boundary-cycle
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-write-boundary
+        with:
+          unchecked-items: ${{ steps.checkbox-tip-cycle.outputs.unchecked-items }}
+          no-write-paths: ${{ inputs.no-write-paths }}
+          spec-dir: ${{ steps.spec.outputs.spec-dir }}
+          tasks-path: ${{ steps.spec.outputs.spec-dir }}/tasks.md
+
       # FR-008 (spec 052): the WC_BOT_TOKEN relay above keeps every step
       # after each agent step credentialed. The agent step's OWN push
       # credential while it is still running is covered separately --
@@ -1400,6 +1441,8 @@ jobs:
           CHECKED_TIP: ${{ steps.checkbox-tip-cycle.outputs.checked-count }}
           UNCHECKED_TIP: ${{ steps.checkbox-tip-cycle.outputs.unchecked-count }}
           REMAINING_TIP: ${{ steps.checkbox-tip-cycle.outputs.unchecked-items }}
+          WRITE_BOUNDARY_ALL_OOB: ${{ steps.write-boundary-cycle.outputs.all-unchecked-out-of-boundary }}
+          WRITE_BOUNDARY_FINDINGS_JSON: ${{ steps.write-boundary-cycle.outputs.findings-json }}
           # The second alternative rides only on a RESOLVED slug: with an
           # empty slug the pattern would degrade to `claude\[bot\]|\[bot\]`,
           # which matches ANY bot - github-actions[bot] included (PR #258
@@ -1518,13 +1561,32 @@ jobs:
           if [ "$ok" = "true" ] && [ "$truncated" = "false" ] && [ "$converged" = "false" ] && [ "$progressed" = "false" ] && [ -z "$converge_sha" ]; then
             handoff=true
           fi
+          # specs/090-stage-write-boundary (FR-011, research.md D5): routed =
+          # handoff && all-unchecked-out-of-boundary -- spec 059's own
+          # hand-off condition above already selects this branch; routed
+          # only changes what the reason narrative below says for it, never
+          # the converged/progressed/handoff booleans themselves (spec 059's
+          # decision table is not reopened).
+          routed=false
+          if [ "$handoff" = "true" ] && [ "$WRITE_BOUNDARY_ALL_OOB" = "true" ]; then
+            routed=true
+          fi
           # FR-013 (spec 059): the non-convergence reason narrative, gained
           # here as the healthy-cycle counterpart of the failed/truncated
           # reasons already set above (data-model.md's "Non-convergence
           # reason"). Left untouched when the cycle failed or truncated —
           # those reasons already stand.
           if [ "$ok" = "true" ] && [ "$truncated" = "false" ] && [ "$converged" = "false" ]; then
-            if [ "$handoff" = "true" ]; then
+            if [ "$routed" = "true" ]; then
+              # specs/090-stage-write-boundary (FR-011): names each
+              # out-of-boundary task instead of spec 059's generic hand-off
+              # phrasing, so this branch reads as neither converged nor
+              # stalled -- the only case this feature's reason narrative
+              # extends; every other branch is spec 059's own text,
+              # unchanged.
+              routed_titles=$(printf '%s' "$WRITE_BOUNDARY_FINDINGS_JSON" | jq -r '[.[].title] | join("; ")')
+              reason="the only remaining work is outside the implement stage's write boundary, so the loop is ending here rather than dispatching another cycle: $routed_titles"
+            elif [ "$handoff" = "true" ]; then
               reason="the cycle checked nothing new, so the loop is ending here rather than dispatching another cycle"
             else
               parts=()
@@ -1545,6 +1607,8 @@ jobs:
           echo "converged=$converged" >> "$GITHUB_OUTPUT"
           echo "progressed=$progressed" >> "$GITHUB_OUTPUT"
           echo "handoff=$handoff" >> "$GITHUB_OUTPUT"
+          echo "routed=$routed" >> "$GITHUB_OUTPUT"
+          echo "write-boundary-findings-json=$WRITE_BOUNDARY_FINDINGS_JSON" >> "$GITHUB_OUTPUT"
           echo "Cycle: tasks.md unchecked-count at tip = ${UNCHECKED_TIP:-0}, progressed=${progressed:-n/a}." >> "$GITHUB_STEP_SUMMARY"
           {
             echo "remaining<<WING_COMMANDER_REMAINING_EOF"
@@ -1722,6 +1786,7 @@ jobs:
           extra-disallowed-tools: ${{ inputs.extra-disallowed-tools }}
           allowed-tools-override: ${{ inputs.allowed-tools-override }}
           disallowed-tools-override: ${{ inputs.disallowed-tools-override }}
+          no-write-paths: ${{ inputs.no-write-paths }}
           step-label: "implement.retry"
 
       - name: Compute agent turn ceiling (retry)
@@ -1873,6 +1938,8 @@ jobs:
             introduce. A task that says to run a validation suite is asking
             you to run it, not to desk-read it: when its command is on the
             list above, execute it and report what it printed.
+
+            ${{ steps.tool-args-retry.outputs.write-paths-statement }}
 
             Shell constraints in this headless run. Each of these cost real
             turns in earlier runs, so read them before your first Bash call:
@@ -2117,6 +2184,18 @@ jobs:
           ref: origin/${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}
           path: ${{ steps.spec.outputs.spec-dir }}/tasks.md
 
+      # specs/090-stage-write-boundary (FR-006): mirrors the cycle arm's
+      # identical classification step above.
+      - name: Classify write-boundary tasks (retry)
+        id: write-boundary-retry
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && (steps.retry.outcome == 'success' || steps.retry.outcome == 'failure')
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-write-boundary
+        with:
+          unchecked-items: ${{ steps.checkbox-tip-retry.outputs.unchecked-items }}
+          no-write-paths: ${{ inputs.no-write-paths }}
+          spec-dir: ${{ steps.spec.outputs.spec-dir }}
+          tasks-path: ${{ steps.spec.outputs.spec-dir }}/tasks.md
+
       - name: Read back retry outcome
         id: retry-outcome
         shell: bash
@@ -2140,6 +2219,8 @@ jobs:
           CHECKED_TIP: ${{ steps.checkbox-tip-retry.outputs.checked-count }}
           UNCHECKED_TIP: ${{ steps.checkbox-tip-retry.outputs.unchecked-count }}
           REMAINING_TIP: ${{ steps.checkbox-tip-retry.outputs.unchecked-items }}
+          WRITE_BOUNDARY_ALL_OOB: ${{ steps.write-boundary-retry.outputs.all-unchecked-out-of-boundary }}
+          WRITE_BOUNDARY_FINDINGS_JSON: ${{ steps.write-boundary-retry.outputs.findings-json }}
         run: |
           # Arm B below must not count commits the branch merely IMPORTED
           # from the default branch: an auto-rebase makes main's commits -
@@ -2254,12 +2335,23 @@ jobs:
           if [ "$ok" = "true" ] && [ "$truncated" = "false" ] && [ "$converged" = "false" ] && [ "$progressed" = "false" ] && [ -z "$converge_sha" ]; then
             handoff=true
           fi
+          # specs/090-stage-write-boundary (FR-011, research.md D5): mirrors
+          # the cycle arm's identical routed computation above.
+          routed=false
+          if [ "$handoff" = "true" ] && [ "$WRITE_BOUNDARY_ALL_OOB" = "true" ]; then
+            routed=true
+          fi
           # FR-013 (spec 059): the non-convergence reason narrative, mirroring
           # the cycle arm's identical block above (data-model.md's
           # "Non-convergence reason"). Left untouched when the retry failed
           # or truncated — those reasons already stand.
           if [ "$ok" = "true" ] && [ "$truncated" = "false" ] && [ "$converged" = "false" ]; then
-            if [ "$handoff" = "true" ]; then
+            if [ "$routed" = "true" ]; then
+              # specs/090-stage-write-boundary (FR-011): mirrors the cycle
+              # arm's identical routed reason narrative above.
+              routed_titles=$(printf '%s' "$WRITE_BOUNDARY_FINDINGS_JSON" | jq -r '[.[].title] | join("; ")')
+              reason="the only remaining work is outside the implement stage's write boundary, so the loop is ending here rather than dispatching another cycle: $routed_titles"
+            elif [ "$handoff" = "true" ]; then
               reason="the cycle checked nothing new, so the loop is ending here rather than dispatching another cycle"
             else
               parts=()
@@ -2280,6 +2372,8 @@ jobs:
           echo "converged=$converged" >> "$GITHUB_OUTPUT"
           echo "progressed=$progressed" >> "$GITHUB_OUTPUT"
           echo "handoff=$handoff" >> "$GITHUB_OUTPUT"
+          echo "routed=$routed" >> "$GITHUB_OUTPUT"
+          echo "write-boundary-findings-json=$WRITE_BOUNDARY_FINDINGS_JSON" >> "$GITHUB_OUTPUT"
           echo "Retry: tasks.md unchecked-count at tip = ${UNCHECKED_TIP:-0}, progressed=${progressed:-n/a}." >> "$GITHUB_STEP_SUMMARY"
           {
             echo "remaining<<WING_COMMANDER_REMAINING_EOF"
@@ -2372,21 +2466,25 @@ jobs:
           PRIMARY_HANDOFF: ${{ steps.outcome.outputs.handoff }}
           PRIMARY_REMAINING: ${{ steps.outcome.outputs.remaining }}
           PRIMARY_TIER: ${{ steps.effective-model.outputs.model }}
+          PRIMARY_ROUTED: ${{ steps.outcome.outputs.routed }}
+          PRIMARY_WRITE_BOUNDARY_FINDINGS_JSON: ${{ steps.outcome.outputs.write-boundary-findings-json }}
           RETRY_OK: ${{ steps.retry-outcome.outputs.ok }}
           RETRY_TRUNCATED: ${{ steps.retry-outcome.outputs.truncated }}
           RETRY_CONVERGED: ${{ steps.retry-outcome.outputs.converged }}
           RETRY_PROGRESSED: ${{ steps.retry-outcome.outputs.progressed }}
           RETRY_HANDOFF: ${{ steps.retry-outcome.outputs.handoff }}
           RETRY_REMAINING: ${{ steps.retry-outcome.outputs.remaining }}
+          RETRY_ROUTED: ${{ steps.retry-outcome.outputs.routed }}
+          RETRY_WRITE_BOUNDARY_FINDINGS_JSON: ${{ steps.retry-outcome.outputs.write-boundary-findings-json }}
           PRIMARY_REASON: ${{ steps.outcome.outputs.reason }}
           RETRY_REASON: ${{ steps.retry-outcome.outputs.reason }}
           ESCALATION_MODEL: ${{ inputs.escalation-model }}
           RETRY_NORMALISED: ${{ steps.retry-verdict.outputs.normalised-transcript }}
         run: |
           if [ "$RETRY_RAN" = "true" ]; then
-            ok="$RETRY_OK"; truncated="$RETRY_TRUNCATED"; converged="$RETRY_CONVERGED"; progressed="$RETRY_PROGRESSED"; handoff="$RETRY_HANDOFF"; remaining="$RETRY_REMAINING"; tier="$ESCALATION_MODEL"; reason="$RETRY_REASON"
+            ok="$RETRY_OK"; truncated="$RETRY_TRUNCATED"; converged="$RETRY_CONVERGED"; progressed="$RETRY_PROGRESSED"; handoff="$RETRY_HANDOFF"; remaining="$RETRY_REMAINING"; tier="$ESCALATION_MODEL"; reason="$RETRY_REASON"; routed="$RETRY_ROUTED"; write_boundary_findings_json="$RETRY_WRITE_BOUNDARY_FINDINGS_JSON"
           else
-            ok="$PRIMARY_OK"; truncated="$PRIMARY_TRUNCATED"; converged="$PRIMARY_CONVERGED"; progressed="$PRIMARY_PROGRESSED"; handoff="$PRIMARY_HANDOFF"; remaining="$PRIMARY_REMAINING"; tier="$PRIMARY_TIER"; reason="$PRIMARY_REASON"
+            ok="$PRIMARY_OK"; truncated="$PRIMARY_TRUNCATED"; converged="$PRIMARY_CONVERGED"; progressed="$PRIMARY_PROGRESSED"; handoff="$PRIMARY_HANDOFF"; remaining="$PRIMARY_REMAINING"; tier="$PRIMARY_TIER"; reason="$PRIMARY_REASON"; routed="$PRIMARY_ROUTED"; write_boundary_findings_json="$PRIMARY_WRITE_BOUNDARY_FINDINGS_JSON"
           fi
           # A retry the API refused before its first model response — e.g. a
           # spend/rate-limit kill, observed live on issue #231's stall notice —
@@ -2436,6 +2534,8 @@ jobs:
             echo "handoff=$handoff"
             echo "tier=$tier"
             echo "reason=$reason"
+            echo "routed=$routed"
+            echo "write-boundary-findings-json=$write_boundary_findings_json"
             echo "remaining<<WING_COMMANDER_REMAINING_EOF"
             printf '%s\n' "$remaining"
             echo "WING_COMMANDER_REMAINING_EOF"
@@ -2469,6 +2569,30 @@ jobs:
           run-url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           lifecycle-issue-number: ${{ inputs.issue-number }}
           label-prefix: ${{ inputs.findings-label-prefix }}
+          cap: ${{ inputs.findings-cap }}
+
+      # specs/090-stage-write-boundary (FR-007, FR-013): files each
+      # out-of-boundary task this cycle classified as a tracked, non-
+      # authorizing item -- never left to resurface every cycle or
+      # evaporate into prose. Guarded on `routed` (only true once the loop
+      # is actually ending on out-of-boundary work alone) and excludes a
+      # truncated run (FR-013), mirroring "File findings from this run"'s
+      # own position and continue-on-error safety net.
+      - name: Route out-of-boundary tasks
+        if: ${{ !cancelled() && steps.final.outputs.ok == 'true' && steps.final.outputs.truncated != 'true' && steps.final.outputs.routed == 'true' }}
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-stage-findings
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
+          stage: implement
+          enabled: ${{ inputs.findings-filing-enabled }}
+          channel-mode: structured-array
+          findings-json: ${{ steps.final.outputs.write-boundary-findings-json }}
+          finding-kind: routed-task
+          spec-dir: ${{ steps.spec.outputs.spec-dir }}
+          run-url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          lifecycle-issue-number: ${{ inputs.issue-number }}
+          label-prefix: ${{ inputs.write-boundary-label-prefix }}
           cap: ${{ inputs.findings-cap }}
 
       # When the cycle is judged failed, the most useful diagnostic is usually

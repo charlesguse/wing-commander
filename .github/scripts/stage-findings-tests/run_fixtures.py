@@ -1242,16 +1242,28 @@ def case_label_description_fits_github_cap():
     case = "the label-description stage-findings passes fits GitHub's 100-character cap for every stage"
     with open(STAGE_FINDINGS_ACTION, encoding="utf-8") as fh:
         text = fh.read()
-    values = re.findall(r'^\s*label-description:\s*"(.*)"\s*$', text, re.M)
+    # specs/090-stage-write-boundary T018: label-description is now a
+    # format() expression with a finding-kind-selected second segment
+    # (defect vs routed-task), not a single `${{ inputs.stage }}`
+    # substitution -- model both branches this test cares about (#422's
+    # own concern: every RENDERED text, for every stage, stays <= 100).
+    values = re.findall(
+        r"^\s*label-description:\s*\S*\{\{\s*format\('([^']*)',\s*inputs\.stage,"
+        r"\s*inputs\.finding-kind == 'routed-task' && '([^']*)' \|\| '([^']*)'\)"
+        r"\s*\}\}\S*\s*$", text, re.M)
     check(case + ": three report sites carry one identical description",
           len(values) == 3 and len(set(values)) == 1, values)
-    template = values[0] if values else ""
+    fmt, routed_phrase, defect_phrase = values[0] if values else ("", "", "")
     check(case + ": the description names the stage",
-          "${{ inputs.stage }}" in template, template)
+          "{0}" in fmt, fmt)
     stages = shipped_stage_names()
     check(case + ": the stage names are read off the call sites, and all six are there",
           len(stages) >= 6 and "implement" in stages and "finalize" in stages, stages)
-    lengths = {s: len(template.replace("${{ inputs.stage }}", s)) for s in stages}
+    lengths = {
+        f"{s}/{kind}": len(fmt.format(s, phrase))
+        for s in stages
+        for kind, phrase in (("defect", defect_phrase), ("routed-task", routed_phrase))
+    }
     check(case + ": every rendered description is at most 100 characters (#422 shipped 104-109)",
           bool(lengths) and max(lengths.values()) <= 100, lengths)
 

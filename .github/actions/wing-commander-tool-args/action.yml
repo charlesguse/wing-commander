@@ -50,6 +50,12 @@ inputs:
       "watchdog.diagnose" — lets one stage with multiple internal steps
       name the specific step in a validation failure.
     required: true
+  no-write-paths:
+    description: >
+      Passthrough of implement.yml's own no-write-paths input, unsplit
+      (specs/090-stage-write-boundary, FR-002, FR-019).
+    required: false
+    default: ""
 
 outputs:
   allowed-tools:
@@ -74,6 +80,16 @@ outputs:
       validation tasks unrun: the grant said one thing and the prompt said
       another.
     value: ${{ steps.compose.outputs.shell-commands }}
+  write-paths-statement:
+    description: >
+      A complete sentence stating exactly which paths this run's agent may
+      not target with Edit/Write, derived from no-write-paths the same way
+      shell-commands is derived from the composed tool lists
+      (specs/090-stage-write-boundary, contracts/write-boundary-mechanism.md
+      §2): "This run's agent may write any path in the checkout." when
+      no-write-paths is empty, or "This run's agent may not write:
+      <comma-joined, deduped, trimmed list>." otherwise.
+    value: ${{ steps.compose.outputs.write-paths-statement }}
 
 runs:
   using: composite
@@ -89,6 +105,7 @@ runs:
         EXTRA_DISALLOWED: ${{ inputs.extra-disallowed-tools }}
         ALLOWED_OVERRIDE: ${{ inputs.allowed-tools-override }}
         DISALLOWED_OVERRIDE: ${{ inputs.disallowed-tools-override }}
+        NO_WRITE_PATHS: ${{ inputs.no-write-paths }}
       run: |
         set -uo pipefail
 
@@ -359,9 +376,36 @@ runs:
         STATIC_SUFFIX=" Each command in a pipeline or \`;\`/\`&&\` chain is checked separately, and a \`>\`/\`>>\` redirect or a \`cd … &&\` prefix is denied regardless of this list — use the Read/Grep/Glob tools, or a single command, for anything multi-step."
         shell_commands="$shell_commands$STATIC_SUFFIX"
 
-        # 5. Emit (only reached once validation in step 1 passes).
+        # 5. Render "write-paths-statement" (specs/090-stage-write-boundary,
+        #    contracts/write-boundary-mechanism.md §2): split no-write-paths
+        #    on commas, trim, dedupe, drop empties, preserving first-seen
+        #    order -- the identical four-shape rendering pattern
+        #    shell_commands above already uses.
+        write_paths_list=""
+        declare -A write_paths_seen=()
+        IFS=',' read -ra write_paths_items <<< "${NO_WRITE_PATHS:-}"
+        for item in "${write_paths_items[@]}"; do
+          item="$(trim "$item")"
+          [ -z "$item" ] && continue
+          [ -n "${write_paths_seen[$item]+x}" ] && continue
+          write_paths_seen["$item"]=1
+          if [ -z "$write_paths_list" ]; then
+            write_paths_list="$item"
+          else
+            write_paths_list="$write_paths_list, $item"
+          fi
+        done
+        if [ -z "$write_paths_list" ]; then
+          write_paths_statement="This run's agent may write any path in the checkout."
+        else
+          write_paths_statement="This run's agent may not write: $write_paths_list."
+        fi
+
+        # 6. Emit (only reached once validation in step 1 passes).
         echo "allowed-tools=$effective_allowed" >> "$GITHUB_OUTPUT"
         echo "disallowed-tools=$effective_disallowed" >> "$GITHUB_OUTPUT"
         echo "shell-commands=$shell_commands" >> "$GITHUB_OUTPUT"
+        echo "write-paths-statement=$write_paths_statement" >> "$GITHUB_OUTPUT"
         echo "✅ wing-commander-tool-args ($STEP_LABEL): composed tool lists." >> "$GITHUB_STEP_SUMMARY"
         echo "**Tooling statement**: $shell_commands" >> "$GITHUB_STEP_SUMMARY"
+        echo "**Write-paths statement**: $write_paths_statement" >> "$GITHUB_STEP_SUMMARY"

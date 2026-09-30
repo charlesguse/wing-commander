@@ -28,6 +28,7 @@ run with a clear error if the inputs conflict (FR-010).
 | `allowed-tools-override` | no (default `__unset__`) | Passthrough of the stage's `allowed-tools-override` workflow_call input. |
 | `disallowed-tools-override` | no (default `__unset__`) | Passthrough of the stage's `disallowed-tools-override` workflow_call input. |
 | `step-label` | yes | Human-readable identifier for error messages, e.g. `implement.cycle`, `watchdog.diagnose` — lets one stage with multiple internal steps (D5) produce an error naming the specific step. |
+| `no-write-paths` | no (default `""`) | Passthrough of `implement.yml`'s own `no-write-paths` input, unsplit. Added by specs/090-stage-write-boundary. |
 
 ## Outputs
 
@@ -36,6 +37,7 @@ run with a clear error if the inputs conflict (FR-010).
 | `allowed-tools` | Composed, deduplicated, comma-joined effective allowed list — the exact value to splice into that step's `claude_args:` after `--allowedTools`. |
 | `disallowed-tools` | Composed, deduplicated, comma-joined effective disallowed list — spliced after `--disallowedTools`. |
 | `shell-commands` | A complete, grammatical sentence stating exactly which shell commands this run permits — derived from `allowed-tools` after subtracting anything `disallowed-tools` fully covers, distinguishing an unrestricted grant, a command grant with any arguments, and an exact-command-only grant. Non-`Bash` entries (`Read`, `Grep`, `Skill`, …) are omitted: they are tools, not shell commands. Added after this feature shipped, by the change that made `implement.yml`'s tooling paragraph derive; the render contract is `specs/037-rendered-tooling-list/contracts/tooling-statement-render.md` — see the guarantees below. |
+| `write-paths-statement` | A complete sentence stating exactly which paths this run's agent may not target with `Edit`/`Write`, derived from the `no-write-paths` input the same way `shell-commands` is derived from the composed tool lists: `` This run's agent may write any path in the checkout. `` when `no-write-paths` is empty, or `` This run's agent may not write: <comma-joined, deduped, trimmed list>. `` otherwise. Added by specs/090-stage-write-boundary; see `specs/090-stage-write-boundary/contracts/write-boundary-mechanism.md` §2. |
 
 ## Behavior
 
