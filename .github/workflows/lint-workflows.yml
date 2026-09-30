@@ -4224,8 +4224,9 @@ jobs:
       # to the working tree's .github/scripts (the gate-suite call
       # excepted). The snapshot step is also run against a scratch
       # repository whose working tree differs from its commit. The
-      # composite half of this same provenance rule is Gate 104,
-      # two gates below.
+      # composite half of this same provenance rule is Gate 104 (every
+      # uses: ./.github/actions/ reference in board-loop.yml resolves from
+      # the trusted copy), later in this file.
       - name: "Gate 98 — board-loop's fix, review and readiness run helpers from a pristine snapshot, never the working tree"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-loop-helper-provenance.py
@@ -4357,10 +4358,15 @@ jobs:
       # has to undo, so its decision is fixtured, not trusted. Numbered
       # 112, not the 104 tasks.md's T050 originally reserved — see Gate
       # 107's comment above for the Maintainer Feedback renumbering.
+      # #826: it also pins how every review_gate marker reader gets its
+      # comments — REST (`gh api .../issues/$N/comments --paginate`, pages
+      # merged), never `gh issue|pr view --json comments`, whose
+      # author{login} shape has no user.type for is_loop_marker_author() —
+      # and runs disposition's and merge's read steps against a stub gh.
       - name: "Gate 112 — Lifecycle merge preconditions"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-lifecycle-merge-preconditions.py
-      - name: "Gate 112 self-test — the bot's own review never blocks its merge, a plain comment never clears a standing CHANGES_REQUESTED, and unmet_reason names only the first failing condition"
+      - name: "Gate 112 self-test — the bot's own review never blocks its merge, a plain comment never clears a standing CHANGES_REQUESTED, unmet_reason names only the first failing condition, and a --json comments, first-page-only, unmerged or unguarded marker read is caught"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-lifecycle-merge-preconditions.py --self-test
 
@@ -4449,7 +4455,7 @@ jobs:
       # unrestricted Write/Edit on the workspace and could otherwise rewrite
       # the sidecar before it runs with the App private key. Numbered 104,
       # not the 99 this branch's own commit first picked (#450/#463's Gate 99,
-      # converged-means-tasks-done, immediately above, claimed 99 first on the
+      # converged-means-tasks-done, claimed 99 first on the
       # default branch before this branch's rebase landed) nor the 100 this
       # gate held next (main's own Gate 100, spec 079, claimed 100 first on
       # the default branch before this branch's second rebase landed).

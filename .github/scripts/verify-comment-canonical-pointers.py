@@ -17,6 +17,15 @@ WHAT IT CHECKS, over `#` comments in .github/workflows/*.yml
     not only workflow-to-workflow prose). Same-file pointers (`-- see
     above in this file.`) name nothing to resolve and are exempt.
 
+    A pointer that NAMES its own file (`-- see clarify.yml.` inside
+    clarify.yml) is a violation, not an exemption (#704): it is almost
+    always a sibling stage's pointer pasted back into the canonical file,
+    it points nowhere, and test (b) below would pass it trivially because
+    a file's comments always share vocabulary with themselves. A `-- see`
+    written inside quotes (`"-- see clarify.yml."`) is a canonical block
+    QUOTING the pointer form its siblings use, not a pointer, and is not
+    scanned.
+
 (b) EVERY CROSS-FILE POINTER'S TOPIC SHOWS UP AT THE TARGET. Resolving a
     path proves the file exists, not that the pointer aims at the right
     thing. So the sentence before `-- see` is stripped of stopwords and at
@@ -55,6 +64,9 @@ WORKFLOWS_DIR = ".github/workflows"
 SCRIPTS_DIR = ".github/scripts"
 
 POINTER_MARK = re.compile(r"--\s*see\b", re.IGNORECASE)
+# A `-- see` opened by one of these is quoted prose describing the pointer
+# form, not a pointer -- part (a) of the module docstring.
+QUOTE_CHARS = ('"', "`")
 # Both fragments together, not just "(canonical copy" alone: a rationale
 # comment (this gate's own Gate 47 block included) can legitimately
 # mention the marker phrase in backticks while explaining the convention,
@@ -203,6 +215,8 @@ def extract_pointers(root, path):
     for block in comment_blocks(path):
         joined = _joined(block)
         for m in POINTER_MARK.finditer(joined):
+            if m.start() > 0 and joined[m.start() - 1] in QUOTE_CHARS:
+                continue  # a quoted example of the pointer form -- (a)
             prefix = joined[:m.start()]
             suffix = joined[m.end():]
             tm = TARGET_RE.search(suffix)
@@ -292,6 +306,15 @@ def check_pointers(root):
                 violations.append(
                     f"{p['file']}:{p['line']}: pointer '-- see {p['target']}' "
                     f"names a file that does not exist ({p['target_path']!r})")
+                continue
+
+            # (a) a pointer naming its own file points nowhere (#704).
+            if (os.path.normcase(os.path.abspath(p["target_path"]))
+                    == os.path.normcase(os.path.abspath(p["file"]))):
+                violations.append(
+                    f"{p['file']}:{p['line']}: pointer '-- see {p['target']}' "
+                    f"names its own file -- a self-pointer resolves to "
+                    f"nothing; drop it, or point at the real canonical copy")
                 continue
 
             # (b) the pointer's topic shows up at the target.
@@ -467,6 +490,34 @@ def self_test():
                   for v in p),
               f"got {p!r}")
         os.remove(os.path.join(wf, "bad-topic.yml"))
+
+        # Defect 2b (check a, #704): a pointer that names its own file.
+        # Its topic words overlap its own comments by construction, so
+        # before #704 check (b) passed it trivially. A quoted example of
+        # the pointer form in the same file is prose, not a pointer.
+        _write(os.path.join(wf, "self-point.yml"), (
+            "on: push\n"
+            "jobs:\n"
+            "  a:\n"
+            "    steps:\n"
+            "      # Siblings point back here with \"-- see self-point.yml.\".\n"
+            "      - run: echo quoted\n"
+            "      # headless has no turn-boundary resume -- see self-point.yml.\n"
+            "      - run: echo self\n"
+            "      # Or in code style: `-- see self-point.yml`.\n"
+            "      - run: echo backtick\n"))
+        p, _ = check_pointers(td)
+        check("pointer naming its own file is caught",
+              any("self-point.yml:7" in v and "names its own file" in v
+                  for v in p),
+              f"got {p!r}")
+        check("quoted '-- see' example is not scanned as a pointer",
+              not any("self-point.yml:5" in v for v in p),
+              f"got {p!r}")
+        check("backtick-quoted '-- see' example is not scanned as a pointer",
+              not any("self-point.yml:9" in v for v in p),
+              f"got {p!r}")
+        os.remove(os.path.join(wf, "self-point.yml"))
 
         # Defect 3 (check c): a canonical marker nothing points at.
         _write(os.path.join(wf, "orphan-canon.yml"), (
