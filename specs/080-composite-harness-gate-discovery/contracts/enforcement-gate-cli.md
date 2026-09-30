@@ -32,8 +32,9 @@ add to.
 1. Calls `wc_gate_registry.unsupported_actions_scripts(root)`.
 2. For each result, emits one `::error::` line naming:
    - the offending path,
-   - whether it is a `run-tests.sh` harness entrypoint or a standalone
-     `verify-*` script (FR-006's "naming the offending path"),
+   - whether it is a `run-tests.sh` harness entrypoint, a standalone
+     `verify-*` script, or (#877) a test harness script its `action.yml`
+     never invokes (FR-006's "naming the offending path"),
    - the supported location it belongs at instead — computed
      mechanically from the offending path's own composite-directory name
      (e.g. `.github/actions/wing-commander-widget/tests/run-tests.sh` ->

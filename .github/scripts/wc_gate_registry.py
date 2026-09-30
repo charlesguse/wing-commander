@@ -44,6 +44,13 @@ ACTIONS_SHARED_DIR = ACTIONS_DIR + "/_shared"
 SUBDIR_ENTRYPOINT = "run-tests.sh"
 SHARED_PREFIX = "wc_"
 STANDALONE_VERIFY_RE = re.compile(r"verify-.*\.(?:py|sh)$")
+# #877: a harness is not always named run-tests.sh. These two shapes catch
+# one under any other name -- see unsupported_actions_scripts.
+HARNESS_DIR_NAMES = frozenset({"test", "tests", "__tests__", "fixtures", "testdata"})
+HARNESS_NAME_RE = re.compile(
+    r"(?:run[^/]*|test[^/]*|[^/]*[_.-]tests?)\.(?:sh|bash|py)$", re.IGNORECASE)
+SCRIPT_EXT_RE = re.compile(r"\.(?:sh|bash|py)$", re.IGNORECASE)
+ACTION_FILES = ("action.yml", "action.yaml")
 
 
 def _rel(path):
@@ -76,6 +83,32 @@ def gate_scripts(root="."):
     return sorted(out)
 
 
+def _is_script(path, name):
+    """A file something could execute: a script extension, a shebang, or an
+    executable bit. Anything unreadable is not a script."""
+    if SCRIPT_EXT_RE.search(name):
+        return True
+    try:
+        if os.access(path, os.X_OK):
+            return True
+        with open(path, "rb") as fh:
+            return fh.read(2) == b"#!"
+    except OSError:
+        return False
+
+
+def _action_invokes(action_dir, action_text, rel):
+    """True when an action.yml's text names `rel` (a path relative to that
+    action's directory) the way a composite step invokes its own file:
+    after $GITHUB_ACTION_PATH / ${{ github.action_path }}, or by its
+    repo-relative .github/actions/... path. A bare basename in a comment
+    does not count."""
+    comp = re.escape(action_dir)
+    pattern = (r"(?:GITHUB_ACTION_PATH\}?|action_path\s*\}\}|" + comp + r")"
+               r"/(?:\./)?" + re.escape(rel) + r"(?![A-Za-z0-9_.-])")
+    return re.search(pattern, action_text) is not None
+
+
 def unsupported_actions_scripts(root="."):
     """Every path under .github/actions/ that a test harness or standalone
     gate script must not occupy -- see verify-actions-no-gate-scripts.py,
@@ -89,15 +122,45 @@ def unsupported_actions_scripts(root="."):
     does is a helper of that harness, not a second violation).
     `.github/actions/_shared/` is pruned from the walk entirely -- the
     carve-out is structural, not a name checked per file.
+
+    #877: a harness under ANY other name is flagged too. In a directory with
+    no run-tests.sh, a script (a .sh/.bash/.py file, or one with a shebang
+    or an executable bit) is flagged when it looks like a harness -- it sits
+    under a test/tests/__tests__/fixtures/testdata directory, or its name is
+    run*/test*/*-test(s)/*_test(s) -- AND the action.yml of the composite
+    that owns it (the nearest ancestor directory holding one) never invokes
+    it. A script its own action.yml runs is that composite's helper, not a
+    gate, whatever its name.
     """
     base = os.path.join(root, *ACTIONS_DIR.split("/"))
     if not os.path.isdir(base):
         return []
     prefix = _rel(os.path.join(root, "")) if root != "." else ""
+
+    def strip(r):
+        return r[len(prefix):] if prefix and r.startswith(prefix) else r
+
+    # Owning-composite map: repo-relative directory -> its action.yml text.
+    actions = {}
+    for dirpath, _dirnames, filenames in os.walk(base):
+        for af in ACTION_FILES:
+            if af in filenames:
+                with open(os.path.join(dirpath, af), encoding="utf-8",
+                          errors="replace") as fh:
+                    actions[strip(_rel(dirpath))] = (
+                        actions.get(strip(_rel(dirpath)), "") + fh.read())
+
+    def owner(rel_dir):
+        d = rel_dir
+        while d.startswith(ACTIONS_DIR + "/"):
+            if d in actions:
+                return d
+            d = d.rsplit("/", 1)[0]
+        return None
+
     out = []
     for dirpath, dirnames, filenames in os.walk(base):
-        rel_dir = _rel(dirpath)
-        rel_dir = rel_dir[len(prefix):] if prefix and rel_dir.startswith(prefix) else rel_dir
+        rel_dir = strip(_rel(dirpath))
         if rel_dir == ACTIONS_SHARED_DIR or rel_dir.startswith(ACTIONS_SHARED_DIR + "/"):
             dirnames[:] = []
             continue
@@ -105,9 +168,25 @@ def unsupported_actions_scripts(root="."):
             matches = [SUBDIR_ENTRYPOINT]
         else:
             matches = sorted(n for n in filenames if STANDALONE_VERIFY_RE.match(n))
+            own = owner(rel_dir)
+            parts = rel_dir.split("/")[len(ACTIONS_DIR.split("/")):]
+            in_test_dir = any(p.lower() in HARNESS_DIR_NAMES for p in parts)
+            for name in sorted(filenames):
+                if name in matches or name in ACTION_FILES:
+                    continue
+                full = os.path.join(dirpath, name)
+                if not _is_script(full, name):
+                    continue
+                if not (in_test_dir or HARNESS_NAME_RE.fullmatch(name)):
+                    continue
+                if own is not None:
+                    rel = (rel_dir + "/" + name)[len(own) + 1:]
+                    if _action_invokes(own, actions[own], rel):
+                        continue
+                matches.append(name)
+            matches.sort()
         for name in matches:
-            r = _rel(os.path.join(dirpath, name))
-            out.append(r[len(prefix):] if prefix and r.startswith(prefix) else r)
+            out.append(strip(_rel(os.path.join(dirpath, name))))
     return sorted(out)
 
 

@@ -29,6 +29,11 @@ Calls wc_gate_registry.unsupported_actions_scripts(root), which walks
 .github/actions/ (.github/actions/_shared/ excluded -- the one structural
 carve-out, FR-014) and returns every run-tests.sh entrypoint, or standalone
 verify-*.py/verify-*.sh with no sibling run-tests.sh, at any depth (FR-012).
+#877: it also returns a harness under any other name -- a script under a
+tests/ (or test/, fixtures/, ...) directory, or named run*/test*, that its
+composite's action.yml never invokes. A spec-074 harness named tests/run.sh
+was invisible to the run-tests.sh-only rule; a script the action.yml does
+run is that composite's helper and is not flagged.
 Every result is an unconditional failure: there is no waiver file and no
 legitimate exception to register one in.
 
@@ -44,7 +49,8 @@ import sys
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from wc_gate_registry import unsupported_actions_scripts  # noqa: E402
+from wc_gate_registry import (  # noqa: E402
+    STANDALONE_VERIFY_RE, unsupported_actions_scripts)
 
 SCRIPTS_DIR = ".github/scripts"
 THIS_FILE = "verify-actions-no-gate-scripts.py"
@@ -62,9 +68,13 @@ def supported_location(offending_path):
 
 
 def failure_for(offending_path):
-    kind = ("test harness entrypoint"
-            if os.path.basename(offending_path) == "run-tests.sh"
-            else "standalone gate script")
+    name = os.path.basename(offending_path)
+    if name == "run-tests.sh":
+        kind = "test harness entrypoint"
+    elif STANDALONE_VERIFY_RE.match(name):
+        kind = "standalone gate script"
+    else:
+        kind = "test harness script its action.yml never invokes"
     supported = supported_location(offending_path)
     return (f"{offending_path} is a {kind} under .github/actions/; gate "
             f"discovery reads only {SCRIPTS_DIR}/, so it belongs at "
@@ -196,6 +206,66 @@ def _fixture_outside_actions_ignored():
         shutil.rmtree(root, ignore_errors=True)
 
 
+def _fixture_any_name_harness():
+    """#877: a harness under any other name -- tests/run.sh, the spec-074
+    shape -- fails, naming the path and the canonical location. The
+    composite's action.yml exists and does not invoke it; a comment naming
+    the file does not count as an invocation."""
+    root = tempfile.mkdtemp(prefix="wc-actions-no-gate-scripts-")
+    try:
+        path = ".github/actions/widget/tests/run.sh"
+        _write(root, ".github/actions/widget/action.yml",
+               "name: widget\n# fixtures: tests/run.sh\nruns:\n"
+               "  using: composite\n  steps:\n    - run: echo hi\n"
+               "      shell: bash\n")
+        _write(root, path, "echo hi\n")
+        _write(root, ".github/actions/widget/tests/case1/input.json", "{}\n")
+        offenders, failures = check(root)
+        ok = (offenders == [path] and _assert_contract(path, failures)
+              and ".github/scripts/widget-tests/run.sh" in " ".join(failures)
+              and "never invokes" in " ".join(failures))
+        return ok, f"got offenders={offenders!r} failures={failures!r}"
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def _fixture_run_star_unreferenced():
+    """#877: a run*.sh at the composite's top level that its action.yml
+    never invokes fails too -- a harness need not sit under tests/."""
+    root = tempfile.mkdtemp(prefix="wc-actions-no-gate-scripts-")
+    try:
+        path = ".github/actions/widget/run-fixtures.sh"
+        _write(root, ".github/actions/widget/action.yml", "name: widget\n")
+        _write(root, path, "echo hi\n")
+        offenders, failures = check(root)
+        ok = offenders == [path] and _assert_contract(path, failures)
+        return ok, f"got offenders={offenders!r} failures={failures!r}"
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def _fixture_invoked_helper_not_flagged():
+    """A run.sh the composite's own action.yml invokes (via
+    $GITHUB_ACTION_PATH, ${{ github.action_path }}, or its repo path) is
+    that composite's helper, not a harness; nor is a script whose name and
+    directory look nothing like a harness, nor a non-script fixture file."""
+    root = tempfile.mkdtemp(prefix="wc-actions-no-gate-scripts-")
+    try:
+        _write(root, ".github/actions/widget/action.yml",
+               'runs:\n  steps:\n    - run: bash "$GITHUB_ACTION_PATH/run.sh"\n'
+               "    - run: bash ${{ github.action_path }}/scripts/test-input.sh\n"
+               "    - run: python3 .github/actions/widget/runner.py\n")
+        _write(root, ".github/actions/widget/run.sh", "echo hi\n")
+        _write(root, ".github/actions/widget/scripts/test-input.sh", "echo hi\n")
+        _write(root, ".github/actions/widget/runner.py", "print('hi')\n")
+        _write(root, ".github/actions/widget/lib.sh", "echo hi\n")
+        _write(root, ".github/actions/_shared/tests/run.sh", "echo hi\n")
+        offenders, _ = check(root)
+        return offenders == [], f"got offenders={offenders!r}"
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 # Each entry: (name, fixture_fn), fixture_fn() -> (ok: bool, detail: str).
 # A fixture builds and tears down its own tempdir, so a FAILing fixture never
 # leaves scratch state for the next one to trip over.
@@ -212,6 +282,12 @@ FIXTURES = [
      _fixture_no_harness_clean),
     ("a same-shaped violation outside .github/actions/ (e.g. repo root) is "
      "correctly ignored", _fixture_outside_actions_ignored),
+    ("#877: a harness under any other name (tests/run.sh) that its "
+     "action.yml never invokes fails", _fixture_any_name_harness),
+    ("#877: an uninvoked run*.sh at a composite's top level fails",
+     _fixture_run_star_unreferenced),
+    ("a script its own action.yml invokes, a non-harness-shaped helper, and "
+     "a _shared/ script are not flagged", _fixture_invoked_helper_not_flagged),
 ]
 
 

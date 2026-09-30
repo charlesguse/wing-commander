@@ -31,6 +31,15 @@ the local runner try to execute a file this function exists to reject
   a `verify-*.py` imported as a helper by a sibling `run-tests.sh` in the
   same directory is part of that harness, not a second, independent
   violation).
+- Also matches (#877), in a directory with no `run-tests.sh`, a harness
+  under any other name: a script (`.sh`/`.bash`/`.py`, or a file with a
+  shebang or an executable bit) that sits under a `test`/`tests`/
+  `__tests__`/`fixtures`/`testdata` directory or is named `run*`/`test*`/
+  `*-test(s)`/`*_test(s)`, AND that the `action.yml` of its owning
+  composite (the nearest ancestor directory holding one) never invokes via
+  `$GITHUB_ACTION_PATH/`, `${{ github.action_path }}/` or its
+  `.github/actions/...` path. A script its own `action.yml` invokes is that
+  composite's helper, whatever its name.
 - Excludes anything whose repo-relative path has `.github/actions/_shared/`
   as a prefix (FR-014: the carve-out is structural, not a manifest entry).
 - Returns repo-relative, forward-slash paths (same normalisation as
