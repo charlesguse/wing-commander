@@ -167,6 +167,23 @@ def check_dead_arms():
         if mutated == cond or "verify-image-prerequisites" not in \
                 dead_failure_arms(mutated):
             mutation_misses.append(f"{path}:{job_id}")
+    # Parser cases: a quoted `)` or `||` must not hide an arm, a guard in
+    # its own parentheses still counts, and a top-level `||` is skipped.
+    for expr, want in [
+        ("inputs.m == ')' && needs.a.result != 'failure' && "
+         "( needs.a.result == 'failure' || x )", ["a"]),
+        ("needs.a.result != 'failure' && inputs.m == 'a||b' && "
+         "( needs.a.result == 'failure' || x )", ["a"]),
+        ("inputs.m == 'it''s )' && needs.a.result != 'failure' && "
+         "( needs.a.result == 'failure' )", ["a"]),
+        ("(needs.a.result != 'failure') && "
+         "( needs.a.result == 'failure' || x )", ["a"]),
+        ("(needs.a.result != 'failure') || needs.a.result == 'failure'", []),
+    ]:
+        got = dead_failure_arms(expr)
+        if got != want:
+            failures.append(f"dead_failure_arms({expr!r}) returned {got!r}, "
+                            f"expected {want!r}")
     if mutation_misses:
         print("::error::MUTATION SURVIVED — reintroduce the dead "
               "verify-image-prerequisites failure arm: not flagged in "

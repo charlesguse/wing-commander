@@ -61,11 +61,22 @@ def evaluate(expr, needs, inputs, cancelled):
 
 
 def _split_top_level(expr, op):
-    """Split `expr` on `op` ('&&' or '||') at paren depth 0 only."""
+    """Split `expr` on `op` ('&&' or '||') at paren depth 0 only. A
+    '...' string literal (`''` is an escaped quote) is skipped whole, so
+    a `)` or an operator inside one neither moves the depth nor splits."""
     parts, depth, start, i = [], 0, 0, 0
     while i < len(expr):
         ch = expr[i]
-        if ch == "(":
+        if ch == "'":
+            i += 1
+            while i < len(expr):
+                if expr[i] == "'":
+                    if expr.startswith("''", i):
+                        i += 2
+                        continue
+                    break
+                i += 1
+        elif ch == "(":
             depth += 1
         elif ch == ")":
             depth -= 1
@@ -77,6 +88,32 @@ def _split_top_level(expr, op):
         i += 1
     parts.append(expr[start:])
     return [p.strip() for p in parts]
+
+
+def _strip_outer_parens(term):
+    """`(x)` -> `x`, repeatedly, while the opening paren at index 0 is
+    the one that closes at the last character (quote-aware, as above)."""
+    while term.startswith("(") and term.endswith(")"):
+        depth, i, closes_at = 0, 0, None
+        while i < len(term):
+            ch = term[i]
+            if ch == "'":
+                i += 1
+                while i < len(term) and not (
+                        term[i] == "'" and not term.startswith("''", i)):
+                    i += 2 if term.startswith("''", i) else 1
+            elif ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+                if depth == 0:
+                    closes_at = i
+                    break
+            i += 1
+        if closes_at != len(term) - 1:
+            break
+        term = term[1:-1].strip()
+    return term
 
 
 _NOT_FAILURE_RE = re.compile(
@@ -95,7 +132,7 @@ def dead_failure_arms(expr):
         return []
     conjuncts = _split_top_level(expr, "&&")
     guarded = {m.group(1) for c in conjuncts
-               for m in [_NOT_FAILURE_RE.match(c)] if m}
+               for m in [_NOT_FAILURE_RE.match(_strip_outer_parens(c))] if m}
     dead = set()
     for job in guarded:
         arm = re.compile(
