@@ -1767,8 +1767,7 @@ jobs:
       needs.verify-image-prerequisites.result != 'failure' &&
       inputs.mode == 'generate' &&
       !cancelled() &&
-      ( needs.verify-image-prerequisites.result == 'failure' ||
-        needs.resolve-spec.result == 'failure' ||
+      ( needs.resolve-spec.result == 'failure' ||
         needs.tasks.result == 'failure' ||
         needs.tasks.result == 'skipped' ) &&
       needs.resolve-spec.outputs.refusal-reason == '' &&
@@ -1914,8 +1913,7 @@ jobs:
       needs.verify-image-prerequisites.result != 'failure' &&
       inputs.mode == 'approved' &&
       !cancelled() &&
-      ( needs.verify-image-prerequisites.result == 'failure' ||
-        needs.resolve-spec.result == 'failure' ||
+      ( needs.resolve-spec.result == 'failure' ||
         needs.tasks-approved.result == 'failure' ||
         needs.tasks-approved.result == 'skipped' ) &&
       needs.resolve-spec.outputs.refusal-reason == '' &&

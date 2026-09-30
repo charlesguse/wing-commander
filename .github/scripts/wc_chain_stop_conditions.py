@@ -60,6 +60,51 @@ def evaluate(expr, needs, inputs, cancelled):
                          f"{exc}") from exc
 
 
+def _split_top_level(expr, op):
+    """Split `expr` on `op` ('&&' or '||') at paren depth 0 only."""
+    parts, depth, start, i = [], 0, 0, 0
+    while i < len(expr):
+        ch = expr[i]
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        elif depth == 0 and expr.startswith(op, i):
+            parts.append(expr[start:i])
+            i += len(op)
+            start = i
+            continue
+        i += 1
+    parts.append(expr[start:])
+    return [p.strip() for p in parts]
+
+
+_NOT_FAILURE_RE = re.compile(
+    r"^needs\.([A-Za-z0-9_-]+)\.result\s*!=\s*'failure'$")
+
+
+def dead_failure_arms(expr):
+    """Jobs whose `== 'failure'` arm sits under a same-job `!= 'failure'`
+    top-level conjunct, i.e. an arm the guard makes unreachable (#728).
+
+    Only a condition that is one top-level `&&` chain is analysed (a
+    top-level `||` means no conjunct is guaranteed to hold). Returns the
+    sorted job ids with such a dead arm; empty when none.
+    """
+    if len(_split_top_level(expr, "||")) > 1:
+        return []
+    conjuncts = _split_top_level(expr, "&&")
+    guarded = {m.group(1) for c in conjuncts
+               for m in [_NOT_FAILURE_RE.match(c)] if m}
+    dead = set()
+    for job in guarded:
+        arm = re.compile(
+            rf"needs\.{re.escape(job)}\.result\s*==\s*'failure'")
+        if any(arm.search(c) for c in conjuncts):
+            dead.add(job)
+    return sorted(dead)
+
+
 # --------------------------------------------------------------- call sites
 
 CALL_SITES = [
