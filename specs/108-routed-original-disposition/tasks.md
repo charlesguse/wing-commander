@@ -662,9 +662,16 @@ Task: "Add disposition:duplicate to wing-commander-board-labels/action.yml"
 
 ## Maintainer Feedback
 
-- [ ] In `board_duplicate_disposition.py`, read the originating/spec-request issue's comments via REST (`gh api repos/{owner}/{repo}/issues/{n}/comments --paginate`, which nests `user`) instead of `gh issue view --json comments` (GraphQL `author`, no `user.type`), so `is_loop_marker_author()` actually matches the loop's own comments in production instead of never matching and re-posting the reason comment on every call (FR-003, FR-004, FR-009).
-- [ ] Make the duplicate-comment/reciprocal-link pre-check match on `marker.get("spec_request") == spec_request_issue`, not just `step == "duplicate"`, so a re-route to a new spec-request after re-admission posts its own reason comment and marker naming the new spec-request instead of being treated as already-disposed.
-- [ ] Update `verify-board-duplicate-disposition.py`'s stubbed `gh` fixtures to return the real REST comment shape (`user.login`/`user.type`) instead of the GraphQL/`author`-shaped stub that currently hides this bug.
+- [X] In `board_duplicate_disposition.py`, read the originating/spec-request issue's comments via REST (`gh api repos/{owner}/{repo}/issues/{n}/comments --paginate`, which nests `user`) instead of `gh issue view --json comments` (GraphQL `author`, no `user.type`), so `is_loop_marker_author()` actually matches the loop's own comments in production instead of never matching and re-posting the reason comment on every call (FR-003, FR-004, FR-009).
+- [X] Make the duplicate-comment/reciprocal-link pre-check match on `marker.get("spec_request") == spec_request_issue`, not just `step == "duplicate"`, so a re-route to a new spec-request after re-admission posts its own reason comment and marker naming the new spec-request instead of being treated as already-disposed.
+- [X] Update `verify-board-duplicate-disposition.py`'s stubbed `gh` fixtures to return the real REST comment shape (`user.login`/`user.type`) instead of the GraphQL/`author`-shaped stub that currently hides this bug.
+      Added `_fetch_comments()` (REST, `gh api .../comments --paginate`)
+      alongside the existing `_view_issue()` (`gh issue view --json
+      state,labels`, no longer `,comments`); `_has_own_duplicate_comment()`
+      now takes `spec_request_issue` and matches on it. New regression
+      case 7 (re-route to a new spec-request) and a new self-test baseline
+      (`_baseline_idempotent_via_real_fetch()`) exercise the real fetch
+      path with REST-shaped stub data, not an injected pre-built dict.
 
 ## Maintainer Feedback
 

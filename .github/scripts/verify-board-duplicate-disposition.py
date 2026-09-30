@@ -17,6 +17,7 @@ already demonstrates), never a real repository.
     python3 .github/scripts/verify-board-duplicate-disposition.py
     python3 .github/scripts/verify-board-duplicate-disposition.py --self-test
 """
+import json
 import os
 import sys
 
@@ -169,6 +170,24 @@ _case("6: reciprocal comment alone missing -> no-op True, needs-reciprocal-link=
       _case_6_reciprocal_only_missing)
 
 
+def _case_7_reroute_new_spec_request_posts_new_comment():
+    """An issue already fully disposed of an OLD spec-request (closed,
+    labelled, marker present naming it) is routed again to a NEW,
+    different spec-request: the stale marker must not be read as "already
+    disposed of THIS spec-request" -- a new reason/marker comment naming
+    the new spec-request is posted (maintainer review, fold leg-1;
+    FR-003/FR-004/FR-009)."""
+    old_spec_request = SPEC_REQUEST + 1000
+    originating = {"state": "CLOSED", "labels": [{"name": bdd.DISPOSITION_LABEL}],
+                   "comments": [_own_comment(spec_request=old_spec_request)]}
+    ok, steps = _call(originating, _spec_request())
+    return ok is True and steps == ["comment"]
+
+
+_case("7: re-route to a new spec-request posts its own comment, not treated as already-disposed",
+      _case_7_reroute_new_spec_request_posts_new_comment)
+
+
 def run(verbose=True):
     failures = 0
     for name, fn in CASES:
@@ -188,26 +207,81 @@ def run(verbose=True):
     return failures
 
 
+def _run_stub_call_kind(args, repository):
+    """Classifies a `run()` call made by the real (non-injected) fetch
+    path: "view" (`gh issue view <n> -R repo --json state,labels`),
+    "comments <n>" (`gh api repos/repo/issues/<n>/comments --paginate`),
+    or None for anything else (the three mutating calls `_stub()` already
+    classifies)."""
+    if args[:3] == ["gh", "issue", "view"]:
+        return "view {0}".format(args[3])
+    prefix = "repos/{0}/issues/".format(repository)
+    if args[:2] == ["gh", "api"] and len(args) > 2 and args[2].startswith(prefix) \
+            and args[2].endswith("/comments"):
+        number = args[2][len(prefix):-len("/comments")]
+        return "comments {0}".format(number)
+    return None
+
+
 def _baseline_end_to_end():
     """No-fixture baseline (T007): a bare gh stub that succeeds at every
-    call -- including the pre-check's own `gh issue view` reads, since
+    call -- including the pre-check's own `gh issue view --json
+    state,labels` and `gh api .../comments --paginate` reads (the real
+    REST shape, fold leg-1 -- never `gh issue view --json comments`'s
+    GraphQL `author`-shaped payload, which hid that bug), since
     originating/spec_request are omitted here -- produces disposed=true,
     needs-reciprocal-link=true end to end."""
+    repository = "example/example"
     calls = []
 
     def run_stub(args, **kwargs):
         calls.append(list(args))
-        if args[:3] == ["gh", "issue", "view"] and str(ORIGINATING) in args:
-            return FakeProc(returncode=0, stdout='{"state": "OPEN", "labels": [], "comments": []}')
-        if args[:3] == ["gh", "issue", "view"] and str(SPEC_REQUEST) in args:
-            return FakeProc(returncode=0, stdout='{"comments": []}')
+        kind = _run_stub_call_kind(args, repository)
+        if kind == "view {0}".format(ORIGINATING):
+            return FakeProc(returncode=0, stdout='{"state": "OPEN", "labels": []}')
+        if kind in ("comments {0}".format(ORIGINATING), "comments {0}".format(SPEC_REQUEST)):
+            return FakeProc(returncode=0, stdout="[]")
         return FakeProc(returncode=0, stdout="")
 
     ok = bdd.dispose_as_duplicate(
         ORIGINATING, SPEC_REQUEST, SPEC_REQUEST_URL, REASON,
-        repository="example/example", bot_login=BOT_LOGIN, run=run_stub)
+        repository=repository, bot_login=BOT_LOGIN, run=run_stub)
     needs = bdd.spec_request_needs_reciprocal_link([])
     return ok is True and needs is True
+
+
+def _baseline_idempotent_via_real_fetch():
+    """Regression drill for fold leg-1: an issue already fully disposed
+    (closed, labelled, own marker comment present) is read through the
+    REAL `gh api .../comments --paginate` fetch path -- not injected as a
+    pre-built Python dict the way CASES 1-7 do -- and correctly
+    recognized as already disposed: zero mutating gh calls. Before the
+    fix, board_duplicate_disposition.py read comments via `gh issue view
+    --json comments` (GraphQL `author`, no `user.type`), so
+    is_loop_marker_author() never matched and this same drill made a
+    spurious "comment" call on every run."""
+    repository = "example/example"
+    own_comment = _own_comment()
+    reciprocal_comment = _reciprocal_comment()
+    calls = []
+
+    def run_stub(args, **kwargs):
+        calls.append(list(args))
+        kind = _run_stub_call_kind(args, repository)
+        if kind == "view {0}".format(ORIGINATING):
+            return FakeProc(returncode=0, stdout=json.dumps(
+                {"state": "CLOSED", "labels": [{"name": bdd.DISPOSITION_LABEL}]}))
+        if kind == "comments {0}".format(ORIGINATING):
+            return FakeProc(returncode=0, stdout=json.dumps([own_comment]))
+        if kind == "comments {0}".format(SPEC_REQUEST):
+            return FakeProc(returncode=0, stdout=json.dumps([reciprocal_comment]))
+        raise AssertionError("unexpected gh call: {0!r}".format(args))
+
+    ok = bdd.dispose_as_duplicate(
+        ORIGINATING, SPEC_REQUEST, SPEC_REQUEST_URL, REASON,
+        repository=repository, bot_login=BOT_LOGIN, run=run_stub)
+    mutating = [c for c in calls if _run_stub_call_kind(c, repository) is None]
+    return ok is True and mutating == []
 
 
 def self_test():
@@ -227,8 +301,12 @@ def self_test():
     check("baseline: bare gh stub succeeding at every call yields "
           "disposed=true, needs-reciprocal-link=true end to end", _baseline_end_to_end())
 
+    check("baseline: an already-disposed issue read through the real "
+          "gh api .../comments --paginate fetch path is recognized as "
+          "already disposed (fold leg-1 regression)", _baseline_idempotent_via_real_fetch())
+
     original = bdd._has_own_duplicate_comment
-    bdd._has_own_duplicate_comment = lambda comments, bot_login: False
+    bdd._has_own_duplicate_comment = lambda comments, bot_login, spec_request_issue: False
     try:
         ok, steps = _call(_originating("CLOSED", labelled=True, own_comment=True), _spec_request())
     finally:

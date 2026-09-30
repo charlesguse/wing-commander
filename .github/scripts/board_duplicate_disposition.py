@@ -56,12 +56,43 @@ def _view_issue(issue_number, json_fields, repository, run):
     return parsed, True
 
 
-def _has_own_duplicate_comment(comments, bot_login):
+def _fetch_comments(issue_number, repository, run):
+    """`gh api repos/<repository>/issues/<issue_number>/comments
+    --paginate`, parsed -- the REST shape (`user: {login, type}`), never
+    `gh issue view --json comments`'s GraphQL shape (`author: {login}`,
+    no `type`), which is_loop_marker_author() cannot read at all
+    (maintainer review, fold leg-1: reading comments via `gh issue view
+    --json comments` meant a loop-authored duplicate-disposition comment
+    was never recognized as already present, so every re-run re-posted
+    it). `--paginate` merges every response page's JSON array into one
+    array, so this needs no second `jq -s` the way board-loop.yml's own
+    shell steps do. Returns (parsed_list_or_None, ok)."""
+    proc = run(["gh", "api", "repos/{0}/issues/{1}/comments".format(repository, issue_number),
+                "--paginate"], capture_output=True, text=True)
+    if proc.returncode != 0:
+        return None, False
+    try:
+        parsed = json.loads(proc.stdout)
+    except ValueError:
+        return None, False
+    if not isinstance(parsed, list):
+        return None, False
+    return parsed, True
+
+
+def _has_own_duplicate_comment(comments, bot_login, spec_request_issue):
     """True when one of `comments` (an issue's own comments) carries a
     loop-authored board-item marker (board_item_marker.is_loop_marker_
-    author/last_marker_match) whose step is "duplicate" -- the disposition
-    operation's own reason+marker comment (contract step 4), read back the
-    same way every other marker consumer in this repository does."""
+    author/last_marker_match) whose step is "duplicate" AND whose
+    `spec_request` field names THIS `spec_request_issue` specifically --
+    the disposition operation's own reason+marker comment (contract step
+    4), read back the same way every other marker consumer in this
+    repository does. Matching on spec_request, not just step=="duplicate"
+    alone, matters for a re-route: an issue re-admitted after its FIRST
+    disposition (spec-request A closed) and then routed to a SECOND,
+    different spec-request (B) must not be treated as already-disposed of
+    B merely because an older marker naming A is still present
+    (maintainer review, fold leg-1: FR-003/FR-004/FR-009)."""
     for comment in comments or []:
         if not is_loop_marker_author(comment, bot_login):
             continue
@@ -72,7 +103,8 @@ def _has_own_duplicate_comment(comments, bot_login):
             marker = json.loads(match.group(1))
         except ValueError:
             continue
-        if isinstance(marker, dict) and marker.get("step") == DUPLICATE_STEP:
+        if (isinstance(marker, dict) and marker.get("step") == DUPLICATE_STEP
+                and marker.get("spec_request") == spec_request_issue):
             return True
     return False
 
@@ -98,13 +130,15 @@ def dispose_as_duplicate(originating_issue, spec_request_issue, spec_request_url
     no-op case), False on any failure -- the caller fails its own step on
     False, the same way add_stalled_label()'s callers do today.
 
-    `originating`/`spec_request`: optional already-fetched `gh issue view`
-    results (`--json state,labels,comments` / `--json comments`
-    respectively) -- when omitted, this function fetches them itself; the
-    CLI entry point (main()) fetches them once and passes them in, since
-    it also needs the spec-request read for spec_request_needs_reciprocal_
-    link(), and re-fetching would risk reading a second, inconsistent
-    snapshot of GitHub's live state."""
+    `originating`/`spec_request`: optional already-fetched dicts -- carrying
+    `state`/`labels`/`comments` (originating) and `comments` (spec_request)
+    -- when omitted, this function fetches them itself via `gh issue view
+    --json state,labels` for the state/labels and `gh api .../comments
+    --paginate` (the REST shape, fold leg-1) for both issues' comments;
+    the CLI entry point (main()) fetches them once and passes them in,
+    since it also needs the spec-request read for spec_request_needs_
+    reciprocal_link(), and re-fetching would risk reading a second,
+    inconsistent snapshot of GitHub's live state."""
     run = run or subprocess.run
     repository = repository or os.environ.get("GITHUB_REPOSITORY")
     bot_login = bot_login if bot_login is not None else os.environ.get("BOT_LOGIN")
@@ -115,25 +149,35 @@ def dispose_as_duplicate(originating_issue, spec_request_issue, spec_request_url
         return False
 
     if originating is None:
-        originating, ok = _view_issue(originating_issue, "state,labels,comments", repository, run)
+        state_labels, ok = _view_issue(originating_issue, "state,labels", repository, run)
         if not ok:
             print("::error::board_duplicate_disposition: could not read issue #{0} (pre-check, step 1) "
                   "-- disposition not attempted; a later run retries from the pre-check.".format(
                       originating_issue), file=sys.stderr)
             return False
-    if spec_request is None:
-        spec_request, ok = _view_issue(spec_request_issue, "comments", repository, run)
+        originating_comments, ok = _fetch_comments(originating_issue, repository, run)
         if not ok:
-            print("::error::board_duplicate_disposition: could not read spec-request #{0} (pre-check, "
-                  "step 1) -- disposition not attempted; a later run retries from the pre-check.".format(
-                      spec_request_issue), file=sys.stderr)
+            print("::error::board_duplicate_disposition: could not read the comments of issue #{0} "
+                  "(pre-check, step 1) -- disposition not attempted; a later run retries from the "
+                  "pre-check.".format(originating_issue), file=sys.stderr)
             return False
+        originating = dict(state_labels)
+        originating["comments"] = originating_comments
+    if spec_request is None:
+        spec_request_comments, ok = _fetch_comments(spec_request_issue, repository, run)
+        if not ok:
+            print("::error::board_duplicate_disposition: could not read the comments of spec-request "
+                  "#{0} (pre-check, step 1) -- disposition not attempted; a later run retries from the "
+                  "pre-check.".format(spec_request_issue), file=sys.stderr)
+            return False
+        spec_request = {"comments": spec_request_comments}
 
     state = originating.get("state")
     label_names = {label.get("name") for label in (originating.get("labels") or [])}
     close_needed = state != "CLOSED"
     label_needed = DISPOSITION_LABEL not in label_names
-    comment_needed = not _has_own_duplicate_comment(originating.get("comments"), bot_login)
+    comment_needed = not _has_own_duplicate_comment(
+        originating.get("comments"), bot_login, spec_request_issue)
 
     if close_needed:
         proc = run(["gh", "api", "-X", "PATCH", "repos/{0}/issues/{1}".format(repository, originating_issue),
@@ -184,18 +228,28 @@ def main():
               "issue #{0}.".format(args.originating), file=sys.stderr)
         sys.exit(1)
 
-    originating, ok = _view_issue(args.originating, "state,labels,comments", repository, subprocess.run)
+    state_labels, ok = _view_issue(args.originating, "state,labels", repository, subprocess.run)
     if not ok:
         print("::error::board_duplicate_disposition: could not read issue #{0} (pre-check, step 1) -- "
               "disposition not attempted; a later run retries from the pre-check.".format(
                   args.originating), file=sys.stderr)
         sys.exit(1)
-    spec_request, ok = _view_issue(args.spec_request_issue, "comments", repository, subprocess.run)
+    originating_comments, ok = _fetch_comments(args.originating, repository, subprocess.run)
     if not ok:
-        print("::error::board_duplicate_disposition: could not read spec-request #{0} (pre-check, step "
-              "1) -- disposition not attempted; a later run retries from the pre-check.".format(
-                  args.spec_request_issue), file=sys.stderr)
+        print("::error::board_duplicate_disposition: could not read the comments of issue #{0} "
+              "(pre-check, step 1) -- disposition not attempted; a later run retries from the "
+              "pre-check.".format(args.originating), file=sys.stderr)
         sys.exit(1)
+    originating = dict(state_labels)
+    originating["comments"] = originating_comments
+
+    spec_request_comments, ok = _fetch_comments(args.spec_request_issue, repository, subprocess.run)
+    if not ok:
+        print("::error::board_duplicate_disposition: could not read the comments of spec-request #{0} "
+              "(pre-check, step 1) -- disposition not attempted; a later run retries from the "
+              "pre-check.".format(args.spec_request_issue), file=sys.stderr)
+        sys.exit(1)
+    spec_request = {"comments": spec_request_comments}
 
     disposed = dispose_as_duplicate(
         args.originating, args.spec_request_issue, args.spec_request_url, args.reason,
