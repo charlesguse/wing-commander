@@ -3458,7 +3458,9 @@ jobs:
           CHOSEN: ${{ steps.decision.outputs.chosen }}
         run: |
           set -uo pipefail
-          author="$(gh api "repos/${GITHUB_REPOSITORY}/issues/comments/${COMMENT_ID}" --jq .user.login 2>/dev/null || echo "a maintainer")"
+          if ! author="$(gh api "repos/${GITHUB_REPOSITORY}/issues/comments/${COMMENT_ID}" --jq .user.login 2>/dev/null)"; then
+            author="a maintainer"
+          fi
           body="$(gh issue view "$ISSUE_NUMBER" --json body --jq .body)"
           # `|| true`: see the comment-reply guard's copy of this line.
           marker_line="$(printf '%s' "$body" | grep -o '<!-- wing-commander-auto-update-spec-kit:[^>]*-->' | head -1 || true)"

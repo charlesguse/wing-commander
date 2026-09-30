@@ -382,6 +382,36 @@ def extract_quoted_var(path, varname):
     return m.group(1)
 
 
+# gh's observed two-stream error shape (FR-012, specs/091-gh-api-error-
+# capture). Re-verify this comment's version list whenever a stub built
+# from gh_error_stub_arm starts failing against a newer `gh` on a
+# maintainer's machine -- that is the signal the two-stream behaviour
+# changed, not that the stub is wrong.
+# Observed: gh 2.63.2, gh 2.81.0 (#497 code review, 2026-08).
+def gh_error_stub_arm(match_glob, status, message, stderr_extra=""):
+    """One `case` arm's body simulating a failed covered `gh` read: stdout
+    gets the raw JSON error body (the `--jq` filter, if any, is never
+    applied -- this is the whole point, #497), stderr gets
+    `gh: <message> (HTTP <status>)` plus any `stderr_extra`, exit code 1.
+
+    `match_glob` is the caller's own `case "$*" in` pattern, recorded here
+    only so a reader of the call site sees which invocation this arm is
+    for -- this function returns just the body between `)` and `;;`, so
+    callers keep authoring their own dispatch the way every existing
+    STUB_GH already does. This is not a second stub-authoring framework,
+    only the one repeated fragment CLAUDE.md's single-home rule applies
+    to (research.md D8).
+    """
+    extra = "\n    " + stderr_extra if stderr_extra else ""
+    return (
+        "    # {0}\n"
+        '    printf \'%s\\n\' \'{{"message":"{1}","documentation_url":'
+        '"https://docs.github.com/rest","status":"{2}"}}\'\n'
+        '    echo "gh: {1} (HTTP {2})" >&2{3}\n'
+        "    exit 1\n"
+    ).format(match_glob, message, status, extra)
+
+
 def find_step(path, name):
     """The step dict named `name` in workflow OR composite action `path`.
 

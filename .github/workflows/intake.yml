@@ -1476,8 +1476,7 @@ jobs:
     if: |
       needs.verify-image-prerequisites.result != 'failure' &&
       !cancelled() &&
-      ( needs.verify-image-prerequisites.result == 'failure' ||
-        needs.intake.result == 'failure' ||
+      ( needs.intake.result == 'failure' ||
         needs.intake.result == 'skipped' ) &&
       needs.intake.outputs.refusal-reason == ''
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}

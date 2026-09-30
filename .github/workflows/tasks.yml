@@ -534,7 +534,9 @@ jobs:
           SPEC_DIR: ${{ needs.resolve-spec.outputs.spec-dir }}
           SPEC_BRANCH: ${{ inputs.spec-prefix }}${{ needs.resolve-spec.outputs.slug }}
         run: |
-          issue=$(gh api -X GET "repos/$GITHUB_REPOSITORY/contents/$SPEC_DIR/spec-meta.json" -f ref="$SPEC_BRANCH" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null | jq -r '.issue // empty' 2>/dev/null)
+          if ! issue=$(gh api -X GET "repos/$GITHUB_REPOSITORY/contents/$SPEC_DIR/spec-meta.json" -f ref="$SPEC_BRANCH" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null | jq -r '.issue // empty' 2>/dev/null); then
+            issue=''
+          fi
           echo "issue=${issue:-}" >> "$GITHUB_OUTPUT"
 
       # Deterministic fail-fast before any billable work (FR-004, FR-009).
@@ -1629,7 +1631,9 @@ jobs:
           SPEC_DIR: ${{ needs.resolve-spec.outputs.spec-dir }}
           SPEC_BRANCH: ${{ inputs.spec-prefix }}${{ needs.resolve-spec.outputs.slug }}
         run: |
-          issue=$(gh api -X GET "repos/$GITHUB_REPOSITORY/contents/$SPEC_DIR/spec-meta.json" -f ref="$SPEC_BRANCH" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null | jq -r '.issue // empty' 2>/dev/null)
+          if ! issue=$(gh api -X GET "repos/$GITHUB_REPOSITORY/contents/$SPEC_DIR/spec-meta.json" -f ref="$SPEC_BRANCH" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null | jq -r '.issue // empty' 2>/dev/null); then
+            issue=''
+          fi
           echo "issue=${issue:-}" >> "$GITHUB_OUTPUT"
 
       # No agent step runs on this path, so no credential is required —
@@ -1767,8 +1771,7 @@ jobs:
       needs.verify-image-prerequisites.result != 'failure' &&
       inputs.mode == 'generate' &&
       !cancelled() &&
-      ( needs.verify-image-prerequisites.result == 'failure' ||
-        needs.resolve-spec.result == 'failure' ||
+      ( needs.resolve-spec.result == 'failure' ||
         needs.tasks.result == 'failure' ||
         needs.tasks.result == 'skipped' ) &&
       needs.resolve-spec.outputs.refusal-reason == '' &&
@@ -1858,7 +1861,9 @@ jobs:
           SPEC_DIR: ${{ steps.identity.outputs.spec-dir }}
           SPEC_BRANCH: ${{ inputs.spec-prefix }}${{ steps.identity.outputs.slug }}
         run: |
-          issue=$(gh api -X GET "repos/$GITHUB_REPOSITORY/contents/$SPEC_DIR/spec-meta.json" -f ref="$SPEC_BRANCH" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null | jq -r '.issue // empty' 2>/dev/null)
+          if ! issue=$(gh api -X GET "repos/$GITHUB_REPOSITORY/contents/$SPEC_DIR/spec-meta.json" -f ref="$SPEC_BRANCH" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null | jq -r '.issue // empty' 2>/dev/null); then
+            issue=''
+          fi
           echo "issue=${issue:-}" >> "$GITHUB_OUTPUT"
 
       # FR-004/FR-011: a credential re-establishment failure is named as
@@ -1914,8 +1919,7 @@ jobs:
       needs.verify-image-prerequisites.result != 'failure' &&
       inputs.mode == 'approved' &&
       !cancelled() &&
-      ( needs.verify-image-prerequisites.result == 'failure' ||
-        needs.resolve-spec.result == 'failure' ||
+      ( needs.resolve-spec.result == 'failure' ||
         needs.tasks-approved.result == 'failure' ||
         needs.tasks-approved.result == 'skipped' ) &&
       needs.resolve-spec.outputs.refusal-reason == '' &&
@@ -2001,7 +2005,9 @@ jobs:
           SPEC_DIR: ${{ steps.identity.outputs.spec-dir }}
           SPEC_BRANCH: ${{ inputs.spec-prefix }}${{ steps.identity.outputs.slug }}
         run: |
-          issue=$(gh api -X GET "repos/$GITHUB_REPOSITORY/contents/$SPEC_DIR/spec-meta.json" -f ref="$SPEC_BRANCH" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null | jq -r '.issue // empty' 2>/dev/null)
+          if ! issue=$(gh api -X GET "repos/$GITHUB_REPOSITORY/contents/$SPEC_DIR/spec-meta.json" -f ref="$SPEC_BRANCH" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null | jq -r '.issue // empty' 2>/dev/null); then
+            issue=''
+          fi
           echo "issue=${issue:-}" >> "$GITHUB_OUTPUT"
 
       - name: Determine which dependency did not start

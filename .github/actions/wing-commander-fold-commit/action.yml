@@ -89,7 +89,9 @@ runs:
         ' "$SPEC_DIR/spec-meta.json" > "$RUNNER_TEMP/wc-fold-commit-meta.json"
         mv "$RUNNER_TEMP/wc-fold-commit-meta.json" "$SPEC_DIR/spec-meta.json"
 
-        bot_login="$(gh api user --jq .login 2>/dev/null || true)"
+        if ! bot_login="$(gh api user --jq .login 2>/dev/null)"; then
+          bot_login=""
+        fi
         [ -n "$bot_login" ] || bot_login="wing-commander-bot[bot]"
         git config user.name  "$bot_login"
         git config user.email "${bot_login}@users.noreply.github.com"
