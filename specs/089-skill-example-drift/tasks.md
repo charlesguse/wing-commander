@@ -254,3 +254,7 @@ Because nearly every task shares one of two files (the gate script or SKILL.md),
 ## Maintainer Feedback (PR #813 Review — Tautological Self-Test Check)
 
 - [ ] T039 Fix the tautological self-test check at verify-skill-board-loop-concurrency-claim.py:652-654 ("a paragraph carrying both the queuing word and the Gate pointer sentence extracts queues_not_cancels=True"): since `extract_skill_claim` only returns a non-None `SkillClaim` when `has_queue_word` already held (line 113, 123-125), `claim.queues_not_cancels` is `True` on every code path that reaches this assertion, so it cannot fail on its own. Delete it or replace it with an assertion that distinguishes a real regression (Constitution Principle VIII; PR #813 review item 4).
+
+## Maintainer Feedback (PR #813 Review — Substring Match False Positive)
+
+- [ ] T040 Fix the substring comparison in the `unexpected-job-in-group` check (verify-skill-board-loop-concurrency-claim.py:301): `claim.ordinary_group in group_value or claim.directed_group in group_value` would falsely flag a future non-capable job whose group name merely contains the claimed group as a substring (e.g. `wing-commander-board-loop-watchdog`). Compare exact literals for `group_literal`, and exact quoted tokens inside a `group_expression`, rather than substring containment (FR-012; PR #813 review item 5).
