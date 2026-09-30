@@ -186,3 +186,15 @@ Because nearly every task shares one of two files (the gate script or SKILL.md),
 - [ ] T024 Add a `--self-test` fixture that renames `wing-commander-board-loop` consistently across a synthetic `board-loop.yml` and `concurrency-groups.md` while leaving `SKILL.md`'s claim unchanged, demonstrating the gate now fails on the stale skill claim (depends on T022; same file as T022, sequential)
 
 **Checkpoint**: Gate 125 now also fails when the claimed group names drift from the workflow/contract, not just when membership drifts — closing the gap PR #813's review identified.
+
+
+## Phase 9: Maintainer Feedback (PR #813 Review) — Gate Number Reassignment
+
+**Purpose**: This feature's Gate 125 collides with a coordinated cross-spec gate renumbering (spec 091 keeps 126/127, spec 074 takes 128, spec 108 takes 130/131, spec 109 takes 132); this feature's gate moves to Gate 129 to fit that scheme.
+
+- [ ] T025 In `.github/scripts/verify-skill-board-loop-concurrency-claim.py`'s docstring, renumber this feature's gate from Gate 125 to Gate 129 per the coordinated cross-spec numbering (spec 091 keeps 126/127, spec 074 takes 128, spec 108 takes 130/131, spec 109 takes 132)
+- [ ] T026 [P] Update the corresponding step name(s) in `.github/workflows/lint-workflows.yml` from "Gate 125" to "Gate 129"
+- [ ] T027 [P] Fix stale "Gate 125" references in `tasks.md` (T002, T015) and in `contracts/skill-drift-gate.md` to read "Gate 129"
+- [ ] T028 Update the PR body/description to reference Gate 129 and note that this resolves #812
+
+**Checkpoint**: Gate 129 is the feature's only remaining gate number — no "Gate 125" reference survives in the script, the workflow, this file, or the contract — and the coordinated cross-spec renumbering lands without collision.
