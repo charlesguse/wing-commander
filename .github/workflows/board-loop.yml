@@ -717,7 +717,8 @@ jobs:
           import sys
 
           sys.path.insert(0, ".github/scripts")
-          from board_eligibility import PRE_FIX_STEPS, FIX_OR_LATER_STEPS, AWAITING_MERGE_STEP, BREACH_STEP
+          from board_eligibility import (
+              PRE_FIX_STEPS, FIX_OR_LATER_STEPS, AWAITING_MERGE_STEP, BREACH_STEP, not_ready_record)
           from board_item_marker import is_loop_branch
 
           marker_step = os.environ.get("MARKER_STEP") or None
@@ -833,6 +834,23 @@ jobs:
                   step = "review"
                   note = "recorded pr {0} was handed off not-ready at head_sha {1}; head has moved -- resuming at review".format(
                       pr_number, marker_full.get("nr_head_sha"))
+          elif (marker_step == "readiness" and pr_from_marker and pr_state == "OPEN"
+                and (not_ready_record(marker_full) or {}).get("class") == "durable"
+                and pr_head_sha and pr_head_sha != not_ready_record(marker_full)["head_sha"]):
+              # specs/093-not-ready-board-release FR-001/FR-007 (US3): a
+              # held item's PR head has moved since the durable not-ready
+              # record was measured -- automatically re-admitted, at
+              # review (never readiness, a human's new commits have not
+              # been through an independent review), continuing rather
+              # than resetting round_/nr_count_ (both already carried
+              # through unchanged above -- research.md D5/D6). Every other
+              # case this clause's sibling below already covers (no
+              # not-ready record, a self-clearing one, or a durable one
+              # whose head is unchanged) is unaffected and still resolves
+              # step = marker_step there.
+              step = "review"
+              note = "recorded pr {0} was held not-ready at head_sha {1}; head has moved -- re-admitted at review".format(
+                  pr_number, not_ready_record(marker_full)["head_sha"])
           elif pr_from_marker and marker_step and (
               marker_step in PRE_FIX_STEPS
               or (marker_step in FIX_OR_LATER_STEPS and pr_state == "OPEN")
@@ -3349,6 +3367,10 @@ jobs:
           BRANCH: ${{ steps.pr.outputs.branch }}
           ROUND: ${{ steps.pr.outputs.round }}
           ROUND_BUDGET: ${{ env.BOARD_LOOP_ROUND_BUDGET }}
+          # specs/093-not-ready-board-release research.md D5: carried
+          # through unchanged -- only readiness's own not-ready outcome
+          # advances this count.
+          NR_COUNT: ${{ steps.pr.outputs.nr-count }}
           OUTCOME: ${{ steps.round.outputs.outcome }}
           STALL_REASON: ${{ steps.round.outputs.stall-reason }}
           DROPPED_COUNT: ${{ steps.extract.outputs.dropped-count }}
@@ -3357,7 +3379,10 @@ jobs:
           # #604: every stall below adds board:stalled before its marker --
           # see board_item_marker.py.
           if [ "$OUTCOME" = "converged" ]; then
-            marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step readiness --pr "$PR_NUMBER" --branch "$BRANCH")"
+            # specs/093-not-ready-board-release research.md D6: --round
+            # preserves the fix->review budget across a later not-ready
+            # detour instead of dropping to the default 0.
+            marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step readiness --pr "$PR_NUMBER" --branch "$BRANCH" --round "$ROUND" --nr-count "$NR_COUNT")"
             gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Review round %s converged -- zero open in-scope findings on PR #%s. Proceeding to readiness.\n\n%s' "$ROUND" "$PR_NUMBER" "$marker")"
           elif [ "$STALL_REASON" = "parse-failed" ]; then
             # SF1/#499: distinct from the budget-spent message below -- this
@@ -3532,11 +3557,15 @@ jobs:
           PR_NUMBER: ${{ steps.pr.outputs.pr-number }}
           BRANCH: ${{ steps.pr.outputs.branch }}
           CURRENT_ROUND: ${{ steps.pr.outputs.round }}
+          # specs/093-not-ready-board-release research.md D5: carried
+          # through unchanged -- the round already advances here; the
+          # not-ready count does not.
+          NR_COUNT: ${{ steps.pr.outputs.nr-count }}
         run: |
           set -uo pipefail
           git push origin "HEAD:refs/heads/$BRANCH"
           next_round=$((CURRENT_ROUND + 1))
-          marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step review --round "$next_round" --pr "$PR_NUMBER" --branch "$BRANCH")"
+          marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step review --round "$next_round" --pr "$PR_NUMBER" --branch "$BRANCH" --nr-count "$NR_COUNT")"
           gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Review round %s: pushed a follow-up commit addressing the in-scope findings on PR #%s. Re-reviewing on a later run.\n\n%s' "$next_round" "$PR_NUMBER" "$marker")"
 
       - name: Comment the failing gate on the issue (review-fixup, gate suite red)

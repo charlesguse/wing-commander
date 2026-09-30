@@ -968,6 +968,39 @@ RESUME_CASES = [
     ("regression: stalled marker from any other stall site (pr absent) -> review",
      _resume_env("stalled", "", False, "OPEN", "42", from_fallback=True),
      {"step": "review", "pr_number": "42", "recovered_via_fallback": True}),
+    # specs/093-not-ready-board-release FR-001/FR-007 (US3): a durable
+    # not-ready record on a readiness marker holds while the head is
+    # unchanged (regression, now exercised with nr_* fields present), and
+    # re-admits at review -- never readiness -- the moment the head moves,
+    # carrying the marker's own round forward rather than resetting it.
+    ("regression: readiness, durable not-ready record, head unmoved -> readiness",
+     _resume_env("readiness", "42", True, "OPEN", "42",
+                 marker_extra={"pr": 42, "nr_count": 1, "nr_head_sha": "deadbeef", "nr_class": "durable"},
+                 pr_head_sha="deadbeef", round_="2"),
+     {"step": "readiness", "pr_number": "42", "round": "2"}),
+    ("readiness, durable not-ready record, head moved -> review, round preserved",
+     _resume_env("readiness", "42", True, "OPEN", "42",
+                 marker_extra={"pr": 42, "nr_count": 1, "nr_head_sha": "deadbeef", "nr_class": "durable"},
+                 pr_head_sha="cafefeed", round_="2"),
+     {"step": "review", "pr_number": "42", "round": "2"}),
+    # FR-005: a self-clearing record never holds -- unaffected, resolves
+    # readiness like an ordinary readiness marker.
+    ("regression: readiness, self-clearing not-ready record -> readiness",
+     _resume_env("readiness", "42", True, "OPEN", "42",
+                 marker_extra={"pr": 42, "nr_count": 1, "nr_head_sha": "deadbeef", "nr_class": "self-clearing"},
+                 pr_head_sha="cafefeed"),
+     {"step": "readiness", "pr_number": "42"}),
+    # FR-007/FR-012/SC-009 (US3 AS5/AS6): re-admission continues the
+    # existing round budget rather than resetting it -- an already
+    # -exhausted budget is carried through unchanged into review, whose
+    # own existing (unmodified) "Decide the round outcome" step takes its
+    # spec 057 FR-030 budget-exhausted stall from there; this feature adds
+    # no second, parallel handover for that case.
+    ("readiness, durable not-ready record, head moved, round budget already exhausted -> review, round carried",
+     _resume_env("readiness", "42", True, "OPEN", "42",
+                 marker_extra={"pr": 42, "nr_count": 1, "nr_head_sha": "deadbeef", "nr_class": "durable"},
+                 pr_head_sha="cafefeed", round_="5"),
+     {"step": "review", "pr_number": "42", "round": "5"}),
 ]
 
 # #555: the resume step's PR-ownership jq, run on these PR payloads
