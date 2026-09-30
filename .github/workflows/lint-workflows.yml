@@ -4625,6 +4625,17 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-lifecycle-review-gate-composite-provenance.py --self-test
 
+      # Gate 126 — specs/092-bounded-spec-request-filing: board_spec_request_
+      # filing.py's find_existing()/reopened_since()/record_attempt() are
+      # the single home FR-017/FR-018 require for the existence check and
+      # the attempt bound every one of board-loop.yml's four spec-request
+      # filing sites shares -- this gate pins them directly against
+      # checked-in fixtures, the same way Gate 81 (verify-board-
+      # eligibility.py) pins board_eligibility.py's own decisions.
+      - name: "Gate 126 — board_spec_request_filing.py's pure functions resolve every fixture case correctly"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-board-spec-request-filing.py
+
       # Gate 114 — specs/066-fine-grained-maintainer-token FR-017/FR-018: "a
       # classic PAT, not fine-grained" was asserted in at least four places
       # (docs/setup.md, auto-release.yml's credential-step comment, Gate

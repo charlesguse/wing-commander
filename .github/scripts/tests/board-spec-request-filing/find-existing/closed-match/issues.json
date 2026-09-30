@@ -1,0 +1,9 @@
+[
+  {
+    "html_url": "https://github.com/example/repo/issues/602",
+    "created_at": "2026-01-06T00:00:00Z",
+    "state": "closed",
+    "body": "No drafted body.\n\n---\nOriginating issue: https://github.com/example/repo/issues/43",
+    "user": {"login": "wing-commander-bot[bot]", "type": "Bot"}
+  }
+]

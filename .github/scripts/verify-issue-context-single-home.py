@@ -1955,9 +1955,11 @@ SPEC_REQUEST_MUTATIONS = (
      'gh issue create -R "$GITHUB_REPOSITORY" --title "$spec_title"'),
     ("fix create guard exits 0",
      'retries it."; exit 1; }\n'
+     '          fi\n'
      '          echo "spec-url=$spec_url" >> "$GITHUB_OUTPUT"\n'
      '          echo "measured=$measured"',
      'retries it."; exit 0; }\n'
+     '          fi\n'
      '          echo "spec-url=$spec_url" >> "$GITHUB_OUTPUT"\n'
      '          echo "measured=$measured"'),
     ("fix breach site made continue-on-error",

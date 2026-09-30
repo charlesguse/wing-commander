@@ -130,9 +130,11 @@ on a PR the size check had already rejected. Now:
     backstop step is forced to breach there with breach-retry=true
     whatever the fresh measure says (executed on an empty diff);
   - the retry looks for a spec-request already filed first: a lookup
-    step gated on breach-retry feeds report-unmet's EXISTING_SPEC_URL,
-    which report-unmet reuses in place of a create (static), and the
-    lookup's BREACH_SPEC_REQUEST_JQ is run on SPEC_REQUEST_CASES.
+    step (specs/092-bounded-spec-request-filing generalized this to run
+    at both the ordinary and step=breach-retry entries, board_spec_
+    request_filing.py's single shared existence check rather than a
+    second, parallel jq predicate) feeds report-unmet's EXISTING_SPEC_URL,
+    which report-unmet reuses in place of a create (static).
 
 WHAT IT CHECKS (#604)
 ---------------------
@@ -1115,45 +1117,6 @@ def select_lookup_findings(doc, scripts_root=ROOT):
 # spec-request that create already filed.
 # ---------------------------------------------------------------------------
 
-_SERVER_REPO = "https://github.com/example/wing-commander"
-_FOOTER = "Originating issue: {0}/issues/396".format(_SERVER_REPO)
-
-
-def _spec_request(body, login=BOT_LOGIN, type_="Bot", created="2026-01-05T00:00:00Z",
-                  url="{0}/issues/900".format(_SERVER_REPO)):
-    return {"html_url": url, "created_at": created, "body": body,
-            "user": {"login": login, "type": type_}}
-
-
-_FIX_NOTICE = ("The fix at {0}/pull/42 grew past the board's size-and-path backstop "
-               "on its final diff (measured={{}}).\n\nNo drafted body.\n\n---\n{1}").format(
-                   _SERVER_REPO, _FOOTER)
-_READINESS_NOTICE = ("PR #42 grew past the board's size-and-path backstop by readiness time."
-                     "\n\nNo drafted body.\n\n---\n{0}").format(_FOOTER)
-
-# (title, issues listing, expected html_url or "") -- BREACH_SPEC_REQUEST_JQ
-# run with bot=BOT_LOGIN, footer=_FOOTER, pr=42.
-SPEC_REQUEST_CASES = [
-    ("fix's post-push-breach spec-request for PR 42", [_spec_request(_FIX_NOTICE)],
-     _SERVER_REPO + "/issues/900"),
-    ("readiness's breach spec-request for PR 42", [_spec_request(_READINESS_NOTICE)],
-     _SERVER_REPO + "/issues/900"),
-    ("nothing filed yet", [], ""),
-    ("same text, posted by someone else",
-     [_spec_request(_FIX_NOTICE, login="outsider", type_="User")], ""),
-    ("same login, not a Bot", [_spec_request(_FIX_NOTICE, type_="User")], ""),
-    ("another PR (420)", [_spec_request(_FIX_NOTICE.replace("/pull/42 ", "/pull/420 "))], ""),
-    ("another issue's footer (3960)",
-     [_spec_request(_FIX_NOTICE.replace("/issues/396", "/issues/3960"))], ""),
-    ("footer only quoted inside a line",
-     [_spec_request(_FIX_NOTICE.replace("\n" + _FOOTER, "\n> " + _FOOTER))], ""),
-    ("two filed -> the oldest",
-     [_spec_request(_FIX_NOTICE, created="2026-01-06T00:00:00Z", url=_SERVER_REPO + "/issues/902"),
-      _spec_request(_FIX_NOTICE, created="2026-01-05T00:00:00Z", url=_SERVER_REPO + "/issues/901")],
-     _SERVER_REPO + "/issues/901"),
-]
-
-
 def _step(doc, job, step_id):
     for s in ((doc.get("jobs") or {}).get(job) or {}).get("steps") or []:
         if isinstance(s, dict) and s.get("id") == step_id:
@@ -1227,37 +1190,42 @@ def breach_retry_findings(doc, scripts_root=ROOT):
                         resume_step, want, got, err.strip()[-200:]))
 
     # Readiness: the retry looks for an existing spec-request first.
+    # specs/092-bounded-spec-request-filing generalized this lookup to run
+    # at both the ordinary and step=breach-retry entries (T014/T015) --
+    # its own `if:` must therefore match report-unmet's own site
+    # condition (parity, the same rule Gate 93 check 3 already applies to
+    # a spec-request site's own context fetch), never be narrowed back to
+    # breach-retry alone.
     lookup = _step(doc, "readiness", "breach-retry-lookup")
-    cond = str(lookup.get("if", "")).replace(" ", "")
-    if "steps.final-diff-backstop.outputs.breach-retry=='true'" not in cond:
-        findings.append("readiness: no step `breach-retry-lookup` gated on "
-                        "`steps.final-diff-backstop.outputs.breach-retry == 'true'` (#530)")
     unmet = _step(doc, "readiness", "report-unmet")
+    lookup_cond = str(lookup.get("if", "")).replace(" ", "")
+    unmet_cond = str(unmet.get("if", "")).replace(" ", "")
+    if not lookup_cond or lookup_cond != unmet_cond:
+        findings.append(
+            "readiness: step `breach-retry-lookup`'s if: ({0}) does not match "
+            "report-unmet's own if: ({1}) -- specs/092-bounded-spec-request-filing "
+            "requires the lookup to run whenever report-unmet might file a "
+            "spec-request, not only on a step=breach retry (#530).".format(
+                lookup.get("if"), unmet.get("if")))
+    lookup_run = str(lookup.get("run", ""))
+    if "board_spec_request_filing.py" not in lookup_run or re.search(
+            r"\bboard_spec_request_filing\.py[^\n]*\blookup\b", lookup_run) is None:
+        findings.append(
+            "readiness/breach-retry-lookup: does not call board_spec_request_filing.py's "
+            "lookup subcommand -- specs/092-bounded-spec-request-filing requires the "
+            "single shared existence check, not a second, parallel jq predicate (#530).")
     unmet_env = unmet.get("env") or {}
     unmet_run = str(unmet.get("run", ""))
     if (unmet_env.get("EXISTING_SPEC_URL") != "${{ steps.breach-retry-lookup.outputs.existing-spec-url }}"
             or unmet_env.get("BREACH_RETRY") != "${{ steps.final-diff-backstop.outputs.breach-retry }}"):
         findings.append("readiness/report-unmet: env does not carry EXISTING_SPEC_URL from "
                         "breach-retry-lookup and BREACH_RETRY from final-diff-backstop (#530)")
-    reuse_at = unmet_run.find('existing_spec_url="$EXISTING_SPEC_URL"')
-    guard_at = unmet_run.find('if [ -n "$existing_spec_url" ]; then')
+    reuse_at = unmet_run.find('spec_url="$EXISTING_SPEC_URL"')
     create_at = unmet_run.find("gh issue create")
-    if not (0 <= reuse_at < guard_at < create_at):
+    if not (0 <= reuse_at < create_at):
         findings.append("readiness/report-unmet: does not reuse EXISTING_SPEC_URL in place of "
                         "`gh issue create` -- a retry after a create that succeeded files a "
                         "second spec-request (#530)")
-    prog = (lookup.get("env") or {}).get("BREACH_SPEC_REQUEST_JQ")
-    if not prog:
-        findings.append("readiness/breach-retry-lookup: no env BREACH_SPEC_REQUEST_JQ (#530)")
-    else:
-        for title, issues, want in SPEC_REQUEST_CASES:
-            proc = subprocess.run(["jq", "-r", "--arg", "bot", BOT_LOGIN, "--arg", "footer", _FOOTER,
-                                   "--arg", "pr", "42", prog],
-                                  input=json.dumps(issues), text=True, capture_output=True)
-            got = proc.stdout.strip()
-            if proc.returncode != 0 or got != want:
-                findings.append("BREACH_SPEC_REQUEST_JQ `{0}`: expected {1!r}, got {2!r} {3}".format(
-                    title, want, got, proc.stderr.strip()))
     return findings
 
 
@@ -2106,10 +2074,18 @@ def _mutations(text):
         "          if breach_retry:\n              holds = False\n", "")
     sub("readiness backstop without RESUME_STEP",
         "          RESUME_STEP: ${{ needs.select.outputs.step }}\n", "", after="\n  readiness:\n")
-    sub("breach-retry lookup not gated on breach-retry",
-        " && steps.final-diff-backstop.outputs.breach-retry == 'true'", "", after="\n  readiness:\n")
+    sub("breach-retry lookup narrowed back to breach-retry only (specs/092)",
+        "        id: breach-retry-lookup\n"
+        "        if: steps.decide.outputs.ready != 'true' && steps.killswitch-recheck.outputs.paused == 'false'\n",
+        "        id: breach-retry-lookup\n"
+        "        if: steps.decide.outputs.ready != 'true' && steps.final-diff-backstop.outputs.breach-retry == 'true' "
+        "&& steps.killswitch-recheck.outputs.paused == 'false'\n",
+        after="\n  readiness:\n")
     sub("report-unmet ignores the spec-request already filed",
-        'existing_spec_url="$EXISTING_SPEC_URL"', 'existing_spec_url=""')
+        'spec_url="$EXISTING_SPEC_URL"\n              echo "board-loop: issue #$ISSUE_NUMBER -- '
+        'reusing spec-request',
+        'spec_url=""\n              echo "board-loop: issue #$ISSUE_NUMBER -- ignoring spec-request',
+        after="\n  readiness:\n")
     # #604 (a): every stall site. Each render loses its label flags, and
     # each loses its fail-loud check; plus the pre-#604 shape (marker, then
     # a bare label add) at route, and triage's handover without stall_args.
@@ -2126,8 +2102,8 @@ def _mutations(text):
         muts.append(("stalled render #{0}: failure not checked".format(n + 1),
                      text[:guard_start] + "\n" + text[guard_end:]))
     sub("route: stalled marker, then a bare board:stalled add (pre-#604)",
-        '"$route_verb" "$route_detail" "$marker" "$rationale_comment")"\n',
-        '"$route_verb" "$route_detail" "$marker" "$rationale_comment")"\n'
+        '"$route_detail" "$spec_url" "$marker" "$rationale_comment")"\n          fi\n',
+        '"$route_detail" "$spec_url" "$marker" "$rationale_comment")"\n          fi\n'
         '          gh issue edit "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --add-label "board:stalled"\n')
     sub("triage handover renders without stall_args",
         '--step "$marker_step" "${stall_args[@]}")"', '--step "$marker_step")"')
@@ -2151,15 +2127,10 @@ def _mutations(text):
         "        id: killswitch-recheck\n        continue-on-error: true\n"
         "        uses: ./.wc-pristine-repo/.github/actions/wing-commander-board-stop-check\n",
         after="\n  readiness:\n")
-    sub("breach lookup jq ignores the author",
-        'select(.user.type == "Bot" and .user.login == $bot)', "select(true)")
-    sub("breach lookup jq ignores the PR number",
-        '| select((.body // "") | test("(/pull/|PR #)" + $pr + "([^0-9]|$)"))', "")
-    sub("breach lookup jq matches the PR number as a prefix",
-        '"([^0-9]|$)"', '""')
-    sub("breach lookup jq matches the footer as a substring",
-        'any((.body // "") | split("\\n")[] | rtrimstr("\\r"); . == $footer)',
-        '(.body // "") | contains($footer)')
+    sub("breach-retry-lookup no longer calls the shared script's lookup subcommand (specs/092)",
+        'python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_spec_request_filing.py" lookup --issue',
+        'python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_spec_request_filing.py" --issue',
+        after="\n  readiness:\n")
     # main's pre-#525 conditions, verbatim.
     muts.append(("fix restored to pre-#525", _replace_job_if(text, "fix", PRE_525["fix"])))
     muts.append(("review restored to pre-#525", _replace_job_if(text, "review",

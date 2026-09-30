@@ -100,7 +100,7 @@ removes duplicate filings even while retries stay unbounded.
 
 ### Implementation for User Story 1
 
-- [ ] T006 [US1] Implement `find_existing(issues_json, bot_login, footer)` in
+- [X] T006 [US1] Implement `find_existing(issues_json, bot_login, footer)` in
   `.github/scripts/board_spec_request_filing.py`: returns the `html_url` of
   the issue with the earliest `created_at` among `issues_json` entries whose
   `user.type == "Bot"` and `user.login == bot_login`, and whose `body`
@@ -108,12 +108,12 @@ removes duplicate filings even while retries stay unbounded.
   `#530` jq predicate's `rtrimstr("\r")` handling), or `None` when none
   match — never a PR reference, never title text (FR-002, FR-003, FR-004;
   contracts/spec-request-existence-check.md; research.md D2).
-- [ ] T007 [US1] Implement `reopened_since(events_json, created_at)` in
+- [X] T007 [US1] Implement `reopened_since(events_json, created_at)` in
   `.github/scripts/board_spec_request_filing.py`: returns the `created_at`
   of the last item in `events_json` whose `event == "reopened"`, or
   `created_at` (the issue's own) when no such item exists (FR-003;
   research.md D3).
-- [ ] T008 [US1] Implement the `lookup --issue ISSUE_NUMBER --bot-login LOGIN`
+- [X] T008 [US1] Implement the `lookup --issue ISSUE_NUMBER --bot-login LOGIN`
   subcommand in `.github/scripts/board_spec_request_filing.py`'s `main()`:
   fetch `repos/OWNER/REPO/issues/ISSUE_NUMBER/events` via `gh api`, compute
   `since` with `reopened_since()`; fetch `repos/OWNER/REPO/issues -f
@@ -124,7 +124,7 @@ removes duplicate filings even while retries stay unbounded.
   failure at either fetch exits 1 with nothing written to
   `existing-spec-url` — never falls back to "no match found"
   (contracts/spec-request-existence-check.md "Behavior"/"Failure"; FR-007).
-- [ ] T009 [P] [US1] Fixture tests for `find_existing()` under
+- [X] T009 [P] [US1] Fixture tests for `find_existing()` under
   `.github/scripts/tests/board-spec-request-filing/` (following
   `.github/scripts/tests/board-eligibility/`'s checked-in-JSON pattern): an
   open match, a closed match (FR-003), the oldest of two matches wins
@@ -132,11 +132,11 @@ removes duplicate filings even while retries stay unbounded.
   ignored (Edge Case: "a maintainer filed the spec-request by hand"), and a
   body containing the footer text only as a substring (not as a whole line)
   is ignored.
-- [ ] T010 [P] [US1] Fixture tests for `reopened_since()` under
+- [X] T010 [P] [US1] Fixture tests for `reopened_since()` under
   `.github/scripts/tests/board-spec-request-filing/`: never-reopened (falls
   back to the issue's own `created_at`), reopened once, and reopened more
   than once (the *last* reopening's timestamp wins).
-- [ ] T011 [US1] Wire route's spec-verdict site in
+- [X] T011 [US1] Wire route's spec-verdict site in
   `.github/workflows/board-loop.yml`: add a "Look for a spec-request already
   filed for this issue" step calling `board_spec_request_filing.py lookup
   --issue $ISSUE_NUMBER --bot-login ...` immediately before the "Create the
@@ -149,27 +149,27 @@ removes duplicate filings even while retries stay unbounded.
   gated on `steps.spec_request.outputs.spec-url != ''`) is unaware of which
   path produced it (FR-001, FR-005; research.md D10;
   contracts/spec-request-existence-check.md "Consumers").
-- [ ] T012 [US1] Update route's closing comment (line 1908) and its
+- [X] T012 [US1] Update route's closing comment (line 1908) and its
   `reason`/`$GITHUB_STEP_SUMMARY` record to state explicitly whether the
   artifact was **reused** or **filed**, naming the artifact either way
   (FR-006) — follow readiness's own existing "reusing spec-request
   $spec_url, already filed for PR #$PR_NUMBER" step-summary phrasing (line
   3892) as the model for the wording. Never name a downstream consumer of
   this repository in the new text (FR-022).
-- [ ] T013 [US1] Wire the fix job's post-push-breach site the same way as
+- [X] T013 [US1] Wire the fix job's post-push-breach site the same way as
   T011/T012: add the lookup step before "On a post-push breach, leave the
   branch/PR open and spin off a spec-request" (line 2425), skip `gh issue
   create` (line 2455) on a non-empty `existing-spec-url`, set
   `steps.post-push-breach.outputs.spec-url` to the reused URL, and state
   reused-vs-filed in the closing comment (line 2469).
-- [ ] T014 [US1] Wire readiness's *ordinary* backstop-breach entry
+- [X] T014 [US1] Wire readiness's *ordinary* backstop-breach entry
   (`report-unmet`, line 3862 — the entry spec 100 FR-016 defers to this
   feature and which has **no** existence check today) the same way: add the
   lookup step before the `gh issue create` inside "Report the unmet
   condition (not ready)" (line 3903), skip the create on a non-empty
   `existing-spec-url`, and state reused-vs-filed in the closing comment
   (lines 3915-3917).
-- [ ] T015 [US1] Replace readiness's `step=breach`-retry entry's inline
+- [X] T015 [US1] Replace readiness's `step=breach`-retry entry's inline
   lookup ("Look for a spec-request already filed for this breach", `id:
   breach-retry-lookup`, lines 3831-3860, its `BREACH_SPEC_REQUEST_JQ` env
   var at lines 3839-3843) with a call to the same shared
@@ -180,7 +180,7 @@ removes duplicate filings even while retries stay unbounded.
   Keep the step id `breach-retry-lookup` and the output name
   `existing-spec-url` that `report-unmet` (line 3871) already consumes, so
   no downstream step needs to change.
-- [ ] T016 [US1] Run Gate 93's existing self-test
+- [X] T016 [US1] Run Gate 93's existing self-test
   (`python3 .github/scripts/verify-issue-context-single-home.py
   --self-test`) and confirm check 3's create-guard fixtures still pass
   unmodified now that a lookup step precedes each create step — the new
