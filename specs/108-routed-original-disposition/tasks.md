@@ -714,3 +714,7 @@ Task: "Add disposition:duplicate to wing-commander-board-labels/action.yml"
 ## Maintainer Feedback
 
 - [ ] Single-home violation: the select step's inline `python3 - <<PYEOF` block in `board-loop.yml` (~lines 678-712) re-implements `board_eligibility._find_duplicate_marker()` -- the same `disposition:duplicate` label check, the same `find_latest_marker_matching()` call, and the same predicate -- as a second, drifting copy instead of calling the module. **Fix:** add a public helper to `board_eligibility.py` (e.g. one that returns the spec-request numbers to resolve for a given set of open issues/comments) and have the heredoc call it, deleting the inline copy, per CLAUDE.md's "Shared logic has exactly one home" rule.
+
+## Maintainer Feedback
+
+- [ ] Wrap the two unchecked `gh issue list` calls in the "Detect a spec-request that closed without landing" step (`board-loop.yml:325`, `:354`) in `if ! ...; then echo "::error::..."; exit 1; fi`, matching the per-issue comment fetches directly below them. The step runs under `set -uo pipefail` (no `-e`): if the call at `:354` fails, the scan finishes "successfully" having posted nothing for that run; if the call at `:325` fails, it crashes with an unhandled traceback instead of a clean `::error::`. (FR-017)
