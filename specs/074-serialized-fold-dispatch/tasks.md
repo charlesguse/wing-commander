@@ -253,3 +253,31 @@ Task: "Add fixtures under wing-commander-fold-queue-release/tests/"
 - [X] T044 Update `specs/074-serialized-fold-dispatch/contracts/wing-commander-fold-queue-claim-dispatch.md`, `contracts/workflow-changes.md`, `contracts/fold-cycle-guard.md` (the re-dispatch reuses the same claim path) and `quickstart.md`. Cover the declined, re-queued and winning claim outcomes, the own-folds input, the round-attributed reply list, and a Drill 3 variant: a folding run, then a no-fold run, ending in one dispatch that lists the first run's folds plus the no-fold run's declined notice.
 
   Done: `contracts/wing-commander-fold-queue-claim-dispatch.md` was updated in the same pass as T040 (documented there since the two changes are one design). `contracts/workflow-changes.md`'s `dispatch-once` row rewritten to the declined/requeued/won shape, the `own-folds`/`round-folded-json`/`fold-queue-token` plumbing, the restored `record-implement-run` step, and the `contents: write` permissions fix found while wiring T043. `contracts/fold-cycle-guard.md` corrected: it previously claimed the re-dispatch calls "the same claim/enqueue path `dispatch-once` uses", which was already imprecise before this cycle (it actually calls the distinct `claim-redispatch` transform, same CAS *shape*, not the same code) — rewritten to say so explicitly and to note `claim-redispatch` carries no `own-folds` gate and is untouched by this reconciliation. `quickstart.md`: Drill 1's mutation count updated to nine; Drill 2 gained the `wing-commander-fold-queue-ledger` suite (already shipped by T038 but missing from this list) and a description of the four `claim-dispatch` fixture scenarios; added Drill 3b (a folding run and a no-fold run in one round, confirming the no-fold run's decline and the folding run's single dispatch naming only its own fold); the outcomes-summary table and Prerequisites section updated to match.
+
+### Code review of cfb856c5 (maintainer REQUEST_CHANGES on #821, 2026-09-30, folded by hand: the PR was conflicted, so pr-conversation never ran)
+
+- [ ] T045 **The requeue path deadlocks, violating FR-018.** `dispatch-once` holds `wing-commander-<spec-dir>` (pr-conversation.yml:3047). Inside it, `wing-commander-fold-queue-claim-dispatch` (called at :3159, loop at claim-dispatch/action.yml:104-110) waits for another run's `act` ticket. That run's `act` leg (:1661, same group) can't start until `dispatch-once` exits. After 30 min the claim fails and nothing dispatches, and the release step then errors with "not at queue head". FR-009's "re-attempts the claim once they clear" therefore can never happen. Gate 126 scenario 11 passes only because the fixture doesn't model the concurrency group. **Fix:** move the claim and its requeue wait, including the own-folds computation, into `fold-turn-dispatch`, which has no concurrency group, and pass the result to `dispatch-once` through outputs.
+
+- [ ] T046 **A won claim with no recorded implement run wedges the spec's queue.** In any of these cases, the `run-<id>-implement` ticket sits granted at the head with no `implement_run_id`, and fold-queue-await.sh:106-113 never reclaims it:
+  - `implement-workflow` is empty (standalone mode, which happens every time);
+  - `gh workflow run` fails;
+  - the `run-url` lookup comes back empty.
+  Every later `fold-turn-act` for the spec then times out. This breaks the spec's "without an implement workflow configured" edge case, and T043's "standalone path unchanged". **Fix:**
+  - don't enqueue the implement ticket in standalone mode;
+  - release it whenever no run is recorded;
+  - bound the await loop for an implement head that has no correlated run.
+
+- [ ] T047 **`-f fold_queue_token=` breaks existing adopter wrappers (FR-019 / Principle VII).** A copied implement wrapper that doesn't declare the input gets HTTP 422 "Unexpected inputs provided", and the queue then falls into item 2. **Fix:** make the field opt-in, or retry without it on a 422, and document the wrapper change in docs/adoption.md.
+
+- [ ] T048 **CI lint is red** (run 36647703287):
+  - The admit fixtures call `release` without `RUN_ID` and `claim-dispatch` without `OWN_FOLDS`.
+  - The ledger fixture expects `run-900-implement` granted but finds it at position 1.
+  **Fix:** correct the fixtures and re-run all four `.github/actions/*/tests/run.sh` suites. The local runner doesn't cover them yet (#825).
+
+- [ ] T049 **The 30-minute `fold-turn-act` admission ceiling is shorter than a normal implement cycle.** The implement ticket is held for the whole implement run. Recent implement runs took 16–125 min, and 9 of the last 15 went over 30. **Fix:** raise the ceiling or tie it to implement liveness, so a review posted during implement is folded rather than dropped.
+
+- [ ] T050 **`claim-dispatch`'s win is not idempotent.** A retry, or a re-run of `dispatch-once`, that sees `dispatch_claimed_by` already set to its own run resolves `declined`. That contradicts the header's "every transform is idempotent under retry". **Fix:** treat a claim already held by this run as a win.
+
+- [ ] T051 **Gate-number collision.** Five open Finalize PRs all claim Gate 126. The allocation is: spec 091 (#818) keeps 126/127, **this PR takes Gate 128**, 089 takes 129, 108 takes 130/131, and 109 takes 132. After rebasing, also make fold-cycle-guard.yml:301 (`jobs_json`) and :321 (`run_json`) pass spec 091's `verify-gh-api-error-capture.py`, using an `if !`/exit guard or a reasoned exempt marker.
+
+- [ ] T052 **The fixture suites live in a location main forbids** (#719, #825). Main has no `.github/actions/**/tests/run.sh`. Its convention is `.github/scripts/<name>/run-tests.sh`, which `wc_gate_registry.gate_scripts()` already globs, so the local runner picks them up; a gate forbids harnesses under actions/. Move the four fold-queue suites there and update lint-workflows.yml to call them from the new path.
