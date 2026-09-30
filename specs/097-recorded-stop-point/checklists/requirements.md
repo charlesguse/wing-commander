@@ -61,3 +61,8 @@
 - Requirements the spec deliberately closes rather than asks about are
   listed in Assumptions, each with the existing rule or issue it follows
   from.
+- 2026-09-30 maintainer spec review: the spec was reconciled with merged
+  specs 100 and 108 and with spec 095 (in review). The resume step after
+  release now defers to spec 100 FR-006/FR-006b. Spec 100 FR-014 is
+  narrowed for an honoured stop request. The stop record goes through
+  `add_stalled_label()`. No owner question is open.

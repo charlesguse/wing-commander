@@ -209,11 +209,12 @@ instruction are all determinable from the issue alone.
 
 Having looked, the maintainer decides the loop should carry on. They
 remove `board:stalled` — the same release act every other stalled board
-item already uses — and the next scheduled run picks the item back up on
-the branch and base commit it had when it stopped, without re-reading the
-old stop comment as a fresh stop and without opening a second branch or a
-second pull request for the issue. Its review starts again from the first
-round, so the state a human has been in is reviewed afresh.
+item already uses — and the next scheduled run picks the item back up at
+the step spec 100's re-admission rule names (FR-010), without re-reading
+the old stop comment as a fresh stop and without opening a second branch
+or a second pull request for the issue. If it resumes into review, the
+review gets a fresh round budget, so state a human has touched is reviewed
+afresh.
 
 **Why this priority**: A stop that cannot be undone is a permanent
 exclusion, and a release that immediately re-stops is the original wedge
@@ -355,12 +356,17 @@ stood down once, the stop point was recorded, and the board moved on.
 - **FR-010**: The stop-point record MUST preserve the item's branch and
   base commit, and only those — the same in-flight context the fix job's
   existing stalled path already keeps. The review round MUST NOT be
-  preserved: a released item's review starts again from the first round,
-  so that state a human has touched is reviewed afresh before anything is
-  reported ready. A released item MUST re-find its open loop-owned pull
+  preserved: if a released item resumes into review, that review starts
+  again from the first round, so state a human has touched is reviewed
+  afresh before anything is reported ready. A released item MUST re-find its open loop-owned pull
   request through the existing `board:owned` fallback rather than through
   a pull request number carried in the record, and FR-054's "no second
-  branch or pull request" MUST continue to hold.
+  branch or pull request" MUST continue to hold. The step a released item
+  resumes at is not set here. A stop is an undisposed stall, so spec 100
+  FR-006/FR-006b decide it: `review` when the open `board:owned` PR's head
+  moved since its last review or that head cannot be established,
+  `readiness` when it provably did not move, and a fresh triage with no
+  open PR. Spec 100 FR-009 sets the fresh round budget.
 - **FR-011**: A stand-down caused by the kill switch alone MUST write
   nothing for the item: no comment, no label change, no marker. Clearing
   the switch MUST leave the board exactly as it was.
@@ -392,7 +398,11 @@ stood down once, the stop point was recorded, and the board moved on.
   job already calls — rather than being repeated per job (CLAUDE.md
   "Shared logic has exactly one home"; spec 057's reuse requirements).
   Whatever item context that home needs in order to write the record is
-  passed in by each caller.
+  passed in by each caller. The label-then-marker write MUST go through
+  the existing stall helper, `add_stalled_label()` in
+  `board_item_marker.py`, not a new implementation. The composite MUST run
+  that helper, and `board_stop_check.py`, from the trusted snapshot rather
+  than the workspace (spec 095 FR-011/FR-012).
 - **FR-019**: A PR-time gate MUST fail on a change that removes the
   recording from the honoured-stop path, that makes the kill-switch-only
   path write to the item, or that lets a recorded stop be re-selected;
@@ -458,6 +468,69 @@ stood down once, the stop point was recorded, and the board moved on.
 - **SC-009**: The new gate fails when run against the pre-fix behaviour
   and passes against the fixed behaviour.
 
+### Status update 2026-09-30 — reconciled with current `main` and specs 095/100/108 (maintainer spec review)
+
+- **The stop path still records nothing.** `wing-commander-board-stop-check`
+  still has a single `paused` output
+  (`.github/actions/wing-commander-board-stop-check/action.yml`) and no
+  comment, label or marker write. It is called at `board-loop.yml:1333`
+  (triage), `1747` (route), `2275` (fix), `3220` (review), `3702`
+  (readiness) and `4258` (prove). `find_stop_request()` still starts from
+  `baseline = ""` (`board_stop_check.py:199`). FR-014 still stands: to
+  record only a stop request, the composite has to expose which cause it
+  observed, not just a single boolean.
+- **The "Observed facts" on stall ordering are superseded by #782.** Every
+  stall site now goes through `add_stalled_label()`
+  (`board_item_marker.py:170`), which adds the label first and renders no
+  marker when the add fails. There are eight sites, not three
+  (`board-loop.yml:1906`, `2263`, `2467`, `3306`, `3311`, `3319`, `3913`,
+  plus triage's hand-over). FR-017's retryable-on-failure rule is that
+  helper's contract, and FR-018 now requires the stop record to use it.
+  Spec 100 FR-004's derived enumeration of stall sites then covers the stop
+  record with no list edit. Readiness's stand-down message already names
+  both causes (`board-loop.yml:3716`); triage's still names only the kill
+  switch (`board-loop.yml:1408`).
+- **Spec 100 (merged) governs release.** An honoured stop is an undisposed
+  stall. Re-admission after the label is removed follows spec 100
+  FR-006/FR-006b, and the fresh budget follows spec 100 FR-009. This spec
+  does not restate either rule. US3 and FR-010 previously said a released
+  item "picks back up on the branch and base commit" and "its review starts
+  again from the first round". That wording is corrected: on an open PR
+  whose already-reviewed head has not moved, spec 100 resumes at
+  `readiness`. That matches this issue's Q2 rationale, since only state a
+  human touched is re-reviewed. The resolution on `main`
+  (`board-loop.yml:811-813`, `step = "review"`) is what spec 100 FR-006
+  changes.
+- **Spec 100 FR-014 and US2 are narrowed for a stop request.** Spec 100
+  FR-014 says a readiness stand-down leaves the marker unchanged, and its
+  US2 scenario 1 says no `board:stalled` is applied. Both were written
+  about readiness's *own* writes. The owner's #724 Q1 answer puts the stop
+  record in the composite that every job calls, readiness included. The
+  specs reconcile as follows:
+  - FR-012/FR-013 of spec 100 still suppress every readiness write.
+  - For a kill-switch or closed-issue stand-down, spec 100 FR-014 holds as
+    written (FR-011/FR-013 here).
+  - For an honoured maintainer stop request, the composite's stop record
+    is the one item write (FR-006 here). No readiness step makes it.
+
+  Whichever feature is implemented second updates the other's gate cases
+  rather than contradicting them.
+- **Spec 108 (merged)** closes a routed original as a duplicate. A closed
+  original is never a stop-request source (spec 108 FR-008 and edge
+  cases), so FR-013 here writes nothing for it. A disposed issue is
+  re-admitted by reopen, not by removing the label.
+- **Spec 095 (in review)** puts this composite's `run:` body under its
+  provenance rule: `action.yml:113` still runs
+  `.github/scripts/board_stop_check.py` from the workspace. The recording
+  this spec adds is a new durable write in that same body, so it must
+  import from the trusted snapshot (FR-018).
+- **Fix's stop check runs before its push** (`board-loop.yml:2275`). A stop
+  honoured there records a branch that was never pushed. After release,
+  spec 100 FR-006 finds no open PR and triages afresh, so no second
+  branch or PR results (FR-054).
+- **Owner decisions:** none open. Every item above follows from the #724
+  answers or from a merged spec.
+
 ## Assumptions
 
 - **The recording lives in the shared stop-check composite** (FR-018),
@@ -509,4 +582,12 @@ stood down once, the stop point was recorded, and the board moved on.
   terminal-step set, which are what make FR-002 achievable without a new
   selection mechanism.
 - The `#530` ordering rule for stalled paths (label before marker) that
-  FR-017 builds on.
+  FR-017 builds on, now implemented once in `add_stalled_label()` (#782).
+- Spec 100 (`specs/100-stalled-item-re-admission`): the resume step, the
+  fresh budget after release (FR-006/FR-006b/FR-009), and readiness's
+  stand-down gating (FR-012-FR-015), narrowed for a stop request as the
+  2026-09-30 status update records.
+- Spec 108 (`specs/108-routed-original-disposition`): a disposed original
+  is not a stop-request source and is re-admitted by reopen.
+- Spec 095 (in review): provenance of the stop-check composite's `run:`
+  body.
