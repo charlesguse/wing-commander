@@ -1337,16 +1337,18 @@ def mut_board_loop_composite_deleted(loaded):
     del steps[ctx_idx]
 
 
-def mut_exempt_job_renamed_away(loaded):
-    """#735: an EXEMPT_JOBS entry naming a job that no longer exists
-    (renamed or deleted) must fail. auto-update-spec-kit.yml's
-    evaluate-path is not a SUBJECT_FLOOR member, so renaming its job away
-    isolates check 10 from the floor-invariant failure a floor member's
-    same mutation would also trigger."""
+def mut_exempt_job_deleted(loaded):
+    """#735: an EXEMPT_JOBS entry naming a job that no longer exists must
+    fail. Deleting auto-update-spec-kit.yml's evaluate-path job (not a
+    SUBJECT_FLOOR member) leaves the exemption as the only thing that
+    mentions it, so check 10 is the sole failure. A rename would not do:
+    the renamed job keeps its agent step and comes back as a fresh derived
+    subject that fails unrelated checks, so the mutation would survive
+    check 10's removal. self_test() also requires check 10's own message."""
     wf = loaded[".github/workflows/auto-update-spec-kit.yml"]
     jobs = wf["jobs"]
     assert "evaluate-path" in jobs, "fixture assumption broken: job renamed"
-    jobs["evaluate-path-renamed"] = jobs.pop("evaluate-path")
+    del jobs["evaluate-path"]
 
 
 SIMPLE_MUTATIONS = [
@@ -1418,8 +1420,8 @@ SIMPLE_MUTATIONS = [
     ("watchdog.yml's diagnose exemption bound removed", mut_watchdog_bound_removed),
     ("board-loop.yml's triage exemption composite call deleted",
      mut_board_loop_composite_deleted),
-    ("an EXEMPT_JOBS entry's named job renamed away, leaving the entry "
-     "stale (#735)", mut_exempt_job_renamed_away),
+    ("an EXEMPT_JOBS entry's named job deleted, leaving the entry "
+     "stale (#735)", mut_exempt_job_deleted),
 ]
 
 
@@ -1445,6 +1447,15 @@ def self_test():
                             f"broke nothing in this gate.")
         else:
             print(f"Mutation OK -- {label}: {len(broke)} assertion(s) fail.")
+
+    # Check 10 must be the check that catches a stale exemption, not some
+    # other assertion the mutation happens to trip.
+    mutated = copy.deepcopy(base)
+    mut_exempt_job_deleted(mutated)
+    broke = scan(mutated)
+    if not (len(broke) == 1 and "EXEMPT_JOBS entry names" in broke[0]):
+        problems.append("a stale EXEMPT_JOBS entry was not caught by check "
+                        f"10 alone (#735): {broke!r}")
 
     # Negative control: unlike SIMPLE_MUTATIONS, this mutation must NOT
     # break the gate (#439 review) -- it proves the toJSON(steps.<id>)
