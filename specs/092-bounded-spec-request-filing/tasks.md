@@ -351,7 +351,7 @@ suite close out the feature.
   failure/duplicate condition triggered at the fix job's post-push breach
   and at readiness's ordinary backstop breach, confirming identical
   behavior at all four site entries (FR-017, SC-005).
-- [ ] T035 Run `python .github/scripts/run-local-gates.py` (the full PR-time
+- [X] T035 Run `python .github/scripts/run-local-gates.py` (the full PR-time
   gate suite, CLAUDE.md "Before pushing") and confirm it passes, including
   the new/extended fixtures from T009, T010, T019, T021, T029 and T033.
 
