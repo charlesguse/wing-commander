@@ -6,8 +6,8 @@
   composites under `.github/actions/wing-commander-fold-queue-*`,
   `.github/actions/_shared/fold-queue-ledger.sh` and
   `fold-queue-await.sh`, the edited `pr-conversation.yml`/`implement.yml`,
-  `fold-cycle-guard.yml` and its wrapper, and Gate 126 registered in
-  `lint-workflows.yml`).
+  `fold-cycle-guard.yml` and its wrapper, and Gate 128 (renumbered from
+  126, T051) registered in `lint-workflows.yml`).
 - `gh` authenticated against the disposable end-to-end test repository
   this pipeline already uses for live drills (spec 055's fixture
   environment), so this drill does not touch the real Wing Commander
@@ -21,20 +21,24 @@
 python .github/scripts/run-local-gates.py "fold-queue"
 ```
 
-Expect Gate 126 to pass against the shipped workflows (12 scenarios) and
+Expect Gate 128 to pass against the shipped workflows (14 scenarios) and
 to report `MUTATION SURVIVED` as a failure it deliberately produced and
-recovered from for each of its nine mutations (contracts/gates.md) — i.e.,
+recovered from for each of its eleven mutations (contracts/gates.md) — i.e.,
 the gate script's own self-check, not the suite overall, should show each
 mutation breaking and the unmodified subject passing.
 
 ## Drill 2 — composite-level fixtures (fast, no network)
 
 ```
-bash .github/actions/wing-commander-fold-queue-admit/tests/run.sh
-bash .github/actions/wing-commander-fold-queue-release/tests/run.sh
-bash .github/actions/wing-commander-fold-queue-claim-dispatch/tests/run.sh
-bash .github/actions/wing-commander-fold-queue-ledger/tests/run.sh
+bash .github/scripts/wing-commander-fold-queue-admit-tests/run-tests.sh
+bash .github/scripts/wing-commander-fold-queue-release-tests/run-tests.sh
+bash .github/scripts/wing-commander-fold-queue-claim-dispatch-tests/run-tests.sh
+bash .github/scripts/wing-commander-fold-queue-ledger-tests/run-tests.sh
 ```
+
+(T052, maintainer review of #821: moved from
+`.github/actions/<composite>/tests/run.sh`, a location Gate 119 forbids,
+so `python .github/scripts/run-local-gates.py` now runs these four too.)
 
 Each uses an injectable `git`/`gh` shim (no live network), exercising: a
 clean grant, a queued-then-granted sequence, an idempotent double-release,
@@ -129,7 +133,7 @@ the other folds nothing of its own, in the same round.
 
 | Check | Success criterion |
 |---|---|
-| Local gates | Gate 126 green (12 scenarios); suite's own mutation self-check shows all nine mutations caught |
+| Local gates | Gate 128 green (14 scenarios); suite's own mutation self-check shows all eleven mutations caught |
 | Composite fixtures | All pass, including the idempotent-release, stale-reclaim, and requeue-then-win cases |
 | Two-run live drill | 11/11 items terminal, 0 cancelled-while-pending, exactly one dispatch reply, implement run non-cancelled |
 | Folding + no-fold live drill (3b) | No-fold run declines and posts spec 075's notice; folding run dispatches once naming only its own fold(s) |

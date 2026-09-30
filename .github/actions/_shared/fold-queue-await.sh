@@ -35,13 +35,22 @@
 # fold-queue-ledger.sh's own override).
 # Optional env: MAX_WAIT_MINUTES (default 30), POLL_INTERVAL_SECONDS
 # (default 10), STALE_AFTER_MINUTES (default 10, must be smaller than
-# MAX_WAIT_MINUTES).
+# MAX_WAIT_MINUTES), UNCORRELATED_IMPLEMENT_GRACE_MINUTES (default 5, T046 --
+# how much longer than STALE_AFTER_MINUTES an implement-kind head ticket
+# still uncorrelated (no rounds[round].implement_run_id recorded yet) is
+# given before it is reclaimed outright).
 #
 # On success, prints `round=<n>` and `granted=true` (the caller decides
 # which of its own outputs, if any, to publish these under) and exits 0.
 # On timeout, prints an `::error::` line and exits 1 -- a hard stop, never
 # a silent pass-through, matching wing-commander-fold-queue-admit's own
-# failure contract.
+# failure contract. specs/074-serialized-fold-dispatch T049: waiting behind
+# a CORRELATED, confirmed-alive implement-kind head ticket extends this
+# deadline instead of failing at it -- a real implement cycle routinely
+# runs well past MAX_WAIT_MINUTES's default (recent runs: 16-125 minutes),
+# and a review posted during that window must still be folded, not dropped
+# with a hard failure just because the implement run it is queued behind is
+# legitimately still working.
 set -uo pipefail
 
 : "${SPEC_DIR:?fold-queue-await.sh: SPEC_DIR is required}"
@@ -55,6 +64,7 @@ fi
 MAX_WAIT_MINUTES="${MAX_WAIT_MINUTES:-30}"
 POLL_INTERVAL_SECONDS="${POLL_INTERVAL_SECONDS:-10}"
 STALE_AFTER_MINUTES="${STALE_AFTER_MINUTES:-10}"
+UNCORRELATED_IMPLEMENT_GRACE_MINUTES="${UNCORRELATED_IMPLEMENT_GRACE_MINUTES:-5}"
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LEDGER="$HERE/fold-queue-ledger.sh"
@@ -80,13 +90,35 @@ while :; do
 
   now_ts=$(date +%s)
   if [ "$now_ts" -ge "$deadline" ]; then
-    # Callers capture this script's stdout via command substitution (both
-    # wing-commander-fold-queue-admit's own wait and
-    # wing-commander-fold-queue-claim-dispatch's requeue-reawait loop), so
-    # the failure line goes to stderr -- stdout on a successful exit is
-    # exactly the two `key=value` lines above, nothing else.
-    echo "::error::fold-queue-await.sh: timed out after ${MAX_WAIT_MINUTES}m waiting for ticket $TOKEN (spec-dir=$SPEC_DIR) to be granted -- current head is $head_token (run $head_run_id)." >&2
-    exit 1
+    # T049: before failing, check whether the head is a CORRELATED,
+    # confirmed-alive implement-kind ticket -- if so, extend the deadline
+    # instead of hard-failing. A normal implement cycle routinely runs well
+    # past MAX_WAIT_MINUTES's default (recent runs: 16-125 minutes; 9 of 15
+    # exceeded 30), and a review posted during that window must still be
+    # folded, not dropped just because the run it is queued behind is
+    # legitimately still working.
+    extend="false"
+    if [ "$head_kind" = "implement" ] && [ -n "$round" ]; then
+      round_out="$(SPEC_DIR="$SPEC_DIR" ROUND="$round" bash "$LEDGER" peek-round)"
+      live_run_id="$(printf '%s\n' "$round_out" | grep '^implement-run-id=' | cut -d= -f2-)"
+      if [ -n "$live_run_id" ]; then
+        live_status="$(wc_fold_queue_run_status "$live_run_id")"
+        if [ "$live_status" = "in_progress" ] || [ "$live_status" = "queued" ]; then
+          extend="true"
+        fi
+      fi
+    fi
+    if [ "$extend" = "true" ]; then
+      deadline=$(( now_ts + MAX_WAIT_MINUTES * 60 ))
+    else
+      # Callers capture this script's stdout via command substitution (both
+      # wing-commander-fold-queue-admit's own wait and
+      # wing-commander-fold-queue-claim-dispatch's requeue-reawait loop), so
+      # the failure line goes to stderr -- stdout on a successful exit is
+      # exactly the two `key=value` lines above, nothing else.
+      echo "::error::fold-queue-await.sh: timed out after ${MAX_WAIT_MINUTES}m waiting for ticket $TOKEN (spec-dir=$SPEC_DIR) to be granted -- current head is $head_token (run $head_run_id)." >&2
+      exit 1
+    fi
   fi
 
   # research.md D6 (extended by specs/074-serialized-fold-dispatch T039): a
@@ -97,7 +129,7 @@ while :; do
   # head ticket's own run_id is the DISPATCHING run that enqueued it, not
   # the real implement.yml run holding the ticket, so staleness for that
   # kind is checked against the round's correlated implement-run-id
-  # instead, skipping reclaim entirely until that correlation exists.
+  # instead.
   if [ -n "$head_token" ] && [ "$head_token" != "$TOKEN" ] && [ -n "$head_granted_at" ]; then
     head_granted_epoch=$(date -u -d "$head_granted_at" +%s 2>/dev/null || echo 0)
     if [ "$head_granted_epoch" -gt 0 ]; then
@@ -105,14 +137,31 @@ while :; do
       if [ "$age_minutes" -ge "$STALE_AFTER_MINUTES" ]; then
         liveness_run_id="$head_run_id"
         skip_reclaim="false"
+        reclaim_unconditionally="false"
         if [ "$head_kind" = "implement" ]; then
           round_out="$(SPEC_DIR="$SPEC_DIR" ROUND="$round" bash "$LEDGER" peek-round)"
           liveness_run_id="$(printf '%s\n' "$round_out" | grep '^implement-run-id=' | cut -d= -f2-)"
           if [ -z "$liveness_run_id" ]; then
-            skip_reclaim="true"
+            # T046: record-implement-run normally lands within seconds of
+            # the ticket's grant (the same job, right after its own gh
+            # workflow run call) -- an implement-kind head still
+            # uncorrelated after stale-after-minutes PLUS this grace period
+            # has no run to check liveness against by construction
+            # (dispatch-once's own cleanup step should already have
+            # released a standalone-mode/failed-dispatch/unfound-run-url
+            # ticket before this point -- this is the backstop for
+            # whatever gap remains) and is reclaimed unconditionally
+            # rather than skipped forever.
+            if [ "$age_minutes" -ge $(( STALE_AFTER_MINUTES + UNCORRELATED_IMPLEMENT_GRACE_MINUTES )) ]; then
+              reclaim_unconditionally="true"
+            else
+              skip_reclaim="true"
+            fi
           fi
         fi
-        if [ "$skip_reclaim" != "true" ]; then
+        if [ "$reclaim_unconditionally" = "true" ]; then
+          SPEC_DIR="$SPEC_DIR" STALE_TOKEN="$head_token" bash "$LEDGER" reclaim-stale >/dev/null || true
+        elif [ "$skip_reclaim" != "true" ]; then
           head_status="$(wc_fold_queue_run_status "$liveness_run_id")"
           if [ -z "$head_status" ] || [ "$head_status" = "completed" ]; then
             SPEC_DIR="$SPEC_DIR" STALE_TOKEN="$head_token" bash "$LEDGER" reclaim-stale >/dev/null || true

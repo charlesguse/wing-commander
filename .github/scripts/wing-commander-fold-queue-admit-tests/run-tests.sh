@@ -15,22 +15,26 @@
 # implement_run_id -- not reclaimed while that real run is still
 # in_progress, reclaimed once it has completed.
 #
-# Invoked directly by a `run:` step in lint-workflows.yml (Gate 126
-# fixtures), so CI runs this suite on every PR. run-local-gates.py mirrors
-# CI by deriving its gate list from wc_gate_registry.gate_scripts(), which
-# only recognizes .github/scripts/verify-*.{py,sh} and
-# .github/scripts/*/run-tests.sh; a path under .github/actions/**/tests/
-# does not match that convention, so this suite runs in CI but is not yet
-# reproduced by the local sweep -- size-path-backstop-tests is in fact a
-# poor precedent for that gap, since .github/scripts/size-path-backstop-tests/run-tests.sh
-# matches the convention and IS a registered gate. Invoke directly for a
-# quick local check: bash .github/actions/wing-commander-fold-queue-admit/tests/run.sh
+# T052 (maintainer review of #821, #719/#825): this suite used to live at
+# .github/actions/wing-commander-fold-queue-admit/tests/run.sh, a location
+# Gate 119 (verify-actions-no-gate-scripts.py) forbids for exactly this
+# reason -- wc_gate_registry.gate_scripts() only discovers
+# .github/scripts/verify-*.{py,sh} and .github/scripts/*/run-tests.sh, so a
+# harness under .github/actions/**/ is invisible to
+# `python .github/scripts/run-local-gates.py`, the suite CLAUDE.md's
+# "Before pushing" section tells every contributor to trust. Moved here
+# (and renamed run.sh -> run-tests.sh, the exact entrypoint name the
+# registry globs for) so both the local sweep and CI run it -- registered
+# in lint-workflows.yml (Gate 128 fixtures) exactly as
+# size-path-backstop-tests/run-tests.sh already is, no longer a "poor
+# precedent" as this file once said. Invoke directly for a quick local
+# check: bash .github/scripts/wing-commander-fold-queue-admit-tests/run-tests.sh
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-COMPOSITE_DIR="$HERE/.."
+COMPOSITE_DIR="$HERE/../../actions/wing-commander-fold-queue-admit"
 ACTION_YML="$COMPOSITE_DIR/action.yml"
-LEDGER_SH="$HERE/../../_shared/fold-queue-ledger.sh"
+LEDGER_SH="$HERE/../../actions/_shared/fold-queue-ledger.sh"
 FAILURES=0
 
 extract_step() {
@@ -107,6 +111,14 @@ else
 fi
 rm -f "$out_file"
 
+# This scenario only exercises the grant path, but the ticket it was
+# granted is real and stays queued (head, forever) until released -- every
+# later scenario shares this same spec-dir/remote, so leaving it held would
+# wedge every subsequent admit behind it.
+LEDGER_REMOTE_URL="$REMOTE" GH_TOKEN=x GITHUB_REPOSITORY=x/x SPEC_DIR="$SPEC_DIR" \
+  TOKEN="run-100-act" RUN_ID=100 OUTCOME="not-folded" LEG_ID="leg-1" \
+  bash "$LEDGER_SH" release >/dev/null
+
 # --- Scenario 2: queued-then-granted ----------------------------------------
 LEDGER_REMOTE_URL="$REMOTE" GH_TOKEN=x GITHUB_REPOSITORY=x/x SPEC_DIR="$SPEC_DIR" \
   KIND=act RUN_ID=101 bash "$LEDGER_SH" enqueue >/dev/null
@@ -114,7 +126,7 @@ LEDGER_REMOTE_URL="$REMOTE" GH_TOKEN=x GITHUB_REPOSITORY=x/x SPEC_DIR="$SPEC_DIR
 (
   sleep 2
   LEDGER_REMOTE_URL="$REMOTE" GH_TOKEN=x GITHUB_REPOSITORY=x/x SPEC_DIR="$SPEC_DIR" \
-    TOKEN="run-101-act" OUTCOME="folded" COMMIT_SHA="abc123" LEG_ID="leg-1" SUMMARY="s" \
+    TOKEN="run-101-act" RUN_ID=101 OUTCOME="folded" COMMIT_SHA="abc123" LEG_ID="leg-1" SUMMARY="s" \
     bash "$LEDGER_SH" release >/dev/null
 ) &
 releaser_pid=$!
@@ -132,6 +144,13 @@ else
 fi
 rm -f "$out_file"
 
+# Same as scenario 1 -- release the ticket this scenario was actually
+# granted, or scenario 3's stale-reclaim would target it instead of
+# run-103-act.
+LEDGER_REMOTE_URL="$REMOTE" GH_TOKEN=x GITHUB_REPOSITORY=x/x SPEC_DIR="$SPEC_DIR" \
+  TOKEN="run-102-act" RUN_ID=102 OUTCOME="not-folded" LEG_ID="leg-1" \
+  bash "$LEDGER_SH" release >/dev/null
+
 # --- Scenario 3: stale-ticket reclaim ---------------------------------------
 LEDGER_REMOTE_URL="$REMOTE" GH_TOKEN=x GITHUB_REPOSITORY=x/x SPEC_DIR="$SPEC_DIR" \
   KIND=act RUN_ID=103 bash "$LEDGER_SH" enqueue >/dev/null
@@ -147,6 +166,13 @@ else
   FAILURES=$((FAILURES + 1))
 fi
 rm -f "$out_file"
+
+# Same as scenario 1 -- this ticket was really granted and stays queued
+# until released, or every later scenario sharing this spec-dir/remote
+# wedges behind it.
+LEDGER_REMOTE_URL="$REMOTE" GH_TOKEN=x GITHUB_REPOSITORY=x/x SPEC_DIR="$SPEC_DIR" \
+  TOKEN="run-104-act" RUN_ID=104 OUTCOME="not-folded" LEG_ID="leg-1" \
+  bash "$LEDGER_SH" release >/dev/null
 
 # --- Scenarios 4/5 setup: an implement-kind head ticket whose own run_id
 # is the DISPATCHING run (claim-dispatch stamps it that way), never the
@@ -164,7 +190,7 @@ LEDGER_REMOTE_URL="$REMOTE" GH_TOKEN=x GITHUB_REPOSITORY=x/x SPEC_DIR="$SPEC_DIR
   KIND=dispatch RUN_ID=900 bash "$LEDGER_SH" enqueue >/dev/null
 
 LEDGER_REMOTE_URL="$REMOTE" GH_TOKEN=x GITHUB_REPOSITORY=x/x SPEC_DIR="$SPEC_DIR" \
-  ROUND="$round" DISPATCH_TOKEN="run-900-dispatch" ITERATION=5 \
+  ROUND="$round" DISPATCH_TOKEN="run-900-dispatch" ITERATION=5 OWN_FOLDS=1 \
   bash "$LEDGER_SH" claim-dispatch >/dev/null
 
 LEDGER_REMOTE_URL="$REMOTE" GH_TOKEN=x GITHUB_REPOSITORY=x/x SPEC_DIR="$SPEC_DIR" \

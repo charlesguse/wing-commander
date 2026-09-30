@@ -2910,6 +2910,21 @@ jobs:
   # verify-image-prerequisites, needed here for the same reason
   # fold-turn-act needs it -- an `if:` may only reference a job's own
   # `needs:`).
+  #
+  # T045 (maintainer review of #821): the round's dispatch claim -- and
+  # everything it depends on (the post-fold tip read, this run's own fold
+  # evidence, the own-folds count) -- used to live in `dispatch-once`
+  # itself. But `dispatch-once` holds the `wing-commander-<spec-dir>`
+  # concurrency group, and the claim's own requeue-reawait loop
+  # (wing-commander-fold-queue-claim-dispatch) can wait on another run's
+  # `act`-kind ticket clearing -- which requires that OTHER run's `act` job
+  # to actually start and finish, and `act` cannot even start while THIS
+  # job (`dispatch-once`) is occupying the very group it needs to join: a
+  # deadlock, timing out the claim after 30 minutes with nothing ever
+  # dispatched. Computing and awaiting the claim here instead, in a job
+  # that carries no concurrency group of its own, means this job's own wait
+  # never blocks the run it is waiting on -- the result crosses to
+  # `dispatch-once` as plain job outputs.
   fold-turn-dispatch:
     needs: [classify-and-announce, verify-image-prerequisites, act]
     if: >-
@@ -2937,6 +2952,13 @@ jobs:
     outputs:
       token: ${{ steps.admit.outputs.token }}
       round: ${{ steps.admit.outputs.round }}
+      tip-sha: ${{ steps.tip.outputs.sha }}
+      should-dispatch: ${{ steps.claim.outputs.should-dispatch }}
+      outcome: ${{ steps.claim.outputs.outcome }}
+      own-folds: ${{ steps.own-folds.outputs.count }}
+      folded-json: ${{ steps.fold-evidence.outputs.folded-json }}
+      round-folded-json: ${{ steps.round-folded.outputs.json }}
+      implement-token: ${{ steps.claim.outputs.implement-token }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
         uses: actions/checkout@v5
@@ -2980,6 +3002,109 @@ jobs:
         with:
           spec-dir: ${{ needs.classify-and-announce.outputs.spec-dir }}
           kind: dispatch
+
+      - name: Wing Commander context
+        id: ctx
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
+        with:
+          app-id: ${{ secrets.speckit-app-id }}
+          private-key: ${{ secrets.speckit-app-private-key }}
+
+      # research.md D3: compares this fresh read of the tip against the
+      # pre-fold tip classify-and-announce captured — unchanged means no
+      # leg folded anything (all held/failed/questions/notes), so there is
+      # nothing to dispatch (US1 AS-none, gate-coverage-042.md scenario 6).
+      - name: Read branch tip after folding
+        id: tip
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SPEC_BRANCH: ${{ inputs.spec-prefix }}${{ needs.classify-and-announce.outputs.slug }}
+        run: |
+          set -euo pipefail
+          tip=$(git ls-remote "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "refs/heads/${SPEC_BRANCH}" | cut -f1)
+          echo "sha=$tip" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout spec branch at its current tip
+        if: steps.tip.outputs.sha != needs.classify-and-announce.outputs.base-sha && steps.tip.outputs.sha != ''
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.spec-prefix }}${{ needs.classify-and-announce.outputs.slug }}
+          token: ${{ steps.ctx.outputs.token }}
+          fetch-depth: 0
+          clean: false
+
+      - name: Refuse a branch that tracks .wing-commander-pipeline/
+        shell: bash
+        if: steps.tip.outputs.sha != needs.classify-and-announce.outputs.base-sha && steps.tip.outputs.sha != ''
+        env:
+          WC_PIPELINE_REF: ${{ steps.pipeline-ref.outputs.ref }}
+        run: |
+          p=.wing-commander-pipeline; want="$(cd "$GITHUB_WORKSPACE" && pwd -P)/$p"
+          if [ -L "$p" ] || [ ! -d "$p" ] || [ -L "$p/.git" ] || [ ! -d "$p/.git" ] || [ "$(git -C "$p" rev-parse --show-toplevel 2>/dev/null)" != "$want" ] || { [[ "${WC_PIPELINE_REF:-}" =~ ^[0-9a-f]{40}$ ]] && [ "$(git -C "$p" rev-parse HEAD 2>/dev/null)" != "$WC_PIPELINE_REF" ]; }; then rm -rf -- "$p"; echo "::error::wing-commander: $p is no longer the trusted pipeline checkout (a symlink, a missing or replaced .git, or another commit): the branch just checked out replaced it. Removed it so no later step loads branch code from there (#611)."; exit 1; fi
+          git -C "$p" cat-file blob HEAD:.github/scripts/pipeline-checkout-guard.sh | bash -s
+
+      # research.md D2: the single home for "which fold(<id>): <summary>
+      # commits in this range are THIS run's own" is the
+      # wing-commander-fold-evidence composite's own header.
+      - name: Compute this run's fold evidence
+        id: fold-evidence
+        if: steps.tip.outputs.sha != needs.classify-and-announce.outputs.base-sha && steps.tip.outputs.sha != ''
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-fold-evidence
+        with:
+          working-directory: .
+          base-sha: ${{ needs.classify-and-announce.outputs.base-sha }}
+          tip-sha: ${{ steps.tip.outputs.sha }}
+
+      # 2026-09-29 reconciliation with spec 075 (spec.md Clarifications):
+      # own-folds gates whether this run may even attempt the round's
+      # dispatch claim below -- spec 075 FR-014's "no own folds, no
+      # dispatch" is now enforced inside the ledger's claim-dispatch
+      # transform itself, not only by wing-commander-fold-dispatch.
+      - name: Count this run's own folds
+        id: own-folds
+        if: steps.tip.outputs.sha != needs.classify-and-announce.outputs.base-sha && steps.tip.outputs.sha != ''
+        shell: bash
+        env:
+          FOLDED_JSON: ${{ steps.fold-evidence.outputs.folded-json }}
+        run: |
+          set -euo pipefail
+          echo "count=$(printf '%s' "${FOLDED_JSON:-[]}" | jq 'length')" >> "$GITHUB_OUTPUT"
+
+      # research.md D4/D9, 2026-09-29 reconciliation with spec 075: exactly
+      # one run per round wins this claim (should-dispatch: true) -- a run
+      # with no folds of its own declines unconditionally (spec 075
+      # FR-014); a run with folds of its own that finds another run's `act`
+      # ticket still outstanding requeues and re-attempts internally
+      # (wing-commander-fold-queue-claim-dispatch's own contract) rather
+      # than stepping aside. T046: implement-configured is "false" when
+      # this review's implement-workflow input is empty (standalone mode)
+      # -- a win still claims the round but enqueues no implement-kind
+      # ticket, since no implement.yml run will ever exist to release one.
+      - name: Attempt this round's dispatch claim
+        id: claim
+        if: steps.tip.outputs.sha != needs.classify-and-announce.outputs.base-sha && steps.tip.outputs.sha != ''
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-fold-queue-claim-dispatch
+        with:
+          spec-dir: ${{ needs.classify-and-announce.outputs.spec-dir }}
+          round: ${{ steps.admit.outputs.round }}
+          dispatch-token: ${{ steps.admit.outputs.token }}
+          own-folds: ${{ steps.own-folds.outputs.count }}
+          implement-configured: ${{ inputs.implement-workflow != '' && 'true' || 'false' }}
+
+      # FR-011 (reconciled): the winning reply names every contributing
+      # run's folds, not only this run's own -- run_id disambiguates a leg
+      # id that is only unique within its own run (spec 075's Key Entities).
+      - name: Map the round's folded items for the reply
+        id: round-folded
+        if: steps.claim.outputs.should-dispatch == 'true'
+        shell: bash
+        env:
+          FOLDED_ITEMS: ${{ steps.claim.outputs.folded-items }}
+        run: |
+          set -euo pipefail
+          json="$(printf '%s' "$FOLDED_ITEMS" | jq -c '[.[] | {id: (.run_id + "/" + .leg_id), summary: .summary}]')"
+          echo "json=$json" >> "$GITHUB_OUTPUT"
 
   # research.md D1/D2/D3/contracts/fold-dispatch-once.md: the ONLY job in
   # this workflow that calls `gh workflow run` for implement.yml, and it
@@ -3088,98 +3213,6 @@ jobs:
           app-id: ${{ secrets.speckit-app-id }}
           private-key: ${{ secrets.speckit-app-private-key }}
 
-      # research.md D3: compares this fresh read of the tip against the
-      # pre-fold tip classify-and-announce captured — unchanged means no
-      # leg folded anything (all held/failed/questions/notes), so there is
-      # nothing to dispatch (US1 AS-none, gate-coverage-042.md scenario 6).
-      - name: Read branch tip after folding
-        id: tip
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          SPEC_BRANCH: ${{ inputs.spec-prefix }}${{ needs.classify-and-announce.outputs.slug }}
-        run: |
-          set -euo pipefail
-          tip=$(git ls-remote "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "refs/heads/${SPEC_BRANCH}" | cut -f1)
-          echo "sha=$tip" >> "$GITHUB_OUTPUT"
-
-      - name: Checkout spec branch at its current tip
-        if: steps.tip.outputs.sha != needs.classify-and-announce.outputs.base-sha && steps.tip.outputs.sha != ''
-        uses: actions/checkout@v5
-        with:
-          ref: ${{ inputs.spec-prefix }}${{ needs.classify-and-announce.outputs.slug }}
-          token: ${{ steps.ctx.outputs.token }}
-          fetch-depth: 0
-          clean: false
-
-      - name: Refuse a branch that tracks .wing-commander-pipeline/
-        shell: bash
-        if: steps.tip.outputs.sha != needs.classify-and-announce.outputs.base-sha && steps.tip.outputs.sha != ''
-        env:
-          WC_PIPELINE_REF: ${{ steps.pipeline-ref.outputs.ref }}
-        run: |
-          p=.wing-commander-pipeline; want="$(cd "$GITHUB_WORKSPACE" && pwd -P)/$p"
-          if [ -L "$p" ] || [ ! -d "$p" ] || [ -L "$p/.git" ] || [ ! -d "$p/.git" ] || [ "$(git -C "$p" rev-parse --show-toplevel 2>/dev/null)" != "$want" ] || { [[ "${WC_PIPELINE_REF:-}" =~ ^[0-9a-f]{40}$ ]] && [ "$(git -C "$p" rev-parse HEAD 2>/dev/null)" != "$WC_PIPELINE_REF" ]; }; then rm -rf -- "$p"; echo "::error::wing-commander: $p is no longer the trusted pipeline checkout (a symlink, a missing or replaced .git, or another commit): the branch just checked out replaced it. Removed it so no later step loads branch code from there (#611)."; exit 1; fi
-          git -C "$p" cat-file blob HEAD:.github/scripts/pipeline-checkout-guard.sh | bash -s
-
-      # research.md D2: the single home for "which fold(<id>): <summary>
-      # commits in this range are THIS run's own" is the
-      # wing-commander-fold-evidence composite's own header.
-      - name: Compute this run's fold evidence
-        id: fold-evidence
-        if: steps.tip.outputs.sha != needs.classify-and-announce.outputs.base-sha && steps.tip.outputs.sha != ''
-        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-fold-evidence
-        with:
-          working-directory: .
-          base-sha: ${{ needs.classify-and-announce.outputs.base-sha }}
-          tip-sha: ${{ steps.tip.outputs.sha }}
-
-      # 2026-09-29 reconciliation with spec 075 (spec.md Clarifications):
-      # own-folds gates whether this run may even attempt the round's
-      # dispatch claim below -- spec 075 FR-014's "no own folds, no
-      # dispatch" is now enforced inside the ledger's claim-dispatch
-      # transform itself, not only by wing-commander-fold-dispatch.
-      - name: Count this run's own folds
-        id: own-folds
-        if: steps.tip.outputs.sha != needs.classify-and-announce.outputs.base-sha && steps.tip.outputs.sha != ''
-        shell: bash
-        env:
-          FOLDED_JSON: ${{ steps.fold-evidence.outputs.folded-json }}
-        run: |
-          set -euo pipefail
-          echo "count=$(printf '%s' "${FOLDED_JSON:-[]}" | jq 'length')" >> "$GITHUB_OUTPUT"
-
-      # research.md D4/D9, 2026-09-29 reconciliation with spec 075: exactly
-      # one run per round wins this claim (should-dispatch: true) -- a run
-      # with no folds of its own declines unconditionally (spec 075
-      # FR-014); a run with folds of its own that finds another run's `act`
-      # ticket still outstanding requeues and re-attempts internally
-      # (wing-commander-fold-queue-claim-dispatch's own contract) rather
-      # than stepping aside.
-      - name: Attempt this round's dispatch claim
-        id: claim
-        if: steps.tip.outputs.sha != needs.classify-and-announce.outputs.base-sha && steps.tip.outputs.sha != ''
-        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-fold-queue-claim-dispatch
-        with:
-          spec-dir: ${{ needs.classify-and-announce.outputs.spec-dir }}
-          round: ${{ needs.fold-turn-dispatch.outputs.round }}
-          dispatch-token: ${{ needs.fold-turn-dispatch.outputs.token }}
-          own-folds: ${{ steps.own-folds.outputs.count }}
-
-      # FR-011 (reconciled): the winning reply names every contributing
-      # run's folds, not only this run's own -- run_id disambiguates a leg
-      # id that is only unique within its own run (spec 075's Key Entities).
-      - name: Map the round's folded items for the reply
-        id: round-folded
-        if: steps.claim.outputs.should-dispatch == 'true'
-        shell: bash
-        env:
-          FOLDED_ITEMS: ${{ steps.claim.outputs.folded-items }}
-        run: |
-          set -euo pipefail
-          json="$(printf '%s' "$FOLDED_ITEMS" | jq -c '[.[] | {id: (.run_id + "/" + .leg_id), summary: .summary}]')"
-          echo "json=$json" >> "$GITHUB_OUTPUT"
-
       # research.md D1/D3/D4 (contracts/run-scoped-fold-evidence.md): the
       # single dispatch point for the whole review, now gated on the
       # round's atomic claim above rather than on this run's own tip-moved
@@ -3195,7 +3228,7 @@ jobs:
       # round-folded-json/fold-queue-token.
       - name: Dispatch implement once for the whole review
         id: fold-dispatch
-        if: steps.claim.outputs.should-dispatch == 'true'
+        if: needs.fold-turn-dispatch.outputs.should-dispatch == 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-fold-dispatch
         with:
           dispatch-token: ${{ github.token }}
@@ -3204,9 +3237,9 @@ jobs:
           base-sha: ${{ needs.classify-and-announce.outputs.base-sha }}
           spec-branch: ${{ inputs.spec-prefix }}${{ needs.classify-and-announce.outputs.slug }}
           implement-workflow: ${{ inputs.implement-workflow }}
-          folded-json: ${{ steps.fold-evidence.outputs.folded-json }}
-          round-folded-json: ${{ steps.round-folded.outputs.json }}
-          fold-queue-token: ${{ steps.claim.outputs.implement-token }}
+          folded-json: ${{ needs.fold-turn-dispatch.outputs.folded-json }}
+          round-folded-json: ${{ needs.fold-turn-dispatch.outputs.round-folded-json }}
+          fold-queue-token: ${{ needs.fold-turn-dispatch.outputs.implement-token }}
 
       # spec 075 FR-014/FR-015, reconciled 2026-09-29: this run's own claim
       # declined because it folded nothing of its own -- the tip moved
@@ -3220,10 +3253,10 @@ jobs:
       - name: Reply that this run folded nothing of its own
         shell: bash
         if: >-
-          steps.tip.outputs.sha != needs.classify-and-announce.outputs.base-sha &&
-          steps.tip.outputs.sha != '' &&
-          steps.claim.outputs.should-dispatch == 'false' &&
-          steps.own-folds.outputs.count == '0'
+          needs.fold-turn-dispatch.outputs.tip-sha != needs.classify-and-announce.outputs.base-sha &&
+          needs.fold-turn-dispatch.outputs.tip-sha != '' &&
+          needs.fold-turn-dispatch.outputs.should-dispatch == 'false' &&
+          needs.fold-turn-dispatch.outputs.own-folds == '0'
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           PR_NUMBER: ${{ inputs.pr-number }}
@@ -3327,9 +3360,13 @@ jobs:
           implement-run-id: ${{ steps.dispatched-run-id.outputs.id }}
 
       # contracts/wing-commander-fold-queue-release.md's step-placement
-      # contract: MUST be if: always() and the job's LAST step, regardless
-      # of which branch above ran (a losing claim's ticket, and a winning
-      # claim's, are both released here — never a second call per branch).
+      # contract: MUST be if: always(), regardless of which branch above ran
+      # (a losing claim's ticket, and a winning claim's, are both released
+      # here — never a second call per branch). T046: no longer literally
+      # the job's LAST step -- it must run BEFORE the orphaned-implement-
+      # ticket cleanup below, since that ticket (when one exists) is this
+      # ticket's immediate successor in the queue and cannot be released
+      # while still sitting behind it at index 1.
       - name: Release this run's dispatch-queue ticket
         if: always()
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-fold-queue-release
@@ -3338,6 +3375,27 @@ jobs:
           token: ${{ needs.fold-turn-dispatch.outputs.token }}
           round: ${{ needs.fold-turn-dispatch.outputs.round }}
           outcome: not-folded
+
+      # T046 (maintainer review of #821): a winning claim enqueues an
+      # implement-kind ticket for the cycle it is about to dispatch, but
+      # nothing ever comes to release it when the dispatch attempt below
+      # didn't actually hand it to a real, identifiable implement.yml run
+      # -- `gh workflow run` failing outright (this step then never even
+      # reaches "dispatched=true"), or the run-url poll timing out even
+      # though dispatch succeeded. Left alone, that ticket sits granted at
+      # the queue head forever (fold-queue-await.sh's own uncorrelated-head
+      # bound is only a backstop for whatever gap remains beyond this),
+      # timing out every later admission for this spec-dir. Runs after the
+      # dispatch ticket's own release above so the implement ticket (its
+      # immediate successor) has already become the queue head.
+      - name: Release an implement ticket this run's claim created but never handed to a real run
+        if: always() && needs.fold-turn-dispatch.outputs.implement-token != '' && steps.dispatched-run-id.outputs.id == ''
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-fold-queue-release
+        with:
+          spec-dir: ${{ needs.classify-and-announce.outputs.spec-dir }}
+          token: ${{ needs.fold-turn-dispatch.outputs.implement-token }}
+          round: ${{ needs.fold-turn-dispatch.outputs.round }}
+          outcome: error
 
   # research.md D6/contracts/fold-dispatch-once.md: cross-references this
   # run's own GitHub-set job `conclusion`s against git-history fold

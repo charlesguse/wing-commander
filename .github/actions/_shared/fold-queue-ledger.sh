@@ -72,7 +72,8 @@
 #                     dequeue. A TOKEN present but not at the queue head is
 #                     a caller error. When a new ticket becomes head as a
 #                     result, it is granted in the same write.
-#   claim-dispatch -- SPEC_DIR, ROUND, DISPATCH_TOKEN, ITERATION, OWN_FOLDS
+#   claim-dispatch -- SPEC_DIR, ROUND, DISPATCH_TOKEN, ITERATION, OWN_FOLDS,
+#                     IMPLEMENT_CONFIGURED (optional, default "true")
 #                     Valid only when DISPATCH_TOKEN is at the queue head.
 #                     Per the maintainer's 2026-09-29 reconciliation with
 #                     spec 075 (specs/074-serialized-fold-dispatch spec.md
@@ -86,16 +87,34 @@
 #                         the same write, clearing its granted_at and
 #                         granting whatever becomes the new head)
 #                       OWN_FOLDS > 0, round already claimed -> outcome=declined
+#                         BY THIS RUN                             unless
+#                         dispatch_claimed_by already names THIS
+#                         run's own run_id, in which case a retried
+#                         claim resolves outcome=won again, idempotently
+#                         (T045/T050) -- reusing whatever implement-kind
+#                         ticket this run's earlier win already enqueued
+#                         (or "" if IMPLEMENT_CONFIGURED was "false" then
+#                         too) rather than declining its own prior win.
 #                       OWN_FOLDS > 0, no act-kind ticket    -> outcome=won
 #                         remains, round unclaimed               (records
-#                         dispatch_claimed_by/iteration, enqueues an
-#                         `implement`-kind ticket immediately behind the
-#                         calling dispatch ticket so it becomes the new head
-#                         the instant the dispatch ticket releases --
-#                         research.md D5 -- and returns the round's WHOLE
-#                         accumulated folded_items/not_folded_items, every
-#                         contributing run's entries, not only the
-#                         caller's own)
+#                         dispatch_claimed_by/iteration and, only when
+#                         IMPLEMENT_CONFIGURED is "true" (the default --
+#                         every caller before T046 gets identical
+#                         behavior), enqueues an `implement`-kind ticket
+#                         immediately behind the calling dispatch ticket so
+#                         it becomes the new head the instant the dispatch
+#                         ticket releases -- research.md D5. When
+#                         IMPLEMENT_CONFIGURED is "false" (dispatch-once's
+#                         own implement-workflow input is empty --
+#                         standalone mode, T046), the round is still
+#                         claimed but no ticket is enqueued and
+#                         implement-token is "" -- there is no real
+#                         implement.yml run that will ever come to release
+#                         it, so one is never created rather than left to
+#                         wedge every later admission for this spec-dir.
+#                         Either way returns the round's WHOLE accumulated
+#                         folded_items/not_folded_items, every contributing
+#                         run's entries, not only the caller's own)
 #                     A `requeued` outcome mutates the ledger (a real write)
 #                     but never sets dispatch_claimed_by; the caller
 #                     (wing-commander-fold-queue-claim-dispatch) re-awaits
@@ -232,6 +251,12 @@ case "$TRANSFORM" in
     : "${DISPATCH_TOKEN:?fold-queue-ledger.sh claim-dispatch: DISPATCH_TOKEN is required}"
     : "${ITERATION:?fold-queue-ledger.sh claim-dispatch: ITERATION is required}"
     : "${OWN_FOLDS:?fold-queue-ledger.sh claim-dispatch: OWN_FOLDS is required}"
+    # Optional, default "true" (T046): every call site that predates this
+    # field -- including every fixture and Gate 126 scenario already in the
+    # tree -- keeps enqueueing the implement-kind ticket exactly as before.
+    # Only dispatch-once's own call (via fold-turn-dispatch) ever passes
+    # "false", and only when its implement-workflow input is empty.
+    IMPLEMENT_CONFIGURED="${IMPLEMENT_CONFIGURED:-true}"
     ;;
   reclaim-stale)
     : "${STALE_TOKEN:?fold-queue-ledger.sh reclaim-stale: STALE_TOKEN is required}"
@@ -477,19 +502,55 @@ JQ
         | .specs[$spec].queue = $newqueue
         | { changed: true, ledger: ., result: { "should-dispatch": "false", outcome: "requeued" } }
       elif ($unclaimed | not) then
-        { changed: false, ledger: ., result: { "should-dispatch": "false", outcome: "declined" } }
+        # T050: "every transform is idempotent under retry" (this file's own
+        # header) previously did not hold for a claim's WINNING branch -- a
+        # retry (or a re-run of the same dispatch-once job step) that lands
+        # here because dispatch_claimed_by is already set would decline even
+        # when it is THIS run's own prior win, contradicting that guarantee.
+        # Recognize the retry and resolve won again, reusing whatever
+        # implement-kind ticket the original win enqueued (empty string if
+        # IMPLEMENT_CONFIGURED was "false" that time too) rather than a
+        # second enqueue.
+        if ((.specs[$spec].rounds[$round].dispatch_claimed_by // null) == $run_id) then
+          ((.specs[$spec].queue | map(select(.kind == "implement" and .run_id == $run_id)) | .[0].token) // "") as $existing_impl_token
+          | {
+              changed: false,
+              ledger: .,
+              result: {
+                "should-dispatch": "true",
+                outcome: "won",
+                "implement-token": $existing_impl_token,
+                "iteration": (.specs[$spec].rounds[$round].iteration | tostring),
+                "folded-items": (.specs[$spec].rounds[$round].folded_items // [] | tojson),
+                "not-folded-items": (.specs[$spec].rounds[$round].not_folded_items // [] | tojson)
+              }
+            }
+        else
+          { changed: false, ledger: ., result: { "should-dispatch": "false", outcome: "declined" } }
+        end
       else
         ("run-" + $run_id + "-implement") as $impl_token
         | .specs[$spec].rounds[$round].dispatch_claimed_by = $run_id
         | .specs[$spec].rounds[$round].iteration = ($iteration | tonumber)
-        | .specs[$spec].queue = ([.specs[$spec].queue[0]] + [{"token": $impl_token, "kind": "implement", "run_id": $run_id, "enqueued_at": $now, "granted_at": null}] + .specs[$spec].queue[1:])
+        # T046: a standalone-mode claim (no implement-workflow configured)
+        # still claims the round -- exactly one run still dispatches
+        # nothing, so a sibling can't also win -- but must NOT enqueue an
+        # implement-kind ticket, since no implement.yml run will ever exist
+        # to await/release it (fold-queue-await.sh's own uncorrelated-head
+        # bound is the backstop for every OTHER way this could still
+        # happen, not the primary defense for this, the common case).
+        | (if $implement_configured == "true" then
+             .specs[$spec].queue = ([.specs[$spec].queue[0]] + [{"token": $impl_token, "kind": "implement", "run_id": $run_id, "enqueued_at": $now, "granted_at": null}] + .specs[$spec].queue[1:])
+           else
+             .
+           end)
         | {
             changed: true,
             ledger: .,
             result: {
               "should-dispatch": "true",
               outcome: "won",
-              "implement-token": $impl_token,
+              "implement-token": (if $implement_configured == "true" then $impl_token else "" end),
               "iteration": ($iteration),
               "folded-items": (.specs[$spec].rounds[$round].folded_items // [] | tojson),
               "not-folded-items": (.specs[$spec].rounds[$round].not_folded_items // [] | tojson)
@@ -613,7 +674,7 @@ while [ "$attempt" -le "$max_attempts" ]; do
         -f "$filter_file" "$current_json" > "$output_file"
       ;;
     claim-dispatch)
-      jq -c --arg spec "$SPEC_DIR" --arg token "$DISPATCH_TOKEN" --arg round "$ROUND" --arg iteration "$ITERATION" --argjson own_folds "$OWN_FOLDS" --arg now "$now" \
+      jq -c --arg spec "$SPEC_DIR" --arg token "$DISPATCH_TOKEN" --arg round "$ROUND" --arg iteration "$ITERATION" --argjson own_folds "$OWN_FOLDS" --arg implement_configured "$IMPLEMENT_CONFIGURED" --arg now "$now" \
         -f "$filter_file" "$current_json" > "$output_file"
       ;;
     reclaim-stale)

@@ -418,6 +418,21 @@ on:
         required: false
         default: "1"
         type: string
+      fold_queue_token:
+        description: >
+          specs/074-serialized-fold-dispatch: the implement-kind fold-queue
+          ticket a winning fold-dispatch claim already enqueued for this
+          cycle. Optional, default "" — a manual dispatch, or a caller
+          predating this feature, omits it and gets today's behavior
+          exactly. Declaring this input (even if you never read it
+          yourself — just forward it to implement.yml's fold-queue-token
+          below) matters: omitting it makes `gh workflow run` reject the
+          `-f fold_queue_token=` argument the pipeline sends with an
+          "Unexpected inputs provided" error whenever a review actually
+          folds something, failing that dispatch outright.
+        required: false
+        default: ""
+        type: string
 
 permissions: {}
 
@@ -433,6 +448,7 @@ jobs:
       spec-dir: ${{ inputs.spec_dir }}
       issue-number: ${{ fromJSON(inputs.issue) }}
       iteration: ${{ fromJSON(inputs.iteration) }}
+      fold-queue-token: ${{ inputs.fold_queue_token }}
       max-iterations: ${{ fromJSON(vars.WING_COMMANDER_MAX_ITERATIONS || '5') }}
       self-workflow: wing-commander-5-implement.yml
       next-workflow: wing-commander-6-finalize.yml
@@ -1434,13 +1450,23 @@ When a stage dispatches a `next-workflow`/`self-workflow`, the target is a
 wrapper translates them to the stage's kebab-case inputs, as wrappers 5 and 6
 show):
 
-| Dispatch target | Required `workflow_dispatch` inputs |
-|---|---|
-| implement wrapper (`next-workflow` of tasks; `self-workflow` of implement) | `spec_dir` (string), `issue` (string), `iteration` (string) |
-| finalize wrapper (`next-workflow` of implement) | `spec_dir` (string), `issue` (string), `converged` (string) |
+| Dispatch target | Required `workflow_dispatch` inputs | Optional |
+|---|---|---|
+| implement wrapper (`next-workflow` of tasks; `self-workflow` of implement) | `spec_dir` (string), `issue` (string), `iteration` (string) | `fold_queue_token` (string, default `""`) |
+| finalize wrapper (`next-workflow` of implement) | `spec_dir` (string), `issue` (string), `converged` (string) | |
 
 Rename the wrapper *files* freely — the stages take the filenames as inputs —
 but keep the input *names* exactly.
+
+`fold_queue_token` (specs/074-serialized-fold-dispatch) is sent as a plain
+`-f fold_queue_token=` argument to `gh workflow run` whenever a review's fold
+actually dispatches a cycle. An implement wrapper that doesn't declare this
+input gets that dispatch rejected outright with a 422 "Unexpected inputs
+provided" — the pipeline retries once without it when that happens (so the
+fold still dispatches, just unticketed), but declaring it and forwarding it
+to `implement.yml`'s own `fold-queue-token` input (section 5's wrapper does
+this) keeps this feature's cross-run serialization intact for your wrapper
+too.
 
 ## Stage-found defect filing
 

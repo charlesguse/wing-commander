@@ -1,8 +1,8 @@
-# Contract: Gate 126 — `verify-fold-queue-admission.py`
+# Contract: Gate 128 — `verify-fold-queue-admission.py`
 
-(Working number — the tasks stage confirms the actual next-available gate
-number against `lint-workflows.yml` at implementation time, per
-plan.md's Testing note.)
+Renumbered from Gate 126 (T051, maintainer review of #821): five open
+Finalize PRs all claimed Gate 126 at tasks time; the maintainer's
+allocation gives this feature 128.
 
 ## Subject (loaded verbatim, never restated — Principle VIII)
 
@@ -71,6 +71,13 @@ A cross-product covering, at minimum:
 12. **The winning claim's `folded-items` names every contributing run in
     the round**, each attributed to its own `run_id` — not only the
     winning run's own evidence (2026-09-29 reconciliation, FR-011).
+13. **Standalone mode never enqueues an implement-kind ticket** (T046) — a
+    winning claim with `implement-configured: false` still claims the
+    round (a sibling's claim still declines) but returns an empty
+    `implement-token` and the ledger shows no ticket was ever enqueued.
+14. **Idempotent win** (T050) — a retried claim carrying the SAME
+    dispatch token as a call that already won resolves `outcome: won`
+    again with the SAME `implement-token`, never `declined`.
 
 ## Mutations (`MUTATIONS`, each proven to break the gate — FR-022)
 
@@ -107,6 +114,12 @@ A cross-product covering, at minimum:
 - `mut_round_list_narrowed_to_claimant` — narrows the winning claim's
   `folded-items` back to the claimant's own `run_id`, dropping every
   other contributing run's folds from the reply. Must fail scenario 12.
+- `mut_standalone_still_enqueues` — ignores `implement-configured` and
+  always enqueues the implement-kind ticket (the T046 defect restored).
+  Must fail scenario 13.
+- `mut_win_retry_declines` — reverts the winning branch's idempotent-retry
+  check to a plain decline (the T050 defect restored). Must fail
+  scenario 14.
 
 `main()` runs `suite()` against the untouched subject (must be 0
 failures) and then, for each mutation, re-runs `suite()` and requires a
@@ -115,7 +128,18 @@ failure — `MUTATION SURVIVED` is a hard error, identical to Gate 70's own
 
 ## Wiring
 
-Registered in `lint-workflows.yml` immediately after Gate 98 (or whichever
-gate is last at implementation time), `if: "!cancelled()"`, no new
-`paths:` entry (research.md D8 confirms the existing globs already cover
-every file this feature touches).
+Registered in `lint-workflows.yml` (as Gate 128, immediately after
+Gate 125), `if: "!cancelled()"`, no new `paths:` entry (research.md D8
+confirms the existing globs already cover every file this feature
+touches). The `fold-turn-dispatch`/`dispatch-once` expressions this gate
+loads now come from `fold-turn-dispatch` alone (T045 moved the claim
+there) plus `dispatch-once`'s own `concurrency.group`/`needs:`, unchanged
+by that move.
+
+The four composite fixture suites this feature's composites ship
+(`wing-commander-fold-queue-{admit,release,claim-dispatch,ledger}-tests/
+run-tests.sh`) live under `.github/scripts/` (T052, maintainer review of
+#821) — not `.github/actions/<composite>/tests/`, a location Gate 119
+(`verify-actions-no-gate-scripts.py`) forbids — so both CI and
+`python .github/scripts/run-local-gates.py` run them, registered as
+separate `run:` steps immediately after Gate 128 itself.

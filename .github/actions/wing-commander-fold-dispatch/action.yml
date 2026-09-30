@@ -141,6 +141,8 @@ runs:
         FOLDED_JSON: ${{ inputs.folded-json }}
         ROUND_FOLDED_JSON: ${{ inputs.round-folded-json }}
         FOLD_QUEUE_TOKEN: ${{ inputs.fold-queue-token }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+        RUN_ID: ${{ github.run_id }}
       run: |
         set -euo pipefail
         FOLD_QUEUE_TOKEN="${FOLD_QUEUE_TOKEN:-}"
@@ -213,7 +215,36 @@ runs:
         if [ -n "$FOLD_QUEUE_TOKEN" ]; then
           dispatch_args+=(-f fold_queue_token="$FOLD_QUEUE_TOKEN")
         fi
-        GH_TOKEN="$DISPATCH_TOKEN" gh workflow run "$IMPLEMENT_WORKFLOW" -R "$GITHUB_REPOSITORY" "${dispatch_args[@]}"
+        dispatch_err="$(mktemp)"
+        if ! GH_TOKEN="$DISPATCH_TOKEN" gh workflow run "$IMPLEMENT_WORKFLOW" -R "$GITHUB_REPOSITORY" "${dispatch_args[@]}" 2>"$dispatch_err"; then
+          # T047 (maintainer review of #821): a wrapper predating this
+          # feature (docs/adoption.md's own reference wrapper lacked
+          # fold_queue_token until this fix) has no such workflow_dispatch
+          # input declared, and GitHub rejects an unknown input with a 422
+          # "Unexpected inputs provided" before even queuing a run. Retry
+          # once without it -- unticketed, exactly today's
+          # pre-serialization behavior for that one un-migrated wrapper,
+          # not a new failure mode -- rather than losing the whole cycle.
+          if [ -n "$FOLD_QUEUE_TOKEN" ] && grep -qi "unexpected inputs" "$dispatch_err"; then
+            cat "$dispatch_err" >&2
+            echo "::warning::wing-commander-fold-dispatch: $IMPLEMENT_WORKFLOW rejected fold_queue_token as an unexpected input -- retrying without it. Add a fold_queue_token workflow_dispatch input (docs/adoption.md, wing-commander-5-implement.yml) to restore fold-queue serialization for this wrapper."
+            retry_args=(-f spec_dir="$SPEC_DIR" -f issue="$ISSUE" -f iteration="$next")
+            GH_TOKEN="$DISPATCH_TOKEN" gh workflow run "$IMPLEMENT_WORKFLOW" -R "$GITHUB_REPOSITORY" "${retry_args[@]}"
+            # The dispatched run will never receive (and so never release)
+            # the implement-kind ticket claim-dispatch already enqueued for
+            # this cycle -- release it directly here (T046's same
+            # principle: nothing must be left to wedge every later
+            # admission for this spec-dir).
+            LEDGER="$GITHUB_ACTION_PATH/../_shared/fold-queue-ledger.sh"
+            SPEC_DIR="$SPEC_DIR" TOKEN="$FOLD_QUEUE_TOKEN" RUN_ID="$RUN_ID" OUTCOME="error" \
+              GH_TOKEN="$DISPATCH_TOKEN" bash "$LEDGER" release >/dev/null || true
+          else
+            cat "$dispatch_err" >&2
+            rm -f "$dispatch_err"
+            exit 1
+          fi
+        fi
+        rm -f "$dispatch_err"
         echo "dispatched=true" >> "$GITHUB_OUTPUT"
 
         run_url=""

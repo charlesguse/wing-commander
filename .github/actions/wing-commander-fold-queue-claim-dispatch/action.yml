@@ -1,20 +1,26 @@
 name: wing-commander-fold-queue-claim-dispatch
 description: >
-  Called once by dispatch-once, after its own dispatch-kind ticket has been
-  granted, to decide -- via one or more atomic ledger transactions -- whether
-  this run is the one that dispatches the round's implement cycle
-  (research.md D4). Per the maintainer's 2026-09-29 reconciliation with spec
-  075 (specs/074-serialized-fold-dispatch spec.md Clarifications): a run
-  with no folds of its own (own-folds input) never wins and declines
-  immediately (spec 075 FR-014); a run WITH folds of its own that finds
-  another act-kind ticket still queued re-queues its own ticket and
-  re-awaits it internally (fold-queue-await.sh, single home with
+  Called once by fold-turn-dispatch (T045 moved this call, and the own-folds
+  computation feeding it, out of dispatch-once -- dispatch-once still holds
+  the wing-commander-<spec-dir> concurrency group, so a claim's internal
+  requeue-reawait loop running there would wait on another run's act-kind
+  ticket that job itself blocks from ever starting: a deadlock. fold-turn-
+  dispatch carries no concurrency group, so its own wait never blocks
+  anyone else), after its own dispatch-kind ticket has been granted, to
+  decide -- via one or more atomic ledger transactions -- whether this run
+  is the one that dispatches the round's implement cycle (research.md D4).
+  Per the maintainer's 2026-09-29 reconciliation with spec 075
+  (specs/074-serialized-fold-dispatch spec.md Clarifications): a run with
+  no folds of its own (own-folds input) never wins and declines immediately
+  (spec 075 FR-014); a run WITH folds of its own that finds another
+  act-kind ticket still queued re-queues its own ticket and re-awaits it
+  internally (fold-queue-await.sh, single home with
   wing-commander-fold-queue-admit's own wait) rather than returning that
   intermediate state to its own caller, since a GitHub Actions job's static
   step list cannot loop across separate uses: steps. The winning
   transaction also enqueues the implement-kind ticket for the
-  about-to-be-dispatched cycle in the same write (research.md D5) -- see
-  fold-queue-ledger.sh.
+  about-to-be-dispatched cycle in the same write (research.md D5), unless
+  implement-configured is "false" (T046) -- see fold-queue-ledger.sh.
 
 inputs:
   spec-dir:
@@ -31,6 +37,16 @@ inputs:
       (wing-commander-fold-evidence's folded-json length). Zero declines
       the claim unconditionally (spec 075 FR-014).
     required: true
+  implement-configured:
+    description: >
+      "true" when the caller's implement-workflow input is non-empty.
+      "false" (T046) means a winning claim still claims the round but
+      enqueues no implement-kind ticket, since no implement.yml run will
+      ever be dispatched to await/release one -- one enqueued anyway would
+      sit at the queue head forever, wedging every later admission for
+      this spec-dir.
+    required: false
+    default: "true"
   max-wait-minutes:
     description: "Passed through to the internal requeue-reawait loop; irrelevant unless this run's own folds are non-zero and the round is not yet empty."
     required: false
@@ -83,6 +99,7 @@ runs:
         ROUND: ${{ inputs.round }}
         DISPATCH_TOKEN: ${{ inputs.dispatch-token }}
         OWN_FOLDS: ${{ inputs.own-folds }}
+        IMPLEMENT_CONFIGURED: ${{ inputs.implement-configured }}
         MAX_WAIT_MINUTES: ${{ inputs.max-wait-minutes }}
         POLL_INTERVAL_SECONDS: ${{ inputs.poll-interval-seconds }}
         STALE_AFTER_MINUTES: ${{ inputs.stale-after-minutes }}

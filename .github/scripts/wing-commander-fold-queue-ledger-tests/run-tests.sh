@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Fixtures for fold-queue-ledger.sh's claim-redispatch transform, exercised
-# through this composite the same way wing-commander-fold-queue-claim-
-# dispatch/tests/run.sh exercises claim-dispatch: against a throwaway
-# LOCAL bare git repository (LEDGER_REMOTE_URL override -- no live
-# network).
+# directly the same way
+# wing-commander-fold-queue-claim-dispatch-tests/run-tests.sh exercises
+# claim-dispatch: against a throwaway LOCAL bare git repository
+# (LEDGER_REMOTE_URL override -- no live network).
 #
 # Covers the T038 fix (specs/074-serialized-fold-dispatch): a winning
 # redispatch claim must enqueue a fresh implement-kind ticket and return
@@ -13,16 +13,19 @@
 # eviction FR-016 exists to recover from. Also covers the bounded case
 # (redispatch_count already 1) and same-run_id idempotency.
 #
-# Invoked directly by a `run:` step in lint-workflows.yml (Gate 126
-# fixtures), so CI runs this suite on every PR; not yet mirrored by
-# run-local-gates.py, whose gate list only covers .github/scripts paths --
-# see wing-commander-fold-queue-admit/tests/run.sh for why. Invoke
-# directly for a quick local check:
-# bash .github/actions/wing-commander-fold-queue-ledger/tests/run.sh
+# T052 (maintainer review of #821, #719/#825): moved here (and renamed
+# run.sh -> run-tests.sh) from
+# .github/actions/wing-commander-fold-queue-ledger/tests/run.sh, a location
+# Gate 119 (verify-actions-no-gate-scripts.py) forbids -- see
+# wing-commander-fold-queue-admit-tests/run-tests.sh's header for why.
+# Registered in lint-workflows.yml (Gate 128 fixtures), so both CI and
+# `python .github/scripts/run-local-gates.py` now run it. Invoke directly
+# for a quick local check:
+# bash .github/scripts/wing-commander-fold-queue-ledger-tests/run-tests.sh
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LEDGER_SH="$HERE/../../_shared/fold-queue-ledger.sh"
+LEDGER_SH="$HERE/../../actions/_shared/fold-queue-ledger.sh"
 FAILURES=0
 
 WORK="$(mktemp -d)"
@@ -46,7 +49,7 @@ claim_redispatch() {
 LEDGER_REMOTE_URL="$REMOTE" GH_TOKEN=x GITHUB_REPOSITORY=x/x SPEC_DIR="$SPEC_DIR_FIXTURE" \
   KIND=act RUN_ID=700 bash "$LEDGER_SH" enqueue >/dev/null
 LEDGER_REMOTE_URL="$REMOTE" GH_TOKEN=x GITHUB_REPOSITORY=x/x SPEC_DIR="$SPEC_DIR_FIXTURE" \
-  TOKEN="run-700-act" OUTCOME="folded" COMMIT_SHA="cafe" LEG_ID="leg-1" SUMMARY="s" \
+  TOKEN="run-700-act" RUN_ID=700 OUTCOME="folded" COMMIT_SHA="cafe" LEG_ID="leg-1" SUMMARY="s" \
   bash "$LEDGER_SH" release >/dev/null
 
 # --- Scenario 1: winning claim enqueues the ticket atomically --------------

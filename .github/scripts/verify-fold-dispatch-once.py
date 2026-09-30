@@ -798,6 +798,19 @@ def test_structural():
     EXTRA_NEEDS = {"dispatch-once": "fold-turn-dispatch",
                    "report-fold-outcomes": "fold-turn-act"}
 
+    # specs/074-serialized-fold-dispatch T045 (maintainer review of #821):
+    # dispatch-once's own copy of the post-fold tip read / fold-evidence
+    # computation / own-folds count / dispatch claim moved into
+    # fold-turn-dispatch, which carries no concurrency group -- computing
+    # and awaiting the claim inside dispatch-once (which holds
+    # wing-commander-<spec-dir>) deadlocked whenever the claim's own
+    # requeue-reawait loop needed another run's `act` job to start, since
+    # that job cannot join the very group dispatch-once was occupying.
+    # report-fold-outcomes was not touched by T045 and still computes its
+    # own copy directly.
+    FOLD_EVIDENCE_JOB = {"dispatch-once": "fold-turn-dispatch",
+                         "report-fold-outcomes": "report-fold-outcomes"}
+
     for job_id in ("dispatch-once", "report-fold-outcomes"):
         job = jobs.get(job_id)
         if job is None:
@@ -834,18 +847,21 @@ def test_structural():
                             f"or a legitimate skip (spec 058) would be "
                             f"treated as a failure.")
 
+        fold_evidence_job_id = FOLD_EVIDENCE_JOB[job_id]
+        fold_evidence_job = jobs.get(fold_evidence_job_id) or {}
         fold_evidence_step = next(
-            (s for s in (job.get("steps") or [])
+            (s for s in (fold_evidence_job.get("steps") or [])
              if (s or {}).get("name") == FOLD_EVIDENCE_STEP), None)
         if fold_evidence_step is None:
-            failures.append(f"structural: {job_id!r} has no step named "
+            failures.append(f"structural: {fold_evidence_job_id!r} (feeding "
+                            f"{job_id!r}) has no step named "
                             f"{FOLD_EVIDENCE_STEP!r} — research.md D2's "
                             f"composite call is missing, so this job would "
                             f"still be reading unscoped fold evidence.")
         elif "wing-commander-fold-evidence" not in (fold_evidence_step.get("uses") or ""):
-            failures.append(f"structural: {job_id!r}'s {FOLD_EVIDENCE_STEP!r} "
-                            f"step does not `uses:` the "
-                            f"wing-commander-fold-evidence composite "
+            failures.append(f"structural: {fold_evidence_job_id!r}'s "
+                            f"{FOLD_EVIDENCE_STEP!r} step does not `uses:` "
+                            f"the wing-commander-fold-evidence composite "
                             f"(research.md D2, FR-009's single home) — got "
                             f"{fold_evidence_step.get('uses')!r}.")
 
@@ -903,11 +919,13 @@ def test_structural():
             failures.append(f"structural: {DISPATCH_STEP!r}'s wing-"
                             f"commander-fold-dispatch call has no {key!r} "
                             f"input.")
-    if "steps.fold-evidence.outputs.folded-json" not in str(dispatch_with.get("folded-json", "")):
+    if "needs.fold-turn-dispatch.outputs.folded-json" not in str(dispatch_with.get("folded-json", "")):
         failures.append(f"structural: {DISPATCH_STEP!r}'s folded-json input "
-                        f"is not steps.fold-evidence.outputs.folded-json — "
-                        f"the dispatch decision would no longer narrow to "
-                        f"this run's own fold evidence (specs/075 FR-014).")
+                        f"is not needs.fold-turn-dispatch.outputs.folded-json "
+                        f"(T045 moved the fold-evidence read into "
+                        f"fold-turn-dispatch) — the dispatch decision would "
+                        f"no longer narrow to this run's own fold evidence "
+                        f"(specs/075 FR-014).")
 
     reply_to_fold_step = find_step(STAGE, REPLY_TO_FOLD_STEP)
     reply_if = str(reply_to_fold_step.get("if") or "")

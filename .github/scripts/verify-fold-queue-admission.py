@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
-"""Gate 126 -- the fold-queue admission wiring actually serializes stage-9's
+"""Gate 128 -- the fold-queue admission wiring actually serializes stage-9's
 concurrency contenders and bounds fold-cycle-guard's automatic re-dispatch.
+
+Renumbered from Gate 126 (T051, maintainer review of #821): five open
+Finalize PRs all claimed Gate 126 at tasks time. The maintainer's
+allocation is spec 091 (#818) keeps 126/127, this feature takes 128, spec
+089 takes 129, spec 108 takes 130/131, spec 109 takes 132.
 
 WHY THIS EXISTS
 ---------------
@@ -100,6 +105,15 @@ SCENARIOS (`suite(subject)`, contracts/gates.md)
 12. The winning claim's `folded-items` names every contributing run in the
     round, each attributed to its own `run_id` -- not only the winning
     run's own evidence (2026-09-29 reconciliation with spec 075, FR-011).
+13. Standalone mode (T046): a winning claim with `implement-configured:
+    false` claims the round (`dispatch_claimed_by` set, a sibling claim
+    still declines) but returns an empty `implement-token` and never
+    enqueues an implement-kind ticket -- nothing will ever come to
+    release one.
+14. Idempotent win (T050): a retried `claim-dispatch` call carrying the
+    SAME dispatch token, after that token's own prior call already won,
+    resolves `outcome: won` again (not `declined`) and returns the SAME
+    `implement-token` rather than enqueueing a second one.
 
 MUTATIONS (each proven to break the gate -- FR-022)
 ----------------------------------------------------
@@ -132,6 +146,15 @@ MUTATIONS (each proven to break the gate -- FR-022)
 - `mut_round_list_narrowed_to_claimant` -- narrows the winning claim's
   `folded-items` back to the claimant's own `run_id`, dropping every other
   contributing run's folds from the reply. Fails scenario 12.
+- `mut_standalone_still_enqueues` -- ignores `implement_configured` and
+  always enqueues the implement-kind ticket (the T046 defect restored: a
+  standalone-mode win would wedge every later admission for the spec-dir
+  behind a ticket nothing will ever release). Fails scenario 13.
+- `mut_win_retry_declines` -- reverts the winning branch's idempotent-retry
+  check to a plain decline (the T050 defect restored: a retried claim from
+  the same run that already won would report `declined` instead of `won`,
+  contradicting this file's own "every transform is idempotent under
+  retry"). Fails scenario 14.
 
 `main()` runs `suite()` against the untouched subject (must be 0 failures),
 then re-runs it under each mutation and requires a failure -- identical to
@@ -607,6 +630,99 @@ def scenario_won_reply_names_every_contributing_run(subject, root):
     return failures
 
 
+def scenario_standalone_never_enqueues_implement_ticket(subject, root):
+    """Scenario 13 (T046): implement-configured=false still claims the round
+    (a sibling's claim still declines) but returns an empty implement-token
+    and never enqueues an implement-kind ticket -- nothing (no dispatched
+    implement.yml run) will ever come to release one, so a spec-dir with no
+    implement-workflow configured must not wedge every later admission
+    behind an orphaned ticket."""
+    failures = []
+    remote = new_bare_remote(root)
+    spec = "specs/999-fixture-standalone"
+    run_ledger(LEDGER_SH, "enqueue", remote,
+              {"SPEC_DIR": spec, "KIND": "act", "RUN_ID": "1000"})
+    run_ledger(LEDGER_SH, "release", remote,
+              {"SPEC_DIR": spec, "TOKEN": "run-1000-act", "RUN_ID": "1000",
+               "OUTCOME": "folded", "COMMIT_SHA": "abcd", "LEG_ID": "leg-1",
+               "SUMMARY": "s"})
+    run_ledger(LEDGER_SH, "enqueue", remote,
+              {"SPEC_DIR": spec, "KIND": "dispatch", "RUN_ID": "1000"})
+    proc = run_ledger(LEDGER_SH, "claim-dispatch", remote,
+                      {"SPEC_DIR": spec, "ROUND": "1",
+                       "DISPATCH_TOKEN": "run-1000-dispatch", "ITERATION": "2",
+                       "OWN_FOLDS": "1", "IMPLEMENT_CONFIGURED": "false"})
+    result = parse_kv(proc.stdout)
+    if result.get("should-dispatch") != "true" or result.get("outcome") != "won":
+        failures.append(f"scenario 13: a standalone-mode claim with own "
+                        f"folds and an empty round resolved "
+                        f"should-dispatch={result.get('should-dispatch')!r} "
+                        f"outcome={result.get('outcome')!r}; expected "
+                        f"should-dispatch=true outcome=won -- the round is "
+                        f"still claimed, only the ticket is skipped. stderr: "
+                        f"{proc.stderr.strip()}")
+    if result.get("implement-token", "unset") != "":
+        failures.append(f"scenario 13: a standalone-mode win returned "
+                        f"implement-token={result.get('implement-token')!r}, "
+                        f"expected '' -- no implement.yml run will ever "
+                        f"exist to release a ticket")
+
+    peek_proc = run_ledger(LEDGER_SH, "peek", remote,
+                           {"SPEC_DIR": spec, "PEEK_TOKEN": "run-1000-implement"})
+    peek_result = parse_kv(peek_proc.stdout)
+    if peek_result.get("position", "-1") != "-1":
+        failures.append(f"scenario 13: an implement-kind ticket "
+                        f"'run-1000-implement' was enqueued despite "
+                        f"implement-configured=false: peek={peek_result!r}")
+    return failures
+
+
+def scenario_idempotent_win_retry(subject, root):
+    """Scenario 14 (T050): a retried claim-dispatch call carrying the same
+    dispatch token as a prior WINNING call must resolve won again -- this
+    file's own header claims every transform is idempotent under retry, but
+    the winning branch alone declined a retry of its own win before this
+    fix, mistaking it for a losing claimant of an already-claimed round."""
+    failures = []
+    remote = new_bare_remote(root)
+    spec = "specs/999-fixture-idempotent-win"
+    run_ledger(LEDGER_SH, "enqueue", remote,
+              {"SPEC_DIR": spec, "KIND": "act", "RUN_ID": "1100"})
+    run_ledger(LEDGER_SH, "release", remote,
+              {"SPEC_DIR": spec, "TOKEN": "run-1100-act", "RUN_ID": "1100",
+               "OUTCOME": "folded", "COMMIT_SHA": "beef", "LEG_ID": "leg-1",
+               "SUMMARY": "s"})
+    run_ledger(LEDGER_SH, "enqueue", remote,
+              {"SPEC_DIR": spec, "KIND": "dispatch", "RUN_ID": "1100"})
+    first = run_ledger(LEDGER_SH, "claim-dispatch", remote,
+                       {"SPEC_DIR": spec, "ROUND": "1",
+                        "DISPATCH_TOKEN": "run-1100-dispatch", "ITERATION": "2",
+                        "OWN_FOLDS": "1"})
+    first_result = parse_kv(first.stdout)
+    if first_result.get("should-dispatch") != "true":
+        failures.append(f"scenario 14: setup's first claim did not win: "
+                        f"{first_result!r}. stderr: {first.stderr.strip()}")
+        return failures
+
+    retry = run_ledger(LEDGER_SH, "claim-dispatch", remote,
+                       {"SPEC_DIR": spec, "ROUND": "1",
+                        "DISPATCH_TOKEN": "run-1100-dispatch", "ITERATION": "2",
+                        "OWN_FOLDS": "1"})
+    retry_result = parse_kv(retry.stdout)
+    if retry_result.get("should-dispatch") != "true" or retry_result.get("outcome") != "won":
+        failures.append(f"scenario 14: a retry of the SAME dispatch token "
+                        f"that already won resolved "
+                        f"should-dispatch={retry_result.get('should-dispatch')!r} "
+                        f"outcome={retry_result.get('outcome')!r}; expected "
+                        f"should-dispatch=true outcome=won (idempotent under "
+                        f"retry). stderr: {retry.stderr.strip()}")
+    if retry_result.get("implement-token") != first_result.get("implement-token"):
+        failures.append(f"scenario 14: a retried win returned a different "
+                        f"implement-token ({retry_result.get('implement-token')!r}) "
+                        f"than the original win ({first_result.get('implement-token')!r})")
+    return failures
+
+
 # --------------------------------------------------------------------------
 # Scenarios 7-8: fold-cycle-guard.yml's decide step, run directly
 # --------------------------------------------------------------------------
@@ -805,6 +921,8 @@ def suite(subject, root):
     failures += scenario_no_own_folds_never_wins(subject, root)
     failures += scenario_requeue_behind_outstanding_then_wins(subject, root)
     failures += scenario_won_reply_names_every_contributing_run(subject, root)
+    failures += scenario_standalone_never_enqueues_implement_ticket(subject, root)
+    failures += scenario_idempotent_win_retry(subject, root)
     return failures
 
 
@@ -918,6 +1036,49 @@ def mut_round_list_narrowed_to_claimant(subject):
     return s
 
 
+def mut_standalone_still_enqueues(subject):
+    """T046: implement-configured must gate the implement-kind ticket
+    enqueue. Forces the enqueue branch unconditionally, as if
+    implement-configured were always "true"."""
+    s = dict(subject)
+    needle = 'if $implement_configured == "true" then\n             .specs[$spec].queue = ([.specs[$spec].queue[0]] + [{"token": $impl_token, "kind": "implement", "run_id": $run_id, "enqueued_at": $now, "granted_at": null}] + .specs[$spec].queue[1:])\n           else\n             .\n           end'
+    replacement = '.specs[$spec].queue = ([.specs[$spec].queue[0]] + [{"token": $impl_token, "kind": "implement", "run_id": $run_id, "enqueued_at": $now, "granted_at": null}] + .specs[$spec].queue[1:])'
+    if needle not in subject["ledger:text"]:
+        return s
+    s["ledger:text"] = subject["ledger:text"].replace(needle, replacement)
+    return s
+
+
+def mut_win_retry_declines(subject):
+    """T050: a retry of a dispatch token that already won must resolve won
+    again. Reverts the idempotent-retry branch to a plain decline."""
+    s = dict(subject)
+    needle = (
+        'if ((.specs[$spec].rounds[$round].dispatch_claimed_by // null) == $run_id) then\n'
+        '          ((.specs[$spec].queue | map(select(.kind == "implement" and .run_id == $run_id)) | .[0].token) // "") as $existing_impl_token\n'
+        '          | {\n'
+        '              changed: false,\n'
+        '              ledger: .,\n'
+        '              result: {\n'
+        '                "should-dispatch": "true",\n'
+        '                outcome: "won",\n'
+        '                "implement-token": $existing_impl_token,\n'
+        '                "iteration": (.specs[$spec].rounds[$round].iteration | tostring),\n'
+        '                "folded-items": (.specs[$spec].rounds[$round].folded_items // [] | tojson),\n'
+        '                "not-folded-items": (.specs[$spec].rounds[$round].not_folded_items // [] | tojson)\n'
+        '              }\n'
+        '            }\n'
+        '        else\n'
+        '          { changed: false, ledger: ., result: { "should-dispatch": "false", outcome: "declined" } }\n'
+        '        end'
+    )
+    replacement = '{ changed: false, ledger: ., result: { "should-dispatch": "false", outcome: "declined" } }'
+    if needle not in subject["ledger:text"]:
+        return s
+    s["ledger:text"] = subject["ledger:text"].replace(needle, replacement)
+    return s
+
+
 MUTATIONS = [
     ("fold-turn-* prerequisite dropped from needs:", mut_drop_fold_turn_needs),
     ("claim-dispatch's round-emptiness check removed", mut_unconditional_dispatch),
@@ -928,6 +1089,8 @@ MUTATIONS = [
     ("claim-dispatch's requeue replaced by a step-aside decline", mut_requeue_replaced_by_stepaside),
     ("claim-dispatch's own-folds check dropped", mut_own_folds_check_dropped),
     ("winning claim's round list narrowed to the claimant's own folds", mut_round_list_narrowed_to_claimant),
+    ("standalone mode still enqueues an implement ticket", mut_standalone_still_enqueues),
+    ("a retried win declines instead of winning again", mut_win_retry_declines),
 ]
 
 
@@ -987,7 +1150,7 @@ def main():
         import shutil
         shutil.rmtree(root, ignore_errors=True)
 
-    print(f"Gate 126: 12 scenario(s), {len(MUTATIONS)} mutation(s); "
+    print(f"Gate 128: 14 scenario(s), {len(MUTATIONS)} mutation(s); "
           f"{len(failures)} failure(s), {mutation_failures} mutation failure(s).")
     return 1 if failures or mutation_failures else 0
 

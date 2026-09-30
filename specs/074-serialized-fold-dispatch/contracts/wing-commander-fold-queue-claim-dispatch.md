@@ -4,20 +4,35 @@
 
 ## Purpose
 
-Called once by `dispatch-once`, after its own `dispatch`-kind ticket has
-been granted (via `wing-commander-fold-queue-admit`), to decide — via one
-or more atomic ledger transactions — whether *this* run is the one that
-dispatches the round's implement cycle (research.md D4). Per the
+Called once by `fold-turn-dispatch`, after its own `dispatch`-kind ticket
+has been granted (via `wing-commander-fold-queue-admit`), to decide — via
+one or more atomic ledger transactions — whether *this* run is the one
+that dispatches the round's implement cycle (research.md D4). Per the
 maintainer's 2026-09-29 reconciliation with spec 075 (spec.md
 Clarifications), this composite internalizes the requeue-and-reawait loop
 described below: a caller invokes it once and receives one of `declined`,
 `requeued`-then-resolved, or `won` — it never returns a bare `requeued`
-state to `dispatch-once` for the caller itself to loop on, since a GitHub
+state to its caller for the caller itself to loop on, since a GitHub
 Actions job's static step list cannot express an unbounded retry across
 separate `uses:` steps. Internally it reuses the exact same poll/stale-
 reclaim primitive `wing-commander-fold-queue-admit` uses (factored into
 `_shared/fold-queue-await.sh`, single-homed per CLAUDE.md), never a
 restated copy.
+
+**T045 (maintainer review of #821):** this call, and the post-fold tip
+read / fold-evidence computation / own-folds count feeding it, used to
+live in `dispatch-once` itself. `dispatch-once` holds the
+`wing-commander-<spec-dir>` GitHub concurrency group, so this composite's
+own internal requeue-reawait loop, run there, could wait on another run's
+`act`-kind ticket clearing — which requires that other run's `act` job to
+actually start, and it cannot start while `dispatch-once` is occupying the
+very group it needs to join. That was a real deadlock (guarantee 6 below
+did not hold for the shape that shipped originally): the claim would time
+out after `max-wait-minutes` with nothing ever dispatched, and the
+requeued ticket's own release step would then error ("not at queue head").
+The call now lives in `fold-turn-dispatch`, which carries no concurrency
+group of its own, so its wait never blocks the run it is waiting on;
+`dispatch-once` receives the result through this job's own outputs.
 
 ## Inputs
 
@@ -27,6 +42,7 @@ restated copy.
 | `round` | yes | — | The round this run's `act` phase (if any) and `dispatch` ticket belong to. |
 | `dispatch-token` | yes | — | This run's own granted `dispatch`-kind ticket — proves the caller is entitled to attempt the claim. |
 | `own-folds` | yes | — | The count of THIS run's own fold-route items folded in this round (`wing-commander-fold-evidence`'s `folded-json` length) — spec 075 FR-014's own-evidence gate, now enforced inside the ledger's `claim-dispatch` transform rather than only in `wing-commander-fold-dispatch`. |
+| `implement-configured` | no | `"true"` | `"true"` when the caller's `implement-workflow` input is non-empty. `"false"` (T046) means a winning claim still claims the round (a sibling's claim still declines) but enqueues no `implement`-kind ticket and returns an empty `implement-token` — no `implement.yml` run will ever be dispatched to await/release one, so one is never created rather than left to wedge every later admission for this spec-dir. |
 | `max-wait-minutes` / `poll-interval-seconds` / `stale-after-minutes` | no | same defaults as `wing-commander-fold-queue-admit` | Passed straight through to the internal requeue-reawait loop; irrelevant when the first claim attempt resolves `declined` or `won`. |
 
 ## Outputs
@@ -67,4 +83,13 @@ restated copy.
    by the same `max-wait-minutes` ceiling and stale-reclaim safety net
    `wing-commander-fold-queue-admit` already provides, applied to this
    ticket's own (unchanged) token each time it is requeued — never a
-   second, independent wait mechanism.
+   second, independent wait mechanism. This guarantee depends on the
+   caller carrying no `concurrency:` block of its own (T045): a caller
+   that does can block the very run its own wait depends on from ever
+   starting.
+7. **Idempotent under retry** (T050): a retried call carrying the SAME
+   `dispatch-token` as a call that already won resolves `outcome: won`
+   again, reusing the SAME `implement-token` the original win enqueued
+   (or `""` if `implement-configured` was `"false"` then too) — never
+   `declined`, which would contradict `fold-queue-ledger.sh`'s own header
+   ("every transform is idempotent under retry").

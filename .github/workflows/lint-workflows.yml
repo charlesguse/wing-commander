@@ -4664,40 +4664,48 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-auto-release-poll-credential-failure.py
 
-      # Gate 126 — specs/074-serialized-fold-dispatch (FR-021/FR-022): the
+      # Gate 128 — specs/074-serialized-fold-dispatch (FR-021/FR-022): the
       # fold-queue admission wiring actually serializes every stage-9
       # concurrency contender through a ticket, and fold-cycle-guard.yml's
       # automatic re-dispatch is bounded to exactly one attempt. Loads the
       # real if:/needs:/concurrency.group text of every job the feature
       # gated and runs the real fold-cycle-guard.yml decide step and
       # fold-queue-ledger.sh claim-dispatch transform directly — see
-      # verify-fold-queue-admission.py.
-      - name: Gate 126 — fold-queue admission wiring serializes every contender and bounds the automatic re-dispatch
+      # verify-fold-queue-admission.py. Renumbered from Gate 126 (T051,
+      # maintainer review of #821): five open Finalize PRs all claimed
+      # Gate 126 at tasks time; the maintainer's allocation gives this
+      # feature 128.
+      - name: Gate 128 — fold-queue admission wiring serializes every contender and bounds the automatic re-dispatch
         if: "!cancelled()"
         run: python3 .github/scripts/verify-fold-queue-admission.py
 
-      # Gate 126 fixtures — specs/074-serialized-fold-dispatch quickstart.md
+      # Gate 128 fixtures — specs/074-serialized-fold-dispatch quickstart.md
       # Drill 2: the fold-queue composites' own bash fixture suites,
       # extracted from each composite's action.yml (or, for
       # wing-commander-fold-queue-ledger, from fold-queue-ledger.sh's
       # claim-redispatch transform directly) and run against a throwaway
-      # local bare git repo (no live network). Gate 126 above exercises the
+      # local bare git repo (no live network). Gate 128 above exercises the
       # claim-dispatch transform and fold-cycle-guard.yml's decide step
       # directly; these four cover the admit/release/claim-dispatch/
       # claim-redispatch composites' own shipped shell, which nothing else
       # runs — see each suite's own header comment for scenario coverage.
-      - name: Gate 126 fixtures — wing-commander-fold-queue-admit composite (quickstart.md Drill 2)
+      # T052 (maintainer review of #821, #719/#825): relocated from
+      # .github/actions/<composite>/tests/run.sh (a location Gate 119
+      # forbids) to .github/scripts/<composite>-tests/run-tests.sh, so
+      # `python .github/scripts/run-local-gates.py` now runs these four
+      # too, not only CI.
+      - name: Gate 128 fixtures — wing-commander-fold-queue-admit composite (quickstart.md Drill 2)
         if: "!cancelled()"
-        run: bash .github/actions/wing-commander-fold-queue-admit/tests/run.sh
-      - name: Gate 126 fixtures — wing-commander-fold-queue-release composite (quickstart.md Drill 2)
+        run: bash .github/scripts/wing-commander-fold-queue-admit-tests/run-tests.sh
+      - name: Gate 128 fixtures — wing-commander-fold-queue-release composite (quickstart.md Drill 2)
         if: "!cancelled()"
-        run: bash .github/actions/wing-commander-fold-queue-release/tests/run.sh
-      - name: Gate 126 fixtures — wing-commander-fold-queue-claim-dispatch composite (quickstart.md Drill 2)
+        run: bash .github/scripts/wing-commander-fold-queue-release-tests/run-tests.sh
+      - name: Gate 128 fixtures — wing-commander-fold-queue-claim-dispatch composite (quickstart.md Drill 2)
         if: "!cancelled()"
-        run: bash .github/actions/wing-commander-fold-queue-claim-dispatch/tests/run.sh
-      - name: Gate 126 fixtures — wing-commander-fold-queue-ledger composite's claim-redispatch transform (T038)
+        run: bash .github/scripts/wing-commander-fold-queue-claim-dispatch-tests/run-tests.sh
+      - name: Gate 128 fixtures — wing-commander-fold-queue-ledger composite's claim-redispatch transform (T038)
         if: "!cancelled()"
-        run: bash .github/actions/wing-commander-fold-queue-ledger/tests/run.sh
+        run: bash .github/scripts/wing-commander-fold-queue-ledger-tests/run-tests.sh
 
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and
