@@ -503,7 +503,9 @@ def self_test():
             "      # Siblings point back here with \"-- see self-point.yml.\".\n"
             "      - run: echo quoted\n"
             "      # headless has no turn-boundary resume -- see self-point.yml.\n"
-            "      - run: echo self\n"))
+            "      - run: echo self\n"
+            "      # Or in code style: `-- see self-point.yml`.\n"
+            "      - run: echo backtick\n"))
         p, _ = check_pointers(td)
         check("pointer naming its own file is caught",
               any("self-point.yml:7" in v and "names its own file" in v
@@ -511,6 +513,9 @@ def self_test():
               f"got {p!r}")
         check("quoted '-- see' example is not scanned as a pointer",
               not any("self-point.yml:5" in v for v in p),
+              f"got {p!r}")
+        check("backtick-quoted '-- see' example is not scanned as a pointer",
+              not any("self-point.yml:9" in v for v in p),
               f"got {p!r}")
         os.remove(os.path.join(wf, "self-point.yml"))
 
