@@ -706,3 +706,7 @@ Task: "Add disposition:duplicate to wing-commander-board-labels/action.yml"
       docs/architecture.md was checked — docs/architecture.md's own
       "Gate 125" (line 733) names spec 062's real, uncollided gate and was
       left untouched.
+
+## Maintainer Feedback
+
+- [ ] Reorder `dispose_as_duplicate()` in `board_duplicate_disposition.py:185-204` so the `disposition:duplicate` label and the reason/marker comment are applied *before* the close, not after. Today the order is close, then label, then comment; if the close succeeds and the `gh issue edit --add-label` call fails, the issue ends up CLOSED with no label and no marker. `is_excluded()` returns `"closed"` first (`board_eligibility.py:193`), so no later run ever selects it to retry, the route/fix/readiness `::error::` texts claiming "a later run resumes from its own pre-check" are false for this case, and the FR-017 closed-without-landing scan can't find it either since the label is missing. Left alone, a maintainer reopening the issue routes it again and can file a second spec-request while the first is still open, violating FR-006 and FR-010. Update `contracts/duplicate-disposition.md`'s failure-semantics table to reflect the new step order. (FR-006, FR-010, FR-017)
