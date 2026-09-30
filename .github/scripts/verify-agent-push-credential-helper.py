@@ -64,7 +64,9 @@ WHAT THIS CHECKS
    construction (`"alg":"RS256"` co-occurring with `"typ":"JWT"` in one
    file) -- the on-demand JWT-signing shape the deleted composite used has
    no legitimate home left in this repository at all. A match -> FAIL,
-   naming the file.
+   naming the file. "The repository" is its git-tracked files, not the
+   filesystem: an untracked `.wing-commander-pipeline/` checkout beside
+   the tree is not repository content (#808).
 4. Negative check (FR-025): an agent step in a SUBJECTS job that is NOT
    push-capable must not carry the retry-bound prompt paragraph (matched
    by its distinguishing substring) -- a step that never pushes has no
@@ -89,6 +91,7 @@ import copy
 import io
 import os
 import re
+import subprocess
 import sys
 
 import yaml
@@ -108,7 +111,9 @@ INLINE_ALLOWED_TOOLS_RE = re.compile(r"--allowedTools\s+\"([^\"]*)\"")
 JWT_ALG_RE = re.compile(r'"alg"\s*:\s*"RS256"')
 JWT_TYP_RE = re.compile(r'"typ"\s*:\s*"JWT"')
 # This gate's own source quotes the same two literal strings to detect
-# them -- excluded from its own scan.
+# them -- excluded from its own scan, by repo-relative path AND by file
+# identity (_is_self()), so the exclusion still holds when the gate runs
+# from a copy at some other path (#808).
 SELF_PATH = ".github/scripts/verify-agent-push-credential-helper.py"
 
 # check 1: the only things ever allowed to see the raw private key. Matches
@@ -322,26 +327,69 @@ def check_e2e_scratch_companion(loaded):
     return []
 
 
-def check_no_jwt_construction(root="."):
-    """check 3 -- no JWT-header/payload construction anywhere in the
-    repository. The deleted wing-commander-agent-push-credential composite
-    was the one legitimate site that ever needed this shape (signing a
-    GitHub App JWT to mint installation tokens on demand, reachable by a
-    running agent step); the redesign has no legitimate site left at all,
-    so any match anywhere is a regression, not a location to relocate to.
+def _is_self(path, rel):
+    if rel == SELF_PATH:
+        return True
+    try:
+        return os.path.samefile(path, os.path.abspath(__file__))
+    except OSError:
+        return False
+
+
+def _repo_files(root="."):
+    """-> every file check 3 scans, repo-root-relative ('/'-separated).
+
+    The git-tracked files (`git ls-files -z`) when `root` is the top of a
+    git working tree -- the repository's content is what is committed, not
+    whatever else sits on disk. An implement run checks the pipeline
+    repository out at `.wing-commander-pipeline/` beside the tree under
+    test, untracked; walking the filesystem scanned that copy of this very
+    gate, whose source quotes the two JWT strings, and failed the gate and
+    its self-test on every implement cycle (#808, #822, #823). Same idiom
+    as verify-stage-tool-lists.py's _glob_has_match(). Outside a git
+    working tree (a synthetic fixture) there is nothing to ask, so the
+    on-disk files stand in for tracked ones, `.git/` excluded.
     """
-    failures = []
-    paths = []
+    try:
+        top = subprocess.run(
+            ["git", "-C", root, "rev-parse", "--show-toplevel"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        # Only when root IS the top: a fixture directory nested inside some
+        # other repository's work tree is not that repository.
+        if top.returncode == 0 and os.path.realpath(
+                os.fsdecode(top.stdout).strip()) == os.path.realpath(root):
+            proc = subprocess.run(
+                ["git", "-C", root, "ls-files", "-z"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            if proc.returncode == 0:
+                return sorted(os.fsdecode(p) for p in proc.stdout.split(b"\0") if p)
+    except OSError:
+        pass
+    rels = []
     for dirpath, dirnames, filenames in os.walk(root):
         if ".git" in dirnames:
             dirnames.remove(".git")
         for filename in filenames:
-            paths.append(os.path.join(dirpath, filename))
-    for path in sorted(paths):
-        rel = os.path.relpath(path, root).replace(os.sep, "/")
-        if rel == SELF_PATH or rel.startswith(".git/"):
-            continue
+            rels.append(os.path.relpath(
+                os.path.join(dirpath, filename), root).replace(os.sep, "/"))
+    return sorted(rels)
+
+
+def check_no_jwt_construction(root="."):
+    """check 3 -- no JWT-header/payload construction anywhere in the
+    repository (its git-tracked files -- _repo_files()). The deleted
+    wing-commander-agent-push-credential composite was the one legitimate
+    site that ever needed this shape (signing a GitHub App JWT to mint
+    installation tokens on demand, reachable by a running agent step); the
+    redesign has no legitimate site left at all, so any match anywhere is
+    a regression, not a location to relocate to.
+    """
+    failures = []
+    for rel in _repo_files(root):
+        path = os.path.join(root, rel)
         if not rel.endswith(SINGLE_HOME_SCAN_EXTENSIONS):
+            continue
+        if rel.startswith(".git/") or _is_self(path, rel):
             continue
         try:
             with io.open(path, encoding="utf-8") as fh:
@@ -562,6 +610,39 @@ def self_test(root="."):
         else:
             problems.append("MUTATION SURVIVED -- a JWT-signing block "
                             f"introduced anywhere was not caught: {broke}")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    # check 3 (#808) -- scope is the git-tracked files. In a git fixture, a
+    # violating file under an untracked `.wing-commander-pipeline/` (the
+    # nested pipeline checkout an implement run leaves beside the tree)
+    # must NOT be flagged, while the same content tracked must be.
+    tmp = tempfile.mkdtemp(prefix="gate122-tracked-")
+    try:
+        jwt_line = 'header=\'{"alg":"RS256","typ":"JWT"}\'\n'
+        nested = os.path.join(tmp, ".wing-commander-pipeline", ".github", "scripts")
+        os.makedirs(nested)
+        with io.open(os.path.join(nested, "untracked-jwt.sh"), "w",
+                     encoding="utf-8") as fh:
+            fh.write(jwt_line)
+        with io.open(os.path.join(tmp, "tracked-jwt.sh"), "w",
+                     encoding="utf-8") as fh:
+            fh.write(jwt_line)
+        for cmd in (["init", "-q"], ["add", "tracked-jwt.sh"]):
+            subprocess.run(["git", "-C", tmp] + cmd, check=True,
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        broke = check_no_jwt_construction(tmp)
+        if any("untracked-jwt.sh" in f for f in broke):
+            problems.append("an untracked JWT-signing copy under "
+                            ".wing-commander-pipeline/ was flagged -- check "
+                            f"3 is scanning beyond git-tracked files: {broke}")
+        elif not any(f.startswith("tracked-jwt.sh:") for f in broke):
+            problems.append("MUTATION SURVIVED -- a tracked JWT-signing "
+                            f"file in a git fixture was not caught: {broke}")
+        else:
+            print("[ok] check 3 scans git-tracked files only: a tracked "
+                  "JWT-signing file is caught, an untracked copy under "
+                  ".wing-commander-pipeline/ is not.")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
