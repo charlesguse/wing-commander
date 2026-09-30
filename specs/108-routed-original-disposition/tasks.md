@@ -98,13 +98,16 @@ to silently patch):
   behaviour.
 - **Gate numbers**: the highest gate number registered in
   `lint-workflows.yml` as of this writing is 124 (with gaps at 107–113 and
-  118 from prior renumbering). This list provisionally claims **Gate 125**
-  (`verify-board-duplicate-disposition.py`) and **Gate 126**
-  (`verify-board-closed-without-landing.py`). Confirm no collision against
-  `main` immediately before registering either (per the precedent in
-  spec 086's own tasks.md "Maintainer Feedback": gate numbers collide
-  across concurrently open branches routinely, and renumbering is a normal,
-  cheap fix-up, never a reason to stall).
+  118 from prior renumbering). This list provisionally claimed Gate 125
+  (`verify-board-duplicate-disposition.py`) and Gate 126
+  (`verify-board-closed-without-landing.py`); both collided (Gate 125 with
+  spec 062's own gate, Gate 126 registered twice for this branch's own two
+  scripts) and were renumbered by maintainer review (fold leg-4) to
+  **Gate 130** (`verify-board-duplicate-disposition.py`) and **Gate 131**
+  (`verify-board-closed-without-landing.py`) — gate numbers collide across
+  concurrently open branches routinely, and renumbering is a normal, cheap
+  fix-up, never a reason to stall (per the precedent in spec 086's own
+  tasks.md "Maintainer Feedback").
 
 ---
 
@@ -270,8 +273,9 @@ comment linking back. Repeat for the fix and readiness sites.
       `context: "(readiness backstop breach, measured=${{
       steps.report-unmet.outputs.measured }})"`.
 - [X] T007 [US1] Create
-      `.github/scripts/verify-board-duplicate-disposition.py` (Gate 125,
-      provisional): a `--self-test` mode exercising
+      `.github/scripts/verify-board-duplicate-disposition.py` (Gate 130,
+      renumbered from the provisional 125 by fold leg-4): a `--self-test`
+      mode exercising
       contracts/duplicate-disposition.md's failure-semantics table as
       checked-in fixtures, each driving `dispose_as_duplicate()` against a
       stubbed `gh` (the same `run=` injection seam
@@ -295,9 +299,9 @@ comment linking back. Repeat for the fix and readiness sites.
       Also assert the plain, no-fixture baseline: a bare `gh` stub that
       succeeds at every call produces `disposed=true`,
       `needs-reciprocal-link=true` end to end.
-- [X] T008 [US1] Register Gate 125 in `.github/workflows/lint-workflows.yml`
+- [X] T008 [US1] Register Gate 130 in `.github/workflows/lint-workflows.yml`
       as two steps (mirroring Gate 103/104's placement pattern): `name:
-      "Gate 125 — dispose_as_duplicate's idempotency and failure semantics
+      "Gate 130 — dispose_as_duplicate's idempotency and failure semantics
       (FR-009/FR-010/FR-011)"` running
       `python3 .github/scripts/verify-board-duplicate-disposition.py`, and
       a self-test sibling running the same script with `--self-test`, each
@@ -430,15 +434,16 @@ confirm one idempotent notice appears on each issue.
       same as every other content read in this job), and invoking
       `board_closed_without_landing.py` to post the notices.
 - [X] T016 [US2] Create
-      `.github/scripts/verify-board-closed-without-landing.py` (Gate 126,
-      provisional) with a `--self-test` covering: (a) a spec-request closed
+      `.github/scripts/verify-board-closed-without-landing.py` (Gate 131,
+      renumbered from the provisional 126 by fold leg-4) with a
+      `--self-test` covering: (a) a spec-request closed
       with `spec-meta.json` `stage` short of the finalize terminal value →
       both notices posted; (b) the same run repeated → no second notice on
       either issue (idempotency, FR-017); (c) a spec-request with no
       `spec-meta.json` naming it at all → still counted as "closed without
       landing"; (d) a spec-request whose `spec-meta.json` DID reach the
       terminal stage → no notice.
-- [X] T017 [US2] Register Gate 126 in `.github/workflows/lint-workflows.yml`
+- [X] T017 [US2] Register Gate 131 in `.github/workflows/lint-workflows.yml`
       the same two-step way as T008.
 
 **Checkpoint**: quickstart.md steps 2 and 3 both pass — disposed-issue
@@ -534,8 +539,9 @@ final integration check.
       matching T004's chosen phrase exactly.
 - [X] T023 Run `python .github/scripts/run-local-gates.py` (the full
       PR-time gate suite, per CLAUDE.md "Before pushing") and confirm every
-      gate — including the newly registered Gate 125/126 and the extended
-      Gate 93 — passes on the shipped tree.
+      gate — including the newly registered Gate 130/131 (renumbered from
+      the provisional 125/126 by fold leg-4) and the extended Gate 93 —
+      passes on the shipped tree.
 
 **Not modeled as tasks** — quickstart.md's live drills that need a real
 dispatched run against a disposable/test repository (never this one): the
@@ -693,4 +699,10 @@ Task: "Add disposition:duplicate to wing-commander-board-labels/action.yml"
 
 ## Maintainer Feedback
 
-- [ ] Renumber this PR's two gates off the colliding Gate 125/126 (Gate 126 is currently registered twice in `lint-workflows.yml`, once for `verify-board-duplicate-disposition.py` and once for `verify-board-closed-without-landing.py`; Gate 125 collides with spec 062's lifecycle-review-gate gate) to **Gate 130** (`verify-board-duplicate-disposition.py`) and **Gate 131** (`verify-board-closed-without-landing.py`), updating `lint-workflows.yml`'s step names/comments, the gate scripts' own self-identifying text, tasks.md, and any contract/doc referencing the provisional numbers — leaving 126/127 to spec 091, 128 to spec 074, 129 to spec 089, and 132 to spec 109.
+- [X] Renumber this PR's two gates off the colliding Gate 125/126 (Gate 126 is currently registered twice in `lint-workflows.yml`, once for `verify-board-duplicate-disposition.py` and once for `verify-board-closed-without-landing.py`; Gate 125 collides with spec 062's lifecycle-review-gate gate) to **Gate 130** (`verify-board-duplicate-disposition.py`) and **Gate 131** (`verify-board-closed-without-landing.py`), updating `lint-workflows.yml`'s step names/comments, the gate scripts' own self-identifying text, tasks.md, and any contract/doc referencing the provisional numbers — leaving 126/127 to spec 091, 128 to spec 074, 129 to spec 089, and 132 to spec 109.
+      `lint-workflows.yml` renumbered (no self-identifying gate number text
+      existed in either `.py` gate script itself, so nothing there needed
+      updating); every other Gate 125/126 mention in this file and in
+      docs/architecture.md was checked — docs/architecture.md's own
+      "Gate 125" (line 733) names spec 062's real, uncollided gate and was
+      left untouched.

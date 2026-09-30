@@ -4720,7 +4720,7 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-gh-error-stub-conformance.py --self-test
 
-      # Gate 126 — specs/108-routed-original-disposition (contracts/
+      # Gate 130 — specs/108-routed-original-disposition (contracts/
       # duplicate-disposition.md, FR-009/FR-010/FR-011): dispose_as_
       # duplicate()'s own idempotency pre-check and failure-semantics table,
       # proven against a stubbed gh rather than a real repository. A
@@ -4728,26 +4728,32 @@ jobs:
       # that board-loop.yml's three spec-request sites CALL this module —
       # this gate checks the module's own internal behaviour, mirroring the
       # one-gate-per-board_*.py convention (board_readiness.py -> Gate,
-      # board_triage.py -> Gate, etc). Numbered 126, not the 125 this
-      # branch's own tasks.md provisionally claimed: Gate 125 was taken by
+      # board_triage.py -> Gate, etc). Numbered 130, not the 125 this
+      # branch's own tasks.md originally claimed: Gate 125 was taken by
       # specs/062-lifecycle-review-gate's own gate before this branch's
-      # rebase landed (#660 tracks the cross-branch allocation problem).
-      - name: "Gate 126 — dispose_as_duplicate's idempotency and failure semantics (FR-009/FR-010/FR-011)"
+      # rebase landed, and this branch's own two gates collided with each
+      # other at 126 too (maintainer review, fold leg-4) -- the maintainer
+      # directed 130/131 here, leaving 126/127 to spec 091, 128 to spec
+      # 074, 129 to spec 089, and 132 to spec 109.
+      - name: "Gate 130 — dispose_as_duplicate's idempotency and failure semantics (FR-009/FR-010/FR-011)"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-duplicate-disposition.py
-      - name: "Gate 126 self-test — the baseline end-to-end drill, and dropping the own-comment presence check must make the idempotency drill re-post a comment"
+      - name: "Gate 130 self-test — the baseline end-to-end drill, and dropping the own-comment presence check must make the idempotency drill re-post a comment"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-duplicate-disposition.py --self-test
 
-      # Gate 126 — specs/108-routed-original-disposition (contracts/
+      # Gate 131 — specs/108-routed-original-disposition (contracts/
       # closed-without-landing-notice.md, FR-017): a spec-request this loop
       # filed that closes without its spec-meta.json ever reaching the
       # finalize stage's terminal value gets one idempotent notice on both
-      # the spec-request and the originating issue it disposed of.
-      - name: "Gate 126 — closed-without-landing notices are posted once and only when the work never landed (FR-017)"
+      # the spec-request and the originating issue it disposed of. Numbered
+      # 131, not the 126 this branch's own tasks.md originally claimed
+      # (maintainer review, fold leg-4: 126 collided with Gate 130's own
+      # module above).
+      - name: "Gate 131 — closed-without-landing notices are posted once and only when the work never landed (FR-017)"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-closed-without-landing.py
-      - name: "Gate 126 self-test — dropping the notice-presence check must make the idempotent-repeat case re-post"
+      - name: "Gate 131 self-test — dropping the notice-presence check must make the idempotent-repeat case re-post"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-closed-without-landing.py --self-test
 
