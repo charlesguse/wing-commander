@@ -1452,7 +1452,9 @@ jobs:
             # entirely, so verify-image-prerequisites never even attempts
             # a pull -- is not distinguishable from this comment scan
             # alone; see the T009 status note in tasks.md).
-            image_failure_comment="$(gh api "repos/${E2E_REPO}/issues/${ISSUE}/comments" --paginate --jq '.[].body' 2>/dev/null | grep -m1 'verify-image-prerequisites job failed' || true)"
+            if ! image_failure_comment="$(gh api "repos/${E2E_REPO}/issues/${ISSUE}/comments" --paginate --jq '.[].body' 2>/dev/null | grep -m1 'verify-image-prerequisites job failed')"; then
+              image_failure_comment=""
+            fi
             if [ "$MODE" = "container" ] && [ -n "$image_failure_comment" ]; then
               run_url="$(printf '%s' "$image_failure_comment" | grep -oE 'https://[^ )]+/actions/runs/[0-9]+' | head -1)"
               [ -n "$run_url" ] || run_url="$ISSUE_URL"

@@ -621,8 +621,10 @@ runs:
           # first match of each page rather than the first match overall.
           # `head -1` (bash-side, over the whole streamed result) is what
           # actually selects "the first match across every page" safely.
-          existing="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${issue}/comments" --paginate --jq \
-            '.[] | select(.user.login == "github-actions[bot]") | select(.body // "" | contains("wing-commander-metrics-rollup:begin")) | {id, body}' 2>/dev/null | head -1)"
+          if ! existing="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${issue}/comments" --paginate --jq \
+            '.[] | select(.user.login == "github-actions[bot]") | select(.body // "" | contains("wing-commander-metrics-rollup:begin")) | {id, body}' 2>/dev/null | head -1)"; then
+            existing=""
+          fi
           existing_id="$(printf '%s' "$existing" | jq -r '.id // empty' 2>/dev/null)"
 
           if [ -n "$existing_id" ]; then
