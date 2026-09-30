@@ -129,6 +129,7 @@ IN_FLIGHT_CASES = {
     "duplicate-readmitted-spec-closed",
     "duplicate-not-readmitted-spec-open",
     "duplicate-closed-issue-not-admitted",
+    "duplicate-readmitted-then-reworked",
 }
 
 # (name, replacement for board_item_marker.is_loop_marker_author)

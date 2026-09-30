@@ -39,7 +39,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from board_item_marker import read_marker_with_timestamp  # noqa: E402
+from board_item_marker import find_latest_marker_matching, read_marker_with_timestamp  # noqa: E402
 
 MAINTAINER_ASSOCIATIONS = {"OWNER", "MEMBER", "COLLABORATOR"}
 
@@ -148,7 +148,23 @@ def classify_issue(issue, labeled_events):
     return "ineligible"
 
 
-def is_excluded(issue, spec_request_state_by_number=None, marker=None):
+def _find_duplicate_marker(issue, comments, bot_login):
+    """The newest loop-authored marker with step == DUPLICATE_STEP among
+    `issue`'s own comments, scanning every comment rather than stopping at
+    the single overall-newest one -- a later route/fix/review marker
+    posted after a reopen must not hide an earlier re-admission-worthy
+    duplicate marker (spec 108 maintainer review, fold leg-0:
+    FR-005/FR-006/FR-007, SC-005). None when `issue` does not carry
+    DISPOSITION_LABEL at all (the common case, skipped without scanning
+    comments) or no such marker exists."""
+    if DISPOSITION_LABEL not in _label_names(issue):
+        return None
+    found = find_latest_marker_matching(
+        comments, bot_login, lambda marker: marker.get("step") == DUPLICATE_STEP)
+    return found[1] if found else None
+
+
+def is_excluded(issue, spec_request_state_by_number=None, duplicate_marker=None):
     """FR-010: (True, reason) when the issue is closed, carries a settled
     disposition:* marker, carries board:stalled, or carries any stage:*/
     spec:* label. (False, None) otherwise.
@@ -157,16 +173,22 @@ def is_excluded(issue, spec_request_state_by_number=None, marker=None):
     FR-005/FR-006/FR-007): when the issue is OPEN and DISPOSITION_LABEL
     is the ONLY exclusion-worthy label it carries (not just any
     disposition:* match), the caller's already-resolved newest
-    loop-authored marker (`marker` -- in_flight_candidate()/select()
-    already read this per issue via read_marker_with_timestamp(), the
-    same way they always have; this function never re-reads comments
-    itself) is consulted: if its step is DUPLICATE_STEP and its
-    `spec_request` issue number resolves CLOSED in
-    spec_request_state_by_number, the issue is NOT excluded (re-admitted).
-    Still OPEN, or unresolved/missing, keeps the issue excluded -- a
-    reopen while the linked spec-request is still open must not re-admit
-    it. Every OTHER exclusion reason (plain closed, board:stalled, any
-    other disposition:* value, stage:*/spec:*) is unaffected."""
+    step==DUPLICATE_STEP marker (`duplicate_marker` --
+    in_flight_candidate()/select() resolve this per issue via
+    _find_duplicate_marker(), scanning every comment rather than only the
+    issue's overall-newest marker: fold leg-0 found that gating on the
+    overall-newest marker re-excluded a re-admitted issue the moment its
+    next route/fix/review marker superseded the duplicate one, even
+    though DISPOSITION_LABEL is never removed) is consulted: if it names a
+    `spec_request` issue number that resolves CLOSED in
+    spec_request_state_by_number, the issue is NOT excluded (re-admitted,
+    and stays re-admitted for as long as DISPOSITION_LABEL persists --
+    "at most once per reopen" is enforced by the reopen requiring a human,
+    not by this carve-out forgetting the re-admission). Still OPEN, or
+    unresolved/missing, keeps the issue excluded -- a reopen while the
+    linked spec-request is still open must not re-admit it. Every OTHER
+    exclusion reason (plain closed, board:stalled, any other
+    disposition:* value, stage:*/spec:*) is unaffected."""
     if (issue.get("state") or "").upper() == "CLOSED":
         return True, "closed"
 
@@ -183,8 +205,8 @@ def is_excluded(issue, spec_request_state_by_number=None, marker=None):
     if not exclusion_labels:
         return False, None
 
-    if exclusion_labels == [DISPOSITION_LABEL] and (marker or {}).get("step") == DUPLICATE_STEP:
-        spec_request_number = (marker or {}).get("spec_request")
+    if exclusion_labels == [DISPOSITION_LABEL]:
+        spec_request_number = (duplicate_marker or {}).get("spec_request")
         if (spec_request_state_by_number or {}).get(spec_request_number) == "CLOSED":
             return False, None
 
@@ -231,9 +253,10 @@ def in_flight_candidate(open_issues, comments_by_issue, pr_state_by_number, bot_
     candidates = []
     for issue in open_issues:
         number = issue.get("number")
-        pair = read_marker_with_timestamp(comments_by_issue.get(number) or [], bot_login)
-        excluded, _reason = is_excluded(
-            issue, spec_request_state_by_number, pair[1] if pair else None)
+        comments = comments_by_issue.get(number) or []
+        pair = read_marker_with_timestamp(comments, bot_login)
+        duplicate_marker = _find_duplicate_marker(issue, comments, bot_login)
+        excluded, _reason = is_excluded(issue, spec_request_state_by_number, duplicate_marker)
         if excluded:
             continue
         if pair is None:
@@ -316,9 +339,10 @@ def select(open_issues, labeled_events_by_issue, comments_by_issue, pr_state_by_
     candidates = sorted(open_issues, key=lambda issue: issue.get("createdAt") or "")
     for issue in candidates:
         number = issue.get("number")
-        pair = read_marker_with_timestamp(comments_by_issue.get(number) or [], bot_login)
-        excluded, _reason = is_excluded(
-            issue, spec_request_state_by_number, pair[1] if pair else None)
+        comments = comments_by_issue.get(number) or []
+        pair = read_marker_with_timestamp(comments, bot_login)
+        duplicate_marker = _find_duplicate_marker(issue, comments, bot_login)
+        excluded, _reason = is_excluded(issue, spec_request_state_by_number, duplicate_marker)
         if excluded:
             continue
         if pair is not None and (pair[1] or {}).get("step") == "prove":

@@ -649,7 +649,16 @@ Task: "Add disposition:duplicate to wing-commander-board-labels/action.yml"
 
 ## Maintainer Feedback
 
-- [ ] Fix `is_excluded()`'s re-admission carve-out (`.github/scripts/board_eligibility.py:186`) so a re-admitted issue (disposition:duplicate label present, linked spec-request resolved CLOSED) stays re-admitted once a later route/fix/review marker becomes the newest marker, instead of falling back to excluded because the carve-out only fires while the newest marker's step is still `duplicate`. Remove or reset the exclusion basis on re-admission rather than gating solely on the newest marker's step. Add a checked-in fixture: issue re-admitted, then a new triage or fix marker posted, still not excluded (FR-005, FR-006, FR-007, SC-005).
+- [X] Fix `is_excluded()`'s re-admission carve-out (`.github/scripts/board_eligibility.py:186`) so a re-admitted issue (disposition:duplicate label present, linked spec-request resolved CLOSED) stays re-admitted once a later route/fix/review marker becomes the newest marker, instead of falling back to excluded because the carve-out only fires while the newest marker's step is still `duplicate`. Remove or reset the exclusion basis on re-admission rather than gating solely on the newest marker's step. Add a checked-in fixture: issue re-admitted, then a new triage or fix marker posted, still not excluded (FR-005, FR-006, FR-007, SC-005).
+      Fixed by resolving `duplicate_marker` via a new
+      `board_item_marker.find_latest_marker_matching()` helper that scans
+      every comment for the newest `step=="duplicate"` marker specifically,
+      independent of the issue's overall-newest marker; threaded through
+      `in_flight_candidate()`/`select()` (board_eligibility.py) and the
+      `select` job's own `spec_request_numbers_to_check` resolution
+      (board-loop.yml). New fixture:
+      `.github/scripts/tests/board-eligibility/in-flight/
+      duplicate-readmitted-then-reworked/`.
 
 ## Maintainer Feedback
 

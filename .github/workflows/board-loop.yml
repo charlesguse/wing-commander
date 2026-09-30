@@ -650,7 +650,12 @@ jobs:
           # FR-006): board_eligibility.is_excluded()'s re-admission
           # carve-out never trusts a cached spec-request state -- resolve
           # the live state of every spec-request a disposition:duplicate,
-          # OPEN issue's own newest marker names.
+          # OPEN issue's own duplicate-step marker names. Scans every
+          # marker on the issue, not just its overall-newest one: a later
+          # route/fix/review marker posted after a reopen must not hide an
+          # earlier re-admission-worthy duplicate marker, the same
+          # find_latest_marker_matching() fix board_eligibility.py's own
+          # _find_duplicate_marker() uses (maintainer review, fold leg-0).
           spec_request_numbers_to_check="$(OPEN_ISSUES_PATH="$RUNNER_TEMP/board-open-issues.json" COMMENTS_BY_ISSUE_PATH="$RUNNER_TEMP/board-comments-by-issue.json" python3 - <<'PYEOF'
           import json
           import os
@@ -658,7 +663,7 @@ jobs:
 
           sys.path.insert(0, ".github/scripts")
           from board_eligibility import DISPOSITION_LABEL, DUPLICATE_STEP
-          from board_item_marker import read_marker_with_timestamp
+          from board_item_marker import find_latest_marker_matching
 
           with open(os.environ["OPEN_ISSUES_PATH"], encoding="utf-8") as fh:
               open_issues = json.load(fh)
@@ -674,12 +679,12 @@ jobs:
                   continue
               number = issue.get("number")
               comments = comments_by_issue.get(str(number)) or []
-              pair = read_marker_with_timestamp(comments, os.environ["BOT_LOGIN"])
-              if pair is None:
+              found = find_latest_marker_matching(
+                  comments, os.environ["BOT_LOGIN"],
+                  lambda marker: marker.get("step") == DUPLICATE_STEP)
+              if found is None:
                   continue
-              _created_at, marker = pair
-              if marker.get("step") != DUPLICATE_STEP:
-                  continue
+              _created_at, marker = found
               try:
                   spec_request_numbers.add(int(marker.get("spec_request")))
               except (TypeError, ValueError):
