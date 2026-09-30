@@ -112,6 +112,12 @@ drop-detection.
    asserted true on every run; the gate fails, naming the entry, its reason
    and its deciding issue, when it is not (FR-007, spec 073; Constitution
    Principle IX).
+10. Every EXEMPT_JOBS key names a (workflow, job) pair that actually
+    resolves -- checked directly against EXEMPT_JOBS's own keys, not just
+    the derived set, since a renamed or deleted job drops out of derivation
+    and would otherwise leave the exemption in place with nothing left to
+    check it (#735; the stale-waiver check Gate 105 already does for
+    labels).
 
 Static structure only (`yaml.safe_load`) -- this gate's subject is step
 *ordering and reference shape*, not step *behaviour*, so no
@@ -140,9 +146,10 @@ refresh-remote call deleted; each exempt entry's condition broken in the
 direction that should fail it (cleanup.yml's and watchdog.yml's bound
 removed and raised past the credential's lifetime, board-loop.yml's
 adopted composite call deleted); a derived subject with no floor
-membership and no exemption; the derived set emptied; and a SUBJECT_FLOOR
-member this feature itself adds losing its agent step -- and asserts each
-one fails.
+membership and no exemption; the derived set emptied; a SUBJECT_FLOOR
+member this feature itself adds losing its agent step; and an EXEMPT_JOBS
+entry's named job renamed away, leaving the entry stale (#735) -- and
+asserts each one fails.
 
 Usage: python3 .github/scripts/verify-post-agent-credential-refresh.py [--self-test]
 """
@@ -857,6 +864,19 @@ def scan(loaded):
                     f"-- this subject's last agent step disappeared "
                     f"(FR-022, spec 072 FR-004)")
 
+    # Check 10 -- every EXEMPT_JOBS key must itself resolve to a job that
+    # exists. Checked directly against EXEMPT_JOBS's own keys, not merely
+    # the derived set below: a renamed or deleted job drops out of
+    # derivation entirely, so an exemption naming it would otherwise never
+    # be looked at again by anything (#735).
+    for path, job_name in EXEMPT_JOBS:
+        wf = loaded.get(path)
+        if wf is None or job_name not in (wf.get("jobs") or {}):
+            failures.append(
+                f"{path} [{job_name}]: EXEMPT_JOBS entry names a "
+                f"workflow/job pair that does not exist -- the exemption "
+                f"has outlived a renamed or deleted job (FR-007, #735)")
+
     # Disposition + checks 1/2/6/7 (full_subject only) and check 8 (any
     # derived subject, regardless of disposition).
     for path, job_name in sorted(derived):
@@ -1317,6 +1337,20 @@ def mut_board_loop_composite_deleted(loaded):
     del steps[ctx_idx]
 
 
+def mut_exempt_job_deleted(loaded):
+    """#735: an EXEMPT_JOBS entry naming a job that no longer exists must
+    fail. Deleting auto-update-spec-kit.yml's evaluate-path job (not a
+    SUBJECT_FLOOR member) leaves the exemption as the only thing that
+    mentions it, so check 10 is the sole failure. A rename would not do:
+    the renamed job keeps its agent step and comes back as a fresh derived
+    subject that fails unrelated checks, so the mutation would survive
+    check 10's removal. self_test() also requires check 10's own message."""
+    wf = loaded[".github/workflows/auto-update-spec-kit.yml"]
+    jobs = wf["jobs"]
+    assert "evaluate-path" in jobs, "fixture assumption broken: job renamed"
+    del jobs["evaluate-path"]
+
+
 SIMPLE_MUTATIONS = [
     ("a post-agent step's credential reference reverted to the stale "
      "steps.ctx.outputs.token form", mut_stale_credential_reference),
@@ -1386,6 +1420,8 @@ SIMPLE_MUTATIONS = [
     ("watchdog.yml's diagnose exemption bound removed", mut_watchdog_bound_removed),
     ("board-loop.yml's triage exemption composite call deleted",
      mut_board_loop_composite_deleted),
+    ("an EXEMPT_JOBS entry's named job deleted, leaving the entry "
+     "stale (#735)", mut_exempt_job_deleted),
 ]
 
 
@@ -1411,6 +1447,15 @@ def self_test():
                             f"broke nothing in this gate.")
         else:
             print(f"Mutation OK -- {label}: {len(broke)} assertion(s) fail.")
+
+    # Check 10 must be the check that catches a stale exemption, not some
+    # other assertion the mutation happens to trip.
+    mutated = copy.deepcopy(base)
+    mut_exempt_job_deleted(mutated)
+    broke = scan(mutated)
+    if not (len(broke) == 1 and "EXEMPT_JOBS entry names" in broke[0]):
+        problems.append("a stale EXEMPT_JOBS entry was not caught by check "
+                        f"10 alone (#735): {broke!r}")
 
     # Negative control: unlike SIMPLE_MUTATIONS, this mutation must NOT
     # break the gate (#439 review) -- it proves the toJSON(steps.<id>)
