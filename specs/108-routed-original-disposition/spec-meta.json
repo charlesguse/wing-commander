@@ -2,7 +2,7 @@
   "issue": 791,
   "spec_dir": "specs/108-routed-original-disposition",
   "feature_num": "108",
-  "stage": "implement",
+  "stage": "stalled",
   "iteration": 2,
   "spec_branch": "spec/108-routed-original-disposition",
   "pending_re_review_from": [
