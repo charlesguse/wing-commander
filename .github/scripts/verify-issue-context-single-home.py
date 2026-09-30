@@ -1448,10 +1448,90 @@ def check_spec_request_bodies(path):
     return problems
 
 
+# specs/092-bounded-spec-request-filing T029/FR-012: every give-up comment
+# must state, in one place a maintainer can read from the issue alone: that
+# no spec-request was filed, the last observed failure, the attempts spent,
+# and that removing board:stalled re-admits the item.
+GIVE_UP_COMMENT_RE = re.compile(
+    r"No spec-request was filed for issue #[^\n]*?\bafter\b[^\n]*?\battempt"
+    r"\(s\)[^\n]*?-- last failure:[^\n]*?Removing board:stalled re-admits")
+
+
+def check_give_up_comment_elements(path):
+    """Gate 93 (specs/092-bounded-spec-request-filing FR-012): each of the
+    three give-up comments (route, fix post-push-breach, readiness) states
+    explicitly that no spec-request was filed, the last observed failure,
+    the attempts spent, and that removing board:stalled re-admits the item
+    -- all four in one comment, not spread across separate ones."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+    except OSError as exc:
+        return [f"{path}: could not read ({exc})"]
+    give_ups = [m.start() for m in re.finditer(
+        r"No spec-request was filed for issue #", text)]
+    if not give_ups:
+        return [f"{path}: found no give-up comment "
+                f"('No spec-request was filed for issue #...') -- "
+                f"check_give_up_comment_elements would pass vacuously."]
+    problems = []
+    for start in give_ups:
+        window = text[start:start + 400]
+        if not GIVE_UP_COMMENT_RE.match(window):
+            problems.append(
+                f"{path}: the give-up comment at offset {start} is missing "
+                f"one of FR-012's four elements (no spec-request was filed, "
+                f"the last failure, the attempts spent, or the board:stalled "
+                f"re-admission instruction): {window[:200]!r}")
+    return problems
+
+
+def _self_test_give_up_comment_elements(tmpdir):
+    """specs/092-bounded-spec-request-filing T029/FR-012: a give-up comment
+    missing any one of its four required elements must fail; a compliant
+    one must pass."""
+    failures = []
+    good = (
+        "gh issue comment \"$ISSUE_NUMBER\" --body \"$(printf 'No "
+        "spec-request was filed for issue #%s after %s attempt(s) -- last "
+        "failure: %s. Removing board:stalled re-admits this item to try "
+        "again.\\n\\n%s' \"$ISSUE_NUMBER\" \"$attempts\" \"$last_failure\" "
+        "\"$marker\")\"\n")
+    path = os.path.join(tmpdir, "give-up-fixture.yml")
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(good)
+    if check_give_up_comment_elements(path):
+        failures.append("give-up comment fixture: a compliant comment was "
+                        "flagged")
+    else:
+        print("note: give-up comment fixture: a compliant comment passes.")
+
+    for label, broken in (
+        ("no spec-request statement dropped",
+         good.replace("No spec-request was filed for issue #%s ", "")),
+        ("attempts-spent count dropped",
+         good.replace("after %s attempt(s) ", "")),
+        ("last failure dropped",
+         good.replace("-- last failure: %s. ", ". ")),
+        ("re-admission instruction dropped",
+         good.replace(
+             "Removing board:stalled re-admits this item to try again.",
+             "Try again later.")),
+    ):
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(broken)
+        if not check_give_up_comment_elements(path):
+            failures.append(f"give-up comment fixture {label!r} was NOT caught")
+        else:
+            print(f"note: give-up comment fixture caught ({label}).")
+    return failures
+
+
 def check_repo():
     problems = []
     problems.extend(check_tool_grants(BOARD_LOOP))
     problems.extend(check_spec_request_bodies(BOARD_LOOP))
+    problems.extend(check_give_up_comment_elements(BOARD_LOOP))
     problems.extend(check_read_only_git(BOARD_LOOP))
     problems.extend(check_fleet_read_only_git())
     problems.extend(check_reviewer_staged_inputs(BOARD_LOOP))
@@ -3007,6 +3087,7 @@ def run_self_test():
                     f"{self_problems!r}")
 
         failures.extend(_self_test_spec_request_sites(tmpdir))
+        failures.extend(_self_test_give_up_comment_elements(tmpdir))
         failures.extend(_self_test_read_only_git(tmpdir))
     failures.extend(_self_test_builder())
     failures.extend(_mutation_check_builder())

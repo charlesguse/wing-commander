@@ -294,7 +294,7 @@ with a fresh count (quickstart.md Section 4).
 
 ### Implementation for User Story 3
 
-- [ ] T029 [P] [US3] Add an assertion (a unit test, or a Gate 93 self-test
+- [X] T029 [P] [US3] Add an assertion (a unit test, or a Gate 93 self-test
   fixture following `_self_test_spec_request_sites`'s pattern) that the
   give-up comment text built in T023-T025 contains all four FR-012
   elements: an explicit "no spec-request was filed" statement, the last
