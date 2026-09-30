@@ -675,7 +675,12 @@ Task: "Add disposition:duplicate to wing-commander-board-labels/action.yml"
 
 ## Maintainer Feedback
 
-- [ ] Narrow the closed-without-landing scan (`.github/workflows/board-loop.yml` ~line 316, `board_closed_without_landing.py:39-48`) to only consider spec-requests named by a `step=duplicate` marker (reuse `originating_by_spec_request`) instead of every closed, bot-authored `spec-request` issue — the current scope would post false FR-017 notices on closed spec-requests the loop never filed under this feature's disposition (#768, #605, #577, #574, #502, #487, #549). (FR-016, FR-017)
+- [X] Narrow the closed-without-landing scan (`.github/workflows/board-loop.yml` ~line 316, `board_closed_without_landing.py:39-48`) to only consider spec-requests named by a `step=duplicate` marker (reuse `originating_by_spec_request`) instead of every closed, bot-authored `spec-request` issue — the current scope would post false FR-017 notices on closed spec-requests the loop never filed under this feature's disposition (#768, #605, #577, #574, #502, #487, #549). (FR-016, FR-017)
+      Fixed in the `select` job's closed-without-landing step: the loop
+      building `spec_requests` now `continue`s when `originating_by_
+      spec_request.get(number)` is `None`, so only a spec-request this
+      feature's own disposition filed reaches `board_closed_without_
+      landing.py`.
 
 ## Maintainer Feedback
 

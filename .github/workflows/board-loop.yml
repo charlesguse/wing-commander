@@ -407,9 +407,19 @@ jobs:
                       return meta
               return None
 
+          # spec 108 (maintainer review, fold leg-2; FR-016/FR-017): only a
+          # spec-request THIS feature's own disposition filed -- named by a
+          # disposition:duplicate issue's own step=="duplicate" marker, via
+          # originating_by_spec_request above -- is in scope. Every other
+          # closed, bot-authored spec-request (including one that predates
+          # this feature and was reconciled by hand, FR-016) is out of
+          # scope; scanning `closed_spec_requests` unfiltered posted false
+          # notices on pre-existing closed spec-requests.
           spec_requests = []
           for number in closed_spec_requests:
               originating = originating_by_spec_request.get(number)
+              if originating is None:
+                  continue
               spec_requests.append({
                   "number": number,
                   "spec_meta": spec_meta_for_issue(number),
