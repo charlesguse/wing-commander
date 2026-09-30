@@ -258,3 +258,7 @@ Because nearly every task shares one of two files (the gate script or SKILL.md),
 ## Maintainer Feedback (PR #813 Review — Substring Match False Positive)
 
 - [ ] T040 Fix the substring comparison in the `unexpected-job-in-group` check (verify-skill-board-loop-concurrency-claim.py:301): `claim.ordinary_group in group_value or claim.directed_group in group_value` would falsely flag a future non-capable job whose group name merely contains the claimed group as a substring (e.g. `wing-commander-board-loop-watchdog`). Compare exact literals for `group_literal`, and exact quoted tokens inside a `group_expression`, rather than substring containment (FR-012; PR #813 review item 5).
+
+## Maintainer Feedback (PR #813 Review — quickstart.md Stale Gate Number)
+
+- [ ] T041 Renumber the remaining "Gate 125" references in `specs/089-skill-example-drift/quickstart.md` (confirmed 12 occurrences) to "Gate 129": unlike `tasks.md`'s historical task narrative (already excluded by T027/T033's precedent), quickstart.md is live operator guidance a triager or reviewer runs today, so a stale gate number there is actively misleading (PR #813 review item 6).
