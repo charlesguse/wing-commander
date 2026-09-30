@@ -221,3 +221,9 @@ Because nearly every task shares one of two files (the gate script or SKILL.md),
 **Purpose**: T027 scoped its renumbering to `tasks.md` (T002, T015) and `contracts/skill-drift-gate.md` only. Issue #812 names `contracts/skill-example-claim.md` explicitly, and that file still reads "Gate 125" at lines 32, 34, 45, 51, 66; `.github/scripts/skill-example-drift-waivers.json`'s live `$comment` at lines 3 and 19 still reads "Gate 126". #812 is therefore still open.
 
 - [ ] T033 Update the remaining stale gate-number references to "Gate 129": `contracts/skill-example-claim.md` (lines 32, 34, 45, 51, 66 — the file #812 names explicitly) and `.github/scripts/skill-example-drift-waivers.json`'s `$comment` (lines 3, 19). Optionally also update `data-model.md`, `plan.md`, `quickstart.md`, and `research.md`, which still say "Gate 125" throughout, for consistency.
+
+## Phase 13: Maintainer Feedback (PR #813 Review — Convergence Gap, T029/T030)
+
+**Purpose**: Confirms Phase 10's existing gap is still open and blocking convergence: `contracts/skill-example-claim.md`'s Verification section documents items 4 (a queuing/cancellation word in the Over-rated paragraph) and 5 (the script path within two paragraphs of the anchor) as gate-checked, but `extract_skill_claim` only pulls the three backtick tokens, so deleting either sentence from `SKILL.md` still passes the gate. FR-008 is unenforced as documented.
+
+- [ ] T034 Either complete T029/T030 as already specified in Phase 10, or — if that scope is rejected for this PR — revise `contracts/skill-example-claim.md`'s Verification section so it no longer documents items 4 and 5 as mechanically gate-checked. This PR is not converged while either remains undone (FR-003, FR-005, FR-008, SC-003, SC-004).
