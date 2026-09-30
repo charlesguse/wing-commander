@@ -94,7 +94,7 @@ afterward.
 ## 4. Cross-harness proof the stub shape is load-bearing (SC-004)
 
 ```bash
-python .github/scripts/verify-auto-release-specs-fallback.py --self-test
+python .github/scripts/verify-auto-release-specs-fallback.py
 ```
 
 Expected: passes. Then mutate `auto-release.yml`'s shipped `specs/`

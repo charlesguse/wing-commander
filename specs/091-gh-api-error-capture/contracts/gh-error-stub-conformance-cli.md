@@ -83,8 +83,9 @@ before landing.
 
 ## SC-004's cross-harness proof, concretely
 
-`verify-auto-release-specs-fallback.py`'s own `--self-test` (unchanged
-interface) is the mechanism SC-004 exercises: after this feature migrates
+`verify-auto-release-specs-fallback.py` (unchanged interface — it takes no
+CLI flags; every plain run already performs its own scenario-plus-mutation
+self-proof, #817) is the mechanism SC-004 exercises: after this feature migrates
 its two stub arms onto `gh_error_stub_arm(...)` (research.md D9), a
 mutation that removes a variable reset from `auto-release.yml`'s shipped
 `specs/` fallback block still makes that harness's own self-test fail —

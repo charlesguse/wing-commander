@@ -1803,10 +1803,12 @@ jobs:
           # PR past page 1 (30 comments), making FR-022's confirmation round
           # permanently unreachable there.
           if ! issue_comments=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" --paginate --jq '.[] | {login: .user.login, body: .body, created_at: .created_at}' | jq -s '.'); then
-            issue_comments='[]'
+            echo "::error::wing-commander pr-conversation stage: Relayed-request risk-confirmation gate could not read issue comments on PR #$PR_NUMBER -- refusing to guess whether the risk was already confirmed."
+            exit 1
           fi
           if ! review_comments=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/comments" --paginate --jq '.[] | {login: .user.login, body: .body, created_at: .created_at}' | jq -s '.'); then
-            review_comments='[]'
+            echo "::error::wing-commander pr-conversation stage: Relayed-request risk-confirmation gate could not read review comments on PR #$PR_NUMBER -- refusing to guess whether the risk was already confirmed."
+            exit 1
           fi
           comments=$(jq -n --argjson a "$issue_comments" --argjson b "$review_comments" '$a + $b | sort_by(.created_at)')
 
@@ -2640,10 +2642,12 @@ jobs:
           # aborted on exactly the long PRs a maintainer most wants to stop
           # something on (FR-024/SC-009).
           if ! issue_comments=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" --paginate --jq '.[] | select(.user.login == env.BOT_LOGIN) | {created_at, body}' | jq -s '.'); then
-            issue_comments='[]'
+            echo "::error::wing-commander pr-conversation stage: Stop procedure could not read issue comments on PR #$PR_NUMBER -- refusing to conclude no run needs stopping."
+            exit 1
           fi
           if ! review_comments=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/comments" --paginate --jq '.[] | select(.user.login == env.BOT_LOGIN) | {created_at, body}' | jq -s '.'); then
-            review_comments='[]'
+            echo "::error::wing-commander pr-conversation stage: Stop procedure could not read review comments on PR #$PR_NUMBER -- refusing to conclude no run needs stopping."
+            exit 1
           fi
           all=$(jq -n --argjson a "$issue_comments" --argjson b "$review_comments" '$a + $b | sort_by(.created_at) | reverse')
           # T056: skip any announcement this run posted ITSELF. The
