@@ -853,13 +853,16 @@ def _exec_heredoc(code, env, scripts_root):
 
 def _resume_env(step, marker_pr, pr_from_marker, pr_state, pr_number,
                 from_fallback=False, branch="fix/396-board-item", round_="2", base_sha="abc1234",
-                pr_owned=True):
+                pr_owned=True, marker_extra=None, pr_head_sha=""):
+    marker = {"step": step} if step else None
+    if marker is not None and marker_extra:
+        marker.update(marker_extra)
     return {
-        "MARKER_STEP": step, "MARKER_JSON": '{"step": "%s"}' % step if step else "null",
+        "MARKER_STEP": step, "MARKER_JSON": json.dumps(marker) if marker is not None else "null",
         "BRANCH": branch, "MARKER_PR": marker_pr,
         "PR_FROM_MARKER": "true" if pr_from_marker else "false",
         "PR_FROM_FALLBACK": "true" if from_fallback else "false",
-        "PR_STATE": pr_state, "PR_NUMBER": pr_number,
+        "PR_STATE": pr_state, "PR_NUMBER": pr_number, "PR_HEAD_SHA": pr_head_sha,
         "MARKER_ROUND": round_, "MARKER_BASE_SHA": base_sha,
         "PR_OWNED": "true" if pr_owned else "false", "ISSUE_NUMBER": "396",
     }
@@ -946,6 +949,24 @@ RESUME_CASES = [
     # the breach marker, which fix now posts before its create.
     ("regression: route marker, board:owned fallback PR -> review",
      _resume_env("route", "", False, "OPEN", "42", from_fallback=True, branch=""),
+     {"step": "review", "pr_number": "42", "recovered_via_fallback": True}),
+    # specs/093-not-ready-board-release FR-007/FR-008/D7: this feature's
+    # own stalled handover marker uniquely carries pr/nr_head_sha -- a
+    # board:stalled removal resumes at readiness (head unchanged, already
+    # reviewed) or review (head moved), never triage.
+    ("not-ready handover (stalled, pr+nr_head_sha), head unchanged -> readiness",
+     _resume_env("stalled", "42", True, "OPEN", "42",
+                 marker_extra={"pr": 42, "nr_head_sha": "deadbeef"}, pr_head_sha="deadbeef"),
+     {"step": "readiness", "pr_number": "42"}),
+    ("not-ready handover (stalled, pr+nr_head_sha), head moved -> review",
+     _resume_env("stalled", "42", True, "OPEN", "42",
+                 marker_extra={"pr": 42, "nr_head_sha": "deadbeef"}, pr_head_sha="cafefeed"),
+     {"step": "review", "pr_number": "42"}),
+    # FR-015: a stalled marker from any other stall site keeps pr: null and
+    # is unaffected -- still resolved by the generic board:owned fallback
+    # clause, never triage.
+    ("regression: stalled marker from any other stall site (pr absent) -> review",
+     _resume_env("stalled", "", False, "OPEN", "42", from_fallback=True),
      {"step": "review", "pr_number": "42", "recovered_via_fallback": True}),
 ]
 
