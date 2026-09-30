@@ -81,6 +81,57 @@ mechanical for every future one.
   through a route the agent no longer holds, and the verdict stays
   schema-valid. (FR-006, FR-020, User Story 1)
 
+### Status update 2026-09-30 — reconciled with current `main` (maintainer spec review)
+
+- **Both named grants are unchanged on `main`.** `watchdog.diagnose`'s
+  shipped list at `watchdog.yml:2363` still carries `Bash(gh:*)`, and the
+  "Decide upgrade path" step's inline list at
+  `auto-update-spec-kit.yml:1105` still carries `Bash(gh api:*)`. Gate 93's
+  check 4b docstring still scopes `gh` out of the fleet check
+  (`verify-issue-context-single-home.py:168`).
+- **A third read-only agent holds `gh` grants (open, owner decision).**
+  `pr-conversation.classify` (`pr-conversation.yml:843`) is named in
+  `FLEET_READ_ONLY_STEP_LABELS` (`verify-issue-context-single-home.py:456`),
+  runs with `WC_BOT_TOKEN`, and is granted `Bash(gh pr view:*)`,
+  `Bash(gh issue view:*)` and `Bash(gh search issues:*)`. Its prompt
+  advertises them. FR-007's total rule ("any `gh` grant at all") would fail
+  the gate on this site on a clean tree once US1 and US2 land, which
+  contradicts US3 scenario 4, SC-001 ("down from the two") and the first
+  Assumption. No owner answer covers this site. It is flagged here and not
+  resolved; FR-007 and US3 scenario 4 stand as drafted until it is
+  answered.
+- **Diagnose's logs are already fetched once, under `github.token`.** The
+  `collect-step-summary` collector fetches every job's log for the inspected
+  run (`watchdog.yml:1133`, `1146`) through `ACTIONS_TOKEN: ${{
+  github.token }}`, because the App token has no Actions read
+  (`watchdog.yml:224-233`, `docs/setup.md`, Gate 12). FR-018's staging
+  therefore reuses that fetch, or a shared helper with it, rather than a
+  second copy (CLAUDE.md "Shared logic has exactly one home"). It runs under
+  the same `github.token` route, which the workflow already grants
+  (`actions: read`). This is not the App-token change Out of Scope
+  excludes. The owner's "fail loud rather than silently under the App
+  token" is met by not using the App token and by FR-019.
+- **Spec 091 (merged) governs the staging step's capture.** If FR-018's
+  fetch is a `gh api` command-substitution capture, spec 091 FR-002/FR-005
+  apply. A failed read must exit, reassign or carry the FR-008 marker, and
+  must never become the staged log's content. That is FR-019 stated
+  mechanically.
+- **Specs 109 (merged) and 099 (#750, in flight)** also change
+  `watchdog.yml`. 109 changes finding dedup, and 099 changes how collectors
+  identify the inspected stage. Neither touches diagnose's tool list or the
+  untrusted-collectors mechanism Q3 reuses, and FR-018's staging step does
+  not identify a stage, so there is no overlap.
+- **More live contracts record the removed grants** than FR-016 named:
+  `specs/015-pipeline-watchdog/contracts/watchdog-workflow.md:81`,
+  `specs/027-auto-update-spec-kit/contracts/auto-update-spec-kit-workflow.md:104`,
+  and a second paragraph of
+  `specs/010-reusable-pipeline/contracts/stage-interfaces.md` (line 293) as
+  well as its table (line 339). FR-016 now lists them.
+- **Gate numbers corrected.** Deterministic `gh` calls in `run:` steps are
+  covered by Gate 12 (token permission), Gate 18 (pagination) and Gate 28
+  (explicit method). Gate 84 is the board loop's route backstop and was
+  cited in error.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - A prompt-injected diagnose agent cannot touch the repository (Priority: P1)
@@ -284,7 +335,8 @@ historical note that says so, not a current description.
   same set.
 - **A deterministic `run:` step that calls `gh api`.** Many do, correctly —
   they are code a reviewer reads, not a model's discretion. They stay in
-  scope of Gate 18 and Gate 84 and out of scope here.
+  scope of Gates 12, 18 and 28 (and spec 091's capture check) and out of
+  scope here.
 - **Zero sites to check.** If a rename or a refactor leaves the new check
   with no read-only site to inspect, it must fail rather than report a pass
   it did not earn (Constitution VIII).
@@ -378,10 +430,15 @@ historical note that says so, not a current description.
   total rather than per-subcommand.
 - **FR-016**: Every live contract under `specs/*/contracts/` that records
   `watchdog.diagnose`'s or evaluate-path's tool lists MUST match the
-  shipped lists after this change, including the per-stage table in
-  `specs/010-reusable-pipeline/contracts/stage-interfaces.md` and the
+  shipped lists after this change, including the per-stage table and the
   `gh api` disposition paragraph in
-  `specs/051-read-only-inspection-policy/contracts/inspection-policy.md`.
+  `specs/010-reusable-pipeline/contracts/stage-interfaces.md`, the `gh api`
+  disposition paragraph in
+  `specs/051-read-only-inspection-policy/contracts/inspection-policy.md`,
+  the diagnose `--allowedTools` in
+  `specs/015-pipeline-watchdog/contracts/watchdog-workflow.md`, and the
+  evaluate-path `--allowedTools` in
+  `specs/027-auto-update-spec-kit/contracts/auto-update-spec-kit-workflow.md`.
 - **FR-017**: The rationale for the narrowing — that `gh` reaches remote
   writes, local file writes, and arbitrary execution via aliases and
   extensions — MUST have exactly one canonical home, with every other site
@@ -393,7 +450,11 @@ historical note that says so, not a current description.
   jobs' logs for the run under diagnosis as files, at literal paths, before
   the diagnose agent runs, following the `board-loop.reviewer` gather
   pattern (#503). The diagnose prompt MUST name those paths exactly and MUST
-  NOT name a fetch the agent would have to perform itself.
+  NOT name a fetch the agent would have to perform itself. The logs MUST be
+  fetched once per run: the step reuses `collect-step-summary`'s per-job
+  fetch (or one helper shared with it) under the workflow's existing
+  `github.token` Actions-read route, not the App token and not a second
+  copy of the fetch.
 - **FR-019**: That staging step MUST fail loudly rather than silently: an
   authorization failure, a missing run, or an empty response MUST be
   recorded as an explicit gather failure that the diagnose step can read,
@@ -458,9 +519,10 @@ historical note that says so, not a current description.
 
 ## Assumptions
 
-- The two agents named in the issue and its comments are the complete set
-  of write-capable `gh` grants on read-only agent steps in this repository
-  today. The gate in US3 is what turns that from an audit result into a
+- The two agents named in the issue and its comments were taken as the
+  complete set of `gh` grants on read-only agent steps. **This does not hold
+  on `main`:** `pr-conversation.classify` also holds three `gh` grants (see
+  the 2026-09-30 status update; open owner decision). The gate in US3 is what turns that from an audit result into a
   standing guarantee, so the feature does not depend on the audit being
   exhaustive.
 - Diagnose's *primary* evidence is already staged: the collectors write
@@ -536,5 +598,10 @@ historical note that says so, not a current description.
 
 ## Open Questions
 
-None. All three `[NEEDS CLARIFICATION]` markers were answered on lifecycle
-issue #759 and are recorded in [Clarifications](#clarifications) above.
+All three `[NEEDS CLARIFICATION]` markers were answered on lifecycle issue
+#759 and are recorded in [Clarifications](#clarifications) above.
+
+One question raised by the 2026-09-30 maintainer review is open for the
+owner: what happens to `pr-conversation.classify`'s three read-only `gh`
+grants (`gh pr view`, `gh issue view`, `gh search issues`) under FR-007's
+total rule. See the status update.
