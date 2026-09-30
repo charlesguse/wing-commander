@@ -4357,10 +4357,15 @@ jobs:
       # has to undo, so its decision is fixtured, not trusted. Numbered
       # 112, not the 104 tasks.md's T050 originally reserved — see Gate
       # 107's comment above for the Maintainer Feedback renumbering.
+      # #826: it also pins how every review_gate marker reader gets its
+      # comments — REST (`gh api .../issues/$N/comments --paginate`, pages
+      # merged), never `gh issue|pr view --json comments`, whose
+      # author{login} shape has no user.type for is_loop_marker_author() —
+      # and runs disposition's and merge's read steps against a stub gh.
       - name: "Gate 112 — Lifecycle merge preconditions"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-lifecycle-merge-preconditions.py
-      - name: "Gate 112 self-test — the bot's own review never blocks its merge, a plain comment never clears a standing CHANGES_REQUESTED, and unmet_reason names only the first failing condition"
+      - name: "Gate 112 self-test — the bot's own review never blocks its merge, a plain comment never clears a standing CHANGES_REQUESTED, unmet_reason names only the first failing condition, and a --json comments, first-page-only, unmerged or unguarded marker read is caught"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-lifecycle-merge-preconditions.py --self-test
 
