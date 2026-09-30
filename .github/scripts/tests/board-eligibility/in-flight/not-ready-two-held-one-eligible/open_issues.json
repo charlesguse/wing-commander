@@ -1,0 +1,32 @@
+[
+  {
+    "number": 5096,
+    "author": {
+      "login": "author-5096"
+    },
+    "authorAssociation": "MEMBER",
+    "labels": [],
+    "state": "OPEN",
+    "createdAt": "2026-01-01T00:00:00Z"
+  },
+  {
+    "number": 5097,
+    "author": {
+      "login": "author-5097"
+    },
+    "authorAssociation": "MEMBER",
+    "labels": [],
+    "state": "OPEN",
+    "createdAt": "2026-01-02T00:00:00Z"
+  },
+  {
+    "number": 5098,
+    "author": {
+      "login": "author-5098"
+    },
+    "authorAssociation": "MEMBER",
+    "labels": [],
+    "state": "OPEN",
+    "createdAt": "2026-01-03T00:00:00Z"
+  }
+]

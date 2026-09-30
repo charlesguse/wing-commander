@@ -19,6 +19,7 @@ def in_flight_candidate(
     open_issues: list[dict],
     comments_by_issue: dict[int, list[dict]],
     pr_state_by_number: dict[int, str],
+    pr_head_sha_by_number: dict[int, str],
     bot_login: str,
 ) -> tuple[int | None, bool]:
     """FR-001/FR-002/FR-003/FR-005. Returns (issue_number, multiple_found).
@@ -39,7 +40,10 @@ def in_flight_candidate(
     starve every other candidate forever for no possible benefit.
     `awaiting-merge` (#532) never qualifies either, whatever its PR's
     state: readiness already handed the PR to a human, and no job
-    consumes that step.
+    consumes that step. A `readiness` marker for which
+    `_not_ready_holds()` is True is also excluded (specs/093-not-ready-board-release
+    FR-014; contracts/not-ready-hold.md is the canonical statement, not
+    restated here).
     """
 
 def select(
@@ -47,6 +51,7 @@ def select(
     labeled_events_by_issue: dict[int, list[dict]],
     comments_by_issue: dict[int, list[dict]],
     pr_state_by_number: dict[int, str],
+    pr_head_sha_by_number: dict[int, str],
     bot_login: str,
 ) -> int | None:
     """FR-004/FR-011: in_flight_candidate() first; falls through to the
@@ -66,7 +71,11 @@ def select(
     lookup kept failing, because resume resolves an unresolvable
     awaiting-merge PR to a no-op. A CLOSED or MERGED PR makes the issue
     eligible again, and resume sends it to a fresh triage
-    (resume-recovery.md)."""
+    (resume-recovery.md).
+
+    The fallback also skips an issue held by `_not_ready_holds()`
+    (specs/093-not-ready-board-release; contracts/not-ready-hold.md is the
+    canonical statement)."""
 ```
 
 `bot_login` (#555) is the loop's own App login, `<app-slug>[bot]`. Both

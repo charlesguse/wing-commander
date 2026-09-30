@@ -198,7 +198,8 @@ def is_excluded(issue):
 # select() that consults it first. Never re-derive this inline in a
 # workflow's run: step or in a second module; point back at this comment
 # instead (contracts/in-flight-detection.md).
-def in_flight_candidate(open_issues, comments_by_issue, pr_state_by_number, bot_login):
+def in_flight_candidate(open_issues, comments_by_issue, pr_state_by_number,
+                         pr_head_sha_by_number, bot_login):
     """FR-001/FR-002/FR-003/FR-005. Returns (issue_number, multiple_found).
     bot_login: the loop's own App login; only its comments' markers are
     read (board_item_marker.is_loop_marker_author(), issue #555).
@@ -228,6 +229,10 @@ def in_flight_candidate(open_issues, comments_by_issue, pr_state_by_number, bot_
     and no job consumes that step. Treating it as in-flight while its PR
     was open re-selected the same item every run, re-posted an identical
     readiness report, and starved every other issue until a human merged.
+
+    pr_head_sha_by_number (specs/093-not-ready-board-release): a `readiness`
+    marker's open PR is additionally excluded when _not_ready_holds() is
+    True -- a durable, unmoved-head not-ready hold (FR-001/FR-003).
     """
     candidates = []
     for issue in open_issues:
@@ -249,12 +254,43 @@ def in_flight_candidate(open_issues, comments_by_issue, pr_state_by_number, bot_
                 pr = int(marker.get("pr"))
             except (TypeError, ValueError):
                 continue
-            if pr_state_by_number.get(pr) == "OPEN":
-                candidates.append((created_at, number))
+            if pr_state_by_number.get(pr) != "OPEN":
+                continue
+            # specs/093-not-ready-board-release FR-001/FR-014: an open,
+            # durable, unmoved-head not-ready hold excludes this issue even
+            # though the OPEN check above would otherwise qualify it --
+            # unlike _awaiting_merge_holds()/_unowned_open_pr_holds(), this
+            # predicate must be called explicitly here (contracts/not-ready-hold.md).
+            if step == "readiness" and _not_ready_holds(
+                    marker, pr_state_by_number, pr_head_sha_by_number):
+                continue
+            candidates.append((created_at, number))
     if not candidates:
         return None, False
     candidates.sort(key=lambda pair: pair[0])
     return candidates[-1][1], len(candidates) > 1
+
+
+def _not_ready_holds(marker, pr_state_by_number, pr_head_sha_by_number):
+    """specs/093-not-ready-board-release FR-001/FR-003/FR-004(b)/FR-005/
+    FR-011. True (held) when `marker` carries a parsable not-ready record
+    (not_ready_record()) whose class is "durable" AND the PR's current
+    head SHA (pr_head_sha_by_number.get(pr)) either cannot be determined
+    at all (fail-safe: unknown degrades to held, never to admitted) or
+    equals the record's own head_sha (unchanged head holds). False
+    otherwise -- including when there is no not-ready record at all, a
+    "self-clearing" record (FR-005: never held), or a durable record
+    whose head has moved (admitted, not merely un-held -- resume's own
+    step-resolution logic decides review vs. readiness, never this
+    predicate). Mirrors _awaiting_merge_holds()/_unowned_open_pr_holds()'s
+    existing shape beside it (contracts/not-ready-hold.md)."""
+    record = not_ready_record(marker)
+    if record is None or record["class"] != "durable":
+        return False
+    current_head_sha = pr_head_sha_by_number.get(record["pr"])
+    if current_head_sha is None:
+        return True
+    return current_head_sha == record["head_sha"]
 
 
 def _awaiting_merge_holds(marker, pr_state_by_number):
@@ -294,7 +330,8 @@ def _unowned_open_pr_holds(marker, pr_state_by_number):
     return pr_state_by_number.get(pr) == UNOWNED_OPEN_PR_STATE
 
 
-def select(open_issues, labeled_events_by_issue, comments_by_issue, pr_state_by_number, bot_login):
+def select(open_issues, labeled_events_by_issue, comments_by_issue, pr_state_by_number,
+           pr_head_sha_by_number, bot_login):
     """FR-004/FR-011: consults in_flight_candidate() first; falls through to
     the existing oldest-first/classify_issue/is_excluded scan when it
     returns (None, ...). That fallback carries the same `prove`-marker skip
@@ -306,9 +343,11 @@ def select(open_issues, labeled_events_by_issue, comments_by_issue, pr_state_by_
     or merged with the issue still open, the item is eligible here again
     and the resume step sends it to a fresh triage. It also passes over an
     issue whose marker's PR is open but not the loop's own
-    (_unowned_open_pr_holds(), issue #555)."""
+    (_unowned_open_pr_holds(), issue #555), and an issue whose marker is a
+    durable, unmoved-head not-ready hold (_not_ready_holds(), specs/093-not-ready-board-release
+    FR-003/FR-004)."""
     in_flight, _multiple_found = in_flight_candidate(
-        open_issues, comments_by_issue, pr_state_by_number, bot_login)
+        open_issues, comments_by_issue, pr_state_by_number, pr_head_sha_by_number, bot_login)
     if in_flight is not None:
         return in_flight
 
@@ -325,6 +364,8 @@ def select(open_issues, labeled_events_by_issue, comments_by_issue, pr_state_by_
             continue
         if pair is not None and _unowned_open_pr_holds(pair[1], pr_state_by_number):
             continue
+        if pair is not None and _not_ready_holds(pair[1], pr_state_by_number, pr_head_sha_by_number):
+            continue
         labeled_events = labeled_events_by_issue.get(number, [])
         if classify_issue(issue, labeled_events) != "ineligible":
             return number
@@ -334,7 +375,8 @@ def select(open_issues, labeled_events_by_issue, comments_by_issue, pr_state_by_
 def main():
     """Runtime entry point: reads `{"open_issues": [...],
     "labeled_events_by_issue": {...}, "comments_by_issue": {...},
-    "pr_state_by_number": {...}, "bot_login": "<slug>[bot]"}` from stdin
+    "pr_state_by_number": {...}, "pr_head_sha_by_number": {...},
+    "bot_login": "<slug>[bot]"}` from stdin
     (bot_login is required: it exits non-zero without one, or with a bare
     "[bot]", issue #555),
     prints the selected issue
@@ -363,10 +405,14 @@ def main():
         int(number): state
         for number, state in (payload.get("pr_state_by_number") or {}).items()
     }
+    pr_head_sha_by_number = {
+        int(number): head_sha
+        for number, head_sha in (payload.get("pr_head_sha_by_number") or {}).items()
+    }
     in_flight_issue, multiple_found = in_flight_candidate(
-        open_issues, comments_by_issue, pr_state_by_number, bot_login)
+        open_issues, comments_by_issue, pr_state_by_number, pr_head_sha_by_number, bot_login)
     selected = select(open_issues, labeled_events_by_issue, comments_by_issue,
-                      pr_state_by_number, bot_login)
+                      pr_state_by_number, pr_head_sha_by_number, bot_login)
     print(json.dumps({
         "decided_by_marker": in_flight_issue is not None and in_flight_issue == selected,
         "multiple_found": multiple_found,

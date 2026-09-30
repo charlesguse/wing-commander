@@ -126,6 +126,11 @@ IN_FLIGHT_CASES = {
     "breach-pr-open",
     "breach-pr-closed",
     "directed-proof-in-flight",
+    "not-ready-durable-unmoved-held",
+    "not-ready-durable-moved-admitted",
+    "not-ready-self-clearing-not-held",
+    "not-ready-head-unresolvable",
+    "not-ready-two-held-one-eligible",
 }
 
 # (name, replacement for board_item_marker.is_loop_marker_author)
@@ -172,6 +177,7 @@ def run_in_flight_cases():
         open_issues_path = os.path.join(case_dir, "open_issues.json")
         comments_path = os.path.join(case_dir, "comments_by_issue.json")
         pr_state_path = os.path.join(case_dir, "pr_state_by_number.json")
+        pr_head_sha_path = os.path.join(case_dir, "pr_head_sha_by_number.json")
         expected_path = os.path.join(case_dir, "expected.json")
         if not all(os.path.isfile(p) for p in
                    (open_issues_path, comments_path, pr_state_path, expected_path)):
@@ -190,10 +196,17 @@ def run_in_flight_cases():
             int(number): state
             for number, state in _load(pr_state_path).items()
         }
+        # specs/093-not-ready-board-release D4: optional -- absent means no
+        # case in this fixture set needs a PR head SHA (every case that
+        # predates this feature).
+        pr_head_sha_by_number = {
+            int(number): head_sha
+            for number, head_sha in (_load(pr_head_sha_path) if os.path.isfile(pr_head_sha_path) else {}).items()
+        }
         expected = _load(expected_path)
 
         issue_number, multiple_found = in_flight_candidate(
-            open_issues, comments_by_issue, pr_state_by_number, BOT_LOGIN)
+            open_issues, comments_by_issue, pr_state_by_number, pr_head_sha_by_number, BOT_LOGIN)
         got = {"issue_number": issue_number, "multiple_found": multiple_found}
         expected_in_flight = {
             "issue_number": expected.get("issue_number"),
@@ -219,7 +232,8 @@ def run_in_flight_cases():
                 for number, events in _load(labeled_events_path).items()
             }
             selected = select(open_issues, labeled_events_by_issue,
-                               comments_by_issue, pr_state_by_number, BOT_LOGIN)
+                               comments_by_issue, pr_state_by_number,
+                               pr_head_sha_by_number, BOT_LOGIN)
             expected_selected = expected["select_issue_number"]
             if selected != expected_selected:
                 failures += 1
