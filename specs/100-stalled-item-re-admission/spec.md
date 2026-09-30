@@ -63,7 +63,8 @@ before the marker and fail loudly otherwise, which is what #603 established,
 did not finish, and #782 finished. What re-admission should then *mean* was
 the owner question, and it is why this is a spec and not a fix PR; the
 answer (below) is that re-admission keeps today's rule, stated and gated
-rather than emergent.
+rather than emergent, refined (with spec 093) so an open PR whose head no
+review has missed resumes at `readiness` rather than being reviewed again.
 
 ### 2. Readiness's own breach path can file a second spec-request (deferred)
 
@@ -150,13 +151,16 @@ No `[NEEDS CLARIFICATION]` marker remains.
   before it writes the marker and renders no marker when the add fails, so a
   `stalled` marker with no label can only mean a deliberate removal. The
   rule's canonical statement already lives at `add_stalled_label()` in
-  `board_item_marker.py`. This feature documents and gates the rule; it does
-  not change it. **Refined 2026-09-29 (maintainer, reconciling with spec
-  093 / #717):** when the open `board:owned` PR's head has not moved since
-  its last review, the item resumes at `readiness` instead of `review`, so
-  an already-reviewed head is not reviewed again; a moved head still
-  resumes at `review`. The canonical statement at `add_stalled_label()` is
-  updated to this combined rule.
+  `board_item_marker.py`. As answered, this feature documents and gates the
+  rule without changing it. **Refined 2026-09-29 (maintainer, reconciling
+  with spec 093 / #717):** when the open `board:owned` PR's head has not
+  moved since its last review, the item resumes at `readiness` instead of
+  `review`, so an already-reviewed head is not reviewed again; a moved head
+  still resumes at `review`. This refinement *is* a change to the rule on
+  `main` (`board-loop.yml:811-813` resolves the fallback to `review`
+  unconditionally), and it is the one behaviour change FR-006 makes. The
+  canonical statement at `add_stalled_label()` is updated to this combined
+  rule.
 - **Q2 (cost, FR-009) — the budget a re-admitted item may spend.**
   **Answer: a fresh review-round budget.** Re-admitting is the maintainer
   authorizing more spend, which is the same call the owner made on #717
@@ -167,6 +171,69 @@ No `[NEEDS CLARIFICATION]` marker remains.
   idempotent `spec-request` filing), which covers every `spec-request`
   filing site, readiness's breach path included. Defect 2 is therefore out
   of scope here, and US4 and its success criterion are removed with it.
+- **Owner scope note (2026-09-29, #752).** Label-before-marker at every
+  stall site and readiness's per-write stop gating landed in #782
+  (`aaaa1405`) and are not re-specified: US1/US2, FR-001–FR-005 and
+  FR-012–FR-015 are kept as invariants the implementation must preserve and
+  gate, not as work to build. The note also listed defect 2 as open; Q3
+  already deferred it, and spec 092 (merged) now covers both readiness
+  entries (its FR-017), so it stays out of scope here.
+
+### Status update 2026-09-30 — reconciled with current `main` and specs 092/093/108 (maintainer spec review)
+
+- **Main still resolves every label-less stall to `review`.** The resume
+  fallback at `board-loop.yml:811-813` sets `step = "review"` for any
+  non-`breach` marker whose PR came from the `board:owned` fallback, and
+  `add_stalled_label()`'s docstring (`board_item_marker.py:176-189`) states
+  that rule. The `readiness` refinement is not built; FR-006 builds it. The
+  eight stall sites are re-verified at `board-loop.yml:1427` (triage),
+  `1906` (route), `2263`/`2467` (fix), `3306`/`3311`/`3319` (review) and
+  `3913` (readiness), each through `--add-label "board:stalled"`.
+- **One home for the combined rule (spec 093, merged).** Spec 093 FR-007
+  requires the same `review`/`readiness` split for a label-removed item,
+  and its 2026-09-29 status note names this spec's FR-006 as the rule's
+  encoding. The rule, its resume clause in spec 061's `resume-recovery.md`,
+  its `add_stalled_label()` statement and its gate are built once, here,
+  and spec 093 consumes them (FR-006b). Whichever feature is implemented
+  second re-derives, and does not rebuild, what the first landed.
+- **What "the last review" is for a stall (FR-006b).** A `stalled` marker
+  records no head SHA (`write_marker()` carries step, round, pr, branch and
+  base-sha — `board_item_marker.py:139`), and FR-019 keeps that schema.
+  Spec 093 answers the question from its not-ready record, which a stall
+  does not write. FR-006b therefore requires the reviewed head to be
+  established from live state or an existing record. By spec 093 FR-007's
+  owner-chosen invariant — nothing is reported ready on a head whose
+  commits no review has covered — the item resolves to `review` whenever
+  that head cannot be established. A stall reached before any review (fix's
+  gate-red and post-push breach) or from an inconclusive one (review's
+  parse-failed and malformed-findings arms) therefore resumes at `review`.
+- **The two re-admission budgets differ on purpose.** Spec 093 FR-007
+  *continues* the round budget when a held item's head moves. A label
+  removal is the maintainer's explicit reset and gets a fresh budget (Q2,
+  FR-009); spec 093's status note records FR-009 as unchanged.
+- **Disposed stalls re-admit by reopen, not by label removal (spec 108,
+  merged).** Spec 108 FR-001/FR-002 close the originating issue as a
+  duplicate at the three sites that file a `spec-request`: route's spec
+  verdict, fix's post-push breach and readiness's backstop breach. Its
+  FR-006 makes removing `board:stalled` from a disposed issue re-admit
+  nothing; a maintainer's reopen routes it afresh, once per reopen. FR-006
+  and FR-007 here therefore govern an **undisposed** stalled issue: the
+  triage hand-over, fix's gate-red stall, review's three arms, spec 093
+  FR-008's not-ready handover, spec 092 FR-012's give-up stall, and any
+  filing site whose disposition did not complete (spec 108 FR-010/FR-011).
+  A disposed issue's re-admission belongs to spec 108 and is not restated
+  here. FR-007 and US3 scenarios 2–3 are scoped accordingly.
+- **New stall sites since drafting.** Spec 093 FR-008 (the not-ready
+  threshold handover) and spec 092 FR-012 (the filing-cap give-up) each add
+  a stall through `add_stalled_label()`. FR-004's derived enumeration covers
+  them without a list edit. The "eight" in FR-001/SC-001 is today's count on
+  `main`, not a bound.
+- **Spec 092 is merged.** FR-016–FR-018's deferral of defect 2 now points
+  at a written spec: its FR-003 existence check and FR-017, which covers
+  both readiness entries. A spec 092 give-up stall at readiness that is
+  re-admitted on an unmoved head re-enters readiness, re-measures the
+  breach and retries the filing under spec 092 FR-014's fresh attempt
+  budget.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -266,8 +333,9 @@ re-admitted review-budget stall starts a fresh round budget (FR-009),
 because the removal is the maintainer authorizing that spend.
 
 **Why this priority**: It was the owner question, now answered — the rule is
-today's behaviour, stated and gated rather than emergent. US1 and US2 are
-correct without it, so it ships last.
+today's behaviour, stated and gated rather than emergent, with spec 093's
+`readiness` refinement for an unmoved head. US1 and US2 are correct without
+it, so it ships last.
 
 **Independent Test**: Drive resume against a stalled marker plus an open
 loop-owned PR whose head moved since its last review and assert the
@@ -284,19 +352,22 @@ the absence of a second branch or PR and the summary line.
    and the run summary
    records that it was re-admitted from a stall and which clause resolved
    the step.
-2. **Given** an item stalled by readiness's backstop breach with its PR
-   still open, **When** the label is removed, **Then** the same rule applies
-   and the loop resumes review of that pull request — the removal is a
-   deliberate instruction, and a maintainer who does not want the oversized
-   PR reviewed leaves the label in place.
-3. **Given** an item stalled by route with no PR ever opened, **When** it is
-   re-admitted, **Then** the loop triages it afresh against current `main`
-   and does not adopt an unrelated PR.
+2. **Given** an undisposed item stalled at readiness with its PR still
+   open and its head unchanged since review converged (spec 092's give-up
+   stall, or a breach whose spec 108 disposition did not complete), **When**
+   the label is removed, **Then** the same rule applies and the loop resumes
+   at `readiness` on that pull request without another review. (A breach
+   stall whose original was disposed is re-admitted by a reopen, under spec
+   108 FR-006, not by this rule.)
+3. **Given** an item stalled by triage's already-fixed hand-over with no PR
+   ever opened, **When** it is re-admitted, **Then** the loop triages it
+   afresh against current `main` and does not adopt an unrelated PR.
 4. **Given** any re-admitted item whose own PR is still open, **When** the
    resolved step would ordinarily cut a branch, **Then** no second branch or
    PR is created (FR-054 of spec 057 is preserved).
-5. **Given** an item stalled by review's spent budget, **When** it is
-   re-admitted, **Then** the round budget starts fresh, and **When** that
+5. **Given** an item stalled by review's spent budget whose head has moved
+   since that review, **When** it is re-admitted, **Then** it resumes at
+   `review` with the round budget starting fresh, and **When** that
    fresh budget is spent with findings still open, **Then** the item stalls
    again on the same terms.
 
@@ -323,7 +394,17 @@ at once. It is not built here; see Out of Scope.
 - **A stalled marker exists with no label and no open PR.** The fallback
   finds nothing, so the item resolves to a fresh triage. FR-006 keeps that
   and states it: a fresh triage against current `main` is the re-admission
-  rule for a stalled item with no open pull request, at every stall site.
+  rule for an undisposed stalled item with no open pull request, at every
+  stall site. (A disposed original is closed and re-admitted by a reopen —
+  spec 108 FR-006.)
+- **A re-admitted open PR whose reviewed head cannot be established.** No
+  record of a review exists (the stall came before one, or from an
+  inconclusive one), or the lookup fails. FR-006b resolves to `review`,
+  never to `readiness`, so nothing is reported ready on unreviewed commits.
+- **An unmoved head re-admitted after review's spent budget.** It resumes
+  at `readiness`, which finds the open in-scope findings and takes spec
+  093's durable not-ready path; the fresh budget (FR-009) is spent only
+  once the head moves.
 - **The label is removed while a run is mid-flight on the item.** The run
   holds the item under the global concurrency group; the removal takes
   effect on the next run, not this one. Nothing in this feature re-reads the
@@ -382,18 +463,29 @@ at once. It is not built here; see Out of Scope.
   from live state (Q1, option (b), as refined with spec 093): when an open
   `board:owned` pull request cites the issue, `review` if its head has moved
   since the last review and `readiness` if it has not; a fresh triage
-  against current `main` otherwise. The rule MUST be stated in one canonical place and MUST be
-  reachable from the contracts a maintainer reads, rather than left to be
-  inferred from the resume fallback's clause order.
+  against current `main` otherwise. The rule MUST be stated in one canonical
+  place and MUST be reachable from the contracts a maintainer reads, rather
+  than left to be inferred from the resume fallback's clause order.
+- **FR-006b**: The "has the head moved since the last review" determination
+  MUST be made from live state or an existing record, without extending the
+  stall marker (FR-019). It MUST be the single determination spec 093
+  FR-007 also consumes, not a second one (CLAUDE.md "Shared logic has
+  exactly one home"). When no reviewed head can be established — no review
+  covered the PR, the stall came from an inconclusive review arm, or the
+  lookup fails — the rule MUST resolve to `review`, never `readiness`
+  (spec 093 FR-007's invariant).
 - **FR-006a**: The rule MUST rest on FR-001/FR-002 explicitly: because no
   stall site can post a `stalled` marker without the label, a label-less
   `stalled` marker means a maintainer removed the label deliberately, and
   the loop MUST treat it as that instruction. A change that weakens
   FR-001/FR-002 therefore invalidates FR-006, and the statement of the rule
   MUST say so.
-- **FR-007**: The rule MUST hold for every stall site — no site's stall gets
-  a different re-admission — and MUST produce a defined step for a stalled
-  item with no open PR as well as one with an open PR.
+- **FR-007**: The rule MUST hold for every stall site whose originating
+  issue stays open — no such site's stall gets a different re-admission —
+  and MUST produce a defined step for a stalled item with no open PR as well
+  as one with an open PR. An originating issue disposed of under spec 108
+  FR-001 is re-admitted by spec 108 FR-006 (a maintainer's reopen), and this
+  feature MUST NOT re-admit it on label removal.
 - **FR-008**: A re-admitted item MUST NOT cause a second branch or a second
   pull request to be opened while its own pull request is still open (spec
   057's FR-054 is preserved whatever FR-006 resolves to).
@@ -480,10 +572,12 @@ at once. It is not built here; see Out of Scope.
   three stall arms, and readiness's backstop breach; FR-004 makes the set
   derivable rather than remembered, which is why no requirement here rests
   on the count.
-- **Re-admission**: what happens after `board:stalled` is removed. An
-  emergent property of the resume fallback today; FR-006 keeps the same
-  outcome and states it as a rule, resting on FR-001/FR-002 for the
-  guarantee that a label-less stall is always deliberate.
+- **Re-admission**: what happens after `board:stalled` is removed from an
+  undisposed issue. An emergent property of the resume fallback today;
+  FR-006 keeps that outcome except for an unmoved, already-reviewed head
+  (resumed at `readiness`), and states it as a rule, resting on
+  FR-001/FR-002 for the guarantee that a label-less stall is always
+  deliberate.
 - **Resume step resolution**: the ordered clauses that turn a marker plus
   live state into the step a run will execute. The `board:owned` fallback
   clause is the one this feature constrains.
@@ -514,8 +608,9 @@ at once. It is not built here; see Out of Scope.
   label is removed, what the run spends is what FR-006's stated rule and
   FR-009's budget allow, and nothing more.
 - **SC-005**: A maintainer can predict, from one stated rule read in one
-  place, what removing `board:stalled` will make the loop do next, for a
-  stall at any site and with or without an open pull request — on the open
+  place, what removing `board:stalled` will make the loop do next, for an
+  undisposed stall at any site and with or without an open pull request —
+  on the open
   loop-owned PR, `review` if its head moved since the last review and
   `readiness` if not; a fresh triage otherwise.
 - **SC-006**: A re-admitted item's additional agent budget is a stated
@@ -593,6 +688,11 @@ at once. It is not built here; see Out of Scope.
   `verify-board-eligibility.py`, `verify-board-readiness.py`,
   `verify-board-loop-resume-gating.py`, and the spec-request-site gate
   (Gate 93) whose rules the stall sites already answer to.
+- Merged specs on the same surface: spec 092 (bounded, idempotent
+  `spec-request` filing — defect 2's home and a new give-up stall site),
+  spec 093 (not-ready board release — FR-007's shared re-admission rule and
+  FR-008's new stall site), spec 108 (routed-original disposition — reopen
+  as the re-admission of a disposed original).
 - Prior art this change must not undo: #530 (the `breach` step and its
   fallback carve-out), #603 (label-before-marker at the two hardest sites),
   #782 (label-before-marker at every site, the readiness stand-down gating,
@@ -612,10 +712,14 @@ at once. It is not built here; see Out of Scope.
 - Changing the round budget's default value; FR-009 is about what a
   re-admitted item may spend, not about the budget itself.
 - Introducing a second exclusion label or a second re-eligibility mechanism
-  beside `board:stalled`. FR-006 resolved to today's behaviour, so spec 057's
-  FR-030 stands unamended (FR-020).
-- Changing what a re-admitted item does — FR-006 states the existing rule and
-  gates it; a different rule is a separate feature.
+  beside `board:stalled`. FR-006 resolved to today's behaviour plus spec
+  093's refinement, so this feature does not amend spec 057's FR-030
+  (FR-020). Spec 108's reopen of a disposed original is that feature's
+  amendment, not this one's.
+- Changing what a re-admitted item does beyond FR-006's `readiness`
+  refinement; any other rule is a separate feature.
+- Re-admission of an originating issue disposed of under spec 108 (reopen,
+  spec 108 FR-006).
 - The wording of stall notices, including whether each states the
   re-eligibility condition FR-030 requires.
 - Closing or de-duplicating `spec-request` issues already filed in duplicate
