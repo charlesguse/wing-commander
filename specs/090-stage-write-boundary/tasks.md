@@ -659,3 +659,14 @@ US2 should not be deferred past a single PR from US3 — shipping US1 alone
 leaves the exact loss (an out-of-boundary task grinding the loop to its cap
 and evaporating into PR-body prose) that this feature exists to end.
 </content>
+
+## Maintainer Feedback — Gate number collision (PR #836 review, item 1)
+
+- [ ] Renumber to **Gate 133** in `verify-write-boundary.py`: the `:2` docstring, the `:49` `GATE_PREFIX` constant, and the `:307`/`:788` `STEP_LABEL "gate126"` values
+- [ ] Renumber in `lint-workflows.yml` `:4657-4669`: the comment and both step names; rewrite the "128, not the 126" rationale text to refer to 133
+- [ ] Renumber the reference in `_shared/compute-finding-fingerprint.sh`:14
+- [ ] Renumber the reference in `wing-commander-stage-findings/action.yml`:285
+- [ ] Renumber the reference in `finalize.yml` ~:708
+- [ ] Fix `constitution-history.md`:25 — the Sync Impact Report is new in this PR, so fix the number before merge rather than treat it as historical
+- [ ] Renumber all 23 occurrences in `tasks.md`, and optionally the placeholders in `contracts/write-boundary-gate.md` and `quickstart.md`
+- [ ] Update the PR body's gate-number references
