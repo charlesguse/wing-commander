@@ -52,14 +52,14 @@ finding, same facts.
    **Then** the metrics-record fallback runs and the slug resolves, so
    collectors and the diagnose verdict file against the spec's lifecycle
    issue instead of the bare run URL.
-6. **Given** an inspected watchdog, rebase, or cleanup run whose record
+4. **Given** an inspected watchdog, rebase, or cleanup run whose record
    names a spec it did not advance, **When** the composite resolves the spec
    slug, **Then** the record's own declaration that the spec is not the
    run's own suppresses the fallback, regardless of that run's display name.
-4. **Given** an inspected run from a renamed finalize wrapper whose final PR
+5. **Given** an inspected run from a renamed finalize wrapper whose final PR
    body overstates its task count, **When** the watchdog inspects it,
    **Then** final-pr-claims runs and the narrative-drift signal is emitted.
-5. **Given** an inspected run from a renamed intake wrapper that created a
+6. **Given** an inspected run from a renamed intake wrapper that created a
    spec number already claimed, **When** the watchdog inspects it, **Then**
    spec-collision runs and the collision signal is emitted.
 
@@ -100,9 +100,14 @@ unqualified clean bill of health.
    recognised and no name-free source supplied a stage.
 4. **Given** an inspected run with no resolvable stage identity that
    uploaded no `claude-execution-output*` artifact — an adopter's unrelated
-   workflow, or a cleanup, rebase or pr-conversation run — **When** the
-   watchdog finishes, **Then** no name warning is emitted, because
+   workflow, or a pipeline run that failed before its agent step — **When**
+   the watchdog finishes, **Then** no name warning is emitted, because
    "unrecognised" is the normal answer for such a run.
+5. **Given** a run of one of this repository's reference-named wrappers
+   (cleanup, rebase and pr-conversation included, which do upload
+   `claude-execution-output*`) that left no metrics record, **When** the
+   watchdog finishes, **Then** the name fallback resolves its stage and no
+   name warning is emitted (FR-014a).
 
 ---
 
@@ -141,12 +146,16 @@ my wrappers, and what do I lose?" without opening `watchdog.yml`.
 - **The record exists but carries no stage.** `stage_available: false` is a
   shape the metrics-summary composite explicitly supports. It must be
   treated as "no stage from this source", never as the empty-string stage.
-- **The run is not a pipeline stage at all.** An adopter's unrelated
-  workflow, or the pipeline's own cleanup, rebase, or pr-conversation runs.
-  These have no single spec and no expected stage transition; the correct
-  outcome is still "skip, on purpose". Per FR-014 no name warning fires
-  here, because such a run uploads no `claude-execution-output*` artifact —
-  which is where most unrecognised names legitimately land.
+- **The run is not a single-spec stage.** An adopter's unrelated workflow,
+  or the pipeline's own cleanup, rebase, or pr-conversation runs. These have
+  no single spec and no expected stage transition; the correct outcome is
+  still "skip, on purpose". An adopter's unrelated workflow uploads no
+  `claude-execution-output*` artifact, so per FR-014 no name warning fires —
+  which is where most unrecognised names legitimately land. Cleanup, rebase
+  and pr-conversation *do* upload one (`cleanup.yml:802`, `rebase.yml:807`,
+  `pr-conversation.yml:1029`/`2259`). Their records name their stage, and a
+  record-less run is resolved by the name fallback (FR-014a), so they reach
+  the warning only under a renamed wrapper — the case the warning is for.
 - **The record's stage and the name disagree.** A wrapper named
   `Wing Commander · 3 plan` that actually calls the tasks stage, or a single
   wrapper file that calls two stages. Per FR-009 the record's stage wins:
@@ -214,6 +223,12 @@ my wrappers, and what do I lose?" without opening `watchdog.yml`.
 - **FR-008a**: A metrics record that carries no such declaration — one
   written before the field existed — MUST be treated as NOT declaring the
   spec as the run's own, which is today's safe default.
+- **FR-008b**: The declaration MUST be added to the durable record's
+  documented shape (`specs/043-durable-metrics-record/contracts/metrics-record-schema.md`)
+  as an additive schema-version-1 field (that contract's rule 1), with the
+  contract stating FR-008a's reading of a v1 record that predates it. It
+  MUST be covered by `verify-metrics-record-schema.py`'s fixtures. No
+  `schema_version` bump is made.
 - **FR-009**: The precedence between the name-free stage identity and the
   display name MUST be fixed and documented in one place, and MUST be:
   the metrics record's stage first, and the display name only when the
@@ -248,6 +263,12 @@ my wrappers, and what do I lose?" without opening `watchdog.yml`.
   A run whose stage resolved MUST NOT produce a name warning, and neither
   MUST a run that fails the condition — which is where most unrecognised
   names legitimately land.
+- **FR-014a**: The FR-009 name fallback MUST recognise the reference display
+  name of every stage whose runs can satisfy FR-014's condition — cleanup,
+  rebase and pr-conversation included, not only the six single-spec stages
+  the allowlist names today. A reference-named wrapper in this repository
+  then never produces a name warning, so this repository's behaviour is
+  unchanged (Assumptions).
 
 ### Key Entities
 
@@ -353,17 +374,66 @@ is reduced to the deterministic condition constitution IX demands — the run
 uploaded a `claude-execution-output*` artifact — rather than left as a
 judgment.
 
+### Status update 2026-09-30 — reconciled with current `main` (maintainer spec review)
+
+- **#744 has merged** (`ae4caf20`, "key denied-tool findings by stage as
+  well as tool"). `wing-commander-inspected-run-identity` now emits
+  `record-stage` (`action.yml:151-156`), the first record in sorted order
+  that names a stage (`action.yml:285-318`). FR-003's single home is that
+  output: the resolved identity is record-stage, then the FR-009 name
+  fallback, and it is derived in the composite, not per collector. The
+  "#744 has not yet merged" Assumption is corrected.
+- **Keep `record-stage` record-only (spec 109, merged).** Denial signal
+  ids key on `record-stage` today, and spec 109 FR-013 requires the
+  per-`{stage, tool}` separation to be preserved. The resolved identity is
+  therefore exposed *beside* `record-stage`, not in place of it. Changing
+  what the denial id keys on, for example keying a record-less run on a
+  name-derived stage instead of `unknown`, would re-key existing
+  `pipeline-defect` issues, and it is not part of this feature.
+- **FR-002's sites are re-verified on `main`**, and no other site
+  identifies the inspected stage by display name:
+  - slug-fallback allowlist: `action.yml:207`;
+  - branch-drift push-expected gate: `watchdog.yml:692-693`;
+  - implement-only baseline arms: `watchdog.yml:795` and `852`;
+  - stage label: `watchdog.yml:867-869`;
+  - spec-meta map: `watchdog.yml:1024-1029`;
+  - final-pr-claims: `watchdog.yml:1705`;
+  - spec-collision: `watchdog.yml:1829`;
+  - self-inspection guard: `watchdog.yml:3507`.
+
+  `gh run list --workflow 'Wing Commander · 8 watchdog'` at
+  `watchdog.yml:3524` is the run-discovery dependency that Assumptions
+  already scope out.
+- **Two record copies exist today, not one.** The composite downloads into
+  `spec-slug-metrics-record` (`action.yml:213`, reused at `301`). The
+  collectors share `metrics-record-shared` (`watchdog.yml:822-824`,
+  `1393-1395`, `1603-1606`). FR-004/SC-004's baseline is that count. The
+  plan may consolidate the two copies, but must not add a third.
+- **FR-014's condition covers cleanup, rebase and pr-conversation.** Each
+  of them uploads a `claude-execution-output*` artifact. US2 scenario 4 and
+  the "not a pipeline stage" edge case said they did not; both are
+  corrected. FR-014a keeps this repository's reference-named runs from
+  warning.
+- **The record's shape is a documented contract** (spec 043's schema,
+  gated by `verify-metrics-record-schema.py`). FR-008b records the new
+  declaration there as an additive v1 field.
+- **Specs in flight on the same workflow.** Spec 101 (#759) adds a
+  diagnose log-staging step to `watchdog.yml`, and spec 109 (merged)
+  changes finding dedup. Neither identifies the inspected stage by display
+  name, so neither adds an FR-002 site.
+- US1's acceptance scenarios are renumbered into order (the Q2 scenario had
+  been inserted as "6" between 3 and 4).
+
 ## Assumptions
 
 - The metrics record's `stage` literal is set inside each published stage
   workflow rather than passed by the wrapper, so it is already adopter-
   independent and needs no new adopter action. Verified against the stage
   workflows, not assumed from the issue.
-- #744's `record-stage` output is the intended carrier and has not yet
-  merged. This spec is written against the shape the issue describes and
-  does not depend on #744's internals; if #744 lands first, this feature
-  consumes its output, and if it does not, this feature establishes the
-  output itself.
+- #744's `record-stage` output is the carrier and has merged (`ae4caf20`;
+  `wing-commander-inspected-run-identity/action.yml:151-156`, `285-318`).
+  This feature consumes it as the record half of the resolved identity
+  (FR-003) rather than establishing a second one.
 - Reference display names remain in the example wrappers in
   `docs/adoption.md` — this feature stops them from being *required*, it
   does not rename anything.
