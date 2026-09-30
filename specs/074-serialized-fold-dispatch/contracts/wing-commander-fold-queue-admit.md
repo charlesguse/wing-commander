@@ -40,6 +40,27 @@ deliberate, visible stop rather than a silent skip — the calling job's
 the run's own summary shows why, satisfying Principle IV's "any manual
 step that survives must be reported explicitly."
 
+**T049:** hitting `max-wait-minutes` is not itself always the failure —
+when the queue head is a correlated (`peek-round`'s `implement-run-id`
+set), confirmed-alive (`in_progress`/`queued`) `implement`-kind ticket,
+the deadline extends by another full `max-wait-minutes` window instead of
+failing, since a normal `implement.yml` cycle routinely runs well past 30
+minutes (recent runs: 16-125 minutes) and a review posted during that
+window must still be folded, not dropped. The hard failure above still
+applies once the head is not alive (or not correlated) and reclaim
+genuinely can't clear it within the deadline.
+
+**T046:** an `implement`-kind head ticket still uncorrelated (no
+`implement_run_id` recorded for its round) is reclaimed outright once
+`stale-after-minutes` plus a further grace period (`fold-queue-await.sh`'s
+own `UNCORRELATED_IMPLEMENT_GRACE_MINUTES`, default 5) has elapsed, rather
+than skipped forever — `record-implement-run` normally lands within
+seconds of the ticket's grant, so a longer gap means the run that would
+have correlated it never came to exist (a standalone-mode claim, a failed
+`gh workflow run`, or an unfound `run-url` — `dispatch-once`'s own cleanup
+step should already have released such a ticket; this is the backstop for
+whatever gap remains).
+
 ## Behavioral guarantees
 
 1. Two calls for the same `(spec-dir, kind, run-id)` are idempotent — a

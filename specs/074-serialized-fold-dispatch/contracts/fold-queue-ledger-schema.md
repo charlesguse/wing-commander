@@ -54,10 +54,14 @@ very next poll.
   as `::error::`, since a ticket only performs real work once granted).
   Appends a completion record to the current round's `folded_items` (when
   `commit_sha` is present) or `not_folded_items` (otherwise).
-- **`claim-dispatch(spec_dir, round, dispatch_token, iteration, own_folds)`**:
+- **`claim-dispatch(spec_dir, round, dispatch_token, iteration, own_folds, implement_configured?)`**:
   only valid when the calling ticket (`kind: dispatch`) is at the head.
-  Per the maintainer's 2026-09-29 reconciliation with spec 075 (spec.md
-  Clarifications), resolves to one of three outcomes:
+  `implement_configured` is optional, default `"true"` (T046) — every call
+  site that predates it keeps today's behavior unchanged; only
+  `fold-turn-dispatch` ever passes `"false"`, and only when its
+  `implement-workflow` input is empty. Per the maintainer's 2026-09-29
+  reconciliation with spec 075 (spec.md Clarifications), resolves to one
+  of three outcomes:
   - `own_folds == 0` → `outcome: declined`, `should-dispatch: false`,
     mutates nothing (spec 075 FR-014: a run with no folds of its own never
     claims, regardless of the round's state).
@@ -71,14 +75,23 @@ very next poll.
     `rounds[round].dispatch_claimed_by` is `null` → `outcome: won`,
     `should-dispatch: true`: sets `dispatch_claimed_by`, reads
     `spec-meta.json`'s `iteration` (fresh checkout, not cached), sets
-    `rounds[round].iteration`, enqueues an `implement`-kind ticket at the
-    new queue head, and returns the round's WHOLE accumulated
+    `rounds[round].iteration`, and returns the round's WHOLE accumulated
     `folded_items`/`not_folded_items` (every contributing run's entries,
-    not only the caller's own).
+    not only the caller's own). When `implement_configured` is `"true"`,
+    also enqueues an `implement`-kind ticket at the new queue head and
+    returns its token as `implement-token`; when `"false"` (T046,
+    standalone mode — no `implement.yml` run will ever exist to
+    await/release such a ticket), the round is still claimed but no ticket
+    is enqueued and `implement-token` is `""`.
   - `own_folds > 0` but `rounds[round].dispatch_claimed_by` is already set
-    (another run already won this round) → `outcome: declined`,
-    `should-dispatch: false`, mutates nothing — the existing "exactly one
-    winner" guarantee, unchanged.
+    → `outcome: declined`, `should-dispatch: false`, mutates nothing,
+    UNLESS `dispatch_claimed_by` equals the calling ticket's own `run_id`
+    (T050, idempotency under retry — `fold-queue-ledger.sh`'s own header
+    guarantee, which the winning branch alone violated before this fix):
+    then `outcome: won`, `should-dispatch: true` again, reusing whichever
+    `implement`-kind ticket the original win enqueued (`""` if that win
+    also had `implement_configured: "false"`) rather than declining or
+    double-enqueueing.
 - **`reclaim-stale(spec_dir, stale_token)`**: only valid when
   `stale_token` is at index 0 and its `granted_at` is older than
   `stale-after-minutes` and the caller has independently confirmed (via
