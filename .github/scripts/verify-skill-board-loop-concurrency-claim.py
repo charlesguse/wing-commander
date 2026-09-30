@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gate 126 -- spec-cross-reference's Over-rated example still describes
+"""Gate 129 -- spec-cross-reference's Over-rated example still describes
 board-loop.yml's actual concurrency shape (specs/089-skill-example-drift).
 
 WHY THIS EXISTS

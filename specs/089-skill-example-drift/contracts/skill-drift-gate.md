@@ -1,4 +1,4 @@
-# Contract: Gate 125 — `verify-skill-board-loop-concurrency-claim.py`
+# Contract: Gate 129 — `verify-skill-board-loop-concurrency-claim.py`
 
 ## Purpose
 
@@ -108,10 +108,10 @@ lint job, immediately following Gate 124's block (waiver-citation checks
 are a natural neighbor), as two steps:
 
 ```yaml
-- name: Gate 125 — spec-cross-reference's Over-rated example matches board-loop.yml's actual concurrency shape
+- name: Gate 129 — spec-cross-reference's Over-rated example matches board-loop.yml's actual concurrency shape
   if: "!cancelled()"
   run: python3 .github/scripts/verify-skill-board-loop-concurrency-claim.py
-- name: Gate 125 self-test — each structural mismatch fails its own mutation, and a stale waiver fails too
+- name: Gate 129 self-test — each structural mismatch fails its own mutation, and a stale waiver fails too
   if: "!cancelled()"
   run: python3 .github/scripts/verify-skill-board-loop-concurrency-claim.py --self-test
 ```
@@ -124,6 +124,6 @@ registration (FR-010's "no separate invocation to remember").
 
 - Changing `board-loop.yml`'s concurrency configuration (Scope, spec.md).
 - Any claim other than this one Over-rated example (FR-011).
-- The `.wing-commander-pipeline/` untracked checkout — Gate 125 reads only
+- The `.wing-commander-pipeline/` untracked checkout — Gate 129 reads only
   the repo-root-relative paths listed under Inputs, never a glob that could
   match that directory's own nested copy (the spec's own edge case).

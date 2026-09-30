@@ -4720,7 +4720,7 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-gh-error-stub-conformance.py --self-test
 
-      # Gate 128 -- specs/089-skill-example-drift: spec-cross-reference/
+      # Gate 129 -- specs/089-skill-example-drift: spec-cross-reference/
       # SKILL.md's Over-rated example quotes a structural claim about
       # board-loop.yml's concurrency configuration (the job range that joins
       # wing-commander-board-loop, and the directed-proof group). Nothing
@@ -4729,15 +4729,17 @@ jobs:
       # for that one quote, not a registry (FR-011) -- a
       # skill-example-drift-waivers.json entry, stale-checked in both
       # directions the same as Gate 124's own registers, covers a PR that
-      # cannot also edit .claude/ (FR-013). Numbered 128, not the 125 this
-      # branch's own commits picked in turn: specs/062-lifecycle-review-gate
-      # claimed 125 and specs/091-gh-api-error-capture claimed 126-127 on
-      # main before this branch's rebase landed (#660 tracks the allocation
-      # problem).
-      - name: "Gate 128 — spec-cross-reference's Over-rated example matches board-loop.yml's actual concurrency shape"
+      # cannot also edit .claude/ (FR-013). Numbered 129, not the 125 or 126
+      # this branch's own commits picked in turn: specs/062-lifecycle-review-gate
+      # claimed 125 on main before this branch's rebase landed (#660 tracked
+      # that allocation problem), and a later coordinated cross-spec
+      # renumbering (PR #813 review, issue #812) reserved 126/127 for spec
+      # 091, 128 for spec 074, 130/131 for spec 108, and 132 for spec 109,
+      # moving this feature to 129.
+      - name: "Gate 129 — spec-cross-reference's Over-rated example matches board-loop.yml's actual concurrency shape"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-skill-board-loop-concurrency-claim.py
-      - name: "Gate 128 self-test — each structural mismatch fails its own mutation, and a stale waiver fails too"
+      - name: "Gate 129 self-test — each structural mismatch fails its own mutation, and a stale waiver fails too"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-skill-board-loop-concurrency-claim.py --self-test
 
