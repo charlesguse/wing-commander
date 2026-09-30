@@ -669,47 +669,25 @@ jobs:
           # FR-006): board_eligibility.is_excluded()'s re-admission
           # carve-out never trusts a cached spec-request state -- resolve
           # the live state of every spec-request a disposition:duplicate,
-          # OPEN issue's own duplicate-step marker names. Scans every
-          # marker on the issue, not just its overall-newest one: a later
-          # route/fix/review marker posted after a reopen must not hide an
-          # earlier re-admission-worthy duplicate marker, the same
-          # find_latest_marker_matching() fix board_eligibility.py's own
-          # _find_duplicate_marker() uses (maintainer review, fold leg-0).
+          # OPEN issue's own duplicate-step marker names, via
+          # board_eligibility.spec_request_numbers_to_resolve() -- the
+          # single home for that scan (CLAUDE.md; never a second, inline
+          # copy of it here, maintainer review of #791, fold leg-1).
           spec_request_numbers_to_check="$(OPEN_ISSUES_PATH="$RUNNER_TEMP/board-open-issues.json" COMMENTS_BY_ISSUE_PATH="$RUNNER_TEMP/board-comments-by-issue.json" python3 - <<'PYEOF'
           import json
           import os
           import sys
 
           sys.path.insert(0, ".github/scripts")
-          from board_eligibility import DISPOSITION_LABEL, DUPLICATE_STEP
-          from board_item_marker import find_latest_marker_matching
+          from board_eligibility import spec_request_numbers_to_resolve
 
           with open(os.environ["OPEN_ISSUES_PATH"], encoding="utf-8") as fh:
               open_issues = json.load(fh)
           with open(os.environ["COMMENTS_BY_ISSUE_PATH"], encoding="utf-8") as fh:
               comments_by_issue = json.load(fh)
 
-          spec_request_numbers = set()
-          for issue in open_issues:
-              if (issue.get("state") or "").upper() != "OPEN":
-                  continue
-              labels = [(label or {}).get("name") or "" for label in issue.get("labels") or []]
-              if DISPOSITION_LABEL not in labels:
-                  continue
-              number = issue.get("number")
-              comments = comments_by_issue.get(str(number)) or []
-              found = find_latest_marker_matching(
-                  comments, os.environ["BOT_LOGIN"],
-                  lambda marker: marker.get("step") == DUPLICATE_STEP)
-              if found is None:
-                  continue
-              _created_at, marker = found
-              try:
-                  spec_request_numbers.add(int(marker.get("spec_request")))
-              except (TypeError, ValueError):
-                  continue
-
-          for number in sorted(spec_request_numbers):
+          for number in spec_request_numbers_to_resolve(
+                  open_issues, comments_by_issue, os.environ["BOT_LOGIN"]):
               print(number)
           PYEOF
           )"

@@ -717,7 +717,10 @@ Task: "Add disposition:duplicate to wing-commander-board-labels/action.yml"
 
 ## Maintainer Feedback
 
-- [ ] Single-home violation: the select step's inline `python3 - <<PYEOF` block in `board-loop.yml` (~lines 678-712) re-implements `board_eligibility._find_duplicate_marker()` -- the same `disposition:duplicate` label check, the same `find_latest_marker_matching()` call, and the same predicate -- as a second, drifting copy instead of calling the module. **Fix:** add a public helper to `board_eligibility.py` (e.g. one that returns the spec-request numbers to resolve for a given set of open issues/comments) and have the heredoc call it, deleting the inline copy, per CLAUDE.md's "Shared logic has exactly one home" rule.
+- [X] Single-home violation: the select step's inline `python3 - <<PYEOF` block in `board-loop.yml` (~lines 678-712) re-implements `board_eligibility._find_duplicate_marker()` -- the same `disposition:duplicate` label check, the same `find_latest_marker_matching()` call, and the same predicate -- as a second, drifting copy instead of calling the module. **Fix:** add a public helper to `board_eligibility.py` (e.g. one that returns the spec-request numbers to resolve for a given set of open issues/comments) and have the heredoc call it, deleting the inline copy, per CLAUDE.md's "Shared logic has exactly one home" rule.
+      Fixed: added `board_eligibility.spec_request_numbers_to_resolve()`,
+      reusing `_find_duplicate_marker()`; the heredoc now imports and calls
+      it instead of reimplementing the label check/marker scan inline.
 
 ## Maintainer Feedback
 

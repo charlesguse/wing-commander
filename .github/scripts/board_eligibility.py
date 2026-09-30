@@ -164,6 +164,38 @@ def _find_duplicate_marker(issue, comments, bot_login):
     return found[1] if found else None
 
 
+def spec_request_numbers_to_resolve(open_issues, comments_by_issue, bot_login):
+    """The distinct `spec_request` issue numbers is_excluded()'s
+    re-admission carve-out needs the live state of (spec 108,
+    contracts/eligibility-and-readmission-delta.md, FR-006): every OPEN
+    issue carrying DISPOSITION_LABEL, resolved via _find_duplicate_marker()
+    -- the same newest-duplicate-marker scan is_excluded()'s own callers
+    use, never a second copy of it. This is the single home for that scan;
+    the select job's step in board-loop.yml calls this instead of
+    reimplementing it inline (CLAUDE.md "shared logic has exactly one
+    home", maintainer review of #791, fold leg-1).
+
+    `comments_by_issue` keys may be either the issue number or its string
+    form (raw JSON object keys are always strings; callers that have
+    already normalized to int keys work too)."""
+    numbers = set()
+    for issue in open_issues:
+        if (issue.get("state") or "").upper() != "OPEN":
+            continue
+        number = issue.get("number")
+        comments = comments_by_issue.get(number)
+        if comments is None:
+            comments = comments_by_issue.get(str(number)) or []
+        marker = _find_duplicate_marker(issue, comments, bot_login)
+        if marker is None:
+            continue
+        try:
+            numbers.add(int(marker.get("spec_request")))
+        except (TypeError, ValueError):
+            continue
+    return sorted(numbers)
+
+
 def is_excluded(issue, spec_request_state_by_number=None, duplicate_marker=None):
     """FR-010: (True, reason) when the issue is closed, carries a settled
     disposition:* marker, carries board:stalled, or carries any stage:*/
