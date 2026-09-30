@@ -251,7 +251,8 @@ def _tracked_tree_status():
     """
     try:
         proc = subprocess.run(["git", "status", "--porcelain"],
-                              capture_output=True, text=True)
+                              capture_output=True, text=True,
+                              encoding="utf-8", errors="replace")
     except OSError:
         return None
     if proc.returncode != 0:
