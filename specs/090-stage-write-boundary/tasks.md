@@ -692,3 +692,9 @@ and evaporating into PR-body prose) that this feature exists to end.
 - [ ] Assert the Route step's `findings-json` and `finding-kind: routed-task` wiring
 - [ ] Confirm, as a regression check, that each of these now fails the gate: the retry arm's routed condition hard-coded to `if false`; either prompt's `write-paths-statement` interpolation deleted; the Route step's `findings-json` set to `'[]'`
 - [ ] Extend condition (f) beyond proving the hash is deterministic to also prove SC-004's "two cycles → one issue"
+
+## Maintainer Feedback — finalize's routed-item lookup fails silently and mismatches the filer (PR #836 review, item 5)
+
+- [ ] In `wing-commander-write-boundary-lookup/action.yml`:62, stop swallowing `gh issue list` failures into "(none)" via `2>/dev/null || true`; emit `::warning::` on failure so a routed item doesn't silently reach the PR as orphan prose
+- [ ] Reuse the filer's existing list-by-label-then-client-side-`contains(marker)` lookup instead of relying on unproven full-text search over an HTML-comment marker
+- [ ] Add gate coverage exercising this lookup path, since the gate currently stubs `gh` and never tests it
