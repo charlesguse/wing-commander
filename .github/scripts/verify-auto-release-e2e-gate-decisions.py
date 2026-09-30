@@ -35,13 +35,20 @@ from wc_shell_harness import (  # noqa: E402
 
 import subprocess  # noqa: E402
 
-CLARIFY_SCRIPT = os.path.join(".github", "actions", "_shared",
+# Resolved from this file's own location, not the process cwd -- run-local-
+# gates.py's parallel pool runs every gate as its own subprocess with the
+# same inherited cwd, but a relative path here still ties this gate to
+# "invoked from the repository root" for no reason, unlike verify-gate-
+# 106.py's REPO_ROOT, which this mirrors.
+REPO_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")
+
+CLARIFY_SCRIPT = os.path.join(REPO_ROOT, ".github", "actions", "_shared",
                                "auto-release-e2e-clarify-decision.sh")
-MERGE_SCRIPT = os.path.join(".github", "actions", "_shared",
+MERGE_SCRIPT = os.path.join(REPO_ROOT, ".github", "actions", "_shared",
                              "auto-release-e2e-merge-decision.sh")
-ALLOWANCE_SCRIPT = os.path.join(".github", "actions", "_shared",
+ALLOWANCE_SCRIPT = os.path.join(REPO_ROOT, ".github", "actions", "_shared",
                                  "auto-release-e2e-gate-allowance-decision.sh")
-POLL_WORKFLOW = os.path.join(".github", "workflows", "auto-release.yml")
+POLL_WORKFLOW = os.path.join(REPO_ROOT, ".github", "workflows", "auto-release.yml")
 
 BASH = None
 
@@ -491,7 +498,7 @@ def run_poll_clamp_suite(workflow_path):
         shared_dir = os.path.join(workdir, ".github", "actions", "_shared")
         os.makedirs(shared_dir, exist_ok=True)
         for name in POLL_CLAMP_SHARED_SCRIPTS:
-            shutil.copyfile(os.path.join(".github", "actions", "_shared", name),
+            shutil.copyfile(os.path.join(REPO_ROOT, ".github", "actions", "_shared", name),
                              os.path.join(shared_dir, name))
         gh_path = os.path.join(bindir, "gh")
         with open(gh_path, "w", encoding="utf-8", newline="\n") as fh:
@@ -692,8 +699,8 @@ def main(argv):
 
     if (not os.path.isfile(CLARIFY_SCRIPT) or not os.path.isfile(MERGE_SCRIPT)
             or not os.path.isfile(ALLOWANCE_SCRIPT) or not os.path.isfile(POLL_WORKFLOW)):
-        sys.exit(f"::error::run this from the repository root; {CLARIFY_SCRIPT}, "
-                 f"{MERGE_SCRIPT}, {ALLOWANCE_SCRIPT}, or {POLL_WORKFLOW} not found.")
+        sys.exit(f"::error::{CLARIFY_SCRIPT}, {MERGE_SCRIPT}, {ALLOWANCE_SCRIPT}, "
+                 f"or {POLL_WORKFLOW} not found relative to this script's own location.")
 
     if "--self-test" in argv:
         return self_test()
