@@ -1833,13 +1833,19 @@ jobs:
       - name: Look for a spec-request already filed for this issue
         id: spec-request-lookup
         if: steps.killswitch-recheck.outputs.paused != 'true' && steps.decide.outputs.verdict == 'spec'
+        # specs/092-bounded-spec-request-filing (FR-007): a failed lookup
+        # counts as a failed filing attempt against the bound, decided by
+        # the create step below -- continue-on-error so that step still
+        # runs (checking steps.spec-request-lookup.outcome) rather than
+        # the whole job stopping here, unbounded, on every failure.
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           ISSUE_NUMBER: ${{ needs.select.outputs.issue-number }}
           BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}[bot]
         run: |
           set -uo pipefail
-          python3 .github/scripts/board_spec_request_filing.py lookup --issue "$ISSUE_NUMBER" --bot-login "$BOT_LOGIN"
+          python3 .github/scripts/board_spec_request_filing.py lookup --issue "$ISSUE_NUMBER" --bot-login "$BOT_LOGIN" || exit 1
           # specs/092-bounded-spec-request-filing (FR-016): truncated here,
           # its own step, rather than inside the create step below (which
           # Gate 93 check 3 restricts to a single board_spec_request_body.py
@@ -1869,6 +1875,8 @@ jobs:
           ISSUE_CONTEXT_FILE: ${{ steps.issue-context-route.outputs.context-file }}
           EXISTING_SPEC_URL: ${{ steps.spec-request-lookup.outputs.existing-spec-url }}
           SPEC_TITLE: ${{ steps.spec-request-lookup.outputs.title }}
+          LOOKUP_OUTCOME: ${{ steps.spec-request-lookup.outcome }}
+          SPEC_REQUEST_ATTEMPTS: ${{ needs.select.outputs.spec-request-attempts }}
         run: |
           set -uo pipefail
           verdict="$(jq -r '.decision.backstop_verdict' "$RUNNER_TEMP/board-route-decision.json")"
@@ -1934,7 +1942,15 @@ jobs:
           # D10: written to the same steps.spec_request.outputs.spec-url
           # a fresh create would populate, so every downstream step is
           # unaware of which path produced it.
-          if [ -n "$EXISTING_SPEC_URL" ]; then
+          failed="false"
+          last_failure=""
+          if [ "$LOOKUP_OUTCOME" = "failure" ]; then
+            # specs/092-bounded-spec-request-filing (FR-007): a failed
+            # lookup counts as a failed attempt too, even though no create
+            # is attempted this run.
+            failed="true"
+            last_failure="the spec-request lookup failed (see its own step log)"
+          elif [ -n "$EXISTING_SPEC_URL" ]; then
             spec_url="$EXISTING_SPEC_URL"
           else
             footer="$(printf 'Routed from board-loop.yml (issue #%s): %s.\n%sOriginating issue: %s/%s/issues/%s' \
@@ -1945,23 +1961,43 @@ jobs:
               || printf 'No drafted body.\n\n---\n%s\n' "$footer" > "$spec_body_file"
 
             spec_url="$(gh issue create -R "$GITHUB_REPOSITORY" --title "$SPEC_TITLE" --body-file "$spec_body_file" --label spec-request)"
-            # #514: this step runs without -e, so a failed create would
-            # otherwise still post the re-route comment, add board:stalled
-            # and cross-link an empty URL, dropping the issue from
-            # eligibility with no spec-request filed. The URL is checked
-            # before any of that; a failed create fails the job with the
-            # issue left unstalled, so a later run retries it (the resume
-            # path into fix/readiness depends on #525's job gating). Known
-            # limits, tracked in #527: the retry is unbounded, and a
-            # failure after a successful create (comment or label) can
-            # file a duplicate spec-request next run. Gate 93 check 3
-            # requires this guard at every spec-request site.
-            [[ "$spec_url" =~ ^https?://[^[:space:]]+/issues/[0-9]+$ ]] || { echo "::error::board-loop route (spec verdict): creating the spec-request returned no issue URL (got '$spec_url') -- no spec-request was filed; the issue is left without board:stalled so a later run retries it."; exit 1; }
+            # #514/#527, bounded by specs/092-bounded-spec-request-filing
+            # below rather than retried forever.
+            if [[ ! "$spec_url" =~ ^https?://[^[:space:]]+/issues/[0-9]+$ ]]; then
+              failed="true"
+              last_failure="creating the spec-request returned no issue URL (got '$spec_url')"
+            fi
+          fi
+
+          if [ "$failed" = "true" ]; then
+            # specs/092-bounded-spec-request-filing (contracts/spec-request-
+            # attempt-bound.md "Branch behavior at each site"): this step
+            # runs without -e, so nothing below acts on the issue until the
+            # bound is decided.
+            result="$(python3 .github/scripts/board_spec_request_filing.py record-attempt --attempts "$SPEC_REQUEST_ATTEMPTS" --budget "$BOARD_LOOP_SPEC_REQUEST_ATTEMPT_BUDGET")"
+            attempts="$(printf '%s' "$result" | jq -r '.attempts')"
+            stall="$(printf '%s' "$result" | jq -r '.stall')"
+            if [ "$stall" = "true" ]; then
+              # The Nth attempt: give up. #604: board:stalled before the marker.
+              marker="$(python3 .github/scripts/board_item_marker.py --step stalled --issue "$ISSUE_NUMBER" --add-label "board:stalled")" \
+                || { echo "::error::board-loop route (spec verdict): board:stalled could not be added to issue #$ISSUE_NUMBER -- no give-up marker is posted; a later run retries (#604)."; exit 1; }
+              gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'No spec-request was filed for issue #%s after %s attempt(s) -- last failure: %s. Removing board:stalled re-admits this item to try again.\n\n%s' "$ISSUE_NUMBER" "$attempts" "$last_failure" "$marker")"
+              exit 0
+            fi
+            # Below the cap: persist the count only -- no narrative, no
+            # label, no spec-request URL (SC-007) -- then still fail loudly.
+            marker="$(python3 .github/scripts/board_item_marker.py --step route --spec-request-attempts "$attempts")"
+            gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$marker"
+            echo "::error::board-loop route (spec verdict): $last_failure -- no spec-request was filed; attempt $attempts/$BOARD_LOOP_SPEC_REQUEST_ATTEMPT_BUDGET, the issue is left eligible so a later run retries it."
+            exit 1
           fi
           echo "spec-url=$spec_url" >> "$GITHUB_OUTPUT"
 
-          # #604: board:stalled before the stalled marker -- see board_item_marker.py.
-          marker="$(python3 .github/scripts/board_item_marker.py --step stalled --issue "$ISSUE_NUMBER" --add-label "board:stalled")" \
+          # #604: board:stalled before the stalled marker -- see
+          # board_item_marker.py. specs/092-bounded-spec-request-filing
+          # (FR-015): a successful filing (create or reuse) clears
+          # spec_request_attempts to 0.
+          marker="$(python3 .github/scripts/board_item_marker.py --step stalled --issue "$ISSUE_NUMBER" --add-label "board:stalled" --spec-request-attempts 0)" \
             || { echo "::error::board-loop route (spec verdict): spec-request $spec_url was filed but board:stalled could not be added to issue #$ISSUE_NUMBER -- no stalled marker is posted; a later run re-routes it and may file a second spec-request (#527, #604)."; exit 1; }
           # specs/092-bounded-spec-request-filing (FR-006): states
           # explicitly whether the artifact was reused or filed, naming it
@@ -2483,13 +2519,18 @@ jobs:
       - name: Look for a spec-request already filed for this issue
         id: spec-request-lookup
         if: steps.push-pr.outputs.pr-url != '' && steps.final-diff-backstop.outputs.breach == 'true'
+        # specs/092-bounded-spec-request-filing (FR-007): a failed lookup
+        # counts as a failed filing attempt against the bound, decided by
+        # the create step below -- continue-on-error so that step still
+        # runs (checking steps.spec-request-lookup.outcome).
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           ISSUE_NUMBER: ${{ needs.select.outputs.issue-number }}
           BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}[bot]
         run: |
           set -uo pipefail
-          python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_spec_request_filing.py" lookup --issue "$ISSUE_NUMBER" --bot-login "$BOT_LOGIN"
+          python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_spec_request_filing.py" lookup --issue "$ISSUE_NUMBER" --bot-login "$BOT_LOGIN" || exit 1
           # specs/092-bounded-spec-request-filing (FR-016): truncated here,
           # its own step, rather than inside the create step below (which
           # Gate 93 check 3 restricts to a single board_spec_request_body.py
@@ -2525,6 +2566,8 @@ jobs:
           ISSUE_CONTEXT_FILE: ${{ steps.issue-context-breach.outputs.context-file }}
           EXISTING_SPEC_URL: ${{ steps.spec-request-lookup.outputs.existing-spec-url }}
           ISSUE_TITLE: ${{ steps.spec-request-lookup.outputs.title }}
+          LOOKUP_OUTCOME: ${{ steps.spec-request-lookup.outcome }}
+          SPEC_REQUEST_ATTEMPTS: ${{ needs.select.outputs.spec-request-attempts }}
         run: |
           set -uo pipefail
           measured="$(jq -c '.measured' "$RUNNER_TEMP/board-fix-final-diff-decision.json")"
@@ -2540,7 +2583,12 @@ jobs:
           # specs/092-bounded-spec-request-filing (FR-001, FR-005, FR-006):
           # reuse the lookup step's existing-spec-url instead of filing a
           # second spec-request for this issue.
-          if [ -n "$EXISTING_SPEC_URL" ]; then
+          failed="false"
+          last_failure=""
+          if [ "$LOOKUP_OUTCOME" = "failure" ]; then
+            failed="true"
+            last_failure="the spec-request lookup failed (see its own step log)"
+          elif [ -n "$EXISTING_SPEC_URL" ]; then
             spec_url="$EXISTING_SPEC_URL"
           else
             # specs/092-bounded-spec-request-filing (FR-016): ISSUE_TITLE
@@ -2555,16 +2603,40 @@ jobs:
               --title "$ISSUE_TITLE" \
               --body-file "$spec_body_file" \
               --label spec-request)"
-            # #514 -- see route's spec-request site.
-            [[ "$spec_url" =~ ^https?://[^[:space:]]+/issues/[0-9]+$ ]] || { echo "::error::board-loop fix (post-push breach): creating the spec-request returned no issue URL (got '$spec_url') -- no spec-request was filed; the issue is left without board:stalled so a later run retries it."; exit 1; }
+            # #514/#527 -- see route's spec-request site.
+            if [[ ! "$spec_url" =~ ^https?://[^[:space:]]+/issues/[0-9]+$ ]]; then
+              failed="true"
+              last_failure="creating the spec-request returned no issue URL (got '$spec_url')"
+            fi
+          fi
+
+          if [ "$failed" = "true" ]; then
+            result="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_spec_request_filing.py" record-attempt --attempts "$SPEC_REQUEST_ATTEMPTS" --budget "$BOARD_LOOP_SPEC_REQUEST_ATTEMPT_BUDGET")"
+            attempts="$(printf '%s' "$result" | jq -r '.attempts')"
+            stall="$(printf '%s' "$result" | jq -r '.stall')"
+            if [ "$stall" = "true" ]; then
+              # The Nth attempt: give up. #604: board:stalled before the marker.
+              marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step stalled --issue "$ISSUE_NUMBER" --add-label "board:stalled")" \
+                || { echo "::error::board-loop fix (post-push breach): board:stalled could not be added to issue #$ISSUE_NUMBER -- no give-up marker is posted; a later run retries (#604)."; exit 1; }
+              gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'No spec-request was filed for issue #%s after %s attempt(s) -- last failure: %s. Removing board:stalled re-admits this item to try again.\n\n%s' "$ISSUE_NUMBER" "$attempts" "$last_failure" "$marker")"
+              exit 0
+            fi
+            # Below the cap: persist the count only -- no narrative, no
+            # label, no spec-request URL (SC-007) -- then still fail loudly.
+            marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step BREACH_STEP --pr "$PR_NUMBER" --branch "$BRANCH" --base-sha "$BASE_SHA" --spec-request-attempts "$attempts")"
+            gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$marker"
+            echo "::error::board-loop fix (post-push breach): $last_failure -- no spec-request was filed; attempt $attempts/$BOARD_LOOP_SPEC_REQUEST_ATTEMPT_BUDGET, the issue is left eligible so a later run retries it."
+            exit 1
           fi
           echo "spec-url=$spec_url" >> "$GITHUB_OUTPUT"
           echo "measured=$measured" >> "$GITHUB_OUTPUT"
 
           # #530/#604: board:stalled before the stalled marker -- see
           # board_item_marker.py. A failed add leaves the breach marker
-          # newest, and readiness retries (reusing the spec-request just filed).
-          marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step stalled --issue "$ISSUE_NUMBER" --add-label "board:stalled")" \
+          # newest, and readiness retries (reusing the spec-request just
+          # filed). specs/092-bounded-spec-request-filing (FR-015): a
+          # successful filing (create or reuse) clears spec_request_attempts.
+          marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step stalled --issue "$ISSUE_NUMBER" --add-label "board:stalled" --spec-request-attempts 0)" \
             || { echo "::error::board-loop fix (post-push breach): spec-request $spec_url was filed but board:stalled could not be added to issue #$ISSUE_NUMBER -- the breach marker stays newest, so a later run retries through readiness (#530)."; exit 1; }
           # specs/092-bounded-spec-request-filing (FR-006): states
           # explicitly whether the artifact was reused or filed.
@@ -3939,13 +4011,18 @@ jobs:
       - name: Look for a spec-request already filed for this breach
         id: breach-retry-lookup
         if: steps.decide.outputs.ready != 'true' && steps.killswitch-recheck.outputs.paused == 'false'
+        # specs/092-bounded-spec-request-filing (FR-007): a failed lookup
+        # counts as a failed filing attempt against the bound, decided by
+        # report-unmet below -- continue-on-error so that step still runs
+        # (checking steps.breach-retry-lookup.outcome).
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           ISSUE_NUMBER: ${{ needs.select.outputs.issue-number || inputs.directed-issue }}
           BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}[bot]
         run: |
           set -uo pipefail
-          python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_spec_request_filing.py" lookup --issue "$ISSUE_NUMBER" --bot-login "$BOT_LOGIN"
+          python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_spec_request_filing.py" lookup --issue "$ISSUE_NUMBER" --bot-login "$BOT_LOGIN" || exit 1
           # specs/092-bounded-spec-request-filing (FR-016): truncated here,
           # its own step, rather than inside report-unmet (which Gate 93
           # check 3 restricts to a single board_spec_request_body.py
@@ -3965,6 +4042,9 @@ jobs:
           BREACH_RETRY: ${{ steps.final-diff-backstop.outputs.breach-retry }}
           EXISTING_SPEC_URL: ${{ steps.breach-retry-lookup.outputs.existing-spec-url }}
           ISSUE_TITLE: ${{ steps.breach-retry-lookup.outputs.title }}
+          LOOKUP_OUTCOME: ${{ steps.breach-retry-lookup.outcome }}
+          SPEC_REQUEST_ATTEMPTS: ${{ needs.select.outputs.spec-request-attempts }}
+          RESUME_STEP: ${{ needs.select.outputs.step }}
           MEASURED: ${{ steps.final-diff-backstop.outputs.measured }}
           ISSUE_CONTEXT_FILE: ${{ steps.issue-context-readiness.outputs.context-file }}
           DIRECTED_ATTRIBUTION: >-
@@ -3985,7 +4065,12 @@ jobs:
             # lookup above now runs at both entries (T014/T015), never
             # only the step=breach retry -- reuse its existing-spec-url
             # whenever it is non-empty, regardless of BREACH_RETRY.
-            if [ -n "$EXISTING_SPEC_URL" ]; then
+            failed="false"
+            last_failure=""
+            if [ "$LOOKUP_OUTCOME" = "failure" ]; then
+              failed="true"
+              last_failure="the spec-request lookup failed (see its own step log)"
+            elif [ -n "$EXISTING_SPEC_URL" ]; then
               spec_url="$EXISTING_SPEC_URL"
               echo "board-loop: issue #$ISSUE_NUMBER -- reusing spec-request $spec_url, already filed for this issue." >> "$GITHUB_STEP_SUMMARY"
             else
@@ -4002,14 +4087,40 @@ jobs:
               spec_url="$(gh issue create -R "$GITHUB_REPOSITORY" --title "$ISSUE_TITLE" \
                 --body-file "$spec_body_file" \
                 --label spec-request)"
-              # #514 -- see route's spec-request site.
-              [[ "$spec_url" =~ ^https?://[^[:space:]]+/issues/[0-9]+$ ]] || { echo "::error::board-loop readiness (backstop breach): creating the spec-request returned no issue URL (got '$spec_url') -- no spec-request was filed; the issue is left without board:stalled so a later run retries it."; exit 1; }
+              # #514/#527 -- see route's spec-request site.
+              if [[ ! "$spec_url" =~ ^https?://[^[:space:]]+/issues/[0-9]+$ ]]; then
+                failed="true"
+                last_failure="creating the spec-request returned no issue URL (got '$spec_url')"
+              fi
+            fi
+
+            if [ "$failed" = "true" ]; then
+              result="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_spec_request_filing.py" record-attempt --attempts "$SPEC_REQUEST_ATTEMPTS" --budget "$BOARD_LOOP_SPEC_REQUEST_ATTEMPT_BUDGET")"
+              attempts="$(printf '%s' "$result" | jq -r '.attempts')"
+              stall="$(printf '%s' "$result" | jq -r '.stall')"
+              if [ "$stall" = "true" ]; then
+                # The Nth attempt: give up. #604: board:stalled before the marker.
+                marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step stalled --issue "$ISSUE_NUMBER" --add-label "board:stalled")" \
+                  || { echo "::error::board-loop readiness (backstop breach): board:stalled could not be added to issue #$ISSUE_NUMBER -- no give-up marker is posted; a later run retries (#604)."; exit 1; }
+                body="$(printf 'No spec-request was filed for issue #%s after %s attempt(s) -- last failure: %s. Removing board:stalled re-admits this item to try again.\n\n%s' "$ISSUE_NUMBER" "$attempts" "$last_failure" "$marker")"
+                [ -n "$DIRECTED_ATTRIBUTION" ] && body="$(printf '%s\n\n%s' "$DIRECTED_ATTRIBUTION" "$body")"
+                gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$body"
+                exit 0
+              fi
+              # Below the cap: persist the count only -- no narrative, no
+              # label, no spec-request URL (SC-007) -- then still fail loudly.
+              marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step "$RESUME_STEP" --spec-request-attempts "$attempts")"
+              gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$marker"
+              echo "::error::board-loop readiness (backstop breach): $last_failure -- no spec-request was filed; attempt $attempts/$BOARD_LOOP_SPEC_REQUEST_ATTEMPT_BUDGET, the issue is left eligible so a later run retries it."
+              exit 1
             fi
             echo "spec-url=$spec_url" >> "$GITHUB_OUTPUT"
             echo "measured=$MEASURED" >> "$GITHUB_OUTPUT"
             # #530/#604: board:stalled before the stalled marker -- see
-            # board_item_marker.py.
-            marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step stalled --issue "$ISSUE_NUMBER" --add-label "board:stalled")" \
+            # board_item_marker.py. specs/092-bounded-spec-request-filing
+            # (FR-015): a successful filing (create or reuse) clears
+            # spec_request_attempts to 0.
+            marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step stalled --issue "$ISSUE_NUMBER" --add-label "board:stalled" --spec-request-attempts 0)" \
               || { echo "::error::board-loop readiness (backstop breach): spec-request $spec_url was filed but board:stalled could not be added to issue #$ISSUE_NUMBER -- no stalled marker is posted, so a later run retries (#530)."; exit 1; }
             # specs/092-bounded-spec-request-filing (FR-006): states
             # explicitly whether the artifact was reused or filed.

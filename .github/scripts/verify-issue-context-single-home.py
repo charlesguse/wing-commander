@@ -1046,11 +1046,133 @@ def _url_guard_re(var):
                       r";\s*exit\s+[1-9][0-9]*\s*;\s*\}\s*$")
 
 
+def _negated_url_guard_re(var):
+    """specs/092-bounded-spec-request-filing: the second sanctioned guard
+    shape (research.md D7) -- `if [[ ! "$V" =~ RE ]]; then` setting a flag
+    for a later failed-attempt branch to test, rather than failing the
+    step immediately (a below-cap failure must still fail loudly, but only
+    after `record-attempt` decides whether this is the Nth attempt)."""
+    v = r'"\$\{?' + re.escape(var) + r'\}?"'
+    return re.compile(
+        r"^\s*if\s+\[\[\s+!\s+" + v +
+        r"\s+=~\s+\^\S*/issues/\[0-9\]\+\$\s+\]\];\s*then\s*$")
+
+
+FLAG_ASSIGN_RE = re.compile(r'^\s*([A-Za-z_][A-Za-z0-9_]*)="true"\s*$')
+RECORD_ATTEMPT_RE = re.compile(r"\bboard_spec_request_filing\.py\b[^\n]*\brecord-attempt\b")
+HAND_ROLLED_COUNT_RE = re.compile(r"\$\(\(.*\+\s*1.*\)\)|\+\s*1\b")
+
+
+def _attempt_bound_problems(where, lines, guard_index, var):
+    """specs/092-bounded-spec-request-filing (research.md D7; contracts/
+    spec-request-attempt-bound.md): validates the negated-guard shape
+    _negated_url_guard_re() matched at `lines[guard_index]` -- the
+    guard's own `then` body must only set a flag (never act or exit
+    itself); a later branch on that flag must call `record-attempt`
+    (never a hand-rolled increment) and may label/comment/publish only
+    after establishing `stall` is true, always reaching `exit 0` there
+    and `exit 1` on every other path."""
+    problems = []
+    flag_var = None
+    end = None
+    for i in range(guard_index + 1, len(lines)):
+        stripped = lines[i].strip()
+        if stripped == "fi":
+            end = i
+            break
+        m = FLAG_ASSIGN_RE.match(lines[i])
+        if m:
+            flag_var = m.group(1)
+    if end is None or flag_var is None:
+        problems.append(
+            f"{where}: the negated guard on ${var} does not set a plain "
+            f"flag variable (FLAG=\"true\") before its own `fi` -- "
+            f"specs/092-bounded-spec-request-filing's give-up shape "
+            f"(research.md D7).")
+        return problems
+
+    rest = lines[end + 1:]
+    branch_re = re.compile(
+        r'^\s*if\s+\[\s+"\$\{?' + re.escape(flag_var) +
+        r'\}?"\s+=\s+"true"\s+\];\s*then\s*$')
+    branch_at = next((i for i, l in enumerate(rest) if branch_re.match(l)), None)
+    if branch_at is None:
+        problems.append(
+            f"{where}: ${flag_var} (set by the negated guard on ${var}) is "
+            f"never tested by a failed-attempt branch -- a failed create "
+            f"is never bounded, the original #514 defect.")
+        return problems
+
+    # Bound `body` to the branch's own `if ... fi` block (never bleeding
+    # into the success path below it, which has its own `exit 1` guards
+    # that would otherwise falsely satisfy the "exit 1 exists" check).
+    depth = 1
+    branch_end = None
+    for i, l in enumerate(rest[branch_at + 1:], start=branch_at + 1):
+        stripped = rest[i].strip()
+        if re.search(r"\bthen\s*$", stripped):
+            depth += 1
+        elif stripped == "fi":
+            depth -= 1
+            if depth == 0:
+                branch_end = i
+                break
+    if branch_end is None:
+        problems.append(
+            f"{where}: the failed-attempt branch on ${flag_var} has no "
+            f"matching `fi`.")
+        return problems
+    body = rest[branch_at + 1:branch_end]
+    if not any(RECORD_ATTEMPT_RE.search(l) for l in body):
+        problems.append(
+            f"{where}: the failed-attempt branch on ${flag_var} never calls "
+            f"`board_spec_request_filing.py record-attempt` -- a hand-rolled "
+            f"count is never the single implementation FR-018 requires.")
+        return problems
+    if any(HAND_ROLLED_COUNT_RE.search(l) for l in body if "record-attempt" not in l):
+        problems.append(
+            f"{where}: the failed-attempt branch on ${flag_var} increments "
+            f"an attempts-shaped variable by hand alongside record-attempt "
+            f"-- record-attempt must be the only counter (FR-018).")
+
+    stall_check_re = re.compile(r'"\$\{?stall\}?"\s*=\s*"true"')
+    stall_at = next((i for i, l in enumerate(body) if stall_check_re.search(l)), None)
+    exit0_at = next((i for i, l in enumerate(body)
+                     if stall_at is not None and i > stall_at
+                     and re.search(r"\bexit\s+0\b", l)), None)
+    if stall_at is None or exit0_at is None:
+        problems.append(
+            f"{where}: no `if [ \"$stall\" = \"true\" ]; then ... exit 0` "
+            f"give-up branch found after record-attempt -- the Nth attempt "
+            f"must give up rather than fail forever (FR-012).")
+        return problems
+    exit1_at = next((i for i, l in enumerate(body)
+                     if i > exit0_at and re.search(r"\bexit\s+1\b", l)), None)
+    if exit1_at is None:
+        problems.append(
+            f"{where}: no `exit 1` found after the give-up branch -- a "
+            f"below-cap failure must still fail loudly (SC-007).")
+        return problems
+    for i, l in enumerate(body):
+        if i >= stall_at:
+            break
+        if ACT_BEFORE_GUARD_RE.search(l):
+            problems.append(
+                f"{where}: {l.strip()[:80]!r} acts on the issue before "
+                f"`stall` is checked -- a below-cap failure must not "
+                f"comment, label or publish (SC-007).")
+            break
+    return problems
+
+
 def _create_guard_problems(where, step, steps, job_id, lines, create_idx):
     """Check 3 (#514): each spec-request create captures its URL, and a
     guard on that URL exits non-zero before the step comments, labels or
     publishes anything; the site is not continue-on-error, and no later
-    step reading its outputs is gated to run after it failed."""
+    step reading its outputs is gated to run after it failed.
+    specs/092-bounded-spec-request-filing (research.md D7): the negated
+    guard shape (_negated_url_guard_re()) is sanctioned too, provided
+    _attempt_bound_problems() finds nothing wrong with it."""
     problems = []
     for index in create_idx:
         m = CREATE_CAPTURE_RE.match(lines[index])
@@ -1062,8 +1184,13 @@ def _create_guard_problems(where, step, steps, job_id, lines, create_idx):
             continue
         var = m.group(1)
         guard = _url_guard_re(var)
+        negated_guard = _negated_url_guard_re(var)
         var_ref = re.compile(r"\$\{?" + re.escape(var) + r"\b")
-        for later in lines[index + 1:]:
+        for later_offset, later in enumerate(lines[index + 1:]):
+            if negated_guard.match(later):
+                problems.extend(_attempt_bound_problems(
+                    where, lines, index + 1 + later_offset, var))
+                break
             if guard.search(later):
                 if ACT_BEFORE_GUARD_RE.search(later):
                     problems.append(
@@ -1956,38 +2083,63 @@ SPEC_REQUEST_MUTATIONS = (
      "        if: false\n"),
     # #514: the create guard at each site.
     ("route create guard reduced to an echo",
-     '[[ "$spec_url" =~ ^https?://[^[:space:]]+/issues/[0-9]+$ ]] || '
-     '{ echo "::error::board-loop route (spec verdict)',
-     'echo "::error::board-loop route (spec verdict)'),
+     '            if [[ ! "$spec_url" =~ ^https?://[^[:space:]]+/issues/[0-9]+$ ]]; then\n'
+     '              failed="true"\n'
+     '              last_failure="creating the spec-request returned no issue URL (got \'$spec_url\')"\n'
+     '            fi\n',
+     '            echo "::error::no spec-request URL (got \'$spec_url\')"\n'),
     ("fix create guard regex made vacuous",
-     '[[ "$spec_url" =~ ^https?://[^[:space:]]+/issues/[0-9]+$ ]] || '
-     '{ echo "::error::board-loop fix (post-push breach)',
-     '[[ "$spec_url" =~ .* ]] || '
-     '{ echo "::error::board-loop fix (post-push breach)'),
+     'if [[ ! "$spec_url" =~ ^https?://[^[:space:]]+/issues/[0-9]+$ ]]; then\n'
+     '              failed="true"\n'
+     '              last_failure="creating the spec-request returned no issue URL (got \'$spec_url\')"\n'
+     '            fi\n'
+     '          fi\n'
+     '\n'
+     '          if [ "$failed" = "true" ]; then\n'
+     '            result="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_spec_request_filing.py" record-attempt',
+     'if [[ ! "$spec_url" =~ .* ]]; then\n'
+     '              failed="true"\n'
+     '              last_failure="creating the spec-request returned no issue URL (got \'$spec_url\')"\n'
+     '            fi\n'
+     '          fi\n'
+     '\n'
+     '          if [ "$failed" = "true" ]; then\n'
+     '            result="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_spec_request_filing.py" record-attempt'),
     ("route create URL no longer captured",
      'spec_url="$(gh issue create -R "$GITHUB_REPOSITORY" --title "$SPEC_TITLE"',
      'gh issue create -R "$GITHUB_REPOSITORY" --title "$SPEC_TITLE"'),
-    ("fix create guard exits 0",
-     'retries it."; exit 1; }\n'
-     '          fi\n'
-     '          echo "spec-url=$spec_url" >> "$GITHUB_OUTPUT"\n'
-     '          echo "measured=$measured"',
-     'retries it."; exit 0; }\n'
-     '          fi\n'
-     '          echo "spec-url=$spec_url" >> "$GITHUB_OUTPUT"\n'
-     '          echo "measured=$measured"'),
+    ("fix below-cap branch exits 0 instead of 1",
+     'echo "::error::board-loop fix (post-push breach): $last_failure -- '
+     'no spec-request was filed; attempt $attempts/'
+     '$BOARD_LOOP_SPEC_REQUEST_ATTEMPT_BUDGET, the issue is left eligible '
+     'so a later run retries it."\n            exit 1\n',
+     'echo "::error::board-loop fix (post-push breach): $last_failure -- '
+     'no spec-request was filed; attempt $attempts/'
+     '$BOARD_LOOP_SPEC_REQUEST_ATTEMPT_BUDGET, the issue is left eligible '
+     'so a later run retries it."\n            exit 0\n'),
     ("fix breach site made continue-on-error",
      "        id: post-push-breach\n",
      "        id: post-push-breach\n        continue-on-error: true\n"),
-    ("readiness spec-url output written before the guard",
-     '            [[ "$spec_url" =~',
-     '            echo "spec-url=$spec_url" >> "$GITHUB_OUTPUT"\n'
-     '            [[ "$spec_url" =~'),
-    ("readiness re-route comment posted before the guard",
-     '            [[ "$spec_url" =~',
-     '            gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" '
-     '--body "re-routed"\n'
-     '            [[ "$spec_url" =~'),
+    ("readiness give-up branch never checked (record-attempt dropped)",
+     '            if [ "$failed" = "true" ]; then\n'
+     '              result="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_spec_request_filing.py" record-attempt --attempts "$SPEC_REQUEST_ATTEMPTS" --budget "$BOARD_LOOP_SPEC_REQUEST_ATTEMPT_BUDGET")"\n'
+     '              attempts="$(printf \'%s\' "$result" | jq -r \'.attempts\')"\n'
+     '              stall="$(printf \'%s\' "$result" | jq -r \'.stall\')"\n',
+     '            if [ "$failed" = "true" ]; then\n'
+     '              attempts="$((SPEC_REQUEST_ATTEMPTS + 1))"\n'
+     '              stall="false"\n'),
+    ("readiness re-route comment posted before stall is checked",
+     '            if [ "$failed" = "true" ]; then\n'
+     '              result="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_spec_request_filing.py" record-attempt --attempts "$SPEC_REQUEST_ATTEMPTS" --budget "$BOARD_LOOP_SPEC_REQUEST_ATTEMPT_BUDGET")"\n'
+     '              attempts="$(printf \'%s\' "$result" | jq -r \'.attempts\')"\n'
+     '              stall="$(printf \'%s\' "$result" | jq -r \'.stall\')"\n'
+     '              if [ "$stall" = "true" ]; then',
+     '            if [ "$failed" = "true" ]; then\n'
+     '              gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "re-routed"\n'
+     '              result="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_spec_request_filing.py" record-attempt --attempts "$SPEC_REQUEST_ATTEMPTS" --budget "$BOARD_LOOP_SPEC_REQUEST_ATTEMPT_BUDGET")"\n'
+     '              attempts="$(printf \'%s\' "$result" | jq -r \'.attempts\')"\n'
+     '              stall="$(printf \'%s\' "$result" | jq -r \'.stall\')"\n'
+     '              if [ "$stall" = "true" ]; then'),
     ("route cross-link gated always()",
      "        if: steps.spec_request.outputs.spec-url != ''",
      "        if: always() && steps.spec_request.outputs.spec-url != ''"),

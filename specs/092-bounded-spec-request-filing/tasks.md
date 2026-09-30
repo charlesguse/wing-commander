@@ -233,7 +233,7 @@ worked on the next run (quickstart.md Section 3).
   argument on line 1890), the fix job's post-push-breach `$issue_title`
   (computed line 2448, used at line 2456), and readiness's ordinary entry
   `$issue_title` (computed line 3894, used at line 3903) (FR-016).
-- [ ] T023 [US2] Extend route's failed-create branch (the URL guard at line
+- [X] T023 [US2] Extend route's failed-create branch (the URL guard at line
   1902) in `.github/workflows/board-loop.yml`: on a failed create, **and**
   on a failed T011 lookup, call `board_spec_request_filing.py record-attempt
   --attempts "$SPEC_REQUEST_ATTEMPTS" --budget
@@ -253,18 +253,18 @@ worked on the next run (quickstart.md Section 3).
   FR-022), write a `stalled`-step marker with `spec_request_attempts` reset
   to `0`, and `exit 0` (research.md D7;
   contracts/spec-request-attempt-bound.md "Branch behavior at each site").
-- [ ] T024 [US2] Apply the identical failed-lookup/failed-create branch logic
+- [X] T024 [US2] Apply the identical failed-lookup/failed-create branch logic
   from T023 to the fix job's post-push-breach site (URL guard at line 2460).
-- [ ] T025 [US2] Apply the identical failed-lookup/failed-create branch logic
+- [X] T025 [US2] Apply the identical failed-lookup/failed-create branch logic
   from T023 to readiness's ordinary backstop-breach entry (URL guard at line
   3907).
-- [ ] T026 [US2] On every **successful** filing (fresh create or reuse) at
+- [X] T026 [US2] On every **successful** filing (fresh create or reuse) at
   all four site entries — including T015's `step=breach`-retry entry, which
   files no create of its own but still resolves a filing outcome — write
   `spec_request_attempts=0` into whatever marker/comment that site already
   posts (the T011-T015 stalled/cross-link marker calls), rather than a
   separate write (FR-015; research.md D5).
-- [ ] T027 [US2] Extend
+- [X] T027 [US2] Extend
   `.github/scripts/verify-issue-context-single-home.py`'s
   `_create_guard_problems()` (line 1049) to recognize the T023-T025 give-up
   shape — a failed-create branch that calls `record-attempt`, and only on
@@ -272,7 +272,7 @@ worked on the next run (quickstart.md Section 3).
   continuing to flag a failed create that labels/comments/publishes *below*
   the cap, or with no `record-attempt` call at all, as the original #514
   defect (FR-020; research.md D7, the paragraph following D7's decision).
-- [ ] T028 [US2] Run `python3 .github/scripts/verify-issue-context-single-home.py
+- [X] T028 [US2] Run `python3 .github/scripts/verify-issue-context-single-home.py
   --self-test` and update any of check 3's existing fixtures (`_site_fixture`,
   `_GOOD_SITE_RUN`, `_create_guard_cases`, lines ~1360-1492) that no longer
   match the new give-up shape after T027, without weakening what they catch
