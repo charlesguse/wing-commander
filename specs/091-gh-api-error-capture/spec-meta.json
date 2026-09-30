@@ -2,8 +2,10 @@
   "issue": 689,
   "spec_dir": "specs/091-gh-api-error-capture",
   "feature_num": "091",
-  "stage": "review",
+  "stage": "implement",
   "iteration": 1,
   "spec_branch": "spec/091-gh-api-error-capture",
-  "pending_re_review_from": []
+  "pending_re_review_from": [
+    "charlesguse"
+  ]
 }

@@ -207,3 +207,7 @@ Task: "Confirm wing-commander-7-cleanup.yml:115,128 already safe (T015)"
 User Story 1 (Phase 1 + Phase 3, T001-T018) is the suggested MVP: it is the
 defect fix itself, independently shippable and independently valuable per
 spec.md, and does not require either new gate to exist.
+
+## Maintainer Feedback
+
+- [ ] Fix `.github/workflows/pr-conversation.yml`'s Stop procedure ("Stop procedure" step, around lines 2632-2665): on a failed `gh api` read, `issue_comments`/`review_comments` are currently reset to `'[]'` rather than the step failing. Because both fall back to `'[]'`, `run_url` ends up empty, and the step posts "No in-flight run was found to stop — nothing was cancelled." and exits 0 even though the underlying read failed — masking a real API error as a false negative and leaving the run the maintainer asked to stop still running. Change the failure path to `::error::` + `exit 1` instead of assigning `'[]'`, so a genuine read failure surfaces as a failed step rather than a misleading "nothing to cancel" outcome. (Code review of PR #818, commit dc8fe79a)
