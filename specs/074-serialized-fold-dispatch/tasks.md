@@ -311,3 +311,9 @@ Task: "Add fixtures under wing-commander-fold-queue-release/tests/"
 ### Follow-up review of 511913b3 (maintainer, 2026-09-30)
 
 - [ ] T055 **B3: a redispatched implement run is never correlated** (`fold-cycle-guard.yml:474-483`, where no `record-implement-run` step follows the dispatch). `implement_run_id` still names the cancelled run, so waiters stale-reclaim the live run's ticket after 10-15 minutes. If the redispatched run is lost too, `peek-implement-run` finds no round, and `claim-redispatch` fails on `${ROUND:?}` — that second loss is never reported, breaking FR-016a. **Fix:** record the new run id after the re-dispatch, and make the peek match it.
+
+## Maintainer Feedback
+
+### Follow-up review of 511913b3 (maintainer, 2026-09-30)
+
+- [ ] T056 **B4: T047's inline release is a no-op** (`fold-dispatch/action.yml:238-240`). It releases the implement token while the dispatch ticket still holds the queue head, so the call errors with "not at queue head (index 1)" and `>/dev/null || true` hides that. The ticket then sits at the head until the unticketed retry run completes, plus stale reclaim. **Fix:** emit `ticket-unused=true` instead. `dispatch-once` releases the ticket after its own dispatch-ticket release, and skips `record-implement-run` in that case.
