@@ -1527,11 +1527,201 @@ def _self_test_give_up_comment_elements(tmpdir):
     return failures
 
 
+BUDGET_CONST_NAME = "BOARD_LOOP_SPEC_REQUEST_ATTEMPT_BUDGET"
+HAND_ROLLED_ATTEMPT_INCREMENT_RE = re.compile(
+    r"\$\(\(.*[Aa]ttempt[A-Za-z_]*\s*\+\s*1.*\)\)")
+
+
+def check_spec_request_filing_bound(path):
+    """Gate 93 check 6 (specs/092-bounded-spec-request-filing FR-019;
+    contracts/gate-spec-request-single-home.md): for each spec-request
+    creation site, (a) a board_spec_request_filing.py lookup step
+    precedes the create step in the same job, gating the create on an
+    empty existing-spec-url output wired into the create step's own env;
+    (b) the failed-attempt branch calls board_spec_request_filing.py
+    record-attempt, never a hand-rolled increment; (c) the workflow's
+    env: block defines exactly one BOARD_LOOP_SPEC_REQUEST_ATTEMPT_BUDGET,
+    read the same way at every site. Enumerates spec-request-create sites
+    the same way check 3 does, so a fourth site that skips (a) or (b)
+    fails this check too, without needing its own update."""
+    problems = []
+    try:
+        with open(path, encoding="utf-8") as fh:
+            doc = yaml.safe_load(fh)
+    except yaml.YAMLError as exc:
+        return [f"{path}: could not parse as YAML ({exc})"]
+    if not isinstance(doc, dict):
+        return [f"{path}: not a mapping -- check 6 found nothing to check."]
+
+    env = doc.get("env") if isinstance(doc.get("env"), dict) else {}
+    budget_names = sorted(
+        k for k in env if k.startswith("BOARD_LOOP_") and "ATTEMPT_BUDGET" in k)
+    if BUDGET_CONST_NAME not in env:
+        problems.append(
+            f"{path}: env: does not define {BUDGET_CONST_NAME} (FR-010).")
+    elif budget_names != [BUDGET_CONST_NAME]:
+        problems.append(
+            f"{path}: more than one BOARD_LOOP_*ATTEMPT_BUDGET* constant "
+            f"defined ({budget_names}) -- exactly one is allowed (FR-010).")
+
+    jobs = doc.get("jobs") if isinstance(doc.get("jobs"), dict) else {}
+    sites = 0
+    for job_id, job in jobs.items():
+        steps = job.get("steps") if isinstance(job, dict) else None
+        if not isinstance(steps, list):
+            continue
+        lookup_ids = set()
+        for step in steps:
+            if not isinstance(step, dict):
+                continue
+            run_text = str(step.get("run") or "")
+            if (re.search(r"\bboard_spec_request_filing\.py\b[^\n]*\blookup\b", run_text)
+                    and step.get("id")):
+                lookup_ids.add(str(step["id"]))
+        for step in steps:
+            if not isinstance(step, dict):
+                continue
+            run_text = str(step.get("run") or "")
+            lines = _logical_lines(run_text)
+            create_idx = [i for i, line in enumerate(lines)
+                          if _is_spec_request_create(line)]
+            if not create_idx:
+                continue
+            sites += len(create_idx)
+            name = step.get("name") or step.get("id") or "(unnamed step)"
+            where = f"{path}: job {job_id!r} step {name!r}"
+
+            step_env = step.get("env") if isinstance(step.get("env"), dict) else {}
+            existing_var = None
+            for key, value in step_env.items():
+                m = re.match(
+                    r"^\$\{\{\s*steps\.([\w-]+)\.outputs\.existing-spec-url\s*\}\}$",
+                    str(value).strip())
+                if m:
+                    existing_var = (key, m.group(1))
+            if existing_var is None or existing_var[1] not in lookup_ids:
+                problems.append(
+                    f"{where}: no board_spec_request_filing.py lookup step "
+                    f"in this job has its existing-spec-url output wired "
+                    f"into this create step's own env (FR-001).")
+            elif not re.search(r"\$\{?" + re.escape(existing_var[0]) + r"\b",
+                              run_text):
+                problems.append(
+                    f"{where}: {existing_var[0]} is wired in but never read "
+                    f"in this step's own run: -- the create is never "
+                    f"skipped on a match (FR-005).")
+
+            if not re.search(r"\bboard_spec_request_filing\.py\b[^\n]*\brecord-attempt\b",
+                             run_text):
+                problems.append(
+                    f"{where}: the failed-attempt branch never calls "
+                    f"board_spec_request_filing.py record-attempt (FR-018).")
+            for line in lines:
+                if HAND_ROLLED_ATTEMPT_INCREMENT_RE.search(line):
+                    problems.append(
+                        f"{where}: hand-rolled attempts increment "
+                        f"{line.strip()[:80]!r} -- record-attempt must be "
+                        f"the only counter (FR-018).")
+                m = re.search(r"--budget\s+\"?\$\{?(\w+)\}?\"?", line)
+                if m and m.group(1) != BUDGET_CONST_NAME:
+                    problems.append(
+                        f"{where}: --budget reads ${m.group(1)!r}, not "
+                        f"${BUDGET_CONST_NAME} (FR-010).")
+    if sites == 0:
+        problems.append(
+            f"{path}: found no spec-request creation site -- check 6 "
+            f"would pass vacuously. If the label or command changed, "
+            f"update this gate with it.")
+    return problems
+
+
+_FILING_BOUND_GOOD_YAML = """\
+name: gate-93-check-6-fixture
+env:
+  BOARD_LOOP_SPEC_REQUEST_ATTEMPT_BUDGET: 3
+jobs:
+  demo:
+    steps:
+      - name: Look for a spec-request already filed for this issue
+        id: spec-request-lookup
+        run: |
+          python3 .github/scripts/board_spec_request_filing.py lookup --issue "$ISSUE_NUMBER" --bot-login "$BOT_LOGIN"
+      - name: Create the spec-request artifact on a spec verdict
+        id: spec_request
+        env:
+          EXISTING_SPEC_URL: ${{ steps.spec-request-lookup.outputs.existing-spec-url }}
+        run: |
+          if [ -n "$EXISTING_SPEC_URL" ]; then
+            spec_url="$EXISTING_SPEC_URL"
+          else
+            spec_url="$(gh issue create -R "$GITHUB_REPOSITORY" --title "$T" --label spec-request)"
+          fi
+          if [ "$failed" = "true" ]; then
+            result="$(python3 .github/scripts/board_spec_request_filing.py record-attempt --attempts "$SPEC_REQUEST_ATTEMPTS" --budget "$BOARD_LOOP_SPEC_REQUEST_ATTEMPT_BUDGET")"
+          fi
+"""
+
+
+def _self_test_filing_bound(tmpdir):
+    """specs/092-bounded-spec-request-filing T033 (Gate 93 check 6): a
+    compliant site, a site with no lookup step, a site with a hand-rolled
+    increment, and a site reading a second BOARD_LOOP_* budget name --
+    each must fail for the stated reason; the compliant one must pass."""
+    failures = []
+    path = os.path.join(tmpdir, "gate-93-check-6-fixture.yml")
+
+    def write(text):
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        return check_spec_request_filing_bound(path)
+
+    good_problems = write(_FILING_BOUND_GOOD_YAML)
+    if good_problems:
+        failures.append(f"check 6 fixture: a compliant site was flagged: "
+                        f"{good_problems!r}")
+    else:
+        print("note: check 6 fixture: a compliant site passes.")
+
+    no_lookup = _FILING_BOUND_GOOD_YAML.replace(
+        "        id: spec-request-lookup\n", "        id: unrelated-step\n")
+    problems = write(no_lookup)
+    if not problems:
+        failures.append("check 6 fixture 'no lookup step' was NOT caught")
+    else:
+        print(f"note: check 6 fixture caught (no lookup step): {problems[0][:120]}")
+
+    hand_rolled = _FILING_BOUND_GOOD_YAML.replace(
+        '          if [ "$failed" = "true" ]; then\n'
+        '            result="$(python3 .github/scripts/board_spec_request_filing.py record-attempt --attempts "$SPEC_REQUEST_ATTEMPTS" --budget "$BOARD_LOOP_SPEC_REQUEST_ATTEMPT_BUDGET")"\n'
+        '          fi\n',
+        '          if [ "$failed" = "true" ]; then\n'
+        '            attempts="$((SPEC_REQUEST_ATTEMPTS + 1))"\n'
+        '          fi\n')
+    problems = write(hand_rolled)
+    if not problems:
+        failures.append("check 6 fixture 'hand-rolled increment' was NOT caught")
+    else:
+        print(f"note: check 6 fixture caught (hand-rolled increment): {problems[0][:120]}")
+
+    second_budget = _FILING_BOUND_GOOD_YAML.replace(
+        "  BOARD_LOOP_SPEC_REQUEST_ATTEMPT_BUDGET: 3\n",
+        "  BOARD_LOOP_SPEC_REQUEST_ATTEMPT_BUDGET: 3\n"
+        "  BOARD_LOOP_SPEC_REQUEST_RETRY_ATTEMPT_BUDGET: 5\n")
+    problems = write(second_budget)
+    if not problems:
+        failures.append("check 6 fixture 'second BOARD_LOOP_* budget name' was NOT caught")
+    else:
+        print(f"note: check 6 fixture caught (second budget name): {problems[0][:120]}")
+
+    return failures
+
+
 def check_repo():
     problems = []
     problems.extend(check_tool_grants(BOARD_LOOP))
     problems.extend(check_spec_request_bodies(BOARD_LOOP))
     problems.extend(check_give_up_comment_elements(BOARD_LOOP))
+    problems.extend(check_spec_request_filing_bound(BOARD_LOOP))
     problems.extend(check_read_only_git(BOARD_LOOP))
     problems.extend(check_fleet_read_only_git())
     problems.extend(check_reviewer_staged_inputs(BOARD_LOOP))
@@ -3088,6 +3278,7 @@ def run_self_test():
 
         failures.extend(_self_test_spec_request_sites(tmpdir))
         failures.extend(_self_test_give_up_comment_elements(tmpdir))
+        failures.extend(_self_test_filing_bound(tmpdir))
         failures.extend(_self_test_read_only_git(tmpdir))
     failures.extend(_self_test_builder())
     failures.extend(_mutation_check_builder())

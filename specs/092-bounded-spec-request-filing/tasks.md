@@ -320,7 +320,7 @@ legible from the issue alone.
 exist before it can check them; cross-site parity and the full local gate
 suite close out the feature.
 
-- [ ] T032 Add `check_spec_request_filing_bound()` as Gate 93 check 6 in
+- [X] T032 Add `check_spec_request_filing_bound()` as Gate 93 check 6 in
   `.github/scripts/verify-issue-context-single-home.py`, called from
   `check_repo()` (line ~1324) alongside `check_spec_request_bodies()`. For
   each of the four call-site entries (route, fix post-push-breach, readiness
@@ -336,7 +336,7 @@ suite close out the feature.
   spec-request-create sites the same way check 3 already does, so a fourth
   site added later that skips (a) or (b) fails this check without needing
   its own update (contracts/gate-spec-request-single-home.md; FR-019).
-- [ ] T033 Add check 6's own regression fixtures as embedded
+- [X] T033 Add check 6's own regression fixtures as embedded
   `_self_test_*`/`_mutation_check_*` functions in
   `.github/scripts/verify-issue-context-single-home.py`, run from
   `run_self_test()` (line ~2719) — following check 3's own established
