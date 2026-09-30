@@ -664,3 +664,7 @@ Task: "Add disposition:duplicate to wing-commander-board-labels/action.yml"
 ## Maintainer Feedback
 
 - [ ] Add `continue-on-error: true` to the "Detect a spec-request that closed without landing (FR-017)" step in `.github/workflows/board-loop.yml` (~line 308), or move it to run after `select`, so a lasting comment failure (a locked issue, a 403) doesn't skip `select` on every scheduled run — keep the `::error::` annotations for visibility.
+
+## Maintainer Feedback
+
+- [ ] Renumber this PR's two gates off the colliding Gate 125/126 (Gate 126 is currently registered twice in `lint-workflows.yml`, once for `verify-board-duplicate-disposition.py` and once for `verify-board-closed-without-landing.py`; Gate 125 collides with spec 062's lifecycle-review-gate gate) to **Gate 130** (`verify-board-duplicate-disposition.py`) and **Gate 131** (`verify-board-closed-without-landing.py`), updating `lint-workflows.yml`'s step names/comments, the gate scripts' own self-identifying text, tasks.md, and any contract/doc referencing the provisional numbers — leaving 126/127 to spec 091, 128 to spec 074, 129 to spec 089, and 132 to spec 109.
