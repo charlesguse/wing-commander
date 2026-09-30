@@ -1674,12 +1674,13 @@ if [ "$1 $2" = "pr list" ]; then
 JSON
   exit 0
 fi
-if [ "$1 $2" = "issue view" ]; then
-  echo '[]'
-  exit 0
-fi
+# #826: the review_gate marker is read through REST; an empty comment list
+# under `--paginate --jq '.[]'` prints nothing.
+case "$1 $2" in
+  "api repos/example/example/issues/{issue}/comments") exit 0 ;;
+esac
 exit 1
-""".format(slug=SELECT_SPEC_SLUG)
+""".format(slug=SELECT_SPEC_SLUG, issue=SELECT_ISSUE)
 
 
 def _make_select_repo(root):

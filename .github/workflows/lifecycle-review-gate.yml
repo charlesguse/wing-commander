@@ -182,8 +182,16 @@ jobs:
             # nothing this gate does commits to that branch, so (unlike
             # T069's now-deleted peel) the head never moves on its own
             # account.
-            review_gate_json="$(gh issue view "$meta_issue" -R "$GITHUB_REPOSITORY" --json comments --jq '.comments' \
-              | python3 .wc-pristine-repo/.github/scripts/wc_lifecycle_review_marker.py read --bot-login "$BOT_LOGIN")"
+            # #826: read through REST, never `gh issue view --json comments`
+            # -- see wc_lifecycle_review_marker.py's read_marker(). A failed
+            # read is not "no round yet": treating it as {} would re-review a
+            # PR the round budget or the unmoved-head skip already settled.
+            if ! review_gate_json="$(gh api "repos/$GITHUB_REPOSITORY/issues/$meta_issue/comments" --paginate --jq '.[]' \
+              | jq -s '.' \
+              | python3 .wc-pristine-repo/.github/scripts/wc_lifecycle_review_marker.py read --bot-login "$BOT_LOGIN")"; then
+              echo "::error::lifecycle-review-gate select: could not read the review_gate marker off lifecycle issue #$meta_issue (PR #$number) -- select stops here rather than treat a failed read as no round yet (#826)."
+              exit 1
+            fi
             recorded_head_sha="$(printf '%s' "$review_gate_json" | jq -r '.head_sha // empty')"
             [ "$recorded_head_sha" != "$head_sha" ] || continue
 
@@ -490,9 +498,14 @@ jobs:
           # never this checkout's own copy (T073/F1) -- this step runs
           # before the reviewer agent, but the branch under review must
           # never supply the code any of this job's own steps execute.
-          round="$(gh issue view "$ISSUE" -R "$GITHUB_REPOSITORY" --json comments --jq '.comments' \
+          # #826: REST, never `--json comments` -- see select's marker read.
+          if ! round="$(gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE/comments" --paginate --jq '.[]' \
+            | jq -s '.' \
             | python3 -I "$RUNNER_TEMP/wc-pristine/scripts/wc_lifecycle_review_marker.py" read --bot-login "$BOT_LOGIN" \
-            | jq -r '(.round // 0) + 1')"
+            | jq -r '(.round // 0) + 1')"; then
+            echo "::error::lifecycle-review-gate review: could not read the review_gate marker off lifecycle issue #$ISSUE (#826)."
+            exit 1
+          fi
           echo "round=$round" >> "$GITHUB_OUTPUT"
 
       # T018/contracts/review-and-findings.md: the same read-only shape
@@ -978,8 +991,13 @@ jobs:
           BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}[bot]
         run: |
           set -euo pipefail
-          review_gate_json="$(gh issue view "$ISSUE" -R "$GITHUB_REPOSITORY" --json comments --jq '.comments' \
-            | python3 .wc-pristine-repo/.github/scripts/wc_lifecycle_review_marker.py read --bot-login "$BOT_LOGIN")"
+          # #826: REST, never `--json comments` -- see select's marker read.
+          if ! review_gate_json="$(gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE/comments" --paginate --jq '.[]' \
+            | jq -s '.' \
+            | python3 .wc-pristine-repo/.github/scripts/wc_lifecycle_review_marker.py read --bot-login "$BOT_LOGIN")"; then
+            echo "::error::lifecycle-review-gate: could not read the review_gate marker off lifecycle issue #$ISSUE (#826)."
+            exit 1
+          fi
           echo "json=$review_gate_json" >> "$GITHUB_OUTPUT"
 
       # T023/T074: the raw-zero fast path. Computes this round's data from
@@ -1595,8 +1613,13 @@ jobs:
           BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}[bot]
         run: |
           set -euo pipefail
-          review_gate_json="$(gh issue view "$ISSUE" -R "$GITHUB_REPOSITORY" --json comments --jq '.comments' \
-            | python3 .wc-pristine-repo/.github/scripts/wc_lifecycle_review_marker.py read --bot-login "$BOT_LOGIN")"
+          # #826: REST, never `--json comments` -- see select's marker read.
+          if ! review_gate_json="$(gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE/comments" --paginate --jq '.[]' \
+            | jq -s '.' \
+            | python3 .wc-pristine-repo/.github/scripts/wc_lifecycle_review_marker.py read --bot-login "$BOT_LOGIN")"; then
+            echo "::error::lifecycle-review-gate: could not read the review_gate marker off lifecycle issue #$ISSUE (#826)."
+            exit 1
+          fi
           echo "json=$review_gate_json" >> "$GITHUB_OUTPUT"
 
       - name: Evaluate the merge preconditions against the current head SHA

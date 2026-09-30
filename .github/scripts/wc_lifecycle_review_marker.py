@@ -28,9 +28,10 @@ single-home rule); only the marker's own name and payload shape are new.
 `report` appends `write_marker()`'s output to the same round-outcome
 comment it already posts on the lifecycle issue (never the comment's only
 content, matching `board_item_marker.write_marker()`'s own discipline).
-`select` and `readiness` read it back via `read_marker()`, given the
-lifecycle issue's own comments (`gh issue view <issue> --json comments`)
-and this App's own bot login.
+`select`, `review`, `disposition` and `merge` read it back via
+`read_marker()`, given the lifecycle issue's own comments as the REST API
+returns them and this App's own bot login -- see read_marker() for the
+shape, and why `gh issue view --json comments` cannot supply it (#826).
 
 This marker is the single source of truth for `review_gate` state -- there
 is no second, git-committed copy to cross-check it against once
@@ -57,7 +58,17 @@ MARKER_RE, MARKER_OPEN_RE = marker_regexes(MARKER_NAME)
 
 def read_marker(issue_comments, bot_login):
     """The latest review_gate marker this App posted on the lifecycle
-    issue's own comments, or None when no round has ever completed."""
+    issue's own comments, or None when no round has ever completed.
+
+    issue_comments must be REST-shaped -- `gh api
+    "repos/$GITHUB_REPOSITORY/issues/<n>/comments" --paginate --jq '.[]' |
+    jq -s '.'`, each comment carrying `user: {login, type}` -- because
+    board_item_marker.is_loop_marker_author() requires `user.type ==
+    "Bot"`. `gh issue view --json comments` returns `author: {login}` and
+    no `user` at all, so every comment in that shape reads as someone
+    else's and the marker is always None (#826). Gate 112
+    (verify-lifecycle-merge-preconditions.py) fails a workflow step that
+    feeds a marker reader from `--json comments`."""
     pair = find_latest_marker(issue_comments, bot_login, MARKER_RE, MARKER_OPEN_RE)
     return pair[1] if pair else None
 
@@ -95,7 +106,12 @@ def self_test():
     written = write_marker(2, "deadbeef", "findings", 1, ["fp1"], [], "2026-01-01T00:00:00Z")
     check("write-marker-embeds-name", MARKER_NAME in written)
     body = "lifecycle-review-gate: round 2 -- 1 finding open.\n\n" + written
-    comments = [{"created_at": "2026-01-01T00:00:00Z", "body": body,
+    # The REST shape (`gh api .../issues/<n>/comments`), trimmed to the
+    # fields the reader uses plus a few it ignores -- never a hand-made
+    # shape no production read returns (#826).
+    comments = [{"id": 1, "created_at": "2026-01-01T00:00:00Z",
+                 "updated_at": "2026-01-01T00:00:00Z", "body": body,
+                 "author_association": "NONE",
                  "user": {"login": "wing-commander-bot[bot]", "type": "Bot"}}]
     got = read_marker(comments, "wing-commander-bot[bot]")
     check("round-trip", got == {"round": 2, "head_sha": "deadbeef",
@@ -111,6 +127,16 @@ def self_test():
                "user": {"login": "an-outsider", "type": "User"}}]
     check("non-bot-comment-ignored",
           read_marker(forged, "wing-commander-bot[bot]") is None)
+
+    # #826: the same bot comment in `gh issue view --json comments`'s shape
+    # (GraphQL: `author: {login}`, `createdAt`, no `user`) reads as no
+    # marker. This pins WHY the workflow reads through REST; if it ever
+    # started passing, is_loop_marker_author() changed and every reader of
+    # it needs a second look.
+    graphql_shaped = [{"createdAt": "2026-01-01T00:00:00Z", "body": body,
+                       "author": {"login": "wing-commander-bot"}}]
+    check("gh-json-comments-shape-reads-as-no-marker",
+          read_marker(graphql_shaped, "wing-commander-bot[bot]") is None)
 
     # No round has ever completed: no marker at all, never a crash.
     check("no-marker-returns-none", read_marker([], "wing-commander-bot[bot]") is None)
@@ -140,8 +166,9 @@ def main():
     sub = parser.add_subparsers(dest="mode", required=True)
 
     read_p = sub.add_parser(
-        "read", help="reads a JSON array of issue comments from stdin, "
-        "prints the marker dict (or {}) to stdout")
+        "read", help="reads a JSON array of REST-shaped issue comments "
+        "(gh api .../issues/<n>/comments, never gh issue view --json "
+        "comments) from stdin, prints the marker dict (or {}) to stdout")
     read_p.add_argument("--bot-login", required=True)
 
     write_p = sub.add_parser(
