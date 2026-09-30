@@ -48,6 +48,14 @@ earn."
    — this is what makes Acceptance Scenario 2 (a selecting job leaving the
    group) surface even if steps 4-5 alone would not name the range itself
    as wrong.
+6a. Compare `SkillClaim.ordinary_group`/`directed_group` themselves against
+   the group names `concurrency-groups.md`'s table actually assigns capable
+   jobs (steps 4-5 only ever compare a job's real group against the table's
+   expected name, never either of those against what the skill claims).
+   Emit `ordinary-group-name-mismatch`/`directed-group-name-mismatch` on a
+   difference — this is what catches a coordinated rename that leaves
+   `concurrency-groups.md` and `board-loop.yml` agreeing with each other but
+   not with `SKILL.md` (PR #813 review).
 7. Load `WaiverEntry` rows. For each `DriftFinding`, if a `WaiverEntry` with
    the same `{property, job}` pair exists, mark it **waived** (still
    printed, not counted as a failure). For each `WaiverEntry` whose

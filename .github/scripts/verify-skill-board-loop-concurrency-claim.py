@@ -281,6 +281,40 @@ def compute_drift_findings(claim, classifications, facts):
                     claim.ordinary_group, claim.directed_group),
                 actual="group `{0}`".format(group_value)))
 
+    # Group-name comparison (PR #813 review, T022): confirms the claim's own
+    # ordinary_group/directed_group tokens have not gone stale under a
+    # coordinated rename that leaves concurrency-groups.md and board-loop.yml
+    # agreeing with each other but not with SKILL.md -- the per-job loop
+    # above only ever compares a job's real group against the table's
+    # expected name, never either of those against what the skill claims.
+    if class_by_job:
+        real_ordinary = next(iter(class_by_job.values())).expected_group_ordinary
+        if claim.ordinary_group != real_ordinary:
+            findings.append(DriftFinding(
+                property="ordinary-group-name-mismatch", job=None,
+                skill_location=claim.location,
+                workflow_location=(CONCURRENCY_GROUPS_MD, None),
+                expected="ordinary group `{0}`".format(real_ordinary),
+                actual="claim names `{0}`".format(claim.ordinary_group)))
+        # Sourced only from jobs board-loop.yml itself gives a conditional
+        # `group:` expression (prove-gate/prove): other capable rows' own
+        # "directed" table cell carries directed-*reachability* footnote
+        # tokens (e.g. `triage`/`review`/`readiness`), not the directed
+        # group's own name, so using those here would pick the wrong token.
+        real_directed = next(
+            (class_by_job[job].expected_group_directed
+             for job, fact in facts.items()
+             if fact.group_expression is not None and job in class_by_job
+             and class_by_job[job].expected_group_directed),
+            None)
+        if real_directed is not None and claim.directed_group != real_directed:
+            findings.append(DriftFinding(
+                property="directed-group-name-mismatch", job=None,
+                skill_location=claim.location,
+                workflow_location=(CONCURRENCY_GROUPS_MD, None),
+                expected="directed group `{0}`".format(real_directed),
+                actual="claim names `{0}`".format(claim.directed_group)))
+
     # Job-range comparison (step 6): the unconditional (literal-group)
     # capable jobs only -- prove-gate/prove are conditionally split and are
     # covered by the directed-group-mismatch check above instead, per
@@ -379,7 +413,8 @@ def evaluate():
     ok_properties = []
     all_properties = (
         "job-missing-from-group", "cancel-in-progress-mismatch",
-        "unexpected-job-in-group", "job-range-mismatch", "directed-group-mismatch")
+        "unexpected-job-in-group", "job-range-mismatch", "directed-group-mismatch",
+        "ordinary-group-name-mismatch", "directed-group-name-mismatch")
     if claim is not None and classifications and facts:
         drift = compute_drift_findings(claim, classifications, facts)
         findings.extend(drift)
@@ -679,6 +714,47 @@ def run_selftest():
     check("a swapped conditional expression is directed-group-mismatch",
           [f.property for f in directed_findings] == ["directed-group-mismatch"]
           and directed_findings[0].job == "prove")
+
+    # --- group-name comparison (PR #813 review, T022/T024): a coordinated
+    # rename of the ordinary or directed group across concurrency-groups.md
+    # and board-loop.yml, with SKILL.md's claim left unchanged, is caught as
+    # a stale claim rather than passing because the two files still agree
+    # with each other. ---
+    renamed_ordinary_classifications = [
+        c._replace(expected_group_ordinary="renamed-ordinary-group")
+        for c in base_classifications
+    ]
+    renamed_ordinary_facts = make_facts({
+        "select": make_facts()["select"]._replace(group_literal="renamed-ordinary-group"),
+        "mid": make_facts()["mid"]._replace(group_literal="renamed-ordinary-group"),
+        "readiness": make_facts()["readiness"]._replace(group_literal="renamed-ordinary-group"),
+        "prove": make_facts()["prove"]._replace(group_expression=(
+            "(needs.select.outputs.directed-stage != '') && "
+            "'directed-group' || 'renamed-ordinary-group'")),
+    })
+    renamed_ordinary_findings = compute_drift_findings(
+        base_claim, renamed_ordinary_classifications, renamed_ordinary_facts)
+    check("a coordinated ordinary-group rename across concurrency-groups.md "
+          "and board-loop.yml leaves SKILL.md's stale claim caught as "
+          "ordinary-group-name-mismatch",
+          [f.property for f in renamed_ordinary_findings] == ["ordinary-group-name-mismatch"])
+
+    renamed_directed_classifications = [
+        c._replace(expected_group_directed=(
+            "renamed-directed-group" if c.expected_group_directed else None))
+        for c in base_classifications
+    ]
+    renamed_directed_facts = make_facts({
+        "prove": make_facts()["prove"]._replace(group_expression=(
+            "(needs.select.outputs.directed-stage != '') && "
+            "'renamed-directed-group' || 'ordinary-group'")),
+    })
+    renamed_directed_findings = compute_drift_findings(
+        base_claim, renamed_directed_classifications, renamed_directed_facts)
+    check("a coordinated directed-group rename across concurrency-groups.md "
+          "and board-loop.yml leaves SKILL.md's stale claim caught as "
+          "directed-group-name-mismatch",
+          [f.property for f in renamed_directed_findings] == ["directed-group-name-mismatch"])
 
     total = len(failures)
     print("verify-skill-board-loop-concurrency-claim --self-test: {0} failure(s).".format(total))

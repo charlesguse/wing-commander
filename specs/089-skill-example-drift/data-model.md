@@ -61,7 +61,7 @@ and the waiver stale-check (D7) key on.
 
 | Field | Type | Meaning |
 |---|---|---|
-| `property` | str | a fixed vocabulary token: `job-missing-from-group`, `cancel-in-progress-mismatch`, `unexpected-job-in-group`, `job-range-mismatch`, `directed-group-mismatch`, `subject-missing` |
+| `property` | str | a fixed vocabulary token: `job-missing-from-group`, `cancel-in-progress-mismatch`, `unexpected-job-in-group`, `job-range-mismatch`, `directed-group-mismatch`, `ordinary-group-name-mismatch`, `directed-group-name-mismatch`, `subject-missing` |
 | `job` | str \| null | the job the finding concerns, when applicable |
 | `skill_location` | (path, line) | where the skill's claim was read from (or would have been) |
 | `workflow_location` | (path, line) | where `board-loop.yml`'s conflicting fact was read from (or would have been) |
