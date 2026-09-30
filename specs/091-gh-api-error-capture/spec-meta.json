@@ -2,8 +2,8 @@
   "issue": 689,
   "spec_dir": "specs/091-gh-api-error-capture",
   "feature_num": "091",
-  "stage": "stalled",
-  "iteration": 1,
+  "stage": "implement",
+  "iteration": 2,
   "spec_branch": "spec/091-gh-api-error-capture",
   "pending_re_review_from": [
     "charlesguse"
