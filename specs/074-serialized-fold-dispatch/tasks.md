@@ -317,3 +317,9 @@ Task: "Add fixtures under wing-commander-fold-queue-release/tests/"
 ### Follow-up review of 511913b3 (maintainer, 2026-09-30)
 
 - [ ] T056 **B4: T047's inline release is a no-op** (`fold-dispatch/action.yml:238-240`). It releases the implement token while the dispatch ticket still holds the queue head, so the call errors with "not at queue head (index 1)" and `>/dev/null || true` hides that. The ticket then sits at the head until the unticketed retry run completes, plus stale reclaim. **Fix:** emit `ticket-unused=true` instead. `dispatch-once` releases the ticket after its own dispatch-ticket release, and skips `record-implement-run` in that case.
+
+## Maintainer Feedback
+
+### Follow-up review of 511913b3 (maintainer, 2026-09-30)
+
+- [ ] T057 **B5: a run-url that the 30-second poll misses now loses the cycle.** The orphan step (:3410) releases the implement ticket whenever `dispatched-run-id` is empty, even when `gh workflow run` succeeded. The real run then awaits an absent token, which `fold-queue-await.sh:75-122` treats as "keep waiting" until the 30-minute timeout, so the cycle is silently dropped. **Fix:** release only when `dispatched != 'true'`, and let the uncorrelated-head bound cover a missing run-url. Alternatively, make await fail fast or proceed on an absent token.
