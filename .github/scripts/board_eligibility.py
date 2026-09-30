@@ -88,6 +88,40 @@ TERMINAL_STEPS = frozenset({"closed", "stalled", "proven"})
 # hold for it is never re-selected every run.
 UNOWNED_OPEN_PR_STATE = "OPEN_UNOWNED"
 
+# specs/093-not-ready-board-release, contracts/not-ready-hold.md,
+# spec.md Assumptions -- "Threshold value: 3 not-ready outcomes per PR", a
+# value, not a mechanism (FR-004(a)).
+NOT_READY_THRESHOLD = 3
+NOT_READY_CLASSES = frozenset({"self-clearing", "durable"})
+
+
+def not_ready_record(marker):
+    """specs/093-not-ready-board-release FR-002/FR-011: {"pr": int,
+    "head_sha": str, "class": "self-clearing"|"durable", "count": int}
+    read from `marker`'s pr/nr_head_sha/nr_class/nr_count fields, or None
+    when `marker` is None, its step is not "readiness", or any of the
+    three nr_* fields is missing or malformed -- fail-safe: degrade to "no
+    record", never guess a class or count."""
+    if marker is None or marker.get("step") != "readiness":
+        return None
+    nr_class = marker.get("nr_class")
+    if nr_class not in NOT_READY_CLASSES:
+        return None
+    try:
+        pr = int(marker.get("pr"))
+        count = int(marker.get("nr_count"))
+    except (TypeError, ValueError):
+        return None
+    head_sha = marker.get("nr_head_sha")
+    if not isinstance(head_sha, str) or not head_sha:
+        return None
+    return {"pr": pr, "head_sha": head_sha, "class": nr_class, "count": count}
+
+
+def not_ready_handover_due(nr_count):
+    """FR-004(a): True when `nr_count` has reached NOT_READY_THRESHOLD."""
+    return nr_count >= NOT_READY_THRESHOLD
+
 
 def _label_names(issue):
     return [(label or {}).get("name") or "" for label in issue.get("labels") or []]

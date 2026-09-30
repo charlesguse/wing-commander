@@ -60,13 +60,38 @@ def _gate_suite_green(rollup):
     return False
 
 
+NOT_CONCLUDED_STATES = ("QUEUED", "IN_PROGRESS", "PENDING", "EXPECTED")
+
+
+def _unmet_class(rollup, checks_green):
+    """specs/093-not-ready-board-release contracts/not-ready-hold.md,
+    research.md D2: "self-clearing" only when every rollup entry is in a
+    not-yet-concluded state (rollup non-empty, checks_green false because
+    nothing has finished yet, not because anything failed) -- "durable"
+    otherwise (a terminal failing check state, an empty rollup, or an
+    unmet reason that is not about checks_green at all: gate_suite_green,
+    zero_open_findings, backstop_holds, kill_switch_clear). FR-005: derived
+    only from the rollup's own per-entry states, never from an agent's
+    reading of them."""
+    if checks_green:
+        return "durable"
+    if not rollup:
+        return "durable"
+    for entry in rollup:
+        state = (entry.get("state") or entry.get("conclusion") or "").upper()
+        if state not in ("SUCCESS", "NEUTRAL", "SKIPPED") and state not in NOT_CONCLUDED_STATES:
+            return "durable"
+    return "self-clearing"
+
+
 def evaluate_from_snapshot(snapshot, open_in_scope_findings, backstop_holds,
                             kill_switch_paused):
     """snapshot: {"headRefOid": str, "statusCheckRollup": [{"state"|
     "conclusion": str, "name"|"context": str, "workflowName": str}, ...]}
     -- the `gh pr view --json headRefOid,statusCheckRollup` shape, fetched
     fresh by the caller. Returns the ReadinessDecision dict
-    (data-model.md)."""
+    (data-model.md), now including "unmet_class" (specs/093-not-ready-board-release):
+    "self-clearing" | "durable" | None (when ready)."""
     head_sha = snapshot.get("headRefOid")
     rollup = snapshot.get("statusCheckRollup") or []
 
@@ -79,7 +104,9 @@ def evaluate_from_snapshot(snapshot, open_in_scope_findings, backstop_holds,
              and backstop_holds and kill_switch_clear)
 
     unmet_reason = None
+    unmet_class = None
     if not ready:
+        unmet_class = _unmet_class(rollup, checks_green)
         if not checks_green:
             if not rollup:
                 unmet_reason = "no checks reported on head_sha {0}".format(head_sha)
@@ -102,6 +129,7 @@ def evaluate_from_snapshot(snapshot, open_in_scope_findings, backstop_holds,
         "backstop_holds": backstop_holds,
         "ready": ready,
         "unmet_reason": unmet_reason,
+        "unmet_class": unmet_class,
     }
 
 

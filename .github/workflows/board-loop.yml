@@ -147,6 +147,7 @@ jobs:
       pr-state: ${{ steps.resume.outputs.pr-state }}
       branch: ${{ steps.resume.outputs.branch }}
       base-sha: ${{ steps.resume.outputs.base-sha }}
+      nr-count: ${{ steps.resume.outputs.nr-count }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -487,6 +488,7 @@ jobs:
           )"
 
           echo '{}' > "$RUNNER_TEMP/board-pr-state-by-number.json"
+          echo '{}' > "$RUNNER_TEMP/board-pr-head-sha-by-number.json"
           if [ -n "$pr_numbers_to_check" ]; then
             while IFS= read -r pr_number; do
               [ -z "$pr_number" ] && continue
@@ -516,6 +518,14 @@ jobs:
               jq --arg n "$pr_number" --arg s "$pr_state" '. + {($n): $s}' \
                 "$RUNNER_TEMP/board-pr-state-by-number.json" > "$RUNNER_TEMP/board-pr-state-by-number.tmp"
               mv "$RUNNER_TEMP/board-pr-state-by-number.tmp" "$RUNNER_TEMP/board-pr-state-by-number.json"
+              # specs/093-not-ready-board-release research.md D4: the same
+              # already-fetched PR JSON carries .head.sha -- no new gh call.
+              pr_head_sha="$(jq -r '.head.sha // empty' "$RUNNER_TEMP/board-lookup-pr.json")"
+              if [ -n "$pr_head_sha" ]; then
+                jq --arg n "$pr_number" --arg s "$pr_head_sha" '. + {($n): $s}' \
+                  "$RUNNER_TEMP/board-pr-head-sha-by-number.json" > "$RUNNER_TEMP/board-pr-head-sha-by-number.tmp"
+                mv "$RUNNER_TEMP/board-pr-head-sha-by-number.tmp" "$RUNNER_TEMP/board-pr-head-sha-by-number.json"
+              fi
             done <<< "$pr_numbers_to_check"
           fi
 
@@ -523,9 +533,11 @@ jobs:
             --slurpfile events "$RUNNER_TEMP/board-labeled-events.json" \
             --slurpfile comments "$RUNNER_TEMP/board-comments-by-issue.json" \
             --slurpfile pr_states "$RUNNER_TEMP/board-pr-state-by-number.json" \
+            --slurpfile pr_head_shas "$RUNNER_TEMP/board-pr-head-sha-by-number.json" \
             --arg bot_login "$BOT_LOGIN" \
             '{open_issues: $issues[0], labeled_events_by_issue: $events[0],
               comments_by_issue: $comments[0], pr_state_by_number: $pr_states[0],
+              pr_head_sha_by_number: $pr_head_shas[0],
               bot_login: $bot_login}' \
             > "$RUNNER_TEMP/board-eligibility-input.json"
 
@@ -606,6 +618,10 @@ jobs:
           marker_round="$(printf '%s' "$marker_json" | jq -r '.round // 0')"
           marker_base_sha="$(printf '%s' "$marker_json" | jq -r '.base_sha // empty')"
           marker_pr="$(printf '%s' "$marker_json" | jq -r '.pr // empty')"
+          # specs/093-not-ready-board-release research.md D5: passthrough
+          # only -- never derived from anything but the marker, mirroring
+          # round/base_sha.
+          marker_nr_count="$(printf '%s' "$marker_json" | jq -r '.nr_count // 0')"
 
           # Issue #564: each live lookup below fails the step on error --
           # see the select step's per-issue comments fetch above in this
@@ -689,7 +705,7 @@ jobs:
           step_resolution_json="$(MARKER_STEP="$marker_step" MARKER_JSON="$marker_json" BRANCH="$branch" \
               MARKER_PR="$marker_pr" PR_FROM_MARKER="$pr_from_marker" PR_FROM_FALLBACK="$pr_from_fallback" PR_OWNED="$pr_owned" \
               PR_STATE="$pr_state" PR_NUMBER="$pr_number" MARKER_ROUND="$marker_round" \
-              MARKER_BASE_SHA="$marker_base_sha" python3 - <<'PYEOF'
+              MARKER_BASE_SHA="$marker_base_sha" MARKER_NR_COUNT="$marker_nr_count" python3 - <<'PYEOF'
           import json
           import os
           import sys
@@ -708,6 +724,10 @@ jobs:
           marker_present = os.environ.get("MARKER_JSON") != "null"
           round_ = os.environ.get("MARKER_ROUND") or "0"
           base_sha = os.environ.get("MARKER_BASE_SHA") or ""
+          # specs/093-not-ready-board-release research.md D5: passthrough
+          # only -- reset alongside round_/base_sha wherever a branch below
+          # resets those for a stale/abandoned marker (FR-022).
+          nr_count_ = os.environ.get("MARKER_NR_COUNT") or "0"
           pr_owned = os.environ.get("PR_OWNED") == "true"
           issue_number = os.environ.get("ISSUE_NUMBER") or ""
 
@@ -775,6 +795,7 @@ jobs:
               branch = ""
               round_ = "0"
               base_sha = ""
+              nr_count_ = "0"
           elif foreign:
               step = "triage"
               reason = "stale marker -- " + foreign
@@ -784,6 +805,7 @@ jobs:
               branch = ""
               round_ = "0"
               base_sha = ""
+              nr_count_ = "0"
           elif pr_from_marker and marker_step and (
               marker_step in PRE_FIX_STEPS
               or (marker_step in FIX_OR_LATER_STEPS and pr_state == "OPEN")
@@ -808,6 +830,7 @@ jobs:
               branch = ""
               round_ = "0"
               base_sha = ""
+              nr_count_ = "0"
           elif pr_from_fallback:
               # #530: a breach marker whose own PR did not resolve still
               # never reviews the PR the fallback finds.
@@ -826,6 +849,7 @@ jobs:
                   reason = "stale marker -- recorded branch/pr could not be re-derived live"
                   round_ = "0"
                   base_sha = ""
+                  nr_count_ = "0"
 
           print(json.dumps({
               "step": step,
@@ -837,6 +861,7 @@ jobs:
               "branch": branch,
               "round": round_,
               "base_sha": base_sha,
+              "nr_count": nr_count_,
           }))
           PYEOF
           )"
@@ -850,6 +875,7 @@ jobs:
           branch="$(printf '%s' "$step_resolution_json" | jq -r '.branch')"
           marker_round="$(printf '%s' "$step_resolution_json" | jq -r '.round')"
           marker_base_sha="$(printf '%s' "$step_resolution_json" | jq -r '.base_sha')"
+          marker_nr_count="$(printf '%s' "$step_resolution_json" | jq -r '.nr_count')"
 
           if [ "$recovered_via_fallback" = "true" ]; then
             echo "board-loop: resume recovered PR #$pr_number for issue #$ISSUE_NUMBER via the board:owned label fallback (no board item marker named it)." >> "$GITHUB_STEP_SUMMARY"
@@ -868,6 +894,7 @@ jobs:
             echo "step=$step"
             echo "round=$marker_round"
             echo "base-sha=$marker_base_sha"
+            echo "nr-count=$marker_nr_count"
           } >> "$GITHUB_OUTPUT"
 
       # T067/FR-047/SC-010: this job runs no agent, but every run of this

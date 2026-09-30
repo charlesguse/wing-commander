@@ -136,7 +136,8 @@ def read_marker(issue_comments, bot_login):
     return pair[1] if pair else None
 
 
-def write_marker(step, round, pr, branch, base_sha):
+def write_marker(step, round, pr, branch, base_sha,
+                  nr_count=None, nr_head_sha=None, nr_class=None):
     """Renders the run announcement plus the HTML-comment marker line.
     Appended to the loop's own human-legible status comment -- never the
     comment's only content (FR-044) -- by the caller.
@@ -148,11 +149,24 @@ def write_marker(step, round, pr, branch, base_sha):
     skipping this run's own announcement by GITHUB_RUN_ID) finds this
     comment without a second announcement convention. GITHUB_SERVER_URL/
     GITHUB_REPOSITORY/GITHUB_RUN_ID are ambient in every Actions step, so
-    every existing write_marker() call site gets this for free."""
-    payload = json.dumps(
-        {"step": step, "round": round, "pr": pr, "branch": branch,
-         "base_sha": base_sha},
-        sort_keys=True)
+    every existing write_marker() call site gets this for free.
+
+    nr_count/nr_head_sha/nr_class (specs/093-not-ready-board-release,
+    contracts/not-ready-hold.md): the not-ready record, meaningful only on
+    a `readiness` marker (and, for the threshold handover only, a
+    `stalled` marker's `nr_head_sha`, D7). Each is serialized only when not
+    None -- an absent field, not a null-valued one, so every marker that
+    carries no not-ready record stays byte-identical to today's shape in
+    every field that already existed."""
+    payload = {"step": step, "round": round, "pr": pr, "branch": branch,
+               "base_sha": base_sha}
+    if nr_count is not None:
+        payload["nr_count"] = nr_count
+    if nr_head_sha is not None:
+        payload["nr_head_sha"] = nr_head_sha
+    if nr_class is not None:
+        payload["nr_class"] = nr_class
+    payload = json.dumps(payload, sort_keys=True)
     marker = "<!-- wing-commander-board-item: {0} -->".format(payload)
 
     server_url = os.environ.get("GITHUB_SERVER_URL")
@@ -242,6 +256,12 @@ def main():
                         help="with --step stalled: the issue --add-label is applied to first (#604)")
     parser.add_argument("--add-label", default=None,
                         help="with --step stalled: must be board_eligibility.STALLED_LABEL (#604)")
+    parser.add_argument("--nr-count", type=int, default=None,
+                        help="specs/093-not-ready-board-release: the not-ready outcome count (FR-004(a))")
+    parser.add_argument("--nr-head-sha", default=None,
+                        help="specs/093-not-ready-board-release: the PR head SHA the not-ready decision was measured against")
+    parser.add_argument("--nr-class", default=None,
+                        help="specs/093-not-ready-board-release: 'self-clearing' or 'durable' (FR-005)")
     args = parser.parse_args()
     step = _resolve_step(args.step)
     if step == STALLED_STEP or args.issue is not None or args.add_label is not None:
@@ -251,7 +271,9 @@ def main():
                          "--step {0} -- see add_stalled_label() (#604)".format(STALLED_STEP, STALLED_LABEL))
         if not add_stalled_label(args.issue, args.add_label):
             sys.exit(1)
-    print(write_marker(step, args.round, args.pr, args.branch, args.base_sha))
+    print(write_marker(step, args.round, args.pr, args.branch, args.base_sha,
+                        nr_count=args.nr_count, nr_head_sha=args.nr_head_sha,
+                        nr_class=args.nr_class))
 
 
 if __name__ == "__main__":
