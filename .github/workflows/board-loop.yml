@@ -308,6 +308,15 @@ jobs:
       - name: Detect a spec-request that closed without landing (FR-017)
         id: closed-without-landing
         if: steps.killswitch.outputs.status != 'paused' && steps.stand-down.outputs.status != 'in-flight'
+        # maintainer review, fold leg-3: this step's own if: has no status
+        # function, so it implicitly reads success() -- a lasting failure
+        # here (a locked issue, a 403) would fail success() for every step
+        # after it in this job, including the `select` step below, and
+        # skip selecting a new board item on every scheduled run.
+        # continue-on-error absorbs that: the ::error:: annotations below
+        # still report the failure, but the job's success() stays true for
+        # select.
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}[bot]

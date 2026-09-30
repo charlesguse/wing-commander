@@ -684,7 +684,12 @@ Task: "Add disposition:duplicate to wing-commander-board-labels/action.yml"
 
 ## Maintainer Feedback
 
-- [ ] Add `continue-on-error: true` to the "Detect a spec-request that closed without landing (FR-017)" step in `.github/workflows/board-loop.yml` (~line 308), or move it to run after `select`, so a lasting comment failure (a locked issue, a 403) doesn't skip `select` on every scheduled run — keep the `::error::` annotations for visibility.
+- [X] Add `continue-on-error: true` to the "Detect a spec-request that closed without landing (FR-017)" step in `.github/workflows/board-loop.yml` (~line 308), or move it to run after `select`, so a lasting comment failure (a locked issue, a 403) doesn't skip `select` on every scheduled run — keep the `::error::` annotations for visibility.
+      Added `continue-on-error: true` to the step (its own `::error::`
+      annotations are unchanged). Reviewed against the `review-step-gating`
+      skill: no step in this job reads `steps.closed-without-landing.*`
+      (grep-confirmed), so nothing downstream is stranded by tolerating
+      this step's failure; Gate 24 reports no new finding.
 
 ## Maintainer Feedback
 
