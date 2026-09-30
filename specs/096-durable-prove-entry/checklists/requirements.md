@@ -114,3 +114,11 @@ unproven forever, so the spec keeps a bounded recovery for exactly those
 two shapes and says so in "Consequences of Q2 (A) rather than (C),
 recorded rather than re-asked". A fourth question was judged
 disproportionate to that gap.
+
+### Maintainer spec review — 2026-09-30
+
+Reconciled with current `main` and with merged specs 092, 093, 100 and 108
+and with spec 097 (in review). Cited line numbers were re-verified. FR-011c
+records the one code gap: `prove` markers carry no machine-readable outcome
+reason. An edge case was added for a stopped, merged-but-unproven item. No
+owner question is open.

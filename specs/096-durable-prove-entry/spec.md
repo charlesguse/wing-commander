@@ -16,7 +16,9 @@ review of the #532 fix on branch `fix/532-board-awaiting-merge`)
 > this spec is against `main` at `fa656bc` — the commit that merged spec
 > 060 (PR #490, 2026-09-29). This feature's own branch was cut before that
 > merge, so its working tree still shows the pre-060 shape; the
-> requirements below are written against `main`.
+> requirements below are written against `main`. `board-loop.yml` has
+> moved since `fa656bc`. The 2026-09-30 status update re-verifies each
+> cited line against current `main`.
 
 ## Overview
 
@@ -412,6 +414,15 @@ label naming the condition.
   recovery takes durable actions (a comment, a dispatch, a close) and must
   re-check both immediately before the first of them, as the live prove job
   does and as spec 060's displacement step already does (:218).
+- **A merged-but-unproven item a maintainer stopped.** Under spec 097 (in
+  review), an honoured stop leaves a `stalled` marker and `board:stalled`.
+  While the label holds, the item is excluded and is not recovered. Once a
+  maintainer removes the label, FR-007 still forbids resolving the item to
+  `triage`, even though spec 100 FR-006's no-open-PR fallback would
+  otherwise triage it. The newest marker is then `stalled`, which is neither
+  of FR-011's two shapes, so the item is not recovered automatically either.
+  It waits for a maintainer, as Q3 intends for a proof the loop did not
+  observe for a reason other than displacement.
 
 ## Requirements *(mandatory)*
 
@@ -508,6 +519,19 @@ label naming the condition.
 - **FR-011b**: At most one item MAY be recovered per run, and an item not
   recovered in this run MUST remain recoverable rather than falling to
   triage or losing its attempt.
+- **FR-011c**: The facts FR-011 and FR-011a decide on MUST be recorded on
+  the issue by the loop in machine-readable form, and read from there:
+  which no-proof condition a `prove` marker records (spec 060's
+  displacement record or an `outcome_reason`), and whether the one
+  recovery attempt is spent. Today every `prove` marker is written with
+  `--step prove` alone (`board-loop.yml:298` and `4463-4498`), so the
+  reason exists only in the comment's prose and in the metrics record's
+  run label. This feature therefore adds the machine-readable form. It MUST
+  be additive to `contracts/board-item-marker.md`, a marker that predates
+  it MUST read as "not recoverable", and it MUST NOT be derived from
+  comment prose. Where spec 093's not-ready record already defines a
+  machine-readable record idiom on the issue, this feature MUST reuse that
+  idiom rather than invent a second one.
 
 ### Functional Requirements — safety and legibility
 
@@ -624,6 +648,50 @@ label naming the condition.
   happening zero times, and `failure`/`unfinished` markers retried zero
   times.
 
+### Status update 2026-09-30 — reconciled with current `main` and specs 092/093/097/100/108 (maintainer spec review)
+
+- **Line numbers re-verified on `main`.**
+  - `board-loop.yml` has shifted since `fa656bc`. The per-job `group:`
+    lines are now `140` (select), `1015` (triage), `1491` (route), `1965`
+    (fix), `2514` (review), `3524` (readiness), `3986` (prove-gate, a
+    folded `>-` expression) and `4166` (prove).
+  - `select`'s trigger exclusion is still `:130`, and `prove-gate`'s `if:`
+    is `:3972-3975`. `prove` is `needs: prove-gate` at `:4153`.
+  - The displacement step starts at `:216`, and its marker write is still
+    `:298`.
+  - The `MERGED, not open` stale-marker clause is still `:804`.
+  - The prove job's per-reason marker and comment arms are `:4455-4500`,
+    and its metrics-outcome step is `:4508`.
+  - The `board_eligibility.py` lines (`167`, `226`, `263`) are unchanged.
+  - `board_prove.py`'s `joins_directed_group()`,
+    `directed_proof_group_busy()` and `outcome_reason()` are at `383`,
+    `409` and `441`.
+  - The plan re-derives these lines, not the `fa656bc` ones.
+- **The outcome reason is not machine-recorded on the issue.** The Q3
+  answer rests on "spec 060's outcome taxonomy already records which
+  no-proof condition occurred". It does so in the metrics record's run
+  label and as one distinct sentence per reason, but the `prove` marker
+  carries only `step` (`board_item_marker.py:139` writes step, round, pr,
+  branch and base_sha). FR-011 forbids deciding from prose, so FR-011c
+  adds the machine-readable record. This follows from FR-011 as written
+  and needs no new owner decision.
+- **Spec 093 (merged)** leaves the `awaiting-merge` OPEN, CLOSED-unmerged
+  and unresolvable states as FR-008 requires. Its not-ready record is the
+  machine-readable record idiom FR-011c reuses.
+- **Spec 100 (merged) and spec 097 (in review).** Spec 100 FR-006
+  triages a released stall that has no open PR. FR-007 here is narrower
+  and takes precedence for a merged, unproven loop-owned PR. A new edge
+  case records the combined outcome for an item stopped under spec 097.
+- **Spec 108 (merged)** disposes of an originating issue only at
+  `spec-request` filing sites. A closed issue is already outside prove's
+  reach: the `prove` job's stop check runs with `check-issue-closed`
+  (`board-loop.yml:4265`, FR-053). This spec adds nothing there.
+- **Spec 092 (merged)** concerns `spec-request` filing and does not touch
+  the prove path.
+- **Assumptions no longer cite CLAUDE.md for "merged specs are frozen".**
+  CLAUDE.md says no such thing, so the rule is this spec's own FR-006.
+- **Owner decisions:** none open.
+
 ## Assumptions
 
 - GitHub's documented concurrency behaviour is taken as given: at most one
@@ -640,7 +708,7 @@ label naming the condition.
   detection, its directed proof entry, its outcome taxonomy and Gate 101
   are shipped behaviour this feature builds on. This feature's own branch
   predates that merge and is rebased before implementation.
-- Spec 057's and spec 060's merged artifacts are frozen records (CLAUDE.md):
+- Spec 057's and spec 060's merged artifacts are frozen records (FR-006):
   their requirements are cited and superseded in this spec's text, never
   edited in place. Their `contracts/` directories are live and are updated.
 - Keying the prove path's group by the merged PR's number is sufficient to
