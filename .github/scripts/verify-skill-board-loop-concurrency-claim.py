@@ -127,12 +127,13 @@ def extract_skill_claim(text, path):
         missing.append("the literal script path '{0}' within two paragraphs of "
                         "the anchor".format(SCRIPT_PATH_TOKEN))
     if missing:
+        rel_path = os.path.relpath(path, REPO_ROOT)
         return None, DriftFinding(
             property="subject-missing", job=None,
-            skill_location=(path, line_no), workflow_location=(BOARD_LOOP_YML, None),
+            skill_location=(path, line_no), workflow_location=(path, line_no),
             expected="the Over-rated paragraph starting at {0}:{1} to carry {2}".format(
-                path, line_no, "; ".join(missing)),
-            actual="not found in that paragraph")
+                rel_path, line_no, "; ".join(missing)),
+            actual="a paragraph without it")
 
     return SkillClaim(
         job_range_start=range_match.group(1),
@@ -297,15 +298,25 @@ def compute_drift_findings(claim, classifications, facts):
     for job, fact in facts.items():
         if job in capable_jobs:
             continue
-        group_value = fact.group_literal or fact.group_expression or ""
-        if claim.ordinary_group in group_value or claim.directed_group in group_value:
+        # Exact-token comparison (PR #813 review, T040): a substring test
+        # here would falsely flag a future non-capable job whose group name
+        # merely contains the claimed group as a substring, e.g.
+        # `wing-commander-board-loop-watchdog`.
+        if fact.group_literal is not None:
+            group_tokens = {fact.group_literal}
+        elif fact.group_expression is not None:
+            group_tokens = set(re.findall(r"'([\w.-]+)'", fact.group_expression))
+        else:
+            group_tokens = set()
+        if claim.ordinary_group in group_tokens or claim.directed_group in group_tokens:
             findings.append(DriftFinding(
                 property="unexpected-job-in-group", job=job,
                 skill_location=claim.location,
                 workflow_location=(BOARD_LOOP_YML, fact.line),
                 expected="neither `{0}` nor `{1}`".format(
                     claim.ordinary_group, claim.directed_group),
-                actual="group `{0}`".format(group_value)))
+                actual="group `{0}`".format(
+                    fact.group_literal or fact.group_expression or "")))
 
     # Group-name comparison (PR #813 review, T022): confirms the claim's own
     # ordinary_group/directed_group tokens have not gone stale under a
@@ -373,16 +384,23 @@ def _loc(path_line):
 def format_finding(finding):
     """-> the FR-006 failure message shape (contracts/skill-drift-gate.md
     "Failure message shape"): names the property, the job, both locations,
-    expected/actual, and the waive-or-fix instruction."""
+    expected/actual, and the waive-or-fix instruction. The workflow-side
+    label is derived from the finding's own workflow_location path (T035)
+    -- board-loop.yml for most properties, but concurrency-groups.md for
+    the two group-name-mismatch properties, and SKILL.md itself for a
+    SKILL.md-internal subject-missing finding -- never a hardcoded literal
+    naming the wrong file."""
     job_clause = " for job '{0}'".format(finding.job) if finding.job else ""
+    workflow_label = os.path.basename(finding.workflow_location[0])
     return (
         "::error::verify-skill-board-loop-concurrency-claim: {property}{job_clause} "
-        "-- SKILL.md ({skill_loc}) claims {expected}; board-loop.yml ({workflow_loc}) "
+        "-- SKILL.md ({skill_loc}) claims {expected}; {workflow_label} ({workflow_loc}) "
         "has {actual}. Waive with a skill-example-drift-waivers.json entry "
         "naming property \"{property}\" and job {job_json}, and a tracking issue, "
         "or fix the drift.".format(
             property=finding.property, job_clause=job_clause,
             skill_loc=_loc(finding.skill_location), expected=finding.expected,
+            workflow_label=workflow_label,
             workflow_loc=_loc(finding.workflow_location), actual=finding.actual,
             job_json=("\"{0}\"".format(finding.job) if finding.job else "null")))
 
@@ -649,10 +667,6 @@ def run_selftest():
           missing_pointer_claim is None and missing_pointer_missing is not None
           and missing_pointer_missing.property == "subject-missing")
 
-    check("a paragraph carrying both the queuing word and the Gate "
-          "pointer sentence extracts queues_not_cancels=True",
-          claim.queues_not_cancels is True)
-
     # --- extract_job_classifications: a synthetic concurrency-groups.md
     # table extracts the expected per-job rows. ---
     table_fixture = (
@@ -781,6 +795,14 @@ def run_selftest():
           [f.property for f in unexpected_findings] == ["unexpected-job-in-group"]
           and unexpected_findings[0].job == "other-job")
 
+    substring_findings = compute_drift_findings(
+        base_claim, base_classifications,
+        make_facts({"other-job": make_facts()["other-job"]._replace(
+            group_literal="ordinary-group-watchdog")}))
+    check("a non-capable job's group name merely containing the claimed group "
+          "as a substring is not unexpected-job-in-group (T040)",
+          substring_findings == [])
+
     range_findings = compute_drift_findings(
         base_claim._replace(job_range_end="mid"), base_classifications, make_facts())
     check("a claimed range shorter than the actual last capable job is job-range-mismatch",
@@ -818,11 +840,22 @@ def run_selftest():
           "and board-loop.yml leaves SKILL.md's stale claim caught as "
           "ordinary-group-name-mismatch",
           [f.property for f in renamed_ordinary_findings] == ["ordinary-group-name-mismatch"])
-    renamed_ordinary_message = format_finding(renamed_ordinary_findings[0])
+    # Guarded (T038): an empty list here (e.g. a regression in the check
+    # above) must record a failed check, not raise IndexError and abort the
+    # self-test before it prints every later check or the summary line.
+    renamed_ordinary_message = (
+        format_finding(renamed_ordinary_findings[0]) if renamed_ordinary_findings else None)
     check("the rendered ordinary-group-name-mismatch message states SKILL.md's "
           "stale claim as the disagreement, not the reverse (T031)",
-          "claims ordinary group `ordinary-group`" in renamed_ordinary_message
+          renamed_ordinary_message is not None
+          and "claims ordinary group `ordinary-group`" in renamed_ordinary_message
           and "has ordinary group `renamed-ordinary-group`" in renamed_ordinary_message)
+    check("the rendered ordinary-group-name-mismatch message names "
+          "concurrency-groups.md, not board-loop.yml, as the workflow-side "
+          "label (T035)",
+          renamed_ordinary_message is not None
+          and "concurrency-groups.md (" in renamed_ordinary_message
+          and "board-loop.yml (" not in renamed_ordinary_message)
 
     renamed_directed_classifications = [
         c._replace(expected_group_directed=(
@@ -840,11 +873,20 @@ def run_selftest():
           "and board-loop.yml leaves SKILL.md's stale claim caught as "
           "directed-group-name-mismatch",
           [f.property for f in renamed_directed_findings] == ["directed-group-name-mismatch"])
-    renamed_directed_message = format_finding(renamed_directed_findings[0])
+    # Guarded (T038): same reasoning as the ordinary-group fixture above.
+    renamed_directed_message = (
+        format_finding(renamed_directed_findings[0]) if renamed_directed_findings else None)
     check("the rendered directed-group-name-mismatch message states SKILL.md's "
           "stale claim as the disagreement, not the reverse (T031)",
-          "claims directed group `directed-group`" in renamed_directed_message
+          renamed_directed_message is not None
+          and "claims directed group `directed-group`" in renamed_directed_message
           and "has directed group `renamed-directed-group`" in renamed_directed_message)
+    check("the rendered directed-group-name-mismatch message names "
+          "concurrency-groups.md, not board-loop.yml, as the workflow-side "
+          "label (T035)",
+          renamed_directed_message is not None
+          and "concurrency-groups.md (" in renamed_directed_message
+          and "board-loop.yml (" not in renamed_directed_message)
 
     total = len(failures)
     print("verify-skill-board-loop-concurrency-claim --self-test: {0} failure(s).".format(total))

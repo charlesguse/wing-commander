@@ -66,7 +66,10 @@ earn."
 
 ## Failure message shape (FR-006)
 
-Every `DriftFinding` line names both locations and both values:
+Every `DriftFinding` line names both locations and both values. The
+workflow-side label is derived from the finding's own `workflow_location`
+path (its basename) rather than a hardcoded literal, so the label always
+names the file that actually disagrees:
 
 ```
 ::error::verify-skill-board-loop-concurrency-claim: <property> for job
@@ -76,6 +79,15 @@ has <actual>. Waive with a skill-example-drift-waivers.json entry
 {"property": "<property>", "job": "<job>"} naming a tracking issue, or fix
 the drift.
 ```
+
+`ordinary-group-name-mismatch`/`directed-group-name-mismatch` set
+`workflow_location` to `concurrency-groups.md`, not `board-loop.yml` — their
+own real disagreement — so the rendered label reads `concurrency-groups.md
+(specs/060-self-redrive-concurrency/contracts/concurrency-groups.md)` for
+those two properties instead. A `subject-missing` finding for a SKILL.md-
+internal problem (a missing anchor, backtick token, queuing word, or script
+pointer) sets both locations to SKILL.md itself, since the disagreement
+never involves `board-loop.yml` at all.
 
 A stale-waiver failure names the entry's location in the JSON file and
 states which property no longer diverges.
