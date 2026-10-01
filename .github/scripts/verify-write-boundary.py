@@ -363,6 +363,13 @@ CLASSIFY_FIXTURES = [
     # first, with zero changes to the classifier itself.
     ("a second boundary entry (.git/) classifies just like the first",
      "- [ ] T006 edit `.git/hooks/pre-commit`", ".claude/,.git/", 1, "true"),
+    # PR #836 review, item 8 / spec.md Edge Cases: a task that would widen
+    # the stage's own grants (editing .claude/settings.json's
+    # permissions.allow) is exactly the case the boundary exists to deny --
+    # dedicated fixture so the outcome is asserted explicitly rather than
+    # left to fall out of the prefix comparison by coincidence.
+    (".claude/settings.json (the boundary-widening edge case) classifies out-of-boundary",
+     "- [ ] T007 grant Edit on `.claude/settings.json`", ".claude/", 1, "true"),
 ]
 
 

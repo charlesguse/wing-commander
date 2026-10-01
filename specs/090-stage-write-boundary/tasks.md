@@ -710,7 +710,7 @@ and evaporating into PR-body prose) that this feature exists to end.
 
 ## Maintainer Feedback — .claude/settings.json edge case needs an explicit fixture (PR #836 review, item 8)
 
-- [ ] Add a dedicated Gate 133 fixture for the `.claude/settings.json` edge case (a task that would grant the stage the very permission it lacks), per spec.md's Edge Cases, rather than relying on it merely falling out of the prefix comparison
+- [x] Add a dedicated Gate 133 fixture for the `.claude/settings.json` edge case (a task that would grant the stage the very permission it lacks), per spec.md's Edge Cases, rather than relying on it merely falling out of the prefix comparison
 
 ## Maintainer Feedback — write-boundary composite can skip the read-back on crash (PR #836 review, item 9)
 
