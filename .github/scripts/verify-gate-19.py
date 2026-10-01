@@ -619,6 +619,52 @@ def stub_bin(bindir, name, template, msg):
     os.chmod(path, 0o755)
 
 
+# #750/FR-002: every FR-002 collector/guard this harness drives now reads
+# RESOLVED_STAGE/RESOLVED_STAGE_SOURCE (the wing-commander-inspected-run-
+# identity composite's own outputs) instead of RUN_NAME directly. These
+# scenarios still parametrize by `run_name` for readability (the name each
+# one models), so this maps that name through the SAME nine-entry table
+# data-model.md's "Name-derived stage map" defines, with source "name" --
+# exactly what the composite would have produced for a run with no
+# metrics record (the shape every pre-existing scenario here models).
+# `run_name` values this map does not recognise (there are none among the
+# ten reference names) would resolve to an empty/empty pair; every
+# scenario below supplies one of the ten.
+NAME_TO_RESOLVED_STAGE = {
+    "Wing Commander · 1 intake": "intake",
+    "Wing Commander · 2 clarify": "clarify",
+    "Wing Commander · 3 plan": "plan",
+    "Wing Commander · 4 tasks": "tasks",
+    "Wing Commander · 5 implement": "implement",
+    "Wing Commander · 6 finalize": "finalize",
+    "Wing Commander · 7 cleanup": "cleanup",
+    "Wing Commander · 9 pr conversation": "pr-conversation",
+    "Wing Commander · rebase": "rebase",
+    # Deliberately absent, matching the composite's own name-fallback step:
+    # the watchdog's own runs always carry stage: watchdog in their own
+    # record, so this name is never consulted for them in production.
+    "Wing Commander · 8 watchdog": "",
+}
+
+
+def resolved_stage_env(sc, default_run_name="Wing Commander · 5 implement"):
+    """RESOLVED_STAGE/RESOLVED_STAGE_SOURCE for a scenario dict, from its
+    `run_name` (or explicit `resolved_stage`/`resolved_stage_source`
+    overrides, for a scenario modelling the stage-unresolved third state
+    directly rather than via a recognised display name)."""
+    if "resolved_stage" in sc or "resolved_stage_source" in sc:
+        return {
+            "RESOLVED_STAGE": sc.get("resolved_stage", ""),
+            "RESOLVED_STAGE_SOURCE": sc.get("resolved_stage_source", ""),
+        }
+    name = sc.get("run_name", default_run_name)
+    stage = NAME_TO_RESOLVED_STAGE.get(name, "")
+    return {
+        "RESOLVED_STAGE": stage,
+        "RESOLVED_STAGE_SOURCE": "name" if stage else "",
+    }
+
+
 EXEC_SCENARIOS = [
     dict(
         name="gh's 'no artifact matches' phrasing: a genuine not-found is ok",
@@ -971,7 +1017,7 @@ def run_bd_one(script, env, sc, tmproot):
     run_env = with_actions_defaults(env)
     run_env["PATH"] = bindir + os.pathsep + os.environ["PATH"]
     run_env["GH_STUB_RECORDS"] = sc.get("gh_records", "")
-    run_env["RUN_NAME"] = sc.get("run_name", "Wing Commander · 5 implement")
+    run_env.update(resolved_stage_env(sc))
     run_env["RUN_CONCLUSION"] = sc.get("run_conclusion", "success")
     # The head IS the branch the stage pushes to unless a scenario says
     # otherwise: before #318 the harness ran with SLUG empty, a shape the
@@ -1960,7 +2006,7 @@ def run_spec_meta_one(script, env, sc, tmproot):
         fh.write("[]")
 
     run_env = dict(env)
-    run_env["RUN_NAME"] = sc["run_name"]
+    run_env.update(resolved_stage_env(sc))
     run_env["RUN_CONCLUSION"] = sc["run_conclusion"]
     run_env["META_STAGE"] = sc["meta_stage"]
     run_env["SLUG"] = sc["slug"]

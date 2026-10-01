@@ -190,7 +190,7 @@ same finding, same facts (SC-001).
 
 ### FR-002 consumer sites in watchdog.yml (depends on T005)
 
-- [ ] T024 [US1] Convert branch-drift's push-expected-stage gate
+- [X] T024 [US1] Convert branch-drift's push-expected-stage gate
       (`watchdog.yml:692-698`: `case "$RUN_NAME" in "Wing Commander · 3
       plan"|"...4 tasks"|"...5 implement") ;; *) skip ;; esac`) to switch
       on `needs.collect.outputs.resolved-stage` matching
@@ -201,32 +201,32 @@ same finding, same facts (SC-001).
       "unresolved"}` to `collector-outcomes.json` (same jq pattern already
       used at lines 864-865), instead of silently taking the existing
       `*)` out-of-scope path.
-- [ ] T025 [US1] Convert branch-drift's implement-only since-created
+- [X] T025 [US1] Convert branch-drift's implement-only since-created
       baseline arms (`watchdog.yml:795` and `852`, each currently
       `[ "$RUN_NAME" = "Wing Commander · 5 implement" ]`) to test
       `[ "$resolved_stage" = "implement" ]` against
       `needs.collect.outputs.resolved-stage`.
-- [ ] T026 [US1] Convert branch-drift's stage label for the summary line
+- [X] T026 [US1] Convert branch-drift's stage label for the summary line
       (`watchdog.yml:866-870`: `case "$RUN_NAME" in "Wing Commander · 4
       tasks") stage_label="tasks" ;; "...5 implement")
       stage_label="implement" ;; esac`) to switch on `resolved-stage`
       instead of `$RUN_NAME`.
-- [ ] T027 [US1] Convert the spec-meta collector's expected-stage map
+- [X] T027 [US1] Convert the spec-meta collector's expected-stage map
       (`watchdog.yml:1023-1034`: `case "$RUN_NAME" in "Wing Commander · 1
       intake") expected="spec" ;; ... esac`) to switch on `resolved-stage`
       — the FR-007 mapping itself is unchanged (intake→spec, plan→plan,
       tasks→tasks, implement→implement, finalize→review) — and add the
       unresolved third arm (distinct from the existing `*)` skip at lines
       1030-1033) per Rule 2.
-- [ ] T028 [US1] Convert final-pr-claims's finalize scope guard
+- [X] T028 [US1] Convert final-pr-claims's finalize scope guard
       (`watchdog.yml:1705-1708`: `if [ "$RUN_NAME" != "Wing Commander · 6
       finalize" ]`) to test `[ "$resolved_stage" != "finalize" ]`, adding
       the unresolved third arm per Rule 2.
-- [ ] T029 [US1] Convert spec-collision's intake scope guard
+- [X] T029 [US1] Convert spec-collision's intake scope guard
       (`watchdog.yml:1829-1832`: `if [ "$RUN_NAME" != "Wing Commander · 1
       intake" ]`) to test `[ "$resolved_stage" != "intake" ]`, adding the
       unresolved third arm per Rule 2.
-- [ ] T030 [US1] Convert the watchdog's self-inspection cascade guard
+- [X] T030 [US1] Convert the watchdog's self-inspection cascade guard
       (`watchdog.yml:3507`: `if: needs.collect.outputs.run-name == 'Wing
       Commander · 8 watchdog'`) to `if: needs.collect.outputs.resolved-
       stage == 'watchdog'`. Self-inspection's own record always carries

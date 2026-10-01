@@ -673,7 +673,8 @@ jobs:
           HEAD_BRANCH: ${{ steps.run-meta.outputs.head-branch }}
           HEAD_SHA: ${{ steps.run-meta.outputs.head-sha }}
           RUN_CREATED_AT: ${{ steps.run-meta.outputs.created-at }}
-          RUN_NAME: ${{ steps.run-meta.outputs.run-name }}
+          RESOLVED_STAGE: ${{ steps.spec-slug.outputs.resolved-stage }}
+          RESOLVED_STAGE_SOURCE: ${{ steps.spec-slug.outputs.resolved-stage-source }}
           RUN_CONCLUSION: ${{ steps.run-meta.outputs.conclusion }}
           META_STAGE: ${{ steps.spec-slug.outputs.meta-stage }}
           STALLED_LABEL: ${{ steps.spec-slug.outputs.stalled-label }}
@@ -691,10 +692,15 @@ jobs:
               exit 0
               ;;
           esac
-          case "$RUN_NAME" in
-            "Wing Commander · 3 plan"|"Wing Commander · 4 tasks"|"Wing Commander · 5 implement") ;;
+          case "$RESOLVED_STAGE" in
+            plan|tasks|implement) ;;
             *)
-              echo "branch-drift: '$RUN_NAME' is not a push-expected stage — skipping." >> "$GITHUB_STEP_SUMMARY"
+              if [ -z "$RESOLVED_STAGE_SOURCE" ]; then
+                jq -c --arg c "collect-branch-drift" --arg o "unresolved" '. + [{"collector":$c,"outcome":$o}]' "$RUNNER_TEMP/collector-outcomes.json" > "$RUNNER_TEMP/collector-outcomes.json.tmp" && mv "$RUNNER_TEMP/collector-outcomes.json.tmp" "$RUNNER_TEMP/collector-outcomes.json"
+                echo "branch-drift: this run's stage could not be identified (no record, no recognised display name) — skipping." >> "$GITHUB_STEP_SUMMARY"
+              else
+                echo "branch-drift: '$RESOLVED_STAGE' is not a push-expected stage — skipping." >> "$GITHUB_STEP_SUMMARY"
+              fi
               exit 0
               ;;
           esac
@@ -794,7 +800,7 @@ jobs:
             # since-created baseline to fall back to either, so it still
             # exits quietly here, before ever attempting the download below
             # — unaffected by this feature, exactly as before specs/068.
-            if [ "$RUN_NAME" = "Wing Commander · 5 implement" ] && [ -z "$RUN_CREATED_AT" ]; then
+            if [ "$RESOLVED_STAGE" = "implement" ] && [ -z "$RUN_CREATED_AT" ]; then
               echo "branch-drift: run head is '$HEAD_BRANCH' but this stage pushes to '${_spec_prefix}${SLUG}' (or to a review branch, depending on its review mode) — the head branch owes no commits. Skipping." >> "$GITHUB_STEP_SUMMARY"
               exit 0
             fi
@@ -810,9 +816,9 @@ jobs:
             # stage-neutral — a future non-implement populator must be
             # picked up here with no collector change. Runs for all three
             # push-expected stages now (specs/068-plan-tasks-branch-advance)
-            # — the outer `case "$RUN_NAME"` gate above already restricts
-            # this whole step to plan/tasks/implement, so nothing new
-            # becomes reachable here.
+            # — the outer `case "$RESOLVED_STAGE"` gate above already
+            # restricts this whole step to plan/tasks/implement, so nothing
+            # new becomes reachable here.
             exact_branch=""
             exact_before_sha=""
             exact_after_sha=""
@@ -851,7 +857,7 @@ jobs:
               # case a record carries both points but no branch name.
               [ -n "$exact_branch" ] && measure_branch="$exact_branch"
               echo "branch-drift: run head is '$HEAD_BRANCH' (not the branch this stage pushes to); measuring '$measure_branch' via the run's own recorded before/after SHAs (specs/050-branch-drift-sha-baseline; specs/068-plan-tasks-branch-advance)." >> "$GITHUB_STEP_SUMMARY"
-            elif [ "$RUN_NAME" = "Wing Commander · 5 implement" ] && [ -n "$RUN_CREATED_AT" ]; then
+            elif [ "$RESOLVED_STAGE" = "implement" ] && [ -n "$RUN_CREATED_AT" ]; then
               baseline="since-created"
               echo "branch-drift: run head is '$HEAD_BRANCH' (a dispatched implement run reports the default branch); measuring '$measure_branch' for commits since the run was created at $RUN_CREATED_AT (no recorded branch-advance evidence on this run)." >> "$GITHUB_STEP_SUMMARY"
             else
@@ -866,9 +872,9 @@ jobs:
               bd_outcome="ok"
               jq -c --arg c "collect-branch-drift" --arg o "$bd_outcome" '. + [{"collector":$c,"outcome":$o}]' "$RUNNER_TEMP/collector-outcomes.json" > "$RUNNER_TEMP/collector-outcomes.json.tmp" && mv "$RUNNER_TEMP/collector-outcomes.json.tmp" "$RUNNER_TEMP/collector-outcomes.json"
               stage_label="plan"
-              case "$RUN_NAME" in
-                "Wing Commander · 4 tasks") stage_label="tasks" ;;
-                "Wing Commander · 5 implement") stage_label="implement" ;;
+              case "$RESOLVED_STAGE" in
+                tasks) stage_label="tasks" ;;
+                implement) stage_label="implement" ;;
               esac
               echo "branch-drift: no recorded branch-advance evidence on this $stage_label run — skipping." >> "$GITHUB_STEP_SUMMARY"
               exit 0
@@ -995,7 +1001,8 @@ jobs:
         shell: bash
         continue-on-error: true
         env:
-          RUN_NAME: ${{ steps.run-meta.outputs.run-name }}
+          RESOLVED_STAGE: ${{ steps.spec-slug.outputs.resolved-stage }}
+          RESOLVED_STAGE_SOURCE: ${{ steps.spec-slug.outputs.resolved-stage-source }}
           RUN_CONCLUSION: ${{ steps.run-meta.outputs.conclusion }}
           META_STAGE: ${{ steps.spec-slug.outputs.meta-stage }}
           SLUG: ${{ steps.spec-slug.outputs.slug }}
@@ -1006,7 +1013,7 @@ jobs:
           # trustworthy for this run (FR-010; never invent a read here).
           jq -c --arg c "collect-spec-meta" --arg o "ok" '. + [{"collector":$c,"outcome":$o}]' "$RUNNER_TEMP/collector-outcomes.json" > "$RUNNER_TEMP/collector-outcomes.json.tmp" && mv "$RUNNER_TEMP/collector-outcomes.json.tmp" "$RUNNER_TEMP/collector-outcomes.json"
           # Same reasoning as branch-drift above. "expected" below is derived
-          # purely from the workflow's display name — it asserts that a plan
+          # from the run's resolved stage (#750) — it asserts that a plan
           # run *that executed* should leave the spec at stage "plan". A
           # skipped run advanced nothing, so the comparison has no premise;
           # the recorded stage disagreeing with it is the stage gate working,
@@ -1023,14 +1030,19 @@ jobs:
             exit 0
           fi
           expected=""
-          case "$RUN_NAME" in
-            "Wing Commander · 1 intake")    expected="spec" ;;
-            "Wing Commander · 3 plan")      expected="plan" ;;
-            "Wing Commander · 4 tasks")     expected="tasks" ;;
-            "Wing Commander · 5 implement") expected="implement" ;;
-            "Wing Commander · 6 finalize")  expected="review" ;;
+          case "$RESOLVED_STAGE" in
+            intake)    expected="spec" ;;
+            plan)      expected="plan" ;;
+            tasks)     expected="tasks" ;;
+            implement) expected="implement" ;;
+            finalize)  expected="review" ;;
             *)
-              echo "spec-meta: '$RUN_NAME' has no single expected stage to compare against — skipping." >> "$GITHUB_STEP_SUMMARY"
+              if [ -z "$RESOLVED_STAGE_SOURCE" ]; then
+                jq -c --arg c "collect-spec-meta" --arg o "unresolved" '. + [{"collector":$c,"outcome":$o}]' "$RUNNER_TEMP/collector-outcomes.json" > "$RUNNER_TEMP/collector-outcomes.json.tmp" && mv "$RUNNER_TEMP/collector-outcomes.json.tmp" "$RUNNER_TEMP/collector-outcomes.json"
+                echo "spec-meta: this run's stage could not be identified — skipping." >> "$GITHUB_STEP_SUMMARY"
+              else
+                echo "spec-meta: '$RESOLVED_STAGE' has no single expected stage to compare against — skipping." >> "$GITHUB_STEP_SUMMARY"
+              fi
               exit 0
               ;;
           esac
@@ -1691,7 +1703,8 @@ jobs:
         continue-on-error: true
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
-          RUN_NAME: ${{ steps.run-meta.outputs.run-name }}
+          RESOLVED_STAGE: ${{ steps.spec-slug.outputs.resolved-stage }}
+          RESOLVED_STAGE_SOURCE: ${{ steps.spec-slug.outputs.resolved-stage-source }}
           RUN_CONCLUSION: ${{ steps.run-meta.outputs.conclusion }}
           SLUG: ${{ steps.spec-slug.outputs.slug }}
           SPEC_DIR: ${{ steps.spec-slug.outputs.spec-dir }}
@@ -1704,8 +1717,13 @@ jobs:
               exit 0
               ;;
           esac
-          if [ "$RUN_NAME" != "Wing Commander · 6 finalize" ]; then
-            echo "final-pr-claims: '$RUN_NAME' is not the finalize stage — skipping (scope guard)." >> "$GITHUB_STEP_SUMMARY"
+          if [ "$RESOLVED_STAGE" != "finalize" ]; then
+            if [ -z "$RESOLVED_STAGE_SOURCE" ]; then
+              jq -c --arg c "collect-final-pr-claims" --arg o "unresolved" '. + [{"collector":$c,"outcome":$o}]' "$RUNNER_TEMP/collector-outcomes.json" > "$RUNNER_TEMP/collector-outcomes.json.tmp" && mv "$RUNNER_TEMP/collector-outcomes.json.tmp" "$RUNNER_TEMP/collector-outcomes.json"
+              echo "final-pr-claims: this run's stage could not be identified — skipping." >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "final-pr-claims: '$RESOLVED_STAGE' is not the finalize stage — skipping (scope guard)." >> "$GITHUB_STEP_SUMMARY"
+            fi
             exit 0
           fi
           if [ -z "$SLUG" ]; then
@@ -1817,7 +1835,8 @@ jobs:
         continue-on-error: true
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
-          RUN_NAME: ${{ steps.run-meta.outputs.run-name }}
+          RESOLVED_STAGE: ${{ steps.spec-slug.outputs.resolved-stage }}
+          RESOLVED_STAGE_SOURCE: ${{ steps.spec-slug.outputs.resolved-stage-source }}
           RUN_CONCLUSION: ${{ steps.run-meta.outputs.conclusion }}
           SLUG: ${{ steps.spec-slug.outputs.slug }}
           SPEC_DRAFT_PREFIX: ${{ vars.WING_COMMANDER_SPEC_DRAFT_PREFIX }}
@@ -1830,8 +1849,13 @@ jobs:
               exit 0
               ;;
           esac
-          if [ "$RUN_NAME" != "Wing Commander · 1 intake" ]; then
-            echo "spec-collision: '$RUN_NAME' is not the intake stage — skipping (scope guard)." >> "$GITHUB_STEP_SUMMARY"
+          if [ "$RESOLVED_STAGE" != "intake" ]; then
+            if [ -z "$RESOLVED_STAGE_SOURCE" ]; then
+              jq -c --arg c "collect-spec-collision" --arg o "unresolved" '. + [{"collector":$c,"outcome":$o}]' "$RUNNER_TEMP/collector-outcomes.json" > "$RUNNER_TEMP/collector-outcomes.json.tmp" && mv "$RUNNER_TEMP/collector-outcomes.json.tmp" "$RUNNER_TEMP/collector-outcomes.json"
+              echo "spec-collision: this run's stage could not be identified — skipping." >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "spec-collision: '$RESOLVED_STAGE' is not the intake stage — skipping (scope guard)." >> "$GITHUB_STEP_SUMMARY"
+            fi
             exit 0
           fi
           own_number="$(printf '%s' "$SLUG" | grep -oE '^[0-9]{3}' || true)"
@@ -3514,20 +3538,21 @@ jobs:
       # walked backward from the inspected run whose own trigger was itself
       # workflow_run (never a human-initiated workflow_dispatch link, which
       # would break the chain). watchdog.yml never reads github.event.*
-      # directly; needs.collect.outputs.run-name (spec 058: resolved in
-      # collect itself, from `inputs.run-name` when the caller supplies
-      # it, otherwise via `gh run view --json workflowName`) already
-      # carries the inspected run's own display name, so
-      # "== 'Wing Commander · 8 watchdog'" here means self-inspection —
-      # the ONLY place this stage special-cases its own name anywhere in
-      # this file (T028 desk-check: detection/fingerprint/dedup/report are
-      # identical for a watchdog-inspecting-watchdog run). The run being
-      # inspected is always stage 8's, never stage 8b's: 8b is what
-      # listens to 8, and nothing listens to 8b.
+      # directly; needs.collect.outputs.resolved-stage (#750: record-stage
+      # if non-empty, else the FR-009 name fallback — the watchdog's own
+      # runs always carry stage: watchdog in their own record, so this
+      # never falls through to the name fallback for them) already
+      # identifies the inspected run's pipeline stage, so
+      # "== 'watchdog'" here means self-inspection — the ONLY place this
+      # stage special-cases its own identity anywhere in this file (T028
+      # desk-check: detection/fingerprint/dedup/report are identical for a
+      # watchdog-inspecting-watchdog run). The run being inspected is
+      # always stage 8's, never stage 8b's: 8b is what listens to 8, and
+      # nothing listens to 8b.
       - name: Self-dispatch depth
         id: self-dispatch-depth
         shell: bash
-        if: needs.collect.outputs.run-name == 'Wing Commander · 8 watchdog'
+        if: needs.collect.outputs.resolved-stage == 'watchdog'
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           ACTIONS_TOKEN: ${{ github.token }}
