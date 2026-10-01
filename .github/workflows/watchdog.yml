@@ -360,6 +360,7 @@ jobs:
       collectors-failed: ${{ steps.aggregate.outputs.collectors-failed }}
       collectors-total: ${{ steps.aggregate.outputs.collectors-total }}
       untrusted-collectors: ${{ steps.aggregate.outputs.untrusted-collectors }}
+      stage-unresolved-collectors: ${{ steps.aggregate.outputs.stage-unresolved-collectors }}
       spec-dir: ${{ steps.spec-slug.outputs.spec-dir }}
       lifecycle-issue: ${{ steps.spec-slug.outputs.lifecycle-issue }}
       slug: ${{ steps.spec-slug.outputs.slug }}
@@ -560,6 +561,9 @@ jobs:
             eo_outcome="ok"
             grep -qiE "no artifact|no valid artifacts|no artifacts" "$RUNNER_TEMP/eo-dl.log" 2>/dev/null || eo_outcome="failed"
             jq -c --arg c "collect-execution-output" --arg o "$eo_outcome" '. + [{"collector":$c,"outcome":$o}]' "$RUNNER_TEMP/collector-outcomes.json" > "$RUNNER_TEMP/collector-outcomes.json.tmp" && mv "$RUNNER_TEMP/collector-outcomes.json.tmp" "$RUNNER_TEMP/collector-outcomes.json"
+            # #750/FR-014/R6: no artifact at all -> the FR-014 name-warning
+            # condition's other half is false, no re-download needed.
+            echo "claude-execution-output-found=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -653,6 +657,40 @@ jobs:
             echo "claude-execution-output-* artifact download produced no readable JSON file — treated as a successful empty contribution." >> "$GITHUB_STEP_SUMMARY"
           fi
           jq -c --arg c "collect-execution-output" --arg o "$eo_outcome" '. + [{"collector":$c,"outcome":$o}]' "$RUNNER_TEMP/collector-outcomes.json" > "$RUNNER_TEMP/collector-outcomes.json.tmp" && mv "$RUNNER_TEMP/collector-outcomes.json.tmp" "$RUNNER_TEMP/collector-outcomes.json"
+          # #750/FR-014/R6: exposed so the new name-warning step below does
+          # not need a second `gh run download` of this same artifact class
+          # (FR-004 forbids growing either download's budget).
+          echo "claude-execution-output-found=$found" >> "$GITHUB_OUTPUT"
+
+      # #750/FR-014/FR-014a (R6): the one place an unrecognised display
+      # name is ever surfaced to a maintainer. Fires only when nothing
+      # resolved a stage for this run from any source (record or name)
+      # AND the run otherwise looks like a pipeline stage run — the
+      # deterministic, judgment-free condition FR-014 requires
+      # (constitution IX): it left behind a claude-execution-output*
+      # artifact. Never fires when the stage DID resolve (regardless of
+      # display name — FR-014a keeps every reference-named wrapper in
+      # this repository, including cleanup/rebase/pr-conversation, out of
+      # this path), or when no such artifact was found (regardless of
+      # display name) — an adopter's unrelated workflow is the common
+      # case there, and FR-009 leaving it unresolved is the normal,
+      # silent answer (spec.md Edge Cases).
+      - name: Report unrecognised display name, when nothing else identified the run's stage
+        shell: bash
+        if: steps.spec-slug.outputs.resolved-stage-source == '' && steps.collect-execution-output.outputs.claude-execution-output-found == 'true'
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          ISSUE: ${{ steps.spec-slug.outputs.lifecycle-issue }}
+          RUN_URL: ${{ steps.run-meta.outputs.url }}
+          RUN_NAME: ${{ steps.run-meta.outputs.run-name }}
+        run: |
+          set -uo pipefail
+          body="🐕 **Wing Commander · watchdog** — this run's display name ('$RUN_NAME') was not recognised, and no metrics record named a pipeline stage either, so this inspection could not identify which stage it was; some evidence classes may not have been examined. _[Inspected run]($RUN_URL)_"
+          if [ -n "$ISSUE" ]; then
+            gh issue comment "$ISSUE" --body "$body"
+          else
+            echo "$body" >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       # FR-003b/FR-006: pattern-matched lost-progress detection — zero
       # commits pushed to the inspected run's own branch since it started.
@@ -2060,6 +2098,16 @@ jobs:
           # to fail on a single bad read (contracts/watchdog-read-outcome.md).
           untrusted="$(jq -c '[.[] | select(.outcome=="failed") | .collector] | unique' "$RUNNER_TEMP/collector-outcomes.json" 2>/dev/null || echo '[]')"
           echo "untrusted-collectors=$untrusted" >> "$GITHUB_OUTPUT"
+          # #750/FR-005/FR-006: a THIRD, distinct outcome — "this collector
+          # could not tell whether it was in scope because the inspected
+          # run's stage was never identified" — never folded into
+          # untrusted-collectors above, which continues to select only
+          # outcome=="failed" (a collector's own read erroring, a different
+          # claim). stage-unresolved-collectors feeds the report strings
+          # below so an unresolved stage is never silently reported as an
+          # unqualified clean pass (SC-003).
+          unresolved="$(jq -c '[.[] | select(.outcome=="unresolved") | .collector] | unique' "$RUNNER_TEMP/collector-outcomes.json" 2>/dev/null || echo '[]')"
+          echo "stage-unresolved-collectors=$unresolved" >> "$GITHUB_OUTPUT"
           if [ "$failed" -ge "$total" ]; then
             echo "evidence-available=false" >> "$GITHUB_OUTPUT"
             echo "signals=[]" >> "$GITHUB_OUTPUT"
@@ -2078,9 +2126,19 @@ jobs:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           ISSUE: ${{ steps.spec-slug.outputs.lifecycle-issue }}
           RUN_URL: ${{ steps.run-meta.outputs.url }}
+          STAGE_UNRESOLVED: ${{ steps.aggregate.outputs.stage-unresolved-collectors }}
         run: |
           set -uo pipefail
-          body="🐕 **Wing Commander · watchdog** — could not inspect this run: every evidence collector failed outright (evidence missing, expired, or unreadable). _[Inspected run]($RUN_URL)_"
+          # #750/SC-003: an unresolved stage never reaches the issue as an
+          # unqualified claim — see Gate 127 for the `0`/`[]` default this
+          # jq call falls back to when stage-unresolved-collectors was
+          # never computed.
+          stage_unresolved_count="$(printf '%s' "${STAGE_UNRESOLVED:-[]}" | jq 'length' 2>/dev/null || echo 0)"
+          suffix=""
+          if [ "$stage_unresolved_count" -gt 0 ] 2>/dev/null; then
+            suffix="; $stage_unresolved_count evidence class(es) not examined because the inspected run's stage could not be identified"
+          fi
+          body="🐕 **Wing Commander · watchdog** — could not inspect this run: every evidence collector failed outright (evidence missing, expired, or unreadable)${suffix}. _[Inspected run]($RUN_URL)_"
           if [ -n "$ISSUE" ]; then
             gh issue comment "$ISSUE" --body "$body"
           else
@@ -2113,14 +2171,22 @@ jobs:
           RUN_URL: ${{ steps.run-meta.outputs.url }}
           COLLECTORS_FAILED: ${{ steps.aggregate.outputs.collectors-failed }}
           COLLECTORS_TOTAL: ${{ steps.aggregate.outputs.collectors-total }}
+          STAGE_UNRESOLVED: ${{ steps.aggregate.outputs.stage-unresolved-collectors }}
         run: |
           set -uo pipefail
           failed="${COLLECTORS_FAILED:-0}"
           total="${COLLECTORS_TOTAL:-9}"
+          # #750/SC-003: see the "could not inspect" step above for why this
+          # is never folded into the collectors-failed accounting.
+          stage_unresolved_count="$(printf '%s' "${STAGE_UNRESOLVED:-[]}" | jq 'length' 2>/dev/null || echo 0)"
+          suffix=""
+          if [ "$stage_unresolved_count" -gt 0 ] 2>/dev/null; then
+            suffix="; $stage_unresolved_count evidence class(es) not examined because the inspected run's stage could not be identified"
+          fi
           if [ "$failed" -gt 0 ]; then
-            body="🐕 **Wing Commander · watchdog** — run passed inspection on $((total - failed)) of $total evidence collectors ($failed collector(s) errored; their evidence classes were not examined). _[Inspected run]($RUN_URL)_"
+            body="🐕 **Wing Commander · watchdog** — run passed inspection on $((total - failed)) of $total evidence collectors ($failed collector(s) errored; their evidence classes were not examined)${suffix}. _[Inspected run]($RUN_URL)_"
           else
-            body="🐕 **Wing Commander · watchdog** — run passed inspection. No problems detected. _[Inspected run]($RUN_URL)_"
+            body="🐕 **Wing Commander · watchdog** — run passed inspection. No problems detected${suffix}. _[Inspected run]($RUN_URL)_"
           fi
           if [ -n "$ISSUE" ]; then
             gh issue comment "$ISSUE" --body "$body"
@@ -2821,6 +2887,7 @@ jobs:
           RUN_URL: ${{ needs.collect.outputs.run-url }}
           COLLECTORS_FAILED: ${{ needs.collect.outputs.collectors-failed }}
           COLLECTORS_TOTAL: ${{ needs.collect.outputs.collectors-total }}
+          STAGE_UNRESOLVED: ${{ needs.collect.outputs.stage-unresolved-collectors }}
         run: |
           set -uo pipefail
           # A pass reached with fewer collectors is a weaker claim and must
@@ -2828,10 +2895,17 @@ jobs:
           # examined.
           failed="${COLLECTORS_FAILED:-0}"
           total="${COLLECTORS_TOTAL:-9}"
+          # #750/SC-003: see collect's own "could not inspect" step for why
+          # this is never folded into the collectors-failed accounting.
+          stage_unresolved_count="$(printf '%s' "${STAGE_UNRESOLVED:-[]}" | jq 'length' 2>/dev/null || echo 0)"
+          suffix=""
+          if [ "$stage_unresolved_count" -gt 0 ] 2>/dev/null; then
+            suffix="; $stage_unresolved_count evidence class(es) not examined because the inspected run's stage could not be identified"
+          fi
           if [ "$failed" -gt 0 ]; then
-            body="🐕 **Wing Commander · watchdog** — run passed inspection on $((total - failed)) of $total evidence collectors ($failed collector(s) errored; their evidence classes were not examined). _[Inspected run]($RUN_URL)_"
+            body="🐕 **Wing Commander · watchdog** — run passed inspection on $((total - failed)) of $total evidence collectors ($failed collector(s) errored; their evidence classes were not examined)${suffix}. _[Inspected run]($RUN_URL)_"
           else
-            body="🐕 **Wing Commander · watchdog** — run passed inspection. No problems detected. _[Inspected run]($RUN_URL)_"
+            body="🐕 **Wing Commander · watchdog** — run passed inspection. No problems detected${suffix}. _[Inspected run]($RUN_URL)_"
           fi
           if [ -n "$ISSUE" ]; then
             gh issue comment "$ISSUE" --body "$body"

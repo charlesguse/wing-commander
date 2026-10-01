@@ -43,6 +43,7 @@ import tempfile
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wc_shell_harness import (  # noqa: E402
     ensure_jq, find_step, resolve_bash, run_step, use_utf8_stdout)
+from wc_gha_expr import evaluate, truthy  # noqa: E402
 
 WATCHDOG = ".github/workflows/watchdog.yml"
 COMPOSITE = ".github/actions/wing-commander-inspected-run-identity/action.yml"
@@ -358,6 +359,72 @@ def case_self_inspection_guard_uses_resolved_stage():
         note(f"Self-dispatch depth's if: reads {cond!r}")
 
 
+NAME_WARNING_STEP_NAME = (
+    "Report unrecognised display name, when nothing else identified the "
+    "run's stage")
+
+FR014_SCENARIOS = [
+    ("stage unresolved + artifact found: FIRES (spec.md US2 AS3)",
+     {"steps.spec-slug.outputs.resolved-stage-source": "",
+      "steps.collect-execution-output.outputs.claude-execution-output-found": "true"},
+     True),
+    ("stage resolved via name, artifact found: does NOT fire (AS2/AS5)",
+     {"steps.spec-slug.outputs.resolved-stage-source": "name",
+      "steps.collect-execution-output.outputs.claude-execution-output-found": "true"},
+     False),
+    ("stage resolved via record, artifact found: does NOT fire",
+     {"steps.spec-slug.outputs.resolved-stage-source": "record",
+      "steps.collect-execution-output.outputs.claude-execution-output-found": "true"},
+     False),
+    ("stage unresolved, no artifact found: does NOT fire (AS4)",
+     {"steps.spec-slug.outputs.resolved-stage-source": "",
+      "steps.collect-execution-output.outputs.claude-execution-output-found": "false"},
+     False),
+]
+
+
+def case_fr014_name_warning():
+    """specs/099-name-free-stage-identity T039: the FR-014 name-warning
+    step's `if:` fires exactly on "stage unresolved AND an execution-
+    output artifact was found" (spec.md's US2 acceptance scenarios 2-5),
+    and its body actually names the run's display name when it fires."""
+    case = "FR-014 name warning (T039)"
+    step = find_step(WATCHDOG, NAME_WARNING_STEP_NAME)
+    cond = str(step.get("if", ""))
+    for label, ctx, expect_fires in FR014_SCENARIOS:
+        try:
+            got = truthy(evaluate(cond, ctx))
+        except (ValueError, IndexError) as exc:
+            fail(case, f"{label}: if: did not evaluate: {exc}")
+            continue
+        if got != expect_fires:
+            fail(case, f"{label}: if: evaluated to {got!r}, expected "
+                       f"{expect_fires!r} (if: was {cond!r})")
+
+    # Behaviorally confirm the firing case's BODY (not just its if:)
+    # actually names the run's display name — ISSUE="" routes it to
+    # $GITHUB_STEP_SUMMARY instead of a `gh issue comment` call, so no
+    # stub is needed.
+    runner_temp = tempfile.mkdtemp(prefix="wc-resolved-stage-fr014-")
+    try:
+        workdir = tempfile.mkdtemp(dir=runner_temp)
+        env = {"GH_TOKEN": "x", "ISSUE": "", "RUN_URL": "https://example.invalid/run/1",
+              "RUN_NAME": "My Totally Custom CI Wrapper"}
+        rc, out, _outputs, summary = run_step(BASH, step["run"], workdir, env, runner_temp)
+        if rc != 0:
+            fail(case, f"the step's body exited {rc}: {out.strip()[:300]}")
+        elif "My Totally Custom CI Wrapper" not in summary:
+            fail(case, f"the warning body must name the run's own display "
+                       f"name so a maintainer can act on it, got summary: "
+                       f"{summary!r}")
+    finally:
+        shutil.rmtree(runner_temp, ignore_errors=True)
+
+    if not any(f.startswith(case) for f in failures):
+        note("the FR-014 name warning fires exactly on stage-unresolved + "
+             "artifact-found, and names the run's own display name")
+
+
 CASES = [
     case_r7_fixture_rows,
     case_sc001_name_independence_at_the_composite,
@@ -366,6 +433,7 @@ CASES = [
     lambda: case_site_three_states(SITES[2]),
     lambda: case_site_three_states(SITES[3]),
     case_self_inspection_guard_uses_resolved_stage,
+    case_fr014_name_warning,
 ]
 
 

@@ -289,17 +289,17 @@ carries an unrecognised display name. The inspection's own report names
 the collectors that could not run, and the top-level verdict is not an
 unqualified clean bill of health (SC-003).
 
-- [ ] T034 [US2] Extend the `aggregate` step (`watchdog.yml:2001-2042`) to
+- [X] T034 [US2] Extend the `aggregate` step (`watchdog.yml:2001-2042`) to
       compute a new `stage-unresolved-collectors` output (names + count)
       from `collector-outcomes.json` entries with `outcome=="unresolved"`
       — added alongside, not merged into, the existing `untrusted` jq
       filter at lines 2033-2034, which continues to select only
       `outcome=="failed"` (FR-005 forbids folding the third state into
       the second).
-- [ ] T035 [US2] Add `stage-unresolved-collectors` to the `collect` job's
+- [X] T035 [US2] Add `stage-unresolved-collectors` to the `collect` job's
       `outputs:` block (`watchdog.yml:356-366`), alongside
       `collectors-failed`/`untrusted-collectors`.
-- [ ] T036 [US2] Extend both existing deterministic report strings — the
+- [X] T036 [US2] Extend both existing deterministic report strings — the
       "Report 'could not inspect'" step (`watchdog.yml:2046-2060`, body at
       line 2055) and the "Report 'passed inspection'" step
       (`watchdog.yml:2076-2101`, bodies at lines 2093 and 2095) — to
@@ -307,13 +307,13 @@ unqualified clean bill of health (SC-003).
       run's stage could not be identified" whenever
       `stage-unresolved-collectors`'s count is non-zero, so SC-003's
       "unqualified pass" never reaches the lifecycle issue.
-- [ ] T037 [US2] Extend the `collect-execution-output` step
+- [X] T037 [US2] Extend the `collect-execution-output` step
       (`watchdog.yml:515-653`) to emit a new `claude-execution-output-
       found` output (`true`/`false`, from the existing `found` variable
       computed at line 650) — no additional artifact download (R6;
       FR-004 budgets only the metrics-record download, not this one, but
       forbids growing either).
-- [ ] T038 [US2] Add a new step in the `collect` job implementing the
+- [X] T038 [US2] Add a new step in the `collect` job implementing the
       FR-014 name warning: fires only when
       `needs.collect.outputs.resolved-stage-source` is empty AND
       `steps.collect-execution-output.outputs.claude-execution-output-
@@ -322,7 +322,7 @@ unqualified clean bill of health (SC-003).
       (regardless of display name) — T003's 9-stage name-fallback
       coverage already keeps this repository's own reference-named
       cleanup/rebase/pr-conversation runs from triggering it (FR-014a).
-- [ ] T039 [P] [US2] Extend T031's `verify-watchdog-resolved-stage-
+- [X] T039 [P] [US2] Extend T031's `verify-watchdog-resolved-stage-
       consumers.py` (or add a sibling script) with fixture coverage
       proving: the FR-014 warning fires exactly once when the stage is
       unresolved and the execution-output artifact was found; it does not
