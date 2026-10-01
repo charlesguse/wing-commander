@@ -177,7 +177,8 @@ Create these labels (Issues → Labels):
 | `model:opus` | Opt this spec's implementation into `claude-opus-5` |
 | `disposition:confirmed` | **Watchdog precision.** A maintainer applying this to a `pipeline-defect` issue records that the finding was genuine |
 | `disposition:false-positive` | The counterpart: the watchdog's finding was not a real defect |
-| `board:stalled` | Applied by the board loop (`board-loop.yml`) on round-budget exhaustion, a post-push backstop breach, or an already-fixed hand-over — excludes the issue from selection until a human removes the label, the sole condition that re-admits it |
+| `disposition:duplicate` | Applied by the board loop (`board-loop.yml`) at spec-request time, to the originating issue it closes as a duplicate of the spec-request — re-admitted only by a maintainer reopening it once its linked spec-request has closed (FR-006), never by label removal alone |
+| `board:stalled` | Applied by the board loop (`board-loop.yml`) on round-budget exhaustion, a post-push backstop breach, or an already-fixed hand-over — excludes the issue from selection until a human removes the label, the sole condition that re-admits it, except a disposed (`disposition:duplicate`) issue, which is re-admitted only by a maintainer reopening it once its linked spec-request has closed (FR-006) |
 | `board:owned` | Applied by the board loop (`board-loop.yml`) to every pull request it opens, at creation time, marking it as the loop's own (FR-013) — read only by resume's ownership-label fallback (FR-007), never an eligibility input |
 
 `spec:<NNN-slug>` and `stage:stalled` labels are created on the fly by the
@@ -206,6 +207,7 @@ gh label create stage:done      --color 5319E7 --description "Lifecycle complete
 gh label create model:opus      --color D93F0B --description "Use claude-opus-5 for implementation"
 gh label create disposition:confirmed      --color 0E8A16 --description "Watchdog finding confirmed genuine by a maintainer"
 gh label create disposition:false-positive --color B60205 --description "Watchdog finding judged a false positive by a maintainer"
+gh label create disposition:duplicate      --color B60205 --description "Board loop: this issue was closed as a duplicate of the spec-request routed for it"
 gh label create board:stalled               --color B60205 --description "Board loop hand-over: a human decision is needed before this item resumes"
 gh label create board:owned                 --color 0E8A16 --description "Board loop: this PR was opened by board-loop.yml"
 ```

@@ -2,7 +2,8 @@
   "issue": 791,
   "spec_dir": "specs/108-routed-original-disposition",
   "feature_num": "108",
-  "stage": "spec",
-  "iteration": 0,
-  "spec_branch": null
+  "stage": "review",
+  "iteration": 4,
+  "spec_branch": "spec/108-routed-original-disposition",
+  "pending_re_review_from": []
 }

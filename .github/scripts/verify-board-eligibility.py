@@ -126,6 +126,10 @@ IN_FLIGHT_CASES = {
     "breach-pr-open",
     "breach-pr-closed",
     "directed-proof-in-flight",
+    "duplicate-readmitted-spec-closed",
+    "duplicate-not-readmitted-spec-open",
+    "duplicate-closed-issue-not-admitted",
+    "duplicate-readmitted-then-reworked",
 }
 
 # (name, replacement for board_item_marker.is_loop_marker_author)
@@ -190,10 +194,19 @@ def run_in_flight_cases():
             int(number): state
             for number, state in _load(pr_state_path).items()
         }
+        # spec 108 (contracts/eligibility-and-readmission-delta.md): optional
+        # per case, like main()'s own tolerant-default stdin key -- most
+        # cases carry no disposition:duplicate issue at all and need none.
+        spec_request_state_path = os.path.join(case_dir, "spec_request_state_by_number.json")
+        spec_request_state_by_number = (
+            {int(number): state for number, state in _load(spec_request_state_path).items()}
+            if os.path.isfile(spec_request_state_path) else {}
+        )
         expected = _load(expected_path)
 
         issue_number, multiple_found = in_flight_candidate(
-            open_issues, comments_by_issue, pr_state_by_number, BOT_LOGIN)
+            open_issues, comments_by_issue, pr_state_by_number, BOT_LOGIN,
+            spec_request_state_by_number)
         got = {"issue_number": issue_number, "multiple_found": multiple_found}
         expected_in_flight = {
             "issue_number": expected.get("issue_number"),
@@ -219,7 +232,8 @@ def run_in_flight_cases():
                 for number, events in _load(labeled_events_path).items()
             }
             selected = select(open_issues, labeled_events_by_issue,
-                               comments_by_issue, pr_state_by_number, BOT_LOGIN)
+                               comments_by_issue, pr_state_by_number, BOT_LOGIN,
+                               spec_request_state_by_number)
             expected_selected = expected["select_issue_number"]
             if selected != expected_selected:
                 failures += 1

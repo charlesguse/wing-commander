@@ -4,7 +4,8 @@
 
 | Label | Added to | Applied when | Cleared by |
 |---|---|---|---|
-| `board:stalled` | `docs/setup.md`'s manual label table (research.md D22) | round-budget exhaustion (FR-030), post-push backstop breach (FR-021), already-fixed hand-over (FR-012) | a human removing the label — the sole condition FR-010 reads for re-eligibility |
+| `board:stalled` | `docs/setup.md`'s manual label table (research.md D22) | round-budget exhaustion (FR-030), post-push backstop breach (FR-021), already-fixed hand-over (FR-012) | a human removing the label — the sole condition FR-010 reads for re-eligibility, except a disposed (`disposition:duplicate`) issue, which is re-admitted only by a maintainer reopening it once its linked spec-request has closed (spec 108, FR-006) |
+| `disposition:duplicate` | `docs/setup.md`'s manual label table (spec 108, research.md D1) | a spec-request is filed for this issue (FR-001/FR-002) | never programmatically — re-admission is the eligibility carve-out above, not a label clear |
 
 No `.github/labels.yml` or other machine-readable label config is
 introduced — this repository documents labels manually today, and this
@@ -21,6 +22,7 @@ reuses:
 |---|---|
 | Fix PR | `Fix opened` |
 | `spec-request` spin-off | `Routed to spec-request` |
+| Reciprocal spec-request link | `Filed for the routed original` |
 | Out-of-scope review-finding issue | `Found by the code review of #<PR>` |
 | Prove-step re-drive | `Re-driven to prove the fix` |
 
