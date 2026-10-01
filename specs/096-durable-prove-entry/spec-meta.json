@@ -2,7 +2,8 @@
   "issue": 723,
   "spec_dir": "specs/096-durable-prove-entry",
   "feature_num": "096",
-  "stage": "implement",
+  "stage": "review",
   "iteration": 2,
-  "spec_branch": "spec/096-durable-prove-entry"
+  "spec_branch": "spec/096-durable-prove-entry",
+  "pending_re_review_from": []
 }
