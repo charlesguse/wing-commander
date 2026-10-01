@@ -41,8 +41,12 @@ SYS_PATH_SCRIPTS_RE = re.compile(
 SCRIPT_IMPORT_RE = re.compile(r"^\s*(?:from (\w+) import|import (\w+))\b", re.MULTILINE)
 # A bare script path (e.g. `python3 .github/scripts/board_stand_down.py`) --
 # unambiguous regardless of import style, so it needs no sys.path.insert
-# guard.
-SCRIPT_PATH_RE = re.compile(r"\.github/scripts/(\w+)\.py")
+# guard. specs/097-recorded-stop-point T007/D8: a composite's own `run:`
+# step may instead invoke the script straight from the pristine snapshot
+# (`python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_stop_check.py"`),
+# equally unambiguous and equally needing no sys.path.insert guard -- the
+# second alternative matches that path shape regardless of quoting.
+SCRIPT_PATH_RE = re.compile(r"\.github/scripts/(\w+)\.py|wc-pristine/scripts/(\w+)\.py")
 DIRECTED_GROUP = "wing-commander-board-loop-directed-proof"
 ORDINARY_GROUP = "wing-commander-board-loop"
 
@@ -124,9 +128,12 @@ def _resolve_script_imports(text):
     otherwise invisible to this scan."""
     resolved = set()
     # A bare script path (`python3 .github/scripts/X.py`) -- unambiguous
-    # regardless of import style, e.g. board_stand_down.py's own call site.
+    # regardless of import style, e.g. board_stand_down.py's own call site --
+    # or the pristine-snapshot equivalent (`$RUNNER_TEMP/wc-pristine/
+    # scripts/X.py`, specs/097-recorded-stop-point T007/D8).
     for match in SCRIPT_PATH_RE.finditer(text):
-        candidate = "{0}/{1}.py".format(SCRIPTS_DIR, match.group(1))
+        name = match.group(1) or match.group(2)
+        candidate = "{0}/{1}.py".format(SCRIPTS_DIR, name)
         if os.path.isfile(candidate):
             resolved.add(candidate)
     # The sys.path.insert(0, ".github/scripts") + `from X import Y`/

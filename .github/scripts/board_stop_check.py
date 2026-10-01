@@ -223,13 +223,88 @@ def find_stop_request(comments, current_run_id, bot_login):
     return StopDecision(True, last_other_run_id)
 
 
+def find_stop_command_comment(comments, bot_login):
+    """As find_stop_request()'s own stop-detection loop, but returns the
+    WINNING comment itself rather than a bare boolean (specs/097-recorded-
+    stop-point, research.md D2). Recomputes the same baseline
+    find_stop_request() computes -- the newest is_loop_marker_author()
+    comment's last_run_match() -- then returns the LAST comment at or after
+    that baseline where `author_association in MAINTAINER_ASSOCIATIONS and
+    is_stop_command(body)`, or None when none exists.
+
+    Invariant (Gate 128 checks this over Gate 87's own fixture corpus):
+    `find_stop_request(comments, run_id, bot_login).stand_down ==
+    (find_stop_command_comment(comments, bot_login) is not None)` for every
+    input -- the two functions must never disagree on whether a comment
+    won. This function does not itself decide the baseline differently;
+    it is a deliberate, independently-testable duplicate of the same ~10
+    lines (research.md D1), not a refactor of find_stop_request() into a
+    shared helper -- that function's own StopDecision contract and Gate 87's
+    mutation coverage of it stay untouched."""
+    ordered = sorted(comments or [], key=lambda c: c.get("created_at") or "")
+
+    baseline = ""
+    for comment in ordered:
+        if not is_loop_marker_author(comment, bot_login):
+            continue
+        match = last_run_match(comment.get("body"))
+        if not match:
+            continue
+        baseline = comment.get("created_at") or baseline
+
+    winner = None
+    for comment in ordered:
+        if (comment.get("created_at") or "") < baseline:
+            continue
+        if (comment.get("author_association") in MAINTAINER_ASSOCIATIONS
+                and is_stop_command(comment.get("body"))):
+            winner = comment
+
+    return winner
+
+
+def stop_command_reason(body):
+    """The free text the maintainer wrote after the stop command token on
+    its own line -- "" when the stop command carried no reason (e.g. a bare
+    `stop.`), reusing the same `_command_line()`/STOP_COMMAND_RE is_stop_
+    command() itself matches against (research.md D2)."""
+    line = _command_line(body)
+    if not line:
+        return ""
+    match = STOP_COMMAND_RE.match(line)
+    if not match:
+        return ""
+    return line[match.end():].strip()
+
+
 def main():
     """Reads {"comments": [...], "current_run_id": "...", "bot_login": "..."}
     from stdin, prints exactly one line of JSON on success --
     {"stand_down": <bool>, "cancel_run_id": <string> | null} -- the
     StopDecision two-fact contract find_stop_request() documents. A
     malformed payload raises inside json.load/dict access, writing a
-    traceback to stderr and exiting non-zero with nothing on stdout."""
+    traceback to stderr and exiting non-zero with nothing on stdout.
+
+    `--stop-comment` (specs/097-recorded-stop-point, FR-018): reads
+    {"comments": [...], "bot_login": "..."} instead, and prints the winning
+    stop-command comment's identity -- {"html_url", "login", "created_at",
+    "reason"} -- or {} when find_stop_command_comment() finds none. The one
+    home for this read so the composite's own `run:` shell never re-derives
+    the match/authorization rule itself."""
+    if len(sys.argv) > 1 and sys.argv[1] == "--stop-comment":
+        payload = json.load(sys.stdin)
+        comment = find_stop_command_comment(payload.get("comments") or [], payload.get("bot_login"))
+        if comment is None:
+            print(json.dumps({}))
+            return
+        print(json.dumps({
+            "html_url": comment.get("html_url"),
+            "login": (comment.get("user") or {}).get("login"),
+            "created_at": comment.get("created_at"),
+            "reason": stop_command_reason(comment.get("body")),
+        }))
+        return
+
     payload = json.load(sys.stdin)
     decision = find_stop_request(payload.get("comments") or [], payload.get("current_run_id"),
                                   payload.get("bot_login"))

@@ -1866,6 +1866,8 @@ jobs:
           bot-login: ${{ steps.ctx.outputs.bot-slug }}[bot]
           issue-number: ${{ needs.select.outputs.issue-number || inputs.directed-issue }}
           initial-paused: ${{ vars.WING_COMMANDER_BOARD_LOOP_PAUSED == 'true' }}
+          marker-branch: ${{ needs.select.outputs.branch }}
+          marker-base-sha: ${{ needs.select.outputs.base-sha }}
 
       - name: Decide the triage verdict
         id: decide
@@ -2303,6 +2305,8 @@ jobs:
           bot-login: ${{ steps.ctx.outputs.bot-slug }}[bot]
           issue-number: ${{ needs.select.outputs.issue-number }}
           initial-paused: ${{ vars.WING_COMMANDER_BOARD_LOOP_PAUSED == 'true' }}
+          marker-branch: ${{ needs.select.outputs.branch }}
+          marker-base-sha: ${{ needs.select.outputs.base-sha }}
 
       - name: Decide the route
         id: decide
@@ -2902,6 +2906,8 @@ jobs:
           bot-login: ${{ steps.ctx.outputs.bot-slug }}[bot]
           issue-number: ${{ needs.select.outputs.issue-number }}
           initial-paused: ${{ vars.WING_COMMANDER_BOARD_LOOP_PAUSED == 'true' }}
+          marker-branch: ${{ needs.select.outputs.branch }}
+          marker-base-sha: ${{ needs.select.outputs.base-sha }}
 
       # FR-026/research.md D9: push only on green, then cross-link.
       - name: Push and open the PR
@@ -3891,6 +3897,8 @@ jobs:
           bot-login: ${{ steps.ctx.outputs.bot-slug }}[bot]
           issue-number: ${{ needs.select.outputs.issue-number || inputs.directed-issue }}
           initial-paused: ${{ vars.WING_COMMANDER_BOARD_LOOP_PAUSED == 'true' }}
+          marker-branch: ${{ needs.select.outputs.branch }}
+          marker-base-sha: ${{ needs.select.outputs.base-sha }}
 
       # T042/T044/FR-030/FR-031: zero open in-scope findings advances to
       # readiness; findings remain and the round budget (research.md D18,
@@ -4395,6 +4403,8 @@ jobs:
           bot-login: ${{ steps.ctx.outputs.bot-slug }}[bot]
           issue-number: ${{ needs.select.outputs.issue-number || inputs.directed-issue }}
           initial-paused: ${{ vars.WING_COMMANDER_BOARD_LOOP_PAUSED == 'true' }}
+          marker-branch: ${{ needs.select.outputs.branch }}
+          marker-base-sha: ${{ needs.select.outputs.base-sha }}
 
       # FR-052: the stop point is recorded; nothing durable is written.
       - name: Record the stand-down (readiness)
