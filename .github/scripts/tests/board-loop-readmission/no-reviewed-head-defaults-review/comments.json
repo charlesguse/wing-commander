@@ -1,0 +1,12 @@
+[
+  {
+    "created_at": "2026-01-01T00:00:00Z",
+    "body": "Review round 3 on PR #42 could not be read -- the reviewer did not return a parseable findings block. Treating this as inconclusive, never as a clean review. The PR is left open, unmerged, pending a maintainer look. Removing board:stalled is the sole re-eligibility condition.\n\n<!-- wing-commander-board-item: {\"step\": \"stalled\"} -->",
+    "user": {"login": "wing-commander-bot[bot]", "type": "Bot"}
+  },
+  {
+    "created_at": "2026-01-01T01:00:00Z",
+    "body": "Review round 4 on PR #42 returned no valid in-scope finding, but dropped 1 malformed finding(s) that may have been in scope. Treating this as inconclusive, never as a clean review.\n\n<!-- wing-commander-board-item: {\"step\": \"stalled\"} -->",
+    "user": {"login": "wing-commander-bot[bot]", "type": "Bot"}
+  }
+]

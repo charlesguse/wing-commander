@@ -4780,6 +4780,31 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-closed-without-landing.py --self-test
 
+      # Gate 134 — specs/100-stalled-item-re-admission FR-006/FR-006b: every
+      # stall site posts a marker with no pr (#604), so a maintainer who
+      # removes board:stalled always reaches resume's board:owned fallback
+      # (clause 2), which used to resolve unconditionally to review (#530's
+      # breach carve-out aside). head_moved_since_last_review()
+      # (board_item_marker.py) now decides review vs. readiness by whether
+      # the PR's head SHA differs from the SHA its loop's own last
+      # *converged* review verdict recorded (never a budget-spent or
+      # inconclusive one); this gate pins the function's own fixture-driven
+      # decision branches, that clause 2 still calls it (reverting to the
+      # old unconditional form fails by name), that a breach marker is
+      # never affected (#530), that a re-admitted item starts review at
+      # round 0 (FR-009), that none of the stall sites carries
+      # continue-on-error (FR-010), and that each records a
+      # GITHUB_STEP_SUMMARY line (FR-011). Numbered 134, not the 128 this
+      # branch's own commit last picked: spec 074 (#821) already holds
+      # Gate 128 on `main` (maintainer review of #885; #660 tracks the
+      # cross-branch allocation problem).
+      - name: "Gate 134 — resume's board:owned fallback resolves review vs. readiness from whether the PR's head moved since the last converged review, never unconditionally"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-board-loop-readmission.py
+      - name: "Gate 134 self-test — clause 2 reverted to the pre-FR-006 unconditional review form is detected"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-board-loop-readmission.py --self-test
+
       # Gate 114 — specs/066-fine-grained-maintainer-token FR-017/FR-018: "a
       # classic PAT, not fine-grained" was asserted in at least four places
       # (docs/setup.md, auto-release.yml's credential-step comment, Gate

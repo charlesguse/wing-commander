@@ -927,7 +927,8 @@ jobs:
           # is never left empty. Reuses board_eligibility.py's own
           # PRE_FIX_STEPS/FIX_OR_LATER_STEPS rather than a second,
           # parallel step-vocabulary list.
-          step_resolution_json="$(MARKER_STEP="$marker_step" MARKER_JSON="$marker_json" BRANCH="$branch" \
+          step_resolution_json="$(COMMENTS_PATH="$RUNNER_TEMP/board-issue-comments.json" \
+              MARKER_STEP="$marker_step" MARKER_JSON="$marker_json" BRANCH="$branch" \
               MARKER_PR="$marker_pr" PR_FROM_MARKER="$pr_from_marker" PR_FROM_FALLBACK="$pr_from_fallback" PR_OWNED="$pr_owned" \
               PR_STATE="$pr_state" PR_NUMBER="$pr_number" MARKER_ROUND="$marker_round" \
               MARKER_BASE_SHA="$marker_base_sha" python3 - <<'PYEOF'
@@ -937,7 +938,7 @@ jobs:
 
           sys.path.insert(0, ".github/scripts")
           from board_eligibility import PRE_FIX_STEPS, FIX_OR_LATER_STEPS, AWAITING_MERGE_STEP, BREACH_STEP
-          from board_item_marker import is_loop_branch
+          from board_item_marker import STALLED_STEP, head_moved_since_last_review, is_loop_branch
 
           marker_step = os.environ.get("MARKER_STEP") or None
           branch = os.environ.get("BRANCH") or ""
@@ -1050,9 +1051,29 @@ jobs:
               round_ = "0"
               base_sha = ""
           elif pr_from_fallback:
-              # #530: a breach marker whose own PR did not resolve still
-              # never reviews the PR the fallback finds.
-              step = BREACH_STEP if marker_step == BREACH_STEP else "review"
+              if marker_step == BREACH_STEP:
+                  # #530: a breach marker whose own PR did not resolve
+                  # still never reviews the PR the fallback finds.
+                  step = BREACH_STEP
+              else:
+                  # FR-006/FR-006b (contracts/resume-recovery-readmission.md
+                  # "Amended clause 2", folded into specs/061's
+                  # resume-recovery.md clause 2): a label-removed stalled
+                  # item recovered via the board:owned fallback resumes at
+                  # review when the PR's head has moved since the loop's
+                  # own last *converged* review verdict (or none is
+                  # resolvable -- a budget-spent verdict never counts,
+                  # maintainer review of #885), at readiness when it has
+                  # not.
+                  with open(os.environ["COMMENTS_PATH"], encoding="utf-8") as fh:
+                      comments = json.load(fh)
+                  moved = head_moved_since_last_review(pr_number, comments, os.environ.get("BOT_LOGIN") or "")
+                  step = "review" if moved else "readiness"
+                  readmission = "re-admitted from a stall -- " if marker_step == STALLED_STEP else ""
+                  note = "{0}recovered pr {1} resolved to {2} -- {3} (FR-006b)".format(
+                      readmission, pr_number, step,
+                      "the head moved since the last converged review (or no converged review was resolvable)"
+                      if moved else "the head had not moved since the last converged review")
           elif branch:
               step = "fix"
           else:
@@ -1064,7 +1085,15 @@ jobs:
                   # leak into a fresh triage (branch is already empty here
                   # -- the `elif branch:` clause above would have matched
                   # otherwise -- but round/base-sha are cleared explicitly).
-                  reason = "stale marker -- recorded branch/pr could not be re-derived live"
+                  if marker_step == STALLED_STEP:
+                      # Every stall site's marker is pr=None (research.md
+                      # D1), so a stalled item with no open board:owned PR
+                      # to recover reaches here by design, not by decay --
+                      # never describe this as a "stale marker" (maintainer
+                      # review of #885).
+                      reason = "re-admitted from a stall -- no open board:owned pull request citing this issue; starting a fresh triage"
+                  else:
+                      reason = "stale marker -- recorded branch/pr could not be re-derived live"
                   round_ = "0"
                   base_sha = ""
 
@@ -1672,6 +1701,16 @@ jobs:
           [ "$marker_step" = "stalled" ] && stall_args=(--issue "$ISSUE_NUMBER" --add-label "board:stalled")
           marker="$(python3 .github/scripts/board_item_marker.py --step "$marker_step" "${stall_args[@]}")" \
             || { echo "::error::board-loop triage ($outcome): could not render the step=$marker_step marker for issue #$ISSUE_NUMBER -- nothing is posted, so a later run re-triages it (#604)."; exit 1; }
+          # FR-011: every successful stall records what stalled and from
+          # where, whether this attempt is a first try or an FR-002 retry
+          # of a prior failed label-add (the loop carries no separate state
+          # to distinguish those two cases). The one canonical run-summary
+          # line (CLAUDE.md single-home rule) lives in
+          # board_item_marker.record_stall_summary(), called via
+          # `--record-stall-summary --issue N --from-step <name>` by every
+          # stall site below right after its own stalled-marker comment
+          # actually posts -- never before, so a failed post never leaves
+          # a false claim already written to the summary.
 
           case "$outcome" in
             closed)
@@ -1690,7 +1729,9 @@ jobs:
               body="$(printf 'Triage read a proposal that this issue is already fixed on main, and is handing it to a maintainer rather than closing it itself (FR-012):\n\n%s\n\n%s' \
                 "$evidence" "$marker")"
               [ -n "$DIRECTED_ATTRIBUTION" ] && body="$(printf '%s\n\n%s' "$DIRECTED_ATTRIBUTION" "$body")"
-              gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$body"
+              gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$body" \
+                || { echo "::error::board-loop triage (handover): board:stalled was applied to issue #$ISSUE_NUMBER but the stalled-marker comment could not be posted."; exit 1; }
+              python3 .github/scripts/board_item_marker.py --record-stall-summary --issue "$ISSUE_NUMBER" --from-step "triage (handover)"
               ;;
             proceed)
               # An unsupported close proposal is the agent's own reasoning
@@ -2194,7 +2235,9 @@ jobs:
           paths="$(jq -r '.decision.measured.workflow_paths // [] | map(select(test("^[A-Za-z0-9._/-]{1,200}$"))) | map("`" + . + "`") | join(", ")' "$RUNNER_TEMP/board-route-decision.json")"
           marker="$(python3 .github/scripts/board_item_marker.py --step stalled --issue "$ISSUE_NUMBER" --add-label "board:stalled")" \
             || { echo "::error::board-loop route (workflow-scope hold): board:stalled could not be added to issue #$ISSUE_NUMBER -- no stalled marker is posted (#604)."; exit 1; }
-          gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Route found this fix-shaped, but its change edits %s, and this loop cannot push a workflow file (the App holds no Workflows permission). Held for a maintainer: fix it from a session whose token has the `workflow` scope, or grant the App Workflows (read and write) and set `WING_COMMANDER_BOARD_CAN_PUSH_WORKFLOWS` to `true`. Removing board:stalled is the sole re-eligibility condition.\n\n%s' "${paths:-a workflow file}" "$marker")"
+          gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Route found this fix-shaped, but its change edits %s, and this loop cannot push a workflow file (the App holds no Workflows permission). Held for a maintainer: fix it from a session whose token has the `workflow` scope, or grant the App Workflows (read and write) and set `WING_COMMANDER_BOARD_CAN_PUSH_WORKFLOWS` to `true`. Removing board:stalled is the sole re-eligibility condition.\n\n%s' "${paths:-a workflow file}" "$marker")" \
+            || { echo "::error::board-loop route (workflow-scope hold): board:stalled was applied to issue #$ISSUE_NUMBER but the stalled-marker comment could not be posted."; exit 1; }
+          python3 .github/scripts/board_item_marker.py --record-stall-summary --issue "$ISSUE_NUMBER" --from-step "route (workflow-scope hold)"
 
       # research.md D9: every artifact this loop spins off outside the
       # originating issue is cross-linked through this one composite
@@ -2564,12 +2607,15 @@ jobs:
           # #604: board:stalled before the stalled marker -- see board_item_marker.py.
           marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step stalled --branch "$FIX_BRANCH" --base-sha "$BASE_SHA" --issue "$ISSUE_NUMBER" --add-label "board:stalled")" \
             || { echo "::error::board-loop fix (gate suite red): board:stalled could not be added to issue #$ISSUE_NUMBER -- no stalled marker is posted (#604)."; exit 1; }
+          # FR-011 -- see triage's own comment on this idiom above.
           # #580: the failing line comes from the gate suite on the fixer
           # agent's own branch, so it is posted inside a fence
           # (fenced_section(), #562's one fencing helper).
           failure="$(python3 -I -c "import os, sys; sys.path.insert(0, os.path.join(os.environ['RUNNER_TEMP'], 'wc-pristine', 'scripts')); from board_spec_request_body import fenced_section; print(fenced_section('First failing gate (gate suite output, shown as text):', os.environ['FIRST_FAILURE'], 4000))")" \
             || failure="(the failing gate could not be rendered)"
-          gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'The fixer'"'"'s branch failed the local gate suite before any push -- nothing was pushed, no PR was opened:\n\n%s\n\n%s' "$failure" "$marker")"
+          gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'The fixer'"'"'s branch failed the local gate suite before any push -- nothing was pushed, no PR was opened:\n\n%s\n\n%s' "$failure" "$marker")" \
+            || { echo "::error::board-loop fix (gate suite red): board:stalled was applied to issue #$ISSUE_NUMBER but the stalled-marker comment could not be posted."; exit 1; }
+          python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --record-stall-summary --issue "$ISSUE_NUMBER" --from-step "fix (gate suite red)"
 
       - name: Re-check kill switch and stop requests before any durable action
         id: killswitch-recheck
@@ -2606,6 +2652,7 @@ jobs:
             marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step stalled --branch "$BRANCH" --base-sha "$BASE_SHA" --issue "$ISSUE_NUMBER" --add-label "board:stalled")" \
               || { echo "::error::board-loop fix (workflow-scope hold): board:stalled could not be added to issue #$ISSUE_NUMBER -- no stalled marker is posted (#604)."; exit 1; }
             gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'The fix for this issue changes a file under `.github/workflows/`, which this loop cannot push (the App holds no Workflows permission). Nothing was pushed; the work is on no branch. Held for a maintainer: fix it from a session whose token has the `workflow` scope, or grant the App Workflows (read and write) and set `WING_COMMANDER_BOARD_CAN_PUSH_WORKFLOWS` to `true`. Removing board:stalled is the sole re-eligibility condition.\n\n%s' "$marker")"
+            python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --record-stall-summary --issue "$ISSUE_NUMBER" --from-step "fix (workflow-scope hold)"
             echo "board-loop: issue #$ISSUE_NUMBER -- the fixer's change touches .github/workflows/, held for a maintainer instead of pushed." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
@@ -2948,12 +2995,18 @@ jobs:
       # onto the PR's own branch here is a plain git fetch/checkout instead
       # of a second checkout action.
       - name: Checkout the PR branch
+        id: checkout-pr
         env:
           BRANCH: ${{ steps.pr.outputs.branch }}
         run: |
           set -uo pipefail
           git fetch --no-tags --quiet origin "$BRANCH"
           git checkout --quiet -B "$BRANCH" FETCH_HEAD
+          # FR-006b (contracts/resume-recovery.md clause 2b): the exact
+          # commit this round reviews, recorded on a converged verdict
+          # comment so a later resume can compare SHAs directly rather
+          # than trusting a commit timestamp (maintainer review of #885).
+          echo "head-sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       # #488: see wing-commander-board-labels; continue-on-error so a
       # missed create cannot block the review round's own outcome step.
@@ -3627,13 +3680,18 @@ jobs:
           OUTCOME: ${{ steps.round.outputs.outcome }}
           STALL_REASON: ${{ steps.round.outputs.stall-reason }}
           DROPPED_COUNT: ${{ steps.extract.outputs.dropped-count }}
+          HEAD_SHA: ${{ steps.checkout-pr.outputs.head-sha }}
         run: |
           set -uo pipefail
           # #604: every stall below adds board:stalled before its marker --
           # see board_item_marker.py.
           if [ "$OUTCOME" = "converged" ]; then
+            # FR-006b (contracts/resume-recovery.md clause 2b): the head
+            # SHA this round reviewed is recorded on the comment itself so
+            # a later resume's head_moved_since_last_review() can compare
+            # SHAs directly -- see board_item_marker.py.
             marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step readiness --pr "$PR_NUMBER" --branch "$BRANCH")"
-            gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Review round %s converged -- zero open in-scope findings on PR #%s. Proceeding to readiness.\n\n%s' "$ROUND" "$PR_NUMBER" "$marker")"
+            gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Review round %s converged -- zero open in-scope findings on PR #%s (head %s). Proceeding to readiness.\n\n%s' "$ROUND" "$PR_NUMBER" "$HEAD_SHA" "$marker")"
           elif [ "$STALL_REASON" = "parse-failed" ]; then
             # SF1/#499: distinct from the budget-spent message below -- this
             # round never produced a trustworthy findings list at all, so
@@ -3641,12 +3699,21 @@ jobs:
             # be none, or the reviewer may not have run to completion).
             marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step stalled --issue "$ISSUE_NUMBER" --add-label "board:stalled")" \
               || { echo "::error::board-loop review ($STALL_REASON): board:stalled could not be added to issue #$ISSUE_NUMBER -- no stalled marker is posted (#604)."; exit 1; }
-            gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Review round %s on PR #%s could not be read -- the reviewer did not return a parseable findings block. Treating this as inconclusive, never as a clean review. The PR is left open, unmerged, pending a maintainer look. Removing board:stalled is the sole re-eligibility condition.\n\n%s' "$ROUND" "$PR_NUMBER" "$marker")"
+            # FR-011: the run-summary line is recorded only after the
+            # comment below actually posts -- see triage's own comment on
+            # this idiom above (its canonical home is
+            # board_item_marker.record_stall_summary()).
+            gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Review round %s on PR #%s could not be read -- the reviewer did not return a parseable findings block. Treating this as inconclusive, never as a clean review. The PR is left open, unmerged, pending a maintainer look. Removing board:stalled is the sole re-eligibility condition.\n\n%s' "$ROUND" "$PR_NUMBER" "$marker")" \
+              || { echo "::error::board-loop review ($STALL_REASON): board:stalled was applied to issue #$ISSUE_NUMBER but the stalled-marker comment could not be posted."; exit 1; }
+            python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --record-stall-summary --issue "$ISSUE_NUMBER" --from-step "review ($STALL_REASON)"
           elif [ "$STALL_REASON" = "malformed-findings" ]; then
             # #583: see "Decide the round outcome".
             marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step stalled --issue "$ISSUE_NUMBER" --add-label "board:stalled")" \
               || { echo "::error::board-loop review ($STALL_REASON): board:stalled could not be added to issue #$ISSUE_NUMBER -- no stalled marker is posted (#604)."; exit 1; }
-            gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Review round %s on PR #%s returned no valid in-scope finding, but dropped %s malformed finding(s) that may have been in scope. Treating this as inconclusive, never as a clean review. The PR is left open, unmerged, pending a maintainer look. Removing board:stalled is the sole re-eligibility condition.\n\n%s' "$ROUND" "$PR_NUMBER" "${DROPPED_COUNT:-an unknown number of}" "$marker")"
+            # FR-011 -- see triage's own comment on this idiom above.
+            gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Review round %s on PR #%s returned no valid in-scope finding, but dropped %s malformed finding(s) that may have been in scope. Treating this as inconclusive, never as a clean review. The PR is left open, unmerged, pending a maintainer look. Removing board:stalled is the sole re-eligibility condition.\n\n%s' "$ROUND" "$PR_NUMBER" "${DROPPED_COUNT:-an unknown number of}" "$marker")" \
+              || { echo "::error::board-loop review ($STALL_REASON): board:stalled was applied to issue #$ISSUE_NUMBER but the stalled-marker comment could not be posted."; exit 1; }
+            python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --record-stall-summary --issue "$ISSUE_NUMBER" --from-step "review ($STALL_REASON)"
           else
             # #580: the titles are the reviewer agent's own text -- fenced,
             # as in "Compose the review body" above.
@@ -3654,7 +3721,10 @@ jobs:
               || remaining="(the open findings could not be rendered)"
             marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step stalled --issue "$ISSUE_NUMBER" --add-label "board:stalled")" \
               || { echo "::error::board-loop review ($STALL_REASON): board:stalled could not be added to issue #$ISSUE_NUMBER -- no stalled marker is posted (#604)."; exit 1; }
-            gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Review round budget (%s) spent on PR #%s with in-scope findings still open. The PR is left open, unmerged. Removing board:stalled is the sole re-eligibility condition.\n\n%s\n\n%s' "$ROUND_BUDGET" "$PR_NUMBER" "$remaining" "$marker")"
+            # FR-011 -- see triage's own comment on this idiom above.
+            gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Review round budget (%s) spent on PR #%s with in-scope findings still open. The PR is left open, unmerged. Removing board:stalled is the sole re-eligibility condition.\n\n%s\n\n%s' "$ROUND_BUDGET" "$PR_NUMBER" "$remaining" "$marker")" \
+              || { echo "::error::board-loop review ($STALL_REASON): board:stalled was applied to issue #$ISSUE_NUMBER but the stalled-marker comment could not be posted."; exit 1; }
+            python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --record-stall-summary --issue "$ISSUE_NUMBER" --from-step "review (round budget spent)"
           fi
 
       - name: Compose tool args (review-fixup)

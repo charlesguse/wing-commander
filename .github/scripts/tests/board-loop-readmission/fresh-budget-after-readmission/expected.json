@@ -1,0 +1,7 @@
+{
+  "step": "review",
+  "round": "0",
+  "pr_number": "42",
+  "recovered_via_fallback": true,
+  "note": "re-admitted from a stall -- recovered pr 42 resolved to review -- the head moved since the last converged review (or no converged review was resolvable) (FR-006b)"
+}

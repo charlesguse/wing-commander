@@ -1,0 +1,8 @@
+{
+  "step": "triage",
+  "pr_number": "",
+  "branch": "",
+  "round": "0",
+  "recovered_via_fallback": false,
+  "disqualified_reason": "re-admitted from a stall -- no open board:owned pull request citing this issue; starting a fresh triage"
+}

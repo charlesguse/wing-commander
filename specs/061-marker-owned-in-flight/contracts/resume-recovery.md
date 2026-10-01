@@ -114,14 +114,44 @@ fires only when the ones above it don't apply:
    budget instead of 0.)
 
 2. No marker-named pr resolved, but the FR-007 fallback recovers an open
-   board:owned pr citing this issue
-     -> step = "review" (matches contracts/fix-step.md's own guard
+   board:owned pr citing this issue:
+
+   a. (#530) The marker's step is breach (a post-push breach whose
+      spec-request is not yet filed)
+        -> step = "breach", unconditional -- the review/readiness split
+           below never applies to a breach marker. A PR the size check
+           rejected is never reviewed, whichever lookup found it.
+
+   b. Otherwise (spec 100 FR-006/FR-006a/FR-006b -- a label-removed
+      stalled item always reaches this clause, since every stall site's
+      marker is pr=None): compute `head_moved_since_last_review(pr_number,
+      comments, bot_login)` (`board_item_marker.py`) -- whether the PR's
+      live head SHA differs from the SHA the loop's own most recent
+      *converged* review-round verdict comment recorded for that PR.
+      Only the converged wording counts: a budget-spent verdict means
+      review never finished clearing the PR's findings, so (maintainer
+      review of #885) it must never be treated as a baseline a later,
+      unmoved head could satisfy -- it is excluded exactly like the
+      inconclusive parse-failed/malformed-findings wording, both of which
+      count as no verdict at all:
+
+      - `True` (moved -- including when no converged head is resolvable
+        at all: no review ever covered this PR, the stall came from
+        review's budget-spent, parse-failed, or malformed-findings arm,
+        or the live lookup itself failed) -> step = "review", with a
+        fresh round budget (matches contracts/fix-step.md's own guard
         language: "resumes at whatever step the existing PR's state
-        implies"), and the run records that this pr was recovered via the
-        label fallback, not a marker (FR-014).
-   (#530) Except when the marker's step is breach (a post-push breach
-   whose spec-request is not yet filed): step = "breach" instead. A PR
-   the size check rejected is never reviewed, whichever lookup found it.
+        implies"). A re-admitted item resuming at review starts with
+        `round == 0`, the same starting value a freshly selected item
+        gets, because every stall site's marker call omits `--round`.
+
+      - `False` (a converged head was established, and the PR's live
+        head SHA is that same commit) -> step = "readiness", so nothing
+        already reviewed is re-reviewed.
+
+      Either way, the run records that this pr was recovered via the
+      label fallback, not a marker (FR-014), and additionally which of
+      review/readiness was resolved and why (FR-011).
 
 3. No pr resolved by clause 1 or 2, but a branch is re-derived
    (`git ls-remote` finds it)
@@ -154,11 +184,19 @@ live state, not the marker's say-so, decides which clause applies.
 |---|---|
 | US2 AS1 (marker + live branch + live PR) | step-resolution clause 1 (fix-or-later, PR OPEN) → marker's own step |
 | US2 AS2 (no marker, no board:owned PR) | PR recovery finds nothing, no branch either → step-resolution clause 4 → triage |
-| US2 AS3 (no marker, board:owned PR citing issue) | PR recovery step 2 → step-resolution clause 2 → review, FR-014 recorded |
+| US2 AS3 (no marker, board:owned PR citing issue) | PR recovery step 2 → step-resolution clause 2b → review or readiness (`head_moved_since_last_review`, spec 100 FR-006b), FR-014 recorded |
 | US2 AS4 (marker's branch and PR both gone) | branch empty, PR recovery finds nothing (marker PR 404s, no board:owned match) → step-resolution clause 4 → triage |
 | US2 AS5 (marker fix-or-later, PR closed/merged) | clause 1 does not match (PR not OPEN) → clause 4, reason recorded → triage |
 | US2 AS6 (step never empty) | every clause above ends in a named step |
 | #532 (awaiting-merge, PR open or unresolved) | clause 0 → awaiting-merge, no job runs |
 | #532 (awaiting-merge, PR closed/merged, issue open) | clause 1 does not match → clause 4, reason recorded → triage |
-| #530 (breach, PR open: post-push breach whose spec-request create failed) | clause 1 → breach (readiness retries the spec-request, no review); only the fallback finds the PR → clause 2's exception → breach; PR closed/merged → clause 4 → triage |
+| #530 (breach, PR open: post-push breach whose spec-request create failed) | clause 1 → breach (readiness retries the spec-request, no review); only the fallback finds the PR → clause 2a → breach; PR closed/merged → clause 4 → triage |
 | #555 (marker branch not `fix/<issue>-<slug>`, or marker PR not board:owned / from another repository) | foreign marker fields → triage, reason recorded, FR-022 cleared; a foreign PR still OPEN, or an awaiting-merge marker: no-op hold, nothing passed on |
+| spec 100 US3 AS1 (stalled by review's spent budget, PR open, human push since last converged review) | clause 2b, head moved → `review` |
+| spec 100 US3 AS1b (stalled by review's spent budget, PR open, head unchanged since the budget was spent) | clause 2b always resolves a budget-spent verdict to `review` with a fresh round budget, never `readiness` -- a spent budget never finished clearing the PR's findings (FR-006b/SC-004, maintainer review of #885) |
+| spec 100 US3 AS2 (PR open, newest review verdict converged, head SHA unchanged since it) | clause 2b, head unmoved since the converged verdict → `readiness` |
+| spec 100 US3 AS3 (stalled by triage's already-fixed hand-over, no PR ever opened) | clause 2 not reached (no PR from fallback) → falls to clause 4 → `triage` |
+| spec 100 US3 AS4 (any re-admitted item, own PR still open) | clause 2 never resolves to `triage`, so FR-054/FR-008 hold regardless of the 2b split |
+| spec 100 US3 AS5 (re-admitted at `review`, fresh round budget spent again) | clause 2b `review` branch + a fresh round-0 restart |
+| spec 100 FR-006b edge case (no reviewed head resolvable) | clause 2b defaults to `review` |
+| spec 100 FR-006a (label-less stall is always deliberate) | precondition of this whole clause -- see "Marker source" above and FR-001/FR-002 |

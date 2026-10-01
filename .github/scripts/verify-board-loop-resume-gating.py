@@ -862,6 +862,14 @@ def _resume_env(step, marker_pr, pr_from_marker, pr_state, pr_number,
         "PR_STATE": pr_state, "PR_NUMBER": pr_number,
         "MARKER_ROUND": round_, "MARKER_BASE_SHA": base_sha,
         "PR_OWNED": "true" if pr_owned else "false", "ISSUE_NUMBER": "396",
+        # spec 100 FR-006b: clause 2b reads COMMENTS_PATH unconditionally
+        # once pr_from_fallback fires (board_item_marker.
+        # head_moved_since_last_review()'s own comments argument) -- an
+        # empty array here is fine, since none of these cases assert on
+        # review-vs-readiness, only on the three-way step split itself
+        # (that split's own fixtures live under verify-board-loop-
+        # readmission.py's Gate 134).
+        "COMMENTS_PATH": ".github/scripts/tests/board-loop-readmission/no-open-pr-falls-to-triage/comments.json",
     }
 
 
@@ -2094,7 +2102,7 @@ def _mutations(text):
         'board_item_marker.py" --step BREACH_STEP --pr "$PR_NUMBER" --branch "$BRANCH" --base-sha "$BASE_SHA")"',
         'board_item_marker.py" --step review --pr "$PR_NUMBER" --branch "$BRANCH" --base-sha "$BASE_SHA")"')
     sub("resume fallback sends a breach marker to review",
-        'step = BREACH_STEP if marker_step == BREACH_STEP else "review"', 'step = "review"')
+        "              if marker_step == BREACH_STEP:", "              if False:")
     sub("readiness without the step=breach resume branch",
         "        || (needs.select.outputs.step == 'breach' && needs.select.outputs.pr != '')\n", "",
         after="\n  readiness:\n")
