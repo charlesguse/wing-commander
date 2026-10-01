@@ -33,6 +33,16 @@
 # findings-json entry, shaped to .github/schemas/stage-finding.schema.json,
 # is emitted for it.
 #
+# review-gate-round-1 item 2: each no-write-paths entry is normalized to
+# end in exactly one trailing slash before the prefix comparison, and each
+# candidate token has a leading "./" stripped first -- the SAME
+# normalization wing-commander-tool-args/action.yml's compose step applies
+# before building the Edit()/Write() deny glob (`<prefix>/**`), so a
+# no-trailing-slash entry like "specs" cannot over-match "specs-legacy/..."
+# here while enforcement denies only "specs/**", and a tasks.md line
+# written with a leading "./" still classifies instead of silently
+# under-matching and leaving the agent to retry a denied edit forever.
+#
 # Unlike count-tasks-checkboxes.sh, this script never fails the job over a
 # task it cannot confidently classify -- falling through to "ordinary" is
 # a valid, expected outcome (FR-015), not an error condition. Only a
@@ -73,7 +83,21 @@ tasks_path = os.environ["TASKS_PATH"]
 # field this script emits is anchored to tasks_path, per data-model.md.
 _spec_dir = os.environ.get("SPEC_DIR", "")
 
-prefixes = [p.strip() for p in no_write_paths_raw.split(",") if p.strip()]
+def normalize_prefix(prefix):
+    # Mirrors wing-commander-tool-args/action.yml's own glob-prefix
+    # normalization (review-gate-round-1 item 2): exactly one trailing
+    # slash, so "specs" and "specs/" compare identically here, the same
+    # way they both become the "specs/**" deny glob there.
+    return prefix if prefix.endswith("/") else prefix + "/"
+
+
+def normalize_token(token):
+    while token.startswith("./"):
+        token = token[2:]
+    return token
+
+
+prefixes = [normalize_prefix(p.strip()) for p in no_write_paths_raw.split(",") if p.strip()]
 
 TOKEN_RE = re.compile(r"`([^`\s]+)`")
 
@@ -90,7 +114,8 @@ for line in lines:
         continue  # empty boundary -- nothing ever classifies (FR-015)
 
     def out_of_boundary(token):
-        return any(token.startswith(prefix) for prefix in prefixes)
+        normalized = normalize_token(token)
+        return any(normalized.startswith(prefix) for prefix in prefixes)
 
     if not all(out_of_boundary(t) for t in candidates):
         continue  # at least one candidate is in-reach -- falls through

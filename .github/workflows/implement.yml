@@ -3161,6 +3161,7 @@ jobs:
           TRUNCATED: ${{ steps.final.outputs.truncated }}
           TRUNCATED_COUNT: ${{ steps.record-truncation.outputs.count }}
           HANDOFF: ${{ steps.final.outputs.handoff }}
+          ROUTED: ${{ steps.final.outputs.routed }}
           REASON: ${{ steps.final.outputs.reason }}
           TIER: ${{ steps.final.outputs.tier }}
           REMAINING: ${{ steps.final.outputs.remaining }}
@@ -3264,16 +3265,31 @@ jobs:
             else
               echo "Iteration cap ($MAX) reached on a truncated cycle — reported; no next-workflow configured, stopped (standalone mode)." >> "$GITHUB_STEP_SUMMARY"
             fi
-          elif [ "$HANDOFF" = "true" ]; then
+          elif [ "$HANDOFF" = "true" ] || [ "$ROUTED" = "true" ]; then
             # FR-010 (spec 059, User Story 4): a healthy cycle that checked
             # no new task and landed no converge: commit is the loop's
             # natural end — a spec whose only leftovers are human-only work
             # must not grind to the iteration cap. Takes the SAME terminal
             # path the cap-reached branch below takes, regardless of
             # ITERATION vs MAX (research.md D4).
-            post_handoff_remaining_work \
-              "⚠️ **No further progress this cycle** — cycle $ITERATION checked nothing new and landed no convergence commit, so the loop is ending here rather than dispatching another cycle. Remaining work identified by the last convergence pass:" \
-              "Cycle $ITERATION made no progress and landed no converge commit — handing off before the iteration cap ($MAX)"
+            # specs/090-stage-write-boundary (FR-010, review-gate-round-1
+            # item 1): ROUTED is deliberately checked alongside HANDOFF, not
+            # folded into it -- "Consolidate final outcome" computes routed
+            # without requiring progressed=false (PR #836 review, item 2), so
+            # a cycle that ticks the last in-reach task on its way to an
+            # all-out-of-boundary remainder has handoff=false, routed=true,
+            # and must still terminate here rather than fall through to the
+            # ITERATION<MAX redispatch branch below, which would contradict
+            # the reason text "Consolidate final outcome" already composed.
+            if [ "$ROUTED" = "true" ]; then
+              post_handoff_remaining_work \
+                "⚠️ **Remaining work is outside the implement stage's write boundary** — the loop is ending here rather than dispatching another cycle. Remaining work identified by the last convergence pass:" \
+                "Cycle $ITERATION: remaining work is outside the write boundary and was routed — handing off before the iteration cap ($MAX)"
+            else
+              post_handoff_remaining_work \
+                "⚠️ **No further progress this cycle** — cycle $ITERATION checked nothing new and landed no convergence commit, so the loop is ending here rather than dispatching another cycle. Remaining work identified by the last convergence pass:" \
+                "Cycle $ITERATION made no progress and landed no converge commit — handing off before the iteration cap ($MAX)"
+            fi
           elif [ "$ITERATION" -lt "$MAX" ]; then
             if [ -n "$SELF_WORKFLOW" ]; then
               GH_TOKEN="$DISPATCH_TOKEN" gh workflow run "$SELF_WORKFLOW" \

@@ -54,23 +54,32 @@ runs:
       run: |
         set -uo pipefail
         FP_SCRIPT="$GITHUB_ACTION_PATH/../_shared/compute-finding-fingerprint.sh"
+        MATCH_SCRIPT="$GITHUB_ACTION_PATH/../_shared/match-issue-by-marker.sh"
         mapping_file="$(mktemp)"
         echo "[]" > "$mapping_file"
         if [ -n "$UNCHECKED_ITEMS" ]; then
-          # PR #836 review, item 5: list-by-label-then-client-side-
-          # contains(marker) -- the SAME dedup lookup strategy
-          # wing-commander-durable-failure-issue's own "report" operation
-          # already uses, never an unproven full-text `gh issue list
-          # --search` over an HTML-comment marker (GitHub's search index is
-          # not guaranteed to match that verbatim or promptly). Fetched
-          # once for every unchecked line, not once per line. A failed
-          # call is surfaced with ::warning:: rather than silently
-          # swallowed into "no routed items found" -- the consequence here
-          # is a routed item reaching the PR as orphan prose, not merely a
-          # redundant `gh issue create`.
+          # PR #836 review, item 5 / review-gate-round-1 items 3 and 6:
+          # list-by-label-then-client-side-contains(marker) -- the SAME
+          # dedup lookup strategy wing-commander-durable-failure-issue's own
+          # "report" operation uses, never an unproven full-text `gh issue
+          # list --search` over an HTML-comment marker (GitHub's search
+          # index is not guaranteed to match that verbatim or promptly).
+          # The marker-match jq filter is the one shared script both
+          # composites call -- never a second copy of it. The `gh issue
+          # list` call itself stays INLINE here, never in a _shared/ script
+          # -- Gate 12 can only resolve a `gh` call's token from the
+          # composite step's own env, not from a script `_shared/` scripts
+          # are merely sourced into (gate 12's own stated rule, lint-
+          # workflows.yml ~line 1631). An explicit --limit bounds it, since
+          # this label accumulates across the repo's whole lifetime, not
+          # per-spec. Fetched once for every unchecked line, not once per
+          # line. A failed `gh issue list` call is surfaced with ::warning::
+          # rather than silently swallowed into "no routed items found" --
+          # the consequence here is a routed item reaching the PR as orphan
+          # prose, not merely a redundant `gh issue create`.
           issues_file="$(mktemp)"
           issues_err="$(mktemp)"
-          if gh issue list --repo "$GITHUB_REPOSITORY" --label "${LABEL_PREFIX}:implement" --state all --json number,url,body > "$issues_file" 2>"$issues_err"; then
+          if gh issue list --repo "$GITHUB_REPOSITORY" --label "${LABEL_PREFIX}:implement" --state all --json number,url,state,body --limit 1000 > "$issues_file" 2>"$issues_err"; then
             :
           else
             echo "::warning::wing-commander-write-boundary-lookup: gh issue list failed for label ${LABEL_PREFIX}:implement -- $(cat "$issues_err") -- treating as no routed items found this run; a routed item may reach the PR as orphan prose."
@@ -82,7 +91,9 @@ runs:
             fp="$(printf '%s\n' "$fp_out" | sed -n 's/^fingerprint=//p')"
             [ -z "$fp" ] && continue
             marker="<!-- wing-commander-finding: fingerprint=$fp -->"
-            found_url="$(jq -r --arg marker "$marker" '[.[] | select(.body != null and (.body | contains($marker)))] | first.url // empty' "$issues_file")"
+            match_json="$(bash "$MATCH_SCRIPT" "$issues_file" "$marker")"
+            found_url=""
+            [ -n "$match_json" ] && found_url="$(printf '%s' "$match_json" | jq -r '.url // empty')"
             if [ -n "$found_url" ]; then
               tmp="$(mktemp)"
               jq --arg line "$line" --arg url "$found_url" '. + [{"line": $line, "url": $url}]' "$mapping_file" > "$tmp" && mv "$tmp" "$mapping_file"

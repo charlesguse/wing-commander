@@ -42,6 +42,7 @@ STAGE_FINDINGS_ACTION = os.path.join(
 STAGE_FINDINGS_ACTION_DIR = os.path.dirname(STAGE_FINDINGS_ACTION)
 FAILURE_ISSUE_ACTION = os.path.join(
     REPO_ROOT, ".github", "actions", "wing-commander-durable-failure-issue", "action.yml")
+FAILURE_ISSUE_ACTION_DIR = os.path.dirname(FAILURE_ISSUE_ACTION)
 SCHEMA_VALIDATOR = os.path.join(REPO_ROOT, ".github", "scripts",
                                 "verify-stage-finding-schema.py")
 
@@ -94,7 +95,7 @@ def run_prepare(tmp, channel_mode, findings=None, transcript_result_text=None,
                 spec_dir="specs/056-stage-found-defect-filing",
                 run_url="https://example.invalid/actions/runs/1",
                 label_prefix="found-by", findings_json_literal=None,
-                lifecycle_issue_number=""):
+                lifecycle_issue_number="", action_path=None):
     out_dir = os.path.join(tmp, "wc-stage-findings")
     state_file = os.path.join(out_dir, "state.json")
     exec_path = os.path.join(tmp, "claude-execution-output.json")
@@ -103,8 +104,12 @@ def run_prepare(tmp, channel_mode, findings=None, transcript_result_text=None,
         "LABEL_PREFIX": label_prefix, "CHANNEL_MODE": channel_mode,
         "CAP": cap, "FINDINGS_JSON": "", "EXECUTION_OUTPUT_PATH": "",
         "OUT_DIR": out_dir, "STATE_FILE": state_file,
-        "GITHUB_ACTION_PATH": STAGE_FINDINGS_ACTION_DIR,
         "LIFECYCLE_ISSUE_NUMBER": lifecycle_issue_number,
+        # review-gate-round-1 item 5: overridable so a case can point this
+        # at a fake action dir whose sibling _shared/compute-finding-
+        # fingerprint.sh is deliberately broken, proving the prepare step
+        # degrades just the one finding instead of crashing the whole run.
+        "GITHUB_ACTION_PATH": action_path or STAGE_FINDINGS_ACTION_DIR,
     }
     if channel_mode == "structured-array":
         if findings_json_literal is not None:
@@ -825,6 +830,78 @@ def case_unverifiable_anchor_is_rejected_and_recorded():
           state and state["dropped_malformed"] == [] and state["dropped_cap"] == 0, state)
 
 
+def case_fingerprint_script_crash_drops_only_that_finding():
+    case = ("review-gate-round-1 item 5: compute-finding-fingerprint.sh "
+            "failing for one finding degrades only that finding, never "
+            "crashes the whole prepare step")
+    tmp = tempfile.mkdtemp(prefix="wc-sf-fp-crash-")
+    # Mirrors the REAL .github/ layout two levels deep (action-dir/../_shared
+    # and action-dir/../../scripts, exactly what the shipped prepare step
+    # resolves against GITHUB_ACTION_PATH) -- a shallower fake tree makes the
+    # step's OWN schema-validator import fail first, never reaching the
+    # fingerprint call this case targets.
+    dotgithub_dir = os.path.join(tmp, "dotgithub")
+    fake_action_dir = os.path.join(dotgithub_dir, "actions", "fake-action")
+    shared_dir = os.path.join(dotgithub_dir, "actions", "_shared")
+    scripts_dir = os.path.join(dotgithub_dir, "scripts")
+    schemas_dir = os.path.join(dotgithub_dir, "schemas")
+    os.makedirs(fake_action_dir, exist_ok=True)
+    os.makedirs(shared_dir, exist_ok=True)
+    os.makedirs(scripts_dir, exist_ok=True)
+    os.makedirs(schemas_dir, exist_ok=True)
+    for name in ("verify-stage-finding-schema.py", "wc_schema_pattern.py"):
+        src = os.path.join(os.path.dirname(SCHEMA_VALIDATOR), name)
+        with open(src, encoding="utf-8") as fh:
+            text = fh.read()
+        with open(os.path.join(scripts_dir, name), "w", encoding="utf-8",
+                  newline="\n") as fh:
+            fh.write(text)
+    schema_src = os.path.join(REPO_ROOT, ".github", "schemas",
+                              "stage-finding.schema.json")
+    with open(schema_src, encoding="utf-8") as fh:
+        schema_text = fh.read()
+    with open(os.path.join(schemas_dir, "stage-finding.schema.json"),
+              "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(schema_text)
+    fake_script = os.path.join(shared_dir, "compute-finding-fingerprint.sh")
+    with open(fake_script, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(
+            "#!/usr/bin/env bash\n"
+            "case \"$3\" in\n"
+            "  *BREAKME*) exit 1 ;;\n"
+            "  *) echo \"fingerprint=deadbeef\"; echo \"verified=true\" ;;\n"
+            "esac\n")
+    os.chmod(fake_script, 0o755)
+
+    breaking = valid_finding(
+        title="T1 breaks fingerprinting",
+        fingerprint_basis={"file_path": "x.md", "gate_or_artifact": "BREAKME line"})
+    ordinary = valid_finding(
+        title="T2 fingerprints fine",
+        fingerprint_basis={"file_path": "x.md", "gate_or_artifact": "ordinary line"})
+    rc, outputs, state, out = run_prepare(
+        tmp, "structured-array", findings=[breaking, ordinary],
+        action_path=fake_action_dir)
+    check(case + ": the step still exits 0 instead of crashing", rc == 0, out)
+    check(case + ": state WAS recorded, not the un-run fallback",
+          state is not None and state.get("notes") != [
+              "wing-commander-stage-findings: no state was recorded for "
+              "this run (an earlier step in this composite did not "
+              "complete) — reporting zero findings rather than failing "
+              "the stage."],
+          state)
+    check(case + ": the broken finding is recorded as dropped (malformed)",
+          state is not None and len(state["dropped_malformed"]) == 1
+          and "T1 breaks fingerprinting" in state["dropped_malformed"][0],
+          state)
+    check(case + ": slot 0 (the broken finding) is NOT present",
+          outputs.get("survivor-0-present") == "false", outputs)
+    check(case + ": slot 1 (the OTHER finding) still filed",
+          outputs.get("survivor-1-present") == "true"
+          and outputs.get("survivor-1-title") == "T2 fingerprints fine",
+          outputs)
+
+
 def case_key_is_rederivable_from_recorded_inputs():
     case = "the prepare step is deterministic: byte-identical inputs in two independent runs produce the identical key (FR-002, Acceptance Scenario 2)"
     fixture_content = "## Gate 71 — fixture harness for stage-findings\n"
@@ -1067,6 +1144,10 @@ def run_lookup(tmp, marker, state_scope, list_json, create_behavior=None, commen
         # keeps this fixture default honest about what the caller ships.
         "FAIL_ON_API_ERROR": fail_on_api_error,
         "GITHUB_REPOSITORY": "o/r",
+        # review-gate-round-1 items 3/6: the marker-match jq filter is now
+        # resolved via $GITHUB_ACTION_PATH/../_shared/match-issue-by-
+        # marker.sh, mirroring run_prepare's own GITHUB_ACTION_PATH wiring.
+        "GITHUB_ACTION_PATH": FAILURE_ISSUE_ACTION_DIR,
         "PATH": bindir + os.pathsep + os.environ["PATH"],
     }
     rc, output, outputs, summary = run_step(BASH, LOOKUP_SCRIPT, tmp, env, tmp,
@@ -1545,6 +1626,7 @@ CASES = [
     case_anchor_wording_variance_shares_one_key,
     case_two_verifiable_anchors_key_apart,
     case_unverifiable_anchor_is_rejected_and_recorded,
+    case_fingerprint_script_crash_drops_only_that_finding,
     case_key_is_rederivable_from_recorded_inputs,
     case_anchor_absent_from_existing_file_takes_fallback,
     case_two_unanchorable_findings_share_fallback_key,

@@ -99,12 +99,25 @@ Step: `Read back cycle outcome` (id `outcome`) / `Read back retry outcome`
 059's own contract, `contracts/convergence-signal.md` §2, is not
 reopened).
 
-**New step-local output**: `routed` (`true`/`false`) = `handoff &&
+**New step-local output**: `routed` (`true`/`false`) = `ok && !truncated &&
 all-unchecked-out-of-boundary`, read from the corresponding
-`write-boundary-*` call's `all-unchecked-out-of-boundary` output. Carried
-through `Consolidate final outcome`'s existing `RETRY_RAN` selection
-alongside `progressed`/`handoff`, together with `findings-json` (carried as
-a step output, not re-derived).
+`write-boundary-*` call's `all-unchecked-out-of-boundary` output —
+**deliberately NOT gated on `handoff`** (PR #836 review, item 2; review-
+gate-round-1 item 4 fixed this section to match). `handoff` additionally
+requires `progressed=false` and no `converge:` commit; a cycle that ticks
+the last in-reach task on its way to an all-out-of-boundary remainder, or
+whose `converge:` commit re-appends only out-of-boundary lines, still
+leaves 100% of the remaining unchecked work unreachable and must still be
+routed the moment this cycle sees it, not only on spec 059's narrower
+hand-off path. Filing is idempotent across cycles (Gate 133 (f)/(g)), so
+filing while the loop keeps iterating toward its own eventual hand-off is
+safe, never a duplicate. Carried through `Consolidate final outcome`'s
+existing `RETRY_RAN` selection alongside `progressed`/`handoff`, together
+with `findings-json` (carried as a step output, not re-derived). The
+"Dispatch next step" terminal `if:`-chain also reads `routed` alongside
+`handoff` (review-gate-round-1 item 1): a cycle with `handoff=false,
+routed=true` must still terminate the loop rather than fall into the
+`ITERATION < MAX` redispatch branch.
 
 **Reason narrative**: when `routed=true`, `reason` names each out-of-
 boundary task (from `findings-json`'s `title` fields) and states the loop
@@ -145,7 +158,7 @@ outputs.truncated != 'true' && steps.final.outputs.routed == 'true'`
 with:
   token: ${{ env.WC_BOT_TOKEN }}
   stage: implement
-  enabled: ${{ inputs.findings-filing-enabled }}
+  enabled: "true"
   channel-mode: structured-array
   findings-json: ${{ steps.final.outputs.write-boundary-findings-json }}
   finding-kind: routed-task
@@ -156,22 +169,53 @@ with:
   cap: ${{ inputs.findings-cap }}
 ```
 
-Reusing `findings-cap`/`findings-filing-enabled` rather than adding parallel
-cap/enable inputs — this channel is not configurably distinct along those
-axes from the existing findings channel, only along the label/wording axes
-§5 already gives it.
+Reuses `findings-cap` (the per-run filing cap) but **deliberately NOT**
+`findings-filing-enabled` (PR #836 review, item 6; review-gate-round-1 item
+4 fixed this section to match) — `enabled` is hardcoded `"true"`. Routing an
+out-of-boundary task is a structural part of the loop's own termination
+condition (the loop has already decided `routed=true`), not the optional
+defect-reporting channel `findings-filing-enabled` governs; disabling
+defect filing must not silently disable routing too. A cycle whose
+out-of-boundary count this run classified exceeds the composite's own
+per-run cap surfaces a `::warning::` ("Warn on dropped out-of-boundary
+tasks") naming the drop, since the loop has already terminated on this
+cycle's routed hand-off and no later cycle re-classifies it.
 
 ## 6. `finalize.yml`: routed-item lookup (new)
 
 **New step**: "Look up routed write-boundary items," deterministic, before
 the existing "Summarize change and extract remaining manual work" step
-(`finalize.yml:686`). For each unchecked line in the tip's `tasks.md`:
-compute its fingerprint via `compute-finding-fingerprint.sh` (same formula,
-§5's shared helper: `stage=implement`, `file_path=<spec-dir>/tasks.md`,
-`gate_or_artifact=<the line's literal text>`), then
-`gh issue list --search '"<!-- wing-commander-finding: fingerprint=<fp>
--->"' --label '${{ inputs.write-boundary-label-prefix }}:implement'
---json url,state`. Emits a mapping (line text → issue URL) for every match.
+(`finalize.yml:686`), implemented by the published
+`wing-commander-write-boundary-lookup` composite. For each unchecked line
+in the tip's `tasks.md`: compute its fingerprint via
+`compute-finding-fingerprint.sh` (same formula, §5's shared helper:
+`stage=implement`, `file_path=<spec-dir>/tasks.md`,
+`gate_or_artifact=<the line's literal text>`), then match it against ONE
+`gh issue list` call fetched for the whole lookup (never once per line) —
+**not** a per-line `gh issue list --search` (PR #836 review, item 5;
+review-gate-round-1 items 3/4/6 fixed this section to match): list every
+issue under `'${{ inputs.write-boundary-label-prefix }}:implement'`
+(`--state all`, bounded by an explicit `--limit`, since that label
+accumulates across the repo's whole lifetime, not per-spec) and match each
+line's fingerprint marker client-side via `jq`'s `contains()` — the SAME
+list-by-label-then-client-side-match strategy
+`wing-commander-durable-failure-issue`'s own dedup lookup uses, never an
+unproven full-text `gh issue list --search` over an HTML-comment marker
+(GitHub's search index is not guaranteed to match that verbatim or
+promptly). The marker-match `jq` filter is
+`.github/actions/_shared/match-issue-by-marker.sh` — the one home, shared
+with `wing-commander-durable-failure-issue`'s identical lookup, never a
+second copy (CLAUDE.md "Shared logic has exactly one home"). The `gh issue
+list --limit 1000` call itself stays INLINE in each composite's own step,
+never factored into a `_shared/` script: Gate 12 (lint-workflows.yml) can
+only resolve a `gh` call's token from the composite step's own `env:`
+block, and explicitly fails any `gh` call found inside
+`.github/actions/_shared/*.sh` for exactly that reason — so this one small
+piece (the bounded listing call, not the matching logic) is the deliberate
+exception to the single-home rule, each composite keeping its own copy. A
+failed `gh issue list` call is surfaced with a `::warning::` and degrades
+to an empty mapping, never silently swallowed and never a hard step
+failure. Emits a mapping (line text → issue URL) for every match.
 
 **Prompt change** (`finalize.yml:722-738`): the existing instruction to
 write "every `tasks.md` item that is still unchecked" gains: "For any item

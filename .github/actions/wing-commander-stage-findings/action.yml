@@ -389,16 +389,29 @@ runs:
             # "Look up routed write-boundary items" step so both callers
             # compute the same value for the same input, never a second
             # copy of this hash (Gate 133 (g)).
+            #
+            # review-gate-round-1 item 5: a nonzero exit or malformed output
+            # here must degrade only THIS ONE finding, never crash the whole
+            # loop -- a later slot's exception would otherwise propagate
+            # past every survivor already written in earlier slots this same
+            # run, losing them down to "no state was recorded" (the
+            # composite's own un-run fallback text) instead of filing what
+            # it could. Mirrors finalize.yml's own caller of this script
+            # (wing-commander-write-boundary-lookup), which already
+            # tolerates a failed/empty fingerprint line without check=True.
             script = os.path.join(
                 os.environ["GITHUB_ACTION_PATH"], "..", "_shared",
                 "compute-finding-fingerprint.sh")
-            proc = subprocess.run(
-                ["bash", script, stage, file_path, gate_or_artifact],
-                capture_output=True, text=True, check=True)
-            values = dict(
-                line.split("=", 1) for line in proc.stdout.strip().splitlines()
-                if "=" in line)
-            return values["fingerprint"], values.get("verified") == "true"
+            try:
+                proc = subprocess.run(
+                    ["bash", script, stage, file_path, gate_or_artifact],
+                    capture_output=True, text=True, check=True)
+                values = dict(
+                    line.split("=", 1) for line in proc.stdout.strip().splitlines()
+                    if "=" in line)
+                return values["fingerprint"], values.get("verified") == "true"
+            except (subprocess.CalledProcessError, KeyError, ValueError):
+                return None, False
 
         def compose_recap(finding):
             return "Seen again in run {0}.\n\n{1}\n\n{2}\n".format(
@@ -472,6 +485,16 @@ runs:
                 # rather than trusting agent prose directly into the key.
                 fp, verified = compute_fingerprint(
                     STAGE, basis["file_path"], basis["gate_or_artifact"])
+                if fp is None:
+                    # review-gate-round-1 item 5: compute-finding-
+                    # fingerprint.sh itself failed for this finding --
+                    # degrade only this slot, never the whole run.
+                    reason = "fingerprint computation failed for \"{0}\"".format(
+                        finding["title"])
+                    dropped_malformed.append(reason)
+                    notes.append("dropped (malformed): {0}".format(reason))
+                    outputs.append(("survivor-{0}-present".format(i), "false"))
+                    continue
                 if not verified:
                     notes.append(
                         "anchor unverifiable for \"{0}\": \"{1}\" was not "

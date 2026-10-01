@@ -726,7 +726,7 @@ and evaporating into PR-body prose) that this feature exists to end.
 
 ## Review Gate Round 1 Findings
 
-- [ ] Review finding: Dispatch decision never reads the new routed output, so FR-010 termination doesn't happen
+- [x] Review finding: Dispatch decision never reads the new routed output, so FR-010 termination doesn't happen
 
   implement.yml's terminal dispatch step only checks CONVERGED/TRUNCATED/HANDOFF, so when a cycle has handoff=false but routed=true (the last in-reach task just ticked, remaining work is out-of-boundary), it falls into the ITERATION<MAX branch and redispatches another cycle instead of terminating, contradicting the reason text it just printed and FR-010's own wording.
 
@@ -734,7 +734,9 @@ and evaporating into PR-body prose) that this feature exists to end.
 
   Detail: env block for "Post progress comment and dispatch next step" never receives ROUTED/PRIMARY_ROUTED/RETRY_ROUTED; the CONVERGED/TRUNCATED/HANDOFF/ITERATION<MAX if-chain has no routed branch; verify-write-boundary.py gate (d) scenario 2 exercises handoff=false, routed=true but only asserts the reason text, not the dispatch outcome
 
-- [ ] Review finding: Classifier's prefix match isn't normalized the same way enforcement's glob-deny is
+  Fixed: "Dispatch next step" now reads `ROUTED: ${{ steps.final.outputs.routed }}` and its `elif [ "$HANDOFF" = "true" ]` branch became `elif [ "$HANDOFF" = "true" ] || [ "$ROUTED" = "true" ]`, terminating via `post_handoff_remaining_work` (with a routed-specific message when `$ROUTED = true`) instead of falling into the `ITERATION < MAX` redispatch branch. Gate 133's scenario 2 now also drives the real "Dispatch next step" body and asserts it hands off to the next-workflow rather than redispatching; mutation 11 reintroduces the regression and confirms the gate catches it.
+
+- [x] Review finding: Classifier's prefix match isn't normalized the same way enforcement's glob-deny is
 
   classify-out-of-boundary-tasks.sh compares raw unnormalized no-write-paths prefixes with startswith, while wing-commander-tool-args/action.yml normalizes each prefix to end in exactly one slash before building the Edit/Write deny glob, so a no-trailing-slash path (e.g. "specs") over-matches in the classifier (routing specs-legacy/notes.md though it isn't actually denied) and a tasks.md line written with a leading "./" under-matches, letting the agent keep retrying a denied edit every cycle.
 
@@ -743,7 +745,9 @@ and evaporating into PR-body prose) that this feature exists to end.
 
   Detail: classify-out-of-boundary-tasks.sh ~line 93 token.startswith(prefix) vs wing-commander-tool-args/action.yml ~lines 403-407 trailing-slash normalization before Edit()/Write() glob construction; no fixture in verify-write-boundary.py's CLASSIFY_FIXTURES/ENFORCEMENT_FIXTURES tests a prefix without a trailing slash
 
-- [ ] Review finding: Routed-issue lookup's gh issue list has no --limit, silently caps at 30 against a repo-lifetime label
+  Fixed: classify-out-of-boundary-tasks.sh now normalizes each no-write-paths prefix to end in exactly one trailing slash (mirroring the composite's own glob normalization) and strips a leading "./" from each candidate token before comparing. New CLASSIFY_FIXTURES cover a no-trailing-slash boundary (`specs` vs `specs-legacy/notes.md` vs `specs/foo.md`) and a leading-"./" token; a new ENFORCEMENT_FIXTURES entry proves the enforcement side already normalized `specs` to `specs/**`. Mutation 12 reintroduces the un-normalized comparison and confirms the gate catches it.
+
+- [x] Review finding: Routed-issue lookup's gh issue list has no --limit, silently caps at 30 against a repo-lifetime label
 
   wing-commander-write-boundary-lookup/action.yml's gh issue list call for route-out-of-boundary:implement has no --limit, and that label accumulates every routed issue across the repo's whole lifetime (not per-spec), so once more than 30 such issues exist, lookups for older fingerprints silently return no match and finalize.yml composes orphan prose instead of pointing at the already-tracked issue.
 
@@ -751,7 +755,9 @@ and evaporating into PR-body prose) that this feature exists to end.
 
   Detail: ~line 73: gh issue list --repo "$GITHUB_REPOSITORY" --label "${LABEL_PREFIX}:implement" --state all --json number,url,body, no --limit flag; label is global per wing-commander-stage-findings/action.yml's label = "{LABEL_PREFIX}:{STAGE}"
 
-- [ ] Review finding: write-boundary-mechanism contract documents wiring the shipped code deliberately changed
+  Fixed: both wing-commander-write-boundary-lookup's and wing-commander-durable-failure-issue's marker-scoped `gh issue list` calls now carry an explicit `--limit 1000`. (The `gh issue list` call itself stays inline in each composite's own step rather than moving into a `_shared/` script, per Gate 12's own rule that a `_shared/*.sh` script making a `gh` call is unresolvable and fails the gate — see the next finding.) check_finalize_lookup now asserts `--limit` appears in the recorded `gh` call; mutation 13 reintroduces its absence and confirms the gate catches it.
+
+- [x] Review finding: write-boundary-mechanism contract documents wiring the shipped code deliberately changed
 
   The live contract (fixed like code per CLAUDE.md) still states routed = handoff && all-unchecked-out-of-boundary and a per-line gh issue list --search lookup and enabled wired to findings-filing-enabled, but the shipped code deliberately decouples routed from handoff, hardcodes enabled: "true", and uses a list-by-label-then-client-side-contains lookup instead — each change made explicitly in response to this PR's own review items 2 and 6, leaving the contract pointing at the regressions already fixed.
 
@@ -761,7 +767,9 @@ and evaporating into PR-body prose) that this feature exists to end.
 
   Detail: contract §4 line ~102 (routed formula), §5 line ~148 (enabled wiring), §6 lines ~171-174 (search-based lookup) vs shipped implement.yml routed computation comment "deliberately NOT gated on spec 059's handoff" and lookup action's label-list+contains() strategy
 
-- [ ] Review finding: compute_fingerprint() can crash the findings loop instead of degrading one finding
+  Fixed: contract §4 now states `routed = ok && !truncated && all-unchecked-out-of-boundary`, deliberately NOT gated on `handoff`, and documents the Dispatch-step fix above; §5's call site now shows `enabled: "true"` with the rationale (never `findings-filing-enabled`); §6 documents the list-by-label-then-client-side-match strategy (bounded `--limit`, inline `gh` call per Gate 12, shared `match-issue-by-marker.sh` for the jq filter only) instead of the old per-line `--search` lookup.
+
+- [x] Review finding: compute_fingerprint() can crash the findings loop instead of degrading one finding
 
   Unlike every other fallible operation in the prepare-findings step, compute_fingerprint() calls the new shared fingerprint script with subprocess.run(check=True) and no try/except, so a nonzero exit there raises past any survivors already processed earlier in the same run, silently dropping all of them down to the generic 'no state was recorded' note instead of degrading just the one finding.
 
@@ -769,7 +777,9 @@ and evaporating into PR-body prose) that this feature exists to end.
 
   Detail: ~line 313, inside the "for i in range(MAX_SLOTS)" loop; contrast with finalize.yml's own caller of the same script which tolerates a failed/empty fingerprint line without check=True
 
-- [ ] Review finding: Routed-issue dedup jq re-pastes an existing composite's lookup pattern instead of a shared helper
+  Fixed: compute_fingerprint() now catches CalledProcessError/KeyError/ValueError and returns (None, False) instead of raising; the per-slot loop treats fp is None as a malformed-and-dropped finding (added to dropped_malformed/notes, survivor-N-present=false) and continues to the next slot rather than crashing the whole step. New stage-findings-tests fixture (case_fingerprint_script_crash_drops_only_that_finding) drives the real prepare step with one finding whose fingerprint script call is made to fail and one that succeeds, asserting the step still exits 0, state is recorded, the broken finding is dropped, and the other finding still files.
+
+- [x] Review finding: Routed-issue dedup jq re-pastes an existing composite's lookup pattern instead of a shared helper
 
   wing-commander-write-boundary-lookup/action.yml's marker-matching jq filter (list by label, then select body contains marker) is a near-verbatim re-paste of wing-commander-durable-failure-issue/action.yml's existing dedup jq program, violating CLAUDE.md's single-home rule for cross-workflow jq even though this same PR already created two _shared/ scripts for its other logic.
 
@@ -777,3 +787,5 @@ and evaporating into PR-body prose) that this feature exists to end.
   - .github/actions/wing-commander-durable-failure-issue/action.yml
 
   Detail: write-boundary-lookup ~lines 85-88 jq '[.[] | select(.body != null and (.body | contains($marker)))] | first.url // empty' vs durable-failure-issue ~lines 165-166 near-identical jq, not factored into .github/actions/_shared/
+
+  Fixed: extracted the marker-match jq filter into `.github/actions/_shared/match-issue-by-marker.sh`; both composites now call this one script instead of each pasting the jq filter. (An earlier draft also factored the `gh issue list` call itself into a `_shared/` script, but Gate 12 explicitly fails any `gh` call inside `.github/actions/_shared/*.sh` since it cannot resolve that script's token statically — the listing call stays inline in each composite, matching/match-issue-by-marker.sh carries no `gh` call of its own.)

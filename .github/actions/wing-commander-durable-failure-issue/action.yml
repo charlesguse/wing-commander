@@ -161,13 +161,21 @@ runs:
         if [ -n "$MARKER" ]; then
           scope="$STATE_SCOPE"
           [ "$scope" = "open" ] || [ "$scope" = "all" ] || scope="open"
-          # --limit: gh returns 30 issues by default, newest first, so a
-          # label past 30 issues lost its older fingerprints and a finding
-          # that should have appended filed a duplicate (#705). 200 is
-          # watchdog.yml's own fingerprint-dedup bound.
-          match_json="$(gh issue list --repo "$GITHUB_REPOSITORY" --label "$LABEL" --state "$scope" --limit 200 --json number,state,body 2>/dev/null | \
-            jq -c --arg marker "$MARKER" \
-            '[.[] | select(.body != null and (.body | contains($marker)))] | first // empty' 2>/dev/null || true)"
+          # review-gate-round-1 items 3/6: an explicit --limit, since this
+          # label accumulates across the repo's whole lifetime (same as
+          # wing-commander-write-boundary-lookup's own lookup) -- gh returns
+          # 30 issues by default, newest first, so a label past 30 issues
+          # lost its older fingerprints and a finding that should have
+          # appended filed a duplicate instead (#705); the marker-match jq
+          # filter is the one shared script both composites call, which
+          # this composite used to paste in full. The `gh issue list` call
+          # itself stays INLINE here, never in a _shared/ script -- Gate 12
+          # can only resolve a `gh` call's token from the composite step's
+          # own env (lint-workflows.yml ~line 1631).
+          MATCH_SCRIPT="$GITHUB_ACTION_PATH/../_shared/match-issue-by-marker.sh"
+          issues_file="$(mktemp)"
+          gh issue list --repo "$GITHUB_REPOSITORY" --label "$LABEL" --state "$scope" --json number,url,state,body --limit 1000 > "$issues_file" 2>/dev/null || echo "[]" > "$issues_file"
+          match_json="$(bash "$MATCH_SCRIPT" "$issues_file" "$MARKER" 2>/dev/null || true)"
           existing=""
           matched_closed=""
           if [ -n "$match_json" ]; then

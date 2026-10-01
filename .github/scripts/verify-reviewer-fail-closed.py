@@ -995,7 +995,13 @@ def _file_in_order(file_script, tmproot, filings):
                    "OPERATION": "report", "LABEL": "found-by:board-review",
                    "LABEL_COLOR": "5319E7", "LABEL_DESCRIPTION": "d", "TITLE": title,
                    "BODY_FILE": body_file, "COMMENT_BODY_FILE": "", "MARKER": marker,
-                   "STATE_SCOPE": "all", "CLOSE_COMMENT": "", "FAIL_ON_API_ERROR": "false"}
+                   "STATE_SCOPE": "all", "CLOSE_COMMENT": "", "FAIL_ON_API_ERROR": "false",
+                   # review-gate-round-1 items 3/6: the marker-match jq
+                   # filter is resolved via $GITHUB_ACTION_PATH/../_shared/
+                   # match-issue-by-marker.sh -- without this, the lookup
+                   # silently finds nothing and every filing reads as a
+                   # fresh create (no dedup).
+                   "GITHUB_ACTION_PATH": os.path.abspath(os.path.dirname(DURABLE_ISSUE_ACTION))}
             rc, out, _o, _ = run_step(BASH, file_script, workdir, env, runner_temp)
             if rc != 0:
                 return [], "filing {0} exited {1}: {2}".format(n, rc, out)

@@ -69,6 +69,7 @@ CYCLE_STEP = "Read back cycle outcome"
 RETRY_STEP = "Read back retry outcome"
 ROUTE_STEP = "Route out-of-boundary tasks"
 LOOKUP_STEP = "Look up routed write-boundary items"
+DISPATCH_STEP = "Dispatch next step"
 
 SPEC_PREFIX = "spec/"
 SLUG = "090-fixture"
@@ -302,6 +303,55 @@ def run_retry_step(steps, repo, base_sha, *, verdict, retry_result,
     return run_step(BASH, steps[RETRY_STEP], repo, env, runner_temp)
 
 
+# PR #836 review-gate-round-1 item 1: drives the shipped "Dispatch next
+# step" body directly, logging every `gh` invocation so a scenario can
+# assert WHICH workflow got dispatched (redispatch the self-workflow for
+# another cycle vs. hand off to the next-workflow with converged=false)
+# rather than only inspecting the reason text "Consolidate final outcome"
+# composed -- the gap this finding named.
+GH_CALL_LOG_STUB = """#!/bin/sh
+echo "$*" >> "$GH_CALLS"
+exit 0
+"""
+
+
+def run_dispatch_step(steps, workdir, outputs, *, self_workflow="self-impl.yml",
+                       next_workflow="next-finalize.yml", iteration=ITERATION,
+                       max_iteration="5"):
+    runner_temp = tempfile.mkdtemp(dir=os.path.dirname(workdir))
+    bindir = os.path.join(workdir, "dispatch_bin")
+    os.makedirs(bindir, exist_ok=True)
+    calls_file = os.path.join(workdir, "dispatch_gh_calls")
+    open(calls_file, "w").close()
+    with open(os.path.join(bindir, "gh"), "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(GH_CALL_LOG_STUB)
+    os.chmod(os.path.join(bindir, "gh"), 0o755)
+    env = {
+        "APP_TOKEN": "app-token", "DISPATCH_TOKEN": "dispatch-token",
+        "SPEC_DIR": SPEC_DIR, "ISSUE": "675", "ITERATION": str(iteration),
+        "MAX": str(max_iteration),
+        "CONVERGED": outputs.get("converged", "false"),
+        "TRUNCATED": outputs.get("truncated", "false"),
+        "TRUNCATED_COUNT": "0",
+        "HANDOFF": outputs.get("handoff", "false"),
+        "ROUTED": outputs.get("routed", "false"),
+        "REASON": outputs.get("reason", ""),
+        "TIER": "sonnet",
+        "REMAINING": outputs.get("remaining", ""),
+        "SELF_WORKFLOW": self_workflow,
+        "NEXT_WORKFLOW": next_workflow,
+        "COST_LINE": "cost line",
+        "GH_CALLS": calls_file,
+        "PATH": bindir + os.pathsep + os.environ["PATH"],
+        "GITHUB_SERVER_URL": "https://github.example",
+        "GITHUB_REPOSITORY": "acme/repo",
+        "GITHUB_RUN_ID": "1",
+    }
+    rc, out, step_outputs, summary = run_step(BASH, steps[DISPATCH_STEP], workdir, env, runner_temp)
+    calls = open(calls_file, encoding="utf-8").read() if os.path.exists(calls_file) else ""
+    return rc, out, calls
+
+
 # ---------------------------------------------------------------------------
 # (a) Single definition
 # ---------------------------------------------------------------------------
@@ -431,6 +481,11 @@ ENFORCEMENT_FIXTURES = [
     (".claude/", ["Edit(.claude/**)", "Write(.claude/**)"]),
     (".claude/,.git/", ["Edit(.claude/**)", "Write(.claude/**)",
                         "Edit(.git/**)", "Write(.git/**)"]),
+    # review-gate-round-1 item 2: a no-trailing-slash entry already
+    # normalizes to "specs/**" on the enforcement side -- the fix adds the
+    # SAME normalization to the classifier (CLASSIFY_FIXTURES above) rather
+    # than loosening enforcement.
+    ("specs", ["Edit(specs/**)", "Write(specs/**)"]),
 ]
 
 
@@ -491,6 +546,21 @@ CLASSIFY_FIXTURES = [
     ("a path containing but not starting with the boundary is not a match "
      "(distinguishes prefix-match from substring-match)",
      "- [ ] T008 edit `src/.claude/nested/thing.md`", ".claude/", 0, "false"),
+    # review-gate-round-1 item 2: a no-trailing-slash boundary entry must
+    # normalize the same way wing-commander-tool-args's enforcement glob
+    # does ("specs" -> "specs/**"), so a sibling directory that merely
+    # shares the prefix as a string ("specs-legacy/...") must NOT classify
+    # out-of-boundary -- enforcement never denies it either.
+    ("a no-trailing-slash boundary entry does not over-match a sibling "
+     "directory sharing the same string prefix",
+     "- [ ] T009 edit `specs-legacy/notes.md`", "specs", 0, "false"),
+    ("a no-trailing-slash boundary entry still classifies a real child path",
+     "- [ ] T010 edit `specs/foo.md`", "specs", 1, "true"),
+    # review-gate-round-1 item 2: a tasks.md line written with a leading
+    # "./" must still classify -- otherwise the agent keeps retrying a
+    # denied edit every cycle.
+    ("a leading './' on the candidate token does not defeat classification",
+     "- [ ] T011 edit `./.claude/skills/foo/SKILL.md`", ".claude/", 1, "true"),
 ]
 
 
@@ -566,6 +636,27 @@ def check_termination_and_reason(steps, root):
                             f"naming the task, now that routed=true overrides "
                             f"spec 059's generic hand-off text -- got "
                             f"reason={reason!r}")
+        # review-gate-round-1 item 1: handoff=false, routed=true, iteration
+        # BELOW the cap used to fall into the ITERATION<MAX redispatch
+        # branch instead of terminating -- contradicting the reason text
+        # just asserted above. Drive the shipped "Dispatch next step" body
+        # with these exact outputs and assert it hands off to the
+        # next-workflow (converged=false) rather than redispatching the
+        # self-workflow for another cycle.
+        rc_dispatch, out_dispatch, calls = run_dispatch_step(steps, repo, outputs)
+        if rc_dispatch != 0:
+            failures.append(f"(d) scenario 2 dispatch: {DISPATCH_STEP!r} "
+                            f"exited {rc_dispatch}: {out_dispatch.strip()}")
+        else:
+            if "self-impl.yml" in calls:
+                failures.append(f"(d) scenario 2 dispatch: handoff=false "
+                                f"routed=true still redispatched the "
+                                f"self-workflow for another cycle instead of "
+                                f"terminating -- FR-010 -- gh calls: {calls!r}")
+            if "next-finalize.yml" not in calls or "converged=false" not in calls:
+                failures.append(f"(d) scenario 2 dispatch: expected a hand-off "
+                                f"to the next-workflow with converged=false -- "
+                                f"gh calls: {calls!r}")
 
     # A converge: commit whose appended lines are all out-of-boundary must
     # not disqualify routed either (PR #836 review, item 2): the converge
@@ -940,6 +1031,19 @@ def check_finalize_lookup(steps, root):
         failures.append(f"SC-005: the rendered instruction did not reference "
                         f"the routed item's URL -- rendered={rendered!r}")
 
+    # review-gate-round-1 item 3: the label this lookup reads
+    # (route-out-of-boundary:implement) accumulates across the repo's whole
+    # lifetime, not per-spec -- a `gh issue list` with no --limit silently
+    # caps at gh's own default of 30. Assert the shipped lookup's own `gh`
+    # invocation actually carries one.
+    calls_text = open(calls_file, encoding="utf-8").read() if os.path.exists(calls_file) else ""
+    if "--limit" not in calls_text:
+        failures.append(f"(3) {LOOKUP_STEP!r}: its `gh issue list` call "
+                        f"carries no --limit -- an older routed item's "
+                        f"fingerprint could silently stop matching once "
+                        f"more than gh's own default page size of such "
+                        f"issues exist -- gh calls recorded: {calls_text!r}")
+
     # (j) A failed `gh issue list` must be surfaced, not silently swallowed
     # into "no routed items found" (PR #836 review, item 5).
     fail_env = dict(base_env, FAIL_GH="true")
@@ -992,8 +1096,8 @@ def _mut_substring_match():
     match."""
     script_path = os.path.abspath(CLASSIFY_SCRIPT)
     text = open(script_path, encoding="utf-8").read()
-    marker = "return any(token.startswith(prefix) for prefix in prefixes)"
-    replacement = "return any(prefix in token for prefix in prefixes)"
+    marker = "return any(normalized.startswith(prefix) for prefix in prefixes)"
+    replacement = "return any(prefix in normalized for prefix in prefixes)"
     if marker not in text:
         return None
     return script_path, text.replace(marker, replacement, 1)
@@ -1210,6 +1314,90 @@ def check_mutation_10():
     return ["mutation survived: Route step findings-json wiped"]
 
 
+def _mut_dispatch_ignores_routed(steps):
+    """(11) review-gate-round-1 item 1: the dispatch step's elif dropped
+    back to checking HANDOFF alone, so a routed=true/handoff=false cycle
+    below the iteration cap redispatches another cycle instead of
+    terminating."""
+    marker = 'elif [ "$HANDOFF" = "true" ] || [ "$ROUTED" = "true" ]; then'
+    replacement = 'elif [ "$HANDOFF" = "true" ]; then'
+    if marker not in steps[DISPATCH_STEP]:
+        return None
+    mutated = copy.deepcopy(steps)
+    mutated[DISPATCH_STEP] = mutated[DISPATCH_STEP].replace(marker, replacement, 1)
+    return mutated
+
+
+def check_mutation_11(steps, root):
+    mutated = _mut_dispatch_ignores_routed(steps)
+    if mutated is None:
+        print("::error::mutation 'dispatch ignores routed' changed nothing.")
+        return ["mutation inapplicable: dispatch ignores routed"]
+    # Re-run the REAL check_termination_and_reason -- scenario 2's dispatch
+    # assertion is the one that targets this exact regression.
+    if check_termination_and_reason(mutated, root):
+        print("Mutation OK -- dispatch ignores routed: caught (d) scenario 2's dispatch assertion.")
+        return []
+    return ["mutation survived: dispatch ignores routed"]
+
+
+def _mut_drop_prefix_normalization():
+    """(12) review-gate-round-1 item 2: the classifier's trailing-slash
+    normalization dropped, so a no-trailing-slash boundary entry
+    ("specs") over-matches a sibling directory ("specs-legacy/...")
+    enforcement never actually denies."""
+    script_path = os.path.abspath(CLASSIFY_SCRIPT)
+    text = open(script_path, encoding="utf-8").read()
+    marker = 'return prefix if prefix.endswith("/") else prefix + "/"'
+    replacement = "return prefix"
+    if marker not in text:
+        return None
+    return script_path, text.replace(marker, replacement, 1)
+
+
+def _mut_drop_limit_flag(steps):
+    """(13) review-gate-round-1 item 3: LOOKUP_STEP's --limit flag dropped,
+    reopening the silent-cap-at-30 defect."""
+    marker = '--json number,url,state,body --limit 1000 > "$issues_file"'
+    replacement = '--json number,url,state,body > "$issues_file"'
+    if marker not in steps[LOOKUP_STEP]:
+        return None
+    mutated = copy.deepcopy(steps)
+    mutated[LOOKUP_STEP] = mutated[LOOKUP_STEP].replace(marker, replacement, 1)
+    return mutated
+
+
+def check_mutation_13(steps, root):
+    mutated = _mut_drop_limit_flag(steps)
+    if mutated is None:
+        print("::error::mutation 'drop --limit flag' changed nothing.")
+        return ["mutation inapplicable: drop --limit flag"]
+    if check_finalize_lookup(mutated, root):
+        print("Mutation OK -- drop --limit flag: caught (3).")
+        return []
+    return ["mutation survived: drop --limit flag"]
+
+
+def check_mutation_12(root):
+    result = _mut_drop_prefix_normalization()
+    if result is None:
+        print("::error::mutation 'drop prefix normalization' changed nothing.")
+        return ["mutation inapplicable: drop prefix normalization"]
+    _script_path, mutated_text = result
+    fd, tmp_path = tempfile.mkstemp(suffix=".sh")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(mutated_text)
+        os.chmod(tmp_path, 0o755)
+        result2 = check_classification(root, script_path=tmp_path)
+    finally:
+        os.remove(tmp_path)
+    if result2:
+        print("Mutation OK -- drop prefix normalization: caught (c).")
+        return []
+    return ["mutation survived: drop prefix normalization"]
+
+
 def run_mutations(steps, root):
     failures = []
     failures.extend(check_mutation_1(steps, root))
@@ -1221,6 +1409,9 @@ def run_mutations(steps, root):
     failures.extend(check_mutation_8(steps, root))
     failures.extend(check_mutation_9())
     failures.extend(check_mutation_10())
+    failures.extend(check_mutation_11(steps, root))
+    failures.extend(check_mutation_12(root))
+    failures.extend(check_mutation_13(steps, root))
     # (7) zero fixtures discovered/executed at all.
     if not CLASSIFY_FIXTURES or not STATEMENT_FIXTURES:
         failures.append("mutation survived: zero fixtures (Constitution VIII)")
@@ -1258,6 +1449,7 @@ def load_steps():
     STEPS_CACHE[CYCLE_STEP] = find_step(STAGE, CYCLE_STEP)["run"]
     STEPS_CACHE[RETRY_STEP] = find_step(STAGE, RETRY_STEP)["run"]
     STEPS_CACHE[LOOKUP_STEP] = find_step(WRITE_BOUNDARY_LOOKUP_COMPOSITE, LOOKUP_STEP)["run"]
+    STEPS_CACHE[DISPATCH_STEP] = find_step(STAGE, DISPATCH_STEP)["run"]
     return STEPS_CACHE
 
 
