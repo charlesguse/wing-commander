@@ -75,6 +75,40 @@ reactors observe every completed implement run independently.
    second loss of the redispatched run is never found by step 5's own
    `implement_run_id == run-id` lookup (breaking FR-016a's "a maintainer's
    re-drive is the remaining step" notice for that second loss).
+6. If `peek-implement-run` resolves no round at all for this `run-id`
+   (T065, maintainer review of #821, round 3 — the original dispatch's own
+   correlation never landed, or this is itself a second loss of an
+   already-uncorrelated cycle) → `action-taken: notice-only`, reporting
+   that the cycle's round could not be determined and no automatic
+   re-dispatch was attempted, rather than reaching `claim-redispatch` with
+   an empty `ROUND` (a caller error the ledger transform itself does not
+   tolerate).
+7. T069 (maintainer review of #821, round 3): the `gh run list` poll that
+   finds the re-dispatched run's URL filters on a timestamp taken
+   immediately before the `gh workflow run` call (`react`'s own
+   `start_ts`), not the ORIGINAL run's cancellation time — the latter
+   opens a window wide enough, on a shared `implement-workflow` wrapper, to
+   match a different spec's run instead of this one's.
+8. `react`'s own `gh workflow run` re-dispatch carries the identical T047/
+   T062 422-retry fallback `wing-commander-fold-dispatch` uses for an
+   un-migrated wrapper with no `fold_queue_token` input declared — but its
+   TICKET-OWNERSHIP choice on that retry path is the OPPOSITE of
+   `dispatch-once`'s (T056): `dispatch-once` explicitly releases the
+   abandoned implement-kind ticket once its own dispatch-queue ticket (the
+   implement ticket's immediate predecessor) has released and the implement
+   ticket has become the queue head, because an immediate release attempt
+   while still behind the head would itself be a caller error. `react`
+   holds no ticket of its own ahead of this one, so there is no guaranteed
+   moment at which the abandoned ticket is known to be at the head — an
+   unconditional release attempt here could hit the same "not at queue
+   head" error if another run's ticket (or this very round's own prior,
+   still-stale head) occupies it. `react` therefore does NOT release the
+   ticket on this path at all: the retried (ticketless) run is still
+   correlated via step 5's `record-implement-run`, and the existing
+   correlated stale-reclaim path (`fold-queue-await.sh`) is what eventually
+   cleans the abandoned ticket up, once that run completes — a deliberately
+   slower, poll-driven cleanup than `dispatch-once`'s own immediate one,
+   not an oversight.
 
 ## Behavioral guarantees
 
