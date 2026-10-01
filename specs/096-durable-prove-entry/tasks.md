@@ -627,7 +627,7 @@ Task: "New Gate 136: verify-board-prove-recovery.py fixtures"
 
 
 ## Maintainer Feedback — recovery never checks a maintainer stop request
-- [ ] Split the recovery step into three: pick the candidate, run `wing-commander-board-stop-check` for that issue, then dispatch gated on `paused != 'true'` (FR-012), so the kill-switch read isn't minutes stale by dispatch time.
+- [X] Split the recovery step into three: pick the candidate, run `wing-commander-board-stop-check` for that issue, then dispatch gated on `paused != 'true'` (FR-012), so the kill-switch read isn't minutes stale by dispatch time.
 
 ## Maintainer Feedback — two arms of the dispatched run don't record the recovery
 - [ ] "Close the issue on the merge evidence alone" (board-loop.yml ~:4725) must write `proven` with `--recovery-attempted` and the recovery notice, matching the other success arm.

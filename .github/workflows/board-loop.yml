@@ -861,8 +861,15 @@ jobs:
       # (board-recent-merges-by-issue.json,
       # board-displacement-comments-by-issue.json) are still on disk here,
       # in the same job.
-      - name: Recover a stranded prove (FR-011)
-        id: recovery
+      # maintainer review (FR-012): split from a single step into three, so
+      # the kill-switch/stop-request recheck below runs as close to the
+      # actual dispatch as this job's own structure allows -- scoped to the
+      # specific issue being recovered, not the job-level `killswitch`
+      # entry gate read at the very top of this job, which can be minutes
+      # stale by the time all of displacement's own gh calls and this
+      # step's own candidate search have run.
+      - name: Pick a stranded prove to recover (FR-011)
+        id: recovery-candidate
         if: steps.killswitch.outputs.status != 'paused' && steps.stand-down.outputs.status != 'in-flight'
         # maintainer review: this step's own if: has no status function, so
         # it implicitly reads success() -- a lasting failure here (a gh
@@ -874,8 +881,6 @@ jobs:
         # but the job's success() stays true for Resume and beyond.
         continue-on-error: true
         env:
-          GH_TOKEN: ${{ github.token }}
-          BOT_TOKEN: ${{ env.WC_BOT_TOKEN }}
           BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}[bot]
         run: |
           set -uo pipefail
@@ -907,12 +912,58 @@ jobs:
 
           if [ "$candidate_json" = "null" ]; then
             echo "board-loop: no stranded prove to recover this tick (FR-011)." >> "$GITHUB_STEP_SUMMARY"
+            {
+              echo "issue-number="
+              echo "merged-pr="
+              echo "outcome-reason="
+            } >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          issue_number="$(printf '%s' "$candidate_json" | jq -r '.issue')"
-          merged_pr="$(printf '%s' "$candidate_json" | jq -r '.merged_pr')"
-          outcome_reason="$(printf '%s' "$candidate_json" | jq -r '.outcome_reason')"
+          {
+            echo "issue-number=$(printf '%s' "$candidate_json" | jq -r '.issue')"
+            echo "merged-pr=$(printf '%s' "$candidate_json" | jq -r '.merged_pr')"
+            echo "outcome-reason=$(printf '%s' "$candidate_json" | jq -r '.outcome_reason')"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Re-check kill switch and stop requests before recovering it
+        id: recovery-killswitch-recheck
+        if: >-
+          steps.killswitch.outputs.status != 'paused' && steps.stand-down.outputs.status != 'in-flight'
+          && steps.recovery-candidate.outputs.issue-number != ''
+        continue-on-error: true
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-board-stop-check
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
+          cancel-token: ${{ github.token }}
+          bot-login: ${{ steps.ctx.outputs.bot-slug }}[bot]
+          issue-number: ${{ steps.recovery-candidate.outputs.issue-number }}
+          initial-paused: ${{ vars.WING_COMMANDER_BOARD_LOOP_PAUSED == 'true' }}
+
+      - name: Dispatch the recovered prove (FR-011)
+        id: recovery-dispatch
+        # steps.recovery-killswitch-recheck.outcome == 'success' (not just a
+        # paused != 'true' check on its output): a FAILED or skipped recheck
+        # reads its own outputs as "", which `!= 'true'` would otherwise let
+        # straight through -- the fail-safe here is to not dispatch at all
+        # when the recheck itself could not be completed.
+        if: >-
+          steps.killswitch.outputs.status != 'paused' && steps.stand-down.outputs.status != 'in-flight'
+          && steps.recovery-candidate.outputs.issue-number != ''
+          && steps.recovery-killswitch-recheck.outcome == 'success'
+          && steps.recovery-killswitch-recheck.outputs.paused != 'true'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BOT_TOKEN: ${{ env.WC_BOT_TOKEN }}
+          ISSUE_NUMBER: ${{ steps.recovery-candidate.outputs.issue-number }}
+          MERGED_PR: ${{ steps.recovery-candidate.outputs.merged-pr }}
+          OUTCOME_REASON: ${{ steps.recovery-candidate.outputs.outcome-reason }}
+        run: |
+          set -uo pipefail
+          issue_number="$ISSUE_NUMBER"
+          merged_pr="$MERGED_PR"
+          outcome_reason="$OUTCOME_REASON"
 
           # research.md D4/FR-001a: whether the directed-proof concurrency
           # group a directed dispatch would join is already occupied is

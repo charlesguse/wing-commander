@@ -9,10 +9,28 @@ second canonical source for any of them.
 
 ## Recovery entry (FR-001/FR-002/FR-011/FR-011a/FR-011b)
 
-A new step in the `select` job, "Recover a stranded prove", runs
+Three new steps in the `select` job (maintainer review, FR-012) run
 immediately after the existing "Detect a merge whose proof run never
-started (FR-010b)" step, under the same `if:` gate (kill switch clear, no
-implement cycle in flight — FR-012).
+started (FR-010b)" step, each gated at minimum on the job-level entry gate
+(kill switch clear, no implement cycle in flight):
+
+1. "Pick a stranded prove to recover" picks the candidate (below) and
+   exposes `issue-number`/`merged-pr`/`outcome-reason` as step outputs,
+   empty when there is none.
+2. "Re-check kill switch and stop requests before recovering it" calls
+   `wing-commander-board-stop-check` scoped to that one issue, only when a
+   candidate was found — this is the re-check FR-012 means: it runs as
+   close to the dispatch as this job's structure allows, not the job-level
+   entry gate alone, which can be minutes stale by the time displacement's
+   own `gh` calls and the candidate search above have run.
+3. "Dispatch the recovered prove" does the busy-check, marker write and
+   dispatch (below), gated on step 2's own `outcome == 'success'` (not
+   merely its `paused` output — a failed or skipped recheck must not read
+   as "not paused") and `paused != 'true'`.
+
+All three carry `continue-on-error: true`: a lasting failure in any of
+them must not fail this job's own success() and stall "Resume" and
+everything after it.
 
 **Candidate set**: issues from this run's own
 `board-recent-merges-by-issue.json` (the displacement step's fetch, reused
