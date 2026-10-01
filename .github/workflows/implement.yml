@@ -3593,3 +3593,7 @@ jobs:
           token: ${{ needs.fold-turn-implement.outputs.token || inputs.fold-queue-token }}
           round: ${{ needs.fold-turn-implement.outputs.round }}
           outcome: not-folded
+          # The fallback token may still be mid-queue (admit never granted
+          # it), where a plain release errors "not at queue head"; abandon
+          # removes it from any position instead.
+          best-effort: ${{ needs.fold-turn-implement.outputs.token == '' }}

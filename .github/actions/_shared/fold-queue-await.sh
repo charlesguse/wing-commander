@@ -70,8 +70,19 @@ set -uo pipefail
 # from "the head ticket belongs to a genuinely different, still-live run" --
 # the former can never be confirmed alive by asking A's own run status,
 # since A is this very waiter and is of course still in_progress.
-MY_RUN_ID="${TOKEN%-*}"
-MY_RUN_ID="${MY_RUN_ID#run-}"
+# Not for an implement ticket: its "run-<id>" names the DISPATCHING run, not
+# this waiter (implement run Y waits on run-X-implement), so treating X's
+# other tickets as this waiter's own orphans would reclaim a live run's
+# ticket without a liveness check (review of #821, round 4). MY_RUN_ID stays
+# empty there and the own-orphan check below never fires.
+MY_RUN_ID=""
+case "$TOKEN" in
+  *-implement) ;;
+  *)
+    MY_RUN_ID="${TOKEN%-*}"
+    MY_RUN_ID="${MY_RUN_ID#run-}"
+    ;;
+esac
 
 if ! declare -F wc_fold_queue_run_status >/dev/null; then
   echo "::error::fold-queue-await.sh: caller must define and 'export -f wc_fold_queue_run_status' before invoking this script (see header comment) -- Gate 12 forbids a gh call inside a _shared/ script, so the actual gh api call must live in the composite's own step." >&2
@@ -108,7 +119,7 @@ while :; do
   # so neither the deadline-extension nor the staleness liveness check
   # below may trust that self-answer for this one case.
   own_orphaned_head="false"
-  if [ -n "$head_run_id" ] && [ "$head_run_id" = "$MY_RUN_ID" ] && [ "$head_token" != "$TOKEN" ]; then
+  if [ -n "$MY_RUN_ID" ] && [ -n "$head_run_id" ] && [ "$head_run_id" = "$MY_RUN_ID" ] && [ "$head_token" != "$TOKEN" ]; then
     own_orphaned_head="true"
   fi
 
@@ -217,7 +228,9 @@ while :; do
             # the ticket's grant (the same job, right after its own gh
             # workflow run call) -- an implement-kind head still
             # uncorrelated after stale-after-minutes PLUS this grace period
-            # has no run to check liveness against by construction
+            # has no recorded run to check liveness against -- including a
+            # live run whose correlation poll missed, which can lose its
+            # ticket here (self-correlation is the follow-up)
             # (dispatch-once's own cleanup step should already have
             # released a standalone-mode/failed-dispatch/unfound-run-url
             # ticket before this point -- this is the backstop for
