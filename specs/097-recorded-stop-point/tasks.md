@@ -607,8 +607,8 @@ kept to one session to avoid edit collisions).
 
 ## Maintainer Feedback
 
-- [ ] **Blocking (spec 086 FR-001):** Delete the "Ensure board-loop's own labels exist" step in `wing-commander-board-stop-check/action.yml` (`uses: ./.github/actions/wing-commander-board-labels`) — inside a composite, a `./`-prefixed `uses:` resolves against `$GITHUB_WORKSPACE`, which in fix/review/prove is the item's own (possibly attacker-controlled) branch checkout, giving a branch that edits that nested composite's `action.yml` App-token execution whenever a maintainer posts "stop".
-- [ ] If `prove` needs the labels ensured, add a top-level "Ensure board-loop's own labels exist" step there instead, resolved via `./.wc-pristine-repo/...` the way other jobs already do.
+- [X] **Blocking (spec 086 FR-001):** Delete the "Ensure board-loop's own labels exist" step in `wing-commander-board-stop-check/action.yml` (`uses: ./.github/actions/wing-commander-board-labels`) — inside a composite, a `./`-prefixed `uses:` resolves against `$GITHUB_WORKSPACE`, which in fix/review/prove is the item's own (possibly attacker-controlled) branch checkout, giving a branch that edits that nested composite's `action.yml` App-token execution whenever a maintainer posts "stop".
+- [X] If `prove` needs the labels ensured, add a top-level "Ensure board-loop's own labels exist" step there instead, resolved via `./.wc-pristine-repo/...` the way other jobs already do.
 
 ## Maintainer Feedback
 

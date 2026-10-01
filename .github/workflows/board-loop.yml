@@ -5181,6 +5181,23 @@ jobs:
           app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
           private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
 
+      # #488: board-loop.yml's own labels -- see wing-commander-board-labels.
+      # This used to be ensured inside wing-commander-board-stop-check's own
+      # composite; moved out to every caller's own job (spec 097-recorded-
+      # stop-point review) because a composite's own `uses: ./...` step
+      # resolves against $GITHUB_WORKSPACE, not the composite's own
+      # directory -- inside fix/review/readiness that workspace is the
+      # item's own (possibly attacker-controlled) branch checkout, so the
+      # nested call ran whatever wing-commander-board-labels/action.yml that
+      # branch carried, with the App token, whenever a stop request was
+      # honoured. continue-on-error: a missed create cannot block prove's
+      # own close/redrive step.
+      - name: Ensure board-loop's own labels exist
+        continue-on-error: true
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-board-labels
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
+
       # research.md D15 + contracts/prove-step.md "Re-drive". The
       # dispatchable set and the uses-graph are read off the checked-out
       # tree at this exact moment (the merge commit's own tree), so a

@@ -218,20 +218,6 @@ runs:
         echo "paused=$paused" >> "$GITHUB_OUTPUT"
         echo "stop-cause=$stop_cause" >> "$GITHUB_OUTPUT"
 
-    # #488/#493, verify-board-label-creation.py: board:stalled is about to
-    # be applied below -- every other apply site either runs this same
-    # idempotent create earlier in its own job, or (triage/route/fix/
-    # review/readiness) already does so before ever reaching this
-    # composite; prove did not, and gains one for free here now that it too
-    # can reach the apply below. `--force` makes this safe and cheap to
-    # call from every job that reaches this composite.
-    - name: Ensure board-loop's own labels exist
-      if: steps.check.outputs.stop-cause == 'stop-request'
-      continue-on-error: true
-      uses: ./.github/actions/wing-commander-board-labels
-      with:
-        token: ${{ inputs.token }}
-
     # specs/097-recorded-stop-point: the durable consequence of an honoured
     # stop request -- the existing `stalled` marker shape plus board:stalled
     # plus a human-legible comment naming the cause, the specific stop
