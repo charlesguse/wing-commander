@@ -177,7 +177,7 @@ same finding, same facts (SC-001).
 
 ### Slug-fallback conversion (the one FR-002 exception — FR-008)
 
-- [ ] T023 [US1] Replace the six-name slug-fallback case block in
+- [X] T023 [US1] Replace the six-name slug-fallback case block in
       `.github/actions/wing-commander-inspected-run-identity/action.yml`
       (lines 206-209: `case "$RUN_NAME" in "Wing Commander · 1
       intake"|...|"Wing Commander · 6 finalize") record_fallback=true ;;

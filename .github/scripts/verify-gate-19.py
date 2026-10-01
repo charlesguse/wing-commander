@@ -1130,12 +1130,25 @@ exit 1
 
 SPEC_META_FIXTURE = json.dumps({"spec_dir": "specs/045-auto-release-verified-head",
                                 "issue": 296, "stage": "implement"})
+# #750/FR-008: the fallback now trusts a record's spec_dir only when that
+# same record declares identity_is_own: true (the six single-spec stages'
+# own call sites). RECORD_045 models one of those "own advance" records.
 RECORD_045 = json.dumps({"schema_version": 1, "stage": "implement",
                          "spec": {"spec_dir": "specs/045-auto-release-verified-head",
-                                  "issue": 296, "identity_available": True}})
+                                  "issue": 296, "identity_available": True,
+                                  "identity_is_own": True}})
 RECORD_046 = json.dumps({"schema_version": 1, "stage": "rebase",
                          "spec": {"spec_dir": "specs/046-watchdog-supervision-collectors",
-                                  "issue": 274, "identity_available": True}})
+                                  "issue": 274, "identity_available": True,
+                                  "identity_is_own": False}})
+# A record whose spec.* was merely borrowed from the run it was reporting
+# on (watchdog's own diagnose record, or a rebase matrix leg) — spec_dir
+# is populated but identity_is_own is false, so the fallback must never
+# resolve a slug from it (#750/FR-008).
+RECORD_045_BORROWED = json.dumps({"schema_version": 1, "stage": "watchdog",
+                                  "spec": {"spec_dir": "specs/045-auto-release-verified-head",
+                                           "issue": 296, "identity_available": True,
+                                           "identity_is_own": False}})
 SPEC_META_DRAFT_FIXTURE = json.dumps({"spec_dir": "specs/045-auto-release-verified-head",
                                       "issue": 296, "stage": "spec"})
 SPEC_META_OTHER_DIR_FIXTURE = json.dumps({"spec_dir": "specs/001-some-other-spec",
@@ -1197,30 +1210,35 @@ SPEC_SLUG_SCENARIOS = [
         expect=dict(slug="", **{"slug-source": "", "lifecycle-issue": ""}),
         expect_download=True,
     ),
-    # Only the six single-spec stages get the fallback. The watchdog's own
-    # diagnose record borrows the INSPECTED run's spec identity, and a
-    # rebase run writes one record per matrix slug — "first record wins"
-    # would tie either to an arbitrary spec. No download, no slug.
+    # #750/FR-008: the fallback no longer gates on the run's display name
+    # at all — it is gated entirely on whether a downloaded record
+    # declares identity_is_own: true. The watchdog's own diagnose record
+    # borrows the INSPECTED run's spec identity (identity_is_own: false),
+    # and a rebase run's matrix-leg records likewise declare false —
+    # "first record wins" would otherwise tie either to an arbitrary spec.
+    # The download IS attempted (no run-name short-circuit); it just finds
+    # nothing trustworthy to read a slug from.
     dict(
         name="a watchdog run with the default-branch head: its record names "
-             "the spec it inspected, not one it advanced — no artifact read, "
-             "no slug",
+             "the spec it inspected, not one it advanced — artifact IS "
+             "read, but identity_is_own: false leaves no slug",
         run_name="Wing Commander · 8 watchdog",
         head_branch="main",
-        records=[RECORD_045],
+        records=[RECORD_045_BORROWED],
         show_json=SPEC_META_FIXTURE,
         expect=dict(slug="", **{"slug-source": "", "lifecycle-issue": ""}),
-        expect_download=False,
+        expect_download=True,
     ),
     dict(
         name="a rebase run with the default-branch head: one record per "
-             "rebased spec, none of them 'the' spec — no artifact read, no slug",
+             "rebased spec, none declaring identity_is_own: true — "
+             "artifact IS read, but no slug resolves",
         run_name="Wing Commander · rebase",
         head_branch="main",
-        records=[RECORD_045, RECORD_046],
+        records=[RECORD_045_BORROWED, RECORD_046],
         show_json=SPEC_META_FIXTURE,
         expect=dict(slug="", **{"slug-source": "", "lifecycle-issue": ""}),
-        expect_download=False,
+        expect_download=True,
     ),
     dict(
         name="a dispatched tasks run: single-spec stage, slug read from the "
@@ -1316,15 +1334,16 @@ SPEC_SLUG_SCENARIOS = [
         expect_run_view=True,
     ),
     dict(
-        name="no head branch handed in, gh run view fails and the stage is not "
-             "a single-spec one: nothing resolves, step still succeeds",
+        name="no head branch handed in, gh run view fails and the record "
+             "found declares identity_is_own: false: nothing resolves, "
+             "step still succeeds",
         head_branch="",
         run_name="Wing Commander · 8 watchdog",
         run_view_fail="gh: HTTP 403: Resource not accessible by integration",
-        records=[RECORD_045],
+        records=[RECORD_045_BORROWED],
         show_json=SPEC_META_FIXTURE,
         expect=dict(slug="", **{"slug-source": "", "lifecycle-issue": ""}),
-        expect_download=False,
+        expect_download=True,
         expect_run_view=True,
     ),
 ]
@@ -1502,7 +1521,7 @@ def remove_record_fallback(script):
     """Mutation: the pre-#322 step, which derived the slug from the head
     branch and nothing else. Disabling the fallback's entry condition must
     break every scenario that expects a slug from the record."""
-    fixed = 'if [ -z "$slug" ] && [ -n "$RUN_ID" ] && [ "$record_fallback" = "true" ]; then'
+    fixed = 'if [ -z "$slug" ] && [ -n "$RUN_ID" ]; then'
     if script.count(fixed) != 1:
         sys.exit("::error::verify-gate-19: could not locate spec-slug's "
                  "metrics-record fallback (#322) to mutate — the step text "
