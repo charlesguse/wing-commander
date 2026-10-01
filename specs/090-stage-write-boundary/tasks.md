@@ -799,3 +799,21 @@ and evaporating into PR-body prose) that this feature exists to end.
   - .github/workflows/finalize.yml
 
   Detail: finalize.yml:722 "Look up routed write-boundary items" step has no continue-on-error, while the sibling step directly above it (checkbox-tip-finalize, ~line 703) explicitly added continue-on-error citing "PR #836 review, item 9", and implement.yml's write-boundary-cycle/-retry steps got the same fix for the identical crash-skips-downstream-success()-gated-step risk. The downstream "Summarize change and extract remaining manual work" step (~line 737) is gated only on an implicit success(), with no always()/!cancelled(), so any crash in this composite (not just the internally-handled `gh issue list` failure, which is already caught) fails the whole finalize job and skips the PR's own summary/remaining-manual-work report for the entire run.
+
+## Phase 8: Convergence
+
+- [ ] T041 Correct plan.md's Summary (~line 22-26) where it states "Loop
+  termination itself needs no new logic — spec 059's existing hand-off
+  (`progressed=false` and no `converge:` commit) already stops the loop the
+  moment the only unchecked task cannot be advanced" per plan: termination
+  decision (contradicts). Review Gate Round 1 finding 1 found the opposite
+  was true — the shipped "Dispatch next step" required a real fix (reading
+  a new `ROUTED` value and OR-ing it into the termination branch) because
+  `handoff=false, routed=true` was falling into the iteration-redispatch
+  branch instead of terminating — and Maintainer Feedback item 2 then
+  deliberately decoupled `routed` from spec 059's `handoff` entirely
+  (`routed = ok && !truncated && all-unchecked-out-of-boundary`, no longer
+  gated on `handoff`/`progressed`/"no converge: commit"). The Summary no
+  longer describes the shipped mechanism. Update it, and check whether the
+  Project Structure section's touch-point list (~line 99-134) should name
+  the "Dispatch next step" edit it currently omits.
