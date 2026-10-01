@@ -864,6 +864,15 @@ jobs:
       - name: Recover a stranded prove (FR-011)
         id: recovery
         if: steps.killswitch.outputs.status != 'paused' && steps.stand-down.outputs.status != 'in-flight'
+        # maintainer review: this step's own if: has no status function, so
+        # it implicitly reads success() -- a lasting failure here (a gh
+        # outage, a locked issue) would fail success() for every step after
+        # it in this job, including "Resume" below, stalling the whole
+        # board every tick. continue-on-error absorbs that, matching the
+        # "Detect a spec-request that closed without landing" precedent
+        # above: the ::error:: annotations below still report the failure,
+        # but the job's success() stays true for Resume and beyond.
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
           BOT_TOKEN: ${{ env.WC_BOT_TOKEN }}
@@ -910,8 +919,11 @@ jobs:
           # read fresh, right before any dispatch is attempted -- the same
           # check the prove job's own "Check whether the directed proof
           # group is busy" step makes before its own re-drive dispatch.
-          run_list_json="$(gh run list --workflow=board-loop.yml -R "$GITHUB_REPOSITORY" \
-            --json databaseId,displayTitle,status -L 20)"
+          if ! run_list_json="$(gh run list --workflow=board-loop.yml -R "$GITHUB_REPOSITORY" \
+            --json databaseId,displayTitle,status -L 20)"; then
+            echo "::error::board-loop: could not list board-loop.yml's own runs -- issue #$issue_number's stranded prove ($outcome_reason) stays recoverable; not dispatched this tick."
+            exit 1
+          fi
           busy="$(RUN_LIST_JSON="$run_list_json" OWN_RUN_ID="$GITHUB_RUN_ID" python3 -c "
           import os, sys
           sys.path.insert(0, '.github/scripts')
@@ -924,18 +936,33 @@ jobs:
             exit 0
           fi
 
-          # FR-011: this step never waits for the dispatched run's own
-          # outcome (research.md D3) -- the marker and comment below are
-          # written on the dispatch call's own success, before anything
-          # else.
-          gh workflow run board-loop.yml -R "$GITHUB_REPOSITORY" \
-            -f directed-stage=prove -f directed-issue="$issue_number" -f directed-pr="$merged_pr" \
-            -f directed-recovery=true
-
+          # maintainer review (SC-008 "retried at most once"): the marker
+          # is written, spending this item's one recovery attempt, BEFORE
+          # the dispatch call is even made -- not after, as research.md
+          # D3's own "on the dispatch call's own success" text originally
+          # read. A dispatch that succeeds but whose comment then fails
+          # would otherwise leave no durable record, and the next tick
+          # would see the same candidate as still-recoverable and dispatch
+          # it again. Spending the attempt first means the rare inverse
+          # failure (the comment posts, the dispatch itself then fails) is
+          # a stranded item a human must re-drive manually, never a
+          # duplicate dispatch.
           marker="$(python3 .github/scripts/board_item_marker.py --step prove \
             --outcome-reason "$outcome_reason" --recovery-attempted)"
-          GH_TOKEN="$BOT_TOKEN" gh issue comment "$issue_number" -R "$GITHUB_REPOSITORY" \
-            --body "$(printf 'Recovering this issue'\''s stranded proof (%s) -- dispatching a directed prove run for PR #%s now, which will record its own outcome here.\n\n%s' "$outcome_reason" "$merged_pr" "$marker")"
+          if ! GH_TOKEN="$BOT_TOKEN" gh issue comment "$issue_number" -R "$GITHUB_REPOSITORY" \
+            --body "$(printf 'Recovering this issue'\''s stranded proof (%s) -- dispatching a directed prove run for PR #%s now, which will record its own outcome here.\n\n%s' "$outcome_reason" "$merged_pr" "$marker")"; then
+            echo "::error::board-loop: could not post issue #$issue_number's recovery marker -- not dispatching, so this attempt is not spent with no durable record of it (FR-011a/SC-008)."
+            exit 1
+          fi
+
+          # FR-011: this step never waits for the dispatched run's own
+          # outcome (research.md D3).
+          if ! gh workflow run board-loop.yml -R "$GITHUB_REPOSITORY" \
+            -f directed-stage=prove -f directed-issue="$issue_number" -f directed-pr="$merged_pr" \
+            -f directed-recovery=true; then
+            echo "::error::board-loop: issue #$issue_number's recovery marker is posted (SC-008: this attempt is now spent) but the directed dispatch itself failed -- a human must re-drive it manually."
+            exit 1
+          fi
           echo "board-loop: dispatched a directed recovery prove run for issue #$issue_number, PR #$merged_pr ($outcome_reason)." >> "$GITHUB_STEP_SUMMARY"
 
       # Board Item Marker (contracts/board-item-marker.md, research.md D21):

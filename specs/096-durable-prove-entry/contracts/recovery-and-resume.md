@@ -51,12 +51,19 @@ ownership read off it were both broken before this feature's own fix —
 see board-loop.yml's "Resolve the originating issue and decide whether
 prove is entered" step).
 
-**On a successful dispatch call** (before waiting for anything — this step
-does not wait, research.md D3): write the marker
-`--step prove --outcome-reason <unchanged> --recovery-attempted`, and post
-a comment naming that the displaced/uncorrelated proof is being recovered.
-This is what makes the one attempt durable per FR-011a, independent of
-whatever the dispatched run itself later does.
+**Before the dispatch call** (maintainer review, SC-008 "retried at most
+once"): write the marker `--step prove --outcome-reason <unchanged>
+--recovery-attempted`, and post a comment naming that the
+displaced/uncorrelated proof is being recovered. This spends the item's
+one recovery attempt regardless of whether the dispatch call that follows
+itself succeeds — a dispatch that succeeds but whose comment then fails
+would otherwise leave no durable record, and the next tick would see the
+same candidate as still-recoverable and dispatch it again (a duplicate,
+which SC-008 forbids). The rarer inverse (the comment posts, the dispatch
+itself then fails) leaves a stranded item a human must re-drive manually,
+never a duplicate — this step still does not wait for anything
+(research.md D3), and the comment failing is itself a loud, non-fatal
+(`continue-on-error: true`) step failure, not a silent one.
 
 **The dispatched run** (a directed `prove` run carrying
 `directed-recovery=true`) performs the *same* actions-only decision,
