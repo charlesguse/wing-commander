@@ -621,3 +621,8 @@ kept to one session to avoid edit collisions).
 
 - [X] In the composite's "Record the stop point" step, check the `--stop-comment` python call's exit status (`|| { echo "::error::..."; exit 1; }`) and validate its output with `jq -e '.html_url|type=="string"'` before writing the label, marker or comment, instead of silently accepting a failure as `{}` (FR-017).
 - [X] Apply the same exit-status check to the `reason_block` rendering call so a failure there fails loudly instead of silently dropping the reason.
+
+
+## Maintainer Feedback
+
+- [ ] **Blocking:** The new fixtures' `expected` values are never checked — Gate 87's hard-coded `FIXTURES` (`verify-board-stop-check.py:68-78`) lists none of the four new fixtures, and Gate 135 check 4 only checks that `find_stop_request` and `find_stop_command_comment` agree with each other, not against `expected`. Add the four new fixtures to Gate 87's `FIXTURES` list, or compare against `spec["expected"]` in check 4. Add a self-test that reverts the same-run fix in both functions together and asserts the gate(s) then fail.
