@@ -360,7 +360,7 @@ rename my wrappers, and what do I lose?" without opening `watchdog.yml`
 
 ## Phase 6: Polish & Cross-Cutting Concerns
 
-- [ ] T041 Run `python .github/scripts/run-local-gates.py` end-to-end and
+- [X] T041 Run `python .github/scripts/run-local-gates.py` end-to-end and
       confirm every gate — including the new Gate 126 — is green, per
       CLAUDE.md's pre-push gate suite and quickstart.md step 1.
 - [ ] T042 After this feature's implementation PR merges, re-drive one
