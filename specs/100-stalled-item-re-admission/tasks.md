@@ -446,3 +446,7 @@ T023's full suite run — this is the same regression concern noted under
 ## Maintainer Feedback (review of 7b4b0825, PR #885)
 
 - [ ] T027 [US3] Fix: board-loop.yml:689 passes `COMMENTS_JSON` via an environment variable, which can exceed the OS's ~128 KiB single-argument/env limit (reproduced with a 142 KB comments array: `python3: Argument list too long`, rc=126) and silently wedges resume under `set -uo pipefail`. Pass `COMMENTS_PATH` instead and `json.load()` the file in the heredoc, matching the marker read at board-loop.yml:589.
+
+## Maintainer Feedback (review of 7b4b0825, PR #885)
+
+- [ ] T028 [US3] Fix board_item_marker.py:221-238's `head_moved_since_last_review()`: comparing `committedDate` (client-set) to the matched comment's `created_at` lets a commit authored before the verdict but pushed after it, or a push landing mid-run, resolve to `moved=False` and send readiness an unreviewed head (FR-006b). Compare the head SHA against the reviewed SHA instead — recorded in the verdict comment text (FR-019 freezes only the marker schema, not comment text) or read from the review's `commit_id`. Also fix the `headRefOid` lookup at :235 to return `True` when not found in `commits`, rather than falling back to `commits[-1]`.
