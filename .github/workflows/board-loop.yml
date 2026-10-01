@@ -343,6 +343,7 @@ jobs:
           # (after the notices for everything that DID resolve are
           # posted), so the failure stays visible without hiding the rest.
           fetch_errors=0
+          scan_failed=0
 
           if [ "${#closed_spec_requests[@]}" -gt 0 ]; then
             for number in "${closed_spec_requests[@]}"; do
@@ -393,7 +394,7 @@ jobs:
             SPEC_REQUEST_COMMENTS_PATH="$RUNNER_TEMP/board-closed-without-landing-comments.json" \
             DISPOSED_COMMENTS_PATH="$RUNNER_TEMP/board-disposed-comments.json" \
             BOT_LOGIN="$BOT_LOGIN" \
-            python3 - <<'PYEOF'
+            python3 - <<'PYEOF' || scan_failed=1
           import glob
           import json
           import os
@@ -464,8 +465,15 @@ jobs:
               json.dump({"spec_requests": spec_requests}, fh)
           PYEOF
 
-          python3 .github/scripts/board_closed_without_landing.py \
-            < "$RUNNER_TEMP/board-closed-without-landing-input.json"
+          # No -e here: each failure is recorded and the step fails at the end,
+          # so a failed fetch, input build or notice post never reads green.
+          notice_failed=0
+          if [ "$scan_failed" = "1" ]; then
+            echo "::error::board-loop: building the closed-without-landing input failed -- no notices were posted this run (FR-017)."
+          elif ! python3 .github/scripts/board_closed_without_landing.py \
+                < "$RUNNER_TEMP/board-closed-without-landing-input.json"; then
+            notice_failed=1
+          fi
 
           # maintainer review, fold leg-3: notices above are posted for
           # everything the fetches above DID resolve; now make any skipped
@@ -473,6 +481,8 @@ jobs:
           # select() unaffected).
           if [ "$fetch_errors" -gt 0 ]; then
             echo "::error::board-loop: $fetch_errors comment fetch(es) failed during the closed-without-landing scan -- some spec-requests/disposed issues were skipped this run (FR-017)."
+          fi
+          if [ "$fetch_errors" -gt 0 ] || [ "$scan_failed" = "1" ] || [ "$notice_failed" = "1" ]; then
             exit 1
           fi
 
