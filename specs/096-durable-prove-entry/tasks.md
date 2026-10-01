@@ -591,3 +591,8 @@ Task: "New Gate 128: verify-board-prove-recovery.py fixtures"
 - [ ] Renumber `verify-board-prove-recovery.py` from Gate 128 (colliding with spec 074's #821) to **Gate 136**.
 - [ ] Renumber `verify-prove-path-concurrency.py` from Gate 129 (colliding with main's spec-cross-reference Gate 129 at lint-workflows.yml:4739) — either fold it into Gate 136 since Gate 89's byte-pin already covers FR-018, or give it **Gate 137** if still free.
 - [ ] Update every citing location: lint-workflows.yml:4783/4793/4797/4805; both scripts' line-2 headers; verify-board-prove.py:127; tasks.md lines 17, 18, 58, 112, 147, 183, 369, 383, 465, 526.
+
+## Maintainer Feedback — false displacement record from this PR's own new concurrency group
+- [ ] In `select`'s displacement step (board-loop.yml :216-321), skip (defer to the next tick) any merge whose `board-loop.yml` `pull_request` run isn't `completed`, matched by `headBranch` to the PR's `headRefName`, so a merge mid-wait in its own new per-PR group isn't falsely reported as displaced.
+- [ ] Add a fixture covering a merge whose own `pull_request` prove run is still in progress when the displacement step runs.
+- [ ] Verify, once the FR-011 `--outcome-reason` fix lands, this skip also prevents a duplicate proof dispatch on the next tick (today's busy check only sees `[directed:` runs).
