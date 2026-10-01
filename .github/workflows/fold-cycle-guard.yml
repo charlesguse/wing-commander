@@ -377,6 +377,30 @@ jobs:
           redispatch_count="$(printf '%s\n' "$ROUND_OUT" | grep '^redispatch-count=' | cut -d= -f2-)"
           iteration="$(printf '%s\n' "$ROUND_OUT" | grep '^iteration=' | cut -d= -f2-)"
 
+          # T065 (maintainer review of #821, B3, round 3): peek-implement-run
+          # found no round matching this cancelled run's id -- either it was
+          # never correlated in the first place (a poll miss on the ORIGINAL
+          # dispatch) or this is itself a second loss of an already-lost
+          # cycle whose correlation also never landed. Either way,
+          # claim-redispatch requires ROUND and dies on `${ROUND:?}`
+          # (ledger.sh) if given an empty one -- stay notice-only rather
+          # than letting that surface as a job failure with no notice
+          # posted at all.
+          if [ -z "$round" ]; then
+            echo "action-taken=notice-only" >> "$GITHUB_OUTPUT"
+            {
+              echo "⏸️ **Lost implementation cycle — replaced by a concurrency group**"
+              echo ""
+              echo "Spec: \`$SPEC_DIR\`"
+              echo "Run: ${GITHUB_SERVER_URL:-https://github.com}/$GITHUB_REPOSITORY/actions/runs/$RUN_ID was cancelled while pending — another admitted run entered the same concurrency group before it could start."
+              echo ""
+              echo "This cycle's round could not be determined (it was never correlated in the fold queue, possibly because an earlier dispatch or redispatch poll missed it) — no automatic re-dispatch was attempted. A maintainer's re-drive is the remaining step."
+            } > "$RUNNER_TEMP/fold-cycle-guard-notice.md"
+            GH_TOKEN="$ISSUE_TOKEN" gh issue comment "$ISSUE" --body-file "$RUNNER_TEMP/fold-cycle-guard-notice.md"
+            echo "fold-cycle-guard: no round could be correlated for $SPEC_DIR run $RUN_ID -- reported without attempting a redispatch (FR-016a)." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
           run_url="${GITHUB_SERVER_URL:-https://github.com}/$GITHUB_REPOSITORY/actions/runs/$RUN_ID"
           notice_file="$RUNNER_TEMP/fold-cycle-guard-notice.md"
           {
@@ -420,7 +444,6 @@ jobs:
           echo "should-attempt-redispatch=true" >> "$GITHUB_OUTPUT"
           echo "round=$round" >> "$GITHUB_OUTPUT"
           echo "iteration=$iteration" >> "$GITHUB_OUTPUT"
-          echo "cancelled-at=$cancelled_at" >> "$GITHUB_OUTPUT"
 
       - name: Claim this cycle's at-most-once redispatch slot
         id: claim
@@ -444,7 +467,6 @@ jobs:
           IMPLEMENT_WORKFLOW: ${{ inputs.implement-workflow }}
           ROUND: ${{ steps.decide.outputs.round }}
           ITERATION: ${{ steps.decide.outputs.iteration }}
-          CANCELLED_AT: ${{ steps.decide.outputs.cancelled-at }}
           CLAIM_OUT: ${{ steps.claim.outputs.output }}
         run: |
           set -euo pipefail
@@ -484,6 +506,19 @@ jobs:
           # and wing-commander-fold-dispatch's own retry build are already
           # distinct (this call carries no folded-json/round-folded-json),
           # so sharing would only move the duplication, not remove it.
+          # T069 (maintainer review of #821, round 3): this step previously
+          # polled from the ORIGINAL run's cancellation time (the decide
+          # step's own cancelled-at output), captured well before this
+          # point (after the correlation read, the claim write, and -- on
+          # the 422 path -- a full failed dispatch attempt first) -- on a
+          # shared implement-workflow wrapper, polling "created since
+          # cancellation" could match a different spec's run that happened
+          # to start in that window instead of this re-dispatch's own.
+          # Mirrors wing-commander-fold-dispatch's own start_ts
+          # (action.yml:225): a timestamp taken immediately before the
+          # actual gh workflow run call narrows the window to this
+          # dispatch alone.
+          start_ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           dispatch_err="$(mktemp)"
           if ! GH_TOKEN="$GH_TOKEN" gh workflow run "$IMPLEMENT_WORKFLOW" \
               -R "$GITHUB_REPOSITORY" -f spec_dir="$SPEC_DIR" -f issue="$ISSUE" -f iteration="${ITERATION:-1}" -f fold_queue_token="$implement_token" 2>"$dispatch_err"; then
@@ -518,9 +553,19 @@ jobs:
           for _ in 1 2 3 4 5 6; do
             sleep 5
             new_run_url=$(gh run list -R "$GITHUB_REPOSITORY" --workflow "$IMPLEMENT_WORKFLOW" \
-              --created ">=$CANCELLED_AT" --limit 1 --json url --jq '.[0].url // empty' 2>/dev/null) || new_run_url=""
+              --created ">=$start_ts" --limit 1 --json url --jq '.[0].url // empty' 2>/dev/null) || new_run_url=""
             [ -n "$new_run_url" ] && break
           done
+
+          # T065 (maintainer review of #821, B3, round 3): emitted
+          # immediately once the poll resolves, before the fallible
+          # `gh issue comment` call below -- previously this was written
+          # only after that call succeeded, so a failed comment post left
+          # a live redispatched run uncorrelated (its ticket then stale-
+          # reclaimed out from under it by a later waiter).
+          if [ -n "$new_run_url" ]; then
+            echo "new-run-id=${new_run_url##*/}" >> "$GITHUB_OUTPUT"
+          fi
 
           {
             echo ""
@@ -533,9 +578,6 @@ jobs:
           GH_TOKEN="$ISSUE_TOKEN" gh issue comment "$ISSUE" --body-file "$notice_file"
           echo "action-taken=notice-and-redispatch" >> "$GITHUB_OUTPUT"
           echo "fold-cycle-guard: re-dispatched $SPEC_DIR round $ROUND once (FR-016)." >> "$GITHUB_STEP_SUMMARY"
-          if [ -n "$new_run_url" ]; then
-            echo "new-run-id=${new_run_url##*/}" >> "$GITHUB_OUTPUT"
-          fi
 
       # T055 (maintainer review of #821, B3): without this, the ledger's
       # round record still names the CANCELLED run as implement_run_id, so
@@ -549,7 +591,7 @@ jobs:
       # remaining step" notice. Mirrors dispatch-once's own "Record this
       # round's dispatched implement run" step (contracts/workflow-changes.md).
       - name: Record the redispatched run
-        if: steps.react.outputs.new-run-id != ''
+        if: "!cancelled() && steps.react.outputs.new-run-id != ''"
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-fold-queue-ledger
         with:
           transform: record-implement-run

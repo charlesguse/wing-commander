@@ -3503,7 +3503,16 @@ jobs:
       # poll simply leaves this round uncorrelated for now; the
       # uncorrelated-head grace-period reclaim fold-queue-await.sh already
       # carries (T046/T049) is the one mechanism that cleans this ticket up
-      # if the dispatched run turns out not to exist at all.
+      # eventually. specs/074-serialized-fold-dispatch T067 (maintainer
+      # review of #821, round 3): that grace-period reclaim fires
+      # UNCONDITIONALLY once its combined threshold elapses, whether or not
+      # the dispatched run actually exists — a poll miss on a run that DOES
+      # exist and is still legitimately running can also have its ticket
+      # reclaimed out from under it this way, reopening the very eviction
+      # this release step exists to prevent. Closing that gap fully needs
+      # self-correlation (the dispatched run recording its own run id
+      # directly, as fold-turn-implement's admit grant already could,
+      # rather than via this poll) — tracked as a follow-up, not yet done.
       - name: Release an implement ticket this run's claim created but never handed to a real run
         if: >-
           always() && needs.fold-turn-dispatch.outputs.implement-token != '' &&
