@@ -1,1 +1,9 @@
-{"issue": 724, "spec_dir": "specs/097-recorded-stop-point", "feature_num": "097", "stage": "implement", "iteration": 3, "spec_branch": "spec/097-recorded-stop-point"}
+{
+  "issue": 724,
+  "spec_dir": "specs/097-recorded-stop-point",
+  "feature_num": "097",
+  "stage": "review",
+  "iteration": 3,
+  "spec_branch": "spec/097-recorded-stop-point",
+  "pending_re_review_from": []
+}
