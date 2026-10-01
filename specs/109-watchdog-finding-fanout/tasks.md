@@ -264,7 +264,7 @@ With two contributors (this run's shared-usage-window constraint caps concurrent
 
 ## Review Gate Round 2 Findings
 
-- [ ] Review finding: Load triage decision never forwards cited-ids/matched-on/other-matches
+- [X] Review finding: Load triage decision never forwards cited-ids/matched-on/other-matches
 
   The act job's Load triage decision step (watchdog.yml:3686-3726, id: decision) reads the persisted triage-decision JSON but never echoes cited-ids, matched-on, or other-matches to $GITHUB_OUTPUT in either branch, even though Ensure pipeline-defect issue and Report finding to lifecycle issue consume steps.decision.outputs.cited-ids/.matched-on/.other-matches (watchdog.yml:3852-3854, 3959).
 

@@ -3803,8 +3803,11 @@ jobs:
               echo "fingerprint=$(jq -r '.fingerprint' "$f")"
               echo "short-fingerprint=$(jq -r '."short-fingerprint"' "$f")"
               echo "canonical-facts=$(jq -r '."canonical-facts" // ""' "$f")"
+              echo "cited-ids=$(jq -r '."cited-ids" // ""' "$f")"
               echo "dedup=$(jq -r '.dedup' "$f")"
               echo "dedup-issue=$(jq -r '."dedup-issue"' "$f")"
+              echo "matched-on=$(jq -r '."matched-on" // ""' "$f")"
+              echo "other-matches=$(jq -r '."other-matches" // ""' "$f")"
               echo "issueless=$(jq -r '.issueless // false' "$f")"
             } >> "$GITHUB_OUTPUT"
           else
@@ -3816,6 +3819,7 @@ jobs:
               echo "fingerprint="
               echo "short-fingerprint="
               echo "canonical-facts="
+              echo "cited-ids="
               # Reuses the dedup step's own "unknown" outcome rather than an
               # empty string: every dedup consumer below (the "Ensure
               # pipeline-defect issue" guard, and this job's report step)
@@ -3827,6 +3831,8 @@ jobs:
               # ""`, which fails the job under this run: block's `-e`.
               echo "dedup=unknown"
               echo "dedup-issue="
+              echo "matched-on="
+              echo "other-matches="
               echo "issueless=false"
             } >> "$GITHUB_OUTPUT"
           fi
