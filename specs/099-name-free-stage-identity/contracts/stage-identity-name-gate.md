@@ -9,7 +9,7 @@ implementation time; see research.md R9), picked up automatically by
 
 ## What it checks
 
-Scans these files for the nine reference display-name literals
+Scans these files for the ten reference display-name literals
 (`"Wing Commander · 1 intake"` … `"Wing Commander · 7 cleanup"`,
 `"Wing Commander · 9 pr conversation"`, `"Wing Commander · rebase"`, and
 `"Wing Commander · 8 watchdog"`):

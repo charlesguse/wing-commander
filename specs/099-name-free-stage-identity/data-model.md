@@ -13,13 +13,13 @@ Produced once per inspection by `wing-commander-inspected-run-identity`
 
 | Field | Type | Values | Source |
 |---|---|---|---|
-| `resolved-stage` | composite output (string) | `intake`, `clarify`, `plan`, `tasks`, `implement`, `finalize`, `cleanup`, `rebase`, `pr-conversation`, or `` (empty = unresolved) | `record-stage` if non-empty, else the FR-009 name fallback, else empty |
+| `resolved-stage` | composite output (string) | `intake`, `clarify`, `plan`, `tasks`, `implement`, `finalize`, `cleanup`, `rebase`, `pr-conversation`, `watchdog`, or `` (empty = unresolved) | `record-stage` if non-empty, else the FR-009 name fallback, else empty |
 | `resolved-stage-source` | composite output (string) | `record`, `name`, `` (empty) | Which branch of the above produced `resolved-stage` |
 
 **Precedence** (FR-009, fixed and documented in one place — R1's
 composite): `record-stage` wins whenever non-empty; the name fallback
 (R2's `id: name-fallback` step) runs only when `record-stage` is empty,
-covering the nine stages FR-014a names; anything else leaves both
+covering the nine stages FR-014a names plus watchdog; anything else leaves both
 outputs empty.
 
 **Consumption state** (FR-005 — one of three, at every FR-002 consumer

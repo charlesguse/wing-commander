@@ -166,7 +166,7 @@ outputs:
   resolved-stage:
     description: >
       `record-stage` if non-empty, else the FR-009 name-derived fallback
-      (the nine stages FR-014a names), else empty (#750). The one stage
+      (the nine stages FR-014a names, plus watchdog), else empty (#750). The one stage
       identity every FR-002 consumer site except the slug-fallback
       allowlist reads.
     value: ${{ steps.name-fallback.outputs.resolved-stage }}
