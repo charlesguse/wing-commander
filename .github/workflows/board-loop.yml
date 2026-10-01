@@ -1926,10 +1926,12 @@ jobs:
       # dispatch's comment never mistakes it for an ordinary lifecycle
       # comment.
       - name: Act on the verdict and post the outcome
+        id: act
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           ISSUE_NUMBER: ${{ needs.select.outputs.issue-number || inputs.directed-issue }}
           PAUSED: ${{ steps.killswitch-recheck.outputs.paused }}
+          STOP_CAUSE: ${{ steps.killswitch-recheck.outputs.stop-cause }}
           DIRECTED_ATTRIBUTION: >-
             ${{ inputs.directed-stage != '' && format('_Directed proof run
             (stage: `{0}`), dispatched to prove PR #{1} -- selects no board
@@ -1938,9 +1940,18 @@ jobs:
           set -uo pipefail
           outcome="$(jq -r '.outcome' "$RUNNER_TEMP/board-triage-verdict.json")"
           ground="$(jq -r '.ground // empty' "$RUNNER_TEMP/board-triage-verdict.json")"
+          echo "outcome=$outcome" >> "$GITHUB_OUTPUT"
 
           if [ "$PAUSED" = "true" ]; then
-            echo "board-loop: kill switch set immediately before triage's durable action -- standing down without acting." >> "$GITHUB_STEP_SUMMARY"
+            # specs/097-recorded-stop-point FR-014: name the cause actually
+            # observed, never "kill switch" unconditionally.
+            case "$STOP_CAUSE" in
+              stop-request) cause="a maintainer stop request" ;;
+              kill-switch) cause="the kill switch" ;;
+              closed-issue) cause="the issue being closed" ;;
+              *) cause="an unrecognised stand-down cause ($STOP_CAUSE)" ;;
+            esac
+            echo "board-loop: $cause set immediately before triage's durable action -- standing down without acting." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           if [ "$outcome" = "defer" ]; then
@@ -2010,6 +2021,35 @@ jobs:
               gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$body"
               ;;
           esac
+
+      # specs/097-recorded-stop-point FR-015/SC-008
+      # (contracts/metrics-classification.md): a second, separate record
+      # from triage-propose's own per-agent metrics call above -- this one
+      # reports what the JOB as a whole did (stood down, or acted on
+      # $outcome), distinguishable from a quiet run by this field alone.
+      - name: Record run outcome (triage)
+        if: always()
+        continue-on-error: true
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-metrics-summary
+        with:
+          transcript-path: ${{ runner.temp }}/wing-commander-no-transcript.json
+          model: ''
+          stage: board-loop
+          run-label: >-
+            ${{ (steps.killswitch-recheck.outputs.stop-cause == 'stop-request' && 'triage: stopped (stop-request)') ||
+                (steps.killswitch-recheck.outputs.stop-cause == 'kill-switch' && 'triage: stood down (kill-switch)') ||
+                format('triage: {0}', steps.act.outputs.outcome) }}
+          record-path: ${{ runner.temp }}/wing-commander-metrics-record-triage-outcome.json
+
+      - name: Upload metrics record (triage outcome)
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v6
+        with:
+          name: metrics-record-triage-outcome
+          path: ${{ runner.temp }}/wing-commander-metrics-record-triage-outcome.json
+          if-no-files-found: ignore
+          retention-days: 90
 
   # Phase 4 (User Story 2, contracts/route-backstop.md): the route-propose
   # agent's fix/spec proposal is only ever narrowed by code, never widened
@@ -2385,6 +2425,23 @@ jobs:
               fh.write("reason={0}\n".format(decision["reason"]))
           PYEOF
 
+      # specs/097-recorded-stop-point FR-014: name the cause actually
+      # observed before route's own durable action (filing a spec-request)
+      # is skipped.
+      - name: Record the stand-down (route)
+        if: steps.killswitch-recheck.outputs.paused == 'true'
+        env:
+          STOP_CAUSE: ${{ steps.killswitch-recheck.outputs.stop-cause }}
+        run: |
+          set -uo pipefail
+          case "$STOP_CAUSE" in
+            stop-request) cause="a maintainer stop request" ;;
+            kill-switch) cause="the kill switch" ;;
+            closed-issue) cause="the issue being closed" ;;
+            *) cause="an unrecognised stand-down cause ($STOP_CAUSE)" ;;
+          esac
+          echo "board-loop: $cause found immediately before route's durable action -- standing down without acting." >> "$GITHUB_STEP_SUMMARY"
+
       # Board Item Marker (T014). A `spec` verdict ends the run for this
       # item with no branch cut (FR-021); a `fix` verdict proceeds to the
       # fix job (Phase 5) with no comment of its own here -- the fix job's
@@ -2541,6 +2598,35 @@ jobs:
           issue-number: ${{ steps.spec_request.outputs.spec-request-number }}
           phrase: "Filed for the routed original"
           artifact-url: ${{ github.server_url }}/${{ github.repository }}/issues/${{ needs.select.outputs.issue-number }}
+
+      # specs/097-recorded-stop-point FR-015/SC-008
+      # (contracts/metrics-classification.md): a second, separate record
+      # from route-propose's own per-agent metrics call above -- this one
+      # reports what the JOB as a whole did (stood down, or its own route
+      # verdict), distinguishable from a quiet run by this field alone.
+      - name: Record run outcome (route)
+        if: always()
+        continue-on-error: true
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-metrics-summary
+        with:
+          transcript-path: ${{ runner.temp }}/wing-commander-no-transcript.json
+          model: ''
+          stage: board-loop
+          run-label: >-
+            ${{ (steps.killswitch-recheck.outputs.stop-cause == 'stop-request' && 'route: stopped (stop-request)') ||
+                (steps.killswitch-recheck.outputs.stop-cause == 'kill-switch' && 'route: stood down (kill-switch)') ||
+                format('route: {0}', steps.decide.outputs.verdict) }}
+          record-path: ${{ runner.temp }}/wing-commander-metrics-record-route-outcome.json
+
+      - name: Upload metrics record (route outcome)
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v6
+        with:
+          name: metrics-record-route-outcome
+          path: ${{ runner.temp }}/wing-commander-metrics-record-route-outcome.json
+          if-no-files-found: ignore
+          retention-days: 90
 
   # Phase 5 (User Story 3, contracts/fix-step.md): the fixer works from a
   # `main` fetched in this same run, the full local gate suite must be
@@ -2909,6 +2995,23 @@ jobs:
           marker-branch: ${{ needs.select.outputs.branch }}
           marker-base-sha: ${{ needs.select.outputs.base-sha }}
 
+      # specs/097-recorded-stop-point FR-014: name the cause actually
+      # observed before fix's own durable action (pushing and opening the
+      # PR) is skipped.
+      - name: Record the stand-down (fix)
+        if: steps.gate-suite.outputs.outcome == 'pass' && steps.killswitch-recheck.outputs.paused == 'true'
+        env:
+          STOP_CAUSE: ${{ steps.killswitch-recheck.outputs.stop-cause }}
+        run: |
+          set -uo pipefail
+          case "$STOP_CAUSE" in
+            stop-request) cause="a maintainer stop request" ;;
+            kill-switch) cause="the kill switch" ;;
+            closed-issue) cause="the issue being closed" ;;
+            *) cause="an unrecognised stand-down cause ($STOP_CAUSE)" ;;
+          esac
+          echo "board-loop: $cause found immediately before fix's durable action -- standing down without acting." >> "$GITHUB_STEP_SUMMARY"
+
       # FR-026/research.md D9: push only on green, then cross-link.
       - name: Push and open the PR
         id: push-pr
@@ -3141,6 +3244,36 @@ jobs:
           phrase: "Filed for the routed original"
           artifact-url: ${{ github.server_url }}/${{ github.repository }}/issues/${{ needs.select.outputs.issue-number }}
           context: "(post-push backstop breach, measured=${{ steps.post-push-breach.outputs.measured }})"
+
+      # specs/097-recorded-stop-point FR-015/SC-008
+      # (contracts/metrics-classification.md): a second, separate record
+      # from the fixer's own per-agent metrics call above -- this one
+      # reports what the JOB as a whole did (stood down, or its own
+      # gate-suite outcome), distinguishable from a quiet run by this field
+      # alone.
+      - name: Record run outcome (fix)
+        if: always()
+        continue-on-error: true
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-metrics-summary
+        with:
+          transcript-path: ${{ runner.temp }}/wing-commander-no-transcript.json
+          model: ''
+          stage: board-loop
+          run-label: >-
+            ${{ (steps.killswitch-recheck.outputs.stop-cause == 'stop-request' && 'fix: stopped (stop-request)') ||
+                (steps.killswitch-recheck.outputs.stop-cause == 'kill-switch' && 'fix: stood down (kill-switch)') ||
+                format('fix: gate-suite {0}', steps.gate-suite.outputs.outcome) }}
+          record-path: ${{ runner.temp }}/wing-commander-metrics-record-fix-outcome.json
+
+      - name: Upload metrics record (fix outcome)
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v6
+        with:
+          name: metrics-record-fix-outcome
+          path: ${{ runner.temp }}/wing-commander-metrics-record-fix-outcome.json
+          if-no-files-found: ignore
+          retention-days: 90
 
   # Phase 6 (User Story 4, contracts/review-and-findings.md): a
   # context-isolated reviewer (a separate job -- no shared transcript,
@@ -3900,6 +4033,23 @@ jobs:
           marker-branch: ${{ needs.select.outputs.branch }}
           marker-base-sha: ${{ needs.select.outputs.base-sha }}
 
+      # specs/097-recorded-stop-point FR-014: name the cause actually
+      # observed before review's own durable actions (posting the round
+      # outcome, pushing a fixup) are skipped.
+      - name: Record the stand-down (review)
+        if: steps.killswitch-recheck.outputs.paused == 'true'
+        env:
+          STOP_CAUSE: ${{ steps.killswitch-recheck.outputs.stop-cause }}
+        run: |
+          set -uo pipefail
+          case "$STOP_CAUSE" in
+            stop-request) cause="a maintainer stop request" ;;
+            kill-switch) cause="the kill switch" ;;
+            closed-issue) cause="the issue being closed" ;;
+            *) cause="an unrecognised stand-down cause ($STOP_CAUSE)" ;;
+          esac
+          echo "board-loop: $cause found immediately before review's durable action -- standing down without acting." >> "$GITHUB_STEP_SUMMARY"
+
       # T042/T044/FR-030/FR-031: zero open in-scope findings advances to
       # readiness; findings remain and the round budget (research.md D18,
       # 5) is not yet spent -> a follow-up fixer commit, and the NEXT
@@ -4184,6 +4334,36 @@ jobs:
             || failure="(the failing gate could not be rendered)"
           gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'A review-fixup follow-up commit failed the local gate suite before any push -- nothing was pushed, the PR is unchanged:\n\n%s' "$failure")"
 
+      # specs/097-recorded-stop-point FR-015/SC-008
+      # (contracts/metrics-classification.md): a second, separate record
+      # from the reviewer's/review-fixup's own per-agent metrics calls
+      # above -- this one reports what the JOB as a whole did (stood down,
+      # or its own round outcome), distinguishable from a quiet run by this
+      # field alone.
+      - name: Record run outcome (review)
+        if: always()
+        continue-on-error: true
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-metrics-summary
+        with:
+          transcript-path: ${{ runner.temp }}/wing-commander-no-transcript.json
+          model: ''
+          stage: board-loop
+          run-label: >-
+            ${{ (steps.killswitch-recheck.outputs.stop-cause == 'stop-request' && 'review: stopped (stop-request)') ||
+                (steps.killswitch-recheck.outputs.stop-cause == 'kill-switch' && 'review: stood down (kill-switch)') ||
+                format('review: {0}', steps.round.outputs.outcome) }}
+          record-path: ${{ runner.temp }}/wing-commander-metrics-record-review-outcome.json
+
+      - name: Upload metrics record (review outcome)
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v6
+        with:
+          name: metrics-record-review-outcome
+          path: ${{ runner.temp }}/wing-commander-metrics-record-review-outcome.json
+          if-no-files-found: ignore
+          retention-days: 90
+
   # Phase 7 (User Story 5, contracts/readiness-report.md): every condition
   # is re-derived against the PR's exact head SHA; the loop reports ready
   # or names the unmet condition, and NEVER merges, approves, or enables
@@ -4411,8 +4591,18 @@ jobs:
         if: steps.killswitch-recheck.outputs.paused == 'true'
         env:
           ISSUE_NUMBER: ${{ needs.select.outputs.issue-number || inputs.directed-issue }}
+          STOP_CAUSE: ${{ steps.killswitch-recheck.outputs.stop-cause }}
         run: |
-          echo "board-loop: kill switch or stop request found immediately before readiness's durable actions on issue #$ISSUE_NUMBER -- standing down without acting (#604)." >> "$GITHUB_STEP_SUMMARY"
+          set -uo pipefail
+          # specs/097-recorded-stop-point FR-014: name the cause actually
+          # observed, never "kill switch or stop request" unconditionally.
+          case "$STOP_CAUSE" in
+            stop-request) cause="a maintainer stop request" ;;
+            kill-switch) cause="the kill switch" ;;
+            closed-issue) cause="the issue being closed" ;;
+            *) cause="an unrecognised stand-down cause ($STOP_CAUSE)" ;;
+          esac
+          echo "board-loop: $cause found immediately before readiness's durable actions on issue #$ISSUE_NUMBER -- standing down without acting (#604)." >> "$GITHUB_STEP_SUMMARY"
 
       # Zero open in-scope findings is trusted from the state machine
       # itself, not re-derived: readiness is entered ONLY when review's own
@@ -4662,7 +4852,14 @@ jobs:
           transcript-path: ${{ runner.temp }}/wing-commander-no-transcript.json
           model: ''
           stage: board-loop
-          run-label: ${{ steps.decide.outputs.ready == 'true' && 'ready' || 'not ready' }}
+          # specs/097-recorded-stop-point FR-015/SC-008
+          # (contracts/metrics-classification.md): a stop-request/kill-switch
+          # stand-down is distinguishable from an ordinary ready/not-ready
+          # run from this one field alone.
+          run-label: >-
+            ${{ (steps.killswitch-recheck.outputs.stop-cause == 'stop-request' && 'readiness: stopped (stop-request)') ||
+                (steps.killswitch-recheck.outputs.stop-cause == 'kill-switch' && 'readiness: stood down (kill-switch)') ||
+                (steps.decide.outputs.ready == 'true' && 'ready' || 'not ready') }}
           record-path: ${{ runner.temp }}/wing-commander-metrics-record-readiness.json
           spec-identity-is-own: 'false'
 
@@ -5268,10 +5465,20 @@ jobs:
           DIRECTED_STAGE: ${{ steps.decide.outputs.directed-stage }}
           CONCLUSION: ${{ steps.redrive.outputs.conclusion }}
           DISAMBIGUATED_REASON: ${{ steps.disambiguate.outputs.reason }}
+          STOP_CAUSE: ${{ steps.killswitch-recheck.outputs.stop-cause }}
         run: |
           set -uo pipefail
+          # specs/097-recorded-stop-point FR-014/FR-015: name the cause
+          # actually observed, distinguishably, in the metrics run_label
+          # (contracts/metrics-classification.md) -- never an undifferentiated
+          # "stood down" for every cause.
           if [ "${{ steps.killswitch-recheck.outputs.paused }}" = "true" ]; then
-            label="stood down"
+            case "$STOP_CAUSE" in
+              stop-request) label="prove: stopped (stop-request)" ;;
+              kill-switch) label="prove: stood down (kill-switch)" ;;
+              closed-issue) label="prove: stood down (issue closed)" ;;
+              *) label="prove: stood down (unrecognised cause: $STOP_CAUSE)" ;;
+            esac
           elif [ "${{ steps.decide.outputs.actions-only }}" != "true" ]; then
             if [ "${{ inputs.directed-recovery }}" = "true" ]; then
               label="closed on merge evidence alone (recovered)"
