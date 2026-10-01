@@ -906,13 +906,15 @@ and evaporating into PR-body prose) that this feature exists to end.
 
   Detail: Loop around lines 829-842 calling verify_anchor() in compute-finding-fingerprint.sh; for K unchecked lines this pays O(K) redundant file reads, regex normalization passes, and process forks on every finalize run while the lifecycle is open
 
-- [ ] Review finding: run_cycle_step/run_retry_step near-identical copy-paste in gate test harness
+- [x] Review finding: run_cycle_step/run_retry_step near-identical copy-paste in gate test harness
 
   verify-write-boundary.py's run_cycle_step and run_retry_step duplicate the same setup and env-dict construction, differing only in a result key, which step is looked up, and one extra env key
 
   - .github/scripts/verify-write-boundary.py
 
   Detail: Around lines 1474-1513; a future fix to shared env-building logic (as already happened once with WRITE_BOUNDARY_ALL_OOB) must be pasted into both functions or they silently diverge
+
+  Fixed: extracted the shared body into `_run_read_back_step(steps, step_key, ..., result_key, result_value, extra_env=None)`; `run_cycle_step`/`run_retry_step` are now thin wrappers passing their differing step/result-key/extra-env, so a future shared env-building fix lands once.
 
 - [x] Review finding: Lost watchdog.yml cross-reference when raising issue-list limit
 

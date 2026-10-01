@@ -261,23 +261,38 @@ def classify_env(unchecked_items, no_write_paths):
     return outputs.get("all-unchecked-out-of-boundary", "false"), outputs.get("findings-json", "[]")
 
 
-def run_cycle_step(steps, repo, base_sha, *, verdict, cycle_result,
-                    no_write_paths=".claude/", iteration=ITERATION):
+def _run_read_back_step(steps, step_key, repo, base_sha, *, verdict,
+                         result_key, result_value, no_write_paths=".claude/",
+                         iteration=ITERATION, extra_env=None):
+    """Shared body of run_cycle_step/run_retry_step (review-gate-round-3):
+    the two differed only in which step/env-key/result-value they drove, so
+    a shared env-building fix (e.g. WRITE_BOUNDARY_ALL_OOB) no longer has to
+    be pasted into both."""
     runner_temp = tempfile.mkdtemp(dir=os.path.dirname(repo))
     checked_base, _, _ = checkbox_count_env(repo, base_sha)
     checked_tip, unchecked_tip, items_tip = checkbox_count_env(
         repo, f"origin/{SPEC_PREFIX}{SLUG}")
     all_oob, findings_json = classify_env(items_tip, no_write_paths)
     env = {"SLUG": SLUG, "SPEC_DIR": SPEC_DIR, "ITERATION": str(iteration),
-           "BASE_SHA": base_sha, "CYCLE_RESULT": cycle_result,
+           "BASE_SHA": base_sha, result_key: result_value,
            "VERDICT": verdict, "SPEC_PREFIX": SPEC_PREFIX,
            "AGENT_AUTHOR_RE": AGENT_AUTHOR_RE, "DEFAULT_BRANCH": "main",
            "CHECKED_BASE": checked_base, "CHECKED_TIP": checked_tip,
            "UNCHECKED_TIP": unchecked_tip, "REMAINING_TIP": items_tip,
            "WRITE_BOUNDARY_ALL_OOB": all_oob,
            "WRITE_BOUNDARY_FINDINGS_JSON": findings_json}
+    if extra_env:
+        env.update(extra_env)
     env.update(read_spec_meta_env(repo))
-    return run_step(BASH, steps[CYCLE_STEP], repo, env, runner_temp)
+    return run_step(BASH, steps[step_key], repo, env, runner_temp)
+
+
+def run_cycle_step(steps, repo, base_sha, *, verdict, cycle_result,
+                    no_write_paths=".claude/", iteration=ITERATION):
+    return _run_read_back_step(
+        steps, CYCLE_STEP, repo, base_sha, verdict=verdict,
+        result_key="CYCLE_RESULT", result_value=cycle_result,
+        no_write_paths=no_write_paths, iteration=iteration)
 
 
 def run_retry_step(steps, repo, base_sha, *, verdict, retry_result,
@@ -285,22 +300,11 @@ def run_retry_step(steps, repo, base_sha, *, verdict, retry_result,
     """Mirrors run_cycle_step, driving the shipped retry arm's own "Read
     back retry outcome" instead (PR #836 review, item 4 -- RETRY_STEP was
     loaded into STEPS_CACHE but never exercised by any scenario)."""
-    runner_temp = tempfile.mkdtemp(dir=os.path.dirname(repo))
-    checked_base, _, _ = checkbox_count_env(repo, base_sha)
-    checked_tip, unchecked_tip, items_tip = checkbox_count_env(
-        repo, f"origin/{SPEC_PREFIX}{SLUG}")
-    all_oob, findings_json = classify_env(items_tip, no_write_paths)
-    env = {"SLUG": SLUG, "SPEC_DIR": SPEC_DIR, "ITERATION": str(iteration),
-           "BASE_SHA": base_sha, "RETRY_RESULT": retry_result,
-           "VERDICT": verdict, "SPEC_PREFIX": SPEC_PREFIX,
-           "AGENT_AUTHOR_RE": AGENT_AUTHOR_RE, "DEFAULT_BRANCH": "main",
-           "ESCALATION_MODEL": "escalation-model",
-           "CHECKED_BASE": checked_base, "CHECKED_TIP": checked_tip,
-           "UNCHECKED_TIP": unchecked_tip, "REMAINING_TIP": items_tip,
-           "WRITE_BOUNDARY_ALL_OOB": all_oob,
-           "WRITE_BOUNDARY_FINDINGS_JSON": findings_json}
-    env.update(read_spec_meta_env(repo))
-    return run_step(BASH, steps[RETRY_STEP], repo, env, runner_temp)
+    return _run_read_back_step(
+        steps, RETRY_STEP, repo, base_sha, verdict=verdict,
+        result_key="RETRY_RESULT", result_value=retry_result,
+        no_write_paths=no_write_paths, iteration=iteration,
+        extra_env={"ESCALATION_MODEL": "escalation-model"})
 
 
 # PR #836 review-gate-round-1 item 1: drives the shipped "Dispatch next
