@@ -1547,6 +1547,21 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
 
+      # #583: see the fix job's "Snapshot helper scripts" step. Triage's
+      # own wing-commander-board-stop-check call site (T006's --stop-comment
+      # mode and T010's record-write block) runs from this pristine
+      # snapshot like every other caller (research.md D8).
+      - name: Snapshot helper scripts (before any agent runs)
+        run: |
+          set -euo pipefail
+          dest="$RUNNER_TEMP/wc-pristine"
+          if ! git cat-file -e "$GITHUB_SHA^{commit}" 2>/dev/null; then
+            git fetch --no-tags --quiet origin "$GITHUB_SHA"
+          fi
+          mkdir "$dest"
+          git archive --format=tar "$GITHUB_SHA" .github/scripts .github/schemas | tar -x -C "$dest" --strip-components=1
+          chmod -R a-w "$dest"
+
       # see this file's header for why every job does this
       - name: Checkout board-loop's own trusted copy (composites)
         uses: actions/checkout@v5
@@ -2091,6 +2106,21 @@ jobs:
         uses: actions/checkout@v5
         with:
           persist-credentials: false
+
+      # #583: see the fix job's "Snapshot helper scripts" step. Route's
+      # own wing-commander-board-stop-check call site (T006's --stop-comment
+      # mode and T010's record-write block) runs from this pristine
+      # snapshot like every other caller (research.md D8).
+      - name: Snapshot helper scripts (before any agent runs)
+        run: |
+          set -euo pipefail
+          dest="$RUNNER_TEMP/wc-pristine"
+          if ! git cat-file -e "$GITHUB_SHA^{commit}" 2>/dev/null; then
+            git fetch --no-tags --quiet origin "$GITHUB_SHA"
+          fi
+          mkdir "$dest"
+          git archive --format=tar "$GITHUB_SHA" .github/scripts .github/schemas | tar -x -C "$dest" --strip-components=1
+          chmod -R a-w "$dest"
 
       # see this file's header for why every job does this
       - name: Checkout board-loop's own trusted copy (composites)
@@ -5115,6 +5145,21 @@ jobs:
         uses: actions/checkout@v5
         with:
           persist-credentials: false
+
+      # #583: see the fix job's "Snapshot helper scripts" step. Prove's
+      # own wing-commander-board-stop-check call site (T006's --stop-comment
+      # mode and T010's record-write block) runs from this pristine
+      # snapshot like every other caller (research.md D8).
+      - name: Snapshot helper scripts (before any agent runs)
+        run: |
+          set -euo pipefail
+          dest="$RUNNER_TEMP/wc-pristine"
+          if ! git cat-file -e "$GITHUB_SHA^{commit}" 2>/dev/null; then
+            git fetch --no-tags --quiet origin "$GITHUB_SHA"
+          fi
+          mkdir "$dest"
+          git archive --format=tar "$GITHUB_SHA" .github/scripts .github/schemas | tar -x -C "$dest" --strip-components=1
+          chmod -R a-w "$dest"
 
       # see this file's header for why every job does this
       - name: Checkout board-loop's own trusted copy (composites)

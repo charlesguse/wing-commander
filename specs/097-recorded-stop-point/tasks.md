@@ -570,7 +570,7 @@ kept to one session to avoid edit collisions).
 
 ## Phase 8: Convergence
 
-- [ ] T034 Add a "Snapshot helper scripts (before any agent runs)" step
+- [X] T034 Add a "Snapshot helper scripts (before any agent runs)" step
   (identical to the one `.github/workflows/board-loop.yml`'s fix/review/
   readiness jobs already carry — the same `git archive … | tar -x` of
   `.github/scripts`/`.github/schemas` from `$GITHUB_SHA` into
