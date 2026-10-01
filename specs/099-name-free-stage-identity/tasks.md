@@ -500,3 +500,8 @@ Task: "Pass spec-identity-is-own: 'false' in .github/workflows/board-loop.yml:90
   - [ ] Set `GITHUB_REPOSITORY` in `env_extra`
   - [ ] Add a `--self-test` mode
   - [ ] Correct the docstring at :91-95
+
+## Maintainer Feedback
+
+- [ ] **FR-014 warning step can take down the whole inspection (blocks merge).** `watchdog.yml:679-694` runs `gh issue comment` with no `continue-on-error`, ahead of all eight collectors, `signal-ids` and `aggregate`, which use the implicit `success()`. If the comment fails, every collector, aggregate, both reports and diagnose are skipped.
+  - [ ] Add `continue-on-error: true`, or better, fold the warning into the aggregate report text
