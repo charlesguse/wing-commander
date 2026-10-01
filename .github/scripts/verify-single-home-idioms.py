@@ -1705,7 +1705,7 @@ PER_STEP_LINE_CASES = (
      "          gh issue comment \"$N\" --body \"- [ ] a third paste "
      "\u2014 $URL\"\n"),
     ("post-review-comment",
-     "          gh api \"repos/$R/pulls/1/reviews\" -f body=x -f event=COMMENT\n"),
+     "          gh api -X POST \"repos/$R/pulls/1/reviews\" -f body=x -f event=COMMENT\n"),
     ("review-finding-fingerprint",
      "          python3 - <<'PYEOF'\n"
      "          import hashlib\n"
