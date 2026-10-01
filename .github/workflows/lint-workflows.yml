@@ -4812,6 +4812,20 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-loop-readmission.py --self-test
 
+      # Gate 128 — specs/096-durable-prove-entry research.md D4/D5: a board
+      # item marker whose `step` is "prove" and whose `outcome_reason` is
+      # exactly board_prove_displacement.RECORDED_REASON or the literal
+      # "uncorrelated" -- and which has not already been recovered once -- is
+      # a candidate for the `select` job's own directed re-dispatch
+      # (FR-011/FR-011a/FR-011b/FR-011c). This gate exercises
+      # board_prove_recovery.is_recoverable()/find_recoverable_items() over
+      # every marker shape data-model.md's "Board Item Marker" table lists,
+      # and board_item_marker.py's two new fields round-trip, including a
+      # marker written before this feature (five keys only).
+      - name: "Gate 128 — a board item marker recoverable only when displaced/uncorrelated and not already spent"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-board-prove-recovery.py
+
       # Gate 138 — specs/099-name-free-stage-identity T032/T033 (FR-012):
       # no FR-002 site in watchdog.yml or wing-commander-inspected-run-
       # identity/action.yml gates behavior on a reference display-name

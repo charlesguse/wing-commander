@@ -170,7 +170,8 @@ def read_marker(issue_comments, bot_login):
     return pair[1] if pair else None
 
 
-def write_marker(step, round, pr, branch, base_sha, spec_request=None):
+def write_marker(step, round, pr, branch, base_sha, spec_request=None,
+                  outcome_reason=None, recovery_attempted=False):
     """Renders the run announcement plus the HTML-comment marker line.
     Appended to the loop's own human-legible status comment -- never the
     comment's only content (FR-044) -- by the caller.
@@ -187,10 +188,16 @@ def write_marker(step, round, pr, branch, base_sha, spec_request=None):
     `spec_request` (spec 108, data-model.md "Board Item Marker"): the
     linked spec-request issue number, included only when not None -- the
     one caller is the duplicate-disposition write (`step="duplicate"`);
-    every other existing call site omits it and keeps its current five-key
-    payload."""
+    every other existing call site omits it.
+
+    `outcome_reason`/`recovery_attempted` (spec 096, research.md D4) are
+    included unconditionally so every pre-feature positional call site
+    keeps working and its marker simply carries
+    `"outcome_reason": null, "recovery_attempted": false` alongside the
+    five existing keys."""
     payload_dict = {"step": step, "round": round, "pr": pr, "branch": branch,
-                     "base_sha": base_sha}
+                     "base_sha": base_sha, "outcome_reason": outcome_reason,
+                     "recovery_attempted": recovery_attempted}
     if spec_request is not None:
         payload_dict["spec_request"] = spec_request
     payload = json.dumps(payload_dict, sort_keys=True)
@@ -418,6 +425,8 @@ def main():
     parser.add_argument("--from-step", default=None,
                         help="with --record-stall-summary: the step name the summary line names, "
                              "e.g. 'review (round budget spent)'")
+    parser.add_argument("--outcome-reason", default=None)
+    parser.add_argument("--recovery-attempted", action="store_true")
     args = parser.parse_args()
     if args.record_stall_summary:
         if args.issue is None or not args.from_step:
@@ -434,7 +443,9 @@ def main():
                          "--step {0} -- see add_stalled_label() (#604)".format(STALLED_STEP, STALLED_LABEL))
         if not add_stalled_label(args.issue, args.add_label):
             sys.exit(1)
-    print(write_marker(step, args.round, args.pr, args.branch, args.base_sha))
+    print(write_marker(step, args.round, args.pr, args.branch, args.base_sha,
+                       outcome_reason=args.outcome_reason,
+                       recovery_attempted=args.recovery_attempted))
 
 
 if __name__ == "__main__":

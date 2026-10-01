@@ -52,7 +52,7 @@ path below is relative to the repository root.
 
 ## Phase 1: Setup
 
-- [ ] T001 Confirm the gate-number reservation above is still accurate:
+- [X] T001 Confirm the gate-number reservation above is still accurate:
   `grep -noE "Gate [0-9]+" .github/workflows/lint-workflows.yml | sed -E
   's/.*Gate ([0-9]+)/\1/' | sort -n | tail -1` must show `127`. If it does
   not, shift every "Gate 128"/"Gate 129" reference in this file by the
@@ -72,7 +72,7 @@ wires it in.
 **⚠️ CRITICAL**: No user story phase can begin until this phase's
 checkpoint passes.
 
-- [ ] T002 `.github/scripts/board_item_marker.py`: `write_marker()`
+- [X] T002 `.github/scripts/board_item_marker.py`: `write_marker()`
   (`:139`) gains two keyword parameters with backward-compatible defaults:
   `outcome_reason=None, recovery_attempted=False` (research.md D4). Both
   are included unconditionally in the JSON payload the function already
@@ -80,11 +80,11 @@ checkpoint passes.
   site keeps working and its marker simply carries
   `"outcome_reason": null, "recovery_attempted": false` alongside the five
   existing keys.
-- [ ] T003 `.github/scripts/board_item_marker.py`: `main()` (`:228-`)
+- [X] T003 `.github/scripts/board_item_marker.py`: `main()` (`:228-`)
   gains `--outcome-reason` (string, default `None`) and
   `--recovery-attempted` (`store_true`) arguments, threaded into the
   `write_marker()` call T002 extends.
-- [ ] T004 [P] New module `.github/scripts/board_prove_recovery.py`
+- [X] T004 [P] New module `.github/scripts/board_prove_recovery.py`
   (research.md D5), matching the one-`board_*.py`-module-per-concern
   convention:
   - `RECOVERY_DIRECTED_INPUT = "directed-recovery"` — the one spelling of
@@ -109,7 +109,7 @@ checkpoint passes.
     "outcome_reason": "..."}` dicts sorted oldest-`marker_created_at`-first
     (FR-011b fairness, matching `board_eligibility.select()`'s own
     fallback-scan ordering).
-- [ ] T005 [P] New Gate 128 — `.github/scripts/verify-board-prove-recovery.py`,
+- [X] T005 [P] New Gate 128 — `.github/scripts/verify-board-prove-recovery.py`,
   wired into `.github/workflows/lint-workflows.yml` with `if:
   "!cancelled()"` immediately after the Gate 127 block. Fixtures (FR-020),
   both directions, exercising every marker shape data-model.md's "Board
@@ -126,7 +126,7 @@ checkpoint passes.
   fields: write with each set, read back byte-for-byte; a marker written
   before this feature (five keys only) reads `outcome_reason=None,
   recovery_attempted=False` rather than raising.
-- [ ] T006 `.github/workflows/board-loop.yml`: add `directed-recovery`
+- [X] T006 `.github/workflows/board-loop.yml`: add `directed-recovery`
   (string, default `""`) to the `workflow_dispatch.inputs` block, after
   `directed-pr` (`:65-69`) (research.md D6):
   ```yaml

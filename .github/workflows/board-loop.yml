@@ -67,6 +67,11 @@ on:
         required: false
         default: ""
         type: string
+      directed-recovery:
+        description: "Directed proof run: this dispatch is recovering a previously displaced or uncorrelated proof (internal use, leave blank otherwise)"
+        required: false
+        default: ""
+        type: string
   pull_request:
     types: [closed]         # resume path (FR-041) -- the `prove` step, added in a later phase of this feature
 
