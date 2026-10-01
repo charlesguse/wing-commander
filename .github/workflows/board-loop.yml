@@ -5230,6 +5230,13 @@ jobs:
           issue-number: ${{ needs.prove-gate.outputs.issue-number }}
           initial-paused: ${{ vars.WING_COMMANDER_BOARD_LOOP_PAUSED == 'true' }}
           check-issue-closed: "true"
+          # prove tracks no branch of its own (it acts on merge evidence or
+          # redrives a workflow, never checks one out) -- explicit empty
+          # strings, matching the composite's own defaults, so this call
+          # site is wired like every other one rather than silently relying
+          # on the default (maintainer review: Gate 135 check 8).
+          marker-branch: ""
+          marker-base-sha: ""
 
       # research.md D4/FR-001a, CLAUDE.md "Shared logic has exactly one
       # home": the same composite the select job's own recovery dispatch

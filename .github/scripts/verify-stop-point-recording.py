@@ -40,9 +40,18 @@ WHAT IT CHECKS
    already invokes this composite from its own trusted `.wc-pristine-repo`
    checkout (spec 086 FR-003), so a second, composite-populated snapshot
    directory is unneeded trust surface (maintainer review fold leg-0).
+8. Marker inputs wired: every `wing-commander-board-stop-check` call site in
+   `.github/workflows/board-loop.yml` passes both `marker-branch` and
+   `marker-base-sha` (maintainer review fold leg-1) -- explicit empty
+   strings count as wired (e.g. triage/route before a branch exists, or
+   prove, which tracks no branch at all).
 
 Each check's own mutation is applied under --self-test and must be caught
 (Principle VIII, SC-009) -- see contracts/gate-135-stop-point-recording.md.
+`selftest_registry_coverage()` additionally asserts `CHECKS` stays in sync
+with `CHECK_SELFTEST_COVERAGE`/`SELFTESTS` themselves (maintainer review
+fold leg-1): deleting a check's own registration from `CHECKS` used to
+leave both `run()` and `--self-test` at 0 failures.
 """
 import glob
 import json
@@ -332,6 +341,48 @@ def check_no_write_on_stand_down(steps=None, verbose=True):
     return 0
 
 
+# --- Check 8: marker-branch/marker-base-sha wired at every call site ----
+STOP_CHECK_USES_RE = re.compile(r"wing-commander-board-stop-check$")
+
+
+def check_marker_inputs_wired(board_loop_doc=None, verbose=True):
+    """Every `wing-commander-board-stop-check` call site in board-loop.yml
+    must wire BOTH `marker-branch` and `marker-base-sha` -- a site that
+    omits either one silently loses the item's branch/base-sha on its
+    stop-point record marker rather than failing anything (maintainer
+    review: nothing previously asserted these six call sites actually pass
+    them through)."""
+    if board_loop_doc is None:
+        with open(BOARD_LOOP, encoding="utf-8") as fh:
+            board_loop_doc = yaml.safe_load(fh)
+    failures = 0
+    found = 0
+    for job_id, job in _board_loop_jobs(board_loop_doc):
+        for step in (job or {}).get("steps") or []:
+            uses = str((step or {}).get("uses") or "")
+            if not STOP_CHECK_USES_RE.search(uses):
+                continue
+            found += 1
+            with_block = (step or {}).get("with") or {}
+            missing = [k for k in ("marker-branch", "marker-base-sha") if k not in with_block]
+            if missing:
+                failures += 1
+                if verbose:
+                    print("::error::verify-stop-point-recording: job {0!r} step {1!r} "
+                          "does not wire {2} to the wing-commander-board-stop-check "
+                          "composite (check 8).".format(
+                              job_id, (step or {}).get("name"), " and ".join(missing)))
+    if found == 0:
+        failures += 1
+        if verbose:
+            print("::error::verify-stop-point-recording: no wing-commander-board-stop-check "
+                  "call site found in {0} (check 8).".format(BOARD_LOOP))
+    if not failures and verbose:
+        print("[ok] check 8: all {0} wing-commander-board-stop-check call site(s) wire "
+              "marker-branch/marker-base-sha".format(found))
+    return failures
+
+
 CHECKS = (
     ("check 1", check_record_write_present),
     ("check 2", check_provenance),
@@ -340,6 +391,7 @@ CHECKS = (
     ("check 5", check_selection_exclusion),
     ("check 6", check_no_write_on_stand_down),
     ("check 7", check_no_wc_pristine_dependency),
+    ("check 8", check_marker_inputs_wired),
 )
 
 
@@ -574,10 +626,81 @@ def selftest_check6():
     return 0
 
 
+def selftest_check8():
+    case = "one wing-commander-board-stop-check call site drops marker-branch -> check 8 fails"
+    doc = {
+        "jobs": {
+            "triage": {
+                "steps": [
+                    {"uses": "./.wc-pristine-repo/.github/actions/wing-commander-board-stop-check",
+                     "with": {"marker-branch": "x", "marker-base-sha": "y"}},
+                ]
+            },
+            "route": {
+                "steps": [
+                    {"uses": "./.wc-pristine-repo/.github/actions/wing-commander-board-stop-check",
+                     "with": {"marker-base-sha": "y"}},
+                ]
+            },
+        }
+    }
+    failures = check_marker_inputs_wired(board_loop_doc=doc, verbose=False)
+    if not failures:
+        print("::error::verify-stop-point-recording self-test: {0}: NOT caught.".format(case))
+        return 1
+    print("note: mutation caught ({0}).".format(case))
+    return 0
+
+
+# maintainer review: a check deleted from CHECKS previously left both the
+# gate's own `run()` and `--self-test` at 0 failures -- nothing compared
+# CHECKS against what the self-tests actually exercise. This table is the
+# one place that comparison is declared; selftest_registry_coverage() below
+# asserts it stays in sync with both CHECKS and SELFTESTS.
+CHECK_SELFTEST_COVERAGE = {
+    check_record_write_present: (selftest_check1,),
+    check_provenance: (selftest_check2,),
+    check_cause_aware_messaging: (selftest_check3,),
+    check_decision_function_agreement: (
+        selftest_check4, selftest_check4_samerun_record, selftest_check4_samerun_record_both),
+    check_selection_exclusion: (selftest_check5,),
+    check_no_write_on_stand_down: (selftest_check6,),
+    check_no_wc_pristine_dependency: (selftest_check7,),
+    check_marker_inputs_wired: (selftest_check8,),
+}
+
+
+def selftest_registry_coverage():
+    case = "CHECKS registry stays in sync with CHECK_SELFTEST_COVERAGE and SELFTESTS"
+    registered = {fn for _, fn in CHECKS}
+    covered = set(CHECK_SELFTEST_COVERAGE)
+    problems = []
+    missing_coverage = registered - covered
+    stale_coverage = covered - registered
+    if missing_coverage:
+        problems.append("check(s) registered in CHECKS with no self-test coverage: {0}".format(
+            ", ".join(sorted(fn.__name__ for fn in missing_coverage))))
+    if stale_coverage:
+        problems.append("self-test coverage references check(s) no longer in CHECKS: {0}".format(
+            ", ".join(sorted(fn.__name__ for fn in stale_coverage))))
+    referenced_selftests = {st for sts in CHECK_SELFTEST_COVERAGE.values() for st in sts}
+    unregistered_selftests = referenced_selftests - set(SELFTESTS)
+    if unregistered_selftests:
+        problems.append("coverage references self-test(s) not in SELFTESTS: {0}".format(
+            ", ".join(sorted(fn.__name__ for fn in unregistered_selftests))))
+    if problems:
+        print("::error::verify-stop-point-recording self-test: {0}: {1}.".format(
+            case, "; ".join(problems)))
+        return 1
+    print("note: registry coverage verified ({0}).".format(case))
+    return 0
+
+
 SELFTESTS = (
     selftest_check1, selftest_check2, selftest_check3,
     selftest_check4, selftest_check4_samerun_record, selftest_check4_samerun_record_both,
-    selftest_check5, selftest_check6, selftest_check7,
+    selftest_check5, selftest_check6, selftest_check7, selftest_check8,
+    selftest_registry_coverage,
 )
 
 

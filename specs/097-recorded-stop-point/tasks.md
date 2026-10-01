@@ -630,7 +630,7 @@ kept to one session to avoid edit collisions).
 
 ## Maintainer Feedback
 
-- [ ] **Blocking:** The self-test doesn't cover the `CHECKS` registry — deleting `("check 7", …)` or `("check 3", …)` from `CHECKS` in `verify-stop-point-recording.py` leaves `--self-test` at exit 0 and the gate at 0 failures, and nothing asserts callers pass `marker-branch`/`marker-base-sha`. Add a self-test assertion that `{fn for _, fn in CHECKS}` equals the set of checks the self-tests exercise, and add a check that the six `board-loop.yml` call sites wire `marker-branch`/`marker-base-sha`.
+- [X] **Blocking:** The self-test doesn't cover the `CHECKS` registry — deleting `("check 7", …)` or `("check 3", …)` from `CHECKS` in `verify-stop-point-recording.py` leaves `--self-test` at exit 0 and the gate at 0 failures, and nothing asserts callers pass `marker-branch`/`marker-base-sha`. Add a self-test assertion that `{fn for _, fn in CHECKS}` equals the set of checks the self-tests exercise, and add a check that the six `board-loop.yml` call sites wire `marker-branch`/`marker-base-sha`.
 
 ## Maintainer Feedback
 
