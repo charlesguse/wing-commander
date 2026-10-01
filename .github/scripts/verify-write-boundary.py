@@ -701,12 +701,25 @@ def check_label_separation():
 # SC-005: finalize.yml's routed-item lookup
 # ---------------------------------------------------------------------------
 
+# PR #836 review, item 5: the real step now calls `gh issue list --repo ...
+# --label ... --state all --json number,url,body` ONCE and matches the
+# marker client-side via jq contains() -- the SAME shape wing-commander-
+# durable-failure-issue's own dedup lookup uses -- rather than a per-line
+# `gh issue list --search`. This stub responds to that one call with a
+# JSON array carrying the marker in `body`, or fails it when FAIL_GH=true
+# (exercising the ::warning:: path, never silently swallowed).
 GH_LOOKUP_STUB = """#!/bin/sh
 args="$*"
 echo "$args" >> "$GH_CALLS"
 case "$args" in
-  *"$MATCH_MARKER"*) printf '%s' "$MATCH_URL" ;;
-  *) printf '' ;;
+  *"issue list"*)
+    if [ "${FAIL_GH:-}" = "true" ]; then
+      echo "simulated API failure" >&2
+      exit 1
+    fi
+    printf '[{"number":42,"url":"%s","body":"body containing %s marker"}]' "$MATCH_URL" "$MATCH_MARKER"
+    ;;
+  *) printf '[]' ;;
 esac
 exit 0
 """
@@ -742,17 +755,18 @@ def check_finalize_lookup(steps, root):
         fh.write(GH_LOOKUP_STUB)
     os.chmod(os.path.join(bindir, "gh"), 0o755)
 
-    env = {
+    base_env = {
         "GH_TOKEN": "x", "UNCHECKED_ITEMS": unchecked_items,
         "TASKS_PATH": tasks_path, "LABEL_PREFIX": "route-out-of-boundary",
         "MATCH_MARKER": marker, "MATCH_URL": match_url,
-        "GH_CALLS": calls_file,
+        "GH_CALLS": calls_file, "GITHUB_REPOSITORY": "acme/repo",
         # Actions sets this to the composite's own directory -- resolves
         # $GITHUB_ACTION_PATH/../_shared/... to the REAL shared script
         # (mirrors verify-chain-stop-notice-body.py's identical convention).
         "GITHUB_ACTION_PATH": os.path.abspath(os.path.dirname(WRITE_BOUNDARY_LOOKUP_COMPOSITE)),
         "PATH": bindir + os.pathsep + os.environ["PATH"],
     }
+    env = dict(base_env, FAIL_GH="false")
     rc, out, outputs, _ = run_step(BASH, steps[LOOKUP_STEP], workdir, env, runner_temp)
     if rc != 0:
         failures.append(f"SC-005: {LOOKUP_STEP!r} exited {rc}: {out.strip()}")
@@ -774,6 +788,23 @@ def check_finalize_lookup(steps, root):
     if match_url not in rendered or "routed" not in rendered:
         failures.append(f"SC-005: the rendered instruction did not reference "
                         f"the routed item's URL -- rendered={rendered!r}")
+
+    # (j) A failed `gh issue list` must be surfaced, not silently swallowed
+    # into "no routed items found" (PR #836 review, item 5).
+    fail_env = dict(base_env, FAIL_GH="true")
+    rc2, out2, outputs2, _ = run_step(BASH, steps[LOOKUP_STEP], workdir, fail_env, runner_temp)
+    if rc2 != 0:
+        failures.append(f"(j) {LOOKUP_STEP!r} exited {rc2} on a failed `gh "
+                        f"issue list` -- it must degrade to an empty "
+                        f"mapping, never fail the job: {out2.strip()}")
+    else:
+        if "::warning::" not in out2:
+            failures.append(f"(j) a failed `gh issue list` produced no "
+                            f"::warning:: annotation -- got output={out2!r}")
+        mapping2 = outputs2.get("mapping", "[]")
+        if mapping2.strip() not in ("[]", ""):
+            failures.append(f"(j) a failed `gh issue list` should degrade "
+                            f"to an empty mapping -- got mapping={mapping2!r}")
     return failures
 
 

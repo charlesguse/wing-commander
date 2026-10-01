@@ -695,9 +695,9 @@ and evaporating into PR-body prose) that this feature exists to end.
 
 ## Maintainer Feedback — finalize's routed-item lookup fails silently and mismatches the filer (PR #836 review, item 5)
 
-- [ ] In `wing-commander-write-boundary-lookup/action.yml`:62, stop swallowing `gh issue list` failures into "(none)" via `2>/dev/null || true`; emit `::warning::` on failure so a routed item doesn't silently reach the PR as orphan prose
-- [ ] Reuse the filer's existing list-by-label-then-client-side-`contains(marker)` lookup instead of relying on unproven full-text search over an HTML-comment marker
-- [ ] Add gate coverage exercising this lookup path, since the gate currently stubs `gh` and never tests it
+- [x] In `wing-commander-write-boundary-lookup/action.yml`:62, stop swallowing `gh issue list` failures into "(none)" via `2>/dev/null || true`; emit `::warning::` on failure so a routed item doesn't silently reach the PR as orphan prose
+- [x] Reuse the filer's existing list-by-label-then-client-side-`contains(marker)` lookup instead of relying on unproven full-text search over an HTML-comment marker
+- [x] Add gate coverage exercising this lookup path, since the gate currently stubs `gh` and never tests it (new pass condition (j), plus the existing SC-005 fixture's stub now simulates a real `gh issue list --json number,url,body` call)
 
 ## Maintainer Feedback — routing can be silently disabled or truncated (PR #836 review, item 6)
 

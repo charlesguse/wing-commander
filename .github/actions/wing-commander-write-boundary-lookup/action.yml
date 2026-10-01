@@ -57,13 +57,32 @@ runs:
         mapping_file="$(mktemp)"
         echo "[]" > "$mapping_file"
         if [ -n "$UNCHECKED_ITEMS" ]; then
+          # PR #836 review, item 5: list-by-label-then-client-side-
+          # contains(marker) -- the SAME dedup lookup strategy
+          # wing-commander-durable-failure-issue's own "report" operation
+          # already uses, never an unproven full-text `gh issue list
+          # --search` over an HTML-comment marker (GitHub's search index is
+          # not guaranteed to match that verbatim or promptly). Fetched
+          # once for every unchecked line, not once per line. A failed
+          # call is surfaced with ::warning:: rather than silently
+          # swallowed into "no routed items found" -- the consequence here
+          # is a routed item reaching the PR as orphan prose, not merely a
+          # redundant `gh issue create`.
+          issues_file="$(mktemp)"
+          issues_err="$(mktemp)"
+          if gh issue list --repo "$GITHUB_REPOSITORY" --label "${LABEL_PREFIX}:implement" --state all --json number,url,body > "$issues_file" 2>"$issues_err"; then
+            :
+          else
+            echo "::warning::wing-commander-write-boundary-lookup: gh issue list failed for label ${LABEL_PREFIX}:implement -- $(cat "$issues_err") -- treating as no routed items found this run; a routed item may reach the PR as orphan prose."
+            echo "[]" > "$issues_file"
+          fi
           while IFS= read -r line; do
             [ -z "$line" ] && continue
             fp_out="$(bash "$FP_SCRIPT" implement "$TASKS_PATH" "$line")"
             fp="$(printf '%s\n' "$fp_out" | sed -n 's/^fingerprint=//p')"
             [ -z "$fp" ] && continue
             marker="<!-- wing-commander-finding: fingerprint=$fp -->"
-            found_url="$(gh issue list --search "\"$marker\"" --label "${LABEL_PREFIX}:implement" --state all --json url --jq '.[0].url // empty' 2>/dev/null || true)"
+            found_url="$(jq -r --arg marker "$marker" '[.[] | select(.body != null and (.body | contains($marker)))] | first.url // empty' "$issues_file")"
             if [ -n "$found_url" ]; then
               tmp="$(mktemp)"
               jq --arg line "$line" --arg url "$found_url" '. + [{"line": $line, "url": $url}]' "$mapping_file" > "$tmp" && mv "$tmp" "$mapping_file"
