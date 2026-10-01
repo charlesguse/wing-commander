@@ -19,14 +19,24 @@ gh issue list --repo "$GITHUB_REPOSITORY" --label "pipeline-defect" \
   --json number,state,body,comments
 ```
 
-`gh issue list --json comments` returns each candidate's full comment
-list (author, body, createdAt — the same shape `gh issue view --json
-comments` already returns), in the one already-budgeted API call. Each
-candidate's **matchable id set** is computed locally (`jq`, no further
-`gh` calls) as the union of: the ids recorded in the issue body's new
-marker (below) plus the ids recorded in each comment's marker, read back
-with a plain string match on the marker's own delimiters — never parsed
-as, or trusted as, agent-authored prose (Constitution IX).
+`gh issue list --json comments` returns each candidate's comment list
+(author, body, createdAt — the same shape `gh issue view --json
+comments` already returns), in the one already-budgeted API call — up to
+GitHub's GraphQL ceiling for a nested connection like this one, which the
+gh CLI serves as a single un-paginated page: a candidate with 100 or more
+comments may come back missing ids recorded only in later ones, the same
+shape of risk Gate 112 (`verify-lifecycle-merge-preconditions.py`)
+polices `gh issue|pr view --json comments` for, for a different reason
+(#826's author-shape gap, not truncation). The `Dedup search` step
+guards this the way it already guards the `--limit 200` candidate-count
+ceiling: any OPEN candidate whose `comments` array length is `>= 100`
+forces `outcome=unknown` rather than risking a `none` computed against an
+incomplete matchable set. Each candidate's **matchable id set** is
+computed locally (`jq`, no further `gh` calls) as the union of: the ids
+recorded in the issue body's new marker (below) plus the ids recorded in
+each comment's marker, read back with a plain string match on the
+marker's own delimiters — never parsed as, or trusted as, agent-authored
+prose (Constitution IX).
 
 **Rationale**: FR-003 requires a later run to read back "the full set of
 collector signal ids its accumulated occurrences have cited — not only

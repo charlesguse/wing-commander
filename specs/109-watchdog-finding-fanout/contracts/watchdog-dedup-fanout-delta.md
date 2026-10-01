@@ -95,12 +95,18 @@ or fails the `implement` job; an upload failure here is invisible to
       (unchanged mechanism and priority: an exact hit is still checked
       first and still reopens a closed issue on its own, independent of
       overlap)
-   c. else: compute each OPEN candidate's matchable id set (data-model.md:
+   c. else: any OPEN candidate whose comments array length >= 100 ->
+      outcome=unknown (NEW: comment-read-ceiling guard, Review Gate
+      Round 3 — `gh issue list --json comments` is a single un-paginated
+      GraphQL page, so a candidate at or past that ceiling may be
+      missing ids recorded only in later comments; a none/overlap
+      computed against it is not trustworthy)
+   d. else: compute each OPEN candidate's matchable id set (data-model.md:
       union of body + comment signal-ids= markers, capped at 30 most
       recent distinct ids) and intersect with this finding's cited ids
       -> outcome=overlap, issue-number=lowest-numbered intersecting
       candidate, other-matches=the rest (NEW)
-   d. else -> outcome=none
+   e. else -> outcome=none
 ```
 
 ## `act` — writes the new readable marker; multi-match names other issues; converging-gate-suite is report-only

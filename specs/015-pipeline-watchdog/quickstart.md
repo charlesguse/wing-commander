@@ -332,12 +332,28 @@ never silently repointed at an unrelated scenario.
    the 200 fetched candidates would have matched — reported as a lookup
    that could not be trusted, never silently treated as "nothing found."
 
-## Scenario 31 — The mutation fixture proves each of the above can fail its own subject (spec 109's own US4, SC-005)
+## Scenario 31 — A candidate at the comment-read ceiling reads as `unknown`, never `none` or `overlap` (spec 109's own US1/US4, Review Gate Round 3)
 
-For each of Scenarios 24, 26, 23, 28, run the checked-in fixture's
+1. Simulate (fixture) a single OPEN candidate whose body already carries
+   a real matching id, and whose `comments` array came back from the
+   bulk `gh issue list --json ...,comments` call at 100 entries or more
+   — GitHub's GraphQL API serves a nested connection like this one as a
+   single un-paginated page, so a candidate at or past that ceiling may
+   be missing ids recorded only in later comments.
+2. Expected: the dedup outcome is `unknown`, even though the candidate's
+   body alone would otherwise overlap-match — never `none` (which would
+   file a duplicate) and never `overlap` computed against a matchable
+   set that might be incomplete. The same candidate one comment short of
+   the ceiling (99) still overlap-matches normally — the guard fires
+   only at its own threshold.
+
+## Scenario 32 — The mutation fixture proves each of the above can fail its own subject (spec 109's own US4, SC-005)
+
+For each of Scenarios 24, 26, 23, 28, 31, run the checked-in fixture's
 companion mutation (`.github/scripts/verify-watchdog-overlap-fanout.py
 --self-test`): reverting overlap matching to exact-set equality,
-reverting the FR-033 filing condition to "always file," and reverting the
+disabling the Scenario 31 comment-read-ceiling guard, reverting the
+FR-033 filing condition to "always file," and reverting the
 `tool-denial` id projection to a shared key. Expected: each mutation makes
 the PR-time gate suite (`python3 .github/scripts/run-local-gates.py`)
 fail, and the failure names the specific fixture whose subject it broke —

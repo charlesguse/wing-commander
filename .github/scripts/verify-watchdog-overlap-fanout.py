@@ -25,12 +25,13 @@ execution-output artifacts` and `Stamp signal ids` steps chained
 end-to-end so the signal ids it asserts on are the ones the shipped code
 actually produces, not a hand-typed stand-in for them.
 
-Three mutations (reverting overlap matching to exact-set equality,
-reverting the FR-009 condition to "always file", and reverting the
-`tool-denial` id projection to a shared, coarser key) each must break at
-least one assertion above, proving these are checks that can fail
-(Constitution VIII) -- exercised under `--self-test`, mirroring Gate 120's
-two-step shape (the plain invocation checks the real shipped files; the
+Four mutations (reverting overlap matching to exact-set equality,
+disabling the 100-comment truncation guard, reverting the FR-009
+condition to "always file", and reverting the `tool-denial` id
+projection to a shared, coarser key) each must break at least one
+assertion above, proving these are checks that can fail (Constitution
+VIII) -- exercised under `--self-test`, mirroring Gate 120's two-step
+shape (the plain invocation checks the real shipped files; the
 self-test invocation checks the gate itself can fail).
 
 Usage: python3 .github/scripts/verify-watchdog-overlap-fanout.py [--self-test]
@@ -398,6 +399,48 @@ def scenario_cap(scripts, tmproot):
 
 
 # --------------------------------------------------------------------------
+# Review Gate Round 3: `gh issue list --json comments` is a single,
+# un-paginated GraphQL page -- a candidate with 100+ comments may be
+# missing ids recorded only in later ones, so a "none"/"overlap" computed
+# against it isn't trustworthy until proven otherwise.
+# --------------------------------------------------------------------------
+def scenario_comment_truncation(scripts, tmproot):
+    failures = []
+    # Every comment repeats the SAME id (not a distinct one each time) so
+    # the unrelated 30-most-recent-distinct-id cap (FR-008) never evicts
+    # `bodyid` on its own — only the comment-count guard under test can
+    # explain a "none"/"unknown" result here.
+    body = fp_marker("fptrunc000") + " " + marker(["bodyid"])
+    truncated = [{"number": 1, "state": "OPEN", "body": body,
+                  "comments": [{"body": marker(["samecomment"])} for _ in range(100)]}]
+    not_truncated = [{"number": 1, "state": "OPEN", "body": body,
+                       "comments": [{"body": marker(["samecomment"])} for _ in range(99)]}]
+
+    rc, out, fp = run_fingerprint(scripts, "denied-tool", ["bodyid"], tmproot)
+    if rc != 0:
+        return [f"[comment-truncation] Compute fingerprint exited {rc}: {out.strip()}"]
+
+    rc, out, d = run_dedup(scripts, fp["fingerprint"], "denied-tool", ["bodyid"], truncated, tmproot)
+    if rc != 0:
+        return [f"[comment-truncation] Dedup search (100 comments) exited {rc}: {out.strip()}"]
+    if d.get("outcome") != "unknown":
+        failures.append(f"[comment-truncation] a candidate with 100 comments, even one that "
+                         f"would otherwise overlap-match on its body marker: outcome = "
+                         f"{d.get('outcome')!r}, expected 'unknown' (a candidate at the "
+                         f"un-paginated nested-read ceiling is never trustworthy enough to "
+                         f"call 'none' or 'overlap')")
+
+    rc, out, d2 = run_dedup(scripts, fp["fingerprint"], "denied-tool", ["bodyid"], not_truncated, tmproot)
+    if rc != 0:
+        return failures + [f"[comment-truncation] Dedup search (99 comments) exited {rc}: {out.strip()}"]
+    if d2.get("outcome") != "overlap":
+        failures.append(f"[comment-truncation] a candidate with 99 comments (below the "
+                         f"ceiling) citing a real body match: outcome = {d2.get('outcome')!r}, "
+                         f"expected 'overlap' — the guard must not fire below its own threshold")
+    return failures
+
+
+# --------------------------------------------------------------------------
 # User Story 3 / #266: the {stage, tool} denial separation survives overlap
 # matching -- proven against REAL stamped ids, not hand-typed stand-ins.
 # --------------------------------------------------------------------------
@@ -500,6 +543,7 @@ def all_scenarios(scripts, dedup_if_expr, tmproot):
     failures += scenario_g(scripts, tmproot)
     failures += scenario_h(scripts, tmproot)
     failures += scenario_cap(scripts, tmproot)
+    failures += scenario_comment_truncation(scripts, tmproot)
     failures += scenario_stage_tool_separation(scripts, tmproot)
     failures += scenario_gate_suite_condition(scripts, dedup_if_expr, tmproot)
     return failures
@@ -517,6 +561,19 @@ def mut_overlap_to_exact_equality(scripts):
                  f"the overlap intersection expression in {DEDUP_STEP!r} to mutate -- the "
                  f"step text changed shape; update this gate alongside it.")
     new = "(if ($matchable | sort) == ($cited_ids | sort) then $matchable else [] end) as $matched"
+    mutated = dict(scripts)
+    mutated[DEDUP_STEP] = text.replace(old, new, 1)
+    return mutated
+
+
+def mut_comment_truncation_guard_removed(scripts):
+    old = 'select((.comments // []) | length >= 100) | .number'
+    text = scripts[DEDUP_STEP]
+    if text.count(old) != 1:
+        sys.exit(f"::error file={WATCHDOG}::verify-watchdog-overlap-fanout: could not find "
+                 f"the comment-truncation guard's length check in {DEDUP_STEP!r} to mutate -- "
+                 f"the step text changed shape; update this gate alongside it.")
+    new = old.replace("length >= 100", "length >= 999999999")
     mutated = dict(scripts)
     mutated[DEDUP_STEP] = text.replace(old, new, 1)
     return mutated
@@ -552,6 +609,7 @@ def mut_tool_denial_coarser_key(scripts):
 
 MUTATIONS = [
     ("overlap matching reverted to exact-set equality", mut_overlap_to_exact_equality),
+    ("the 100-comment truncation guard disabled", mut_comment_truncation_guard_removed),
     ("the FR-009 gate-suite filing condition reverted to \"always file\"", mut_fr009_always_file),
     ("the tool-denial id projection reverted to a shared, coarser key (drops #266's stage)",
      mut_tool_denial_coarser_key),

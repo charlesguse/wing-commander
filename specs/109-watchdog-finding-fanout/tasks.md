@@ -274,7 +274,7 @@ With two contributors (this run's shared-usage-window constraint caps concurrent
 
 ## Review Gate Round 3 Findings
 
-- [ ] Review finding: gh issue list --json comments can silently truncate an issue's matchable id set
+- [X] Review finding: gh issue list --json comments can silently truncate an issue's matchable id set
 
   The new overlap-matching Dedup search step reads comments via gh issue list --json comments, which this repo's own Gate 112 treats as unreliable for nested comment data (first-page-only GraphQL read) everywhere else, but Gate 112's regex only catches gh issue|pr view, not gh issue list, so this new read has no guard and no consuming test exercises real gh pagination.
 
@@ -284,7 +284,7 @@ With two contributors (this run's shared-usage-window constraint caps concurrent
 
   Detail: Dedup search's new --json number,state,body,comments call (watchdog.yml, 'Dedup search' step) only guards total issue count (total_count -eq 200 -> outcome=unknown), not per-issue comment count; research.md's 'Decision: Overlap matching reads every candidate's accumulated id set from ONE bulk gh issue list call' asserts gh issue list --json comments 'returns each candidate's full comment list' without qualification, the same assumption Gate 112/#826 exists to forbid for gh issue|pr view --json comments.
 
-- [ ] Review finding: Two new collect job outputs are declared but never consumed
+- [X] Review finding: Two new collect job outputs are declared but never consumed
 
   collect job outputs cycle-outcome-gate-suite-outcome and cycle-outcome-gate-suite-first-failure are wired from the new collect-cycle-outcome step but no step in triage or act reads needs.collect.outputs.cycle-outcome-gate-suite-outcome or ...-first-failure anywhere in the repo.
 
@@ -292,7 +292,7 @@ With two contributors (this run's shared-usage-window constraint caps concurrent
 
   Detail: watchdog.yml lines 377-378 declare the outputs; repo-wide grep for both exact strings finds only their own declaration/assignment line, no consumer. The gate-suite-failure fact that matters for filing logic already reaches Gate-suite filing condition and diagnose via the gate-suite-failure signal pushed into signals.json.
 
-- [ ] Review finding: Redundant join-then-split round trip in the overlap-matching jq pipeline
+- [X] Review finding: Redundant join-then-split round trip in the overlap-matching jq pipeline
 
   The new matchable-id computation in Dedup search joins each occurrence's scanned ids into a comma string with join(",") and then immediately splits that same string back apart with split(",") on the next line, a no-op serialize/deserialize with no effect besides obscuring the pipeline.
 

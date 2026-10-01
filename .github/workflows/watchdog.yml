@@ -374,8 +374,6 @@ jobs:
       stalled-label: ${{ steps.spec-slug.outputs.stalled-label }}
       cycle-outcome-converged: ${{ steps.collect-cycle-outcome.outputs.converged }}
       cycle-outcome-handoff: ${{ steps.collect-cycle-outcome.outputs.handoff }}
-      cycle-outcome-gate-suite-outcome: ${{ steps.collect-cycle-outcome.outputs.gate-suite-outcome }}
-      cycle-outcome-gate-suite-first-failure: ${{ steps.collect-cycle-outcome.outputs.gate-suite-first-failure }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
         uses: actions/checkout@v5
@@ -776,11 +774,14 @@ jobs:
           handoff=$(jq -r '.handoff // ""' "$f")
           gate_outcome=$(jq -r '."gate-suite-outcome" // ""' "$f")
           first_failure=$(jq -r '."gate-suite-first-failure" // ""' "$f")
+          # gate-suite-outcome/-first-failure are consumed below (the
+          # signals.json push), never as a job output — nothing reads
+          # needs.collect.outputs.cycle-outcome-gate-suite-* downstream, so
+          # only converged/handoff (Gate-suite filing condition's own
+          # inputs) are surfaced past this step.
           {
             echo "converged=$converged"
             echo "handoff=$handoff"
-            echo "gate-suite-outcome=$gate_outcome"
-            echo "gate-suite-first-failure=$first_failure"
           } >> "$GITHUB_OUTPUT"
           if [ "$gate_outcome" = "fail" ]; then
             entries=$(jq -cn --arg ff "$first_failure" '[{source:"gate-suite","class-hint":null,facts:{"first-failure":$ff}}]')
@@ -3504,35 +3505,53 @@ jobs:
             # capped at the 30 most-recently-added distinct ids, oldest
             # evicted first, in occurrence order). Never against a closed
             # issue (FR-006): a partial overlap must still file new there.
-            overlap_matches=$(printf '%s' "$results" | jq -c --arg cited "$CITED_IDS" '
-              ($cited | split(",") | map(select(length>0))) as $cited_ids
-              | [ .[] | select(.state == "OPEN") ]
-              | map(
-                  . as $iss
-                  | ([($iss.body // "")] + [($iss.comments // [])[] | (.body // "")]) as $texts
-                  | ($texts
-                      | map([scan("signal-ids=([^ ]+)")] | map(.[0]) | join(","))
-                      | map(split(",") | map(select(length>0)))
-                      | add // []) as $occ_ids
-                  # Distinct ids in first-seen order across occurrences, then
-                  # the last 30 (most-recently-added) of that order — the 30
-                  # cap named at the point it applies (FR-008).
-                  | (reduce $occ_ids[] as $id ([]; if index($id) then . else . + [$id] end)) as $distinct
-                  | ($distinct[-30:]) as $matchable
-                  | ([ $matchable[] | select(. as $x | ($cited_ids | index($x)) != null) ] | unique) as $matched
-                  | { number: $iss.number, matched: $matched }
-                )
-              | map(select(.matched | length > 0))
-              | sort_by(.number)
+            #
+            # `comments` came back on the SAME bulk `gh issue list` call as
+            # the candidates (research.md) — GitHub's GraphQL API serves a
+            # nested connection like this one as a single, un-paginated
+            # page (the gh CLI does not follow its cursor for `--json
+            # comments`), so a candidate with 100 or more comments may be
+            # missing ids recorded only in later ones. A "none" computed
+            # against a candidate in that state isn't trustworthy — same
+            # bias as the --limit 200 guard above: unknown, not a risked
+            # false negative that creates a duplicate issue.
+            truncated_candidate=$(printf '%s' "$results" | jq -r '
+              [ .[] | select(.state == "OPEN") | select((.comments // []) | length >= 100) | .number ]
+              | if length > 0 then "\(.[0])" else "" end
             ')
-            ocount=$(printf '%s' "$overlap_matches" | jq 'length')
-            if [ "$ocount" -gt 0 ]; then
-              outcome=overlap
-              issue_number=$(printf '%s' "$overlap_matches" | jq -r '.[0].number')
-              matched_on=$(printf '%s' "$overlap_matches" | jq -r '.[0].matched | sort | join(",")')
-              other_matches=$(printf '%s' "$overlap_matches" | jq -r '[.[1:][].number] | sort | join(",")')
+            if [ -n "$truncated_candidate" ]; then
+              echo "::warning::candidate issue #$truncated_candidate's comment list came back at or above the 100-comment nested-read ceiling for class '$FINDING_CLASS' — its matchable id set may be truncated; treating outcome as unknown rather than risking a false 'none'."
+              outcome=unknown
             else
-              outcome=none
+              overlap_matches=$(printf '%s' "$results" | jq -c --arg cited "$CITED_IDS" '
+                ($cited | split(",") | map(select(length>0))) as $cited_ids
+                | [ .[] | select(.state == "OPEN") ]
+                | map(
+                    . as $iss
+                    | ([($iss.body // "")] + [($iss.comments // [])[] | (.body // "")]) as $texts
+                    | ($texts
+                        | map([scan("signal-ids=([^ ]+)")] | map(.[0] | split(",") | map(select(length>0))) | add // [])
+                        | add // []) as $occ_ids
+                    # Distinct ids in first-seen order across occurrences, then
+                    # the last 30 (most-recently-added) of that order — the 30
+                    # cap named at the point it applies (FR-008).
+                    | (reduce $occ_ids[] as $id ([]; if index($id) then . else . + [$id] end)) as $distinct
+                    | ($distinct[-30:]) as $matchable
+                    | ([ $matchable[] | select(. as $x | ($cited_ids | index($x)) != null) ] | unique) as $matched
+                    | { number: $iss.number, matched: $matched }
+                  )
+                | map(select(.matched | length > 0))
+                | sort_by(.number)
+              ')
+              ocount=$(printf '%s' "$overlap_matches" | jq 'length')
+              if [ "$ocount" -gt 0 ]; then
+                outcome=overlap
+                issue_number=$(printf '%s' "$overlap_matches" | jq -r '.[0].number')
+                matched_on=$(printf '%s' "$overlap_matches" | jq -r '.[0].matched | sort | join(",")')
+                other_matches=$(printf '%s' "$overlap_matches" | jq -r '[.[1:][].number] | sort | join(",")')
+              else
+                outcome=none
+              fi
             fi
           elif [ "$count" -eq 1 ]; then
             state=$(printf '%s' "$matches" | jq -r '.[0].state | ascii_upcase')

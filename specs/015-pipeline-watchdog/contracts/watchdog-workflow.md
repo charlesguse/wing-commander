@@ -140,17 +140,24 @@ Per Finding, deterministic (no agent):
    filter over that bounded result set, in order: (a) candidate count ==
    200 (the `--limit` ceiling) ⇒ `unknown` (spec 109: a truncated read is
    not a completed one); (b) the exact `fingerprint=$FP` marker, unchanged
-   priority and mechanism; (c) for OPEN candidates only, an intersection
-   between the finding's cited ids and each candidate's matchable id set
-   (data-model.md — body + comment `signal-ids=` markers, capped at the 30
-   most-recently-added distinct ids). Outcomes: `none` | `match-open` |
-   `match-closed` | `overlap` (spec 109: ≥1 open candidate's matchable set
-   intersects; comment lands on the lowest-numbered intersecting
-   candidate, others named per FR-031, never on a closed issue) |
-   `unknown` (the `gh issue list` call itself exited non-zero, or the
-   truncation case above) | `data-integrity` (>1 **exact**-fingerprint
-   match — still an anomaly under overlap matching too). `unknown` MUST
-   suppress filing and MUST NOT share a code path with `none`.
+   priority and mechanism — checked ahead of (c) regardless of any open
+   candidate's comment count, since it reads only `.body`, never
+   `.comments`; (c) any OPEN candidate whose `comments` array length is
+   >= 100 ⇒ `unknown` (spec 109, Review Gate Round 3: `gh issue list
+   --json comments` is a single un-paginated GraphQL page, so a candidate
+   at or past that ceiling may be missing ids recorded only in later
+   comments — a `none`/`overlap` computed against it is not trustworthy);
+   (d) for OPEN candidates only, an intersection between the finding's
+   cited ids and each candidate's matchable id set (data-model.md — body +
+   comment `signal-ids=` markers, capped at the 30 most-recently-added
+   distinct ids). Outcomes: `none` | `match-open` | `match-closed` |
+   `overlap` (spec 109: ≥1 open candidate's matchable set intersects;
+   comment lands on the lowest-numbered intersecting candidate, others
+   named per FR-031, never on a closed issue) | `unknown` (the `gh issue
+   list` call itself exited non-zero, or either truncation case above) |
+   `data-integrity` (>1 **exact**-fingerprint match — still an anomaly
+   under overlap matching too). `unknown` MUST suppress filing and MUST
+   NOT share a code path with `none`.
 
 No fix attempt is ever made — the watchdog is a pure reporter with no
 diff-producing step (FR-014 of spec 024).

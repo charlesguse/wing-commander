@@ -99,13 +99,29 @@ also a checked-in fixture (FR-020–FR-022), not only a manual demonstration
    the 200 fetched candidates would have matched — reported as a lookup
    that could not be trusted, never silently treated as "nothing found."
 
-## Scenario I — The mutation fixture proves each of the above can fail its own subject (US4, SC-005)
+## Scenario I — A candidate at the comment-read ceiling reads as `unknown`, never `none` or `overlap` (US1/US4, Review Gate Round 3)
 
-For each of Scenarios A, C, E, F, run the checked-in fixture's companion
-mutation (`tasks.md`/gate detail): reverting overlap matching to
-exact-set equality, reverting the FR-009 filing condition to "always
-file," and reverting the `tool-denial` id projection to a shared key.
-Expected: each mutation makes the PR-time gate suite (`python3
+1. Simulate (fixture) a single OPEN candidate whose body already carries
+   a real matching id, and whose `comments` array came back from the
+   bulk `gh issue list --json ...,comments` call at 100 entries or more
+   — GitHub's GraphQL API serves a nested connection like this one as a
+   single un-paginated page, so a candidate at or past that ceiling may
+   be missing ids recorded only in later comments.
+2. Expected: the dedup outcome is `unknown`, even though the candidate's
+   body alone would otherwise overlap-match — never `none` (which would
+   file a duplicate) and never `overlap` computed against a matchable
+   set that might be incomplete. The same candidate one comment short of
+   the ceiling (99) still overlap-matches normally — the guard fires
+   only at its own threshold.
+
+## Scenario J — The mutation fixture proves each of the above can fail its own subject (US4, SC-005)
+
+For each of Scenarios A, C, E, F, I, run the checked-in fixture's
+companion mutation (`tasks.md`/gate detail): reverting overlap matching
+to exact-set equality, disabling the Scenario I comment-read-ceiling
+guard, reverting the FR-009 filing condition to "always file," and
+reverting the `tool-denial` id projection to a shared key. Expected:
+each mutation makes the PR-time gate suite (`python3
 .github/scripts/run-local-gates.py`) fail, and the failure names the
 specific fixture whose subject it broke — confirming these are checks
 that can fail, not decorations (Constitution VIII).
