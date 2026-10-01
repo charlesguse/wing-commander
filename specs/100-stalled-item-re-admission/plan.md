@@ -17,12 +17,16 @@ clause ordering, what a re-admitted stalled item resumes at — the resume
 step's existing `board:owned` fallback (`board-loop.yml`'s `select` job,
 clause 2), refined per spec 093's owner-chosen invariant so an open PR whose
 head no review has covered yet resumes at `review`, but one whose head is
-unchanged since the last review resumes at `readiness` instead of a second,
-wasted review round. That refinement rests on one shared "has the head
-moved since the last review" determination (FR-006b) that this feature
-builds from live state — the PR's head commit timestamp compared against
-the loop's own most recent review-round comment — with no new marker field
-and no change to how review posts its findings. The technical approach is
+unchanged since the last *converged* review resumes at `readiness` instead
+of a second, wasted review round. That refinement rests on one shared "has
+the head moved since the last review" determination (FR-006b) that this
+feature builds from live state — the PR's live head SHA compared against
+the head SHA the loop's own most recent *converged* review-round comment
+recorded for that PR; a budget-spent or any other inconclusive verdict
+never establishes a reviewed head and always resolves to `review` with a
+fresh round budget, regardless of head movement (maintainer review of
+#885) — with no new marker field and no change to how review posts its
+findings. The technical approach is
 a three-way split of one existing `elif` clause, one new small live-state
 lookup function, one new fixture-driven gate, and run-summary lines at the
 resume step and at stall-site retries recording what fired and why. FR-016-

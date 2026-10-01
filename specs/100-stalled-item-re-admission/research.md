@@ -102,55 +102,69 @@ builds the shared determination**, exactly as spec 100's own text anticipates
 (`step, round, pr, branch, base_sha` — `board_item_marker.py:139`) records no
 head SHA, and FR-019/FR-006b forbid extending it. Readiness's own snapshot
 (`board-loop.yml:3736`) fetches `headRefOid` fresh, but only at readiness
-time, not as a durable record. Review's round-outcome comments
-(`board-loop.yml:3298-3321`) are plain issue comments with no embedded head
-SHA. No `gh pr review` (formal GitHub review, which would carry a
-`commitId`) is ever posted — every round's verdict is an ordinary issue
-comment.
+time, not as a durable record. Review's *converged* round-outcome comment
+names the PR and the head SHA it converged on directly in its body ("Review
+round N converged ... PR #P (head <sha>)"); the inconclusive arms
+(parse-failed, malformed-findings, budget-spent) share the same generic
+"Review round N on PR #P" prefix but name no verdict and no head. No
+`gh pr review` (formal GitHub review, which would carry a `commitId`) is
+ever posted — every round's verdict is an ordinary issue comment.
 
 **Decision**: Determine "has the head moved since the last review" from live
 state only, with no new durable record and no marker extension:
 
-1. Fetch the PR's current head commit info:
-   `gh pr view <pr> --json headRefOid,commits --jq
-   '{head: .headRefOid, pushedAt: (.commits | last | .committedDate)}'`
-   (or equivalent) — the timestamp of the commit that is the PR's current
-   head.
-2. Find the loop's own most recent round-outcome comment on the *issue*
-   whose body is a review-round verdict for this PR (`converged` or a
-   `stalled` review-arm comment naming this PR and round) — these are
-   already posted, bot-authored, and distinguishable by their existing
-   fixed wording ("Review round N ... on PR #P").
-3. If step 2 finds such a comment and its `created_at` is at or after the
-   head commit's `committedDate` from step 1, the head has **not** moved
-   (`readiness`). If the head commit's `committedDate` is after that
-   comment's `created_at`, the head **has** moved (`review`). If step 1 or
-   step 2 cannot resolve (no such comment found, the PR lookup fails, or the
-   stall arm was `parse-failed`/`malformed-findings` — inconclusive by
-   definition), resolve to `review` (FR-006b's safe default; also matches
-   the edge case "A stall reached before any review ... or from an
-   inconclusive one ... resumes at `review`").
+1. Find the loop's own most recent **converged** review-round verdict
+   comment on the issue that names `pr_number` and a head SHA (matched by a
+   pattern on the converged comment's own fixed wording — never the
+   budget-spent or other inconclusive wording, which names no SHA at all).
+2. If no such comment is found, resolve to `review` (FR-006b's safe
+   default) without making a live call at all — this covers a stall reached
+   before any review, and every inconclusive review arm including
+   budget-spent: a spent budget never finished clearing the PR's findings,
+   so it must never be treated as a baseline a later, unmoved head could
+   satisfy (maintainer review of #885 — an earlier version of this
+   determination compared a commit timestamp to the inconclusive comment's
+   own `created_at`, which let a budget-spent stall with an unmoved head
+   resolve to `readiness` with findings still open, breaking FR-006b/
+   SC-004).
+3. Otherwise fetch the PR's live head SHA (`gh pr view <pr> --json
+   headRefOid`) and compare it directly to the SHA the converged comment
+   recorded. Equal SHAs mean the head has **not** moved (`readiness`); any
+   difference, or a failed/unparsable lookup, means moved (`review`, the
+   safe default).
 
-This determination is implemented once, as a function taking the already-
-fetched `comments_by_issue` (the `select` job already fetches these for
-`read_marker`) and a freshly fetched head-commit timestamp, and is called
-from the resume step. Because it depends only on data the `select` job (or
-a live `gh pr view` call it makes) already has access to, spec 093 — when it
-plans — reuses the same function rather than re-deriving the same read.
+This determination is implemented once, as a function taking the resume
+step's own already-fetched flat comments array and the bot's login, making
+its own live `gh pr view` call only when a converged verdict comment is
+found. Because it depends only on data the `select`/resume step already has
+access to, spec 093 — when it plans — reuses the same function rather than
+re-deriving the same read.
 
 **Rationale**: This satisfies FR-006b's exact wording ("from live state or
 an existing record, without extending the stall marker") using data that
-already exists on `main` — the round-outcome comments review already posts,
-and the PR's own commit history. It requires no new marker field, no new
-comment convention and no `gh pr review` migration.
+already exists on `main` — the converged comment's own recorded head SHA,
+compared against a live, authoritative head-SHA lookup rather than an
+inferred timestamp ordering. It requires no new marker field, no new
+comment convention and no `gh pr review` migration, and it cannot
+mistake an inconclusive verdict for a baseline the way a timestamp
+comparison could.
 
 **Alternatives considered**:
+- *Compare the head commit's timestamp against the matched comment's
+  `created_at`* — this was the original design and was built, then
+  reverted by maintainer review of #885: a commit authored before the
+  verdict but pushed after it (or a push landing mid-run) could resolve to
+  "not moved" even though the live head was never reviewed, and extending
+  the same timestamp match to the inconclusive review arms (to avoid a
+  second, differently-shaped lookup) let a budget-spent stall with an
+  unmoved head resolve to `readiness` with findings still open. Comparing
+  SHAs directly, sourced only from a converged comment's own recorded head,
+  removes both failure modes.
 - *Embed a head SHA in a new, non-marker HTML comment tag on each review
-  round's comment* — rejected as unnecessary: the existing comment's
-  timestamp plus the PR's commit history already answers the question
-  without inventing a new record shape, and CLAUDE.md's "shared logic has
-  exactly one home" cautions against a second small format when live state
-  suffices.
+  round's comment* — rejected as unnecessary: the converged comment's own
+  existing wording already names the head SHA in plain text, so no new
+  record shape is needed, and CLAUDE.md's "shared logic has exactly one
+  home" cautions against a second small format when live state suffices.
 - *Post real GitHub PR reviews (`gh pr review`) instead of issue comments,
   so `commitId` is available directly* — rejected as out of scope: it
   changes review's posting mechanism repository-wide for every arm

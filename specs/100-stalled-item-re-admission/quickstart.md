@@ -32,13 +32,15 @@ behavior by re-driving one real run after merge.
    likely `.github/scripts/tests/board-loop-readmission/` alongside the
    existing `board-eligibility`/`board-readiness` fixture directories):
 
-   - Open `board:owned` PR, reviewed head established, head commit newer
-     than the last review comment → resolves `review`.
-   - Open `board:owned` PR, reviewed head established, head commit at or
-     before the last review comment → resolves `readiness`.
-   - Open `board:owned` PR, no reviewed head resolvable (no prior review
-     comment matches, or the arm was parse-failed/malformed-findings) →
-     resolves `review` (FR-006b default).
+   - Open `board:owned` PR, a converged review recorded a head SHA, live
+     head SHA differs from the recorded one → resolves `review`.
+   - Open `board:owned` PR, a converged review recorded a head SHA, live
+     head SHA matches the recorded one → resolves `readiness`.
+   - Open `board:owned` PR, no reviewed head resolvable (no prior converged
+     review comment matches — including every inconclusive arm:
+     parse-failed, malformed-findings, or budget-spent) → resolves `review`
+     (FR-006b default) with a fresh round budget, regardless of whether the
+     head has moved.
    - `breach` marker, PR recovered only via the fallback → resolves
      `breach` regardless of head movement (#530 carve-out preserved).
    - No open PR recovered → falls through to `triage`.
@@ -59,20 +61,30 @@ Using a disposable test issue in a sandbox/fork (never against a real
 maintainer-facing issue):
 
 1. Drive an item to a `review` budget-spent stall (five rounds, in-scope
-   findings left open at round 5). Confirm: `board:stalled` present,
-   `stalled` marker posted, issue excluded from the next `select()` run
-   (US1 AS5).
+   findings left open at round 5, no converged verdict ever posted).
+   Confirm: `board:stalled` present, `stalled` marker posted, issue excluded
+   from the next `select()` run (US1 AS5).
 2. Without pushing a new commit, remove `board:stalled`. Run `select`
-   again. Confirm: resolved step is `readiness`, not `review` — no reviewer
-   invocation spent (US3 AS2 / SC-005).
-3. Push a new commit to the same PR, then remove `board:stalled` again (a
+   again. Confirm: resolved step is `review` with `round == 0`, never
+   `readiness` — a budget-spent verdict never finished clearing the PR's
+   findings, so it does not establish a reviewed head regardless of whether
+   the head has moved (US3 AS1 / FR-006b / SC-006).
+3. Separately, drive a different item's PR to a *converged* review, then to
+   a readiness backstop-breach stall, without pushing any further commit.
+   Remove `board:stalled`. Run `select`. Confirm: resolved step is
+   `readiness`, not `review` — the converged review's recorded head SHA
+   matches the PR's live head, so no reviewer invocation is spent (US3 AS2 /
+   SC-005).
+4. Push a new commit to step 3's PR, then remove `board:stalled` again (a
    fresh stall/removal cycle, or directly if the label was left off — either
    way the marker is still `stalled`). Run `select`. Confirm: resolved step
-   is `review`, with `round == 0` (US3 AS1 / SC-006).
-4. Let the fresh round budget exhaust again with findings still open.
-   Confirm: it stalls again on the same terms (SC-006's second half).
-5. Read the run summary for steps 2-4's runs. Confirm each names the
-   re-admission, the clause that fired, and (for step 2/3) whether the head
+   is `review`, with `round == 0` — the live head no longer matches the
+   converged review's recorded head (US3 AS1 / SC-006).
+5. Let the fresh round budget from step 2 or step 4 exhaust again with
+   findings still open. Confirm: it stalls again on the same terms (SC-006's
+   second half).
+6. Read the run summary for steps 2-5's runs. Confirm each names the
+   re-admission, the clause that fired, and (for step 2-4) whether the head
    had moved (SC-009).
 
 ## Post-merge Actions proof (CLAUDE.md)

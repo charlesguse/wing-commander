@@ -18,7 +18,7 @@ same set.
 | job | one of `triage`, `route`, `fix`, `review`, `readiness` | the job that stalls |
 | line | `board-loop.yml:1427`/`1906`/`2263`/`2467`/`3306`/`3311`/`3319`/`3913` | current `main` |
 | stalls from | the marker step the job was executing when it stalled (`triage`'s handover has no prior step; `route`'s spec verdict; `fix`'s gate-red and post-push breach; `review`'s parse-failed/malformed-findings/budget-spent; `readiness`'s backstop breach) | derived, not hand-listed (FR-004) |
-| reviewed-head resolvable? | `review`'s budget-spent arm and `readiness`'s breach arm: yes (a review converged into this state); every other arm: no (stalled before or during an inconclusive review) | governs FR-006b's default |
+| reviewed-head resolvable? | `readiness`'s breach arm: yes (a review converged before this stall); every other arm, including `review`'s budget-spent arm: no — a spent budget never finished clearing the PR's findings, so it never establishes a reviewed head either (FR-006b, maintainer review of #885) | governs FR-006b's default |
 
 No new fields are added to this table by this feature; it is a restatement
 for traceability between FR-004's enumeration and FR-006's rule.
@@ -45,9 +45,9 @@ needed.
 
 | Input | Source |
 |---|---|
-| PR head commit timestamp | `gh pr view <pr> --json headRefOid,commits` (live) |
-| last review-round verdict comment for this PR | `comments_by_issue` (already fetched by the `select` job for `read_marker`), filtered to the loop's own bot-authored comments matching the existing round-outcome wording (research.md D3 step 2) |
-| output | `head_moved: bool` — `True` if no comparable comment is found, the PR lookup fails, or the comment is absent; `True` if the head commit postdates the comment; `False` only when a comment is found and postdates (or ties) the head commit |
+| last **converged** review-round verdict comment for this PR | the resume step's own flat comments array, filtered to the loop's own bot-authored comments matching the converged verdict's fixed wording and the head SHA it recorded (research.md D3 step 1) — a budget-spent or other inconclusive verdict comment never matches, however recent |
+| PR live head SHA | `gh pr view <pr> --json headRefOid` (live) — fetched only when a converged comment is found |
+| output | `head_moved: bool` — `True` if no converged comment is found, the live lookup fails or is unparsable, or the live head SHA differs from the converged comment's recorded SHA; `False` only when a converged comment is found and its recorded SHA equals the live head SHA |
 
 Consumers: this feature's resume clause 2 (D2); spec 093 FR-007, when that
 feature plans, reuses this same computation rather than deriving a second

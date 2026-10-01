@@ -206,7 +206,9 @@ No `[NEEDS CLARIFICATION]` marker remains.
   commits no review has covered — the item resolves to `review` whenever
   that head cannot be established. A stall reached before any review (fix's
   gate-red and post-push breach) or from an inconclusive one (review's
-  parse-failed and malformed-findings arms) therefore resumes at `review`.
+  parse-failed, malformed-findings, and budget-spent arms — a spent budget
+  never finished clearing the PR's findings, so it does not establish a
+  reviewed head either) therefore resumes at `review`.
 - **The two re-admission budgets differ on purpose.** Spec 093 FR-007
   *continues* the round budget when a held item's head moves. A label
   removal is the maintainer's explicit reset and gets a fresh budget (Q2,
@@ -346,12 +348,12 @@ the absence of a second branch or PR and the summary line.
 **Acceptance Scenarios**:
 
 1. **Given** an item stalled by review's spent budget with its PR still
-   open and a human push since its last review, **When** the label is
-   removed and the next run selects it, **Then** the item resumes at
-   `review` on that pull request (at `readiness` if the head has not moved)
-   and the run summary
-   records that it was re-admitted from a stall and which clause resolved
-   the step.
+   open, **When** the label is removed and the next run selects it, **Then**
+   the item resumes at `review` with a fresh round budget regardless of
+   whether the head has moved since the budget was spent — a budget-spent
+   verdict never finished clearing the PR's findings, so it never
+   establishes a reviewed head (FR-006b) — and the run summary records that
+   it was re-admitted from a stall and which clause resolved the step.
 2. **Given** an undisposed item stalled at readiness with its PR still
    open and its head unchanged since review converged (spec 092's give-up
    stall, or a breach whose spec 108 disposition did not complete), **When**
@@ -401,10 +403,12 @@ at once. It is not built here; see Out of Scope.
   record of a review exists (the stall came before one, or from an
   inconclusive one), or the lookup fails. FR-006b resolves to `review`,
   never to `readiness`, so nothing is reported ready on unreviewed commits.
-- **An unmoved head re-admitted after review's spent budget.** It resumes
-  at `readiness`, which finds the open in-scope findings and takes spec
-  093's durable not-ready path; the fresh budget (FR-009) is spent only
-  once the head moves.
+- **An unmoved head re-admitted after review's spent budget.** A
+  budget-spent verdict never finished clearing the PR's findings, so it
+  never establishes a reviewed head (FR-006b) regardless of whether the
+  head has since moved. The item resumes at `review` with a fresh round
+  budget (FR-009), never at `readiness`, so a stall with findings still
+  open is never reported ready.
 - **The label is removed while a run is mid-flight on the item.** The run
   holds the item under the global concurrency group; the removal takes
   effect on the next run, not this one. Nothing in this feature re-reads the
