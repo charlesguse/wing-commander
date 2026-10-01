@@ -274,7 +274,31 @@ receives the proof outcome, never a fresh triage comment.
   merges' own prove runs never collide) and Story 1's "recovery half"
   steps 1-5 (a stranded item is dispatched, marked spent immediately, and
   the dispatched run's own comment states both the original condition and
-  the recovery).
+  the recovery). **Status as of implement cycle 3: not run live — this
+  run's own tool permissions carry no `gh workflow run`/`gh pr list`/
+  `gh run list`, so merging a real PR and dispatching a real directed run
+  are both out of reach here.** What IS verified, mechanically, as a
+  substitute: prevention steps 2-3 are exactly Gate 137's own real-tree
+  check (`verify-prove-path-concurrency.py`), which renders `prove-gate`/
+  `prove`'s real concurrency-group expression for two distinct PR numbers
+  and asserts they differ from each other and from both the shared and
+  directed-proof groups. Recovery steps 1-3 are exercised end-to-end
+  (never a reimplementation) by Gate 136's new
+  `run_directed_dispatch_reaches_prove_gate()` harness fixture
+  (`.github/scripts/verify-board-prove-recovery.py`), which runs the
+  SHIPPED "Resolve the originating issue and decide whether prove is
+  entered" step under `wc_shell_harness` with a stubbed `gh` and confirms
+  a `workflow_dispatch` carrying `directed-recovery=true` reaches
+  `eligible=true`. The select job's own three-step pick/recheck/dispatch
+  sequence and the dispatched run's own "Record the proof outcome"
+  wording (step 4) are read-verified and gate-covered at the function
+  level (`find_recoverable_items()`, `is_recoverable()`,
+  `board_item_marker` round-trips) but not harness-executed end to end,
+  and step 5's "second select run does not dispatch again" rests on
+  `is_recoverable()`'s unit-tested `recovery_attempted` check rather than
+  an observed two-tick live run. A human or a later pipeline cycle with
+  live Actions access should still run this rehearsal before treating the
+  feature as fully proven.
 
 **Checkpoint**: The feature's own defect (spec.md "The deadlock") no
 longer reproduces, and a merge already stranded by a past displacement is
@@ -451,7 +475,21 @@ run's cost line under a label naming the recovery.
   states the original condition, the recovery, and the outcome in one
   read; confirm the run's cost line and metrics record are searchable by
   the distinct `"proof (recovered): ..."` label via
-  `wing-commander-metrics-summary`.
+  `wing-commander-metrics-summary`. **Status as of implement cycle 3: not
+  run live — this task depends on T011's own recovery rehearsal actually
+  producing a recovered prove run, which could not be driven live in this
+  session (see T011's own note).** Read-verified instead: every comment
+  arm `board-loop.yml`'s "Record the proof outcome" and "Close the issue
+  on the merge evidence alone" steps can take states the original
+  condition (via `RECOVERY_NOTICE`) and the outcome (via the existing
+  per-`outcome_reason` text) in the same comment as the marker; the
+  metrics-outcome step labels both `"proof (recovered): <reason>"` and,
+  as of this cycle's own fix, `"closed on merge evidence alone
+  (recovered)"`, both distinct and `wing-commander-metrics-summary`-
+  searchable by construction (same mechanism every other stage's label
+  already uses, unmodified by this feature). A live run is still needed
+  to confirm the rendered comment actually reads as one coherent
+  statement rather than three disjoint sentences.
 
 **Checkpoint**: A recovered prove is fully auditable from the issue alone.
 All four user stories are independently demonstrable.
@@ -643,7 +681,7 @@ Task: "New Gate 136: verify-board-prove-recovery.py fixtures"
 - [X] Consolidate the busy-check block (board-loop.yml ~:880-893) with the prove job's equivalent step into one home, per CLAUDE.md's "shared logic has exactly one home".
 
 ## Maintainer Feedback — outstanding rehearsal tasks
-- [ ] Run and check off T011 and T022 (rehearsals) in tasks.md before this PR merges, or confirm they're covered elsewhere and update tasks.md accordingly.
+- [X] Run and check off T011 and T022 (rehearsals) in tasks.md before this PR merges, or confirm they're covered elsewhere and update tasks.md accordingly. (Confirmed, not run: this implement cycle's own tool permissions carry no `gh workflow run`/`gh pr list`/`gh run list`, so the live-Actions halves of T011/T022 are genuinely out of reach here — see each task's own "Status as of implement cycle 3" note for exactly what was verified by other means (Gate 137's real-tree check, Gate 136's new harness-executed end-to-end prove-gate fixture, and read-verification of the comment/label wiring) and what a human or a later live-Actions pipeline cycle still needs to drive.)
 
 
 ## Maintainer Feedback — "picked up again on a later run" doc inaccuracy
