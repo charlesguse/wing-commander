@@ -323,3 +323,9 @@ Task: "Add fixtures under wing-commander-fold-queue-release/tests/"
 ### Follow-up review of 511913b3 (maintainer, 2026-09-30)
 
 - [ ] T057 **B5: a run-url that the 30-second poll misses now loses the cycle.** The orphan step (:3410) releases the implement ticket whenever `dispatched-run-id` is empty, even when `gh workflow run` succeeded. The real run then awaits an absent token, which `fold-queue-await.sh:75-122` treats as "keep waiting" until the 30-minute timeout, so the cycle is silently dropped. **Fix:** release only when `dispatched != 'true'`, and let the uncorrelated-head bound cover a missing run-url. Alternatively, make await fail fast or proceed on an absent token.
+
+## Maintainer Feedback
+
+### Follow-up review of 511913b3 (maintainer, 2026-09-30)
+
+- [ ] T059 **B7: ledger errors are invisible.** `fold-queue-ledger.sh:695` and `:728` write `::error::` to stdout, and every caller discards or captures stdout: `release:83`, `admit:93`, `claim-dispatch:122` and `ledger:64`. **Fix:** write them to `>&2`.
