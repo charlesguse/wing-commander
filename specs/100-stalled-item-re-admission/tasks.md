@@ -458,3 +458,7 @@ T023's full suite run — this is the same regression concern noted under
 ## Maintainer Feedback (review of 7b4b0825, PR #885)
 
 - [ ] T030 [US3] Strengthen verify-board-loop-readmission.py's self-test: currently each of these mutations passes with 0 findings — (a) forcing `step = "review"` in place of the moved check (no executed case ever resolves to readiness; the structural check only greps for the call) and (b) removing review's parse-failed summary line (the three stall arms share one step, so one surviving line satisfies the check). Against main's board-loop.yml, the FR-011 check already passes for triage/route/readiness, and `STALL_SITES` is a hand-kept list of 6 that a new stall site would escape. Add an executed heredoc case (with a stub `gh`) that actually resolves to readiness, derive stall sites from the workflow's `--step stalled` renders rather than a hand-kept list, and add a self-test mutation per check family.
+
+## Maintainer Feedback (review of 7b4b0825, PR #885)
+
+- [ ] T031 [US3] Consolidate the FR-011 summary line, currently pasted at eight sites (board-loop.yml:1455, 1936, 2296, 2503, 3345, 3353, 3364, 3961), into board_item_marker.py's `--add-label` success path (CLAUDE.md 'Shared logic has exactly one home'; every stall site already calls this). This also closes item 5's enumeration gap. Emit it only after the marker comment has actually posted — today the line is written before the post, so a failed post leaves a false claim on the run summary.
