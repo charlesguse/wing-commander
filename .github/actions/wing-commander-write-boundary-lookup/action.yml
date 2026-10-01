@@ -65,18 +65,16 @@ runs:
           # list --search` over an HTML-comment marker (GitHub's search
           # index is not guaranteed to match that verbatim or promptly).
           # The marker-match jq filter is the one shared script both
-          # composites call -- never a second copy of it. The `gh issue
-          # list` call itself stays INLINE here, never in a _shared/ script
-          # -- Gate 12 can only resolve a `gh` call's token from the
-          # composite step's own env, not from a script `_shared/` scripts
-          # are merely sourced into (gate 12's own stated rule, lint-
-          # workflows.yml ~line 1631). An explicit --limit bounds it, since
-          # this label accumulates across the repo's whole lifetime, not
-          # per-spec. Fetched once for every unchecked line, not once per
-          # line. A failed `gh issue list` call is surfaced with ::warning::
-          # rather than silently swallowed into "no routed items found" --
-          # the consequence here is a routed item reaching the PR as orphan
-          # prose, not merely a redundant `gh issue create`.
+          # composites call -- never a second copy of it. Why the `gh issue
+          # list` call itself stays INLINE here, never in a _shared/ script,
+          # and why an explicit --limit bounds it -- see
+          # wing-commander-durable-failure-issue/action.yml's own Gate 12
+          # rationale comment (canonical; not re-derived here). Fetched once
+          # for every unchecked line, not once per line. A failed `gh issue
+          # list` call is surfaced with ::warning:: rather than silently
+          # swallowed into "no routed items found" -- the consequence here
+          # is a routed item reaching the PR as orphan prose, not merely a
+          # redundant `gh issue create`.
           issues_file="$(mktemp)"
           issues_err="$(mktemp)"
           if gh issue list --repo "$GITHUB_REPOSITORY" --label "${LABEL_PREFIX}:implement" --state all --json number,url,state,body --limit 1000 > "$issues_file" 2>"$issues_err"; then

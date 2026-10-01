@@ -172,6 +172,13 @@ runs:
           # itself stays INLINE here, never in a _shared/ script -- Gate 12
           # can only resolve a `gh` call's token from the composite step's
           # own env (lint-workflows.yml ~line 1631).
+          #
+          # This 1000 is independent of watchdog.yml's own `--limit 200`
+          # dedup-lookup bound (its "Record or suppress" step, ~line 3469) --
+          # different call, different composite, deliberately not the same
+          # number -- but if watchdog's own bound ever needs raising for the
+          # same truncation-risk reason, check whether this one should move
+          # too.
           MATCH_SCRIPT="$GITHUB_ACTION_PATH/../_shared/match-issue-by-marker.sh"
           issues_file="$(mktemp)"
           gh issue list --repo "$GITHUB_REPOSITORY" --label "$LABEL" --state "$scope" --json number,url,state,body --limit 1000 > "$issues_file" 2>/dev/null || echo "[]" > "$issues_file"

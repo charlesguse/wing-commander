@@ -876,7 +876,7 @@ and evaporating into PR-body prose) that this feature exists to end.
 
   Fixed: extracted the trailing-slash canonicalization into `.github/actions/_shared/normalize-write-path-prefix.sh`. `classify-out-of-boundary-tasks.sh` now normalizes `NO_WRITE_PATHS` through this one helper in bash before handing the result to its Python classifier (whose own `normalize_prefix()` was deleted); `wing-commander-tool-args/action.yml`'s compose step calls the same helper when building each `Edit()`/`Write()` deny glob. Gate 133's mutation (12) now targets the shared helper (both `check_mutation_12` and `_mut_drop_prefix_normalization` updated accordingly, copying a mutated helper beside a copy of the classifier so its relative `BASH_SOURCE` lookup still resolves) and still fails classification (c) when the normalization is dropped. `run_compose()`'s harness now sets `GITHUB_ACTION_PATH` to the real `wing-commander-tool-args` composite directory, matching how Actions sets it in production and how `wing-commander-write-boundary-lookup`'s own harness call already did.
 
-- [ ] Review finding: finding-kind branching hand-duplicated across three survivor slots
+- [x] Review finding: finding-kind branching hand-duplicated across three survivor slots
 
   The new finding-kind: defect|routed-task input is implemented as inline if/ternary branches repeated identically in all three survivor slots of wing-commander-stage-findings/action.yml instead of callers passing pre-rendered phrase strings
 
@@ -884,7 +884,9 @@ and evaporating into PR-body prose) that this feature exists to end.
 
   Detail: Around lines 507, 524-538, 549, 566-580, 591, 608-622; a third finding-kind or a wording tweak needs 6 copy-pasted edits, and a missed one leaves one slot stale with no gate to catch it, bakes write-boundary vocabulary into a composite meant to stay generic
 
-- [ ] Review finding: Gate 12 token-resolution comment duplicated without a canonical pointer
+  Fixed: the "Extract, validate, cap, and prepare findings" step now renders `LABEL_DESCRIPTION_PHRASE`/`CREATED_PHRASE`/`COMMENTED_PHRASE` ONCE from `FINDING_KIND` (a single run-level input, not per-survivor) and emits them as `label-description-phrase`/`created-phrase`/`commented-phrase` outputs. All three "Report finding N" steps' `label-description:` now reference `steps.prepare.outputs.label-description-phrase` instead of repeating the ternary, and all three "Record finding N outcome" steps read `CREATED_PHRASE`/`COMMENTED_PHRASE` from `steps.prepare.outputs.*` instead of re-deriving the phrase from `FINDING_KIND` with an inline if/else. stage-findings-tests/run_fixtures.py's `case_label_description_fits_github_cap` and `run_record()` (feeding `case_filed_with_lifecycle_issue_posts_filed_phrase`/`case_deduped_with_lifecycle_issue_posts_recorded_phrase`/`case_filed_without_lifecycle_issue_records_absence_not_failure`) updated to match the new single-source-of-the-phrase shape.
+
+- [x] Review finding: Gate 12 token-resolution comment duplicated without a canonical pointer
 
   The explanation for why gh issue list must stay inline (never moved to _shared/) is independently reworded in both wing-commander-durable-failure-issue/action.yml and wing-commander-write-boundary-lookup/action.yml, with neither comment pointing at the other, violating CLAUDE.md's single-canonical-comment rule
 
@@ -892,6 +894,8 @@ and evaporating into PR-body prose) that this feature exists to end.
   - .github/actions/wing-commander-durable-failure-issue/action.yml
 
   Detail: write-boundary-lookup/action.yml ~lines 808-814 vs durable-failure-issue/action.yml ~lines 322-326; a future change to the Gate 12 rationale has two copies to update and nothing fails if only one is updated
+
+  Fixed: designated wing-commander-durable-failure-issue/action.yml's rationale comment canonical; wing-commander-write-boundary-lookup/action.yml's comment now points at it ("see wing-commander-durable-failure-issue/action.yml's own Gate 12 rationale comment (canonical; not re-derived here)") instead of restating the full explanation. Gate 47 (verify-comment-canonical-pointers.py) scans only .github/workflows/*.yml, so this is hygiene per CLAUDE.md's rule rather than a gate-enforced pointer, but it removes the second independently-worded copy.
 
 - [ ] Review finding: Per-unchecked-line fingerprint lookup re-reads and re-normalizes tasks.md
 
@@ -910,7 +914,7 @@ and evaporating into PR-body prose) that this feature exists to end.
 
   Detail: Around lines 1474-1513; a future fix to shared env-building logic (as already happened once with WRITE_BOUNDARY_ALL_OOB) must be pasted into both functions or they silently diverge
 
-- [ ] Review finding: Lost watchdog.yml cross-reference when raising issue-list limit
+- [x] Review finding: Lost watchdog.yml cross-reference when raising issue-list limit
 
   The deleted comment in wing-commander-durable-failure-issue/action.yml explicitly tied --limit 200 to watchdog.yml's own dedup bound; the replacement raises the limit to 1000 and only cross-references wing-commander-write-boundary-lookup, dropping the watchdog.yml parity note entirely
 
@@ -919,10 +923,14 @@ and evaporating into PR-body prose) that this feature exists to end.
 
   Detail: Around line 329; watchdog.yml still uses --limit 200 (lines ~3469,3484) with its own truncation-risk warning, but nothing now points at this composite's now-independent 1000 limit if watchdog's bound changes
 
-- [ ] Review finding: Duplicate import subprocess in stage-findings python heredoc
+  Fixed: restored a cross-reference comment naming watchdog.yml's own `--limit 200` dedup-lookup bound (its "Record or suppress" step, ~line 3469), noting the two are deliberately different numbers for different calls but pointing a future reader at the other one if either bound's rationale changes.
+
+- [x] Review finding: Duplicate import subprocess in stage-findings python heredoc
 
   A new `import subprocess` was added at the top of the python heredoc in wing-commander-stage-findings/action.yml while a pre-existing `import subprocess` lower in the same block was left in place
 
   - .github/actions/wing-commander-stage-findings/action.yml
 
   Detail: Around line 365; harmless no-op re-import but a trivial cleanup a reviewer has to puzzle over
+
+  Fixed: removed the duplicate `import subprocess` line, keeping the imports in alphabetical order.

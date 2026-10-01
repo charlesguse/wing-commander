@@ -150,6 +150,7 @@ runs:
         OUT_DIR: ${{ runner.temp }}/wc-stage-findings
         STATE_FILE: ${{ runner.temp }}/wc-stage-findings/state.json
         LIFECYCLE_ISSUE_NUMBER: ${{ inputs.lifecycle-issue-number }}
+        FINDING_KIND: ${{ inputs.finding-kind }}
       run: |
         set -uo pipefail
         mkdir -p "$OUT_DIR"
@@ -158,7 +159,6 @@ runs:
         import json
         import os
         import re
-        import subprocess
         import secrets
         import subprocess
 
@@ -174,6 +174,23 @@ runs:
         STAGE = os.environ["STAGE"]
         SPEC_DIR = os.environ["SPEC_DIR"]
         LIFECYCLE_ISSUE_NUMBER = os.environ.get("LIFECYCLE_ISSUE_NUMBER", "").strip()
+        FINDING_KIND = os.environ.get("FINDING_KIND", "defect") or "defect"
+        # review-gate-round-3: finding-kind is one value for the WHOLE run,
+        # not per-survivor, so its defect|routed-task phrasing is rendered
+        # ONCE here and handed to every "Report finding N"/"Record finding N
+        # outcome" step as a plain output -- never a ternary hand-copied
+        # into three label-description expressions and six shell branches.
+        IS_ROUTED = FINDING_KIND == "routed-task"
+        LABEL_DESCRIPTION_PHRASE = ("was given work outside its write boundary" if IS_ROUTED
+                                     else "met a defect outside its own task")
+        CREATED_PHRASE = (
+            "work the {0} stage could not complete under its write boundary was filed".format(STAGE)
+            if IS_ROUTED else
+            "a defect was filed by the {0} stage".format(STAGE))
+        COMMENTED_PHRASE = (
+            "work the {0} stage still could not complete under its write boundary was recorded on an existing issue".format(STAGE)
+            if IS_ROUTED else
+            "a defect met by the {0} stage was recorded on an existing issue".format(STAGE))
         RUN_URL = os.environ["RUN_URL"]
         LABEL_PREFIX = os.environ["LABEL_PREFIX"]
         CHANNEL_MODE = os.environ["CHANNEL_MODE"]
@@ -483,7 +500,10 @@ runs:
         outputs = [("survivor-count", str(len(kept))),
                    ("lifecycle-count", str(len(items))),
                    ("lifecycle-items-file", lifecycle_items_path),
-                   ("lifecycle-header", lifecycle_header)]
+                   ("lifecycle-header", lifecycle_header),
+                   ("label-description-phrase", LABEL_DESCRIPTION_PHRASE),
+                   ("created-phrase", CREATED_PHRASE),
+                   ("commented-phrase", COMMENTED_PHRASE)]
         for i in range(MAX_SLOTS):
             if i < len(kept):
                 finding = kept[i]
@@ -586,7 +606,7 @@ runs:
         # shorter than tasks.md's own suggested wording ("was assigned
         # work...") because that phrasing runs 102 for the longest stage
         # name ("implement"), over the cap.
-        label-description: "${{ format('Filed by the wing-commander pipeline: the {0} stage {1}', inputs.stage, inputs.finding-kind == 'routed-task' && 'was given work outside its write boundary' || 'met a defect outside its own task') }}"
+        label-description: "${{ format('Filed by the wing-commander pipeline: the {0} stage {1}', inputs.stage, steps.prepare.outputs.label-description-phrase) }}"
         title: ${{ steps.prepare.outputs.survivor-0-title }}
         body-file: ${{ steps.prepare.outputs.survivor-0-body-file }}
         comment-body-file: ${{ steps.prepare.outputs.survivor-0-recap-file }}
@@ -612,7 +632,8 @@ runs:
         TITLE: ${{ steps.prepare.outputs.survivor-0-title }}
         WHAT: ${{ steps.prepare.outputs.survivor-0-what }}
         LIFECYCLE_ISSUE_NUMBER: ${{ inputs.lifecycle-issue-number }}
-        FINDING_KIND: ${{ inputs.finding-kind }}
+        CREATED_PHRASE: ${{ steps.prepare.outputs.created-phrase }}
+        COMMENTED_PHRASE: ${{ steps.prepare.outputs.commented-phrase }}
       run: |
         set -uo pipefail
         post_outstanding=false
@@ -637,20 +658,12 @@ runs:
           issue_url="https://github.com/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER"
           case "$ACTION_TAKEN" in
             created|created-linked-closed)
-              if [ "${FINDING_KIND:-}" = "routed-task" ]; then
-                phrase="work the $STAGE stage could not complete under its write boundary was filed"
-              else
-                phrase="a defect was filed by the $STAGE stage"
-              fi
+              phrase="$CREATED_PHRASE"
               post_outstanding=true
               jq '.filed += 1' "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
               ;;
             commented)
-              if [ "${FINDING_KIND:-}" = "routed-task" ]; then
-                phrase="work the $STAGE stage still could not complete under its write boundary was recorded on an existing issue"
-              else
-                phrase="a defect met by the $STAGE stage was recorded on an existing issue"
-              fi
+              phrase="$COMMENTED_PHRASE"
               post_outstanding=true
               jq '.appended += 1' "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
               ;;
@@ -707,7 +720,7 @@ runs:
         label: ${{ steps.prepare.outputs.survivor-1-label }}
         label-color: "5319E7"
         # label-description -- see Report finding 0.
-        label-description: "${{ format('Filed by the wing-commander pipeline: the {0} stage {1}', inputs.stage, inputs.finding-kind == 'routed-task' && 'was given work outside its write boundary' || 'met a defect outside its own task') }}"
+        label-description: "${{ format('Filed by the wing-commander pipeline: the {0} stage {1}', inputs.stage, steps.prepare.outputs.label-description-phrase) }}"
         title: ${{ steps.prepare.outputs.survivor-1-title }}
         body-file: ${{ steps.prepare.outputs.survivor-1-body-file }}
         comment-body-file: ${{ steps.prepare.outputs.survivor-1-recap-file }}
@@ -729,7 +742,8 @@ runs:
         TITLE: ${{ steps.prepare.outputs.survivor-1-title }}
         WHAT: ${{ steps.prepare.outputs.survivor-1-what }}
         LIFECYCLE_ISSUE_NUMBER: ${{ inputs.lifecycle-issue-number }}
-        FINDING_KIND: ${{ inputs.finding-kind }}
+        CREATED_PHRASE: ${{ steps.prepare.outputs.created-phrase }}
+        COMMENTED_PHRASE: ${{ steps.prepare.outputs.commented-phrase }}
       run: |
         set -uo pipefail
         post_outstanding=false
@@ -754,20 +768,12 @@ runs:
           issue_url="https://github.com/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER"
           case "$ACTION_TAKEN" in
             created|created-linked-closed)
-              if [ "${FINDING_KIND:-}" = "routed-task" ]; then
-                phrase="work the $STAGE stage could not complete under its write boundary was filed"
-              else
-                phrase="a defect was filed by the $STAGE stage"
-              fi
+              phrase="$CREATED_PHRASE"
               post_outstanding=true
               jq '.filed += 1' "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
               ;;
             commented)
-              if [ "${FINDING_KIND:-}" = "routed-task" ]; then
-                phrase="work the $STAGE stage still could not complete under its write boundary was recorded on an existing issue"
-              else
-                phrase="a defect met by the $STAGE stage was recorded on an existing issue"
-              fi
+              phrase="$COMMENTED_PHRASE"
               post_outstanding=true
               jq '.appended += 1' "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
               ;;
@@ -816,7 +822,7 @@ runs:
         label: ${{ steps.prepare.outputs.survivor-2-label }}
         label-color: "5319E7"
         # label-description -- see Report finding 0.
-        label-description: "${{ format('Filed by the wing-commander pipeline: the {0} stage {1}', inputs.stage, inputs.finding-kind == 'routed-task' && 'was given work outside its write boundary' || 'met a defect outside its own task') }}"
+        label-description: "${{ format('Filed by the wing-commander pipeline: the {0} stage {1}', inputs.stage, steps.prepare.outputs.label-description-phrase) }}"
         title: ${{ steps.prepare.outputs.survivor-2-title }}
         body-file: ${{ steps.prepare.outputs.survivor-2-body-file }}
         comment-body-file: ${{ steps.prepare.outputs.survivor-2-recap-file }}
@@ -838,7 +844,8 @@ runs:
         TITLE: ${{ steps.prepare.outputs.survivor-2-title }}
         WHAT: ${{ steps.prepare.outputs.survivor-2-what }}
         LIFECYCLE_ISSUE_NUMBER: ${{ inputs.lifecycle-issue-number }}
-        FINDING_KIND: ${{ inputs.finding-kind }}
+        CREATED_PHRASE: ${{ steps.prepare.outputs.created-phrase }}
+        COMMENTED_PHRASE: ${{ steps.prepare.outputs.commented-phrase }}
       run: |
         set -uo pipefail
         post_outstanding=false
@@ -863,20 +870,12 @@ runs:
           issue_url="https://github.com/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER"
           case "$ACTION_TAKEN" in
             created|created-linked-closed)
-              if [ "${FINDING_KIND:-}" = "routed-task" ]; then
-                phrase="work the $STAGE stage could not complete under its write boundary was filed"
-              else
-                phrase="a defect was filed by the $STAGE stage"
-              fi
+              phrase="$CREATED_PHRASE"
               post_outstanding=true
               jq '.filed += 1' "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
               ;;
             commented)
-              if [ "${FINDING_KIND:-}" = "routed-task" ]; then
-                phrase="work the $STAGE stage still could not complete under its write boundary was recorded on an existing issue"
-              else
-                phrase="a defect met by the $STAGE stage was recorded on an existing issue"
-              fi
+              phrase="$COMMENTED_PHRASE"
               post_outstanding=true
               jq '.appended += 1' "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
               ;;

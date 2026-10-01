@@ -1376,18 +1376,26 @@ def case_label_description_fits_github_cap():
     case = "the label-description stage-findings passes fits GitHub's 100-character cap for every stage"
     with open(STAGE_FINDINGS_ACTION, encoding="utf-8") as fh:
         text = fh.read()
-    # specs/090-stage-write-boundary T018: label-description is now a
-    # format() expression with a finding-kind-selected second segment
-    # (defect vs routed-task), not a single `${{ inputs.stage }}`
-    # substitution -- model both branches this test cares about (#422's
-    # own concern: every RENDERED text, for every stage, stays <= 100).
+    # specs/090-stage-write-boundary T018 / review-gate-round-3: label-
+    # description is a format() expression whose finding-kind-selected
+    # second segment (defect vs routed-task) is now rendered ONCE by the
+    # "prepare" step's Python (LABEL_DESCRIPTION_PHRASE), not a ternary
+    # hand-copied into each of the three report sites' own YAML expression
+    # -- model both branches this test cares about (#422's own concern:
+    # every RENDERED text, for every stage, stays <= 100).
     values = re.findall(
         r"^\s*label-description:\s*\S*\{\{\s*format\('([^']*)',\s*inputs\.stage,"
-        r"\s*inputs\.finding-kind == 'routed-task' && '([^']*)' \|\| '([^']*)'\)"
-        r"\s*\}\}\S*\s*$", text, re.M)
+        r"\s*steps\.prepare\.outputs\.label-description-phrase\)\s*\}\}\S*\s*$",
+        text, re.M)
     check(case + ": three report sites carry one identical description",
           len(values) == 3 and len(set(values)) == 1, values)
-    fmt, routed_phrase, defect_phrase = values[0] if values else ("", "", "")
+    fmt = values[0] if values else ""
+    phrase_match = re.search(
+        r'LABEL_DESCRIPTION_PHRASE = \("([^"]*)" if IS_ROUTED\s*else "([^"]*)"\)',
+        text)
+    check(case + ": the prepare step computes both finding-kind phrases once",
+          phrase_match is not None, text)
+    routed_phrase, defect_phrase = phrase_match.groups() if phrase_match else ("", "")
     check(case + ": the description names the stage",
           "{0}" in fmt, fmt)
     stages = shipped_stage_names()
@@ -1569,17 +1577,28 @@ def case_comment_failed_is_recorded_as_dropped_naming_the_open_issue():
 
 # --- outstanding-task-item cross-link phrasing (T049) ----------------------
 def run_record(tmp, issue_number, action_taken, lifecycle_issue_number,
-              title="t", what="w", stage="implement"):
+              title="t", what="w", stage="implement",
+              created_phrase=None, commented_phrase=None):
     state_file = os.path.join(tmp, "state.json")
     with open(state_file, "w", encoding="utf-8") as fh:
         json.dump({"disabled": False, "proposed": 1, "dropped_malformed": [],
                   "dropped_cap": 0, "filed": 0, "appended": 0,
                   "dropped_api_failure": 0, "outstanding_skipped": 0, "notes": []}, fh)
+    # review-gate-round-3: the shipped step now reads the finding-kind
+    # phrase pre-rendered by the "prepare" step (steps.prepare.outputs.
+    # created-phrase/commented-phrase) instead of re-deriving it from
+    # FINDING_KIND itself -- default to the "defect" kind's own wording,
+    # the shape every case below already expects.
+    if created_phrase is None:
+        created_phrase = "a defect was filed by the {0} stage".format(stage)
+    if commented_phrase is None:
+        commented_phrase = "a defect met by the {0} stage was recorded on an existing issue".format(stage)
     env = {
         "STATE_FILE": state_file, "STAGE": stage, "ISSUE_NUMBER": issue_number,
         "ACTION_TAKEN": action_taken, "TITLE": title, "WHAT": what,
         "LIFECYCLE_ISSUE_NUMBER": lifecycle_issue_number,
         "GITHUB_REPOSITORY": "o/r",
+        "CREATED_PHRASE": created_phrase, "COMMENTED_PHRASE": commented_phrase,
     }
     rc, out, outputs, summary = run_step(BASH, RECORD_SCRIPT, tmp, env, tmp)
     with open(state_file, encoding="utf-8") as fh:
