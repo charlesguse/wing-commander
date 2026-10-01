@@ -459,7 +459,7 @@ All four user stories are independently demonstrable.
 - [X] T024 Run `python .github/scripts/run-local-gates.py` and confirm all
   gates pass on the real tree, including new Gates 128-129 and amended
   Gates 89/97/101.
-- [ ] T025 Confirm every gate this feature adds or amends fails on its own
+- [X] T025 Confirm every gate this feature adds or amends fails on its own
   negative fixture when the behaviour it checks is mutated (Principle
   VIII, FR-020) — e.g. temporarily revert T007/T008's group back to the
   shared literal and confirm Gate 129 (T017) fails; temporarily revert
@@ -468,12 +468,12 @@ All four user stories are independently demonstrable.
   Edit and confirm the revert is byte-identical to HEAD with `git diff`
   (spec 058/060 precedent — this run's tooling has no `git checkout`/`git
   restore`).
-- [ ] T026 Confirm SC-008: feed `find_recoverable_items()` (or a live
+- [X] T026 Confirm SC-008: feed `find_recoverable_items()` (or a live
   rehearsal) an item whose marker already carries `recovery_attempted:
   true` and confirm a second `select` run does not dispatch again, and
   that a `failure`/`unfinished`-reason marker is never returned by
   `is_recoverable()`.
-- [ ] T027 Final full-suite confirmation: re-run `python
+- [X] T027 Final full-suite confirmation: re-run `python
   .github/scripts/run-local-gates.py` after T023-T026 and confirm the gate
   count is unchanged from T024 (no gate silently dropped), and that
   `verify-gate-wiring.py` accounts for Gates 128 and 129.
