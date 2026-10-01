@@ -4826,6 +4826,18 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-prove-recovery.py
 
+      # Gate 129 — specs/096-durable-prove-entry FR-018, research.md D8: the
+      # concurrency arrangement T007/T008 give prove-gate/prove is what this
+      # gate reads, not only what a comment describes (spec.md "A rule with
+      # no gate behind it"). Asserts, against the real board-loop.yml, that
+      # prove-gate/prove's own pull_request-branch group text is not the
+      # shared wing-commander-board-loop literal, contains the per-merge
+      # github.event.pull_request.number key, and the two jobs never
+      # desync.
+      - name: "Gate 129 — prove-gate/prove's own pull_request-branch concurrency group is per-merge and never desyncs"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-prove-path-concurrency.py
+
       # Gate 138 — specs/099-name-free-stage-identity T032/T033 (FR-012):
       # no FR-002 site in watchdog.yml or wing-commander-inspected-run-
       # identity/action.yml gates behavior on a reference display-name

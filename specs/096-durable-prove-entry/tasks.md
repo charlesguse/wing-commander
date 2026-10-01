@@ -347,7 +347,7 @@ against fixtures that put the `pull_request: closed` prove path back into
 merges, and that desync `prove-gate` from `prove` (each fails, naming the
 file and the property).
 
-- [ ] T015 [US3] `.github/scripts/board_prove.py`: extract
+- [X] T015 [US3] `.github/scripts/board_prove.py`: extract
   `read_job_concurrency_group(workflow_path, job_name)` from
   `joins_directed_group()`'s (`:383-406`) inline "read a job's own
   `concurrency.group` text off the tree" step (research.md D8):
@@ -361,12 +361,12 @@ file and the property).
   `joins_directed_group()`'s own workflow-level read is unchanged (a
   different shape — a *workflow*-level `concurrency:` block, for a future
   external dispatchable target); this function is additive.
-- [ ] T016 [US3] `.github/scripts/verify-board-prove.py` (Gate 89):
+- [X] T016 [US3] `.github/scripts/verify-board-prove.py` (Gate 89):
   extend with fixtures for `read_job_concurrency_group()` — reads
   `prove-gate`'s group text off a fixture `board-loop.yml`; reads a job
   with no `concurrency:` block (returns `""`); reads a job that does not
   exist (returns `""`).
-- [ ] T017 [US3] New Gate 129 — `.github/scripts/verify-prove-path-concurrency.py`
+- [X] T017 [US3] New Gate 129 — `.github/scripts/verify-prove-path-concurrency.py`
   (FR-018, research.md D8), asserting against the real `board-loop.yml`
   via `read_job_concurrency_group()` (T015):
   1. `prove-gate` and `prove`'s raw `pull_request`-branch group text is
@@ -381,7 +381,7 @@ file and the property).
   literal with no `.number` (fail); `prove-gate`/`prove` group text
   diverging (fail). Wire into `.github/workflows/lint-workflows.yml` with
   `if: "!cancelled()"`, immediately after Gate 128 (T005).
-- [ ] T018 [US3] Follow quickstart.md Story 5-equivalent (this spec's
+- [X] T018 [US3] Follow quickstart.md Story 5-equivalent (this spec's
   Story 3): run `python .github/scripts/run-local-gates.py` against the
   real tree (passes), then against each of T017's three fixture mutations
   (each fails, naming the broken property).

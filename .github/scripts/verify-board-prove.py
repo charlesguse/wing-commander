@@ -19,7 +19,8 @@ from board_prove import (  # noqa: E402
     _close_script_imports, _resolve_script_imports, actions_only,
     aimable_jobs, directed_proof_group_busy, directed_stage,
     is_safe_redrive_target, joins_directed_group, outcome_reason,
-    redrive_target, scan_dispatchable_and_uses_graph, scan_job_uses_graph,
+    read_job_concurrency_group, redrive_target,
+    scan_dispatchable_and_uses_graph, scan_job_uses_graph,
 )
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -276,6 +277,51 @@ def run():
             print("[ok] joins_directed_group(shared group fixture) = False")
     finally:
         os.unlink(shared_group_path)
+
+    # specs/096-durable-prove-entry research.md D8: read_job_concurrency_group()
+    # extracted from joins_directed_group()'s own inline tree-read above --
+    # a job-level (not workflow-level) concurrency.group: read, against a
+    # fixture board-loop.yml.
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False, encoding="utf-8") as fh:
+        fh.write(
+            "on: pull_request\n"
+            "jobs:\n"
+            "  prove-gate:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    concurrency:\n"
+            "      group: example-prove-group\n"
+            "    steps: []\n"
+            "  no-group-job:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    steps: []\n"
+        )
+        read_job_group_fixture_path = fh.name
+    try:
+        got = read_job_concurrency_group(read_job_group_fixture_path, "prove-gate")
+        if got != "example-prove-group":
+            failures += 1
+            print("::error::verify-board-prove: read_job_concurrency_group(fixture, prove-gate): "
+                  "expected 'example-prove-group', got {0!r}.".format(got))
+        else:
+            print("[ok] read_job_concurrency_group(fixture, prove-gate) = 'example-prove-group'")
+
+        got = read_job_concurrency_group(read_job_group_fixture_path, "no-group-job")
+        if got != "":
+            failures += 1
+            print("::error::verify-board-prove: read_job_concurrency_group(fixture, no-group-job): "
+                  "expected '', got {0!r}.".format(got))
+        else:
+            print("[ok] read_job_concurrency_group(fixture, no-group-job) = ''")
+
+        got = read_job_concurrency_group(read_job_group_fixture_path, "does-not-exist")
+        if got != "":
+            failures += 1
+            print("::error::verify-board-prove: read_job_concurrency_group(fixture, does-not-exist): "
+                  "expected '', got {0!r}.".format(got))
+        else:
+            print("[ok] read_job_concurrency_group(fixture, does-not-exist) = ''")
+    finally:
+        os.unlink(read_job_group_fixture_path)
 
     for name, text, expected in SCRIPT_IMPORT_CASES:
         got = _resolve_script_imports(text)

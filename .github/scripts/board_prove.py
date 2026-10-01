@@ -406,6 +406,21 @@ def joins_directed_group(target_workflow_path, target_job, aimable_jobs):
     return group not in (ORDINARY_GROUP, DIRECTED_GROUP)
 
 
+def read_job_concurrency_group(workflow_path, job_name):
+    """specs/096-durable-prove-entry research.md D8: `job_name`'s own raw
+    (unevaluated) `concurrency.group:` text in `workflow_path`, read off the
+    checked-out tree -- `""` when the job has no `concurrency:` block, or
+    does not exist at all. A small extraction from
+    `joins_directed_group()`'s own inline "read a job's own concurrency.group
+    text off the tree" step; that function's own workflow-level read (a
+    different shape -- a *workflow*-level `concurrency:` block, for a future
+    external dispatchable target) is unchanged by this addition."""
+    with open(workflow_path, encoding="utf-8") as fh:
+        doc = yaml.safe_load(fh.read()) or {}
+    job = (doc.get("jobs") or {}).get(job_name) or {}
+    return (job.get("concurrency") or {}).get("group") or ""
+
+
 def directed_proof_group_busy(run_list_json, own_run_id=None):
     """research.md D4, FR-001a (dynamic): whether DIRECTED_GROUP is already
     occupied by another directed dispatch, read from a live `gh run list
