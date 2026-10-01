@@ -70,6 +70,15 @@ prove. Each step has a rule.
   `pipeline-defect` whose execution-output artifact records an API 429
   (a `rate_limit_event`, `api_error_status: 429`, one turn, zero cost) or
   an upstream action bump is closed with that evidence quoted, not fixed.
+- Before closing any issue, check that no waiver register cites it as its
+  tracker: `grep -rnE '"#N"|issue *= *\([^)]*\bN\b' .github/scripts/`
+  covers the `*-waivers.json` registers and the `EXEMPT_*` tables (a
+  `decided_by` hit is provenance and can stay). Gate 124
+  (`verify-waiver-citations.py --check-open`) runs on pushes to main and
+  on the daily schedule, never on a pull request, so closing a cited
+  issue turns main red while every PR stays green. Repoint the waiver at
+  the issue that now tracks the work, usually the Maintenance backlog, in
+  the same sitting.
 - Route by shape. A change that is deterministic and gate-shaped (a new
   `verify-*.py`, a plumbing fix, a comment correction) and carries no
   design trade-off is a local fix PR, even when it edits a workflow. A

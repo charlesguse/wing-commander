@@ -501,8 +501,8 @@ EXEMPT_JOBS = {
             "wing-commander-post-agent-credential-status after its agent "
             "step voluntarily (spec 057); provisional -- promoting to "
             "full_subject is a re-classification, not a new remedy, and "
-            "is tracked on #733"),
-        issue=(733,),
+            "is tracked on the maintenance backlog #889 (was #733)"),
+        issue=(889,),
         decided_by=(558, 410),
         condition=_composite_adoption_ok,
     ),
@@ -511,8 +511,8 @@ EXEMPT_JOBS = {
             "already consumes wing-commander-context and "
             "wing-commander-post-agent-credential-status after its agent "
             "step voluntarily (spec 057); provisional, promotion tracked "
-            "on #733"),
-        issue=(733,),
+            "on #889 (was #733)"),
+        issue=(889,),
         decided_by=(558, 410),
         condition=_composite_adoption_ok,
     ),
@@ -521,8 +521,8 @@ EXEMPT_JOBS = {
             "already consumes wing-commander-context and "
             "wing-commander-post-agent-credential-status after its agent "
             "step voluntarily (spec 057); provisional, promotion tracked "
-            "on #733"),
-        issue=(733,),
+            "on #889 (was #733)"),
+        issue=(889,),
         decided_by=(558, 410),
         condition=_composite_adoption_ok,
     ),
@@ -531,8 +531,8 @@ EXEMPT_JOBS = {
             "already consumes wing-commander-context and "
             "wing-commander-post-agent-credential-status after EACH of its "
             "two agent steps (Reviewer, Review-fixup) voluntarily (spec "
-            "057); provisional, promotion tracked on #733"),
-        issue=(733,),
+            "057); provisional, promotion tracked on #889 (was #733)"),
+        issue=(889,),
         decided_by=(558, 410),
         condition=_composite_adoption_ok,
     ),
