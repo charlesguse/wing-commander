@@ -36,6 +36,11 @@ deterministic read-back. `research.md` D10 is the design rationale;
    step failure (spec's Edge Cases).
 3. Validate each element with `verify-stage-finding-schema.py`
    (`stage-finding-schema.md`); drop failures with a logged reason each.
+   Then drop, as `dropped_spec_errata`, every valid finding whose
+   `evidence.file_paths` and `fingerprint_basis.file_path` all sit under
+   `specs/` outside `specs/*/contracts/`: spec documents are corrected in
+   their own spec's PR, never filed (board reset of 2026-10-01). A
+   finding citing any other file, a live contract included, still files.
 4. If survivors exceed `cap`, keep the first `cap` in proposal order
    (research.md D11); log the rest as `dropped_cap`.
 5. For each surviving finding: compute the fingerprint (research.md D6),

@@ -148,6 +148,103 @@ def case_well_formed_finding_survives():
           "<!-- wing-commander-finding: fingerprint=" in body)
 
 
+def spec_errata_finding(**overrides):
+    finding = valid_finding(
+        title="tasks.md T027 scopes less than its checkpoint claims",
+        what="The Phase 9 checkpoint says no stale reference survives, but T027 scopes two tasks.",
+        evidence={"file_paths": ["specs/089-skill-example-drift/tasks.md"]},
+        fingerprint_basis={"file_path": "specs/089-skill-example-drift/tasks.md",
+                           "gate_or_artifact": "T027"})
+    finding.update(overrides)
+    return finding
+
+
+def case_spec_errata_is_dropped_and_counted():
+    case = "a finding citing only spec documents is dropped as spec errata, counted and noted"
+    tmp = tempfile.mkdtemp(prefix="wc-sf-")
+    rc, outputs, state, out = run_prepare(
+        tmp, "structured-array", findings=[spec_errata_finding()])
+    check(case + ": exit 0", rc == 0, out)
+    check(case + ": zero survivors", outputs.get("survivor-count") == "0", out)
+    check(case + ": slot 0 absent", outputs.get("survivor-0-present") == "false")
+    check(case + ": proposed=1", state and state["proposed"] == 1, state)
+    check(case + ": dropped_spec_errata=1", state and state.get("dropped_spec_errata") == 1, state)
+    check(case + ": not counted as malformed or capped",
+          state and state["dropped_malformed"] == [] and state["dropped_cap"] == 0, state)
+    check(case + ": a note names the dropped finding",
+          state and any("spec errata" in n and "T027" in n for n in state["notes"]),
+          state and state["notes"])
+
+
+def case_spec_errata_dot_slash_and_mixed_paths():
+    case = "spec-errata detection reads ./specs/ as specs/, and any non-spec path keeps a finding"
+    tmp = tempfile.mkdtemp(prefix="wc-sf-")
+    dot_slash = spec_errata_finding(
+        evidence={"file_paths": ["./specs/089-skill-example-drift/plan.md"]},
+        fingerprint_basis={"file_path": "./specs/089-skill-example-drift/plan.md",
+                           "gate_or_artifact": "plan"})
+    mixed_evidence = spec_errata_finding(
+        title="tasks.md and the workflow disagree",
+        evidence={"file_paths": ["specs/089-skill-example-drift/tasks.md",
+                                 ".github/workflows/board-loop.yml"]})
+    code_anchor = spec_errata_finding(
+        title="the contract and its gate disagree",
+        fingerprint_basis={"file_path": ".github/scripts/verify-stage-findings-wiring.py",
+                           "gate_or_artifact": "Gate 71"})
+    look_alike = valid_finding(
+        title="a script whose name starts with specs",
+        evidence={"file_paths": ["specsheet/tool.py"]},
+        fingerprint_basis={"file_path": "specsheet/tool.py", "gate_or_artifact": "tool"})
+    rc, outputs, state, out = run_prepare(
+        tmp, "structured-array",
+        findings=[dot_slash, mixed_evidence, code_anchor, look_alike], cap="3")
+    check(case + ": exit 0", rc == 0, out)
+    check(case + ": the ./specs/ finding is the only drop",
+          state and state.get("dropped_spec_errata") == 1, state)
+    check(case + ": the other three survive", outputs.get("survivor-count") == "3", out)
+    check(case + ": the spec-errata drop happens before the cap, so it frees a slot",
+          state and state["dropped_cap"] == 0, state)
+    check(case + ": proposal order is kept for survivors",
+          outputs.get("survivor-0-title") == "tasks.md and the workflow disagree"
+          and outputs.get("survivor-1-title") == "the contract and its gate disagree"
+          and outputs.get("survivor-2-title") == "a script whose name starts with specs",
+          [outputs.get("survivor-{0}-title".format(i)) for i in range(3)])
+
+
+def case_live_contract_finding_still_files():
+    case = "a finding citing only a specs/*/contracts/ file still files: contracts are fixed like code"
+    tmp = tempfile.mkdtemp(prefix="wc-sf-")
+    contract = spec_errata_finding(
+        title="the stage-findings contract misnames an output",
+        evidence={"file_paths": ["specs/056-stage-found-defect-filing/contracts/wing-commander-stage-findings.md"]},
+        fingerprint_basis={"file_path": "./specs/056-stage-found-defect-filing/contracts/wing-commander-stage-findings.md",
+                           "gate_or_artifact": "Outputs"})
+    rc, outputs, state, out = run_prepare(tmp, "structured-array", findings=[contract])
+    check(case + ": exit 0", rc == 0, out)
+    check(case + ": it survives", outputs.get("survivor-count") == "1", out)
+    check(case + ": nothing counted as spec errata",
+          state and state.get("dropped_spec_errata") == 0, state)
+
+
+def case_spec_errata_summary_reports_the_drop():
+    case = "a run whose only finding was spec errata says so in the summary, not 'No findings'"
+    tmp = tempfile.mkdtemp(prefix="wc-sf-summary-")
+    state_file = os.path.join(tmp, "state.json")
+    with open(state_file, "w", encoding="utf-8") as fh:
+        json.dump({"disabled": False, "proposed": 1, "dropped_malformed": [],
+                   "dropped_cap": 0, "dropped_spec_errata": 1, "filed": 0,
+                   "appended": 0, "dropped_api_failure": 0,
+                   "outstanding_skipped": 0,
+                   "notes": ["dropped (spec errata, fix in the spec's own PR): x"]}, fh)
+    rc, out, outputs, summary = run_step(
+        BASH, SUMMARY_SCRIPT, tmp, {"STAGE": "implement", "STATE_FILE": state_file}, tmp)
+    check(case + ": exit 0", rc == 0, out)
+    check(case + ": summary counts the spec-errata drop",
+          "dropped (spec errata): 1" in summary, summary)
+    check(case + ": summary output carries the count",
+          "dropped_spec_errata=1" in outputs.get("summary", ""), outputs.get("summary"))
+
+
 def case_malformed_finding_dropped():
     case = "malformed finding (missing fingerprint_basis) is dropped, reason logged"
     tmp = tempfile.mkdtemp(prefix="wc-sf-")
@@ -427,10 +524,11 @@ def case_unverifiable_anchor_is_rejected_and_recorded():
           state and state["notes"])
     check(case + ": the note names the fallback route, not a drop",
           state and any("fallback" in n for n in state["notes"]), state and state["notes"])
-    check(case + ": the filed/appended/dropped_* set is unchanged -- no new counter (research.md D4)",
+    check(case + ": the anchor rejection adds no counter of its own -- the state keys are exactly the known set (research.md D4)",
           state and set(state.keys()) == {
-              "disabled", "proposed", "dropped_malformed", "dropped_cap", "filed",
-              "appended", "dropped_api_failure", "outstanding_skipped", "notes"},
+              "disabled", "proposed", "dropped_malformed", "dropped_cap",
+              "dropped_spec_errata", "filed", "appended", "dropped_api_failure",
+              "outstanding_skipped", "notes"},
           state and sorted(state.keys()))
     check(case + ": dropped_malformed/dropped_cap are still zero -- not counted as a drop",
           state and state["dropped_malformed"] == [] and state["dropped_cap"] == 0, state)
@@ -1094,6 +1192,10 @@ def case_zero_findings_summary_is_terse():
 CASES = [
     case_well_formed_finding_survives,
     case_malformed_finding_dropped,
+    case_spec_errata_is_dropped_and_counted,
+    case_spec_errata_dot_slash_and_mixed_paths,
+    case_live_contract_finding_still_files,
+    case_spec_errata_summary_reports_the_drop,
     case_empty_file_paths_dropped,
     case_trailing_newline_title_dropped,
     case_cap_overflow_keeps_proposal_order,
