@@ -215,8 +215,13 @@ gh issue list --label pipeline-defect --label "🐕 · <class>" --state all --li
   exact fingerprint=<sha256> marker, 1 OPEN match          → comment with fresh evidence, file nothing new
   exact fingerprint=<sha256> marker, 1 CLOSED match        → reopen + comment with fresh evidence
   exact fingerprint=<sha256> marker, >1 match              → data-integrity finding of its own; reported, no auto action
-  no exact match; ≥1 OPEN candidate's matchable id set
-    (spec 109, below) intersects the finding's cited ids   → overlap: comment on the lowest-numbered intersecting candidate;
+  no exact match; any OPEN candidate's own comments array
+    came back at/past its nested-read ceiling (>= 100)     → unknown (spec 109, FR-016/FR-028, Review Gate Round 3: a candidate's
+                                                              own comments came back truncated too — not trustworthy enough to
+                                                              call none/overlap)
+  no exact match, no candidate past that ceiling; ≥1 OPEN
+    candidate's matchable id set (spec 109, below)
+    intersects the finding's cited ids                     → overlap: comment on the lowest-numbered intersecting candidate;
                                                               other intersecting candidates named, never written to (FR-031)
   no exact match; no OPEN candidate's matchable set
     intersects, or the only intersecting candidate is
@@ -224,15 +229,17 @@ gh issue list --label pipeline-defect --label "🐕 · <class>" --state all --li
 ```
 
 **`unknown` (FR-028, amended by spec 109)**: the lookup itself could not
-be completed, **or** it completed but returned a full page (candidate
-count equals the `--limit` ceiling) and so may not be the whole candidate
-set — distinct from `none`, which means the lookup completed, was not
-truncated, and found nothing under either mechanism. `unknown` suppresses
-filing entirely and reports "dedup lookup failed — finding suppressed,
-needs a maintainer's manual check" (or the truncation-specific wording)
-on the lifecycle issue. It shares no code path with `none`'s create-new
-behavior — a broken or truncated lookup is never treated as "nothing
-found."
+be completed, it completed but returned a full page (candidate count
+equals the `--limit` ceiling), **or an open candidate's own `comments`
+array came back at or past the nested-connection read's own ceiling
+(100 or more, Review Gate Round 3)** and so may not be the whole
+candidate/comment set — distinct from `none`, which means the lookup
+completed, was not truncated at either level, and found nothing under
+either mechanism. `unknown` suppresses filing entirely and reports "dedup
+lookup failed — finding suppressed, needs a maintainer's manual check"
+(or the truncation-specific wording) on the lifecycle issue. It shares no
+code path with `none`'s create-new behavior — a broken or truncated
+lookup, at either level, is never treated as "nothing found."
 
 **`overlap` (spec 109, new)**: at least one OPEN issue's matchable id set
 (below) intersects the finding's cited signal ids, with no exact
@@ -370,7 +377,11 @@ run and are still reported; only the write itself is suppressed.
                                                               exact fingerprint hit, open                    ──▶ comment on existing pipeline-defect issue
                                                               exact fingerprint hit, closed                  ──▶ reopen + comment on pipeline-defect issue
                                                               >1 exact fingerprint hit                       ──▶ report only, no auto action (data-integrity)
-                                                              no exact hit; ≥1 OPEN matchable-set overlap
+                                                              no exact hit; an OPEN candidate's own comments
+                                                                array >= its nested-read ceiling (100,
+                                                                spec 109, Review Gate Round 3)               ──▶ suppress; report truncated lookup (unknown)
+                                                              no exact hit; no candidate past that ceiling;
+                                                                ≥1 OPEN matchable-set overlap
                                                                 (spec 109, FR-030)                           ──▶ comment on the lowest-numbered match; others named (FR-031)
                                                               no exact hit; no overlap                       ──▶ create new pipeline-defect issue
                                                                                         │

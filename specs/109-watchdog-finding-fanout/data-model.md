@@ -116,15 +116,20 @@ converging-gate-suite                       ▼
  (report only, no write)      dedup search: gh issue list
                                 --json number,state,body,comments
                                        │
-                    ┌──────────────────┼───────────────────┐
-                    ▼                  ▼                    ▼
-             count == 200        exact fingerprint     matchable-set
-             (truncated)          match found?          intersects
-                    │                  │yes                  │
-                    ▼                  ▼                      ▼
-                 unknown       match-open/match-closed     overlap
-                                                    (lowest-numbered
-                                                     open match wins;
-                                                     others named, not
-                                                     written)
+                                       ▼
+                       1. count == 200 (truncated)? ──yes──▶ unknown
+                                       │no
+                                       ▼
+                       2. exact fingerprint match found? ──yes──▶ match-open/match-closed
+                                       │no
+                                       ▼
+                       3. any OPEN candidate's comments.length
+                          >= 100 (comment-read ceiling,
+                          Review Gate Round 3)? ──yes──▶ unknown
+                                       │no
+                                       ▼
+                       4. matchable-set intersects? ──yes──▶ overlap
+                                       │no                   (lowest-numbered open
+                                       ▼                      match wins; others
+                                     none                     named, not written)
 ```
