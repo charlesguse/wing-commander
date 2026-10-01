@@ -1,0 +1,10 @@
+{
+  "agent_proposal": "fix",
+  "board_max_files": 6,
+  "board_max_lines": 120,
+  "measure": {"over_threshold": false, "files": 2, "lines": 12},
+  "diff_paths": [".github/workflows/watchdog.yml", ".github/actions/wing-commander-context/action.yml"],
+  "diff_text": "",
+  "workflow_push_blocked": [],
+  "expected": {"backstop_verdict": "fix", "reason": "under_threshold"}
+}

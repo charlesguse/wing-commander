@@ -135,6 +135,7 @@ create them now so the stubs' documentation stays true):
 | `WING_COMMANDER_AUTO_RELEASE_E2E_CONTAINER_PAUSED` | unset (not paused) | `true` = kill switch scoped to `auto-release.yml`'s container-mode leg only, independent of `WING_COMMANDER_AUTO_RELEASE_PAUSED` above — pausing this does not pause auto-release as a whole. Read by the `mode` step in `verify-e2e`: when `true`, a run whose date-parity turn would otherwise be `container` runs the default-runner leg instead, and its report states container mode was not exercised because it was paused, not because the rotation happened to land on default-runner that day — see specs/054-e2e-container-coverage |
 | `WING_COMMANDER_LIFECYCLE_REVIEW_GATE_PAUSED` | unset (not paused) | `true` = kill switch for `lifecycle-review-gate.yml` (specs/062-lifecycle-review-gate). Stops both the review round and the merge step: set before a run starts, no PR is selected, no round is spent, and nothing merges. Set while a run is already in flight, it is not guaranteed to be seen by that run — the per-step re-checks read `vars` as fixed when the run was created, so they are defence in depth, not a mid-run kill — and the pause takes effect on the next run; the bound that always holds is the `kill-switch` job plus the job-level `if:` on every job below it (see the canonical comment on `readiness`'s `KILL_SWITCH_PAUSED` in the workflow). A stand-down a run does see is recorded on the lifecycle issue |
 | `WING_COMMANDER_LIFECYCLE_AUTO_MERGE` | unset (off) | Only the exact value `true` lets `lifecycle-review-gate.yml`'s `merge` job run at all, and only when the round's own eight preconditions (readiness plus round-clean, zero open findings, no unresolved human changes-requested review) all hold — see `lifecycle_merge_preconditions.py`. Off (the shipped default), the gate still reviews and reports on every eligible pull request; a human merges (constitution X, 2.1.0). A pull request touching `.github/workflows/` is refused for lack of the Workflows permission and handed to a maintainer rather than retried or routed around |
+| `WING_COMMANDER_BOARD_CAN_PUSH_WORKFLOWS` | unset (off) | Only the exact value `true` lets the board loop (`board-loop.yml`) fix an issue whose change edits a file under `.github/workflows/`. Set it **only after** granting the App **Workflows: Read and write** — an extra permission beyond §1's three, which GitHub requires for any push that changes a workflow file. Off, such a fix is held: the issue gets `board:stalled` and a comment naming the workflow files, for a maintainer whose own token has the `workflow` scope. It is never routed into a spec. Granting the permission also lets an agent-written workflow change reach a pull request, though never `main` without the usual merge |
 | `WING_COMMANDER_LIFECYCLE_REVIEW_GATE_MODEL` | `claude-sonnet-5` | Model for `lifecycle-review-gate.yml`'s independent reviewer step |
 
 The watchdog reads no consuming-repo config file. It is a pure reporter: it
@@ -167,6 +168,7 @@ Create these labels (Issues → Labels):
 | Label | Purpose |
 |---|---|
 | `spec-request` | **The approval gate.** A maintainer applying this to an issue admits it into the pipeline. |
+| `spec-proposal` | Applied by the board loop (`board-loop.yml`) to spec-shaped work it files. It never starts intake; the owner promotes a proposal by adding `spec-request`, or closes it. Created by the loop on first use. The board loop never selects an issue carrying `spec-proposal` or `spec-request` — adding `spec-request` to an issue hands it to the feature lifecycle, and any fix PR the loop had open for it is left for a human |
 | `stage:spec` | Spec is being drafted / awaiting review |
 | `stage:clarify` | Spec has open clarification questions |
 | `stage:plan` | Plan PR in flight |
@@ -177,7 +179,8 @@ Create these labels (Issues → Labels):
 | `model:opus` | Opt this spec's implementation into `claude-opus-5` |
 | `disposition:confirmed` | **Watchdog precision.** A maintainer applying this to a `pipeline-defect` issue records that the finding was genuine |
 | `disposition:false-positive` | The counterpart: the watchdog's finding was not a real defect |
-| `board:stalled` | Applied by the board loop (`board-loop.yml`) on round-budget exhaustion, a post-push backstop breach, or an already-fixed hand-over — excludes the issue from selection until a human removes the label, the sole condition that re-admits it |
+| `disposition:duplicate` | Applied by the board loop (`board-loop.yml`) when it files a spec proposal, to the originating issue it closes as a duplicate of that proposal — re-admitted only by a maintainer reopening it once the linked proposal has closed (FR-006), never by label removal alone |
+| `board:stalled` | Applied by the board loop (`board-loop.yml`) on round-budget exhaustion, a post-push backstop breach, a fix it cannot push (a workflow file, while `WING_COMMANDER_BOARD_CAN_PUSH_WORKFLOWS` is off), or an already-fixed hand-over — excludes the issue from selection until a human removes the label, the sole condition that re-admits it, except a disposed (`disposition:duplicate`) issue, which is re-admitted only by a maintainer reopening it once its linked proposal has closed (FR-006) |
 | `board:owned` | Applied by the board loop (`board-loop.yml`) to every pull request it opens, at creation time, marking it as the loop's own (FR-013) — read only by resume's ownership-label fallback (FR-007), never an eligibility input |
 
 `spec:<NNN-slug>` and `stage:stalled` labels are created on the fly by the
@@ -206,6 +209,7 @@ gh label create stage:done      --color 5319E7 --description "Lifecycle complete
 gh label create model:opus      --color D93F0B --description "Use claude-opus-5 for implementation"
 gh label create disposition:confirmed      --color 0E8A16 --description "Watchdog finding confirmed genuine by a maintainer"
 gh label create disposition:false-positive --color B60205 --description "Watchdog finding judged a false positive by a maintainer"
+gh label create disposition:duplicate      --color B60205 --description "Board loop: this issue was closed as a duplicate of the spec-request routed for it"
 gh label create board:stalled               --color B60205 --description "Board loop hand-over: a human decision is needed before this item resumes"
 gh label create board:owned                 --color 0E8A16 --description "Board loop: this PR was opened by board-loop.yml"
 ```

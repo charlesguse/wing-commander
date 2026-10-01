@@ -376,7 +376,12 @@ change to the tiering above.
 - Pipeline entry = maintainer-applied `spec-request` label for the feature
   lifecycle. The board loop (constitution X) acts on an issue a maintainer
   authored or labeled, or one the pipeline filed under a label only it
-  applies; anything else gets a read-only triage proposal.
+  applies; anything else gets a read-only triage proposal. Spec-shaped
+  work the loop finds is filed as a `spec-proposal`, which never starts
+  intake: only the owner's own `spec-request` does. A fix-shaped change
+  the loop cannot push (a workflow file, while the App holds no Workflows
+  permission) is held under `board:stalled` for a maintainer, never filed
+  as a spec.
 - Comment triggers: commenter must be OWNER/MEMBER/COLLABORATOR **or** the
   original issue author; `Bot`-type users never trigger. Stage 10
   (`pr-conversation`) is the one exception to the author carve-out —

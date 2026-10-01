@@ -129,6 +129,40 @@ def read_marker_with_timestamp(issue_comments, bot_login):
     return find_latest_marker(issue_comments, bot_login)
 
 
+def find_latest_marker_matching(issue_comments, bot_login, predicate,
+                                marker_re=MARKER_RE, open_re=MARKER_OPEN_RE):
+    """As find_latest_marker(), but returns the newest loop-authored marker
+    satisfying `predicate(marker_dict)`, scanning every comment rather than
+    stopping at the single overall-newest one -- a later marker of a
+    different shape must never hide an earlier one a caller still needs
+    (spec 108 maintainer review, fold leg-0: board_eligibility's
+    re-admission carve-out needs the newest step=="duplicate" marker even
+    once a later route/fix marker becomes the issue's overall-newest).
+    Comments whose own marker is unparsable are skipped rather than
+    aborting the whole scan -- unlike find_latest_marker(), there is no
+    "trust the single newest, even if unparsable" contract to preserve
+    here. Returns (created_at, marker) or None."""
+    dated_matches = []
+    for comment in issue_comments or []:
+        if not is_loop_marker_author(comment, bot_login):
+            continue
+        body = comment.get("body") or ""
+        match = last_marker_match(body, marker_re, open_re)
+        if not match:
+            continue
+        try:
+            marker = json.loads(match.group(1))
+        except ValueError:
+            continue
+        if not isinstance(marker, dict) or not predicate(marker):
+            continue
+        dated_matches.append((comment.get("created_at") or "", marker))
+    if not dated_matches:
+        return None
+    dated_matches.sort(key=lambda pair: pair[0])
+    return dated_matches[-1]
+
+
 def read_marker(issue_comments, bot_login):
     """As read_marker_with_timestamp(), returning only the marker dict (or
     None)."""
@@ -136,7 +170,7 @@ def read_marker(issue_comments, bot_login):
     return pair[1] if pair else None
 
 
-def write_marker(step, round, pr, branch, base_sha):
+def write_marker(step, round, pr, branch, base_sha, spec_request=None):
     """Renders the run announcement plus the HTML-comment marker line.
     Appended to the loop's own human-legible status comment -- never the
     comment's only content (FR-044) -- by the caller.
@@ -148,11 +182,18 @@ def write_marker(step, round, pr, branch, base_sha):
     skipping this run's own announcement by GITHUB_RUN_ID) finds this
     comment without a second announcement convention. GITHUB_SERVER_URL/
     GITHUB_REPOSITORY/GITHUB_RUN_ID are ambient in every Actions step, so
-    every existing write_marker() call site gets this for free."""
-    payload = json.dumps(
-        {"step": step, "round": round, "pr": pr, "branch": branch,
-         "base_sha": base_sha},
-        sort_keys=True)
+    every existing write_marker() call site gets this for free.
+
+    `spec_request` (spec 108, data-model.md "Board Item Marker"): the
+    linked spec-request issue number, included only when not None -- the
+    one caller is the duplicate-disposition write (`step="duplicate"`);
+    every other existing call site omits it and keeps its current five-key
+    payload."""
+    payload_dict = {"step": step, "round": round, "pr": pr, "branch": branch,
+                     "base_sha": base_sha}
+    if spec_request is not None:
+        payload_dict["spec_request"] = spec_request
+    payload = json.dumps(payload_dict, sort_keys=True)
     marker = "<!-- wing-commander-board-item: {0} -->".format(payload)
 
     server_url = os.environ.get("GITHUB_SERVER_URL")
@@ -174,8 +215,7 @@ def add_stalled_label(issue_number, label, run=None):
     and main() then renders no marker at all.
 
     Canonical statement of the stall rule, for every board-loop.yml stall
-    site (triage's hand-over, route's spec verdict, fix's gate-red and
-    post-push-breach, review's three stalls, readiness's backstop breach):
+    site (triage's hand-over, fix's gate-red, review's three stalls):
     board:stalled goes on first and a failed add fails the step, so a
     stalled marker is never posted without the label. A stalled marker
     with no board:stalled label can then only mean a maintainer removed

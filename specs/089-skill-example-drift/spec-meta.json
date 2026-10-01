@@ -1,3 +1,9 @@
-{"issue": 658, "spec_dir": "specs/089-skill-example-drift",
- "feature_num": "089", "stage": "spec", "iteration": 0,
- "spec_branch": null}
+{
+  "issue": 658,
+  "spec_dir": "specs/089-skill-example-drift",
+  "feature_num": "089",
+  "stage": "review",
+  "iteration": 7,
+  "spec_branch": "spec/089-skill-example-drift",
+  "pending_re_review_from": []
+}

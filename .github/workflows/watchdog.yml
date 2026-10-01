@@ -3002,16 +3002,30 @@ jobs:
             echo "suppressed=false" >> "$GITHUB_OUTPUT"
           fi
 
-      # research.md R9 (specs/046-watchdog-supervision-collectors): a
-      # narrative-drift Finding is fully diagnosed, fingerprinted, and
+      # research.md R9 (specs/046-watchdog-supervision-collectors): an
+      # issue-exempt Finding is fully diagnosed, fingerprinted, and
       # dedup-searched exactly like any other class below — this step only
       # decides, via a fixed class check, whether `act`'s `Ensure
       # pipeline-defect issue` step gets to run at all (FR-025). It sits
       # beside the coexistence check above, never inside it: coexistence
       # means "someone else already reported this exact problem";
-      # issue-exemption means "this class is permanently cosmetic-severity
-      # by design." Neither the evidence-validity gate, fingerprint, nor
-      # dedup steps below are touched (FR-032).
+      # issue-exemption means "this class is a signal to read on the
+      # lifecycle issue, never a defect to file." Neither the
+      # evidence-validity gate, fingerprint, nor dedup steps below are
+      # touched (FR-032).
+      #
+      # The exempt classes, and why each is one:
+      #   narrative-drift    cosmetic-severity by design (R9).
+      #   denied-tool        the agent recovered from a refused command; one
+      #                      issue per exact command buried real defects
+      #                      (eight open at once before the 2026-10-01
+      #                      board reset). Widening grants is #827's call.
+      # turn-budget-trend is deliberately NOT exempt: closing its issue is
+      # how a maintainer acknowledges a trend (collect-turn-budget's
+      # suppression pre-check reads closed issues by fingerprint), so an
+      # exempt trend could never be silenced.
+      # The Finding still reaches the lifecycle issue through `Report
+      # finding to lifecycle issue`, which is unconditional.
       - name: Determine issue-filing eligibility
         id: eligibility
         shell: bash
@@ -3019,11 +3033,12 @@ jobs:
           FINDING_CLASS: ${{ steps.finding.outputs.class }}
         run: |
           set -uo pipefail
-          if [ "$FINDING_CLASS" = "narrative-drift" ]; then
-            echo "issueless=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "issueless=false" >> "$GITHUB_OUTPUT"
-          fi
+          case "$FINDING_CLASS" in
+            narrative-drift|denied-tool)
+              echo "issueless=true" >> "$GITHUB_OUTPUT" ;;
+            *)
+              echo "issueless=false" >> "$GITHUB_OUTPUT" ;;
+          esac
 
       # Registers a genuinely new finding class in the label vocabulary the
       # diagnose schema is compiled from, so the NEXT run is offered it as an
@@ -3718,14 +3733,13 @@ jobs:
               esac
             elif [ "$ISSUELESS" = "true" ]; then
               # research.md R9: distinct wording from the coexistence-
-              # suppressed branch above — this class is permanently
-              # cosmetic-severity by design, not "someone else already
-              # handled it." Still distinguishes new vs. recurrence, since
-              # dedup ran normally for this Finding.
+              # suppressed branch above — this class is issue-exempt by
+              # design (see `Determine issue-filing eligibility`), not
+              # "someone else already handled it." Still distinguishes new
+              # vs. recurrence, since dedup ran normally for this Finding.
               case "$DEDUP_OUTCOME" in
-                none) echo "_Cosmetic narrative mismatch — reported here only; no \`pipeline-defect\` issue filed by design (narrative-drift is issue-exempt)._" ;;
-                match-open|match-closed) echo "_Cosmetic narrative mismatch — recurrence of a previously reported mismatch, reported here only; no \`pipeline-defect\` issue filed by design (narrative-drift is issue-exempt)._" ;;
-                *) echo "_Cosmetic narrative mismatch — reported here only; no \`pipeline-defect\` issue filed by design (narrative-drift is issue-exempt)._" ;;
+                match-open|match-closed) echo "_Recurrence of a previously reported \`$FINDING_CLASS\` signal — reported here only; no \`pipeline-defect\` issue filed by design (\`$FINDING_CLASS\` is issue-exempt)._" ;;
+                *) echo "_Reported here only; no \`pipeline-defect\` issue filed by design (\`$FINDING_CLASS\` is issue-exempt)._" ;;
               esac
             else
               case "$DEDUP_OUTCOME" in

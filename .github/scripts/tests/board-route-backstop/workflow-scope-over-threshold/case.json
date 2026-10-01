@@ -1,0 +1,10 @@
+{
+  "agent_proposal": "fix",
+  "board_max_files": 6,
+  "board_max_lines": 120,
+  "measure": {"over_threshold": true, "files": 9, "lines": 400},
+  "diff_paths": [".github/workflows/watchdog.yml"],
+  "diff_text": "",
+  "workflow_push_blocked": [".github/workflows/watchdog.yml"],
+  "expected": {"backstop_verdict": "spec", "reason": "over_threshold"}
+}

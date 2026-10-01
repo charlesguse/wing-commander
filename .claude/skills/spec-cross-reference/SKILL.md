@@ -28,9 +28,16 @@ spec 057):
   open a fix PR (`select` through `readiness`) joins
   `wing-commander-board-loop`, and the only run allowed to overlap them is
   a directed proof run in `wing-commander-board-loop-directed-proof`,
-  which selects no item and opens no fix PR. Without checking the spec,
-  that finding would have shipped at full severity instead of being
-  flagged as refuted.
+  which selects no item and opens no fix PR. A second run whose job joins
+  that group queues behind the first rather than racing or cancelling it.
+  Without checking the spec, that finding would have shipped at full
+  severity instead of being flagged as refuted.
+
+  This example describes code that can move. Before letting it downgrade
+  a finding, run `python .github/scripts/verify-skill-board-loop-concurrency-claim.py`:
+  it passes only while the group and job names above still match
+  `board-loop.yml` and spec 060's table, and names the drift when they
+  don't.
 
 A finding can also be *reframed* rather than moved: a missing input on a
 redrive looked like a silent-failure bug until FR-043 turned out to already

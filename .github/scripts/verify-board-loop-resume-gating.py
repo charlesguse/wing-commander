@@ -2115,8 +2115,17 @@ def _mutations(text):
     # a bare label add) at route, and triage's handover without stall_args.
     stall_flags = ' --issue "$ISSUE_NUMBER" --add-label "board:stalled")"'
     render_at = [m.start() for m in re.finditer(r"--step stalled[^\n]*" + re.escape(stall_flags), text)]
-    if len(render_at) != 7:
-        raise AssertionError("self-test: expected 7 literal stalled renders, found {0}".format(len(render_at)))
+    # spec 108: route's spec-verdict, fix's post-push-breach and
+    # readiness's backstop-breach sites no longer render a stalled marker
+    # at all -- they dispose of the originating issue as a duplicate
+    # instead (contracts/duplicate-disposition.md) -- so the count drops
+    # from 7 to 4 (triage's hand-over, fix's gate-red, review's three
+    # stalls). The board reset of 2026-10-01 adds two workflow-scope holds
+    # (route's, on the drafted diff, and fix's pre-push one, on the
+    # fixer's real diff): a fix this loop cannot push is held under
+    # board:stalled, never filed as a spec.
+    if len(render_at) != 6:
+        raise AssertionError("self-test: expected 6 literal stalled renders, found {0}".format(len(render_at)))
     for n, at in enumerate(render_at):
         flags_at = text.index(stall_flags, at)
         muts.append(("stalled render #{0}: no --issue/--add-label".format(n + 1),
@@ -2125,10 +2134,11 @@ def _mutations(text):
         guard_end = text.index("\n", text.index("exit 1; }", guard_start)) + 1
         muts.append(("stalled render #{0}: failure not checked".format(n + 1),
                      text[:guard_start] + "\n" + text[guard_end:]))
-    sub("route: stalled marker, then a bare board:stalled add (pre-#604)",
-        '"$route_verb" "$route_detail" "$marker" "$rationale_comment")"\n',
-        '"$route_verb" "$route_detail" "$marker" "$rationale_comment")"\n'
-        '          gh issue edit "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --add-label "board:stalled"\n')
+    # spec 108: route's spec-verdict site no longer posts a stalled marker
+    # at all (contracts/duplicate-disposition.md) -- the pre-#604
+    # marker-then-bare-label-add anti-pattern this mutation guarded is no
+    # longer physically expressible there, so it is retired rather than
+    # kept as dead fixture text.
     sub("triage handover renders without stall_args",
         '--step "$marker_step" "${stall_args[@]}")"', '--step "$marker_step")"')
     sub("an inline write_marker( stalled marker",

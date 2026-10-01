@@ -112,7 +112,7 @@ runs:
         else
           echo "do-run=false" >> "$GITHUB_OUTPUT"
           cat > "$STATE_FILE" <<'EOF'
-        {"disabled": true, "proposed": 0, "dropped_malformed": [], "dropped_cap": 0, "filed": 0, "appended": 0, "dropped_api_failure": 0, "outstanding_skipped": 0, "notes": []}
+        {"disabled": true, "proposed": 0, "dropped_malformed": [], "dropped_cap": 0, "dropped_spec_errata": 0, "filed": 0, "appended": 0, "dropped_api_failure": 0, "outstanding_skipped": 0, "notes": []}
         EOF
         fi
 
@@ -213,15 +213,48 @@ runs:
         raw = load_raw_findings()
         proposed = len(raw)
 
+        def is_spec_doc_path(path):
+            # A path under the repository's specs/ tree, read the way
+            # evidence.file_paths is (relative to the checkout), with a
+            # leading "./" tolerated -- except specs/*/contracts/, which
+            # gates read and which are fixed like code (CLAUDE.md).
+            norm = str(path).strip().replace("\\", "/")
+            while norm.startswith("./"):
+                norm = norm[2:]
+            parts = norm.split("/")
+            if len(parts) >= 3 and parts[0] == "specs" and parts[2] == "contracts":
+                return False
+            return parts[0] == "specs" and len(parts) > 1
+
+        def is_spec_errata(finding):
+            # A finding whose every cited file -- evidence and fingerprint
+            # anchor alike -- is a spec document (spec.md, plan.md,
+            # tasks.md, research.md, quickstart.md, ...) is spec errata, not
+            # a defect: the stage that wrote those documents corrects its
+            # own in the same run, and a merged spec's documents are
+            # historical records that are never fixed (CLAUDE.md). Filing
+            # them was most of what this composite opened before the
+            # 2026-10-01 board reset. A finding citing any file outside
+            # specs/, or a live contract under specs/*/contracts/, still
+            # files.
+            paths = list(finding["evidence"]["file_paths"])
+            paths.append(finding["fingerprint_basis"]["file_path"])
+            return all(is_spec_doc_path(p) for p in paths)
+
         survivors = []
         dropped_malformed = []
+        dropped_spec_errata = 0
         for item in raw:
             ok, reason = validate_finding(item)
-            if ok:
-                survivors.append(item)
-            else:
+            if not ok:
                 dropped_malformed.append(reason)
                 notes.append("dropped (malformed): {0}".format(reason))
+            elif is_spec_errata(item):
+                dropped_spec_errata += 1
+                notes.append("dropped (spec errata, fix in the spec's own PR): {0}".format(
+                    item.get("title", "(untitled)")))
+            else:
+                survivors.append(item)
 
         try:
             cap_val = int(os.environ.get("CAP", "3"))
@@ -357,6 +390,7 @@ runs:
             "proposed": proposed,
             "dropped_malformed": dropped_malformed,
             "dropped_cap": dropped_cap,
+            "dropped_spec_errata": dropped_spec_errata,
             "filed": 0,
             "appended": 0,
             "dropped_api_failure": 0,
@@ -718,7 +752,7 @@ runs:
         if [ ! -f "$STATE_FILE" ]; then
           mkdir -p "$(dirname "$STATE_FILE")"
           cat > "$STATE_FILE" <<'EOF'
-        {"disabled": false, "proposed": 0, "dropped_malformed": [], "dropped_cap": 0, "filed": 0, "appended": 0, "dropped_api_failure": 0, "outstanding_skipped": 0, "notes": ["wing-commander-stage-findings: no state was recorded for this run (an earlier step in this composite did not complete) — reporting zero findings rather than failing the stage."]}
+        {"disabled": false, "proposed": 0, "dropped_malformed": [], "dropped_cap": 0, "dropped_spec_errata": 0, "filed": 0, "appended": 0, "dropped_api_failure": 0, "outstanding_skipped": 0, "notes": ["wing-commander-stage-findings: no state was recorded for this run (an earlier step in this composite did not complete) — reporting zero findings rather than failing the stage."]}
         EOF
         fi
 
@@ -729,6 +763,7 @@ runs:
         dropped_malformed_count="$(jq -r '.dropped_malformed | length' "$STATE_FILE")"
         dropped_cap="$(jq -r '.dropped_cap' "$STATE_FILE")"
         dropped_api_failure="$(jq -r '.dropped_api_failure' "$STATE_FILE")"
+        dropped_spec_errata="$(jq -r '.dropped_spec_errata // 0' "$STATE_FILE")"
 
         echo "filed=$filed" >> "$GITHUB_OUTPUT"
         echo "appended=$appended" >> "$GITHUB_OUTPUT"
@@ -743,7 +778,7 @@ runs:
             echo "Filing is disabled for this stage."
           elif [ "$proposed" = "0" ] && [ "$filed" = "0" ] && [ "$appended" = "0" ] && \
                [ "$dropped_malformed_count" = "0" ] && [ "$dropped_cap" = "0" ] && \
-               [ "$dropped_api_failure" = "0" ]; then
+               [ "$dropped_api_failure" = "0" ] && [ "$dropped_spec_errata" = "0" ]; then
             echo "No findings proposed this run."
           else
             echo "- proposed: $proposed"
@@ -752,6 +787,7 @@ runs:
             echo "- dropped (malformed): $dropped_malformed_count"
             echo "- dropped (cap exceeded): $dropped_cap"
             echo "- dropped (API failure): $dropped_api_failure"
+            echo "- dropped (spec errata): $dropped_spec_errata"
             notes="$(jq -r '.notes[]?' "$STATE_FILE")"
             if [ -n "$notes" ]; then
               echo ""
@@ -760,7 +796,7 @@ runs:
           fi
         } >> "$GITHUB_STEP_SUMMARY"
 
-        summary_text="$(jq -r '"proposed=\(.proposed) filed=\(.filed) appended=\(.appended) dropped_malformed=\(.dropped_malformed|length) dropped_cap=\(.dropped_cap) dropped_api_failure=\(.dropped_api_failure)"' "$STATE_FILE")"
+        summary_text="$(jq -r '"proposed=\(.proposed) filed=\(.filed) appended=\(.appended) dropped_malformed=\(.dropped_malformed|length) dropped_cap=\(.dropped_cap) dropped_api_failure=\(.dropped_api_failure) dropped_spec_errata=\(.dropped_spec_errata // 0)"' "$STATE_FILE")"
         {
           echo "summary<<WC_STAGE_FINDINGS_SUMMARY_EOF"
           echo "$summary_text"

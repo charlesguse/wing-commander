@@ -41,6 +41,27 @@ def route_final_diff(route_decision: RouteDecision, final_diff: dict) -> RouteDe
     filed pointing at them — the branch/PR are never deleted."""
 ```
 
+## Board reset of 2026-10-01 (constitution X, 2.2.0)
+
+- Every outcome below that names `spec-request` now files a
+  `spec-proposal` instead; only the owner promotes one by applying
+  `spec-request`.
+- The pre-push contract check is `drafted_contract_widened()`: it applies
+  the route agent's drafted hunks to main's file content by their own
+  lines (never their header numbers), and flags a path whose contract
+  block (`on: workflow_call:`, or a composite's `inputs:`/`outputs:`)
+  changes, or a `wing-commander-*` composite added or deleted. The old
+  `touches_protected_file()` proxy, which flagged any touched workflow or
+  composite, is gone.
+- The final-diff check (`route_final_diff()`) also compares against the
+  base side (`read_base_contents()`), so a contract removed is a breach,
+  not only one added.
+- A new verdict, `hold`, comes before `fix`:
+
+| agent_proposal | backstop verdict | `reason` | Outcome |
+|---|---|---|---|
+| fix | under threshold, no contract change, drafted diff edits a file under `.github/workflows/`, `WING_COMMANDER_BOARD_CAN_PUSH_WORKFLOWS` off | `workflow_scope` | held: `board:stalled` and a comment naming the files, for a maintainer whose token has the `workflow` scope. Never filed as a spec. The fix job's pre-push check holds the same way when the fixer's real diff edits one |
+
 ## Decision table
 
 | agent_proposal | backstop verdict | `reason` | Outcome |
