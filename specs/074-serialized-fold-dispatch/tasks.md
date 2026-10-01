@@ -335,3 +335,9 @@ Task: "Add fixtures under wing-commander-fold-queue-release/tests/"
 ### Follow-up review of 511913b3 (maintainer, 2026-09-30)
 
 - [ ] T060 **B8: the T049 extension only covers implement heads with status `in_progress` or `queued`** (`await.sh:106`). It misses a run with status `waiting` (environment approval), act heads held for confirmation (`confirm-timeout-minutes` defaults to 1440), and redispatched runs (B3). **Fix:** extend while the head's owning run is anything but `completed`. Add fixtures for the extension and for the uncorrelated reclaim.
+
+## Maintainer Feedback
+
+### Follow-up review of 511913b3 (maintainer, 2026-09-30)
+
+- [ ] T061 **B9: the rule from item 1 has no gate behind it.** Nothing asserts that admit, claim-dispatch and await run only in jobs with no `concurrency:` group, so moving the claim back into `dispatch-once` would pass every gate. **Fix:** add that assertion and a mutation to Gate 128.
