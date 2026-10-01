@@ -454,3 +454,7 @@ T023's full suite run — this is the same regression concern noted under
 ## Maintainer Feedback (review of 7b4b0825, PR #885)
 
 - [ ] T029 [US3] Fix gate-number collision: lint-workflows.yml:4723/4740/4743 register this feature's gate as Gate 128, which spec 074 (#821) already holds. Renumber this feature's gate to **Gate 134** throughout lint-workflows.yml, verify-board-loop-readmission.py, and its tests. Also correct tasks.md's remaining 'Gate 126' text in T001/T019/T023 to match the number actually in use.
+
+## Maintainer Feedback (review of 7b4b0825, PR #885)
+
+- [ ] T030 [US3] Strengthen verify-board-loop-readmission.py's self-test: currently each of these mutations passes with 0 findings — (a) forcing `step = "review"` in place of the moved check (no executed case ever resolves to readiness; the structural check only greps for the call) and (b) removing review's parse-failed summary line (the three stall arms share one step, so one surviving line satisfies the check). Against main's board-loop.yml, the FR-011 check already passes for triage/route/readiness, and `STALL_SITES` is a hand-kept list of 6 that a new stall site would escape. Add an executed heredoc case (with a stub `gh`) that actually resolves to readiness, derive stall sites from the workflow's `--step stalled` renders rather than a hand-kept list, and add a self-test mutation per check family.
