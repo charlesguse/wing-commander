@@ -521,3 +521,10 @@ Task: "Pass spec-identity-is-own: 'false' in .github/workflows/board-loop.yml:90
   - [ ] Match `(?:==|!=|\s=)\s*["']NAME["']`
   - [ ] Scan `if:` expressions too
   - [ ] Add both fixtures to the self-test
+
+## Maintainer Feedback
+
+- [ ] **`docs/adoption.md:640-668` is inaccurate (FR-011/SC-005).**
+  - [ ] Correct the recognised-name count (code has nine, once the watchdog name-fallback gap above is fixed)
+  - [ ] Add the self-dispatch cap's `gh run list --workflow 'Wing Commander · 8 watchdog'` (watchdog.yml:3644) as a second name dependency — an adopter who renames the watchdog wrapper gets depth 0, so the cap never fires
+  - [ ] Correct the record-less renamed-run case: it skips four collectors (branch-drift, spec-meta, final-pr-claims, spec-collision), not "one difference"
