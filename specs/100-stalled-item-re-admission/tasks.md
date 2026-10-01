@@ -462,3 +462,7 @@ T023's full suite run — this is the same regression concern noted under
 ## Maintainer Feedback (review of 7b4b0825, PR #885)
 
 - [ ] T031 [US3] Consolidate the FR-011 summary line, currently pasted at eight sites (board-loop.yml:1455, 1936, 2296, 2503, 3345, 3353, 3364, 3961), into board_item_marker.py's `--add-label` success path (CLAUDE.md 'Shared logic has exactly one home'; every stall site already calls this). This also closes item 5's enumeration gap. Emit it only after the marker comment has actually posted — today the line is written before the post, so a failed post leaves a false claim on the run summary.
+
+## Maintainer Feedback (review of 7b4b0825, PR #885)
+
+- [ ] T032 [US3] Nit: fix summary wording — clause 2b's note never says the item was re-admitted from a stall; a failed `gh pr view` currently reads the same as 'no verdict found' because stderr is discarded (distinguish the two); clause 4's note describes a re-admitted triage-handover stall as a 'stale marker', which should instead name it as a re-admission.
