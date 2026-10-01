@@ -341,3 +341,9 @@ Task: "Add fixtures under wing-commander-fold-queue-release/tests/"
 ### Follow-up review of 511913b3 (maintainer, 2026-09-30)
 
 - [ ] T061 **B9: the rule from item 1 has no gate behind it.** Nothing asserts that admit, claim-dispatch and await run only in jobs with no `concurrency:` group, so moving the claim back into `dispatch-once` would pass every gate. **Fix:** add that assertion and a mutation to Gate 128.
+
+## Maintainer Feedback
+
+### Follow-up review of 511913b3 (maintainer, 2026-09-30)
+
+- [ ] T062 **B10: fold-cycle-guard.yml:474-475 still sends `-f fold_queue_token=` without the 422 retry**, so an older wrapper fails the react step. Also, `adoption.md:428-432` still says a missing input "fails that dispatch outright", which contradicts `:1461-1467`. **Fix:** route this dispatch through `wing-commander-fold-dispatch`'s retry, or mirror it, and fix the doc.
