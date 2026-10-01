@@ -3,7 +3,7 @@
   "spec_dir": "specs/097-recorded-stop-point",
   "feature_num": "097",
   "stage": "implement",
-  "iteration": 4,
+  "iteration": 5,
   "spec_branch": "spec/097-recorded-stop-point",
   "pending_re_review_from": [
     "charlesguse"
