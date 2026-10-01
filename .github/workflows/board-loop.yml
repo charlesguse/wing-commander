@@ -5021,6 +5021,7 @@ jobs:
           DIRECTED_STAGE: ${{ steps.decide.outputs.directed-stage }}
           BUSY: ${{ steps.busy-check.outputs.busy }}
           DISAMBIGUATED_REASON: ${{ steps.disambiguate.outputs.reason }}
+          RECOVERY: ${{ inputs.directed-recovery }}
           # FR-011, contracts/directed-proof-run.md "Attribution": one
           # canonical attribution string (CLAUDE.md single-home), gated on
           # inputs.directed-stage != '', prepended rather than a
@@ -5030,6 +5031,14 @@ jobs:
             ${{ inputs.directed-stage != '' && format('_Directed proof run
             (stage: `{0}`), dispatched to prove PR #{1} -- selects no board
             item, opens no fix PR._', inputs.directed-stage, inputs.directed-pr) || '' }}
+          # specs/096-durable-prove-entry FR-014/FR-015: one canonical
+          # recovery notice (CLAUDE.md single-home), mirroring
+          # DIRECTED_ATTRIBUTION above, appended to every comment arm below
+          # rather than eight separately-worded copies.
+          RECOVERY_NOTICE: >-
+            ${{ inputs.directed-recovery == 'true' && 'This proof had previously
+            been displaced or could not be correlated to a dispatch; this
+            recovery run addresses that.' || '' }}
         run: |
           set -uo pipefail
           reason="$(python3 -c "
@@ -5045,53 +5054,57 @@ jobs:
           ")"
           attr_prefix=""
           [ -n "$DIRECTED_ATTRIBUTION" ] && attr_prefix="$(printf '%s\n\n' "$DIRECTED_ATTRIBUTION")"
+          recovery_suffix=""
+          [ -n "$RECOVERY_NOTICE" ] && recovery_suffix="$(printf '\n\n%s' "$RECOVERY_NOTICE")"
+          recovery_flag=()
+          [ "$RECOVERY" = "true" ] && recovery_flag=(--recovery-attempted)
 
           case "$reason" in
             success)
-              marker="$(python3 .github/scripts/board_item_marker.py --step proven)"
+              marker="$(python3 .github/scripts/board_item_marker.py --step proven "${recovery_flag[@]}")"
               gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
-                --body "$attr_prefix$(printf 'Proven: %s was re-driven after the merge of PR #%s and concluded success -- %s\n\n%s' "$REDRIVE_WORKFLOW" "$PR_NUMBER" "$RUN_URL" "$marker")"
+                --body "$attr_prefix$(printf 'Proven: %s was re-driven after the merge of PR #%s and concluded success -- %s\n\n%s' "$REDRIVE_WORKFLOW" "$PR_NUMBER" "$RUN_URL" "$marker")$recovery_suffix"
               gh issue close "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY"
               ;;
             failure)
-              marker="$(python3 .github/scripts/board_item_marker.py --step prove)"
+              marker="$(python3 .github/scripts/board_item_marker.py --step prove --outcome-reason "$reason" "${recovery_flag[@]}")"
               gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
-                --body "$attr_prefix$(printf 'Not proven: %s was re-driven after the merge of PR #%s and concluded failure -- %s. This issue stays open.\n\n%s' "$REDRIVE_WORKFLOW" "$PR_NUMBER" "$RUN_URL" "$marker")"
+                --body "$attr_prefix$(printf 'Not proven: %s was re-driven after the merge of PR #%s and concluded failure -- %s. This issue stays open.\n\n%s' "$REDRIVE_WORKFLOW" "$PR_NUMBER" "$RUN_URL" "$marker")$recovery_suffix"
               ;;
             group-busy)
-              marker="$(python3 .github/scripts/board_item_marker.py --step prove)"
+              marker="$(python3 .github/scripts/board_item_marker.py --step prove --outcome-reason "$reason" "${recovery_flag[@]}")"
               gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
-                --body "$attr_prefix$(printf 'PR #%s merged, but the directed proof group was already occupied by another proof run -- nothing was dispatched. Picked up again on a later run.\n\n%s' "$PR_NUMBER" "$marker")"
+                --body "$attr_prefix$(printf 'PR #%s merged, but the directed proof group was already occupied by another proof run -- nothing was dispatched. Picked up again on a later run.\n\n%s' "$PR_NUMBER" "$marker")$recovery_suffix"
               ;;
             no-target)
-              marker="$(python3 .github/scripts/board_item_marker.py --step prove)"
+              marker="$(python3 .github/scripts/board_item_marker.py --step prove --outcome-reason "$reason" "${recovery_flag[@]}")"
               gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
-                --body "$attr_prefix$(printf 'PR #%s merged, but no directed run of board-loop.yml reaches the changed behaviour -- nothing was dispatched. This issue stays open for a maintainer to review.\n\n%s' "$PR_NUMBER" "$marker")"
+                --body "$attr_prefix$(printf 'PR #%s merged, but no directed run of board-loop.yml reaches the changed behaviour -- nothing was dispatched. This issue stays open for a maintainer to review.\n\n%s' "$PR_NUMBER" "$marker")$recovery_suffix"
               ;;
             nothing-reaches)
-              marker="$(python3 .github/scripts/board_item_marker.py --step prove)"
+              marker="$(python3 .github/scripts/board_item_marker.py --step prove --outcome-reason "$reason" "${recovery_flag[@]}")"
               gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
-                --body "$attr_prefix$(printf 'PR #%s merged, but no workflow in the repository reaches the changed behaviour (%s) -- nothing was dispatched. This issue stays open for a maintainer to review.\n\n%s' "$PR_NUMBER" "$REDRIVE_REASON" "$marker")"
+                --body "$attr_prefix$(printf 'PR #%s merged, but no workflow in the repository reaches the changed behaviour (%s) -- nothing was dispatched. This issue stays open for a maintainer to review.\n\n%s' "$PR_NUMBER" "$REDRIVE_REASON" "$marker")$recovery_suffix"
               ;;
             not-started)
-              marker="$(python3 .github/scripts/board_item_marker.py --step prove)"
+              marker="$(python3 .github/scripts/board_item_marker.py --step prove --outcome-reason "$reason" "${recovery_flag[@]}")"
               gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
-                --body "$attr_prefix$(printf 'PR #%s merged, and %s was dispatched to prove it (%s), but that run never left the queue within the wait budget. This issue stays open.\n\n%s' "$PR_NUMBER" "$REDRIVE_WORKFLOW" "$RUN_URL" "$marker")"
+                --body "$attr_prefix$(printf 'PR #%s merged, and %s was dispatched to prove it (%s), but that run never left the queue within the wait budget. This issue stays open.\n\n%s' "$PR_NUMBER" "$REDRIVE_WORKFLOW" "$RUN_URL" "$marker")$recovery_suffix"
               ;;
             unfinished)
-              marker="$(python3 .github/scripts/board_item_marker.py --step prove)"
+              marker="$(python3 .github/scripts/board_item_marker.py --step prove --outcome-reason "$reason" "${recovery_flag[@]}")"
               gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
-                --body "$attr_prefix$(printf 'PR #%s merged, and %s was dispatched to prove it (%s), but it did not reach a terminal conclusion within the wait budget. This issue stays open.\n\n%s' "$PR_NUMBER" "$REDRIVE_WORKFLOW" "$RUN_URL" "$marker")"
+                --body "$attr_prefix$(printf 'PR #%s merged, and %s was dispatched to prove it (%s), but it did not reach a terminal conclusion within the wait budget. This issue stays open.\n\n%s' "$PR_NUMBER" "$REDRIVE_WORKFLOW" "$RUN_URL" "$marker")$recovery_suffix"
               ;;
             displaced)
-              marker="$(python3 .github/scripts/board_item_marker.py --step prove)"
+              marker="$(python3 .github/scripts/board_item_marker.py --step prove --outcome-reason "$reason" "${recovery_flag[@]}")"
               gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
-                --body "$attr_prefix$(printf 'PR #%s merged, but the proof run dispatched to prove it was evicted before it could ever be correlated. This issue stays open.\n\n%s' "$PR_NUMBER" "$marker")"
+                --body "$attr_prefix$(printf 'PR #%s merged, but the proof run dispatched to prove it was evicted before it could ever be correlated. This issue stays open.\n\n%s' "$PR_NUMBER" "$marker")$recovery_suffix"
               ;;
             uncorrelated|*)
-              marker="$(python3 .github/scripts/board_item_marker.py --step prove)"
+              marker="$(python3 .github/scripts/board_item_marker.py --step prove --outcome-reason "$reason" "${recovery_flag[@]}")"
               gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
-                --body "$attr_prefix$(printf 'PR #%s merged, but the proof run could not be correlated (%s). This issue stays open.\n\n%s' "$PR_NUMBER" "$REDRIVE_REASON" "$marker")"
+                --body "$attr_prefix$(printf 'PR #%s merged, but the proof run could not be correlated (%s). This issue stays open.\n\n%s' "$PR_NUMBER" "$REDRIVE_REASON" "$marker")$recovery_suffix"
               ;;
           esac
 
@@ -5126,7 +5139,11 @@ jobs:
               os.environ.get('CONCLUSION') or None,
               os.environ.get('DISAMBIGUATED_REASON') or None))
           ")"
-            label="proof: $reason"
+            if [ "${{ inputs.directed-recovery }}" = "true" ]; then
+              label="proof (recovered): $reason"
+            else
+              label="proof: $reason"
+            fi
           fi
           echo "label=$label" >> "$GITHUB_OUTPUT"
 

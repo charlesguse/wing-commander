@@ -402,7 +402,7 @@ cost — without reading a run log.
 displacement statement, the recovery statement, the proof outcome, and the
 run's cost line under a label naming the recovery.
 
-- [ ] T019 [US4] `.github/workflows/board-loop.yml`: `prove`'s "Record the
+- [X] T019 [US4] `.github/workflows/board-loop.yml`: `prove`'s "Record the
   proof outcome" step (currently `:4421-4506`) reads
   `inputs.directed-recovery` and, on every comment arm (the `success` arm
   and each of the seven non-`success` arms in the `case "$reason" in ...
@@ -412,7 +412,7 @@ run's cost line under a label naming the recovery.
   shared string composed once (mirroring the existing `DIRECTED_ATTRIBUTION`
   env var pattern already on this step, `:4434-4442`), not eight separately
   worded copies (CLAUDE.md single-home, FR-014).
-- [ ] T020 [US4] Same step (T019): every `board_item_marker.py` CLI call
+- [X] T020 [US4] Same step (T019): every `board_item_marker.py` CLI call
   in the `case` block (currently bare `--step prove`/`--step proven` at
   `:4461,4467,4472,4477,4482,4487,4492,4497,4502`) gains
   `--outcome-reason "$reason"` (the value `outcome_reason()` already
@@ -421,7 +421,7 @@ run's cost line under a label naming the recovery.
   `inputs.directed-recovery == 'true'` — so a later re-displacement of
   *this* run's own attempt cannot look like a fresh, unspent one
   (research.md D4's second bullet).
-- [ ] T021 [US4] `.github/workflows/board-loop.yml`: `prove`'s "Determine
+- [X] T021 [US4] `.github/workflows/board-loop.yml`: `prove`'s "Determine
   this run's outcome for the metrics record" step (currently
   `:4512-4541`) labels the run `"proof (recovered): <reason>"` instead of
   `"proof: <reason>"` (`:4539`) when `inputs.directed-recovery == 'true'`
