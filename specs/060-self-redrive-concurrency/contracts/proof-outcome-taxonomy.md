@@ -36,6 +36,22 @@ Every row above that is not `success` leaves the issue open, carrying:
    `no-target`/`nothing-reaches` point at the mechanism's own reach, and
    `failure` points at the fix itself.
 
+`specs/096-durable-prove-entry` (research.md D4) additionally writes this
+same `outcome_reason` value onto the board item marker itself (every
+`prove`/`proven`-step write, not only the comment), alongside a
+`recovery_attempted` boolean. This is the only one of the nine rows above
+`board_prove_recovery.is_recoverable()` treats as recoverable: `uncorrelated`
+— never `displaced` (above), which is a mid-flight eviction after a run had
+already started, not the never-started case this feature recovers. The
+other recoverable marker shape, `board_prove_displacement.RECORDED_REASON`
+(`"prove run displaced"`), is not a row in this table at all: it comes from
+the separate after-the-fact detection
+(`specs/060-self-redrive-concurrency/contracts/concurrency-groups.md`
+FR-010b) for a `pull_request: closed` run whose `prove-gate`/`prove` never
+even started, so no live run's `board_prove.outcome_reason()` was ever
+computed for it. No new `outcome_reason` value is introduced to this table
+by either source.
+
 ## Cost line / metrics record label (FR-012)
 
 `board-loop.yml`'s existing "Determine this run's outcome for the metrics

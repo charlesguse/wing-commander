@@ -441,7 +441,7 @@ All four user stories are independently demonstrable.
 
 ## Phase 7: Polish & Cross-Cutting Concerns
 
-- [ ] T023 Fold the remaining FR-021 contract updates into their live
+- [X] T023 Fold the remaining FR-021 contract updates into their live
   homes (research.md D9; T009 already folded the concurrency-groups.md/
   board-loop-workflow.md guarantee-sentence edit):
   - `specs/057-autonomous-board-loop/contracts/prove-step.md`'s
@@ -456,7 +456,7 @@ All four user stories are independently demonstrable.
   - `specs/060-self-redrive-concurrency/contracts/proof-outcome-taxonomy.md` —
     "Recording rule" section documents the new `outcome_reason` marker
     field (T020); no new taxonomy value.
-- [ ] T024 Run `python .github/scripts/run-local-gates.py` and confirm all
+- [X] T024 Run `python .github/scripts/run-local-gates.py` and confirm all
   gates pass on the real tree, including new Gates 128-129 and amended
   Gates 89/97/101.
 - [ ] T025 Confirm every gate this feature adds or amends fails on its own
