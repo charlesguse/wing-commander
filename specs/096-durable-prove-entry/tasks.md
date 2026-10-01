@@ -568,3 +568,7 @@ Task: "New Gate 128: verify-board-prove-recovery.py fixtures"
   `board_prove_displacement.find_undetected_merges()`'s own output
   verbatim), no change to what `board_prove.py` decides is Actions-only,
   no change to the merge gate itself.
+
+## Maintainer Feedback — FR-011 case (a) unreachable
+- [ ] In board-loop.yml's displacement step (~:319, inside the `find_undetected_merges()` marker write), pass `--outcome-reason "$(printf '%s' "$row" | jq -r .recorded_reason)"` so the written `prove` marker carries `RECORDED_REASON`, sourced from `find_undetected_merges()` as the one home.
+- [ ] Extend Gate 128 (`verify-board-prove-recovery.py`) to assert the displacement-step writer actually passes `--outcome-reason`, not just that the reader accepts it.
