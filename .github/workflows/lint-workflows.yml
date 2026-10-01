@@ -227,13 +227,53 @@ jobs:
       # the run with zero jobs and no annotations when the called workflow
       # asks for a permission the caller did not grant. (Same failure shape
       # cost us a v1.0.0 release-day startup_failure on tasks-approved.)
+      # #880: the check is per called JOB and per LEVEL, not per workflow and
+      # per key name. PR #821 passed the old form with a caller granting
+      # `actions: read` to a called workflow whose top level was
+      # `permissions: {}` and whose `guard` job asked for `actions: write`.
+      # A calling job with no permissions: of its own is held to its
+      # workflow's top-level block; with neither, it inherits the repository
+      # default, which this check cannot resolve. Self-tested by
+      # verify-gate-3.py.
       - name: Gate 3 — callers grant every permission their reusable workflow requests
         run: |
           python3 - <<'PYEOF'
           import glob, os, sys, yaml
 
+          LEVEL = {"none": 0, "read": 1, "write": 2}
+          # Every scope `read-all` / `write-all` expands to. A scope with no
+          # read level (id-token) or no write level (models) is capped at
+          # the level it has, so `write-all` never "needs" a level GitHub
+          # cannot grant.
+          SCOPES = {"actions": 2, "attestations": 2, "checks": 2, "contents": 2,
+                    "deployments": 2, "discussions": 2, "id-token": 2,
+                    "issues": 2, "models": 1, "packages": 2, "pages": 2,
+                    "pull-requests": 2, "repository-projects": 2,
+                    "security-events": 2, "statuses": 2}
+          NAME = {v: k for k, v in LEVEL.items()}
+
+          def levels(perms):
+              """A permissions: value as {scope: 0|1|2}; None if absent/unresolvable."""
+              if perms is None:
+                  return None
+              if isinstance(perms, str):
+                  want = {"read-all": 1, "write-all": 2}.get(perms.strip())
+                  if want is None:
+                      return None
+                  return {k: min(want, cap) for k, cap in SCOPES.items()
+                          if not (want == 1 and k == "id-token")}
+              if isinstance(perms, dict):
+                  out = {}
+                  for k, v in perms.items():
+                      lv = LEVEL.get(str(v).strip()) if isinstance(v, str) else None
+                      if lv is not None:
+                          out[str(k)] = lv
+                  return out
+              return None
+
           docs = {}
-          for f in sorted(glob.glob(".github/workflows/*.yml")):
+          for f in sorted(glob.glob(".github/workflows/*.yml")
+                          + glob.glob(".github/workflows/*.yaml")):
               docs[os.path.basename(f)] = yaml.safe_load(open(f, encoding="utf-8")) or {}
 
           failures = 0
@@ -248,21 +288,47 @@ jobs:
                             f"{uses}, which does not exist")
                       failures += 1
                       continue
-                  needed = called.get("permissions") or {}
-                  granted = job.get("permissions")
-                  # No explicit grant means the job inherits the workflow (or
-                  # repository) default, which this check cannot resolve.
-                  if granted is None or not isinstance(needed, dict):
+                  if "permissions" in job:
+                      granted, source = levels(job.get("permissions")), f"job {jname!r}"
+                  elif "permissions" in wf:
+                      granted, source = levels(wf.get("permissions")), "this workflow's top-level permissions:"
+                  else:
+                      granted = None
+                  # No explicit grant anywhere means the job inherits the
+                  # repository default, which this check cannot resolve.
+                  if granted is None:
                       continue
-                  missing = {k: v for k, v in needed.items() if k not in granted}
-                  if missing:
-                      print(f"::error file=.github/workflows/{fname}::job {jname!r} calls "
-                            f"{uses} but does not grant {missing} — the run will die at "
-                            f"startup with zero jobs. Add it to this job's permissions:.")
-                      failures += 1
-          print(f"Gate 3: checked every local reusable-workflow call; {failures} failure(s).")
+                  # Requesters: the called workflow's top level, and every
+                  # job's EFFECTIVE block (its own, else the top level).
+                  top = called.get("permissions")
+                  requests = [("its top-level permissions:", levels(top))]
+                  for cj, cjob in (called.get("jobs") or {}).items():
+                      cjob = cjob or {}
+                      own = cjob["permissions"] if "permissions" in cjob else top
+                      requests.append((f"its job {cj!r}", levels(own)))
+                  for who, needed in requests:
+                      if not needed:
+                          continue
+                      short = {k: f"{NAME[v]} (granted {NAME[granted.get(k, 0)]})"
+                               for k, v in sorted(needed.items())
+                               if granted.get(k, 0) < v}
+                      if short:
+                          print(f"::error file=.github/workflows/{fname}::job {jname!r} calls "
+                                f"{uses}, and {who} asks for {short}, which {source} "
+                                f"does not grant — the run will die at startup with "
+                                f"zero jobs. Raise the grant in this job's permissions:.")
+                          failures += 1
+          print(f"Gate 3: checked every local reusable-workflow call, job by job; {failures} failure(s).")
           sys.exit(1 if failures else 0)
           PYEOF
+
+      # Same reasoning as Gate 6's self-test: the fleet should stay healthy,
+      # so Gate 3 prints "0 failure(s)" whether its logic works or not —
+      # and #880 is the time it did not. This runs the SHIPPED gate against
+      # synthetic caller/callee pairs, including a caller grant downgraded
+      # from write to read and a called job asking for an ungranted key.
+      - name: Gate 3 self-test — the detector actually detects
+        run: python3 .github/scripts/verify-gate-3.py
 
       # Gate 5 — the denied-tool collector is the one piece of watchdog
       # evidence-gathering with its own executable fixture check. That check
