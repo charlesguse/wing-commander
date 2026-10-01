@@ -524,7 +524,7 @@ Task: "Pass spec-identity-is-own: 'false' in .github/workflows/board-loop.yml:90
 
 ## Maintainer Feedback
 
-- [ ] **`docs/adoption.md:640-668` is inaccurate (FR-011/SC-005).**
-  - [ ] Correct the recognised-name count (code has nine, once the watchdog name-fallback gap above is fixed)
-  - [ ] Add the self-dispatch cap's `gh run list --workflow 'Wing Commander · 8 watchdog'` (watchdog.yml:3644) as a second name dependency — an adopter who renames the watchdog wrapper gets depth 0, so the cap never fires
-  - [ ] Correct the record-less renamed-run case: it skips four collectors (branch-drift, spec-meta, final-pr-claims, spec-collision), not "one difference"
+- [X] **`docs/adoption.md:640-668` is inaccurate (FR-011/SC-005).**
+  - [X] Correct the recognised-name count (code has nine, once the watchdog name-fallback gap above is fixed) — resolved as a side effect of the name-fallback fix above: the map now genuinely has ten entries, matching what the doc already said
+  - [X] Add the self-dispatch cap's `gh run list --workflow 'Wing Commander · 8 watchdog'` (watchdog.yml:3644) as a second name dependency — an adopter who renames the watchdog wrapper gets depth 0, so the cap never fires
+  - [X] Correct the record-less renamed-run case: it skips four collectors (branch-drift, spec-meta, final-pr-claims, spec-collision), not "one difference"
