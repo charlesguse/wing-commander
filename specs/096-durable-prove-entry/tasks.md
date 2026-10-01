@@ -572,3 +572,10 @@ Task: "New Gate 128: verify-board-prove-recovery.py fixtures"
 ## Maintainer Feedback — FR-011 case (a) unreachable
 - [ ] In board-loop.yml's displacement step (~:319, inside the `find_undetected_merges()` marker write), pass `--outcome-reason "$(printf '%s' "$row" | jq -r .recorded_reason)"` so the written `prove` marker carries `RECORDED_REASON`, sourced from `find_undetected_merges()` as the one home.
 - [ ] Extend Gate 128 (`verify-board-prove-recovery.py`) to assert the displacement-step writer actually passes `--outcome-reason`, not just that the reader accepts it.
+
+
+## Maintainer Feedback — directed prove-gate dispatch can never reach prove
+- [ ] In `prove-gate` (board-loop.yml ~:4471), replace the invalid `gh pr view --json merged` field: on `workflow_dispatch`, run `gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > "$RUNNER_TEMP/board-prove-pr.json"` (fail loudly on error) and take `merged` from `.merged`.
+- [ ] Fix `BOARD_PR_OWNED_JQ`'s ownership test (~:4496) to read off the fetched file instead of `.pull_request` on `$GITHUB_EVENT_PATH`, which is null on `workflow_dispatch`.
+- [ ] Add a fixture driving the directed `workflow_dispatch` branch through `prove-gate` end to end.
+- [ ] Reconcile `contracts/recovery-and-resume.md`'s "Dispatch" section, which currently claims live-state re-derivation this branch doesn't actually do.
