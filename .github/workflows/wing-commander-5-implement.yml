@@ -25,6 +25,16 @@ on:
         required: false
         default: "1"
         type: string
+      fold_queue_token:
+        description: >
+          specs/074-serialized-fold-dispatch: the implement-kind fold-queue
+          ticket dispatch-once's winning claim already enqueued for this
+          cycle (research.md D5). Empty (default) for a manual/standalone
+          dispatch or this wrapper's own iteration+1 self-dispatch, neither
+          of which holds one.
+        required: false
+        default: ""
+        type: string
 
 permissions: {}
 
@@ -67,6 +77,7 @@ jobs:
       spec-dir: ${{ inputs.spec_dir }}
       issue-number: ${{ fromJSON(inputs.issue) }}
       iteration: ${{ fromJSON(inputs.iteration) }}
+      fold-queue-token: ${{ inputs.fold_queue_token }}
       model: ${{ needs.resolve-model.outputs.model }}
       escalation-model: ${{ needs.resolve-model.outputs.escalation-model }}
       summary-model: ${{ needs.resolve-model.outputs.summary-model }}

@@ -82,6 +82,28 @@ inputs:
     description: Workflow file to dispatch (gh workflow run target). Empty means standalone mode -- fold, but never auto-dispatch.
     required: false
     default: ""
+  round-folded-json:
+    description: >
+      specs/074-serialized-fold-dispatch's 2026-09-29 reconciliation with
+      spec 075: JSON array of {id, summary} covering the WHOLE round's
+      attributed folds (every contributing run's entries, from
+      wing-commander-fold-queue-claim-dispatch's folded-items output) --
+      not just this run's own. Non-empty means the caller has already won
+      the round's atomic dispatch claim through the fold-queue ledger, so
+      this composite dispatches unconditionally using THIS list instead of
+      folded-json and skips folded-json's own own-evidence gate entirely.
+      Empty (default) preserves every other caller's behavior unchanged.
+    required: false
+    default: ""
+  fold-queue-token:
+    description: >
+      The implement-kind ticket token wing-commander-fold-queue-claim-dispatch
+      enqueued in the same write as the winning claim. Forwarded as
+      `-f fold_queue_token=` on the `gh workflow run` call when non-empty,
+      so the dispatched run enters implement.yml's concurrency group
+      through the same serialized gate as every other entrant.
+    required: false
+    default: ""
 
 outputs:
   folded:
@@ -102,6 +124,16 @@ outputs:
   run-url:
     description: The dispatched run's own URL, when found within this composite's own poll window. Empty when not dispatched, or when the run could not be located.
     value: ${{ steps.dispatch.outputs.run-url }}
+  ticket-unused:
+    description: >
+      'true' only when fold-queue-token was supplied but the dispatched run
+      never actually received it (the 422-retry path below, T056) -- a run
+      WAS dispatched (dispatched: true, run-url set to that unticketed
+      run), but the ticket itself was never handed to any run and must be
+      released by the caller, which also must not correlate the dispatched
+      run to it via record-implement-run. 'false' (or empty) in every other
+      case.
+    value: ${{ steps.dispatch.outputs.ticket-unused }}
 
 runs:
   using: composite
@@ -117,8 +149,12 @@ runs:
         SPEC_BRANCH: ${{ inputs.spec-branch }}
         IMPLEMENT_WORKFLOW: ${{ inputs.implement-workflow }}
         FOLDED_JSON: ${{ inputs.folded-json }}
+        ROUND_FOLDED_JSON: ${{ inputs.round-folded-json }}
+        FOLD_QUEUE_TOKEN: ${{ inputs.fold-queue-token }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
       run: |
         set -euo pipefail
+        FOLD_QUEUE_TOKEN="${FOLD_QUEUE_TOKEN:-}"
         git fetch --quiet origin "refs/heads/${SPEC_BRANCH}" || true
         tip="$(git rev-parse FETCH_HEAD 2>/dev/null || true)"
 
@@ -131,15 +167,36 @@ runs:
         folded_json="${FOLDED_JSON:-[]}"
         [ -n "$folded_json" ] || folded_json="[]"
 
+        # specs/074-serialized-fold-dispatch's 2026-09-29 reconciliation
+        # with spec 075: round-folded-json means the caller already won
+        # this round's atomic dispatch claim through the fold-queue ledger
+        # (wing-commander-fold-queue-claim-dispatch) -- that claim's own
+        # own-folds gate already re-implements FR-014's "no own folds, no
+        # dispatch" check, so this composite dispatches unconditionally off
+        # the round's WHOLE attributed list instead of re-deciding from
+        # folded-json.
+        round_folded_json="${ROUND_FOLDED_JSON:-}"
+        using_round_list=false
+        if [ -n "$round_folded_json" ]; then
+          folded_json="$round_folded_json"
+          using_round_list=true
+        fi
+
         # FR-014: this run folded nothing of its own -- whether or not the
-        # tip moved, there is nothing of this run's to dispatch.
-        if [ -z "$tip" ] || [ "$(printf '%s' "$folded_json" | jq 'length')" = "0" ]; then
+        # tip moved, there is nothing of this run's to dispatch. Skipped
+        # when using the round's own list -- that decision was already made.
+        if [ "$using_round_list" != "true" ] && { [ -z "$tip" ] || [ "$(printf '%s' "$folded_json" | jq 'length')" = "0" ]; }; then
           echo "folded=false" >> "$GITHUB_OUTPUT"
           echo "dispatched=false" >> "$GITHUB_OUTPUT"
           echo "new-iteration=" >> "$GITHUB_OUTPUT"
           echo "folded-summary=" >> "$GITHUB_OUTPUT"
           echo "run-url=" >> "$GITHUB_OUTPUT"
+          echo "ticket-unused=false" >> "$GITHUB_OUTPUT"
           exit 0
+        fi
+        if [ -z "$tip" ]; then
+          echo "::error::wing-commander-fold-dispatch: round-folded-json was supplied but the spec branch's tip could not be read -- cannot compute the next iteration."
+          exit 1
         fi
 
         folded=$(printf '%s' "$folded_json" | jq -r '.[] | "- " + .id + ": " + .summary')
@@ -160,13 +217,53 @@ runs:
         if [ -z "$IMPLEMENT_WORKFLOW" ]; then
           echo "dispatched=false" >> "$GITHUB_OUTPUT"
           echo "run-url=" >> "$GITHUB_OUTPUT"
+          echo "ticket-unused=false" >> "$GITHUB_OUTPUT"
           exit 0
         fi
 
+        ticket_unused=false
         start_ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-        GH_TOKEN="$DISPATCH_TOKEN" gh workflow run "$IMPLEMENT_WORKFLOW" -R "$GITHUB_REPOSITORY" \
-          -f spec_dir="$SPEC_DIR" -f issue="$ISSUE" -f iteration="$next"
+        dispatch_args=(-f spec_dir="$SPEC_DIR" -f issue="$ISSUE" -f iteration="$next")
+        if [ -n "$FOLD_QUEUE_TOKEN" ]; then
+          dispatch_args+=(-f fold_queue_token="$FOLD_QUEUE_TOKEN")
+        fi
+        dispatch_err="$(mktemp)"
+        if ! GH_TOKEN="$DISPATCH_TOKEN" gh workflow run "$IMPLEMENT_WORKFLOW" -R "$GITHUB_REPOSITORY" "${dispatch_args[@]}" 2>"$dispatch_err"; then
+          # T047 (maintainer review of #821): a wrapper predating this
+          # feature (docs/adoption.md's own reference wrapper lacked
+          # fold_queue_token until this fix) has no such workflow_dispatch
+          # input declared, and GitHub rejects an unknown input with a 422
+          # "Unexpected inputs provided" before even queuing a run. Retry
+          # once without it -- unticketed, exactly today's
+          # pre-serialization behavior for that one un-migrated wrapper,
+          # not a new failure mode -- rather than losing the whole cycle.
+          if [ -n "$FOLD_QUEUE_TOKEN" ] && grep -qi "unexpected inputs" "$dispatch_err"; then
+            cat "$dispatch_err" >&2
+            echo "::warning::wing-commander-fold-dispatch: $IMPLEMENT_WORKFLOW rejected fold_queue_token as an unexpected input -- retrying without it. Add a fold_queue_token workflow_dispatch input (docs/adoption.md, wing-commander-5-implement.yml) to restore fold-queue serialization for this wrapper."
+            retry_args=(-f spec_dir="$SPEC_DIR" -f issue="$ISSUE" -f iteration="$next")
+            GH_TOKEN="$DISPATCH_TOKEN" gh workflow run "$IMPLEMENT_WORKFLOW" -R "$GITHUB_REPOSITORY" "${retry_args[@]}"
+            # T056 (maintainer review of #821, B4): the dispatched run will
+            # never receive (and so never release) the implement-kind
+            # ticket claim-dispatch already enqueued for this cycle. A
+            # direct ledger release from HERE is a no-op: the caller's own
+            # dispatch-queue ticket (this ticket's immediate predecessor)
+            # still holds the queue head at this point in the job, so a
+            # release attempt on this ticket fails "not at queue head" and
+            # was being silently swallowed. Signal the caller instead
+            # (ticket-unused) -- it releases this ticket AFTER its own
+            # dispatch-ticket release, once this ticket has actually
+            # reached the head, and skips correlating the dispatched
+            # (unticketed) run to it.
+            ticket_unused=true
+          else
+            cat "$dispatch_err" >&2
+            rm -f "$dispatch_err"
+            exit 1
+          fi
+        fi
+        rm -f "$dispatch_err"
         echo "dispatched=true" >> "$GITHUB_OUTPUT"
+        echo "ticket-unused=$ticket_unused" >> "$GITHUB_OUTPUT"
 
         run_url=""
         for _ in 1 2 3 4 5 6; do

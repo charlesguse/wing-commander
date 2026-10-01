@@ -253,6 +253,19 @@ Each stage job uses `concurrency: wing-commander-<spec key>` — one spec's stag
 serialize, different specs run in parallel. Intake serializes globally
 (`wing-commander-intake`) so feature numbers can't collide.
 
+GitHub's own concurrency group holds only one pending job at a time, so two
+overlapping stage-9 (`pr-conversation.yml`) runs joining it directly could
+evict each other's queued `act`/`dispatch-once`/`implement` before either
+ran a step. `specs/074-serialized-fold-dispatch` adds a ticket-admission
+layer ahead of that group: `fold-turn-act`/`fold-turn-dispatch`/
+`fold-turn-implement` each enqueue one ticket in a shared branch-backed
+ledger (`.github/actions/_shared/fold-queue-ledger.sh`) and block until it
+is granted before the gated job is even scheduled, so at most one job
+across every in-flight run for a spec ever attempts to enter the group.
+`fold-cycle-guard.yml` watches for an implement run cancelled while still
+pending (the one residual case: an un-ticketed manual dispatch colliding
+with a ticketed one) and re-dispatches it automatically, at most once.
+
 ### Model tiering (constitution II)
 | Work | Model |
 |---|---|
