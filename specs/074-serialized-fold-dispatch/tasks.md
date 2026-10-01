@@ -394,3 +394,9 @@ Task: "Add fixtures under wing-commander-fold-queue-release/tests/"
 ### Round-3 review of 9e87d013 (maintainer, 2026-10-01)
 
 - [ ] T066 **B9's gate passes on the regression it targets.** Scenario 15 is pinned to three job names, and its mutation flips a flag in the subject dict. Injecting a `wing-commander-fold-queue-claim-dispatch` step into `dispatch-once` still passes Gate 128 and all 13 fold gates. **Fix:** walk every job in pr-conversation.yml, implement.yml and fold-cycle-guard.yml that `uses:` the admit or claim-dispatch composites, and assert none has `concurrency:`. Make the mutation inject such a step into `dispatch-once`.
+
+## Maintainer Feedback
+
+### Round-3 review of 9e87d013 (maintainer, 2026-10-01)
+
+- [ ] T067 **The uncorrelated grace reclaim takes live runs** (fold-queue-await.sh:173-181, comment at pr-conversation.yml:3457-3467). An uncorrelated implement head is reclaimed after about 15 minutes whether or not its run exists. So after a poll miss, a live 16-125-minute implement run loses its ticket, and the next dispatch enters the group mid-run. The comment says reclaim happens only "if the dispatched run turns out not to exist". **Fix:** item 2's (T065) self-correlation, or at minimum correct the comment.
