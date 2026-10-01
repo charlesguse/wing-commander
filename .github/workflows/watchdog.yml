@@ -679,6 +679,7 @@ jobs:
       - name: Report unrecognised display name, when nothing else identified the run's stage
         shell: bash
         if: steps.spec-slug.outputs.resolved-stage-source == '' && steps.collect-execution-output.outputs.claude-execution-output-found == 'true'
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           ISSUE: ${{ steps.spec-slug.outputs.lifecycle-issue }}
@@ -3614,10 +3615,11 @@ jobs:
       # workflow_run (never a human-initiated workflow_dispatch link, which
       # would break the chain). watchdog.yml never reads github.event.*
       # directly; needs.collect.outputs.resolved-stage (#750: record-stage
-      # if non-empty, else the FR-009 name fallback — the watchdog's own
-      # runs always carry stage: watchdog in their own record, so this
-      # never falls through to the name fallback for them) already
-      # identifies the inspected run's pipeline stage, so
+      # if non-empty, else the FR-009 name fallback, which includes
+      # "Wing Commander · 8 watchdog" — a clean or early-failed watchdog
+      # run writes no metrics-record-diagnose and so falls through to the
+      # name fallback same as any other stage; maintainer review, fold
+      # leg-3) already identifies the inspected run's pipeline stage, so
       # "== 'watchdog'" here means self-inspection — the ONLY place this
       # stage special-cases its own identity anywhere in this file (T028
       # desk-check: detection/fingerprint/dedup/report are identical for a

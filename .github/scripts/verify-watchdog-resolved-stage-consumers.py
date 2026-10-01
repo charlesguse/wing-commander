@@ -183,6 +183,12 @@ R7_CASES = [
          record={"schema_version": 1, "stage": "tasks"},
          run_name="Wing Commander · 5 implement",
          expect=("tasks", "record")),
+    dict(name="a clean or early-failed watchdog run (no metrics-record-"
+              "diagnose written) falls to the recognised name, same as any "
+              "other stage (maintainer review, fold leg-3)",
+         record=None,
+         run_name="Wing Commander · 8 watchdog",
+         expect=("watchdog", "name")),
 ]
 
 
@@ -201,7 +207,7 @@ def case_r7_fixture_rows():
                        f"{want_stage!r}/source={want_source!r}, got "
                        f"{got_stage!r}/{got_source!r}")
     if not any(f.startswith(case) for f in failures):
-        note("all four research.md R7 rows produced the expected "
+        note("all research.md R7 rows produced the expected "
              "resolved-stage/resolved-stage-source pair")
 
 

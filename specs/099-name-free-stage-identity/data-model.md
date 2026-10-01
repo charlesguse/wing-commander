@@ -104,14 +104,18 @@ reference display name to gate behavior.
 | `Wing Commander · 5 implement` | `implement` |
 | `Wing Commander · 6 finalize` | `finalize` |
 | `Wing Commander · 7 cleanup` | `cleanup` |
+| `Wing Commander · 8 watchdog` | `watchdog` |
 | `Wing Commander · 9 pr conversation` | `pr-conversation` |
 | `Wing Commander · rebase` | `rebase` |
 | anything else | (no match — `resolved-stage` stays empty) |
 
-Note: `Wing Commander · 8 watchdog` is intentionally absent from this
-table — the watchdog's own runs always carry `stage: watchdog` in their
-own record (self-inspection, per spec.md's Edge Cases), so `record-stage`
-never falls through to the name fallback for the watchdog's own runs.
+Note (maintainer review, fold leg-3): `Wing Commander · 8 watchdog` IS
+included in this table. The only watchdog record
+(`metrics-record-diagnose`) is written when diagnose runs, so a clean or
+early-failed watchdog run writes no record naming a stage and falls
+through to this name fallback the same as every other stage's run — the
+earlier premise that a watchdog run's own record always carries `stage:
+watchdog` only holds once diagnose has actually run.
 
 ## Expected-stage map (FR-007, unchanged home)
 

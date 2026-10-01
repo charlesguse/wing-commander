@@ -343,10 +343,12 @@ runs:
     # record-stage empty; maps inputs.run-name through the fixed
     # data-model.md table so every FR-002 consumer can read one
     # resolved-stage output instead of matching a display name itself.
-    # Wing Commander · 8 watchdog is deliberately absent: the watchdog's
-    # own runs always carry stage: watchdog in their own record (spec.md
-    # Edge Cases, "Self-inspection"), so record-stage never falls through
-    # to this step for them.
+    # Wing Commander · 8 watchdog IS included (maintainer review, fold
+    # leg-3): the only watchdog record (metrics-record-diagnose) is written
+    # when diagnose runs, so a clean or early-failed watchdog run leaves
+    # record-stage empty and must still resolve here, or the self-dispatch
+    # cap guard (Self-dispatch depth's if:) and four collectors skip
+    # unresolved for every such run.
     - name: Resolve inspected run's stage from its display name, when the record left it unresolved
       id: name-fallback
       shell: bash
@@ -366,6 +368,7 @@ runs:
             "Wing Commander · 6 finalize")      name_stage="finalize" ;;
             "Wing Commander · 7 cleanup")       name_stage="cleanup" ;;
             "Wing Commander · rebase")          name_stage="rebase" ;;
+            "Wing Commander · 8 watchdog")      name_stage="watchdog" ;;
             "Wing Commander · 9 pr conversation") name_stage="pr-conversation" ;;
           esac
         fi

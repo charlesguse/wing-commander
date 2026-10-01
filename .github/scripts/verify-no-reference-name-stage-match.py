@@ -59,10 +59,10 @@ NAME_FALLBACK_STEP_ID = "name-fallback"
 METRICS_SUMMARY_MARKER = "wing-commander-metrics-summary"
 SPEC_IDENTITY_KEY = "spec-identity-is-own"
 
-# data-model.md's "Name-derived stage map" (nine entries) plus the tenth
-# literal the self-inspection guard used to compare against (deliberately
-# absent from the map itself, but still a reference name this gate must
-# catch if it ever reappears in a gating conditional).
+# data-model.md's "Name-derived stage map" — all ten entries, including
+# "Wing Commander · 8 watchdog" (maintainer review, fold leg-3: a clean or
+# early-failed watchdog run writes no stage-naming record either, so the
+# name fallback must resolve it exactly like any other stage).
 REFERENCE_NAMES = [
     "Wing Commander · 1 intake",
     "Wing Commander · 2 clarify",
@@ -80,10 +80,16 @@ REFERENCE_NAMES = [
 CASE_ARM_RE = {
     name: re.compile(r'"' + re.escape(name) + r'"\s*[)|]') for name in REFERENCE_NAMES
 }
-# A reference name as the right-hand side of a bash string-equality test:
-# [ "$VAR" = "NAME" ] / != "NAME" / [[ ... ]] alike.
+# A reference name as the right-hand side of a bash/GHA string-equality
+# test: [ "$VAR" = "NAME" ] (single `=`, POSIX test), != "NAME" / == "NAME"
+# ([[ ... ]] or bash [ ... ]), and a GHA `if:` expression's own
+# `== 'NAME'` (single-quoted). `\s=` (not `[=!]=`) is deliberate: it also
+# matches the lone `=` POSIX test uses, which `[=!]=` cannot (maintainer
+# review, fold leg-4 — a restored `[ "$RUN_NAME" = "NAME" ]` or
+# `if: ... == 'NAME'` line previously gave 0 violations).
 IF_TEST_RE = {
-    name: re.compile(r'[=!]=\s*"' + re.escape(name) + r'"') for name in REFERENCE_NAMES
+    name: re.compile(r'''(?:==|!=|\s=)\s*['"]''' + re.escape(name) + r'''['"]''')
+    for name in REFERENCE_NAMES
 }
 
 
@@ -357,7 +363,51 @@ def self_test_main():
         else:
             print(f"[ok] fixture 5: a removed/renamed name-fallback step errors: {e}")
 
-    print(f"Gate 138 self-test: {'FAILED' if bad else 'all 5 fixtures behaved as specified'}")
+    # Fixture 6 — a reintroduced single-`=` POSIX test (maintainer review,
+    # fold leg-4): `IF_TEST_RE` used to require `==`/`!=`, missing this form
+    # entirely.
+    single_eq_watchdog = MINIMAL_CLEAN_WATCHDOG.replace(
+        'case "$RESOLVED_STAGE" in\n            plan|tasks|implement) ;;\n'
+        '            *) exit 0 ;;\n          esac',
+        'if [ "$RUN_NAME" = "Wing Commander · 5 implement" ]; then\n'
+        '            exit 0\n          fi')
+    if single_eq_watchdog == MINIMAL_CLEAN_WATCHDOG:
+        bad += 1
+        print("[FAIL] fixture 6 setup: the single-`=` replacement did not apply")
+    else:
+        v, e = run_check(single_eq_watchdog, MINIMAL_CLEAN_COMPOSITE,
+                          {"watchdog.yml": single_eq_watchdog})
+        if not v or e:
+            bad += 1
+            print(f"[FAIL] fixture 6 (single-`=` POSIX test): expected a "
+                  f"violation, got violations={v} errors={e}")
+        else:
+            print(f"[ok] fixture 6: reintroduced single-`=` test caught: {v}")
+
+    # Fixture 7 — a reintroduced single-quoted `if:` expression match
+    # (maintainer review, fold leg-4): `IF_TEST_RE` used to require double
+    # quotes, missing a GHA `if:` expression's own single-quoted literal.
+    single_quote_watchdog = MINIMAL_CLEAN_WATCHDOG.replace(
+        '      - name: "Collect: branch drift"\n        id: collect-branch-drift\n'
+        '        shell: bash\n',
+        "      - name: \"Collect: branch drift\"\n"
+        "        id: collect-branch-drift\n"
+        "        if: needs.collect.outputs.run-name == 'Wing Commander · 8 watchdog'\n"
+        "        shell: bash\n")
+    if single_quote_watchdog == MINIMAL_CLEAN_WATCHDOG:
+        bad += 1
+        print("[FAIL] fixture 7 setup: the single-quoted if: replacement did not apply")
+    else:
+        v, e = run_check(single_quote_watchdog, MINIMAL_CLEAN_COMPOSITE,
+                          {"watchdog.yml": single_quote_watchdog})
+        if not v or e:
+            bad += 1
+            print(f"[FAIL] fixture 7 (single-quoted if: expression): expected a "
+                  f"violation, got violations={v} errors={e}")
+        else:
+            print(f"[ok] fixture 7: reintroduced single-quoted if: match caught: {v}")
+
+    print(f"Gate 138 self-test: {'FAILED' if bad else 'all 7 fixtures behaved as specified'}")
     return 1 if bad else 0
 
 
