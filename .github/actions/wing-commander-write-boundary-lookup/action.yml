@@ -83,20 +83,34 @@ runs:
             echo "::warning::wing-commander-write-boundary-lookup: gh issue list failed for label ${LABEL_PREFIX}:implement -- $(cat "$issues_err") -- treating as no routed items found this run; a routed item may reach the PR as orphan prose."
             echo "[]" > "$issues_file"
           fi
+          # review-gate-round-3: every line below shares the same
+          # TASKS_PATH, so its content is read and normalized ONCE by
+          # compute-finding-fingerprint.sh's own batch mode -- one process,
+          # not one bash->python3 fork (and one file re-read) per unchecked
+          # line.
+          lines=()
           while IFS= read -r line; do
             [ -z "$line" ] && continue
-            fp_out="$(bash "$FP_SCRIPT" implement "$TASKS_PATH" "$line")"
-            fp="$(printf '%s\n' "$fp_out" | sed -n 's/^fingerprint=//p')"
-            [ -z "$fp" ] && continue
-            marker="<!-- wing-commander-finding: fingerprint=$fp -->"
-            match_json="$(bash "$MATCH_SCRIPT" "$issues_file" "$marker")"
-            found_url=""
-            [ -n "$match_json" ] && found_url="$(printf '%s' "$match_json" | jq -r '.url // empty')"
-            if [ -n "$found_url" ]; then
-              tmp="$(mktemp)"
-              jq --arg line "$line" --arg url "$found_url" '. + [{"line": $line, "url": $url}]' "$mapping_file" > "$tmp" && mv "$tmp" "$mapping_file"
-            fi
+            lines+=("$line")
           done <<< "$UNCHECKED_ITEMS"
+          if [ "${#lines[@]}" -gt 0 ]; then
+            fp_out="$(bash "$FP_SCRIPT" implement "$TASKS_PATH" "${lines[@]}")"
+            fps="$(printf '%s\n' "$fp_out" | sed -n 's/^fingerprint=//p')"
+            i=0
+            while IFS= read -r fp; do
+              line="${lines[$i]}"
+              i=$((i + 1))
+              [ -z "$fp" ] && continue
+              marker="<!-- wing-commander-finding: fingerprint=$fp -->"
+              match_json="$(bash "$MATCH_SCRIPT" "$issues_file" "$marker")"
+              found_url=""
+              [ -n "$match_json" ] && found_url="$(printf '%s' "$match_json" | jq -r '.url // empty')"
+              if [ -n "$found_url" ]; then
+                tmp="$(mktemp)"
+                jq --arg line "$line" --arg url "$found_url" '. + [{"line": $line, "url": $url}]' "$mapping_file" > "$tmp" && mv "$tmp" "$mapping_file"
+              fi
+            done <<< "$fps"
+          fi
         fi
         rendered=""
         count=$(jq -r 'length' "$mapping_file")

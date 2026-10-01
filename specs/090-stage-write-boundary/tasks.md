@@ -897,7 +897,7 @@ and evaporating into PR-body prose) that this feature exists to end.
 
   Fixed: designated wing-commander-durable-failure-issue/action.yml's rationale comment canonical; wing-commander-write-boundary-lookup/action.yml's comment now points at it ("see wing-commander-durable-failure-issue/action.yml's own Gate 12 rationale comment (canonical; not re-derived here)") instead of restating the full explanation. Gate 47 (verify-comment-canonical-pointers.py) scans only .github/workflows/*.yml, so this is hygiene per CLAUDE.md's rule rather than a gate-enforced pointer, but it removes the second independently-worded copy.
 
-- [ ] Review finding: Per-unchecked-line fingerprint lookup re-reads and re-normalizes tasks.md
+- [x] Review finding: Per-unchecked-line fingerprint lookup re-reads and re-normalizes tasks.md
 
   wing-commander-write-boundary-lookup/action.yml's lookup loop invokes compute-finding-fingerprint.sh once per unchecked tasks.md line, each call forking bash->python3 and re-reading/re-normalizing the whole file even though its content is identical across iterations
 
@@ -905,6 +905,8 @@ and evaporating into PR-body prose) that this feature exists to end.
   - .github/actions/_shared/compute-finding-fingerprint.sh
 
   Detail: Loop around lines 829-842 calling verify_anchor() in compute-finding-fingerprint.sh; for K unchecked lines this pays O(K) redundant file reads, regex normalization passes, and process forks on every finalize run while the lifecycle is open
+
+  Fixed: `compute-finding-fingerprint.sh` now accepts one or more trailing `<gate_or_artifact>` arguments against the same `<file_path>` (backward compatible: the single-argument shape every other caller uses is unchanged), reading and normalizing the file ONCE and printing one `fingerprint=`/`verified=` pair per argument in order. `wing-commander-write-boundary-lookup/action.yml`'s loop now collects every unchecked line into a bash array and calls the script once instead of once per line, matching output pairs back to lines by position. Gate 133's mutation (6)/(f) markers (`_mut_inline_fingerprint_in_finalize`, `_mut_break_fingerprint_determinism`) updated to the new call shape/indentation; contracts/write-boundary-mechanism.md §6 updated to describe the batch call.
 
 - [x] Review finding: run_cycle_step/run_retry_step near-identical copy-paste in gate test harness
 

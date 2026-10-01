@@ -195,12 +195,15 @@ cycle's routed hand-off and no later cycle re-classifies it.
 **New step**: "Look up routed write-boundary items," deterministic, before
 the existing "Summarize change and extract remaining manual work" step
 (`finalize.yml:686`), implemented by the published
-`wing-commander-write-boundary-lookup` composite. For each unchecked line
-in the tip's `tasks.md`: compute its fingerprint via
-`compute-finding-fingerprint.sh` (same formula, §5's shared helper:
-`stage=implement`, `file_path=<spec-dir>/tasks.md`,
-`gate_or_artifact=<the line's literal text>`), then match it against ONE
-`gh issue list` call fetched for the whole lookup (never once per line) —
+`wing-commander-write-boundary-lookup` composite. Every unchecked line in
+the tip's `tasks.md` comes from that same file, so their fingerprints are
+computed in ONE call to `compute-finding-fingerprint.sh` (same formula,
+§5's shared helper: `stage=implement`, `file_path=<spec-dir>/tasks.md`,
+`gate_or_artifact=<each line's literal text>`, one per trailing argument —
+review-gate-round-3's batch mode, which reads and normalizes `tasks.md`
+once regardless of how many lines follow, never once per line), then each
+line's fingerprint is matched against ONE `gh issue list` call fetched for
+the whole lookup (also never once per line) —
 **not** a per-line `gh issue list --search` (PR #836 review, item 5;
 review-gate-round-1 items 3/4/6 fixed this section to match): list every
 issue under `'${{ inputs.write-boundary-label-prefix }}:implement'`

@@ -1225,7 +1225,7 @@ def _mut_inline_fingerprint_in_finalize():
     finalize.yml itself, which may not resolve _shared/ directly -- Gate
     60's promotion-prevention check) is where the call site lives."""
     text = open(WRITE_BOUNDARY_LOOKUP_COMPOSITE, encoding="utf-8").read()
-    marker = 'bash "$FP_SCRIPT" implement "$TASKS_PATH" "$line"'
+    marker = 'bash "$FP_SCRIPT" implement "$TASKS_PATH" "${lines[@]}"'
     replacement = ('python3 -c \'import hashlib; print("fingerprint=" + '
                    'hashlib.sha256("anchor|implement|x".encode()).hexdigest())\'')
     if marker not in text:
@@ -1542,12 +1542,12 @@ def _mut_break_fingerprint_determinism():
     differently across cycles, defeating SC-004's dedup."""
     script_path = os.path.abspath(FINGERPRINT_SCRIPT)
     text = open(script_path, encoding="utf-8").read()
-    marker = ('    fp = hashlib.sha256("anchor|{0}|{1}|{2}".format(\n'
-             '        STAGE, norm_path, norm_gate\n'
-             '    ).encode("utf-8")).hexdigest()')
-    replacement = ('    fp = hashlib.sha256("anchor|{0}|{1}|{2}".format(\n'
-                   '        STAGE, norm_path, norm_gate + str(os.urandom(4))\n'
-                   '    ).encode("utf-8")).hexdigest()')
+    marker = ('        fp = hashlib.sha256("anchor|{0}|{1}|{2}".format(\n'
+             '            STAGE, norm_path, norm_gate\n'
+             '        ).encode("utf-8")).hexdigest()')
+    replacement = ('        fp = hashlib.sha256("anchor|{0}|{1}|{2}".format(\n'
+                   '            STAGE, norm_path, norm_gate + str(os.urandom(4))\n'
+                   '        ).encode("utf-8")).hexdigest()')
     if marker not in text:
         return None
     return script_path, text.replace(marker, replacement, 1)
