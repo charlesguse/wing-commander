@@ -512,3 +512,12 @@ Task: "Pass spec-identity-is-own: 'false' in .github/workflows/board-loop.yml:90
   - [ ] Add `"Wing Commander · 8 watchdog") name_stage="watchdog"` to the name-fallback step
   - [ ] Update `data-model.md` and the gate comment at `verify-no-reference-name-stage-match.py:66`
   - [ ] Update both comments making the false "always carries a record" claim
+
+## Maintainer Feedback
+
+- [ ] **Gate 133[→138]'s regex misses forms this PR removed.** `verify-no-reference-name-stage-match.py:85-87`'s `IF_TEST_RE` doesn't match a single `=` or single quotes. Restoring either removed line gives 0 violations:
+  - `if [ "$RUN_NAME" = "Wing Commander · 5 implement" ]`
+  - `if: needs.collect.outputs.run-name == 'Wing Commander · 8 watchdog'`
+  - [ ] Match `(?:==|!=|\s=)\s*["']NAME["']`
+  - [ ] Scan `if:` expressions too
+  - [ ] Add both fixtures to the self-test
