@@ -16,7 +16,7 @@ other gate uses (e.g. Gate 97/`verify-board-loop-resume-gating.py`, Gate
 | 1 | Composite record-write present | `.github/actions/wing-commander-board-stop-check/action.yml` has no step that, gated on `stop-cause == "stop-request"`, invokes `board_item_marker.py --step stalled ... --add-label "board:stalled"` | the step is present |
 | 2 | Provenance | that invocation (and `board_stop_check.py`'s own) references a bare `.github/scripts/...` path instead of `$RUNNER_TEMP/wc-pristine/scripts/...` | both are invoked from the pristine snapshot (spec 095 FR-011/FR-012, research.md D8) |
 | 3 | Cause-aware messaging | any of the six stand-down message strings in `board-loop.yml` hardcodes "kill switch" prose unconditionally (the pre-fix shape at, e.g., `board-loop.yml:1412`) | each reads `stop-cause` (or the composite's `stop-cause` output) to select its wording (FR-014) |
-| 4 | Decision-function agreement | `find_stop_command_comment()`'s "did a comment win" answer disagrees with `find_stop_request()`'s `stand_down` on any fixture in Gate 87's corpus, or on the new FR-016/FR-009 fixtures this gate adds | the two agree on every fixture (research.md D2's invariant) |
+| 4 | Decision-function agreement | `find_stop_command_comment()`'s "did a comment win" answer disagrees with `find_stop_request()`'s `stand_down` on any fixture in Gate 87's corpus, or on the new FR-016/FR-009/FR-006/FR-008 fixtures this gate adds | the two agree on every fixture (research.md D2's invariant) |
 | 5 | Selection exclusion | a fixture issue carrying `{"step": "stalled", "round": 0, "pr": null, "branch": null, "base_sha": null}` plus `board:stalled` is still returned by `board_eligibility.in_flight_candidate()` or `select()` | it is excluded by both, on every one of ten simulated successive selection passes (SC-001) |
 | 6 | No write on kill-switch-only / closed-issue | a fixture composite invocation with `stop-cause` resolving to `"kill-switch"` or `"closed-issue"` still reaches the record-write block | it never does (FR-011/FR-013) |
 
@@ -34,7 +34,12 @@ check then reports failure:
 4. Feed a hand-crafted fixture where a comment matches `is_stop_command()`
    but predates a synthetic baseline in one function's copy of the logic
    and not the other → check 4 fails (this is the mutation Gate 87 cannot
-   catch, since Gate 87 only proves `find_stop_request()` alone).
+   catch, since Gate 87 only proves `find_stop_request()` alone). A second
+   mutation reverts `find_stop_request()` alone to a baseline computation
+   that advances on every marker, including same-run-id ones (the pre-fold-
+   leg-1 shape) → check 4 fails on the own-run-record fixture (FR-006/
+   FR-008), since `find_stop_command_comment()` still disagrees using the
+   current (fixed) same-run exclusion.
 5. Feed a marker fixture with `board:stalled` label omitted → check 5's
    assertion about exclusion no longer holds *because* the fixture is now
    a normal in-flight marker, proving the check is actually reading the

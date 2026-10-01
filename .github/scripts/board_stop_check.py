@@ -192,7 +192,27 @@ def find_stop_request(comments, current_run_id, bot_login):
     may a `**Run:**` line any other commenter types, maintainer or not.
     The stop request itself is still honoured only from
     MAINTAINER_ASSOCIATIONS -- a different author rule for a different
-    comment."""
+    comment.
+
+    specs/097-recorded-stop-point (FR-006/FR-008, maintainer review fold
+    leg-1): a marker carrying THIS run's own id never advances the
+    baseline, however many of them exist or in what order -- only a marker
+    from a DIFFERENT run can. This run's own stop-point record is exactly
+    such a same-run marker (write_marker()'s `**Run:**` line, posted by the
+    same bot, after honouring a stop within this very run); if it were
+    allowed to set the baseline the way an other-run marker does, it would
+    move the baseline past the very stop comment it just recorded, and a
+    later job checking again in this same run would wrongly see
+    stand_down=False -- undoing the stand-down the record exists to make
+    durable. Excluding every same-run marker from baseline-setting is also
+    the semantically right rule on its own terms, not just a workaround:
+    within one continuous run, a stop posted partway through must stay
+    honoured for the rest of that run regardless of what other same-run
+    progress markers accumulate after it (FR-006). A marker from a
+    DIFFERENT (earlier) run is unaffected and still sets the baseline
+    exactly as before -- that is the separate FR-009/FR-016 case, where a
+    PAST run's own stop-point record correctly suppresses its own old stop
+    comment from re-triggering the NEXT run."""
     ordered = sorted(comments or [], key=lambda c: c.get("created_at") or "")
     current_run_id = str(current_run_id)
 
@@ -204,10 +224,11 @@ def find_stop_request(comments, current_run_id, bot_login):
         match = last_run_match(comment.get("body"))
         if not match:
             continue
-        baseline = comment.get("created_at") or baseline
         run_id = match.group(2)
-        if run_id != current_run_id:
-            last_other_run_id = run_id
+        if run_id == current_run_id:
+            continue
+        baseline = comment.get("created_at") or baseline
+        last_other_run_id = run_id
 
     stop_seen = False
     for comment in ordered:
@@ -223,25 +244,30 @@ def find_stop_request(comments, current_run_id, bot_login):
     return StopDecision(True, last_other_run_id)
 
 
-def find_stop_command_comment(comments, bot_login):
+def find_stop_command_comment(comments, current_run_id, bot_login):
     """As find_stop_request()'s own stop-detection loop, but returns the
     WINNING comment itself rather than a bare boolean (specs/097-recorded-
     stop-point, research.md D2). Recomputes the same baseline
-    find_stop_request() computes -- the newest is_loop_marker_author()
-    comment's last_run_match() -- then returns the LAST comment at or after
-    that baseline where `author_association in MAINTAINER_ASSOCIATIONS and
-    is_stop_command(body)`, or None when none exists.
+    find_stop_request() computes -- including the same-run-id handling
+    FR-006/FR-008 require (no current-run-id marker, including this run's
+    own stop-point record, ever advances the baseline; see
+    find_stop_request()'s docstring) -- then returns the LAST comment at or
+    after that baseline where `author_association in
+    MAINTAINER_ASSOCIATIONS and is_stop_command(body)`, or None when none
+    exists.
 
     Invariant (Gate 128 checks this over Gate 87's own fixture corpus):
     `find_stop_request(comments, run_id, bot_login).stand_down ==
-    (find_stop_command_comment(comments, bot_login) is not None)` for every
-    input -- the two functions must never disagree on whether a comment
-    won. This function does not itself decide the baseline differently;
-    it is a deliberate, independently-testable duplicate of the same ~10
-    lines (research.md D1), not a refactor of find_stop_request() into a
-    shared helper -- that function's own StopDecision contract and Gate 87's
-    mutation coverage of it stay untouched."""
+    (find_stop_command_comment(comments, run_id, bot_login) is not None)`
+    for every input -- the two functions must never disagree on whether a
+    comment won. This function does not itself decide the baseline
+    differently; it is a deliberate, independently-testable duplicate of
+    the same ~15 lines (research.md D1), not a refactor of
+    find_stop_request() into a shared helper -- that function's own
+    StopDecision contract and Gate 87's mutation coverage of it stay
+    untouched."""
     ordered = sorted(comments or [], key=lambda c: c.get("created_at") or "")
+    current_run_id = str(current_run_id)
 
     baseline = ""
     for comment in ordered:
@@ -249,6 +275,9 @@ def find_stop_command_comment(comments, bot_login):
             continue
         match = last_run_match(comment.get("body"))
         if not match:
+            continue
+        run_id = match.group(2)
+        if run_id == current_run_id:
             continue
         baseline = comment.get("created_at") or baseline
 
@@ -286,14 +315,22 @@ def main():
     traceback to stderr and exiting non-zero with nothing on stdout.
 
     `--stop-comment` (specs/097-recorded-stop-point, FR-018): reads
-    {"comments": [...], "bot_login": "..."} instead, and prints the winning
-    stop-command comment's identity -- {"html_url", "login", "created_at",
-    "reason"} -- or {} when find_stop_command_comment() finds none. The one
-    home for this read so the composite's own `run:` shell never re-derives
-    the match/authorization rule itself."""
+    {"comments": [...], "current_run_id": "...", "bot_login": "..."}
+    instead, and prints the winning stop-command comment's identity --
+    {"html_url", "login", "created_at", "reason"} -- or {} when
+    find_stop_command_comment() finds none. `current_run_id` is required
+    here too (maintainer review fold leg-1, FR-006/FR-008): without it,
+    this run's own stop-point record -- posted moments earlier by the
+    `check` step's own stand_down=true path, carrying a `**Run:**` line
+    with this same run's id -- would be indistinguishable from a marker
+    from a genuinely different run, and would wrongly suppress the very
+    stop comment this call is looking up. The one home for this read so
+    the composite's own `run:` shell never re-derives the match/
+    authorization rule itself."""
     if len(sys.argv) > 1 and sys.argv[1] == "--stop-comment":
         payload = json.load(sys.stdin)
-        comment = find_stop_command_comment(payload.get("comments") or [], payload.get("bot_login"))
+        comment = find_stop_command_comment(
+            payload.get("comments") or [], payload.get("current_run_id"), payload.get("bot_login"))
         if comment is None:
             print(json.dumps({}))
             return

@@ -61,14 +61,17 @@ guards) is unchanged in every respect and unaffected by `stop-cause`.
 2. Identify the winning comment and its reason:
    ```bash
    stop_comment_json="$(jq -n --slurpfile comments "$RUNNER_TEMP/board-stop-check-comments.json" \
-     --arg bot_login "$BOT_LOGIN" \
-     '{comments: $comments[0], bot_login: $bot_login}' \
+     --arg run_id "$GITHUB_RUN_ID" --arg bot_login "$BOT_LOGIN" \
+     '{comments: $comments[0], current_run_id: $run_id, bot_login: $bot_login}' \
      | python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_stop_check.py" --stop-comment)"
    ```
    (exact CLI flag/subcommand shape is a tasks-stage detail; the contract is
    that this reuses `find_stop_command_comment()`/`stop_command_reason()`
    from `board_stop_check.py`, run from the trusted snapshot per D8, never a
-   second re-implementation of the match rule in shell/jq).
+   second re-implementation of the match rule in shell/jq. `current_run_id`
+   is required — maintainer review fold leg-1, FR-006/FR-008 — so this
+   run's own not-yet-posted stop-point record can never be mistaken for a
+   different run's marker when the baseline is recomputed).
 3. Write the record:
    ```bash
    marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" \

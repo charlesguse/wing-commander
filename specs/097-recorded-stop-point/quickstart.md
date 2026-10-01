@@ -22,8 +22,10 @@ implementation breakdown.
    python .github/scripts/run-local-gates.py
    ```
    Confirm Gate 128 (and its self-test) both pass, and that Gate 87 still
-   passes unchanged (`find_stop_request()` was not modified — research.md
-   D1).
+   passes (`find_stop_request()` gained the narrow same-run-id baseline fix
+   research.md D1's addendum describes — maintainer review fold leg-1 —
+   but Gate 87's own fixture corpus has at most one marker per run id per
+   fixture, so it is unaffected).
 
 2. Exercise the new pure functions directly:
    ```python
@@ -36,13 +38,30 @@ implementation breakdown.
         "html_url": "https://github.com/o/r/issues/402#issuecomment-1"},
    ]
    decision = find_stop_request(comments, "999", "wing-commander[bot]")
-   winner = find_stop_command_comment(comments, "wing-commander[bot]")
+   winner = find_stop_command_comment(comments, "999", "wing-commander[bot]")
    assert decision.stand_down is True
    assert winner is comments[0]
    assert stop_command_reason(winner["body"]) == "wrong approach"
    ```
    Confirms D2's invariant by hand before trusting Gate 128's automated
    version of the same check.
+
+   A second call confirms research.md D1's addendum: once this run's own
+   stop-point record (also carrying a `**Run:**` line for run `"999"`) is
+   appended to `comments`, both functions must still agree the original
+   stop comment stands the item down:
+   ```python
+   own_record = {
+       "body": "**Run:** https://github.com/o/r/actions/runs/999\n\n"
+               "<!-- wing-commander-board-item: {} -->",
+       "author_association": "NONE", "created_at": "2026-09-29T00:05:00Z",
+       "user": {"login": "wing-commander[bot]", "type": "Bot"},
+   }
+   decision2 = find_stop_request(comments + [own_record], "999", "wing-commander[bot]")
+   winner2 = find_stop_command_comment(comments + [own_record], "999", "wing-commander[bot]")
+   assert decision2.stand_down is True
+   assert winner2 is comments[0]
+   ```
 
 ## End-to-end validation (Actions)
 

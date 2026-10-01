@@ -18,7 +18,8 @@ WHAT IT CHECKS
 4. Decision-function agreement: `find_stop_command_comment()`'s "did a
    comment win" answer agrees with `find_stop_request()`'s `stand_down` on
    every fixture under `.github/scripts/tests/board-stop-check/` (Gate 87's
-   own corpus, reused, plus this feature's FR-016/FR-009 fixtures).
+   own corpus, reused, plus this feature's FR-016/FR-009 fixtures, plus the
+   FR-006/FR-008 same-run-record fixture, maintainer review fold leg-1).
 5. Selection exclusion: a fixture issue carrying a `stalled` marker plus
    `board:stalled` is excluded by `is_excluded()` and never returned by
    `in_flight_candidate()`/`select()`, across ten simulated passes (SC-001).
@@ -185,7 +186,8 @@ def check_decision_function_agreement(verbose=True):
         bot_login = spec["bot_login"]
         current_run_id = spec.get("current_run_id", "999")
         stand_down = board_stop_check.find_stop_request(comments, current_run_id, bot_login).stand_down
-        comment_won = board_stop_check.find_stop_command_comment(comments, bot_login) is not None
+        comment_won = board_stop_check.find_stop_command_comment(
+            comments, current_run_id, bot_login) is not None
         if stand_down != comment_won:
             failures += 1
             if verbose:
@@ -351,7 +353,7 @@ def selftest_check4():
     case = "find_stop_command_comment() baseline forced empty -> check 4 fails"
     original = board_stop_check.find_stop_command_comment
 
-    def _no_baseline(comments, bot_login):
+    def _no_baseline(comments, current_run_id, bot_login):
         ordered = sorted(comments or [], key=lambda c: c.get("created_at") or "")
         winner = None
         for comment in ordered:
@@ -365,6 +367,50 @@ def selftest_check4():
         failures = check_decision_function_agreement(verbose=False)
     finally:
         board_stop_check.find_stop_command_comment = original
+    if not failures:
+        print("::error::verify-stop-point-recording self-test: {0}: NOT caught.".format(case))
+        return 1
+    print("note: mutation caught ({0}: {1} fixture(s) disagreed).".format(case, failures))
+    return 0
+
+
+def selftest_check4_samerun_record():
+    case = ("own-run-record-does-not-undo-stand-down.json: pre-fix "
+            "find_stop_request() (baseline advanced by every marker, "
+            "including same-run ones) -> check 4 fails")
+
+    def _pre_fix_find_stop_request(comments, current_run_id, bot_login):
+        ordered = sorted(comments or [], key=lambda c: c.get("created_at") or "")
+        current_run_id = str(current_run_id)
+        baseline = ""
+        last_other_run_id = None
+        for comment in ordered:
+            if not board_stop_check.is_loop_marker_author(comment, bot_login):
+                continue
+            match = board_stop_check.last_run_match(comment.get("body"))
+            if not match:
+                continue
+            baseline = comment.get("created_at") or baseline
+            run_id = match.group(2)
+            if run_id != current_run_id:
+                last_other_run_id = run_id
+        stop_seen = False
+        for comment in ordered:
+            if (comment.get("created_at") or "") < baseline:
+                continue
+            if (comment.get("author_association") in board_stop_check.MAINTAINER_ASSOCIATIONS
+                    and board_stop_check.is_stop_command(comment.get("body"))):
+                stop_seen = True
+        if not stop_seen:
+            return board_stop_check.StopDecision(False, None)
+        return board_stop_check.StopDecision(True, last_other_run_id)
+
+    original = board_stop_check.find_stop_request
+    board_stop_check.find_stop_request = _pre_fix_find_stop_request
+    try:
+        failures = check_decision_function_agreement(verbose=False)
+    finally:
+        board_stop_check.find_stop_request = original
     if not failures:
         print("::error::verify-stop-point-recording self-test: {0}: NOT caught.".format(case))
         return 1
@@ -400,7 +446,7 @@ def selftest_check6():
 
 SELFTESTS = (
     selftest_check1, selftest_check2, selftest_check3,
-    selftest_check4, selftest_check5, selftest_check6,
+    selftest_check4, selftest_check4_samerun_record, selftest_check5, selftest_check6,
 )
 
 

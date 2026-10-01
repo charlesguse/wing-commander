@@ -254,10 +254,15 @@ runs:
 
         # FR-018: identify the winning comment and its reason through the
         # one home board_stop_check.py provides, never a re-derivation of
-        # the match/authorization rule in this shell.
+        # the match/authorization rule in this shell. current_run_id is
+        # passed the same way the `check` step above passes it (FR-006/
+        # FR-008, maintainer review fold leg-1): without it,
+        # find_stop_command_comment() cannot tell this run's own
+        # not-yet-posted stop-point record apart from a genuinely earlier
+        # run's marker.
         stop_comment_json="$(jq -n --slurpfile comments "$RUNNER_TEMP/board-stop-check-comments.json" \
-          --arg bot_login "$BOT_LOGIN" \
-          '{comments: $comments[0], bot_login: $bot_login}' \
+          --arg run_id "$GITHUB_RUN_ID" --arg bot_login "$BOT_LOGIN" \
+          '{comments: $comments[0], current_run_id: $run_id, bot_login: $bot_login}' \
           | python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_stop_check.py" --stop-comment)"
         html_url="$(jq -r '.html_url // empty' <<<"$stop_comment_json")"
         login="$(jq -r '.login // empty' <<<"$stop_comment_json")"

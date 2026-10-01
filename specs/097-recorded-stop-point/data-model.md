@@ -26,10 +26,16 @@ and computed as a single ordered check — see research.md D3.
 
 ### Stop Command Comment (new derived fact, not a new stored entity)
 
-The specific issue comment `find_stop_command_comment(comments, bot_login)`
-identifies as the one that makes `stand_down` true: the newest comment at
-or after the existing baseline whose author's `author_association` is in
-`{OWNER, MEMBER, COLLABORATOR}` and whose body satisfies `is_stop_command()`.
+The specific issue comment `find_stop_command_comment(comments,
+current_run_id, bot_login)` identifies as the one that makes `stand_down`
+true: the newest comment at or after the existing baseline whose author's
+`author_association` is in `{OWNER, MEMBER, COLLABORATOR}` and whose body
+satisfies `is_stop_command()`. `current_run_id` is required (maintainer
+review fold leg-1, FR-006/FR-008 — see research.md D1's addendum): no
+`**Run:**` marker carrying the SAME run id may advance the baseline, since
+this run's own stop-point record is exactly such a marker, and letting it
+advance the baseline would undo an already-honoured stop for the rest of
+the run.
 
 Fields consumed from it (all already present in, or newly added to, the
 composite's existing `gh api .../comments` fetch):

@@ -25,6 +25,35 @@ cancel path."* Gate 87 mutation-proves `find_stop_request()` today
 its body untouched removes any risk of that gate suite drifting out of
 sync with this change.
 
+**Addendum (maintainer review fold leg-1, FR-006/FR-008)**: this "not
+modified" decision turned out to have a real gap once the record-write
+itself existed: `find_stop_request()`'s own baseline loop treats any
+bot-authored `**Run:**` marker, from any run, as advancing the baseline —
+including THIS run's own stop-point record, which carries write_marker()'s
+`**Run:**` line like every other loop-posted comment. Left as designed, the
+record's own marker (posted strictly after the stop comment it is
+recording — in the common case, it is the run's ONLY same-run marker, since
+a job that stands down does not go on to post its own ordinary outcome
+marker too) would move the baseline past that stop comment, so a later job
+in the SAME run would recompute `stand_down=false` and the stand-down would
+not actually hold for the rest of the run — the opposite of what
+FR-006/FR-008 require. The fix, scoped as narrowly as the original "not
+modified" intent allows: `find_stop_request()`'s baseline loop now skips
+EVERY bot-authored marker carrying the CURRENT run's own id — none of them
+advance the baseline, however many exist or in what order; only a marker
+from a genuinely different run id still does, exactly as before. This is
+also the semantically correct general rule, not just a workaround for the
+record's own marker: within one continuous run, a stop posted partway
+through must stay honoured for the rest of that run regardless of what
+other same-run progress markers accumulate after it. The cross-run case is
+unaffected — FR-009/FR-016's scenario is a PAST run's own stop-point record
+(a DIFFERENT, non-current run id) correctly preventing its old stop comment
+from re-triggering the NEXT run, which still works exactly as designed.
+`StopDecision`'s shape and `main()`'s stdin/stdout contract are still
+untouched; Gate 87's existing fixture corpus has at most one marker per run
+id per fixture, so it is unaffected by this change and still mutation-
+proves `find_stop_request()` end-to-end.
+
 **Rationale**: `find_stop_request()` already computes everything the
 *decision* needs. What is new is: (a) identifying *which* comment among the
 same input is the one that made `stand_down` true, so the record can name
@@ -50,18 +79,21 @@ fixture, which is the actual invariant that matters.
 
 ## D2 — The new pure function: identifying the winning stop comment
 
-**Decision**: Add `find_stop_command_comment(comments, bot_login)` to
-`board_stop_check.py`, next to `find_stop_request()`. It recomputes the
-same baseline `find_stop_request()` computes (the newest
-`is_loop_marker_author()` comment's `last_run_match()`, exactly the same
-predicate and ordering) and returns the **last** comment at or after that
-baseline satisfying `author_association in MAINTAINER_ASSOCIATIONS and
-is_stop_command(body)` — i.e. the same comment whose existence makes
-`find_stop_request(...).stand_down` true — or `None`. Also add
-`stop_command_reason(body)`, reusing the existing private `_command_line()`
-and public `STOP_COMMAND_RE`: the text on the matched line after
-`STOP_COMMAND_RE`'s match end, stripped (empty when there is none — a bare
-`stop.` carries no reason).
+**Decision**: Add `find_stop_command_comment(comments, current_run_id,
+bot_login)` to `board_stop_check.py`, next to `find_stop_request()`. It
+recomputes the same baseline `find_stop_request()` computes (the newest
+is_loop_marker_author() comment's last_run_match(), with the same
+current-run-id handling D1's addendum describes) and returns the **last**
+comment at or after that baseline satisfying `author_association in
+MAINTAINER_ASSOCIATIONS and is_stop_command(body)` — i.e. the same comment
+whose existence makes `find_stop_request(...).stand_down` true — or `None`.
+Also add `stop_command_reason(body)`, reusing the existing private
+`_command_line()` and public `STOP_COMMAND_RE`: the text on the matched
+line after `STOP_COMMAND_RE`'s match end, stripped (empty when there is
+none — a bare `stop.` carries no reason). `current_run_id` was added to
+this function's own signature after D1's addendum (it originally took only
+`(comments, bot_login)`): the composite's own `--stop-comment` call already
+has `$GITHUB_RUN_ID` in scope, the same way the `check` step's call does.
 
 **Rationale**: FR-004 needs the specific comment (to link/identify it) and
 FR-005 needs its reason text (to fence it as inert data). Both read the
@@ -74,8 +106,9 @@ composite's `run:` shell or in board-loop.yml.
 
 **Invariant this creates**: for every input, `find_stop_request(comments,
 run_id, bot_login).stand_down == (find_stop_command_comment(comments,
-bot_login) is not None)`. The new gate (D7) checks this holds over Gate
-87's own fixture corpus, so the two functions can never quietly diverge.
+run_id, bot_login) is not None)`. The new gate (D7) checks this holds over
+Gate 87's own fixture corpus, so the two functions can never quietly
+diverge.
 
 ## D3 — Composite contract: a new `stop-cause` output, unchanged `paused`
 
