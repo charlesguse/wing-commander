@@ -29,11 +29,11 @@ This sentence must appear, verbatim or gate-verified-equivalent, in:
 
 ## Groups, per job
 
-| Job | Group (ordinary trigger) | Group (`directed-stage != ''`) | `cancel-in-progress` |
-|---|---|---|---|
-| `select` | `wing-commander-board-loop` | n/a — job is skipped for a directed dispatch | `false` |
-| `triage`, `route`, `fix`, `review`, `readiness` | `wing-commander-board-loop` | `wing-commander-board-loop` when directed-reachable (`triage`/`review`/`readiness` only, contracts/directed-proof-run.md) | `false` |
-| `prove-gate`, `prove` | `wing-commander-board-loop-prove-{github.event.pull_request.number}` (`pull_request: closed`; was `wing-commander-board-loop` before specs/096-durable-prove-entry) | `wing-commander-board-loop-directed-proof` | `false` |
+| Job | Group (ordinary trigger) | Group (`pull_request: closed`) | Group (`directed-stage != ''`) | `cancel-in-progress` |
+|---|---|---|---|---|
+| `select` | `wing-commander-board-loop` | n/a | n/a — job is skipped for a directed dispatch | `false` |
+| `triage`, `route`, `fix`, `review`, `readiness` | `wing-commander-board-loop` | n/a | `wing-commander-board-loop` when directed-reachable (`triage`/`review`/`readiness` only, contracts/directed-proof-run.md) | `false` |
+| `prove-gate`, `prove` | `wing-commander-board-loop` | `wing-commander-board-loop-prove-` (suffixed with the merged PR's own number; specs/096-durable-prove-entry replaced the old unconditional `wing-commander-board-loop` membership on this trigger) | `wing-commander-board-loop-directed-proof` | `false` |
 
 The directed group is shared across every directed dispatch (not
 per-attempt-token), so two merges proven close together contend for it

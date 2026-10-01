@@ -582,10 +582,10 @@ Task: "New Gate 128: verify-board-prove-recovery.py fixtures"
 
 
 ## Maintainer Feedback — Gate 129 can't parse a three-arm prove concurrency expression
-- [ ] Extend the Gate 129 / spec-cross-reference parser to accept an optional middle `format('<prefix>{0}', github.event.pull_request.number)` arm between the directed and ordinary arms, comparing its prefix against a new table column.
-- [ ] Add self-test mutations: wrong middle-arm prefix, missing middle arm, unexpected middle arm.
-- [ ] Update spec 089's `contracts/skill-drift-gate.md` step 4 to describe the three-arm shape.
-- [ ] Add a "`pull_request: closed` group" column to spec 060's `concurrency-groups.md` holding `` `wing-commander-board-loop-prove-` `` (PR number noted outside the backticks), fixing the accidental brace-parsing in the ordinary column.
+- [X] Extend the Gate 129 / spec-cross-reference parser to accept an optional middle `format('<prefix>{0}', github.event.pull_request.number)` arm between the directed and ordinary arms, comparing its prefix against a new table column.
+- [X] Add self-test mutations: wrong middle-arm prefix, missing middle arm, unexpected middle arm.
+- [X] Update spec 089's `contracts/skill-drift-gate.md` step 4 to describe the three-arm shape.
+- [X] Add a "`pull_request: closed` group" column to spec 060's `concurrency-groups.md` holding `` `wing-commander-board-loop-prove-` `` (PR number noted outside the backticks), fixing the accidental brace-parsing in the ordinary column.
 
 ## Maintainer Feedback — Gate number collisions
 - [ ] Renumber `verify-board-prove-recovery.py` from Gate 128 (colliding with spec 074's #821) to **Gate 136**.

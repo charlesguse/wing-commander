@@ -44,7 +44,8 @@ SkillClaim = collections.namedtuple(
 JobClassification = collections.namedtuple(
     "JobClassification",
     ["job", "can_select_or_open_fix_pr", "expected_group_ordinary",
-     "expected_group_directed", "expected_cancel_in_progress"])
+     "expected_group_pull_request_prefix", "expected_group_directed",
+     "expected_cancel_in_progress"])
 
 WorkflowConcurrencyFact = collections.namedtuple(
     "WorkflowConcurrencyFact",
@@ -58,10 +59,16 @@ WaiverEntry = collections.namedtuple(
     "WaiverEntry", ["index", "property", "job", "issue", "permanent", "reason"])
 
 # The conditional group shape prove-gate/prove use (research.md D5): resolves
-# to the directed-proof group when a directed dispatch names a stage, the
-# ordinary group otherwise. Matched structurally, not evaluated generically.
+# to the directed-proof group when a directed dispatch names a stage, a
+# per-merge group on a `pull_request: closed` trigger (specs/096-durable-
+# prove-entry FR-005, the optional middle arm -- group(2) is None when this
+# arm is absent), the ordinary group otherwise. Matched structurally, not
+# evaluated generically.
 DIRECTED_EXPR_RE = re.compile(
-    r"directed-stage\s*!=\s*''\s*\)\s*&&\s*'([\w.-]+)'\s*\|\|\s*'([\w.-]+)'")
+    r"directed-stage\s*!=\s*''\s*\)\s*&&\s*'([\w.-]+)'\s*\|\|\s*"
+    r"(?:\(github\.event_name\s*==\s*'pull_request'\s*&&\s*format\("
+    r"'([\w.-]+)\{0\}',\s*github\.event\.pull_request\.number\)\)\s*\|\|\s*)?"
+    r"'([\w.-]+)'")
 
 # Item 4 (contracts/skill-example-claim.md "Verification"): a queuing/
 # cancellation word in the same paragraph as the group tokens.
@@ -147,11 +154,16 @@ def extract_skill_claim(text, path):
 
 
 # The "Groups, per job" table's data rows (contracts/concurrency-groups.md):
-# job names in column 1, ordinary/directed group tokens and the
-# cancel-in-progress literal in columns 2-4. Read as-is -- never re-derived
-# from board-loop.yml's own job names (research.md D4).
+# job names in column 1, ordinary/pull_request-prefix/directed group tokens
+# and the cancel-in-progress literal in columns 2-5. Read as-is -- never
+# re-derived from board-loop.yml's own job names (research.md D4). The
+# pull_request-prefix column holds a plain literal with no `{0}`/braces (kept
+# out of backticks in prose, specs/096-durable-prove-entry maintainer review)
+# so this table extracts cleanly -- a braced token inside backticks does not
+# match `[\w.-]+` and silently falls through to the next backtick span.
 TABLE_ROW_RE = re.compile(
-    r"^\|(?P<jobs>[^|]+)\|(?P<ordinary>[^|]+)\|(?P<directed>[^|]+)\|(?P<cancel>[^|]+)\|\s*$",
+    r"^\|(?P<jobs>[^|]+)\|(?P<ordinary>[^|]+)\|(?P<pr_prefix>[^|]+)\|"
+    r"(?P<directed>[^|]+)\|(?P<cancel>[^|]+)\|\s*$",
     re.MULTILINE)
 
 
@@ -171,6 +183,11 @@ def extract_job_classifications(text):
         ordinary_tokens = re.findall(r"`([\w.-]+)`", match.group("ordinary"))
         if not ordinary_tokens:
             continue
+        pr_prefix_cell = match.group("pr_prefix")
+        pr_prefix_tokens = re.findall(r"`([\w.-]+)`", pr_prefix_cell)
+        expected_pr_prefix = (
+            pr_prefix_tokens[0] if pr_prefix_tokens and "n/a" not in pr_prefix_cell.lower()
+            else None)
         directed_cell = match.group("directed")
         directed_tokens = re.findall(r"`([\w.-]+)`", directed_cell)
         expected_directed = (
@@ -183,6 +200,7 @@ def extract_job_classifications(text):
                 job=job,
                 can_select_or_open_fix_pr=True,
                 expected_group_ordinary=ordinary_tokens[0],
+                expected_group_pull_request_prefix=expected_pr_prefix,
                 expected_group_directed=expected_directed,
                 expected_cancel_in_progress=expected_cancel,
             ))
@@ -270,7 +288,7 @@ def compute_drift_findings(claim, classifications, facts):
         if fact.group_expression is not None:
             expr_match = DIRECTED_EXPR_RE.search(fact.group_expression)
             if not expr_match or expr_match.group(1) != c.expected_group_directed \
-                    or expr_match.group(2) != c.expected_group_ordinary:
+                    or expr_match.group(3) != c.expected_group_ordinary:
                 findings.append(DriftFinding(
                     property="directed-group-mismatch", job=job,
                     skill_location=claim.location,
@@ -278,6 +296,17 @@ def compute_drift_findings(claim, classifications, facts):
                     expected="a conditional expression resolving to `{0}` when directed, "
                              "`{1}` otherwise".format(
                                  c.expected_group_directed, c.expected_group_ordinary),
+                    actual=fact.group_expression))
+            elif (expr_match.group(2) or None) != c.expected_group_pull_request_prefix:
+                findings.append(DriftFinding(
+                    property="pull-request-group-prefix-mismatch", job=job,
+                    skill_location=claim.location,
+                    workflow_location=(BOARD_LOOP_YML, fact.line),
+                    expected=(
+                        "a middle `pull_request` arm resolving to `{0}{{PR#}}`".format(
+                            c.expected_group_pull_request_prefix)
+                        if c.expected_group_pull_request_prefix
+                        else "no middle `pull_request` arm"),
                     actual=fact.group_expression))
         elif fact.group_literal != c.expected_group_ordinary:
             findings.append(DriftFinding(
@@ -463,6 +492,7 @@ def evaluate():
     all_properties = (
         "job-missing-from-group", "cancel-in-progress-mismatch",
         "unexpected-job-in-group", "job-range-mismatch", "directed-group-mismatch",
+        "pull-request-group-prefix-mismatch",
         "ordinary-group-name-mismatch", "directed-group-name-mismatch")
     if claim is not None and classifications and facts:
         drift = compute_drift_findings(claim, classifications, facts)
@@ -689,12 +719,12 @@ def run_selftest():
     # table extracts the expected per-job rows. ---
     table_fixture = (
         "## Groups, per job\n\n"
-        "| Job | Ordinary group | Directed group | cancel-in-progress |\n"
-        "|-----|-----------------|-----------------|---------------------|\n"
-        "| `select` | `ordinary-group` | n/a | `false` |\n"
-        "| `mid` | `ordinary-group` | n/a | `false` |\n"
-        "| `readiness` | `ordinary-group` | n/a | `false` |\n"
-        "| `prove` | `ordinary-group` | `directed-group` | `false` |\n"
+        "| Job | Ordinary group | pull_request group | Directed group | cancel-in-progress |\n"
+        "|-----|-----------------|---------------------|-----------------|---------------------|\n"
+        "| `select` | `ordinary-group` | n/a | n/a | `false` |\n"
+        "| `mid` | `ordinary-group` | n/a | n/a | `false` |\n"
+        "| `readiness` | `ordinary-group` | n/a | n/a | `false` |\n"
+        "| `prove` | `ordinary-group` | `merge-group-` | `directed-group` | `false` |\n"
     )
     fixture_classes = {c.job: c for c in extract_job_classifications(table_fixture)}
     check("a synthetic classification table extracts all four job rows",
@@ -702,6 +732,10 @@ def run_selftest():
     check("a table row with a directed group populates expected_group_directed",
           fixture_classes["prove"].expected_group_directed == "directed-group"
           and fixture_classes["select"].expected_group_directed is None)
+    check("a table row with a pull_request prefix populates "
+          "expected_group_pull_request_prefix",
+          fixture_classes["prove"].expected_group_pull_request_prefix == "merge-group-"
+          and fixture_classes["select"].expected_group_pull_request_prefix is None)
 
     # --- extract_workflow_concurrency_facts: a synthetic board-loop.yml
     # extracts each job's own concurrency: block, keyed by job. ---
@@ -747,18 +781,22 @@ def run_selftest():
     base_classifications = [
         JobClassification(job="select", can_select_or_open_fix_pr=True,
                            expected_group_ordinary="ordinary-group",
+                           expected_group_pull_request_prefix=None,
                            expected_group_directed=None,
                            expected_cancel_in_progress=False),
         JobClassification(job="mid", can_select_or_open_fix_pr=True,
                            expected_group_ordinary="ordinary-group",
+                           expected_group_pull_request_prefix=None,
                            expected_group_directed=None,
                            expected_cancel_in_progress=False),
         JobClassification(job="readiness", can_select_or_open_fix_pr=True,
                            expected_group_ordinary="ordinary-group",
+                           expected_group_pull_request_prefix=None,
                            expected_group_directed=None,
                            expected_cancel_in_progress=False),
         JobClassification(job="prove", can_select_or_open_fix_pr=True,
                            expected_group_ordinary="ordinary-group",
+                           expected_group_pull_request_prefix="merge-group-",
                            expected_group_directed="directed-group",
                            expected_cancel_in_progress=False),
     ]
@@ -777,8 +815,9 @@ def run_selftest():
             ("prove", WorkflowConcurrencyFact(
                 job="prove", group_literal=None,
                 group_expression=(
-                    "(needs.select.outputs.directed-stage != '') && "
-                    "'directed-group' || 'ordinary-group'"),
+                    "(needs.select.outputs.directed-stage != '') && 'directed-group' || "
+                    "(github.event_name == 'pull_request' && format('merge-group-{0}', "
+                    "github.event.pull_request.number)) || 'ordinary-group'"),
                 cancel_in_progress=False, line=13)),
             ("other-job", WorkflowConcurrencyFact(
                 job="other-job", group_literal="unrelated-group",
@@ -843,6 +882,41 @@ def run_selftest():
           [f.property for f in directed_findings] == ["directed-group-mismatch"]
           and directed_findings[0].job == "prove")
 
+    # --- the three-arm pull_request middle arm (specs/096-durable-prove-entry
+    # maintainer review): a wrong prefix, a missing arm (reverted to the old
+    # two-arm shape), and an arm present where none is classified each fail
+    # as pull-request-group-prefix-mismatch, distinct from directed-group-
+    # mismatch above. ---
+    wrong_prefix_findings = compute_drift_findings(
+        base_claim, base_classifications,
+        make_facts({"prove": make_facts()["prove"]._replace(group_expression=(
+            "(needs.select.outputs.directed-stage != '') && 'directed-group' || "
+            "(github.event_name == 'pull_request' && format('wrong-group-{0}', "
+            "github.event.pull_request.number)) || 'ordinary-group'"))}))
+    check("a wrong pull_request middle-arm prefix is pull-request-group-prefix-mismatch",
+          [f.property for f in wrong_prefix_findings] == ["pull-request-group-prefix-mismatch"]
+          and wrong_prefix_findings[0].job == "prove")
+
+    missing_middle_findings = compute_drift_findings(
+        base_claim, base_classifications,
+        make_facts({"prove": make_facts()["prove"]._replace(group_expression=(
+            "(needs.select.outputs.directed-stage != '') && "
+            "'directed-group' || 'ordinary-group'"))}))
+    check("a missing pull_request middle arm is pull-request-group-prefix-mismatch",
+          [f.property for f in missing_middle_findings] == ["pull-request-group-prefix-mismatch"]
+          and missing_middle_findings[0].job == "prove")
+
+    unexpected_middle_classifications = [
+        c._replace(expected_group_pull_request_prefix=None) if c.job == "prove" else c
+        for c in base_classifications
+    ]
+    unexpected_middle_findings = compute_drift_findings(
+        base_claim, unexpected_middle_classifications, make_facts())
+    check("a pull_request middle arm where none is classified is "
+          "pull-request-group-prefix-mismatch",
+          [f.property for f in unexpected_middle_findings] == ["pull-request-group-prefix-mismatch"]
+          and unexpected_middle_findings[0].job == "prove")
+
     # --- group-name comparison (PR #813 review, T022/T024): a coordinated
     # rename of the ordinary or directed group across concurrency-groups.md
     # and board-loop.yml, with SKILL.md's claim left unchanged, is caught as
@@ -857,8 +931,9 @@ def run_selftest():
         "mid": make_facts()["mid"]._replace(group_literal="renamed-ordinary-group"),
         "readiness": make_facts()["readiness"]._replace(group_literal="renamed-ordinary-group"),
         "prove": make_facts()["prove"]._replace(group_expression=(
-            "(needs.select.outputs.directed-stage != '') && "
-            "'directed-group' || 'renamed-ordinary-group'")),
+            "(needs.select.outputs.directed-stage != '') && 'directed-group' || "
+            "(github.event_name == 'pull_request' && format('merge-group-{0}', "
+            "github.event.pull_request.number)) || 'renamed-ordinary-group'")),
     })
     renamed_ordinary_findings = compute_drift_findings(
         base_claim, renamed_ordinary_classifications, renamed_ordinary_facts)
@@ -890,8 +965,9 @@ def run_selftest():
     ]
     renamed_directed_facts = make_facts({
         "prove": make_facts()["prove"]._replace(group_expression=(
-            "(needs.select.outputs.directed-stage != '') && "
-            "'renamed-directed-group' || 'ordinary-group'")),
+            "(needs.select.outputs.directed-stage != '') && 'renamed-directed-group' || "
+            "(github.event_name == 'pull_request' && format('merge-group-{0}', "
+            "github.event.pull_request.number)) || 'ordinary-group'")),
     })
     renamed_directed_findings = compute_drift_findings(
         base_claim, renamed_directed_classifications, renamed_directed_facts)
