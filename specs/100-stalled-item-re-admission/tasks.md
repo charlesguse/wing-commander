@@ -442,3 +442,7 @@ T023's full suite run — this is the same regression concern noted under
 ## Maintainer Feedback (review of 7b4b0825, PR #885)
 
 - [ ] T026 [US3] BLOCKING: Fix clause 2b (board-loop.yml:822-827) so only the review job's converged-verdict wording resolves `step == "readiness"`; a budget-spent verdict (board_item_marker.py:170's `_REVIEW_BUDGET_SPENT_RE`) must instead resolve to `review` with a fresh round budget (FR-009). Update contracts/resume-recovery.md's "spent budget → readiness" row to match and add a checked-in fixture covering a re-admitted budget-spent stall with an unmoved head.
+
+## Maintainer Feedback (review of 7b4b0825, PR #885)
+
+- [ ] T027 [US3] Fix: board-loop.yml:689 passes `COMMENTS_JSON` via an environment variable, which can exceed the OS's ~128 KiB single-argument/env limit (reproduced with a 142 KB comments array: `python3: Argument list too long`, rc=126) and silently wedges resume under `set -uo pipefail`. Pass `COMMENTS_PATH` instead and `json.load()` the file in the heredoc, matching the marker read at board-loop.yml:589.
