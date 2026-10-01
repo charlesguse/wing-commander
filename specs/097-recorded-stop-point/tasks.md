@@ -442,11 +442,11 @@ cleanly, and a pre-loop stop command cannot wedge an issue forever.
 **Purpose**: Whole-suite verification and the post-merge proof CLAUDE.md's
 board rules require for Actions-only behaviour.
 
-- [ ] T031 [P] Run `python .github/scripts/run-local-gates.py` locally
+- [X] T031 [P] Run `python .github/scripts/run-local-gates.py` locally
   (CLAUDE.md "Before pushing"). Confirm Gate 128 and its `--self-test` both
   pass, and that Gate 87 still passes completely unchanged (`research.md`
   D1 — `find_stop_request()` was never modified).
-- [ ] T032 [P] Run `quickstart.md` Scenario F (kill switch and stop request
+- [X] T032 [P] Run `quickstart.md` Scenario F (kill switch and stop request
   together) structurally: confirm the stop point IS still recorded
   (FR-012) and the item's only release mechanism afterward is removing
   `board:stalled`, independent of the kill switch's own state.
