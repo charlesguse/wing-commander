@@ -41,6 +41,31 @@ deterministic read-back. `research.md` D10 is the design rationale;
    `specs/` outside `specs/*/contracts/`: spec documents are corrected in
    their own spec's PR, never filed (board reset of 2026-10-01). A
    finding citing any other file, a live contract included, still files.
+   Then, when the caller passed a `lifecycle-issue-number`, every finding
+   that cites the run's own `spec-dir` among its files AND whose
+   `fingerprint_basis.file_path` is a file this checkout changed against
+   the default branch (`git diff --name-only $(git merge-base
+   origin/<default> HEAD)`) is a defect in this lifecycle's in-flight
+   change. It is not filed. Instead it is listed in one checklist comment
+   on the lifecycle issue, so the spec's own final PR review sees it:
+   - Title and `what` are each shown in a code span, with backticks
+     removed and any comment opener broken.
+   - Up to 10 distinct defects are listed, as `routed_to_lifecycle`. The
+     rest count as `dropped_cap`.
+   - Each line carries its fingerprint marker on the line below it.
+   - A line is not posted again, and counts as `appended`, when its
+     marker already stands as a whole line directly under an unchecked
+     box in a bot comment on that issue, or when it repeats an earlier
+     defect in the same run. A line a maintainer checked off is fixed, so
+     the same defect seen again is posted again.
+   - A failed read or post counts the rest as `dropped_api_failure` and
+     never fails the stage.
+
+   Ownership comes from git, never from the spec's prose. A file the spec
+   only runs or reads, which its `tasks.md` may name, is main's. A finding
+   anchored there files as usual, so a defect on main is never parked on
+   a lifecycle issue that will close. A checkout without that history
+   routes nothing.
 4. If survivors exceed `cap`, keep the first `cap` in proposal order
    (research.md D11); log the rest as `dropped_cap`.
 5. For each surviving finding: compute the fingerprint (research.md D6),

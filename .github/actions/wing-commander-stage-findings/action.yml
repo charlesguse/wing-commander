@@ -7,7 +7,9 @@
 #
 # Pipeline, in order: enable check -> extract raw findings per channel
 # shape (fenced-block or structured-array) -> validate each against
-# .github/schemas/stage-finding.schema.json -> cap survivors -> per
+# .github/schemas/stage-finding.schema.json -> drop spec-document errata
+# and route this spec's own in-flight defects to one lifecycle-issue
+# comment (board reset of 2026-10-01) -> cap survivors -> per
 # survivor, fingerprint + compose body + report through
 # wing-commander-durable-failure-issue (dedup by a marker embedded in the
 # issue body) -> cross-link onto the lifecycle issue via
@@ -112,7 +114,7 @@ runs:
         else
           echo "do-run=false" >> "$GITHUB_OUTPUT"
           cat > "$STATE_FILE" <<'EOF'
-        {"disabled": true, "proposed": 0, "dropped_malformed": [], "dropped_cap": 0, "dropped_spec_errata": 0, "filed": 0, "appended": 0, "dropped_api_failure": 0, "outstanding_skipped": 0, "notes": []}
+        {"disabled": true, "proposed": 0, "dropped_malformed": [], "dropped_cap": 0, "dropped_spec_errata": 0, "routed_to_lifecycle": 0, "filed": 0, "appended": 0, "dropped_api_failure": 0, "outstanding_skipped": 0, "notes": []}
         EOF
         fi
 
@@ -136,6 +138,7 @@ runs:
         EXECUTION_OUTPUT_PATH: ${{ inputs.execution-output-path }}
         OUT_DIR: ${{ runner.temp }}/wc-stage-findings
         STATE_FILE: ${{ runner.temp }}/wc-stage-findings/state.json
+        LIFECYCLE_ISSUE_NUMBER: ${{ inputs.lifecycle-issue-number }}
       run: |
         set -uo pipefail
         mkdir -p "$OUT_DIR"
@@ -146,6 +149,7 @@ runs:
         import os
         import re
         import secrets
+        import subprocess
 
         _schema_validator = os.path.join(
             os.environ["GITHUB_ACTION_PATH"], "..", "..", "scripts",
@@ -158,6 +162,7 @@ runs:
 
         STAGE = os.environ["STAGE"]
         SPEC_DIR = os.environ["SPEC_DIR"]
+        LIFECYCLE_ISSUE_NUMBER = os.environ.get("LIFECYCLE_ISSUE_NUMBER", "").strip()
         RUN_URL = os.environ["RUN_URL"]
         LABEL_PREFIX = os.environ["LABEL_PREFIX"]
         CHANNEL_MODE = os.environ["CHANNEL_MODE"]
@@ -241,7 +246,70 @@ runs:
             paths.append(finding["fingerprint_basis"]["file_path"])
             return all(is_spec_doc_path(p) for p in paths)
 
+        def _norm(path):
+            norm = str(path).strip().replace("\\", "/")
+            while norm.startswith("./"):
+                norm = norm[2:]
+            return norm
+
+        def _branch_changed_paths():
+            # The files this checkout changed against the default branch:
+            # committed on the lifecycle's branch or still in the working
+            # tree. The default branch is read from git (a composite takes
+            # no event facts, constitution VII): origin/HEAD when the
+            # checkout set it, else origin/main, else origin/master. Any
+            # git failure (no history, none of those refs) returns None,
+            # and nothing is treated as in flight.
+            try:
+                base_ref = None
+                for ref in ("origin/HEAD", "origin/main", "origin/master"):
+                    probe = subprocess.run(["git", "rev-parse", "--verify", "--quiet", ref + "^{commit}"],
+                                           capture_output=True, text=True, timeout=60)
+                    if probe.returncode == 0:
+                        base_ref = ref
+                        break
+                if base_ref is None:
+                    return None
+                base = subprocess.run(["git", "merge-base", base_ref, "HEAD"],
+                                      capture_output=True, text=True, timeout=60)
+                if base.returncode != 0 or not base.stdout.strip():
+                    return None
+                diff = subprocess.run(["git", "diff", "--name-only", base.stdout.strip()],
+                                      capture_output=True, text=True, timeout=60)
+            except (OSError, subprocess.SubprocessError):
+                return None
+            if diff.returncode != 0:
+                return None
+            return {_norm(line) for line in diff.stdout.splitlines() if line.strip()}
+
+        BRANCH_CHANGED = None
+
+        def in_flight(finding):
+            # A defect in this spec's own in-flight change belongs on its
+            # lifecycle thread, where its final PR's review sees it, not on
+            # the board as an issue of its own (the board reset of
+            # 2026-10-01: #894-#897 were this shape). "Its own change" is
+            # decided from git, never from prose: the finding cites this
+            # spec's directory AND its anchor -- the file the defect is in
+            # -- is a file this lifecycle's branch changed. A file the spec
+            # only runs or reads (its tasks.md names run-local-gates.py in
+            # most specs) is main's, so a bug there files on the board as
+            # usual and is never lost when the lifecycle issue closes.
+            # Without a lifecycle issue there is nowhere to put it.
+            global BRANCH_CHANGED
+            own = SPEC_DIR.rstrip("/")
+            if not (LIFECYCLE_ISSUE_NUMBER and own):
+                return False
+            paths = [_norm(p) for p in finding["evidence"]["file_paths"]]
+            paths.append(_norm(finding["fingerprint_basis"]["file_path"]))
+            if not any(p == own or p.startswith(own + "/") for p in paths):
+                return False
+            if BRANCH_CHANGED is None:
+                BRANCH_CHANGED = _branch_changed_paths() or set()
+            return _norm(finding["fingerprint_basis"]["file_path"]) in BRANCH_CHANGED
+
         survivors = []
+        in_flight_findings = []
         dropped_malformed = []
         dropped_spec_errata = 0
         for item in raw:
@@ -253,6 +321,8 @@ runs:
                 dropped_spec_errata += 1
                 notes.append("dropped (spec errata, fix in the spec's own PR): {0}".format(
                     item.get("title", "(untitled)")))
+            elif in_flight(item):
+                in_flight_findings.append(item)
             else:
                 survivors.append(item)
 
@@ -272,6 +342,9 @@ runs:
         dropped_cap = len(overflow)
         for item in overflow:
             notes.append("dropped (cap exceeded): {0}".format(item.get("title", "(untitled)")))
+
+        def marker_for(fingerprint):
+            return "<!-- wing-commander-finding: fingerprint={0} -->".format(fingerprint)
 
         def compose_body(finding, fingerprint):
             spec_num = ""
@@ -296,7 +369,7 @@ runs:
                 for dl in detail.splitlines():
                     lines.append("> {0}".format(dl))
             lines.append("")
-            lines.append("<!-- wing-commander-finding: fingerprint={0} -->".format(fingerprint))
+            lines.append(marker_for(fingerprint))
             return "\n".join(lines) + "\n"
 
         def normalize_basis(value):
@@ -337,35 +410,89 @@ runs:
             return "Seen again in run {0}.\n\n{1}\n\n{2}\n".format(
                 RUN_URL, finding["title"], finding["what"])
 
-        outputs = [("survivor-count", str(len(kept)))]
+        def finding_fingerprint(finding):
+            # #569: the fingerprint's gate_or_artifact segment is only ever
+            # the agent's own normalized wording when that wording is
+            # checked against the named file's content (anchor verifies);
+            # otherwise the finding is keyed under the fallback shape
+            # (data-model.md "Fingerprint", both shapes) rather than
+            # trusting agent prose directly into the key. Returns the
+            # fingerprint and whether the anchor verified.
+            basis = finding["fingerprint_basis"]
+            norm_path = normalize_basis(basis["file_path"])
+            verified, norm_gate = verify_anchor(basis["file_path"], basis["gate_or_artifact"])
+            if verified:
+                key = "anchor|{0}|{1}|{2}".format(STAGE, norm_path, norm_gate)
+            else:
+                key = "fallback|{0}|{1}".format(STAGE, norm_path)
+            return hashlib.sha256(key.encode("utf-8")).hexdigest(), verified
+
+        # Each in-flight finding becomes one checklist line plus its own
+        # fingerprint marker on the line below it (the post step skips an
+        # item whose marker is already on the issue under an unchecked
+        # line). title/what are agent-authored (FR-026): each is one line
+        # by schema, shown inside a code span with its backticks removed
+        # and any comment opener broken, so no mention, link, HTML or
+        # marker forms. The same defect twice in one run is one line,
+        # counted the way a second filing of one fingerprint is: appended.
+        # Duplicates go first, then the cap, so the cap counts distinct
+        # defects.
+        LIFECYCLE_MAX = 10
+
+        def code_span(text, limit):
+            text = " ".join(str(text).replace("`", "'").replace("<!--", "<! --").split())
+            if len(text) > limit:
+                text = text[:limit - 3].rstrip() + "..."
+            return "`{0}`".format(text) if text else "`(empty)`"
+
+        distinct = []
+        seen_markers = set()
+        appended_in_run = 0
+        for item in in_flight_findings:
+            marker = marker_for(finding_fingerprint(item)[0])
+            if marker in seen_markers:
+                appended_in_run += 1
+                notes.append("same defect as an earlier in-flight finding this run: {0}".format(
+                    item.get("title", "(untitled)")))
+                continue
+            seen_markers.add(marker)
+            distinct.append((item, marker))
+        for item, _marker in distinct[LIFECYCLE_MAX:]:
+            dropped_cap += 1
+            notes.append("dropped (cap exceeded, in-flight): {0}".format(item.get("title", "(untitled)")))
+
+        lifecycle_items_path = os.path.join(OUT_DIR, "lifecycle-items.json")
+        items = []
+        for item, marker in distinct[:LIFECYCLE_MAX]:
+            items.append({
+                "line": "- [ ] {0} — {1}".format(code_span(item["title"], 200), code_span(item["what"], 600)),
+                "marker": marker,
+            })
+            notes.append("listed for the lifecycle issue (a defect in this spec's own change): {0}: {1}".format(
+                item.get("title", "(untitled)"), item.get("what", "")))
+        with open(lifecycle_items_path, "w", encoding="utf-8") as fh:
+            json.dump(items, fh)
+        lifecycle_header = ("The {0} stage found defect(s) in this spec's own change ([run]({1})). "
+                            "They are listed here instead of filed as issues: fix them in this "
+                            "spec's PR.".format(STAGE, RUN_URL))
+
+        outputs = [("survivor-count", str(len(kept))),
+                   ("lifecycle-count", str(len(items))),
+                   ("lifecycle-items-file", lifecycle_items_path),
+                   ("lifecycle-header", lifecycle_header)]
         for i in range(MAX_SLOTS):
             if i < len(kept):
                 finding = kept[i]
                 basis = finding["fingerprint_basis"]
-                # #569: the fingerprint's gate_or_artifact segment is only
-                # ever the agent's own normalized wording when that wording
-                # is checked against the named file's content (anchor
-                # verifies); otherwise the finding is keyed under the
-                # fallback shape (data-model.md "Fingerprint", both shapes)
-                # rather than trusting agent prose directly into the key.
-                norm_path = normalize_basis(basis["file_path"])
-                verified, norm_gate = verify_anchor(
-                    basis["file_path"], basis["gate_or_artifact"])
-                if verified:
-                    fp = hashlib.sha256("anchor|{0}|{1}|{2}".format(
-                        STAGE, norm_path, norm_gate
-                    ).encode("utf-8")).hexdigest()
-                else:
-                    fp = hashlib.sha256("fallback|{0}|{1}".format(
-                        STAGE, norm_path
-                    ).encode("utf-8")).hexdigest()
+                fp, verified = finding_fingerprint(finding)
+                if not verified:
                     notes.append(
                         "anchor unverifiable for \"{0}\": \"{1}\" was not "
                         "found (verbatim, normalized) in {2}; keyed via the "
                         "fallback route rather than dropped.".format(
                             finding["title"], basis["gate_or_artifact"],
                             basis["file_path"]))
-                marker = "<!-- wing-commander-finding: fingerprint={0} -->".format(fp)
+                marker = marker_for(fp)
                 label = "{0}:{1}".format(LABEL_PREFIX, STAGE)
                 body_path = os.path.join(OUT_DIR, "body-{0}.md".format(i))
                 recap_path = os.path.join(OUT_DIR, "recap-{0}.md".format(i))
@@ -391,8 +518,9 @@ runs:
             "dropped_malformed": dropped_malformed,
             "dropped_cap": dropped_cap,
             "dropped_spec_errata": dropped_spec_errata,
+            "routed_to_lifecycle": len(items),
             "filed": 0,
-            "appended": 0,
+            "appended": appended_in_run,
             "dropped_api_failure": 0,
             "outstanding_skipped": 0,
             "notes": notes,
@@ -735,6 +863,63 @@ runs:
         artifact-url: ${{ steps.record-2.outputs.issue-url }}
         context: (run ${{ inputs.run-url }})
 
+    # This spec's own in-flight defects, listed on its lifecycle issue as
+    # one checklist comment (prepare's in_flight()). A finding whose marker
+    # is already in a bot comment there is not posted again, so a re-run
+    # stage (implement's converge cycles) does not repeat itself. It is a
+    # header plus a list, not the one-line item
+    # wing-commander-outstanding-task-item posts, so it composes its own body.
+    - name: Post in-flight findings to the lifecycle issue
+      id: post-in-flight
+      if: steps.gate.outputs.do-run == 'true' && steps.prepare.outputs.lifecycle-count != '' && steps.prepare.outputs.lifecycle-count != '0' && inputs.lifecycle-issue-number != ''
+      continue-on-error: true
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        ISSUE_NUMBER: ${{ inputs.lifecycle-issue-number }}
+        ITEMS_FILE: ${{ steps.prepare.outputs.lifecycle-items-file }}
+        HEADER: ${{ steps.prepare.outputs.lifecycle-header }}
+        STATE_FILE: ${{ runner.temp }}/wc-stage-findings/state.json
+      run: |
+        set -uo pipefail
+        count="$(jq 'length' "$ITEMS_FILE")"
+        fail() {
+          # FR-022: never fails the stage. The finding text is already in
+          # the step summary through .notes; the count moves to dropped (API).
+          echo "::warning::wing-commander-stage-findings: $1 -- $count in-flight finding(s) not posted to lifecycle issue #$ISSUE_NUMBER; see the step summary for the finding text."
+          tmp="$(mktemp "${RUNNER_TEMP:-/tmp}/wc-sf-inflight.XXXXXX")"
+          jq --argjson n "$count" '.routed_to_lifecycle -= $n | .dropped_api_failure += $n | .notes += ["the in-flight findings above could not be posted to the lifecycle issue"]' \
+            "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
+          exit 0
+        }
+        # The bodies go through a file: one --arg is capped at 128 KiB, and
+        # a long lifecycle thread passes that. An item counts as posted
+        # only when its marker is a whole line directly under an unchecked
+        # box. A marker quoted inside some other line is not one, and a
+        # line a maintainer checked off is fixed, so the same defect seen
+        # again is posted again.
+        existing_file="$(mktemp "${RUNNER_TEMP:-/tmp}/wc-sf-inflight-existing.XXXXXX")"
+        if ! gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments" --paginate \
+            --jq '.[] | select(.user.type == "Bot") | .body' > "$existing_file"; then
+          fail "reading the lifecycle issue's comments failed"
+        fi
+        fresh="$(jq -c --rawfile existing "$existing_file" '
+          ($existing | split("\n") | map(rtrimstr("\r"))) as $lines
+          | [.[] | select(.marker as $m
+              | [range(1; $lines | length) | select($lines[.] == $m and ($lines[. - 1] | startswith("- [ ] ")))]
+              | length == 0)]' "$ITEMS_FILE")" \
+          || fail "filtering already-posted findings failed"
+        already=$(( count - $(jq 'length' <<<"$fresh") ))
+        if [ "$already" -gt 0 ]; then
+          tmp="$(mktemp "${RUNNER_TEMP:-/tmp}/wc-sf-inflight.XXXXXX")"
+          jq --argjson n "$already" '.routed_to_lifecycle -= $n | .appended += $n' "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
+        fi
+        count="$(jq 'length' <<<"$fresh")"
+        [ "$count" -gt 0 ] || exit 0
+        body_file="$(mktemp "${RUNNER_TEMP:-/tmp}/wc-sf-inflight-body.XXXXXX")"
+        { printf '%s\n\n' "$HEADER"; jq -r '.[] | .line + "\n" + .marker' <<<"$fresh"; } > "$body_file"
+        gh issue comment "$ISSUE_NUMBER" --body-file "$body_file" >/dev/null || fail "gh issue comment failed"
+
     # Always runs, regardless of enabled/disabled or any earlier step's own
     # outcome (FR-020/FR-021): the one step whose outputs the composite's
     # own `outputs:` block reads from, and the one place $GITHUB_STEP_SUMMARY
@@ -752,7 +937,7 @@ runs:
         if [ ! -f "$STATE_FILE" ]; then
           mkdir -p "$(dirname "$STATE_FILE")"
           cat > "$STATE_FILE" <<'EOF'
-        {"disabled": false, "proposed": 0, "dropped_malformed": [], "dropped_cap": 0, "dropped_spec_errata": 0, "filed": 0, "appended": 0, "dropped_api_failure": 0, "outstanding_skipped": 0, "notes": ["wing-commander-stage-findings: no state was recorded for this run (an earlier step in this composite did not complete) — reporting zero findings rather than failing the stage."]}
+        {"disabled": false, "proposed": 0, "dropped_malformed": [], "dropped_cap": 0, "dropped_spec_errata": 0, "routed_to_lifecycle": 0, "filed": 0, "appended": 0, "dropped_api_failure": 0, "outstanding_skipped": 0, "notes": ["wing-commander-stage-findings: no state was recorded for this run (an earlier step in this composite did not complete) — reporting zero findings rather than failing the stage."]}
         EOF
         fi
 
@@ -764,6 +949,7 @@ runs:
         dropped_cap="$(jq -r '.dropped_cap' "$STATE_FILE")"
         dropped_api_failure="$(jq -r '.dropped_api_failure' "$STATE_FILE")"
         dropped_spec_errata="$(jq -r '.dropped_spec_errata // 0' "$STATE_FILE")"
+        routed_to_lifecycle="$(jq -r '.routed_to_lifecycle // 0' "$STATE_FILE")"
 
         echo "filed=$filed" >> "$GITHUB_OUTPUT"
         echo "appended=$appended" >> "$GITHUB_OUTPUT"
@@ -778,7 +964,8 @@ runs:
             echo "Filing is disabled for this stage."
           elif [ "$proposed" = "0" ] && [ "$filed" = "0" ] && [ "$appended" = "0" ] && \
                [ "$dropped_malformed_count" = "0" ] && [ "$dropped_cap" = "0" ] && \
-               [ "$dropped_api_failure" = "0" ] && [ "$dropped_spec_errata" = "0" ]; then
+               [ "$dropped_api_failure" = "0" ] && [ "$dropped_spec_errata" = "0" ] && \
+               [ "$routed_to_lifecycle" = "0" ]; then
             echo "No findings proposed this run."
           else
             echo "- proposed: $proposed"
@@ -788,6 +975,7 @@ runs:
             echo "- dropped (cap exceeded): $dropped_cap"
             echo "- dropped (API failure): $dropped_api_failure"
             echo "- dropped (spec errata): $dropped_spec_errata"
+            echo "- routed to the lifecycle issue (in-flight change): $routed_to_lifecycle"
             notes="$(jq -r '.notes[]?' "$STATE_FILE")"
             if [ -n "$notes" ]; then
               echo ""
@@ -796,7 +984,7 @@ runs:
           fi
         } >> "$GITHUB_STEP_SUMMARY"
 
-        summary_text="$(jq -r '"proposed=\(.proposed) filed=\(.filed) appended=\(.appended) dropped_malformed=\(.dropped_malformed|length) dropped_cap=\(.dropped_cap) dropped_api_failure=\(.dropped_api_failure) dropped_spec_errata=\(.dropped_spec_errata // 0)"' "$STATE_FILE")"
+        summary_text="$(jq -r '"proposed=\(.proposed) filed=\(.filed) appended=\(.appended) dropped_malformed=\(.dropped_malformed|length) dropped_cap=\(.dropped_cap) dropped_api_failure=\(.dropped_api_failure) dropped_spec_errata=\(.dropped_spec_errata // 0) routed_to_lifecycle=\(.routed_to_lifecycle // 0)"' "$STATE_FILE")"
         {
           echo "summary<<WC_STAGE_FINDINGS_SUMMARY_EOF"
           echo "$summary_text"
