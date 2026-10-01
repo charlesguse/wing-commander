@@ -345,7 +345,7 @@ names are free-form and which behavior (if any) still reads them.
 rename my wrappers, and what do I lose?" without opening `watchdog.yml`
 (SC-005).
 
-- [ ] T040 [US3] Add a new subsection to `docs/adoption.md` directly after
+- [X] T040 [US3] Add a new subsection to `docs/adoption.md` directly after
       "A wrapper-owned feature needs a wrapper change too" (lines
       612-639), stating: wrapper display names are free-form for all ten
       stages; the sole behavior that still reads one is the FR-009

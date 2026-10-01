@@ -657,6 +657,34 @@ lists its nine completion-trigger workflows plus
 `wing-commander-8-watchdog.yml`; substitute your own repository's wrapper
 filenames.
 
+### Your wrapper's display name is free-form
+
+Every one of your wrapper files' `name:` — the string GitHub shows as the
+workflow's own name, and the one every example in this document pins to a
+`"Wing Commander · N stage"` string purely by convention — may be anything
+you like. The watchdog's stage-identity resolution (specs/099-name-free-
+stage-identity) reads each inspected run's own metrics record first: every
+published stage writes its pipeline-defined `stage` literal into that
+record regardless of which wrapper, under which name, called it, so
+renaming your wrapper changes nothing about the coverage you get.
+
+The sole behaviour that still reads a wrapper's display name is the one
+fallback case: a run that left no metrics record at all — an expired or
+missing artifact, a failure early enough that the stage never got to
+write one, or a cancellation. For that one case only, the watchdog
+recognises the ten reference names this document's own example wrappers
+already use (`intake` through `pr-conversation`, `rebase`, and
+`watchdog`); a differently-named wrapper in that same no-record situation
+is inspected and reported the same as any other run, with one difference
+— its report names the stage as not identified, rather than guessing one,
+and (only when the run otherwise looks like a pipeline stage run, i.e. it
+left behind an agent execution-output artifact) notes that the display
+name was not recognised either.
+
+Every reference-named example wrapper already shown in this document
+keeps working exactly as it does today either way: nothing here asks you
+to change a wrapper that already uses the names this document ships.
+
 ## Migrating to `@v2`
 
 The product's rename from "speckit-action" to "Wing Commander" ships its
