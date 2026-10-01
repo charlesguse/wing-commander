@@ -2,10 +2,8 @@
   "issue": 560,
   "spec_dir": "specs/074-serialized-fold-dispatch",
   "feature_num": "074",
-  "stage": "implement",
+  "stage": "review",
   "iteration": 7,
   "spec_branch": "spec/074-serialized-fold-dispatch",
-  "pending_re_review_from": [
-    "charlesguse"
-  ]
+  "pending_re_review_from": []
 }
