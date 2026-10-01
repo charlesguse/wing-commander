@@ -13,7 +13,12 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from board_item_marker import write_marker, read_marker_with_timestamp  # noqa: E402
 from board_prove_displacement import RECORDED_REASON  # noqa: E402
-from board_prove_recovery import is_recoverable, find_recoverable_items  # noqa: E402
+from board_prove_recovery import (  # noqa: E402
+    RECOVERY_DIRECTED_INPUT, is_recoverable, find_recoverable_items,
+)
+
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+REPO_BOARD_LOOP = os.path.join(REPO_ROOT, ".github", "workflows", "board-loop.yml")
 
 BOT_LOGIN = "wing-commander-bot[bot]"
 BOT_USER = {"login": BOT_LOGIN, "type": "Bot"}
@@ -168,8 +173,50 @@ def run_marker_round_trip():
     return failures
 
 
+def run_directed_recovery_input_spelling():
+    """research.md D5/D6: board-loop.yml cannot import
+    RECOVERY_DIRECTED_INPUT (a workflow_dispatch input name is YAML schema,
+    resolved before any step runs) -- so this checks the same literal
+    appears, verbatim, at the three sites that would otherwise silently
+    drift from it: the input's own declaration, the recovery step's
+    dispatch flag, and at least one `inputs.<name>` read."""
+    failures = 0
+    with open(REPO_BOARD_LOOP, encoding="utf-8") as fh:
+        text = fh.read()
+
+    declaration = "      {0}:".format(RECOVERY_DIRECTED_INPUT)
+    if declaration not in text:
+        failures += 1
+        print("::error::verify-board-prove-recovery: board-loop.yml declares no "
+              "`{0}` workflow_dispatch input (expected {1!r}).".format(
+                  RECOVERY_DIRECTED_INPUT, declaration))
+    else:
+        print("[ok] board-loop.yml declares the `{0}` workflow_dispatch input".format(
+            RECOVERY_DIRECTED_INPUT))
+
+    dispatch_flag = "-f {0}=true".format(RECOVERY_DIRECTED_INPUT)
+    if dispatch_flag not in text:
+        failures += 1
+        print("::error::verify-board-prove-recovery: board-loop.yml's recovery dispatch "
+              "never sets `{0}` (expected {1!r}).".format(RECOVERY_DIRECTED_INPUT, dispatch_flag))
+    else:
+        print("[ok] board-loop.yml's recovery dispatch sets `{0}`".format(RECOVERY_DIRECTED_INPUT))
+
+    read_expr = "inputs.{0}".format(RECOVERY_DIRECTED_INPUT)
+    if text.count(read_expr) < 2:
+        failures += 1
+        print("::error::verify-board-prove-recovery: board-loop.yml reads `{0}` fewer than "
+              "twice (expected the recovery notice and the metrics-label branch both to "
+              "read it).".format(read_expr))
+    else:
+        print("[ok] board-loop.yml reads `{0}` at least twice".format(read_expr))
+
+    return failures
+
+
 def run():
-    failures = run_is_recoverable() + run_find_recoverable_items() + run_marker_round_trip()
+    failures = (run_is_recoverable() + run_find_recoverable_items() + run_marker_round_trip()
+                + run_directed_recovery_input_spelling())
     print("verify-board-prove-recovery: {0} failure(s).".format(failures))
     return 1 if failures else 0
 

@@ -19,8 +19,14 @@ import board_prove_displacement  # noqa: E402
 from board_item_marker import read_marker_with_timestamp  # noqa: E402
 
 # research.md D5/D6: the one spelling of the `workflow_dispatch` input name
-# a recovery dispatch sets -- imported by the board-loop.yml step and by
-# verify-board-prove-recovery.py rather than re-typed (CLAUDE.md single-home).
+# a recovery dispatch sets -- imported by verify-board-prove-recovery.py
+# rather than re-typed (CLAUDE.md single-home). board-loop.yml's own three
+# sites (the input declaration, the dispatch step's `-f` flag, and the two
+# `inputs.directed-recovery` reads) cannot import a Python constant -- a
+# workflow_dispatch input name is YAML schema, resolved before any step
+# runs -- so this constant's reach is the Python side only; those three
+# YAML sites are checked instead by grep (verify-board-prove-recovery.py's
+# own fixture) for the same literal text.
 RECOVERY_DIRECTED_INPUT = "directed-recovery"
 
 
