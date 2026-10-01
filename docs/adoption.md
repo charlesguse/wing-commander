@@ -429,7 +429,10 @@ on:
           below) matters: omitting it makes `gh workflow run` reject the
           `-f fold_queue_token=` argument the pipeline sends with an
           "Unexpected inputs provided" error whenever a review actually
-          folds something, failing that dispatch outright.
+          folds something -- the pipeline retries once without it when
+          that happens, so the dispatch still goes through, just
+          unticketed, losing this feature's cross-run serialization for
+          that one cycle (see the chaining-payload-contract table below).
         required: false
         default: ""
         type: string

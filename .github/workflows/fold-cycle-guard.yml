@@ -471,8 +471,48 @@ jobs:
           # reopen).
           implement_token="$(printf '%s\n' "$CLAIM_OUT" | grep '^implement-token=' | cut -d= -f2-)"
 
-          GH_TOKEN="$GH_TOKEN" gh workflow run "$IMPLEMENT_WORKFLOW" \
-            -R "$GITHUB_REPOSITORY" -f spec_dir="$SPEC_DIR" -f issue="$ISSUE" -f iteration="${ITERATION:-1}" -f fold_queue_token="$implement_token"
+          # T062 (maintainer review of #821, B10): mirrors the identical
+          # 422-retry fallback T047 added to wing-commander-fold-dispatch's
+          # own dispatch step -- a wrapper predating this feature has no
+          # fold_queue_token workflow_dispatch input declared, and GitHub
+          # rejects an unknown input with a 422 "Unexpected inputs
+          # provided" before even queuing a run. Retrying once without it
+          # degrades to today's pre-serialization behavior for that one
+          # un-migrated wrapper instead of losing the recovered cycle
+          # outright. Not extracted into a shared _shared/ script: Gate 12
+          # forbids a gh call there, and the two `-f` argument lists this
+          # and wing-commander-fold-dispatch's own retry build are already
+          # distinct (this call carries no folded-json/round-folded-json),
+          # so sharing would only move the duplication, not remove it.
+          dispatch_err="$(mktemp)"
+          if ! GH_TOKEN="$GH_TOKEN" gh workflow run "$IMPLEMENT_WORKFLOW" \
+              -R "$GITHUB_REPOSITORY" -f spec_dir="$SPEC_DIR" -f issue="$ISSUE" -f iteration="${ITERATION:-1}" -f fold_queue_token="$implement_token" 2>"$dispatch_err"; then
+            if [ -n "$implement_token" ] && grep -qi "unexpected inputs" "$dispatch_err"; then
+              cat "$dispatch_err" >&2
+              echo "::warning::fold-cycle-guard: $IMPLEMENT_WORKFLOW rejected fold_queue_token as an unexpected input -- retrying without it. Add a fold_queue_token workflow_dispatch input (docs/adoption.md, wing-commander-5-implement.yml) to restore fold-queue serialization for this wrapper."
+              GH_TOKEN="$GH_TOKEN" gh workflow run "$IMPLEMENT_WORKFLOW" \
+                -R "$GITHUB_REPOSITORY" -f spec_dir="$SPEC_DIR" -f issue="$ISSUE" -f iteration="${ITERATION:-1}"
+              # Deliberately NOT releasing implement_token here the way
+              # T056 fixed wing-commander-fold-dispatch's own equivalent
+              # inline release: that fix exists because dispatch-once's own
+              # dispatch-queue ticket sits ahead of the implement ticket at
+              # this point, making an immediate release fail "not at queue
+              # head" -- the exact no-op T056 removed. This job holds no
+              # ticket of its own ahead of this one, but another run's
+              # ticket (or this very round's own prior, still-stale head)
+              # could still occupy the head, so an unconditional release
+              # attempt here would reproduce the identical class of bug.
+              # The redispatched (ticketless) run still gets correlated via
+              # "Record the redispatched run" below, so the existing
+              # correlated stale-reclaim path -- not a new release here --
+              # cleans this ticket up once that run actually completes.
+            else
+              cat "$dispatch_err" >&2
+              rm -f "$dispatch_err"
+              exit 1
+            fi
+          fi
+          rm -f "$dispatch_err"
 
           new_run_url=""
           for _ in 1 2 3 4 5 6; do
