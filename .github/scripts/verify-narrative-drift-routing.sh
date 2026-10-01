@@ -48,10 +48,11 @@ if "${{" in script:
               "eligibility' now contains an unresolved ${{ }} expression this "
               "harness does not substitute.")
 
-cases = [("narrative-drift", "true")] + [
+cases = [(cls, "true") for cls in ("narrative-drift", "denied-tool")] + [
     (cls, "false") for cls in
-    ("denied-tool", "lost-progress", "stage-mismatch", "turn-budget-trend",
-     "cost-line-missing", "cost-line-malformed", "spec-number-collision")
+    ("lost-progress", "stage-mismatch", "turn-budget-trend", "cost-line-missing",
+     "cost-line-malformed", "spec-number-collision", "denied-tool-x",
+     "narrative-drifts", "")
 ]
 failures = []
 for cls, expect in cases:
