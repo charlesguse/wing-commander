@@ -852,3 +852,73 @@ and evaporating into PR-body prose) that this feature exists to end.
   write-boundary-findings-json != '[]' && (routed || handoff ||
   iteration>=max)` (Maintainer Feedback item 12) per data-model.md:
   Routed flag / FR-012 / Routed finding (contradicts)
+
+## Review Gate Round 3 Findings
+
+- [ ] Review finding: In-flight dedup loop treats a None fingerprint as a real dedup key
+
+  The in-flight findings loop in wing-commander-stage-findings/action.yml calls compute_fingerprint() and uses its result as a dedup marker without checking for None, unlike the survivors loop added in the same diff which explicitly guards `if fp is None`
+
+  - .github/actions/wing-commander-stage-findings/action.yml
+
+  Detail: Around line 445 (in-flight loop) vs the None-guard added around lines 488-497 for the survivors loop; if compute-finding-fingerprint.sh crashes for two distinct in-flight findings, both get marker fingerprint=None and the second is silently treated as a duplicate of the first, dropping a real defect from the lifecycle-issue checklist with no dropped-malformed note
+
+- [ ] Review finding: No-write-path prefix normalization duplicated between classifier and enforcement
+
+  classify-out-of-boundary-tasks.sh's normalize_prefix (Python) and wing-commander-tool-args/action.yml's compose step (bash) independently reimplement the same trailing-slash/leading-./ canonicalization, kept in sync only by comments claiming parity, not a shared helper or formula-level gate
+
+  - .github/actions/_shared/classify-out-of-boundary-tasks.sh
+  - .github/actions/wing-commander-tool-args/action.yml
+
+  Detail: classify-out-of-boundary-tasks.sh lines ~86-97/92-124 vs wing-commander-tool-args/action.yml lines ~696-702; a future edge case (multiple leading './', trailing '//', different separators) can diverge between classification and enforcement with no gate catching it, violating FR-004/FR-005's 'stated boundary is the enforced boundary' guarantee and CLAUDE.md's single-home rule
+
+- [ ] Review finding: finding-kind branching hand-duplicated across three survivor slots
+
+  The new finding-kind: defect|routed-task input is implemented as inline if/ternary branches repeated identically in all three survivor slots of wing-commander-stage-findings/action.yml instead of callers passing pre-rendered phrase strings
+
+  - .github/actions/wing-commander-stage-findings/action.yml
+
+  Detail: Around lines 507, 524-538, 549, 566-580, 591, 608-622; a third finding-kind or a wording tweak needs 6 copy-pasted edits, and a missed one leaves one slot stale with no gate to catch it, bakes write-boundary vocabulary into a composite meant to stay generic
+
+- [ ] Review finding: Gate 12 token-resolution comment duplicated without a canonical pointer
+
+  The explanation for why gh issue list must stay inline (never moved to _shared/) is independently reworded in both wing-commander-durable-failure-issue/action.yml and wing-commander-write-boundary-lookup/action.yml, with neither comment pointing at the other, violating CLAUDE.md's single-canonical-comment rule
+
+  - .github/actions/wing-commander-write-boundary-lookup/action.yml
+  - .github/actions/wing-commander-durable-failure-issue/action.yml
+
+  Detail: write-boundary-lookup/action.yml ~lines 808-814 vs durable-failure-issue/action.yml ~lines 322-326; a future change to the Gate 12 rationale has two copies to update and nothing fails if only one is updated
+
+- [ ] Review finding: Per-unchecked-line fingerprint lookup re-reads and re-normalizes tasks.md
+
+  wing-commander-write-boundary-lookup/action.yml's lookup loop invokes compute-finding-fingerprint.sh once per unchecked tasks.md line, each call forking bash->python3 and re-reading/re-normalizing the whole file even though its content is identical across iterations
+
+  - .github/actions/wing-commander-write-boundary-lookup/action.yml
+  - .github/actions/_shared/compute-finding-fingerprint.sh
+
+  Detail: Loop around lines 829-842 calling verify_anchor() in compute-finding-fingerprint.sh; for K unchecked lines this pays O(K) redundant file reads, regex normalization passes, and process forks on every finalize run while the lifecycle is open
+
+- [ ] Review finding: run_cycle_step/run_retry_step near-identical copy-paste in gate test harness
+
+  verify-write-boundary.py's run_cycle_step and run_retry_step duplicate the same setup and env-dict construction, differing only in a result key, which step is looked up, and one extra env key
+
+  - .github/scripts/verify-write-boundary.py
+
+  Detail: Around lines 1474-1513; a future fix to shared env-building logic (as already happened once with WRITE_BOUNDARY_ALL_OOB) must be pasted into both functions or they silently diverge
+
+- [ ] Review finding: Lost watchdog.yml cross-reference when raising issue-list limit
+
+  The deleted comment in wing-commander-durable-failure-issue/action.yml explicitly tied --limit 200 to watchdog.yml's own dedup bound; the replacement raises the limit to 1000 and only cross-references wing-commander-write-boundary-lookup, dropping the watchdog.yml parity note entirely
+
+  - .github/actions/wing-commander-durable-failure-issue/action.yml
+  - .github/workflows/watchdog.yml
+
+  Detail: Around line 329; watchdog.yml still uses --limit 200 (lines ~3469,3484) with its own truncation-risk warning, but nothing now points at this composite's now-independent 1000 limit if watchdog's bound changes
+
+- [ ] Review finding: Duplicate import subprocess in stage-findings python heredoc
+
+  A new `import subprocess` was added at the top of the python heredoc in wing-commander-stage-findings/action.yml while a pre-existing `import subprocess` lower in the same block was left in place
+
+  - .github/actions/wing-commander-stage-findings/action.yml
+
+  Detail: Around line 365; harmless no-op re-import but a trivial cleanup a reviewer has to puzzle over
