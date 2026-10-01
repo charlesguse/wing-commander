@@ -25,7 +25,7 @@ import tempfile
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wc_lint_gate_source import LINT_WORKFLOW, extract_gate_step  # noqa: E402
 
-STEP_PREFIX = "Gate 3"
+STEP_PREFIX = "Gate 3 —"  # the em dash keeps Gates 30-39 and the self-test step out
 
 
 def caller(job_perms=None, wf_perms=None, uses="./.github/workflows/called.yml"):
@@ -119,6 +119,11 @@ CASES = [
      {"wrapper.yml": caller(job_perms=" read-all"),
       "called.yml": called(job_perms=A_WRITE)},
      True, ("actions", "write (granted read)")),
+
+    ("read-all grants no id-token, which has no read level",
+     {"wrapper.yml": caller(job_perms=" read-all"),
+      "called.yml": called(job_perms="\n      id-token: write")},
+     True, ("id-token", "write (granted none)")),
 
     ("a called job asking for write-all needs more than an explicit map grants",
      {"wrapper.yml": caller(job_perms=A_WRITE),
