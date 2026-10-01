@@ -142,6 +142,17 @@ def run_find_recoverable_items():
     else:
         print("[ok] find_recoverable_items excludes a candidate absent from open_issue_numbers")
 
+    # spec 097 FR-008: an honoured stop labels the issue board:stalled; it is
+    # never a recovery candidate while held, and is again once released.
+    got = find_recoverable_items(merged_prs_by_issue, comments_by_issue, open_issue_numbers, BOT_LOGIN,
+                                 stalled_issue_numbers={11})
+    if got != expected_excluding_11:
+        failures += 1
+        print("::error::verify-board-prove-recovery: find_recoverable_items board:stalled: "
+              "expected {0!r}, got {1!r}.".format(expected_excluding_11, got))
+    else:
+        print("[ok] find_recoverable_items excludes a board:stalled issue")
+
     return failures
 
 
