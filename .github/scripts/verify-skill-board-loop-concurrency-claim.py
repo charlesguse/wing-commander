@@ -89,10 +89,11 @@ def extract_skill_claim(text, path):
     if idx == -1:
         return None, DriftFinding(
             property="subject-missing", job=None,
-            skill_location=(path, None), workflow_location=(BOARD_LOOP_YML, None),
+            skill_location=(path, None), workflow_location=(path, None),
             expected="an Over-rated example paragraph ({0!r}) naming the job "
                      "range and both concurrency groups".format(ANCHOR),
-            actual="no {0!r} anchor found in {1}".format(ANCHOR, path))
+            actual="no {0!r} anchor found in {1}".format(
+                ANCHOR, os.path.relpath(path, REPO_ROOT)))
 
     line_no = text.count("\n", 0, idx) + 1
     end = text.find("\n\n", idx)
@@ -302,7 +303,11 @@ def compute_drift_findings(claim, classifications, facts):
         # here would falsely flag a future non-capable job whose group name
         # merely contains the claimed group as a substring, e.g.
         # `wing-commander-board-loop-watchdog`.
-        if fact.group_literal is not None:
+        if fact.group_literal is not None and "${{" in fact.group_literal:
+            # A one-line `group: ${{ ... }}` is parsed as a literal; read
+            # its quoted tokens the same way as a block expression.
+            group_tokens = set(re.findall(r"'([\w.-]+)'", fact.group_literal))
+        elif fact.group_literal is not None:
             group_tokens = {fact.group_literal}
         elif fact.group_expression is not None:
             group_tokens = set(re.findall(r"'([\w.-]+)'", fact.group_expression))
@@ -416,7 +421,7 @@ def evaluate():
     if not os.path.isfile(SKILL_MD):
         findings.append(DriftFinding(
             property="subject-missing", job=None,
-            skill_location=(SKILL_MD, None), workflow_location=(BOARD_LOOP_YML, None),
+            skill_location=(SKILL_MD, None), workflow_location=(SKILL_MD, None),
             expected="{0} to exist".format(os.path.relpath(SKILL_MD, REPO_ROOT)),
             actual="file not found"))
     else:
@@ -625,6 +630,19 @@ def run_selftest():
           no_claim is None and no_claim_missing is not None
           and no_claim_missing.property == "subject-missing")
 
+    # A SKILL.md-internal subject-missing finding names the skill file on
+    # both sides and never leaks an absolute path (PR #813 review).
+    abs_skill = os.path.join(REPO_ROOT, "fixture-skill.md")
+    for case, text in (("a missing anchor", "no over-rated example here."),
+                       ("a missing token", "- **Over-rated.** nothing else.")):
+        _claim, internal_missing = extract_skill_claim(text, abs_skill)
+        rendered = format_finding(internal_missing) if internal_missing else ""
+        check("the subject-missing message for {0} names the skill file, "
+              "not board-loop.yml, with a repo-relative path".format(case),
+              "; fixture-skill.md (" in rendered
+              and "board-loop.yml (" not in rendered
+              and REPO_ROOT not in rendered)
+
     # --- extract_skill_claim: the two FR-008-driven checks contracts/
     # skill-example-claim.md's "Verification" adds as items 4-5 (T029) -- a
     # queuing/cancellation word in the same paragraph as the group tokens,
@@ -799,6 +817,14 @@ def run_selftest():
         base_claim, base_classifications,
         make_facts({"other-job": make_facts()["other-job"]._replace(
             group_literal="ordinary-group-watchdog")}))
+    oneline_expr_findings = compute_drift_findings(
+        base_claim, base_classifications,
+        make_facts({"other-job": make_facts()["other-job"]._replace(
+            group_literal="${{ inputs.x && 'ordinary-group' || 'other' }}")}))
+    check("a non-capable job whose one-line group expression names the claimed "
+          "group is unexpected-job-in-group",
+          [f.property for f in oneline_expr_findings] == ["unexpected-job-in-group"])
+
     check("a non-capable job's group name merely containing the claimed group "
           "as a substring is not unexpected-job-in-group (T040)",
           substring_findings == [])
