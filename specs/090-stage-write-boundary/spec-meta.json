@@ -2,8 +2,8 @@
   "issue": 675,
   "spec_dir": "specs/090-stage-write-boundary",
   "feature_num": "090",
-  "stage": "stalled",
-  "iteration": 7,
+  "stage": "implement",
+  "iteration": 8,
   "spec_branch": "spec/090-stage-write-boundary",
   "pending_re_review_from": [
     "charlesguse"
