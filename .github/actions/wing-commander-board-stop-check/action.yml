@@ -263,7 +263,22 @@ runs:
         stop_comment_json="$(jq -n --slurpfile comments "$RUNNER_TEMP/board-stop-check-comments.json" \
           --arg run_id "$GITHUB_RUN_ID" --arg bot_login "$BOT_LOGIN" \
           '{comments: $comments[0], current_run_id: $run_id, bot_login: $bot_login}' \
-          | python3 -I "$GITHUB_ACTION_PATH/../../scripts/board_stop_check.py" --stop-comment)"
+          | python3 -I "$GITHUB_ACTION_PATH/../../scripts/board_stop_check.py" --stop-comment)" || {
+          echo "::error::wing-commander-board-stop-check: could not identify the winning stop comment for issue #$ISSUE_NUMBER -- no stop-point record is posted, so a later run retries the check (FR-017)."
+          exit 1
+        }
+        # FR-017 (maintainer review fold leg-4): stop-cause == 'stop-request'
+        # already means find_stop_request() found a winner, so Gate 128
+        # check 4's invariant guarantees find_stop_command_comment() finds
+        # one too -- an empty `{}` result here (board_stop_check.py's own
+        # "no winner" shape) means the two disagreed, not that there is
+        # legitimately nothing to record. Failing loudly here, rather than
+        # silently posting a record with blank fields, is what makes a
+        # later run retry instead of publishing bad data.
+        jq -e '.html_url | type == "string"' >/dev/null <<<"$stop_comment_json" || {
+          echo "::error::wing-commander-board-stop-check: board_stop_check.py --stop-comment returned no winning comment for issue #$ISSUE_NUMBER ($stop_comment_json) -- no stop-point record is posted, so a later run retries the check (FR-017)."
+          exit 1
+        }
         html_url="$(jq -r '.html_url // empty' <<<"$stop_comment_json")"
         login="$(jq -r '.login // empty' <<<"$stop_comment_json")"
         created_at="$(jq -r '.created_at // empty' <<<"$stop_comment_json")"
@@ -304,7 +319,15 @@ runs:
 
         reason_block=""
         if [ -n "$reason" ]; then
-          reason_block="$(REASON="$reason" python3 -I -c 'import os, sys; sys.path.insert(0, os.path.join(os.environ["GITHUB_ACTION_PATH"], "..", "..", "scripts")); from board_spec_request_body import fenced_section; print(fenced_section("Reason given:", os.environ["REASON"], 2000))')"
+          # FR-017 (maintainer review fold leg-4): a failure here must not
+          # silently drop the reason and post the record as if none were
+          # given -- fail loudly instead, same as every other step in this
+          # block, so a later run retries rather than publishing a record
+          # that is missing data it actually had.
+          reason_block="$(REASON="$reason" python3 -I -c 'import os, sys; sys.path.insert(0, os.path.join(os.environ["GITHUB_ACTION_PATH"], "..", "..", "scripts")); from board_spec_request_body import fenced_section; print(fenced_section("Reason given:", os.environ["REASON"], 2000))')" || {
+            echo "::error::wing-commander-board-stop-check: could not render the reason block for issue #$ISSUE_NUMBER -- no stop-point record is posted, so a later run retries the check (FR-017)."
+            exit 1
+          }
         fi
 
         # contracts/stop-point-record.md: names the cause, links the

@@ -619,5 +619,5 @@ kept to one session to avoid edit collisions).
 
 ## Maintainer Feedback
 
-- [ ] In the composite's "Record the stop point" step, check the `--stop-comment` python call's exit status (`|| { echo "::error::..."; exit 1; }`) and validate its output with `jq -e '.html_url|type=="string"'` before writing the label, marker or comment, instead of silently accepting a failure as `{}` (FR-017).
-- [ ] Apply the same exit-status check to the `reason_block` rendering call so a failure there fails loudly instead of silently dropping the reason.
+- [X] In the composite's "Record the stop point" step, check the `--stop-comment` python call's exit status (`|| { echo "::error::..."; exit 1; }`) and validate its output with `jq -e '.html_url|type=="string"'` before writing the label, marker or comment, instead of silently accepting a failure as `{}` (FR-017).
+- [X] Apply the same exit-status check to the `reason_block` rendering call so a failure there fails loudly instead of silently dropping the reason.

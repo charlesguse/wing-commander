@@ -72,10 +72,19 @@ guards) is unchanged in every respect and unaffected by `stop-cause`.
    match rule in shell/jq. `current_run_id` is required — maintainer review
    fold leg-1, FR-006/FR-008 — so this run's own not-yet-posted stop-point
    record can never be mistaken for a different run's marker when the
-   baseline is recomputed). A one-line `gh label create "board:stalled"
-   ... --force` fallback precedes step 3's marker write — maintainer
-   review fold leg-0/leg-2: every caller already ensures this label exists
-   via `wing-commander-board-labels` before reaching this composite, but
+   baseline is recomputed). Both the subprocess's own exit status AND its
+   output shape are checked (maintainer review fold leg-4, FR-017): a
+   non-zero exit fails loudly immediately; `jq -e '.html_url | type ==
+   "string"'` then rejects an empty `{}` result too, since `stop-cause ==
+   "stop-request"` already means `find_stop_request()` found a winner, so
+   Gate 128 check 4's invariant guarantees `find_stop_command_comment()`
+   finds one too — an empty result here means the two disagreed, not that
+   there is legitimately nothing to record, and must not be accepted as
+   data (the pre-fix shape posted a record with blank fields instead of
+   failing). A one-line `gh label create "board:stalled" ... --force`
+   fallback precedes step 3's marker write — maintainer review fold
+   leg-0/leg-2: every caller already ensures this label exists via
+   `wing-commander-board-labels` before reaching this composite, but
    `verify-board-label-creation.py` is job-scoped with no cross-file
    fallback, and a nested `uses: ./.github/actions/wing-commander-board-
    labels` step here was exactly the leg-2 RCE.

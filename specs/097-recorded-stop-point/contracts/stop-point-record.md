@@ -31,12 +31,16 @@ Where:
   <fenced_section("Reason given:", reason, 2000)>
   ```
   using `.github/scripts/board_spec_request_body.py`'s existing
-  `fenced_section()` (imported from the trusted snapshot, the same way
-  `board-loop.yml`'s fix job already does at its gate-failure rendering
-  site) — never a second, hand-rolled quoting routine (FR-005: "the loop's
-  existing fencing rule for quoted content"). When the stop command carried
-  no reason (e.g. a bare `stop.`), this block is omitted entirely — no
-  empty fence.
+  `fenced_section()` (imported relative to the composite's own
+  `$GITHUB_ACTION_PATH`, maintainer review fold leg-0 — the same resolution
+  mechanism `board-loop.yml`'s fix job reaches its own copy of this helper
+  through, via the trusted snapshot its own job populates) — never a
+  second, hand-rolled quoting routine (FR-005: "the loop's existing
+  fencing rule for quoted content"). When the stop command carried no
+  reason (e.g. a bare `stop.`), this block is omitted entirely — no empty
+  fence. A failure rendering this block (maintainer review fold leg-4,
+  FR-017) fails the whole record loudly rather than silently posting the
+  record with the reason dropped.
 - `<marker>` — exactly `write_marker("stalled", 0, None, branch_or_none,
   base_sha_or_none)`'s own output, i.e. the `**Run:** <url>` line followed
   by the `<!-- wing-commander-board-item: {...} -->` HTML comment — this is
