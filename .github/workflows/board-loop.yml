@@ -1948,9 +1948,10 @@ jobs:
 
           if [ "$PAUSED" = "true" ]; then
             # specs/097-recorded-stop-point FR-014: name the cause actually
-            # observed, never "kill switch" unconditionally -- see
-            # wing-commander-board-stop-check/action.yml's `stop-cause-phrase`
-            # output, the one home for this prose (maintainer review fold leg-2).
+            # observed, never "kill switch" unconditionally -- read from the
+            # wing-commander-board-stop-check composite's own
+            # `stop-cause-phrase` output, the one home for this prose
+            # (maintainer review fold leg-2).
             echo "board-loop: $STOP_CAUSE_PHRASE set immediately before triage's durable action -- standing down without acting." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
@@ -3422,6 +3423,12 @@ jobs:
           # comment so a later resume can compare SHAs directly rather
           # than trusting a commit timestamp (maintainer review of #885).
           echo "head-sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          # specs/097-recorded-stop-point (maintainer review fold leg-3):
+          # needs.select.outputs.base-sha is select's own one-time read, not
+          # refreshed on a same-run fix->review handoff -- compute it fresh
+          # here instead, for the stop-point record's marker.
+          git fetch --no-tags --quiet origin main
+          echo "base-sha=$(git merge-base origin/main HEAD)" >> "$GITHUB_OUTPUT"
 
       # #488: see wing-commander-board-labels; continue-on-error so a
       # missed create cannot block the review round's own outcome step.
@@ -3472,13 +3479,6 @@ jobs:
             echo "::error::wing-commander board-loop review: could not fetch origin/main for PR #$PR_NUMBER's review diff."
             exit 1
           fi
-          # specs/097-recorded-stop-point (maintainer review fold leg-3):
-          # needs.select.outputs.base-sha is select's own one-time read, not
-          # refreshed on a same-run fix->review handoff -- this job already
-          # has a freshly-fetched origin/main right here, so compute the
-          # stop-point record's base-sha the same way instead of trusting a
-          # possibly-stale upstream output.
-          echo "base-sha=$(git merge-base origin/main HEAD)" >> "$GITHUB_OUTPUT"
           mkdir -p /tmp/wing-commander
           if ! git diff origin/main...HEAD > /tmp/wing-commander/board-review-diff.txt; then
             echo "::error::wing-commander board-loop review: could not build PR #$PR_NUMBER's diff against origin/main."
@@ -4039,10 +4039,10 @@ jobs:
           # specs/097-recorded-stop-point (maintainer review fold leg-3):
           # needs.select.outputs.branch/base-sha is select's own one-time
           # read -- empty on a same-run fix->review handoff, which would
-          # record branch: null. steps.pr/steps.gather are this job's own
-          # fresh reads of the PR actually under review.
+          # record branch: null. steps.pr/steps.checkout-pr are this job's
+          # own fresh reads of the PR actually under review.
           marker-branch: ${{ steps.pr.outputs.branch }}
-          marker-base-sha: ${{ steps.gather.outputs.base-sha }}
+          marker-base-sha: ${{ steps.checkout-pr.outputs.base-sha }}
 
       # specs/097-recorded-stop-point FR-014: name the cause actually
       # observed before review's own durable actions (posting the round
@@ -4615,7 +4615,7 @@ jobs:
           set -uo pipefail
           # specs/097-recorded-stop-point FR-014: name the cause actually
           # observed, never "kill switch or stop request" unconditionally --
-          # see wing-commander-board-stop-check/action.yml's
+          # read from the wing-commander-board-stop-check composite's own
           # `stop-cause-phrase` output (maintainer review fold leg-2).
           echo "board-loop: $STOP_CAUSE_PHRASE found immediately before readiness's durable actions on issue #$ISSUE_NUMBER -- standing down without acting (#604)." >> "$GITHUB_STEP_SUMMARY"
 
@@ -5512,9 +5512,9 @@ jobs:
           # specs/097-recorded-stop-point FR-014/FR-015: name the cause
           # actually observed, distinguishably, in the metrics run_label
           # (contracts/metrics-classification.md) -- never an undifferentiated
-          # "stood down" for every cause. See wing-commander-board-stop-check/
-          # action.yml's `stop-cause-run-label` output, the one home for this
-          # suffix (maintainer review fold leg-2).
+          # "stood down" for every cause. Read from the wing-commander-
+          # board-stop-check composite's own `stop-cause-run-label` output,
+          # the one home for this suffix (maintainer review fold leg-2).
           if [ "${{ steps.killswitch-recheck.outputs.paused }}" = "true" ]; then
             label="prove: $STOP_CAUSE_RUN_LABEL"
           elif [ "${{ steps.decide.outputs.actions-only }}" != "true" ]; then
