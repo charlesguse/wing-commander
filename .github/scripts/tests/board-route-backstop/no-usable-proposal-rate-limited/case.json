@@ -1,0 +1,19 @@
+{
+  "_note": "A rate-limited route agent (agent-verdict = rate-limited, an API 429) gave no usable proposal: defer, never the default spec, which closed the original as a duplicate during the 2026-10-01 usage outage (#902 -> #907, #906 -> #908).",
+  "agent_proposal": "spec",
+  "proposal_extracted": false,
+  "agent_rate_limited": true,
+  "board_max_files": 6,
+  "board_max_lines": 120,
+  "measure": {
+    "over_threshold": false,
+    "files": 0,
+    "lines": 0
+  },
+  "diff_paths": [],
+  "diff_text": "",
+  "expected": {
+    "backstop_verdict": "defer",
+    "reason": "agent_rate_limited"
+  }
+}

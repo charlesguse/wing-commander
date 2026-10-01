@@ -55,6 +55,9 @@ EXPECTED_CASES = {
     "agent-proposed-spec",
     "agent-proposed-spec-over-threshold",
     "no-usable-proposal",
+    "no-usable-proposal-rate-limited",
+    "agent-proposed-spec-rate-limited",
+    "fix-rate-limited-stays-fix",
     # #548: the category is normalised in one place (normalize_category())
     # and anything outside fix/spec is no usable proposal -> spec.
     "category-upper-spec",
@@ -151,10 +154,17 @@ def hold_wiring_problems(workflow_text):
             ("workflow_push_blocked_paths(", "computes the paths this loop cannot push"),
             ("workflow_push_blocked=blocked", "passes them into route()"),
             ("drafted_contract_widened(file_changes, read_text)", "checks the drafted diff for a contract change"),
-            ("widened_paths_override=widened", "passes that check into route()")):
+            ("widened_paths_override=widened", "passes that check into route()"),
+            ('agent_rate_limited=os.environ.get("ROUTE_AGENT_VERDICT") == "rate-limited"',
+             "defers a rate-limited agent's missing proposal instead of filing a spec")):
         if needle not in run:
             problems.append("board-loop.yml route decide step: `{0}` not found -- it no "
                             "longer {1}".format(needle, why))
+    env = decide[0].get("env") or {}
+    if str(env.get("ROUTE_AGENT_VERDICT", "")).replace(" ", "") != "${{steps.route-verdict.outputs.verdict}}":
+        problems.append("board-loop.yml route decide step: ROUTE_AGENT_VERDICT is not "
+                        "the route agent's own verdict (steps.route-verdict.outputs.verdict) "
+                        "-- a rate-limited route would default to spec again")
     holds = [st for st in steps if isinstance(st, dict)
              and "steps.decide.outputs.verdict == 'hold'" in str(st.get("if", ""))]
     if len(holds) != 1:
@@ -212,7 +222,8 @@ def run():
             diff_paths=spec.get("diff_paths"), diff_text=spec.get("diff_text"),
             file_contents=spec.get("file_contents"),
             proposal_extracted=spec.get("proposal_extracted", True),
-            workflow_push_blocked=spec.get("workflow_push_blocked"))
+            workflow_push_blocked=spec.get("workflow_push_blocked"),
+            agent_rate_limited=spec.get("agent_rate_limited", False))
         expected = spec["expected"]
         ok = (got["backstop_verdict"] == expected["backstop_verdict"]
               and got["reason"] == expected["reason"])
@@ -458,6 +469,10 @@ def run():
             print("::error::verify-board-route-backstop: " + problem)
         for label, old, new in (
                 ("hold paths no longer passed", "workflow_push_blocked=blocked", "workflow_push_blocked=None"),
+                ("rate-limited defer dropped", 'agent_rate_limited=os.environ.get("ROUTE_AGENT_VERDICT") == "rate-limited"',
+                 "agent_rate_limited=False"),
+                ("defer reads the wrong verdict", "ROUTE_AGENT_VERDICT: ${{ steps.route-verdict.outputs.verdict }}",
+                 "ROUTE_AGENT_VERDICT: ${{ steps.triage-verdict.outputs.verdict }}"),
                 ("pre-push contract check dropped", "widened_paths_override=widened",
                  "widened_paths_override=[]"),
                 ("drafted contract check never run", "widened = drafted_contract_widened(file_changes, read_text)",

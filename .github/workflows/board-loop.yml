@@ -1616,6 +1616,9 @@ jobs:
         id: decide
         env:
           RUN_URL: ${{ steps.cite.outputs.run-url }}
+          # board_triage.defer_on_rate_limit(): a rate-limited agent's
+          # proceed is defer -- nothing posted, route skipped.
+          TRIAGE_AGENT_VERDICT: ${{ steps.triage-verdict.outputs.verdict }}
           COMMIT_SHA: ${{ steps.fetch.outputs.commit-sha }}
           WORKFLOW_PATH: ${{ steps.fetch.outputs.workflow-path }}
           TRANSCRIPT_PATH: ${{ steps.fetch.outputs.transcript-path }}
@@ -1627,7 +1630,7 @@ jobs:
           import sys
 
           sys.path.insert(0, ".github/scripts")
-          from board_triage import tracked_pin_files, triage
+          from board_triage import defer_on_rate_limit, tracked_pin_files, triage
 
           runner_temp = os.environ["RUNNER_TEMP"]
           with open(os.path.join(runner_temp, "board-triage-proposal.json"), encoding="utf-8") as fh:
@@ -1642,7 +1645,8 @@ jobs:
               "workflow_files": workflow_files,
               "agent_proposal": proposal,
           }
-          verdict = triage(issue, run_url)
+          verdict = defer_on_rate_limit(triage(issue, run_url),
+                                        os.environ.get("TRIAGE_AGENT_VERDICT", ""))
 
           with open(os.path.join(runner_temp, "board-triage-verdict.json"), "w", encoding="utf-8") as fh:
               json.dump(verdict, fh)
@@ -1680,6 +1684,10 @@ jobs:
 
           if [ "$PAUSED" = "true" ]; then
             echo "board-loop: kill switch set immediately before triage's durable action -- standing down without acting." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if [ "$outcome" = "defer" ]; then
+            echo "board-loop: the triage agent was rate-limited and judged nothing -- nothing is posted and route does not run; a later run triages this issue again." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
 
@@ -2050,6 +2058,9 @@ jobs:
           # docs/setup.md: set only once the App has been granted Workflows
           # (read and write); until then a workflow-file fix is held.
           CAN_PUSH_WORKFLOWS: ${{ vars.WING_COMMANDER_BOARD_CAN_PUSH_WORKFLOWS == 'true' }}
+          # route() defers, rather than defaulting to spec, when a
+          # rate-limited agent gave no usable proposal.
+          ROUTE_AGENT_VERDICT: ${{ steps.route-verdict.outputs.verdict }}
         run: |
           set -uo pipefail
           python3 - <<'PYEOF'
@@ -2098,7 +2109,8 @@ jobs:
               int(os.environ["BOARD_MAX_FILES"]), int(os.environ["BOARD_MAX_LINES"]),
               measure_backstop, widened_paths_override=widened,
               proposal_extracted=proposal_extracted,
-              workflow_push_blocked=blocked)
+              workflow_push_blocked=blocked,
+              agent_rate_limited=os.environ.get("ROUTE_AGENT_VERDICT") == "rate-limited")
 
           runner_temp = os.environ["RUNNER_TEMP"]
           with open(os.path.join(runner_temp, "board-route-decision.json"), "w", encoding="utf-8") as fh:
@@ -2135,6 +2147,8 @@ jobs:
           if [ "$verdict" != "spec" ]; then
             if [ "$verdict" = "hold" ]; then
               echo "board-loop: route verdict is hold (reason: $reason) -- no spec proposal is filed; the next step holds the issue for a maintainer." >> "$GITHUB_STEP_SUMMARY"
+            elif [ "$verdict" = "defer" ]; then
+              echo "board-loop: route verdict is defer (reason: $reason) -- the route agent was rate-limited and judged nothing, so nothing is filed or closed; the issue's route marker keeps it in flight, and the next run triages and routes it again." >> "$GITHUB_STEP_SUMMARY"
             else
               echo "board-loop: route verdict is fix (reason: $reason) -- proceeding to the fix step." >> "$GITHUB_STEP_SUMMARY"
             fi

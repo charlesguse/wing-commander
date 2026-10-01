@@ -1285,12 +1285,83 @@ CITE_MUTATIONS = (
     ("decide spells its own pre-#521 ls-files again",
      "          python3 - <<'PYEOF'\n          import json\n          import os\n"
      "          import sys\n\n          sys.path.insert(0, \".github/scripts\")\n"
-     "          from board_triage import tracked_pin_files, triage\n",
+     "          from board_triage import defer_on_rate_limit, tracked_pin_files, triage\n",
      "          git ls-files '.github/workflows/*.yml' > \"$RUNNER_TEMP/wf.txt\"\n"
      "          python3 - <<'PYEOF'\n          import json\n          import os\n"
      "          import sys\n\n          sys.path.insert(0, \".github/scripts\")\n"
-     "          from board_triage import tracked_pin_files, triage\n"),
+     "          from board_triage import defer_on_rate_limit, tracked_pin_files, triage\n"),
 )
+
+
+def run_defer_cases():
+    """board_triage.defer_on_rate_limit(): only a rate-limited agent's
+    proceed becomes defer; code-derived closes and handovers stand."""
+    problems = []
+    proceed = {"outcome": "proceed", "ground": None, "evidence": {}, "agent_proposal": None}
+    closed = {"outcome": "closed", "ground": "rate_limit", "evidence": {"x": 1}, "agent_proposal": None}
+    handover = {"outcome": "handover", "ground": "already_fixed_proposal", "evidence": {}, "agent_proposal": "r"}
+    for name, verdict, agent_verdict, want in (
+            ("rate-limited proceed defers", proceed, "rate-limited", "defer"),
+            ("healthy proceed proceeds", proceed, "healthy", "proceed"),
+            ("exhausted proceed proceeds", proceed, "exhausted", "proceed"),
+            ("no agent verdict (skipped agent) proceeds", proceed, "", "proceed"),
+            ("a code-derived close stands under a rate limit", closed, "rate-limited", "closed"),
+            ("a handover stands under a rate limit", handover, "rate-limited", "handover")):
+        got = board_triage.defer_on_rate_limit(dict(verdict), agent_verdict)["outcome"]
+        if got != want:
+            problems.append("defer_on_rate_limit: {0}: expected {1!r}, got {2!r}".format(name, want, got))
+        else:
+            print("[ok] defer_on_rate_limit: {0}".format(name))
+    return problems
+
+
+DEFER_DECIDE_NEEDLES = (
+    ("TRIAGE_AGENT_VERDICT: ${{ steps.triage-verdict.outputs.verdict }}",
+     "the decide step reads the triage agent's own verdict"),
+    ("verdict = defer_on_rate_limit(triage(issue, run_url),\n"
+     "                                        os.environ.get(\"TRIAGE_AGENT_VERDICT\", \"\"))",
+     "the decide step passes triage()'s verdict through defer_on_rate_limit()"),
+)
+DEFER_ACT_GUARD = ('          if [ "$outcome" = "defer" ]; then\n'
+                   '            echo "board-loop: the triage agent was rate-limited')
+
+
+def check_defer_wiring(text):
+    """The decide step defers a rate-limited agent's proceed, and the act
+    step exits on defer before it renders a marker or posts anything."""
+    problems = []
+    for needle, why in DEFER_DECIDE_NEEDLES:
+        if needle not in text:
+            problems.append("board-loop.yml triage: {0} -- not found".format(why))
+    guard = text.find(DEFER_ACT_GUARD)
+    render = text.find('marker="$(python3 .github/scripts/board_item_marker.py --step "$marker_step"')
+    if guard < 0:
+        problems.append("board-loop.yml triage act step: no `defer` exit -- a rate-limited "
+                        "triage would post \"proceeding to route\" every run")
+    elif render < 0 or guard > render:
+        problems.append("board-loop.yml triage act step: the `defer` exit comes after the "
+                        "marker render -- it must leave before anything is posted")
+    return problems
+
+
+def _mutation_check_defer_wiring(text):
+    problems = []
+    for label, old, new in (
+            ("decide reads the route agent's verdict",
+             "TRIAGE_AGENT_VERDICT: ${{ steps.triage-verdict.outputs.verdict }}",
+             "TRIAGE_AGENT_VERDICT: ${{ steps.route-verdict.outputs.verdict }}"),
+            ("decide skips defer_on_rate_limit",
+             "verdict = defer_on_rate_limit(triage(issue, run_url),",
+             "verdict = (triage(issue, run_url),"),
+            ("act step loses its defer exit", DEFER_ACT_GUARD, "          if false; then\n            echo \"x")):
+        if old not in text:
+            problems.append("defer mutation {0!r} no longer applies -- update it".format(label))
+            continue
+        if not check_defer_wiring(text.replace(old, new, 1)):
+            problems.append("defer mutation {0!r} was NOT caught".format(label))
+        else:
+            print("[ok] defer mutation caught ({0})".format(label))
+    return problems
 
 
 def _mutation_check_cite(reassignment_res):
@@ -1810,6 +1881,13 @@ def run():
               "from the trust-filtered context-file".format(BOARD_LOOP))
     problems.extend(cite_problems)
     problems.extend(_mutation_check_cite(reassignment_res))
+
+    problems.extend(run_defer_cases())
+    defer_problems = check_defer_wiring(board_loop_text)
+    if not defer_problems:
+        print("[ok] defer wiring: a rate-limited triage agent's proceed posts nothing and skips route")
+    problems.extend(defer_problems)
+    problems.extend(_mutation_check_defer_wiring(board_loop_text))
 
     for problem in problems:
         print("::error::verify-board-triage: {0}".format(problem))
