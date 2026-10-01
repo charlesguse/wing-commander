@@ -326,6 +326,12 @@ jobs:
           # so this `gh issue list` call's own exit code is never checked
           # on its own -- an explicit `if` around it is required, matching
           # the per-issue comment fetches below.
+          #
+          # Only spec-request is read: a bot-filed spec-proposal reaches
+          # the lifecycle only when the owner promotes it by adding
+          # spec-request, and a proposal the owner closes unpromoted was
+          # declined, not lost -- it gets no "closed without landing"
+          # notice inviting a reopen (board reset of 2026-10-01).
           if ! gh issue list -R "$GITHUB_REPOSITORY" --state closed --label spec-request \
             --author "$BOT_LOGIN" --json number -L 100 \
             > "$RUNNER_TEMP/board-closed-spec-requests.json"; then
@@ -2000,6 +2006,9 @@ jobs:
           MEASURED_LINES: ${{ steps.backstop.outputs.measured-lines }}
           BOARD_MAX_FILES: ${{ env.BOARD_MAX_FILES }}
           BOARD_MAX_LINES: ${{ env.BOARD_MAX_LINES }}
+          # docs/setup.md: set only once the App has been granted Workflows
+          # (read and write); until then a workflow-file fix is held.
+          CAN_PUSH_WORKFLOWS: ${{ vars.WING_COMMANDER_BOARD_CAN_PUSH_WORKFLOWS == 'true' }}
         run: |
           set -uo pipefail
           python3 - <<'PYEOF'
@@ -2008,7 +2017,8 @@ jobs:
           import sys
 
           sys.path.insert(0, ".github/scripts")
-          from board_route_backstop import one_line_rationale, route, touches_protected_file
+          from board_route_backstop import (drafted_contract_widened, normalize_repo_path,
+                                            one_line_rationale, route, workflow_push_blocked_paths)
 
           runner_temp = os.environ["RUNNER_TEMP"]
           with open(os.path.join(runner_temp, "board-route-proposal.json"), encoding="utf-8") as fh:
@@ -2023,15 +2033,31 @@ jobs:
           def measure_backstop(_fc, _mf, _ml):
               return over_threshold, measured_files, measured_lines
 
-          diff_paths = [fc.get("path") for fc in file_changes if fc.get("path")]
-          widened = touches_protected_file(diff_paths)
+          diff_paths = [normalize_repo_path(fc.get("path")) for fc in file_changes
+                        if isinstance(fc, dict) and fc.get("path")]
+          blocked = workflow_push_blocked_paths(
+              diff_paths, os.environ.get("CAN_PUSH_WORKFLOWS") == "true")
+
+          # This job checks out main, so main's own file content is what the
+          # drafted hunks are located against (drafted_contract_widened);
+          # the pushed diff is checked again by "Re-apply the route
+          # backstop to the final diff".
+          def read_text(path):
+              try:
+                  with open(path, encoding="utf-8") as fh:
+                      return fh.read()
+              except (OSError, UnicodeDecodeError):
+                  return None
+
+          widened = drafted_contract_widened(file_changes, read_text)
 
           proposal_extracted = os.environ.get("PROPOSAL_EXTRACTED") == "true"
           decision = route(
               proposal.get("category"), file_changes,
               int(os.environ["BOARD_MAX_FILES"]), int(os.environ["BOARD_MAX_LINES"]),
               measure_backstop, widened_paths_override=widened,
-              proposal_extracted=proposal_extracted)
+              proposal_extracted=proposal_extracted,
+              workflow_push_blocked=blocked)
 
           runner_temp = os.environ["RUNNER_TEMP"]
           with open(os.path.join(runner_temp, "board-route-decision.json"), "w", encoding="utf-8") as fh:
@@ -2066,7 +2092,11 @@ jobs:
           echo "reason=$reason" >> "$GITHUB_OUTPUT"
 
           if [ "$verdict" != "spec" ]; then
-            echo "board-loop: route verdict is fix (reason: $reason) -- proceeding to the fix step." >> "$GITHUB_STEP_SUMMARY"
+            if [ "$verdict" = "hold" ]; then
+              echo "board-loop: route verdict is hold (reason: $reason) -- no spec proposal is filed; the next step holds the issue for a maintainer." >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "board-loop: route verdict is fix (reason: $reason) -- proceeding to the fix step." >> "$GITHUB_STEP_SUMMARY"
+            fi
             echo "spec-url=" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -2117,7 +2147,7 @@ jobs:
             --drafted-body-file "$RUNNER_TEMP/board-spec-request-drafted.md" --footer "$footer" --out "$spec_body_file" \
             || printf 'No drafted body.\n\n---\n%s\n' "$footer" > "$spec_body_file"
 
-          spec_url="$(gh issue create -R "$GITHUB_REPOSITORY" --title "$spec_title" --body-file "$spec_body_file" --label spec-request)"
+          spec_url="$(gh issue create -R "$GITHUB_REPOSITORY" --title "$spec_title" --body-file "$spec_body_file" --label spec-proposal)"
           # #514: this step runs without -e, so a failed create would
           # otherwise still post the re-route comment, add board:stalled
           # and cross-link an empty URL, dropping the issue from
@@ -2144,9 +2174,31 @@ jobs:
             --reason "Routed to $spec_url" \
             || { echo "::error::board-loop route (spec verdict): spec-request $spec_url was filed but disposing of issue #$ISSUE_NUMBER as a duplicate failed -- a later run resumes from its own pre-check."; exit 1; }
 
+      # A fix-shaped item whose drafted diff edits a workflow file, while
+      # the App holds no Workflows permission (docs/setup.md): this loop
+      # cannot push it, so it is held for a maintainer as the one issue it
+      # already is. It is never filed as a spec -- the spec lifecycle is
+      # for design trade-offs, and sending push-permission cases there
+      # turned one-line comment fixes into specs with owner questions (the
+      # 2026-10-01 board reset). See workflow_push_blocked_paths().
+      - name: Hold a workflow-file fix for a maintainer
+        id: hold
+        if: steps.killswitch-recheck.outputs.paused != 'true' && steps.decide.outputs.verdict == 'hold'
+        env:
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
+          ISSUE_NUMBER: ${{ needs.select.outputs.issue-number }}
+        run: |
+          set -uo pipefail
+          # The paths are agent-drafted: only a plain path charset is
+          # rendered, inside a code span; anything else is left out.
+          paths="$(jq -r '.decision.measured.workflow_paths // [] | map(select(test("^[A-Za-z0-9._/-]{1,200}$"))) | map("`" + . + "`") | join(", ")' "$RUNNER_TEMP/board-route-decision.json")"
+          marker="$(python3 .github/scripts/board_item_marker.py --step stalled --issue "$ISSUE_NUMBER" --add-label "board:stalled")" \
+            || { echo "::error::board-loop route (workflow-scope hold): board:stalled could not be added to issue #$ISSUE_NUMBER -- no stalled marker is posted (#604)."; exit 1; }
+          gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Route found this fix-shaped, but its change edits %s, and this loop cannot push a workflow file (the App holds no Workflows permission). Held for a maintainer: fix it from a session whose token has the `workflow` scope, or grant the App Workflows (read and write) and set `WING_COMMANDER_BOARD_CAN_PUSH_WORKFLOWS` to `true`. Removing board:stalled is the sole re-eligibility condition.\n\n%s' "${paths:-a workflow file}" "$marker")"
+
       # research.md D9: every artifact this loop spins off outside the
       # originating issue is cross-linked through this one composite
-      # (contracts/labels-and-cross-links.md's "Routed to spec-request"
+      # (contracts/labels-and-cross-links.md's "Routed to a spec proposal"
       # phrase) -- never a second, hand-written link format.
       - name: Cross-link the spec-request onto the originating issue
         if: steps.spec_request.outputs.spec-url != ''
@@ -2154,7 +2206,7 @@ jobs:
         with:
           token: ${{ env.WC_BOT_TOKEN }}
           issue-number: ${{ needs.select.outputs.issue-number }}
-          phrase: "Routed to spec-request"
+          phrase: "Routed to a spec proposal (the owner promotes it with spec-request)"
           artifact-url: ${{ steps.spec_request.outputs.spec-url }}
           context: "(reason: ${{ steps.spec_request.outputs.reason }})"
 
@@ -2539,8 +2591,24 @@ jobs:
           ISSUE_NUMBER: ${{ needs.select.outputs.issue-number }}
           BRANCH: ${{ steps.base.outputs.branch }}
           BASE_SHA: ${{ steps.base.outputs.base-sha }}
+          CAN_PUSH_WORKFLOWS: ${{ vars.WING_COMMANDER_BOARD_CAN_PUSH_WORKFLOWS == 'true' }}
         run: |
           set -euo pipefail
+          # Route's hold covers only the paths the drafted diff named; the
+          # fixer's real change is checked here, before the push GitHub
+          # would refuse (the App holds no Workflows permission) -- held the
+          # same way, never left to fail and be resumed into the same
+          # refusal on every later run.
+          # Captured first: `git diff | grep -q` under pipefail can fail on
+          # the SIGPIPE grep's early exit sends, and read as "no match".
+          changed_paths="$(git diff --name-only "$BASE_SHA" HEAD)"
+          if [ "$CAN_PUSH_WORKFLOWS" != "true" ] && grep -q '^\.github/workflows/' <<<"$changed_paths"; then
+            marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step stalled --branch "$BRANCH" --base-sha "$BASE_SHA" --issue "$ISSUE_NUMBER" --add-label "board:stalled")" \
+              || { echo "::error::board-loop fix (workflow-scope hold): board:stalled could not be added to issue #$ISSUE_NUMBER -- no stalled marker is posted (#604)."; exit 1; }
+            gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'The fix for this issue changes a file under `.github/workflows/`, which this loop cannot push (the App holds no Workflows permission). Nothing was pushed; the work is on no branch. Held for a maintainer: fix it from a session whose token has the `workflow` scope, or grant the App Workflows (read and write) and set `WING_COMMANDER_BOARD_CAN_PUSH_WORKFLOWS` to `true`. Removing board:stalled is the sole re-eligibility condition.\n\n%s' "$marker")"
+            echo "board-loop: issue #$ISSUE_NUMBER -- the fixer's change touches .github/workflows/, held for a maintainer instead of pushed." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           git push origin "HEAD:refs/heads/$BRANCH"
 
           # One-line fallback (CLAUDE.md "shared logic has exactly one
@@ -2562,10 +2630,10 @@ jobs:
 
       # T029/FR-021/FR-018: route_final_diff() re-applies the SAME backstop
       # to the pushed branch's real diff and real file content -- the
-      # precise contract_widened() check, unlike route's own pre-push
-      # touches_protected_file() proxy, because the new side's actual file
-      # content now exists on disk to locate the workflow_call:/inputs:/
-      # outputs: block precisely.
+      # precise contract_widened() check, unlike route's pre-push
+      # drafted_contract_widened(), which can only locate the agent's
+      # drafted hunks against main, because only now does the new side's
+      # actual file content exist on disk.
       - name: Re-apply the route backstop to the final diff
         id: final-diff-backstop
         if: steps.push-pr.outputs.pr-url != ''
@@ -2586,7 +2654,7 @@ jobs:
           import sys
 
           sys.path.insert(0, os.path.join(os.environ["RUNNER_TEMP"], "wc-pristine", "scripts"))
-          from board_route_backstop import route_final_diff
+          from board_route_backstop import read_base_contents, route_final_diff
 
           runner_temp = os.environ["RUNNER_TEMP"]
           with open(os.path.join(runner_temp, "board-fix-final-diff.patch"), encoding="utf-8") as fh:
@@ -2611,10 +2679,13 @@ jobs:
 
           route_decision = {"agent_proposal": "fix", "backstop_verdict": os.environ["ROUTE_VERDICT"],
                              "reason": os.environ["ROUTE_REASON"]}
+          # The base side too, so a contract REMOVED is a breach, not only
+          # one added (contract_widened()'s base_contents).
           result = route_final_diff(
               route_decision, final_diff=None, board_max_files=board_max_files,
               board_max_lines=board_max_lines, measure_backstop=measure_backstop,
-              diff_paths=diff_paths, diff_text=diff_text, file_contents=file_contents)
+              diff_paths=diff_paths, diff_text=diff_text, file_contents=file_contents,
+              base_contents=read_base_contents(os.environ.get("BASE_SHA", ""), diff_paths))
 
           with open(os.path.join(runner_temp, "board-fix-final-diff-decision.json"), "w", encoding="utf-8") as fh:
               json.dump(result, fh)
@@ -2694,7 +2765,7 @@ jobs:
             || { echo "::error::board-loop fix (post-push breach): board_item_marker.py failed to render the step=breach marker -- not posting a marker-less comment (#530)."; exit 1; }
           [ -n "$breach_marker" ] \
             || { echo "::error::board-loop fix (post-push breach): board_item_marker.py rendered an empty step=breach marker -- not posting a marker-less comment (#530)."; exit 1; }
-          gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Post-push backstop breach on %s (measured=%s) -- the PR will not be reviewed; filing a spec-request to cover finishing this at the right size.\n\n%s' "$PR_URL" "$measured" "$breach_marker")" \
+          gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Post-push backstop breach on %s (measured=%s) -- the PR will not be reviewed; filing a spec proposal to cover finishing this at the right size.\n\n%s' "$PR_URL" "$measured" "$breach_marker")" \
             || echo "::warning::board-loop fix (post-push breach): could not post the step=breach marker on issue #$ISSUE_NUMBER -- if the spec-request create below fails too, a later run may resume this PR at review (#530)."
           issue_title="$(gh issue view "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --json title --jq .title)"
           notice="$(printf 'The fix at %s grew past the board'"'"'s size-and-path backstop on its final diff (measured=%s). The branch/PR are left open, unmerged, under a notice -- this spec request covers finishing the work at the size a human plan should decide.' "$PR_URL" "$measured")"
@@ -2706,7 +2777,7 @@ jobs:
           spec_url="$(gh issue create -R "$GITHUB_REPOSITORY" \
             --title "$issue_title" \
             --body-file "$spec_body_file" \
-            --label spec-request)"
+            --label spec-proposal)"
           # #514 -- see route's spec-request site.
           [[ "$spec_url" =~ ^https?://[^[:space:]]+/issues/[0-9]+$ ]] || { echo "::error::board-loop fix (post-push breach): creating the spec-request returned no issue URL (got '$spec_url') -- no spec-request was filed; the issue is left without board:stalled so a later run retries it."; exit 1; }
           echo "spec-url=$spec_url" >> "$GITHUB_OUTPUT"
@@ -2729,7 +2800,7 @@ jobs:
         with:
           token: ${{ env.WC_BOT_TOKEN }}
           issue-number: ${{ needs.select.outputs.issue-number }}
-          phrase: "Routed to spec-request"
+          phrase: "Routed to a spec proposal (the owner promotes it with spec-request)"
           artifact-url: ${{ steps.post-push-breach.outputs.spec-url }}
           context: "(post-push backstop breach, measured=${{ steps.post-push-breach.outputs.measured }})"
 
@@ -3913,6 +3984,7 @@ jobs:
         run: |
           set -uo pipefail
           base_sha="$(git merge-base origin/main HEAD)"
+          export BASE_SHA="$base_sha"
           git diff "$base_sha" HEAD > "$RUNNER_TEMP/board-readiness-final-diff.patch"
           git diff --name-only "$base_sha" HEAD > "$RUNNER_TEMP/board-readiness-final-diff-paths.txt"
 
@@ -3923,7 +3995,7 @@ jobs:
 
           sys.path.insert(0, os.path.join(os.environ["RUNNER_TEMP"], "wc-pristine", "scripts"))
           from board_eligibility import BREACH_STEP
-          from board_route_backstop import contract_widened
+          from board_route_backstop import contract_widened, read_base_contents
 
           runner_temp = os.environ["RUNNER_TEMP"]
           with open(os.path.join(runner_temp, "board-readiness-final-diff.patch"), encoding="utf-8") as fh:
@@ -3942,7 +4014,8 @@ jobs:
                       if line[:1] in "+-" and not line.startswith(("+++", "---")))
           board_max_files = int(os.environ["BOARD_MAX_FILES"])
           board_max_lines = int(os.environ["BOARD_MAX_LINES"])
-          widened = contract_widened(diff_paths, diff_text, file_contents)
+          widened = contract_widened(diff_paths, diff_text, file_contents,
+                                     read_base_contents(os.environ.get("BASE_SHA", ""), diff_paths))
           holds = files <= board_max_files and lines <= board_max_lines and not widened
           breach_retry = os.environ.get("RESUME_STEP") == BREACH_STEP
           if breach_retry:
@@ -4168,7 +4241,7 @@ jobs:
                 || printf '%s\n\nNo drafted body.\n\n---\n%s\n' "$notice" "$footer" > "$spec_body_file"
               spec_url="$(gh issue create -R "$GITHUB_REPOSITORY" --title "$issue_title" \
                 --body-file "$spec_body_file" \
-                --label spec-request)"
+                --label spec-proposal)"
               # #514 -- see route's spec-request site.
               [[ "$spec_url" =~ ^https?://[^[:space:]]+/issues/[0-9]+$ ]] || { echo "::error::board-loop readiness (backstop breach): creating the spec-request returned no issue URL (got '$spec_url') -- no spec-request was filed; the issue is left without board:stalled so a later run retries it."; exit 1; }
             fi
@@ -4201,7 +4274,7 @@ jobs:
         with:
           token: ${{ env.WC_BOT_TOKEN }}
           issue-number: ${{ needs.select.outputs.issue-number || inputs.directed-issue }}
-          phrase: "Routed to spec-request"
+          phrase: "Routed to a spec proposal (the owner promotes it with spec-request)"
           artifact-url: ${{ steps.report-unmet.outputs.spec-url }}
           context: "(readiness backstop breach, measured=${{ steps.report-unmet.outputs.measured }})"
 

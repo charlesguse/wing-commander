@@ -4,8 +4,9 @@
 
 | Label | Added to | Applied when | Cleared by |
 |---|---|---|---|
-| `board:stalled` | `docs/setup.md`'s manual label table (research.md D22) | round-budget exhaustion (FR-030), post-push backstop breach (FR-021), already-fixed hand-over (FR-012) | a human removing the label — the sole condition FR-010 reads for re-eligibility, except a disposed (`disposition:duplicate`) issue, which is re-admitted only by a maintainer reopening it once its linked spec-request has closed (spec 108, FR-006) |
-| `disposition:duplicate` | `docs/setup.md`'s manual label table (spec 108, research.md D1) | a spec-request is filed for this issue (FR-001/FR-002) | never programmatically — re-admission is the eligibility carve-out above, not a label clear |
+| `board:stalled` | `docs/setup.md`'s manual label table (research.md D22) | round-budget exhaustion (FR-030), post-push backstop breach (FR-021), already-fixed hand-over (FR-012), a fix this loop cannot push — route's `hold` verdict on the drafted diff, or the fix job's pre-push check on the real one, for any file under `.github/workflows/` while `WING_COMMANDER_BOARD_CAN_PUSH_WORKFLOWS` is off (board reset of 2026-10-01) | a human removing the label — the sole condition FR-010 reads for re-eligibility, except a disposed (`disposition:duplicate`) issue, which is re-admitted only by a maintainer reopening it once its linked proposal has closed (spec 108, FR-006) |
+| `spec-proposal` | `docs/setup.md`'s manual label table; created on first use by `wing-commander-board-labels` | the loop files spec-shaped work (route's spec verdict, a post-push or readiness backstop breach) — never `spec-request`, which only the owner applies (constitution X, 2.2.0) | the owner adding `spec-request` (promotion into intake) or closing it (declined); `board_eligibility.is_excluded()` never selects an issue carrying either label |
+| `disposition:duplicate` | `docs/setup.md`'s manual label table (spec 108, research.md D1) | a spec proposal is filed for this issue (FR-001/FR-002) | never programmatically — re-admission is the eligibility carve-out above, not a label clear |
 
 No `.github/labels.yml` or other machine-readable label config is
 introduced — this repository documents labels manually today, and this
@@ -21,7 +22,7 @@ reuses:
 | Artifact | Phrase posted |
 |---|---|
 | Fix PR | `Fix opened` |
-| `spec-request` spin-off | `Routed to spec-request` |
+| Spec-proposal spin-off | `Routed to a spec proposal (the owner promotes it with spec-request)` |
 | Reciprocal spec-request link | `Filed for the routed original` |
 | Out-of-scope review-finding issue | `Found by the code review of #<PR>` |
 | Prove-step re-drive | `Re-driven to prove the fix` |

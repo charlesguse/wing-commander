@@ -130,6 +130,12 @@ IN_FLIGHT_CASES = {
     "duplicate-not-readmitted-spec-open",
     "duplicate-closed-issue-not-admitted",
     "duplicate-readmitted-then-reworked",
+    # Board reset of 2026-10-01: a spec-proposal (bot-filed, awaiting the
+    # owner) or a spec-request (the owner's, before intake has applied a
+    # stage label) is lifecycle work, never a board item -- even after a
+    # maintainer labels it. The three older such issues are passed over
+    # and the newest ordinary issue is selected.
+    "spec-labelled-issues-not-selected",
 }
 
 # (name, replacement for board_item_marker.is_loop_marker_author)
