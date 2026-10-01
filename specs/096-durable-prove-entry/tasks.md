@@ -622,3 +622,6 @@ Task: "New Gate 128: verify-board-prove-recovery.py fixtures"
 
 ## Maintainer Feedback — busy-check block duplicates prove job's step
 - [ ] Consolidate the busy-check block (board-loop.yml ~:880-893) with the prove job's equivalent step into one home, per CLAUDE.md's "shared logic has exactly one home".
+
+## Maintainer Feedback — outstanding rehearsal tasks
+- [ ] Run and check off T011 and T022 (rehearsals) in tasks.md before this PR merges, or confirm they're covered elsewhere and update tasks.md accordingly.
