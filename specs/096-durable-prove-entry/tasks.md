@@ -619,3 +619,6 @@ Task: "New Gate 128: verify-board-prove-recovery.py fixtures"
 ## Maintainer Feedback — verify-prove-path-concurrency.py is substring-only
 - [ ] Rewrite the gate to evaluate the concurrency-group expression for at least two distinct PR numbers and assert the results are distinct per merged item and distinct from both the ordinary and directed-proof groups, so a shared-key or event-name regression no longer passes.
 - [ ] Add a real desync fixture exercising the gate's `--self-test` path, currently ignored.
+
+## Maintainer Feedback — busy-check block duplicates prove job's step
+- [ ] Consolidate the busy-check block (board-loop.yml ~:880-893) with the prove job's equivalent step into one home, per CLAUDE.md's "shared logic has exactly one home".
