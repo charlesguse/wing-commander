@@ -792,7 +792,7 @@ and evaporating into PR-body prose) that this feature exists to end.
 
 ## Review Gate Round 2 Findings
 
-- [ ] Review finding: finalize.yml lookup step lacks the continue-on-error its sibling got
+- [x] Review finding: finalize.yml lookup step lacks the continue-on-error its sibling got
 
   The new "Look up routed write-boundary items" step in finalize.yml has no continue-on-error, unlike the "Count tasks.md checkboxes at tip (finalize)" step immediately above it and the analogous write-boundary-cycle/-retry steps in implement.yml, which were all given this exact protection in response to review-gate-round-1 item 9's finding about classifier/composite crashes skipping downstream implicit-success() steps.
 

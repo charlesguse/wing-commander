@@ -722,6 +722,12 @@ jobs:
       - name: Look up routed write-boundary items
         id: write-boundary-lookup
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true'
+        # continue-on-error (PR #836 review, item 9; review-gate-round-2 item
+        # 1): a crash here must not skip "Summarize change and extract
+        # remaining manual work" below, which uses the implicit success()
+        # gate -- the prompt already falls back to "(none)" when `rendered`
+        # is empty.
+        continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-write-boundary-lookup
         with:
           token: ${{ env.WC_BOT_TOKEN }}
