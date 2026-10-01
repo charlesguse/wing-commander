@@ -616,3 +616,8 @@ kept to one session to avoid edit collisions).
 - [ ] Rename `contracts/gate-128-stop-point-recording.md` to `gate-135-stop-point-recording.md` and update its internal references (lines 1, 3, 7, 8).
 - [ ] Update every `128` reference in `specs/097-recorded-stop-point/{plan.md,research.md,data-model.md,quickstart.md,tasks.md}` (`grep -rn 128 specs/097-recorded-stop-point`).
 - [ ] Update the PR body's gate-number reference.
+
+## Maintainer Feedback
+
+- [ ] In the composite's "Record the stop point" step, check the `--stop-comment` python call's exit status (`|| { echo "::error::..."; exit 1; }`) and validate its output with `jq -e '.html_url|type=="string"'` before writing the label, marker or comment, instead of silently accepting a failure as `{}` (FR-017).
+- [ ] Apply the same exit-status check to the `reason_block` rendering call so a failure there fails loudly instead of silently dropping the reason.
