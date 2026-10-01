@@ -478,11 +478,53 @@ def read(root, path):
         return fh.read()
 
 
+class _LineMap(dict):
+    """A YAML mapping that remembers where it sat in the source.
+
+    `line` is the mapping's own 1-based start line and `key_lines` maps
+    each scalar key to the 1-based line it was written on. Both are
+    attributes, never dict keys, so they cannot collide with a real step
+    key or show up in `.items()` (issue #758)."""
+
+    line = 0
+    key_lines = None
+
+
+class _LineMarkedLoader(yaml.SafeLoader):
+    """SafeLoader whose mappings are _LineMap, so a per-step finding can
+    name the violating step's own line. Re-finding the step's text with
+    `text.find(run.splitlines()[0])` returned the first occurrence
+    anywhere in the file, which for a common opener like
+    `set -uo pipefail` is an earlier, unrelated step (issue #758)."""
+
+
+def _construct_line_map(loader, node):
+    data = _LineMap()
+    data.line = node.start_mark.line + 1
+    data.key_lines = {}
+    yield data
+    data.update(loader.construct_mapping(node))
+    for key_node, _value in node.value:
+        if isinstance(key_node, yaml.ScalarNode):
+            data.key_lines[key_node.value] = key_node.start_mark.line + 1
+
+
+_LineMarkedLoader.add_constructor(
+    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _construct_line_map)
+
+
 def load_yaml(root, path):
     try:
-        return yaml.safe_load(read(root, path)) or {}
+        return yaml.load(read(root, path), Loader=_LineMarkedLoader) or {}
     except (yaml.YAMLError, OSError):
         return None
+
+
+def step_run_line(step):
+    """1-based line of a step's own `run:` key (the step's start line if
+    the key's position is unknown) -- see _LineMarkedLoader."""
+    key_lines = getattr(step, "key_lines", None) or {}
+    return key_lines.get("run") or getattr(step, "line", 0) or 1
 
 
 def line_of(text, offset):
@@ -548,17 +590,15 @@ def check_failure_issue(root="."):
         doc = load_yaml(root, path)
         if doc is None:
             continue
-        text = read(root, path)
         for _ctx, steps in _step_lists(doc):
             for step in steps:
                 run = str((step or {}).get("run") or "")
                 if not run:
                     continue
                 if LABEL_CREATE_RE.search(run) and ISSUE_LOOKUP_RE.search(run):
-                    offset = text.find(run.splitlines()[0]) if run.splitlines() else 0
                     findings.append(Finding(
                         path, "failure-issue",
-                        line_of(text, max(offset, 0)),
+                        step_run_line(step),
                         "gh label create ... --force + gh issue list ... "
                         "--jq '.[0].number // empty'"))
     return findings
@@ -576,17 +616,15 @@ def check_outstanding_task_item(root="."):
         doc = load_yaml(root, path)
         if doc is None:
             continue
-        text = read(root, path)
         for _ctx, steps in _step_lists(doc):
             for step in steps:
                 run = str((step or {}).get("run") or "")
                 if not run:
                     continue
                 if OUTSTANDING_TASK_RE.search(run):
-                    offset = text.find(run.splitlines()[0]) if run.splitlines() else 0
                     findings.append(Finding(
                         path, "outstanding-task-item",
-                        line_of(text, max(offset, 0)),
+                        step_run_line(step),
                         'gh issue comment ... "- [ ] ..."'))
     return findings
 
@@ -603,17 +641,15 @@ def check_post_review_comment(root="."):
         doc = load_yaml(root, path)
         if doc is None:
             continue
-        text = read(root, path)
         for _ctx, steps in _step_lists(doc):
             for step in steps:
                 run = str((step or {}).get("run") or "")
                 if not run:
                     continue
                 if POST_REVIEW_COMMENT_RE.search(run):
-                    offset = text.find(run.splitlines()[0]) if run.splitlines() else 0
                     findings.append(Finding(
                         path, "post-review-comment",
-                        line_of(text, max(offset, 0)),
+                        step_run_line(step),
                         'gh api -X POST ... reviews ... -f event=COMMENT'))
     return findings
 
@@ -630,17 +666,15 @@ def check_review_finding_fingerprint(root="."):
         doc = load_yaml(root, path)
         if doc is None:
             continue
-        text = read(root, path)
         for _ctx, steps in _step_lists(doc):
             for step in steps:
                 run = str((step or {}).get("run") or "")
                 if not run:
                     continue
                 if REVIEW_FINDING_FINGERPRINT_RE.search(run):
-                    offset = text.find(run.splitlines()[0]) if run.splitlines() else 0
                     findings.append(Finding(
                         path, "review-finding-fingerprint",
-                        line_of(text, max(offset, 0)),
+                        step_run_line(step),
                         'hashlib.sha256("{0}|{1}|{2}".format(issue_number, ...))'))
     return findings
 
@@ -657,16 +691,14 @@ def check_fold_commit(root="."):
         doc = load_yaml(root, path)
         if doc is None:
             continue
-        text = read(root, path)
         for _ctx, steps in _step_lists(doc):
             for step in steps:
                 run = str((step or {}).get("run") or "")
                 if not run:
                     continue
                 if FOLD_COMMIT_RE.search(run):
-                    offset = text.find(run.splitlines()[0]) if run.splitlines() else 0
                     findings.append(Finding(
-                        path, "fold-commit", line_of(text, max(offset, 0)),
+                        path, "fold-commit", step_run_line(step),
                         '.pending_re_review_from = (((.pending_re_review_from ...'))
     return findings
 
@@ -683,16 +715,14 @@ def check_fold_dispatch(root="."):
         doc = load_yaml(root, path)
         if doc is None:
             continue
-        text = read(root, path)
         for _ctx, steps in _step_lists(doc):
             for step in steps:
                 run = str((step or {}).get("run") or "")
                 if not run:
                     continue
                 if FOLD_DISPATCH_RE.search(run):
-                    offset = text.find(run.splitlines()[0]) if run.splitlines() else 0
                     findings.append(Finding(
-                        path, "fold-dispatch", line_of(text, max(offset, 0)),
+                        path, "fold-dispatch", step_run_line(step),
                         'git fetch --quiet origin "refs/heads/${SPEC_BRANCH}"'))
     return findings
 
@@ -831,16 +861,14 @@ def check_marker_write(root="."):
         doc = load_yaml(root, path)
         if doc is None:
             continue
-        text = read(root, path)
         for _ctx, steps in _step_lists(doc):
             for step in steps:
                 run = str((step or {}).get("run") or "")
                 if not run:
                     continue
                 if all(fragment in run for fragment in MARKER_WRITE_FRAGMENTS):
-                    offset = text.find(run.splitlines()[0]) if run.splitlines() else 0
                     findings.append(Finding(
-                        path, "marker-write", line_of(text, max(offset, 0)),
+                        path, "marker-write", step_run_line(step),
                         "sys.path.insert + board_item_marker + write_marker "
                         "co-occurrence"))
     return findings
@@ -859,16 +887,14 @@ def check_pr_branch(root="."):
         doc = load_yaml(root, path)
         if doc is None:
             continue
-        text = read(root, path)
         for _ctx, steps in _step_lists(doc):
             for step in steps:
                 run = str((step or {}).get("run") or "")
                 if not run:
                     continue
                 if all(fragment in run for fragment in PR_BRANCH_FRAGMENTS):
-                    offset = text.find(run.splitlines()[0]) if run.splitlines() else 0
                     findings.append(Finding(
-                        path, "pr-branch", line_of(text, max(offset, 0)),
+                        path, "pr-branch", step_run_line(step),
                         "gh pr view ... headRefName + pr-number=/branch= "
                         "GITHUB_OUTPUT co-occurrence"))
     return findings
@@ -1658,6 +1684,98 @@ def selftest_composite_checkout_order_line_attribution():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+# One violating run: body per check that locates its finding with
+# step_run_line(); selftest_per_step_line_attribution prefixes each with a
+# shared `set -uo pipefail` opener (issue #758).
+PER_STEP_LINE_CASES = (
+    ("marker-write",
+     "          python3 -c \"import sys; "
+     "sys.path.insert(0, '.github/scripts'); "
+     "from board_item_marker import write_marker; "
+     "write_marker('x', 1, 2, 'b', 'sha')\"\n"),
+    ("pr-branch",
+     "          head=$(gh pr view 1 --json headRefName --jq .headRefName)\n"
+     "          echo \"pr-number=1\" >> \"$GITHUB_OUTPUT\"\n"
+     "          echo \"branch=${head}\" >> \"$GITHUB_OUTPUT\"\n"),
+    ("failure-issue",
+     "          gh label create \"third:failed\" --color B60205 --force\n"
+     "          gh issue list --label \"third:failed\" --state open "
+     "--json number --jq '.[0].number // empty'\n"),
+    ("outstanding-task-item",
+     "          gh issue comment \"$N\" --body \"- [ ] a third paste "
+     "\u2014 $URL\"\n"),
+    ("post-review-comment",
+     "          gh api -X POST \"repos/$R/pulls/1/reviews\" -f body=x -f event=COMMENT\n"),
+    ("review-finding-fingerprint",
+     "          python3 - <<'PYEOF'\n"
+     "          import hashlib\n"
+     "          fp = hashlib.sha256(\"{0}|{1}|{2}\".format(\n"
+     "              issue_number, norm(title), norm(file_path)\n"
+     "          ).encode(\"utf-8\")).hexdigest()\n"
+     "          PYEOF\n"),
+    ("fold-commit",
+     "          jq --arg actor \"$ACTOR_LOGIN\" '\n"
+     "            .stage = \"implement\"\n"
+     "            | .pending_re_review_from = (((.pending_re_review_from "
+     "// []) + (if $actor == \"\" then [] else [$actor] end)) | unique)\n"
+     "          ' \"$SPEC_DIR/spec-meta.json\" > /tmp/m.json\n"),
+    ("fold-dispatch",
+     "          git fetch --quiet origin \"refs/heads/${SPEC_BRANCH}\" "
+     "|| true\n"),
+)
+
+
+def selftest_per_step_line_attribution(check_key, violating_body):
+    """Issue #758: a per-step finding must name the violating step's own
+    line. The decoy step opens its `run:` with the same common line
+    (`set -uo pipefail`) earlier in the file; re-finding that text, as the
+    per-step checks once did, reported the decoy's line instead (PR #683:
+    board-loop.yml:298 reported at :176)."""
+    case = f"{check_key} line attribution survives a shared first run: line"
+    tmp = tempfile.mkdtemp(prefix="wc-single-home-")
+    try:
+        _clean_tree(tmp)
+        paste_path = f".github/workflows/third-{check_key}-shared-opener.yml"
+        content = (
+            "on: push\n"
+            "jobs:\n"
+            "  x:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    steps:\n"
+            "      - name: Decoy sharing the opener\n"
+            "        shell: bash\n"
+            "        run: |\n"
+            "          set -uo pipefail\n"
+            "          echo unrelated\n"
+            "      - name: Real violation\n"
+            "        shell: bash\n"
+            "        run: |\n"
+            "          set -uo pipefail\n"
+            + violating_body
+        )
+        lines = content.splitlines()
+        decoy_run = lines.index("        run: |") + 1
+        expected_line = lines.index("        run: |", decoy_run) + 1
+        _write(tmp, paste_path, content)
+        findings, hard = evaluate(tmp)
+        if hard:
+            fail(f"[{case}] unexpected hard failure(s): {hard}")
+            return
+        hits = [f for f in findings
+                if f.check == check_key and f.path == paste_path]
+        if len(hits) != 1:
+            fail(f"[{case}] expected exactly one {check_key} finding at "
+                f"{paste_path}, got: {findings}")
+        elif hits[0].line != expected_line:
+            fail(f"[{case}] finding pointed at line {hits[0].line}, expected "
+                f"{expected_line} (the violating step's own run: key, not "
+                f"the decoy step's shared `set -uo pipefail`)")
+        else:
+            note(f"[{case}] passed ({hits[0].path}:{hits[0].line})")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def selftest_per_document_wrap_passes():
     """#575: loosening the transcript-normalise regex must not start
     flagging the per-document wrap -- the legitimate fallback read the
@@ -2078,6 +2196,10 @@ def run_selftest():
         "        with:\n          path: .wc-pristine-repo\n"
         "      - uses: actions/checkout@v5\n")
     selftest_composite_checkout_order_line_attribution()
+    # Every per-step check that reports step_run_line() gets the same
+    # decoy test, so one regressing to a first-text-match lookup fails here.
+    for check_key, body in PER_STEP_LINE_CASES:
+        selftest_per_step_line_attribution(check_key, body)
     selftest_waived_copy_passes()
     selftest_stale_waiver_fails()
     selftest_promotion_fails()
