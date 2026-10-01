@@ -802,7 +802,7 @@ and evaporating into PR-body prose) that this feature exists to end.
 
 ## Phase 8: Convergence
 
-- [ ] T041 Correct plan.md's Summary (~line 22-26) where it states "Loop
+- [x] T041 Correct plan.md's Summary (~line 22-26) where it states "Loop
   termination itself needs no new logic — spec 059's existing hand-off
   (`progressed=false` and no `converge:` commit) already stops the loop the
   moment the only unchecked task cannot be advanced" per plan: termination

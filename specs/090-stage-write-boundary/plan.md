@@ -19,11 +19,23 @@ extending `wing-commander-tool-args` the same way it already renders the
 Tooling paragraph's shell-command sentence (FR-004), and adds a new
 deterministic composite, `wing-commander-write-boundary`, that classifies
 each unchecked task against that same input and reports whether every
-remaining unchecked task is out of reach. Loop termination itself needs no
-new logic — spec 059's existing hand-off (`progressed=false` and no
-`converge:` commit) already stops the loop the moment the only unchecked
-task cannot be advanced; this plan only changes what the terminal `reason`
-says and adds the filing side effect FR-007 requires. Routing reuses
+remaining unchecked task is out of reach. Loop termination needed a real
+fix, not only a `reason`-text change: the read-back steps compute a new
+`routed` output (`ok && !truncated && all-unchecked-out-of-boundary`),
+deliberately NOT gated on spec 059's own `handoff` (which additionally
+requires no progress this cycle and no `converge:` commit) — a cycle that
+ticks the last in-reach task, or whose `converge:` commit re-appends only
+out-of-boundary lines, must still route and terminate rather than wait for
+`handoff` to agree. `implement.yml`'s "Dispatch next step" terminal
+`if:`-chain reads `routed` alongside `handoff` so a `handoff=false,
+routed=true` cycle terminates instead of redispatching toward the
+iteration cap. Filing itself (the "Route out-of-boundary tasks" step)
+fires more broadly still: whenever this cycle classified at least one
+out-of-boundary task AND the loop is ending for any reason — a clean
+routed hand-off, spec 059's own stall hand-off, or the iteration cap — so
+a MIXED remainder (one out-of-boundary task beside an ordinary one, which
+never reaches `routed=true`) still gets filed instead of evaporating into
+prose. Routing reuses
 `wing-commander-stage-findings`'s existing fingerprinting, dedup, cap, and
 lifecycle-issue recap machinery under a second, distinct label prefix — so
 the routed item never carries a label the board loop would treat as
@@ -115,7 +127,16 @@ YAML plus Python/shell gate scripts:
 │                                      # existing RETRY_RAN selection; a new
 │                                      # "Route out-of-boundary tasks" step
 │                                      # sits beside "File findings from
-│                                      # this run" (:2260-2274)
+│                                      # this run" (:2260-2274), guarded on
+│                                      # routed/handoff/iteration-cap and a
+│                                      # non-empty classification, not
+│                                      # `routed` alone (review item 12);
+│                                      # "Dispatch next step" (:2934-3093)
+│                                      # reads the new `routed` output
+│                                      # alongside `handoff` so a
+│                                      # `handoff=false, routed=true` cycle
+│                                      # terminates instead of redispatching
+│                                      # (review-gate-round-1 item 1)
 ├── finalize.yml                     # new `write-boundary-label-prefix`
 │                                      # workflow_call input; a new
 │                                      # deterministic "Look up routed
