@@ -248,7 +248,7 @@ same finding, same facts (SC-001).
       entirely, an unrecognised display name with no record, and a
       record-vs-name disagreement (record wins, per FR-009).
 - [X] T032 [US1] Add `.github/scripts/verify-no-reference-name-stage-
-      match.py` (Gate 126 — re-verify the number per T002) implementing
+      match.py` (Gate 138 — re-verify the number per T002) implementing
       contracts/stage-identity-name-gate.md: scan `watchdog.yml` and
       `wing-commander-inspected-run-identity/action.yml` for the ten
       reference display-name literals (`"Wing Commander · 1 intake"`
@@ -263,17 +263,17 @@ same finding, same facts (SC-001).
       outside `name-fallback`; a match inside `name-fallback`, which
       passes; a metrics-summary call site missing the key; the
       `name-fallback` step renamed/removed, which errors).
-- [X] T033 [US1] Wire Gate 126 into `.github/workflows/lint-workflows.yml`:
-      a `- name: "Gate 126 — ..."` step (`if: "!cancelled()"`, `run:
+- [X] T033 [US1] Wire Gate 138 into `.github/workflows/lint-workflows.yml`:
+      a `- name: "Gate 138 — ..."` step (`if: "!cancelled()"`, `run:
       python3 .github/scripts/verify-no-reference-name-stage-match.py`)
-      immediately followed by a `"Gate 126 self-test — ..."` step running
+      immediately followed by a `"Gate 138 self-test — ..."` step running
       the same script with `--self-test`, matching Gate 124/125's
       convention (lines 4604-4626) including a header comment citing this
       spec (#750) and the number-allocation rationale.
 
 **Checkpoint**: User Story 1 is fully functional and independently
 testable — renamed and reference-named wrappers produce identical
-watchdog findings, and Gate 126 fails loudly if any FR-002 site regresses
+watchdog findings, and Gate 138 fails loudly if any FR-002 site regresses
 to name-matching.
 
 ---
@@ -361,7 +361,7 @@ rename my wrappers, and what do I lose?" without opening `watchdog.yml`
 ## Phase 6: Polish & Cross-Cutting Concerns
 
 - [X] T041 Run `python .github/scripts/run-local-gates.py` end-to-end and
-      confirm every gate — including the new Gate 126 — is green, per
+      confirm every gate — including the new Gate 138 — is green, per
       CLAUDE.md's pre-push gate suite and quickstart.md step 1.
 - [ ] T042 After this feature's implementation PR merges, re-drive one
       watchdog inspection (`gh workflow run` on the stage-8 wrapper)
@@ -448,10 +448,10 @@ Task: "Pass spec-identity-is-own: 'false' in .github/workflows/board-loop.yml:90
    `resolved-stage` computation).
 2. Complete Phase 3 (User Story 1): spec-identity declaration
    infrastructure, all 12 call sites, the slug-fallback conversion, all
-   seven FR-002 site conversions, and Gate 126.
+   seven FR-002 site conversions, and Gate 138.
 3. **STOP and VALIDATE**: run the local gate suite; confirm SC-001
    (identical outcomes for renamed vs. reference-named wrappers) and
-   SC-002 (Gate 126 green) hold.
+   SC-002 (Gate 138 green) hold.
 4. This alone closes the defect spec.md opens with — a renamed wrapper
    now gets full watchdog coverage.
 
@@ -495,11 +495,11 @@ Task: "Pass spec-identity-is-own: 'false' in .github/workflows/board-loop.yml:90
 
 ## Maintainer Feedback
 
-- [ ] **Resolved-stage consumers gate is broken (blocks merge).** `verify-watchdog-resolved-stage-consumers.py:109`'s `resolve_stage()` runs the composite's real stage step, which needs `$GITHUB_REPOSITORY` under `set -u`; locally the "missing record entirely" and "unrecognised display name, no record" rows fail, and in CI the same rows only pass because a real `gh run download 1 --repo … ` with `GH_TOKEN=x` fails — contradicting the docstring at :91-95, which says the download is skipped.
-  - [ ] Put a `gh` stub on `PATH` (the `wc_gh_capture`/`path_prepend` convention)
-  - [ ] Set `GITHUB_REPOSITORY` in `env_extra`
-  - [ ] Add a `--self-test` mode
-  - [ ] Correct the docstring at :91-95
+- [X] **Resolved-stage consumers gate is broken (blocks merge).** `verify-watchdog-resolved-stage-consumers.py:109`'s `resolve_stage()` runs the composite's real stage step, which needs `$GITHUB_REPOSITORY` under `set -u`; locally the "missing record entirely" and "unrecognised display name, no record" rows fail, and in CI the same rows only pass because a real `gh run download 1 --repo … ` with `GH_TOKEN=x` fails — contradicting the docstring at :91-95, which says the download is skipped.
+  - [X] Put a `gh` stub on `PATH` (the `wc_gh_capture`/`path_prepend` convention)
+  - [X] Set `GITHUB_REPOSITORY` in `env_extra`
+  - [X] Add a `--self-test` mode
+  - [X] Correct the docstring at :91-95
 
 ## Maintainer Feedback
 

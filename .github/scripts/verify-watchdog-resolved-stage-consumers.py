@@ -32,6 +32,7 @@ to drift out of sync, matching this repository's existing execution-based
 gate convention (Gate 19, verify-metrics-summary-record-emission.py).
 
 Usage: python3 .github/scripts/verify-watchdog-resolved-stage-consumers.py
+       python3 .github/scripts/verify-watchdog-resolved-stage-consumers.py --self-test
 Requires: bash, jq.
 """
 import json
@@ -52,8 +53,38 @@ NAME_FALLBACK_STEP_NAME = (
     "Resolve inspected run's stage from its display name, when the "
     "record left it unresolved")
 
+# Fixed per verify-branch-drift-sha-baseline.py's own REPO convention — this
+# gate never talks to the real GitHub API, so the value only has to be
+# well-formed, not real.
+GITHUB_REPOSITORY = "charlesguse/wing-commander"
+
+# A `gh` stub answering `gh run download` with a deterministic "no artifacts"
+# failure (gh's own phrasing, matched by the "stage" step's own
+# `grep -qiE "no artifact|..."` check), so a `record=None` row proves the
+# SAME genuine-not-found path a real adopter's record-less run takes,
+# without ever reaching the network — see resolve_stage()'s docstring.
+GH_STUB = """#!/bin/sh
+case " $* " in
+  *" run "*"download "*)
+    echo "gh: no artifacts found" >&2
+    exit 1
+    ;;
+esac
+exit 0
+"""
+
 BASH = None
+GH_STUB_BINDIR = None
 failures = []
+
+
+def _make_gh_stub_bindir():
+    d = tempfile.mkdtemp(prefix="wc-gh-stub-")
+    path = os.path.join(d, "gh")
+    with open(path, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(GH_STUB)
+    os.chmod(path, 0o755)
+    return d
 
 
 def fail(case, msg):
@@ -87,11 +118,19 @@ def _read_outcomes(runner_temp):
 # Part A — the composite's own precedence (R1/R2), driven for real.
 # ---------------------------------------------------------------------------
 def resolve_stage(run_name, record=None, runner_temp=None):
-    """Run the composite's "stage" step, then its "name-fallback" step,
-    for real, against an optional pre-seeded metrics record (skipping the
-    `gh run download` the "stage" step would otherwise attempt — this
+    """Run the composite's "stage" step, then its "name-fallback" step, for
+    real, against an optional pre-seeded metrics record. When `record` is
+    None, the "stage" step's own `gh run download` still runs for real (it
+    is unconditional whenever the record dir is empty, under `set -uo
+    pipefail`) — it is pointed at GH_STUB_BINDIR's `gh` stub, which answers
+    with a deterministic "no artifacts" failure, and GITHUB_REPOSITORY is
+    passed explicitly so the step's `--repo "$GITHUB_REPOSITORY"` expansion
+    never depends on whatever the ambient environment happens to carry (a
+    bare host has it unset, which trips `set -u` before `gh` even runs; a
+    real Actions runner sets it for real, which made this gate's own CI
+    runs reach the live network under a fake token until this fix). This
     gate is about the precedence logic, not the download itself, which
-    Gate 19's STAGE_SCENARIOS already covers). Returns
+    Gate 19's STAGE_SCENARIOS already covers in depth. Returns
     (resolved_stage, resolved_stage_source, rc1, rc2)."""
     own_temp = runner_temp is None
     if own_temp:
@@ -106,7 +145,10 @@ def resolve_stage(run_name, record=None, runner_temp=None):
         workdir = tempfile.mkdtemp(dir=runner_temp)
         rc1, out1, outputs1, _s1 = run_step(
             BASH, stage_script, workdir,
-            {"ACTIONS_TOKEN": "x", "RUN_ID": "1"}, runner_temp)
+            {"ACTIONS_TOKEN": "x", "RUN_ID": "1",
+             "GITHUB_REPOSITORY": GITHUB_REPOSITORY,
+             "PATH": GH_STUB_BINDIR + os.pathsep + os.environ["PATH"]},
+            runner_temp)
         if rc1 != 0:
             return "", "", rc1, None
         record_stage = outputs1.get("record-stage", "")
@@ -437,11 +479,86 @@ CASES = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# --self-test: proves the "stage" step's `gh run download` line is actually
+# exercised by resolve_stage()'s own fixture rows, and that an ambient
+# GITHUB_REPOSITORY (set for real on every Actions runner, unset on a bare
+# dev host) is not what makes those rows pass — the exact drift this gate
+# shipped with (maintainer review, fold leg-1): locally, an absent ambient
+# value tripped `set -u` before `gh` ever ran; in CI, a present ambient
+# value let a real `gh run download` reach the network under a fake token
+# and pass only because that live call happened to fail too.
+# ---------------------------------------------------------------------------
+def self_test():
+    case = "self-test: GITHUB_REPOSITORY is passed explicitly, not inherited"
+    had = os.environ.pop("GITHUB_REPOSITORY", None)
+    try:
+        # With the fix: resolve_stage()'s own env_extra carries
+        # GITHUB_REPOSITORY regardless of the ambient environment, and the
+        # gh stub answers the download deterministically.
+        got_stage, got_source, rc1, rc2 = resolve_stage(
+            "Wing Commander · 4 tasks", record=None)
+        if rc1 != 0 or rc2 != 0:
+            fail(case, f"with the fix in place, a record=None row still "
+                       f"exited non-zero (rc1={rc1}, rc2={rc2}) even "
+                       f"with GITHUB_REPOSITORY absent from the ambient "
+                       f"environment")
+        elif (got_stage, got_source) != ("tasks", "name"):
+            fail(case, f"expected ('tasks', 'name'), got "
+                       f"{(got_stage, got_source)!r}")
+
+        # Without the fix: calling the real "stage" step directly, the same
+        # way resolve_stage() used to before env_extra carried
+        # GITHUB_REPOSITORY, must fail under `set -u` when the ambient
+        # environment has none either — proving the case above is not
+        # vacuous.
+        runner_temp = tempfile.mkdtemp(prefix="wc-resolved-stage-selftest-")
+        try:
+            os.makedirs(os.path.join(runner_temp, "spec-slug-metrics-record"),
+                        exist_ok=True)
+            stage_script = find_step(COMPOSITE, STAGE_STEP_NAME)["run"]
+            workdir = tempfile.mkdtemp(dir=runner_temp)
+            rc_unfixed, out_unfixed, _o, _s = run_step(
+                BASH, stage_script, workdir,
+                {"ACTIONS_TOKEN": "x", "RUN_ID": "1"}, runner_temp)
+        finally:
+            shutil.rmtree(runner_temp, ignore_errors=True)
+        if rc_unfixed == 0:
+            fail(case, "calling the 'stage' step with no explicit "
+                       "GITHUB_REPOSITORY and none in the ambient "
+                       "environment unexpectedly exited 0 — this "
+                       "self-test no longer discriminates the fix from "
+                       "its absence")
+        elif "GITHUB_REPOSITORY" not in out_unfixed and "unbound variable" \
+                not in out_unfixed:
+            fail(case, f"expected the unfixed call to fail on an unbound "
+                       f"GITHUB_REPOSITORY, got: {out_unfixed.strip()[:300]}")
+    finally:
+        if had is not None:
+            os.environ["GITHUB_REPOSITORY"] = had
+
+    if not any(f.startswith(case) for f in failures):
+        note("GITHUB_REPOSITORY is passed explicitly in env_extra (not "
+             "inherited from the ambient environment), and the same call "
+             "with that fix removed demonstrably fails — the self-test "
+             "discriminates")
+
+
 def main():
-    global BASH
+    global BASH, GH_STUB_BINDIR
     use_utf8_stdout()
     ensure_jq()
     BASH = resolve_bash()
+    GH_STUB_BINDIR = _make_gh_stub_bindir()
+
+    if "--self-test" in sys.argv[1:]:
+        self_test()
+        if failures:
+            print(f"{len(failures)} failure(s).")
+            return 1
+        print("verify-watchdog-resolved-stage-consumers self-test: "
+              "GITHUB_REPOSITORY fix verified as non-vacuous; 0 failures.")
+        return 0
 
     for case in CASES:
         case()

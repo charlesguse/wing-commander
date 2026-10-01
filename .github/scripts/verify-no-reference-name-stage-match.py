@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gate 126 — no FR-002 site gates on a reference display name
+"""Gate 138 — no FR-002 site gates on a reference display name
 (specs/099-name-free-stage-identity T032, contracts/stage-identity-name-
 gate.md).
 
@@ -233,7 +233,7 @@ def main():
     if errors or violations:
         print(f"{len(errors)} error(s), {len(violations)} violation(s).")
         return 1
-    print(f"Gate 126: {len(metrics_sources)} workflow file(s) scanned for "
+    print(f"Gate 138: {len(metrics_sources)} workflow file(s) scanned for "
           f"spec-identity-is-own; 0 reference-name-conditional violations, "
           f"0 missing-declaration violations.")
     return 0
@@ -357,7 +357,7 @@ def self_test_main():
         else:
             print(f"[ok] fixture 5: a removed/renamed name-fallback step errors: {e}")
 
-    print(f"Gate 126 self-test: {'FAILED' if bad else 'all 5 fixtures behaved as specified'}")
+    print(f"Gate 138 self-test: {'FAILED' if bad else 'all 5 fixtures behaved as specified'}")
     return 1 if bad else 0
 
 
