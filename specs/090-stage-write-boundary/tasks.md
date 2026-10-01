@@ -835,3 +835,20 @@ and evaporating into PR-body prose) that this feature exists to end.
 - [x] Add a mutation to the `run_mutations` table in `verify-write-boundary.py` (~:1401) for pass condition (i) enforcement parity: strip the `Edit(…)`/`Write(…)` append from the `wing-commander-tool-args` compose step and re-run `check_enforcement_parity`, asserting it now fails
 - [x] Add a mutation covering pass condition (f) idempotency: break the shared fingerprint helper's determinism (or its call site) and assert the idempotency check now fails
 - [x] Add a mutation covering pass condition (h) label separation: collapse `write-boundary-label-prefix`'s default onto `findings-label-prefix`'s default and assert the label-separation check now fails
+
+## Phase 9: Convergence
+
+- [ ] T042 Correct data-model.md's `routed`-flag formula (~line 101, still
+  `routed = handoff && all-unchecked-out-of-boundary`), the FR-012
+  paragraph (~line 117-121, still claiming `routed` cannot be true when
+  `progressed=true`), the "Routed finding" entry's "Computed/filed by"
+  guard text (~line 131-132, still `routed == 'true' && truncated !=
+  'true'` only), and the relationships diagram (~line 170, still showing
+  `all-unchecked-out-of-boundary, handoff ─▶ routed`) to describe the
+  shipped mechanism: `routed = ok && !truncated &&
+  all-unchecked-out-of-boundary`, deliberately NOT gated on `handoff`
+  (Maintainer Feedback item 2), and the "Route out-of-boundary tasks"
+  step's broadened guard, `!cancelled() && ok && !truncated &&
+  write-boundary-findings-json != '[]' && (routed || handoff ||
+  iteration>=max)` (Maintainer Feedback item 12) per data-model.md:
+  Routed flag / FR-012 / Routed finding (contradicts)
