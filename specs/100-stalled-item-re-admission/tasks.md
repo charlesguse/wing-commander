@@ -48,7 +48,8 @@ fixed like code, unlike those features' own frozen `spec.md`/`plan.md`/
 **Purpose**: Reserve the one shared resource (a gate number) every later
 gate-registration task in Phase 5 needs.
 
-- [ ] T001 Confirm the highest `Gate N —` currently registered in
+- [X] T001 (confirmed **126** against `main`'s tip at implementation time —
+  grep still finds 125 as the highest registered gate) Confirm the highest `Gate N —` currently registered in
   `.github/workflows/lint-workflows.yml` (this session's read of `main`
   finds **125** as the highest, via `grep -on "Gate [0-9]\+"
   .github/workflows/lint-workflows.yml`) and provisionally reserve **Gate
@@ -84,14 +85,14 @@ label call succeeding, assert the label precedes the marker comment. This
 is exactly what Gate 97's existing self-test mutations already exercise
 (commit `aaaa140`, PR #782).
 
-- [ ] T002 [US1] Run `python3 .github/scripts/verify-board-loop-resume-gating.py`
+- [X] T002 [US1] Run `python3 .github/scripts/verify-board-loop-resume-gating.py`
   and confirm `stall_label_findings()` reports zero findings for all eight
   current stall sites — triage's hand-over (`board-loop.yml:1427`), route's
   spec verdict (`:1906`), fix's gate-suite-red stall and post-push breach
   (`:2263`/`:2467`), review's three stall arms (`:3306`/`:3311`/`:3319`),
   and readiness's backstop breach (`:3913`) — satisfying FR-001/FR-004 and
   SC-001/SC-003.
-- [ ] T003 [US1] Run `python3 .github/scripts/verify-board-loop-resume-gating.py --self-test`
+- [X] T003 [US1] Run `python3 .github/scripts/verify-board-loop-resume-gating.py --self-test`
   and confirm the stall-label self-test mutations (reverting any one site
   to marker-before-label, or continuing past a failed `add_stalled_label()`
   call) still fail and name the site, satisfying FR-002/FR-003/FR-005 and
@@ -113,14 +114,14 @@ stop check answers "stand down", once with the backstop holding and once
 breaching, and assert zero durable calls in both — exactly what Gate 97's
 `readiness_stop_gate_findings()` and its self-test already exercise.
 
-- [ ] T004 [US2] Run `python3 .github/scripts/verify-board-loop-resume-gating.py`
+- [X] T004 [US2] Run `python3 .github/scripts/verify-board-loop-resume-gating.py`
   and confirm `readiness_stop_gate_findings()` reports zero findings across
   every readiness durable step gated on
   `steps.killswitch-recheck.outputs.paused` (`board-loop.yml:3696-3934`:
   the ready report and its marker, the not-ready comment, the breach-retry
   lookup, the `spec-request` create, the `board:stalled` label, and the
   cross-link), satisfying FR-012/FR-014 and SC-007.
-- [ ] T005 [US2] Run `python3 .github/scripts/verify-board-loop-resume-gating.py --self-test`
+- [X] T005 [US2] Run `python3 .github/scripts/verify-board-loop-resume-gating.py --self-test`
   and confirm removing the stand-down gate from any one of those readiness
   durable steps still fails and names that step, satisfying FR-013/FR-015
   and SC-008.
@@ -147,7 +148,7 @@ second branch/PR and a run-summary line naming the clause that fired.
 
 ### Implementation for User Story 3
 
-- [ ] T006 [US3] Implement the shared reviewed-head determination in
+- [X] T006 [US3] Implement the shared reviewed-head determination in
   `.github/scripts/board_item_marker.py` (contracts/reviewed-head-determination.md,
   FR-006b): a function `head_moved_since_last_review(pr_number, comments,
   bot_login, run=None)` — signature matching this module's own `read_marker(comments,
@@ -176,7 +177,11 @@ second branch/PR and a run-summary line naming the clause that fired.
   commit's `committedDate` is strictly after the matched comment's
   `created_at`; return `False` only when a matching comment's `created_at`
   is at or after the head commit's `committedDate`.
-- [ ] T007 [US3] In `.github/workflows/board-loop.yml`'s `select` job resume
+- [X] T007 [US3] (comments threaded via a new `COMMENTS_JSON` env var, cat'd
+  from the already-fetched `$RUNNER_TEMP/board-issue-comments.json`, rather
+  than re-reading the file inside the heredoc -- keeps Gate 97's own
+  `RESUME_CASES` heredoc-execution harness working with no stub needed) In
+  `.github/workflows/board-loop.yml`'s `select` job resume
   step's step-resolution heredoc, change clause 2 (currently at
   `:811-813`: `elif pr_from_fallback: step = BREACH_STEP if marker_step ==
   BREACH_STEP else "review"`) to the three-way split
@@ -187,14 +192,20 @@ second branch/PR and a run-summary line naming the clause that fired.
   `BOT_LOGIN` (both already in scope in this heredoc's environment — `BOT_LOGIN` is
   set at the step's `env:`, line `578`); `step = "review"` when it returns `True`,
   `step = "readiness"` when `False`. Do not touch clauses 0, 1, 3, or 4.
-- [ ] T008 [US3] Extend the resume step's existing `$GITHUB_STEP_SUMMARY`
+- [X] T008 [US3] (satisfied by reusing the step's existing generic `note`
+  field/echo rather than adding a new one: clause 2b sets `note` to name the
+  resolved step and, per the contract's own wording, "the head moved ... or
+  no reviewed head was resolvable" vs "the head had not moved since the
+  last review" -- the already-existing `if [ -n "$resume_note" ]; then
+  echo ...` at the bottom of the step prints it unconditionally) Extend the
+  resume step's existing `$GITHUB_STEP_SUMMARY`
   echo lines (`board-loop.yml:855-861`) so that, whenever T007's clause-2b
   split fires, the line also names which of `review`/`readiness` was
   resolved and why (head moved / head unmoved / no reviewed head
   resolvable), reusing the same `echo ... >> "$GITHUB_STEP_SUMMARY"` idiom
   already used at that site and at readiness's stand-down record (FR-011,
   research.md D6).
-- [ ] T009 [US3] Add one `$GITHUB_STEP_SUMMARY` line at each of the eight
+- [X] T009 [US3] Add one `$GITHUB_STEP_SUMMARY` line at each of the eight
   stall sites (the same lines T002 lists), immediately after a successful
   `add_stalled_label()` + marker render, naming the issue, the step it
   stalled from, and that a `stalled` marker was recorded — reusing the
@@ -205,7 +216,7 @@ second branch/PR and a run-summary line naming the clause that fired.
   retry of a previously failed label-add" (a failed attempt posts no marker
   and leaves no state to distinguish it), so recording every successful
   stall satisfies FR-011 for both a first attempt and a retry.
-- [ ] T010 [US3] Update `add_stalled_label()`'s docstring in
+- [X] T010 [US3] Update `add_stalled_label()`'s docstring in
   `.github/scripts/board_item_marker.py` (currently lines `183-186`: "...
   Re-admission keeps the resume step's ordinary re-derivation from live
   state: review when an open board:owned PR cites the issue, otherwise a
@@ -215,7 +226,8 @@ second branch/PR and a run-summary line naming the clause that fired.
   fresh triage — cross-referencing `head_moved_since_last_review()` (T006)
   as the shared determination, per FR-006's requirement that the rule live
   "in one canonical place."
-- [ ] T011 [P] [US3] Fold `specs/100-stalled-item-re-admission/contracts/resume-recovery-readmission.md`'s
+- [X] T011 [P] [US3] (both source contracts left in place as this feature's
+  own review record, per the task's own "either is acceptable" clause) Fold `specs/100-stalled-item-re-admission/contracts/resume-recovery-readmission.md`'s
   "Amended clause 2" text directly into
   `specs/061-marker-owned-in-flight/contracts/resume-recovery.md`'s own
   "Step resolution" clause 2 and its "Acceptance mapping" table (FR-019),
@@ -227,14 +239,14 @@ second branch/PR and a run-summary line naming the clause that fired.
   once folded in, or leave them as this feature's own review record if the
   implement stage prefers — either is acceptable since the live contract is
   what gates now read.
-- [ ] T012 [P] [US3] Amend
+- [X] T012 [P] [US3] Amend
   `specs/057-autonomous-board-loop/contracts/labels-and-cross-links.md`'s
   `board:stalled` row's "Cleared by" cell (currently: "a human removing the
   label — the sole condition FR-010 [of spec 057] reads for
   re-eligibility") to add one sentence cross-referencing
   `resume-recovery.md`'s amended clause 2 for what happens *after* the
   label is cleared (FR-019/FR-020). No new row, column, or label.
-- [ ] T013 [US3] Create `.github/scripts/verify-board-loop-readmission.py`
+- [X] T013 [US3] Create `.github/scripts/verify-board-loop-readmission.py`
   (Gate 126 per T001), fixture-driven in the style of
   `verify-board-eligibility.py` (file-based fixtures under
   `.github/scripts/tests/`) for the reviewed-head determination, and in the
@@ -252,39 +264,43 @@ second branch/PR and a run-summary line naming the clause that fired.
   exercising that reversion. Fails loudly (not vacuously) when any fixture
   file under (a) is missing, matching `verify-board-eligibility.py`'s own
   rule.
-- [ ] T014 [P] [US3] Fixture case `head-moved-resolves-review/` under
+- [X] T014 [P] [US3] Fixture case `head-moved-resolves-review/` under
   `.github/scripts/tests/board-loop-readmission/`: a round-outcome comment
   with `created_at` before the PR's `gh pr view` head-commit
   `committedDate` → `head_moved_since_last_review()` returns `True`, and
   the clause-2 simulation resolves `step == "review"`.
-- [ ] T015 [P] [US3] Fixture case `head-unmoved-resolves-readiness/`: a
+- [X] T015 [P] [US3] Fixture case `head-unmoved-resolves-readiness/`: a
   round-outcome comment with `created_at` at or after the head commit's
   `committedDate` → returns `False`, clause-2 simulation resolves `step ==
   "readiness"`.
-- [ ] T016 [P] [US3] Fixture case `no-reviewed-head-defaults-review/`: no
+- [X] T016 [P] [US3] Fixture case `no-reviewed-head-defaults-review/`: no
   round-outcome comment matches this `pr_number` (or only a
   parse-failed/malformed-findings comment does) → returns `True` (FR-006b's
   safe default), `step == "review"`.
-- [ ] T017 [P] [US3] Fixture case `pr-lookup-fails-defaults-review/`: the
+- [X] T017 [P] [US3] Fixture case `pr-lookup-fails-defaults-review/`: the
   stubbed `run` for `gh pr view` returns a non-zero returncode → returns
   `True`, `step == "review"`.
-- [ ] T018 [P] [US3] Fixture case `breach-marker-ignores-head-movement/`: a
+- [X] T018 [P] [US3] Fixture case `breach-marker-ignores-head-movement/`: a
   `breach`-step marker whose PR was recovered only via the fallback, with
   both a head-moved and a head-unmoved sub-case → clause-2 simulation
   resolves `step == "breach"` regardless (`#530`'s carve-out, unaffected by
   T007).
-- [ ] T019 [P] [US3] Fixture case `no-open-pr-falls-to-triage/`: no
+- [X] T019 [P] [US3] Fixture case `no-open-pr-falls-to-triage/`: no
   `board:owned` PR citing the issue resolves via either the marker or the
   fallback → clause-2 is never reached, resolution falls to clause 4 →
   `step == "triage"`.
-- [ ] T020 [US3] Fixture case `fresh-budget-after-readmission/` (FR-009,
+- [X] T020 [US3] (the round-0 half is gated directly via the heredoc; the
+  "spends a fresh budget and stalls again" half is the review job's own
+  pre-existing, unmodified round-count/budget logic -- not re-simulated
+  here, since clause 2b never touches `round_` and so cannot regress it)
+  Fixture case `fresh-budget-after-readmission/` (FR-009,
   SC-006, research.md D4): a `stalled` marker (`round: 0`, per every stall
   site's marker call omitting `--round`) recovered via the fallback with a
   moved head → resolved `step == "review"` with `round == "0"` — the same
   starting value a freshly selected item gets — and, spending a fresh
   `BOARD_LOOP_ROUND_BUDGET` (5) rounds with findings still open, stalling
   again on the same terms.
-- [ ] T021 [US3] Implement FR-010's no-extra-agent-invocation check inside
+- [X] T021 [US3] Implement FR-010's no-extra-agent-invocation check inside
   `verify-board-loop-readmission.py` (contracts/stall-and-readmission-invariants.md
   "Added: FR-010's no-extra-invocation property"): confirm, for each of the
   eight stall sites, that the label-add call (`add_stalled_label()`) is
@@ -294,7 +310,7 @@ second branch/PR and a run-summary line naming the clause that fired.
   agent after a label-add failure; a retry is simply the next scheduled
   workflow run re-entering the job exactly once, at the cost of one
   ordinary round, never an extra one.
-- [ ] T022 [US3] Register `verify-board-loop-readmission.py` (T013) in
+- [X] T022 [US3] Register `verify-board-loop-readmission.py` (T013) in
   `.github/workflows/lint-workflows.yml` as a `"Gate 126 — ..."` /
   `"Gate 126 self-test — ..."` step pair, following the existing two-step
   convention immediately visible at Gate 97's own registration
@@ -314,17 +330,26 @@ the run summary (T008/T009).
 
 **Purpose**: Whole-suite and whole-diff checks that span every story.
 
-- [ ] T023 [P] Run `python .github/scripts/run-local-gates.py` end-to-end
+- [X] T023 [P] (197/197 gates passed, including Gate 126 and its self-test,
+  with none skipped or waived) Run `python .github/scripts/run-local-gates.py` end-to-end
   and confirm every existing gate stays green alongside Gate 126, with none
   skipped, waived, or weakened to accommodate this change (SC-010).
-- [ ] T024 Confirm FR-021/SC-011: diff every changed file against
+- [X] T024 (confirmed: every file this feature touches is `board-loop.yml`,
+  `.github/scripts/*.py`, `.github/scripts/tests/**`,
+  `.github/workflows/lint-workflows.yml` (not itself a `workflow_call`
+  reusable workflow -- it triggers on `workflow_dispatch`/push/pull_request,
+  so its own internal step list is not a published interface), or a
+  `specs/*/contracts/*.md`) Confirm FR-021/SC-011: diff every changed file against
   published-surface boundaries — no `workflow_call` stage workflow's
   `inputs`/`outputs`/`secrets`, and no published composite action's
   `action.yml` `inputs`/`outputs`, changed by this feature (every changed
   file is `board-loop.yml`, `.github/scripts/*.py`, `.github/scripts/tests/**`,
   or a `specs/*/contracts/*.md`, none of which are the published surface
   per Constitution VII).
-- [ ] T025 Per CLAUDE.md "A fix to behaviour that only runs in Actions is
+- [X] T025 (recorded as a comment on lifecycle issue #752, since this
+  implement-stage agent opens no PRs itself:
+  https://github.com/charlesguse/wing-commander/issues/752#issuecomment-5922077122)
+  Per CLAUDE.md "A fix to behaviour that only runs in Actions is
   proven after merge" and quickstart.md's "Post-merge Actions proof": note
   in this feature's implementation PR description that, after merge, one
   `board-loop.yml` run must be re-driven via its dispatchable wrapper
