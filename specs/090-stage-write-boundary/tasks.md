@@ -707,3 +707,7 @@ and evaporating into PR-body prose) that this feature exists to end.
 ## Maintainer Feedback — filed routed-item text contradicts itself (PR #836 review, item 7)
 
 - [ ] In `classify-out-of-boundary-tasks.sh` (~:103), reword the body from "is **inside** the implement stage's write boundary" to "is on the implement stage's no-write list", matching the title's "outside" framing
+
+## Maintainer Feedback — .claude/settings.json edge case needs an explicit fixture (PR #836 review, item 8)
+
+- [ ] Add a dedicated Gate 133 fixture for the `.claude/settings.json` edge case (a task that would grant the stage the very permission it lacks), per spec.md's Edge Cases, rather than relying on it merely falling out of the prefix comparison
