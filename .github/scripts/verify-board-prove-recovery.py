@@ -214,9 +214,61 @@ def run_directed_recovery_input_spelling():
     return failures
 
 
+DISPLACEMENT_STEP_NAME = "- name: Detect a merge whose proof run never started (FR-010b)"
+
+
+def run_displacement_writer_passes_outcome_reason():
+    """FR-011 case (a), maintainer review: a marker the displacement step
+    writes with no `--outcome-reason` can never satisfy
+    is_recoverable()'s own `outcome_reason ==
+    board_prove_displacement.RECORDED_REASON` check -- the reader accepting
+    the field is not enough; the one writer that records a genuine
+    displacement must actually pass it, sourced from
+    find_undetected_merges()'s own `recorded_reason` field (the one home),
+    never a re-typed literal."""
+    failures = 0
+    with open(REPO_BOARD_LOOP, encoding="utf-8") as fh:
+        text = fh.read()
+
+    start = text.find(DISPLACEMENT_STEP_NAME)
+    if start == -1:
+        failures += 1
+        print("::error::verify-board-prove-recovery: board-loop.yml has no {0!r} "
+              "step to check.".format(DISPLACEMENT_STEP_NAME))
+        return failures
+    next_step = text.find("\n      - name:", start + len(DISPLACEMENT_STEP_NAME))
+    block = text[start:next_step if next_step != -1 else len(text)]
+
+    if "--step prove" not in block:
+        failures += 1
+        print("::error::verify-board-prove-recovery: the displacement step no longer "
+              "writes a `--step prove` marker at all.")
+        return failures
+
+    if "--outcome-reason" not in block:
+        failures += 1
+        print("::error::verify-board-prove-recovery: the displacement step's own "
+              "`board_item_marker.py --step prove` call passes no `--outcome-reason` "
+              "-- a marker it writes can never satisfy is_recoverable()'s "
+              "RECORDED_REASON check, so FR-011 case (a) is unreachable.")
+    elif ".recorded_reason" not in block:
+        failures += 1
+        print("::error::verify-board-prove-recovery: the displacement step's "
+              "`--outcome-reason` does not read `.recorded_reason` off its own row -- "
+              "expected find_undetected_merges()'s own field to be the one home, "
+              "never a re-typed literal.")
+    else:
+        print("[ok] the displacement step's own marker write passes "
+              "`--outcome-reason`, sourced from find_undetected_merges()'s own "
+              "`recorded_reason` field")
+
+    return failures
+
+
 def run():
     failures = (run_is_recoverable() + run_find_recoverable_items() + run_marker_round_trip()
-                + run_directed_recovery_input_spelling())
+                + run_directed_recovery_input_spelling()
+                + run_displacement_writer_passes_outcome_reason())
     print("verify-board-prove-recovery: {0} failure(s).".format(failures))
     return 1 if failures else 0
 

@@ -316,7 +316,8 @@ jobs:
           jq -c '.[]' "$RUNNER_TEMP/board-undetected-merges.json" | while read -r row; do
             issue_number="$(printf '%s' "$row" | jq -r '.issue')"
             merged_pr="$(printf '%s' "$row" | jq -r '.merged_pr')"
-            marker="$(python3 .github/scripts/board_item_marker.py --step prove)"
+            marker="$(python3 .github/scripts/board_item_marker.py --step prove \
+              --outcome-reason "$(printf '%s' "$row" | jq -r '.recorded_reason')")"
             gh issue comment "$issue_number" -R "$GITHUB_REPOSITORY" \
               --body "$(printf 'PR #%s merged, but its proof run never started -- the pull_request: closed run that would have entered prove-gate/prove was itself displaced from the queue before it began. This issue stays open.\n\n%s' "$merged_pr" "$marker")"
           done

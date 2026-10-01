@@ -589,8 +589,8 @@ Task: "New Gate 136: verify-board-prove-recovery.py fixtures"
   no change to the merge gate itself.
 
 ## Maintainer Feedback — FR-011 case (a) unreachable
-- [ ] In board-loop.yml's displacement step (~:319, inside the `find_undetected_merges()` marker write), pass `--outcome-reason "$(printf '%s' "$row" | jq -r .recorded_reason)"` so the written `prove` marker carries `RECORDED_REASON`, sourced from `find_undetected_merges()` as the one home.
-- [ ] Extend Gate 136 (`verify-board-prove-recovery.py`) to assert the displacement-step writer actually passes `--outcome-reason`, not just that the reader accepts it.
+- [X] In board-loop.yml's displacement step (~:319, inside the `find_undetected_merges()` marker write), pass `--outcome-reason "$(printf '%s' "$row" | jq -r .recorded_reason)"` so the written `prove` marker carries `RECORDED_REASON`, sourced from `find_undetected_merges()` as the one home.
+- [X] Extend Gate 136 (`verify-board-prove-recovery.py`) to assert the displacement-step writer actually passes `--outcome-reason`, not just that the reader accepts it.
 
 
 ## Maintainer Feedback — directed prove-gate dispatch can never reach prove
@@ -636,8 +636,8 @@ Task: "New Gate 136: verify-board-prove-recovery.py fixtures"
 
 
 ## Maintainer Feedback — verify-prove-path-concurrency.py is substring-only
-- [ ] Rewrite the gate to evaluate the concurrency-group expression for at least two distinct PR numbers and assert the results are distinct per merged item and distinct from both the ordinary and directed-proof groups, so a shared-key or event-name regression no longer passes.
-- [ ] Add a real desync fixture exercising the gate's `--self-test` path, currently ignored.
+- [X] Rewrite the gate to evaluate the concurrency-group expression for at least two distinct PR numbers and assert the results are distinct per merged item and distinct from both the ordinary and directed-proof groups, so a shared-key or event-name regression no longer passes.
+- [X] Add a real desync fixture exercising the gate's `--self-test` path, currently ignored.
 
 ## Maintainer Feedback — busy-check block duplicates prove job's step
 - [ ] Consolidate the busy-check block (board-loop.yml ~:880-893) with the prove job's equivalent step into one home, per CLAUDE.md's "shared logic has exactly one home".
