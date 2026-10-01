@@ -9,7 +9,7 @@ second canonical source for any of them.
 
 ## Recovery entry (FR-001/FR-002/FR-011/FR-011a/FR-011b)
 
-Three new steps in the `select` job (maintainer review, FR-012) run
+Four new steps in the `select` job (maintainer review, FR-012) run
 immediately after the existing "Detect a merge whose proof run never
 started (FR-010b)" step, each gated at minimum on the job-level entry gate
 (kill switch clear, no implement cycle in flight):
@@ -23,14 +23,22 @@ started (FR-010b)" step, each gated at minimum on the job-level entry gate
    close to the dispatch as this job's structure allows, not the job-level
    entry gate alone, which can be minutes stale by the time displacement's
    own `gh` calls and the candidate search above have run.
-3. "Dispatch the recovered prove" does the busy-check, marker write and
-   dispatch (below), gated on step 2's own `outcome == 'success'` (not
-   merely its `paused` output — a failed or skipped recheck must not read
-   as "not paused") and `paused != 'true'`.
+3. "Check whether the directed proof group is busy" calls the shared
+   `wing-commander-directed-proof-busy-check` composite (maintainer review,
+   CLAUDE.md "Shared logic has exactly one home" — the prove job's own
+   identically-named step calls the same composite, not a second pasted
+   copy), gated on step 2's own `outcome == 'success'` and `paused !=
+   'true'`.
+4. "Dispatch the recovered prove" does the marker write and dispatch
+   (below), gated additionally on step 3's own `outcome == 'success'` and
+   `busy != 'true'`.
 
-All three carry `continue-on-error: true`: a lasting failure in any of
-them must not fail this job's own success() and stall "Resume" and
-everything after it.
+All four carry `continue-on-error: true`: a lasting failure in any of them
+must not fail this job's own success() and stall "Resume" and everything
+after it. Each `if:` checks the prior step's own `outcome == 'success'`,
+never merely its output value — a failed or skipped step reads its own
+outputs as the empty string, which a bare `!= 'true'` test would
+incorrectly treat as "proceed".
 
 **Candidate set**: issues from this run's own
 `board-recent-merges-by-issue.json` (the displacement step's fetch, reused
@@ -48,10 +56,11 @@ ownership check is added here (FR-013).
 still recoverable, not touched (FR-011b's "must remain recoverable rather
 than falling to triage or losing its attempt").
 
-**Pre-dispatch check**: `board_prove.directed_proof_group_busy()` against a
-fresh `gh run list`. `True` → stop; nothing durable is written for this
-item this run (FR-011a: a dispatch not made for this reason does not spend
-the attempt). `False` → proceed.
+**Pre-dispatch check**: the `wing-commander-directed-proof-busy-check`
+composite (`board_prove.directed_proof_group_busy()` against a fresh `gh
+run list`, maintainer review's "one home"). `True` → stop; nothing durable
+is written for this item this run (FR-011a: a dispatch not made for this
+reason does not spend the attempt). `False` → proceed.
 
 **Dispatch**: `gh workflow run board-loop.yml -f directed-stage=prove -f
 directed-issue=<issue> -f directed-pr=<merged PR> -f

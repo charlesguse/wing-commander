@@ -940,18 +940,48 @@ jobs:
           issue-number: ${{ steps.recovery-candidate.outputs.issue-number }}
           initial-paused: ${{ vars.WING_COMMANDER_BOARD_LOOP_PAUSED == 'true' }}
 
+      # research.md D4/FR-001a, CLAUDE.md "Shared logic has exactly one
+      # home": the same composite the prove job's own "Check whether the
+      # directed proof group is busy" step uses -- see that composite's own
+      # header for why this was two pasted copies before (maintainer
+      # review).
+      - name: Check whether the directed proof group is busy
+        id: recovery-busy-check
+        if: >-
+          steps.killswitch.outputs.status != 'paused' && steps.stand-down.outputs.status != 'in-flight'
+          && steps.recovery-candidate.outputs.issue-number != ''
+          && steps.recovery-killswitch-recheck.outcome == 'success'
+          && steps.recovery-killswitch-recheck.outputs.paused != 'true'
+        continue-on-error: true
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-directed-proof-busy-check
+        with:
+          token: ${{ github.token }}
+
+      - name: Record that the stranded prove stays recoverable (busy)
+        if: >-
+          steps.recovery-candidate.outputs.issue-number != ''
+          && steps.recovery-killswitch-recheck.outcome == 'success'
+          && steps.recovery-killswitch-recheck.outputs.paused != 'true'
+          && steps.recovery-busy-check.outcome == 'success'
+          && steps.recovery-busy-check.outputs.busy == 'true'
+        run: |
+          echo "board-loop: issue #${{ steps.recovery-candidate.outputs.issue-number }}'s stranded prove (${{ steps.recovery-candidate.outputs.outcome-reason }}) stays recoverable -- the directed-proof group is busy this tick (FR-011a)." >> "$GITHUB_STEP_SUMMARY"
+
       - name: Dispatch the recovered prove (FR-011)
         id: recovery-dispatch
         # steps.recovery-killswitch-recheck.outcome == 'success' (not just a
         # paused != 'true' check on its output): a FAILED or skipped recheck
         # reads its own outputs as "", which `!= 'true'` would otherwise let
         # straight through -- the fail-safe here is to not dispatch at all
-        # when the recheck itself could not be completed.
+        # when the recheck itself could not be completed. Same reasoning
+        # applies to recovery-busy-check's own outcome.
         if: >-
           steps.killswitch.outputs.status != 'paused' && steps.stand-down.outputs.status != 'in-flight'
           && steps.recovery-candidate.outputs.issue-number != ''
           && steps.recovery-killswitch-recheck.outcome == 'success'
           && steps.recovery-killswitch-recheck.outputs.paused != 'true'
+          && steps.recovery-busy-check.outcome == 'success'
+          && steps.recovery-busy-check.outputs.busy != 'true'
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
@@ -964,28 +994,6 @@ jobs:
           issue_number="$ISSUE_NUMBER"
           merged_pr="$MERGED_PR"
           outcome_reason="$OUTCOME_REASON"
-
-          # research.md D4/FR-001a: whether the directed-proof concurrency
-          # group a directed dispatch would join is already occupied is
-          # read fresh, right before any dispatch is attempted -- the same
-          # check the prove job's own "Check whether the directed proof
-          # group is busy" step makes before its own re-drive dispatch.
-          if ! run_list_json="$(gh run list --workflow=board-loop.yml -R "$GITHUB_REPOSITORY" \
-            --json databaseId,displayTitle,status -L 20)"; then
-            echo "::error::board-loop: could not list board-loop.yml's own runs -- issue #$issue_number's stranded prove ($outcome_reason) stays recoverable; not dispatched this tick."
-            exit 1
-          fi
-          busy="$(RUN_LIST_JSON="$run_list_json" OWN_RUN_ID="$GITHUB_RUN_ID" python3 -c "
-          import os, sys
-          sys.path.insert(0, '.github/scripts')
-          from board_prove import directed_proof_group_busy
-          print('true' if directed_proof_group_busy(os.environ['RUN_LIST_JSON'], os.environ['OWN_RUN_ID']) else 'false')
-          ")"
-
-          if [ "$busy" = "true" ]; then
-            echo "board-loop: issue #$issue_number's stranded prove ($outcome_reason) stays recoverable -- the directed-proof group is busy this tick (FR-011a)." >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
 
           # maintainer review (SC-008 "retried at most once"): the marker
           # is written, spending this item's one recovery attempt, BEFORE
@@ -4969,31 +4977,19 @@ jobs:
           initial-paused: ${{ vars.WING_COMMANDER_BOARD_LOOP_PAUSED == 'true' }}
           check-issue-closed: "true"
 
-      # research.md D4/FR-001a: whether the directed-proof concurrency
-      # group a directed dispatch would join is already occupied by
-      # another directed run -- read fresh, right before any dispatch is
-      # attempted, never cached or assumed from the busy-ness of the
-      # ordinary group.
+      # research.md D4/FR-001a, CLAUDE.md "Shared logic has exactly one
+      # home": the same composite the select job's own recovery dispatch
+      # uses -- see that composite's own header for why this was two
+      # pasted copies before (maintainer review).
       - name: Check whether the directed proof group is busy
         id: busy-check
         if: >-
           steps.decide.outputs.actions-only == 'true' &&
           steps.decide.outputs.directed-stage != '' &&
           steps.killswitch-recheck.outputs.paused != 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -uo pipefail
-          run_list_json="$(gh run list --workflow=board-loop.yml -R "$GITHUB_REPOSITORY" \
-            --json databaseId,displayTitle,status -L 20)"
-
-          busy="$(RUN_LIST_JSON="$run_list_json" OWN_RUN_ID="$GITHUB_RUN_ID" python3 -c "
-          import os, sys
-          sys.path.insert(0, '.github/scripts')
-          from board_prove import directed_proof_group_busy
-          print('true' if directed_proof_group_busy(os.environ['RUN_LIST_JSON'], os.environ['OWN_RUN_ID']) else 'false')
-          ")"
-          echo "busy=$busy" >> "$GITHUB_OUTPUT"
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-directed-proof-busy-check
+        with:
+          token: ${{ github.token }}
 
       # FR-041 scenario 4: nothing a fresh dispatch would prove that the
       # merged PR's own required checks did not already prove -- the issue
