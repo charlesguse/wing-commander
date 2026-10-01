@@ -510,6 +510,13 @@ jobs:
       # the very run it was asked to cancel.
       # prose-free: literal
       concurrency-group: ${{ steps.confirm.outputs.concurrency-group }}
+      # specs/074-serialized-fold-dispatch T054: true when every classified
+      # leg is `stop` -- the stop procedure runs inside `act` itself
+      # (contracts/workflow-changes.md), so a stop-only run still has a
+      # non-empty `legs` and must not be made to queue for a fold-phase or
+      # dispatch-claim ticket behind the very run it was asked to cancel.
+      # prose-free: literal
+      stop-only: ${{ steps.confirm.outputs.stop-only }}
       # research.md D3/data-model.md §2: the spec branch's tip immediately
       # before `act` starts folding anything — `dispatch-once` compares its
       # own read of the tip against this to decide whether any leg folded.
@@ -1363,8 +1370,10 @@ jobs:
           # latency of a stop request bundled into the same comment.
           if [ "$(printf '%s' "$result" | jq -r 'all(.category == "stop")')" = "true" ]; then
             echo "concurrency-group=wing-commander-pr-conversation-stop-pr-${PR_NUMBER}" >> "$GITHUB_OUTPUT"
+            echo "stop-only=true" >> "$GITHUB_OUTPUT"
           else
             echo "concurrency-group=wing-commander-${SPEC_DIR}" >> "$GITHUB_OUTPUT"
+            echo "stop-only=false" >> "$GITHUB_OUTPUT"
           fi
 
       # #287: the classified bodies reach `act` and report-fold-outcomes as
@@ -1519,13 +1528,18 @@ jobs:
   # only `act`'s own release step ever clears it.
   fold-turn-act:
     needs: [classify-and-announce, verify-image-prerequisites]
+    # specs/074-serialized-fold-dispatch T054: a stop-only run mutates
+    # nothing and must not wait for an `act`-kind ticket behind the very
+    # run it was asked to cancel (FR-005/SC-009) -- see `act`'s own
+    # concurrency-group comment above.
     if: >-
       !cancelled() &&
       needs.verify-image-prerequisites.result != 'failure' &&
       needs.classify-and-announce.result == 'success' &&
       needs.classify-and-announce.outputs.qualifies == 'true' &&
       needs.classify-and-announce.outputs.legs != '' &&
-      needs.classify-and-announce.outputs.legs != '[]'
+      needs.classify-and-announce.outputs.legs != '[]' &&
+      needs.classify-and-announce.outputs.stop-only != 'true'
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
@@ -1616,7 +1630,11 @@ jobs:
     # explicitly here, a ticket-admission timeout (fold-turn-act failing)
     # would NOT stop `act` from running unticketed and re-contending for
     # the GitHub concurrency group, which is the exact defect this feature
-    # removes.
+    # removes. T054: fold-turn-act itself skips for a stop-only run (it
+    # joins a per-PR group, never the canonical one, so it needs no
+    # fold-phase ticket) -- that skip is accepted here only when
+    # classify-and-announce agrees this run is stop-only, never as a
+    # blanket substitute for a real grant.
     if: >-
       !cancelled() &&
       needs.verify-image-prerequisites.result != 'failure' &&
@@ -1624,7 +1642,8 @@ jobs:
       needs.classify-and-announce.outputs.qualifies == 'true' &&
       needs.classify-and-announce.outputs.legs != '' &&
       needs.classify-and-announce.outputs.legs != '[]' &&
-      needs.fold-turn-act.result == 'success'
+      (needs.fold-turn-act.result == 'success' ||
+       (needs.fold-turn-act.result == 'skipped' && needs.classify-and-announce.outputs.stop-only == 'true'))
     # data-model.md §4 point 2: an explicit per-instance job name, keyed by
     # the stable `id` T005 assigns, so report-fold-outcomes can identify
     # each leg's own GitHub Actions job by id in the run's job list.
@@ -2945,12 +2964,17 @@ jobs:
   # `dispatch-once` as plain job outputs.
   fold-turn-dispatch:
     needs: [classify-and-announce, verify-image-prerequisites, act]
+    # specs/074-serialized-fold-dispatch T054: a stop-only run never
+    # dispatches an implement cycle (it has no folds), so it must not wait
+    # for a dispatch-claim ticket either -- see `fold-turn-act`'s matching
+    # comment above.
     if: >-
       always() &&
       needs.verify-image-prerequisites.result != 'failure' &&
       needs.classify-and-announce.outputs.qualifies == 'true' &&
       needs.classify-and-announce.outputs.legs != '' &&
-      needs.classify-and-announce.outputs.legs != '[]'
+      needs.classify-and-announce.outputs.legs != '[]' &&
+      needs.classify-and-announce.outputs.stop-only != 'true'
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
@@ -3144,13 +3168,21 @@ jobs:
   # admission timeout would not stop this job from dispatching unticketed.
   dispatch-once:
     needs: [verify-image-prerequisites, classify-and-announce, act, fold-turn-dispatch]
+    # T054: fold-turn-dispatch itself skips for a stop-only run; that skip
+    # is accepted here only when classify-and-announce agrees this run is
+    # stop-only (see fold-turn-act/act's matching comments above). A
+    # stop-only `dispatch-once` run below falls straight through every
+    # should-dispatch-gated step (needs.fold-turn-dispatch.outputs.* are
+    # all empty) to the standalone/no-op path, posting no reply -- it has
+    # no folds to dispatch for.
     if: >-
       always() &&
       needs.verify-image-prerequisites.result != 'failure' &&
       needs.classify-and-announce.outputs.qualifies == 'true' &&
       needs.classify-and-announce.outputs.legs != '' &&
       needs.classify-and-announce.outputs.legs != '[]' &&
-      needs.fold-turn-dispatch.result == 'success'
+      (needs.fold-turn-dispatch.result == 'success' ||
+       (needs.fold-turn-dispatch.result == 'skipped' && needs.classify-and-announce.outputs.stop-only == 'true'))
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}

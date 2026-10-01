@@ -44,9 +44,14 @@ A cross-product covering, at minimum:
    reconciliation with spec 075).
 5. **Dispatch claim after the round empties** — asserts exactly one of two
    simulated concurrent claimants resolves `true` (FR-009/SC-003).
-6. **`stop`-only run alongside a mutating run** — asserts the stop run's
-   jobs never enqueue a ticket at all and never appear in the simulated
-   ledger (FR-005/FR-017a).
+6. **A `stop`-only run** (every classified leg is `stop` — the stop
+   procedure runs INSIDE `act`, so `legs` is never `[]` for this case;
+   T054/B2) — asserts `fold-turn-act`'s/`fold-turn-dispatch`'s `if:`
+   resolve false whenever classify-and-announce's `stop-only` output is
+   `true` (their only `enqueue` step never runs), and that `act`/
+   `dispatch-once` accept that skip only when `stop-only` agrees it was
+   deliberate — never as a blanket substitute for a real ticket grant on a
+   mutating run (FR-005/SC-009/FR-017a).
 7. **`fold-cycle-guard` never-started + correlated entrant** →
    `notice-and-redispatch`; **never-started + no correlated entrant** →
    `none`; **ran steps then cancelled** → `none` (FR-012/FR-013).
@@ -120,6 +125,11 @@ A cross-product covering, at minimum:
 - `mut_win_retry_declines` — reverts the winning branch's idempotent-retry
   check to a plain decline (the T050 defect restored). Must fail
   scenario 14.
+- `mut_drop_stop_only_handling` — reverts `fold-turn-act`/
+  `fold-turn-dispatch` to admitting a ticket even for a stop-only run, and
+  `act`/`dispatch-once` to requiring a bare `success` result from them
+  (the T054/B2 defect restored: a stop-only run queues behind the very run
+  it was asked to cancel). Must fail scenario 6.
 
 `main()` runs `suite()` against the untouched subject (must be 0
 failures) and then, for each mutation, re-runs `suite()` and requires a

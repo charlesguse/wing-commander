@@ -74,10 +74,13 @@ SCENARIOS (`suite(subject)`, contracts/gates.md)
    ticket enqueued behind the winner can never even attempt a valid claim
    (it is not at the queue head) -- `claim-dispatch` against it is a
    caller-error, not a second `true` (FR-009/SC-003).
-6. A `stop`-only run (zero fold-route legs) -- `fold-turn-act`'s `if:`
-   resolves false regardless of the image-prerequisites/classify result, so
-   its steps (the only place `enqueue` is ever called) never run at all
-   (FR-005/FR-017a).
+6. A `stop`-only run (every classified leg is `stop` -- the stop procedure
+   runs INSIDE `act`, so `legs` is never `[]` for this case; T054/B2) --
+   `fold-turn-act`'s/`fold-turn-dispatch`'s `if:` resolve false whenever
+   classify-and-announce's `stop-only` output is `true`, so their only
+   `enqueue` step never runs, and `act`/`dispatch-once` accept that skip
+   ONLY when `stop-only` agrees it was deliberate, never as a blanket
+   substitute for a real grant (FR-005/SC-009/FR-017a).
 7. `fold-cycle-guard`'s `decide` step: never-started + a correlated entrant
    -> proceeds toward redispatch; never-started + no correlated entrant ->
    `action-taken: none`; ran a step then was cancelled -> `action-taken:
@@ -155,6 +158,10 @@ MUTATIONS (each proven to break the gate -- FR-022)
   the same run that already won would report `declined` instead of `won`,
   contradicting this file's own "every transform is idempotent under
   retry"). Fails scenario 14.
+- `mut_drop_stop_only_handling` -- reverts fold-turn-act/fold-turn-dispatch
+  to admitting a ticket even for a stop-only run, and act/dispatch-once to
+  requiring a bare `success` result from them (the T054/B2 defect
+  restored). Fails scenario 6.
 
 `main()` runs `suite()` against the untouched subject (must be 0 failures),
 then re-runs it under each mutation and requires a failure -- identical to
@@ -164,6 +171,7 @@ single invocation.
 """
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -239,7 +247,7 @@ def load_expr_subject():
 # pr-conversation.yml / implement.yml expression contexts
 # --------------------------------------------------------------------------
 def pr_ctx(legs='["leg-1"]', qualifies="true", fold_turn_act="success",
-           fold_turn_dispatch="success"):
+           fold_turn_dispatch="success", stop_only="false"):
     return {
         "cancelled()": False,
         "always()": True,
@@ -247,6 +255,7 @@ def pr_ctx(legs='["leg-1"]', qualifies="true", fold_turn_act="success",
         "needs.classify-and-announce.result": "success",
         "needs.classify-and-announce.outputs.qualifies": qualifies,
         "needs.classify-and-announce.outputs.legs": legs,
+        "needs.classify-and-announce.outputs.stop-only": stop_only,
         "needs.fold-turn-act.result": fold_turn_act,
         "needs.fold-turn-dispatch.result": fold_turn_dispatch,
     }
@@ -334,14 +343,63 @@ def scenario_three_overlapping(subject):
 
 
 def scenario_stop_only(subject):
+    """T054 (B2): the stop procedure runs INSIDE `act` (contracts/
+    workflow-changes.md), so a stop-only run's `legs` is never `[]` -- it
+    carries the stop leg itself. classify-and-announce's `stop-only` output
+    (true only when every classified leg is `stop`) is what fold-turn-act/
+    fold-turn-dispatch skip on, not an empty `legs`; the downstream `act`/
+    `dispatch-once` jobs must then accept that skip, but ONLY when
+    stop-only agrees -- a skip for any other reason (a real admission
+    timeout on a mutating run) must still block them."""
     failures = []
+    real_stop_legs = '[{"id": "leg-1", "category": "stop"}]'
     for qualifies in ("true", "false"):
-        ctx = pr_ctx(legs="[]", qualifies=qualifies)
+        ctx = pr_ctx(legs=real_stop_legs, qualifies=qualifies, stop_only="true")
         if truthy(evaluate(subject["fold-turn-act:if"], ctx)):
             failures.append(f"scenario 6: fold-turn-act:if ran for a "
-                            f"stop-only review (legs=[], qualifies="
+                            f"stop-only review (a real stop leg, qualifies="
                             f"{qualifies}) -- it would enqueue a ticket for "
                             f"a run with nothing to fold (FR-005/FR-017a)")
+        ctx = pr_ctx(legs=real_stop_legs, qualifies=qualifies, stop_only="true",
+                     fold_turn_dispatch="skipped")
+        if truthy(evaluate(subject["fold-turn-dispatch:if"], ctx)):
+            failures.append(f"scenario 6: fold-turn-dispatch:if ran for a "
+                            f"stop-only review (a real stop leg, qualifies="
+                            f"{qualifies}) -- it would enqueue a dispatch-"
+                            f"claim ticket for a run with no folds to "
+                            f"dispatch (FR-005/SC-009)")
+
+    # `act` must accept its own fold-turn-act's skip, but only when
+    # classify-and-announce agrees this run is stop-only.
+    ctx = pr_ctx(legs=real_stop_legs, stop_only="true", fold_turn_act="skipped")
+    if not truthy(evaluate(subject["act:if"], ctx)):
+        failures.append("scenario 6: act:if did not run for a stop-only "
+                        "review whose fold-turn-act skipped as designed -- "
+                        "the stop leg itself (run inside act) would never "
+                        "execute, and the run it targets would wait out "
+                        "the very ticket this fix removes (FR-005/SC-009)")
+
+    # A skip for any OTHER reason (e.g. a mutating run whose fold-turn-act
+    # job was itself skipped by some upstream failure) must NOT be treated
+    # as a stop-only pass-through.
+    ctx = pr_ctx(legs='["leg-1"]', stop_only="false", fold_turn_act="skipped")
+    if truthy(evaluate(subject["act:if"], ctx)):
+        failures.append("scenario 6: act:if ran despite fold-turn-act "
+                        "skipping on a run classify-and-announce does NOT "
+                        "consider stop-only -- the stop-only skip must not "
+                        "be a blanket substitute for a real ticket grant")
+
+    ctx = pr_ctx(legs=real_stop_legs, stop_only="true", fold_turn_dispatch="skipped")
+    if not truthy(evaluate(subject["dispatch-once:if"], ctx)):
+        failures.append("scenario 6: dispatch-once:if did not run for a "
+                        "stop-only review whose fold-turn-dispatch skipped "
+                        "as designed (FR-005/SC-009)")
+
+    ctx = pr_ctx(legs='["leg-1"]', stop_only="false", fold_turn_dispatch="skipped")
+    if truthy(evaluate(subject["dispatch-once:if"], ctx)):
+        failures.append("scenario 6: dispatch-once:if ran despite "
+                        "fold-turn-dispatch skipping on a run classify-and-"
+                        "announce does NOT consider stop-only")
     return failures
 
 
@@ -1079,6 +1137,32 @@ def mut_win_retry_declines(subject):
     return s
 
 
+def mut_drop_stop_only_handling(subject):
+    """T054 (B2): reverts fold-turn-act/fold-turn-dispatch to admitting a
+    ticket even for a stop-only run, and act/dispatch-once to requiring a
+    bare 'success' result from them -- the defect restored: a stop-only
+    run queues behind the very run it was asked to cancel (FR-005/SC-009)."""
+    s = dict(subject)
+    admit_needle = re.compile(
+        r"\s*&&\s*needs\.classify-and-announce\.outputs\.stop-only != 'true'")
+    s["fold-turn-act:if"] = admit_needle.sub("", subject["fold-turn-act:if"], count=1)
+    s["fold-turn-dispatch:if"] = admit_needle.sub(
+        "", subject["fold-turn-dispatch:if"], count=1)
+    accept_act = re.compile(
+        r"\(needs\.fold-turn-act\.result == 'success' \|\|"
+        r"\s*\(needs\.fold-turn-act\.result == 'skipped' && "
+        r"needs\.classify-and-announce\.outputs\.stop-only == 'true'\)\)")
+    s["act:if"] = accept_act.sub(
+        "needs.fold-turn-act.result == 'success'", subject["act:if"])
+    accept_dispatch = re.compile(
+        r"\(needs\.fold-turn-dispatch\.result == 'success' \|\|"
+        r"\s*\(needs\.fold-turn-dispatch\.result == 'skipped' && "
+        r"needs\.classify-and-announce\.outputs\.stop-only == 'true'\)\)")
+    s["dispatch-once:if"] = accept_dispatch.sub(
+        "needs.fold-turn-dispatch.result == 'success'", subject["dispatch-once:if"])
+    return s
+
+
 MUTATIONS = [
     ("fold-turn-* prerequisite dropped from needs:", mut_drop_fold_turn_needs),
     ("claim-dispatch's round-emptiness check removed", mut_unconditional_dispatch),
@@ -1091,6 +1175,7 @@ MUTATIONS = [
     ("winning claim's round list narrowed to the claimant's own folds", mut_round_list_narrowed_to_claimant),
     ("standalone mode still enqueues an implement ticket", mut_standalone_still_enqueues),
     ("a retried win declines instead of winning again", mut_win_retry_declines),
+    ("stop-only skip-and-accept handling reverted", mut_drop_stop_only_handling),
 ]
 
 
