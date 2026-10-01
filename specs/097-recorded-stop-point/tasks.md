@@ -49,7 +49,7 @@ board-stop-check/` (new fixtures).
 **Purpose**: Documentation housekeeping that has no code dependency and can
 proceed before any implementation.
 
-- [ ] T001 [P] Extend `specs/085-stop-request-cancel-contract/contracts/
+- [X] T001 [P] Extend `specs/085-stop-request-cancel-contract/contracts/
   composite-invocation.md` with an additive note describing the widened
   `wing-commander-board-stop-check` surface this feature adds — the two new
   optional inputs `marker-branch` (default `""`) and `marker-base-sha`
@@ -60,7 +60,7 @@ proceed before any implementation.
   contracts"). Make clear the existing "Unchanged surface (FR-008)" clause
   still holds letter-for-letter: no existing input/output's name, default,
   or meaning changes.
-- [ ] T002 [P] Create `.github/scripts/verify-stop-point-recording.py` with
+- [X] T002 [P] Create `.github/scripts/verify-stop-point-recording.py` with
   only its module header: a docstring naming Gate 128, FR-019, and
   `specs/097-recorded-stop-point/contracts/gate-128-stop-point-recording.md`,
   matching the header style of `.github/scripts/
@@ -80,7 +80,7 @@ a durable, legible record in the first place).
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete.
 
-- [ ] T003 Add `find_stop_command_comment(comments, bot_login)` to
+- [X] T003 Add `find_stop_command_comment(comments, bot_login)` to
   `.github/scripts/board_stop_check.py`, next to `find_stop_request()`
   (research.md D2). It recomputes the same baseline `find_stop_request()`
   computes — the newest `is_loop_marker_author()` comment's
@@ -92,12 +92,12 @@ a durable, legible record in the first place).
   modify `find_stop_request()` itself, its `StopDecision` return shape, or
   `main()`'s existing stdin/stdout contract (D1 — Gate 87 mutation-proves
   `find_stop_request()` today and must keep doing so unchanged).
-- [ ] T004 Add `stop_command_reason(body)` to `.github/scripts/
+- [X] T004 Add `stop_command_reason(body)` to `.github/scripts/
   board_stop_check.py`, reusing the existing private `_command_line()` and
   the module-level `STOP_COMMAND_RE` (research.md D2). Returns the text on
   the matched line after `STOP_COMMAND_RE`'s match end, stripped; returns
   `""` when the stop command carried no reason (e.g. a bare `stop.`).
-- [ ] T005 [P] Add `html_url` to the composite's existing `gh api
+- [X] T005 [P] Add `html_url` to the composite's existing `gh api
   repos/.../issues/.../comments` `--jq` projection in `.github/actions/
   wing-commander-board-stop-check/action.yml`'s `check` step (currently
   `--jq '.[] | {body, author_association, created_at, user: {login:
@@ -105,7 +105,7 @@ a durable, legible record in the first place).
   one more object field (research.md D9). `specs/085-.../contracts/
   composite-invocation.md`'s "Unchanged" description of this JSON shape
   stays accurate since nothing downstream reads the object positionally.
-- [ ] T006 Add a `--stop-comment` CLI mode to `.github/scripts/
+- [X] T006 Add a `--stop-comment` CLI mode to `.github/scripts/
   board_stop_check.py`'s `main()`: reads `{"comments": [...], "bot_login":
   "..."}` JSON from stdin (the same comments-array shape `main()` already
   reads, now including `html_url` per T005), calls
@@ -118,7 +118,7 @@ a durable, legible record in the first place).
   rule itself (FR-018; contracts/stop-check-composite.md step 2's `--jq
   ... | python3 -I ".../board_stop_check.py" --stop-comment` usage, exact
   flag shape confirmed here).
-- [ ] T007 Fix provenance of the **existing** `board_stop_check.py`
+- [X] T007 Fix provenance of the **existing** `board_stop_check.py`
   invocation in `.github/actions/wing-commander-board-stop-check/
   action.yml`'s `check` step (currently `python3 .github/scripts/
   board_stop_check.py` at `action.yml:113`) to `python3 -I
@@ -128,14 +128,14 @@ a durable, legible record in the first place).
   `board_item_marker.py` call in T010) is written with the pristine path
   from the start — this task only fixes the one pre-existing bare-path
   call.
-- [ ] T008 Add two new optional inputs to `.github/actions/
+- [X] T008 Add two new optional inputs to `.github/actions/
   wing-commander-board-stop-check/action.yml`: `marker-branch` (required:
   false, default `""`) and `marker-base-sha` (required: false, default
   `""`) — "The item's currently-known branch name / base commit... passed
   through to the stop-point record's marker when a stop is honoured... no
   effect on a kill-switch-only or closed-issue stand-down" (contracts/
   stop-check-composite.md).
-- [ ] T009 Add the new `stop-cause` output to `.github/actions/
+- [X] T009 Add the new `stop-cause` output to `.github/actions/
   wing-commander-board-stop-check/action.yml`, computed once inside the
   existing `check` step via this exact decision order (contracts/
   stop-check-composite.md):
@@ -153,7 +153,7 @@ a durable, legible record in the first place).
   `stop-cause != ""` — so every one of the ~30 existing
   `steps.killswitch-recheck.outputs.paused` reads across `board-loop.yml`
   keeps working unchanged (FR-008's frozen clause, D3).
-- [ ] T010 Implement the record-write block inside `.github/actions/
+- [X] T010 Implement the record-write block inside `.github/actions/
   wing-commander-board-stop-check/action.yml`'s `check` step, gated on
   `stop-cause == "stop-request"` (research.md D5, D6, D8; contracts/
   stop-check-composite.md "Recording"):
@@ -192,7 +192,7 @@ a durable, legible record in the first place).
   5. `paused`/`stop-cause` outputs (T009) are unaffected by whether step 1
      short-circuited (FR-008: writing the record must never read back as
      "the stop is satisfied").
-- [ ] T011 Wire the six call sites in `.github/workflows/board-loop.yml` —
+- [X] T011 Wire the six call sites in `.github/workflows/board-loop.yml` —
   triage (`id: killswitch-recheck` at `board-loop.yml:1336`), route
   (`:1750`), fix (`:2277`), review (`:3223`), readiness (`:3705`), prove
   (`:4261`) — to pass `marker-branch: ${{ needs.select.outputs.branch }}`
@@ -202,26 +202,26 @@ a durable, legible record in the first place).
   already reuses verbatim at `board-loop.yml:2060-2061`). Triage and route
   naturally pass through empty strings today (no branch exists pre-fix) —
   no special-casing needed.
-- [ ] T012 Add Gate 128 structural check 1 to `.github/scripts/
+- [X] T012 Add Gate 128 structural check 1 to `.github/scripts/
   verify-stop-point-recording.py`: parses `.github/actions/
   wing-commander-board-stop-check/action.yml` as text/YAML (no execution)
   and fails when there is no step, gated on `stop-cause == "stop-request"`,
   that invokes `board_item_marker.py --step stalled ... --add-label
   "board:stalled"` (contracts/gate-128-stop-point-recording.md check 1).
-- [ ] T013 [P] Add Gate 128 structural check 2 to `.github/scripts/
+- [X] T013 [P] Add Gate 128 structural check 2 to `.github/scripts/
   verify-stop-point-recording.py`: fails when the `board_stop_check.py`
   invocation or the new `board_item_marker.py` invocation in `action.yml`
   references a bare `.github/scripts/...` path instead of
   `$RUNNER_TEMP/wc-pristine/scripts/...` (contracts/gate-128... check 2;
   spec 095 FR-011/FR-012, research.md D8).
-- [ ] T014 Add `--self-test` coverage for checks 1 and 2 to `.github/
+- [X] T014 Add `--self-test` coverage for checks 1 and 2 to `.github/
   scripts/verify-stop-point-recording.py`: mutation 1 deletes the
   record-write step's `if:` condition or its body and asserts check 1 then
   fails; mutation 2 rewrites the invocation to a bare `.github/scripts/...`
   path and asserts check 2 then fails (contracts/gate-128... Self-test
   items 1–2; Principle VIII/SC-009 — the gate must be shown to fail its own
   subject).
-- [ ] T015 Register Gate 128 in `.github/workflows/lint-workflows.yml`,
+- [X] T015 Register Gate 128 in `.github/workflows/lint-workflows.yml`,
   immediately after the existing Gate 127 block (ends at
   `lint-workflows.yml:4653`), following the exact two-step pattern every
   other gate uses:
@@ -253,7 +253,7 @@ consecutive runs. The first stands down and records; the second selects a
 *different* eligible item (or reports an empty board) and never re-enters a
 job for the stopped item.
 
-- [ ] T016 [P] [US1] Add Gate 128 eligibility-level check 5 to `.github/
+- [X] T016 [P] [US1] Add Gate 128 eligibility-level check 5 to `.github/
   scripts/verify-stop-point-recording.py`: constructs the data-model.md
   fixture — an issue with `"labels": [{"name": "board:stalled"}]` plus a
   companion bot comment carrying the marker
@@ -263,12 +263,12 @@ job for the stopped item.
   `in_flight_candidate()` nor `select()` ever returns that issue, across
   ten simulated successive selection passes (contracts/gate-128... check 5;
   SC-001: "selected by zero of the next ten runs").
-- [ ] T017 [P] [US1] Add Gate 128 check 6 to `.github/scripts/
+- [X] T017 [P] [US1] Add Gate 128 check 6 to `.github/scripts/
   verify-stop-point-recording.py`: fails when a fixture composite
   invocation with `stop-cause` resolving to `"kill-switch"` or
   `"closed-issue"` still reaches the record-write block added in T010
   (contracts/gate-128... check 6; FR-011/FR-013).
-- [ ] T018 [US1] Add `--self-test` coverage for checks 5 and 6 to `.github/
+- [X] T018 [US1] Add `--self-test` coverage for checks 5 and 6 to `.github/
   scripts/verify-stop-point-recording.py`: mutation 5 feeds a marker
   fixture with the `board:stalled` label omitted and asserts check 5's
   exclusion assertion no longer holds (proving the check actually reads the
@@ -277,7 +277,7 @@ job for the stopped item.
   block's own gating condition (a deliberately broken `if:` that ignores
   `stop-cause`) and asserts check 6 then fails (contracts/gate-128...
   Self-test items 5–6).
-- [ ] T019 [US1] Run `quickstart.md` Scenario A (one stop halts one item,
+- [X] T019 [US1] Run `quickstart.md` Scenario A (one stop halts one item,
   board keeps moving) and Scenario E (kill-switch-only writes nothing)
   structurally against the fixtures added in T016/T017 — confirm SC-001,
   SC-003 and SC-005 hold without requiring a live Actions run.
