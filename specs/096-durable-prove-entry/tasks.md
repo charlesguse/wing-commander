@@ -586,3 +586,8 @@ Task: "New Gate 128: verify-board-prove-recovery.py fixtures"
 - [ ] Add self-test mutations: wrong middle-arm prefix, missing middle arm, unexpected middle arm.
 - [ ] Update spec 089's `contracts/skill-drift-gate.md` step 4 to describe the three-arm shape.
 - [ ] Add a "`pull_request: closed` group" column to spec 060's `concurrency-groups.md` holding `` `wing-commander-board-loop-prove-` `` (PR number noted outside the backticks), fixing the accidental brace-parsing in the ordinary column.
+
+## Maintainer Feedback — Gate number collisions
+- [ ] Renumber `verify-board-prove-recovery.py` from Gate 128 (colliding with spec 074's #821) to **Gate 136**.
+- [ ] Renumber `verify-prove-path-concurrency.py` from Gate 129 (colliding with main's spec-cross-reference Gate 129 at lint-workflows.yml:4739) — either fold it into Gate 136 since Gate 89's byte-pin already covers FR-018, or give it **Gate 137** if still free.
+- [ ] Update every citing location: lint-workflows.yml:4783/4793/4797/4805; both scripts' line-2 headers; verify-board-prove.py:127; tasks.md lines 17, 18, 58, 112, 147, 183, 369, 383, 465, 526.
