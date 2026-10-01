@@ -1540,8 +1540,9 @@ jobs:
       cancel-in-progress: false
     outputs:
       # Maintainer feedback (spec 097): a stand-down must not read
-      # downstream as 'proceed' -- route's own if: is #901's to fix, but
-      # this job's own continuation output already stops lying about it.
+      # downstream as 'proceed' -- route's own if: already excludes it
+      # (needs.triage.outputs.outcome == 'proceed'), and this job's own
+      # continuation output stops lying about it too.
       outcome: ${{ steps.killswitch-recheck.outputs.paused == 'true' && 'stood-down' || steps.decide.outputs.outcome }}
     steps:
       - name: Checkout
@@ -3310,8 +3311,8 @@ jobs:
       pr-number: ${{ steps.pr.outputs.pr-number }}
       # Maintainer feedback (spec 097): a stand-down must not read
       # downstream (readiness's needs.review.outputs.outcome == 'converged'
-      # check) as 'converged' -- route's own if: is #901's to fix, but this
-      # job's own continuation output already stops lying about it.
+      # check) as 'converged' -- readiness's own if: already excludes it,
+      # and this job's own continuation output stops lying about it too.
       outcome: ${{ steps.killswitch-recheck.outputs.paused == 'true' && 'stood-down' || steps.round.outputs.outcome }}
     steps:
       # A directed dispatch needs the issue marker read -- and therefore the

@@ -265,7 +265,19 @@ def find_stop_command_comment(comments, current_run_id, bot_login):
     the same ~15 lines (research.md D1), not a refactor of
     find_stop_request() into a shared helper -- that function's own
     StopDecision contract and Gate 87's mutation coverage of it stay
-    untouched."""
+    untouched.
+
+    Note (maintainer review): GitHub's "re-run failed jobs" keeps the SAME
+    run id as the original attempt. If a maintainer removes board:stalled
+    and re-runs the failed jobs that way -- rather than waiting for the
+    next scheduled run -- this run's own already-posted stop-point record
+    still carries that same id, so it still does not move the baseline
+    (same-run-id exclusion, above): the original stop comment remains at or
+    after the baseline and is honoured again on the re-run. Only a
+    genuinely later run (a DIFFERENT run id, the FR-009/FR-016 case) moves
+    the baseline past an already-recorded stop. A release is reliably
+    effective from the next scheduled run; re-running the same failed run
+    id after a release is not a supported release path."""
     ordered = sorted(comments or [], key=lambda c: c.get("created_at") or "")
     current_run_id = str(current_run_id)
 

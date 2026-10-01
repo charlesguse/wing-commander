@@ -642,9 +642,9 @@ kept to one session to avoid edit collisions).
 
 ## Maintainer Feedback
 
-- [ ] Nit: update the stale "route's own if: is #901's to fix" comments at triage's and review's `outcome` comments (`board-loop.yml` ~1288, ~3057) — #901 has merged and route's `if:` already handles `stood-down`.
+- [X] Nit: update the stale "route's own if: is #901's to fix" comments at triage's and review's `outcome` comments (`board-loop.yml` ~1288, ~3057) — #901 has merged and route's `if:` already handles `stood-down`.
 
 
 ## Maintainer Feedback
 
-- [ ] Nit: re-running a failed job reuses the run id, so after a release that run's own record no longer moves the baseline. Note this in the relevant docstring (e.g. `find_stop_command_comment`'s or `board_stop_check.py`'s module docstring).
+- [X] Nit: re-running a failed job reuses the run id, so after a release that run's own record no longer moves the baseline. Note this in the relevant docstring (e.g. `find_stop_command_comment`'s or `board_stop_check.py`'s module docstring).
