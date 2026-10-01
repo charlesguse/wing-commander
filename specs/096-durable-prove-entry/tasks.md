@@ -605,3 +605,7 @@ Task: "New Gate 128: verify-board-prove-recovery.py fixtures"
 ## Maintainer Feedback — recovery step has no continue-on-error and sits in front of resume
 - [ ] Add `continue-on-error: true` to the recovery step (board-loop.yml ~:837) plus an `::error::` annotation, following the closed-without-landing precedent at :340, so a persistent `gh` failure there doesn't fail `select` and stall the board every tick.
 - [ ] Write the spent marker before dispatching, so a dispatch that succeeds but whose comment fails doesn't cause a duplicate dispatch on the next tick (SC-008).
+
+
+## Maintainer Feedback — recovery never checks a maintainer stop request
+- [ ] Split the recovery step into three: pick the candidate, run `wing-commander-board-stop-check` for that issue, then dispatch gated on `paused != 'true'` (FR-012), so the kill-switch read isn't minutes stale by dispatch time.
