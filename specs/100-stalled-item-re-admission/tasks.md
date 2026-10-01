@@ -450,3 +450,7 @@ T023's full suite run — this is the same regression concern noted under
 ## Maintainer Feedback (review of 7b4b0825, PR #885)
 
 - [ ] T028 [US3] Fix board_item_marker.py:221-238's `head_moved_since_last_review()`: comparing `committedDate` (client-set) to the matched comment's `created_at` lets a commit authored before the verdict but pushed after it, or a push landing mid-run, resolve to `moved=False` and send readiness an unreviewed head (FR-006b). Compare the head SHA against the reviewed SHA instead — recorded in the verdict comment text (FR-019 freezes only the marker schema, not comment text) or read from the review's `commit_id`. Also fix the `headRefOid` lookup at :235 to return `True` when not found in `commits`, rather than falling back to `commits[-1]`.
+
+## Maintainer Feedback (review of 7b4b0825, PR #885)
+
+- [ ] T029 [US3] Fix gate-number collision: lint-workflows.yml:4723/4740/4743 register this feature's gate as Gate 128, which spec 074 (#821) already holds. Renumber this feature's gate to **Gate 134** throughout lint-workflows.yml, verify-board-loop-readmission.py, and its tests. Also correct tasks.md's remaining 'Gate 126' text in T001/T019/T023 to match the number actually in use.
