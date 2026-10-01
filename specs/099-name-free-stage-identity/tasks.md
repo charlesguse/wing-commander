@@ -492,3 +492,11 @@ Task: "Pass spec-identity-is-own: 'false' in .github/workflows/board-loop.yml:90
   - [ ] `verify-no-reference-name-stage-match.py:2`, `:236`, `:360`
   - [ ] `tasks.md:251,266,267,269,276,364,451,454`
   - [ ] optionally `contracts/stage-identity-name-gate.md` and `plan.md:148`
+
+## Maintainer Feedback
+
+- [ ] **Resolved-stage consumers gate is broken (blocks merge).** `verify-watchdog-resolved-stage-consumers.py:109`'s `resolve_stage()` runs the composite's real stage step, which needs `$GITHUB_REPOSITORY` under `set -u`; locally the "missing record entirely" and "unrecognised display name, no record" rows fail, and in CI the same rows only pass because a real `gh run download 1 --repo … ` with `GH_TOKEN=x` fails — contradicting the docstring at :91-95, which says the download is skipped.
+  - [ ] Put a `gh` stub on `PATH` (the `wc_gh_capture`/`path_prepend` convention)
+  - [ ] Set `GITHUB_REPOSITORY` in `env_extra`
+  - [ ] Add a `--self-test` mode
+  - [ ] Correct the docstring at :91-95
