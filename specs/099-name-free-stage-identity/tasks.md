@@ -483,3 +483,12 @@ Task: "Pass spec-identity-is-own: 'false' in .github/workflows/board-loop.yml:90
 - T042 cannot be completed until after merge — it is listed here so it is
   not forgotten, per CLAUDE.md's rule for Actions-only behavior, not as
   work the implement stage can close out pre-merge.
+
+## Maintainer Feedback
+
+- [ ] **Gate numbering (blocks merge).** This feature takes Gates 138 and 139, not 133/134 (held by specs 090 and 100) or the script's stale "Gate 126" comment. Renumber:
+  - [ ] `lint-workflows.yml:4783-4799` → Gate 138, including the comment's stale reservation list
+  - [ ] `lint-workflows.yml:4801-4816` → Gate 139
+  - [ ] `verify-no-reference-name-stage-match.py:2`, `:236`, `:360`
+  - [ ] `tasks.md:251,266,267,269,276,364,451,454`
+  - [ ] optionally `contracts/stage-identity-name-gate.md` and `plan.md:148`
