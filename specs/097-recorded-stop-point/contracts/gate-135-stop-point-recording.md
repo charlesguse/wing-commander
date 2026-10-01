@@ -23,6 +23,20 @@ lint-workflows.yml` as a "Gate 135 — ..." step plus a "Gate 135 self-test
 | 5 | Selection exclusion | a fixture issue carrying `{"step": "stalled", "round": 0, "pr": null, "branch": null, "base_sha": null}` plus `board:stalled` is still returned by `board_eligibility.in_flight_candidate()` or `select()` | it is excluded by both, on every one of ten simulated successive selection passes (SC-001) |
 | 6 | No write on kill-switch-only / closed-issue | a fixture composite invocation with `stop-cause` resolving to `"kill-switch"` or `"closed-issue"` still reaches the record-write block | it never does (FR-011/FR-013) |
 | 7 | No caller-populated snapshot dependency | the composite's own script resolutions reference `$RUNNER_TEMP/wc-pristine` (maintainer review fold leg-0) | they resolve only via `$GITHUB_ACTION_PATH`, never a caller-populated snapshot (spec 086 FR-003) |
+| 8 | Marker inputs wired | any `wing-commander-board-stop-check` call site in `board-loop.yml` omits `marker-branch` or `marker-base-sha` from its `with:` block (maintainer review fold leg-1; found prove's own call site had never been wired) | all six call sites wire both, explicit empty strings counting as wired (FR-010) |
+| 9 | Single home (stop-cause case block) | `board-loop.yml` contains a pasted `case "$STOP_CAUSE"` block (maintainer review fold leg-2) | the stop-cause → prose/run-label mapping is read solely from the composite's own `stop-cause-phrase`/`stop-cause-run-label` outputs (CLAUDE.md "Shared logic has exactly one home") |
+
+Check 4 additionally compares each function's answer against a fixture's
+own `expected.stand_down` when the fixture carries one, not only the two
+functions' agreement with each other (maintainer review fold leg-0): a
+mutation that moves both functions' baseline computation the same wrong
+way would otherwise still agree with each other while both being wrong.
+
+`--self-test` additionally asserts (`selftest_registry_coverage()`,
+maintainer review fold leg-1) that `CHECKS` stays in sync with a declared
+`CHECK_SELFTEST_COVERAGE` map and `SELFTESTS` itself — deleting a check's
+own registration from `CHECKS` previously left both the gate and
+`--self-test` at 0 failures.
 
 ## Self-test (Principle VIII: the gate must be shown to fail its own subject)
 
@@ -54,6 +68,18 @@ check then reports failure:
 7. Revert the `check` step's `board_stop_check.py` invocation to
    `$RUNNER_TEMP/wc-pristine/scripts/board_stop_check.py` (the pre-fold-
    leg-0 shape) → check 7 fails.
+8. Drop `marker-branch` from one of the six `wing-commander-board-stop-
+   check` call sites → check 8 fails.
+9. Re-paste a `case "$STOP_CAUSE"` block into `board-loop.yml` → check 9
+   fails.
+
+`--self-test` also reverts the same-run-id baseline fix in BOTH
+`find_stop_request()` and `find_stop_command_comment()` together (so they
+still agree with each other) and asserts check 4 then fails against the
+fixture's own `expected.stand_down` (maintainer review fold leg-0) — and
+asserts `CHECKS` stays equal to the set of checks
+`CHECK_SELFTEST_COVERAGE`/`SELFTESTS` actually exercise (maintainer review
+fold leg-1).
 
 ## What this gate does NOT check
 
@@ -71,6 +97,9 @@ check then reports failure:
 - FR-019 — checks 1–3 and 6 directly test "a change that removes the
   recording..., that makes the kill-switch-only path write..., or that lets
   a recorded stop be re-selected" fails this gate.
+- FR-010 — check 8 tests that the item's branch/base commit actually reach
+  the record's marker from every call site, not only that the composite
+  can accept them.
 - SC-009 — the self-test section proves each check can fail its own
   subject, on the pre-fix shape specifically (the mutations above restore
   exactly the pre-fix code shape observed in spec.md's "Observed facts"
