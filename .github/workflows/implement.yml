@@ -1407,6 +1407,13 @@ jobs:
       - name: Classify write-boundary tasks (cycle)
         id: write-boundary-cycle
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true'
+        # continue-on-error (PR #836 review, item 9): a classifier crash
+        # must not skip "Read back cycle outcome" below, which uses the
+        # implicit success() gate -- the composite's own inner-step
+        # continue-on-error already keeps it from failing; this is the
+        # second, redundant safety net (mirrors wing-commander-stage-
+        # findings' own header-comment idiom).
+        continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-write-boundary
         with:
           unchecked-items: ${{ steps.checkbox-tip-cycle.outputs.unchecked-items }}
@@ -2189,6 +2196,9 @@ jobs:
       - name: Classify write-boundary tasks (retry)
         id: write-boundary-retry
         if: steps.lifecycle-gate.outputs.is-open == 'true' && (steps.retry.outcome == 'success' || steps.retry.outcome == 'failure')
+        # continue-on-error -- see "Classify write-boundary tasks (cycle)"
+        # above.
+        continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-write-boundary
         with:
           unchecked-items: ${{ steps.checkbox-tip-retry.outputs.unchecked-items }}

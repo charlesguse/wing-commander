@@ -714,10 +714,10 @@ and evaporating into PR-body prose) that this feature exists to end.
 
 ## Maintainer Feedback — write-boundary composite can skip the read-back on crash (PR #836 review, item 9)
 
-- [ ] Add failure handling (e.g. `continue-on-error` plus an explicit downstream guard) to the `wing-commander-write-boundary` step so a classifier crash doesn't skip the subsequent "Read back cycle/retry outcome" steps, which currently rely on implicit `success()`
-- [ ] Make the composite's header comment ("never fails the job") true in practice
-- [ ] Apply the same fix to finalize's new checkbox-count step
-- [ ] Get a pass from the `review-step-gating` skill per CLAUDE.md, since this touches an `if:`/failing-step surface
+- [x] Add failure handling (e.g. `continue-on-error` plus an explicit downstream guard) to the `wing-commander-write-boundary` step so a classifier crash doesn't skip the subsequent "Read back cycle/retry outcome" steps, which currently rely on implicit `success()`
+- [x] Make the composite's header comment ("never fails the job") true in practice
+- [x] Apply the same fix to finalize's new checkbox-count step
+- [x] Get a pass from the `review-step-gating` skill per CLAUDE.md, since this touches an `if:`/failing-step surface (Gate 24 clean; manual stranded-step check found no step reading `.outcome`/`.conclusion` of any of the three newly-tolerant steps, and every downstream consumer reads only `.outputs.*`, which degrade to empty/false -- "not applicable" -- never a false positive signal)
 
 ## Maintainer Feedback — duplicated prose violates single-home rule (PR #836 review, item 10)
 

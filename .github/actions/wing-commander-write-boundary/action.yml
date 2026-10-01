@@ -50,6 +50,15 @@ runs:
     - name: Classify unchecked tasks against the write boundary
       id: classify
       shell: bash
+      # continue-on-error (PR #836 review, item 9): the classify script
+      # itself never exits non-zero for a task it cannot confidently
+      # classify (FR-015), but a genuine crash still must not stop the
+      # job -- this header comment's "never fails the job" promise needs
+      # this, not just the script's own forbearance. The caller reads the
+      # all-unchecked-out-of-boundary/findings-json outputs as empty on a
+      # crash, which safely falls through to "not routed" rather than
+      # skipping the convergence read-back below it.
+      continue-on-error: true
       env:
         UNCHECKED_ITEMS: ${{ inputs.unchecked-items }}
         NO_WRITE_PATHS: ${{ inputs.no-write-paths }}

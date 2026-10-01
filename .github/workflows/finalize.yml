@@ -697,6 +697,12 @@ jobs:
       - name: Count tasks.md checkboxes at tip (finalize)
         id: checkbox-tip-finalize
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true'
+        # continue-on-error (PR #836 review, item 9): a crash here must not
+        # skip "Look up routed write-boundary items" and "Summarize change
+        # and extract remaining manual work" below it, which use the
+        # implicit success() gate; the lookup step already treats empty
+        # unchecked-items as "nothing to look up" (mapping=[]).
+        continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-tasks-checkbox-count
         with:
           ref: HEAD
