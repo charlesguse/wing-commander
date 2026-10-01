@@ -261,3 +261,13 @@ With two contributors (this run's shared-usage-window constraint caps concurrent
   - .github/scripts/verify-gate-19.py
 
   Detail: COLLECTOR_IDS now has 10 entries (collect-cycle-outcome added) but the 'name'/'why' strings in the second and third AGGREGATE_CASES entries were not updated from nine/eight to ten/nine.
+
+## Review Gate Round 2 Findings
+
+- [ ] Review finding: Load triage decision never forwards cited-ids/matched-on/other-matches
+
+  The act job's Load triage decision step (watchdog.yml:3686-3726, id: decision) reads the persisted triage-decision JSON but never echoes cited-ids, matched-on, or other-matches to $GITHUB_OUTPUT in either branch, even though Ensure pipeline-defect issue and Report finding to lifecycle issue consume steps.decision.outputs.cited-ids/.matched-on/.other-matches (watchdog.yml:3852-3854, 3959).
+
+  - .github/workflows/watchdog.yml
+
+  Detail: Persist triage decision (around line 3461-3502) writes cited-ids/matched-on/other-matches into watchdog-triage-decision.json, but Load triage decision (3692-3703 found-artifact branch, 3706-3724 missing-artifact fallback) has no echo line for any of the three fields, so steps.decision.outputs.cited-ids/.matched-on/.other-matches are always empty.
