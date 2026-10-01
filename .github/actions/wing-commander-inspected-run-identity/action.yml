@@ -31,16 +31,25 @@
 #      leave behind is its wing-commander-metrics-record artifact(s), whose
 #      spec.spec_dir names the spec for every agent-bearing stage
 #      (specs/043). The slug is read from there when the head gave none —
-#      but only for the six stages whose every run advances exactly ONE
-#      spec, so the record's identity IS the run's. Everywhere else the
-#      record names a spec the run did not advance: the watchdog's own
-#      diagnose record borrows the spec of the run THAT watchdog inspected,
-#      a rebase run writes one record per matrix slug, and a cleanup sweep
-#      can touch several specs. "First record wins" would tie those runs
-#      to an arbitrary spec and route findings about them onto its
-#      lifecycle issue; they stay reported against their own run URL.
-#      A missing/expired artifact, a download failure, or a record with no
-#      spec identity all leave the slug empty exactly as step 1 left it.
+#      but only from a record that declares spec.identity_is_own: true
+#      (#750/FR-008, specs/099-name-free-stage-identity/contracts/spec-
+#      identity-declaration.md), i.e. the record's own spec.* IS the
+#      emitting run's advance, never borrowed. Everywhere else the record
+#      names a spec the run did not advance: the watchdog's own diagnose
+#      record borrows the spec of the run THAT watchdog inspected, a
+#      rebase run writes one record per matrix slug, and a cleanup sweep
+#      can touch several specs — each of those call sites passes
+#      spec-identity-is-own: 'false', so their records are never trusted
+#      here. "First record wins" would otherwise tie those runs to an
+#      arbitrary spec and route findings about them onto its lifecycle
+#      issue; they stay reported against their own run URL. A missing/
+#      expired artifact, a download failure, or a record with no spec
+#      identity (or identity_is_own: false) all leave the slug empty
+#      exactly as step 1 left it. This no longer keys on the run's display
+#      name at all (replacing a six-name `case "$RUN_NAME"` allowlist) —
+#      the FR-012 gate (verify-no-reference-name-stage-match.py) asserts
+#      no reference display name gates behavior anywhere in this
+#      composite except the id: name-fallback step below.
 #
 # With a slug in hand, spec-meta.json on the spec branch names the
 # lifecycle issue and the recorded stage. A spec still in intake or clarify
@@ -154,6 +163,18 @@ outputs:
       (lowercased, restricted to [a-z0-9._-]), or empty when the run left
       no readable record (#266).
     value: ${{ steps.stage.outputs.record-stage }}
+  resolved-stage:
+    description: >
+      `record-stage` if non-empty, else the FR-009 name-derived fallback
+      (the nine stages FR-014a names, plus watchdog), else empty (#750). The one stage
+      identity every FR-002 consumer site except the slug-fallback
+      allowlist reads.
+    value: ${{ steps.name-fallback.outputs.resolved-stage }}
+  resolved-stage-source:
+    description: >
+      Which branch produced `resolved-stage`: `record`, `name`, or empty
+      when neither resolved anything (#750).
+    value: ${{ steps.name-fallback.outputs.resolved-stage-source }}
 
 runs:
   using: composite
@@ -165,7 +186,6 @@ runs:
         GH_TOKEN: ${{ inputs.token }}
         ACTIONS_TOKEN: ${{ inputs.actions-token }}
         RUN_ID: ${{ inputs.run-id }}
-        RUN_NAME: ${{ inputs.run-name }}
         HEAD_BRANCH: ${{ inputs.head-branch }}
         SPEC_DRAFT_PREFIX: ${{ inputs.spec-draft-prefix }}
         SPEC_PREFIX: ${{ inputs.spec-prefix }}
@@ -198,24 +218,25 @@ runs:
         slug_source=""
         [ -z "$slug" ] || slug_source="head-branch"
 
-        # #322 metrics-record fallback, six single-spec stages only -- the
-        # header explains both the fallback and the allowlist. This step is
+        # #322 metrics-record fallback -- the header explains both the
+        # fallback and its FR-008/#750 identity_is_own guard. This step is
         # `shell: bash` (errexit on), so every read is guarded: a failed
         # download must not kill the calling job.
-        record_fallback=false
-        case "$RUN_NAME" in
-          "Wing Commander · 1 intake"|"Wing Commander · 2 clarify"|"Wing Commander · 3 plan"|"Wing Commander · 4 tasks"|"Wing Commander · 5 implement"|"Wing Commander · 6 finalize")
-            record_fallback=true ;;
-        esac
-        if [ -z "$slug" ] && [ -n "$RUN_ID" ] && [ "$record_fallback" = "true" ]; then
+        if [ -z "$slug" ] && [ -n "$RUN_ID" ]; then
           mr_dir="$RUNNER_TEMP/spec-slug-metrics-record"
           mkdir -p "$mr_dir" 2>/dev/null || true
           if GH_TOKEN="$ACTIONS_TOKEN" gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" -p 'metrics-record*' -D "$mr_dir" >"$RUNNER_TEMP/spec-slug-mr-dl.log" 2>&1; then
-            # First record that carries a spec_dir under specs/. A run
-            # with several records (implement's cycle + progress) names
-            # the same spec in each, so the first is as good as any.
+            # First record that declares identity_is_own: true AND carries
+            # a spec_dir under specs/ (#750/FR-008) -- a record whose
+            # spec.* merely borrows another run's identity (identity_is_own
+            # false or absent) is never trusted to resolve THIS run's slug.
+            # A run with several own-identity records (implement's cycle +
+            # progress) names the same spec in each, so the first is as
+            # good as any.
             record_dir=""
             while IFS= read -r rec; do
+              is_own="$(jq -r '.spec.identity_is_own // false' "$rec" 2>/dev/null || true)"
+              [ "$is_own" = "true" ] || continue
               d="$(jq -r '.spec.spec_dir // empty' "$rec" 2>/dev/null || true)"
               case "$d" in
                 specs/?*) record_dir="$d"; break ;;
@@ -316,3 +337,50 @@ runs:
           echo "stage: no metrics record of run ${RUN_ID:-?} names a stage -- the inspected run's stage is unresolved." >> "$GITHUB_STEP_SUMMARY"
         fi
         echo "record-stage=$record_stage" >> "$GITHUB_OUTPUT"
+
+    # #750 (R1/R2) -- the one site the FR-012 gate permits a reference
+    # display name to gate behavior. Runs only when the step above left
+    # record-stage empty; maps inputs.run-name through the fixed
+    # data-model.md table so every FR-002 consumer can read one
+    # resolved-stage output instead of matching a display name itself.
+    # Wing Commander · 8 watchdog IS included (maintainer review, fold
+    # leg-3): the only watchdog record (metrics-record-diagnose) is written
+    # when diagnose runs, so a clean or early-failed watchdog run leaves
+    # record-stage empty and must still resolve here, or the self-dispatch
+    # cap guard (Self-dispatch depth's if:) and four collectors skip
+    # unresolved for every such run.
+    - name: Resolve inspected run's stage from its display name, when the record left it unresolved
+      id: name-fallback
+      shell: bash
+      env:
+        RECORD_STAGE: ${{ steps.stage.outputs.record-stage }}
+        RUN_NAME: ${{ inputs.run-name }}
+      run: |
+        set -uo pipefail
+        name_stage=""
+        if [ -z "$RECORD_STAGE" ]; then
+          case "$RUN_NAME" in
+            "Wing Commander · 1 intake")        name_stage="intake" ;;
+            "Wing Commander · 2 clarify")       name_stage="clarify" ;;
+            "Wing Commander · 3 plan")          name_stage="plan" ;;
+            "Wing Commander · 4 tasks")         name_stage="tasks" ;;
+            "Wing Commander · 5 implement")     name_stage="implement" ;;
+            "Wing Commander · 6 finalize")      name_stage="finalize" ;;
+            "Wing Commander · 7 cleanup")       name_stage="cleanup" ;;
+            "Wing Commander · rebase")          name_stage="rebase" ;;
+            "Wing Commander · 8 watchdog")      name_stage="watchdog" ;;
+            "Wing Commander · 9 pr conversation") name_stage="pr-conversation" ;;
+          esac
+        fi
+        resolved_stage="$RECORD_STAGE"
+        resolved_stage_source=""
+        if [ -n "$resolved_stage" ]; then
+          resolved_stage_source="record"
+        elif [ -n "$name_stage" ]; then
+          resolved_stage="$name_stage"
+          resolved_stage_source="name"
+        fi
+        {
+          echo "resolved-stage=$resolved_stage"
+          echo "resolved-stage-source=$resolved_stage_source"
+        } >> "$GITHUB_OUTPUT"

@@ -1179,6 +1179,7 @@ jobs:
           stage: board-loop
           run-label: ${{ steps.outcome.outputs.label }}
           record-path: ${{ runner.temp }}/wing-commander-metrics-record-select.json
+          spec-identity-is-own: 'false'
 
       - name: Upload metrics record (select)
         if: always()
@@ -1543,6 +1544,7 @@ jobs:
           verdict: ${{ steps.triage-verdict.outputs.verdict }}
           verdict-reason: ${{ steps.triage-verdict.outputs.reason }}
           stage: board-loop
+          spec-identity-is-own: 'false'
 
       # #499/Gate 23: continue-on-error: true (review-step-gating resolution
       # 4), not a hard exit -- the deterministic extract/decide/act steps
@@ -1940,6 +1942,7 @@ jobs:
           verdict: ${{ steps.route-verdict.outputs.verdict }}
           verdict-reason: ${{ steps.route-verdict.outputs.reason }}
           stage: board-loop
+          spec-identity-is-own: 'false'
 
       # #499/Gate 23: continue-on-error: true (review-step-gating resolution
       # 4), not a hard exit -- the deterministic extract/decide/act steps
@@ -2572,6 +2575,7 @@ jobs:
           verdict: ${{ steps.fix-verdict.outputs.verdict }}
           verdict-reason: ${{ steps.fix-verdict.outputs.reason }}
           stage: board-loop
+          spec-identity-is-own: 'false'
 
       # #499/Gate 23: continue-on-error: true (review-step-gating resolution
       # 4), not a hard exit -- the gate-suite/push/PR steps below are this
@@ -3213,6 +3217,7 @@ jobs:
           verdict: ${{ steps.review-verdict.outputs.verdict }}
           verdict-reason: ${{ steps.review-verdict.outputs.reason }}
           stage: board-loop
+          spec-identity-is-own: 'false'
 
       # #499/Gate 23: continue-on-error: true (review-step-gating resolution
       # 4), not a hard exit -- the extract/post-review steps below are this
@@ -3847,6 +3852,7 @@ jobs:
           verdict: ${{ steps.review-fixup-verdict.outputs.verdict }}
           verdict-reason: ${{ steps.review-fixup-verdict.outputs.reason }}
           stage: board-loop
+          spec-identity-is-own: 'false'
 
       # #499/Gate 23: continue-on-error: true (review-step-gating resolution
       # 4), not a hard exit -- the gate-suite/push steps below are this
@@ -4387,6 +4393,7 @@ jobs:
           stage: board-loop
           run-label: ${{ steps.decide.outputs.ready == 'true' && 'ready' || 'not ready' }}
           record-path: ${{ runner.temp }}/wing-commander-metrics-record-readiness.json
+          spec-identity-is-own: 'false'
 
       - name: Upload metrics record (readiness)
         if: always()
@@ -4569,6 +4576,7 @@ jobs:
           stage: board-loop
           run-label: ${{ steps.gate.outcome == 'failure' && 'prove-gate failed' || steps.gate.outputs.eligible == 'true' && 'eligible for prove' || 'prove not entered' }}
           record-path: ${{ runner.temp }}/wing-commander-metrics-record-prove-gate.json
+          spec-identity-is-own: 'false'
 
       - name: Upload metrics record (prove-gate)
         if: always()
@@ -4984,6 +4992,7 @@ jobs:
           stage: board-loop
           run-label: ${{ steps.outcome.outputs.label }}
           record-path: ${{ runner.temp }}/wing-commander-metrics-record-prove.json
+          spec-identity-is-own: 'false'
 
       - name: Upload metrics record (prove)
         if: always()

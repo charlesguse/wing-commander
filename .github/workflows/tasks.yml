@@ -1220,6 +1220,7 @@ jobs:
           stage: tasks
           spec-dir: ${{ needs.resolve-spec.outputs.spec-dir }}
           spec-issue: ${{ steps.meta.outputs.issue }}
+          spec-identity-is-own: 'true'
           run-label: branch advance
           step-index: '1'
           record-path: ${{ runner.temp }}/wing-commander-metrics-record-branch-advance.json
@@ -1268,6 +1269,7 @@ jobs:
           stage: tasks
           spec-dir: ${{ needs.resolve-spec.outputs.spec-dir }}
           spec-issue: ${{ steps.meta.outputs.issue }}
+          spec-identity-is-own: 'true'
 
       # Durable record (specs/043-durable-metrics-record) — the artifact this
       # feature persists past the transcript's own retention window.

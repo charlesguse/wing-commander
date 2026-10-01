@@ -820,6 +820,7 @@ jobs:
           stage: cleanup
           spec-dir: ${{ steps.spec.outputs.spec-dir }}
           spec-issue: ${{ steps.meta.outputs.issue }}
+          spec-identity-is-own: 'false'
 
       # Durable record (specs/043-durable-metrics-record) — the artifact this
       # feature persists past the transcript's own retention window.

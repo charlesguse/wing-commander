@@ -994,6 +994,7 @@ jobs:
           stage: intake
           spec-dir: ${{ steps.created.outputs.spec-dir }}
           spec-issue: ${{ inputs.issue-number }}
+          spec-identity-is-own: 'true'
 
       # Durable record (specs/043-durable-metrics-record) — the artifact this
       # feature persists past the transcript's own retention window.

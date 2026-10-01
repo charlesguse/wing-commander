@@ -4812,6 +4812,47 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-loop-readmission.py --self-test
 
+      # Gate 138 — specs/099-name-free-stage-identity T032/T033 (FR-012):
+      # no FR-002 site in watchdog.yml or wing-commander-inspected-run-
+      # identity/action.yml gates behavior on a reference display-name
+      # literal outside the one permitted id: name-fallback step, and
+      # every wing-commander-metrics-summary call site declares its spec
+      # identity explicitly (SC-008). Numbered 138, not the 126 this
+      # branch's own tasks.md originally claimed, nor 133: specs 091 and
+      # 108 landed gates 126, 127, 130 and 131 on main before this
+      # branch's rebase; 128/129/132 are reserved for specs 074/089/109;
+      # 133 and 134 are independently claimed by sibling in-flight
+      # branches spec 090 and (on main) spec 100 (maintainer review, fold
+      # leg-0); #660 tracks the cross-branch allocation problem these
+      # gates' own numbering comments keep hitting.
+      - name: "Gate 138 — no FR-002 site gates on a reference display name, and every metrics-summary call site declares spec-identity-is-own"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-no-reference-name-stage-match.py
+      - name: "Gate 138 self-test — a clean pass, a reintroduced reference-name case arm, a match inside name-fallback, a missing spec-identity-is-own: key, and a renamed/removed name-fallback step each behave as specified"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-no-reference-name-stage-match.py --self-test
+
+      # Gate 139 — specs/099-name-free-stage-identity T031: the shipped
+      # bash behind watchdog.yml's seven converted FR-002 sites and the
+      # composite's own record/name precedence, EXECUTED against fixtures
+      # covering research.md R7's rows, SC-001 (a renamed and a reference-
+      # named wrapper resolve identically for the same record), and
+      # contracts/resolved-stage-identity.md Rule 2's three-state
+      # consumption, including the new "unresolved" collector-outcomes
+      # entry. tasks.md's T032/T033 claimed 126/127 for these two gates;
+      # specs 091 and 108 landed on main first during this branch's
+      # rebase and took 126, 127, 130 and 131; 128/129/132 are reserved
+      # for specs 074/089/109; 133 and 134 are independently claimed by
+      # sibling in-flight branch spec 090 and (on main) spec 100
+      # (maintainer review, fold leg-0), so this gate claims 139 and its
+      # sibling above claims 138; #660 tracks the allocation problem.
+      - name: "Gate 139 — resolved-stage FR-002 consumers, executed against the shipped scripts"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-watchdog-resolved-stage-consumers.py
+      - name: "Gate 139 self-test — GITHUB_REPOSITORY is passed explicitly to the composite's stage step, not inherited from the ambient environment"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-watchdog-resolved-stage-consumers.py --self-test
+
       # Gate 114 — specs/066-fine-grained-maintainer-token FR-017/FR-018: "a
       # classic PAT, not fine-grained" was asserted in at least four places
       # (docs/setup.md, auto-release.yml's credential-step comment, Gate

@@ -657,6 +657,47 @@ lists its nine completion-trigger workflows plus
 `wing-commander-8-watchdog.yml`; substitute your own repository's wrapper
 filenames.
 
+### Your wrapper's display name is free-form
+
+Every one of your wrapper files' `name:` — the string GitHub shows as the
+workflow's own name, and the one every example in this document pins to a
+`"Wing Commander · N stage"` string purely by convention — may be anything
+you like. The watchdog's stage-identity resolution (specs/099-name-free-
+stage-identity) reads each inspected run's own metrics record first: every
+published stage writes its pipeline-defined `stage` literal into that
+record regardless of which wrapper, under which name, called it, so
+renaming your wrapper changes nothing about the coverage you get.
+
+Two behaviours still read a wrapper's display name.
+
+The main one is the fallback case: a run that left no metrics record at
+all — an expired or missing artifact, a failure early enough that the
+stage never got to write one, or a cancellation. For that one case only,
+the watchdog recognises the ten reference names this document's own
+example wrappers already use (`intake` through `pr-conversation`,
+`rebase`, and `watchdog`); a differently-named wrapper in that same
+no-record situation is inspected and reported as the same run, but with
+its stage genuinely unresolved rather than guessed: four collectors
+(branch drift, spec-meta, final PR claims, and spec collision) skip their
+own checks and record an "unresolved" outcome instead, and the report
+names the stage as not identified rather than guessing one, and (only
+when the run otherwise looks like a pipeline stage run, i.e. it left
+behind an agent execution-output artifact) notes that the display name
+was not recognised either.
+
+The second is independent of the fallback above: the self-dispatch cap
+that limits how many times the watchdog may re-dispatch itself
+(`watchdog.yml`'s "Self-dispatch depth" step) counts prior runs with
+`gh run list --workflow 'Wing Commander · 8 watchdog'` — a literal
+workflow-name lookup, not a metrics-record read. If you rename your own
+watchdog wrapper, this count always resolves to zero prior runs, so the
+cap never fires. There is currently no record-based alternative for this
+one check.
+
+Every reference-named example wrapper already shown in this document
+keeps working exactly as it does today either way: nothing here asks you
+to change a wrapper that already uses the names this document ships.
+
 ## Migrating to `@v2`
 
 The product's rename from "speckit-action" to "Wing Commander" ships its

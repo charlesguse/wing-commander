@@ -1262,6 +1262,7 @@ jobs:
           stage: implement
           spec-dir: ${{ inputs.spec-dir }}
           spec-issue: ${{ inputs.issue-number }}
+          spec-identity-is-own: 'true'
           step-index: '0'
 
       # Durable record (specs/043-durable-metrics-record) — the artifact this
@@ -1979,6 +1980,7 @@ jobs:
           stage: implement
           spec-dir: ${{ inputs.spec-dir }}
           spec-issue: ${{ inputs.issue-number }}
+          spec-identity-is-own: 'true'
           step-index: '1'
 
       # Durable record (specs/043-durable-metrics-record) — the artifact this
@@ -2674,6 +2676,7 @@ jobs:
           stage: implement
           spec-dir: ${{ inputs.spec-dir }}
           spec-issue: ${{ inputs.issue-number }}
+          spec-identity-is-own: 'true'
           step-index: '2'
 
       # Durable record (specs/043-durable-metrics-record) — the artifact this
@@ -2823,6 +2826,7 @@ jobs:
           stage: implement
           spec-dir: ${{ inputs.spec-dir }}
           spec-issue: ${{ inputs.issue-number }}
+          spec-identity-is-own: 'true'
           run-label: branch advance
           step-index: '3'
           record-path: ${{ runner.temp }}/wing-commander-metrics-record-branch-advance.json

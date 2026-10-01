@@ -35,7 +35,8 @@ alone has them — not left to be inferred from spec.md):
   "spec": {
     "spec_dir": "specs/043-durable-metrics-record",
     "issue": 148,
-    "identity_available": true
+    "identity_available": true,
+    "identity_is_own": true
   },
   "model": "claude-sonnet-5",
   "model_available": true,
@@ -158,6 +159,13 @@ Fields the job environment itself supplies (`run.*`, `stage`,
 stay available even when the transcript is unreadable — they never came
 from the transcript in the first place. Only transcript-derived fields
 degrade.
+
+`spec.identity_is_own` (boolean, optional, additive per rule 1 above —
+specs/099-name-free-stage-identity): `true` when this record's `spec.*`
+fields describe the emitting run's own advance, rather than a spec the
+run merely reported on. A record with no `identity_is_own` key —
+including every record written before this field existed — MUST be read
+as `false`; its absence is never a schema violation.
 
 ## Invariant (checked by gate coverage, research.md R12.2)
 

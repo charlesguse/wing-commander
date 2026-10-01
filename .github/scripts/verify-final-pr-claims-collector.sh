@@ -96,7 +96,7 @@ esac
 '''
 
 
-def run_case(*, run_name="Wing Commander · 6 finalize", run_conclusion="success",
+def run_case(*, resolved_stage="finalize", resolved_stage_source="name", run_conclusion="success",
              slug="046-watchdog-supervision-collectors",
              spec_dir="specs/046-watchdog-supervision-collectors",
              pr_number=301, fail_list=False, fail_view=False, fail_compare=False,
@@ -138,7 +138,8 @@ def run_case(*, run_name="Wing Commander · 6 finalize", run_conclusion="success
         env = {
             "GITHUB_REPOSITORY": GITHUB_REPOSITORY,
             "GH_TOKEN": "dummy-token",
-            "RUN_NAME": run_name,
+            "RESOLVED_STAGE": resolved_stage,
+            "RESOLVED_STAGE_SOURCE": resolved_stage_source,
             "RUN_CONCLUSION": run_conclusion,
             "SLUG": slug,
             "SPEC_DIR": spec_dir,
@@ -212,7 +213,7 @@ check("matching claims", rc == 0 and drift_signals(signals) == [],
 # ── Negative: non-finalize run → scope guard exits before any signal or
 #    collector-outcomes write.
 rc, out, signals, outcomes, _ = run_case(
-    run_name="Wing Commander · 3 plan",
+    resolved_stage="plan", resolved_stage_source="name",
     body="This PR completes 42 tasks.", tasks_md="- [x] a\n", total_commits=1)
 check("non-finalize scope guard", rc == 0 and signals == [] and outcomes == [],
       f"a non-finalize run must skip before writing signals or collector-outcomes, got rc={rc} "

@@ -74,13 +74,14 @@ else
 fi
 
 # ── Note on the non-intake-run fixture (scope guard): that guard is a
-#    bash-level `if [ "$RUN_NAME" != "Wing Commander · 1 intake" ]` exit-0
-#    before this filter is ever invoked — verified by inspecting the
+#    bash-level `if [ "$RESOLVED_STAGE" != "intake" ]` exit-0 before this
+#    filter is ever invoked (#750: resolved-stage replaces the old
+#    reference-display-name comparison) — verified by inspecting the
 #    shipped step directly, the same way verify-turn-budget-collector.sh
 #    verifies its own attribution guard.
 WATCHDOG_YML=".github/workflows/watchdog.yml"
 if [ -f "$WATCHDOG_YML" ]; then
-  if grep -A25 'id: collect-spec-collision' "$WATCHDOG_YML" | grep -q "Wing Commander · 1 intake"; then
+  if grep -A25 'id: collect-spec-collision' "$WATCHDOG_YML" | grep -q '"\$RESOLVED_STAGE" != "intake"'; then
     note "collect-spec-collision carries the intake-only scope guard"
   else
     reason "collect-spec-collision no longer scopes itself to intake-completion runs"

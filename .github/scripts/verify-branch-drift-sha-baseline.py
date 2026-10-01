@@ -162,7 +162,8 @@ def base_env(bindir, extra=None):
         "ACTIONS_TOKEN": "x",
         "GITHUB_REPOSITORY": REPO,
         "RUN_ID": RUN_ID,
-        "RUN_NAME": "Wing Commander · 5 implement",
+        "RESOLVED_STAGE": "implement",
+        "RESOLVED_STAGE_SOURCE": "name",
         "RUN_CONCLUSION": "success",
         "HEAD_BRANCH": "main",
         "HEAD_SHA": "0" * 40,
@@ -432,7 +433,8 @@ def scenario_plan_exact_sha_equal_fires_lost_progress(step_text, root):
         "commits": 0, "commits_available": True,
     })
     env = base_env(bindir, {"GH_DOWNLOAD_FIXTURE_DIR": fixture_dir,
-                            "RUN_NAME": "Wing Commander · 3 plan"})
+                            "RESOLVED_STAGE": "plan",
+                            "RESOLVED_STAGE_SOURCE": "name"})
     runner_temp = os.path.join(work, "runner_temp")
     rc, out, signals, outcomes, _summary = run_collector(
         step_text, work, runner_temp, env)
@@ -482,7 +484,8 @@ def scenario_tasks_exact_sha_differ_no_signal(step_text, root):
         "commits": 5, "commits_available": True,
     })
     env = base_env(bindir, {"GH_DOWNLOAD_FIXTURE_DIR": fixture_dir,
-                            "RUN_NAME": "Wing Commander · 4 tasks"})
+                            "RESOLVED_STAGE": "tasks",
+                            "RESOLVED_STAGE_SOURCE": "name"})
     runner_temp = os.path.join(work, "runner_temp")
     rc, out, signals, outcomes, _summary = run_collector(
         step_text, work, runner_temp, env)
@@ -503,7 +506,7 @@ def scenario_plan_exact_sha_ignores_live_branch_state(step_text, root):
     """specs/068-plan-tasks-branch-advance T014 (US2 AS1-2): the exact-sha
     arm's verdict for a plan run cannot be affected by an intervening push
     either -- mirrors scenario_exact_sha_ignores_live_branch_state, but for
-    a plan/<slug>-branch record and RUN_NAME "Wing Commander · 3 plan"
+    a plan/<slug>-branch record and RESOLVED_STAGE "plan"
     (T011 widened the exact-sha arm beyond implement-only)."""
     failures = []
     repo, work, tip = make_repo(root)
@@ -516,7 +519,8 @@ def scenario_plan_exact_sha_ignores_live_branch_state(step_text, root):
         "commits": 0, "commits_available": True,
     })
     env = base_env(bindir, {"GH_DOWNLOAD_FIXTURE_DIR": fixture_dir,
-                            "RUN_NAME": "Wing Commander · 3 plan"})
+                            "RESOLVED_STAGE": "plan",
+                            "RESOLVED_STAGE_SOURCE": "name"})
 
     runner_temp_1 = os.path.join(work, "runner_temp_1")
     rc1, out1, signals1, _outcomes1, _s1 = run_collector(
@@ -575,7 +579,8 @@ def scenario_plan_no_branch_advance_no_signal_no_fallback(step_text, root):
     # No GH_DOWNLOAD_FIXTURE_DIR set -> the gh stub's `run download` exits 1,
     # exactly like an expired/absent artifact -- mirrors
     # scenario_no_branch_advance_falls_back_to_since_created's own setup.
-    env = base_env(bindir, {"RUN_NAME": "Wing Commander · 3 plan"})
+    env = base_env(bindir, {"RESOLVED_STAGE": "plan",
+                            "RESOLVED_STAGE_SOURCE": "name"})
     runner_temp = os.path.join(work, "runner_temp")
     rc, out, signals, outcomes, summary = run_collector(
         step_text, work, runner_temp, env)
@@ -602,7 +607,8 @@ def scenario_tasks_no_branch_advance_no_signal_no_fallback(step_text, root):
     failures = []
     work = tempfile.mkdtemp(dir=root)
     bindir = new_stub_dir(work)
-    env = base_env(bindir, {"RUN_NAME": "Wing Commander · 4 tasks"})
+    env = base_env(bindir, {"RESOLVED_STAGE": "tasks",
+                            "RESOLVED_STAGE_SOURCE": "name"})
     runner_temp = os.path.join(work, "runner_temp")
     rc, out, signals, outcomes, summary = run_collector(
         step_text, work, runner_temp, env)
@@ -678,7 +684,8 @@ def scenario_head_sha_arm_unaffected(step_text, root):
     repo, work, tip = make_repo(root)
     bindir = new_stub_dir(work)
     env = base_env(bindir, {
-        "RUN_NAME": "Wing Commander · 3 plan",
+        "RESOLVED_STAGE": "plan",
+        "RESOLVED_STAGE_SOURCE": "name",
         "HEAD_BRANCH": BRANCH,
         "HEAD_SHA": tip,
     })
@@ -710,7 +717,8 @@ def scenario_non_push_expected_stage_unaffected(step_text, root):
     failures = []
     work = tempfile.mkdtemp(dir=root)
     bindir = new_stub_dir(work)
-    env = base_env(bindir, {"RUN_NAME": "Wing Commander · 8 watchdog"})
+    env = base_env(bindir, {"RESOLVED_STAGE": "watchdog",
+                            "RESOLVED_STAGE_SOURCE": "record"})
     runner_temp = os.path.join(work, "runner_temp")
     rc, out, signals, outcomes, summary = run_collector(
         step_text, work, runner_temp, env)
