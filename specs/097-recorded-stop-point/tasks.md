@@ -609,3 +609,10 @@ kept to one session to avoid edit collisions).
 
 - [ ] **Blocking (spec 086 FR-001):** Delete the "Ensure board-loop's own labels exist" step in `wing-commander-board-stop-check/action.yml` (`uses: ./.github/actions/wing-commander-board-labels`) — inside a composite, a `./`-prefixed `uses:` resolves against `$GITHUB_WORKSPACE`, which in fix/review/prove is the item's own (possibly attacker-controlled) branch checkout, giving a branch that edits that nested composite's `action.yml` App-token execution whenever a maintainer posts "stop".
 - [ ] If `prove` needs the labels ensured, add a top-level "Ensure board-loop's own labels exist" step there instead, resolved via `./.wc-pristine-repo/...` the way other jobs already do.
+
+## Maintainer Feedback
+
+- [ ] Renumber this feature's gate from 128 to 135 (128 is spec 074/#821's; 129–134 are taken or allocated) in `verify-stop-point-recording.py` (lines 2, 4, 30), `board_stop_check.py:235`, and `lint-workflows.yml:4723-4731`; place the registration block after the Gate 131/134 block with an allocation note.
+- [ ] Rename `contracts/gate-128-stop-point-recording.md` to `gate-135-stop-point-recording.md` and update its internal references (lines 1, 3, 7, 8).
+- [ ] Update every `128` reference in `specs/097-recorded-stop-point/{plan.md,research.md,data-model.md,quickstart.md,tasks.md}` (`grep -rn 128 specs/097-recorded-stop-point`).
+- [ ] Update the PR body's gate-number reference.
