@@ -6,7 +6,7 @@ contracts/resume-recovery.md clause 2).
 
 WHY THIS EXISTS
 ---------------
-Every one of the eight stall sites (#604) posts a `stalled` marker with no
+Every stall site (#604) posts a `stalled` marker with no
 `pr`, so a maintainer who removes `board:stalled` always sends the item
 through resume clause 2's `board:owned` fallback. Before this feature that
 clause resolved unconditionally to `review` (except the `#530` breach
@@ -159,6 +159,7 @@ DIRECT_CASES = (
     "no-reviewed-head-defaults-review",
     "pr-lookup-fails-defaults-review",
     "budget-spent-unmoved-resolves-review",
+    "converged-then-budget-spent-resolves-review",
 )
 
 

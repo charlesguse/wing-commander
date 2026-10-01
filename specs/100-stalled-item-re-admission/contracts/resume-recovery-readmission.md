@@ -35,20 +35,28 @@ need to build a second one.
    b. Otherwise, compute `head_moved_since_last_review` (FR-006b, see
       reviewed-head-determination.md in this same contracts directory):
 
-      - `head_moved_since_last_review == True` (including: no reviewed
-        head could be established — no review ever covered this PR, or the
-        stall came from review's parse-failed or malformed-findings arm, or
-        the lookup itself failed) -> step = "review". The run records that
-        this pr was recovered via the label fallback, not a marker
-        (FR-014, unchanged), and additionally that step resolved to
-        `review` because the head moved (or because no reviewed head was
-        resolvable) — FR-011.
+      - `head_moved_since_last_review == True` -> step = "review", with a
+        fresh round budget (round 0). This covers four cases:
+        - the newest review verdict naming this PR is not a converged one:
+          no review ever covered it, or the newest verdict is review's
+          budget-spent, parse-failed or malformed-findings arm, none of
+          which establishes a reviewed head;
+        - the live head SHA differs from the SHA that converged verdict
+          recorded;
+        - the live `gh pr view` lookup failed;
+        - the lookup returned no `headRefOid`.
 
-      - `head_moved_since_last_review == False` (a reviewed head was
-        established, and the PR's live head commit is the same one, or no
-        newer) -> step = "readiness". The run records the same FR-014
-        fallback-recovery fact, plus that step resolved to `readiness`
-        because the head had not moved since the last review — FR-011.
+        The run records that this PR was recovered via the label fallback,
+        not a marker (FR-014, unchanged), and that step resolved to
+        `review` because the head moved or no converged head was
+        resolvable — FR-011.
+
+      - `head_moved_since_last_review == False` (the newest review verdict
+        for this PR is a converged one, and the PR's live `headRefOid` is
+        exactly the head SHA it recorded) -> step = "readiness". The run
+        records the same FR-014 fallback-recovery fact, plus that step
+        resolved to `readiness` because the head had not moved since the
+        last converged review — FR-011.
 ```
 
 Clauses 0, 1, 3, and 4 of `resume-recovery.md` are unchanged: none of them
@@ -78,9 +86,10 @@ not new behavior.
 | Spec scenario | This contract's clause |
 |---|---|
 | US3 AS1 (stalled by review's spent budget, PR open, human push since last review) | clause 2b, head moved → `review` |
-| US3 AS2 (stalled at readiness or by review's spent budget, PR open, head unchanged since last review) | clause 2b, head unmoved → `readiness` |
+| US3 AS1b (stalled by review's spent budget, PR open, head unchanged) | clause 2b → `review` with a fresh round budget, never `readiness` (a budget-spent verdict establishes no reviewed head) |
+| US3 AS2 (PR open, newest review verdict converged, head SHA unchanged since it) | clause 2b, head unmoved → `readiness` |
 | US3 AS3 (stalled by triage's already-fixed hand-over, no PR ever opened) | clause 2 not reached (no PR from fallback) → falls to clause 4 → `triage` |
 | US3 AS4 (any re-admitted item, own PR still open) | clause 2 never resolves to `triage`, so FR-054/FR-008 hold regardless of the 2b split |
 | US3 AS5 (re-admitted at `review`, fresh round budget spent again) | clause 2b `review` branch + research.md D4's round-0 restart |
-| FR-006b edge case (no reviewed head resolvable) | clause 2b defaults to `review` |
+| FR-006b edge case (no converged verdict is the newest — including budget-spent/parse-failed/malformed-findings — or the lookup failed) | clause 2b defaults to `review` |
 | FR-006a (label-less stall is always deliberate) | precondition of this whole clause — see resume-recovery.md's "Marker source" section and FR-001/FR-002 |

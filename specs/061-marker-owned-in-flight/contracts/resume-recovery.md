@@ -194,7 +194,7 @@ live state, not the marker's say-so, decides which clause applies.
 | #555 (marker branch not `fix/<issue>-<slug>`, or marker PR not board:owned / from another repository) | foreign marker fields → triage, reason recorded, FR-022 cleared; a foreign PR still OPEN, or an awaiting-merge marker: no-op hold, nothing passed on |
 | spec 100 US3 AS1 (stalled by review's spent budget, PR open, human push since last converged review) | clause 2b, head moved → `review` |
 | spec 100 US3 AS1b (stalled by review's spent budget, PR open, head unchanged since the budget was spent) | clause 2b always resolves a budget-spent verdict to `review` with a fresh round budget, never `readiness` -- a spent budget never finished clearing the PR's findings (FR-006b/SC-004, maintainer review of #885) |
-| spec 100 US3 AS2 (stalled by readiness's own backstop breach after review had converged, PR open, head unchanged since that converged review) | clause 2b, head unmoved since the converged verdict → `readiness` |
+| spec 100 US3 AS2 (PR open, newest review verdict converged, head SHA unchanged since it) | clause 2b, head unmoved since the converged verdict → `readiness` |
 | spec 100 US3 AS3 (stalled by triage's already-fixed hand-over, no PR ever opened) | clause 2 not reached (no PR from fallback) → falls to clause 4 → `triage` |
 | spec 100 US3 AS4 (any re-admitted item, own PR still open) | clause 2 never resolves to `triage`, so FR-054/FR-008 hold regardless of the 2b split |
 | spec 100 US3 AS5 (re-admitted at `review`, fresh round budget spent again) | clause 2b `review` branch + a fresh round-0 restart |

@@ -4792,7 +4792,7 @@ jobs:
       # decision branches, that clause 2 still calls it (reverting to the
       # old unconditional form fails by name), that a breach marker is
       # never affected (#530), that a re-admitted item starts review at
-      # round 0 (FR-009), that none of the eight stall sites carries
+      # round 0 (FR-009), that none of the stall sites carries
       # continue-on-error (FR-010), and that each records a
       # GITHUB_STEP_SUMMARY line (FR-011). Numbered 134, not the 128 this
       # branch's own commit last picked: spec 074 (#821) already holds

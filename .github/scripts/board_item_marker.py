@@ -208,6 +208,12 @@ def write_marker(step, round, pr, branch, base_sha, spec_request=None):
 STALLED_STEP = "stalled"
 
 
+# Any review-round verdict line naming a PR: converged, budget-spent,
+# inconclusive, or a pushed follow-up. Only the newest of these for a PR
+# decides clause 2b, so a later inconclusive or budget-spent verdict on a
+# head an earlier round converged on is never read as "reviewed clean".
+_REVIEW_VERDICT_RE = re.compile(r"Review round[^\n]*?PR #(\d+)")
+
 _REVIEW_CONVERGED_RE = re.compile(r"Review round \d+ converged -- .*?PR #(\d+) \(head ([0-9a-f]{7,40})\)")
 
 
@@ -257,18 +263,22 @@ def head_moved_since_last_review(pr_number, comments, bot_login, run=None):
     has exactly one home") -- spec 093's own FR-007, when it reaches its
     plan stage, calls this function rather than deriving a second one."""
     run = run or subprocess.run
-    reviewed_sha = None
+    newest_body = None
     latest_created_at = None
     for comment in comments or []:
         if not is_loop_marker_author(comment, bot_login):
             continue
-        sha = _converged_review_head(comment.get("body"), pr_number)
-        if sha is None:
+        body = comment.get("body") or ""
+        verdict = _REVIEW_VERDICT_RE.search(body)
+        if verdict is None or verdict.group(1) != str(pr_number):
             continue
         created_at = comment.get("created_at") or ""
         if latest_created_at is None or created_at > latest_created_at:
             latest_created_at = created_at
-            reviewed_sha = sha
+            newest_body = body
+    # Only the newest review verdict for this PR counts: a converged round
+    # followed by a budget-spent or inconclusive one is not reviewed clean.
+    reviewed_sha = _converged_review_head(newest_body, pr_number)
     if reviewed_sha is None:
         return True
     repository = os.environ.get("GITHUB_REPOSITORY")
@@ -307,7 +317,7 @@ def record_stall_summary(issue_number, from_step):
     site calls this -- `--record-stall-summary --issue N --from-step
     <name>` -- right after its own `gh issue comment`/`gh issue close`
     posting the stalled marker actually succeeds, never before. Before
-    this, each of the eight stall call sites pasted its own copy of this
+    this, each stall call site pasted its own copy of this
     line BEFORE that post, so a failed post still left the line's claim
     standing (maintainer review of #885)."""
     path = os.environ.get("GITHUB_STEP_SUMMARY")

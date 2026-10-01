@@ -2235,7 +2235,9 @@ jobs:
           paths="$(jq -r '.decision.measured.workflow_paths // [] | map(select(test("^[A-Za-z0-9._/-]{1,200}$"))) | map("`" + . + "`") | join(", ")' "$RUNNER_TEMP/board-route-decision.json")"
           marker="$(python3 .github/scripts/board_item_marker.py --step stalled --issue "$ISSUE_NUMBER" --add-label "board:stalled")" \
             || { echo "::error::board-loop route (workflow-scope hold): board:stalled could not be added to issue #$ISSUE_NUMBER -- no stalled marker is posted (#604)."; exit 1; }
-          gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Route found this fix-shaped, but its change edits %s, and this loop cannot push a workflow file (the App holds no Workflows permission). Held for a maintainer: fix it from a session whose token has the `workflow` scope, or grant the App Workflows (read and write) and set `WING_COMMANDER_BOARD_CAN_PUSH_WORKFLOWS` to `true`. Removing board:stalled is the sole re-eligibility condition.\n\n%s' "${paths:-a workflow file}" "$marker")"
+          gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Route found this fix-shaped, but its change edits %s, and this loop cannot push a workflow file (the App holds no Workflows permission). Held for a maintainer: fix it from a session whose token has the `workflow` scope, or grant the App Workflows (read and write) and set `WING_COMMANDER_BOARD_CAN_PUSH_WORKFLOWS` to `true`. Removing board:stalled is the sole re-eligibility condition.\n\n%s' "${paths:-a workflow file}" "$marker")" \
+            || { echo "::error::board-loop route (workflow-scope hold): board:stalled was applied to issue #$ISSUE_NUMBER but the stalled-marker comment could not be posted."; exit 1; }
+          python3 .github/scripts/board_item_marker.py --record-stall-summary --issue "$ISSUE_NUMBER" --from-step "route (workflow-scope hold)"
 
       # research.md D9: every artifact this loop spins off outside the
       # originating issue is cross-linked through this one composite
@@ -2650,6 +2652,7 @@ jobs:
             marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step stalled --branch "$BRANCH" --base-sha "$BASE_SHA" --issue "$ISSUE_NUMBER" --add-label "board:stalled")" \
               || { echo "::error::board-loop fix (workflow-scope hold): board:stalled could not be added to issue #$ISSUE_NUMBER -- no stalled marker is posted (#604)."; exit 1; }
             gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'The fix for this issue changes a file under `.github/workflows/`, which this loop cannot push (the App holds no Workflows permission). Nothing was pushed; the work is on no branch. Held for a maintainer: fix it from a session whose token has the `workflow` scope, or grant the App Workflows (read and write) and set `WING_COMMANDER_BOARD_CAN_PUSH_WORKFLOWS` to `true`. Removing board:stalled is the sole re-eligibility condition.\n\n%s' "$marker")"
+            python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --record-stall-summary --issue "$ISSUE_NUMBER" --from-step "fix (workflow-scope hold)"
             echo "board-loop: issue #$ISSUE_NUMBER -- the fixer's change touches .github/workflows/, held for a maintainer instead of pushed." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
