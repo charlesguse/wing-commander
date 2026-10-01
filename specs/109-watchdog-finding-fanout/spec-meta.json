@@ -2,8 +2,8 @@
   "issue": 792,
   "spec_dir": "specs/109-watchdog-finding-fanout",
   "feature_num": "109",
-  "stage": "stalled",
-  "iteration": 2,
+  "stage": "implement",
+  "iteration": 3,
   "spec_branch": "spec/109-watchdog-finding-fanout",
   "pending_re_review_from": []
 }
