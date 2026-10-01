@@ -439,6 +439,19 @@ def case_fr014_name_warning():
     case = "FR-014 name warning (T039)"
     step = find_step(WATCHDOG, NAME_WARNING_STEP_NAME)
     cond = str(step.get("if", ""))
+
+    # T043: the step's `continue-on-error: true` (fold leg-2) must survive —
+    # without it, a failed `gh issue comment` here flips `needs.collect.result`
+    # to `failure` and skips every collector, signal-ids, aggregate, and
+    # diagnose/triage/act, which is the exact regression the maintainer
+    # review caught this cycle.
+    coe = step.get("continue-on-error")
+    if coe is not True:
+        fail(case, f"expected continue-on-error: true (fold leg-2 — a "
+                   f"failed gh issue comment here must not take down every "
+                   f"collector, signal-ids, aggregate, and diagnose/triage/"
+                   f"act), got {coe!r}")
+
     for label, ctx, expect_fires in FR014_SCENARIOS:
         try:
             got = truthy(evaluate(cond, ctx))

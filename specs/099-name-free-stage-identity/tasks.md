@@ -531,7 +531,7 @@ Task: "Pass spec-identity-is-own: 'false' in .github/workflows/board-loop.yml:90
 
 ## Phase 7: Convergence
 
-- [ ] T043 Add a structural assertion in `verify-watchdog-resolved-stage-
+- [X] T043 Add a structural assertion in `verify-watchdog-resolved-stage-
       consumers.py`'s `case_fr014_name_warning` (or a sibling case) that
       the "Report unrecognised display name, when nothing else identified
       the run's stage" step in `watchdog.yml` carries `continue-on-error:
