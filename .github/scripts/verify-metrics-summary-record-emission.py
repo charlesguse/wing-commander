@@ -242,6 +242,7 @@ def run_case(tmp, records=None, raw=None, missing=False, env_over=None):
         "STAGE": "implement",
         "SPEC_DIR": "specs/043-durable-metrics-record",
         "SPEC_ISSUE": "148",
+        "SPEC_IDENTITY_IS_OWN": "true",
         "STEP_INDEX": "0",
         "RUN_ID": "555000111",
         "JOB_KEY": "cycle",
@@ -721,6 +722,44 @@ def case_plan_tasks_branch_advance_call_sites_emit_conforming_records():
              "their inputs verbatim")
 
 
+def case_spec_identity_is_own_recorded_verbatim():
+    """specs/099-name-free-stage-identity T010: the required
+    spec-identity-is-own input lands in the rendered record's
+    spec.identity_is_own field verbatim, for both 'true' (the six
+    single-spec stages) and 'false' (every other stage that emits a
+    record) — contracts/spec-identity-declaration.md Rule 2."""
+    case = "spec.identity_is_own recorded verbatim"
+    any_failed = False
+    for value, want in (("true", True), ("false", False)):
+        tmp = tempfile.mkdtemp(prefix="wc-metrics-record-")
+        try:
+            rc, _outputs, _summary, record, output = run_case(
+                tmp, records=healthy_transcript(main=3),
+                env_over={"SPEC_IDENTITY_IS_OWN": value})
+            if rc != 0:
+                fail(case, f"spec-identity-is-own={value!r}: exited {rc}: "
+                           f"{output.strip()[:300]}")
+                any_failed = True
+                continue
+            if record is None:
+                fail(case, f"spec-identity-is-own={value!r}: record-path "
+                           f"was not written")
+                any_failed = True
+                continue
+            validate_schema(f"{case} ({value})", record)
+            got = record.get("spec", {}).get("identity_is_own")
+            if got is not want:
+                fail(case, f"spec-identity-is-own={value!r}: expected "
+                           f"record.spec.identity_is_own={want!r}, got "
+                           f"{got!r}")
+                any_failed = True
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+    if not any_failed:
+        note("spec-identity-is-own 'true' and 'false' each land in "
+             "record.spec.identity_is_own verbatim")
+
+
 def case_multi_model_record_tokens_sum_across_per_model():
     """A run that used two models (the watchdog diagnose site: an opus
     main loop plus a haiku helper) carries BOTH in `.modelUsage`, but the
@@ -1085,6 +1124,7 @@ CASES = [
     case_branch_advance_composite_matches_pre_refactor_inline_bash,
     case_branch_advance_availability_follows_contract_or_rule,
     case_plan_tasks_branch_advance_call_sites_emit_conforming_records,
+    case_spec_identity_is_own_recorded_verbatim,
     case_multi_model_record_tokens_sum_across_per_model,
     case_cost_line_formatter_has_exactly_one_home,
     case_cost_report_has_exactly_one_home,

@@ -98,6 +98,13 @@ REQUIRED_SPEC = {
     "issue": (int, type(None)),
     "identity_available": bool,
 }
+# specs/099-name-free-stage-identity (FR-008a): additive and optional —
+# a record predating this field has no such key at all, and that MUST
+# NOT be reported as a schema violation, unlike every REQUIRED_SPEC
+# field above. Checked for type only when present.
+OPTIONAL_SPEC = {
+    "identity_is_own": bool,
+}
 REQUIRED_TURNS = {
     "counted": (int, type(None)),
     "reported": (int, type(None)),
@@ -165,6 +172,31 @@ def _check_fields(obj, spec, where, failures):
                     where, field, types, type(value).__name__))
 
 
+def _check_optional_fields(obj, spec, where, failures):
+    """Like _check_fields, but a field's absence is never a failure —
+    only a present field's type is checked (FR-008a)."""
+    if not isinstance(obj, dict):
+        return
+    for field, types in spec.items():
+        if field not in obj:
+            continue
+        if not isinstance(types, tuple):
+            types = (types,)
+        value = obj[field]
+        ok = False
+        for t in types:
+            if t is bool:
+                ok = ok or isinstance(value, bool)
+            elif t is int:
+                ok = ok or (isinstance(value, int) and not isinstance(value, bool))
+            else:
+                ok = ok or isinstance(value, t)
+        if not ok:
+            failures.append(
+                "{0}.{1} has the wrong type: expected {2}, got {3}".format(
+                    where, field, types, type(value).__name__))
+
+
 def validate_record(record):
     """-> list of failure strings; empty means valid schema-version-1 shape."""
     failures = []
@@ -179,6 +211,7 @@ def validate_record(record):
         _check_fields(record["run"], REQUIRED_RUN, "record.run", failures)
     if isinstance(record.get("spec"), dict):
         _check_fields(record["spec"], REQUIRED_SPEC, "record.spec", failures)
+        _check_optional_fields(record["spec"], OPTIONAL_SPEC, "record.spec", failures)
     if isinstance(record.get("turns"), dict):
         _check_fields(record["turns"], REQUIRED_TURNS, "record.turns", failures)
     if isinstance(record.get("tokens"), dict):
@@ -268,12 +301,18 @@ def check_fields_match_contract():
     per_model_shape = shape.get("per_model") or [{}]
     levels.append(("record.per_model[]", PER_MODEL_FIELD_TYPES, per_model_shape[0]))
 
+    # Fields that may appear in the doc's example without REQUIRED_* making
+    # them mandatory on every record (FR-008a) — their absence from a doc_obj
+    # vs. gate comparison is not drift either direction.
+    OPTIONAL_LEVELS = {"record.spec": OPTIONAL_SPEC}
+
     failures = []
     for where, required, doc_obj in levels:
         doc_fields = set(doc_obj.keys())
-        gate_fields = set(required.keys())
+        optional = OPTIONAL_LEVELS.get(where, {})
+        gate_fields = set(required.keys()) | set(optional.keys())
         missing_from_gate = doc_fields - gate_fields
-        missing_from_doc = gate_fields - doc_fields
+        missing_from_doc = set(required.keys()) - doc_fields
         # branch_advance is the one field this gate treats as optional at
         # record's own top level (REQUIRED_TOP deliberately omits it — its
         # absence from a record is not a failure, see REQUIRED_BRANCH_ADVANCE's
@@ -304,8 +343,8 @@ def _fixture_files():
     found = sorted(glob.glob(os.path.join(FIXTURES_DIR, "*.json")))
     # Pinned count: a bare glob makes a deleted fixture read as a smaller
     # clean pass (PR #267 re-review). Update deliberately with the set.
-    if len(found) != 27:
-        sys.exit("::error::metrics-record-schema: expected exactly 27 "
+    if len(found) != 30:
+        sys.exit("::error::metrics-record-schema: expected exactly 30 "
                  "fixtures under {0}, found {1} - a fixture was added or "
                  "removed without updating this pin.".format(
                      FIXTURES_DIR, len(found)))

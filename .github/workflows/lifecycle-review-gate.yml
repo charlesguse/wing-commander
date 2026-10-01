@@ -672,6 +672,7 @@ jobs:
           verdict: ${{ steps.review-verdict.outputs.verdict }}
           verdict-reason: ${{ steps.review-verdict.outputs.reason }}
           stage: lifecycle-review-gate
+          spec-identity-is-own: 'false'
 
       # review-step-gating resolution 4: continue-on-error: true, not a
       # hard exit -- the extract/post-review steps below are this job's own

@@ -111,7 +111,7 @@ same finding, same facts (SC-001).
 
 ### Spec-identity declaration infrastructure (serves the slug-fallback site only — FR-008/FR-008a/FR-008b)
 
-- [ ] T006 [US1] Add `spec.identity_is_own` (boolean, optional, additive)
+- [X] T006 [US1] Add `spec.identity_is_own` (boolean, optional, additive)
       to the `spec` group of the `## Shape` fence in `specs/043-durable-
       metrics-record/contracts/metrics-record-schema.md` (the fence is at
       lines 21-84; the `spec` group's existing fields — `spec_dir`,
@@ -120,20 +120,20 @@ same finding, same facts (SC-001).
       MUST be read as `identity_is_own: false`. This is an additive
       change per that document's Rule 1 (lines 9-11): no existing field's
       name, type, or meaning changes.
-- [ ] T007 [US1] Update `.github/scripts/verify-metrics-record-schema.py`
+- [X] T007 [US1] Update `.github/scripts/verify-metrics-record-schema.py`
       so `spec.identity_is_own` validates as an optional boolean —
       present as `true`/`false`, or absent — and its absence MUST NOT be
       reported as a schema violation (FR-008a). `REQUIRED_SPEC` (lines
       96-100) stays the required-fields dict for `spec_dir`/`issue`/
       `identity_available`; add `identity_is_own` as a new optional-field
       check alongside it.
-- [ ] T008 [P] [US1] Add three fixtures under `.github/scripts/fixtures/
+- [X] T008 [P] [US1] Add three fixtures under `.github/scripts/fixtures/
       metrics-record-schema/`: one record with `spec.identity_is_own:
       true`, one with `false`, and one that omits the key entirely
       (representing a pre-feature record), proving T007 accepts all three
       and that the omitted case is read as FR-008a's `false`, not a schema
       failure.
-- [ ] T009 [US1] Add a required input `spec-identity-is-own`
+- [X] T009 [US1] Add a required input `spec-identity-is-own`
       (`'true'`/`'false'`, no default) to `.github/actions/wing-commander-
       metrics-summary/action.yml`'s `inputs:` block (lines 23-174), thread
       it through the `render` step (`id: render`, lines 198-751) — the
@@ -141,7 +141,7 @@ same finding, same facts (SC-001).
       ... }` object at lines 334-338 — so the emitted record carries
       `spec.identity_is_own` verbatim, alongside `spec_dir`/`issue`/
       `identity_available`.
-- [ ] T010 [US1] Extend `.github/scripts/verify-metrics-summary-record-
+- [X] T010 [US1] Extend `.github/scripts/verify-metrics-summary-record-
       emission.py`'s `run_case` harness (lines 213-260) with cases
       asserting the rendered record carries `spec.identity_is_own`
       verbatim for both `spec-identity-is-own: 'true'` and `'false'`
@@ -149,30 +149,30 @@ same finding, same facts (SC-001).
 
 ### Call sites: every `wing-commander-metrics-summary` invocation declares its spec identity (SC-008) — depends on T009
 
-- [ ] T011 [P] [US1] Pass `spec-identity-is-own: 'true'` at the call site
+- [X] T011 [P] [US1] Pass `spec-identity-is-own: 'true'` at the call site
       in `.github/workflows/intake.yml:987`.
-- [ ] T012 [P] [US1] Pass `spec-identity-is-own: 'true'` at the call site
+- [X] T012 [P] [US1] Pass `spec-identity-is-own: 'true'` at the call site
       in `.github/workflows/clarify.yml:837`.
-- [ ] T013 [P] [US1] Pass `spec-identity-is-own: 'true'` at the call
+- [X] T013 [P] [US1] Pass `spec-identity-is-own: 'true'` at the call
       sites in `.github/workflows/plan.yml:1248,1290`.
-- [ ] T014 [P] [US1] Pass `spec-identity-is-own: 'true'` at the call
+- [X] T014 [P] [US1] Pass `spec-identity-is-own: 'true'` at the call
       sites in `.github/workflows/tasks.yml:1214,1259`.
-- [ ] T015 [P] [US1] Pass `spec-identity-is-own: 'true'` at the call
+- [X] T015 [P] [US1] Pass `spec-identity-is-own: 'true'` at the call
       sites in `.github/workflows/implement.yml:1150,1867,2562,2715`.
-- [ ] T016 [P] [US1] Pass `spec-identity-is-own: 'true'` at the call site
+- [X] T016 [P] [US1] Pass `spec-identity-is-own: 'true'` at the call site
       in `.github/workflows/finalize.yml:851`.
-- [ ] T017 [P] [US1] Pass `spec-identity-is-own: 'false'` at the call
+- [X] T017 [P] [US1] Pass `spec-identity-is-own: 'false'` at the call
       site in `.github/workflows/watchdog.yml:2595`.
-- [ ] T018 [P] [US1] Pass `spec-identity-is-own: 'false'` at the call
+- [X] T018 [P] [US1] Pass `spec-identity-is-own: 'false'` at the call
       site in `.github/workflows/cleanup.yml:813`.
-- [ ] T019 [P] [US1] Pass `spec-identity-is-own: 'false'` at the call
+- [X] T019 [P] [US1] Pass `spec-identity-is-own: 'false'` at the call
       site in `.github/workflows/rebase.yml:819`.
-- [ ] T020 [P] [US1] Pass `spec-identity-is-own: 'false'` at the call
+- [X] T020 [P] [US1] Pass `spec-identity-is-own: 'false'` at the call
       sites in `.github/workflows/pr-conversation.yml:1078,2389`.
-- [ ] T021 [P] [US1] Pass `spec-identity-is-own: 'false'` at the call
+- [X] T021 [P] [US1] Pass `spec-identity-is-own: 'false'` at the call
       sites in `.github/workflows/board-loop.yml:905,1263,1640,2207,2804,
       3421,3946,4128,4543`.
-- [ ] T022 [P] [US1] Pass `spec-identity-is-own: 'false'` at the call
+- [X] T022 [P] [US1] Pass `spec-identity-is-own: 'false'` at the call
       site in `.github/workflows/lifecycle-review-gate.yml:666`.
 
 ### Slug-fallback conversion (the one FR-002 exception — FR-008)

@@ -826,6 +826,7 @@ jobs:
           stage: rebase
           spec-dir: ${{ matrix.spec_dir }}
           spec-issue: ${{ matrix.issue }}
+          spec-identity-is-own: 'false'
           # github.job (JOB_KEY) is identical across every leg of this
           # matrix, so step-index must carry the per-leg distinction or
           # every leg's record_key collides on the same
