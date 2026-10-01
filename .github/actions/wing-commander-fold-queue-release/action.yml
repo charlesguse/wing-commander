@@ -86,6 +86,7 @@ runs:
       run: |
         set -euo pipefail
         LEDGER="$GITHUB_ACTION_PATH/../_shared/fold-queue-ledger.sh"
+        BEST_EFFORT="${BEST_EFFORT:-false}"
 
         if [ -z "$TOKEN" ]; then
           echo "wing-commander-fold-queue-release: no token supplied (this run never held a ticket for $SPEC_DIR) -- nothing to release." >> "$GITHUB_STEP_SUMMARY"

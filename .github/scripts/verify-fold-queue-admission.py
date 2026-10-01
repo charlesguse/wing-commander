@@ -118,11 +118,15 @@ SCENARIOS (`suite(subject)`, contracts/gates.md)
     resolves `outcome: won` again (not `declined`) and returns the SAME
     `implement-token` rather than enqueueing a second one.
 15. No ticket job carries its own concurrency: group (T061, maintainer
-    review of #821, B9) -- fold-turn-act/fold-turn-dispatch/
-    fold-turn-implement (admit/claim-dispatch/await) each carry no
-    concurrency: block of their own, or a wait running inside one could
-    deadlock against the very group it is awaiting entry to (T045's exact
-    defect, before the claim was moved out of dispatch-once).
+    review of #821, B9; widened by T066, round 3, to a dynamic walk of
+    every job in all three workflows rather than three pinned names) --
+    every job that calls wing-commander-fold-queue-admit or
+    wing-commander-fold-queue-claim-dispatch (today: fold-turn-act/
+    fold-turn-dispatch/fold-turn-implement) must carry no concurrency:
+    block of its own, or a wait running inside one could deadlock against
+    the very group it is awaiting entry to (T045's exact defect, before
+    the claim was moved out of dispatch-once) -- including a regression
+    that adds such a call to some OTHER job, like dispatch-once itself.
 
 MUTATIONS (each proven to break the gate -- FR-022)
 ----------------------------------------------------
@@ -168,9 +172,12 @@ MUTATIONS (each proven to break the gate -- FR-022)
   to admitting a ticket even for a stop-only run, and act/dispatch-once to
   requiring a bare `success` result from them (the T054/B2 defect
   restored). Fails scenario 6.
-- `mut_ticket_job_gains_concurrency_group` -- gives fold-turn-dispatch a
-  concurrency: block of its own (the T061/B9 regression item 1's own fix
-  removed). Fails scenario 15.
+- `mut_ticket_job_gains_concurrency_group` -- simulates an admit/
+  claim-dispatch call added INSIDE dispatch-once, a job that already
+  carries its own concurrency: group (T066, round 3: the previous version
+  of this mutation only flipped fold-turn-dispatch's own flag, which a
+  regression landing in a DIFFERENT job -- the actual shape this item
+  reported -- would not have triggered). Fails scenario 15.
 
 `main()` runs `suite()` against the untouched subject (must be 0 failures),
 then re-runs it under each mutation and requires a failure -- identical to
@@ -211,6 +218,30 @@ def needs_of(job):
     return [n] if isinstance(n, str) else list(n)
 
 
+def load_ticket_composite_users():
+    """{"<path>:<job id>": has_concurrency} for every job in pr-conversation.yml
+    / implement.yml / fold-cycle-guard.yml that has a step whose `uses:`
+    names wing-commander-fold-queue-admit or
+    wing-commander-fold-queue-claim-dispatch -- walked dynamically across
+    every job key, not a fixed job-name list (T066, maintainer review of
+    #821, round 3), so a regression that adds either call to some OTHER
+    job (one that already carries its own concurrency: group, like
+    dispatch-once) is still found."""
+    import yaml
+    users = {}
+    for path in (PR_CONV, IMPLEMENT, GUARD):
+        doc = yaml.safe_load(open(path, encoding="utf-8")) or {}
+        for jid, job in (doc.get("jobs") or {}).items():
+            uses_composite = any(
+                "wing-commander-fold-queue-admit" in str((step or {}).get("uses") or "")
+                or "wing-commander-fold-queue-claim-dispatch" in str((step or {}).get("uses") or "")
+                for step in (job or {}).get("steps") or []
+            )
+            if uses_composite:
+                users[f"{path}:{jid}"] = (job or {}).get("concurrency") is not None
+    return users
+
+
 def load_expr_subject():
     subject = {}
     for jid in ("fold-turn-act", "act", "fold-turn-dispatch", "dispatch-once"):
@@ -235,10 +266,19 @@ def load_expr_subject():
     # its own, or a waiter blocked inside one of these jobs' own group
     # could never see the ticket it awaits clear (T045's exact deadlock,
     # research.md D1) -- nothing before this task asserted it.
-    for jid, path in (("fold-turn-act", PR_CONV), ("fold-turn-dispatch", PR_CONV),
-                      ("fold-turn-implement", IMPLEMENT)):
-        job = find_job(path, jid)
-        subject[f"{jid}:has-concurrency"] = job.get("concurrency") is not None
+    #
+    # T066 (maintainer review of #821, round 3): the original check here
+    # was pinned to these three job names and a mutation that only flipped
+    # one of their own flags -- a regression that instead added an admit/
+    # claim-dispatch call INSIDE a DIFFERENT job (dispatch-once, which
+    # already carries its own concurrency: group) passed unnoticed, since
+    # nothing ever looked at dispatch-once's steps. ticket-composite-jobs
+    # is built by walking every job in all three workflows and recording
+    # any whose steps actually `uses:` one of the two composites, keyed by
+    # "<path>:<job id>" -- not a fixed name list -- so scenario 15 below
+    # catches a regression landing in ANY job, and the matching mutation
+    # can simulate exactly the dispatch-once case this item named.
+    subject["ticket-composite-jobs"] = load_ticket_composite_users()
 
     for key, val in subject.items():
         if key.endswith(":if") and not val.strip():
@@ -363,20 +403,25 @@ def scenario_three_overlapping(subject):
 
 
 def scenario_ticket_jobs_carry_no_concurrency_group(subject):
-    """T061 (B9): admit (fold-turn-act), claim-dispatch (fold-turn-dispatch)
-    and await (fold-turn-implement) must each run in a job carrying NO
-    concurrency: block of its own -- a waiter polling for a ticket to
-    clear, from inside a group that ticket's own owning run cannot itself
-    join, can never see it clear (T045's exact deadlock when the claim
-    briefly lived inside dispatch-once's own group instead)."""
+    """T061 (B9), widened by T066 (maintainer review of #821, round 3):
+    EVERY job anywhere in pr-conversation.yml/implement.yml/
+    fold-cycle-guard.yml that calls wing-commander-fold-queue-admit or
+    wing-commander-fold-queue-claim-dispatch must carry NO concurrency:
+    block of its own -- a waiter polling for a ticket to clear, from
+    inside a group that ticket's own owning run cannot itself join, can
+    never see it clear (T045's exact deadlock when the claim briefly lived
+    inside dispatch-once's own group instead). Walking
+    ticket-composite-jobs (built dynamically, not three pinned names)
+    means this also catches a regression that adds either call to a job
+    OTHER than the three today's wiring uses -- the T066 mutation below
+    simulates exactly that by adding dispatch-once to the set."""
     failures = []
-    for jid in ("fold-turn-act", "fold-turn-dispatch", "fold-turn-implement"):
-        if subject[f"{jid}:has-concurrency"]:
-            failures.append(f"scenario 15: {jid} carries a concurrency: "
-                            f"block -- admit/claim-dispatch/await must run "
-                            f"in a job with none, or a wait inside it can "
-                            f"deadlock against the very group it is "
-                            f"awaiting entry to (T045, research.md D1)")
+    for key, has_concurrency in subject["ticket-composite-jobs"].items():
+        if has_concurrency:
+            failures.append(f"scenario 15: {key} calls admit/claim-dispatch "
+                            f"but carries a concurrency: block -- a wait "
+                            f"inside it can deadlock against the very group "
+                            f"it is awaiting entry to (T045, research.md D1)")
     return failures
 
 
@@ -1147,13 +1192,21 @@ def mut_standalone_still_enqueues(subject):
 
 
 def mut_ticket_job_gains_concurrency_group(subject):
-    """T061 (B9): simulates the regression item 1's own fix removed --
-    fold-turn-dispatch (or either sibling) gaining a concurrency: block of
-    its own, which would silently reopen T045's exact deadlock (a wait
-    for a ticket to clear, running inside the very group that ticket's
-    owning run cannot itself join)."""
+    """T061 (B9), widened by T066 (maintainer review of #821, round 3):
+    simulates a claim-dispatch (or admit) call being added INSIDE
+    dispatch-once -- a job that already carries its own concurrency:
+    group -- rather than merely flipping a pinned job's own flag. The
+    PREVIOUS version of this mutation (and scenario) could not catch this
+    exact regression: dispatch-once was never one of the three job names
+    either one looked at, so a real `uses: .../wing-commander-fold-queue-
+    claim-dispatch` step landing inside dispatch-once passed Gate 128
+    unnoticed (T066's own finding). Walking ticket-composite-jobs
+    dynamically fixes that; this mutation proves it by adding exactly the
+    entry such a regression would produce."""
     s = dict(subject)
-    s["fold-turn-dispatch:has-concurrency"] = True
+    users = dict(subject["ticket-composite-jobs"])
+    users[f"{PR_CONV}:dispatch-once"] = True
+    s["ticket-composite-jobs"] = users
     return s
 
 
@@ -1226,7 +1279,7 @@ MUTATIONS = [
     ("standalone mode still enqueues an implement ticket", mut_standalone_still_enqueues),
     ("a retried win declines instead of winning again", mut_win_retry_declines),
     ("stop-only skip-and-accept handling reverted", mut_drop_stop_only_handling),
-    ("a ticket job (fold-turn-dispatch) gains a concurrency: group", mut_ticket_job_gains_concurrency_group),
+    ("an admit/claim-dispatch call lands inside dispatch-once, which carries its own concurrency: group", mut_ticket_job_gains_concurrency_group),
 ]
 
 
