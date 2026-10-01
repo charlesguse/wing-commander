@@ -57,6 +57,11 @@ The board has three lanes, and only the first one waits on the owner:
   on the lifecycle issue and files nothing (watchdog.yml's `Determine
   issue-filing eligibility`).
 
+The open `disposition:tracking` issue titled "Board status" is rewritten
+daily by `board-status.yml` from the board itself: what waits on the
+owner, what the pipeline is working on, and main's CI. Read it before
+the board.
+
 Keep at most three lifecycles in implement at once; the rest wait in the
 Roadmap issue's "Queued" list. A lifecycle that has to wait for the
 owner's answers belongs in "Parked", closed with the `parked` label, not
