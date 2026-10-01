@@ -1023,8 +1023,16 @@ def _logical_lines(run_text):
     return re.sub(r"\\\n\s*", " ", run_text or "").split("\n")
 
 
+# The labels a board-loop.yml filing of spec-shaped work carries. The loop
+# files spec-proposal (board reset of 2026-10-01; only the owner applies
+# spec-request, which starts intake), and spec-request is kept so a site
+# that reverts to it is still checked -- either way the body is what a
+# maintainer promotes into intake, so the same trust rules hold.
+SPEC_FILING_LABEL_RE = re.compile(r"\bspec-(?:request|proposal)\b")
+
+
 def _is_spec_request_create(line):
-    return bool(GH_ISSUE_CREATE_RE.search(line) and "spec-request" in line)
+    return bool(GH_ISSUE_CREATE_RE.search(line) and SPEC_FILING_LABEL_RE.search(line))
 
 
 # Check 3's create guard (#514). A site's `run:` has no `-e`, so a failed
@@ -1195,7 +1203,7 @@ def check_spec_request_bodies(path):
 
             for line in lines:
                 if (re.search(r"\bgh\s+issue\s+edit\b", line)
-                        and re.search(r"--add-label[= ]\s*[\"']?spec-request",
+                        and re.search(r"--add-label[= ]\s*[\"']?spec-(?:request|proposal)\b",
                                       line)):
                     problems.append(
                         f"{where} relabels an issue as spec-request -- its "
@@ -1973,8 +1981,8 @@ def _mutation_check_builder():
 # edit could reopen #509's gap; check 3 must catch every one.
 SPEC_REQUEST_MUTATIONS = (
     ("route site's body inlined again",
-     '--body-file "$spec_body_file" --label spec-request',
-     '--body "${pr_body:-No drafted body.}" --label spec-request'),
+     '--body-file "$spec_body_file" --label spec-proposal',
+     '--body "${pr_body:-No drafted body.}" --label spec-proposal'),
     ("fallback fed the comments-file",
      "ISSUE_CONTEXT_FILE: ${{ steps.issue-context-route.outputs.context-file }}",
      "ISSUE_CONTEXT_FILE: ${{ steps.issue-context-route.outputs.comments-file }}"),

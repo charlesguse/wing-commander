@@ -1,0 +1,19 @@
+{
+  "6001": [
+    {"event": "labeled", "created_at": "2026-01-01T00:01:00Z", "label": {"name": "spec-proposal"},
+     "actor": {"login": "wing-commander-bot[bot]", "association": "BOT"}},
+    {"event": "labeled", "created_at": "2026-01-01T01:00:00Z", "label": {"name": "enhancement"},
+     "actor": {"login": "someone", "association": "OWNER"}}
+  ],
+  "6002": [
+    {"event": "labeled", "created_at": "2026-01-02T00:01:00Z", "label": {"name": "spec-proposal"},
+     "actor": {"login": "wing-commander-bot[bot]", "association": "BOT"}},
+    {"event": "labeled", "created_at": "2026-01-02T01:00:00Z", "label": {"name": "spec-request"},
+     "actor": {"login": "someone", "association": "OWNER"}}
+  ],
+  "6003": [
+    {"event": "labeled", "created_at": "2026-01-03T00:01:00Z", "label": {"name": "spec-request"},
+     "actor": {"login": "someone", "association": "OWNER"}}
+  ],
+  "6004": []
+}

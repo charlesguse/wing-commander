@@ -41,8 +41,9 @@ def dispose_as_duplicate(originating_issue: int, spec_request_issue: int,
    contract treats "already closed" as satisfied per the edge case's own
    wording).
 5. **Cross-link on the originating issue** (unchanged, FR-004): the
-   existing `wing-commander-outstanding-task-item` "Routed to spec-request"
-   checklist item, posted by the site exactly as it is today — this
+   existing `wing-commander-outstanding-task-item` "Routed to a spec
+   proposal" checklist item (the loop files a `spec-proposal` since the
+   board reset of 2026-10-01; constitution X 2.2.0), posted by the site exactly as it is today — this
    contract does not move that call, only sequences the new steps around
    it.
 6. **Reciprocal cross-link on the spec-request** (FR-004, research.md D5):

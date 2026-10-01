@@ -161,7 +161,8 @@ The project [constitution](.specify/memory/constitution.md) governs every change
     `WING_COMMANDER_LIFECYCLE_AUTO_MERGE` is on (it defaults to off), a
     lifecycle's final PR, behind eight deterministic conditions at the exact
     head, a clean review round, and its own kill switch. Spec-shaped work is
-    filed as a `spec-request`, and every other merge stays human.
+    filed as a `spec-proposal` that only the owner can promote to a
+    `spec-request`, and every other merge stays human.
 
 Full stage-by-stage design: [docs/architecture.md](docs/architecture.md).
 
