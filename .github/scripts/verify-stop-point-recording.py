@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
-"""Gate 128 -- an honoured stop records its stop point, and the kill switch
+"""Gate 135 -- an honoured stop records its stop point, and the kill switch
 keeps writing nothing (specs/097-recorded-stop-point, FR-019,
-specs/097-recorded-stop-point/contracts/gate-128-stop-point-recording.md).
+specs/097-recorded-stop-point/contracts/gate-135-stop-point-recording.md).
+Numbered 135, not the 128 this feature's own plan/tasks originally claimed
+(maintainer review fold leg-3): 128 is spec 074/#821's, and 129-134 are
+taken or allocated to specs 089/108/109 and others.
 
 WHAT IT CHECKS
 --------------
@@ -13,11 +16,6 @@ WHAT IT CHECKS
    scripts/...` (resolved relative to the composite's own trusted
    directory -- maintainer review fold leg-0), never a bare
    `.github/scripts/...` path (spec 095 FR-011/FR-012, research.md D8).
-7. No caller-populated snapshot dependency: the composite's own script
-   resolutions never reference `$RUNNER_TEMP/wc-pristine` -- every caller
-   already invokes this composite from its own trusted `.wc-pristine-repo`
-   checkout (spec 086 FR-003), so a second, composite-populated snapshot
-   directory is unneeded trust surface (maintainer review fold leg-0).
 3. Cause-aware messaging: none of `.github/workflows/board-loop.yml`'s six
    stand-down messages hardcodes "kill switch" prose unconditionally --
    each reads `stop-cause` to pick its wording (FR-014).
@@ -32,9 +30,14 @@ WHAT IT CHECKS
 6. No write on kill-switch-only/closed-issue: the record-write step's own
    `if:` is exactly `stop-cause == 'stop-request'` -- never a condition
    that would also admit `"kill-switch"`/`"closed-issue"` (FR-011/FR-013).
+7. No caller-populated snapshot dependency: the composite's own script
+   resolutions never reference `$RUNNER_TEMP/wc-pristine` -- every caller
+   already invokes this composite from its own trusted `.wc-pristine-repo`
+   checkout (spec 086 FR-003), so a second, composite-populated snapshot
+   directory is unneeded trust surface (maintainer review fold leg-0).
 
 Each check's own mutation is applied under --self-test and must be caught
-(Principle VIII, SC-009) -- see contracts/gate-128-stop-point-recording.md.
+(Principle VIII, SC-009) -- see contracts/gate-135-stop-point-recording.md.
 """
 import glob
 import json

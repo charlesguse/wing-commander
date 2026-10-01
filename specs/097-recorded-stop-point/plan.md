@@ -42,9 +42,10 @@ and comments on GitHub (the "board item marker" convention); no database,
 no new file format.
 
 **Testing**: `.github/scripts/run-local-gates.py` (the full PR-time gate
-suite, per CLAUDE.md's "Before pushing" section); the new Gate 128
-(`verify-stop-point-recording.py`, contracts/gate-128-stop-point-
-recording.md) plus its `--self-test`; Gate 87's existing mutation-tested
+suite, per CLAUDE.md's "Before pushing" section); the new Gate 135
+(renumbered from 128 by maintainer review fold leg-3 — see tasks.md's
+Maintainer Feedback; `verify-stop-point-recording.py`, contracts/
+gate-135-stop-point-recording.md) plus its `--self-test`; Gate 87's existing mutation-tested
 fixture corpus for `find_stop_request()`, extended with new fixtures for
 FR-016/FR-009; `board_eligibility.py`'s existing fixture-driven tests,
 reused (not modified) to prove SC-001.
@@ -121,7 +122,7 @@ new composite action, no new script file beyond the one gate script.
   removal, no changed default/meaning of any existing input or output).
   Flagged here explicitly per Principle VII's own requirement that widening
   be deliberate rather than incidental.
-- **VIII. A Green Check Means What It Says**: The new Gate 128 is
+- **VIII. A Green Check Means What It Says**: The new Gate 135 is
   registered through the standard `lint-workflows.yml` wiring, runs
   identically locally via `run-local-gates.py`, is triggered by changes to
   the files it checks, and ships a `--self-test` proving it can fail its
@@ -156,7 +157,7 @@ specs/097-recorded-stop-point/
 │   ├── stop-check-composite.md
 │   ├── stop-point-record.md
 │   ├── metrics-classification.md
-│   └── gate-128-stop-point-recording.md
+│   └── gate-135-stop-point-recording.md
 ├── checklists/
 │   └── requirements.md   # (from the intake stage)
 └── tasks.md              # Phase 2 output (/speckit-tasks command — NOT created by /speckit-plan)
@@ -178,13 +179,13 @@ apply. The concrete files this feature touches:
 │   ├── board_item_marker.py           # unchanged — reused (add_stalled_label(), write_marker())
 │   ├── board_spec_request_body.py     # unchanged — reused (fenced_section())
 │   ├── board_eligibility.py           # unchanged — relied upon (is_excluded(), in_flight_candidate())
-│   ├── verify-stop-point-recording.py # NEW — Gate 128 + --self-test
+│   ├── verify-stop-point-recording.py # NEW — Gate 135 + --self-test
 │   └── tests/
-│       └── board-stop-check/          # NEW fixtures for Gate 128 (and Gate 87 corpus extension)
+│       └── board-stop-check/          # NEW fixtures for Gate 135 (and Gate 87 corpus extension)
 └── workflows/
     ├── board-loop.yml                 # six call sites: new inputs, stop-cause reads, reworded
     │                                   # stand-down messages, six new always() metrics steps
-    └── lint-workflows.yml             # Gate 128 + self-test step registration
+    └── lint-workflows.yml             # Gate 135 + self-test step registration
 ```
 
 **Structure Decision**: No new top-level directory. This feature is scoped

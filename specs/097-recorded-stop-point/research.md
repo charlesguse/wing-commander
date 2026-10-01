@@ -251,15 +251,18 @@ same call, since D3's ordering runs regardless of D5) still reports
 already written; nothing about having written the record is read back as
 "the stop is satisfied."
 
-## D7 — New PR-time gate (FR-019): Gate 128
+## D7 — New PR-time gate (FR-019): Gate 135
 
-**Decision**: The next unused gate number in this repository is 128 (127
-is the current maximum, `specs/091-gh-api-error-capture`; gate numbers are
-a naming convention checked by `verify-gate-wiring.py`/`run-local-gates.py`,
-not a stored list — `.github/scripts/wc_gate_registry.py`). New gate:
-`.github/scripts/verify-stop-point-recording.py`, wired into
-`.github/workflows/lint-workflows.yml` as "Gate 128" with its own
-`--self-test`, following the same two-step pattern as every other gate
+**Decision**: The next unused gate number in this repository was 128 at
+plan time (127 was then the current maximum, `specs/091-gh-api-error-
+capture`; gate numbers are a naming convention checked by
+`verify-gate-wiring.py`/`run-local-gates.py`, not a stored list —
+`.github/scripts/wc_gate_registry.py`). Renumbered to 135 (maintainer
+review fold leg-3): 128 turned out to be spec 074's own gate (PR #821,
+confirmed open), and 129-134 are taken or allocated to specs 089/108/109
+and others. New gate: `.github/scripts/verify-stop-point-recording.py`,
+wired into `.github/workflows/lint-workflows.yml` as "Gate 135" with its
+own `--self-test`, following the same two-step pattern as every other gate
 (e.g. Gate 97/`verify-board-loop-resume-gating.py`, Gate 47/`verify-
 comment-canonical-pointers.py`).
 
@@ -270,9 +273,10 @@ Principle VIII, SC-009):
    `board-loop.yml`'s six call sites as text/YAML, no execution): the
    composite's `stop-cause`-gated record-write block exists and reuses
    `board_item_marker.py --step stalled ... --add-label "board:stalled"`
-   from `$RUNNER_TEMP/wc-pristine/scripts/` (not a bare `.github/scripts/`
-   path — this also covers spec 095 FR-011/FR-012's provenance rule for
-   this one file, once spec 095 lands); each of the six stand-down message
+   from `$GITHUB_ACTION_PATH/../../scripts/` (D8's addendum; not a bare
+   `.github/scripts/` path — this also covers spec 095 FR-011/FR-012's
+   provenance rule for this one file, once spec 095 lands); each of the
+   six stand-down message
    strings in `board-loop.yml` reads `stop-cause` (or the composite's
    output) rather than hardcoding "kill switch" prose unconditionally.
 2. **Function-level** (imports `board_stop_check` directly, no Actions
@@ -348,7 +352,7 @@ trusted file `$RUNNER_TEMP/wc-pristine/scripts/<name>.py` did, with no
 caller-populated snapshot and no new trust surface (spec 086 FR-003). The
 three T034 steps are removed as unneeded; fix/review/readiness keep their
 own pre-existing `$RUNNER_TEMP/wc-pristine` snapshot (used for other
-helpers those jobs import, unrelated to this composite). Gate 128 check 2
+helpers those jobs import, unrelated to this composite). Gate 135 check 2
 and a new check 7 enforce this; `board_prove.py`'s `SCRIPT_PATH_RE`/
 `SYS_PATH_SCRIPTS_RE` are extended to still resolve this composite's
 script imports under the new form.
@@ -489,7 +493,7 @@ label (`board-loop.yml:4524`) gains the same cause name.
   inputs and read `stop-cause`; six stand-down messages reworded (D12); six
   new `always()` "Record run outcome" steps (D11).
 - `.github/scripts/verify-stop-point-recording.py` (new) + its `lint-
-  workflows.yml` wiring as Gate 128 (D7).
-- `.github/scripts/tests/` — new fixtures for Gate 128's function-level and
+  workflows.yml` wiring as Gate 135 (D7).
+- `.github/scripts/tests/` — new fixtures for Gate 135's function-level and
   eligibility-level checks (D7), reusing Gate 87's existing corpus where
   possible.

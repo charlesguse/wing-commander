@@ -12,8 +12,8 @@ description: "Task list for An Honoured Stop Records Its Stop Point — One Stop
 quickstart.md — all present and read.
 
 **Tests**: Not explicitly requested as TDD. This feature's "tests" are the
-new Gate 128 (`verify-stop-point-recording.py`) and its fixture corpus,
-whose own contract (`contracts/gate-128-stop-point-recording.md`) requires
+new Gate 135 (`verify-stop-point-recording.py`) and its fixture corpus,
+whose own contract (`contracts/gate-135-stop-point-recording.md`) requires
 it to be shown failing on the pre-fix shape and passing on the fixed one
 (SC-009) — so gate-check tasks are interleaved with the implementation
 they check, not written strictly before it.
@@ -61,8 +61,8 @@ proceed before any implementation.
   still holds letter-for-letter: no existing input/output's name, default,
   or meaning changes.
 - [X] T002 [P] Create `.github/scripts/verify-stop-point-recording.py` with
-  only its module header: a docstring naming Gate 128, FR-019, and
-  `specs/097-recorded-stop-point/contracts/gate-128-stop-point-recording.md`,
+  only its module header: a docstring naming Gate 135, FR-019, and
+  `specs/097-recorded-stop-point/contracts/gate-135-stop-point-recording.md`,
   matching the header style of `.github/scripts/
   verify-board-loop-resume-gating.py` (Gate 97), plus an empty `main()` and
   `if __name__ == "__main__":` dispatch with a `--self-test` flag stub (no
@@ -202,41 +202,41 @@ a durable, legible record in the first place).
   already reuses verbatim at `board-loop.yml:2060-2061`). Triage and route
   naturally pass through empty strings today (no branch exists pre-fix) —
   no special-casing needed.
-- [X] T012 Add Gate 128 structural check 1 to `.github/scripts/
+- [X] T012 Add Gate 135 structural check 1 to `.github/scripts/
   verify-stop-point-recording.py`: parses `.github/actions/
   wing-commander-board-stop-check/action.yml` as text/YAML (no execution)
   and fails when there is no step, gated on `stop-cause == "stop-request"`,
   that invokes `board_item_marker.py --step stalled ... --add-label
-  "board:stalled"` (contracts/gate-128-stop-point-recording.md check 1).
-- [X] T013 [P] Add Gate 128 structural check 2 to `.github/scripts/
+  "board:stalled"` (contracts/gate-135-stop-point-recording.md check 1).
+- [X] T013 [P] Add Gate 135 structural check 2 to `.github/scripts/
   verify-stop-point-recording.py`: fails when the `board_stop_check.py`
   invocation or the new `board_item_marker.py` invocation in `action.yml`
   references a bare `.github/scripts/...` path instead of
-  `$RUNNER_TEMP/wc-pristine/scripts/...` (contracts/gate-128... check 2;
+  `$RUNNER_TEMP/wc-pristine/scripts/...` (contracts/gate-135... check 2;
   spec 095 FR-011/FR-012, research.md D8).
 - [X] T014 Add `--self-test` coverage for checks 1 and 2 to `.github/
   scripts/verify-stop-point-recording.py`: mutation 1 deletes the
   record-write step's `if:` condition or its body and asserts check 1 then
   fails; mutation 2 rewrites the invocation to a bare `.github/scripts/...`
-  path and asserts check 2 then fails (contracts/gate-128... Self-test
+  path and asserts check 2 then fails (contracts/gate-135... Self-test
   items 1–2; Principle VIII/SC-009 — the gate must be shown to fail its own
   subject).
-- [X] T015 Register Gate 128 in `.github/workflows/lint-workflows.yml`,
+- [X] T015 Register Gate 135 in `.github/workflows/lint-workflows.yml`,
   immediately after the existing Gate 127 block (ends at
   `lint-workflows.yml:4653`), following the exact two-step pattern every
   other gate uses:
   ```yaml
-  - name: "Gate 128 — an honoured stop records its stop point, and the kill switch keeps writing nothing"
+  - name: "Gate 135 — an honoured stop records its stop point, and the kill switch keeps writing nothing"
     if: "!cancelled()"
     run: python3 .github/scripts/verify-stop-point-recording.py
-  - name: "Gate 128 self-test — ..."
+  - name: "Gate 135 self-test — ..."
     if: "!cancelled()"
     run: python3 .github/scripts/verify-stop-point-recording.py --self-test
   ```
 
 **Checkpoint**: The composite now computes `stop-cause`, writes the label+
 marker+comment record exactly once per honoured stop, leaves kill-switch-
-only and closed-issue stand-downs untouched, and Gate 128 proves the write
+only and closed-issue stand-downs untouched, and Gate 135 proves the write
 itself exists and runs from the trusted snapshot. User story work can now
 begin.
 
@@ -253,7 +253,7 @@ consecutive runs. The first stands down and records; the second selects a
 *different* eligible item (or reports an empty board) and never re-enters a
 job for the stopped item.
 
-- [X] T016 [P] [US1] Add Gate 128 eligibility-level check 5 to `.github/
+- [X] T016 [P] [US1] Add Gate 135 eligibility-level check 5 to `.github/
   scripts/verify-stop-point-recording.py`: constructs the data-model.md
   fixture — an issue with `"labels": [{"name": "board:stalled"}]` plus a
   companion bot comment carrying the marker
@@ -261,13 +261,13 @@ job for the stopped item.
   null}` — and imports `board_eligibility` directly (no Actions runtime) to
   assert `is_excluded()` returns `(True, "board:stalled")` and neither
   `in_flight_candidate()` nor `select()` ever returns that issue, across
-  ten simulated successive selection passes (contracts/gate-128... check 5;
+  ten simulated successive selection passes (contracts/gate-135... check 5;
   SC-001: "selected by zero of the next ten runs").
-- [X] T017 [P] [US1] Add Gate 128 check 6 to `.github/scripts/
+- [X] T017 [P] [US1] Add Gate 135 check 6 to `.github/scripts/
   verify-stop-point-recording.py`: fails when a fixture composite
   invocation with `stop-cause` resolving to `"kill-switch"` or
   `"closed-issue"` still reaches the record-write block added in T010
-  (contracts/gate-128... check 6; FR-011/FR-013).
+  (contracts/gate-135... check 6; FR-011/FR-013).
 - [X] T018 [US1] Add `--self-test` coverage for checks 5 and 6 to `.github/
   scripts/verify-stop-point-recording.py`: mutation 5 feeds a marker
   fixture with the `board:stalled` label omitted and asserts check 5's
@@ -275,7 +275,7 @@ job for the stopped item.
   label, not vacuously passing); mutation 6 forces `stop-cause` to
   `"kill-switch"` in a fixture that also satisfies the record-write
   block's own gating condition (a deliberately broken `if:` that ignores
-  `stop-cause`) and asserts check 6 then fails (contracts/gate-128...
+  `stop-cause`) and asserts check 6 then fails (contracts/gate-135...
   Self-test items 5–6).
 - [X] T019 [US1] Run `quickstart.md` Scenario A (one stop halts one item,
   board keeps moving) and Scenario E (kill-switch-only writes nothing)
@@ -299,11 +299,11 @@ stand-downs from the metrics records alone.
 no access to the run logs. The reason, the stopping point and the release
 instruction are all determinable from the issue alone.
 
-- [X] T020 [P] [US2] Add Gate 128 cause-aware-messaging check 3 to
+- [X] T020 [P] [US2] Add Gate 135 cause-aware-messaging check 3 to
   `.github/scripts/verify-stop-point-recording.py`: fails when any of the
   six stand-down message strings in `.github/workflows/board-loop.yml`
   hardcodes "kill switch" prose unconditionally — the pre-fix shape at,
-  e.g., `board-loop.yml:1412` (contracts/gate-128... check 3; FR-014).
+  e.g., `board-loop.yml:1412` (contracts/gate-135... check 3; FR-014).
 - [X] T021 [US2] Reword the six stand-down messages in `.github/workflows/
   board-loop.yml` to read `steps.killswitch-recheck.outputs.stop-cause`
   and name the actual observed cause — "a maintainer stop request" / "the
@@ -318,7 +318,7 @@ instruction are all determinable from the issue alone.
   no cause named).
 - [X] T022 [US2] Add `--self-test` coverage for check 3 to `.github/
   scripts/verify-stop-point-recording.py`: restores one hardcoded "kill
-  switch" string and asserts check 3 then fails (contracts/gate-128...
+  switch" string and asserts check 3 then fails (contracts/gate-135...
   Self-test item 3).
 - [X] T023 [US2] Add one additional step, `if: always()`, named `Record run
   outcome (<job>)`, to the end of each of the six resume-stage jobs in
@@ -375,7 +375,7 @@ the item is selected, proceeds past its stop check, and the issue gains no
 second stop-point record.
 
 - [X] T026 [P] [US3] Add an FR-009 fixture to `.github/scripts/tests/
-  board-stop-check/` and to Gate 128's decision-function-agreement check
+  board-stop-check/` and to Gate 135's decision-function-agreement check
   (research.md D2's invariant: `find_stop_command_comment(...) is not None
   == find_stop_request(...).stand_down`, checked over Gate 87's existing
   corpus plus new fixtures) — a comments list where the recorded
@@ -386,11 +386,11 @@ second stop-point record.
   recorded MUST NOT stand the item down again"), per research.md D10's
   observation that this falls out of the unmodified baseline computation
   with no new logic.
-- [X] T027 [US3] Add `--self-test` coverage for Gate 128 check 4's FR-009
+- [X] T027 [US3] Add `--self-test` coverage for Gate 135 check 4's FR-009
   fixture to `.github/scripts/verify-stop-point-recording.py`: a
   hand-crafted fixture where a comment matches `is_stop_command()` but
   predates a synthetic baseline in one function's copy of the logic and
-  not the other, asserting check 4 then fails (contracts/gate-128...
+  not the other, asserting check 4 then fails (contracts/gate-135...
   Self-test item 4 — "the mutation Gate 87 cannot catch, since Gate 87
   only proves `find_stop_request()` alone").
 - [X] T028 [US3] Run `quickstart.md` Scenario C (release and resume)
@@ -416,7 +416,7 @@ no loop `**Run:**` announcement at all, drive one run and confirm the item
 stood down once, the stop point was recorded, and the board moved on.
 
 - [X] T029 [P] [US4] Add an FR-016 fixture to `.github/scripts/tests/
-  board-stop-check/` and to Gate 128's decision-function-agreement check —
+  board-stop-check/` and to Gate 135's decision-function-agreement check —
   a comments list with **no** bot-authored `**Run:**` comment at all (empty
   baseline, `baseline = ""`) and one old, authorized, stop-command comment
   — asserting both `find_stop_request()` and `find_stop_command_comment()`
@@ -443,7 +443,7 @@ cleanly, and a pre-loop stop command cannot wedge an issue forever.
 board rules require for Actions-only behaviour.
 
 - [X] T031 [P] Run `python .github/scripts/run-local-gates.py` locally
-  (CLAUDE.md "Before pushing"). Confirm Gate 128 and its `--self-test` both
+  (CLAUDE.md "Before pushing"). Confirm Gate 135 and its `--self-test` both
   pass, and that Gate 87 still passes completely unchanged (`research.md`
   D1 — `find_stop_request()` was never modified).
 - [X] T032 [P] Run `quickstart.md` Scenario F (kill switch and stop request
@@ -490,7 +490,7 @@ board rules require for Actions-only behaviour.
 - **User Story 3 (P2)**: Depends only on Foundational (reuses T003/T006's
   pure functions and fixture corpus; does not depend on US1/US2).
 - **User Story 4 (P3)**: Depends only on Foundational, and shares its
-  fixture file/gate check with US3 (both extend Gate 128 check 4) —
+  fixture file/gate check with US3 (both extend Gate 135 check 4) —
   sequence T026 before T029 if both are assigned to the same session, to
   avoid two uncoordinated edits to the same check.
 
@@ -520,8 +520,8 @@ Task: "Add html_url to the composite's comments --jq projection in action.yml"
 # logically independent properties (selection exclusion vs no-write-on-
 # kill-switch) -- sequence them if working solo, or split by check number
 # if two sessions coordinate on non-overlapping line ranges.
-Task: "Gate 128 check 5 -- fixture excluded by is_excluded()/in_flight_candidate()/select() across ten passes"
-Task: "Gate 128 check 6 -- kill-switch/closed-issue fixture never reaches the record-write block"
+Task: "Gate 135 check 5 -- fixture excluded by is_excluded()/in_flight_candidate()/select() across ten passes"
+Task: "Gate 135 check 6 -- kill-switch/closed-issue fixture never reaches the record-write block"
 ```
 
 ---
@@ -536,7 +536,7 @@ Task: "Gate 128 check 6 -- kill-switch/closed-issue fixture never reaches the re
 3. Complete Phase 3: User Story 1 (T016–T019) — proves the wedge is closed
    and the board keeps moving.
 4. **STOP and VALIDATE**: run `python .github/scripts/run-local-gates.py`;
-   confirm Gate 128 passes and Gate 87 is unaffected. This alone already
+   confirm Gate 135 passes and Gate 87 is unaffected. This alone already
    satisfies spec.md's own stated priority ("This is the defect... Without
    it, one stop costs the whole board every subsequent run").
 
@@ -562,7 +562,7 @@ With two sessions available (CLAUDE.md's board rules cap concurrent local
 agents at two): one completes Setup + Foundational alone (it is one
 tightly-sequenced file chain); once that lands, a second session can start
 User Story 2's message/metrics wiring (T021/T023/T024 — `board-loop.yml`,
-independent of the gate script) while the first continues the Gate 128
+independent of the gate script) while the first continues the Gate 135
 checks for US1/US3/US4 (all in `verify-stop-point-recording.py`, so best
 kept to one session to avoid edit collisions).
 
@@ -579,7 +579,7 @@ kept to one session to avoid edit collisions).
   before its `wing-commander-board-stop-check` call site. T007/research.md
   D8 made the composite's `board_stop_check.py` invocation run
   unconditionally from `$RUNNER_TEMP/wc-pristine/scripts/…` for every
-  caller (confirmed present and required by Gate 128 check 2), but only
+  caller (confirmed present and required by Gate 135 check 2), but only
   fix, review, and readiness populate that directory — triage, route, and
   prove do not (verified: `grep -n "Snapshot helper scripts"
   .github/workflows/board-loop.yml` finds exactly three occurrences). Every
@@ -587,7 +587,7 @@ kept to one session to avoid edit collisions).
   "No such file or directory" once this lands, regardless of whether a
   stop is pending, since that invocation runs on every call. All 201 local
   gates pass without catching this because none of them execute
-  board-loop.yml itself — Gate 128 checks the composite's own text
+  board-loop.yml itself — Gate 135 checks the composite's own text
   structurally, and Gate 87's harness synthesizes the pristine directory
   itself rather than reading it from a real job. (missing; research.md D8,
   FR-018)
@@ -596,13 +596,13 @@ kept to one session to avoid edit collisions).
 
 - [X] Have `wing-commander-board-stop-check`'s composite resolve `board_stop_check.py`, `board_item_marker.py` and the `board_spec_request_body` import relative to itself (e.g. `$GITHUB_ACTION_PATH/../../scripts/...`) instead of depending on a caller-populated `./.wc-pristine-repo` — every caller already checks that out per spec 086 FR-003, so this adds no trust surface.
 - [X] Drop the three T034 "Snapshot helper scripts" steps added to the triage, route and prove jobs, now unneeded.
-- [X] Extend `board_prove.py`'s `SCRIPT_PATH_RE` and Gate 128 check 2 to accept the `$GITHUB_ACTION_PATH`-relative resolution form.
-- [X] Add a Gate 128 check asserting the composite never depends on a caller-populated `wc-pristine` directory (today, deleting the three T034 steps keeps the gate at 0 failures).
+- [X] Extend `board_prove.py`'s `SCRIPT_PATH_RE` and Gate 135 check 2 to accept the `$GITHUB_ACTION_PATH`-relative resolution form.
+- [X] Add a Gate 135 check asserting the composite never depends on a caller-populated `wc-pristine` directory (today, deleting the three T034 steps keeps the gate at 0 failures).
 
 ## Maintainer Feedback
 
 - [X] **Blocking (FR-008/FR-006):** In `board_stop_check.py`, treat a stop-point record comment posted by `current_run_id` as still standing the item down, so the record's own `**Run:**` line does not move `find_stop_request()`'s baseline past the honoured stop within the same run. Keep FR-009/FR-016 intact (a later run's different run id is unaffected).
-- [X] Add a fixture: a stop followed by this run's own stop-point record comment, same run id, asserting `stand_down=true`; add the corresponding Gate 128 check.
+- [X] Add a fixture: a stop followed by this run's own stop-point record comment, same run id, asserting `stand_down=true`; add the corresponding Gate 135 check.
 - [ ] (Nice-to-have per reviewer) Gate triage's and review's continuation outputs on the stand-down too; leave route's to #901.
 
 ## Maintainer Feedback
@@ -612,10 +612,10 @@ kept to one session to avoid edit collisions).
 
 ## Maintainer Feedback
 
-- [ ] Renumber this feature's gate from 128 to 135 (128 is spec 074/#821's; 129–134 are taken or allocated) in `verify-stop-point-recording.py` (lines 2, 4, 30), `board_stop_check.py:235`, and `lint-workflows.yml:4723-4731`; place the registration block after the Gate 131/134 block with an allocation note.
-- [ ] Rename `contracts/gate-128-stop-point-recording.md` to `gate-135-stop-point-recording.md` and update its internal references (lines 1, 3, 7, 8).
-- [ ] Update every `128` reference in `specs/097-recorded-stop-point/{plan.md,research.md,data-model.md,quickstart.md,tasks.md}` (`grep -rn 128 specs/097-recorded-stop-point`).
-- [ ] Update the PR body's gate-number reference.
+- [X] Renumber this feature's gate from 128 to 135 (128 is spec 074/#821's; 129–134 are taken or allocated) in `verify-stop-point-recording.py` (lines 2, 4, 30), `board_stop_check.py:235`, and `lint-workflows.yml:4723-4731`; place the registration block after the Gate 131/134 block with an allocation note.
+- [X] Rename `contracts/gate-128-stop-point-recording.md` to `gate-135-stop-point-recording.md` and update its internal references (lines 1, 3, 7, 8).
+- [X] Update every `128` reference in `specs/097-recorded-stop-point/{plan.md,research.md,data-model.md,quickstart.md,tasks.md}` (`grep -rn 128 specs/097-recorded-stop-point`).
+- [ ] Update the PR body's gate-number reference (not applicable this cycle — no PR is open yet).
 
 ## Maintainer Feedback
 

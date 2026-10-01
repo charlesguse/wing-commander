@@ -256,7 +256,7 @@ def find_stop_command_comment(comments, current_run_id, bot_login):
     MAINTAINER_ASSOCIATIONS and is_stop_command(body)`, or None when none
     exists.
 
-    Invariant (Gate 128 checks this over Gate 87's own fixture corpus):
+    Invariant (Gate 135 checks this over Gate 87's own fixture corpus):
     `find_stop_request(comments, run_id, bot_login).stand_down ==
     (find_stop_command_comment(comments, run_id, bot_login) is not None)`
     for every input -- the two functions must never disagree on whether a

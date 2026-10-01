@@ -77,7 +77,7 @@ guards) is unchanged in every respect and unaffected by `stop-cause`.
    non-zero exit fails loudly immediately; `jq -e '.html_url | type ==
    "string"'` then rejects an empty `{}` result too, since `stop-cause ==
    "stop-request"` already means `find_stop_request()` found a winner, so
-   Gate 128 check 4's invariant guarantees `find_stop_command_comment()`
+   Gate 135 check 4's invariant guarantees `find_stop_command_comment()`
    finds one too — an empty result here means the two disagreed, not that
    there is legitimately nothing to record, and must not be accepted as
    data (the pre-fix shape posted a record with blank fields instead of

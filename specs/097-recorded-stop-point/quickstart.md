@@ -17,11 +17,11 @@ implementation breakdown.
 
 ## Local validation (no Actions run required)
 
-1. Run the PR-time gate suite, including the new Gate 128:
+1. Run the PR-time gate suite, including the new Gate 135:
    ```bash
    python .github/scripts/run-local-gates.py
    ```
-   Confirm Gate 128 (and its self-test) both pass, and that Gate 87 still
+   Confirm Gate 135 (and its self-test) both pass, and that Gate 87 still
    passes (`find_stop_request()` gained the narrow same-run-id baseline fix
    research.md D1's addendum describes — maintainer review fold leg-1 —
    but Gate 87's own fixture corpus has at most one marker per run id per
@@ -43,7 +43,7 @@ implementation breakdown.
    assert winner is comments[0]
    assert stop_command_reason(winner["body"]) == "wrong approach"
    ```
-   Confirms D2's invariant by hand before trusting Gate 128's automated
+   Confirms D2's invariant by hand before trusting Gate 135's automated
    version of the same check.
 
    A second call confirms research.md D1's addendum: once this run's own

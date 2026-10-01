@@ -113,9 +113,9 @@ value is always `0` for a stop-point record (the CLI's own default when
 `--round` is omitted), matching FR-010's "the review round MUST NOT be
 preserved."
 
-### Board item marker → JSON test fixture correspondence (Gate 128)
+### Board item marker → JSON test fixture correspondence (Gate 135)
 
-Gate 128's eligibility-level check (research.md D7 item 3) constructs an
+Gate 135's eligibility-level check (research.md D7 item 3) constructs an
 issue fixture of this shape and feeds it through the existing, unmodified
 `board_eligibility.is_excluded()` / `in_flight_candidate()` / `select()`:
 

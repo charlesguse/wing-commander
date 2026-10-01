@@ -268,7 +268,7 @@ runs:
           exit 1
         }
         # FR-017 (maintainer review fold leg-4): stop-cause == 'stop-request'
-        # already means find_stop_request() found a winner, so Gate 128
+        # already means find_stop_request() found a winner, so Gate 135
         # check 4's invariant guarantees find_stop_command_comment() finds
         # one too -- an empty `{}` result here (board_stop_check.py's own
         # "no winner" shape) means the two disagreed, not that there is

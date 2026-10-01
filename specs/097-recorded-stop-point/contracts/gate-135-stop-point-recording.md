@@ -1,12 +1,15 @@
-# Contract: Gate 128 — `verify-stop-point-recording.py` (FR-019)
+# Contract: Gate 135 — `verify-stop-point-recording.py` (FR-019)
 
-Next available gate number confirmed at plan time: 128 (current maximum on
-`main` is 127, `specs/091-gh-api-error-capture`; gate numbers are a
-convention enforced by `verify-gate-wiring.py`/`run-local-gates.py`, not a
-stored list — `.github/scripts/wc_gate_registry.py`). Registered in
-`.github/workflows/lint-workflows.yml` as a "Gate 128 — ..." step plus a
-"Gate 128 self-test — ..." step, following the exact two-step pattern every
-other gate uses (e.g. Gate 97/`verify-board-loop-resume-gating.py`, Gate
+Gate number confirmed at plan time was 128 (current maximum on `main` was
+then 127, `specs/091-gh-api-error-capture`); renumbered to 135 (maintainer
+review fold leg-3): 128 collided with spec 074's own gate (PR #821,
+confirmed open), and 129-134 are taken or allocated to specs 089/108/109
+and others. Gate numbers are a convention enforced by
+`verify-gate-wiring.py`/`run-local-gates.py`, not a stored list —
+`.github/scripts/wc_gate_registry.py`. Registered in `.github/workflows/
+lint-workflows.yml` as a "Gate 135 — ..." step plus a "Gate 135 self-test
+— ..." step, following the exact two-step pattern every other gate uses
+(e.g. Gate 97/`verify-board-loop-resume-gating.py`, Gate
 47/`verify-comment-canonical-pointers.py`).
 
 ## What it must fail on (pre-fix) and pass on (post-fix) — SC-009
