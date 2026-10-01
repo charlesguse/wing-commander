@@ -3,7 +3,7 @@
   "spec_dir": "specs/100-stalled-item-re-admission",
   "feature_num": "100",
   "stage": "implement",
-  "iteration": 2,
+  "iteration": 3,
   "spec_branch": "spec/100-stalled-item-re-admission",
   "pending_re_review_from": [
     "charlesguse"
