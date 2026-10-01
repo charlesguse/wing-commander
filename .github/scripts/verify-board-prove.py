@@ -118,9 +118,19 @@ JOINS_DIRECTED_GROUP_CASES = [
 # branches (or resolve the arms the wrong way round), which reintroduces the
 # deadlock silently. Pin it byte-for-byte, normalized only for the folded
 # scalar's own line breaks, so any such edit fails loudly here.
+#
+# specs/096-durable-prove-entry FR-004/FR-005 (contracts/
+# prove-path-concurrency.md) inserted a third, per-merged-PR branch between
+# the directed branch and the ordinary fallback, so prove-gate/prove's own
+# `pull_request` trigger no longer shares the `wing-commander-board-loop`
+# group with select/triage/route/fix/review/readiness either -- Gate 129
+# (verify-prove-path-concurrency.py) asserts that half; this constant only
+# needed its own literal updated to match.
 DIRECTED_GROUP_EXPR = (
     "${{ (github.event_name == 'workflow_dispatch' && inputs.directed-stage != '') && "
-    "'wing-commander-board-loop-directed-proof' || 'wing-commander-board-loop' }}"
+    "'wing-commander-board-loop-directed-proof' || "
+    "(github.event_name == 'pull_request' && format('wing-commander-board-loop-prove-{0}', "
+    "github.event.pull_request.number)) || 'wing-commander-board-loop' }}"
 )
 
 # research.md D5/T045/T046/T049 (both directions, FR-020):

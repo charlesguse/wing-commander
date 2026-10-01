@@ -23,18 +23,23 @@ typed input to publish.
 specs/060-self-redrive-concurrency's own directed-proof-run mechanism
 (contracts/concurrency-groups.md, contracts/directed-proof-run.md) replaces
 the single workflow-level `concurrency:` block this section originally
-documented with per-job blocks. The guarantee (FR-016/FR-048):
+documented with per-job blocks. specs/096-durable-prove-entry further
+splits `prove-gate`/`prove`'s own ordinary-trigger group by merged PR
+(FR-004/FR-005). The guarantee (FR-016/FR-048, as amended by
+specs/096-durable-prove-entry FR-005):
 
-> One board item is in flight repository-wide. A directed proof run, which
-> selects no board item and opens no fix PR, is the only run permitted to
-> overlap an ordinary board-loop run. Every other pair of `board-loop.yml`
-> runs queues rather than races or cancels.
+> One board item is in flight repository-wide. A directed proof run and a
+> merged item's own prove run — neither of which selects a board item or
+> opens a fix PR — are the only runs permitted to overlap an ordinary
+> board-loop run, or each other when they prove distinct merged items.
+> Every other pair of `board-loop.yml` runs queues rather than races or
+> cancels.
 
 | Job | Group (ordinary trigger) | Group (`directed-stage != ''`) | `cancel-in-progress` |
 |---|---|---|---|
 | `select` | `wing-commander-board-loop` | n/a — job is skipped for a directed dispatch | `false` |
 | `triage`, `route`, `fix`, `review`, `readiness` | `wing-commander-board-loop` | `wing-commander-board-loop` when directed-reachable (`triage`/`review`/`readiness` only) | `false` |
-| `prove-gate`, `prove` | `wing-commander-board-loop` (`pull_request: closed`) | `wing-commander-board-loop-directed-proof` | `false` |
+| `prove-gate`, `prove` | `wing-commander-board-loop-prove-{github.event.pull_request.number}` (`pull_request: closed`; was `wing-commander-board-loop` before specs/096-durable-prove-entry) | `wing-commander-board-loop-directed-proof` | `false` |
 
 See `specs/060-self-redrive-concurrency/contracts/concurrency-groups.md`
 for the pre-dispatch checks (FR-001/FR-001a) and

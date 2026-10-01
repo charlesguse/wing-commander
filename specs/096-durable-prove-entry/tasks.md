@@ -166,7 +166,7 @@ receives the proof outcome, never a fresh triage comment.
 
 ### Prevention — the ordinary prove path's own concurrency group (research.md D1/D2)
 
-- [ ] T007 [US1] `.github/workflows/board-loop.yml`: `prove-gate`'s
+- [X] T007 [US1] `.github/workflows/board-loop.yml`: `prove-gate`'s
   `concurrency.group:` expression (`:3986-3993`) gains a new middle branch,
   keyed by the merged PR's own number, between the existing directed
   branch and the trailing shared-group fallback — the directed branch
@@ -178,12 +178,12 @@ receives the proof outcome, never a fresh triage comment.
         (github.event_name == 'pull_request' && format('wing-commander-board-loop-prove-{0}', github.event.pull_request.number)) ||
         'wing-commander-board-loop' }}
   ```
-- [ ] T008 [US1] `.github/workflows/board-loop.yml`: `prove`'s
+- [X] T008 [US1] `.github/workflows/board-loop.yml`: `prove`'s
   `concurrency.group:` expression (`:4166-4173`) gets the **identical**
   raw text T007 wrote (Gate 129 / T017 below asserts the two jobs never
   desync, since `prove`'s `needs: prove-gate` requires they mean the same
   group).
-- [ ] T009 [US1] Guarantee-sentence edit (FR-005/FR-021, research.md D2/D9)
+- [X] T009 [US1] Guarantee-sentence edit (FR-005/FR-021, research.md D2/D9)
   — one content change, folded into three live sites, none of them a new
   sentence:
   1. `specs/060-self-redrive-concurrency/contracts/concurrency-groups.md`
@@ -211,7 +211,7 @@ receives the proof outcome, never a fresh triage comment.
 
 ### Recovery — a new step in `select` (research.md D3/D5/D6)
 
-- [ ] T010 [US1] `.github/workflows/board-loop.yml`: add a new step,
+- [X] T010 [US1] `.github/workflows/board-loop.yml`: add a new step,
   "Recover a stranded prove (FR-011)", to the `select` job, placed
   immediately after "Fetch open issues and select the next board item"
   (id: `select`, currently `:324-571`) and before "Resume - read the board

@@ -82,12 +82,18 @@ permissions: {}
 # research.md D3/contracts/concurrency-groups.md: concurrency moved from
 # one workflow-level block to per-job blocks (below, on each job) so a
 # directed proof run's prove-gate/prove job instances never enter this
-# workflow's own ordinary group at all. The FR-016 guarantee sentence:
+# workflow's own ordinary group at all; specs/096-durable-prove-entry
+# further keys prove-gate/prove's own ordinary-trigger group by merged PR
+# (contracts/prove-path-concurrency.md), so two merges' own prove runs
+# never enter each other's group either. The FR-016 guarantee sentence, as
+# amended by specs/096-durable-prove-entry FR-005:
 #
-#   One board item is in flight repository-wide. A directed proof run,
-#   which selects no board item and opens no fix PR, is the only run
-#   permitted to overlap an ordinary board-loop run. Every other pair of
-#   board-loop.yml runs queues rather than races or cancels.
+#   One board item is in flight repository-wide. A directed proof run
+#   and a merged item's own prove run — neither of which selects a
+#   board item or opens a fix PR — are the only runs permitted to
+#   overlap an ordinary board-loop run, or each other when they prove
+#   distinct merged items. Every other pair of board-loop.yml runs
+#   queues rather than races or cancels.
 #
 # -- see specs/060-self-redrive-concurrency/contracts/concurrency-groups.md
 
@@ -137,10 +143,20 @@ jobs:
     permissions:
       contents: read
       issues: read
-    # One board item is in flight repository-wide. A directed proof run,
-    # which selects no board item and opens no fix PR, is the only run
-    # permitted to overlap an ordinary board-loop run. Every other pair of
-    # board-loop.yml runs queues rather than races or cancels.
+      # specs/096-durable-prove-entry FR-011: the new recovery step below
+      # calls `gh run list`/`gh workflow run` against this same workflow,
+      # which github.token needs actions:write for (mirroring the prove
+      # job's own busy-check step). WC_BOT_TOKEN never gets this
+      # permission (docs/setup.md "Repository permissions" -- exactly
+      # Contents/Issues/Pull requests), so every issue-write in that step
+      # still goes through WC_BOT_TOKEN, not github.token.
+      actions: write
+    # One board item is in flight repository-wide. A directed proof run
+    # and a merged item's own prove run — neither of which selects a
+    # board item or opens a fix PR — are the only runs permitted to
+    # overlap an ordinary board-loop run, or each other when they prove
+    # distinct merged items. Every other pair of board-loop.yml runs
+    # queues rather than races or cancels.
     concurrency:
       group: wing-commander-board-loop
       cancel-in-progress: false
@@ -810,6 +826,97 @@ jobs:
             echo "board-loop: more than one issue qualified as in-flight -- selected the one with the newest marker (FR-005)." >> "$GITHUB_STEP_SUMMARY"
           fi
 
+      # specs/096-durable-prove-entry research.md D3/D5/D6, FR-011: an item
+      # already stranded by a past displacement -- or Q3's uncorrelated
+      # case, which the prevention half of this feature does not address --
+      # is driven to prove through spec 060's existing directed dispatch, at
+      # most once, without this step ever waiting synchronously for that
+      # dispatch's own outcome. Placed here, immediately after the "Fetch
+      # open issues and select the next board item" step above, rather than
+      # immediately after the displacement step further up: this step's own
+      # "is the issue still open" check needs board-open-issues.json, which
+      # only the select-id step above (not the displacement step) writes.
+      # The displacement step's own two files
+      # (board-recent-merges-by-issue.json,
+      # board-displacement-comments-by-issue.json) are still on disk here,
+      # in the same job.
+      - name: Recover a stranded prove (FR-011)
+        id: recovery
+        if: steps.killswitch.outputs.status != 'paused' && steps.stand-down.outputs.status != 'in-flight'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BOT_TOKEN: ${{ env.WC_BOT_TOKEN }}
+          BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}[bot]
+        run: |
+          set -uo pipefail
+
+          candidate_json="$(OPEN_ISSUES_PATH="$RUNNER_TEMP/board-open-issues.json" \
+            MERGED_PRS_PATH="$RUNNER_TEMP/board-recent-merges-by-issue.json" \
+            COMMENTS_BY_ISSUE_PATH="$RUNNER_TEMP/board-displacement-comments-by-issue.json" \
+            BOT_LOGIN="$BOT_LOGIN" \
+            python3 - <<'PYEOF'
+          import json
+          import os
+          import sys
+
+          sys.path.insert(0, ".github/scripts")
+          from board_prove_recovery import find_recoverable_items
+
+          with open(os.environ["OPEN_ISSUES_PATH"], encoding="utf-8") as fh:
+              open_issue_numbers = {row["number"] for row in json.load(fh)}
+          with open(os.environ["MERGED_PRS_PATH"], encoding="utf-8") as fh:
+              merged_prs_by_issue = json.load(fh)
+          with open(os.environ["COMMENTS_BY_ISSUE_PATH"], encoding="utf-8") as fh:
+              comments_by_issue = json.load(fh)
+
+          candidates = find_recoverable_items(
+              merged_prs_by_issue, comments_by_issue, open_issue_numbers, os.environ["BOT_LOGIN"])
+          print(json.dumps(candidates[0] if candidates else None))
+          PYEOF
+          )"
+
+          if [ "$candidate_json" = "null" ]; then
+            echo "board-loop: no stranded prove to recover this tick (FR-011)." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          issue_number="$(printf '%s' "$candidate_json" | jq -r '.issue')"
+          merged_pr="$(printf '%s' "$candidate_json" | jq -r '.merged_pr')"
+          outcome_reason="$(printf '%s' "$candidate_json" | jq -r '.outcome_reason')"
+
+          # research.md D4/FR-001a: whether the directed-proof concurrency
+          # group a directed dispatch would join is already occupied is
+          # read fresh, right before any dispatch is attempted -- the same
+          # check the prove job's own "Check whether the directed proof
+          # group is busy" step makes before its own re-drive dispatch.
+          run_list_json="$(gh run list --workflow=board-loop.yml -R "$GITHUB_REPOSITORY" \
+            --json databaseId,displayTitle,status -L 20)"
+          busy="$(RUN_LIST_JSON="$run_list_json" OWN_RUN_ID="$GITHUB_RUN_ID" python3 -c "
+          import os, sys
+          sys.path.insert(0, '.github/scripts')
+          from board_prove import directed_proof_group_busy
+          print('true' if directed_proof_group_busy(os.environ['RUN_LIST_JSON'], os.environ['OWN_RUN_ID']) else 'false')
+          ")"
+
+          if [ "$busy" = "true" ]; then
+            echo "board-loop: issue #$issue_number's stranded prove ($outcome_reason) stays recoverable -- the directed-proof group is busy this tick (FR-011a)." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          # FR-011: this step never waits for the dispatched run's own
+          # outcome (research.md D3) -- the marker and comment below are
+          # written on the dispatch call's own success, before anything
+          # else.
+          gh workflow run board-loop.yml -R "$GITHUB_REPOSITORY" \
+            -f directed-stage=prove -f directed-issue="$issue_number" -f directed-pr="$merged_pr" \
+            -f directed-recovery=true
+
+          marker="$(python3 .github/scripts/board_item_marker.py --step prove \
+            --outcome-reason "$outcome_reason" --recovery-attempted)"
+          GH_TOKEN="$BOT_TOKEN" gh issue comment "$issue_number" -R "$GITHUB_REPOSITORY" \
+            --body "$(printf 'Recovering this issue'\''s stranded proof (%s) -- dispatching a directed prove run for PR #%s now, which will record its own outcome here.\n\n%s' "$outcome_reason" "$merged_pr" "$marker")"
+          echo "board-loop: dispatched a directed recovery prove run for issue #$issue_number, PR #$merged_pr ($outcome_reason)." >> "$GITHUB_STEP_SUMMARY"
+
       # Board Item Marker (contracts/board-item-marker.md, research.md D21):
       # a fast path only. Every field is re-derived from live GitHub state
       # here, before any later job takes a durable action, so a missing,
@@ -1283,10 +1390,12 @@ jobs:
       contents: read
       issues: write
       actions: write
-    # One board item is in flight repository-wide. A directed proof run,
-    # which selects no board item and opens no fix PR, is the only run
-    # permitted to overlap an ordinary board-loop run. Every other pair of
-    # board-loop.yml runs queues rather than races or cancels.
+    # One board item is in flight repository-wide. A directed proof run
+    # and a merged item's own prove run — neither of which selects a
+    # board item or opens a fix PR — are the only runs permitted to
+    # overlap an ordinary board-loop run, or each other when they prove
+    # distinct merged items. Every other pair of board-loop.yml runs
+    # queues rather than races or cancels.
     concurrency:
       group: wing-commander-board-loop
       cancel-in-progress: false
@@ -1784,10 +1893,12 @@ jobs:
       contents: read
       issues: write
       actions: write
-    # One board item is in flight repository-wide. A directed proof run,
-    # which selects no board item and opens no fix PR, is the only run
-    # permitted to overlap an ordinary board-loop run. Every other pair of
-    # board-loop.yml runs queues rather than races or cancels.
+    # One board item is in flight repository-wide. A directed proof run
+    # and a merged item's own prove run — neither of which selects a
+    # board item or opens a fix PR — are the only runs permitted to
+    # overlap an ordinary board-loop run, or each other when they prove
+    # distinct merged items. Every other pair of board-loop.yml runs
+    # queues rather than races or cancels.
     concurrency:
       group: wing-commander-board-loop
       cancel-in-progress: false
@@ -2324,10 +2435,12 @@ jobs:
       issues: write
       pull-requests: write
       actions: write
-    # One board item is in flight repository-wide. A directed proof run,
-    # which selects no board item and opens no fix PR, is the only run
-    # permitted to overlap an ordinary board-loop run. Every other pair of
-    # board-loop.yml runs queues rather than races or cancels.
+    # One board item is in flight repository-wide. A directed proof run
+    # and a merged item's own prove run — neither of which selects a
+    # board item or opens a fix PR — are the only runs permitted to
+    # overlap an ordinary board-loop run, or each other when they prove
+    # distinct merged items. Every other pair of board-loop.yml runs
+    # queues rather than races or cancels.
     concurrency:
       group: wing-commander-board-loop
       cancel-in-progress: false
@@ -2912,10 +3025,12 @@ jobs:
       issues: write
       pull-requests: write
       actions: write
-    # One board item is in flight repository-wide. A directed proof run,
-    # which selects no board item and opens no fix PR, is the only run
-    # permitted to overlap an ordinary board-loop run. Every other pair of
-    # board-loop.yml runs queues rather than races or cancels.
+    # One board item is in flight repository-wide. A directed proof run
+    # and a merged item's own prove run — neither of which selects a
+    # board item or opens a fix PR — are the only runs permitted to
+    # overlap an ordinary board-loop run, or each other when they prove
+    # distinct merged items. Every other pair of board-loop.yml runs
+    # queues rather than races or cancels.
     concurrency:
       group: wing-commander-board-loop
       cancel-in-progress: false
@@ -3947,10 +4062,12 @@ jobs:
       issues: write
       pull-requests: read
       actions: write
-    # One board item is in flight repository-wide. A directed proof run,
-    # which selects no board item and opens no fix PR, is the only run
-    # permitted to overlap an ordinary board-loop run. Every other pair of
-    # board-loop.yml runs queues rather than races or cancels.
+    # One board item is in flight repository-wide. A directed proof run
+    # and a merged item's own prove run — neither of which selects a
+    # board item or opens a fix PR — are the only runs permitted to
+    # overlap an ordinary board-loop run, or each other when they prove
+    # distinct merged items. Every other pair of board-loop.yml runs
+    # queues rather than races or cancels.
     concurrency:
       group: wing-commander-board-loop
       cancel-in-progress: false
@@ -4427,14 +4544,18 @@ jobs:
       contents: read
       issues: write
       pull-requests: read
-    # One board item is in flight repository-wide. A directed proof run,
-    # which selects no board item and opens no fix PR, is the only run
-    # permitted to overlap an ordinary board-loop run. Every other pair of
-    # board-loop.yml runs queues rather than races or cancels.
+    # One board item is in flight repository-wide. A directed proof run
+    # and a merged item's own prove run — neither of which selects a
+    # board item or opens a fix PR — are the only runs permitted to
+    # overlap an ordinary board-loop run, or each other when they prove
+    # distinct merged items. Every other pair of board-loop.yml runs
+    # queues rather than races or cancels.
     concurrency:
       group: >-
         ${{ (github.event_name == 'workflow_dispatch' && inputs.directed-stage != '') &&
-        'wing-commander-board-loop-directed-proof' || 'wing-commander-board-loop' }}
+        'wing-commander-board-loop-directed-proof' ||
+        (github.event_name == 'pull_request' && format('wing-commander-board-loop-prove-{0}', github.event.pull_request.number)) ||
+        'wing-commander-board-loop' }}
       cancel-in-progress: false
     outputs:
       issue-number: ${{ steps.gate.outputs.issue-number }}
@@ -4608,14 +4729,18 @@ jobs:
       issues: write
       pull-requests: read
       actions: write
-    # One board item is in flight repository-wide. A directed proof run,
-    # which selects no board item and opens no fix PR, is the only run
-    # permitted to overlap an ordinary board-loop run. Every other pair of
-    # board-loop.yml runs queues rather than races or cancels.
+    # One board item is in flight repository-wide. A directed proof run
+    # and a merged item's own prove run — neither of which selects a
+    # board item or opens a fix PR — are the only runs permitted to
+    # overlap an ordinary board-loop run, or each other when they prove
+    # distinct merged items. Every other pair of board-loop.yml runs
+    # queues rather than races or cancels.
     concurrency:
       group: >-
         ${{ (github.event_name == 'workflow_dispatch' && inputs.directed-stage != '') &&
-        'wing-commander-board-loop-directed-proof' || 'wing-commander-board-loop' }}
+        'wing-commander-board-loop-directed-proof' ||
+        (github.event_name == 'pull_request' && format('wing-commander-board-loop-prove-{0}', github.event.pull_request.number)) ||
+        'wing-commander-board-loop' }}
       cancel-in-progress: false
     steps:
       - name: Checkout
