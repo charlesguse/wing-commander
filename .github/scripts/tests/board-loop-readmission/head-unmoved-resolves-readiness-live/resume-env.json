@@ -11,6 +11,7 @@
   "MARKER_ROUND": "0",
   "MARKER_BASE_SHA": "",
   "ISSUE_NUMBER": "396",
-  "COMMENTS_PATH": ".github/scripts/tests/board-loop-readmission/fresh-budget-after-readmission/comments.json",
-  "BOT_LOGIN": "wing-commander-bot[bot]"
+  "COMMENTS_PATH": ".github/scripts/tests/board-loop-readmission/head-unmoved-resolves-readiness-live/comments.json",
+  "BOT_LOGIN": "wing-commander-bot[bot]",
+  "GH_STUB_HEAD_REF_OID": "1111111111111111111111111111111111111a"
 }

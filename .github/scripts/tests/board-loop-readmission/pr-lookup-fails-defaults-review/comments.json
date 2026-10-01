@@ -1,7 +1,7 @@
 [
   {
     "created_at": "2026-01-01T00:00:00Z",
-    "body": "Review round budget (5) spent on PR #42 with in-scope findings still open. The PR is left open, unmerged. Removing board:stalled is the sole re-eligibility condition.\n\n(findings)\n\n<!-- wing-commander-board-item: {\"step\": \"stalled\"} -->",
+    "body": "Review round 2 converged -- zero open in-scope findings on PR #42 (head dddddddddddddddddddddddddddddddddddddddd). Proceeding to readiness.\n\n<!-- wing-commander-board-item: {\"step\": \"readiness\"} -->",
     "user": {"login": "wing-commander-bot[bot]", "type": "Bot"}
   }
 ]

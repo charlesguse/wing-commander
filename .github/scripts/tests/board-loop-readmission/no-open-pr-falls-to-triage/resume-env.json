@@ -11,6 +11,6 @@
   "MARKER_ROUND": "0",
   "MARKER_BASE_SHA": "",
   "ISSUE_NUMBER": "396",
-  "COMMENTS_JSON": "[]",
+  "COMMENTS_PATH": ".github/scripts/tests/board-loop-readmission/no-open-pr-falls-to-triage/comments.json",
   "BOT_LOGIN": "wing-commander-bot[bot]"
 }

@@ -48,8 +48,11 @@ fixed like code, unlike those features' own frozen `spec.md`/`plan.md`/
 **Purpose**: Reserve the one shared resource (a gate number) every later
 gate-registration task in Phase 5 needs.
 
-- [X] T001 (confirmed **126** against `main`'s tip at implementation time —
-  grep still finds 125 as the highest registered gate) Confirm the highest `Gate N —` currently registered in
+- [X] T001 (confirmed **134** — a rebase collision cost this feature its
+  first two picks: Gates 126-127 went to spec 091 (#497) before this
+  branch's rebase landed, and the Gate 128 this feature then moved to
+  collided with spec 074 (#821) in turn; maintainer review of #885
+  settled on 134) Confirm the highest `Gate N —` currently registered in
   `.github/workflows/lint-workflows.yml` (this session's read of `main`
   finds **125** as the highest, via `grep -on "Gate [0-9]\+"
   .github/workflows/lint-workflows.yml`) and provisionally reserve **Gate
@@ -246,7 +249,8 @@ second branch/PR and a run-summary line naming the clause that fired.
   re-eligibility") to add one sentence cross-referencing
   `resume-recovery.md`'s amended clause 2 for what happens *after* the
   label is cleared (FR-019/FR-020). No new row, column, or label.
-- [X] T013 [US3] Create `.github/scripts/verify-board-loop-readmission.py`
+- [X] T013 [US3] (registered as Gate 134, not 126 — see T001's note)
+  Create `.github/scripts/verify-board-loop-readmission.py`
   (Gate 126 per T001), fixture-driven in the style of
   `verify-board-eligibility.py` (file-based fixtures under
   `.github/scripts/tests/`) for the reviewed-head determination, and in the
@@ -310,7 +314,9 @@ second branch/PR and a run-summary line naming the clause that fired.
   agent after a label-add failure; a retry is simply the next scheduled
   workflow run re-entering the job exactly once, at the cost of one
   ordinary round, never an extra one.
-- [X] T022 [US3] Register `verify-board-loop-readmission.py` (T013) in
+- [X] T022 [US3] (registered as Gate 134 — see T001's note; renumbered
+  again by T029 after a second, cross-branch collision with spec 074)
+  Register `verify-board-loop-readmission.py` (T013) in
   `.github/workflows/lint-workflows.yml` as a `"Gate 126 — ..."` /
   `"Gate 126 self-test — ..."` step pair, following the existing two-step
   convention immediately visible at Gate 97's own registration
@@ -330,8 +336,9 @@ the run summary (T008/T009).
 
 **Purpose**: Whole-suite and whole-diff checks that span every story.
 
-- [X] T023 [P] (197/197 gates passed, including Gate 126 and its self-test,
-  with none skipped or waived) Run `python .github/scripts/run-local-gates.py` end-to-end
+- [X] T023 [P] (re-run after T029's renumbering: 202/202 gates passed,
+  including Gate 134 and its self-test, with none skipped or waived)
+  Run `python .github/scripts/run-local-gates.py` end-to-end
   and confirm every existing gate stays green alongside Gate 126, with none
   skipped, waived, or weakened to accommodate this change (SC-010).
 - [X] T024 (confirmed: every file this feature touches is `board-loop.yml`,
@@ -441,40 +448,40 @@ T023's full suite run — this is the same regression concern noted under
 
 ## Maintainer Feedback (review of 7b4b0825, PR #885)
 
-- [ ] T026 [US3] BLOCKING: Fix clause 2b (board-loop.yml:822-827) so only the review job's converged-verdict wording resolves `step == "readiness"`; a budget-spent verdict (board_item_marker.py:170's `_REVIEW_BUDGET_SPENT_RE`) must instead resolve to `review` with a fresh round budget (FR-009). Update contracts/resume-recovery.md's "spent budget → readiness" row to match and add a checked-in fixture covering a re-admitted budget-spent stall with an unmoved head.
+- [X] T026 [US3] (head_moved_since_last_review()'s own `_converged_review_head()` now matches ONLY the converged wording; a budget-spent or inconclusive verdict is treated exactly like "no verdict", so it always returns True -> review, never readiness. resume-recovery.md's acceptance-mapping rows updated; new fixture `budget-spent-unmoved-resolves-review/` pins it) BLOCKING: Fix clause 2b (board-loop.yml:822-827) so only the review job's converged-verdict wording resolves `step == "readiness"`; a budget-spent verdict (board_item_marker.py:170's `_REVIEW_BUDGET_SPENT_RE`) must instead resolve to `review` with a fresh round budget (FR-009). Update contracts/resume-recovery.md's "spent budget → readiness" row to match and add a checked-in fixture covering a re-admitted budget-spent stall with an unmoved head.
 
 ## Maintainer Feedback (review of 7b4b0825, PR #885)
 
-- [ ] T027 [US3] Fix: board-loop.yml:689 passes `COMMENTS_JSON` via an environment variable, which can exceed the OS's ~128 KiB single-argument/env limit (reproduced with a 142 KB comments array: `python3: Argument list too long`, rc=126) and silently wedges resume under `set -uo pipefail`. Pass `COMMENTS_PATH` instead and `json.load()` the file in the heredoc, matching the marker read at board-loop.yml:589.
+- [X] T027 [US3] (clause 2b now `json.load()`s `$RUNNER_TEMP/board-issue-comments.json` by path, matching the read_marker heredoc's own idiom; Gate 97's RESUME_CASES fixtures updated to supply COMMENTS_PATH) Fix: board-loop.yml:689 passes `COMMENTS_JSON` via an environment variable, which can exceed the OS's ~128 KiB single-argument/env limit (reproduced with a 142 KB comments array: `python3: Argument list too long`, rc=126) and silently wedges resume under `set -uo pipefail`. Pass `COMMENTS_PATH` instead and `json.load()` the file in the heredoc, matching the marker read at board-loop.yml:589.
 
 ## Maintainer Feedback (review of 7b4b0825, PR #885)
 
-- [ ] T028 [US3] Fix board_item_marker.py:221-238's `head_moved_since_last_review()`: comparing `committedDate` (client-set) to the matched comment's `created_at` lets a commit authored before the verdict but pushed after it, or a push landing mid-run, resolve to `moved=False` and send readiness an unreviewed head (FR-006b). Compare the head SHA against the reviewed SHA instead — recorded in the verdict comment text (FR-019 freezes only the marker schema, not comment text) or read from the review's `commit_id`. Also fix the `headRefOid` lookup at :235 to return `True` when not found in `commits`, rather than falling back to `commits[-1]`.
+- [X] T028 [US3] (the converged comment now records the exact reviewed head SHA -- `steps.checkout-pr.outputs.head-sha` via `git rev-parse HEAD` right after checkout, printed into the comment body as "(head %s)" -- and head_moved_since_last_review() compares that SHA directly against a live `gh pr view --json headRefOid`; `commits`/`committedDate` are no longer read at all, which also moots the `commits[-1]` fallback this task flagged) Fix board_item_marker.py:221-238's `head_moved_since_last_review()`: comparing `committedDate` (client-set) to the matched comment's `created_at` lets a commit authored before the verdict but pushed after it, or a push landing mid-run, resolve to `moved=False` and send readiness an unreviewed head (FR-006b). Compare the head SHA against the reviewed SHA instead — recorded in the verdict comment text (FR-019 freezes only the marker schema, not comment text) or read from the review's `commit_id`. Also fix the `headRefOid` lookup at :235 to return `True` when not found in `commits`, rather than falling back to `commits[-1]`.
 
 ## Maintainer Feedback (review of 7b4b0825, PR #885)
 
-- [ ] T029 [US3] Fix gate-number collision: lint-workflows.yml:4723/4740/4743 register this feature's gate as Gate 128, which spec 074 (#821) already holds. Renumber this feature's gate to **Gate 134** throughout lint-workflows.yml, verify-board-loop-readmission.py, and its tests. Also correct tasks.md's remaining 'Gate 126' text in T001/T019/T023 to match the number actually in use.
+- [X] T029 [US3] (renumbered to Gate 134 in lint-workflows.yml and this gate's own docstring/self-test output; T001/T013/T022/T023 annotated with the actual number in use) Fix gate-number collision: lint-workflows.yml:4723/4740/4743 register this feature's gate as Gate 128, which spec 074 (#821) already holds. Renumber this feature's gate to **Gate 134** throughout lint-workflows.yml, verify-board-loop-readmission.py, and its tests. Also correct tasks.md's remaining 'Gate 126' text in T001/T019/T023 to match the number actually in use.
 
 ## Maintainer Feedback (review of 7b4b0825, PR #885)
 
-- [ ] T030 [US3] Strengthen verify-board-loop-readmission.py's self-test: currently each of these mutations passes with 0 findings — (a) forcing `step = "review"` in place of the moved check (no executed case ever resolves to readiness; the structural check only greps for the call) and (b) removing review's parse-failed summary line (the three stall arms share one step, so one surviving line satisfies the check). Against main's board-loop.yml, the FR-011 check already passes for triage/route/readiness, and `STALL_SITES` is a hand-kept list of 6 that a new stall site would escape. Add an executed heredoc case (with a stub `gh`) that actually resolves to readiness, derive stall sites from the workflow's `--step stalled` renders rather than a hand-kept list, and add a self-test mutation per check family.
+- [X] T030 [US3] (added `head-unmoved-resolves-readiness-live/` -- an executed heredoc case with a throwaway stub `gh` on PATH that drives the live lookup to an actual `step == "readiness"`; `_stall_sites()` now derives every stall site from `--add-label "board:stalled"` occurrences in board-loop.yml's own text, including triage's, whose `--step` is a shell variable rather than the literal word "stalled" -- so `--step stalled` text-matching alone would have missed it; `run_summary_findings()` now counts `--record-stall-summary` calls per step against stall-marker-render count, catching a dropped single arm; self-test gained a second mutation dropping review's budget-spent arm's summary call) Strengthen verify-board-loop-readmission.py's self-test: currently each of these mutations passes with 0 findings — (a) forcing `step = "review"` in place of the moved check (no executed case ever resolves to readiness; the structural check only greps for the call) and (b) removing review's parse-failed summary line (the three stall arms share one step, so one surviving line satisfies the check). Against main's board-loop.yml, the FR-011 check already passes for triage/route/readiness, and `STALL_SITES` is a hand-kept list of 6 that a new stall site would escape. Add an executed heredoc case (with a stub `gh`) that actually resolves to readiness, derive stall sites from the workflow's `--step stalled` renders rather than a hand-kept list, and add a self-test mutation per check family.
 
 ## Maintainer Feedback (review of 7b4b0825, PR #885)
 
-- [ ] T031 [US3] Consolidate the FR-011 summary line, currently pasted at eight sites (board-loop.yml:1455, 1936, 2296, 2503, 3345, 3353, 3364, 3961), into board_item_marker.py's `--add-label` success path (CLAUDE.md 'Shared logic has exactly one home'; every stall site already calls this). This also closes item 5's enumeration gap. Emit it only after the marker comment has actually posted — today the line is written before the post, so a failed post leaves a false claim on the run summary.
+- [X] T031 [US3] (new `board_item_marker.record_stall_summary()`, invoked via `--record-stall-summary --issue N --from-step <name>`; every one of the eight call sites now chains it onto its own `gh issue comment`/`gh issue close` with `|| { ::error::...; exit 1; }` first, so the line is appended only once that post has actually succeeded) Consolidate the FR-011 summary line, currently pasted at eight sites (board-loop.yml:1455, 1936, 2296, 2503, 3345, 3353, 3364, 3961), into board_item_marker.py's `--add-label` success path (CLAUDE.md 'Shared logic has exactly one home'; every stall site already calls this). This also closes item 5's enumeration gap. Emit it only after the marker comment has actually posted — today the line is written before the post, so a failed post leaves a false claim on the run summary.
 
 ## Maintainer Feedback (review of 7b4b0825, PR #885)
 
-- [ ] T032 [US3] Nit: fix summary wording — clause 2b's note never says the item was re-admitted from a stall; a failed `gh pr view` currently reads the same as 'no verdict found' because stderr is discarded (distinguish the two); clause 4's note describes a re-admitted triage-handover stall as a 'stale marker', which should instead name it as a re-admission.
+- [X] T032 [US3] (clause 2b's note now prefixes "re-admitted from a stall -- " whenever `marker_step == STALLED_STEP`; head_moved_since_last_review() now prints an explicit `::warning::` to stderr on a failed/unparsable `gh pr view`, distinct from the silent "no converged verdict" path; clause 4's reason for a stalled marker with no open PR to recover now reads "re-admitted from a stall -- no open board:owned pull request citing this issue; starting a fresh triage" instead of "stale marker") Nit: fix summary wording — clause 2b's note never says the item was re-admitted from a stall; a failed `gh pr view` currently reads the same as 'no verdict found' because stderr is discarded (distinguish the two); clause 4's note describes a re-admitted triage-handover stall as a 'stale marker', which should instead name it as a re-admission.
 
 ## Maintainer Feedback (review of 7b4b0825, PR #885)
 
-- [ ] T033 [US3] Nit: add `-R "$GITHUB_REPOSITORY"` to the `gh pr view` call at board_item_marker.py:221, matching this script's other `gh` invocations.
+- [X] T033 [US3] (head_moved_since_last_review()'s `gh pr view` call now adds `-R <repository>` when `GITHUB_REPOSITORY` is set, matching add_stalled_label()'s own `gh issue edit -R` call) Nit: add `-R "$GITHUB_REPOSITORY"` to the `gh pr view` call at board_item_marker.py:221, matching this script's other `gh` invocations.
 
 ## Maintainer Feedback (review of 7b4b0825, PR #885)
 
-- [ ] T034 [US3] Nit: correct the docstring's line citation (currently board-loop.yml:3300-3321) to this PR's actual lines (:3335-3365), or note that line numbers drift and should be re-derived rather than hardcoded.
+- [X] T034 [US3] (took the "re-derive, don't hardcode" option: the rewritten `_converged_review_head()`/`head_moved_since_last_review()` docstrings name the review job's "Post the converged/stalled outcome and marker" step instead of a line range, since this same cycle's own edits would have drifted a hardcoded number again) Nit: correct the docstring's line citation (currently board-loop.yml:3300-3321) to this PR's actual lines (:3335-3365), or note that line numbers drift and should be re-derived rather than hardcoded.
 
 ## Maintainer Feedback (review of 7b4b0825, PR #885)
 
-- [ ] T035 [US3] Nit: SC-006 claims 'a checked-in case shows the item stalling again once [the fresh budget] is spent', but T020's fixture only covers the round-0 starting value; the re-stall half is left to the review job's own pre-existing round-count logic, unexercised by any fixture here. Add a case (or an explicit pointer to an existing covering case elsewhere) that actually demonstrates the re-stall.
+- [X] T035 [US3] (no existing case covered this anywhere in the repo, so added one: `fresh-budget-after-readmission/re-stall-after-fresh-budget-spent/` drives review's own, unmodified "Decide the round outcome" step for real, via wc_shell_harness, at round==ROUND_BUDGET with findings still open, asserting outcome=stalled/stall-reason=budget-spent) Nit: SC-006 claims 'a checked-in case shows the item stalling again once [the fresh budget] is spent', but T020's fixture only covers the round-0 starting value; the re-stall half is left to the review job's own pre-existing round-count logic, unexercised by any fixture here. Add a case (or an explicit pointer to an existing covering case elsewhere) that actually demonstrates the re-stall.

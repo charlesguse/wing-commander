@@ -208,75 +208,115 @@ def write_marker(step, round, pr, branch, base_sha, spec_request=None):
 STALLED_STEP = "stalled"
 
 
-_REVIEW_CONVERGED_RE = re.compile(r"Review round \d+ converged -- .*?PR #(\d+)")
-_REVIEW_BUDGET_SPENT_RE = re.compile(r"Review round budget \(\d+\) spent on PR #(\d+)")
+_REVIEW_CONVERGED_RE = re.compile(r"Review round \d+ converged -- .*?PR #(\d+) \(head ([0-9a-f]{7,40})\)")
 
 
-def _resolved_review_round_pr(body):
-    """The PR number named by a review round's *resolved* verdict comment
-    (converged, board-loop.yml:3300, or budget-spent, :3321) in `body`, or
-    None. Deliberately does not match the inconclusive parse-failed
-    (:3308) or malformed-findings (:3313) wording, which shares the same
-    generic "Review round N on PR #P" prefix but names no verdict
-    (contracts/reviewed-head-determination.md, FR-006b)."""
-    for pattern in (_REVIEW_CONVERGED_RE, _REVIEW_BUDGET_SPENT_RE):
-        match = pattern.search(body or "")
-        if match:
-            return match.group(1)
+def _converged_review_head(body, pr_number):
+    """The head commit SHA a review round's *converged* verdict comment
+    recorded for `pr_number` in `body`, or None (contracts/resume-
+    recovery.md clause 2b, FR-006b). Deliberately matches ONLY the
+    converged wording the review job's "Post the converged/stalled
+    outcome and marker" step posts -- never the inconclusive parse-failed
+    or malformed-findings wording (which shares the same generic "Review
+    round N on PR #P" prefix but names no verdict), and never the
+    budget-spent wording either: a spent budget means review never
+    finished clearing the PR's findings, so it must not be treated as a
+    baseline a later, unmoved head could satisfy (maintainer review of
+    #885: that bug reported a budget-spent stall READY once its head
+    stopped moving, with in-scope findings still open, breaking FR-006b/
+    SC-004). Both of those inconclusive verdicts fall through to
+    head_moved_since_last_review()'s own "no converged head resolvable"
+    default of True, exactly like finding no resolved comment at all."""
+    match = _REVIEW_CONVERGED_RE.search(body or "")
+    if match and match.group(1) == str(pr_number):
+        return match.group(2)
     return None
 
 
 def head_moved_since_last_review(pr_number, comments, bot_login, run=None):
-    """FR-006/FR-006b, contracts/reviewed-head-determination.md: whether
-    `pr_number`'s live head commit postdates the loop's own most recent
-    *resolved* review-round verdict comment for that PR (the converged or
-    budget-spent wording -- never the inconclusive parse-failed or
-    malformed-findings wording, which is treated as no verdict at all).
-    `comments` is the resume step's own already-fetched flat per-issue
-    comments array (read_marker()'s own argument shape), not the earlier
-    select step's comments_by_issue map -- a different step's own file.
+    """FR-006/FR-006b, contracts/resume-recovery.md clause 2b: whether
+    `pr_number`'s live head commit differs from the SHA the loop's own
+    most recent *converged* review-round verdict comment recorded for
+    that PR -- never a budget-spent or inconclusive verdict, neither of
+    which establishes a head reviewed clean (see _converged_review_head()
+    above). `comments` is the resume step's own already-fetched flat
+    per-issue comments array (read_marker()'s own argument shape), not the
+    earlier select step's comments_by_issue map -- a different step's own
+    file.
 
-    Returns True (moved -- the safe default) when no resolved verdict
-    comment names this PR, or when the live `gh pr view` lookup fails or
-    its output cannot be read; otherwise True when the PR's head commit was
-    committed strictly after the matched comment's `created_at`, False when
-    the head is that same commit (or older, which cannot happen in
-    practice but is treated as "unmoved" rather than erroring).
+    Returns True (moved -- the safe default, forcing a fresh `review`)
+    when no converged verdict comment names this PR, or when the live
+    `gh pr view` lookup fails or its output cannot be read (both failures
+    are reported to stderr -- distinct from the silent "no converged
+    verdict" case above, so a run's log does not read the same for "never
+    reviewed" and "the live lookup broke"); False only when the PR's live
+    head SHA is exactly the SHA the converged comment recorded (nothing
+    reviewed has changed).
 
     The single shared computation this rule needs (CLAUDE.md "shared logic
     has exactly one home") -- spec 093's own FR-007, when it reaches its
     plan stage, calls this function rather than deriving a second one."""
     run = run or subprocess.run
+    reviewed_sha = None
     latest_created_at = None
     for comment in comments or []:
         if not is_loop_marker_author(comment, bot_login):
             continue
-        if _resolved_review_round_pr(comment.get("body")) != str(pr_number):
+        sha = _converged_review_head(comment.get("body"), pr_number)
+        if sha is None:
             continue
         created_at = comment.get("created_at") or ""
         if latest_created_at is None or created_at > latest_created_at:
             latest_created_at = created_at
-    if latest_created_at is None:
+            reviewed_sha = sha
+    if reviewed_sha is None:
         return True
+    repository = os.environ.get("GITHUB_REPOSITORY")
+    cmd = ["gh", "pr", "view", str(pr_number)]
+    if repository:
+        cmd += ["-R", repository]
+    cmd += ["--json", "headRefOid"]
     try:
-        proc = run(["gh", "pr", "view", str(pr_number), "--json", "headRefOid,commits"],
-                   capture_output=True, text=True)
-    except OSError:
+        proc = run(cmd, capture_output=True, text=True)
+    except OSError as exc:
+        print("::warning::head_moved_since_last_review: gh pr view #{0} raised {1} -- "
+              "treating the head as moved (FR-006b safe default).".format(pr_number, exc),
+              file=sys.stderr)
         return True
     if proc.returncode != 0:
+        print("::warning::head_moved_since_last_review: gh pr view #{0} failed (rc={1}): {2} -- "
+              "treating the head as moved (FR-006b safe default).".format(
+                  pr_number, proc.returncode, (proc.stderr or "").strip()),
+              file=sys.stderr)
         return True
     try:
-        data = json.loads(proc.stdout)
+        head_sha = json.loads(proc.stdout).get("headRefOid")
     except ValueError:
+        print("::warning::head_moved_since_last_review: gh pr view #{0} returned unparsable JSON -- "
+              "treating the head as moved (FR-006b safe default).".format(pr_number),
+              file=sys.stderr)
         return True
-    head_sha = data.get("headRefOid")
-    commits = data.get("commits") or []
-    committed_date = next(
-        (commit.get("committedDate") for commit in commits if commit.get("oid") == head_sha),
-        commits[-1].get("committedDate") if commits else None)
-    if not committed_date:
+    if not head_sha:
         return True
-    return committed_date > latest_created_at
+    return head_sha != reviewed_sha
+
+
+def record_stall_summary(issue_number, from_step):
+    """FR-011's one canonical $GITHUB_STEP_SUMMARY line for a successful
+    stall (CLAUDE.md "shared logic has exactly one home"): every stall
+    site calls this -- `--record-stall-summary --issue N --from-step
+    <name>` -- right after its own `gh issue comment`/`gh issue close`
+    posting the stalled marker actually succeeds, never before. Before
+    this, each of the eight stall call sites pasted its own copy of this
+    line BEFORE that post, so a failed post still left the line's claim
+    standing (maintainer review of #885)."""
+    path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if not path:
+        return
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write(
+            "board-loop: issue #{0} -- stalled from {1} with board:stalled applied "
+            "and a stalled marker recorded.\n".format(issue_number, from_step))
 
 
 def add_stalled_label(issue_number, label, run=None):
@@ -293,8 +333,9 @@ def add_stalled_label(issue_number, label, run=None):
     the label on purpose -- the re-admission spec 057 data-model.md
     defines. Re-admission keeps the resume step's ordinary re-derivation
     from live state: review when an open board:owned PR cites the issue AND
-    its head has moved since the loop's own last resolved review verdict
-    (or none is resolvable), readiness when it has not, otherwise a fresh
+    its head has moved since the loop's own last *converged* review
+    verdict (or none is resolvable -- a budget-spent or inconclusive
+    verdict never counts), readiness when it has not, otherwise a fresh
     triage (FR-006/FR-006a/FR-006b, contracts/resume-recovery-readmission.md
     folded into specs/061-marker-owned-in-flight/contracts/resume-recovery.md)
     -- head_moved_since_last_review() above is the one shared determination
@@ -350,16 +391,31 @@ def main():
     # snapshot directory is trusted (Gate 98), so adding it back is safe.
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     parser = argparse.ArgumentParser()
-    parser.add_argument("--step", required=True)
+    parser.add_argument("--step", default=None)
     parser.add_argument("--round", type=int, default=0)
     parser.add_argument("--pr", type=int, default=None)
     parser.add_argument("--branch", default=None)
     parser.add_argument("--base-sha", default=None)
     parser.add_argument("--issue", type=int, default=None,
-                        help="with --step stalled: the issue --add-label is applied to first (#604)")
+                        help="with --step stalled: the issue --add-label is applied to first (#604); "
+                             "with --record-stall-summary: the issue the summary line names")
     parser.add_argument("--add-label", default=None,
                         help="with --step stalled: must be board_eligibility.STALLED_LABEL (#604)")
+    parser.add_argument("--record-stall-summary", action="store_true",
+                        help="append FR-011's run-summary line for --issue N, naming --from-step, "
+                             "instead of rendering a marker -- call this AFTER the stall site's own "
+                             "stalled-marker comment has actually posted (see record_stall_summary())")
+    parser.add_argument("--from-step", default=None,
+                        help="with --record-stall-summary: the step name the summary line names, "
+                             "e.g. 'review (round budget spent)'")
     args = parser.parse_args()
+    if args.record_stall_summary:
+        if args.issue is None or not args.from_step:
+            parser.error("--record-stall-summary needs --issue N --from-step <name>")
+        record_stall_summary(args.issue, args.from_step)
+        return
+    if args.step is None:
+        parser.error("--step is required (unless --record-stall-summary)")
     step = _resolve_step(args.step)
     if step == STALLED_STEP or args.issue is not None or args.add_label is not None:
         from board_eligibility import STALLED_LABEL

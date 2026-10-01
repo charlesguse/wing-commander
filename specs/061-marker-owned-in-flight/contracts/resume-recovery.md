@@ -126,23 +126,28 @@ fires only when the ones above it don't apply:
       stalled item always reaches this clause, since every stall site's
       marker is pr=None): compute `head_moved_since_last_review(pr_number,
       comments, bot_login)` (`board_item_marker.py`) -- whether the PR's
-      live head commit postdates the loop's own most recent *resolved*
-      review-round verdict comment for that PR (the converged or
-      budget-spent wording; never the inconclusive parse-failed or
-      malformed-findings wording, which counts as no verdict at all):
+      live head SHA differs from the SHA the loop's own most recent
+      *converged* review-round verdict comment recorded for that PR.
+      Only the converged wording counts: a budget-spent verdict means
+      review never finished clearing the PR's findings, so (maintainer
+      review of #885) it must never be treated as a baseline a later,
+      unmoved head could satisfy -- it is excluded exactly like the
+      inconclusive parse-failed/malformed-findings wording, both of which
+      count as no verdict at all:
 
-      - `True` (moved -- including when no reviewed head is resolvable at
-        all: no review ever covered this PR, the stall came from review's
-        parse-failed/malformed-findings arm, or the live lookup itself
-        failed) -> step = "review" (matches contracts/fix-step.md's own
-        guard language: "resumes at whatever step the existing PR's state
+      - `True` (moved -- including when no converged head is resolvable
+        at all: no review ever covered this PR, the stall came from
+        review's budget-spent, parse-failed, or malformed-findings arm,
+        or the live lookup itself failed) -> step = "review", with a
+        fresh round budget (matches contracts/fix-step.md's own guard
+        language: "resumes at whatever step the existing PR's state
         implies"). A re-admitted item resuming at review starts with
         `round == 0`, the same starting value a freshly selected item
         gets, because every stall site's marker call omits `--round`.
 
-      - `False` (a reviewed head was established, and the PR's live head
-        commit is that same one, or no newer) -> step = "readiness", so
-        nothing already reviewed is re-reviewed.
+      - `False` (a converged head was established, and the PR's live
+        head SHA is that same commit) -> step = "readiness", so nothing
+        already reviewed is re-reviewed.
 
       Either way, the run records that this pr was recovered via the
       label fallback, not a marker (FR-014), and additionally which of
@@ -187,8 +192,9 @@ live state, not the marker's say-so, decides which clause applies.
 | #532 (awaiting-merge, PR closed/merged, issue open) | clause 1 does not match → clause 4, reason recorded → triage |
 | #530 (breach, PR open: post-push breach whose spec-request create failed) | clause 1 → breach (readiness retries the spec-request, no review); only the fallback finds the PR → clause 2a → breach; PR closed/merged → clause 4 → triage |
 | #555 (marker branch not `fix/<issue>-<slug>`, or marker PR not board:owned / from another repository) | foreign marker fields → triage, reason recorded, FR-022 cleared; a foreign PR still OPEN, or an awaiting-merge marker: no-op hold, nothing passed on |
-| spec 100 US3 AS1 (stalled by review's spent budget, PR open, human push since last review) | clause 2b, head moved → `review` |
-| spec 100 US3 AS2 (stalled at readiness or by review's spent budget, PR open, head unchanged since last review) | clause 2b, head unmoved → `readiness` |
+| spec 100 US3 AS1 (stalled by review's spent budget, PR open, human push since last converged review) | clause 2b, head moved → `review` |
+| spec 100 US3 AS1b (stalled by review's spent budget, PR open, head unchanged since the budget was spent) | clause 2b always resolves a budget-spent verdict to `review` with a fresh round budget, never `readiness` -- a spent budget never finished clearing the PR's findings (FR-006b/SC-004, maintainer review of #885) |
+| spec 100 US3 AS2 (stalled by readiness's own backstop breach after review had converged, PR open, head unchanged since that converged review) | clause 2b, head unmoved since the converged verdict → `readiness` |
 | spec 100 US3 AS3 (stalled by triage's already-fixed hand-over, no PR ever opened) | clause 2 not reached (no PR from fallback) → falls to clause 4 → `triage` |
 | spec 100 US3 AS4 (any re-admitted item, own PR still open) | clause 2 never resolves to `triage`, so FR-054/FR-008 hold regardless of the 2b split |
 | spec 100 US3 AS5 (re-admitted at `review`, fresh round budget spent again) | clause 2b `review` branch + a fresh round-0 restart |
