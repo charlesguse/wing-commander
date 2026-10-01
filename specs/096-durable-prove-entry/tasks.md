@@ -596,3 +596,7 @@ Task: "New Gate 128: verify-board-prove-recovery.py fixtures"
 - [ ] In `select`'s displacement step (board-loop.yml :216-321), skip (defer to the next tick) any merge whose `board-loop.yml` `pull_request` run isn't `completed`, matched by `headBranch` to the PR's `headRefName`, so a merge mid-wait in its own new per-PR group isn't falsely reported as displaced.
 - [ ] Add a fixture covering a merge whose own `pull_request` prove run is still in progress when the displacement step runs.
 - [ ] Verify, once the FR-011 `--outcome-reason` fix lands, this skip also prevents a duplicate proof dispatch on the next tick (today's busy check only sees `[directed:` runs).
+
+## Maintainer Feedback — resume step's MERGED step=prove path has no consumer
+- [ ] In `board_eligibility.select()`'s fallback, hold fix-or-later markers whose PR is MERGED, next to the existing `prove` skip (FR-009), so the oldest such item stops being re-admitted every tick.
+- [ ] Fix the stale docstrings at `board_eligibility.py:362` and `board_prove_displacement.py:8`.
