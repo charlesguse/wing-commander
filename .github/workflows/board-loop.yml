@@ -237,24 +237,37 @@ jobs:
       - name: Detect a merge whose proof run never started (FR-010b)
         id: displacement
         if: steps.killswitch.outputs.status != 'paused' && steps.stand-down.outputs.status != 'in-flight'
+        # A failure here only skips this tick's detection; select and the
+        # steps after it never depend on it (review of #893).
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
+          # The App holds no Actions permission, so `gh run list` reads with
+          # the job's own token (select grants actions: write).
+          ACTIONS_TOKEN: ${{ github.token }}
           BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}[bot]
         run: |
           set -uo pipefail
-          gh pr list -R "$GITHUB_REPOSITORY" --state merged --label board:owned \
-            --json number,body,mergedAt,headRefName -L 20 > "$RUNNER_TEMP/board-recent-merges.json"
+          if ! gh pr list -R "$GITHUB_REPOSITORY" --state merged --label board:owned \
+            --json number,body,mergedAt,headRefName -L 20 > "$RUNNER_TEMP/board-recent-merges.json"; then
+            echo "::error::board-loop: could not list recent board:owned merges -- displacement detection skipped this tick (FR-010b)."
+            exit 1
+          fi
 
           # maintainer review: a merge's own `pull_request: closed` run can
           # still be mid-wait in its own new per-PR concurrency group
           # (specs/096-durable-prove-entry FR-005) when this step runs --
-          # that run has not been displaced at all, only queued behind
-          # another run sharing the SAME per-PR group (a prior tick's own
-          # directed recovery dispatch, for instance). Matched by headBranch
+          # that run has not been displaced at all, only still running or
+          # queued in its own per-PR group. Matched by headBranch
           # against each merge's own headRefName, never by PR number alone
           # (a run list row carries no PR number for a `pull_request` event).
-          gh run list --workflow=board-loop.yml -R "$GITHUB_REPOSITORY" --event pull_request \
-            --json headBranch,status -L 50 > "$RUNNER_TEMP/board-displacement-runs.json"
+          # A failed read must not become "no live runs": that would mark a
+          # running proof as displaced.
+          if ! GH_TOKEN="$ACTIONS_TOKEN" gh run list --workflow=board-loop.yml -R "$GITHUB_REPOSITORY" --event pull_request \
+            --json headBranch,status -L 50 > "$RUNNER_TEMP/board-displacement-runs.json"; then
+            echo "::error::board-loop: could not list board-loop's pull_request runs -- displacement detection skipped this tick (FR-010b)."
+            exit 1
+          fi
 
           # One row per issue's own MOST RECENT merge -- the same `Fixes #N`
           # convention prove-gate's own "Resolve the originating issue" step
@@ -5068,7 +5081,7 @@ jobs:
             ${{ steps.decide.outputs.directed-stage != '' &&
             format('{{"directed-stage":"{0}","directed-issue":"{1}","directed-pr":"{2}"}}',
             steps.decide.outputs.directed-stage, needs.prove-gate.outputs.issue-number,
-            github.event.pull_request.number) ||
+            github.event.pull_request.number || inputs.directed-pr) ||
             '{}' }}
 
       - name: Cross-link the proof run onto the originating issue

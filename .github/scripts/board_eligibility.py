@@ -109,7 +109,8 @@ TERMINAL_STEPS = frozenset({"closed", "stalled", "proven", DUPLICATE_STEP})
 # loop's own (no board:owned label, or its head in another repository) as
 # this state instead of "OPEN". Such a marker never makes its issue
 # in-flight, and select()'s fallback passes the issue over until the PR is
-# CLOSED or MERGED (_unowned_open_pr_holds()), so the resume step's no-op
+# CLOSED (_unowned_open_pr_holds(); a MERGED one stays held by
+# _merged_fix_holds() instead), so the resume step's no-op
 # hold for it is never re-selected every run.
 UNOWNED_OPEN_PR_STATE = "OPEN_UNOWNED"
 
@@ -343,7 +344,8 @@ def _awaiting_merge_holds(marker, pr_state_by_number):
     awaiting-merge PR to a no-op, so an oldest-eligible item would be
     re-selected and do nothing on every run. Skipping costs at most a
     delay for this one item (it is re-admitted on the first run whose
-    lookup returns CLOSED or MERGED), and a human merge still reaches
+    lookup returns CLOSED; a MERGED one stays held by _merged_fix_holds()
+    for the displacement recovery path), and a human merge still reaches
     prove-gate/prove through pull_request: closed, which never consults
     this."""
     if (marker or {}).get("step") != AWAITING_MERGE_STEP:
