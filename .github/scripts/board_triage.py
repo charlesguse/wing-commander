@@ -426,6 +426,22 @@ def triage(issue, cited_run):
     return _not_closed(outcome, proposal)
 
 
+def defer_on_rate_limit(verdict, agent_verdict):
+    """A `proceed` verdict from a triage agent whose own agent-verdict was
+    `rate-limited` (an API 429) is `defer`: the agent judged nothing, so
+    triage posts nothing and route does not run. During the 2026-10-01
+    usage outage every hourly run otherwise posted "proceeding to route",
+    and route then filed a spec-proposal and closed the original
+    (#902 -> #907). A close on a code-derived ground and a handover stand:
+    the first never needed the agent, the second came from a proposal it
+    did deliver. The issue keeps whatever marker it had, so a later run
+    triages it again once the usage window resets."""
+    if verdict.get("outcome") == "proceed" and agent_verdict == "rate-limited":
+        return {"outcome": "defer", "ground": "agent_rate_limited",
+                "evidence": {}, "agent_proposal": None}
+    return verdict
+
+
 def _not_closed(outcome, proposal):
     """The single exit for every triage() path that does not close (#578).
     An already_fixed_proposal is handed to a maintainer (FR-012: posted

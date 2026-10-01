@@ -368,7 +368,8 @@ def normalize_category(category):
 def route(agent_proposal, file_changes, board_max_files, board_max_lines,
           measure_backstop, diff_paths=None, diff_text=None, file_contents=None,
           widened_paths_override=None, proposal_extracted=True,
-          workflow_push_blocked=None, base_contents=None):
+          workflow_push_blocked=None, base_contents=None,
+          agent_rate_limited=False):
     """FR-016..FR-020. `measure_backstop` is a callable
     (file_changes, max_files, max_lines) -> (over_threshold, files, lines)
     -- the runtime caller (board-loop.yml) supplies one that shells out to
@@ -390,7 +391,17 @@ def route(agent_proposal, file_changes, board_max_files, board_max_lines,
     (#534). `agent_proposal` is read through normalize_category(); a
     value outside fix/spec is no usable proposal whatever
     `proposal_extracted` says, so it is spec, never fix (#548). The
-    decision records the normalised value."""
+    decision records the normalised value.
+    `agent_rate_limited` is True when the route agent's own verdict was
+    rate-limited (an API 429). No usable proposal from a rate-limited agent
+    is "defer", reason "agent_rate_limited", never the default spec: the
+    agent judged nothing, and filing a spec-proposal closed the original
+    as a duplicate during a usage outage (#902 -> #907, #906 -> #908).
+    Defer takes no durable action. The issue's route marker (triage writes
+    it before route runs) keeps it in flight, and the next run triages it
+    again -- a rate-limited triage then defers too and posts nothing
+    (board_triage.defer_on_rate_limit()) -- and routes it once the usage
+    window resets."""
     category = normalize_category(agent_proposal)
     if category is None:
         agent_proposal, proposal_extracted = "spec", False
@@ -417,6 +428,9 @@ def route(agent_proposal, file_changes, board_max_files, board_max_lines,
             reason = "over_threshold"
         elif proposal_extracted:
             reason = "agent_proposed_spec"
+        elif agent_rate_limited:
+            backstop_verdict = "defer"
+            reason = "agent_rate_limited"
         else:
             reason = "no_usable_proposal"
     elif widened_paths:

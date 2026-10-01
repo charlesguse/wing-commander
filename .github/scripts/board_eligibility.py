@@ -60,6 +60,13 @@ LIFECYCLE_PREFIXES = ("stage:", "spec:")
 # Without this, a maintainer adding any label to a proposal made it
 # "maintainer-labeled" and the loop could route a proposal of a proposal.
 LIFECYCLE_LABELS = ("spec-proposal", "spec-request")
+# A pipeline stage's own self-managing tracker, never a board item, though
+# its prefix is a pipeline label (PIPELINE_LABEL_PREFIXES). The auto-update
+# stage finds its settle state on the one open issue carrying
+# auto-update:tracking; routing it closed that issue as a duplicate and
+# left the stage to adopt the routed copy (#852 -> #904, 2026-10-01). The
+# upgrades that stage files under other auto-update:* labels stay eligible.
+SELF_MANAGED_LABELS = ("auto-update:tracking",)
 
 # data-model.md "Step" / contracts/in-flight-detection.md: the loop's named
 # steps, split by whether a PR can exist yet at that step. Pre-fix qualifies
@@ -207,7 +214,8 @@ def spec_request_numbers_to_resolve(open_issues, comments_by_issue, bot_login):
 def is_excluded(issue, spec_request_state_by_number=None, duplicate_marker=None):
     """FR-010: (True, reason) when the issue is closed, carries a settled
     disposition:* marker, carries board:stalled, or carries any stage:*/
-    spec:* label or a LIFECYCLE_LABELS label. (False, None) otherwise.
+    spec:* label, a LIFECYCLE_LABELS label or a SELF_MANAGED_LABELS label.
+    (False, None) otherwise.
 
     spec 108 carve-out (contracts/eligibility-and-readmission-delta.md,
     FR-005/FR-006/FR-007): when the issue is OPEN and DISPOSITION_LABEL
@@ -242,6 +250,7 @@ def is_excluded(issue, spec_request_state_by_number=None, duplicate_marker=None)
         if name.startswith(DISPOSITION_PREFIX)
         or any(name.startswith(prefix) for prefix in LIFECYCLE_PREFIXES)
         or name in LIFECYCLE_LABELS
+        or name in SELF_MANAGED_LABELS
     ]
     if not exclusion_labels:
         return False, None

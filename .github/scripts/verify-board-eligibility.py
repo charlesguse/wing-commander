@@ -136,6 +136,11 @@ IN_FLIGHT_CASES = {
     # maintainer labels it. The three older such issues are passed over
     # and the newest ordinary issue is selected.
     "spec-labelled-issues-not-selected",
+    # The auto-update stage's settle tracker (auto-update:tracking) is that
+    # stage's own state, never a board item, though auto-update:* is a
+    # pipeline label; an upgrade it files under another auto-update:*
+    # label is still selected.
+    "auto-update-tracker-not-selected",
 }
 
 # (name, replacement for board_item_marker.is_loop_marker_author)
