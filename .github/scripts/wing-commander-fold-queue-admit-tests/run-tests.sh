@@ -13,7 +13,16 @@
 # enqueued it, not the real implement.yml run holding the ticket, so
 # staleness must be checked against the round's correlated
 # implement_run_id -- not reclaimed while that real run is still
-# in_progress, reclaimed once it has completed.
+# in_progress, reclaimed once it has completed. Scenarios 6/7 (T060,
+# maintainer review of #821, B8) cover fold-queue-await.sh's separate
+# admission-DEADLINE extension (not the stale-reclaim check above): it
+# extends for an implement-kind head reporting "waiting" (not just
+# "in_progress"/"queued"), and now also for a long-held ACT-kind head
+# (a leg bound by confirm-timeout-minutes, not an implement cycle's
+# runtime) -- previously the extension applied only to head-kind
+# "implement" and only two literal statuses. Scenarios 8/9 cover the
+# SEPARATE, pre-existing (T046) uncorrelated-implement-head uncorrelated-
+# grace-period reclaim, which had no fixture of its own before T060.
 #
 # T052 (maintainer review of #821, #719/#825): this suite used to live at
 # .github/actions/wing-commander-fold-queue-admit/tests/run.sh, a location
@@ -262,6 +271,213 @@ else
   FAILURES=$((FAILURES + 1))
 fi
 rm -f "$out_file5" "$summary_file5"
+
+# Scenario 5 was really granted (run-106-act) and stays queued until
+# released, or scenarios 6/7 below would wedge behind it.
+LEDGER_REMOTE_URL="$REMOTE" GH_TOKEN=x GITHUB_REPOSITORY=x/x SPEC_DIR="$SPEC_DIR" \
+  TOKEN="run-106-act" RUN_ID=106 OUTCOME="not-folded" LEG_ID="leg-1" \
+  bash "$LEDGER_SH" release >/dev/null
+
+# --- Scenario 6/7 setup: another realistic round, correlated to a THIRD
+# real run (902) -- distinct from 901 (already completed/reclaimed above)
+# so this round's own deadline-extension check cannot pass by accident.
+enqueue_out2="$(LEDGER_REMOTE_URL="$REMOTE" GH_TOKEN=x GITHUB_REPOSITORY=x/x SPEC_DIR="$SPEC_DIR" \
+  KIND=act RUN_ID=910 bash "$LEDGER_SH" enqueue)"
+round2="$(printf '%s\n' "$enqueue_out2" | grep '^round=' | cut -d= -f2-)"
+
+LEDGER_REMOTE_URL="$REMOTE" GH_TOKEN=x GITHUB_REPOSITORY=x/x SPEC_DIR="$SPEC_DIR" \
+  TOKEN="run-910-act" RUN_ID=910 OUTCOME=folded COMMIT_SHA=ghi789 LEG_ID=leg-1 SUMMARY=s \
+  bash "$LEDGER_SH" release >/dev/null
+
+LEDGER_REMOTE_URL="$REMOTE" GH_TOKEN=x GITHUB_REPOSITORY=x/x SPEC_DIR="$SPEC_DIR" \
+  KIND=dispatch RUN_ID=910 bash "$LEDGER_SH" enqueue >/dev/null
+
+LEDGER_REMOTE_URL="$REMOTE" GH_TOKEN=x GITHUB_REPOSITORY=x/x SPEC_DIR="$SPEC_DIR" \
+  ROUND="$round2" DISPATCH_TOKEN="run-910-dispatch" ITERATION=6 OWN_FOLDS=1 \
+  bash "$LEDGER_SH" claim-dispatch >/dev/null
+
+LEDGER_REMOTE_URL="$REMOTE" GH_TOKEN=x GITHUB_REPOSITORY=x/x SPEC_DIR="$SPEC_DIR" \
+  TOKEN="run-910-dispatch" RUN_ID=910 OUTCOME=folded \
+  bash "$LEDGER_SH" release >/dev/null
+
+LEDGER_REMOTE_URL="$REMOTE" GH_TOKEN=x GITHUB_REPOSITORY=x/x SPEC_DIR="$SPEC_DIR" \
+  ROUND="$round2" IMPLEMENT_RUN_ID=902 bash "$LEDGER_SH" record-implement-run >/dev/null
+
+# --- Scenario 6 (T060/B8): the admission DEADLINE (not the stale-reclaim
+# check) extends for an implement-kind head whose correlated run (902)
+# reports "waiting" (an environment-approval pause), not just
+# "in_progress"/"queued" -- MAX_WAIT_MINUTES=0 makes the deadline check
+# fire on the very first poll.
+out_file6="$(mktemp)"
+summary_file6="$(mktemp)"
+(
+  PATH="$STUBDIR:$PATH" \
+    GITHUB_ACTION_PATH="$COMPOSITE_DIR" \
+    GH_TOKEN=x GITHUB_REPOSITORY=x/x \
+    LEDGER_REMOTE_URL="$REMOTE" \
+    SPEC_DIR="$SPEC_DIR" KIND=act RUN_ID=111 EXISTING_TOKEN="" \
+    MAX_WAIT_MINUTES=0 POLL_INTERVAL_SECONDS=1 STALE_AFTER_MINUTES=60 \
+    GH_STUB_STATUS=waiting \
+    GITHUB_OUTPUT="$out_file6" GITHUB_STEP_SUMMARY="$summary_file6" \
+    bash "$SCRIPT"
+) &
+waiter_pid6=$!
+sleep 3
+if kill -0 "$waiter_pid6" 2>/dev/null; then
+  kill "$waiter_pid6" 2>/dev/null
+  wait "$waiter_pid6" 2>/dev/null
+  echo "[ok] admission deadline extends for an implement-kind head reporting 'waiting', not just in_progress/queued"
+else
+  echo "::error::[deadline extension, 'waiting' status] waiter exited early (should have extended past MAX_WAIT_MINUTES=0 while the correlated run reports 'waiting')"
+  FAILURES=$((FAILURES + 1))
+fi
+rm -f "$out_file6" "$summary_file6"
+
+# Scenario 6's killed waiter already pushed its own real "run-111-act"
+# ticket to the ledger (enqueue commits before the poll loop even starts),
+# queued directly behind "run-910-implement" -- release both, in queue
+# order, so scenario 7 below starts from an empty queue.
+LEDGER_REMOTE_URL="$REMOTE" GH_TOKEN=x GITHUB_REPOSITORY=x/x SPEC_DIR="$SPEC_DIR" \
+  TOKEN="run-910-implement" RUN_ID=910 OUTCOME=folded \
+  bash "$LEDGER_SH" release >/dev/null
+LEDGER_REMOTE_URL="$REMOTE" GH_TOKEN=x GITHUB_REPOSITORY=x/x SPEC_DIR="$SPEC_DIR" \
+  TOKEN="run-111-act" RUN_ID=111 OUTCOME="not-folded" LEG_ID="leg-1" \
+  bash "$LEDGER_SH" release >/dev/null
+
+# --- Scenario 7 (T060/B8): the admission deadline also extends for a
+# long-held ACT-kind head (a leg bound only by confirm-timeout-minutes,
+# default 1440 = 24h, not by an implement cycle's runtime) -- previously
+# this extension applied only to head-kind "implement".
+LEDGER_REMOTE_URL="$REMOTE" GH_TOKEN=x GITHUB_REPOSITORY=x/x SPEC_DIR="$SPEC_DIR" \
+  KIND=act RUN_ID=920 bash "$LEDGER_SH" enqueue >/dev/null
+
+out_file7="$(mktemp)"
+summary_file7="$(mktemp)"
+(
+  PATH="$STUBDIR:$PATH" \
+    GITHUB_ACTION_PATH="$COMPOSITE_DIR" \
+    GH_TOKEN=x GITHUB_REPOSITORY=x/x \
+    LEDGER_REMOTE_URL="$REMOTE" \
+    SPEC_DIR="$SPEC_DIR" KIND=act RUN_ID=112 EXISTING_TOKEN="" \
+    MAX_WAIT_MINUTES=0 POLL_INTERVAL_SECONDS=1 STALE_AFTER_MINUTES=60 \
+    GH_STUB_STATUS=in_progress \
+    GITHUB_OUTPUT="$out_file7" GITHUB_STEP_SUMMARY="$summary_file7" \
+    bash "$SCRIPT"
+) &
+waiter_pid7=$!
+sleep 3
+if kill -0 "$waiter_pid7" 2>/dev/null; then
+  kill "$waiter_pid7" 2>/dev/null
+  wait "$waiter_pid7" 2>/dev/null
+  echo "[ok] admission deadline extends for a long-held act-kind head whose own run is still in_progress"
+else
+  echo "::error::[deadline extension, act-kind] waiter exited early (should have extended past MAX_WAIT_MINUTES=0 behind a confirm-held act-kind head)"
+  FAILURES=$((FAILURES + 1))
+fi
+rm -f "$out_file7" "$summary_file7"
+
+# Same leaked-ticket cleanup as scenario 6's, in queue order: run-920-act
+# (head), then scenario 7's own killed waiter's real "run-112-act" ticket.
+LEDGER_REMOTE_URL="$REMOTE" GH_TOKEN=x GITHUB_REPOSITORY=x/x SPEC_DIR="$SPEC_DIR" \
+  TOKEN="run-920-act" RUN_ID=920 OUTCOME="not-folded" LEG_ID="leg-1" \
+  bash "$LEDGER_SH" release >/dev/null
+LEDGER_REMOTE_URL="$REMOTE" GH_TOKEN=x GITHUB_REPOSITORY=x/x SPEC_DIR="$SPEC_DIR" \
+  TOKEN="run-112-act" RUN_ID=112 OUTCOME="not-folded" LEG_ID="leg-1" \
+  bash "$LEDGER_SH" release >/dev/null
+
+# --- Scenario 8/9 setup (T060/B8, "uncorrelated reclaim" fixtures): a
+# third round whose implement-kind head ticket NEVER gets
+# record-implement-run called -- T046's own backstop for exactly this gap.
+enqueue_out4="$(LEDGER_REMOTE_URL="$REMOTE" GH_TOKEN=x GITHUB_REPOSITORY=x/x SPEC_DIR="$SPEC_DIR" \
+  KIND=act RUN_ID=930 bash "$LEDGER_SH" enqueue)"
+round3="$(printf '%s\n' "$enqueue_out4" | grep '^round=' | cut -d= -f2-)"
+
+LEDGER_REMOTE_URL="$REMOTE" GH_TOKEN=x GITHUB_REPOSITORY=x/x SPEC_DIR="$SPEC_DIR" \
+  TOKEN="run-930-act" RUN_ID=930 OUTCOME=folded COMMIT_SHA=jkl012 LEG_ID=leg-1 SUMMARY=s \
+  bash "$LEDGER_SH" release >/dev/null
+
+LEDGER_REMOTE_URL="$REMOTE" GH_TOKEN=x GITHUB_REPOSITORY=x/x SPEC_DIR="$SPEC_DIR" \
+  KIND=dispatch RUN_ID=930 bash "$LEDGER_SH" enqueue >/dev/null
+
+LEDGER_REMOTE_URL="$REMOTE" GH_TOKEN=x GITHUB_REPOSITORY=x/x SPEC_DIR="$SPEC_DIR" \
+  ROUND="$round3" DISPATCH_TOKEN="run-930-dispatch" ITERATION=7 OWN_FOLDS=1 \
+  bash "$LEDGER_SH" claim-dispatch >/dev/null
+
+# Releasing the dispatch ticket promotes "run-930-implement" to head,
+# granted -- deliberately never correlated via record-implement-run.
+LEDGER_REMOTE_URL="$REMOTE" GH_TOKEN=x GITHUB_REPOSITORY=x/x SPEC_DIR="$SPEC_DIR" \
+  TOKEN="run-930-dispatch" RUN_ID=930 OUTCOME=folded \
+  bash "$LEDGER_SH" release >/dev/null
+
+# --- Scenario 8 (T060/B8): an uncorrelated implement-kind head is NOT
+# reclaimed before stale-after-minutes PLUS the uncorrelated grace period
+# has elapsed, even though it has no correlated run to check liveness
+# against at all.
+out_file8="$(mktemp)"
+summary_file8="$(mktemp)"
+(
+  PATH="$STUBDIR:$PATH" \
+    GITHUB_ACTION_PATH="$COMPOSITE_DIR" \
+    GH_TOKEN=x GITHUB_REPOSITORY=x/x \
+    LEDGER_REMOTE_URL="$REMOTE" \
+    SPEC_DIR="$SPEC_DIR" KIND=act RUN_ID=113 EXISTING_TOKEN="" \
+    MAX_WAIT_MINUTES=5 POLL_INTERVAL_SECONDS=1 STALE_AFTER_MINUTES=0 \
+    UNCORRELATED_IMPLEMENT_GRACE_MINUTES=60 \
+    GH_STUB_STATUS=completed \
+    GITHUB_OUTPUT="$out_file8" GITHUB_STEP_SUMMARY="$summary_file8" \
+    bash "$SCRIPT"
+) &
+waiter_pid8=$!
+sleep 3
+if kill -0 "$waiter_pid8" 2>/dev/null; then
+  kill "$waiter_pid8" 2>/dev/null
+  wait "$waiter_pid8" 2>/dev/null
+  still_position8="$(LEDGER_REMOTE_URL="$REMOTE" GH_TOKEN=x GITHUB_REPOSITORY=x/x SPEC_DIR="$SPEC_DIR" PEEK_TOKEN="run-930-implement" bash "$LEDGER_SH" peek | grep '^position=' | cut -d= -f2-)"
+  if [ "$still_position8" = "0" ]; then
+    echo "[ok] uncorrelated implement-kind head NOT reclaimed before stale-after-minutes + the grace period elapses"
+  else
+    echo "::error::[uncorrelated reclaim, within grace] expected run-930-implement still at head, position=$still_position8"
+    FAILURES=$((FAILURES + 1))
+  fi
+else
+  echo "::error::[uncorrelated reclaim, within grace] waiter exited early (should still be blocked within the grace period)"
+  FAILURES=$((FAILURES + 1))
+fi
+rm -f "$out_file8" "$summary_file8"
+# NOT released here: "run-113-act" (scenario 8's own killed waiter's real,
+# already-enqueued ticket) sits behind "run-930-implement" at position 1,
+# not the queue head, so a release call on it would itself error "not at
+# queue head". Scenario 9 below reclaims "run-930-implement" (clearing it)
+# and then, in the SAME invocation's next poll, reclaims "run-113-act" too
+# (GH_STUB_STATUS=completed is blanket for every run id in that call) on
+# its way to granting its own ticket -- no separate cleanup step needed.
+
+# --- Scenario 9 (T060/B8): the SAME uncorrelated implement-kind head IS
+# reclaimed unconditionally once stale-after-minutes + the grace period
+# has elapsed (here, a zero grace period makes it immediate) -- T046's own
+# backstop for whatever gap record-implement-run's own callers don't cover.
+out_file9="$(mktemp)"
+summary_file9="$(mktemp)"
+PATH="$STUBDIR:$PATH" \
+  GITHUB_ACTION_PATH="$COMPOSITE_DIR" \
+  GH_TOKEN=x GITHUB_REPOSITORY=x/x \
+  LEDGER_REMOTE_URL="$REMOTE" \
+  SPEC_DIR="$SPEC_DIR" KIND=act RUN_ID=114 EXISTING_TOKEN="" \
+  MAX_WAIT_MINUTES=5 POLL_INTERVAL_SECONDS=1 STALE_AFTER_MINUTES=0 \
+  UNCORRELATED_IMPLEMENT_GRACE_MINUTES=0 \
+  GH_STUB_STATUS=completed \
+  GITHUB_OUTPUT="$out_file9" GITHUB_STEP_SUMMARY="$summary_file9" \
+  bash "$SCRIPT"
+rc9=$?
+token9="$(grep '^token=' "$out_file9" | cut -d= -f2-)"
+granted9="$(grep '^granted=' "$out_file9" | cut -d= -f2-)"
+if [ "$rc9" -eq 0 ] && [ "$token9" = "run-114-act" ] && [ "$granted9" = "true" ]; then
+  echo "[ok] uncorrelated implement-kind head reclaimed unconditionally once stale-after-minutes + the (zero) grace period elapses"
+else
+  echo "::error::[uncorrelated reclaim, grace elapsed] rc=$rc9 token=${token9:-<empty>} granted=${granted9:-<empty>}"
+  FAILURES=$((FAILURES + 1))
+fi
+rm -f "$out_file9" "$summary_file9"
 
 echo "wing-commander-fold-queue-admit tests: $FAILURES failure(s)."
 [ "$FAILURES" -eq 0 ]

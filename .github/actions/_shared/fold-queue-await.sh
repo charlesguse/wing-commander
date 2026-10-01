@@ -45,12 +45,18 @@
 # On timeout, prints an `::error::` line and exits 1 -- a hard stop, never
 # a silent pass-through, matching wing-commander-fold-queue-admit's own
 # failure contract. specs/074-serialized-fold-dispatch T049: waiting behind
-# a CORRELATED, confirmed-alive implement-kind head ticket extends this
-# deadline instead of failing at it -- a real implement cycle routinely
-# runs well past MAX_WAIT_MINUTES's default (recent runs: 16-125 minutes),
-# and a review posted during that window must still be folded, not dropped
-# with a hard failure just because the implement run it is queued behind is
-# legitimately still working.
+# a CORRELATED, confirmed-alive implement-kind OR act-kind head ticket
+# extends this deadline instead of failing at it -- a real implement cycle
+# routinely runs well past MAX_WAIT_MINUTES's default (recent runs: 16-125
+# minutes), and an act-kind leg can be held just as long awaiting
+# environment approval (confirm-timeout-minutes defaults to 1440 = 24h);
+# a review posted during either window must still be folded, not dropped
+# with a hard failure just because the run it is queued behind is
+# legitimately still working. T060 (maintainer review of #821, B8): "alive"
+# means any status but "completed" (not an allowlist of "in_progress"/
+# "queued" alone), so a run paused on "waiting" (environment approval) or a
+# redispatched run (T055) reporting any other non-terminal status also
+# extends, not just hard-fails.
 set -uo pipefail
 
 : "${SPEC_DIR:?fold-queue-await.sh: SPEC_DIR is required}"
@@ -91,21 +97,39 @@ while :; do
   now_ts=$(date +%s)
   if [ "$now_ts" -ge "$deadline" ]; then
     # T049: before failing, check whether the head is a CORRELATED,
-    # confirmed-alive implement-kind ticket -- if so, extend the deadline
-    # instead of hard-failing. A normal implement cycle routinely runs well
-    # past MAX_WAIT_MINUTES's default (recent runs: 16-125 minutes; 9 of 15
+    # confirmed-alive ticket -- if so, extend the deadline instead of
+    # hard-failing. A normal implement cycle routinely runs well past
+    # MAX_WAIT_MINUTES's default (recent runs: 16-125 minutes; 9 of 15
     # exceeded 30), and a review posted during that window must still be
     # folded, not dropped just because the run it is queued behind is
     # legitimately still working.
+    #
+    # T060 (maintainer review of #821, B8) extends this two ways: (1) ANY
+    # non-"completed" status counts as alive, not just "in_progress"/
+    # "queued" -- a run paused on an environment protection-rule approval
+    # reports "waiting", and a redispatched run (T055) can report any of
+    # these at the moment this check runs; the stale-reclaim liveness check
+    # just below already treats "not completed" (and not empty) as alive
+    # for the identical reason, so this mirrors it instead of a narrower
+    # allowlist that silently drifts from it. (2) An `act`-kind head can
+    # also be legitimately held for a long time -- a leg awaiting
+    # environment approval is bounded by the calling stage's own
+    # confirm-timeout-minutes (default 1440 = 24h), not by an implement
+    # cycle's runtime -- so it now gets the identical extension, using
+    # head-run-id directly: unlike an implement-kind ticket, an act-kind
+    # ticket's own run_id IS its real owning run (research.md D6).
     extend="false"
+    live_run_id=""
     if [ "$head_kind" = "implement" ] && [ -n "$round" ]; then
       round_out="$(SPEC_DIR="$SPEC_DIR" ROUND="$round" bash "$LEDGER" peek-round)"
       live_run_id="$(printf '%s\n' "$round_out" | grep '^implement-run-id=' | cut -d= -f2-)"
-      if [ -n "$live_run_id" ]; then
-        live_status="$(wc_fold_queue_run_status "$live_run_id")"
-        if [ "$live_status" = "in_progress" ] || [ "$live_status" = "queued" ]; then
-          extend="true"
-        fi
+    elif [ "$head_kind" = "act" ]; then
+      live_run_id="$head_run_id"
+    fi
+    if [ -n "$live_run_id" ]; then
+      live_status="$(wc_fold_queue_run_status "$live_run_id")"
+      if [ -n "$live_status" ] && [ "$live_status" != "completed" ]; then
+        extend="true"
       fi
     fi
     if [ "$extend" = "true" ]; then
