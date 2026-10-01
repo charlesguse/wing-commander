@@ -625,3 +625,7 @@ Task: "New Gate 128: verify-board-prove-recovery.py fixtures"
 
 ## Maintainer Feedback — outstanding rehearsal tasks
 - [ ] Run and check off T011 and T022 (rehearsals) in tasks.md before this PR merges, or confirm they're covered elsewhere and update tasks.md accordingly.
+
+
+## Maintainer Feedback — "picked up again on a later run" doc inaccuracy
+- [ ] Correct the `group-busy` documentation/comment claiming an item is "picked up again on a later run" -- not true for record-only reasons; align the prose with actual behavior (likely in contracts/recovery-and-resume.md or proof-outcome-taxonomy.md).
