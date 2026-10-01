@@ -638,7 +638,7 @@ kept to one session to avoid edit collisions).
 
 ## Maintainer Feedback
 
-- [ ] Review and readiness still pass `needs.select.outputs.branch`/`base-sha` to the stop-check composite's `marker-branch`/`marker-base-sha` inputs (~3776, ~4326), so a fix→review chain in the same run records `branch: null`. Pass `steps.pr.outputs.branch` (and corresponding base-sha) instead. The fix-job site is correct as-is: its stop check runs before the push.
+- [X] Review and readiness still pass `needs.select.outputs.branch`/`base-sha` to the stop-check composite's `marker-branch`/`marker-base-sha` inputs (~3776, ~4326), so a fix→review chain in the same run records `branch: null`. Pass `steps.pr.outputs.branch` (and corresponding base-sha) instead. The fix-job site is correct as-is: its stop check runs before the push.
 
 ## Maintainer Feedback
 

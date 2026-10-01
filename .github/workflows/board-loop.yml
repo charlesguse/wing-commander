@@ -3471,6 +3471,13 @@ jobs:
             echo "::error::wing-commander board-loop review: could not fetch origin/main for PR #$PR_NUMBER's review diff."
             exit 1
           fi
+          # specs/097-recorded-stop-point (maintainer review fold leg-3):
+          # needs.select.outputs.base-sha is select's own one-time read, not
+          # refreshed on a same-run fix->review handoff -- this job already
+          # has a freshly-fetched origin/main right here, so compute the
+          # stop-point record's base-sha the same way instead of trusting a
+          # possibly-stale upstream output.
+          echo "base-sha=$(git merge-base origin/main HEAD)" >> "$GITHUB_OUTPUT"
           mkdir -p /tmp/wing-commander
           if ! git diff origin/main...HEAD > /tmp/wing-commander/board-review-diff.txt; then
             echo "::error::wing-commander board-loop review: could not build PR #$PR_NUMBER's diff against origin/main."
@@ -4028,8 +4035,13 @@ jobs:
           bot-login: ${{ steps.ctx.outputs.bot-slug }}[bot]
           issue-number: ${{ needs.select.outputs.issue-number || inputs.directed-issue }}
           initial-paused: ${{ vars.WING_COMMANDER_BOARD_LOOP_PAUSED == 'true' }}
-          marker-branch: ${{ needs.select.outputs.branch }}
-          marker-base-sha: ${{ needs.select.outputs.base-sha }}
+          # specs/097-recorded-stop-point (maintainer review fold leg-3):
+          # needs.select.outputs.branch/base-sha is select's own one-time
+          # read -- empty on a same-run fix->review handoff, which would
+          # record branch: null. steps.pr/steps.gather are this job's own
+          # fresh reads of the PR actually under review.
+          marker-branch: ${{ steps.pr.outputs.branch }}
+          marker-base-sha: ${{ steps.gather.outputs.base-sha }}
 
       # specs/097-recorded-stop-point FR-014: name the cause actually
       # observed before review's own durable actions (posting the round
@@ -4558,6 +4570,12 @@ jobs:
               fh.write("holds={0}\n".format("true" if holds else "false"))
               fh.write("measured=files={0},lines={1}\n".format(files, lines))
               fh.write("breach-retry={0}\n".format("true" if breach_retry else "false"))
+              # specs/097-recorded-stop-point (maintainer review fold
+              # leg-3): the base-sha this step already computed fresh, for
+              # the stop-point record's marker -- needs.select.outputs.
+              # base-sha is select's own one-time read and can be stale by
+              # the time readiness runs.
+              fh.write("base-sha={0}\n".format(os.environ.get("BASE_SHA", "")))
           PYEOF
 
       # FR-051/FR-052 (#604): this re-check gates EVERY durable action
@@ -4577,8 +4595,14 @@ jobs:
           bot-login: ${{ steps.ctx.outputs.bot-slug }}[bot]
           issue-number: ${{ needs.select.outputs.issue-number || inputs.directed-issue }}
           initial-paused: ${{ vars.WING_COMMANDER_BOARD_LOOP_PAUSED == 'true' }}
-          marker-branch: ${{ needs.select.outputs.branch }}
-          marker-base-sha: ${{ needs.select.outputs.base-sha }}
+          # specs/097-recorded-stop-point (maintainer review fold leg-3):
+          # needs.select.outputs.branch/base-sha is select's own one-time
+          # read -- empty on a same-run review->readiness handoff, which
+          # would record branch: null. steps.pr/steps.final-diff-backstop
+          # are this job's own fresh reads of the PR actually under
+          # readiness.
+          marker-branch: ${{ steps.pr.outputs.branch }}
+          marker-base-sha: ${{ steps.final-diff-backstop.outputs.base-sha }}
 
       # FR-052: the stop point is recorded; nothing durable is written.
       - name: Record the stand-down (readiness)
