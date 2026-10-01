@@ -823,3 +823,9 @@ and evaporating into PR-body prose) that this feature exists to end.
 
 - [ ] Move this PR's Sync Impact Report in `.specify/memory/constitution-history.md` (~:29) to the top of the list, above #901's 2026-10-01 report — currently it sits below that report even though both claim the same "2.1.0 → 2.2.0" range
 - [ ] Change this PR's report's Version line to `2.2.0 → 2.3.0` (matching `constitution.md:60`'s already-correct "2.3.0") and refresh its date to match when this PR's amendment actually lands
+
+## Maintainer Feedback — out-of-boundary tasks in a mixed remainder are never filed (PR #836 review, item 12)
+
+- [ ] `implement.yml`: always pass `write-boundary-findings-json` through to the "Route out-of-boundary tasks" step regardless of `routed`/`handoff` (the write-boundary composite's `findings-json` output already lists only out-of-boundary entries)
+- [ ] Change the "Route out-of-boundary tasks" step's `if:` guard (implement.yml:~2411) to `!cancelled() && ok && !truncated && findings-json != '[]' && (routed || handoff || iteration >= max)`, so a mixed unchecked set (some out-of-boundary, some ordinary) still gets its out-of-boundary tasks filed even when the loop stalls or hits the cap instead of reaching a clean routed hand-off (FR-007)
+- [ ] Add a Gate 133 fixture reproducing the mixed-stall scenario (`routed=false, handoff=true`, one out-of-boundary task and one ordinary task both unchecked) and assert the out-of-boundary task is now filed
