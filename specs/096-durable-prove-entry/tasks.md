@@ -647,4 +647,4 @@ Task: "New Gate 136: verify-board-prove-recovery.py fixtures"
 
 
 ## Maintainer Feedback — "picked up again on a later run" doc inaccuracy
-- [ ] Correct the `group-busy` documentation/comment claiming an item is "picked up again on a later run" -- not true for record-only reasons; align the prose with actual behavior (likely in contracts/recovery-and-resume.md or proof-outcome-taxonomy.md).
+- [X] Correct the `group-busy` documentation/comment claiming an item is "picked up again on a later run" -- not true for record-only reasons; align the prose with actual behavior (likely in contracts/recovery-and-resume.md or proof-outcome-taxonomy.md). (The inaccurate sentence lived only in board-loop.yml's own posted comment body, not in either contract -- proof-outcome-taxonomy.md's own group-busy row was already accurate.)

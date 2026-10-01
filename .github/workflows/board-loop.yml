@@ -5181,7 +5181,7 @@ jobs:
             group-busy)
               marker="$(python3 .github/scripts/board_item_marker.py --step prove --outcome-reason "$reason" "${recovery_flag[@]}")"
               gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
-                --body "$attr_prefix$(printf 'PR #%s merged, but the directed proof group was already occupied by another proof run -- nothing was dispatched. Picked up again on a later run.\n\n%s' "$PR_NUMBER" "$marker")$recovery_suffix"
+                --body "$attr_prefix$(printf 'PR #%s merged, but the directed proof group was already occupied by another proof run -- nothing was dispatched. This issue stays open; group-busy is not a recoverable reason (FR-011c), so no automatic retry is scheduled -- a maintainer must re-drive it manually.\n\n%s' "$PR_NUMBER" "$marker")$recovery_suffix"
               ;;
             no-target)
               marker="$(python3 .github/scripts/board_item_marker.py --step prove --outcome-reason "$reason" "${recovery_flag[@]}")"
