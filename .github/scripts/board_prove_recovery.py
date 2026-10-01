@@ -45,7 +45,8 @@ def is_recoverable(marker):
         board_prove_displacement.RECORDED_REASON, "uncorrelated")
 
 
-def find_recoverable_items(merged_prs_by_issue, comments_by_issue, open_issue_numbers, bot_login):
+def find_recoverable_items(merged_prs_by_issue, comments_by_issue, open_issue_numbers, bot_login,
+                           stalled_issue_numbers=()):
     """`merged_prs_by_issue`: the `board-recent-merges-by-issue.json` shape
     (`[{"issue": N, "pr": M, "merged_at": "..."}, ...]`). `comments_by_issue`:
     `{"<issue>": [comment, ...], ...}` (string keys, as written by the
@@ -60,10 +61,13 @@ def find_recoverable_items(merged_prs_by_issue, comments_by_issue, open_issue_nu
     (FR-011b fairness, matching board_eligibility.select()'s own
     fallback-scan ordering)."""
     open_issue_numbers = set(open_issue_numbers)
+    # A board:stalled issue is held (e.g. an honoured stop, spec 097 FR-008):
+    # never a recovery candidate until a maintainer removes the label.
+    stalled_issue_numbers = set(stalled_issue_numbers)
     candidates = []
     for row in merged_prs_by_issue:
         issue = row["issue"]
-        if issue not in open_issue_numbers:
+        if issue not in open_issue_numbers or issue in stalled_issue_numbers:
             continue
         comments = comments_by_issue.get(str(issue)) or []
         pair = read_marker_with_timestamp(comments, bot_login)

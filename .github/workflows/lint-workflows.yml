@@ -4812,6 +4812,23 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-loop-readmission.py --self-test
 
+      # Gate 135 — specs/097-recorded-stop-point: an honoured stop request
+      # must leave a durable record (board:stalled + a stalled marker + a
+      # human-legible comment) so the board keeps moving past a stopped
+      # item, while a kill-switch-only or closed-issue stand-down keeps
+      # writing nothing. See contracts/gate-135-stop-point-recording.md.
+      # Numbered 135, not the 128 this branch's own tasks.md originally
+      # claimed (maintainer review fold leg-3): 128 is spec 074's own gate
+      # (PR #821, confirmed open), and 129-131 above are spec 089/108's;
+      # 132-134 are taken or allocated elsewhere (spec 109 and others, not
+      # yet landed on this branch), so this feature moves to 135.
+      - name: "Gate 135 — an honoured stop records its stop point, and the kill switch keeps writing nothing"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-stop-point-recording.py
+      - name: "Gate 135 self-test — each check is shown failing its own pre-fix shape"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-stop-point-recording.py --self-test
+
       # Gate 136 — specs/096-durable-prove-entry research.md D4/D5: a board
       # item marker whose `step` is "prove" and whose `outcome_reason` is
       # exactly board_prove_displacement.RECORDED_REASON or the literal

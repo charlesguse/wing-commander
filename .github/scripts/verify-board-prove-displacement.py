@@ -95,6 +95,26 @@ def run():
         else:
             print("[ok] {0}: find_undetected_merges() == {1!r}".format(name, got))
 
+    # spec 097 FR-008: an issue held by board:stalled (an honoured stop) is
+    # never re-marked as displaced, even with a stalled (non-proven) newest
+    # marker; the same merge without the label is still flagged.
+    held = [{"issue": 6, "pr": 601, "merged_at": "2026-01-01T00:00:00Z"}]
+    stalled_comments = {6: [{"created_at": "2026-01-01T01:00:00Z",
+                             "body": "Stopped -- " + MARKER.format(step="stalled"),
+                             "user": BOT_USER}]}
+    for name, stalled, expected in (
+            ("board:stalled issue not re-marked", {6}, []),
+            ("released issue flagged again", set(),
+             [{"issue": 6, "merged_pr": 601, "recorded_reason": "prove run displaced"}])):
+        got = find_undetected_merges(held, stalled_comments, BOT_LOGIN, (),
+                                     stalled_issue_numbers=stalled)
+        if got != expected:
+            failures += 1
+            print("::error::verify-board-prove-displacement: {0}: expected "
+                  "{1!r}, got {2!r}.".format(name, expected, got))
+        else:
+            print("[ok] {0}: find_undetected_merges() == {1!r}".format(name, got))
+
     print("verify-board-prove-displacement: {0} failure(s).".format(failures))
     return 1 if failures else 0
 

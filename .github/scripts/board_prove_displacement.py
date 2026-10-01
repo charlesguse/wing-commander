@@ -38,7 +38,7 @@ PROVEN_STEPS = ("prove", "proven")
 
 
 def find_undetected_merges(merged_prs, issues_by_number, bot_login,
-                           in_progress_head_refs=()):
+                           in_progress_head_refs=(), stalled_issue_numbers=()):
     """research.md D8, FR-010b: an issue whose most recently merged,
     loop-labeled fix PR left no later `prove`/`proven` marker -- the
     signature of a `pull_request: closed` run displaced from its own
@@ -72,11 +72,17 @@ def find_undetected_merges(merged_prs, issues_by_number, bot_login,
     "prove run displaced"}, ...]`, deterministic and code-derived
     (Principle IX) -- never an agent's read of the issue thread."""
     in_progress_head_refs = set(in_progress_head_refs)
+    # An issue carrying board:stalled is held by a maintainer (e.g. an
+    # honoured stop request, spec 097): never re-marked as displaced while
+    # held; removing the label lets the next tick pick it up again (FR-008).
+    stalled_issue_numbers = set(stalled_issue_numbers)
     undetected = []
     for row in merged_prs:
         if row.get("head_ref") and row["head_ref"] in in_progress_head_refs:
             continue
         issue_number = row["issue"]
+        if issue_number in stalled_issue_numbers:
+            continue
         comments = issues_by_number.get(issue_number) or []
         pair = read_marker_with_timestamp(comments, bot_login)
         if pair is not None:

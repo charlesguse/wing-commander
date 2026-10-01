@@ -299,6 +299,7 @@ jobs:
           PYEOF
 
           echo '{}' > "$RUNNER_TEMP/board-displacement-comments-by-issue.json"
+          : > "$RUNNER_TEMP/board-displacement-stalled.txt"
           mapfile -t displacement_issues < <(jq -r '.[].issue' "$RUNNER_TEMP/board-recent-merges-by-issue.json")
           for number in "${displacement_issues[@]}"; do
             # Issue #557: fails the step on error -- see the select step's
@@ -311,6 +312,13 @@ jobs:
               echo "::error::board-loop: could not fetch the comments of issue #$number -- its board item marker cannot be read, so the proof-run-displacement check is not decided (#557)."
               exit 1
             fi
+            # A board:stalled issue is held and must not be re-marked (spec
+            # 097 FR-008); a failed read is fatal, never "not stalled".
+            if ! labels="$(gh api "repos/$GITHUB_REPOSITORY/issues/$number" --jq '[.labels[].name] | join(",")')"; then
+              echo "::error::board-loop: could not read issue #$number's labels -- the proof-run-displacement check is not decided."
+              exit 1
+            fi
+            case ",$labels," in *,board:stalled,*) echo "$number" >> "$RUNNER_TEMP/board-displacement-stalled.txt" ;; esac
             jq --arg number "$number" --slurpfile comments "$RUNNER_TEMP/board-displacement-comments-$number.json" \
               '. + {($number): $comments[0]}' "$RUNNER_TEMP/board-displacement-comments-by-issue.json" \
               > "$RUNNER_TEMP/board-displacement-comments-by-issue.tmp"
@@ -320,6 +328,7 @@ jobs:
           MERGED_PRS_PATH="$RUNNER_TEMP/board-recent-merges-by-issue.json" \
             COMMENTS_BY_ISSUE_PATH="$RUNNER_TEMP/board-displacement-comments-by-issue.json" \
             RUNS_PATH="$RUNNER_TEMP/board-displacement-runs.json" \
+            STALLED_PATH="$RUNNER_TEMP/board-displacement-stalled.txt" \
             BOT_LOGIN="$BOT_LOGIN" \
             python3 - <<'PYEOF'
           import json
@@ -339,8 +348,12 @@ jobs:
           in_progress_head_refs = {
               run.get("headBranch") or "" for run in runs if run.get("status") != "completed"}
 
+          with open(os.environ["STALLED_PATH"], encoding="utf-8") as fh:
+              stalled = {int(line) for line in fh if line.strip()}
+
           undetected = find_undetected_merges(
-              merged_prs, issues_by_number, os.environ["BOT_LOGIN"], in_progress_head_refs)
+              merged_prs, issues_by_number, os.environ["BOT_LOGIN"], in_progress_head_refs,
+              stalled_issue_numbers=stalled)
 
           with open(os.path.join(os.environ["RUNNER_TEMP"], "board-undetected-merges.json"), "w", encoding="utf-8") as fh:
               json.dump(undetected, fh)
@@ -911,14 +924,18 @@ jobs:
           from board_prove_recovery import find_recoverable_items
 
           with open(os.environ["OPEN_ISSUES_PATH"], encoding="utf-8") as fh:
-              open_issue_numbers = {row["number"] for row in json.load(fh)}
+              open_issues = json.load(fh)
+          open_issue_numbers = {row["number"] for row in open_issues}
+          stalled = {row["number"] for row in open_issues
+                     if any(label.get("name") == "board:stalled" for label in row.get("labels") or [])}
           with open(os.environ["MERGED_PRS_PATH"], encoding="utf-8") as fh:
               merged_prs_by_issue = json.load(fh)
           with open(os.environ["COMMENTS_BY_ISSUE_PATH"], encoding="utf-8") as fh:
               comments_by_issue = json.load(fh)
 
           candidates = find_recoverable_items(
-              merged_prs_by_issue, comments_by_issue, open_issue_numbers, os.environ["BOT_LOGIN"])
+              merged_prs_by_issue, comments_by_issue, open_issue_numbers, os.environ["BOT_LOGIN"],
+              stalled_issue_numbers=stalled)
           print(json.dumps(candidates[0] if candidates else None))
           PYEOF
           )"
@@ -952,6 +969,10 @@ jobs:
           bot-login: ${{ steps.ctx.outputs.bot-slug }}[bot]
           issue-number: ${{ steps.recovery-candidate.outputs.issue-number }}
           initial-paused: ${{ vars.WING_COMMANDER_BOARD_LOOP_PAUSED == 'true' }}
+          # A recovery candidate is a merged item: no live branch or base to
+          # preserve on a stop-point record (spec 097 FR-010).
+          marker-branch: ''
+          marker-base-sha: ''
 
       # research.md D4/FR-001a, CLAUDE.md "Shared logic has exactly one
       # home": the same composite the prove job's own "Check whether the
@@ -1539,7 +1560,11 @@ jobs:
       group: wing-commander-board-loop
       cancel-in-progress: false
     outputs:
-      outcome: ${{ steps.decide.outputs.outcome }}
+      # Maintainer feedback (spec 097): a stand-down must not read
+      # downstream as 'proceed' -- route's own if: already excludes it
+      # (needs.triage.outputs.outcome == 'proceed'), and this job's own
+      # continuation output stops lying about it too.
+      outcome: ${{ steps.killswitch-recheck.outputs.paused == 'true' && 'stood-down' || steps.decide.outputs.outcome }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -1866,6 +1891,8 @@ jobs:
           bot-login: ${{ steps.ctx.outputs.bot-slug }}[bot]
           issue-number: ${{ needs.select.outputs.issue-number || inputs.directed-issue }}
           initial-paused: ${{ vars.WING_COMMANDER_BOARD_LOOP_PAUSED == 'true' }}
+          marker-branch: ${{ needs.select.outputs.branch }}
+          marker-base-sha: ${{ needs.select.outputs.base-sha }}
 
       - name: Decide the triage verdict
         id: decide
@@ -1924,10 +1951,12 @@ jobs:
       # dispatch's comment never mistakes it for an ordinary lifecycle
       # comment.
       - name: Act on the verdict and post the outcome
+        id: act
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           ISSUE_NUMBER: ${{ needs.select.outputs.issue-number || inputs.directed-issue }}
           PAUSED: ${{ steps.killswitch-recheck.outputs.paused }}
+          STOP_CAUSE_PHRASE: ${{ steps.killswitch-recheck.outputs.stop-cause-phrase }}
           DIRECTED_ATTRIBUTION: >-
             ${{ inputs.directed-stage != '' && format('_Directed proof run
             (stage: `{0}`), dispatched to prove PR #{1} -- selects no board
@@ -1936,9 +1965,15 @@ jobs:
           set -uo pipefail
           outcome="$(jq -r '.outcome' "$RUNNER_TEMP/board-triage-verdict.json")"
           ground="$(jq -r '.ground // empty' "$RUNNER_TEMP/board-triage-verdict.json")"
+          echo "outcome=$outcome" >> "$GITHUB_OUTPUT"
 
           if [ "$PAUSED" = "true" ]; then
-            echo "board-loop: kill switch set immediately before triage's durable action -- standing down without acting." >> "$GITHUB_STEP_SUMMARY"
+            # specs/097-recorded-stop-point FR-014: name the cause actually
+            # observed, never "kill switch" unconditionally -- read from the
+            # wing-commander-board-stop-check composite's own
+            # `stop-cause-phrase` output, the one home for this prose
+            # (maintainer review fold leg-2).
+            echo "board-loop: $STOP_CAUSE_PHRASE set immediately before triage's durable action -- standing down without acting." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           if [ "$outcome" = "defer" ]; then
@@ -2008,6 +2043,39 @@ jobs:
               gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$body"
               ;;
           esac
+
+      # specs/097-recorded-stop-point FR-015/SC-008
+      # (contracts/metrics-classification.md): a second, separate record
+      # from triage-propose's own per-agent metrics call above -- this one
+      # reports what the JOB as a whole did (stood down, or acted on
+      # $outcome), distinguishable from a quiet run by this field alone.
+      - name: Record run outcome (triage)
+        if: always()
+        continue-on-error: true
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-metrics-summary
+        with:
+          transcript-path: ${{ runner.temp }}/wing-commander-no-transcript.json
+          model: ''
+          stage: board-loop
+          # maintainer review fold leg-2: the stop-cause branch reads the
+          # composite's own `stop-cause-run-label` output (one home) rather
+          # than re-deriving "stopped (stop-request)"/"stood down
+          # (kill-switch)" per job.
+          run-label: >-
+            ${{ steps.killswitch-recheck.outputs.stop-cause != '' && format('triage: {0}', steps.killswitch-recheck.outputs.stop-cause-run-label) ||
+                format('triage: {0}', steps.act.outputs.outcome) }}
+          record-path: ${{ runner.temp }}/wing-commander-metrics-record-triage-outcome.json
+          spec-identity-is-own: 'false'
+
+      - name: Upload metrics record (triage outcome)
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v6
+        with:
+          name: metrics-record-triage-outcome
+          path: ${{ runner.temp }}/wing-commander-metrics-record-triage-outcome.json
+          if-no-files-found: ignore
+          retention-days: 90
 
   # Phase 4 (User Story 2, contracts/route-backstop.md): the route-propose
   # agent's fix/spec proposal is only ever narrowed by code, never widened
@@ -2303,6 +2371,8 @@ jobs:
           bot-login: ${{ steps.ctx.outputs.bot-slug }}[bot]
           issue-number: ${{ needs.select.outputs.issue-number }}
           initial-paused: ${{ vars.WING_COMMANDER_BOARD_LOOP_PAUSED == 'true' }}
+          marker-branch: ${{ needs.select.outputs.branch }}
+          marker-base-sha: ${{ needs.select.outputs.base-sha }}
 
       - name: Decide the route
         id: decide
@@ -2380,6 +2450,17 @@ jobs:
               fh.write("verdict={0}\n".format(decision["backstop_verdict"]))
               fh.write("reason={0}\n".format(decision["reason"]))
           PYEOF
+
+      # specs/097-recorded-stop-point FR-014: name the cause actually
+      # observed before route's own durable action (filing a spec-request)
+      # is skipped.
+      - name: Record the stand-down (route)
+        if: steps.killswitch-recheck.outputs.paused == 'true'
+        env:
+          STOP_CAUSE_PHRASE: ${{ steps.killswitch-recheck.outputs.stop-cause-phrase }}
+        run: |
+          set -uo pipefail
+          echo "board-loop: $STOP_CAUSE_PHRASE found immediately before route's durable action -- standing down without acting." >> "$GITHUB_STEP_SUMMARY"
 
       # Board Item Marker (T014). A `spec` verdict ends the run for this
       # item with no branch cut (FR-021); a `fix` verdict proceeds to the
@@ -2537,6 +2618,38 @@ jobs:
           issue-number: ${{ steps.spec_request.outputs.spec-request-number }}
           phrase: "Filed for the routed original"
           artifact-url: ${{ github.server_url }}/${{ github.repository }}/issues/${{ needs.select.outputs.issue-number }}
+
+      # specs/097-recorded-stop-point FR-015/SC-008
+      # (contracts/metrics-classification.md): a second, separate record
+      # from route-propose's own per-agent metrics call above -- this one
+      # reports what the JOB as a whole did (stood down, or its own route
+      # verdict), distinguishable from a quiet run by this field alone.
+      - name: Record run outcome (route)
+        if: always()
+        continue-on-error: true
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-metrics-summary
+        with:
+          transcript-path: ${{ runner.temp }}/wing-commander-no-transcript.json
+          model: ''
+          stage: board-loop
+          # maintainer review fold leg-2: see triage's own run-label comment
+          # above -- same one-home `stop-cause-run-label` read, not a
+          # per-job re-derivation.
+          run-label: >-
+            ${{ steps.killswitch-recheck.outputs.stop-cause != '' && format('route: {0}', steps.killswitch-recheck.outputs.stop-cause-run-label) ||
+                format('route: {0}', steps.decide.outputs.verdict) }}
+          record-path: ${{ runner.temp }}/wing-commander-metrics-record-route-outcome.json
+          spec-identity-is-own: 'false'
+
+      - name: Upload metrics record (route outcome)
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v6
+        with:
+          name: metrics-record-route-outcome
+          path: ${{ runner.temp }}/wing-commander-metrics-record-route-outcome.json
+          if-no-files-found: ignore
+          retention-days: 90
 
   # Phase 5 (User Story 3, contracts/fix-step.md): the fixer works from a
   # `main` fetched in this same run, the full local gate suite must be
@@ -2902,6 +3015,19 @@ jobs:
           bot-login: ${{ steps.ctx.outputs.bot-slug }}[bot]
           issue-number: ${{ needs.select.outputs.issue-number }}
           initial-paused: ${{ vars.WING_COMMANDER_BOARD_LOOP_PAUSED == 'true' }}
+          marker-branch: ${{ needs.select.outputs.branch }}
+          marker-base-sha: ${{ needs.select.outputs.base-sha }}
+
+      # specs/097-recorded-stop-point FR-014: name the cause actually
+      # observed before fix's own durable action (pushing and opening the
+      # PR) is skipped.
+      - name: Record the stand-down (fix)
+        if: steps.gate-suite.outputs.outcome == 'pass' && steps.killswitch-recheck.outputs.paused == 'true'
+        env:
+          STOP_CAUSE_PHRASE: ${{ steps.killswitch-recheck.outputs.stop-cause-phrase }}
+        run: |
+          set -uo pipefail
+          echo "board-loop: $STOP_CAUSE_PHRASE found immediately before fix's durable action -- standing down without acting." >> "$GITHUB_STEP_SUMMARY"
 
       # FR-026/research.md D9: push only on green, then cross-link.
       - name: Push and open the PR
@@ -3136,6 +3262,39 @@ jobs:
           artifact-url: ${{ github.server_url }}/${{ github.repository }}/issues/${{ needs.select.outputs.issue-number }}
           context: "(post-push backstop breach, measured=${{ steps.post-push-breach.outputs.measured }})"
 
+      # specs/097-recorded-stop-point FR-015/SC-008
+      # (contracts/metrics-classification.md): a second, separate record
+      # from the fixer's own per-agent metrics call above -- this one
+      # reports what the JOB as a whole did (stood down, or its own
+      # gate-suite outcome), distinguishable from a quiet run by this field
+      # alone.
+      - name: Record run outcome (fix)
+        if: always()
+        continue-on-error: true
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-metrics-summary
+        with:
+          transcript-path: ${{ runner.temp }}/wing-commander-no-transcript.json
+          model: ''
+          stage: board-loop
+          # maintainer review fold leg-2: see triage's own run-label comment
+          # above -- same one-home `stop-cause-run-label` read, not a
+          # per-job re-derivation.
+          run-label: >-
+            ${{ steps.killswitch-recheck.outputs.stop-cause != '' && format('fix: {0}', steps.killswitch-recheck.outputs.stop-cause-run-label) ||
+                format('fix: gate-suite {0}', steps.gate-suite.outputs.outcome) }}
+          record-path: ${{ runner.temp }}/wing-commander-metrics-record-fix-outcome.json
+          spec-identity-is-own: 'false'
+
+      - name: Upload metrics record (fix outcome)
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v6
+        with:
+          name: metrics-record-fix-outcome
+          path: ${{ runner.temp }}/wing-commander-metrics-record-fix-outcome.json
+          if-no-files-found: ignore
+          retention-days: 90
+
   # Phase 6 (User Story 4, contracts/review-and-findings.md): a
   # context-isolated reviewer (a separate job -- no shared transcript,
   # memory, or prompt continuation from the fixer, FR-028) posts a
@@ -3175,7 +3334,11 @@ jobs:
       cancel-in-progress: false
     outputs:
       pr-number: ${{ steps.pr.outputs.pr-number }}
-      outcome: ${{ steps.round.outputs.outcome }}
+      # Maintainer feedback (spec 097): a stand-down must not read
+      # downstream (readiness's needs.review.outputs.outcome == 'converged'
+      # check) as 'converged' -- readiness's own if: already excludes it,
+      # and this job's own continuation output stops lying about it too.
+      outcome: ${{ steps.killswitch-recheck.outputs.paused == 'true' && 'stood-down' || steps.round.outputs.outcome }}
     steps:
       # A directed dispatch needs the issue marker read -- and therefore the
       # pristine snapshot below -- before it even knows which PR to check
@@ -3284,6 +3447,14 @@ jobs:
           # comment so a later resume can compare SHAs directly rather
           # than trusting a commit timestamp (maintainer review of #885).
           echo "head-sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          # specs/097-recorded-stop-point (maintainer review fold leg-3):
+          # needs.select.outputs.base-sha is select's own one-time read, not
+          # refreshed on a same-run fix->review handoff -- compute it fresh
+          # here instead, for the stop-point record's marker.
+          # Best-effort: a failed fetch leaves base-sha empty on the record
+          # rather than failing the review round.
+          git fetch --no-tags --quiet origin main || echo "::warning::board-loop review: could not refresh origin/main; the stop-point record's base-sha may be empty."
+          echo "base-sha=$(git merge-base origin/main HEAD 2>/dev/null || true)" >> "$GITHUB_OUTPUT"
 
       # #488: see wing-commander-board-labels; continue-on-error so a
       # missed create cannot block the review round's own outcome step.
@@ -3891,6 +4062,24 @@ jobs:
           bot-login: ${{ steps.ctx.outputs.bot-slug }}[bot]
           issue-number: ${{ needs.select.outputs.issue-number || inputs.directed-issue }}
           initial-paused: ${{ vars.WING_COMMANDER_BOARD_LOOP_PAUSED == 'true' }}
+          # specs/097-recorded-stop-point (maintainer review fold leg-3):
+          # needs.select.outputs.branch/base-sha is select's own one-time
+          # read -- empty on a same-run fix->review handoff, which would
+          # record branch: null. steps.pr/steps.checkout-pr are this job's
+          # own fresh reads of the PR actually under review.
+          marker-branch: ${{ steps.pr.outputs.branch }}
+          marker-base-sha: ${{ steps.checkout-pr.outputs.base-sha }}
+
+      # specs/097-recorded-stop-point FR-014: name the cause actually
+      # observed before review's own durable actions (posting the round
+      # outcome, pushing a fixup) are skipped.
+      - name: Record the stand-down (review)
+        if: steps.killswitch-recheck.outputs.paused == 'true'
+        env:
+          STOP_CAUSE_PHRASE: ${{ steps.killswitch-recheck.outputs.stop-cause-phrase }}
+        run: |
+          set -uo pipefail
+          echo "board-loop: $STOP_CAUSE_PHRASE found immediately before review's durable action -- standing down without acting." >> "$GITHUB_STEP_SUMMARY"
 
       # T042/T044/FR-030/FR-031: zero open in-scope findings advances to
       # readiness; findings remain and the round budget (research.md D18,
@@ -4176,6 +4365,39 @@ jobs:
             || failure="(the failing gate could not be rendered)"
           gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'A review-fixup follow-up commit failed the local gate suite before any push -- nothing was pushed, the PR is unchanged:\n\n%s' "$failure")"
 
+      # specs/097-recorded-stop-point FR-015/SC-008
+      # (contracts/metrics-classification.md): a second, separate record
+      # from the reviewer's/review-fixup's own per-agent metrics calls
+      # above -- this one reports what the JOB as a whole did (stood down,
+      # or its own round outcome), distinguishable from a quiet run by this
+      # field alone.
+      - name: Record run outcome (review)
+        if: always()
+        continue-on-error: true
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-metrics-summary
+        with:
+          transcript-path: ${{ runner.temp }}/wing-commander-no-transcript.json
+          model: ''
+          stage: board-loop
+          # maintainer review fold leg-2: see triage's own run-label comment
+          # above -- same one-home `stop-cause-run-label` read, not a
+          # per-job re-derivation.
+          run-label: >-
+            ${{ steps.killswitch-recheck.outputs.stop-cause != '' && format('review: {0}', steps.killswitch-recheck.outputs.stop-cause-run-label) ||
+                format('review: {0}', steps.round.outputs.outcome) }}
+          record-path: ${{ runner.temp }}/wing-commander-metrics-record-review-outcome.json
+          spec-identity-is-own: 'false'
+
+      - name: Upload metrics record (review outcome)
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v6
+        with:
+          name: metrics-record-review-outcome
+          path: ${{ runner.temp }}/wing-commander-metrics-record-review-outcome.json
+          if-no-files-found: ignore
+          retention-days: 90
+
   # Phase 7 (User Story 5, contracts/readiness-report.md): every condition
   # is re-derived against the PR's exact head SHA; the loop reports ready
   # or names the unmet condition, and NEVER merges, approves, or enables
@@ -4376,6 +4598,12 @@ jobs:
               fh.write("holds={0}\n".format("true" if holds else "false"))
               fh.write("measured=files={0},lines={1}\n".format(files, lines))
               fh.write("breach-retry={0}\n".format("true" if breach_retry else "false"))
+              # specs/097-recorded-stop-point (maintainer review fold
+              # leg-3): the base-sha this step already computed fresh, for
+              # the stop-point record's marker -- needs.select.outputs.
+              # base-sha is select's own one-time read and can be stale by
+              # the time readiness runs.
+              fh.write("base-sha={0}\n".format(os.environ.get("BASE_SHA", "")))
           PYEOF
 
       # FR-051/FR-052 (#604): this re-check gates EVERY durable action
@@ -4395,14 +4623,28 @@ jobs:
           bot-login: ${{ steps.ctx.outputs.bot-slug }}[bot]
           issue-number: ${{ needs.select.outputs.issue-number || inputs.directed-issue }}
           initial-paused: ${{ vars.WING_COMMANDER_BOARD_LOOP_PAUSED == 'true' }}
+          # specs/097-recorded-stop-point (maintainer review fold leg-3):
+          # needs.select.outputs.branch/base-sha is select's own one-time
+          # read -- empty on a same-run review->readiness handoff, which
+          # would record branch: null. steps.pr/steps.final-diff-backstop
+          # are this job's own fresh reads of the PR actually under
+          # readiness.
+          marker-branch: ${{ steps.pr.outputs.branch }}
+          marker-base-sha: ${{ steps.final-diff-backstop.outputs.base-sha }}
 
       # FR-052: the stop point is recorded; nothing durable is written.
       - name: Record the stand-down (readiness)
         if: steps.killswitch-recheck.outputs.paused == 'true'
         env:
           ISSUE_NUMBER: ${{ needs.select.outputs.issue-number || inputs.directed-issue }}
+          STOP_CAUSE_PHRASE: ${{ steps.killswitch-recheck.outputs.stop-cause-phrase }}
         run: |
-          echo "board-loop: kill switch or stop request found immediately before readiness's durable actions on issue #$ISSUE_NUMBER -- standing down without acting (#604)." >> "$GITHUB_STEP_SUMMARY"
+          set -uo pipefail
+          # specs/097-recorded-stop-point FR-014: name the cause actually
+          # observed, never "kill switch or stop request" unconditionally --
+          # read from the wing-commander-board-stop-check composite's own
+          # `stop-cause-phrase` output (maintainer review fold leg-2).
+          echo "board-loop: $STOP_CAUSE_PHRASE found immediately before readiness's durable actions on issue #$ISSUE_NUMBER -- standing down without acting (#604)." >> "$GITHUB_STEP_SUMMARY"
 
       # Zero open in-scope findings is trusted from the state machine
       # itself, not re-derived: readiness is entered ONLY when review's own
@@ -4652,7 +4894,16 @@ jobs:
           transcript-path: ${{ runner.temp }}/wing-commander-no-transcript.json
           model: ''
           stage: board-loop
-          run-label: ${{ steps.decide.outputs.ready == 'true' && 'ready' || 'not ready' }}
+          # specs/097-recorded-stop-point FR-015/SC-008
+          # (contracts/metrics-classification.md): a stop-request/kill-switch
+          # stand-down is distinguishable from an ordinary ready/not-ready
+          # run from this one field alone.
+          # maintainer review fold leg-2: see triage's own run-label comment
+          # above -- same one-home `stop-cause-run-label` read, not a
+          # per-job re-derivation.
+          run-label: >-
+            ${{ steps.killswitch-recheck.outputs.stop-cause != '' && format('readiness: {0}', steps.killswitch-recheck.outputs.stop-cause-run-label) ||
+                (steps.decide.outputs.ready == 'true' && 'ready' || 'not ready') }}
           record-path: ${{ runner.temp }}/wing-commander-metrics-record-readiness.json
           spec-identity-is-own: 'false'
 
@@ -4929,6 +5180,23 @@ jobs:
           app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
           private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
 
+      # #488: board-loop.yml's own labels (see wing-commander-board-labels).
+      # This used to be ensured inside wing-commander-board-stop-check's own
+      # composite; moved out to every caller's own job (spec 097-recorded-
+      # stop-point review) because a composite's own `uses: ./...` step
+      # resolves against $GITHUB_WORKSPACE, not the composite's own
+      # directory -- inside fix/review/readiness that workspace is the
+      # item's own (possibly attacker-controlled) branch checkout, so the
+      # nested call ran that composite's definition as the branch carried
+      # it, with the App token, whenever a stop request was honoured.
+      # continue-on-error: a missed create cannot block prove's own
+      # close/redrive step.
+      - name: Ensure board-loop's own labels exist
+        continue-on-error: true
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-board-labels
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
+
       # research.md D15 + contracts/prove-step.md "Re-drive". The
       # dispatchable set and the uses-graph are read off the checked-out
       # tree at this exact moment (the merge commit's own tree), so a
@@ -4999,6 +5267,13 @@ jobs:
           issue-number: ${{ needs.prove-gate.outputs.issue-number }}
           initial-paused: ${{ vars.WING_COMMANDER_BOARD_LOOP_PAUSED == 'true' }}
           check-issue-closed: "true"
+          # prove tracks no branch of its own (it acts on merge evidence or
+          # redrives a workflow, never checks one out) -- explicit empty
+          # strings, matching the composite's own defaults, so this call
+          # site is wired like every other one rather than silently relying
+          # on the default (maintainer review: Gate 135 check 8).
+          marker-branch: ""
+          marker-base-sha: ""
 
       # research.md D4/FR-001a, CLAUDE.md "Shared logic has exactly one
       # home": the same composite the select job's own recovery dispatch
@@ -5258,10 +5533,17 @@ jobs:
           DIRECTED_STAGE: ${{ steps.decide.outputs.directed-stage }}
           CONCLUSION: ${{ steps.redrive.outputs.conclusion }}
           DISAMBIGUATED_REASON: ${{ steps.disambiguate.outputs.reason }}
+          STOP_CAUSE_RUN_LABEL: ${{ steps.killswitch-recheck.outputs.stop-cause-run-label }}
         run: |
           set -uo pipefail
+          # specs/097-recorded-stop-point FR-014/FR-015: name the cause
+          # actually observed, distinguishably, in the metrics run_label
+          # (contracts/metrics-classification.md) -- never an undifferentiated
+          # "stood down" for every cause. Read from the wing-commander-
+          # board-stop-check composite's own `stop-cause-run-label` output,
+          # the one home for this suffix (maintainer review fold leg-2).
           if [ "${{ steps.killswitch-recheck.outputs.paused }}" = "true" ]; then
-            label="stood down"
+            label="prove: $STOP_CAUSE_RUN_LABEL"
           elif [ "${{ steps.decide.outputs.actions-only }}" != "true" ]; then
             if [ "${{ inputs.directed-recovery }}" = "true" ]; then
               label="closed on merge evidence alone (recovered)"

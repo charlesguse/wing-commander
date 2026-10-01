@@ -1,0 +1,19 @@
+{
+  "comments": [
+    {
+      "body": "stop - old stale request, well before any loop run",
+      "author_association": "OWNER",
+      "created_at": "2025-06-01T00:00:00Z",
+      "user": {"login": "maintainer", "type": "User"}
+    },
+    {
+      "body": "**Run:** https://github.com/example/example/actions/runs/444\n\n<!-- wing-commander-board-item: {\"step\": \"stalled\", \"round\": 0, \"pr\": null, \"branch\": null, \"base_sha\": null} -->",
+      "author_association": "NONE",
+      "created_at": "2025-06-01T00:05:00Z",
+      "user": {"login": "wing-commander-bot[bot]", "type": "Bot"}
+    }
+  ],
+  "current_run_id": "555",
+  "bot_login": "wing-commander-bot[bot]",
+  "expected": {"stand_down": false, "cancel_run_id": null}
+}
