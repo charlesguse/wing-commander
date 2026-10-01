@@ -400,3 +400,9 @@ Task: "Add fixtures under wing-commander-fold-queue-release/tests/"
 ### Round-3 review of 9e87d013 (maintainer, 2026-10-01)
 
 - [ ] T067 **The uncorrelated grace reclaim takes live runs** (fold-queue-await.sh:173-181, comment at pr-conversation.yml:3457-3467). An uncorrelated implement head is reclaimed after about 15 minutes whether or not its run exists. So after a poll miss, a live 16-125-minute implement run loses its ticket, and the next dispatch enters the group mid-run. The comment says reclaim happens only "if the dispatched run turns out not to exist". **Fix:** item 2's (T065) self-correlation, or at minimum correct the comment.
+
+## Maintainer Feedback
+
+### Round-3 review of 9e87d013 (maintainer, 2026-10-01)
+
+- [ ] T068 **An orphaned act ticket now blocks its own run for up to 6 hours** (fold-queue-await.sh:124-126). If run A's own act ticket is orphaned (its release gave up, or the runner was lost), A's `fold-turn-dispatch` waits behind a head whose run is A itself. A is `in_progress`, so the new extension renews until the job timeout and wedges every other waiter on the spec. Before T060 this was a 30-minute timeout. **Fix:** never extend for, and allow reclaiming, a head whose `head_run_id` is the waiter's own run but whose token isn't the waiter's.
