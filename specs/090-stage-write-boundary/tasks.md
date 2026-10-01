@@ -703,3 +703,7 @@ and evaporating into PR-body prose) that this feature exists to end.
 
 - [ ] Make the "Route out-of-boundary tasks" step run regardless of `findings-filing-enabled`, or give routing its own enablement toggle, so disabling defect filing doesn't also silently disable FR-007 routing while the loop still reports "routed"
 - [ ] Surface `findings-cap`'s clamp-to-3 limit so a 4th out-of-boundary task in one cycle isn't silently dropped (FR-007/SC-005)
+
+## Maintainer Feedback — filed routed-item text contradicts itself (PR #836 review, item 7)
+
+- [ ] In `classify-out-of-boundary-tasks.sh` (~:103), reword the body from "is **inside** the implement stage's write boundary" to "is on the implement stage's no-write list", matching the title's "outside" framing
