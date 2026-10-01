@@ -927,7 +927,8 @@ jobs:
           # is never left empty. Reuses board_eligibility.py's own
           # PRE_FIX_STEPS/FIX_OR_LATER_STEPS rather than a second,
           # parallel step-vocabulary list.
-          step_resolution_json="$(MARKER_STEP="$marker_step" MARKER_JSON="$marker_json" BRANCH="$branch" \
+          step_resolution_json="$(COMMENTS_JSON="$(cat "$RUNNER_TEMP/board-issue-comments.json")" \
+              MARKER_STEP="$marker_step" MARKER_JSON="$marker_json" BRANCH="$branch" \
               MARKER_PR="$marker_pr" PR_FROM_MARKER="$pr_from_marker" PR_FROM_FALLBACK="$pr_from_fallback" PR_OWNED="$pr_owned" \
               PR_STATE="$pr_state" PR_NUMBER="$pr_number" MARKER_ROUND="$marker_round" \
               MARKER_BASE_SHA="$marker_base_sha" python3 - <<'PYEOF'
@@ -1062,9 +1063,7 @@ jobs:
                   # review when the PR's head has moved since the loop's
                   # own last resolved review verdict (or none is
                   # resolvable), at readiness when it has not.
-                  comments_path = os.path.join(os.environ.get("RUNNER_TEMP", ""), "board-issue-comments.json")
-                  with open(comments_path, encoding="utf-8") as fh:
-                      comments = json.load(fh)
+                  comments = json.loads(os.environ.get("COMMENTS_JSON") or "[]")
                   moved = head_moved_since_last_review(pr_number, comments, os.environ.get("BOT_LOGIN") or "")
                   step = "review" if moved else "readiness"
                   note = "recovered pr {0} resolved to {1} -- {2} (FR-006b)".format(

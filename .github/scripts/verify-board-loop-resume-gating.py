@@ -2094,7 +2094,7 @@ def _mutations(text):
         'board_item_marker.py" --step BREACH_STEP --pr "$PR_NUMBER" --branch "$BRANCH" --base-sha "$BASE_SHA")"',
         'board_item_marker.py" --step review --pr "$PR_NUMBER" --branch "$BRANCH" --base-sha "$BASE_SHA")"')
     sub("resume fallback sends a breach marker to review",
-        'step = BREACH_STEP if marker_step == BREACH_STEP else "review"', 'step = "review"')
+        "              if marker_step == BREACH_STEP:", "              if False:")
     sub("readiness without the step=breach resume branch",
         "        || (needs.select.outputs.step == 'breach' && needs.select.outputs.pr != '')\n", "",
         after="\n  readiness:\n")
