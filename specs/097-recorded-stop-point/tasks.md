@@ -631,3 +631,7 @@ kept to one session to avoid edit collisions).
 ## Maintainer Feedback
 
 - [ ] **Blocking:** The self-test doesn't cover the `CHECKS` registry — deleting `("check 7", …)` or `("check 3", …)` from `CHECKS` in `verify-stop-point-recording.py` leaves `--self-test` at exit 0 and the gate at 0 failures, and nothing asserts callers pass `marker-branch`/`marker-base-sha`. Add a self-test assertion that `{fn for _, fn in CHECKS}` equals the set of checks the self-tests exercise, and add a check that the six `board-loop.yml` call sites wire `marker-branch`/`marker-base-sha`.
+
+## Maintainer Feedback
+
+- [ ] **Blocking (CLAUDE.md single home):** The stop-cause wording is pasted into six places: the `case "$STOP_CAUSE"` phrase block at `board-loop.yml` triage (~1697), route (~2183), fix (~2750), review (~3789), readiness (~4340), and prove's variant (~5194); the `stop-cause → run-label` expression is separately copied into six metrics steps. Add a `stop-cause-phrase` output (and a run-label prefix) on the `wing-commander-board-stop-check` composite, consumed at each of the six sites instead of being re-derived. Extend Gate 135 or Gate 60 to fail if the `case` block reappears in a workflow.
