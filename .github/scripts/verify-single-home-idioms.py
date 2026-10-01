@@ -487,7 +487,7 @@ class _LineMap(dict):
     key or show up in `.items()` (issue #758)."""
 
     line = 0
-    key_lines = {}
+    key_lines = None
 
 
 class _LineMarkedLoader(yaml.SafeLoader):
@@ -506,7 +506,7 @@ def _construct_line_map(loader, node):
     data.update(loader.construct_mapping(node))
     for key_node, _value in node.value:
         if isinstance(key_node, yaml.ScalarNode):
-            data.key_lines.setdefault(key_node.value, key_node.start_mark.line + 1)
+            data.key_lines[key_node.value] = key_node.start_mark.line + 1
 
 
 _LineMarkedLoader.add_constructor(
@@ -523,7 +523,7 @@ def load_yaml(root, path):
 def step_run_line(step):
     """1-based line of a step's own `run:` key (the step's start line if
     the key's position is unknown) -- see _LineMarkedLoader."""
-    key_lines = getattr(step, "key_lines", {})
+    key_lines = getattr(step, "key_lines", None) or {}
     return key_lines.get("run") or getattr(step, "line", 0) or 1
 
 
@@ -1684,6 +1684,47 @@ def selftest_composite_checkout_order_line_attribution():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+# One violating run: body per check that locates its finding with
+# step_run_line(); selftest_per_step_line_attribution prefixes each with a
+# shared `set -uo pipefail` opener (issue #758).
+PER_STEP_LINE_CASES = (
+    ("marker-write",
+     "          python3 -c \"import sys; "
+     "sys.path.insert(0, '.github/scripts'); "
+     "from board_item_marker import write_marker; "
+     "write_marker('x', 1, 2, 'b', 'sha')\"\n"),
+    ("pr-branch",
+     "          head=$(gh pr view 1 --json headRefName --jq .headRefName)\n"
+     "          echo \"pr-number=1\" >> \"$GITHUB_OUTPUT\"\n"
+     "          echo \"branch=${head}\" >> \"$GITHUB_OUTPUT\"\n"),
+    ("failure-issue",
+     "          gh label create \"third:failed\" --color B60205 --force\n"
+     "          gh issue list --label \"third:failed\" --state open "
+     "--json number --jq '.[0].number // empty'\n"),
+    ("outstanding-task-item",
+     "          gh issue comment \"$N\" --body \"- [ ] a third paste "
+     "\u2014 $URL\"\n"),
+    ("post-review-comment",
+     "          gh api \"repos/$R/pulls/1/reviews\" -f body=x -f event=COMMENT\n"),
+    ("review-finding-fingerprint",
+     "          python3 - <<'PYEOF'\n"
+     "          import hashlib\n"
+     "          fp = hashlib.sha256(\"{0}|{1}|{2}\".format(\n"
+     "              issue_number, norm(title), norm(file_path)\n"
+     "          ).encode(\"utf-8\")).hexdigest()\n"
+     "          PYEOF\n"),
+    ("fold-commit",
+     "          jq --arg actor \"$ACTOR_LOGIN\" '\n"
+     "            .stage = \"implement\"\n"
+     "            | .pending_re_review_from = (((.pending_re_review_from "
+     "// []) + (if $actor == \"\" then [] else [$actor] end)) | unique)\n"
+     "          ' \"$SPEC_DIR/spec-meta.json\" > /tmp/m.json\n"),
+    ("fold-dispatch",
+     "          git fetch --quiet origin \"refs/heads/${SPEC_BRANCH}\" "
+     "|| true\n"),
+)
+
+
 def selftest_per_step_line_attribution(check_key, violating_body):
     """Issue #758: a per-step finding must name the violating step's own
     line. The decoy step opens its `run:` with the same common line
@@ -2155,17 +2196,10 @@ def run_selftest():
         "        with:\n          path: .wc-pristine-repo\n"
         "      - uses: actions/checkout@v5\n")
     selftest_composite_checkout_order_line_attribution()
-    selftest_per_step_line_attribution(
-        "marker-write",
-        "          python3 -c \"import sys; "
-        "sys.path.insert(0, '.github/scripts'); "
-        "from board_item_marker import write_marker; "
-        "write_marker('x', 1, 2, 'b', 'sha')\"\n")
-    selftest_per_step_line_attribution(
-        "pr-branch",
-        "          head=$(gh pr view 1 --json headRefName --jq .headRefName)\n"
-        "          echo \"pr-number=1\" >> \"$GITHUB_OUTPUT\"\n"
-        "          echo \"branch=${head}\" >> \"$GITHUB_OUTPUT\"\n")
+    # Every per-step check that reports step_run_line() gets the same
+    # decoy test, so one regressing to a first-text-match lookup fails here.
+    for check_key, body in PER_STEP_LINE_CASES:
+        selftest_per_step_line_attribution(check_key, body)
     selftest_waived_copy_passes()
     selftest_stale_waiver_fails()
     selftest_promotion_fails()
