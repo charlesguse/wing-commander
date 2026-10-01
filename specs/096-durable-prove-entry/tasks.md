@@ -617,8 +617,8 @@ Task: "New Gate 136: verify-board-prove-recovery.py fixtures"
 - [X] Verify, once the FR-011 `--outcome-reason` fix lands, this skip also prevents a duplicate proof dispatch on the next tick (today's busy check only sees `[directed:` runs): confirmed by inspection -- while a merge's own run stays in progress, the skip means `find_undetected_merges()` writes it no marker at all, so `board_prove_recovery.is_recoverable()` (which requires an existing `outcome_reason` of `RECORDED_REASON`/`"uncorrelated"`) has nothing to act on and `find_recoverable_items()` never returns it; a recovery dispatch can only be attempted once a marker actually exists, which happens either when the in-progress run itself writes one (success path) or, once it reaches `status: completed` with no marker at all, on the FIRST tick after that (the ordinary "no marker" branch, now correctly recorded with `--outcome-reason`).
 
 ## Maintainer Feedback — resume step's MERGED step=prove path has no consumer
-- [ ] In `board_eligibility.select()`'s fallback, hold fix-or-later markers whose PR is MERGED, next to the existing `prove` skip (FR-009), so the oldest such item stops being re-admitted every tick.
-- [ ] Fix the stale docstrings at `board_eligibility.py:362` and `board_prove_displacement.py:8`.
+- [X] In `board_eligibility.select()`'s fallback, hold fix-or-later markers whose PR is MERGED, next to the existing `prove` skip (FR-009), so the oldest such item stops being re-admitted every tick.
+- [X] Fix the stale docstrings at `board_eligibility.py:362` and `board_prove_displacement.py:8`.
 
 
 ## Maintainer Feedback — recovery step has no continue-on-error and sits in front of resume

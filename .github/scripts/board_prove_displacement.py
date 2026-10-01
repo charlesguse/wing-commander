@@ -9,10 +9,17 @@ contracts/concurrency-groups.md's "What does not change" section keeps this
 repository's existing behaviour: the hourly schedule tick can still displace
 a queued `pull_request: closed` run's own pending slot in
 `wing-commander-board-loop` before that run's `prove-gate`/`prove` jobs ever
-execute. Nothing about this feature's own directed-proof mechanism helps
-here -- that mechanism only exists once `prove-gate` has already run and
+execute. Nothing about spec 060's own directed-proof mechanism helps here on
+its own -- that mechanism only exists once `prove-gate` has already run and
 decided `eligible`. This module detects the displacement AFTER the fact,
-from durable state, so the merge is not silently forgotten.
+from durable state, so the merge is not silently forgotten -- and, as of
+specs/096-durable-prove-entry, it is also the one consumer for a merged fix
+PR whose issue never reached a `prove`/`proven` marker at all (an
+`awaiting-merge` or other fix-or-later marker board_eligibility.select()'s
+own fallback now holds rather than re-admits, since nothing in select's own
+job graph can resolve it): both shapes read identically here -- no later
+`prove`/`proven` marker since the merge -- and feed the same `select` step's
+own directed recovery dispatch (research.md D3/D5/D6).
 """
 import sys
 
