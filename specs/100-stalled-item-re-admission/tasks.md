@@ -466,3 +466,7 @@ T023's full suite run — this is the same regression concern noted under
 ## Maintainer Feedback (review of 7b4b0825, PR #885)
 
 - [ ] T032 [US3] Nit: fix summary wording — clause 2b's note never says the item was re-admitted from a stall; a failed `gh pr view` currently reads the same as 'no verdict found' because stderr is discarded (distinguish the two); clause 4's note describes a re-admitted triage-handover stall as a 'stale marker', which should instead name it as a re-admission.
+
+## Maintainer Feedback (review of 7b4b0825, PR #885)
+
+- [ ] T033 [US3] Nit: add `-R "$GITHUB_REPOSITORY"` to the `gh pr view` call at board_item_marker.py:221, matching this script's other `gh` invocations.
