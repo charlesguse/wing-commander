@@ -2602,13 +2602,22 @@ jobs:
       # specs/090-stage-write-boundary (FR-007, FR-013): files each
       # out-of-boundary task this cycle classified as a tracked, non-
       # authorizing item -- never left to resurface every cycle or
-      # evaporate into prose. Guarded on `routed` (only true once the loop
-      # is actually ending on out-of-boundary work alone) and excludes a
+      # evaporate into prose. PR #836 review, item 12: a mixed remainder
+      # (some out-of-boundary, some ordinary) never reaches a clean
+      # `routed=true` hand-off, since `routed` requires ALL unchecked work
+      # to be out-of-boundary -- so the old `routed == 'true'`-only guard
+      # silently dropped every out-of-boundary task in a mixed set once the
+      # loop stalled (`handoff=true`) or hit its iteration cap, the exact
+      # loss FR-007 exists to end. Fires whenever this cycle classified at
+      # least one out-of-boundary task (`write-boundary-findings-json !=
+      # '[]'`) AND the loop is ending for any reason -- a clean routed
+      # hand-off, spec 059's own stall hand-off, or the iteration cap --
+      # never only on the narrow all-out-of-boundary path. Excludes a
       # truncated run (FR-013), mirroring "File findings from this run"'s
       # own position and continue-on-error safety net.
       - name: Route out-of-boundary tasks
         id: route-out-of-boundary
-        if: ${{ !cancelled() && steps.final.outputs.ok == 'true' && steps.final.outputs.truncated != 'true' && steps.final.outputs.routed == 'true' }}
+        if: ${{ !cancelled() && steps.final.outputs.ok == 'true' && steps.final.outputs.truncated != 'true' && steps.final.outputs.write-boundary-findings-json != '[]' && (steps.final.outputs.routed == 'true' || steps.final.outputs.handoff == 'true' || fromJSON(inputs.iteration) >= fromJSON(steps.cap.outputs.max)) }}
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-stage-findings
         with:

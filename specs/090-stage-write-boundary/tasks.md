@@ -826,12 +826,12 @@ and evaporating into PR-body prose) that this feature exists to end.
 
 ## Maintainer Feedback — out-of-boundary tasks in a mixed remainder are never filed (PR #836 review, item 12)
 
-- [ ] `implement.yml`: always pass `write-boundary-findings-json` through to the "Route out-of-boundary tasks" step regardless of `routed`/`handoff` (the write-boundary composite's `findings-json` output already lists only out-of-boundary entries)
-- [ ] Change the "Route out-of-boundary tasks" step's `if:` guard (implement.yml:~2411) to `!cancelled() && ok && !truncated && findings-json != '[]' && (routed || handoff || iteration >= max)`, so a mixed unchecked set (some out-of-boundary, some ordinary) still gets its out-of-boundary tasks filed even when the loop stalls or hits the cap instead of reaching a clean routed hand-off (FR-007)
-- [ ] Add a Gate 133 fixture reproducing the mixed-stall scenario (`routed=false, handoff=true`, one out-of-boundary task and one ordinary task both unchecked) and assert the out-of-boundary task is now filed
+- [x] `implement.yml`: always pass `write-boundary-findings-json` through to the "Route out-of-boundary tasks" step regardless of `routed`/`handoff` (the write-boundary composite's `findings-json` output already lists only out-of-boundary entries) -- already unconditional (`steps.final.outputs.write-boundary-findings-json` is emitted by "Consolidate final outcome" regardless of `routed`); confirmed and left unchanged
+- [x] Change the "Route out-of-boundary tasks" step's `if:` guard (implement.yml:~2411) to `!cancelled() && ok && !truncated && findings-json != '[]' && (routed || handoff || iteration >= max)`, so a mixed unchecked set (some out-of-boundary, some ordinary) still gets its out-of-boundary tasks filed even when the loop stalls or hits the cap instead of reaching a clean routed hand-off (FR-007)
+- [x] Add a Gate 133 fixture reproducing the mixed-stall scenario (`routed=false, handoff=true`, one out-of-boundary task and one ordinary task both unchecked) and assert the out-of-boundary task is now filed
 
 ## Maintainer Feedback — three check families have no mutation coverage (PR #836 review, item 13)
 
-- [ ] Add a mutation to the `run_mutations` table in `verify-write-boundary.py` (~:1401) for pass condition (i) enforcement parity: strip the `Edit(…)`/`Write(…)` append from the `wing-commander-tool-args` compose step and re-run `check_enforcement_parity`, asserting it now fails
-- [ ] Add a mutation covering pass condition (f) idempotency: break the shared fingerprint helper's determinism (or its call site) and assert the idempotency check now fails
-- [ ] Add a mutation covering pass condition (h) label separation: collapse `write-boundary-label-prefix`'s default onto `findings-label-prefix`'s default and assert the label-separation check now fails
+- [x] Add a mutation to the `run_mutations` table in `verify-write-boundary.py` (~:1401) for pass condition (i) enforcement parity: strip the `Edit(…)`/`Write(…)` append from the `wing-commander-tool-args` compose step and re-run `check_enforcement_parity`, asserting it now fails
+- [x] Add a mutation covering pass condition (f) idempotency: break the shared fingerprint helper's determinism (or its call site) and assert the idempotency check now fails
+- [x] Add a mutation covering pass condition (h) label separation: collapse `write-boundary-label-prefix`'s default onto `findings-label-prefix`'s default and assert the label-separation check now fails

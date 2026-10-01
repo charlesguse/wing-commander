@@ -197,6 +197,16 @@ caught:
    fail both times.
 10. The Route step's `findings-json` input replaced with the literal
     `'[]'` — re-runs (k) against the mutated text, must fail.
+11. The compose step's `Edit()`/`Write()` glob-deny append stripped, so
+    `write-paths-statement` still renders but the composed
+    `disallowed-tools` list no longer enforces it — re-runs (i) against
+    the mutated compose step, must fail (PR #836 review, item 13).
+12. The shared fingerprint helper's anchor-branch hash input salted with a
+    fresh value on every call, breaking its determinism — re-runs (f)
+    against the mutated script, must fail (PR #836 review, item 13).
+13. `write-boundary-label-prefix`'s default collapsed onto
+    `findings-label-prefix`'s default — re-runs (h) against the mutated
+    text, must fail (PR #836 review, item 13).
 
 ## Out of scope for this gate
 

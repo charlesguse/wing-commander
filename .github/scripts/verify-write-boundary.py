@@ -27,7 +27,7 @@ single-home (research.md D6); (h) board-loop label separation
 (research.md D4); (i) enforcement parity (FR-004/FR-005, Principle V/IX);
 (j) finalize lookup failure handling; (k) prompt interpolation and Route
 step wiring -- see contracts/write-boundary-gate.md for the exact scenario
-tables. --self-test reintroduces each of the 10 mutations that contract
+tables. --self-test reintroduces each of the mutations that contract
 names, re-running the REAL pass-condition function each one targets
 against the mutated input, and asserts every one is caught.
 
@@ -704,6 +704,38 @@ def check_termination_and_reason(steps, root):
         if outputs.get("reason", "") != expected_reason:
             failures.append(f"(d) scenario 3: existing hand-off narrative "
                             f"changed -- got reason={outputs.get('reason')!r}")
+        # PR #836 review, item 12: a mixed-stall remainder (routed=false,
+        # handoff=true, one out-of-boundary task and one ordinary task both
+        # unchecked) must still file the out-of-boundary task rather than
+        # let it evaporate into PR-body prose the moment the loop stalls
+        # instead of reaching a clean routed hand-off -- drive the REAL
+        # Route step's if: expression with this scenario's own shipped
+        # outputs, never a hand-rolled one-off assertion.
+        route_if = _find_route_if_expr()
+        route_context = {
+            "steps.final.outputs.ok": "true",
+            "steps.final.outputs.truncated": "false",
+            "steps.final.outputs.routed": outputs.get("routed", ""),
+            "steps.final.outputs.handoff": outputs.get("handoff", ""),
+            "steps.final.outputs.write-boundary-findings-json":
+                outputs.get("write-boundary-findings-json", ""),
+            "inputs.iteration": "1",
+            "steps.cap.outputs.max": "5",
+        }
+        try:
+            fires = eval_if_expr(route_if, route_context)
+        except Exception as exc:  # noqa: BLE001
+            failures.append(f"(d) scenario 3: could not evaluate "
+                            f"{ROUTE_STEP!r}'s if: expression {route_if!r}: "
+                            f"{exc}")
+        else:
+            if not fires:
+                failures.append(f"(d) scenario 3 (PR #836 review, item 12): "
+                                f"a mixed-stall remainder (routed=false, "
+                                f"handoff=true) with a non-empty "
+                                f"out-of-boundary findings-json must still "
+                                f"fire {ROUTE_STEP!r} -- if: was {route_if!r}, "
+                                f"context was {route_context!r}")
 
     # Retry arm (PR #836 review, item 4): mirrors scenario 1 exactly, but
     # drives the shipped "Read back retry outcome" step -- RETRY_STEP was
@@ -732,45 +764,69 @@ def check_termination_and_reason(steps, root):
 
 def eval_if_expr(expr, context):
     """A tiny, deliberately narrow evaluator for this repository's own
-    `if:` expressions -- substitutes each `steps.X.outputs.Y` token with
-    its modelled string value, translates &&/|| to and/or, then evaluates
-    the result as a Python boolean expression. Sufficient for the fixed
-    shape this gate's own targets use; not a general GitHub Actions
-    expression engine."""
+    `if:` expressions -- substitutes each `steps.X.outputs.Y`/`inputs.X`
+    token with its modelled string value, maps `fromJSON(...)` to an
+    int-or-JSON parse, translates &&/|| to and/or, then evaluates the
+    result as a Python boolean expression. Sufficient for the fixed shape
+    this gate's own targets use; not a general GitHub Actions expression
+    engine."""
     e = expr.strip()
     if e.startswith("${{") and e.endswith("}}"):
         e = e[3:-2].strip()
     e = e.replace("!cancelled()", "True")
     e = e.replace("&&", " and ").replace("||", " or ")
+    e = e.replace("fromJSON(", "_from_json(")
 
     def repl(m):
         return repr(context.get(m.group(0), ""))
 
-    e = re.sub(r"steps\.[\w.\-]+\.outputs\.[\w\-]+", repl, e)
-    return bool(eval(e, {"__builtins__": {}}, {}))
+    e = re.sub(r"steps\.[\w.\-]+\.outputs\.[\w\-]+|inputs\.[\w\-]+", repl, e)
+
+    def _from_json(value):
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return json.loads(value)
+
+    return bool(eval(e, {"__builtins__": {}}, {"_from_json": _from_json}))
+
+
+def _find_route_if_expr(stage_text=None):
+    """The one lookup of the shipped Route step's `if:` text -- shared by
+    check_no_filing_on_truncated and check_termination_and_reason's
+    mixed-stall assertion (PR #836 review, item 12) rather than each
+    re-parsing implement.yml on its own."""
+    if stage_text is None:
+        stage_text = open(STAGE, encoding="utf-8").read()
+    doc = yaml.safe_load(stage_text) or {}
+    for job in (doc.get("jobs") or {}).values():
+        for s in (job or {}).get("steps") or []:
+            if (s or {}).get("name") == ROUTE_STEP:
+                return str(s.get("if", ""))
+    return None
 
 
 def check_no_filing_on_truncated(stage_text=None):
     """`stage_text` is overridable so --self-test can re-run THIS SAME
     function against a mutated copy of implement.yml's text (PR #836
     review, item 4) instead of a parallel hand-rolled if:-expression
-    evaluation."""
+    evaluation. The context sets every OTHER disjunct the Route step's
+    `if:` now reads (routed, handoff, a non-empty findings-json, and an
+    iteration already at the cap -- PR #836 review, item 12) so this stays
+    the strongest possible regression test for FR-013: truncated must win
+    even when every other condition would otherwise fire filing."""
     failures = []
-    if stage_text is None:
-        stage_text = open(STAGE, encoding="utf-8").read()
-    doc = yaml.safe_load(stage_text) or {}
-    step = None
-    for job in (doc.get("jobs") or {}).values():
-        for s in (job or {}).get("steps") or []:
-            if (s or {}).get("name") == ROUTE_STEP:
-                step = s
-                break
-    if step is None:
+    if_expr = _find_route_if_expr(stage_text)
+    if if_expr is None:
         return [f"(e) no step named {ROUTE_STEP!r} found in {STAGE}."]
-    if_expr = str(step.get("if", ""))
     context = {"steps.final.outputs.ok": "true",
                "steps.final.outputs.truncated": "true",
-               "steps.final.outputs.routed": "true"}
+               "steps.final.outputs.routed": "true",
+               "steps.final.outputs.handoff": "true",
+               "steps.final.outputs.write-boundary-findings-json":
+                   '[{"title":"x"}]',
+               "inputs.iteration": "5",
+               "steps.cap.outputs.max": "5"}
     try:
         result = eval_if_expr(if_expr, context)
     except Exception as exc:  # noqa: BLE001 -- a malformed if: is itself the finding
@@ -787,8 +843,13 @@ def check_no_filing_on_truncated(stage_text=None):
 # (f) Idempotency
 # ---------------------------------------------------------------------------
 
-def run_fingerprint(stage, file_path, gate_or_artifact, cwd=None):
-    script = os.path.abspath(FINGERPRINT_SCRIPT).replace("\\", "/")
+def run_fingerprint(stage, file_path, gate_or_artifact, cwd=None,
+                    script_path=FINGERPRINT_SCRIPT):
+    """`script_path` is overridable so --self-test can re-run THIS SAME
+    function, via check_idempotency, against a mutated copy of the script
+    (PR #836 review, item 13) rather than a parallel hand-rolled
+    determinism check."""
+    script = os.path.abspath(script_path).replace("\\", "/")
     proc = subprocess.run([BASH, script, stage, file_path, gate_or_artifact],
                           capture_output=True, text=True, encoding="utf-8",
                           errors="replace", cwd=cwd)
@@ -796,18 +857,22 @@ def run_fingerprint(stage, file_path, gate_or_artifact, cwd=None):
     return proc.returncode, kv.get("fingerprint", ""), kv.get("verified", "")
 
 
-def check_idempotency(root):
+def check_idempotency(root, script_path=FINGERPRINT_SCRIPT):
     """Runs with a real tasks.md present so the anchor path verifies (the
     fallback shape is keyed only on (stage, file_path), never on
     gate_or_artifact -- two different lines would collide there, which is
-    not what this pass condition is testing)."""
+    not what this pass condition is testing). `script_path` is overridable
+    so --self-test can re-run THIS SAME function against a mutated copy of
+    compute-finding-fingerprint.sh (PR #836 review, item 13)."""
     failures = []
     file_path = f"{SPEC_DIR}/tasks.md"
     line = "- [ ] T001 edit `.claude/skills/foo/SKILL.md`"
     workdir = tempfile.mkdtemp(dir=root)
     write_file(workdir, file_path, line + "\n")
-    rc1, fp1, verified1 = run_fingerprint("implement", file_path, line, cwd=workdir)
-    rc2, fp2, verified2 = run_fingerprint("implement", file_path, line, cwd=workdir)
+    rc1, fp1, verified1 = run_fingerprint("implement", file_path, line,
+                                          cwd=workdir, script_path=script_path)
+    rc2, fp2, verified2 = run_fingerprint("implement", file_path, line,
+                                          cwd=workdir, script_path=script_path)
     if rc1 != 0 or rc2 != 0:
         failures.append(f"(f) compute-finding-fingerprint.sh exited nonzero "
                         f"(rc1={rc1}, rc2={rc2}).")
@@ -824,7 +889,8 @@ def check_idempotency(root):
     # SAME normalized anchor. Change an actual word instead.
     reworded = line.replace("edit", "adjust")
     write_file(workdir, file_path, line + "\n" + reworded + "\n")
-    rc3, fp3, verified3 = run_fingerprint("implement", file_path, reworded, cwd=workdir)
+    rc3, fp3, verified3 = run_fingerprint("implement", file_path, reworded,
+                                          cwd=workdir, script_path=script_path)
     if rc3 == 0 and verified3 == "true" and fp1 == fp3:
         failures.append("(f) a line reworded by one character produced the "
                         "SAME fingerprint as the original -- expected a "
@@ -916,9 +982,14 @@ def check_fingerprint_single_home(content_overrides=None):
 # (h) Board-loop label separation
 # ---------------------------------------------------------------------------
 
-def check_label_separation():
+def check_label_separation(stage_text=None):
+    """`stage_text` is overridable so --self-test can re-run THIS SAME
+    function against a mutated copy of implement.yml's text (PR #836
+    review, item 13)."""
     failures = []
-    doc = yaml.safe_load(open(STAGE, encoding="utf-8")) or {}
+    if stage_text is None:
+        stage_text = open(STAGE, encoding="utf-8").read()
+    doc = yaml.safe_load(stage_text) or {}
     # PyYAML (1.1 resolver) parses the bare `on:` key as the boolean True,
     # not the string "on" -- mirrors board_prove.py's/verify-metrics-
     # wrapper-trigger-drops-watchdog.py's own fallback.
@@ -1125,10 +1196,14 @@ def _mut_routed_ignores_classification(steps):
 
 
 def _mut_drop_truncated_guard():
+    """(5) the Route step's if: guard's `truncated` clause removed -- the
+    rest of the PR #836 review item 12 guard (findings-json non-empty,
+    routed/handoff/iteration-cap) stays intact, so this isolates the
+    truncated exclusion specifically."""
     doc_text = open(STAGE, encoding="utf-8").read()
     marker = ("steps.final.outputs.truncated != 'true' && "
-             "steps.final.outputs.routed == 'true'")
-    replacement = "steps.final.outputs.routed == 'true'"
+             "steps.final.outputs.write-boundary-findings-json != '[]'")
+    replacement = "steps.final.outputs.write-boundary-findings-json != '[]'"
     if marker not in doc_text:
         return None
     return doc_text.replace(marker, replacement, 1)
@@ -1398,6 +1473,101 @@ def check_mutation_12(root):
     return ["mutation survived: drop prefix normalization"]
 
 
+def _mut_drop_enforcement_append(steps):
+    """(14) PR #836 review, item 13: strip the Edit()/Write() glob-deny
+    append from the compose step, so write_paths_glob_denies is still
+    computed and the write-paths-statement still renders, but the
+    composed disallowed-tools list no longer enforces it -- a stated-but-
+    unenforced boundary (condition (i))."""
+    marker = ('if [ -n "$write_paths_glob_denies" ]; then\n'
+             '  if [ -z "$effective_disallowed" ]; then\n'
+             '    effective_disallowed="$write_paths_glob_denies"\n'
+             '  else\n'
+             '    effective_disallowed="$effective_disallowed,$write_paths_glob_denies"\n'
+             '  fi\nfi')
+    if marker not in steps[COMPOSE_STEP]:
+        return None
+    mutated = copy.deepcopy(steps)
+    mutated[COMPOSE_STEP] = mutated[COMPOSE_STEP].replace(marker, "", 1)
+    return mutated
+
+
+def check_mutation_14(steps, root):
+    mutated = _mut_drop_enforcement_append(steps)
+    if mutated is None:
+        print("::error::mutation 'drop enforcement append' changed nothing.")
+        return ["mutation inapplicable: drop enforcement append"]
+    # Re-run the REAL check_enforcement_parity against the mutated compose
+    # step, never a parallel hand-rolled assertion (PR #836 review, item 4's
+    # established pattern, extended to condition (i) per item 13).
+    if check_enforcement_parity(mutated, root):
+        print("Mutation OK -- drop enforcement append: caught (i).")
+        return []
+    return ["mutation survived: drop enforcement append"]
+
+
+def _mut_break_fingerprint_determinism():
+    """(15) PR #836 review, item 13: salt the anchor-branch hash input
+    with a fresh value on every invocation, breaking condition (f)'s
+    idempotency guarantee -- the same unchecked line would fingerprint
+    differently across cycles, defeating SC-004's dedup."""
+    script_path = os.path.abspath(FINGERPRINT_SCRIPT)
+    text = open(script_path, encoding="utf-8").read()
+    marker = ('    fp = hashlib.sha256("anchor|{0}|{1}|{2}".format(\n'
+             '        STAGE, norm_path, norm_gate\n'
+             '    ).encode("utf-8")).hexdigest()')
+    replacement = ('    fp = hashlib.sha256("anchor|{0}|{1}|{2}".format(\n'
+                   '        STAGE, norm_path, norm_gate + str(os.urandom(4))\n'
+                   '    ).encode("utf-8")).hexdigest()')
+    if marker not in text:
+        return None
+    return script_path, text.replace(marker, replacement, 1)
+
+
+def check_mutation_15(root):
+    result = _mut_break_fingerprint_determinism()
+    if result is None:
+        print("::error::mutation 'break fingerprint determinism' changed nothing.")
+        return ["mutation inapplicable: break fingerprint determinism"]
+    _script_path, mutated_text = result
+    fd, tmp_path = tempfile.mkstemp(suffix=".sh")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(mutated_text)
+        os.chmod(tmp_path, 0o755)
+        result2 = check_idempotency(root, script_path=tmp_path)
+    finally:
+        os.remove(tmp_path)
+    if result2:
+        print("Mutation OK -- break fingerprint determinism: caught (f).")
+        return []
+    return ["mutation survived: break fingerprint determinism"]
+
+
+def _mut_collapse_label_defaults():
+    """(16) PR #836 review, item 13: collapse write-boundary-label-
+    prefix's default onto findings-label-prefix's default -- the board
+    loop would then treat a routed-but-unreachable task the same as a
+    fix-shaped defect (condition (h), research.md D4)."""
+    text = open(STAGE, encoding="utf-8").read()
+    marker = '        default: "route-out-of-boundary"'
+    replacement = "        default: found-by"
+    if marker not in text:
+        return None
+    return text.replace(marker, replacement, 1)
+
+
+def check_mutation_16():
+    mutated_text = _mut_collapse_label_defaults()
+    if mutated_text is None:
+        print("::error::mutation 'collapse label defaults' changed nothing.")
+        return ["mutation inapplicable: collapse label defaults"]
+    if check_label_separation(stage_text=mutated_text):
+        print("Mutation OK -- collapse label defaults: caught (h).")
+        return []
+    return ["mutation survived: collapse label defaults"]
+
+
 def run_mutations(steps, root):
     failures = []
     failures.extend(check_mutation_1(steps, root))
@@ -1412,6 +1582,9 @@ def run_mutations(steps, root):
     failures.extend(check_mutation_11(steps, root))
     failures.extend(check_mutation_12(root))
     failures.extend(check_mutation_13(steps, root))
+    failures.extend(check_mutation_14(steps, root))
+    failures.extend(check_mutation_15(root))
+    failures.extend(check_mutation_16())
     # (7) zero fixtures discovered/executed at all.
     if not CLASSIFY_FIXTURES or not STATEMENT_FIXTURES:
         failures.append("mutation survived: zero fixtures (Constitution VIII)")

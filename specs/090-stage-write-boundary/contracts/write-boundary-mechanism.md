@@ -151,8 +151,17 @@ or output name changes.
 **Call site** (new, `implement.yml`): "Route out-of-boundary tasks," beside
 the existing "File findings from this run" (line ~2260), guarded
 `if: !cancelled() && steps.final.outputs.ok == 'true' && steps.final.
-outputs.truncated != 'true' && steps.final.outputs.routed == 'true'`
-(FR-013's truncated exclusion, plus the `routed` gate):
+outputs.truncated != 'true' && steps.final.outputs.write-boundary-
+findings-json != '[]' && (steps.final.outputs.routed == 'true' ||
+steps.final.outputs.handoff == 'true' || fromJSON(inputs.iteration) >=
+fromJSON(steps.cap.outputs.max))` (FR-013's truncated exclusion, plus a
+gate that fires on ANY of a clean routed hand-off, spec 059's own stall
+hand-off, or the iteration cap, rather than `routed` alone — PR #836
+review, item 12: `routed` requires every remaining unchecked task to be
+out-of-boundary, so a MIXED remainder (one out-of-boundary task beside an
+ordinary one) never reaches `routed=true` and was silently dropped by the
+narrower guard the moment the loop stalled or hit its cap instead of
+ending on a clean hand-off):
 
 ```yaml
 with:
