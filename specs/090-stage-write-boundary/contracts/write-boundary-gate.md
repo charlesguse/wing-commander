@@ -68,7 +68,15 @@ table of unchecked-item texts, each with its expected classification
 - No path in the text → falls through.
 - A path only partly matching a prefix (e.g. `.claude-extra/`, not actually
   under `.claude/`) → falls through (prefix match, not substring match).
+- A path that CONTAINS the boundary prefix without starting with it (e.g.
+  `src/.claude/nested/thing.md`) → falls through — the fixture that
+  actually distinguishes prefix-match from substring-match, since the
+  `.claude-extra/` fixture above never contains the literal boundary text
+  at all and would pass a substring-match mutant too.
 - The boundary is empty → nothing classifies out-of-boundary, ever.
+- `.claude/settings.json` (a task that would widen the stage's own grants)
+  → out-of-boundary, asserted explicitly rather than left to fall out of
+  the prefix comparison by coincidence (PR #836 review, item 8).
 
 **(d) Termination and reason (FR-007, FR-010, FR-011, FR-012).** Executing
 the shipped read-back `run:` bodies against synthetic repos. `routed` is
@@ -97,12 +105,20 @@ out-of-boundary tasks" step's own `if:` evaluates false; the gate asserts
 this by evaluating the compiled `if:` expression against `truncated=true`,
 `ok=true`, `routed=true`, never by executing a live filing call.
 
-**(f) Idempotency (FR-008).** The same out-of-boundary unchecked line,
-fingerprinted twice (simulating two cycles), produces byte-identical
+**(f) Idempotency (FR-008, SC-004).** The same out-of-boundary unchecked
+line, fingerprinted twice (simulating two cycles), produces byte-identical
 fingerprints; a line whose text differs by even one character (a re-worded
 task) produces a different fingerprint (documented as an accepted, narrow
 limitation — research.md does not claim re-wording is detected as "the
-same" task).
+same" task). SC-004's full "two cycles → one issue" claim is proven
+jointly with Gate 71 (`stage-findings-tests/run-tests.sh`), which already
+drives `wing-commander-durable-failure-issue`'s real marker-based dedup
+and proves a second report carrying the same marker is commented onto the
+existing issue rather than creating a second one, generically for every
+finding-kind — re-testing that nested `uses:` chain here would be a second
+copy of Gate 71's own test infrastructure. This gate only asserts that
+Gate 71's step is still wired, so a future removal does not silently break
+the chain without failing anything.
 
 **(g) Fingerprint single-home (D6).** `compute-finding-fingerprint.sh` is
 called by `wing-commander-stage-findings`'s shipped step and by
@@ -115,34 +131,72 @@ label-prefix`'s default (`route-out-of-boundary`) is not equal to
 string `spec-request` — a static assertion on the two defaults, failing
 loudly if a future edit collapses them.
 
-A fixture or comparison failing any of (a)-(h) fails the gate, naming the
+**(i) Enforcement parity (FR-004, FR-005, Principle V/IX; PR #836 review,
+item 3).** For the same `no-write-paths` fixture table as (b), the
+`compose` step's composed `disallowed-tools` output actually contains one
+`Edit(<prefix>**)`/`Write(<prefix>**)` pair per prefix — the stated
+boundary must be the SAME one the agent's tool grant enforces, never just
+prose.
+
+**(j) Finalize lookup failure handling (PR #836 review, item 5).** The
+shipped "Look up routed write-boundary items" step, driven with a stubbed
+`gh` that fails its one `gh issue list` call, degrades to an empty mapping
+(never fails the job) AND emits an `::warning::` annotation — a silent
+"(none)" is the same failure (d) exists to catch, one layer further out.
+
+**(k) Prompt interpolation and Route step wiring (PR #836 review, item
+4).** Both the cycle and retry prompts actually interpolate their own
+`write-paths-statement` output; the "Route out-of-boundary tasks" step's
+`findings-json` is wired from `steps.final.outputs.write-boundary-
+findings-json` and its `finding-kind` is the literal `routed-task` — none
+of these four facts had ever been asserted, so any one could be silently
+deleted with every other pass condition still green.
+
+A fixture or comparison failing any of (a)-(k) fails the gate, naming the
 file, step, and scenario — matching Gate 51's `::error file=...::Gate NN:
 {msg}` format.
 
 ## `--self-test`
 
-Reintroduces, and asserts each one is caught:
+Each mutation re-runs the REAL pass-condition function it targets against
+the mutated input (PR #836 review, item 4) — never a parallel hand-rolled
+assertion that could drift from, or simply not notice the deletion of, the
+normal-mode check it stands in for. Reintroduces, and asserts each one is
+caught:
 
 1. `no-write-paths` hand-edited to a second literal default inside
    `wing-commander-write-boundary`'s call site, diverging from `implement.
-   yml`'s own input default — must fail (a).
+   yml`'s own input default — re-runs (a) against the mutated text, must
+   fail.
 2. The rendered `write-paths-statement` mutated to include a prefix absent
-   from the input — must fail (b) (the SC-007 drift mutation).
-3. The classification rule's prefix-match relaxed to a substring match
-   (so `.claude-extra/foo` would wrongly classify under a `.claude/`
-   boundary) — must fail (c).
+   from the input — re-runs (b) against the mutated compose step, must
+   fail (the SC-007 drift mutation).
+3. The classification rule's prefix-match relaxed to a substring match —
+   re-runs (c) against the mutated script, must fail (via the
+   `src/.claude/nested/thing.md` fixture, the one that actually
+   distinguishes prefix-match from substring-match).
 4. The `routed` computation changed to ignore classification entirely
    (e.g. hard-coded `true` whenever `ok && !truncated`, even when
-   `all-unchecked-out-of-boundary=false`) — must fail (d)'s mixed-set
-   scenario (the SC-007 "disables the boundary check" mutation, read as
-   "always routes").
+   `all-unchecked-out-of-boundary=false`) — re-runs (d) against the
+   mutated cycle step, must fail on the mixed-set scenario (the SC-007
+   "disables the boundary check" mutation, read as "always routes").
 5. The "Route out-of-boundary tasks" step's `if:` guard's `truncated`
-   clause removed — must fail (e).
+   clause removed — re-runs (e) against the mutated text, must fail.
 6. `compute-finding-fingerprint.sh` re-implemented inline a second time in
-   a copy pasted into `finalize.yml` instead of called — must fail (g).
+   a copy pasted into the lookup composite instead of called — re-runs (g)
+   against the mutated file content, must fail.
 7. Zero fixtures discovered/executed at all — must fail loudly
    (Constitution VIII's "a gate that cannot reach its subject... MUST fail
    loudly rather than report a pass it did not earn").
+8. The RETRY arm's `routed` condition hard-coded to `if false` — re-runs
+   (d) against the mutated retry step, must fail on the retry scenario
+   (RETRY_STEP was loaded into the gate's own step cache but, before this
+   mutation existed, no scenario had ever exercised it).
+9. Either prompt's `write-paths-statement` interpolation deleted (cycle and
+   retry, checked separately) — re-runs (k) against the mutated text, must
+   fail both times.
+10. The Route step's `findings-json` input replaced with the literal
+    `'[]'` — re-runs (k) against the mutated text, must fail.
 
 ## Out of scope for this gate
 
@@ -154,7 +208,7 @@ Reintroduces, and asserts each one is caught:
   pre-existing fingerprinting behavior for `found-by:*` findings — covered
   by `verify-stage-finding-schema.py`/`verify-stage-findings-wiring.py`,
   unaffected by this feature's additive `finding-kind` input.
-- Live GitHub API behavior of `gh issue list --search` (text-search
-  ranking, rate limits) — this gate executes the deterministic fingerprint
-  computation and the `if:`-guard logic only; it does not call the GitHub
-  API.
+- Live GitHub API behavior of `gh issue list` (rate limits, pagination) —
+  this gate stubs `gh` for (j) and executes the deterministic fingerprint
+  computation and the `if:`-guard logic only; it never calls the real
+  GitHub API.

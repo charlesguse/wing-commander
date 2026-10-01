@@ -686,12 +686,12 @@ and evaporating into PR-body prose) that this feature exists to end.
 
 ## Maintainer Feedback — Gate's --self-test is vacuous and misses real regressions (PR #836 review, item 4)
 
-- [ ] Rewrite each `check_mutation_N` in `verify-write-boundary.py` (:764-894) to re-run the real matching `check_*` pass condition against the mutated input and assert it fails, not merely assert the mutation changed the text (currently deleting the `check_statement_fidelity`/`check_termination_and_reason` calls from `main()` still passes `--self-test`)
-- [ ] Add retry-arm scenarios: `RETRY_STEP` is loaded but never exercised, and condition (a) doesn't check the write-boundary-cycle/-retry call sites — extend it to cover them
-- [ ] Assert both prompts (cycle and retry) actually interpolate `write-paths-statement`
-- [ ] Assert the Route step's `findings-json` and `finding-kind: routed-task` wiring
-- [ ] Confirm, as a regression check, that each of these now fails the gate: the retry arm's routed condition hard-coded to `if false`; either prompt's `write-paths-statement` interpolation deleted; the Route step's `findings-json` set to `'[]'`
-- [ ] Extend condition (f) beyond proving the hash is deterministic to also prove SC-004's "two cycles → one issue"
+- [x] Rewrite each `check_mutation_N` in `verify-write-boundary.py` (:764-894) to re-run the real matching `check_*` pass condition against the mutated input and assert it fails, not merely assert the mutation changed the text (currently deleting the `check_statement_fidelity`/`check_termination_and_reason` calls from `main()` still passes `--self-test`)
+- [x] Add retry-arm scenarios: `RETRY_STEP` is loaded but never exercised, and condition (a) doesn't check the write-boundary-cycle/-retry call sites — extend it to cover them
+- [x] Assert both prompts (cycle and retry) actually interpolate `write-paths-statement`
+- [x] Assert the Route step's `findings-json` and `finding-kind: routed-task` wiring
+- [x] Confirm, as a regression check, that each of these now fails the gate: the retry arm's routed condition hard-coded to `if false`; either prompt's `write-paths-statement` interpolation deleted; the Route step's `findings-json` set to `'[]'`
+- [x] Extend condition (f) beyond proving the hash is deterministic to also prove SC-004's "two cycles → one issue" (proven jointly with Gate 71's own dedup test; this gate asserts that Gate 71 step is still wired, rather than re-testing its nested `uses:` chain as a second copy)
 
 ## Maintainer Feedback — finalize's routed-item lookup fails silently and mismatches the filer (PR #836 review, item 5)
 
