@@ -24,6 +24,17 @@ job.
 Priority order (closed-issue > stop-request > kill-switch > none) is fixed
 and computed as a single ordered check — see research.md D3.
 
+Two more derived values, computed from `stop-cause` at the same site
+(maintainer review fold leg-2, CLAUDE.md "Shared logic has exactly one
+home"): `stop-cause-phrase` (`""` | `"a maintainer stop request"` | `"the
+kill switch"` | `"the issue being closed"`), the prose every resume-stage
+job's own stand-down message names, and `stop-cause-run-label` (`""` |
+`"stopped (stop-request)"` | `"stood down (kill-switch)"` | `"stood down
+(issue closed)"`), the metrics run-label suffix each job's "Record run
+outcome" step reads. Both were previously re-derived per job (a `case
+"$STOP_CAUSE"` block pasted into six places); they now exist solely as
+these two composite outputs, alongside `stop-cause` itself.
+
 ### Stop Command Comment (new derived fact, not a new stored entity)
 
 The specific issue comment `find_stop_command_comment(comments,
