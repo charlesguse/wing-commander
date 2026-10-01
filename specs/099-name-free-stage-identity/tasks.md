@@ -528,3 +528,18 @@ Task: "Pass spec-identity-is-own: 'false' in .github/workflows/board-loop.yml:90
   - [X] Correct the recognised-name count (code has nine, once the watchdog name-fallback gap above is fixed) — resolved as a side effect of the name-fallback fix above: the map now genuinely has ten entries, matching what the doc already said
   - [X] Add the self-dispatch cap's `gh run list --workflow 'Wing Commander · 8 watchdog'` (watchdog.yml:3644) as a second name dependency — an adopter who renames the watchdog wrapper gets depth 0, so the cap never fires
   - [X] Correct the record-less renamed-run case: it skips four collectors (branch-drift, spec-meta, final-pr-claims, spec-collision), not "one difference"
+
+## Phase 7: Convergence
+
+- [ ] T043 Add a structural assertion in `verify-watchdog-resolved-stage-
+      consumers.py`'s `case_fr014_name_warning` (or a sibling case) that
+      the "Report unrecognised display name, when nothing else identified
+      the run's stage" step in `watchdog.yml` carries `continue-on-error:
+      true`, alongside the existing `if:` condition check. per Constitution
+      VIII / FR-014 (missing): the step gained this guard this cycle
+      (maintainer review fold leg-2, closing the bug where a failed `gh
+      issue comment` flipped `needs.collect.result` to `failure` and
+      skipped every collector, `signal-ids`, `aggregate`, and
+      `diagnose`/`triage`/`act`), but no checked-in fixture proves it, so a
+      future edit could silently drop it with nothing failing locally or
+      in CI.
