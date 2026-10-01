@@ -400,12 +400,13 @@ runs:
           # in prose (FR-004/FR-005, Principle V/IX) -- one Edit()/Write()
           # glob deny per prefix, derived from the identical split this
           # loop already performs, never a second list.
-          glob="$item"
-          case "$glob" in
-            */) ;;
-            *) glob="$glob/" ;;
-          esac
-          glob="${glob}**"
+          #
+          # review-gate-round-3: the trailing-slash canonicalization below
+          # is the one shared transform classify-out-of-boundary-tasks.sh
+          # also calls, so the classifier's "is this path out of boundary"
+          # verdict and this glob's "is this path denied" verdict can never
+          # independently drift apart on a no-trailing-slash prefix.
+          glob="$(bash "$GITHUB_ACTION_PATH/../_shared/normalize-write-path-prefix.sh" "$item")**"
           if [ -z "$write_paths_glob_denies" ]; then
             write_paths_glob_denies="Edit($glob),Write($glob)"
           else

@@ -865,7 +865,7 @@ and evaporating into PR-body prose) that this feature exists to end.
 
   Fixed: the in-flight loop now checks `if fp is None` before computing a marker, dropping only that finding with a `"dropped (malformed, in-flight): ..."` note instead of letting a shared `fingerprint=None` marker collide two distinct broken findings into one. New stage-findings-tests fixture (`case_in_flight_fingerprint_crash_does_not_collide_two_findings`) drives two in-flight findings whose fingerprint script both fail, asserting both are recorded as dropped (malformed) and neither is treated as a duplicate of the other.
 
-- [ ] Review finding: No-write-path prefix normalization duplicated between classifier and enforcement
+- [x] Review finding: No-write-path prefix normalization duplicated between classifier and enforcement
 
   classify-out-of-boundary-tasks.sh's normalize_prefix (Python) and wing-commander-tool-args/action.yml's compose step (bash) independently reimplement the same trailing-slash/leading-./ canonicalization, kept in sync only by comments claiming parity, not a shared helper or formula-level gate
 
@@ -873,6 +873,8 @@ and evaporating into PR-body prose) that this feature exists to end.
   - .github/actions/wing-commander-tool-args/action.yml
 
   Detail: classify-out-of-boundary-tasks.sh lines ~86-97/92-124 vs wing-commander-tool-args/action.yml lines ~696-702; a future edge case (multiple leading './', trailing '//', different separators) can diverge between classification and enforcement with no gate catching it, violating FR-004/FR-005's 'stated boundary is the enforced boundary' guarantee and CLAUDE.md's single-home rule
+
+  Fixed: extracted the trailing-slash canonicalization into `.github/actions/_shared/normalize-write-path-prefix.sh`. `classify-out-of-boundary-tasks.sh` now normalizes `NO_WRITE_PATHS` through this one helper in bash before handing the result to its Python classifier (whose own `normalize_prefix()` was deleted); `wing-commander-tool-args/action.yml`'s compose step calls the same helper when building each `Edit()`/`Write()` deny glob. Gate 133's mutation (12) now targets the shared helper (both `check_mutation_12` and `_mut_drop_prefix_normalization` updated accordingly, copying a mutated helper beside a copy of the classifier so its relative `BASH_SOURCE` lookup still resolves) and still fails classification (c) when the normalization is dropped. `run_compose()`'s harness now sets `GITHUB_ACTION_PATH` to the real `wing-commander-tool-args` composite directory, matching how Actions sets it in production and how `wing-commander-write-boundary-lookup`'s own harness call already did.
 
 - [ ] Review finding: finding-kind branching hand-duplicated across three survivor slots
 

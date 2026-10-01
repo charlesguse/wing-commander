@@ -452,7 +452,13 @@ def run_compose(steps, no_write_paths, runner_temp):
     env = {"STEP_LABEL": "gate133", "DEFAULT_ALLOWED": "Read,Write",
            "DEFAULT_DISALLOWED": "WebFetch", "EXTRA_ALLOWED": "",
            "EXTRA_DISALLOWED": "", "ALLOWED_OVERRIDE": "__unset__",
-           "DISALLOWED_OVERRIDE": "__unset__", "NO_WRITE_PATHS": no_write_paths}
+           "DISALLOWED_OVERRIDE": "__unset__", "NO_WRITE_PATHS": no_write_paths,
+           # review-gate-round-3: the compose step now shells out to
+           # $GITHUB_ACTION_PATH/../_shared/normalize-write-path-prefix.sh
+           # (mirroring wing-commander-write-boundary-lookup's own
+           # GITHUB_ACTION_PATH override above) -- real Actions sets this
+           # to the composite's own directory for every step inside it.
+           "GITHUB_ACTION_PATH": os.path.abspath(os.path.dirname(TOOL_ARGS_COMPOSITE))}
     return run_step(BASH, steps[COMPOSE_STEP], runner_temp, env, runner_temp)
 
 
@@ -1416,18 +1422,28 @@ def check_mutation_11(steps, root):
     return ["mutation survived: dispatch ignores routed"]
 
 
+NORMALIZE_PREFIX_SCRIPT = ".github/actions/_shared/normalize-write-path-prefix.sh"
+
+
 def _mut_drop_prefix_normalization():
-    """(12) review-gate-round-1 item 2: the classifier's trailing-slash
-    normalization dropped, so a no-trailing-slash boundary entry
-    ("specs") over-matches a sibling directory ("specs-legacy/...")
-    enforcement never actually denies."""
-    script_path = os.path.abspath(CLASSIFY_SCRIPT)
-    text = open(script_path, encoding="utf-8").read()
-    marker = 'return prefix if prefix.endswith("/") else prefix + "/"'
-    replacement = "return prefix"
+    """(12) review-gate-round-1 item 2 / review-gate-round-3 single-home
+    follow-up: the SHARED normalize-write-path-prefix.sh helper's
+    trailing-slash normalization dropped, so a no-trailing-slash boundary
+    entry ("specs") over-matches a sibling directory ("specs-legacy/...")
+    enforcement never actually denies. The classifier itself no longer
+    normalizes inline -- it shells out to this one helper, also called by
+    wing-commander-tool-args/action.yml's compose step -- so this mutation
+    now targets the helper, not the classifier."""
+    helper_path = os.path.abspath(NORMALIZE_PREFIX_SCRIPT)
+    text = open(helper_path, encoding="utf-8").read()
+    marker = ('case "$prefix" in\n'
+              '  */) echo "$prefix" ;;\n'
+              '  *) echo "${prefix}/" ;;\n'
+              'esac')
+    replacement = 'echo "$prefix"'
     if marker not in text:
         return None
-    return script_path, text.replace(marker, replacement, 1)
+    return helper_path, text.replace(marker, replacement, 1)
 
 
 def _mut_drop_limit_flag(steps):
@@ -1458,15 +1474,24 @@ def check_mutation_12(root):
     if result is None:
         print("::error::mutation 'drop prefix normalization' changed nothing.")
         return ["mutation inapplicable: drop prefix normalization"]
-    _script_path, mutated_text = result
-    fd, tmp_path = tempfile.mkstemp(suffix=".sh")
+    _helper_path, mutated_text = result
+    # The classifier resolves the shared helper by its own BASH_SOURCE
+    # dirname, so the mutated helper has to sit beside a copy of the
+    # classifier -- in the real tree's relative layout -- rather than at an
+    # arbitrary tmp path the classifier could never find.
+    tmp_dir = tempfile.mkdtemp()
     try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
+        classify_src = os.path.abspath(CLASSIFY_SCRIPT)
+        tmp_classify = os.path.join(tmp_dir, os.path.basename(classify_src))
+        shutil.copy(classify_src, tmp_classify)
+        os.chmod(tmp_classify, 0o755)
+        tmp_helper = os.path.join(tmp_dir, os.path.basename(NORMALIZE_PREFIX_SCRIPT))
+        with open(tmp_helper, "w", encoding="utf-8", newline="\n") as fh:
             fh.write(mutated_text)
-        os.chmod(tmp_path, 0o755)
-        result2 = check_classification(root, script_path=tmp_path)
+        os.chmod(tmp_helper, 0o755)
+        result2 = check_classification(root, script_path=tmp_classify)
     finally:
-        os.remove(tmp_path)
+        shutil.rmtree(tmp_dir)
     if result2:
         print("Mutation OK -- drop prefix normalization: caught (c).")
         return []

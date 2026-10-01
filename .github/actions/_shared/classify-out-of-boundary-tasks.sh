@@ -33,13 +33,16 @@
 # findings-json entry, shaped to .github/schemas/stage-finding.schema.json,
 # is emitted for it.
 #
-# review-gate-round-1 item 2: each no-write-paths entry is normalized to
-# end in exactly one trailing slash before the prefix comparison, and each
-# candidate token has a leading "./" stripped first -- the SAME
-# normalization wing-commander-tool-args/action.yml's compose step applies
-# before building the Edit()/Write() deny glob (`<prefix>/**`), so a
+# review-gate-round-1 item 2 (prefix normalization) / review-gate-round-3
+# (single-home follow-up): each no-write-paths entry is normalized to end
+# in exactly one trailing slash before the prefix comparison, via the
+# SAME shared helper (_shared/normalize-write-path-prefix.sh)
+# wing-commander-tool-args/action.yml's compose step also calls before
+# building the Edit()/Write() deny glob (`<prefix>/**`), so a
 # no-trailing-slash entry like "specs" cannot over-match "specs-legacy/..."
-# here while enforcement denies only "specs/**", and a tasks.md line
+# here while enforcement denies only "specs/**", with no second
+# reimplementation of the transform to drift out of sync. Each candidate
+# token also has a leading "./" stripped first, so a tasks.md line
 # written with a leading "./" still classifies instead of silently
 # under-matching and leaving the agent to retry a denied edit forever.
 #
@@ -69,7 +72,25 @@ if [ $# -lt 4 ]; then
   exit 1
 fi
 
-UNCHECKED_ITEMS="$UNCHECKED_ITEMS" NO_WRITE_PATHS="$NO_WRITE_PATHS" \
+# review-gate-round-3: normalize each no-write-paths entry through the ONE
+# shared helper also called by wing-commander-tool-args/action.yml's
+# compose step, before this value ever reaches the Python classifier below
+# -- so there is exactly one trailing-slash canonicalization in the repo,
+# never two independently-maintained copies.
+NORMALIZE_SCRIPT="$(dirname "${BASH_SOURCE[0]}")/normalize-write-path-prefix.sh"
+NORMALIZED_NO_WRITE_PATHS=""
+IFS=',' read -ra _nwp_items <<< "$NO_WRITE_PATHS"
+for _nwp_item in "${_nwp_items[@]}"; do
+  _nwp_norm="$(bash "$NORMALIZE_SCRIPT" "$_nwp_item")"
+  [ -z "$_nwp_norm" ] && continue
+  if [ -z "$NORMALIZED_NO_WRITE_PATHS" ]; then
+    NORMALIZED_NO_WRITE_PATHS="$_nwp_norm"
+  else
+    NORMALIZED_NO_WRITE_PATHS="$NORMALIZED_NO_WRITE_PATHS,$_nwp_norm"
+  fi
+done
+
+UNCHECKED_ITEMS="$UNCHECKED_ITEMS" NO_WRITE_PATHS="$NORMALIZED_NO_WRITE_PATHS" \
 TASKS_PATH="$TASKS_PATH" SPEC_DIR="$SPEC_DIR" python3 - <<'PYEOF'
 import json
 import os
@@ -83,21 +104,16 @@ tasks_path = os.environ["TASKS_PATH"]
 # field this script emits is anchored to tasks_path, per data-model.md.
 _spec_dir = os.environ.get("SPEC_DIR", "")
 
-def normalize_prefix(prefix):
-    # Mirrors wing-commander-tool-args/action.yml's own glob-prefix
-    # normalization (review-gate-round-1 item 2): exactly one trailing
-    # slash, so "specs" and "specs/" compare identically here, the same
-    # way they both become the "specs/**" deny glob there.
-    return prefix if prefix.endswith("/") else prefix + "/"
-
-
 def normalize_token(token):
     while token.startswith("./"):
         token = token[2:]
     return token
 
 
-prefixes = [normalize_prefix(p.strip()) for p in no_write_paths_raw.split(",") if p.strip()]
+# NO_WRITE_PATHS has already been through the shared normalize-write-path-
+# prefix.sh helper (one trailing slash each) before reaching this process --
+# only the comma-split/strip/empty-drop remains to do here.
+prefixes = [p.strip() for p in no_write_paths_raw.split(",") if p.strip()]
 
 TOKEN_RE = re.compile(r"`([^`\s]+)`")
 
