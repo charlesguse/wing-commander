@@ -1,0 +1,13 @@
+{
+  "comments": [
+    {
+      "body": "stop - old stale request, well before any loop run",
+      "author_association": "OWNER",
+      "created_at": "2025-06-01T00:00:00Z",
+      "user": {"login": "maintainer", "type": "User"}
+    }
+  ],
+  "current_run_id": "444",
+  "bot_login": "wing-commander-bot[bot]",
+  "expected": {"stand_down": true, "cancel_run_id": null}
+}

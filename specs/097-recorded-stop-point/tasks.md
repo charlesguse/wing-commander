@@ -299,12 +299,12 @@ stand-downs from the metrics records alone.
 no access to the run logs. The reason, the stopping point and the release
 instruction are all determinable from the issue alone.
 
-- [ ] T020 [P] [US2] Add Gate 128 cause-aware-messaging check 3 to
+- [X] T020 [P] [US2] Add Gate 128 cause-aware-messaging check 3 to
   `.github/scripts/verify-stop-point-recording.py`: fails when any of the
   six stand-down message strings in `.github/workflows/board-loop.yml`
   hardcodes "kill switch" prose unconditionally — the pre-fix shape at,
   e.g., `board-loop.yml:1412` (contracts/gate-128... check 3; FR-014).
-- [ ] T021 [US2] Reword the six stand-down messages in `.github/workflows/
+- [X] T021 [US2] Reword the six stand-down messages in `.github/workflows/
   board-loop.yml` to read `steps.killswitch-recheck.outputs.stop-cause`
   and name the actual observed cause — "a maintainer stop request" / "the
   kill switch" / "the issue being closed" — rather than hardcoding "kill
@@ -316,11 +316,11 @@ instruction are all determinable from the issue alone.
   — generalize to name the specific cause rather than "kill switch or stop
   request"), and prove (`:4523-4524`, currently `label="stood down"` with
   no cause named).
-- [ ] T022 [US2] Add `--self-test` coverage for check 3 to `.github/
+- [X] T022 [US2] Add `--self-test` coverage for check 3 to `.github/
   scripts/verify-stop-point-recording.py`: restores one hardcoded "kill
   switch" string and asserts check 3 then fails (contracts/gate-128...
   Self-test item 3).
-- [ ] T023 [US2] Add one additional step, `if: always()`, named `Record run
+- [X] T023 [US2] Add one additional step, `if: always()`, named `Record run
   outcome (<job>)`, to the end of each of the six resume-stage jobs in
   `.github/workflows/board-loop.yml` (triage, route, fix, review,
   readiness, prove), modeled on the `select` job's existing accounting-only
@@ -347,11 +347,11 @@ instruction are all determinable from the issue alone.
   `outcome` enum (`healthy|exhausted|rate-limited|failed|unclassifiable|
   unavailable`), which is left exactly as each job's own earlier per-agent
   metrics call already sets it.
-- [ ] T024 [P] [US2] Upload each new "Record run outcome" record via
+- [X] T024 [P] [US2] Upload each new "Record run outcome" record via
   `actions/upload-artifact` with `retention-days: 90`, for all six jobs,
   following the `select` job's existing artifact-upload precedent exactly
   (contracts/metrics-classification.md "Mechanism").
-- [ ] T025 [US2] Verify, against the template implemented in T010, that
+- [X] T025 [US2] Verify, against the template implemented in T010, that
   `contracts/stop-point-record.md`'s inert-reason guarantee holds for a
   reason containing `` `@everyone` fixes #1 <script>alert(1)</script> ``:
   confirm it renders inside the fence as inert text — no mention fires, no
@@ -374,7 +374,7 @@ stop command re-triggering and without opening a second branch or PR.
 the item is selected, proceeds past its stop check, and the issue gains no
 second stop-point record.
 
-- [ ] T026 [P] [US3] Add an FR-009 fixture to `.github/scripts/tests/
+- [X] T026 [P] [US3] Add an FR-009 fixture to `.github/scripts/tests/
   board-stop-check/` and to Gate 128's decision-function-agreement check
   (research.md D2's invariant: `find_stop_command_comment(...) is not None
   == find_stop_request(...).stand_down`, checked over Gate 87's existing
@@ -386,14 +386,14 @@ second stop-point record.
   recorded MUST NOT stand the item down again"), per research.md D10's
   observation that this falls out of the unmodified baseline computation
   with no new logic.
-- [ ] T027 [US3] Add `--self-test` coverage for Gate 128 check 4's FR-009
+- [X] T027 [US3] Add `--self-test` coverage for Gate 128 check 4's FR-009
   fixture to `.github/scripts/verify-stop-point-recording.py`: a
   hand-crafted fixture where a comment matches `is_stop_command()` but
   predates a synthetic baseline in one function's copy of the logic and
   not the other, asserting check 4 then fails (contracts/gate-128...
   Self-test item 4 — "the mutation Gate 87 cannot catch, since Gate 87
   only proves `find_stop_request()` alone").
-- [ ] T028 [US3] Run `quickstart.md` Scenario C (release and resume)
+- [X] T028 [US3] Run `quickstart.md` Scenario C (release and resume)
   structurally against the fixtures in T026: confirm no second
   stop-point record is produced from the original stop comment (FR-009)
   and that spec 100's `board:owned` fallback (unchanged by this feature)
@@ -415,7 +415,7 @@ stand-downs.
 no loop `**Run:**` announcement at all, drive one run and confirm the item
 stood down once, the stop point was recorded, and the board moved on.
 
-- [ ] T029 [P] [US4] Add an FR-016 fixture to `.github/scripts/tests/
+- [X] T029 [P] [US4] Add an FR-016 fixture to `.github/scripts/tests/
   board-stop-check/` and to Gate 128's decision-function-agreement check —
   a comments list with **no** bot-authored `**Run:**` comment at all (empty
   baseline, `baseline = ""`) and one old, authorized, stop-command comment
@@ -425,7 +425,7 @@ stood down once, the stop point was recorded, and the board moved on.
   the *next* run — where the stop-point record's own `**Run:**` comment is
   now the newest baseline — asserts neither function stands the item down
   again from that same old comment.
-- [ ] T030 [US4] Run `quickstart.md` Scenario D (ancient stop, empty
+- [X] T030 [US4] Run `quickstart.md` Scenario D (ancient stop, empty
   baseline) structurally against the fixture in T029: confirm SC-007 ("an
   issue with a pre-loop stop command and no loop announcement produces
   exactly one stand-down, with a record, never an unbounded series of
