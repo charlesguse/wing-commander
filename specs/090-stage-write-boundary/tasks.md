@@ -711,3 +711,10 @@ and evaporating into PR-body prose) that this feature exists to end.
 ## Maintainer Feedback — .claude/settings.json edge case needs an explicit fixture (PR #836 review, item 8)
 
 - [ ] Add a dedicated Gate 133 fixture for the `.claude/settings.json` edge case (a task that would grant the stage the very permission it lacks), per spec.md's Edge Cases, rather than relying on it merely falling out of the prefix comparison
+
+## Maintainer Feedback — write-boundary composite can skip the read-back on crash (PR #836 review, item 9)
+
+- [ ] Add failure handling (e.g. `continue-on-error` plus an explicit downstream guard) to the `wing-commander-write-boundary` step so a classifier crash doesn't skip the subsequent "Read back cycle/retry outcome" steps, which currently rely on implicit `success()`
+- [ ] Make the composite's header comment ("never fails the job") true in practice
+- [ ] Apply the same fix to finalize's new checkbox-count step
+- [ ] Get a pass from the `review-step-gating` skill per CLAUDE.md, since this touches an `if:`/failing-step surface
