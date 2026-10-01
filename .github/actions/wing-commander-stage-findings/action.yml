@@ -442,6 +442,17 @@ runs:
             basis = item["fingerprint_basis"]
             fp, _verified = compute_fingerprint(
                 STAGE, basis["file_path"], basis["gate_or_artifact"])
+            if fp is None:
+                # review-gate-round-3: a failed fingerprint must drop only
+                # this finding, never collide with another failed finding's
+                # equally-None fingerprint onto one shared "fingerprint=None"
+                # marker (which would silently treat the second as a
+                # duplicate of the first, mirroring the survivors loop's own
+                # `if fp is None` guard below).
+                reason = "fingerprint computation failed for \"{0}\"".format(
+                    item.get("title", "(untitled)"))
+                notes.append("dropped (malformed, in-flight): {0}".format(reason))
+                continue
             marker = marker_for(fp)
             if marker in seen_markers:
                 appended_in_run += 1

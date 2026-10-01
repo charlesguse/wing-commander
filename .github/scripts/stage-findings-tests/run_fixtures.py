@@ -902,6 +902,59 @@ def case_fingerprint_script_crash_drops_only_that_finding():
           outputs)
 
 
+def case_in_flight_fingerprint_crash_does_not_collide_two_findings():
+    case = ("review-gate-round-3: a fingerprint-script crash in the in-flight "
+            "loop drops only the broken finding, never collides a second "
+            "broken finding onto the first as a false duplicate")
+    tmp = tempfile.mkdtemp(prefix="wc-sf-fp-crash-inflight-")
+    make_branch(tmp, [IN_FLIGHT_ANCHOR])
+    dotgithub_dir = os.path.join(tmp, "dotgithub")
+    fake_action_dir = os.path.join(dotgithub_dir, "actions", "fake-action")
+    shared_dir = os.path.join(dotgithub_dir, "actions", "_shared")
+    scripts_dir = os.path.join(dotgithub_dir, "scripts")
+    schemas_dir = os.path.join(dotgithub_dir, "schemas")
+    os.makedirs(fake_action_dir, exist_ok=True)
+    os.makedirs(shared_dir, exist_ok=True)
+    os.makedirs(scripts_dir, exist_ok=True)
+    os.makedirs(schemas_dir, exist_ok=True)
+    for name in ("verify-stage-finding-schema.py", "wc_schema_pattern.py"):
+        src = os.path.join(os.path.dirname(SCHEMA_VALIDATOR), name)
+        with open(src, encoding="utf-8") as fh:
+            text = fh.read()
+        with open(os.path.join(scripts_dir, name), "w", encoding="utf-8",
+                  newline="\n") as fh:
+            fh.write(text)
+    schema_src = os.path.join(REPO_ROOT, ".github", "schemas",
+                              "stage-finding.schema.json")
+    with open(schema_src, encoding="utf-8") as fh:
+        schema_text = fh.read()
+    with open(os.path.join(schemas_dir, "stage-finding.schema.json"),
+              "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(schema_text)
+    fake_script = os.path.join(shared_dir, "compute-finding-fingerprint.sh")
+    with open(fake_script, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(
+            "#!/usr/bin/env bash\n"
+            "exit 1\n")
+    os.chmod(fake_script, 0o755)
+
+    broken_one = in_flight_finding(title="first in-flight finding that breaks fingerprinting")
+    broken_two = in_flight_finding(title="second, unrelated in-flight finding that also breaks fingerprinting")
+    rc, outputs, state, out = run_prepare(
+        tmp, "structured-array", findings=[broken_one, broken_two],
+        lifecycle_issue_number="560", action_path=fake_action_dir)
+    check(case + ": exit 0 instead of crashing", rc == 0, out)
+    check(case + ": nothing routed to the lifecycle issue (both broken)",
+          outputs.get("lifecycle-count") == "0", outputs)
+    check(case + ": neither finding files as a survivor either",
+          outputs.get("survivor-count") == "0", outputs)
+    check(case + ": both findings are recorded as dropped (malformed), not one as a duplicate of the other",
+          state is not None
+          and sum(1 for n in state["notes"] if "dropped (malformed, in-flight)" in n) == 2
+          and not any("same defect as an earlier in-flight finding" in n for n in state["notes"]),
+          state)
+
+
 def case_key_is_rederivable_from_recorded_inputs():
     case = "the prepare step is deterministic: byte-identical inputs in two independent runs produce the identical key (FR-002, Acceptance Scenario 2)"
     fixture_content = "## Gate 71 — fixture harness for stage-findings\n"
@@ -1627,6 +1680,7 @@ CASES = [
     case_two_verifiable_anchors_key_apart,
     case_unverifiable_anchor_is_rejected_and_recorded,
     case_fingerprint_script_crash_drops_only_that_finding,
+    case_in_flight_fingerprint_crash_does_not_collide_two_findings,
     case_key_is_rederivable_from_recorded_inputs,
     case_anchor_absent_from_existing_file_takes_fallback,
     case_two_unanchorable_findings_share_fallback_key,

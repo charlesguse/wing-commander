@@ -855,13 +855,15 @@ and evaporating into PR-body prose) that this feature exists to end.
 
 ## Review Gate Round 3 Findings
 
-- [ ] Review finding: In-flight dedup loop treats a None fingerprint as a real dedup key
+- [x] Review finding: In-flight dedup loop treats a None fingerprint as a real dedup key
 
   The in-flight findings loop in wing-commander-stage-findings/action.yml calls compute_fingerprint() and uses its result as a dedup marker without checking for None, unlike the survivors loop added in the same diff which explicitly guards `if fp is None`
 
   - .github/actions/wing-commander-stage-findings/action.yml
 
   Detail: Around line 445 (in-flight loop) vs the None-guard added around lines 488-497 for the survivors loop; if compute-finding-fingerprint.sh crashes for two distinct in-flight findings, both get marker fingerprint=None and the second is silently treated as a duplicate of the first, dropping a real defect from the lifecycle-issue checklist with no dropped-malformed note
+
+  Fixed: the in-flight loop now checks `if fp is None` before computing a marker, dropping only that finding with a `"dropped (malformed, in-flight): ..."` note instead of letting a shared `fingerprint=None` marker collide two distinct broken findings into one. New stage-findings-tests fixture (`case_in_flight_fingerprint_crash_does_not_collide_two_findings`) drives two in-flight findings whose fingerprint script both fail, asserting both are recorded as dropped (malformed) and neither is treated as a duplicate of the other.
 
 - [ ] Review finding: No-write-path prefix normalization duplicated between classifier and enforcement
 
