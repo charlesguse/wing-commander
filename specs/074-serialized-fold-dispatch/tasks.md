@@ -406,3 +406,9 @@ Task: "Add fixtures under wing-commander-fold-queue-release/tests/"
 ### Round-3 review of 9e87d013 (maintainer, 2026-10-01)
 
 - [ ] T068 **An orphaned act ticket now blocks its own run for up to 6 hours** (fold-queue-await.sh:124-126). If run A's own act ticket is orphaned (its release gave up, or the runner was lost), A's `fold-turn-dispatch` waits behind a head whose run is A itself. A is `in_progress`, so the new extension renews until the job timeout and wedges every other waiter on the spec. Before T060 this was a 30-minute timeout. **Fix:** never extend for, and allow reclaiming, a head whose `head_run_id` is the waiter's own run but whose token isn't the waiter's.
+
+## Maintainer Feedback
+
+### Round-3 review of 9e87d013 (maintainer, 2026-10-01)
+
+- [ ] T069 **The redispatch poll window is too wide** (fold-cycle-guard.yml:520-521). `--created ">=$CANCELLED_AT" --limit 1` opens minutes before the redispatch, so on a shared wrapper it can pick another spec's run and record that id in the ledger. **Fix:** take a timestamp immediately before `gh workflow run`, as `fold-dispatch` does at :225.
