@@ -49,6 +49,7 @@ PREPARE_SCRIPT = find_step(STAGE_FINDINGS_ACTION,
                           "Extract, validate, cap, and prepare findings")["run"]
 SUMMARY_SCRIPT = find_step(STAGE_FINDINGS_ACTION, "Emit summary")["run"]
 RECORD_SCRIPT = find_step(STAGE_FINDINGS_ACTION, "Record finding 0 outcome")["run"]
+POST_IN_FLIGHT_SCRIPT = find_step(STAGE_FINDINGS_ACTION, "Post in-flight findings to the lifecycle issue")["run"]
 LOOKUP_SCRIPT = find_step(FAILURE_ISSUE_ACTION, "Look up, then report or close")["run"]
 
 BASH = None
@@ -92,7 +93,8 @@ def run_prepare(tmp, channel_mode, findings=None, transcript_result_text=None,
                 cap="3", stage="implement",
                 spec_dir="specs/056-stage-found-defect-filing",
                 run_url="https://example.invalid/actions/runs/1",
-                label_prefix="found-by", findings_json_literal=None):
+                label_prefix="found-by", findings_json_literal=None,
+                lifecycle_issue_number=""):
     out_dir = os.path.join(tmp, "wc-stage-findings")
     state_file = os.path.join(out_dir, "state.json")
     exec_path = os.path.join(tmp, "claude-execution-output.json")
@@ -102,6 +104,7 @@ def run_prepare(tmp, channel_mode, findings=None, transcript_result_text=None,
         "CAP": cap, "FINDINGS_JSON": "", "EXECUTION_OUTPUT_PATH": "",
         "OUT_DIR": out_dir, "STATE_FILE": state_file,
         "GITHUB_ACTION_PATH": STAGE_FINDINGS_ACTION_DIR,
+        "LIFECYCLE_ISSUE_NUMBER": lifecycle_issue_number,
     }
     if channel_mode == "structured-array":
         if findings_json_literal is not None:
@@ -243,6 +246,294 @@ def case_spec_errata_summary_reports_the_drop():
           "dropped (spec errata): 1" in summary, summary)
     check(case + ": summary output carries the count",
           "dropped_spec_errata=1" in outputs.get("summary", ""), outputs.get("summary"))
+
+
+IN_FLIGHT_SPEC_DIR = "specs/056-stage-found-defect-filing"
+IN_FLIGHT_ANCHOR = ".github/actions/_shared/fold-queue-ledger.sh"
+
+
+def in_flight_finding(**overrides):
+    finding = valid_finding(
+        title="fold-queue-ledger.sh opens a round only `when empty` @someone <!-- x -->",
+        what="research.md D4 says a late run owns its own cycle; the ledger's `enqueue` filter disagrees.",
+        evidence={"file_paths": [IN_FLIGHT_SPEC_DIR + "/research.md", IN_FLIGHT_ANCHOR]},
+        fingerprint_basis={"file_path": IN_FLIGHT_ANCHOR, "gate_or_artifact": "enqueue"})
+    finding.update(overrides)
+    return finding
+
+
+def make_branch(tmp, changed, also_write=None):
+    """A git checkout in `tmp` (the prepare step's cwd) whose origin/main is
+    one commit behind HEAD, the commit changing exactly `changed`.
+    `also_write` files are committed on the base, so the branch did not
+    change them."""
+    def git(*args):
+        subprocess.run(["git", "-c", "user.email=t@example.invalid", "-c", "user.name=t"] + list(args),
+                       cwd=tmp, check=True, capture_output=True)
+    git("init", "-q")
+    for path, text in (also_write or {}).items():
+        full = os.path.join(tmp, path)
+        os.makedirs(os.path.dirname(full), exist_ok=True)
+        with open(full, "w", encoding="utf-8") as fh:
+            fh.write(text)
+    with open(os.path.join(tmp, "README"), "w", encoding="utf-8") as fh:
+        fh.write("base\n")
+    git("add", "-A")
+    git("commit", "-q", "-m", "base")
+    git("update-ref", "refs/remotes/origin/main", "HEAD")
+    for path in changed:
+        full = os.path.join(tmp, path)
+        os.makedirs(os.path.dirname(full), exist_ok=True)
+        with open(full, "a", encoding="utf-8") as fh:
+            fh.write("changed on the branch\n")
+    git("add", "-A")
+    git("commit", "-q", "-m", "branch")
+
+
+def read_lifecycle_items(outputs):
+    path = outputs.get("lifecycle-items-file", "")
+    if not path or not os.path.isfile(path):
+        return None
+    with open(path, encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def case_in_flight_finding_goes_to_the_lifecycle_issue():
+    case = "a finding anchored in a file its own lifecycle's branch changed, with a lifecycle issue, is listed there, not filed"
+    tmp = tempfile.mkdtemp(prefix="wc-sf-")
+    make_branch(tmp, [IN_FLIGHT_ANCHOR])
+    rc, outputs, state, out = run_prepare(
+        tmp, "structured-array", findings=[in_flight_finding(), valid_finding()],
+        lifecycle_issue_number="560")
+    check(case + ": exit 0", rc == 0, out)
+    check(case + ": only the unrelated finding files", outputs.get("survivor-count") == "1", out)
+    check(case + ": the file slot is the unrelated one",
+          outputs.get("survivor-0-title") == valid_finding()["title"], outputs.get("survivor-0-title"))
+    check(case + ": lifecycle-count=1", outputs.get("lifecycle-count") == "1", out)
+    check(case + ": routed_to_lifecycle=1", state and state.get("routed_to_lifecycle") == 1, state)
+    items = read_lifecycle_items(outputs) or []
+    check(case + ": one item is written", len(items) == 1, items)
+    item = items[0] if items else {"line": "", "marker": ""}
+    line = item["line"]
+    spans = line[len("- [ ] "):].split(" — ") if line.startswith("- [ ] ") else []
+    check(case + ": the line is a checklist item of two code spans with no inner backtick",
+          len(spans) == 2 and all(sp.startswith("`") and sp.endswith("`") and sp.count("`") == 2
+                                  for sp in spans), line)
+    check(case + ": the item carries a fingerprint marker",
+          re.fullmatch(r"<!-- wing-commander-finding: fingerprint=[0-9a-f]{64} -->", item["marker"]) is not None,
+          item["marker"])
+    check(case + ": the header names the run",
+          "https://example.invalid/actions/runs/1" in outputs.get("lifecycle-header", ""),
+          outputs.get("lifecycle-header"))
+    check(case + ": the notes keep the full title and what (FR-025)",
+          state and any(in_flight_finding()["what"] in n for n in state["notes"]), state)
+
+
+def case_in_flight_needs_the_anchor_changed_on_the_branch():
+    case = "a finding citing its own spec, anchored in a file the branch did NOT change, files as usual"
+    tmp = tempfile.mkdtemp(prefix="wc-sf-")
+    # tasks.md naming the anchor is not ownership: most specs' tasks.md
+    # name run-local-gates.py, which they only run.
+    make_branch(tmp, [".github/workflows/implement.yml"],
+                also_write={IN_FLIGHT_SPEC_DIR + "/tasks.md": "- [ ] T001 Run `" + IN_FLIGHT_ANCHOR + "`\n",
+                            IN_FLIGHT_ANCHOR: "#!/bin/sh\n"})
+    rc, outputs, state, out = run_prepare(
+        tmp, "structured-array", findings=[in_flight_finding()], lifecycle_issue_number="560")
+    check(case + ": exit 0", rc == 0, out)
+    check(case + ": it files", outputs.get("survivor-count") == "1", out)
+    check(case + ": nothing routed", outputs.get("lifecycle-count") == "0"
+          and state and state.get("routed_to_lifecycle") == 0, state)
+    tmp = tempfile.mkdtemp(prefix="wc-sf-")
+    rc, outputs, state, out = run_prepare(
+        tmp, "structured-array", findings=[in_flight_finding()], lifecycle_issue_number="560")
+    check(case + " (no git history at all): it files", rc == 0 and outputs.get("survivor-count") == "1", out)
+
+
+def case_in_flight_without_lifecycle_issue_still_files():
+    case = "an in-flight finding files as usual when there is no lifecycle issue"
+    tmp = tempfile.mkdtemp(prefix="wc-sf-")
+    make_branch(tmp, [IN_FLIGHT_ANCHOR])
+    rc, outputs, state, out = run_prepare(
+        tmp, "structured-array", findings=[in_flight_finding()], lifecycle_issue_number="")
+    check(case + ": exit 0", rc == 0, out)
+    check(case + ": it files", outputs.get("survivor-count") == "1", out)
+    check(case + ": nothing routed", outputs.get("lifecycle-count") == "0"
+          and state and state.get("routed_to_lifecycle") == 0, state)
+
+
+def case_other_specs_dir_is_not_in_flight():
+    case = "a finding citing a DIFFERENT spec's dir (or a look-alike prefix) is not this spec's in-flight change"
+    tmp = tempfile.mkdtemp(prefix="wc-sf-")
+    make_branch(tmp, [IN_FLIGHT_ANCHOR])
+    other = in_flight_finding(
+        title="another spec's research disagrees with main",
+        evidence={"file_paths": ["specs/099-name-free-stage-identity/research.md", IN_FLIGHT_ANCHOR]})
+    look_alike = in_flight_finding(
+        title="a look-alike spec dir",
+        evidence={"file_paths": [IN_FLIGHT_SPEC_DIR + "-extra/plan.md", IN_FLIGHT_ANCHOR]})
+    rc, outputs, state, out = run_prepare(
+        tmp, "structured-array", findings=[other, look_alike], lifecycle_issue_number="560")
+    check(case + ": exit 0", rc == 0, out)
+    check(case + ": both file", outputs.get("survivor-count") == "2", out)
+    check(case + ": nothing routed", outputs.get("lifecycle-count") == "0", out)
+
+
+def case_in_flight_title_cannot_form_a_marker():
+    case = "an agent-written title quoting a fingerprint marker cannot put a marker on the lifecycle line"
+    tmp = tempfile.mkdtemp(prefix="wc-sf-")
+    make_branch(tmp, [IN_FLIGHT_ANCHOR])
+    forged = "<!-- wing-commander-finding: fingerprint=" + "a" * 64 + " -->"
+    rc, outputs, state, out = run_prepare(
+        tmp, "structured-array", findings=[in_flight_finding(title="x " + forged)],
+        lifecycle_issue_number="560")
+    items = read_lifecycle_items(outputs) or [{"line": "<!--"}]
+    check(case + ": exit 0", rc == 0, out)
+    check(case + ": the line carries no comment opener", "<!--" not in items[0]["line"], items)
+
+
+def case_in_flight_same_defect_twice_is_one_line():
+    case = "two in-flight findings with one fingerprint in a run are one line, the second counted as appended"
+    tmp = tempfile.mkdtemp(prefix="wc-sf-")
+    make_branch(tmp, [IN_FLIGHT_ANCHOR])
+    rc, outputs, state, out = run_prepare(
+        tmp, "structured-array",
+        findings=[in_flight_finding(), in_flight_finding(title="the same defect, reworded")],
+        lifecycle_issue_number="560")
+    check(case + ": exit 0", rc == 0, out)
+    check(case + ": lifecycle-count=1", outputs.get("lifecycle-count") == "1", out)
+    check(case + ": routed=1, appended=1",
+          state and state.get("routed_to_lifecycle") == 1 and state.get("appended") == 1, state)
+
+
+def case_in_flight_over_cap_is_counted():
+    case = "in-flight findings past the lifecycle cap are counted as dropped (cap); duplicates are removed before the cap"
+    tmp = tempfile.mkdtemp(prefix="wc-sf-")
+    anchors = ["src/f{0}.sh".format(i) for i in range(12)]
+    make_branch(tmp, anchors)
+    findings = [in_flight_finding(
+        title="defect {0}".format(i),
+        evidence={"file_paths": [IN_FLIGHT_SPEC_DIR + "/plan.md", a]},
+        fingerprint_basis={"file_path": a, "gate_or_artifact": "x"}) for i, a in enumerate(anchors)]
+    findings.insert(1, dict(findings[0], title="defect 0 again"))
+    rc, outputs, state, out = run_prepare(
+        tmp, "structured-array", findings=findings, lifecycle_issue_number="560")
+    check(case + ": exit 0", rc == 0, out)
+    check(case + ": lifecycle-count=10", outputs.get("lifecycle-count") == "10", out)
+    check(case + ": dropped_cap=2, appended=1 (12 distinct, one repeated)",
+          state and state.get("dropped_cap") == 2 and state.get("appended") == 1, state)
+
+
+IN_FLIGHT_GH_STUB = r"""#!/usr/bin/env bash
+dir="$(dirname "$0")"
+printf '%s\n' "$*" >> "$dir/gh-args.log"
+case "$1" in
+  api)
+    [ "$(cat "$dir/api-rc")" = 0 ] || exit "$(cat "$dir/api-rc")"
+    prog=""
+    while [ $# -gt 0 ]; do [ "$1" = --jq ] && prog="$2"; shift; done
+    jq -r "$prog" "$dir/comments.json" ;;
+  issue)
+    while [ $# -gt 0 ]; do [ "$1" = --body-file ] && cp "$2" "$dir/posted-body.md"; shift; done
+    exit "$(cat "$dir/comment-rc")" ;;
+  *) exit 99 ;;
+esac
+"""
+
+
+def run_post_in_flight(tmp, items, comments, comment_rc="0", api_rc="0"):
+    state_file = os.path.join(tmp, "state.json")
+    items_file = os.path.join(tmp, "lifecycle-items.json")
+    with open(items_file, "w", encoding="utf-8") as fh:
+        json.dump(items, fh)
+    with open(state_file, "w", encoding="utf-8") as fh:
+        json.dump({"disabled": False, "proposed": len(items), "dropped_malformed": [],
+                   "dropped_cap": 0, "dropped_spec_errata": 0, "routed_to_lifecycle": len(items),
+                   "filed": 0, "appended": 0, "dropped_api_failure": 0,
+                   "outstanding_skipped": 0, "notes": []}, fh)
+    bindir = tempfile.mkdtemp(prefix="bin-", dir=tmp)
+    for name, value in (("api-rc", api_rc), ("comment-rc", comment_rc)):
+        with open(os.path.join(bindir, name), "w") as fh:
+            fh.write(value)
+    with open(os.path.join(bindir, "comments.json"), "w", encoding="utf-8") as fh:
+        json.dump(comments, fh)
+    stub = os.path.join(bindir, "gh")
+    with open(stub, "w", encoding="utf-8") as fh:
+        fh.write(IN_FLIGHT_GH_STUB)
+    os.chmod(stub, os.stat(stub).st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    rc, out, _outputs, _summary = run_step(
+        BASH, POST_IN_FLIGHT_SCRIPT, tmp,
+        {"GH_TOKEN": "stub", "ISSUE_NUMBER": "560", "ITEMS_FILE": items_file,
+         "HEADER": "The implement stage found defect(s).", "STATE_FILE": state_file,
+         "GITHUB_REPOSITORY": "o/r", "PATH": bindir + os.pathsep + os.environ["PATH"]}, tmp)
+    with open(state_file, encoding="utf-8") as fh:
+        state = json.load(fh)
+    posted_path = os.path.join(bindir, "posted-body.md")
+    posted = open(posted_path, encoding="utf-8").read() if os.path.isfile(posted_path) else None
+    args_path = os.path.join(bindir, "gh-args.log")
+    args = open(args_path, encoding="utf-8").read() if os.path.isfile(args_path) else ""
+    return rc, out, state, posted, args
+
+
+def case_in_flight_post_posts_dedups_and_survives_failure():
+    case = "the in-flight post writes one comment, skips items already on the issue, and never fails the stage"
+    m1 = "<!-- wing-commander-finding: fingerprint=" + "a" * 64 + " -->"
+    m2 = "<!-- wing-commander-finding: fingerprint=" + "b" * 64 + " -->"
+    items = [{"line": "- [ ] `one` — `first`", "marker": m1},
+             {"line": "- [ ] `two` — `second`", "marker": m2}]
+
+    def bot(body):
+        return {"user": {"type": "Bot"}, "body": body}
+
+    def new_tmp():
+        return tempfile.mkdtemp(prefix="wc-sf-post-")
+
+    rc, out, state, posted, args = run_post_in_flight(new_tmp(), items, [])
+    check(case + " (fresh): exit 0", rc == 0, out)
+    check(case + " (fresh): routed=2, nothing dropped",
+          state["routed_to_lifecycle"] == 2 and state["dropped_api_failure"] == 0, state)
+    check(case + " (fresh): one comment carries the header, both lines and both markers",
+          posted is not None and posted.startswith("The implement stage found defect(s).\n\n")
+          and all(x in posted for x in (items[0]["line"], m1, items[1]["line"], m2)), posted)
+    check(case + " (fresh): it reads every page of this issue's comments",
+          "api repos/o/r/issues/560/comments --paginate" in args, args)
+
+    rc, out, state, posted, _ = run_post_in_flight(
+        new_tmp(), items, [bot("earlier comment\r\n" + items[0]["line"] + "\r\n" + m1)])
+    check(case + " (one already posted): exit 0", rc == 0, out)
+    check(case + " (one already posted): routed=1, appended=1",
+          state["routed_to_lifecycle"] == 1 and state["appended"] == 1, state)
+    check(case + " (one already posted): only the new item is posted",
+          posted is not None and m2 in posted and m1 not in posted, posted)
+
+    rc, out, state, posted, _ = run_post_in_flight(
+        new_tmp(), items, [bot(items[0]["line"] + "\n" + m1 + "\n" + items[1]["line"] + "\n" + m2)])
+    check(case + " (all already posted): exit 0, nothing posted", rc == 0 and posted is None, out)
+    check(case + " (all already posted): routed=0, appended=2",
+          state["routed_to_lifecycle"] == 0 and state["appended"] == 2, state)
+
+    for label, comments in (
+            ("a person's comment carrying the marker", [{"user": {"type": "User"}, "body": items[0]["line"] + "\n" + m1}]),
+            ("a marker quoted inside another line", [bot("intro\n- [ ] `x " + m1 + "` — `y`\nnot a marker")]),
+            ("a line a maintainer checked off", [bot("- [x] `one` — `first`\n" + m1)])):
+        rc, out, state, posted, _ = run_post_in_flight(new_tmp(), items[:1], comments)
+        check("{0} ({1}): the item is posted again, not counted as present".format(case, label),
+              rc == 0 and posted is not None and m1 in posted and state["appended"] == 0, (state, posted))
+
+    big = [bot("x" * 2000 + "\n") for _ in range(90)] + [bot(items[0]["line"] + "\n" + m1)]
+    rc, out, state, posted, _ = run_post_in_flight(new_tmp(), items, big)
+    check(case + " (180 KB of earlier comments): the read still dedups instead of failing",
+          rc == 0 and state["dropped_api_failure"] == 0 and state["appended"] == 1
+          and posted is not None and m2 in posted, (state, out[-400:]))
+
+    rc, out, state, posted, _ = run_post_in_flight(new_tmp(), items, [], comment_rc="1")
+    check(case + " (comment fails): exit 0", rc == 0, out)
+    check(case + " (comment fails): routed=0, dropped (API)=2",
+          state["routed_to_lifecycle"] == 0 and state["dropped_api_failure"] == 2, state)
+
+    rc, out, state, posted, _ = run_post_in_flight(new_tmp(), items, [], api_rc="1")
+    check(case + " (reading comments fails): exit 0, nothing posted", rc == 0 and posted is None, out)
+    check(case + " (reading comments fails): routed=0, dropped (API)=2",
+          state["routed_to_lifecycle"] == 0 and state["dropped_api_failure"] == 2, state)
 
 
 def case_malformed_finding_dropped():
@@ -527,8 +818,8 @@ def case_unverifiable_anchor_is_rejected_and_recorded():
     check(case + ": the anchor rejection adds no counter of its own -- the state keys are exactly the known set (research.md D4)",
           state and set(state.keys()) == {
               "disabled", "proposed", "dropped_malformed", "dropped_cap",
-              "dropped_spec_errata", "filed", "appended", "dropped_api_failure",
-              "outstanding_skipped", "notes"},
+              "dropped_spec_errata", "routed_to_lifecycle", "filed", "appended",
+              "dropped_api_failure", "outstanding_skipped", "notes"},
           state and sorted(state.keys()))
     check(case + ": dropped_malformed/dropped_cap are still zero -- not counted as a drop",
           state and state["dropped_malformed"] == [] and state["dropped_cap"] == 0, state)
@@ -1195,6 +1486,14 @@ CASES = [
     case_spec_errata_is_dropped_and_counted,
     case_spec_errata_dot_slash_and_mixed_paths,
     case_live_contract_finding_still_files,
+    case_in_flight_finding_goes_to_the_lifecycle_issue,
+    case_in_flight_needs_the_anchor_changed_on_the_branch,
+    case_in_flight_title_cannot_form_a_marker,
+    case_in_flight_without_lifecycle_issue_still_files,
+    case_other_specs_dir_is_not_in_flight,
+    case_in_flight_same_defect_twice_is_one_line,
+    case_in_flight_over_cap_is_counted,
+    case_in_flight_post_posts_dedups_and_survives_failure,
     case_spec_errata_summary_reports_the_drop,
     case_empty_file_paths_dropped,
     case_trailing_newline_title_dropped,

@@ -195,6 +195,18 @@ def check_canonical_rule_sync(root="."):
     code_anchor_m = ANCHOR_LITERAL_RE.search(code_text)
     code_fallback_m = FALLBACK_LITERAL_RE.search(code_text)
 
+    # One home: the step computes the fingerprint in exactly one place
+    # (finding_fingerprint()), which both the filing slots and the
+    # lifecycle checklist items call. A second copy of either format
+    # literal is a pasted computation that can drift from the first.
+    for label, regex in (("anchor|", ANCHOR_LITERAL_RE), ("fallback|", FALLBACK_LITERAL_RE)):
+        count = len(regex.findall(code_text))
+        if count > 1:
+            local_fail(f"{ACTION_FILE}'s {ACTION_STEP_NAME!r} step carries {count} "
+                       f"{label!r}-tagged format literals; the fingerprint has one "
+                       f"home, finding_fingerprint() -- call it instead of pasting "
+                       f"the computation.")
+
     if doc_anchor_m and code_anchor_m:
         doc_pipes = doc_anchor_m.group(1).count("|")
         code_pipes = code_anchor_m.group(1).count("|")
