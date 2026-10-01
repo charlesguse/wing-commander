@@ -789,3 +789,13 @@ and evaporating into PR-body prose) that this feature exists to end.
   Detail: write-boundary-lookup ~lines 85-88 jq '[.[] | select(.body != null and (.body | contains($marker)))] | first.url // empty' vs durable-failure-issue ~lines 165-166 near-identical jq, not factored into .github/actions/_shared/
 
   Fixed: extracted the marker-match jq filter into `.github/actions/_shared/match-issue-by-marker.sh`; both composites now call this one script instead of each pasting the jq filter. (An earlier draft also factored the `gh issue list` call itself into a `_shared/` script, but Gate 12 explicitly fails any `gh` call inside `.github/actions/_shared/*.sh` since it cannot resolve that script's token statically — the listing call stays inline in each composite, matching/match-issue-by-marker.sh carries no `gh` call of its own.)
+
+## Review Gate Round 2 Findings
+
+- [ ] Review finding: finalize.yml lookup step lacks the continue-on-error its sibling got
+
+  The new "Look up routed write-boundary items" step in finalize.yml has no continue-on-error, unlike the "Count tasks.md checkboxes at tip (finalize)" step immediately above it and the analogous write-boundary-cycle/-retry steps in implement.yml, which were all given this exact protection in response to review-gate-round-1 item 9's finding about classifier/composite crashes skipping downstream implicit-success() steps.
+
+  - .github/workflows/finalize.yml
+
+  Detail: finalize.yml:722 "Look up routed write-boundary items" step has no continue-on-error, while the sibling step directly above it (checkbox-tip-finalize, ~line 703) explicitly added continue-on-error citing "PR #836 review, item 9", and implement.yml's write-boundary-cycle/-retry steps got the same fix for the identical crash-skips-downstream-success()-gated-step risk. The downstream "Summarize change and extract remaining manual work" step (~line 737) is gated only on an implicit success(), with no always()/!cancelled(), so any crash in this composite (not just the internally-handled `gh issue list` failure, which is already caught) fails the whole finalize job and skips the PR's own summary/remaining-manual-work report for the entire run.
