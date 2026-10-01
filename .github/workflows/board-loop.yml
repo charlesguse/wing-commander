@@ -952,6 +952,10 @@ jobs:
           bot-login: ${{ steps.ctx.outputs.bot-slug }}[bot]
           issue-number: ${{ steps.recovery-candidate.outputs.issue-number }}
           initial-paused: ${{ vars.WING_COMMANDER_BOARD_LOOP_PAUSED == 'true' }}
+          # A recovery candidate is a merged item: no live branch or base to
+          # preserve on a stop-point record (spec 097 FR-010).
+          marker-branch: ''
+          marker-base-sha: ''
 
       # research.md D4/FR-001a, CLAUDE.md "Shared logic has exactly one
       # home": the same composite the prove job's own "Check whether the
@@ -2044,6 +2048,7 @@ jobs:
             ${{ steps.killswitch-recheck.outputs.stop-cause != '' && format('triage: {0}', steps.killswitch-recheck.outputs.stop-cause-run-label) ||
                 format('triage: {0}', steps.act.outputs.outcome) }}
           record-path: ${{ runner.temp }}/wing-commander-metrics-record-triage-outcome.json
+          spec-identity-is-own: 'false'
 
       - name: Upload metrics record (triage outcome)
         if: always()
@@ -2617,6 +2622,7 @@ jobs:
             ${{ steps.killswitch-recheck.outputs.stop-cause != '' && format('route: {0}', steps.killswitch-recheck.outputs.stop-cause-run-label) ||
                 format('route: {0}', steps.decide.outputs.verdict) }}
           record-path: ${{ runner.temp }}/wing-commander-metrics-record-route-outcome.json
+          spec-identity-is-own: 'false'
 
       - name: Upload metrics record (route outcome)
         if: always()
@@ -3260,6 +3266,7 @@ jobs:
             ${{ steps.killswitch-recheck.outputs.stop-cause != '' && format('fix: {0}', steps.killswitch-recheck.outputs.stop-cause-run-label) ||
                 format('fix: gate-suite {0}', steps.gate-suite.outputs.outcome) }}
           record-path: ${{ runner.temp }}/wing-commander-metrics-record-fix-outcome.json
+          spec-identity-is-own: 'false'
 
       - name: Upload metrics record (fix outcome)
         if: always()
@@ -4360,6 +4367,7 @@ jobs:
             ${{ steps.killswitch-recheck.outputs.stop-cause != '' && format('review: {0}', steps.killswitch-recheck.outputs.stop-cause-run-label) ||
                 format('review: {0}', steps.round.outputs.outcome) }}
           record-path: ${{ runner.temp }}/wing-commander-metrics-record-review-outcome.json
+          spec-identity-is-own: 'false'
 
       - name: Upload metrics record (review outcome)
         if: always()
