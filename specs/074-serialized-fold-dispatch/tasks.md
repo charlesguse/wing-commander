@@ -388,3 +388,9 @@ Task: "Add fixtures under wing-commander-fold-queue-release/tests/"
   - emit `new-run-id` right after the poll, and gate Record with `!cancelled() &&`;
   - treat an empty `round` in `decide` as notice-only;
   - preferably, have `fold-turn-implement` call `record-implement-run` with its own `github.run_id` and admit's round, so correlation never depends on a poll.
+
+## Maintainer Feedback
+
+### Round-3 review of 9e87d013 (maintainer, 2026-10-01)
+
+- [ ] T066 **B9's gate passes on the regression it targets.** Scenario 15 is pinned to three job names, and its mutation flips a flag in the subject dict. Injecting a `wing-commander-fold-queue-claim-dispatch` step into `dispatch-once` still passes Gate 128 and all 13 fold gates. **Fix:** walk every job in pr-conversation.yml, implement.yml and fold-cycle-guard.yml that `uses:` the admit or claim-dispatch composites, and assert none has `concurrency:`. Make the mutation inject such a step into `dispatch-once`.
