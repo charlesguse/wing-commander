@@ -591,3 +591,10 @@ kept to one session to avoid edit collisions).
   structurally, and Gate 87's harness synthesizes the pristine directory
   itself rather than reading it from a real job. (missing; research.md D8,
   FR-018)
+
+## Maintainer Feedback
+
+- [ ] Have `wing-commander-board-stop-check`'s composite resolve `board_stop_check.py`, `board_item_marker.py` and the `board_spec_request_body` import relative to itself (e.g. `$GITHUB_ACTION_PATH/../../scripts/...`) instead of depending on a caller-populated `./.wc-pristine-repo` — every caller already checks that out per spec 086 FR-003, so this adds no trust surface.
+- [ ] Drop the three T034 "Snapshot helper scripts" steps added to the triage, route and prove jobs, now unneeded.
+- [ ] Extend `board_prove.py`'s `SCRIPT_PATH_RE` and Gate 128 check 2 to accept the `$GITHUB_ACTION_PATH`-relative resolution form.
+- [ ] Add a Gate 128 check asserting the composite never depends on a caller-populated `wc-pristine` directory (today, deleting the three T034 steps keeps the gate at 0 failures).
