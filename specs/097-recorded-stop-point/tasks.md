@@ -565,3 +565,29 @@ User Story 2's message/metrics wiring (T021/T023/T024 — `board-loop.yml`,
 independent of the gate script) while the first continues the Gate 128
 checks for US1/US3/US4 (all in `verify-stop-point-recording.py`, so best
 kept to one session to avoid edit collisions).
+
+---
+
+## Phase 8: Convergence
+
+- [ ] T034 Add a "Snapshot helper scripts (before any agent runs)" step
+  (identical to the one `.github/workflows/board-loop.yml`'s fix/review/
+  readiness jobs already carry — the same `git archive … | tar -x` of
+  `.github/scripts`/`.github/schemas` from `$GITHUB_SHA` into
+  `$RUNNER_TEMP/wc-pristine`, write-protected afterward) to the triage,
+  route, and prove jobs, placed after each job's own `Checkout` step and
+  before its `wing-commander-board-stop-check` call site. T007/research.md
+  D8 made the composite's `board_stop_check.py` invocation run
+  unconditionally from `$RUNNER_TEMP/wc-pristine/scripts/…` for every
+  caller (confirmed present and required by Gate 128 check 2), but only
+  fix, review, and readiness populate that directory — triage, route, and
+  prove do not (verified: `grep -n "Snapshot helper scripts"
+  .github/workflows/board-loop.yml` finds exactly three occurrences). Every
+  run of those three jobs will fail at the composite's `check` step with
+  "No such file or directory" once this lands, regardless of whether a
+  stop is pending, since that invocation runs on every call. All 201 local
+  gates pass without catching this because none of them execute
+  board-loop.yml itself — Gate 128 checks the composite's own text
+  structurally, and Gate 87's harness synthesizes the pristine directory
+  itself rather than reading it from a real job. (missing; research.md D8,
+  FR-018)
