@@ -3,7 +3,7 @@
   "spec_dir": "specs/099-name-free-stage-identity",
   "feature_num": "099",
   "stage": "implement",
-  "iteration": 2,
+  "iteration": 3,
   "spec_branch": "spec/099-name-free-stage-identity",
   "pending_re_review_from": [
     "charlesguse"
