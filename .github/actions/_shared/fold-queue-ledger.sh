@@ -692,7 +692,14 @@ while [ "$attempt" -le "$max_attempts" ]; do
   esac
 
   if [ "$(jq -r 'has("error")' "$output_file")" = "true" ]; then
-    echo "::error::$(jq -r '.error' "$output_file")"
+    # T059 (maintainer review of #821, B7): every caller captures this
+    # script's stdout via command substitution (`out="$(bash "$LEDGER" ...)"`,
+    # or release's own `>/dev/null`) to parse its key=value result -- an
+    # error line printed to stdout here is silently absorbed into that
+    # capture (or discarded outright) and never reaches the job's log or
+    # the Actions UI as an annotation. stderr is not captured by any
+    # caller, so it is what actually surfaces this failure.
+    echo "::error::$(jq -r '.error' "$output_file")" >&2
     exit 1
   fi
 
@@ -725,6 +732,6 @@ while [ "$attempt" -le "$max_attempts" ]; do
 done
 
 if [ "$success" != "true" ]; then
-  echo "::error::fold-queue-ledger.sh: gave up applying '$TRANSFORM' for $SPEC_DIR after $max_attempts attempts. Last push error: $last_error"
+  echo "::error::fold-queue-ledger.sh: gave up applying '$TRANSFORM' for $SPEC_DIR after $max_attempts attempts. Last push error: $last_error" >&2
   exit 1
 fi

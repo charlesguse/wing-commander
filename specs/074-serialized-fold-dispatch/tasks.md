@@ -338,7 +338,9 @@ Task: "Add fixtures under wing-commander-fold-queue-release/tests/"
 
 ### Follow-up review of 511913b3 (maintainer, 2026-09-30)
 
-- [ ] T059 **B7: ledger errors are invisible.** `fold-queue-ledger.sh:695` and `:728` write `::error::` to stdout, and every caller discards or captures stdout: `release:83`, `admit:93`, `claim-dispatch:122` and `ledger:64`. **Fix:** write them to `>&2`.
+- [X] T059 **B7: ledger errors are invisible.** `fold-queue-ledger.sh:695` and `:728` write `::error::` to stdout, and every caller discards or captures stdout: `release:83`, `admit:93`, `claim-dispatch:122` and `ledger:64`. **Fix:** write them to `>&2`.
+
+  Done: both lines now redirect to `>&2` (matching `fold-queue-await.sh`'s own existing `::error::` precedent in the same `_shared/` directory). `shellcheck .github/actions/_shared/fold-queue-ledger.sh`: clean. `python3 .github/scripts/verify-fold-queue-admission.py` and all four composite fixture suites (`python .github/scripts/run-local-gates.py "fold-queue"`, 5/5): no regression. Scoped strictly to the two named lines; the transform-dispatcher error at `:213` and the three `peek`/`peek-round`/`peek-implement-run` clone-failure errors (`:291`/`:323`/`:349`) share the identical stdout-swallowed-by-capture defect but were left untouched (outside this task's named scope) and reported as a finding instead.
 
 ## Maintainer Feedback
 
