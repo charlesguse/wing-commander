@@ -9,9 +9,15 @@ WHAT IT CHECKS
    has a step, gated on `stop-cause == 'stop-request'`, that invokes
    `board_item_marker.py --step stalled ... --add-label "board:stalled"`.
 2. Provenance: that step's invocation, and the composite's own
-   `board_stop_check.py` invocation, run from `$RUNNER_TEMP/wc-pristine/
-   scripts/...`, never a bare `.github/scripts/...` path (spec 095
-   FR-011/FR-012, research.md D8).
+   `board_stop_check.py` invocation, run from `$GITHUB_ACTION_PATH/../../
+   scripts/...` (resolved relative to the composite's own trusted
+   directory -- maintainer review fold leg-0), never a bare
+   `.github/scripts/...` path (spec 095 FR-011/FR-012, research.md D8).
+7. No caller-populated snapshot dependency: the composite's own script
+   resolutions never reference `$RUNNER_TEMP/wc-pristine` -- every caller
+   already invokes this composite from its own trusted `.wc-pristine-repo`
+   checkout (spec 086 FR-003), so a second, composite-populated snapshot
+   directory is unneeded trust surface (maintainer review fold leg-0).
 3. Cause-aware messaging: none of `.github/workflows/board-loop.yml`'s six
    stand-down messages hardcodes "kill switch" prose unconditionally --
    each reads `stop-cause` to pick its wording (FR-014).
@@ -54,9 +60,19 @@ RECORD_WRITE_IF_RE = re.compile(r"stop-cause\s*==\s*'stop-request'")
 RECORD_WRITE_INVOCATION_RE = re.compile(
     r"board_item_marker\.py[\s\S]*?--step\s+stalled[\s\S]*?--add-label\s+\"board:stalled\"")
 BARE_SCRIPT_PATH_RE = re.compile(
-    r"(?<!wc-pristine/scripts/)\.github/scripts/(board_stop_check|board_item_marker)\.py")
-PRISTINE_BOARD_STOP_CHECK_RE = re.compile(
-    r"wc-pristine/scripts/board_stop_check\.py")
+    r"(?<!GITHUB_ACTION_PATH/\.\./\.\./scripts/)\.github/scripts/"
+    r"(board_stop_check|board_item_marker)\.py")
+TRUSTED_BOARD_STOP_CHECK_RE = re.compile(
+    r"GITHUB_ACTION_PATH/\.\./\.\./scripts/board_stop_check\.py")
+# maintainer review fold leg-0: the composite must resolve its scripts
+# relative to its own $GITHUB_ACTION_PATH, never a caller-populated
+# $RUNNER_TEMP/wc-pristine snapshot -- matches both the shell
+# ($RUNNER_TEMP/wc-pristine/scripts/...) and the python
+# (os.environ["RUNNER_TEMP"], "wc-pristine") forms, but never the
+# unrelated `.wc-pristine-repo` checkout directory every caller already
+# uses to resolve this composite itself (spec 086 FR-003).
+WC_PRISTINE_DEPENDENCY_RE = re.compile(
+    r"\$RUNNER_TEMP/wc-pristine|RUNNER_TEMP[\"']\]\s*,\s*[\"']wc-pristine[\"']")
 
 
 def _load_composite_steps(text=None):
@@ -119,17 +135,34 @@ def check_provenance(steps=None, verbose=True):
         failures += 1
         if verbose:
             print("::error::verify-stop-point-recording: {0!r} references a bare "
-                  ".github/scripts/ path instead of $RUNNER_TEMP/wc-pristine/scripts/ "
+                  ".github/scripts/ path instead of $GITHUB_ACTION_PATH/../../scripts/ "
                   "(check 2).".format(bare.group(0)))
-    if not PRISTINE_BOARD_STOP_CHECK_RE.search(str((check_step or {}).get("run") or "")):
+    if not TRUSTED_BOARD_STOP_CHECK_RE.search(str((check_step or {}).get("run") or "")):
         failures += 1
         if verbose:
             print("::error::verify-stop-point-recording: the `check` step does not "
-                  "invoke board_stop_check.py from $RUNNER_TEMP/wc-pristine/scripts/ "
+                  "invoke board_stop_check.py from $GITHUB_ACTION_PATH/../../scripts/ "
                   "(check 2).")
     if not failures and verbose:
-        print("[ok] check 2: both invocations run from the pristine snapshot")
+        print("[ok] check 2: both invocations run from the composite's own trusted path")
     return failures
+
+
+# --- Check 7: no caller-populated wc-pristine dependency -----------------
+def check_no_wc_pristine_dependency(text=None, verbose=True):
+    text = text if text is not None else _composite_text()
+    match = WC_PRISTINE_DEPENDENCY_RE.search(text)
+    if match:
+        if verbose:
+            print("::error::verify-stop-point-recording: {0!r} references a "
+                  "caller-populated $RUNNER_TEMP/wc-pristine snapshot -- the composite "
+                  "must resolve its scripts relative to its own $GITHUB_ACTION_PATH "
+                  "instead (check 7).".format(match.group(0)))
+        return 1
+    if verbose:
+        print("[ok] check 7: the composite depends on no caller-populated wc-pristine "
+              "snapshot")
+    return 0
 
 
 # --- Check 3: cause-aware messaging -------------------------------------
@@ -283,6 +316,7 @@ CHECKS = (
     ("check 4", check_decision_function_agreement),
     ("check 5", check_selection_exclusion),
     ("check 6", check_no_write_on_stand_down),
+    ("check 7", check_no_wc_pristine_dependency),
 )
 
 
@@ -319,9 +353,27 @@ def selftest_check1():
 def selftest_check2():
     case = "board_item_marker.py invocation rewritten to a bare .github/scripts/ path -> check 2 fails"
     mutated_steps = _mutate_composite_text(
-        r'\$RUNNER_TEMP/wc-pristine/scripts/board_item_marker\.py',
+        r'\$GITHUB_ACTION_PATH/\.\./\.\./scripts/board_item_marker\.py',
         r'.github/scripts/board_item_marker.py', count=1)
     failures = check_provenance(steps=mutated_steps, verbose=False)
+    if not failures:
+        print("::error::verify-stop-point-recording self-test: {0}: NOT caught.".format(case))
+        return 1
+    print("note: mutation caught ({0}).".format(case))
+    return 0
+
+
+def selftest_check7():
+    case = "board_stop_check.py invocation reverted to $RUNNER_TEMP/wc-pristine -> check 7 fails"
+    text = _composite_text()
+    mutated, n = re.subn(
+        r'\$GITHUB_ACTION_PATH/\.\./\.\./scripts/board_stop_check\.py"\)"',
+        r'$RUNNER_TEMP/wc-pristine/scripts/board_stop_check.py")"',
+        text, count=1)
+    if n != 1:
+        raise AssertionError("selftest_check7: mutation pattern matched {0} time(s), "
+                              "expected 1".format(n))
+    failures = check_no_wc_pristine_dependency(text=mutated, verbose=False)
     if not failures:
         print("::error::verify-stop-point-recording self-test: {0}: NOT caught.".format(case))
         return 1
@@ -447,6 +499,7 @@ def selftest_check6():
 SELFTESTS = (
     selftest_check1, selftest_check2, selftest_check3,
     selftest_check4, selftest_check4_samerun_record, selftest_check5, selftest_check6,
+    selftest_check7,
 )
 
 

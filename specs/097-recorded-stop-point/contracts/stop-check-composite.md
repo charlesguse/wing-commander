@@ -63,18 +63,25 @@ guards) is unchanged in every respect and unaffected by `stop-cause`.
    stop_comment_json="$(jq -n --slurpfile comments "$RUNNER_TEMP/board-stop-check-comments.json" \
      --arg run_id "$GITHUB_RUN_ID" --arg bot_login "$BOT_LOGIN" \
      '{comments: $comments[0], current_run_id: $run_id, bot_login: $bot_login}' \
-     | python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_stop_check.py" --stop-comment)"
+     | python3 -I "$GITHUB_ACTION_PATH/../../scripts/board_stop_check.py" --stop-comment)"
    ```
    (exact CLI flag/subcommand shape is a tasks-stage detail; the contract is
    that this reuses `find_stop_command_comment()`/`stop_command_reason()`
-   from `board_stop_check.py`, run from the trusted snapshot per D8, never a
-   second re-implementation of the match rule in shell/jq. `current_run_id`
-   is required — maintainer review fold leg-1, FR-006/FR-008 — so this
-   run's own not-yet-posted stop-point record can never be mistaken for a
-   different run's marker when the baseline is recomputed).
+   from `board_stop_check.py`, run from the composite's own trusted
+   directory per D8's addendum, never a second re-implementation of the
+   match rule in shell/jq. `current_run_id` is required — maintainer review
+   fold leg-1, FR-006/FR-008 — so this run's own not-yet-posted stop-point
+   record can never be mistaken for a different run's marker when the
+   baseline is recomputed). A one-line `gh label create "board:stalled"
+   ... --force` fallback precedes step 3's marker write — maintainer
+   review fold leg-0/leg-2: every caller already ensures this label exists
+   via `wing-commander-board-labels` before reaching this composite, but
+   `verify-board-label-creation.py` is job-scoped with no cross-file
+   fallback, and a nested `uses: ./.github/actions/wing-commander-board-
+   labels` step here was exactly the leg-2 RCE.
 3. Write the record:
    ```bash
-   marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" \
+   marker="$(python3 -I "$GITHUB_ACTION_PATH/../../scripts/board_item_marker.py" \
      --step stalled --issue "$ISSUE_NUMBER" --add-label "board:stalled" \
      ${MARKER_BRANCH:+--branch "$MARKER_BRANCH"} \
      ${MARKER_BASE_SHA:+--base-sha "$MARKER_BASE_SHA"})" \
@@ -89,12 +96,15 @@ guards) is unchanged in every respect and unaffected by `stop-cause`.
 
 Both the existing `board_stop_check.py` invocation and the new
 `board_item_marker.py` invocation in this composite's `run:` step execute
-as `python3 -I "$RUNNER_TEMP/wc-pristine/scripts/<name>.py"` — never a bare
-`.github/scripts/<name>.py` workspace-relative path. This is the first
-composite in the repository to import from the trusted snapshot inside its
-own `run:` step (research.md D8); the mechanism (the runner's ambient
-`$RUNNER_TEMP` populated by the caller job's own pristine-checkout step,
-before any composite is invoked) is unchanged by that fact.
+as `python3 -I "$GITHUB_ACTION_PATH/../../scripts/<name>.py"` — never a
+bare `.github/scripts/<name>.py` workspace-relative path, and never a
+caller-populated `$RUNNER_TEMP/wc-pristine` snapshot either (maintainer
+review fold leg-0 supersedes research.md D8's original design: every
+caller already invokes this composite as `./.wc-pristine-repo/.github/
+actions/wing-commander-board-stop-check`, so `$GITHUB_ACTION_PATH` —
+GitHub Actions' own ambient variable naming where a composite's action.yml
+was loaded from — always points inside that same trusted checkout, spec
+086 FR-003; no second, composite-populated snapshot is needed).
 
 ## Acceptance mapping
 

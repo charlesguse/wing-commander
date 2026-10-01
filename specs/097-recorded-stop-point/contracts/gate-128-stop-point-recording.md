@@ -14,11 +14,12 @@ other gate uses (e.g. Gate 97/`verify-board-loop-resume-gating.py`, Gate
 | # | Check | Fails when | Passes when |
 |---|---|---|---|
 | 1 | Composite record-write present | `.github/actions/wing-commander-board-stop-check/action.yml` has no step that, gated on `stop-cause == "stop-request"`, invokes `board_item_marker.py --step stalled ... --add-label "board:stalled"` | the step is present |
-| 2 | Provenance | that invocation (and `board_stop_check.py`'s own) references a bare `.github/scripts/...` path instead of `$RUNNER_TEMP/wc-pristine/scripts/...` | both are invoked from the pristine snapshot (spec 095 FR-011/FR-012, research.md D8) |
+| 2 | Provenance | that invocation (and `board_stop_check.py`'s own) references a bare `.github/scripts/...` path instead of `$GITHUB_ACTION_PATH/../../scripts/...` | both are invoked from the composite's own trusted directory (spec 095 FR-011/FR-012, research.md D8/D8 addendum) |
 | 3 | Cause-aware messaging | any of the six stand-down message strings in `board-loop.yml` hardcodes "kill switch" prose unconditionally (the pre-fix shape at, e.g., `board-loop.yml:1412`) | each reads `stop-cause` (or the composite's `stop-cause` output) to select its wording (FR-014) |
 | 4 | Decision-function agreement | `find_stop_command_comment()`'s "did a comment win" answer disagrees with `find_stop_request()`'s `stand_down` on any fixture in Gate 87's corpus, or on the new FR-016/FR-009/FR-006/FR-008 fixtures this gate adds | the two agree on every fixture (research.md D2's invariant) |
 | 5 | Selection exclusion | a fixture issue carrying `{"step": "stalled", "round": 0, "pr": null, "branch": null, "base_sha": null}` plus `board:stalled` is still returned by `board_eligibility.in_flight_candidate()` or `select()` | it is excluded by both, on every one of ten simulated successive selection passes (SC-001) |
 | 6 | No write on kill-switch-only / closed-issue | a fixture composite invocation with `stop-cause` resolving to `"kill-switch"` or `"closed-issue"` still reaches the record-write block | it never does (FR-011/FR-013) |
+| 7 | No caller-populated snapshot dependency | the composite's own script resolutions reference `$RUNNER_TEMP/wc-pristine` (maintainer review fold leg-0) | they resolve only via `$GITHUB_ACTION_PATH`, never a caller-populated snapshot (spec 086 FR-003) |
 
 ## Self-test (Principle VIII: the gate must be shown to fail its own subject)
 
@@ -47,6 +48,9 @@ check then reports failure:
 6. Force `stop-cause` to `"kill-switch"` in a fixture that also satisfies
    the record-write block's own gating condition (a deliberately broken
    `if:` that ignores `stop-cause`) → check 6 fails.
+7. Revert the `check` step's `board_stop_check.py` invocation to
+   `$RUNNER_TEMP/wc-pristine/scripts/board_stop_check.py` (the pre-fold-
+   leg-0 shape) → check 7 fails.
 
 ## What this gate does NOT check
 

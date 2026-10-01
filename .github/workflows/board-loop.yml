@@ -1547,21 +1547,6 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
 
-      # #583: see the fix job's "Snapshot helper scripts" step. Triage's
-      # own wing-commander-board-stop-check call site (T006's --stop-comment
-      # mode and T010's record-write block) runs from this pristine
-      # snapshot like every other caller (research.md D8).
-      - name: Snapshot helper scripts (before any agent runs)
-        run: |
-          set -euo pipefail
-          dest="$RUNNER_TEMP/wc-pristine"
-          if ! git cat-file -e "$GITHUB_SHA^{commit}" 2>/dev/null; then
-            git fetch --no-tags --quiet origin "$GITHUB_SHA"
-          fi
-          mkdir "$dest"
-          git archive --format=tar "$GITHUB_SHA" .github/scripts .github/schemas | tar -x -C "$dest" --strip-components=1
-          chmod -R a-w "$dest"
-
       # see this file's header for why every job does this
       - name: Checkout board-loop's own trusted copy (composites)
         uses: actions/checkout@v5
@@ -2106,21 +2091,6 @@ jobs:
         uses: actions/checkout@v5
         with:
           persist-credentials: false
-
-      # #583: see the fix job's "Snapshot helper scripts" step. Route's
-      # own wing-commander-board-stop-check call site (T006's --stop-comment
-      # mode and T010's record-write block) runs from this pristine
-      # snapshot like every other caller (research.md D8).
-      - name: Snapshot helper scripts (before any agent runs)
-        run: |
-          set -euo pipefail
-          dest="$RUNNER_TEMP/wc-pristine"
-          if ! git cat-file -e "$GITHUB_SHA^{commit}" 2>/dev/null; then
-            git fetch --no-tags --quiet origin "$GITHUB_SHA"
-          fi
-          mkdir "$dest"
-          git archive --format=tar "$GITHUB_SHA" .github/scripts .github/schemas | tar -x -C "$dest" --strip-components=1
-          chmod -R a-w "$dest"
 
       # see this file's header for why every job does this
       - name: Checkout board-loop's own trusted copy (composites)
@@ -5146,21 +5116,6 @@ jobs:
         with:
           persist-credentials: false
 
-      # #583: see the fix job's "Snapshot helper scripts" step. Prove's
-      # own wing-commander-board-stop-check call site (T006's --stop-comment
-      # mode and T010's record-write block) runs from this pristine
-      # snapshot like every other caller (research.md D8).
-      - name: Snapshot helper scripts (before any agent runs)
-        run: |
-          set -euo pipefail
-          dest="$RUNNER_TEMP/wc-pristine"
-          if ! git cat-file -e "$GITHUB_SHA^{commit}" 2>/dev/null; then
-            git fetch --no-tags --quiet origin "$GITHUB_SHA"
-          fi
-          mkdir "$dest"
-          git archive --format=tar "$GITHUB_SHA" .github/scripts .github/schemas | tar -x -C "$dest" --strip-components=1
-          chmod -R a-w "$dest"
-
       # see this file's header for why every job does this
       - name: Checkout board-loop's own trusted copy (composites)
         uses: actions/checkout@v5
@@ -5181,17 +5136,17 @@ jobs:
           app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
           private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
 
-      # #488: board-loop.yml's own labels -- see wing-commander-board-labels.
+      # #488: board-loop.yml's own labels (see wing-commander-board-labels).
       # This used to be ensured inside wing-commander-board-stop-check's own
       # composite; moved out to every caller's own job (spec 097-recorded-
       # stop-point review) because a composite's own `uses: ./...` step
       # resolves against $GITHUB_WORKSPACE, not the composite's own
       # directory -- inside fix/review/readiness that workspace is the
       # item's own (possibly attacker-controlled) branch checkout, so the
-      # nested call ran whatever wing-commander-board-labels/action.yml that
-      # branch carried, with the App token, whenever a stop request was
-      # honoured. continue-on-error: a missed create cannot block prove's
-      # own close/redrive step.
+      # nested call ran that composite's definition as the branch carried
+      # it, with the App token, whenever a stop request was honoured.
+      # continue-on-error: a missed create cannot block prove's own
+      # close/redrive step.
       - name: Ensure board-loop's own labels exist
         continue-on-error: true
         uses: ./.wc-pristine-repo/.github/actions/wing-commander-board-labels

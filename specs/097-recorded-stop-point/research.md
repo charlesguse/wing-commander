@@ -328,6 +328,31 @@ timing, since FR-018 requires it unconditionally, not contingent on spec
 095 landing first; if spec 095 lands first, this becomes an ordinary
 instance of its rule rather than the first one.
 
+**Addendum (maintainer review fold leg-0)**: this decision is superseded.
+`$RUNNER_TEMP/wc-pristine` requires a caller-populated snapshot step
+(T034 ended up adding it to triage, route and prove solely for this), is a
+second trust mechanism alongside the `.wc-pristine-repo` full-repo checkout
+every caller already takes (spec 086 FR-003) to resolve this very
+composite, and T034's own fix exposed a real gate hole (nothing guarded
+the three new snapshot steps). The composite now instead resolves both
+invocations, and the `board_spec_request_body` import (D9), relative to
+its own `$GITHUB_ACTION_PATH` — GitHub Actions' own ambient variable
+naming the directory a composite's `action.yml` was loaded from, already
+the established idiom several other composites in this repo use for their
+own `_shared/` siblings (e.g. `wing-commander-published-commits-line`).
+Since every caller invokes this composite as `./.wc-pristine-repo/.github/
+actions/wing-commander-board-stop-check`, `$GITHUB_ACTION_PATH` always
+points inside that same trusted checkout, so
+`$GITHUB_ACTION_PATH/../../scripts/<name>.py` resolves to the identical
+trusted file `$RUNNER_TEMP/wc-pristine/scripts/<name>.py` did, with no
+caller-populated snapshot and no new trust surface (spec 086 FR-003). The
+three T034 steps are removed as unneeded; fix/review/readiness keep their
+own pre-existing `$RUNNER_TEMP/wc-pristine` snapshot (used for other
+helpers those jobs import, unrelated to this composite). Gate 128 check 2
+and a new check 7 enforce this; `board_prove.py`'s `SCRIPT_PATH_RE`/
+`SYS_PATH_SCRIPTS_RE` are extended to still resolve this composite's
+script imports under the new form.
+
 ## D9 — Stop-point record content (FR-004, FR-005)
 
 **Decision**: The comment posted in D5 step 3 has this shape:

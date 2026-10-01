@@ -128,7 +128,7 @@ runs:
         stop_decision_json="$(jq -n --slurpfile comments "$RUNNER_TEMP/board-stop-check-comments.json" \
           --arg run_id "$GITHUB_RUN_ID" --arg bot_login "$BOT_LOGIN" \
           '{comments: $comments[0], current_run_id: $run_id, bot_login: $bot_login}' \
-          | python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_stop_check.py")"
+          | python3 -I "$GITHUB_ACTION_PATH/../../scripts/board_stop_check.py")"
         jq -e '.stand_down | type == "boolean"' >/dev/null <<<"$stop_decision_json" || {
           echo "::error::wing-commander-board-stop-check: could not read a stop decision from board_stop_check.py: $stop_decision_json"
           exit 1
@@ -263,17 +263,38 @@ runs:
         stop_comment_json="$(jq -n --slurpfile comments "$RUNNER_TEMP/board-stop-check-comments.json" \
           --arg run_id "$GITHUB_RUN_ID" --arg bot_login "$BOT_LOGIN" \
           '{comments: $comments[0], current_run_id: $run_id, bot_login: $bot_login}' \
-          | python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_stop_check.py" --stop-comment)"
+          | python3 -I "$GITHUB_ACTION_PATH/../../scripts/board_stop_check.py" --stop-comment)"
         html_url="$(jq -r '.html_url // empty' <<<"$stop_comment_json")"
         login="$(jq -r '.login // empty' <<<"$stop_comment_json")"
         created_at="$(jq -r '.created_at // empty' <<<"$stop_comment_json")"
         reason="$(jq -r '.reason // empty' <<<"$stop_comment_json")"
 
+        # #488, one-line fallback matching the fix job's own push-pr
+        # precedent for board:owned (see wing-commander-board-labels'
+        # header comment): every caller already ensures board:stalled
+        # exists before reaching this composite (wing-commander-board-
+        # labels, called at the top of each job), but this composite's own
+        # `--add-label "board:stalled"` call below still needs its OWN
+        # earlier step to create it (verify-board-label-creation.py is
+        # job-scoped with no cross-file fallback by design) -- a nested
+        # `uses: ./.github/actions/wing-commander-board-labels` step here
+        # was the leg-2 RCE (it resolves against $GITHUB_WORKSPACE, not
+        # this composite's own trusted directory), so this is one inline
+        # `--force` create instead, not a second composite call.
+        if ! gh label create "board:stalled" -R "$GITHUB_REPOSITORY" --color B60205 --description "Board loop: stalled awaiting a human (CLAUDE.md board-loop rules)" --force; then
+          echo "::warning::wing-commander-board-stop-check: gh label create failed for board:stalled -- the --add-label call below may fail until this label exists."
+        fi
+
         # FR-018: the label-then-marker write goes through the existing
         # stall helper (add_stalled_label(), and the marker-render routine
-        # beside it) verbatim, from the trusted snapshot (FR-018 last
-        # sentence; spec 095 FR-011/FR-012) -- never a new implementation.
-        marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" \
+        # beside it) verbatim, resolved relative to this composite's own
+        # $GITHUB_ACTION_PATH (maintainer review fold leg-0; every caller
+        # invokes this composite as `./.wc-pristine-repo/.github/actions/
+        # wing-commander-board-stop-check`, so $GITHUB_ACTION_PATH always
+        # points inside that same trusted checkout -- spec 086 FR-003 --
+        # never a caller-populated snapshot this composite would have to
+        # trust separately) -- never a new implementation.
+        marker="$(python3 -I "$GITHUB_ACTION_PATH/../../scripts/board_item_marker.py" \
           --step stalled --issue "$ISSUE_NUMBER" --add-label "board:stalled" \
           ${MARKER_BRANCH:+--branch "$MARKER_BRANCH"} \
           ${MARKER_BASE_SHA:+--base-sha "$MARKER_BASE_SHA"})" || {
@@ -283,7 +304,7 @@ runs:
 
         reason_block=""
         if [ -n "$reason" ]; then
-          reason_block="$(REASON="$reason" python3 -I -c 'import os, sys; sys.path.insert(0, os.path.join(os.environ["RUNNER_TEMP"], "wc-pristine", "scripts")); from board_spec_request_body import fenced_section; print(fenced_section("Reason given:", os.environ["REASON"], 2000))')"
+          reason_block="$(REASON="$reason" python3 -I -c 'import os, sys; sys.path.insert(0, os.path.join(os.environ["GITHUB_ACTION_PATH"], "..", "..", "scripts")); from board_spec_request_body import fenced_section; print(fenced_section("Reason given:", os.environ["REASON"], 2000))')"
         fi
 
         # contracts/stop-point-record.md: names the cause, links the
