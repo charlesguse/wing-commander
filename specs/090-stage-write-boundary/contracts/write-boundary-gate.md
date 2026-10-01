@@ -70,19 +70,26 @@ table of unchecked-item texts, each with its expected classification
   under `.claude/`) → falls through (prefix match, not substring match).
 - The boundary is empty → nothing classifies out-of-boundary, ever.
 
-**(d) Termination and reason (FR-010, FR-011, FR-012).** Executing the
-shipped read-back `run:` bodies against synthetic repos:
+**(d) Termination and reason (FR-007, FR-010, FR-011, FR-012).** Executing
+the shipped read-back `run:` bodies against synthetic repos. `routed` is
+derived as `ok && !truncated && all-unchecked-out-of-boundary`, deliberately
+NOT gated on spec 059's `handoff` (PR #836 review, item 2) — ticking the
+last in-reach task, or a `converge:` commit that re-appends only
+out-of-boundary lines, must not block filing work that is already 100%
+unreachable:
 
 - Only unchecked task is out-of-boundary, nothing else progressed →
   `handoff=true`, `routed=true`, `reason` names the task.
-- Same, but another task also got checked this cycle (`progressed=true`)
-  → `handoff=false`, `routed=false`, `reason` is spec 059's existing
-  "outstanding with progress" narrative, unchanged — proving FR-012's "must
-  not suppress the existing... early hand-off for the cases those already
-  cover" the other way round (progress must still win).
+- Same, but another task also got checked this cycle (`progressed=true`) →
+  `handoff=false` (spec 059's own progress test is unaffected) but
+  `routed=true`, and `reason` names the out-of-boundary task — progress on
+  other work must not suppress filing work that is unreachable regardless.
+- A `converge:` commit whose appended lines are all out-of-boundary →
+  `routed=true` and `reason` names the task, overriding spec 059's
+  "converge appended new work" text rather than being suppressed by it.
 - A mixed unchecked set (one out-of-boundary, one ordinary) →
-  `all-unchecked-out-of-boundary=false`, `routed=false` even at hand-off
-  time, existing narrative unchanged.
+  `all-unchecked-out-of-boundary=false`, `routed=false`, existing narrative
+  unchanged.
 
 **(e) No filing on a truncated run (FR-013).** A synthetic truncated cycle
 with an out-of-boundary-shaped `tasks.md` at the tip → the "Route
@@ -124,10 +131,11 @@ Reintroduces, and asserts each one is caught:
 3. The classification rule's prefix-match relaxed to a substring match
    (so `.claude-extra/foo` would wrongly classify under a `.claude/`
    boundary) — must fail (c).
-4. The `routed` computation changed to ignore `handoff` (e.g. hard-coded
-   `true` whenever `all-unchecked-out-of-boundary` alone is true, even
-   with `progressed=true`) — must fail (d)'s second scenario (the SC-007
-   "disables the boundary check" mutation, read as "always routes").
+4. The `routed` computation changed to ignore classification entirely
+   (e.g. hard-coded `true` whenever `ok && !truncated`, even when
+   `all-unchecked-out-of-boundary=false`) — must fail (d)'s mixed-set
+   scenario (the SC-007 "disables the boundary check" mutation, read as
+   "always routes").
 5. The "Route out-of-boundary tasks" step's `if:` guard's `truncated`
    clause removed — must fail (e).
 6. `compute-finding-fingerprint.sh` re-implemented inline a second time in

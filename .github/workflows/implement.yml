@@ -1568,14 +1568,22 @@ jobs:
           if [ "$ok" = "true" ] && [ "$truncated" = "false" ] && [ "$converged" = "false" ] && [ "$progressed" = "false" ] && [ -z "$converge_sha" ]; then
             handoff=true
           fi
-          # specs/090-stage-write-boundary (FR-011, research.md D5): routed =
-          # handoff && all-unchecked-out-of-boundary -- spec 059's own
-          # hand-off condition above already selects this branch; routed
-          # only changes what the reason narrative below says for it, never
-          # the converged/progressed/handoff booleans themselves (spec 059's
-          # decision table is not reopened).
+          # specs/090-stage-write-boundary (FR-007/FR-011, research.md D5;
+          # PR #836 review, item 2): routed = ok && !truncated &&
+          # all-unchecked-out-of-boundary -- deliberately NOT gated on spec
+          # 059's `handoff` (which additionally requires progressed=false
+          # and no converge: commit). A cycle that ticks the last in-reach
+          # task, or whose converge: commit re-appends only out-of-boundary
+          # lines, still leaves 100% of the remaining unchecked work
+          # unreachable -- that work must be filed the moment this cycle
+          # sees it, not only on the one narrow path spec 059's own
+          # decision table was built to describe. Filing is idempotent
+          # across cycles (Gate 133 (f)/(g)), so filing here even while the
+          # loop keeps iterating toward its own eventual handoff is safe,
+          # never a duplicate; spec 059's converged/progressed/handoff
+          # booleans themselves are unchanged.
           routed=false
-          if [ "$handoff" = "true" ] && [ "$WRITE_BOUNDARY_ALL_OOB" = "true" ]; then
+          if [ "$ok" = "true" ] && [ "$truncated" = "false" ] && [ "$WRITE_BOUNDARY_ALL_OOB" = "true" ]; then
             routed=true
           fi
           # FR-013 (spec 059): the non-convergence reason narrative, gained
@@ -1588,9 +1596,10 @@ jobs:
               # specs/090-stage-write-boundary (FR-011): names each
               # out-of-boundary task instead of spec 059's generic hand-off
               # phrasing, so this branch reads as neither converged nor
-              # stalled -- the only case this feature's reason narrative
-              # extends; every other branch is spec 059's own text,
-              # unchanged.
+              # stalled -- checked BEFORE handoff/progressed/converge below,
+              # since routed no longer implies handoff (item 2 above) --
+              # the only case this feature's reason narrative extends;
+              # every other branch is spec 059's own text, unchanged.
               routed_titles=$(printf '%s' "$WRITE_BOUNDARY_FINDINGS_JSON" | jq -r '[.[].title] | join("; ")')
               reason="the only remaining work is outside the implement stage's write boundary, so the loop is ending here rather than dispatching another cycle: $routed_titles"
             elif [ "$handoff" = "true" ]; then
@@ -2345,10 +2354,11 @@ jobs:
           if [ "$ok" = "true" ] && [ "$truncated" = "false" ] && [ "$converged" = "false" ] && [ "$progressed" = "false" ] && [ -z "$converge_sha" ]; then
             handoff=true
           fi
-          # specs/090-stage-write-boundary (FR-011, research.md D5): mirrors
-          # the cycle arm's identical routed computation above.
+          # specs/090-stage-write-boundary (FR-007/FR-011, research.md D5;
+          # PR #836 review, item 2): mirrors the cycle arm's identical
+          # routed computation above -- NOT gated on handoff.
           routed=false
-          if [ "$handoff" = "true" ] && [ "$WRITE_BOUNDARY_ALL_OOB" = "true" ]; then
+          if [ "$ok" = "true" ] && [ "$truncated" = "false" ] && [ "$WRITE_BOUNDARY_ALL_OOB" = "true" ]; then
             routed=true
           fi
           # FR-013 (spec 059): the non-convergence reason narrative, mirroring

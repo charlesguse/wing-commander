@@ -673,11 +673,11 @@ and evaporating into PR-body prose) that this feature exists to end.
 
 ## Maintainer Feedback — routing never fires when converge commits or the last in-reach task ticks (PR #836 review, item 2)
 
-- [ ] In `implement.yml`'s "Read back cycle outcome" (~:1459-1468) and "Read back retry outcome" (~:2184-2189), derive `routed` from `all-unchecked-out-of-boundary && ok && !truncated` and no in-reach progress this cycle, instead of requiring spec 059's `handoff` (which requires no `converge:` commit)
-- [ ] Treat a `converge:` commit whose appended lines are all out-of-boundary as not disqualifying `routed`
-- [ ] File out-of-boundary tasks whenever the loop ends for any reason (iteration cap or stall reached), not only on the routed hand-off path
-- [ ] Add a Gate 133 fixture reproducing the shipped read-back step with every unchecked task under `.claude/` plus one `converge:` commit that re-appends it, asserting the fix now routes instead of `handoff=false routed=false reason="converge appended new work"`
-- [ ] Add a Gate 133 fixture for a cycle that ticks the last in-reach task (`progressed=true`) on what turns out to be the final iteration, asserting the out-of-boundary task is still filed instead of reaching the PR as orphan prose (SC-005)
+- [x] In `implement.yml`'s "Read back cycle outcome" (~:1459-1468) and "Read back retry outcome" (~:2184-2189), derive `routed` from `all-unchecked-out-of-boundary && ok && !truncated` and no in-reach progress this cycle, instead of requiring spec 059's `handoff` (which requires no `converge:` commit)
+- [x] Treat a `converge:` commit whose appended lines are all out-of-boundary as not disqualifying `routed`
+- [x] File out-of-boundary tasks whenever the loop ends for any reason (iteration cap or stall reached), not only on the routed hand-off path (routed is now derived from `ok`/`truncated`/classification alone, so it fires on every cycle/retry read-back that sees an all-out-of-boundary unchecked set, not only spec 059's narrow handoff path)
+- [x] Add a Gate 133 fixture reproducing the shipped read-back step with every unchecked task under `.claude/` plus one `converge:` commit that re-appends it, asserting the fix now routes instead of `handoff=false routed=false reason="converge appended new work"` (scenario 4, via the new `build_converge_scenario` harness helper)
+- [x] Add a Gate 133 fixture for a cycle that ticks the last in-reach task (`progressed=true`) on what turns out to be the final iteration, asserting the out-of-boundary task is still filed instead of reaching the PR as orphan prose (SC-005) (scenario 2, updated in place -- same fixture shape the ask describes)
 
 ## Maintainer Feedback — write boundary is stated but not enforced (PR #836 review, item 3)
 

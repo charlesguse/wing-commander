@@ -172,6 +172,22 @@ def build_scenario(root, *, base_tasks_md, tip_tasks_md, advance=True,
     return work, repo, base_sha, branch
 
 
+def build_converge_scenario(root, *, base_tasks_md, tip_tasks_md, iteration=ITERATION):
+    """Like build_scenario, but commits the tasks.md change with a
+    `converge: ...` subject (PR #836 review, item 2; Gate 133 (d) scenario
+    4), simulating /speckit-converge's own append-and-commit convention
+    rather than a plain agent edit -- the ONLY thing that sets
+    `converge_sha` in the shipped read-back step."""
+    work, repo, base_sha, branch = make_workspace(root, base_tasks_md)
+    if tip_tasks_md != base_tasks_md:
+        write_file(repo, f"{SPEC_DIR}/tasks.md", tip_tasks_md)
+        git_commit(repo, "converge: append outstanding out-of-boundary work")
+    write_file(repo, f"{SPEC_DIR}/spec-meta.json", _meta(iteration))
+    git_commit(repo, "implement: advance lifecycle record")
+    git_push(repo, branch)
+    return work, repo, base_sha, branch
+
+
 def checkbox_count_env(repo, ref):
     """Runs the REAL shared script -- see verify-tasks-checkbox-
     convergence-signal.py's identical helper for the parsing rationale."""
@@ -392,7 +408,12 @@ def check_termination_and_reason(steps, root):
             failures.append(f"(d) scenario 1: reason did not name the routed "
                             f"task -- got {reason!r}")
 
-    # Same, but another task also got checked this cycle (progressed=true).
+    # Same, but another task also got checked this cycle (progressed=true)
+    # -- ticking the last in-reach task on what may be the final iteration
+    # must still file the out-of-boundary task rather than let it reach the
+    # PR as orphan prose (PR #836 review, item 2, SC-005). handoff stays
+    # false (spec 059's own progress test is unaffected), but routed is
+    # now true and the reason narrative names the task.
     base2 = "- [ ] T000 do something\n- [ ] T001 edit `.claude/skills/foo/SKILL.md`\n"
     tip2 = "- [x] T000 do something\n- [ ] T001 edit `.claude/skills/foo/SKILL.md`\n"
     work, repo, base_sha, _ = build_scenario(root, base_tasks_md=base2, tip_tasks_md=tip2)
@@ -401,14 +422,47 @@ def check_termination_and_reason(steps, root):
     if rc != 0:
         failures.append(f"(d) scenario 2: {CYCLE_STEP!r} exited {rc}: {out.strip()}")
     else:
-        if outputs.get("handoff") != "false" or outputs.get("routed") != "false":
-            failures.append(f"(d) scenario 2: expected handoff=false routed=false "
-                            f"(progress must still win, FR-012), got "
-                            f"handoff={outputs.get('handoff')!r} "
+        if outputs.get("handoff") != "false":
+            failures.append(f"(d) scenario 2: expected handoff=false (spec "
+                            f"059's own progress test is unaffected), got "
+                            f"handoff={outputs.get('handoff')!r}")
+        if outputs.get("routed") != "true":
+            failures.append(f"(d) scenario 2: expected routed=true -- ticking "
+                            f"the last in-reach task must not block filing the "
+                            f"still-unchecked out-of-boundary task (item 2), "
+                            f"got routed={outputs.get('routed')!r}")
+        reason = outputs.get("reason", "")
+        if "write boundary" not in reason or ".claude/skills/foo/SKILL.md" not in reason:
+            failures.append(f"(d) scenario 2: expected the routed narrative "
+                            f"naming the task, now that routed=true overrides "
+                            f"spec 059's generic hand-off text -- got "
+                            f"reason={reason!r}")
+
+    # A converge: commit whose appended lines are all out-of-boundary must
+    # not disqualify routed either (PR #836 review, item 2): the converge
+    # commit here re-appends a second out-of-boundary line, so converge_sha
+    # is set and progressed=false, which used to force the generic
+    # "converge appended new work" text and routed=false.
+    base4 = "- [ ] T001 edit `.claude/skills/foo/SKILL.md`\n"
+    tip4 = ("- [ ] T001 edit `.claude/skills/foo/SKILL.md`\n"
+            "- [ ] T002 edit `.claude/skills/bar/SKILL.md`\n")
+    work, repo, base_sha, _ = build_converge_scenario(root, base_tasks_md=base4,
+                                                       tip_tasks_md=tip4)
+    rc, out, outputs, _ = run_cycle_step(steps, repo, base_sha, verdict="healthy",
+                                         cycle_result="success")
+    if rc != 0:
+        failures.append(f"(d) scenario 4: {CYCLE_STEP!r} exited {rc}: {out.strip()}")
+    else:
+        if outputs.get("routed") != "true":
+            failures.append(f"(d) scenario 4: a converge: commit whose "
+                            f"appended lines are all out-of-boundary must not "
+                            f"disqualify routed -- got "
                             f"routed={outputs.get('routed')!r}")
-        if outputs.get("reason", "") != "the cycle ended with tasks outstanding":
-            failures.append(f"(d) scenario 2: existing narrative changed -- "
-                            f"got reason={outputs.get('reason')!r}")
+        reason = outputs.get("reason", "")
+        if "write boundary" not in reason or "converge appended new work" in reason:
+            failures.append(f"(d) scenario 4: expected the routed narrative "
+                            f"to override spec 059's \"converge appended new "
+                            f"work\" text -- got reason={reason!r}")
 
     # Mixed unchecked set (one out-of-boundary, one ordinary).
     base3 = "- [ ] T001 edit `.claude/skills/foo/SKILL.md`\n- [ ] T002 write docs\n"
@@ -722,13 +776,19 @@ def _mut_substring_match():
     return script_path, text.replace(marker, replacement, 1)
 
 
-def _mut_ignore_handoff(steps):
-    """(4) the routed computation changed to ignore handoff."""
+def _mut_routed_ignores_classification(steps):
+    """(4) the routed computation changed to ignore classification entirely
+    -- hard-coded true whenever ok && !truncated, even when the remaining
+    unchecked work is NOT all out-of-boundary (PR #836 review, item 2's fix
+    dropped the old handoff gate on `routed`; this mutation now targets the
+    classification gate that replaced it, never a resurrected handoff
+    check)."""
     marker = ('routed=false\n'
-              'if [ "$handoff" = "true" ] && [ "$WRITE_BOUNDARY_ALL_OOB" = "true" ]; then\n'
+              'if [ "$ok" = "true" ] && [ "$truncated" = "false" ] && '
+              '[ "$WRITE_BOUNDARY_ALL_OOB" = "true" ]; then\n'
               '  routed=true\nfi')
     replacement = ('routed=false\n'
-                  'if [ "$WRITE_BOUNDARY_ALL_OOB" = "true" ]; then\n'
+                  'if [ "$ok" = "true" ] && [ "$truncated" = "false" ]; then\n'
                   '  routed=true\nfi')
     if marker not in steps[CYCLE_STEP]:
         return None
@@ -827,19 +887,18 @@ def check_mutation_3():
 
 
 def check_mutation_4(steps, root):
-    mutated = _mut_ignore_handoff(steps)
+    mutated = _mut_routed_ignores_classification(steps)
     if mutated is None:
-        print("::error::mutation 'ignore handoff' changed nothing.")
-        return ["mutation inapplicable: ignore handoff"]
-    base2 = "- [ ] T000 do something\n- [ ] T001 edit `.claude/skills/foo/SKILL.md`\n"
-    tip2 = "- [x] T000 do something\n- [ ] T001 edit `.claude/skills/foo/SKILL.md`\n"
-    work, repo, base_sha, _ = build_scenario(root, base_tasks_md=base2, tip_tasks_md=tip2)
+        print("::error::mutation 'routed ignores classification' changed nothing.")
+        return ["mutation inapplicable: routed ignores classification"]
+    base3 = "- [ ] T001 edit `.claude/skills/foo/SKILL.md`\n- [ ] T002 write docs\n"
+    work, repo, base_sha, _ = build_scenario(root, base_tasks_md=base3, tip_tasks_md=base3)
     rc, out, outputs, _ = run_cycle_step(mutated, repo, base_sha, verdict="healthy",
                                          cycle_result="success")
     if rc == 0 and outputs.get("routed") == "true":
-        print("Mutation OK -- ignore handoff: caught (d)'s second scenario.")
+        print("Mutation OK -- routed ignores classification: caught (d)'s mixed-set scenario.")
         return []
-    return ["mutation survived: ignore handoff"]
+    return ["mutation survived: routed ignores classification"]
 
 
 def check_mutation_5():
