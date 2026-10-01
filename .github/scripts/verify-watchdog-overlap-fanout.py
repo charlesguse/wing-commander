@@ -193,7 +193,7 @@ def run_collector_and_stamp(scripts, stage, tool, command, tmproot):
             with open(os.path.join(runner_temp, name), "w", encoding="utf-8") as fh:
                 fh.write("[]")
         env = {"GH_TOKEN": "dummy-token", "ACTIONS_TOKEN": "dummy-token",
-               "RUN_ID": "1", "RUN_CONCLUSION": "success", "INSPECTED_STAGE": stage,
+               "GITHUB_REPOSITORY": GITHUB_REPOSITORY, "RUN_ID": "1", "RUN_CONCLUSION": "success", "INSPECTED_STAGE": stage,
                "WC_GH_ARTIFACT": denial_artifact(tool, command),
                "PATH": bindir + os.pathsep + os.environ["PATH"]}
         rc, out, _, _ = run_step(BASH, scripts[EXEC_STEP], workdir, env, runner_temp)
