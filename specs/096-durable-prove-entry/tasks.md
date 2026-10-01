@@ -579,3 +579,10 @@ Task: "New Gate 128: verify-board-prove-recovery.py fixtures"
 - [ ] Fix `BOARD_PR_OWNED_JQ`'s ownership test (~:4496) to read off the fetched file instead of `.pull_request` on `$GITHUB_EVENT_PATH`, which is null on `workflow_dispatch`.
 - [ ] Add a fixture driving the directed `workflow_dispatch` branch through `prove-gate` end to end.
 - [ ] Reconcile `contracts/recovery-and-resume.md`'s "Dispatch" section, which currently claims live-state re-derivation this branch doesn't actually do.
+
+
+## Maintainer Feedback — Gate 129 can't parse a three-arm prove concurrency expression
+- [ ] Extend the Gate 129 / spec-cross-reference parser to accept an optional middle `format('<prefix>{0}', github.event.pull_request.number)` arm between the directed and ordinary arms, comparing its prefix against a new table column.
+- [ ] Add self-test mutations: wrong middle-arm prefix, missing middle arm, unexpected middle arm.
+- [ ] Update spec 089's `contracts/skill-drift-gate.md` step 4 to describe the three-arm shape.
+- [ ] Add a "`pull_request: closed` group" column to spec 060's `concurrency-groups.md` holding `` `wing-commander-board-loop-prove-` `` (PR number noted outside the backticks), fixing the accidental brace-parsing in the ordinary column.
