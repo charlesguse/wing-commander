@@ -594,10 +594,10 @@ Task: "New Gate 136: verify-board-prove-recovery.py fixtures"
 
 
 ## Maintainer Feedback — directed prove-gate dispatch can never reach prove
-- [ ] In `prove-gate` (board-loop.yml ~:4471), replace the invalid `gh pr view --json merged` field: on `workflow_dispatch`, run `gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > "$RUNNER_TEMP/board-prove-pr.json"` (fail loudly on error) and take `merged` from `.merged`.
-- [ ] Fix `BOARD_PR_OWNED_JQ`'s ownership test (~:4496) to read off the fetched file instead of `.pull_request` on `$GITHUB_EVENT_PATH`, which is null on `workflow_dispatch`.
-- [ ] Add a fixture driving the directed `workflow_dispatch` branch through `prove-gate` end to end.
-- [ ] Reconcile `contracts/recovery-and-resume.md`'s "Dispatch" section, which currently claims live-state re-derivation this branch doesn't actually do.
+- [X] In `prove-gate` (board-loop.yml ~:4471), replace the invalid `gh pr view --json merged` field: on `workflow_dispatch`, run `gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > "$RUNNER_TEMP/board-prove-pr.json"` (fail loudly on error) and take `merged` from `.merged`.
+- [X] Fix `BOARD_PR_OWNED_JQ`'s ownership test (~:4496) to read off the fetched file instead of `.pull_request` on `$GITHUB_EVENT_PATH`, which is null on `workflow_dispatch`.
+- [X] Add a fixture driving the directed `workflow_dispatch` branch through `prove-gate` end to end.
+- [X] Reconcile `contracts/recovery-and-resume.md`'s "Dispatch" section, which currently claims live-state re-derivation this branch doesn't actually do.
 
 
 ## Maintainer Feedback — Gate 129 can't parse a three-arm prove concurrency expression

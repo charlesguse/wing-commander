@@ -39,12 +39,17 @@ the attempt). `False` → proceed.
 directed-issue=<issue> -f directed-pr=<merged PR> -f
 directed-recovery=true`. This is spec 060's existing directed dispatch
 mechanism (`contracts/directed-proof-run.md`), not a new entry point or a
-copy of it (FR-002) — `prove-gate`/`prove`'s existing directed branch
-already re-derives the issue's ownership, the PR's merged state, its
-labels, and its changed paths from live GitHub state via
-`directed-issue`/`directed-pr` rather than `github.event.pull_request`
-(pre-existing self-redrive mechanism, `board-loop.yml:4036` et al.),
-satisfying FR-010 with no new re-derivation code.
+copy of it (FR-002) — `prove-gate`'s own directed branch re-derives the
+PR's merged state and `board:owned` ownership live, via a fresh `gh api
+repos/<owner>/<repo>/pulls/<PR>` fetch keyed off `directed-pr` (never
+`github.event.pull_request`, which carries no payload at all on
+`workflow_dispatch`); `prove`'s own directed branch separately re-derives
+the changed paths the same way `fix`/`readiness` already do (`git diff
+--name-only <base> HEAD`), satisfying FR-010 with no new re-derivation
+code beyond that one PR fetch (maintainer review: the fetch and the
+ownership read off it were both broken before this feature's own fix —
+see board-loop.yml's "Resolve the originating issue and decide whether
+prove is entered" step).
 
 **On a successful dispatch call** (before waiting for anything — this step
 does not wait, research.md D3): write the marker

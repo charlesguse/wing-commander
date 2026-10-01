@@ -4633,7 +4633,17 @@ jobs:
           # already re-derives from github.event.pull_request.* (Principle IX).
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             issue_number="$DIRECTED_ISSUE"
-            merged="$(gh pr view "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --json merged --jq .merged)"
+            # `gh pr view --json merged` is not a real field (the REST/GraphQL
+            # shapes gh exposes have no top-level `merged` key under that
+            # name) -- fetch the PR directly instead, and reuse the same file
+            # below for the ownership check, since $GITHUB_EVENT_PATH carries
+            # no `.pull_request` payload at all on workflow_dispatch
+            # (maintainer review).
+            if ! gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > "$RUNNER_TEMP/board-prove-pr.json"; then
+              echo "::error::board-loop: could not look up PR #$PR_NUMBER -- a directed prove dispatch cannot re-derive its own merged state or ownership without it."
+              exit 1
+            fi
+            merged="$(jq -r '.merged' "$RUNNER_TEMP/board-prove-pr.json")"
           else
             issue_number="$(python3 -c "
           import os, re
@@ -4641,6 +4651,7 @@ jobs:
           print(m.group(1) if m else '')
           ")"
             merged="$MERGED_EVENT"
+            jq '.pull_request' "$GITHUB_EVENT_PATH" > "$RUNNER_TEMP/board-prove-pr.json"
           fi
 
           eligible=false
@@ -4656,9 +4667,10 @@ jobs:
           # Issue #557: only this loop's own PR enters prove -- the same
           # ownership test the resume step applies to a marker's PR
           # (BOARD_PR_OWNED_JQ -- see this workflow's top-level env:
-          # block), read off the event's own pull_request payload (labels
-          # as of the close, head.repo).
-          jq '.pull_request' "$GITHUB_EVENT_PATH" > "$RUNNER_TEMP/board-prove-pr.json"
+          # block), read off board-prove-pr.json (the event's own
+          # pull_request payload for a pull_request trigger, or the fresh
+          # gh api fetch above for a directed workflow_dispatch -- both
+          # carry the same labels/head.repo shape BOARD_PR_OWNED_JQ reads).
           if [ "$(jq -r --arg repo "$GITHUB_REPOSITORY" "$BOARD_PR_OWNED_JQ" "$RUNNER_TEMP/board-prove-pr.json")" != "true" ]; then
             echo "PR #$PR_NUMBER is not board:owned with its head in this repository -- not a board item; prove is not entered." >> "$GITHUB_STEP_SUMMARY"
             {

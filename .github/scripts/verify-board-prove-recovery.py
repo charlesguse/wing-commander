@@ -8,7 +8,9 @@ pre-feature marker (five keys only) reading back
 """
 import json
 import os
+import shutil
 import sys
+import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from board_item_marker import write_marker, read_marker_with_timestamp  # noqa: E402
@@ -16,12 +18,39 @@ from board_prove_displacement import RECORDED_REASON  # noqa: E402
 from board_prove_recovery import (  # noqa: E402
     RECOVERY_DIRECTED_INPUT, is_recoverable, find_recoverable_items,
 )
+from wc_shell_harness import (  # noqa: E402
+    ensure_jq, find_step, resolve_bash, run_step, use_utf8_stdout)
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 REPO_BOARD_LOOP = os.path.join(REPO_ROOT, ".github", "workflows", "board-loop.yml")
 
 BOT_LOGIN = "wing-commander-bot[bot]"
 BOT_USER = {"login": BOT_LOGIN, "type": "Bot"}
+
+BASH = None
+REPO = "acme/widgets"
+
+GATE_STEP_NAME = "Resolve the originating issue and decide whether prove is entered"
+# board-loop.yml's own top-level env: block (BOARD_PR_OWNED_JQ) -- not part
+# of the step's own `run:` text find_step() returns, so the harness supplies
+# it directly, same as a real run would via job-level env: merging.
+BOARD_PR_OWNED_JQ = (
+    'any(.labels[]?; .name == "board:owned") and '
+    '((.head.repo.full_name // "") == $repo)')
+
+GH_API_STUB = r"""#!/bin/sh
+case " $* " in
+  *" api "*"/pulls/"*)
+    cat "$GH_PR_JSON"
+    exit 0
+    ;;
+  *" api "*"/comments"*)
+    cat "$GH_COMMENTS_JSONL"
+    exit 0
+    ;;
+esac
+exit 0
+"""
 
 def marker_dict(step="prove", outcome_reason=None, recovery_attempted=False):
     return {"step": step, "round": 0, "pr": None, "branch": None, "base_sha": None,
@@ -265,13 +294,116 @@ def run_displacement_writer_passes_outcome_reason():
     return failures
 
 
+def _run_gate_step(work, pr_json, comments, event_name="workflow_dispatch",
+                   pr_number="777", issue="501"):
+    """Executes board-loop.yml's SHIPPED "Resolve the originating issue and
+    decide whether prove is entered" step (research.md D3/maintainer review:
+    a directed recovery dispatch is, structurally, an ordinary directed
+    `prove` dispatch -- this is the one job that decides whether such a
+    dispatch ever reaches `prove` at all). Returns (rc, out, outputs)."""
+    step = find_step(REPO_BOARD_LOOP, GATE_STEP_NAME)
+    # the step's own `sys.path.insert(0, ".github/scripts")` idiom resolves
+    # relative to cwd -- a real run's cwd is the checked-out repo root, so
+    # the harness copies the real scripts dir into its own workdir instead
+    # of a reimplementation (same pattern as verify-board-loop-resume-
+    # gating.py's own harness).
+    shutil.copytree(os.path.join(REPO_ROOT, ".github", "scripts"),
+                    os.path.join(work, ".github", "scripts"),
+                    ignore=shutil.ignore_patterns("tests", "fixtures", "__pycache__"))
+    bindir = os.path.join(work, "bin")
+    os.makedirs(bindir, exist_ok=True)
+    with open(os.path.join(bindir, "gh"), "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(GH_API_STUB)
+    os.chmod(os.path.join(bindir, "gh"), 0o755)
+
+    pr_json_path = os.path.join(work, "pr.json")
+    with open(pr_json_path, "w", encoding="utf-8") as fh:
+        json.dump(pr_json, fh)
+    comments_jsonl_path = os.path.join(work, "comments.jsonl")
+    with open(comments_jsonl_path, "w", encoding="utf-8") as fh:
+        for c in comments:
+            fh.write(json.dumps(c) + "\n")
+
+    path = bindir + os.pathsep + os.environ["PATH"]
+    runner_temp = os.path.join(work, "runner_temp")
+    os.makedirs(runner_temp, exist_ok=True)
+    rc, out, outputs, _ = run_step(
+        BASH, step["run"], work,
+        {"GH_TOKEN": "x", "EVENT_NAME": event_name, "PR_BODY": "",
+         "PR_NUMBER": pr_number, "MERGED_EVENT": "", "DIRECTED_ISSUE": issue,
+         "BOT_LOGIN": BOT_LOGIN, "GITHUB_REPOSITORY": REPO,
+         "BOARD_PR_OWNED_JQ": BOARD_PR_OWNED_JQ,
+         "GH_PR_JSON": pr_json_path, "GH_COMMENTS_JSONL": comments_jsonl_path,
+         "PATH": path},
+        runner_temp)
+    return rc, out, outputs
+
+
+def run_directed_dispatch_reaches_prove_gate():
+    """Maintainer review: `gh pr view --json merged` is not a real field,
+    and the ownership check read `$GITHUB_EVENT_PATH`'s `.pull_request`,
+    null on `workflow_dispatch` -- both stranded every directed/recovery
+    prove dispatch in `prove-gate` before this feature's own fix. Drives
+    the shipped step end to end on a `workflow_dispatch` input shape (never
+    a copy of its logic) and asserts `eligible` actually reaches `true`."""
+    failures = 0
+
+    with tempfile.TemporaryDirectory() as work:
+        marker_comment = comment("2026-01-01T00:00:00Z", outcome_reason=RECORDED_REASON)
+        rc, out, outputs = _run_gate_step(
+            work,
+            {"merged": True, "labels": [{"name": "board:owned"}],
+             "head": {"repo": {"full_name": REPO}}},
+            [marker_comment])
+        if rc != 0:
+            failures += 1
+            print("::error::verify-board-prove-recovery: directed dispatch through "
+                  "prove-gate exited {0}: {1}".format(rc, out))
+        elif outputs.get("eligible") != "true" or outputs.get("issue-number") != "501":
+            failures += 1
+            print("::error::verify-board-prove-recovery: a directed workflow_dispatch "
+                  "for a merged, board:owned PR did not reach eligible=true -- "
+                  "outputs={0!r}, output={1}".format(outputs, out))
+        else:
+            print("[ok] a directed workflow_dispatch reaches prove-gate's own "
+                  "eligible=true (gh api .../pulls/<N> + ownership read off the "
+                  "fetched file, not $GITHUB_EVENT_PATH)")
+
+    with tempfile.TemporaryDirectory() as work:
+        marker_comment = comment("2026-01-01T00:00:00Z", outcome_reason=RECORDED_REASON)
+        rc, out, outputs = _run_gate_step(
+            work,
+            {"merged": True, "labels": [],
+             "head": {"repo": {"full_name": "someone-else/fork"}}},
+            [marker_comment])
+        if rc != 0:
+            failures += 1
+            print("::error::verify-board-prove-recovery: not-owned directed dispatch "
+                  "exited {0}: {1}".format(rc, out))
+        elif outputs.get("eligible") != "false":
+            failures += 1
+            print("::error::verify-board-prove-recovery: a directed workflow_dispatch "
+                  "for a PR with no board:owned label and a foreign head.repo should "
+                  "read eligible=false -- outputs={0!r}".format(outputs))
+        else:
+            print("[ok] a directed workflow_dispatch for a not-board:owned PR reads "
+                  "eligible=false (ownership re-derived off the fetched file, not "
+                  "a null $GITHUB_EVENT_PATH)")
+
+    return failures
+
+
 def run():
     failures = (run_is_recoverable() + run_find_recoverable_items() + run_marker_round_trip()
                 + run_directed_recovery_input_spelling()
-                + run_displacement_writer_passes_outcome_reason())
+                + run_displacement_writer_passes_outcome_reason()
+                + run_directed_dispatch_reaches_prove_gate())
     print("verify-board-prove-recovery: {0} failure(s).".format(failures))
     return 1 if failures else 0
 
 
 if __name__ == "__main__":
+    use_utf8_stdout()
+    ensure_jq()
+    BASH = resolve_bash()
     sys.exit(run())
