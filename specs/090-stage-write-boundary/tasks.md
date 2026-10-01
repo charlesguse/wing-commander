@@ -718,3 +718,8 @@ and evaporating into PR-body prose) that this feature exists to end.
 - [ ] Make the composite's header comment ("never fails the job") true in practice
 - [ ] Apply the same fix to finalize's new checkbox-count step
 - [ ] Get a pass from the `review-step-gating` skill per CLAUDE.md, since this touches an `if:`/failing-step surface
+
+## Maintainer Feedback — duplicated prose violates single-home rule (PR #836 review, item 10)
+
+- [ ] In `wing-commander-stage-findings/action.yml` slots 1 and 2, replace the newly pasted-in-full label-description comment with a pointer back to the canonical copy, per CLAUDE.md's "Shared logic has exactly one home" rule (Gate 47 enforces the pointer)
+- [ ] Fix `finalize.yml`'s new comment, which cites a "Check out the spec branch" step that doesn't exist; the real step is named "Checkout spec branch as wing-commander-bot"
