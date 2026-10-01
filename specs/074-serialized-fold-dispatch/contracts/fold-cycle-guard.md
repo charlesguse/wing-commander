@@ -65,7 +65,16 @@ reactors observe every completed implement run independently.
    step threads that ticket's token onto the re-dispatch as
    `fold_queue_token`; the new run is named in a second notice line. If
    `redispatch_count == 1` already, posts the FR-016a line instead and
-   dispatches nothing.
+   dispatches nothing. T055 (maintainer review of #821, B3): once the
+   re-dispatch's run id is resolved (the same `gh run list` poll the notice
+   text uses), `react` records it into the round via `record-implement-run`
+   (mirroring `dispatch-once`'s own step of the same name) — without this,
+   the round's `implement_run_id` keeps naming the CANCELLED run, so a
+   later waiter's stale-reclaim check resolves liveness against a run
+   that's already done and evicts the LIVE redispatched run's ticket, and a
+   second loss of the redispatched run is never found by step 5's own
+   `implement_run_id == run-id` lookup (breaking FR-016a's "a maintainer's
+   re-drive is the remaining step" notice for that second loss).
 
 ## Behavioral guarantees
 

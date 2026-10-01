@@ -493,3 +493,26 @@ jobs:
           GH_TOKEN="$ISSUE_TOKEN" gh issue comment "$ISSUE" --body-file "$notice_file"
           echo "action-taken=notice-and-redispatch" >> "$GITHUB_OUTPUT"
           echo "fold-cycle-guard: re-dispatched $SPEC_DIR round $ROUND once (FR-016)." >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "$new_run_url" ]; then
+            echo "new-run-id=${new_run_url##*/}" >> "$GITHUB_OUTPUT"
+          fi
+
+      # T055 (maintainer review of #821, B3): without this, the ledger's
+      # round record still names the CANCELLED run as implement_run_id, so
+      # a later waiter's stale-reclaim check (fold-queue-await.sh) resolves
+      # liveness against a run that is already done and reclaims the LIVE
+      # redispatched run's ticket out from under it -- reopening the exact
+      # eviction FR-016 exists to recover from. It also means a second loss
+      # of the redispatched run is never found by peek-implement-run below
+      # (its run-id search would still only ever match the first, long-gone
+      # run), silently breaking FR-016a's "a maintainer's re-drive is the
+      # remaining step" notice. Mirrors dispatch-once's own "Record this
+      # round's dispatched implement run" step (contracts/workflow-changes.md).
+      - name: Record the redispatched run
+        if: steps.react.outputs.new-run-id != ''
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-fold-queue-ledger
+        with:
+          transform: record-implement-run
+          spec-dir: ${{ inputs.spec-dir || steps.identity.outputs.spec-dir }}
+          round: ${{ steps.decide.outputs.round }}
+          implement-run-id: ${{ steps.react.outputs.new-run-id }}
