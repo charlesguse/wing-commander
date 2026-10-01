@@ -692,8 +692,8 @@ jobs:
       # text, the same read wing-commander-tasks-checkbox-count already
       # gives implement.yml's read-back steps (never a second copy of the
       # fence-aware extraction). The spec branch is already checked out at
-      # its tip (the "Check out the spec branch" step above), so `HEAD`
-      # resolves to it.
+      # its tip (the "Checkout spec branch as wing-commander-bot" step
+      # above), so `HEAD` resolves to it.
       - name: Count tasks.md checkboxes at tip (finalize)
         id: checkbox-tip-finalize
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true'

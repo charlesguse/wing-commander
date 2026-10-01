@@ -706,7 +706,7 @@ and evaporating into PR-body prose) that this feature exists to end.
 
 ## Maintainer Feedback — filed routed-item text contradicts itself (PR #836 review, item 7)
 
-- [ ] In `classify-out-of-boundary-tasks.sh` (~:103), reword the body from "is **inside** the implement stage's write boundary" to "is on the implement stage's no-write list", matching the title's "outside" framing
+- [x] In `classify-out-of-boundary-tasks.sh` (~:103), reword the body from "is **inside** the implement stage's write boundary" to "is on the implement stage's no-write list", matching the title's "outside" framing
 
 ## Maintainer Feedback — .claude/settings.json edge case needs an explicit fixture (PR #836 review, item 8)
 
@@ -721,5 +721,5 @@ and evaporating into PR-body prose) that this feature exists to end.
 
 ## Maintainer Feedback — duplicated prose violates single-home rule (PR #836 review, item 10)
 
-- [ ] In `wing-commander-stage-findings/action.yml` slots 1 and 2, replace the newly pasted-in-full label-description comment with a pointer back to the canonical copy, per CLAUDE.md's "Shared logic has exactly one home" rule (Gate 47 enforces the pointer)
-- [ ] Fix `finalize.yml`'s new comment, which cites a "Check out the spec branch" step that doesn't exist; the real step is named "Checkout spec branch as wing-commander-bot"
+- [x] In `wing-commander-stage-findings/action.yml` slots 1 and 2, replace the newly pasted-in-full label-description comment with a pointer back to the canonical copy, per CLAUDE.md's "Shared logic has exactly one home" rule (Gate 47 enforces the pointer)
+- [x] Fix `finalize.yml`'s new comment, which cites a "Check out the spec branch" step that doesn't exist; the real step is named "Checkout spec branch as wing-commander-bot"

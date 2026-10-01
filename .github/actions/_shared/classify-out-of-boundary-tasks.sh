@@ -100,8 +100,8 @@ for line in lines:
     title = "Task outside the write boundary: {0}".format(out_paths)
     if len(title) > 200:
         title = title[:197] + "..."
-    what = ("This unchecked task names {0}, which is inside the implement "
-            "stage's write boundary, so the stage cannot make this edit "
+    what = ("This unchecked task names {0}, which is on the implement "
+            "stage's no-write list, so the stage cannot make this edit "
             "itself.").format(out_paths)
     if len(what) > 4000:
         what = what[:3997] + "..."
