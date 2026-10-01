@@ -83,6 +83,13 @@ A cross-product covering, at minimum:
 14. **Idempotent win** (T050) — a retried claim carrying the SAME
     dispatch token as a call that already won resolves `outcome: won`
     again with the SAME `implement-token`, never `declined`.
+15. **No ticket job carries its own `concurrency:` group** (T061,
+    maintainer review of #821, B9) — `fold-turn-act`/`fold-turn-dispatch`/
+    `fold-turn-implement` (admit/claim-dispatch/await) each carry no
+    `concurrency:` block of their own, or a wait running inside one could
+    deadlock against the very group it is awaiting entry to (T045's exact
+    defect, from when the claim briefly lived inside `dispatch-once`'s own
+    group).
 
 ## Mutations (`MUTATIONS`, each proven to break the gate — FR-022)
 
@@ -125,6 +132,9 @@ A cross-product covering, at minimum:
 - `mut_win_retry_declines` — reverts the winning branch's idempotent-retry
   check to a plain decline (the T050 defect restored). Must fail
   scenario 14.
+- `mut_ticket_job_gains_concurrency_group` — gives `fold-turn-dispatch` a
+  `concurrency:` block of its own (the T061/B9 regression item 1's own fix
+  removed). Must fail scenario 15.
 - `mut_drop_stop_only_handling` — reverts `fold-turn-act`/
   `fold-turn-dispatch` to admitting a ticket even for a stop-only run, and
   `act`/`dispatch-once` to requiring a bare `success` result from them

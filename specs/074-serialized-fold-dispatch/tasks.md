@@ -354,7 +354,9 @@ Task: "Add fixtures under wing-commander-fold-queue-release/tests/"
 
 ### Follow-up review of 511913b3 (maintainer, 2026-09-30)
 
-- [ ] T061 **B9: the rule from item 1 has no gate behind it.** Nothing asserts that admit, claim-dispatch and await run only in jobs with no `concurrency:` group, so moving the claim back into `dispatch-once` would pass every gate. **Fix:** add that assertion and a mutation to Gate 128.
+- [X] T061 **B9: the rule from item 1 has no gate behind it.** Nothing asserts that admit, claim-dispatch and await run only in jobs with no `concurrency:` group, so moving the claim back into `dispatch-once` would pass every gate. **Fix:** add that assertion and a mutation to Gate 128.
+
+  Done: Gate 128 (`verify-fold-queue-admission.py`) gained scenario 15 (`scenario_ticket_jobs_carry_no_concurrency_group`), asserting `fold-turn-act`/`fold-turn-dispatch`/`fold-turn-implement` each carry no `concurrency:` block (loaded as a plain `job.get("concurrency") is not None` boolean per job, alongside the existing `if:`/`needs:`/`group` subject fields), and mutation `mut_ticket_job_gains_concurrency_group` (flips `fold-turn-dispatch`'s flag to `True`), proven caught. `contracts/gates.md` updated to the same 15-scenario/13-mutation shape. `python3 .github/scripts/verify-fold-queue-admission.py`: 15 scenarios, 13 mutations, 0 failures.
 
 ## Maintainer Feedback
 

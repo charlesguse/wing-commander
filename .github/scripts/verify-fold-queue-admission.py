@@ -117,6 +117,12 @@ SCENARIOS (`suite(subject)`, contracts/gates.md)
     SAME dispatch token, after that token's own prior call already won,
     resolves `outcome: won` again (not `declined`) and returns the SAME
     `implement-token` rather than enqueueing a second one.
+15. No ticket job carries its own concurrency: group (T061, maintainer
+    review of #821, B9) -- fold-turn-act/fold-turn-dispatch/
+    fold-turn-implement (admit/claim-dispatch/await) each carry no
+    concurrency: block of their own, or a wait running inside one could
+    deadlock against the very group it is awaiting entry to (T045's exact
+    defect, before the claim was moved out of dispatch-once).
 
 MUTATIONS (each proven to break the gate -- FR-022)
 ----------------------------------------------------
@@ -162,6 +168,9 @@ MUTATIONS (each proven to break the gate -- FR-022)
   to admitting a ticket even for a stop-only run, and act/dispatch-once to
   requiring a bare `success` result from them (the T054/B2 defect
   restored). Fails scenario 6.
+- `mut_ticket_job_gains_concurrency_group` -- gives fold-turn-dispatch a
+  concurrency: block of its own (the T061/B9 regression item 1's own fix
+  removed). Fails scenario 15.
 
 `main()` runs `suite()` against the untouched subject (must be 0 failures),
 then re-runs it under each mutation and requires a failure -- identical to
@@ -219,6 +228,17 @@ def load_expr_subject():
     for jid in ("implement", "stalled"):
         job = find_job(IMPLEMENT, jid)
         subject[f"{jid}:group"] = str((job.get("concurrency") or {}).get("group") or "")
+
+    # T061 (maintainer review of #821, B9): item 1's own fix -- admit,
+    # claim-dispatch and await (fold-turn-act/fold-turn-dispatch/
+    # fold-turn-implement) must run in a job with NO concurrency: block of
+    # its own, or a waiter blocked inside one of these jobs' own group
+    # could never see the ticket it awaits clear (T045's exact deadlock,
+    # research.md D1) -- nothing before this task asserted it.
+    for jid, path in (("fold-turn-act", PR_CONV), ("fold-turn-dispatch", PR_CONV),
+                      ("fold-turn-implement", IMPLEMENT)):
+        job = find_job(path, jid)
+        subject[f"{jid}:has-concurrency"] = job.get("concurrency") is not None
 
     for key, val in subject.items():
         if key.endswith(":if") and not val.strip():
@@ -339,6 +359,24 @@ def scenario_three_overlapping(subject):
         failures.append(f"scenario 3: stalled's concurrency.group is "
                         f"{subject['stalled:group']!r}, expected "
                         f"{EXPECTED_SPEC_GROUP!r} -- unchanged by contract")
+    return failures
+
+
+def scenario_ticket_jobs_carry_no_concurrency_group(subject):
+    """T061 (B9): admit (fold-turn-act), claim-dispatch (fold-turn-dispatch)
+    and await (fold-turn-implement) must each run in a job carrying NO
+    concurrency: block of its own -- a waiter polling for a ticket to
+    clear, from inside a group that ticket's own owning run cannot itself
+    join, can never see it clear (T045's exact deadlock when the claim
+    briefly lived inside dispatch-once's own group instead)."""
+    failures = []
+    for jid in ("fold-turn-act", "fold-turn-dispatch", "fold-turn-implement"):
+        if subject[f"{jid}:has-concurrency"]:
+            failures.append(f"scenario 15: {jid} carries a concurrency: "
+                            f"block -- admit/claim-dispatch/await must run "
+                            f"in a job with none, or a wait inside it can "
+                            f"deadlock against the very group it is "
+                            f"awaiting entry to (T045, research.md D1)")
     return failures
 
 
@@ -970,6 +1008,7 @@ def suite(subject, root):
     failures += scenario_single_run_no_contention(subject)
     failures += scenario_two_overlapping(subject)
     failures += scenario_three_overlapping(subject)
+    failures += scenario_ticket_jobs_carry_no_concurrency_group(subject)
     failures += scenario_stop_only(subject)
     failures += scenario_dispatch_while_outstanding(subject, root)
     failures += scenario_dispatch_after_round_empties(subject, root)
@@ -1107,6 +1146,17 @@ def mut_standalone_still_enqueues(subject):
     return s
 
 
+def mut_ticket_job_gains_concurrency_group(subject):
+    """T061 (B9): simulates the regression item 1's own fix removed --
+    fold-turn-dispatch (or either sibling) gaining a concurrency: block of
+    its own, which would silently reopen T045's exact deadlock (a wait
+    for a ticket to clear, running inside the very group that ticket's
+    owning run cannot itself join)."""
+    s = dict(subject)
+    s["fold-turn-dispatch:has-concurrency"] = True
+    return s
+
+
 def mut_win_retry_declines(subject):
     """T050: a retry of a dispatch token that already won must resolve won
     again. Reverts the idempotent-retry branch to a plain decline."""
@@ -1176,6 +1226,7 @@ MUTATIONS = [
     ("standalone mode still enqueues an implement ticket", mut_standalone_still_enqueues),
     ("a retried win declines instead of winning again", mut_win_retry_declines),
     ("stop-only skip-and-accept handling reverted", mut_drop_stop_only_handling),
+    ("a ticket job (fold-turn-dispatch) gains a concurrency: group", mut_ticket_job_gains_concurrency_group),
 ]
 
 
@@ -1235,7 +1286,7 @@ def main():
         import shutil
         shutil.rmtree(root, ignore_errors=True)
 
-    print(f"Gate 128: 14 scenario(s), {len(MUTATIONS)} mutation(s); "
+    print(f"Gate 128: 15 scenario(s), {len(MUTATIONS)} mutation(s); "
           f"{len(failures)} failure(s), {mutation_failures} mutation failure(s).")
     return 1 if failures or mutation_failures else 0
 
