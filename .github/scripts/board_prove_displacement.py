@@ -30,17 +30,18 @@ RECORDED_REASON = "prove run displaced"
 PROVEN_STEPS = ("prove", "proven")
 
 
-def find_undetected_merges(merged_prs, issues_by_number, bot_login):
+def find_undetected_merges(merged_prs, issues_by_number, bot_login,
+                           in_progress_head_refs=()):
     """research.md D8, FR-010b: an issue whose most recently merged,
     loop-labeled fix PR left no later `prove`/`proven` marker -- the
     signature of a `pull_request: closed` run displaced from its own
     pending slot before `prove-gate`/`prove` ever ran.
 
-    `merged_prs`: `[{"issue": int, "pr": int, "merged_at": iso8601 str}, ...]`
-    -- the repo's recently-merged, loop-labeled fix PRs (the same
-    `Fixes #N` + board-item-marker convention `prove-gate` already reads),
-    one row per issue's own most recent merge (the caller's own job to
-    pre-filter to that, never this function's).
+    `merged_prs`: `[{"issue": int, "pr": int, "merged_at": iso8601 str,
+    "head_ref": str}, ...]` -- the repo's recently-merged, loop-labeled fix
+    PRs (the same `Fixes #N` + board-item-marker convention `prove-gate`
+    already reads), one row per issue's own most recent merge (the
+    caller's own job to pre-filter to that, never this function's).
 
     `issues_by_number`: `{issue_number: [{"created_at": iso8601 str,
     "body": str, "user": {"login": str, "type": str}}, ...]}` -- each cited
@@ -50,11 +51,24 @@ def find_undetected_merges(merged_prs, issues_by_number, bot_login):
     `read_marker_with_timestamp()` so only the loop's own comments are read
     (board_item_marker.is_loop_marker_author(), issue #555) -- required.
 
+    `in_progress_head_refs`: branch names with a currently non-`completed`
+    `board-loop.yml` `pull_request` run (maintainer review,
+    specs/096-durable-prove-entry FR-005's own per-PR concurrency group: a
+    merge's own run can be genuinely mid-wait in that group rather than
+    displaced from it, e.g. queued behind a prior tick's own directed
+    recovery dispatch of the same merge). A row whose `head_ref` matches is
+    deferred to the next tick -- not reported as undetected, and not
+    double-counted as recoverable either, since no marker has been written
+    for it yet.
+
     Returns `[{"issue": int, "merged_pr": int, "recorded_reason":
     "prove run displaced"}, ...]`, deterministic and code-derived
     (Principle IX) -- never an agent's read of the issue thread."""
+    in_progress_head_refs = set(in_progress_head_refs)
     undetected = []
     for row in merged_prs:
+        if row.get("head_ref") and row["head_ref"] in in_progress_head_refs:
+            continue
         issue_number = row["issue"]
         comments = issues_by_number.get(issue_number) or []
         pair = read_marker_with_timestamp(comments, bot_login)

@@ -612,9 +612,9 @@ Task: "New Gate 136: verify-board-prove-recovery.py fixtures"
 - [X] Update every citing location: lint-workflows.yml:4783/4793/4797/4805; both scripts' line-2 headers; verify-board-prove.py:127; tasks.md lines 17, 18, 58, 112, 147, 183, 369, 383, 465, 526.
 
 ## Maintainer Feedback — false displacement record from this PR's own new concurrency group
-- [ ] In `select`'s displacement step (board-loop.yml :216-321), skip (defer to the next tick) any merge whose `board-loop.yml` `pull_request` run isn't `completed`, matched by `headBranch` to the PR's `headRefName`, so a merge mid-wait in its own new per-PR group isn't falsely reported as displaced.
-- [ ] Add a fixture covering a merge whose own `pull_request` prove run is still in progress when the displacement step runs.
-- [ ] Verify, once the FR-011 `--outcome-reason` fix lands, this skip also prevents a duplicate proof dispatch on the next tick (today's busy check only sees `[directed:` runs).
+- [X] In `select`'s displacement step (board-loop.yml :216-321), skip (defer to the next tick) any merge whose `board-loop.yml` `pull_request` run isn't `completed`, matched by `headBranch` to the PR's `headRefName`, so a merge mid-wait in its own new per-PR group isn't falsely reported as displaced.
+- [X] Add a fixture covering a merge whose own `pull_request` prove run is still in progress when the displacement step runs.
+- [X] Verify, once the FR-011 `--outcome-reason` fix lands, this skip also prevents a duplicate proof dispatch on the next tick (today's busy check only sees `[directed:` runs): confirmed by inspection -- while a merge's own run stays in progress, the skip means `find_undetected_merges()` writes it no marker at all, so `board_prove_recovery.is_recoverable()` (which requires an existing `outcome_reason` of `RECORDED_REASON`/`"uncorrelated"`) has nothing to act on and `find_recoverable_items()` never returns it; a recovery dispatch can only be attempted once a marker actually exists, which happens either when the in-progress run itself writes one (success path) or, once it reaches `status: completed` with no marker at all, on the FIRST tick after that (the ordinary "no marker" branch, now correctly recorded with `--outcome-reason`).
 
 ## Maintainer Feedback — resume step's MERGED step=prove path has no consumer
 - [ ] In `board_eligibility.select()`'s fallback, hold fix-or-later markers whose PR is MERGED, next to the existing `prove` skip (FR-009), so the oldest such item stops being re-admitted every tick.

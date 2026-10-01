@@ -243,7 +243,18 @@ jobs:
         run: |
           set -uo pipefail
           gh pr list -R "$GITHUB_REPOSITORY" --state merged --label board:owned \
-            --json number,body,mergedAt -L 20 > "$RUNNER_TEMP/board-recent-merges.json"
+            --json number,body,mergedAt,headRefName -L 20 > "$RUNNER_TEMP/board-recent-merges.json"
+
+          # maintainer review: a merge's own `pull_request: closed` run can
+          # still be mid-wait in its own new per-PR concurrency group
+          # (specs/096-durable-prove-entry FR-005) when this step runs --
+          # that run has not been displaced at all, only queued behind
+          # another run sharing the SAME per-PR group (a prior tick's own
+          # directed recovery dispatch, for instance). Matched by headBranch
+          # against each merge's own headRefName, never by PR number alone
+          # (a run list row carries no PR number for a `pull_request` event).
+          gh run list --workflow=board-loop.yml -R "$GITHUB_REPOSITORY" --event pull_request \
+            --json headBranch,status -L 50 > "$RUNNER_TEMP/board-displacement-runs.json"
 
           # One row per issue's own MOST RECENT merge -- the same `Fixes #N`
           # convention prove-gate's own "Resolve the originating issue" step
@@ -265,7 +276,10 @@ jobs:
               merged_at = pr.get("mergedAt") or ""
               existing = latest_by_issue.get(issue)
               if existing is None or merged_at > existing["merged_at"]:
-                  latest_by_issue[issue] = {"issue": issue, "pr": pr["number"], "merged_at": merged_at}
+                  latest_by_issue[issue] = {
+                      "issue": issue, "pr": pr["number"], "merged_at": merged_at,
+                      "head_ref": pr.get("headRefName") or "",
+                  }
 
           with open(os.path.join(os.environ["RUNNER_TEMP"], "board-recent-merges-by-issue.json"), "w", encoding="utf-8") as fh:
               json.dump(list(latest_by_issue.values()), fh)
@@ -292,6 +306,7 @@ jobs:
 
           MERGED_PRS_PATH="$RUNNER_TEMP/board-recent-merges-by-issue.json" \
             COMMENTS_BY_ISSUE_PATH="$RUNNER_TEMP/board-displacement-comments-by-issue.json" \
+            RUNS_PATH="$RUNNER_TEMP/board-displacement-runs.json" \
             BOT_LOGIN="$BOT_LOGIN" \
             python3 - <<'PYEOF'
           import json
@@ -306,8 +321,13 @@ jobs:
           with open(os.environ["COMMENTS_BY_ISSUE_PATH"], encoding="utf-8") as fh:
               raw = json.load(fh)
           issues_by_number = {int(k): v for k, v in raw.items()}
+          with open(os.environ["RUNS_PATH"], encoding="utf-8") as fh:
+              runs = json.load(fh)
+          in_progress_head_refs = {
+              run.get("headBranch") or "" for run in runs if run.get("status") != "completed"}
 
-          undetected = find_undetected_merges(merged_prs, issues_by_number, os.environ["BOT_LOGIN"])
+          undetected = find_undetected_merges(
+              merged_prs, issues_by_number, os.environ["BOT_LOGIN"], in_progress_head_refs)
 
           with open(os.path.join(os.environ["RUNNER_TEMP"], "board-undetected-merges.json"), "w", encoding="utf-8") as fh:
               json.dump(undetected, fh)
