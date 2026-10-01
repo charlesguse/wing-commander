@@ -537,6 +537,7 @@ jobs:
           case "$RUN_CONCLUSION" in
             skipped|cancelled)
               echo "execution-output: run conclusion is '$RUN_CONCLUSION' — nothing executed, so no denial artifact is attributable. Skipping." >> "$GITHUB_STEP_SUMMARY"
+              echo "claude-execution-output-found=false" >> "$GITHUB_OUTPUT"
               exit 0
               ;;
           esac

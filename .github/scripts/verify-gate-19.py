@@ -555,6 +555,21 @@ if [ "$1" = "run" ] && [ "$2" = "download" ]; then
     printf '%s\n' __MSG__ >&2
     exit 1
   fi
+  # #750/FR-014/R6: lays a real artifact file in the -D dest when a
+  # scenario supplies one, so claude-execution-output-found's TRUE branch
+  # has a fixture too, not just its false ones (SC-006).
+  if [ -n "${GH_STUB_ARTIFACT_JSON:-}" ]; then
+    dest=""
+    prev=""
+    for arg in "$@"; do
+      if [ "$prev" = "-D" ]; then dest="$arg"; fi
+      prev="$arg"
+    done
+    if [ -n "$dest" ]; then
+      mkdir -p "$dest/claude-execution-output"
+      printf '%s\n' "$GH_STUB_ARTIFACT_JSON" > "$dest/claude-execution-output/claude-execution-output.json"
+    fi
+  fi
   exit 0
 fi
 echo "unexpected gh invocation: $*" >&2
@@ -671,6 +686,7 @@ EXEC_SCENARIOS = [
         fail=True,
         msg="gh: no artifact matches any of the names or patterns provided",
         expect_outcome="ok",
+        expect_found=False,
     ),
     dict(
         name="gh's 'no valid artifacts found to download' phrasing "
@@ -679,12 +695,14 @@ EXEC_SCENARIOS = [
         fail=True,
         msg="gh: no valid artifacts found to download",
         expect_outcome="ok",
+        expect_found=False,
     ),
     dict(
         name="a permission/network-flavored download failure is failed",
         fail=True,
         msg="gh: HTTP 403: Resource not accessible by integration",
         expect_outcome="failed",
+        expect_found=False,
     ),
     # Attribution invariant (spec 024 FR-026): a run that skipped or was
     # cancelled executed nothing, so no denial artifact is attributable to
@@ -697,6 +715,7 @@ EXEC_SCENARIOS = [
         msg="",
         run_conclusion="skipped",
         expect_outcome=None,
+        expect_found=False,
     ),
     dict(
         name="run conclusion cancelled: nothing executed, no download attempted (FR-026)",
@@ -704,6 +723,17 @@ EXEC_SCENARIOS = [
         msg="",
         run_conclusion="cancelled",
         expect_outcome=None,
+        expect_found=False,
+    ),
+    # #750/FR-014/R6: the TRUE branch of claude-execution-output-found —
+    # the download succeeds AND lays down a real artifact file.
+    dict(
+        name="download succeeds with a real artifact: claude-execution-output-found is true",
+        fail=False,
+        msg="",
+        artifact_json='[{"type": "result", "subtype": "success"}]',
+        expect_outcome="ok",
+        expect_found=True,
     ),
 ]
 
@@ -969,20 +999,22 @@ def run_exec_one(script, env, sc, tmproot):
     run_env["RUN_CONCLUSION"] = sc.get("run_conclusion", "success")
     if sc["fail"]:
         run_env["GH_STUB_DOWNLOAD_FAIL"] = "1"
+    if sc.get("artifact_json"):
+        run_env["GH_STUB_ARTIFACT_JSON"] = sc["artifact_json"]
 
-    rc, out, _, _ = run_step(BASH, script, workdir, run_env, runner_temp)
+    rc, out, outputs, _ = run_step(BASH, script, workdir, run_env, runner_temp)
     with open(os.path.join(runner_temp, "collector-outcomes.json"), encoding="utf-8") as fh:
         outcomes = json.load(fh)
     for d in (workdir, runner_temp, bindir):
         shutil.rmtree(d, ignore_errors=True)
-    return rc, out, outcomes
+    return rc, out, outcomes, outputs
 
 
 def suite_exec(script, env, tmproot):
     failures = []
     for sc in EXEC_SCENARIOS:
         tag = f"[execution-output: {sc['name']}]"
-        rc, out, outcomes = run_exec_one(script, env, sc, tmproot)
+        rc, out, outcomes, outputs = run_exec_one(script, env, sc, tmproot)
         if rc != 0:
             failures.append(f"{tag} the collector exited {rc}:\n{out}")
             continue
@@ -992,6 +1024,12 @@ def suite_exec(script, env, tmproot):
                 f"{tag} collector-outcomes.json for collect-execution-output "
                 f"reads {got!r}, expected {sc['expect_outcome']!r} (FR-010). "
                 f"outcomes: {outcomes}")
+        want_found = "true" if sc["expect_found"] else "false"
+        if outputs.get("claude-execution-output-found") != want_found:
+            failures.append(
+                f"{tag} claude-execution-output-found reads "
+                f"{outputs.get('claude-execution-output-found')!r}, "
+                f"expected {want_found!r} (#750/FR-014/R6)")
     return failures
 
 
