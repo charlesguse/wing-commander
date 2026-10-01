@@ -1603,6 +1603,26 @@ jobs:
           spec-dir: ${{ needs.classify-and-announce.outputs.spec-dir }}
           kind: act
 
+      # specs/074-serialized-fold-dispatch T064 (maintainer review of #821,
+      # B6): `act` only ever releases this ticket as the LAST step of its
+      # own run (T013), gated on needs.fold-turn-act.result == 'success' --
+      # if this job itself fails or is cancelled (a runner lost mid-poll, a
+      # whole-workflow cancel), `act` never even starts and nothing else
+      # releases the ticket this job's own admit step may have enqueued.
+      # Uses the deterministic token (not steps.admit.outputs.token, which
+      # a cancellation can leave unwritten) and best-effort/abandon mode
+      # (not plain release) since the ticket may not have reached the queue
+      # head yet -- fold-queue-ledger.sh.
+      - name: Abandon this run's act-kind ticket if this job failed or was cancelled
+        if: failure() || cancelled()
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-fold-queue-release
+        with:
+          spec-dir: ${{ needs.classify-and-announce.outputs.spec-dir }}
+          token: run-${{ github.run_id }}-act
+          round: ${{ steps.admit.outputs.round }}
+          outcome: error
+          best-effort: "true"
+
   # Executes each classification's route: fold-in + implement re-dispatch
   # (in-scope-change), new-issue/new-PR spin-offs (new-functionality,
   # small-unrelated-change, manual-step-permission's permission-request
@@ -3147,6 +3167,25 @@ jobs:
           set -euo pipefail
           json="$(printf '%s' "$FOLDED_ITEMS" | jq -c '[.[] | {id: (.run_id + "/" + .leg_id), summary: .summary}]')"
           echo "json=$json" >> "$GITHUB_OUTPUT"
+
+      # specs/074-serialized-fold-dispatch T064 (maintainer review of #821,
+      # B6): `dispatch-once` only releases this ticket on its own success
+      # path (gated on needs.fold-turn-dispatch.result == 'success' or the
+      # stop-only skip) -- if this job itself fails (including the claim
+      # step's own max-requeue-attempts hard failure, claim-dispatch/
+      # action.yml) or is cancelled, nothing downstream ever releases the
+      # dispatch-kind ticket this job enqueued/requeued. Same deterministic-
+      # token + best-effort/abandon approach as fold-turn-act's matching
+      # step above (the ticket may be mid-requeue, not at the queue head).
+      - name: Abandon this run's dispatch-kind ticket if this job failed or was cancelled
+        if: failure() || cancelled()
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-fold-queue-release
+        with:
+          spec-dir: ${{ needs.classify-and-announce.outputs.spec-dir }}
+          token: run-${{ github.run_id }}-dispatch
+          round: ${{ steps.admit.outputs.round }}
+          outcome: error
+          best-effort: "true"
 
   # research.md D1/D2/D3/contracts/fold-dispatch-once.md: the ONLY job in
   # this workflow that calls `gh workflow run` for implement.yml, and it

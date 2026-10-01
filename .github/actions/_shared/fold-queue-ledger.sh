@@ -166,6 +166,25 @@
 #                     false) even after redispatch_count has advanced to 1.
 #                     Called by fold-cycle-guard.yml (research.md D7) --
 #                     redispatch_count itself is never incremented past 1.
+#   abandon        -- SPEC_DIR, TOKEN
+#                     specs/074-serialized-fold-dispatch T064 (maintainer
+#                     review of #821, B6): removes TOKEN from the queue
+#                     wherever it sits -- unlike `release` and
+#                     `reclaim-stale` (both head-only), a ticket's own
+#                     waiter may need to abandon it before it ever reaches
+#                     the head (a fold-turn-* job's own enqueue never got
+#                     granted before its wait gave up, or claim-dispatch's
+#                     requeue-reawait loop exceeded max-requeue-attempts
+#                     with its ticket requeued behind another). No
+#                     completion record is filed (outcome unknown by
+#                     construction, same as reclaim-stale). If the removed
+#                     ticket was at the head, the new head (if any) is
+#                     granted in the same write. Absent-token is a no-op
+#                     (changed: false), so a retry is always safe. Called
+#                     by fold-queue-await.sh on its own hard timeout, and
+#                     by wing-commander-fold-queue-release's best-effort
+#                     mode from a fold-turn-* job's own failure/cancellation
+#                     cleanup step.
 #
 # Every transform is idempotent under retry: a retried write observes its
 # own prior effect on the freshly re-fetched tip and returns the same
@@ -208,9 +227,9 @@ set -uo pipefail
 TRANSFORM="${1:-}"
 
 case "$TRANSFORM" in
-  enqueue|release|claim-dispatch|reclaim-stale|record-implement-run|claim-redispatch|peek|peek-round|peek-implement-run) ;;
+  enqueue|release|claim-dispatch|reclaim-stale|record-implement-run|claim-redispatch|abandon|peek|peek-round|peek-implement-run) ;;
   *)
-    echo "::error::fold-queue-ledger.sh: unknown or missing transform '$TRANSFORM' (expected one of: enqueue, release, claim-dispatch, reclaim-stale, record-implement-run, claim-redispatch, peek, peek-round, peek-implement-run)"
+    echo "::error::fold-queue-ledger.sh: unknown or missing transform '$TRANSFORM' (expected one of: enqueue, release, claim-dispatch, reclaim-stale, record-implement-run, claim-redispatch, abandon, peek, peek-round, peek-implement-run)" >&2
     exit 1
     ;;
 esac
@@ -269,6 +288,9 @@ case "$TRANSFORM" in
     : "${ROUND:?fold-queue-ledger.sh claim-redispatch: ROUND is required}"
     : "${RUN_ID:?fold-queue-ledger.sh claim-redispatch: RUN_ID is required}"
     ;;
+  abandon)
+    : "${TOKEN:?fold-queue-ledger.sh abandon: TOKEN is required}"
+    ;;
 esac
 
 workdir="$(mktemp -d "${RUNNER_TEMP:-/tmp}/wc-fold-queue-ledger.XXXXXX")"
@@ -288,7 +310,7 @@ if [ "$TRANSFORM" = "peek" ]; then
   if git ls-remote --exit-code "$auth_url" "refs/heads/$LEDGER_BRANCH" >/dev/null 2>&1; then
     if ! git clone --quiet --depth 1 --branch "$LEDGER_BRANCH" --single-branch "$auth_url" "$clone_dir" 2>"$workdir/peek-clone-err.txt"; then
       cat "$workdir/peek-clone-err.txt" >&2
-      echo "::error::fold-queue-ledger.sh peek: failed to read $LEDGER_BRANCH"
+      echo "::error::fold-queue-ledger.sh peek: failed to read $LEDGER_BRANCH" >&2
       exit 1
     fi
   fi
@@ -320,7 +342,7 @@ if [ "$TRANSFORM" = "peek-round" ]; then
   if git ls-remote --exit-code "$auth_url" "refs/heads/$LEDGER_BRANCH" >/dev/null 2>&1; then
     if ! git clone --quiet --depth 1 --branch "$LEDGER_BRANCH" --single-branch "$auth_url" "$clone_dir" 2>"$workdir/peek-round-clone-err.txt"; then
       cat "$workdir/peek-round-clone-err.txt" >&2
-      echo "::error::fold-queue-ledger.sh peek-round: failed to read $LEDGER_BRANCH"
+      echo "::error::fold-queue-ledger.sh peek-round: failed to read $LEDGER_BRANCH" >&2
       exit 1
     fi
   fi
@@ -346,7 +368,7 @@ if [ "$TRANSFORM" = "peek-implement-run" ]; then
   if git ls-remote --exit-code "$auth_url" "refs/heads/$LEDGER_BRANCH" >/dev/null 2>&1; then
     if ! git clone --quiet --depth 1 --branch "$LEDGER_BRANCH" --single-branch "$auth_url" "$clone_dir" 2>"$workdir/peek-implement-run-clone-err.txt"; then
       cat "$workdir/peek-implement-run-clone-err.txt" >&2
-      echo "::error::fold-queue-ledger.sh peek-implement-run: failed to read $LEDGER_BRANCH"
+      echo "::error::fold-queue-ledger.sh peek-implement-run: failed to read $LEDGER_BRANCH" >&2
       exit 1
     fi
   fi
@@ -613,6 +635,24 @@ JQ
   end
 JQ
     ;;
+  abandon)
+    cat > "$filter_file" <<'JQ'
+.specs[$spec] //= {"round": 0, "queue": [], "rounds": {}}
+| (.specs[$spec].queue | map(.token) | index($token)) as $idx
+| if $idx == null then
+    { changed: false, ledger: ., result: { abandoned: "false", "already-absent": "true" } }
+  else
+    (.specs[$spec].queue[0:$idx] + .specs[$spec].queue[($idx + 1):]) as $newqueue
+    | .specs[$spec].queue = $newqueue
+    | (if ($idx == 0) and (.specs[$spec].queue | length) > 0 and (.specs[$spec].queue[0].granted_at == null) then
+         .specs[$spec].queue[0].granted_at = $now
+       else
+         .
+       end) as $newdoc
+    | { changed: true, ledger: $newdoc, result: { abandoned: "true", "already-absent": "false" } }
+  end
+JQ
+    ;;
 esac
 
 max_attempts=8
@@ -687,6 +727,10 @@ while [ "$attempt" -le "$max_attempts" ]; do
       ;;
     claim-redispatch)
       jq -c --arg spec "$SPEC_DIR" --arg round "$ROUND" --arg run_id "$RUN_ID" --arg now "$now" \
+        -f "$filter_file" "$current_json" > "$output_file"
+      ;;
+    abandon)
+      jq -c --arg spec "$SPEC_DIR" --arg token "$TOKEN" --arg now "$now" \
         -f "$filter_file" "$current_json" > "$output_file"
       ;;
   esac

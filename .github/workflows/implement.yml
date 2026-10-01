@@ -3582,6 +3582,14 @@ jobs:
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-fold-queue-release
         with:
           spec-dir: ${{ inputs.spec-dir }}
-          token: ${{ needs.fold-turn-implement.outputs.token }}
+          # specs/074-serialized-fold-dispatch T064 (maintainer review of
+          # #821, B6): fold-turn-implement's own admit step only writes its
+          # outputs on a successful grant -- if that step instead timed out
+          # or the job was cancelled mid-wait, outputs.token is empty even
+          # though the ticket (inputs.fold-queue-token, known in advance
+          # since it was enqueued by the dispatching run) still needs
+          # releasing. Falls back to the input directly rather than relying
+          # solely on the job's own (possibly-unwritten) output.
+          token: ${{ needs.fold-turn-implement.outputs.token || inputs.fold-queue-token }}
           round: ${{ needs.fold-turn-implement.outputs.round }}
           outcome: not-folded

@@ -62,6 +62,17 @@ set -uo pipefail
 : "${SPEC_DIR:?fold-queue-await.sh: SPEC_DIR is required}"
 : "${TOKEN:?fold-queue-await.sh: TOKEN is required}"
 
+# T068 (maintainer review of #821, B9): TOKEN is always this waiter's own
+# ticket, shaped "run-<RUN_ID>-<kind>" (fold-queue-ledger.sh's enqueue/
+# claim-dispatch/claim-redispatch). Parsed once so the loop below can tell
+# "the head ticket is some OTHER ticket this same run still owns" (e.g. run
+# A's own act-kind ticket, orphaned because its release step never ran)
+# from "the head ticket belongs to a genuinely different, still-live run" --
+# the former can never be confirmed alive by asking A's own run status,
+# since A is this very waiter and is of course still in_progress.
+MY_RUN_ID="${TOKEN%-*}"
+MY_RUN_ID="${MY_RUN_ID#run-}"
+
 if ! declare -F wc_fold_queue_run_status >/dev/null; then
   echo "::error::fold-queue-await.sh: caller must define and 'export -f wc_fold_queue_run_status' before invoking this script (see header comment) -- Gate 12 forbids a gh call inside a _shared/ script, so the actual gh api call must live in the composite's own step." >&2
   exit 1
@@ -87,6 +98,19 @@ while :; do
   head_run_id="$(printf '%s\n' "$peek_out" | grep '^head-run-id=' | cut -d= -f2-)"
   head_kind="$(printf '%s\n' "$peek_out" | grep '^head-kind=' | cut -d= -f2-)"
   head_granted_at="$(printf '%s\n' "$peek_out" | grep '^head-granted-at=' | cut -d= -f2-)"
+
+  # T068: the head ticket belongs to THIS SAME run (head_run_id == our own
+  # run id, parsed from TOKEN above) but isn't the ticket we are ourselves
+  # waiting for -- it can only be an earlier ticket of ours that was never
+  # released (our run's act-kind leg job crashed or lost its runner before
+  # its own always() release step ran). Asking "is head_run_id alive?"
+  # always answers yes (we ARE that run, still executing this very poll),
+  # so neither the deadline-extension nor the staleness liveness check
+  # below may trust that self-answer for this one case.
+  own_orphaned_head="false"
+  if [ -n "$head_run_id" ] && [ "$head_run_id" = "$MY_RUN_ID" ] && [ "$head_token" != "$TOKEN" ]; then
+    own_orphaned_head="true"
+  fi
 
   if [ "$position" = "0" ] && [ "$granted" = "true" ]; then
     echo "round=$round"
@@ -120,11 +144,18 @@ while :; do
     # ticket's own run_id IS its real owning run (research.md D6).
     extend="false"
     live_run_id=""
-    if [ "$head_kind" = "implement" ] && [ -n "$round" ]; then
-      round_out="$(SPEC_DIR="$SPEC_DIR" ROUND="$round" bash "$LEDGER" peek-round)"
-      live_run_id="$(printf '%s\n' "$round_out" | grep '^implement-run-id=' | cut -d= -f2-)"
-    elif [ "$head_kind" = "act" ]; then
-      live_run_id="$head_run_id"
+    # T068: never extend for our own orphaned head -- see where
+    # own_orphaned_head is computed above. Asking wc_fold_queue_run_status
+    # about our own run id always reports "alive" (we are the one asking),
+    # which would extend the deadline forever rather than letting the
+    # stale-reclaim check below clear the orphan and let us proceed.
+    if [ "$own_orphaned_head" != "true" ]; then
+      if [ "$head_kind" = "implement" ] && [ -n "$round" ]; then
+        round_out="$(SPEC_DIR="$SPEC_DIR" ROUND="$round" bash "$LEDGER" peek-round)"
+        live_run_id="$(printf '%s\n' "$round_out" | grep '^implement-run-id=' | cut -d= -f2-)"
+      elif [ "$head_kind" = "act" ]; then
+        live_run_id="$head_run_id"
+      fi
     fi
     if [ -n "$live_run_id" ]; then
       live_status="$(wc_fold_queue_run_status "$live_run_id")"
@@ -135,12 +166,21 @@ while :; do
     if [ "$extend" = "true" ]; then
       deadline=$(( now_ts + MAX_WAIT_MINUTES * 60 ))
     else
+      # T064 (maintainer review of #821, B6): our own TOKEN is still sitting
+      # in the queue (not yet granted, by construction -- the granted check
+      # above already returned) -- best-effort abandon it before giving up,
+      # so the next waiter behind it isn't stuck watching a dead ticket
+      # crawl its way to the head only to need its own stale-reclaim pass
+      # once it gets there. `|| true`: a failed abandon here must not mask
+      # the real timeout error below.
+      SPEC_DIR="$SPEC_DIR" TOKEN="$TOKEN" bash "$LEDGER" abandon >/dev/null 2>&1 || true
+
       # Callers capture this script's stdout via command substitution (both
       # wing-commander-fold-queue-admit's own wait and
       # wing-commander-fold-queue-claim-dispatch's requeue-reawait loop), so
       # the failure line goes to stderr -- stdout on a successful exit is
       # exactly the two `key=value` lines above, nothing else.
-      echo "::error::fold-queue-await.sh: timed out after ${MAX_WAIT_MINUTES}m waiting for ticket $TOKEN (spec-dir=$SPEC_DIR) to be granted -- current head is $head_token (run $head_run_id)." >&2
+      echo "::error::fold-queue-await.sh: timed out after ${MAX_WAIT_MINUTES}m waiting for ticket $TOKEN (spec-dir=$SPEC_DIR) to be granted -- current head is $head_token (run $head_run_id). This ticket was abandoned (removed from the queue) so it does not block the next waiter." >&2
       exit 1
     fi
   fi
@@ -162,7 +202,14 @@ while :; do
         liveness_run_id="$head_run_id"
         skip_reclaim="false"
         reclaim_unconditionally="false"
-        if [ "$head_kind" = "implement" ]; then
+        if [ "$own_orphaned_head" = "true" ]; then
+          # T068: the head is our own run's earlier, un-released ticket --
+          # asking wc_fold_queue_run_status about our own run id always
+          # reports "alive" (we are the one asking), so that self-check is
+          # never trustworthy here. Reclaim once stale, same as the
+          # already-uncorrelated-implement-head backstop below.
+          reclaim_unconditionally="true"
+        elif [ "$head_kind" = "implement" ]; then
           round_out="$(SPEC_DIR="$SPEC_DIR" ROUND="$round" bash "$LEDGER" peek-round)"
           liveness_run_id="$(printf '%s\n' "$round_out" | grep '^implement-run-id=' | cut -d= -f2-)"
           if [ -z "$liveness_run_id" ]; then

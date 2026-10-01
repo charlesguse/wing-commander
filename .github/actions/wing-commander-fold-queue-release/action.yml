@@ -50,6 +50,17 @@ inputs:
       (Principle V).
     required: false
     default: ""
+  best-effort:
+    description: >
+      specs/074-serialized-fold-dispatch T064 (maintainer review of #821,
+      B6): "true" routes through the ledger's `abandon` transform instead
+      of `release` -- used only by a fold-turn-* job's own
+      failure()/cancelled() cleanup step for its OWN deterministic token,
+      which (unlike every other caller of this composite) cannot prove the
+      ticket ever reached the queue head. `outcome`/`commit-sha`/`leg-id`/
+      `summary` are ignored in this mode; no completion record is filed.
+    required: false
+    default: "false"
 
 runs:
   using: composite
@@ -71,12 +82,19 @@ runs:
         COMMIT_SHA: ${{ inputs.commit-sha }}
         LEG_ID: ${{ inputs.leg-id }}
         SUMMARY: ${{ inputs.summary }}
+        BEST_EFFORT: ${{ inputs.best-effort }}
       run: |
         set -euo pipefail
         LEDGER="$GITHUB_ACTION_PATH/../_shared/fold-queue-ledger.sh"
 
         if [ -z "$TOKEN" ]; then
           echo "wing-commander-fold-queue-release: no token supplied (this run never held a ticket for $SPEC_DIR) -- nothing to release." >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+        fi
+
+        if [ "$BEST_EFFORT" = "true" ]; then
+          bash "$LEDGER" abandon >/dev/null
+          echo "wing-commander-fold-queue-release: abandoned $TOKEN (best-effort, no completion record)." >> "$GITHUB_STEP_SUMMARY"
           exit 0
         fi
 
