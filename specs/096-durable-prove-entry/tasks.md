@@ -600,3 +600,8 @@ Task: "New Gate 128: verify-board-prove-recovery.py fixtures"
 ## Maintainer Feedback — resume step's MERGED step=prove path has no consumer
 - [ ] In `board_eligibility.select()`'s fallback, hold fix-or-later markers whose PR is MERGED, next to the existing `prove` skip (FR-009), so the oldest such item stops being re-admitted every tick.
 - [ ] Fix the stale docstrings at `board_eligibility.py:362` and `board_prove_displacement.py:8`.
+
+
+## Maintainer Feedback — recovery step has no continue-on-error and sits in front of resume
+- [ ] Add `continue-on-error: true` to the recovery step (board-loop.yml ~:837) plus an `::error::` annotation, following the closed-without-landing precedent at :340, so a persistent `gh` failure there doesn't fail `select` and stall the board every tick.
+- [ ] Write the spent marker before dispatching, so a dispatch that succeeds but whose comment fails doesn't cause a duplicate dispatch on the next tick (SC-008).
