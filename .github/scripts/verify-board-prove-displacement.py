@@ -23,6 +23,7 @@ CASES = [
         {1: [{"created_at": "2026-01-01T01:00:00Z",
               "body": "Not proven: -- " + MARKER.format(step="prove"),
               "user": BOT_USER}]},
+        (),
         [],
     ),
     # A later proven marker (success) exists; not flagged.
@@ -32,6 +33,7 @@ CASES = [
         {2: [{"created_at": "2026-01-01T01:00:00Z",
               "body": "Proven -- " + MARKER.format(step="proven"),
               "user": BOT_USER}]},
+        (),
         [],
     ),
     # No marker at all after the merge -- the run never even reached
@@ -40,6 +42,7 @@ CASES = [
         "no marker at all",
         [{"issue": 3, "pr": 301, "merged_at": "2026-01-01T00:00:00Z"}],
         {3: []},
+        (),
         [{"issue": 3, "merged_pr": 301, "recorded_reason": "prove run displaced"}],
     ),
     # The latest marker predates the merge (stale, from an earlier board
@@ -50,15 +53,41 @@ CASES = [
         [{"issue": 4, "pr": 401, "merged_at": "2026-01-02T00:00:00Z"}],
         {4: [{"created_at": "2026-01-01T00:00:00Z",
               "body": "Readiness -- " + MARKER.format(step="readiness")}]},
+        (),
         [{"issue": 4, "merged_pr": 401, "recorded_reason": "prove run displaced"}],
+    ),
+    # maintainer review (specs/096-durable-prove-entry FR-005): no marker at
+    # all, same as "no marker at all" above, but the merge's own head_ref
+    # still has a non-completed board-loop.yml pull_request run -- it is
+    # genuinely mid-wait in its own per-PR concurrency group, not displaced
+    # from it; deferred to the next tick rather than flagged.
+    (
+        "own pull_request run still in progress",
+        [{"issue": 5, "pr": 501, "merged_at": "2026-01-01T00:00:00Z",
+          "head_ref": "fix/issue-5"}],
+        {5: []},
+        {"fix/issue-5"},
+        [],
+    ),
+    # Same shape, but the in-progress run is on a DIFFERENT branch -- issue
+    # 5's own merge is still flagged (the in-progress set does not blanket
+    # suppress every undetected merge, only the ones it actually names).
+    (
+        "in-progress run on an unrelated branch does not suppress this merge",
+        [{"issue": 5, "pr": 501, "merged_at": "2026-01-01T00:00:00Z",
+          "head_ref": "fix/issue-5"}],
+        {5: []},
+        {"fix/some-other-issue"},
+        [{"issue": 5, "merged_pr": 501, "recorded_reason": "prove run displaced"}],
     ),
 ]
 
 
 def run():
     failures = 0
-    for name, merged_prs, issues_by_number, expected in CASES:
-        got = find_undetected_merges(merged_prs, issues_by_number, BOT_LOGIN)
+    for name, merged_prs, issues_by_number, in_progress_head_refs, expected in CASES:
+        got = find_undetected_merges(
+            merged_prs, issues_by_number, BOT_LOGIN, in_progress_head_refs)
         if got != expected:
             failures += 1
             print("::error::verify-board-prove-displacement: {0}: expected "

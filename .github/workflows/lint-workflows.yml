@@ -4812,6 +4812,40 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-loop-readmission.py --self-test
 
+      # Gate 136 — specs/096-durable-prove-entry research.md D4/D5: a board
+      # item marker whose `step` is "prove" and whose `outcome_reason` is
+      # exactly board_prove_displacement.RECORDED_REASON or the literal
+      # "uncorrelated" -- and which has not already been recovered once -- is
+      # a candidate for the `select` job's own directed re-dispatch
+      # (FR-011/FR-011a/FR-011b/FR-011c). This gate exercises
+      # board_prove_recovery.is_recoverable()/find_recoverable_items() over
+      # every marker shape data-model.md's "Board Item Marker" table lists,
+      # and board_item_marker.py's two new fields round-trip, including a
+      # marker written before this feature (five keys only). Numbered 136,
+      # not 128, to avoid colliding with another spec's own Gate 128
+      # (maintainer review).
+      - name: "Gate 136 — a board item marker recoverable only when displaced/uncorrelated and not already spent"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-board-prove-recovery.py
+
+      # Gate 137 — specs/096-durable-prove-entry FR-018, research.md D8: the
+      # concurrency arrangement T007/T008 give prove-gate/prove is what this
+      # gate reads, not only what a comment describes (spec.md "A rule with
+      # no gate behind it"). Asserts, against the real board-loop.yml, that
+      # prove-gate/prove's own pull_request-branch group text is not the
+      # shared wing-commander-board-loop literal, contains the per-merge
+      # github.event.pull_request.number key, resolves to a distinct group
+      # for two distinct PR numbers, and the two jobs never desync. Numbered
+      # 137, not 129, to avoid colliding with Gate 129
+      # (verify-skill-board-loop-concurrency-claim.py, specs/089, already
+      # wired above -- maintainer review).
+      - name: "Gate 137 — prove-gate/prove's own pull_request-branch concurrency group is per-merge and never desyncs"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-prove-path-concurrency.py
+      - name: "Gate 137 self-test — a shared-key regression, an event-name swap, and a prove-gate/prove desync each fail"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-prove-path-concurrency.py --self-test
+
       # Gate 138 — specs/099-name-free-stage-identity T032/T033 (FR-012):
       # no FR-002 site in watchdog.yml or wing-commander-inspected-run-
       # identity/action.yml gates behavior on a reference display-name

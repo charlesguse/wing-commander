@@ -109,7 +109,8 @@ TERMINAL_STEPS = frozenset({"closed", "stalled", "proven", DUPLICATE_STEP})
 # loop's own (no board:owned label, or its head in another repository) as
 # this state instead of "OPEN". Such a marker never makes its issue
 # in-flight, and select()'s fallback passes the issue over until the PR is
-# CLOSED or MERGED (_unowned_open_pr_holds()), so the resume step's no-op
+# CLOSED (_unowned_open_pr_holds(); a MERGED one stays held by
+# _merged_fix_holds() instead), so the resume step's no-op
 # hold for it is never re-selected every run.
 UNOWNED_OPEN_PR_STATE = "OPEN_UNOWNED"
 
@@ -343,7 +344,8 @@ def _awaiting_merge_holds(marker, pr_state_by_number):
     awaiting-merge PR to a no-op, so an oldest-eligible item would be
     re-selected and do nothing on every run. Skipping costs at most a
     delay for this one item (it is re-admitted on the first run whose
-    lookup returns CLOSED or MERGED), and a human merge still reaches
+    lookup returns CLOSED; a MERGED one stays held by _merged_fix_holds()
+    for the displacement recovery path), and a human merge still reaches
     prove-gate/prove through pull_request: closed, which never consults
     this."""
     if (marker or {}).get("step") != AWAITING_MERGE_STEP:
@@ -367,6 +369,30 @@ def _unowned_open_pr_holds(marker, pr_state_by_number):
     return pr_state_by_number.get(pr) == UNOWNED_OPEN_PR_STATE
 
 
+def _merged_fix_holds(marker, pr_state_by_number):
+    """True when `marker` records a fix-or-later step (not yet `prove`,
+    already skipped above) whose PR the select job's lookup reports
+    MERGED -- specs/096-durable-prove-entry's own resume-step clause
+    resolves such a marker to `step = "prove"` once this item is actually
+    resumed, but nothing in select's own job graph consumes a bare `prove`
+    result produced that way, and that in-memory resolution is never
+    written back to a durable marker either -- re-admitting the item here
+    would just re-select and re-resolve it to the same dead end every tick
+    (the #532-style wedge, maintainer review). The item's real path
+    forward is the displacement step's own independent scan
+    (research.md D8/FR-010b, `board_prove_displacement.find_undetected_merges()`),
+    which already treats "no later prove/proven marker" as undetected
+    regardless of select()'s own picks, and writes the `step=prove`
+    marker FR-011's recovery mechanism then acts on."""
+    if (marker or {}).get("step") not in FIX_OR_LATER_STEPS:
+        return False
+    try:
+        pr = int(marker.get("pr"))
+    except (TypeError, ValueError):
+        return False
+    return pr_state_by_number.get(pr) == "MERGED"
+
+
 def select(open_issues, labeled_events_by_issue, comments_by_issue, pr_state_by_number, bot_login,
            spec_request_state_by_number=None):
     """FR-004/FR-011: consults in_flight_candidate() first; falls through to
@@ -377,10 +403,16 @@ def select(open_issues, labeled_events_by_issue, comments_by_issue, pr_state_by_
     passed over instead of being re-selected every run with no consumer
     able to advance it. It likewise passes over an `awaiting-merge` issue
     while _awaiting_merge_holds() (#532); once that PR is closed unmerged,
-    or merged with the issue still open, the item is eligible here again
-    and the resume step sends it to a fresh triage. It also passes over an
-    issue whose marker's PR is open but not the loop's own
-    (_unowned_open_pr_holds(), issue #555)."""
+    the item is eligible here again and the resume step sends it to a fresh
+    triage. It also passes over an issue whose marker's PR is open but not
+    the loop's own (_unowned_open_pr_holds(), issue #555). A fix-or-later
+    marker (including `awaiting-merge`) whose PR has since MERGED is held
+    too (_merged_fix_holds(), specs/096-durable-prove-entry maintainer
+    review) rather than admitted -- the resume step resolves such a marker
+    to `step = "prove"` with no durable write and no consumer in select's
+    own job graph, so re-admitting it here would just re-resolve it to the
+    same dead end every tick; the displacement step's own independent scan
+    is what actually recovers it instead."""
     in_flight, _multiple_found = in_flight_candidate(
         open_issues, comments_by_issue, pr_state_by_number, bot_login, spec_request_state_by_number)
     if in_flight is not None:
@@ -400,6 +432,8 @@ def select(open_issues, labeled_events_by_issue, comments_by_issue, pr_state_by_
         if pair is not None and _awaiting_merge_holds(pair[1], pr_state_by_number):
             continue
         if pair is not None and _unowned_open_pr_holds(pair[1], pr_state_by_number):
+            continue
+        if pair is not None and _merged_fix_holds(pair[1], pr_state_by_number):
             continue
         labeled_events = labeled_events_by_issue.get(number, [])
         if classify_issue(issue, labeled_events) != "ineligible":

@@ -1,0 +1,47 @@
+# CLAUDE.md "Shared logic has exactly one home" (maintainer review,
+# specs/096-durable-prove-entry): the prove job's own "Check whether the
+# directed proof group is busy" step and the select job's own recovery
+# dispatch each ran the identical `gh run list` + board_prove.
+# directed_proof_group_busy() pair inline -- a pasted copy invisible until
+# the first divergent fix. This composite is the one home; both call sites
+# keep only this `uses:` and their own `if:` gating.
+#
+# research.md D4/FR-001a: whether the directed-proof concurrency group a
+# directed dispatch would join is already occupied by another directed
+# run -- read fresh, right before any dispatch is attempted, never cached
+# or assumed from the busy-ness of the ordinary group.
+name: wing-commander-directed-proof-busy-check
+description: >
+  Reports whether board-loop.yml's own directed-proof concurrency group is
+  occupied by a run other than the caller's own.
+
+inputs:
+  token:
+    description: A token with read access to this repository's own Actions runs (github.token suffices)
+    required: true
+
+outputs:
+  busy:
+    description: "true when another run already occupies the directed-proof group"
+    value: ${{ steps.check.outputs.busy }}
+
+runs:
+  using: composite
+  steps:
+    - name: Check whether the directed proof group is busy
+      id: check
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+      run: |
+        set -uo pipefail
+        run_list_json="$(gh run list --workflow=board-loop.yml -R "$GITHUB_REPOSITORY" \
+          --json databaseId,displayTitle,status -L 20)"
+
+        busy="$(RUN_LIST_JSON="$run_list_json" OWN_RUN_ID="$GITHUB_RUN_ID" python3 -c "
+        import os, sys
+        sys.path.insert(0, '.github/scripts')
+        from board_prove import directed_proof_group_busy
+        print('true' if directed_proof_group_busy(os.environ['RUN_LIST_JSON'], os.environ['OWN_RUN_ID']) else 'false')
+        ")"
+        echo "busy=$busy" >> "$GITHUB_OUTPUT"

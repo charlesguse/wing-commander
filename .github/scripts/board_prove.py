@@ -406,6 +406,41 @@ def joins_directed_group(target_workflow_path, target_job, aimable_jobs):
     return group not in (ORDINARY_GROUP, DIRECTED_GROUP)
 
 
+def read_job_concurrency_group(workflow_path, job_name):
+    """specs/096-durable-prove-entry research.md D8: `job_name`'s own raw
+    (unevaluated) `concurrency.group:` text in `workflow_path`, read off the
+    checked-out tree -- `""` when the job has no `concurrency:` block, or
+    does not exist at all. A small extraction from
+    `joins_directed_group()`'s own inline "read a job's own concurrency.group
+    text off the tree" step; that function's own workflow-level read (a
+    different shape -- a *workflow*-level `concurrency:` block, for a future
+    external dispatchable target) is unchanged by this addition."""
+    with open(workflow_path, encoding="utf-8") as fh:
+        doc = yaml.safe_load(fh.read()) or {}
+    job = (doc.get("jobs") or {}).get(job_name) or {}
+    return (job.get("concurrency") or {}).get("group") or ""
+
+
+PULL_REQUEST_GROUP_ARM_RE = re.compile(
+    r"github\.event_name\s*==\s*'pull_request'\s*&&\s*format\("
+    r"'([\w.-]+)\{0\}',\s*github\.event\.pull_request\.number\)")
+
+
+def render_pull_request_group(group_text, pr_number):
+    """specs/096-durable-prove-entry FR-018, maintainer review: renders
+    prove-gate/prove's own `pull_request`-branch concurrency group for a
+    specific merged PR number, by extracting the `format('<prefix>{0}',
+    github.event.pull_request.number)` arm's own prefix -- never a literal
+    substring check, which a shared-key, collapsed-key, or wrong-event-name
+    regression could still pass. Returns None when the arm is not present
+    at all, or is gated on a different event name (the structural
+    regressions this exists to catch)."""
+    match = PULL_REQUEST_GROUP_ARM_RE.search(group_text)
+    if not match:
+        return None
+    return "{0}{1}".format(match.group(1), pr_number)
+
+
 def directed_proof_group_busy(run_list_json, own_run_id=None):
     """research.md D4, FR-001a (dynamic): whether DIRECTED_GROUP is already
     occupied by another directed dispatch, read from a live `gh run list

@@ -48,6 +48,15 @@ directed-proof-in-flight to pin that select() returns None rather than any
 issue at all when the only open issue is mid-proof (FR-017,
 specs/060-self-redrive-concurrency).
 
+specs/096-durable-prove-entry maintainer review: awaiting-merge-pr-merged
+and fix-or-later-pr-merged also each carry a select_issue_number pinning
+_merged_fix_holds() -- a fix-or-later marker (including awaiting-merge)
+whose PR has since MERGED is held, same as a stuck `prove` marker, rather
+than admitted and resolved to a dead-end in-memory `step = "prove"` with
+no durable write and no consumer; awaiting-merge-pr-merged's two-issue
+shape additionally pins that the hold is scoped to its own issue, moving
+on to the next-oldest eligible one rather than returning None entirely.
+
 Marker authorship (#555): markers are read only from the loop's own App
 comments (board_item_marker.is_loop_marker_author(); every fixture marker
 comment carries `user`, BOT_LOGIN below is the loop's login). The

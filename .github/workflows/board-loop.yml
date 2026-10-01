@@ -67,6 +67,11 @@ on:
         required: false
         default: ""
         type: string
+      directed-recovery:
+        description: "Directed proof run: this dispatch is recovering a previously displaced or uncorrelated proof (internal use, leave blank otherwise)"
+        required: false
+        default: ""
+        type: string
   pull_request:
     types: [closed]         # resume path (FR-041) -- the `prove` step, added in a later phase of this feature
 
@@ -77,12 +82,18 @@ permissions: {}
 # research.md D3/contracts/concurrency-groups.md: concurrency moved from
 # one workflow-level block to per-job blocks (below, on each job) so a
 # directed proof run's prove-gate/prove job instances never enter this
-# workflow's own ordinary group at all. The FR-016 guarantee sentence:
+# workflow's own ordinary group at all; specs/096-durable-prove-entry
+# further keys prove-gate/prove's own ordinary-trigger group by merged PR
+# (contracts/prove-path-concurrency.md), so two merges' own prove runs
+# never enter each other's group either. The FR-016 guarantee sentence, as
+# amended by specs/096-durable-prove-entry FR-005:
 #
-#   One board item is in flight repository-wide. A directed proof run,
-#   which selects no board item and opens no fix PR, is the only run
-#   permitted to overlap an ordinary board-loop run. Every other pair of
-#   board-loop.yml runs queues rather than races or cancels.
+#   One board item is in flight repository-wide. A directed proof run
+#   and a merged item's own prove run — neither of which selects a
+#   board item or opens a fix PR — are the only runs permitted to
+#   overlap an ordinary board-loop run, or each other when they prove
+#   distinct merged items. Every other pair of board-loop.yml runs
+#   queues rather than races or cancels.
 #
 # -- see specs/060-self-redrive-concurrency/contracts/concurrency-groups.md
 
@@ -132,10 +143,20 @@ jobs:
     permissions:
       contents: read
       issues: read
-    # One board item is in flight repository-wide. A directed proof run,
-    # which selects no board item and opens no fix PR, is the only run
-    # permitted to overlap an ordinary board-loop run. Every other pair of
-    # board-loop.yml runs queues rather than races or cancels.
+      # specs/096-durable-prove-entry FR-011: the new recovery step below
+      # calls `gh run list`/`gh workflow run` against this same workflow,
+      # which github.token needs actions:write for (mirroring the prove
+      # job's own busy-check step). WC_BOT_TOKEN never gets this
+      # permission (docs/setup.md "Repository permissions" -- exactly
+      # Contents/Issues/Pull requests), so every issue-write in that step
+      # still goes through WC_BOT_TOKEN, not github.token.
+      actions: write
+    # One board item is in flight repository-wide. A directed proof run
+    # and a merged item's own prove run — neither of which selects a
+    # board item or opens a fix PR — are the only runs permitted to
+    # overlap an ordinary board-loop run, or each other when they prove
+    # distinct merged items. Every other pair of board-loop.yml runs
+    # queues rather than races or cancels.
     concurrency:
       group: wing-commander-board-loop
       cancel-in-progress: false
@@ -216,13 +237,37 @@ jobs:
       - name: Detect a merge whose proof run never started (FR-010b)
         id: displacement
         if: steps.killswitch.outputs.status != 'paused' && steps.stand-down.outputs.status != 'in-flight'
+        # A failure here only skips this tick's detection; select and the
+        # steps after it never depend on it (review of #893).
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
+          # The App holds no Actions permission, so `gh run list` reads with
+          # the job's own token (select grants actions: write).
+          ACTIONS_TOKEN: ${{ github.token }}
           BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}[bot]
         run: |
           set -uo pipefail
-          gh pr list -R "$GITHUB_REPOSITORY" --state merged --label board:owned \
-            --json number,body,mergedAt -L 20 > "$RUNNER_TEMP/board-recent-merges.json"
+          if ! gh pr list -R "$GITHUB_REPOSITORY" --state merged --label board:owned \
+            --json number,body,mergedAt,headRefName -L 20 > "$RUNNER_TEMP/board-recent-merges.json"; then
+            echo "::error::board-loop: could not list recent board:owned merges -- displacement detection skipped this tick (FR-010b)."
+            exit 1
+          fi
+
+          # maintainer review: a merge's own `pull_request: closed` run can
+          # still be mid-wait in its own new per-PR concurrency group
+          # (specs/096-durable-prove-entry FR-005) when this step runs --
+          # that run has not been displaced at all, only still running or
+          # queued in its own per-PR group. Matched by headBranch
+          # against each merge's own headRefName, never by PR number alone
+          # (a run list row carries no PR number for a `pull_request` event).
+          # A failed read must not become "no live runs": that would mark a
+          # running proof as displaced.
+          if ! GH_TOKEN="$ACTIONS_TOKEN" gh run list --workflow=board-loop.yml -R "$GITHUB_REPOSITORY" --event pull_request \
+            --json headBranch,status -L 50 > "$RUNNER_TEMP/board-displacement-runs.json"; then
+            echo "::error::board-loop: could not list board-loop's pull_request runs -- displacement detection skipped this tick (FR-010b)."
+            exit 1
+          fi
 
           # One row per issue's own MOST RECENT merge -- the same `Fixes #N`
           # convention prove-gate's own "Resolve the originating issue" step
@@ -244,7 +289,10 @@ jobs:
               merged_at = pr.get("mergedAt") or ""
               existing = latest_by_issue.get(issue)
               if existing is None or merged_at > existing["merged_at"]:
-                  latest_by_issue[issue] = {"issue": issue, "pr": pr["number"], "merged_at": merged_at}
+                  latest_by_issue[issue] = {
+                      "issue": issue, "pr": pr["number"], "merged_at": merged_at,
+                      "head_ref": pr.get("headRefName") or "",
+                  }
 
           with open(os.path.join(os.environ["RUNNER_TEMP"], "board-recent-merges-by-issue.json"), "w", encoding="utf-8") as fh:
               json.dump(list(latest_by_issue.values()), fh)
@@ -271,6 +319,7 @@ jobs:
 
           MERGED_PRS_PATH="$RUNNER_TEMP/board-recent-merges-by-issue.json" \
             COMMENTS_BY_ISSUE_PATH="$RUNNER_TEMP/board-displacement-comments-by-issue.json" \
+            RUNS_PATH="$RUNNER_TEMP/board-displacement-runs.json" \
             BOT_LOGIN="$BOT_LOGIN" \
             python3 - <<'PYEOF'
           import json
@@ -285,8 +334,13 @@ jobs:
           with open(os.environ["COMMENTS_BY_ISSUE_PATH"], encoding="utf-8") as fh:
               raw = json.load(fh)
           issues_by_number = {int(k): v for k, v in raw.items()}
+          with open(os.environ["RUNS_PATH"], encoding="utf-8") as fh:
+              runs = json.load(fh)
+          in_progress_head_refs = {
+              run.get("headBranch") or "" for run in runs if run.get("status") != "completed"}
 
-          undetected = find_undetected_merges(merged_prs, issues_by_number, os.environ["BOT_LOGIN"])
+          undetected = find_undetected_merges(
+              merged_prs, issues_by_number, os.environ["BOT_LOGIN"], in_progress_head_refs)
 
           with open(os.path.join(os.environ["RUNNER_TEMP"], "board-undetected-merges.json"), "w", encoding="utf-8") as fh:
               json.dump(undetected, fh)
@@ -295,7 +349,8 @@ jobs:
           jq -c '.[]' "$RUNNER_TEMP/board-undetected-merges.json" | while read -r row; do
             issue_number="$(printf '%s' "$row" | jq -r '.issue')"
             merged_pr="$(printf '%s' "$row" | jq -r '.merged_pr')"
-            marker="$(python3 .github/scripts/board_item_marker.py --step prove)"
+            marker="$(python3 .github/scripts/board_item_marker.py --step prove \
+              --outcome-reason "$(printf '%s' "$row" | jq -r '.recorded_reason')")"
             gh issue comment "$issue_number" -R "$GITHUB_REPOSITORY" \
               --body "$(printf 'PR #%s merged, but its proof run never started -- the pull_request: closed run that would have entered prove-gate/prove was itself displaced from the queue before it began. This issue stays open.\n\n%s' "$merged_pr" "$marker")"
           done
@@ -805,6 +860,183 @@ jobs:
             echo "board-loop: more than one issue qualified as in-flight -- selected the one with the newest marker (FR-005)." >> "$GITHUB_STEP_SUMMARY"
           fi
 
+      # specs/096-durable-prove-entry research.md D3/D5/D6, FR-011: an item
+      # already stranded by a past displacement -- or Q3's uncorrelated
+      # case, which the prevention half of this feature does not address --
+      # is driven to prove through spec 060's existing directed dispatch, at
+      # most once, without this step ever waiting synchronously for that
+      # dispatch's own outcome. Placed here, immediately after the "Fetch
+      # open issues and select the next board item" step above, rather than
+      # immediately after the displacement step further up: this step's own
+      # "is the issue still open" check needs board-open-issues.json, which
+      # only the select-id step above (not the displacement step) writes.
+      # The displacement step's own two files
+      # (board-recent-merges-by-issue.json,
+      # board-displacement-comments-by-issue.json) are still on disk here,
+      # in the same job.
+      # maintainer review (FR-012): split from a single step into three, so
+      # the kill-switch/stop-request recheck below runs as close to the
+      # actual dispatch as this job's own structure allows -- scoped to the
+      # specific issue being recovered, not the job-level `killswitch`
+      # entry gate read at the very top of this job, which can be minutes
+      # stale by the time all of displacement's own gh calls and this
+      # step's own candidate search have run.
+      - name: Pick a stranded prove to recover (FR-011)
+        id: recovery-candidate
+        if: steps.killswitch.outputs.status != 'paused' && steps.stand-down.outputs.status != 'in-flight'
+        # maintainer review: this step's own if: has no status function, so
+        # it implicitly reads success() -- a lasting failure here (a gh
+        # outage, a locked issue) would fail success() for every step after
+        # it in this job, including "Resume" below, stalling the whole
+        # board every tick. continue-on-error absorbs that, matching the
+        # "Detect a spec-request that closed without landing" precedent
+        # above: the ::error:: annotations below still report the failure,
+        # but the job's success() stays true for Resume and beyond.
+        continue-on-error: true
+        env:
+          BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}[bot]
+        run: |
+          set -uo pipefail
+
+          candidate_json="$(OPEN_ISSUES_PATH="$RUNNER_TEMP/board-open-issues.json" \
+            MERGED_PRS_PATH="$RUNNER_TEMP/board-recent-merges-by-issue.json" \
+            COMMENTS_BY_ISSUE_PATH="$RUNNER_TEMP/board-displacement-comments-by-issue.json" \
+            BOT_LOGIN="$BOT_LOGIN" \
+            python3 - <<'PYEOF'
+          import json
+          import os
+          import sys
+
+          sys.path.insert(0, ".github/scripts")
+          from board_prove_recovery import find_recoverable_items
+
+          with open(os.environ["OPEN_ISSUES_PATH"], encoding="utf-8") as fh:
+              open_issue_numbers = {row["number"] for row in json.load(fh)}
+          with open(os.environ["MERGED_PRS_PATH"], encoding="utf-8") as fh:
+              merged_prs_by_issue = json.load(fh)
+          with open(os.environ["COMMENTS_BY_ISSUE_PATH"], encoding="utf-8") as fh:
+              comments_by_issue = json.load(fh)
+
+          candidates = find_recoverable_items(
+              merged_prs_by_issue, comments_by_issue, open_issue_numbers, os.environ["BOT_LOGIN"])
+          print(json.dumps(candidates[0] if candidates else None))
+          PYEOF
+          )"
+
+          if [ "$candidate_json" = "null" ]; then
+            echo "board-loop: no stranded prove to recover this tick (FR-011)." >> "$GITHUB_STEP_SUMMARY"
+            {
+              echo "issue-number="
+              echo "merged-pr="
+              echo "outcome-reason="
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          {
+            echo "issue-number=$(printf '%s' "$candidate_json" | jq -r '.issue')"
+            echo "merged-pr=$(printf '%s' "$candidate_json" | jq -r '.merged_pr')"
+            echo "outcome-reason=$(printf '%s' "$candidate_json" | jq -r '.outcome_reason')"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Re-check kill switch and stop requests before recovering it
+        id: recovery-killswitch-recheck
+        if: >-
+          steps.killswitch.outputs.status != 'paused' && steps.stand-down.outputs.status != 'in-flight'
+          && steps.recovery-candidate.outputs.issue-number != ''
+        continue-on-error: true
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-board-stop-check
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
+          cancel-token: ${{ github.token }}
+          bot-login: ${{ steps.ctx.outputs.bot-slug }}[bot]
+          issue-number: ${{ steps.recovery-candidate.outputs.issue-number }}
+          initial-paused: ${{ vars.WING_COMMANDER_BOARD_LOOP_PAUSED == 'true' }}
+
+      # research.md D4/FR-001a, CLAUDE.md "Shared logic has exactly one
+      # home": the same composite the prove job's own "Check whether the
+      # directed proof group is busy" step uses -- see that composite's own
+      # header for why this was two pasted copies before (maintainer
+      # review).
+      - name: Check whether the directed proof group is busy
+        id: recovery-busy-check
+        if: >-
+          steps.killswitch.outputs.status != 'paused' && steps.stand-down.outputs.status != 'in-flight'
+          && steps.recovery-candidate.outputs.issue-number != ''
+          && steps.recovery-killswitch-recheck.outcome == 'success'
+          && steps.recovery-killswitch-recheck.outputs.paused != 'true'
+        continue-on-error: true
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-directed-proof-busy-check
+        with:
+          token: ${{ github.token }}
+
+      - name: Record that the stranded prove stays recoverable (busy)
+        if: >-
+          steps.recovery-candidate.outputs.issue-number != ''
+          && steps.recovery-killswitch-recheck.outcome == 'success'
+          && steps.recovery-killswitch-recheck.outputs.paused != 'true'
+          && steps.recovery-busy-check.outcome == 'success'
+          && steps.recovery-busy-check.outputs.busy == 'true'
+        run: |
+          echo "board-loop: issue #${{ steps.recovery-candidate.outputs.issue-number }}'s stranded prove (${{ steps.recovery-candidate.outputs.outcome-reason }}) stays recoverable -- the directed-proof group is busy this tick (FR-011a)." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Dispatch the recovered prove (FR-011)
+        id: recovery-dispatch
+        # steps.recovery-killswitch-recheck.outcome == 'success' (not just a
+        # paused != 'true' check on its output): a FAILED or skipped recheck
+        # reads its own outputs as "", which `!= 'true'` would otherwise let
+        # straight through -- the fail-safe here is to not dispatch at all
+        # when the recheck itself could not be completed. Same reasoning
+        # applies to recovery-busy-check's own outcome.
+        if: >-
+          steps.killswitch.outputs.status != 'paused' && steps.stand-down.outputs.status != 'in-flight'
+          && steps.recovery-candidate.outputs.issue-number != ''
+          && steps.recovery-killswitch-recheck.outcome == 'success'
+          && steps.recovery-killswitch-recheck.outputs.paused != 'true'
+          && steps.recovery-busy-check.outcome == 'success'
+          && steps.recovery-busy-check.outputs.busy != 'true'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BOT_TOKEN: ${{ env.WC_BOT_TOKEN }}
+          ISSUE_NUMBER: ${{ steps.recovery-candidate.outputs.issue-number }}
+          MERGED_PR: ${{ steps.recovery-candidate.outputs.merged-pr }}
+          OUTCOME_REASON: ${{ steps.recovery-candidate.outputs.outcome-reason }}
+        run: |
+          set -uo pipefail
+          issue_number="$ISSUE_NUMBER"
+          merged_pr="$MERGED_PR"
+          outcome_reason="$OUTCOME_REASON"
+
+          # maintainer review (SC-008 "retried at most once"): the marker
+          # is written, spending this item's one recovery attempt, BEFORE
+          # the dispatch call is even made -- not after, as research.md
+          # D3's own "on the dispatch call's own success" text originally
+          # read. A dispatch that succeeds but whose comment then fails
+          # would otherwise leave no durable record, and the next tick
+          # would see the same candidate as still-recoverable and dispatch
+          # it again. Spending the attempt first means the rare inverse
+          # failure (the comment posts, the dispatch itself then fails) is
+          # a stranded item a human must re-drive manually, never a
+          # duplicate dispatch.
+          marker="$(python3 .github/scripts/board_item_marker.py --step prove \
+            --outcome-reason "$outcome_reason" --recovery-attempted)"
+          if ! GH_TOKEN="$BOT_TOKEN" gh issue comment "$issue_number" -R "$GITHUB_REPOSITORY" \
+            --body "$(printf 'Recovering this issue'\''s stranded proof (%s) -- dispatching a directed prove run for PR #%s now, which will record its own outcome here.\n\n%s' "$outcome_reason" "$merged_pr" "$marker")"; then
+            echo "::error::board-loop: could not post issue #$issue_number's recovery marker -- not dispatching, so this attempt is not spent with no durable record of it (FR-011a/SC-008)."
+            exit 1
+          fi
+
+          # FR-011: this step never waits for the dispatched run's own
+          # outcome (research.md D3).
+          if ! gh workflow run board-loop.yml -R "$GITHUB_REPOSITORY" \
+            -f directed-stage=prove -f directed-issue="$issue_number" -f directed-pr="$merged_pr" \
+            -f directed-recovery=true; then
+            echo "::error::board-loop: issue #$issue_number's recovery marker is posted (SC-008: this attempt is now spent) but the directed dispatch itself failed -- a human must re-drive it manually."
+            exit 1
+          fi
+          echo "board-loop: dispatched a directed recovery prove run for issue #$issue_number, PR #$merged_pr ($outcome_reason)." >> "$GITHUB_STEP_SUMMARY"
+
       # Board Item Marker (contracts/board-item-marker.md, research.md D21):
       # a fast path only. Every field is re-derived from live GitHub state
       # here, before any later job takes a durable action, so a missing,
@@ -1031,14 +1263,33 @@ jobs:
               or (marker_step in FIX_OR_LATER_STEPS and pr_state == "OPEN")
           ):
               step = marker_step
+          elif pr_from_marker and marker_step in FIX_OR_LATER_STEPS and pr_state == "MERGED":
+              # specs/096-durable-prove-entry research.md D7/FR-007/FR-008/
+              # FR-009: resolved by number, MERGED, and the issue is still
+              # open -- the loop's own fix landed but nothing proved it yet
+              # (board_prove_displacement's displacement case, or a run that
+              # simply has not reached prove-gate/prove this tick). This is
+              # never re-triaged as if the fix did not exist (FR-007): the
+              # issue goes straight to prove, with none of the abandoned
+              # attempt's PR number/state, branch, round or base-sha leaking
+              # forward (same FR-022 clearing the sibling clause below
+              # already does). `step = "prove"` is already a
+              # FIX_OR_LATER_STEPS member (board_eligibility.py) -- no new
+              # step name.
+              step = "prove"
+              reason = "merged fix -- awaiting proof"
+              pr_number = ""
+              pr_state = ""
+              branch = ""
+              round_ = "0"
+              base_sha = ""
           elif pr_from_marker and marker_step in FIX_OR_LATER_STEPS:
-              # Resolved by number but not OPEN -- disqualified (for an
-              # awaiting-merge marker: the handed-over PR was closed
-              # unmerged, or merged while the issue stayed open). Falls to
-              # the triage clause below, never the fallback clause: the
-              # marker named a real PR, so a different loop-owned PR must
-              # not be adopted in its place (SC-007). None of this
-              # abandoned attempt's state -- PR number/state, branch,
+              # Resolved by number but not OPEN and not MERGED -- disqualified
+              # (for an awaiting-merge marker: the handed-over PR was closed
+              # unmerged). Falls to the triage clause below, never the
+              # fallback clause: the marker named a real PR, so a different
+              # loop-owned PR must not be adopted in its place (SC-007). None
+              # of this abandoned attempt's state -- PR number/state, branch,
               # round, base-sha -- must leak into this triage output
               # (FR-022): a fresh triage->route->fix must cut a new branch
               # off current main and a fresh review must start at round 0.
@@ -1278,10 +1529,12 @@ jobs:
       contents: read
       issues: write
       actions: write
-    # One board item is in flight repository-wide. A directed proof run,
-    # which selects no board item and opens no fix PR, is the only run
-    # permitted to overlap an ordinary board-loop run. Every other pair of
-    # board-loop.yml runs queues rather than races or cancels.
+    # One board item is in flight repository-wide. A directed proof run
+    # and a merged item's own prove run — neither of which selects a
+    # board item or opens a fix PR — are the only runs permitted to
+    # overlap an ordinary board-loop run, or each other when they prove
+    # distinct merged items. Every other pair of board-loop.yml runs
+    # queues rather than races or cancels.
     concurrency:
       group: wing-commander-board-loop
       cancel-in-progress: false
@@ -1779,10 +2032,12 @@ jobs:
       contents: read
       issues: write
       actions: write
-    # One board item is in flight repository-wide. A directed proof run,
-    # which selects no board item and opens no fix PR, is the only run
-    # permitted to overlap an ordinary board-loop run. Every other pair of
-    # board-loop.yml runs queues rather than races or cancels.
+    # One board item is in flight repository-wide. A directed proof run
+    # and a merged item's own prove run — neither of which selects a
+    # board item or opens a fix PR — are the only runs permitted to
+    # overlap an ordinary board-loop run, or each other when they prove
+    # distinct merged items. Every other pair of board-loop.yml runs
+    # queues rather than races or cancels.
     concurrency:
       group: wing-commander-board-loop
       cancel-in-progress: false
@@ -2319,10 +2574,12 @@ jobs:
       issues: write
       pull-requests: write
       actions: write
-    # One board item is in flight repository-wide. A directed proof run,
-    # which selects no board item and opens no fix PR, is the only run
-    # permitted to overlap an ordinary board-loop run. Every other pair of
-    # board-loop.yml runs queues rather than races or cancels.
+    # One board item is in flight repository-wide. A directed proof run
+    # and a merged item's own prove run — neither of which selects a
+    # board item or opens a fix PR — are the only runs permitted to
+    # overlap an ordinary board-loop run, or each other when they prove
+    # distinct merged items. Every other pair of board-loop.yml runs
+    # queues rather than races or cancels.
     concurrency:
       group: wing-commander-board-loop
       cancel-in-progress: false
@@ -2907,10 +3164,12 @@ jobs:
       issues: write
       pull-requests: write
       actions: write
-    # One board item is in flight repository-wide. A directed proof run,
-    # which selects no board item and opens no fix PR, is the only run
-    # permitted to overlap an ordinary board-loop run. Every other pair of
-    # board-loop.yml runs queues rather than races or cancels.
+    # One board item is in flight repository-wide. A directed proof run
+    # and a merged item's own prove run — neither of which selects a
+    # board item or opens a fix PR — are the only runs permitted to
+    # overlap an ordinary board-loop run, or each other when they prove
+    # distinct merged items. Every other pair of board-loop.yml runs
+    # queues rather than races or cancels.
     concurrency:
       group: wing-commander-board-loop
       cancel-in-progress: false
@@ -3942,10 +4201,12 @@ jobs:
       issues: write
       pull-requests: read
       actions: write
-    # One board item is in flight repository-wide. A directed proof run,
-    # which selects no board item and opens no fix PR, is the only run
-    # permitted to overlap an ordinary board-loop run. Every other pair of
-    # board-loop.yml runs queues rather than races or cancels.
+    # One board item is in flight repository-wide. A directed proof run
+    # and a merged item's own prove run — neither of which selects a
+    # board item or opens a fix PR — are the only runs permitted to
+    # overlap an ordinary board-loop run, or each other when they prove
+    # distinct merged items. Every other pair of board-loop.yml runs
+    # queues rather than races or cancels.
     concurrency:
       group: wing-commander-board-loop
       cancel-in-progress: false
@@ -4422,14 +4683,18 @@ jobs:
       contents: read
       issues: write
       pull-requests: read
-    # One board item is in flight repository-wide. A directed proof run,
-    # which selects no board item and opens no fix PR, is the only run
-    # permitted to overlap an ordinary board-loop run. Every other pair of
-    # board-loop.yml runs queues rather than races or cancels.
+    # One board item is in flight repository-wide. A directed proof run
+    # and a merged item's own prove run — neither of which selects a
+    # board item or opens a fix PR — are the only runs permitted to
+    # overlap an ordinary board-loop run, or each other when they prove
+    # distinct merged items. Every other pair of board-loop.yml runs
+    # queues rather than races or cancels.
     concurrency:
       group: >-
         ${{ (github.event_name == 'workflow_dispatch' && inputs.directed-stage != '') &&
-        'wing-commander-board-loop-directed-proof' || 'wing-commander-board-loop' }}
+        'wing-commander-board-loop-directed-proof' ||
+        (github.event_name == 'pull_request' && format('wing-commander-board-loop-prove-{0}', github.event.pull_request.number)) ||
+        'wing-commander-board-loop' }}
       cancel-in-progress: false
     outputs:
       issue-number: ${{ steps.gate.outputs.issue-number }}
@@ -4487,7 +4752,17 @@ jobs:
           # already re-derives from github.event.pull_request.* (Principle IX).
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             issue_number="$DIRECTED_ISSUE"
-            merged="$(gh pr view "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --json merged --jq .merged)"
+            # `gh pr view --json merged` is not a real field (the REST/GraphQL
+            # shapes gh exposes have no top-level `merged` key under that
+            # name) -- fetch the PR directly instead, and reuse the same file
+            # below for the ownership check, since $GITHUB_EVENT_PATH carries
+            # no `.pull_request` payload at all on workflow_dispatch
+            # (maintainer review).
+            if ! gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > "$RUNNER_TEMP/board-prove-pr.json"; then
+              echo "::error::board-loop: could not look up PR #$PR_NUMBER -- a directed prove dispatch cannot re-derive its own merged state or ownership without it."
+              exit 1
+            fi
+            merged="$(jq -r '.merged' "$RUNNER_TEMP/board-prove-pr.json")"
           else
             issue_number="$(python3 -c "
           import os, re
@@ -4495,6 +4770,7 @@ jobs:
           print(m.group(1) if m else '')
           ")"
             merged="$MERGED_EVENT"
+            jq '.pull_request' "$GITHUB_EVENT_PATH" > "$RUNNER_TEMP/board-prove-pr.json"
           fi
 
           eligible=false
@@ -4510,9 +4786,10 @@ jobs:
           # Issue #557: only this loop's own PR enters prove -- the same
           # ownership test the resume step applies to a marker's PR
           # (BOARD_PR_OWNED_JQ -- see this workflow's top-level env:
-          # block), read off the event's own pull_request payload (labels
-          # as of the close, head.repo).
-          jq '.pull_request' "$GITHUB_EVENT_PATH" > "$RUNNER_TEMP/board-prove-pr.json"
+          # block), read off board-prove-pr.json (the event's own
+          # pull_request payload for a pull_request trigger, or the fresh
+          # gh api fetch above for a directed workflow_dispatch -- both
+          # carry the same labels/head.repo shape BOARD_PR_OWNED_JQ reads).
           if [ "$(jq -r --arg repo "$GITHUB_REPOSITORY" "$BOARD_PR_OWNED_JQ" "$RUNNER_TEMP/board-prove-pr.json")" != "true" ]; then
             echo "PR #$PR_NUMBER is not board:owned with its head in this repository -- not a board item; prove is not entered." >> "$GITHUB_STEP_SUMMARY"
             {
@@ -4603,15 +4880,29 @@ jobs:
       issues: write
       pull-requests: read
       actions: write
-    # One board item is in flight repository-wide. A directed proof run,
-    # which selects no board item and opens no fix PR, is the only run
-    # permitted to overlap an ordinary board-loop run. Every other pair of
-    # board-loop.yml runs queues rather than races or cancels.
+    # One board item is in flight repository-wide. A directed proof run
+    # and a merged item's own prove run — neither of which selects a
+    # board item or opens a fix PR — are the only runs permitted to
+    # overlap an ordinary board-loop run, or each other when they prove
+    # distinct merged items. Every other pair of board-loop.yml runs
+    # queues rather than races or cancels.
     concurrency:
       group: >-
         ${{ (github.event_name == 'workflow_dispatch' && inputs.directed-stage != '') &&
-        'wing-commander-board-loop-directed-proof' || 'wing-commander-board-loop' }}
+        'wing-commander-board-loop-directed-proof' ||
+        (github.event_name == 'pull_request' && format('wing-commander-board-loop-prove-{0}', github.event.pull_request.number)) ||
+        'wing-commander-board-loop' }}
       cancel-in-progress: false
+    # specs/096-durable-prove-entry FR-014/FR-015, maintainer review: one
+    # canonical recovery notice (CLAUDE.md single-home), at job level so
+    # both "Close the issue on the merge evidence alone" and "Record the
+    # proof outcome" read the identical text rather than each carrying its
+    # own copy.
+    env:
+      RECOVERY_NOTICE: >-
+        ${{ inputs.directed-recovery == 'true' && 'This proof had previously
+        been displaced or could not be correlated to a dispatch; this
+        recovery run addresses that.' || '' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -4709,31 +5000,19 @@ jobs:
           initial-paused: ${{ vars.WING_COMMANDER_BOARD_LOOP_PAUSED == 'true' }}
           check-issue-closed: "true"
 
-      # research.md D4/FR-001a: whether the directed-proof concurrency
-      # group a directed dispatch would join is already occupied by
-      # another directed run -- read fresh, right before any dispatch is
-      # attempted, never cached or assumed from the busy-ness of the
-      # ordinary group.
+      # research.md D4/FR-001a, CLAUDE.md "Shared logic has exactly one
+      # home": the same composite the select job's own recovery dispatch
+      # uses -- see that composite's own header for why this was two
+      # pasted copies before (maintainer review).
       - name: Check whether the directed proof group is busy
         id: busy-check
         if: >-
           steps.decide.outputs.actions-only == 'true' &&
           steps.decide.outputs.directed-stage != '' &&
           steps.killswitch-recheck.outputs.paused != 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -uo pipefail
-          run_list_json="$(gh run list --workflow=board-loop.yml -R "$GITHUB_REPOSITORY" \
-            --json databaseId,displayTitle,status -L 20)"
-
-          busy="$(RUN_LIST_JSON="$run_list_json" OWN_RUN_ID="$GITHUB_RUN_ID" python3 -c "
-          import os, sys
-          sys.path.insert(0, '.github/scripts')
-          from board_prove import directed_proof_group_busy
-          print('true' if directed_proof_group_busy(os.environ['RUN_LIST_JSON'], os.environ['OWN_RUN_ID']) else 'false')
-          ")"
-          echo "busy=$busy" >> "$GITHUB_OUTPUT"
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-directed-proof-busy-check
+        with:
+          token: ${{ github.token }}
 
       # FR-041 scenario 4: nothing a fresh dispatch would prove that the
       # merged PR's own required checks did not already prove -- the issue
@@ -4745,11 +5024,23 @@ jobs:
           ISSUE_NUMBER: ${{ needs.prove-gate.outputs.issue-number }}
           PR_NUMBER: ${{ github.event.pull_request.number || inputs.directed-pr }}
           REASON: ${{ steps.decide.outputs.reason }}
+          RECOVERY: ${{ inputs.directed-recovery }}
         run: |
           set -uo pipefail
-          marker="$(python3 .github/scripts/board_item_marker.py --step proven)"
+          # maintainer review (FR-014/FR-015): this is the other arm that
+          # can close an issue a recovery dispatch targeted -- the success
+          # arm of "Record the proof outcome" below already records
+          # --recovery-attempted and the recovery notice; this one must
+          # too, or a recovery of an item that turns out Actions-only-free
+          # leaves no record the attempt was ever spent.
+          recovery_flag=()
+          [ "$RECOVERY" = "true" ] && recovery_flag=(--recovery-attempted)
+          recovery_suffix=""
+          [ -n "$RECOVERY_NOTICE" ] && recovery_suffix="$(printf '\n\n%s' "$RECOVERY_NOTICE")"
+
+          marker="$(python3 .github/scripts/board_item_marker.py --step proven "${recovery_flag[@]}")"
           gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
-            --body "$(printf 'Closed on the merge of PR #%s alone: %s -- no Actions-only behaviour changed, so a re-driven run would prove nothing this merge did not.\n\n%s' "$PR_NUMBER" "$REASON" "$marker")"
+            --body "$(printf 'Closed on the merge of PR #%s alone: %s -- no Actions-only behaviour changed, so a re-driven run would prove nothing this merge did not.\n\n%s' "$PR_NUMBER" "$REASON" "$marker")$recovery_suffix"
           gh issue close "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY"
 
       # FR-042: the re-drive itself. `conclusion` is read from the
@@ -4790,7 +5081,7 @@ jobs:
             ${{ steps.decide.outputs.directed-stage != '' &&
             format('{{"directed-stage":"{0}","directed-issue":"{1}","directed-pr":"{2}"}}',
             steps.decide.outputs.directed-stage, needs.prove-gate.outputs.issue-number,
-            github.event.pull_request.number) ||
+            github.event.pull_request.number || inputs.directed-pr) ||
             '{}' }}
 
       - name: Cross-link the proof run onto the originating issue
@@ -4872,6 +5163,7 @@ jobs:
           DIRECTED_STAGE: ${{ steps.decide.outputs.directed-stage }}
           BUSY: ${{ steps.busy-check.outputs.busy }}
           DISAMBIGUATED_REASON: ${{ steps.disambiguate.outputs.reason }}
+          RECOVERY: ${{ inputs.directed-recovery }}
           # FR-011, contracts/directed-proof-run.md "Attribution": one
           # canonical attribution string (CLAUDE.md single-home), gated on
           # inputs.directed-stage != '', prepended rather than a
@@ -4881,6 +5173,9 @@ jobs:
             ${{ inputs.directed-stage != '' && format('_Directed proof run
             (stage: `{0}`), dispatched to prove PR #{1} -- selects no board
             item, opens no fix PR._', inputs.directed-stage, inputs.directed-pr) || '' }}
+          # RECOVERY_NOTICE is now a job-level env (see this job's own
+          # `env:` block header comment) -- read here via the ordinary env
+          # merge, not redeclared.
         run: |
           set -uo pipefail
           reason="$(python3 -c "
@@ -4896,53 +5191,57 @@ jobs:
           ")"
           attr_prefix=""
           [ -n "$DIRECTED_ATTRIBUTION" ] && attr_prefix="$(printf '%s\n\n' "$DIRECTED_ATTRIBUTION")"
+          recovery_suffix=""
+          [ -n "$RECOVERY_NOTICE" ] && recovery_suffix="$(printf '\n\n%s' "$RECOVERY_NOTICE")"
+          recovery_flag=()
+          [ "$RECOVERY" = "true" ] && recovery_flag=(--recovery-attempted)
 
           case "$reason" in
             success)
-              marker="$(python3 .github/scripts/board_item_marker.py --step proven)"
+              marker="$(python3 .github/scripts/board_item_marker.py --step proven "${recovery_flag[@]}")"
               gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
-                --body "$attr_prefix$(printf 'Proven: %s was re-driven after the merge of PR #%s and concluded success -- %s\n\n%s' "$REDRIVE_WORKFLOW" "$PR_NUMBER" "$RUN_URL" "$marker")"
+                --body "$attr_prefix$(printf 'Proven: %s was re-driven after the merge of PR #%s and concluded success -- %s\n\n%s' "$REDRIVE_WORKFLOW" "$PR_NUMBER" "$RUN_URL" "$marker")$recovery_suffix"
               gh issue close "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY"
               ;;
             failure)
-              marker="$(python3 .github/scripts/board_item_marker.py --step prove)"
+              marker="$(python3 .github/scripts/board_item_marker.py --step prove --outcome-reason "$reason" "${recovery_flag[@]}")"
               gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
-                --body "$attr_prefix$(printf 'Not proven: %s was re-driven after the merge of PR #%s and concluded failure -- %s. This issue stays open.\n\n%s' "$REDRIVE_WORKFLOW" "$PR_NUMBER" "$RUN_URL" "$marker")"
+                --body "$attr_prefix$(printf 'Not proven: %s was re-driven after the merge of PR #%s and concluded failure -- %s. This issue stays open.\n\n%s' "$REDRIVE_WORKFLOW" "$PR_NUMBER" "$RUN_URL" "$marker")$recovery_suffix"
               ;;
             group-busy)
-              marker="$(python3 .github/scripts/board_item_marker.py --step prove)"
+              marker="$(python3 .github/scripts/board_item_marker.py --step prove --outcome-reason "$reason" "${recovery_flag[@]}")"
               gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
-                --body "$attr_prefix$(printf 'PR #%s merged, but the directed proof group was already occupied by another proof run -- nothing was dispatched. Picked up again on a later run.\n\n%s' "$PR_NUMBER" "$marker")"
+                --body "$attr_prefix$(printf 'PR #%s merged, but the directed proof group was already occupied by another proof run -- nothing was dispatched. This issue stays open; group-busy is not a recoverable reason (FR-011c), so no automatic retry is scheduled -- a maintainer must re-drive it manually.\n\n%s' "$PR_NUMBER" "$marker")$recovery_suffix"
               ;;
             no-target)
-              marker="$(python3 .github/scripts/board_item_marker.py --step prove)"
+              marker="$(python3 .github/scripts/board_item_marker.py --step prove --outcome-reason "$reason" "${recovery_flag[@]}")"
               gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
-                --body "$attr_prefix$(printf 'PR #%s merged, but no directed run of board-loop.yml reaches the changed behaviour -- nothing was dispatched. This issue stays open for a maintainer to review.\n\n%s' "$PR_NUMBER" "$marker")"
+                --body "$attr_prefix$(printf 'PR #%s merged, but no directed run of board-loop.yml reaches the changed behaviour -- nothing was dispatched. This issue stays open for a maintainer to review.\n\n%s' "$PR_NUMBER" "$marker")$recovery_suffix"
               ;;
             nothing-reaches)
-              marker="$(python3 .github/scripts/board_item_marker.py --step prove)"
+              marker="$(python3 .github/scripts/board_item_marker.py --step prove --outcome-reason "$reason" "${recovery_flag[@]}")"
               gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
-                --body "$attr_prefix$(printf 'PR #%s merged, but no workflow in the repository reaches the changed behaviour (%s) -- nothing was dispatched. This issue stays open for a maintainer to review.\n\n%s' "$PR_NUMBER" "$REDRIVE_REASON" "$marker")"
+                --body "$attr_prefix$(printf 'PR #%s merged, but no workflow in the repository reaches the changed behaviour (%s) -- nothing was dispatched. This issue stays open for a maintainer to review.\n\n%s' "$PR_NUMBER" "$REDRIVE_REASON" "$marker")$recovery_suffix"
               ;;
             not-started)
-              marker="$(python3 .github/scripts/board_item_marker.py --step prove)"
+              marker="$(python3 .github/scripts/board_item_marker.py --step prove --outcome-reason "$reason" "${recovery_flag[@]}")"
               gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
-                --body "$attr_prefix$(printf 'PR #%s merged, and %s was dispatched to prove it (%s), but that run never left the queue within the wait budget. This issue stays open.\n\n%s' "$PR_NUMBER" "$REDRIVE_WORKFLOW" "$RUN_URL" "$marker")"
+                --body "$attr_prefix$(printf 'PR #%s merged, and %s was dispatched to prove it (%s), but that run never left the queue within the wait budget. This issue stays open.\n\n%s' "$PR_NUMBER" "$REDRIVE_WORKFLOW" "$RUN_URL" "$marker")$recovery_suffix"
               ;;
             unfinished)
-              marker="$(python3 .github/scripts/board_item_marker.py --step prove)"
+              marker="$(python3 .github/scripts/board_item_marker.py --step prove --outcome-reason "$reason" "${recovery_flag[@]}")"
               gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
-                --body "$attr_prefix$(printf 'PR #%s merged, and %s was dispatched to prove it (%s), but it did not reach a terminal conclusion within the wait budget. This issue stays open.\n\n%s' "$PR_NUMBER" "$REDRIVE_WORKFLOW" "$RUN_URL" "$marker")"
+                --body "$attr_prefix$(printf 'PR #%s merged, and %s was dispatched to prove it (%s), but it did not reach a terminal conclusion within the wait budget. This issue stays open.\n\n%s' "$PR_NUMBER" "$REDRIVE_WORKFLOW" "$RUN_URL" "$marker")$recovery_suffix"
               ;;
             displaced)
-              marker="$(python3 .github/scripts/board_item_marker.py --step prove)"
+              marker="$(python3 .github/scripts/board_item_marker.py --step prove --outcome-reason "$reason" "${recovery_flag[@]}")"
               gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
-                --body "$attr_prefix$(printf 'PR #%s merged, but the proof run dispatched to prove it was evicted before it could ever be correlated. This issue stays open.\n\n%s' "$PR_NUMBER" "$marker")"
+                --body "$attr_prefix$(printf 'PR #%s merged, but the proof run dispatched to prove it was evicted before it could ever be correlated. This issue stays open.\n\n%s' "$PR_NUMBER" "$marker")$recovery_suffix"
               ;;
             uncorrelated|*)
-              marker="$(python3 .github/scripts/board_item_marker.py --step prove)"
+              marker="$(python3 .github/scripts/board_item_marker.py --step prove --outcome-reason "$reason" "${recovery_flag[@]}")"
               gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
-                --body "$attr_prefix$(printf 'PR #%s merged, but the proof run could not be correlated (%s). This issue stays open.\n\n%s' "$PR_NUMBER" "$REDRIVE_REASON" "$marker")"
+                --body "$attr_prefix$(printf 'PR #%s merged, but the proof run could not be correlated (%s). This issue stays open.\n\n%s' "$PR_NUMBER" "$REDRIVE_REASON" "$marker")$recovery_suffix"
               ;;
           esac
 
@@ -4964,7 +5263,11 @@ jobs:
           if [ "${{ steps.killswitch-recheck.outputs.paused }}" = "true" ]; then
             label="stood down"
           elif [ "${{ steps.decide.outputs.actions-only }}" != "true" ]; then
-            label="closed on merge evidence alone"
+            if [ "${{ inputs.directed-recovery }}" = "true" ]; then
+              label="closed on merge evidence alone (recovered)"
+            else
+              label="closed on merge evidence alone"
+            fi
           else
             reason="$(python3 -c "
           import os, sys
@@ -4977,7 +5280,11 @@ jobs:
               os.environ.get('CONCLUSION') or None,
               os.environ.get('DISAMBIGUATED_REASON') or None))
           ")"
-            label="proof: $reason"
+            if [ "${{ inputs.directed-recovery }}" = "true" ]; then
+              label="proof (recovered): $reason"
+            else
+              label="proof: $reason"
+            fi
           fi
           echo "label=$label" >> "$GITHUB_OUTPUT"
 

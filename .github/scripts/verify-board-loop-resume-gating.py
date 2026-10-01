@@ -898,9 +898,10 @@ RESUME_CASES = [
     ("awaiting-merge, PR CLOSED -> triage, FR-022 cleared",
      _resume_env("awaiting-merge", "42", True, "CLOSED", "42"),
      dict(_CLEARED, step="triage")),
-    ("awaiting-merge, PR MERGED (issue still open) -> triage, FR-022 cleared",
+    ("awaiting-merge, PR MERGED (issue still open) -> prove, FR-022 cleared "
+     "(specs/096-durable-prove-entry FR-007/FR-008/FR-009)",
      _resume_env("awaiting-merge", "42", True, "MERGED", "42"),
-     dict(_CLEARED, step="triage")),
+     dict(_CLEARED, step="prove")),
     ("regression: readiness, PR OPEN -> readiness",
      _resume_env("readiness", "42", True, "OPEN", "42"),
      {"step": "readiness", "pr_number": "42"}),
@@ -2010,6 +2011,13 @@ def _mutations(text):
         after="\n  readiness:\n")
     sub("resume clause 0 (awaiting-merge hold) disabled",
         "elif marker_step == AWAITING_MERGE_STEP and (not pr_from_marker or pr_state == \"OPEN\"):",
+        "elif False:")
+    # specs/096-durable-prove-entry FR-007/FR-008/FR-009 (research.md D7):
+    # a resolved-by-number, MERGED, issue-still-open marker must resolve to
+    # prove, not fall through to the sibling triage clause.
+    sub("resume merged-fix-awaiting-proof clause reverted to triage "
+        "(specs/096-durable-prove-entry)",
+        "elif pr_from_marker and marker_step in FIX_OR_LATER_STEPS and pr_state == \"MERGED\":",
         "elif False:")
     # #555: the resume step's branch and PR guards, and the marker readers'
     # author plumbing.

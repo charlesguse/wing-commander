@@ -37,7 +37,15 @@ earn."
    `expected_group_ordinary`/`expected_group_directed`/
    `expected_cancel_in_progress`. Emit a `DriftFinding` per mismatch
    (`job-missing-from-group`, `cancel-in-progress-mismatch`,
-   `directed-group-mismatch`).
+   `directed-group-mismatch`). `prove-gate`/`prove`'s own conditional
+   expression (specs/096-durable-prove-entry FR-005) is a three-arm shape,
+   not two: a directed arm, an optional middle arm resolving to a per-merge
+   group on a `pull_request: closed` trigger (matched structurally by
+   `DIRECTED_EXPR_RE`'s own optional group), and the ordinary-trigger
+   fallback. Also compare the middle arm's own prefix against
+   `expected_group_pull_request_prefix`; emit
+   `pull-request-group-prefix-mismatch` on a wrong prefix, a missing arm
+   where one is expected, or an arm present where none is classified.
 5. For every job classified `can_select_or_open_fix_pr: false` (including
    any job the table does not mention at all): confirm its
    `WorkflowConcurrencyFact` does not place it in `SkillClaim.ordinary_group`

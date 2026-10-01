@@ -38,6 +38,7 @@ does not re-derive by guesswork.
 | `job` | str | job id as it appears in `board-loop.yml` (`select`, `triage`, `route`, `fix`, `review`, `readiness`, `prove-gate`, `prove`, plus any job the table does not mention, e.g. `resolve-model`) |
 | `can_select_or_open_fix_pr` | bool | true for the six unconditional jobs and (conditionally) `prove-gate`/`prove`'s ordinary-trigger path; false for every unlisted job |
 | `expected_group_ordinary` | str | group the table's "Group (ordinary trigger)" column names |
+| `expected_group_pull_request_prefix` | str \| null | prefix the table's "Group (`pull_request: closed`)" column names (specs/096-durable-prove-entry), or null where the table says "n/a" |
 | `expected_group_directed` | str \| null | group the table's "Group (`directed-stage != ''`)" column names, or null where the table says "n/a" |
 | `expected_cancel_in_progress` | bool | always `false` per the table's third column |
 

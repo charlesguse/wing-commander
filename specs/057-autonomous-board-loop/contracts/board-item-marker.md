@@ -7,12 +7,28 @@ At the end of every job that changes a board item's step, the loop posts
 appending a duplicate) a comment on the issue whose body ends with:
 
 ```html
-<!-- wing-commander-board-item: {"step":"<step>","round":<n>,"pr":<n|null>,"branch":"<name|null>","base_sha":"<sha|null>"} -->
+<!-- wing-commander-board-item: {"step":"<step>","round":<n>,"pr":<n|null>,"branch":"<name|null>","base_sha":"<sha|null>","outcome_reason":"<reason|null>","recovery_attempted":<bool>} -->
 ```
 
 The visible part of the comment is the human-legible outcome (FR-044);
 the marker is never the only content — a maintainer reading the comment
 sees the same information the marker encodes.
+
+`outcome_reason`/`recovery_attempted` (specs/096-durable-prove-entry
+research.md D4) are written unconditionally by every `write_marker()` call
+site, defaulting to `null`/`false` — a marker written before this feature
+(five keys only) reads back with these defaults rather than raising.
+`outcome_reason` carries a `prove`/`proven`-step marker's own
+`board_prove.outcome_reason()` value (`"group-busy"`, `"not-started"`,
+`"unfinished"`, `"displaced"`, `"uncorrelated"`, `"no-target"`,
+`"nothing-reaches"`, `"failure"`, or `board_prove_displacement.RECORDED_REASON`
+i.e. `"prove run displaced"`); every other step's marker carries it as
+`null`. `recovery_attempted` is `true` once the `select` job's own
+"Recover a stranded prove" step (or a recovered run's own "Record the
+proof outcome" step) has dispatched one recovery attempt for this marker's
+condition, so a later re-displacement of that same attempt is never
+offered a second one (`board_prove_recovery.is_recoverable()`, FR-011a) —
+see `specs/096-durable-prove-entry/contracts/recovery-and-resume.md`.
 
 ## Read (resume)
 
