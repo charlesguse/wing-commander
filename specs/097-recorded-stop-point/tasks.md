@@ -603,7 +603,7 @@ kept to one session to avoid edit collisions).
 
 - [X] **Blocking (FR-008/FR-006):** In `board_stop_check.py`, treat a stop-point record comment posted by `current_run_id` as still standing the item down, so the record's own `**Run:**` line does not move `find_stop_request()`'s baseline past the honoured stop within the same run. Keep FR-009/FR-016 intact (a later run's different run id is unaffected).
 - [X] Add a fixture: a stop followed by this run's own stop-point record comment, same run id, asserting `stand_down=true`; add the corresponding Gate 135 check.
-- [ ] (Nice-to-have per reviewer) Gate triage's and review's continuation outputs on the stand-down too; leave route's to #901.
+- [X] (Nice-to-have per reviewer) Gate triage's and review's continuation outputs on the stand-down too; leave route's to #901.
 
 ## Maintainer Feedback
 

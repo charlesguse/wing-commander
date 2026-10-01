@@ -1539,7 +1539,10 @@ jobs:
       group: wing-commander-board-loop
       cancel-in-progress: false
     outputs:
-      outcome: ${{ steps.decide.outputs.outcome }}
+      # Maintainer feedback (spec 097): a stand-down must not read
+      # downstream as 'proceed' -- route's own if: is #901's to fix, but
+      # this job's own continuation output already stops lying about it.
+      outcome: ${{ steps.killswitch-recheck.outputs.paused == 'true' && 'stood-down' || steps.decide.outputs.outcome }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -3314,7 +3317,11 @@ jobs:
       cancel-in-progress: false
     outputs:
       pr-number: ${{ steps.pr.outputs.pr-number }}
-      outcome: ${{ steps.round.outputs.outcome }}
+      # Maintainer feedback (spec 097): a stand-down must not read
+      # downstream (readiness's needs.review.outputs.outcome == 'converged'
+      # check) as 'converged' -- route's own if: is #901's to fix, but this
+      # job's own continuation output already stops lying about it.
+      outcome: ${{ steps.killswitch-recheck.outputs.paused == 'true' && 'stood-down' || steps.round.outputs.outcome }}
     steps:
       # A directed dispatch needs the issue marker read -- and therefore the
       # pristine snapshot below -- before it even knows which PR to check
