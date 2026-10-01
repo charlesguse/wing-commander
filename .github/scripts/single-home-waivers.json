@@ -65,9 +65,9 @@
       "check": "size-path-backstop",
       "pattern": "select\\(test",
       "count": 1,
-      "issue": "#734",
+      "issue": "#889",
       "decided_by": "#408",
-      "reason": "specs/057-autonomous-board-loop tasks.md T021 (repoint pr-conversation.yml's classify-and-announce job at the new wing-commander-size-path-backstop composite) is NOT done in this cycle: the inline jq formula sits inside a per-classification-leg `map()` pipeline that also rewrites category/drafted-content based on the over-threshold result, with no existing behavioral test harness (unlike Gate 4's auto-update-spec-kit-tests) to prove a refactor byte-identical -- repointing it blind, under this cycle's own turn budget, was judged too large a regression risk for a live, production routing decision. board-loop.yml's own route job reaches the formula only through the composite. Remove this waiver when T021 lands (tracked on #734)."
+      "reason": "specs/057-autonomous-board-loop tasks.md T021 (repoint pr-conversation.yml's classify-and-announce job at the new wing-commander-size-path-backstop composite) is NOT done in this cycle: the inline jq formula sits inside a per-classification-leg `map()` pipeline that also rewrites category/drafted-content based on the over-threshold result, with no existing behavioral test harness (unlike Gate 4's auto-update-spec-kit-tests) to prove a refactor byte-identical -- repointing it blind, under this cycle's own turn budget, was judged too large a regression risk for a live, production routing decision. board-loop.yml's own route job reaches the formula only through the composite. Remove this waiver when T021 lands (tracked on the maintenance backlog #889, was #734)."
     },
     {
       "file": ".github/workflows/board-loop.yml",
