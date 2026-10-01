@@ -347,3 +347,9 @@ Task: "Add fixtures under wing-commander-fold-queue-release/tests/"
 ### Follow-up review of 511913b3 (maintainer, 2026-09-30)
 
 - [ ] T062 **B10: fold-cycle-guard.yml:474-475 still sends `-f fold_queue_token=` without the 422 retry**, so an older wrapper fails the react step. Also, `adoption.md:428-432` still says a missing input "fails that dispatch outright", which contradicts `:1461-1467`. **Fix:** route this dispatch through `wing-commander-fold-dispatch`'s retry, or mirror it, and fix the doc.
+
+## Maintainer Feedback
+
+### Follow-up review of 511913b3 (maintainer, 2026-09-30)
+
+- [ ] T063 **Nits:** (1) Stale "Gate 126" in `fold-queue-release/action.yml:61`, `fold-queue-ledger.sh:255` and `contracts/wing-commander-fold-queue-release.md:49` (missed by T051's renumbering to Gate 128). (2) `verify-fold-queue-admission.py:42`'s docstring still names the old `tests/run.sh` path (pre-T052 move). (3) `claim-dispatch/action.yml:85` still says "the caller -- dispatch-once" (stale after T045 moved the claim into `fold-turn-dispatch`). (4) The requeue loop has no overall bound, so a steady stream of act tickets can starve a dispatch.
