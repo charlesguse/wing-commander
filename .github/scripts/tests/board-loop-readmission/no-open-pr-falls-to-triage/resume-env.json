@@ -1,6 +1,6 @@
 {
-  "MARKER_STEP": "",
-  "MARKER_JSON": "null",
+  "MARKER_STEP": "stalled",
+  "MARKER_JSON": "{\"step\": \"stalled\"}",
   "BRANCH": "",
   "MARKER_PR": "",
   "PR_FROM_MARKER": "false",

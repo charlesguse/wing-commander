@@ -2,5 +2,6 @@
   "step": "review",
   "round": "0",
   "pr_number": "42",
-  "recovered_via_fallback": true
+  "recovered_via_fallback": true,
+  "note": "recovered pr 42 resolved to review -- the head moved since the last review (or no reviewed head was resolvable) (FR-006b)"
 }

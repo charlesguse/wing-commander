@@ -2,5 +2,7 @@
   "step": "triage",
   "pr_number": "",
   "branch": "",
-  "recovered_via_fallback": false
+  "round": "0",
+  "recovered_via_fallback": false,
+  "disqualified_reason": "stale marker -- recorded branch/pr could not be re-derived live"
 }
