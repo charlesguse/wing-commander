@@ -3433,12 +3433,10 @@ jobs:
 
       # T046 (maintainer review of #821): a winning claim enqueues an
       # implement-kind ticket for the cycle it is about to dispatch, but
-      # nothing ever comes to release it when the dispatch attempt below
-      # didn't actually hand it to a real, identifiable implement.yml run
-      # -- `gh workflow run` failing outright (this step then never even
-      # reaches "dispatched=true"), or the run-url poll timing out even
-      # though dispatch succeeded. Left alone, that ticket sits granted at
-      # the queue head forever (fold-queue-await.sh's own uncorrelated-head
+      # nothing ever comes to release it when `gh workflow run` itself
+      # failed outright (this step then never even reaches
+      # "dispatched=true"). Left alone, that ticket sits granted at the
+      # queue head forever (fold-queue-await.sh's own uncorrelated-head
       # bound is only a backstop for whatever gap remains beyond this),
       # timing out every later admission for this spec-dir. Runs after the
       # dispatch ticket's own release above so the implement ticket (its
@@ -3452,10 +3450,25 @@ jobs:
       # ticket released just above still held the head at that point in
       # the job), so this is the one place that actually releases it, now
       # that this ticket has reached the head.
+      #
+      # T057 (maintainer review of #821, B5): deliberately NOT gated on
+      # `steps.dispatched-run-id.outputs.id == ''` -- `dispatched: true`
+      # with an empty run-url means `gh workflow run` succeeded but this
+      # job's own 30-second run-url poll simply missed finding the new run
+      # (which DOES hold this ticket, via `fold_queue_token`, and is
+      # already awaiting it). Releasing the ticket out from under that real
+      # run would strand it awaiting a now-absent token until
+      # fold-queue-await.sh's own timeout — the exact cycle-loss this fix
+      # removes. "Record this round's dispatched implement run" above
+      # already requires `dispatched-run-id.outputs.id != ''`, so a missed
+      # poll simply leaves this round uncorrelated for now; the
+      # uncorrelated-head grace-period reclaim fold-queue-await.sh already
+      # carries (T046/T049) is the one mechanism that cleans this ticket up
+      # if the dispatched run turns out not to exist at all.
       - name: Release an implement ticket this run's claim created but never handed to a real run
         if: >-
           always() && needs.fold-turn-dispatch.outputs.implement-token != '' &&
-          (steps.dispatched-run-id.outputs.id == '' || steps.fold-dispatch.outputs.ticket-unused == 'true')
+          (steps.fold-dispatch.outputs.dispatched != 'true' || steps.fold-dispatch.outputs.ticket-unused == 'true')
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-fold-queue-release
         with:
           spec-dir: ${{ needs.classify-and-announce.outputs.spec-dir }}
