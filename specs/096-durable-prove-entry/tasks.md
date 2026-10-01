@@ -614,3 +614,8 @@ Task: "New Gate 128: verify-board-prove-recovery.py fixtures"
 - [ ] "Close the issue on the merge evidence alone" (board-loop.yml ~:4725) must write `proven` with `--recovery-attempted` and the recovery notice, matching the other success arm.
 - [ ] Add a recovery variant to the metrics label at ~:4964 (FR-015).
 - [ ] At ~:4777, fall back to `inputs.directed-pr` when `github.event.pull_request.number` is empty (`|| inputs.directed-pr`), matching `prove-gate`'s own pattern (FR-002).
+
+
+## Maintainer Feedback — verify-prove-path-concurrency.py is substring-only
+- [ ] Rewrite the gate to evaluate the concurrency-group expression for at least two distinct PR numbers and assert the results are distinct per merged item and distinct from both the ordinary and directed-proof groups, so a shared-key or event-name regression no longer passes.
+- [ ] Add a real desync fixture exercising the gate's `--self-test` path, currently ignored.
