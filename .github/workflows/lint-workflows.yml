@@ -4058,6 +4058,13 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-eligibility.py
 
+      # The daily board status (board-status.yml, board reset of
+      # 2026-10-01) renders what it read and publishes to one issue. Not
+      # numbered: gate numbers are allocated by hand and collide (#773).
+      - name: Board status renders the board it read and edits only its own issue
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-board-status.py
+
       # Gate 82 — specs/057-autonomous-board-loop (FR-012/FR-064 bullet 1):
       # triage may close an issue on exactly two code-derived grounds, and
       # an agent's "already fixed on main" proposal must NEVER be one of
