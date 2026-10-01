@@ -344,6 +344,40 @@ def check_statement_fidelity(steps, root):
 
 
 # ---------------------------------------------------------------------------
+# (i) Enforcement parity (PR #836 review, item 3)
+# ---------------------------------------------------------------------------
+
+ENFORCEMENT_FIXTURES = [
+    ("", []),
+    (".claude/", ["Edit(.claude/**)", "Write(.claude/**)"]),
+    (".claude/,.git/", ["Edit(.claude/**)", "Write(.claude/**)",
+                        "Edit(.git/**)", "Write(.git/**)"]),
+]
+
+
+def check_enforcement_parity(steps, root):
+    """The composed disallowed-tools list must enforce the SAME boundary
+    write-paths-statement states -- a stated-but-unenforced boundary is the
+    same failure as making no statement at all (PR #836 review, item 3;
+    FR-004/FR-005, Principle V/IX)."""
+    failures = []
+    for no_write_paths, expected_denies in ENFORCEMENT_FIXTURES:
+        workdir = tempfile.mkdtemp(dir=root)
+        rc, out, outputs, _ = run_compose(steps, no_write_paths, workdir)
+        if rc != 0:
+            failures.append(f"(i) compose step exited {rc} for "
+                            f"no-write-paths={no_write_paths!r}: {out.strip()}")
+            continue
+        disallowed = outputs.get("disallowed-tools", "").split(",")
+        for entry in expected_denies:
+            if entry not in disallowed:
+                failures.append(f"(i) no-write-paths={no_write_paths!r}: "
+                                f"expected disallowed-tools to contain "
+                                f"{entry!r}, got {outputs.get('disallowed-tools')!r}")
+    return failures
+
+
+# ---------------------------------------------------------------------------
 # (c) Classification correctness
 # ---------------------------------------------------------------------------
 
@@ -1009,6 +1043,7 @@ def main():
         else:
             failures.extend(check_single_definition())
             failures.extend(check_statement_fidelity(steps, root))
+            failures.extend(check_enforcement_parity(steps, root))
             failures.extend(check_classification(root))
             failures.extend(check_termination_and_reason(steps, root))
             failures.extend(check_no_filing_on_truncated())

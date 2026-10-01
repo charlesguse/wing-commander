@@ -681,8 +681,8 @@ and evaporating into PR-body prose) that this feature exists to end.
 
 ## Maintainer Feedback — write boundary is stated but not enforced (PR #836 review, item 3)
 
-- [ ] In `wing-commander-tool-args`'s `compose` step, derive the disallowed `Edit`/`Write` tool-list entries (e.g. `Edit(X**)`/`Write(X**)`) from `no-write-paths`, so the rendered "may not write: X" statement and the composed tool grant share one source
-- [ ] Add the prompt sentence User Story 1 Acceptance Scenario 2 needs: instruct the agent to leave an out-of-boundary task unchecked rather than attempt it, since such tasks are routed deterministically
+- [x] In `wing-commander-tool-args`'s `compose` step, derive the disallowed `Edit`/`Write` tool-list entries (e.g. `Edit(X**)`/`Write(X**)`) from `no-write-paths`, so the rendered "may not write: X" statement and the composed tool grant share one source (new Gate 133 pass condition (i) asserts the parity)
+- [x] Add the prompt sentence User Story 1 Acceptance Scenario 2 needs: instruct the agent to leave an out-of-boundary task unchecked rather than attempt it, since such tasks are routed deterministically
 
 ## Maintainer Feedback — Gate's --self-test is vacuous and misses real regressions (PR #836 review, item 4)
 

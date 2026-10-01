@@ -1118,6 +1118,10 @@ jobs:
             list above, execute it and report what it printed.
 
             ${{ steps.tool-args-cycle.outputs.write-paths-statement }}
+            If a task names a path under this boundary, leave it unchecked
+            rather than attempt the edit -- such a task is routed to a
+            tracked, non-authorizing item by deterministic code after this
+            run, never left for you to resolve or to resurface next cycle.
 
             Shell constraints in this headless run. Each of these cost real
             turns in earlier runs, so read them before your first Bash call:
@@ -1956,6 +1960,10 @@ jobs:
             list above, execute it and report what it printed.
 
             ${{ steps.tool-args-retry.outputs.write-paths-statement }}
+            If a task names a path under this boundary, leave it unchecked
+            rather than attempt the edit -- such a task is routed to a
+            tracked, non-authorizing item by deterministic code after this
+            run, never left for you to resolve or to resurface next cycle.
 
             Shell constraints in this headless run. Each of these cost real
             turns in earlier runs, so read them before your first Bash call:
