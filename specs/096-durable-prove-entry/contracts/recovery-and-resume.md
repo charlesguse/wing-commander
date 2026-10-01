@@ -95,20 +95,28 @@ never a duplicate — this step still does not wait for anything
 **The dispatched run** (a directed `prove` run carrying
 `directed-recovery=true`) performs the *same* actions-only decision,
 re-drive, wait, and close-on-success/leave-open-otherwise logic as any
-other entry into `prove-gate`/`prove` (FR-002, "decision for decision").
-Its own "Record the proof outcome" step additionally:
+other entry into `prove-gate`/`prove` (FR-002, "decision for decision") —
+including the "Close the issue on the merge evidence alone" arm taken when
+`steps.decide.outputs.actions-only != 'true'` (maintainer review: this arm
+closes the issue just as surely as "Record the proof outcome"'s own
+success arm does, and must record the recovery the same way). Both arms
+additionally:
 
-- states the recovery in its comment (FR-014: "what it adds is the
+- state the recovery in their comment (FR-014: "what it adds is the
   statement that the displaced proof was recovered, and the proof outcome,
-  each distinct from every reason spec 060's taxonomy enumerates");
-- writes `--outcome-reason <this run's own outcome_reason>
-  --recovery-attempted` on every marker write (success → `proven`, still
-  carrying the flag for legibility; any non-success → `prove`), so a
-  second re-displacement of *this* recovery attempt cannot look like a
-  fresh, unspent one (closing the loop research.md D6 opens);
-- labels the run's metrics record `"proof (recovered): <outcome_reason>"`
-  instead of `"proof: <outcome_reason>"` (FR-015) when
-  `inputs.directed-recovery == 'true'`.
+  each distinct from every reason spec 060's taxonomy enumerates") via one
+  canonical `RECOVERY_NOTICE`, a job-level `env:` on `prove` (CLAUDE.md
+  single-home) rather than a copy per arm;
+- write `--outcome-reason <this run's own outcome_reason>
+  --recovery-attempted` on every marker write ("Record the proof outcome"
+  success → `proven`, "Close the issue on the merge evidence alone" →
+  `proven`, still carrying the flag for legibility; any non-success →
+  `prove`), so a second re-displacement of *this* recovery attempt cannot
+  look like a fresh, unspent one (closing the loop research.md D6 opens);
+- label the run's metrics record `"proof (recovered): <outcome_reason>"` /
+  `"closed on merge evidence alone (recovered)"` instead of
+  `"proof: <outcome_reason>"` / `"closed on merge evidence alone"`
+  (FR-015) when `inputs.directed-recovery == 'true'`.
 
 A `failure` or `unfinished` outcome on the recovery dispatch is not
 retried — Q3/FR-011 name only the displacement and `uncorrelated` shapes as

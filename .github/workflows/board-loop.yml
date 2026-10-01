@@ -4880,6 +4880,16 @@ jobs:
         (github.event_name == 'pull_request' && format('wing-commander-board-loop-prove-{0}', github.event.pull_request.number)) ||
         'wing-commander-board-loop' }}
       cancel-in-progress: false
+    # specs/096-durable-prove-entry FR-014/FR-015, maintainer review: one
+    # canonical recovery notice (CLAUDE.md single-home), at job level so
+    # both "Close the issue on the merge evidence alone" and "Record the
+    # proof outcome" read the identical text rather than each carrying its
+    # own copy.
+    env:
+      RECOVERY_NOTICE: >-
+        ${{ inputs.directed-recovery == 'true' && 'This proof had previously
+        been displaced or could not be correlated to a dispatch; this
+        recovery run addresses that.' || '' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -5001,11 +5011,23 @@ jobs:
           ISSUE_NUMBER: ${{ needs.prove-gate.outputs.issue-number }}
           PR_NUMBER: ${{ github.event.pull_request.number || inputs.directed-pr }}
           REASON: ${{ steps.decide.outputs.reason }}
+          RECOVERY: ${{ inputs.directed-recovery }}
         run: |
           set -uo pipefail
-          marker="$(python3 .github/scripts/board_item_marker.py --step proven)"
+          # maintainer review (FR-014/FR-015): this is the other arm that
+          # can close an issue a recovery dispatch targeted -- the success
+          # arm of "Record the proof outcome" below already records
+          # --recovery-attempted and the recovery notice; this one must
+          # too, or a recovery of an item that turns out Actions-only-free
+          # leaves no record the attempt was ever spent.
+          recovery_flag=()
+          [ "$RECOVERY" = "true" ] && recovery_flag=(--recovery-attempted)
+          recovery_suffix=""
+          [ -n "$RECOVERY_NOTICE" ] && recovery_suffix="$(printf '\n\n%s' "$RECOVERY_NOTICE")"
+
+          marker="$(python3 .github/scripts/board_item_marker.py --step proven "${recovery_flag[@]}")"
           gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
-            --body "$(printf 'Closed on the merge of PR #%s alone: %s -- no Actions-only behaviour changed, so a re-driven run would prove nothing this merge did not.\n\n%s' "$PR_NUMBER" "$REASON" "$marker")"
+            --body "$(printf 'Closed on the merge of PR #%s alone: %s -- no Actions-only behaviour changed, so a re-driven run would prove nothing this merge did not.\n\n%s' "$PR_NUMBER" "$REASON" "$marker")$recovery_suffix"
           gh issue close "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY"
 
       # FR-042: the re-drive itself. `conclusion` is read from the
@@ -5138,14 +5160,9 @@ jobs:
             ${{ inputs.directed-stage != '' && format('_Directed proof run
             (stage: `{0}`), dispatched to prove PR #{1} -- selects no board
             item, opens no fix PR._', inputs.directed-stage, inputs.directed-pr) || '' }}
-          # specs/096-durable-prove-entry FR-014/FR-015: one canonical
-          # recovery notice (CLAUDE.md single-home), mirroring
-          # DIRECTED_ATTRIBUTION above, appended to every comment arm below
-          # rather than eight separately-worded copies.
-          RECOVERY_NOTICE: >-
-            ${{ inputs.directed-recovery == 'true' && 'This proof had previously
-            been displaced or could not be correlated to a dispatch; this
-            recovery run addresses that.' || '' }}
+          # RECOVERY_NOTICE is now a job-level env (see this job's own
+          # `env:` block header comment) -- read here via the ordinary env
+          # merge, not redeclared.
         run: |
           set -uo pipefail
           reason="$(python3 -c "
@@ -5233,7 +5250,11 @@ jobs:
           if [ "${{ steps.killswitch-recheck.outputs.paused }}" = "true" ]; then
             label="stood down"
           elif [ "${{ steps.decide.outputs.actions-only }}" != "true" ]; then
-            label="closed on merge evidence alone"
+            if [ "${{ inputs.directed-recovery }}" = "true" ]; then
+              label="closed on merge evidence alone (recovered)"
+            else
+              label="closed on merge evidence alone"
+            fi
           else
             reason="$(python3 -c "
           import os, sys

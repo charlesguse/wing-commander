@@ -630,9 +630,9 @@ Task: "New Gate 136: verify-board-prove-recovery.py fixtures"
 - [X] Split the recovery step into three: pick the candidate, run `wing-commander-board-stop-check` for that issue, then dispatch gated on `paused != 'true'` (FR-012), so the kill-switch read isn't minutes stale by dispatch time.
 
 ## Maintainer Feedback — two arms of the dispatched run don't record the recovery
-- [ ] "Close the issue on the merge evidence alone" (board-loop.yml ~:4725) must write `proven` with `--recovery-attempted` and the recovery notice, matching the other success arm.
-- [ ] Add a recovery variant to the metrics label at ~:4964 (FR-015).
-- [ ] At ~:4777, fall back to `inputs.directed-pr` when `github.event.pull_request.number` is empty (`|| inputs.directed-pr`), matching `prove-gate`'s own pattern (FR-002).
+- [X] "Close the issue on the merge evidence alone" (board-loop.yml ~:4725) must write `proven` with `--recovery-attempted` and the recovery notice, matching the other success arm.
+- [X] Add a recovery variant to the metrics label at ~:4964 (FR-015).
+- [X] At ~:4777, fall back to `inputs.directed-pr` when `github.event.pull_request.number` is empty (`|| inputs.directed-pr`), matching `prove-gate`'s own pattern (FR-002). (Already correct at every PR_NUMBER derivation site -- lines 4530/4707/4803/4924 as of this cycle's audit -- confirmed, not a fresh fix.)
 
 
 ## Maintainer Feedback — verify-prove-path-concurrency.py is substring-only
