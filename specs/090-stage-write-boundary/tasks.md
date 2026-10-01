@@ -838,7 +838,7 @@ and evaporating into PR-body prose) that this feature exists to end.
 
 ## Phase 9: Convergence
 
-- [ ] T042 Correct data-model.md's `routed`-flag formula (~line 101, still
+- [x] T042 Correct data-model.md's `routed`-flag formula (~line 101, still
   `routed = handoff && all-unchecked-out-of-boundary`), the FR-012
   paragraph (~line 117-121, still claiming `routed` cannot be true when
   `progressed=true`), the "Routed finding" entry's "Computed/filed by"

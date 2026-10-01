@@ -98,9 +98,14 @@ shape.
 - **Shape**: boolean, step-local (not a `workflow_call` output — mirrors
   spec 059's `progressed`/`handoff`).
 - **Computed by**: `Read back cycle outcome`/`Read back retry outcome`:
-  `routed = handoff && all-unchecked-out-of-boundary` (D5). Carried through
-  "Consolidate final outcome" under the existing `RETRY_RAN` selection,
-  alongside `findings-json`.
+  `routed = ok && !truncated && all-unchecked-out-of-boundary` (D5),
+  deliberately NOT gated on spec 059's `handoff` (PR #836 review, item 2) —
+  a cycle that ticks the last in-reach task, or whose `converge:` commit
+  re-appends only out-of-boundary lines, still leaves 100% of the remaining
+  unchecked work unreachable, and that must be filed the moment this cycle
+  sees it rather than only on the one narrow path spec 059's own decision
+  table was built to describe. Carried through "Consolidate final outcome"
+  under the existing `RETRY_RAN` selection, alongside `findings-json`.
 - **Relates to**: gates whether "Route out-of-boundary tasks" (below) runs
   at all this cycle.
 
@@ -116,9 +121,12 @@ shape.
   generic hand-off narrative ("the cycle checked nothing new").
 - **Unaffected case**: FR-012 — a cycle where `progressed=true` this cycle
   (other work also got done) uses spec 059's existing "outstanding with
-  progress" narrative unchanged; `routed` cannot be `true` in that branch,
-  because `handoff` (and therefore D5's `routed`) requires
-  `progressed=false`.
+  progress" narrative unchanged. Unlike the shipped `reason` branch, which
+  checks `routed` before `handoff`/`progressed` precisely because `routed`
+  no longer implies `handoff` (PR #836 review, item 2), `routed` CAN be
+  `true` in the same cycle a `progressed=true` task also ticked — the
+  narrative branch order, not the `routed` formula itself, is what keeps
+  "outstanding with progress" from being displaced by the routed phrasing.
 
 ### Routed finding (filed GitHub issue)
 
@@ -129,7 +137,12 @@ shape.
   implement` and the same `<!-- wing-commander-finding: fingerprint=... -->`
   marker convention `found-by:*` findings already use.
 - **Computed/filed by**: "Route out-of-boundary tasks" (new step), guarded
-  `routed == 'true'` and `truncated != 'true'` (FR-013).
+  `ok == 'true' && truncated != 'true' && write-boundary-findings-json !=
+  '[]' && (routed == 'true' || handoff == 'true' || iteration >= max)`
+  (FR-013, FR-007; PR #836 review, item 12) — broadened past `routed` alone
+  so a mixed unchecked set (some out-of-boundary, some ordinary) still gets
+  its out-of-boundary tasks filed on a stalled or cap-reached cycle, not
+  only on a clean routed hand-off.
 - **Idempotency**: FR-008 — the fingerprint is the anchor form (D6), keyed
   on `(stage, tasks.md path, exact line text)`; the same out-of-boundary
   task on a later cycle, a retry of the same iteration, or a re-driven run
@@ -167,9 +180,11 @@ no-write-paths (implement.yml input)
 
 unchecked-items(tip) [unchanged, spec 059] ─▶ per-task classification
 
-all-unchecked-out-of-boundary, handoff [spec 059, unchanged] ─▶ routed
+ok, truncated, all-unchecked-out-of-boundary ─▶ routed
+                              (NOT gated on handoff -- PR #836 review, item 2)
 routed, findings-json ─▶ reason narrative (extended)
-routed, findings-json, truncated ─▶ "Route out-of-boundary tasks"
+ok, truncated, findings-json, (routed or handoff or iteration>=max)
+                                       ─▶ "Route out-of-boundary tasks"
                                        ─▶ routed finding (GitHub issue)
                                        ─▶ lifecycle-issue recap comment
                                           (wing-commander-stage-findings'
