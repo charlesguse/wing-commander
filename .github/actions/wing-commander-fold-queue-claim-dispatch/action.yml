@@ -57,6 +57,20 @@ inputs:
   stale-after-minutes:
     required: false
     default: "10"
+  max-requeue-attempts:
+    description: >
+      T063 nit 4 (maintainer review of #821): the internal requeue-reawait
+      loop below has no bound of its own otherwise -- each individual
+      await is bounded by max-wait-minutes, but a steady stream of newly
+      enqueued act-kind tickets arriving faster than they drain could keep
+      re-requeuing this dispatch ticket behind the newest one indefinitely
+      (research.md's requeue placement: behind the LAST outstanding
+      act-kind ticket), starving the dispatch forever. Exceeding this many
+      requeue cycles is a hard step failure, matching
+      fold-queue-await.sh's own "a hard stop, never a silent
+      pass-through" contract.
+    required: false
+    default: "20"
 
 outputs:
   should-dispatch:
@@ -82,8 +96,9 @@ runs:
   using: composite
   steps:
     # research.md D4: iteration is read fresh from spec-meta.json on the
-    # ALREADY-checked-out spec branch (the caller -- dispatch-once -- has
-    # already done this checkout for its own pre-existing steps) rather
+    # ALREADY-checked-out spec branch (the caller -- fold-turn-dispatch,
+    # since T045 -- has already done this checkout for its own
+    # pre-existing steps) rather
     # than by this composite fetching a second copy of the branch; the
     # freshness guarantee this satisfies is "not cached from an earlier
     # point in a long-running job", not "re-read on every CAS retry" --
@@ -103,6 +118,7 @@ runs:
         MAX_WAIT_MINUTES: ${{ inputs.max-wait-minutes }}
         POLL_INTERVAL_SECONDS: ${{ inputs.poll-interval-seconds }}
         STALE_AFTER_MINUTES: ${{ inputs.stale-after-minutes }}
+        MAX_REQUEUE_ATTEMPTS: ${{ inputs.max-requeue-attempts }}
       run: |
         set -euo pipefail
         LEDGER="$GITHUB_ACTION_PATH/../_shared/fold-queue-ledger.sh"
@@ -118,12 +134,22 @@ runs:
         recorded="$(jq -r '.iteration // 0' "$SPEC_DIR/spec-meta.json")"
         next=$(( recorded + 1 ))
 
+        # T063 nit 4: bounds the requeue-reawait loop itself, distinct from
+        # max-wait-minutes bounding each individual await -- see this
+        # input's own description.
+        requeue_count=0
+
         while :; do
           out="$(ITERATION="$next" OWN_FOLDS="$OWN_FOLDS" bash "$LEDGER" claim-dispatch)"
           outcome="$(printf '%s\n' "$out" | grep '^outcome=' | cut -d= -f2-)"
 
           if [ "$outcome" = "requeued" ]; then
-            echo "wing-commander-fold-queue-claim-dispatch: own-folds=$OWN_FOLDS but another act-kind ticket for round $ROUND is still outstanding -- requeued behind it, awaiting regrant." >> "$GITHUB_STEP_SUMMARY"
+            requeue_count=$(( requeue_count + 1 ))
+            if [ "$requeue_count" -gt "$MAX_REQUEUE_ATTEMPTS" ]; then
+              echo "::error::wing-commander-fold-queue-claim-dispatch: requeued more than $MAX_REQUEUE_ATTEMPTS time(s) for round $ROUND of $SPEC_DIR -- giving up rather than waiting indefinitely behind a steady stream of newly enqueued act-kind tickets." >&2
+              exit 1
+            fi
+            echo "wing-commander-fold-queue-claim-dispatch: own-folds=$OWN_FOLDS but another act-kind ticket for round $ROUND is still outstanding -- requeued behind it, awaiting regrant (attempt $requeue_count/$MAX_REQUEUE_ATTEMPTS)." >> "$GITHUB_STEP_SUMMARY"
             TOKEN="$DISPATCH_TOKEN" bash "$AWAIT" >/dev/null
             continue
           fi

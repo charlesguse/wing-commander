@@ -58,7 +58,7 @@ runs:
     # MUST be invoked with if: always() as the last step of the job holding
     # the ticket -- callers are responsible for that placement; this
     # composite itself has no way to enforce a caller's if: condition, so
-    # Gate 126 checks it against the shipped workflow instead.
+    # Gate 128 checks it against the shipped workflow instead.
     - name: Release ticket and record outcome
       shell: bash
       env:

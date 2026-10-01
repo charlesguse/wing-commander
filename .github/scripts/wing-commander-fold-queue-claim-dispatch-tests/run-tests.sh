@@ -61,7 +61,7 @@ mkdir -p "$WORK/$SPEC_DIR_FIXTURE"
 echo '{"iteration": 2}' > "$WORK/$SPEC_DIR_FIXTURE/spec-meta.json"
 
 run_claim() {
-  local token="$1" round="$2" own_folds="$3" max_wait="${4:-30}" poll="${5:-10}" stale_after="${6:-10}"
+  local token="$1" round="$2" own_folds="$3" max_wait="${4:-30}" poll="${5:-10}" stale_after="${6:-10}" max_requeue="${7:-20}"
   local out_file summary_file
   out_file="$(mktemp)"
   summary_file="$(mktemp)"
@@ -72,6 +72,7 @@ run_claim() {
       LEDGER_REMOTE_URL="$REMOTE" \
       SPEC_DIR="$SPEC_DIR_FIXTURE" ROUND="$round" DISPATCH_TOKEN="$token" OWN_FOLDS="$own_folds" \
       MAX_WAIT_MINUTES="$max_wait" POLL_INTERVAL_SECONDS="$poll" STALE_AFTER_MINUTES="$stale_after" \
+      MAX_REQUEUE_ATTEMPTS="$max_requeue" \
       GITHUB_OUTPUT="$out_file" GITHUB_STEP_SUMMARY="$summary_file" \
       bash "$SCRIPT"
   )
@@ -201,6 +202,61 @@ else
   FAILURES=$((FAILURES + 1))
 fi
 rm -f "$out_file"
+
+# Drain scenario 4's own declined dispatch ticket (never released -- a
+# decline mutates nothing, the CALLER releases its own dispatch ticket in
+# production) so scenario 5's own act ticket below opens a FRESH round.
+LEDGER_REMOTE_URL="$REMOTE" GH_TOKEN=x GITHUB_REPOSITORY=x/x SPEC_DIR="$SPEC_DIR_FIXTURE" \
+  TOKEN="run-401-dispatch" RUN_ID=401 OUTCOME="not-folded" \
+  bash "$LEDGER_SH" release >/dev/null
+
+# --- Scenario 5 (T063 nit 4): max-requeue-attempts bounds the internal
+# requeue-reawait loop -- a steady stream of newly enqueued act-kind
+# tickets, each clearing just in time for a fresh one to replace it, must
+# not keep this dispatch ticket requeuing forever; it hard-fails once the
+# bound is exceeded instead. -------------------------------------------
+LEDGER_REMOTE_URL="$REMOTE" GH_TOKEN=x GITHUB_REPOSITORY=x/x SPEC_DIR="$SPEC_DIR_FIXTURE" \
+  KIND=act RUN_ID=510 bash "$LEDGER_SH" enqueue >/dev/null
+LEDGER_REMOTE_URL="$REMOTE" GH_TOKEN=x GITHUB_REPOSITORY=x/x SPEC_DIR="$SPEC_DIR_FIXTURE" \
+  TOKEN="run-510-act" RUN_ID=510 OUTCOME="folded" COMMIT_SHA="f00d" LEG_ID="leg-1" SUMMARY="s" \
+  bash "$LEDGER_SH" release >/dev/null
+LEDGER_REMOTE_URL="$REMOTE" GH_TOKEN=x GITHUB_REPOSITORY=x/x SPEC_DIR="$SPEC_DIR_FIXTURE" \
+  KIND=dispatch RUN_ID=510 bash "$LEDGER_SH" enqueue >/dev/null
+round5="$(LEDGER_REMOTE_URL="$REMOTE" GH_TOKEN=x GITHUB_REPOSITORY=x/x SPEC_DIR="$SPEC_DIR_FIXTURE" PEEK_TOKEN="run-510-dispatch" bash "$LEDGER_SH" peek | grep '^round=' | cut -d= -f2-)"
+LEDGER_REMOTE_URL="$REMOTE" GH_TOKEN=x GITHUB_REPOSITORY=x/x SPEC_DIR="$SPEC_DIR_FIXTURE" \
+  KIND=act RUN_ID=511 bash "$LEDGER_SH" enqueue >/dev/null
+
+(
+  sleep 2
+  # Releases the act ticket currently blocking the dispatch ticket's claim
+  # and, with NO delay in between, enqueues a FRESH one -- simulating a
+  # steady stream that never actually clears the round, so the dispatch
+  # ticket keeps requeuing behind the newest arrival rather than winning.
+  LEDGER_REMOTE_URL="$REMOTE" GH_TOKEN=x GITHUB_REPOSITORY=x/x SPEC_DIR="$SPEC_DIR_FIXTURE" \
+    TOKEN="run-511-act" RUN_ID=511 OUTCOME="folded" COMMIT_SHA="dead" LEG_ID="leg-1" SUMMARY="s" \
+    bash "$LEDGER_SH" release >/dev/null
+  LEDGER_REMOTE_URL="$REMOTE" GH_TOKEN=x GITHUB_REPOSITORY=x/x SPEC_DIR="$SPEC_DIR_FIXTURE" \
+    KIND=act RUN_ID=512 bash "$LEDGER_SH" enqueue >/dev/null
+  sleep 2
+  # Defensive drain in case the bound somehow failed to trigger -- a
+  # correctly-bounded run exits long before this second release matters.
+  LEDGER_REMOTE_URL="$REMOTE" GH_TOKEN=x GITHUB_REPOSITORY=x/x SPEC_DIR="$SPEC_DIR_FIXTURE" \
+    TOKEN="run-512-act" RUN_ID=512 OUTCOME="folded" COMMIT_SHA="beef" LEG_ID="leg-1" SUMMARY="s" \
+    bash "$LEDGER_SH" release >/dev/null
+) &
+releaser_pid=$!
+
+out_file="$(run_claim "run-510-dispatch" "$round5" 1 2 1 1 1)"
+rc=$?
+wait "$releaser_pid"
+if [ "$rc" -ne 0 ]; then
+  echo "[ok] max-requeue-attempts bound: the claim hard-failed rather than requeuing indefinitely behind a steady stream of act tickets"
+else
+  echo "::error::[max-requeue-attempts bound] expected a non-zero exit once the bound (1) was exceeded, got rc=$rc"
+  FAILURES=$((FAILURES + 1))
+fi
+rm -f "$out_file"
+# No queue cleanup needed -- this is the last scenario in the suite.
 
 echo "wing-commander-fold-queue-claim-dispatch tests: $FAILURES failure(s)."
 [ "$FAILURES" -eq 0 ]

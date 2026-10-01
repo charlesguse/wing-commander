@@ -252,7 +252,7 @@ case "$TRANSFORM" in
     : "${ITERATION:?fold-queue-ledger.sh claim-dispatch: ITERATION is required}"
     : "${OWN_FOLDS:?fold-queue-ledger.sh claim-dispatch: OWN_FOLDS is required}"
     # Optional, default "true" (T046): every call site that predates this
-    # field -- including every fixture and Gate 126 scenario already in the
+    # field -- including every fixture and Gate 128 scenario already in the
     # tree -- keeps enqueueing the implement-kind ticket exactly as before.
     # Only dispatch-once's own call (via fold-turn-dispatch) ever passes
     # "false", and only when its implement-workflow input is empty.

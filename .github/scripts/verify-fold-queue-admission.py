@@ -39,10 +39,10 @@ WHAT THIS GATE LOADS (Principle VIII -- verbatim, never restated)
 - `.github/actions/_shared/fold-queue-ledger.sh`'s `claim-dispatch` and
   `claim-redispatch` transforms -- run directly against a throwaway local
   bare repository (`LEDGER_REMOTE_URL`, the same fixture convention
-  `wing-commander-fold-queue-claim-dispatch/tests/run.sh` and
-  `wing-commander-fold-queue-ledger/tests/run.sh` already use; this gate's
-  own value is proving MUTATIONS of those transforms, which the manual
-  quickstart drill does not).
+  `.github/scripts/wing-commander-fold-queue-claim-dispatch-tests/run-tests.sh`
+  and `.github/scripts/wing-commander-fold-queue-ledger-tests/run-tests.sh`
+  already use; this gate's own value is proving MUTATIONS of those
+  transforms, which the manual quickstart drill does not).
 
 The two composites' own step lists (peek, peek-implement-run, claim) are
 NOT re-run here -- fold-cycle-guard.yml's `decide` step already takes their

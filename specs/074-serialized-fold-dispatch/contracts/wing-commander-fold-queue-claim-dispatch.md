@@ -44,6 +44,7 @@ group of its own, so its wait never blocks the run it is waiting on;
 | `own-folds` | yes | — | The count of THIS run's own fold-route items folded in this round (`wing-commander-fold-evidence`'s `folded-json` length) — spec 075 FR-014's own-evidence gate, now enforced inside the ledger's `claim-dispatch` transform rather than only in `wing-commander-fold-dispatch`. |
 | `implement-configured` | no | `"true"` | `"true"` when the caller's `implement-workflow` input is non-empty. `"false"` (T046) means a winning claim still claims the round (a sibling's claim still declines) but enqueues no `implement`-kind ticket and returns an empty `implement-token` — no `implement.yml` run will ever be dispatched to await/release one, so one is never created rather than left to wedge every later admission for this spec-dir. |
 | `max-wait-minutes` / `poll-interval-seconds` / `stale-after-minutes` | no | same defaults as `wing-commander-fold-queue-admit` | Passed straight through to the internal requeue-reawait loop; irrelevant when the first claim attempt resolves `declined` or `won`. |
+| `max-requeue-attempts` | no | `"20"` | T063 nit 4 (maintainer review of #821): bounds the OUTER requeue loop itself, distinct from `max-wait-minutes` (which only bounds each individual await) — a steady stream of newly enqueued `act`-kind tickets arriving faster than they drain could otherwise re-requeue this dispatch ticket indefinitely (the requeue placement rule moves it behind the LAST outstanding `act`-kind ticket each time), starving the dispatch forever. Exceeding this many requeue cycles is a hard step failure. |
 
 ## Outputs
 
@@ -86,7 +87,11 @@ group of its own, so its wait never blocks the run it is waiting on;
    second, independent wait mechanism. This guarantee depends on the
    caller carrying no `concurrency:` block of its own (T045): a caller
    that does can block the very run its own wait depends on from ever
-   starting.
+   starting. **No starvation** (T063 nit 4): the OUTER requeue loop is
+   separately bounded by `max-requeue-attempts` — a steady stream of
+   newly enqueued `act`-kind tickets, each requeuing this dispatch ticket
+   again before it can win, hard-fails once that bound is exceeded rather
+   than requeuing indefinitely.
 7. **Idempotent under retry** (T050): a retried call carrying the SAME
    `dispatch-token` as a call that already won resolves `outcome: won`
    again, reusing the SAME `implement-token` the original win enqueued
