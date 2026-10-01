@@ -13,11 +13,11 @@ verify rather than in a separate TDD phase.
 **Gate numbering**: the highest gate number wired into
 `.github/workflows/lint-workflows.yml` as of this branch's Setup phase
 (T001) was Gate 125 (`grep -oE "Gate [0-9]+" .github/workflows/lint-workflows.yml | sort -t' ' -k2 -n -u | tail -1`),
-so this feature's gate is provisionally **Gate 126**. Per spec
+so this feature's gate is provisionally **Gate 133**. Per spec
 059-converged-means-tasks-done's own precedent (its Gate 81 reservation was
 overtaken twice by other specs landing first, ending as Gate 99): re-check
-this reservation at T001 and, if `main` has since claimed Gate 126, renumber
-every "Gate 126" reference below (the `GATE_PREFIX` constant and docstring
+this reservation at T001 and, if `main` has since claimed Gate 133, renumber
+every "Gate 133" reference below (the `GATE_PREFIX` constant and docstring
 in `verify-write-boundary.py`, the step name/self-test in
 `lint-workflows.yml`, and every mention in this file) to the next free
 number before starting Phase 3.
@@ -49,7 +49,7 @@ those steps.
 
 - [x] T001 Confirm the gate-number reservation above is still accurate:
   `grep -oE "Gate [0-9]+" .github/workflows/lint-workflows.yml | sort -t' ' -k2 -n -u | tail -1`
-  must show Gate 125. If a higher gate now exists, shift every "Gate 126"
+  must show Gate 125. If a higher gate now exists, shift every "Gate 133"
   reference in this file, and in the files T012/T034/T035 create, to the
   next free number before starting Phase 3.
 
@@ -208,7 +208,7 @@ answer matches what the run actually permits.
   126, contracts/write-boundary-gate.md), modeled on
   `verify-tasks-checkbox-convergence-signal.py`'s structure: import
   `ensure_jq, find_step, resolve_bash, run_step, use_utf8_stdout` from
-  `wc_shell_harness`; a `GATE_PREFIX = "Gate 126"` constant; a
+  `wc_shell_harness`; a `GATE_PREFIX = "Gate 133"` constant; a
   `STEPS_CACHE`/`load_steps()` populating it from the exact shipped step
   names this gate drives (`Compose tool args` — both `wing-commander-tool-
   args`'s own step and its two `implement.yml` call sites — `Read back
@@ -224,16 +224,16 @@ answer matches what the run actually permits.
   the shipped `compose` step's rendered `write-paths-statement` states
   exactly the given prefixes and no others. Wire it into
   `.github/workflows/lint-workflows.yml` immediately, next to the other
-  `verify-tasks-*`/`verify-stage-findings-*` gates, as two steps: `"Gate 126
+  `verify-tasks-*`/`verify-stage-findings-*` gates, as two steps: `"Gate 133
   — the implement stage's write boundary is stated, classified, and routed
   consistently"` (bare `run: python3 .github/scripts/verify-write-
-  boundary.py`) and `"Gate 126 self-test — write boundary"` (`run: python3
+  boundary.py`) and `"Gate 133 self-test — write boundary"` (`run: python3
   .github/scripts/verify-write-boundary.py --self-test`) — Gate 10 requires
   every check script be named by some `run:` line or it is reported
   orphaned; do not leave it unwired even mid-feature. The `--self-test` flag
   can exit 0 with zero reintroduced mutations for now — T034 fills it in.
 - [x] T013 [US1] Run `python .github/scripts/run-local-gates.py`; confirm
-  Gate 126's (a)/(b) fixtures and every pre-existing gate pass.
+  Gate 133's (a)/(b) fixtures and every pre-existing gate pass.
 
 **Checkpoint**: An agent in an implement cycle can now answer "may I write
 this path?" for every path in the checkout from its prompt alone (SC-001).
@@ -325,7 +325,7 @@ US1's, in the same steps).
   §5 — reusing `findings-cap`/`findings-filing-enabled` rather than adding
   parallel inputs, since this channel is not configurably distinct along
   those axes).
-- [x] T020 [US2] Extend Gate 126 (`verify-write-boundary.py`) with pass
+- [x] T020 [US2] Extend Gate 133 (`verify-write-boundary.py`) with pass
   condition (c), classification correctness, driving T006's shipped script
   directly: a single path, fully out-of-boundary → out-of-boundary; several
   paths, one in-reach → falls through; no path in the text → falls through;
@@ -333,7 +333,7 @@ US1's, in the same steps).
   `.claude/` boundary) → falls through (prefix match, not substring); the
   boundary is empty → nothing classifies out-of-boundary, ever. Cover every
   Edge Case spec.md names for this rule.
-- [x] T021 [US2] Extend Gate 126 with pass conditions (f) idempotency and
+- [x] T021 [US2] Extend Gate 133 with pass conditions (f) idempotency and
   (g) fingerprint single-home: the same out-of-boundary unchecked line,
   fingerprinted twice via T008's shared helper (simulating two cycles),
   produces byte-identical fingerprints; a line reworded by even one
@@ -343,21 +343,21 @@ US1's, in the same steps).
   shaped string literal outside `compute-finding-fingerprint.sh` and its
   two callers (the findings composite, and — once T027 lands —
   `finalize.yml`'s lookup step) and assert none exists.
-- [x] T022 [US2] Extend Gate 126 with pass condition (e), no filing on a
+- [x] T022 [US2] Extend Gate 133 with pass condition (e), no filing on a
   truncated run: build a synthetic truncated cycle (`ok=true,
   truncated=true`) with an out-of-boundary-shaped `tasks.md` at the tip,
   and assert the "Route out-of-boundary tasks" step's own `if:` expression
   evaluates false when `truncated=true` even with `routed=true` — evaluate
   the compiled `if:` expression directly, never a live filing call
   (FR-013).
-- [x] T023 [US2] Extend Gate 126 with pass condition (h), board-loop label
+- [x] T023 [US2] Extend Gate 133 with pass condition (h), board-loop label
   separation: a static assertion that `write-boundary-label-prefix`'s
   default (`route-out-of-boundary`) is not equal to `findings-label-
   prefix`'s default (`found-by`) and is not the literal string
   `spec-request` — failing loudly if a future edit collapses them
   (research.md D4, Assumptions section).
 - [x] T024 [US2] Run `python .github/scripts/run-local-gates.py`; confirm
-  Gate 126's US2 fixtures ((c), (e), (f), (g), (h)) plus every pre-existing
+  Gate 133's US2 fixtures ((c), (e), (f), (g), (h)) plus every pre-existing
   gate — including `verify-stage-finding-schema.py`/`verify-stage-findings-
   wiring.py`, unaffected by T018's additive `finding-kind` input — pass
   together.
@@ -406,7 +406,7 @@ branch, per research.md D5. Do not re-derive or short-circuit spec 059's
   hand-off for the cases those already cover" — the other direction: a
   cycle where `progressed=true` still uses the unchanged narrative,
   because `handoff` (and therefore `routed`) requires `progressed=false`).
-- [x] T026 [US3] Extend Gate 126 with pass condition (d), termination and
+- [x] T026 [US3] Extend Gate 133 with pass condition (d), termination and
   reason, executing the shipped read-back `run:` bodies against synthetic
   repos: only unchecked task is out-of-boundary, nothing else progressed →
   `handoff=true, routed=true`, `reason` names the task; same, but another
@@ -436,13 +436,13 @@ branch, per research.md D5. Do not re-derive or short-circuit spec 059's
   every other item as today." Render T027's mapping into the prompt from
   its step output — never let the agent re-derive which unchecked line
   "looks routed" (Principle IX).
-- [x] T029 [US3] Extend Gate 126 with a fixture for SC-005: a synthetic
+- [x] T029 [US3] Extend Gate 133 with a fixture for SC-005: a synthetic
   `tasks.md` with one routed (fingerprint-matching, per T027's formula)
   unchecked line and one ordinary unchecked line → T027's lookup mapping
   contains only the routed line's fingerprint match, and the rendered
   prompt instruction references it by URL; the ordinary line is untouched.
 - [x] T030 [US3] Run `python .github/scripts/run-local-gates.py`; confirm
-  Gate 126's US3 fixtures ((d), SC-005) plus every pre-existing gate pass.
+  Gate 133's US3 fixtures ((d), SC-005) plus every pre-existing gate pass.
 
 **Checkpoint**: a `tasks.md` whose only unchecked item is out-of-boundary
 terminates the loop in one cycle (SC-003), reported as neither converged
@@ -466,7 +466,7 @@ change to the mechanism itself.
 a property Phases 3-5's implementation must already satisfy by
 construction, per the same reasoning spec 059's US2 phase used).
 
-- [x] T031 [US4] Extend Gate 126 with a second-path fixture: drive the
+- [x] T031 [US4] Extend Gate 133 with a second-path fixture: drive the
   shipped `compose`/classification/lookup bodies with
   `no-write-paths=".claude/,.git/"` and confirm (i) the rendered
   `write-paths-statement` states both prefixes, (ii) a task naming a
@@ -486,7 +486,7 @@ construction, per the same reasoning spec 059's US2 phase used).
   literal default exactly once (the `workflow_call` input declaration in
   T002).
 - [x] T033 [US4] Run `python .github/scripts/run-local-gates.py`; confirm
-  Gate 126's US4 fixture passes alongside every prior phase's.
+  Gate 133's US4 fixture passes alongside every prior phase's.
 
 **Checkpoint**: the next unwritable path this repository identifies is a
 list entry on `no-write-paths`, never a second mechanism (FR-019).
@@ -495,7 +495,7 @@ list entry on `no-write-paths`, never a second mechanism (FR-019).
 
 ## Phase 7: Polish & Cross-Cutting Concerns
 
-- [x] T034 Add a `MUTATIONS` table to Gate 126 (mirroring
+- [x] T034 Add a `MUTATIONS` table to Gate 133 (mirroring
   `verify-tasks-checkbox-convergence-signal.py`'s `_mut_*`/`MUTATIONS`
   pattern, FR-020, SC-007), reintroducing and asserting each one is caught
   by `--self-test` (contracts/write-boundary-gate.md's 7-item list): (1)
@@ -518,8 +518,8 @@ list entry on `no-write-paths`, never a second mechanism (FR-019).
   `verify-tasks-checkbox-convergence-signal.py`'s `main()` already does: if
   the mutation's target text no longer exists in the current shipped step,
   error "mutation inapplicable" rather than silently pass.
-- [x] T035 Add a `check_gate_wired()` self-test to Gate 126 (mirroring Gate
-  99's): confirm the "Gate 126 — ..." step exists in `.github/workflows/
+- [x] T035 Add a `check_gate_wired()` self-test to Gate 133 (mirroring Gate
+  99's): confirm the "Gate 133 — ..." step exists in `.github/workflows/
   lint-workflows.yml`, is not `if: false`, and its `run:` line names
   `verify-write-boundary.py`'s exact path.
 - [x] T036 Record FR-002's policy decision — "no agent write under
@@ -547,11 +547,11 @@ list entry on `no-write-paths`, never a second mechanism (FR-019).
 - [x] T038 Comment on issue #675 recording SC-006: spec 060's `T055` was
   completed by hand in #490 (FR-002's prescribed outcome for a `.claude/`
   task); this feature's routing mechanism is proven on the T055-shaped
-  fixture in Gate 126 (T020) rather than on `T055` itself, since `T055` is
+  fixture in Gate 133 (T020) rather than on `T055` itself, since `T055` is
   already checked in `specs/060-self-redrive-concurrency/tasks.md`. No code
   change to `T055`'s own content is required (Out of Scope).
 - [x] T039 Run `python .github/scripts/run-local-gates.py` for the full
-  suite: confirm Gate 126 (complete scenario table across (a)-(h) plus the
+  suite: confirm Gate 133 (complete scenario table across (a)-(h) plus the
   7-item mutation battery) and every other gate pass together (SC-007).
 - [ ] T040 Replay a `T055`-shaped fixture end-to-end against the real
   workflow file (quickstart.md's live-replay section): seed a throwaway
@@ -662,14 +662,14 @@ and evaporating into PR-body prose) that this feature exists to end.
 
 ## Maintainer Feedback — Gate number collision (PR #836 review, item 1)
 
-- [ ] Renumber to **Gate 133** in `verify-write-boundary.py`: the `:2` docstring, the `:49` `GATE_PREFIX` constant, and the `:307`/`:788` `STEP_LABEL "gate126"` values
-- [ ] Renumber in `lint-workflows.yml` `:4657-4669`: the comment and both step names; rewrite the "128, not the 126" rationale text to refer to 133
-- [ ] Renumber the reference in `_shared/compute-finding-fingerprint.sh`:14
-- [ ] Renumber the reference in `wing-commander-stage-findings/action.yml`:285
-- [ ] Renumber the reference in `finalize.yml` ~:708
-- [ ] Fix `constitution-history.md`:25 — the Sync Impact Report is new in this PR, so fix the number before merge rather than treat it as historical
-- [ ] Renumber all 23 occurrences in `tasks.md`, and optionally the placeholders in `contracts/write-boundary-gate.md` and `quickstart.md`
-- [ ] Update the PR body's gate-number references
+- [x] Renumber to **Gate 133** in `verify-write-boundary.py`: the `:2` docstring, the `:49` `GATE_PREFIX` constant, and the `:307`/`:788` `STEP_LABEL "gate126"` values
+- [x] Renumber in `lint-workflows.yml` `:4657-4669`: the comment and both step names; rewrite the "128, not the 126" rationale text to refer to 133
+- [x] Renumber the reference in `_shared/compute-finding-fingerprint.sh`:14
+- [x] Renumber the reference in `wing-commander-stage-findings/action.yml`:285
+- [x] Renumber the reference in `finalize.yml` ~:708
+- [x] Fix `constitution-history.md`:25 — the Sync Impact Report is new in this PR, so fix the number before merge rather than treat it as historical
+- [x] Renumber all 23 occurrences in `tasks.md`, and optionally the placeholders in `contracts/write-boundary-gate.md` and `quickstart.md` (no placeholders found in either file)
+- [ ] Update the PR body's gate-number references (PR #836's body; this run's permitted `gh` commands are only `gh issue view`/`gh issue comment`, no `gh pr` verb, so this is left for a human or a differently-scoped session)
 
 ## Maintainer Feedback — routing never fires when converge commits or the last in-reach task ticks (PR #836 review, item 2)
 

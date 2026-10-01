@@ -388,7 +388,7 @@ runs:
             # of the anchor/fallback formula, shared with finalize.yml's
             # "Look up routed write-boundary items" step so both callers
             # compute the same value for the same input, never a second
-            # copy of this hash (Gate 126 (g)).
+            # copy of this hash (Gate 133 (g)).
             script = os.path.join(
                 os.environ["GITHUB_ACTION_PATH"], "..", "_shared",
                 "compute-finding-fingerprint.sh")

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gate 126 — the implement stage's write boundary is stated, classified,
+"""Gate 133 — the implement stage's write boundary is stated, classified,
 and routed consistently (specs/090-stage-write-boundary,
 contracts/write-boundary-gate.md).
 
@@ -46,7 +46,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wc_shell_harness import (ensure_jq, find_step, resolve_bash, run_step,
                               parse_github_output, use_utf8_stdout)
 
-GATE_PREFIX = "Gate 126"
+GATE_PREFIX = "Gate 133"
 THIS_SCRIPT = ".github/scripts/verify-write-boundary.py"
 LINT_WORKFLOW = ".github/workflows/lint-workflows.yml"
 
@@ -304,7 +304,7 @@ STATEMENT_FIXTURES = [
 
 
 def run_compose(steps, no_write_paths, runner_temp):
-    env = {"STEP_LABEL": "gate126", "DEFAULT_ALLOWED": "Read,Write",
+    env = {"STEP_LABEL": "gate133", "DEFAULT_ALLOWED": "Read,Write",
            "DEFAULT_DISALLOWED": "WebFetch", "EXTRA_ALLOWED": "",
            "EXTRA_DISALLOWED": "", "ALLOWED_OVERRIDE": "__unset__",
            "DISALLOWED_OVERRIDE": "__unset__", "NO_WRITE_PATHS": no_write_paths}
@@ -785,7 +785,7 @@ def check_mutation_2(steps, root):
     workdir = tempfile.mkdtemp(dir=root)
     rc, out, outputs, _ = run_step(BASH, mutated[COMPOSE_STEP],
                                    workdir,
-                                   {"STEP_LABEL": "gate126", "DEFAULT_ALLOWED": "Read",
+                                   {"STEP_LABEL": "gate133", "DEFAULT_ALLOWED": "Read",
                                     "DEFAULT_DISALLOWED": "WebFetch", "EXTRA_ALLOWED": "",
                                     "EXTRA_DISALLOWED": "", "ALLOWED_OVERRIDE": "__unset__",
                                     "DISALLOWED_OVERRIDE": "__unset__",

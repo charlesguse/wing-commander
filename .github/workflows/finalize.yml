@@ -706,7 +706,7 @@ jobs:
       # unchecked line at the tip, recomputes its fingerprint via the SAME
       # shared helper wing-commander-stage-findings uses to file a routed
       # item (never a second copy of that formula -- research.md D6, Gate
-      # 126 (g)) and looks up whether a routed issue already carries it, so
+      # 133 (g)) and looks up whether a routed issue already carries it, so
       # the remaining-manual-work prompt below can point at the tracked
       # issue instead of losing it as an orphan line. Deterministic code
       # decides the mapping; the agent below only renders it (Principle IX).

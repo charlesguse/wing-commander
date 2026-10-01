@@ -11,7 +11,7 @@
 # identical value for an unchecked tasks.md line without re-running that
 # whole composite, so the formula is extracted here and both callers
 # invoke it -- never a second copy (CLAUDE.md's "Shared logic has exactly
-# one home"; Gate 126 (g) asserts no third sha256(anchor|...)/
+# one home"; Gate 133 (g) asserts no third sha256(anchor|...)/
 # sha256(fallback|...)-shaped literal exists anywhere else under .github/.
 #
 # Invoke with
