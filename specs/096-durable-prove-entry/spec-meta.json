@@ -3,6 +3,6 @@
   "spec_dir": "specs/096-durable-prove-entry",
   "feature_num": "096",
   "stage": "implement",
-  "iteration": 1,
+  "iteration": 2,
   "spec_branch": "spec/096-durable-prove-entry"
 }
