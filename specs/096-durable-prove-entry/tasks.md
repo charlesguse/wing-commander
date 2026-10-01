@@ -21,6 +21,17 @@ implementation time in case another in-flight branch has since claimed one
 of these numbers (spec 060's own tasks.md needed three renumbering passes
 for exactly this reason) and renumber every reference in this file if so.
 
+**Renumbered (maintainer review, implement cycle 3)**: by the time this
+branch's own gates landed, in-flight siblings had claimed both 128 (spec
+074) and 129 (spec 089's own `verify-skill-board-loop-concurrency-claim.py`,
+already wired at `lint-workflows.yml:4739`), and the tree's own highest
+wired gate had moved to 131. This feature's two gates are **Gate 136**
+(`verify-board-prove-recovery.py`) and **Gate 137**
+(`verify-prove-path-concurrency.py`) instead — every "Gate 128"/"Gate 129"
+reference below describing this feature's own two gates means 136/137;
+historical task descriptions are left using the original numbers they were
+written against except where renumbered explicitly.
+
 **Line numbers**: every `board-loop.yml`/`board_prove.py`/
 `board_item_marker.py` line number below was re-verified directly against
 this branch's checked-out tree while this file was written (not carried
@@ -109,7 +120,8 @@ checkpoint passes.
     "outcome_reason": "..."}` dicts sorted oldest-`marker_created_at`-first
     (FR-011b fairness, matching `board_eligibility.select()`'s own
     fallback-scan ordering).
-- [X] T005 [P] New Gate 128 — `.github/scripts/verify-board-prove-recovery.py`,
+- [X] T005 [P] New Gate 136 (originally reserved as Gate 128, renumbered —
+  see "Renumbered" note above) — `.github/scripts/verify-board-prove-recovery.py`,
   wired into `.github/workflows/lint-workflows.yml` with `if:
   "!cancelled()"` immediately after the Gate 127 block. Fixtures (FR-020),
   both directions, exercising every marker shape data-model.md's "Board
@@ -144,7 +156,7 @@ checkpoint passes.
 **Checkpoint**: `board_item_marker.py` can carry the two new fields
 round-trip; `board_prove_recovery.py`'s judgment functions are unit-gated;
 `directed-recovery` exists as an input nothing reads yet. `python
-.github/scripts/run-local-gates.py` passes, including Gate 128. Every user
+.github/scripts/run-local-gates.py` passes, including Gate 136. Every user
 story phase below builds on this.
 
 ---
@@ -180,7 +192,7 @@ receives the proof outcome, never a fresh triage comment.
   ```
 - [X] T008 [US1] `.github/workflows/board-loop.yml`: `prove`'s
   `concurrency.group:` expression (`:4166-4173`) gets the **identical**
-  raw text T007 wrote (Gate 129 / T017 below asserts the two jobs never
+  raw text T007 wrote (Gate 137 / T017 below asserts the two jobs never
   desync, since `prove`'s `needs: prove-gate` requires they mean the same
   group).
 - [X] T009 [US1] Guarantee-sentence edit (FR-005/FR-021, research.md D2/D9)
@@ -366,21 +378,28 @@ file and the property).
   `prove-gate`'s group text off a fixture `board-loop.yml`; reads a job
   with no `concurrency:` block (returns `""`); reads a job that does not
   exist (returns `""`).
-- [X] T017 [US3] New Gate 129 — `.github/scripts/verify-prove-path-concurrency.py`
+- [X] T017 [US3] New Gate 137 (originally reserved as Gate 129, renumbered
+  — see "Renumbered" note above) — `.github/scripts/verify-prove-path-concurrency.py`
   (FR-018, research.md D8), asserting against the real `board-loop.yml`
-  via `read_job_concurrency_group()` (T015):
-  1. `prove-gate` and `prove`'s raw `pull_request`-branch group text is
-     not the literal `wing-commander-board-loop`.
-  2. That text contains the literal substring
-     `github.event.pull_request.number`.
-  3. `prove-gate` and `prove` resolve to identical raw group text.
+  via `read_job_concurrency_group()`/`render_pull_request_group()` (T015,
+  maintainer review -- rendering two distinct PR numbers rather than a
+  substring check, which a collapsed key or wrong-event-name regression
+  could still pass):
+  1. `prove-gate` and `prove`'s raw `pull_request`-branch group text
+     renders a distinct group for two distinct PR numbers, neither of
+     which is the literal `wing-commander-board-loop` or
+     `wing-commander-board-loop-directed-proof`.
+  2. `prove-gate` and `prove` resolve to identical raw group text.
 
-  Fixtures (FR-020), both directions: the shipped `board-loop.yml` (pass);
-  the `pull_request` branch reverted to `'wing-commander-board-loop'`
-  (fail, naming the regression); the per-PR key replaced by a fixed string
-  literal with no `.number` (fail); `prove-gate`/`prove` group text
-  diverging (fail). Wire into `.github/workflows/lint-workflows.yml` with
-  `if: "!cancelled()"`, immediately after Gate 128 (T005).
+  Fixtures (FR-020), both directions, exercised via `--self-test`: the
+  shipped `board-loop.yml` (pass); the `pull_request` branch reverted to
+  `'wing-commander-board-loop'` (fail, naming the regression); the per-PR
+  key replaced by a fixed string literal with no `.number` (fail); the
+  middle arm's own event-name check swapped away from `'pull_request'`
+  (fail); `prove-gate`/`prove` group text diverging (fail). Wire into
+  `.github/workflows/lint-workflows.yml` with `if: "!cancelled()"`,
+  immediately after Gate 136 (T005), plus a paired "Gate 137 self-test"
+  step.
 - [X] T018 [US3] Follow quickstart.md Story 5-equivalent (this spec's
   Story 3): run `python .github/scripts/run-local-gates.py` against the
   real tree (passes), then against each of T017's three fixture mutations
@@ -462,7 +481,7 @@ All four user stories are independently demonstrable.
 - [X] T025 Confirm every gate this feature adds or amends fails on its own
   negative fixture when the behaviour it checks is mutated (Principle
   VIII, FR-020) — e.g. temporarily revert T007/T008's group back to the
-  shared literal and confirm Gate 129 (T017) fails; temporarily revert
+  shared literal and confirm Gate 137 (T017) fails; temporarily revert
   T012's `MERGED` clause to `step = "triage"` and confirm Gate 97's
   self-test (T013) fails. Revert each mutation afterward via a matching
   Edit and confirm the revert is byte-identical to HEAD with `git diff`
@@ -523,7 +542,7 @@ Phase 2 touches until T010 (Phase 3) imports the module.
 # T004 and T005 touch only new, dedicated files -- can be drafted
 # alongside T002/T003 (board_item_marker.py, a different file):
 Task: "New module board_prove_recovery.py: is_recoverable(), find_recoverable_items()"
-Task: "New Gate 128: verify-board-prove-recovery.py fixtures"
+Task: "New Gate 136: verify-board-prove-recovery.py fixtures"
 ```
 
 ---
@@ -571,7 +590,7 @@ Task: "New Gate 128: verify-board-prove-recovery.py fixtures"
 
 ## Maintainer Feedback — FR-011 case (a) unreachable
 - [ ] In board-loop.yml's displacement step (~:319, inside the `find_undetected_merges()` marker write), pass `--outcome-reason "$(printf '%s' "$row" | jq -r .recorded_reason)"` so the written `prove` marker carries `RECORDED_REASON`, sourced from `find_undetected_merges()` as the one home.
-- [ ] Extend Gate 128 (`verify-board-prove-recovery.py`) to assert the displacement-step writer actually passes `--outcome-reason`, not just that the reader accepts it.
+- [ ] Extend Gate 136 (`verify-board-prove-recovery.py`) to assert the displacement-step writer actually passes `--outcome-reason`, not just that the reader accepts it.
 
 
 ## Maintainer Feedback — directed prove-gate dispatch can never reach prove
@@ -588,9 +607,9 @@ Task: "New Gate 128: verify-board-prove-recovery.py fixtures"
 - [X] Add a "`pull_request: closed` group" column to spec 060's `concurrency-groups.md` holding `` `wing-commander-board-loop-prove-` `` (PR number noted outside the backticks), fixing the accidental brace-parsing in the ordinary column.
 
 ## Maintainer Feedback — Gate number collisions
-- [ ] Renumber `verify-board-prove-recovery.py` from Gate 128 (colliding with spec 074's #821) to **Gate 136**.
-- [ ] Renumber `verify-prove-path-concurrency.py` from Gate 129 (colliding with main's spec-cross-reference Gate 129 at lint-workflows.yml:4739) — either fold it into Gate 136 since Gate 89's byte-pin already covers FR-018, or give it **Gate 137** if still free.
-- [ ] Update every citing location: lint-workflows.yml:4783/4793/4797/4805; both scripts' line-2 headers; verify-board-prove.py:127; tasks.md lines 17, 18, 58, 112, 147, 183, 369, 383, 465, 526.
+- [X] Renumber `verify-board-prove-recovery.py` from Gate 128 (colliding with spec 074's #821) to **Gate 136**.
+- [X] Renumber `verify-prove-path-concurrency.py` from Gate 129 (colliding with main's spec-cross-reference Gate 129 at lint-workflows.yml:4739) — gave it **Gate 137** (kept separate from Gate 136 rather than folded in: Gate 89's own byte-pin covers the directed-group expression only, not the three FR-018 pull_request-branch properties this gate's own fixtures exercise).
+- [X] Update every citing location: lint-workflows.yml:4783/4793/4797/4805; both scripts' line-2 headers; verify-board-prove.py:127; tasks.md lines 17, 18, 58, 112, 147, 183, 369, 383, 465, 526.
 
 ## Maintainer Feedback — false displacement record from this PR's own new concurrency group
 - [ ] In `select`'s displacement step (board-loop.yml :216-321), skip (defer to the next tick) any merge whose `board-loop.yml` `pull_request` run isn't `completed`, matched by `headBranch` to the PR's `headRefName`, so a merge mid-wait in its own new per-PR group isn't falsely reported as displaced.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gate 128 — board_prove_recovery.is_recoverable()/find_recoverable_items()
+"""Gate 136 — board_prove_recovery.is_recoverable()/find_recoverable_items()
 resolve FR-011/FR-011a/FR-011b/FR-011c correctly (specs/096-durable-prove-
 entry research.md D5), and board_item_marker.write_marker()/main() carry
 the two fields this feature adds (research.md D4) round-trip, including a

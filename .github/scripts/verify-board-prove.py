@@ -124,7 +124,7 @@ JOINS_DIRECTED_GROUP_CASES = [
 # prove-path-concurrency.md) inserted a third, per-merged-PR branch between
 # the directed branch and the ordinary fallback, so prove-gate/prove's own
 # `pull_request` trigger no longer shares the `wing-commander-board-loop`
-# group with select/triage/route/fix/review/readiness either -- Gate 129
+# group with select/triage/route/fix/review/readiness either -- Gate 137
 # (verify-prove-path-concurrency.py) asserts that half; this constant only
 # needed its own literal updated to match.
 DIRECTED_GROUP_EXPR = (
