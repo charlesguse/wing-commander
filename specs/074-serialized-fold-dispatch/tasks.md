@@ -379,3 +379,12 @@ Task: "Add fixtures under wing-commander-fold-queue-release/tests/"
 ### Round-3 review of 9e87d013 (maintainer, 2026-10-01)
 
 - [ ] T064 **B6 is not done.** There's no task for it and no fold commit. `fold-turn-dispatch` (pr-conversation.yml:2965-3150) still has no `always()` release, and admit (`admit/action.yml:110-113`) still leaves its ticket enqueued when await times out. If `fold-turn-dispatch` or `fold-turn-act` fails after admitting, the downstream job's `always()` release never runs, so the ticket sits until the owning run completes plus `stale-after-minutes`. The new T063 hard-fail (`claim-dispatch/action.yml:148-150`) is one more way into this. **Fix:** an `if: always()` release step in each fold-turn job for its own token, and admit dequeues its own ticket on timeout.
+
+## Maintainer Feedback
+
+### Round-3 review of 9e87d013 (maintainer, 2026-10-01)
+
+- [ ] T065 **B3 is only partly done** (fold-cycle-guard.yml). "Record the redispatched run" (:552) uses the default `success()`, and `new-run-id` is written at :537, after `gh issue comment` (:533). So a failed comment, or a run-list poll that misses past 30 seconds, leaves the live redispatched run unrecorded. Its ticket is then stale-reclaimed. A second loss reaches `decide` with an empty `round` (:376), sets `should-attempt-redispatch=true` (:420), and the claim dies on `${ROUND:?}` (ledger.sh:269), which breaks FR-016a. **Fix:**
+  - emit `new-run-id` right after the poll, and gate Record with `!cancelled() &&`;
+  - treat an empty `round` in `decide` as notice-only;
+  - preferably, have `fold-turn-implement` call `record-implement-run` with its own `github.run_id` and admit's round, so correlation never depends on a poll.
