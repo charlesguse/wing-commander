@@ -21,7 +21,7 @@ jobs:
     permissions:
       contents: write
       issues: write
-      actions: read
+      actions: write
       id-token: write
     uses: ./.github/workflows/fold-cycle-guard.yml
     with:

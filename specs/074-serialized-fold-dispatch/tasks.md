@@ -302,7 +302,9 @@ Task: "Add fixtures under wing-commander-fold-queue-release/tests/"
 
 ### Follow-up review of 511913b3 (maintainer, 2026-09-30)
 
-- [ ] T053 **B1 (blocking): the 9b wrapper can never start.** `wing-commander-9b-fold-cycle-guard.yml:24` grants `actions: read`, but `fold-cycle-guard.yml:180`'s `guard` job asks for `actions: write`, which its `gh workflow run` needs. GitHub rejects a reusable-workflow call that asks for more than the caller grants, so every run fails at startup and the lost-cycle guard never runs. **Fix:** grant `actions: write` in the wrapper.
+- [X] T053 **B1 (blocking): the 9b wrapper can never start.** `wing-commander-9b-fold-cycle-guard.yml:24` grants `actions: read`, but `fold-cycle-guard.yml:180`'s `guard` job asks for `actions: write`, which its `gh workflow run` needs. GitHub rejects a reusable-workflow call that asks for more than the caller grants, so every run fails at startup and the lost-cycle guard never runs. **Fix:** grant `actions: write` in the wrapper.
+
+  Done: changed `wing-commander-9b-fold-cycle-guard.yml`'s `fold-cycle-guard` job permissions from `actions: read` to `actions: write`, matching the `guard` job's own declared requirement in `fold-cycle-guard.yml:180`.
 
 - [ ] T054 **B2 (blocking): a stop-only run queues behind the run it is meant to stop** (FR-005 / SC-009, a regression of T072). A stop-only run's `legs` includes the stop leg (:1344), because the stop procedure runs inside `act` (:2728), so `fold-turn-act` (:1520-1527) and `fold-turn-dispatch` enqueue for it. Scenario: run A holds the act ticket, or an implement ticket is held, and the maintainer comments "stop"; run S waits until A's act or the implement run finishes (up to ~125 minutes), then reports "nothing was cancelled". Gate 128 scenario 6 (verify-fold-queue-admission.py:336-345) models a stop-only run as `legs=[]`, which doesn't match reality. **Fix:** have classify emit a stop-only flag; skip `fold-turn-act` and `fold-turn-dispatch` when it's set and let `act`/`dispatch-once` accept a skipped fold-turn in that case; fix scenario 6 to use a real stop leg.
 
