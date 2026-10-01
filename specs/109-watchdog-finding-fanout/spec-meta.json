@@ -3,7 +3,7 @@
   "spec_dir": "specs/109-watchdog-finding-fanout",
   "feature_num": "109",
   "stage": "implement",
-  "iteration": 4,
+  "iteration": 5,
   "spec_branch": "spec/109-watchdog-finding-fanout",
   "pending_re_review_from": []
 }
