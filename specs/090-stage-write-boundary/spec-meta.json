@@ -3,7 +3,7 @@
   "spec_dir": "specs/090-stage-write-boundary",
   "feature_num": "090",
   "stage": "implement",
-  "iteration": 4,
+  "iteration": 5,
   "spec_branch": "spec/090-stage-write-boundary",
   "pending_re_review_from": [
     "charlesguse"
