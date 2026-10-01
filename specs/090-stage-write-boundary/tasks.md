@@ -701,8 +701,8 @@ and evaporating into PR-body prose) that this feature exists to end.
 
 ## Maintainer Feedback — routing can be silently disabled or truncated (PR #836 review, item 6)
 
-- [ ] Make the "Route out-of-boundary tasks" step run regardless of `findings-filing-enabled`, or give routing its own enablement toggle, so disabling defect filing doesn't also silently disable FR-007 routing while the loop still reports "routed"
-- [ ] Surface `findings-cap`'s clamp-to-3 limit so a 4th out-of-boundary task in one cycle isn't silently dropped (FR-007/SC-005)
+- [x] Make the "Route out-of-boundary tasks" step run regardless of `findings-filing-enabled`, or give routing its own enablement toggle, so disabling defect filing doesn't also silently disable FR-007 routing while the loop still reports "routed"
+- [x] Surface `findings-cap`'s clamp-to-3 limit so a 4th out-of-boundary task in one cycle isn't silently dropped (FR-007/SC-005)
 
 ## Maintainer Feedback — filed routed-item text contradicts itself (PR #836 review, item 7)
 

@@ -2589,13 +2589,21 @@ jobs:
       # truncated run (FR-013), mirroring "File findings from this run"'s
       # own position and continue-on-error safety net.
       - name: Route out-of-boundary tasks
+        id: route-out-of-boundary
         if: ${{ !cancelled() && steps.final.outputs.ok == 'true' && steps.final.outputs.truncated != 'true' && steps.final.outputs.routed == 'true' }}
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-stage-findings
         with:
           token: ${{ env.WC_BOT_TOKEN }}
           stage: implement
-          enabled: ${{ inputs.findings-filing-enabled }}
+          # FR-007/SC-005 (PR #836 review, item 6): deliberately NOT wired
+          # from findings-filing-enabled -- routing a task outside the
+          # write boundary is a structural part of this loop's own
+          # termination condition (the loop has already decided
+          # routed=true), not the optional defect-reporting channel that
+          # toggle governs, so disabling defect filing must not silently
+          # disable routing too.
+          enabled: "true"
           channel-mode: structured-array
           findings-json: ${{ steps.final.outputs.write-boundary-findings-json }}
           finding-kind: routed-task
@@ -2604,6 +2612,19 @@ jobs:
           lifecycle-issue-number: ${{ inputs.issue-number }}
           label-prefix: ${{ inputs.write-boundary-label-prefix }}
           cap: ${{ inputs.findings-cap }}
+
+      # FR-007/SC-005 (PR #836 review, item 6): wing-commander-stage-findings
+      # clamps its own per-run cap to 3 (MAX_SLOTS) regardless of what
+      # findings-cap requests, so a cycle whose only unchecked work is 4+
+      # out-of-boundary tasks loses the 4th silently -- the loop has
+      # already terminated on this cycle's routed hand-off, so no later
+      # cycle re-classifies it. Surfaced as a warning annotation rather
+      # than left buried only in the composite's own step summary.
+      - name: Warn on dropped out-of-boundary tasks (cap exceeded)
+        if: ${{ !cancelled() && steps.route-out-of-boundary.outputs.dropped-cap != '' && steps.route-out-of-boundary.outputs.dropped-cap != '0' }}
+        shell: bash
+        run: |
+          echo "::warning::Route out-of-boundary tasks: ${{ steps.route-out-of-boundary.outputs.dropped-cap }} out-of-boundary task(s) this cycle classified were dropped for exceeding the per-run filing cap -- the loop has already ended on this cycle's routed hand-off, so these will not be re-classified by a later cycle; file them by hand."
 
       # When the cycle is judged failed, the most useful diagnostic is usually
       # the agent's own final message (e.g. "push rejected — the App lacks the
