@@ -2,7 +2,8 @@
   "issue": 750,
   "spec_dir": "specs/099-name-free-stage-identity",
   "feature_num": "099",
-  "stage": "implement",
+  "stage": "review",
   "iteration": 2,
-  "spec_branch": "spec/099-name-free-stage-identity"
+  "spec_branch": "spec/099-name-free-stage-identity",
+  "pending_re_review_from": []
 }
