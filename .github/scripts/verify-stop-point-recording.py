@@ -23,7 +23,12 @@ WHAT IT CHECKS
    comment win" answer agrees with `find_stop_request()`'s `stand_down` on
    every fixture under `.github/scripts/tests/board-stop-check/` (Gate 87's
    own corpus, reused, plus this feature's FR-016/FR-009 fixtures, plus the
-   FR-006/FR-008 same-run-record fixture, maintainer review fold leg-1).
+   FR-006/FR-008 same-run-record fixture, maintainer review fold leg-1) --
+   AND, for every fixture carrying its own `expected.stand_down`, both
+   functions' answer agrees with that value too (maintainer review fold
+   leg-0: the two functions agreeing with EACH OTHER is not enough, since a
+   mutation that moves both functions' baseline computation the same wrong
+   way would still agree with each other while being wrong).
 5. Selection exclusion: a fixture issue carrying a `stalled` marker plus
    `board:stalled` is excluded by `is_excluded()` and never returned by
    `in_flight_candidate()`/`select()`, across ten simulated passes (SC-001).
@@ -233,6 +238,21 @@ def check_decision_function_agreement(verbose=True):
         elif verbose:
             print("[ok] check 4: {0}: both functions agree (stand_down={1!r})".format(
                 os.path.basename(path), stand_down))
+        # maintainer review fold leg-0: agreement between the two functions
+        # is not by itself enough -- a mutation that moves both functions'
+        # baseline computation the same wrong way would still agree with
+        # each other while disagreeing with the fixture's own known-correct
+        # answer. Compare against `expected.stand_down` too, for every
+        # fixture that carries one (Gate 87's own corpus already does;
+        # this feature's four new fixtures carry one for this reason).
+        expected = spec.get("expected")
+        if expected is not None and stand_down != expected.get("stand_down"):
+            failures += 1
+            if verbose:
+                print("::error::verify-stop-point-recording: {0}: find_stop_request()."
+                      "stand_down={1!r} but the fixture's own expected stand_down={2!r} "
+                      "(check 4).".format(os.path.basename(path), stand_down,
+                                          expected.get("stand_down")))
     return failures
 
 
@@ -429,36 +449,42 @@ def selftest_check4():
     return 0
 
 
+def _pre_fix_find_stop_request(comments, current_run_id, bot_login):
+    """The pre-FR-006/FR-008 shape of `find_stop_request()`: every marker
+    advances the baseline, including one carrying `current_run_id` -- shared
+    by `selftest_check4_samerun_record` (reverts this function alone) and
+    `selftest_check4_samerun_record_both` (reverts this and
+    `_pre_fix_find_stop_command_comment` together)."""
+    ordered = sorted(comments or [], key=lambda c: c.get("created_at") or "")
+    current_run_id = str(current_run_id)
+    baseline = ""
+    last_other_run_id = None
+    for comment in ordered:
+        if not board_stop_check.is_loop_marker_author(comment, bot_login):
+            continue
+        match = board_stop_check.last_run_match(comment.get("body"))
+        if not match:
+            continue
+        baseline = comment.get("created_at") or baseline
+        run_id = match.group(2)
+        if run_id != current_run_id:
+            last_other_run_id = run_id
+    stop_seen = False
+    for comment in ordered:
+        if (comment.get("created_at") or "") < baseline:
+            continue
+        if (comment.get("author_association") in board_stop_check.MAINTAINER_ASSOCIATIONS
+                and board_stop_check.is_stop_command(comment.get("body"))):
+            stop_seen = True
+    if not stop_seen:
+        return board_stop_check.StopDecision(False, None)
+    return board_stop_check.StopDecision(True, last_other_run_id)
+
+
 def selftest_check4_samerun_record():
     case = ("own-run-record-does-not-undo-stand-down.json: pre-fix "
             "find_stop_request() (baseline advanced by every marker, "
             "including same-run ones) -> check 4 fails")
-
-    def _pre_fix_find_stop_request(comments, current_run_id, bot_login):
-        ordered = sorted(comments or [], key=lambda c: c.get("created_at") or "")
-        current_run_id = str(current_run_id)
-        baseline = ""
-        last_other_run_id = None
-        for comment in ordered:
-            if not board_stop_check.is_loop_marker_author(comment, bot_login):
-                continue
-            match = board_stop_check.last_run_match(comment.get("body"))
-            if not match:
-                continue
-            baseline = comment.get("created_at") or baseline
-            run_id = match.group(2)
-            if run_id != current_run_id:
-                last_other_run_id = run_id
-        stop_seen = False
-        for comment in ordered:
-            if (comment.get("created_at") or "") < baseline:
-                continue
-            if (comment.get("author_association") in board_stop_check.MAINTAINER_ASSOCIATIONS
-                    and board_stop_check.is_stop_command(comment.get("body"))):
-                stop_seen = True
-        if not stop_seen:
-            return board_stop_check.StopDecision(False, None)
-        return board_stop_check.StopDecision(True, last_other_run_id)
 
     original = board_stop_check.find_stop_request
     board_stop_check.find_stop_request = _pre_fix_find_stop_request
@@ -466,6 +492,55 @@ def selftest_check4_samerun_record():
         failures = check_decision_function_agreement(verbose=False)
     finally:
         board_stop_check.find_stop_request = original
+    if not failures:
+        print("::error::verify-stop-point-recording self-test: {0}: NOT caught.".format(case))
+        return 1
+    print("note: mutation caught ({0}: {1} fixture(s) disagreed).".format(case, failures))
+    return 0
+
+
+def _pre_fix_find_stop_command_comment(comments, current_run_id, bot_login):
+    """Mirrors `_pre_fix_find_stop_request` above, but for
+    `find_stop_command_comment()` -- drops the same-run-id exclusion
+    (FR-006/FR-008) from its baseline computation too, so a self-test can
+    revert the fix in BOTH functions at once (maintainer review: reverting
+    only one function makes them disagree with each other, which check 4's
+    agreement half already catches; reverting both keeps them agreeing with
+    each other while both disagree with a fixture's own `expected`)."""
+    ordered = sorted(comments or [], key=lambda c: c.get("created_at") or "")
+    baseline = ""
+    for comment in ordered:
+        if not board_stop_check.is_loop_marker_author(comment, bot_login):
+            continue
+        match = board_stop_check.last_run_match(comment.get("body"))
+        if not match:
+            continue
+        baseline = comment.get("created_at") or baseline
+    winner = None
+    for comment in ordered:
+        if (comment.get("created_at") or "") < baseline:
+            continue
+        if (comment.get("author_association") in board_stop_check.MAINTAINER_ASSOCIATIONS
+                and board_stop_check.is_stop_command(comment.get("body"))):
+            winner = comment
+    return winner
+
+
+def selftest_check4_samerun_record_both():
+    case = ("own-run-record-does-not-undo-stand-down.json: pre-fix "
+            "find_stop_request() AND find_stop_command_comment() reverted "
+            "together (both lose the same-run baseline exclusion, so they "
+            "still agree with each other) -> check 4 fails against the "
+            "fixture's own expected stand_down")
+    original_request = board_stop_check.find_stop_request
+    original_comment = board_stop_check.find_stop_command_comment
+    board_stop_check.find_stop_request = _pre_fix_find_stop_request
+    board_stop_check.find_stop_command_comment = _pre_fix_find_stop_command_comment
+    try:
+        failures = check_decision_function_agreement(verbose=False)
+    finally:
+        board_stop_check.find_stop_request = original_request
+        board_stop_check.find_stop_command_comment = original_comment
     if not failures:
         print("::error::verify-stop-point-recording self-test: {0}: NOT caught.".format(case))
         return 1
@@ -501,8 +576,8 @@ def selftest_check6():
 
 SELFTESTS = (
     selftest_check1, selftest_check2, selftest_check3,
-    selftest_check4, selftest_check4_samerun_record, selftest_check5, selftest_check6,
-    selftest_check7,
+    selftest_check4, selftest_check4_samerun_record, selftest_check4_samerun_record_both,
+    selftest_check5, selftest_check6, selftest_check7,
 )
 
 

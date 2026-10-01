@@ -625,7 +625,7 @@ kept to one session to avoid edit collisions).
 
 ## Maintainer Feedback
 
-- [ ] **Blocking:** The new fixtures' `expected` values are never checked — Gate 87's hard-coded `FIXTURES` (`verify-board-stop-check.py:68-78`) lists none of the four new fixtures, and Gate 135 check 4 only checks that `find_stop_request` and `find_stop_command_comment` agree with each other, not against `expected`. Add the four new fixtures to Gate 87's `FIXTURES` list, or compare against `spec["expected"]` in check 4. Add a self-test that reverts the same-run fix in both functions together and asserts the gate(s) then fail.
+- [X] **Blocking:** The new fixtures' `expected` values are never checked — Gate 87's hard-coded `FIXTURES` (`verify-board-stop-check.py:68-78`) lists none of the four new fixtures, and Gate 135 check 4 only checks that `find_stop_request` and `find_stop_command_comment` agree with each other, not against `expected`. Add the four new fixtures to Gate 87's `FIXTURES` list, or compare against `spec["expected"]` in check 4. Add a self-test that reverts the same-run fix in both functions together and asserts the gate(s) then fail.
 
 
 ## Maintainer Feedback
