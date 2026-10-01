@@ -42,6 +42,10 @@ GH_STUB = r"""#!/bin/sh
 echo "gh $*" >> "$GH_CALLS"
 case " $* " in
   *" workflow "*"run "*)
+    if [ "${GH_REJECT_FOLD_QUEUE_TOKEN:-}" = "true" ] && printf '%s\n' "$*" | grep -q "fold_queue_token"; then
+      echo "HTTP 422: Unexpected inputs provided: [\"fold_queue_token\"]" >&2
+      exit 1
+    fi
     exit "${GH_WORKFLOW_RUN_EXIT:-0}"
     ;;
   *" run "*"list "*)
@@ -135,7 +139,8 @@ def folded_json_for(fold_commits):
 
 def run_dispatch(root, step_script, base_sha, repo, implement_workflow,
                  run_list_json='[{"url":"https://example.invalid/runs/1"}]',
-                 folded_json="[]"):
+                 folded_json="[]", fold_queue_token="",
+                 reject_fold_queue_token=False):
     runner_temp = os.path.join(root, "runner_temp_{}".format(os.getpid()))
     os.makedirs(runner_temp, exist_ok=True)
     bindir, calls = _stub_gh(root)
@@ -146,7 +151,8 @@ def run_dispatch(root, step_script, base_sha, repo, implement_workflow,
         "IMPLEMENT_WORKFLOW": implement_workflow,
         "GITHUB_REPOSITORY": REPO, "GH_CALLS": calls,
         "GH_RUN_LIST_JSON": run_list_json, "PATH": path,
-        "FOLDED_JSON": folded_json,
+        "FOLDED_JSON": folded_json, "FOLD_QUEUE_TOKEN": fold_queue_token,
+        "GH_REJECT_FOLD_QUEUE_TOKEN": "true" if reject_fold_queue_token else "false",
     }
     rc, out, outputs, _summary = run_step(BASH, step_script, repo, env,
                                           runner_temp)
@@ -277,6 +283,66 @@ def run():
         if len(failures) == before:
             print("[ok] case 4: tip moved + folded-json empty -> "
                  "folded=false, tip-moved=true, nothing dispatched")
+
+        # Case 5 (T056, maintainer review of #821, B4): a fold-queue-token
+        # was supplied but the target workflow rejects it with a 422
+        # "unexpected inputs" -- the composite must retry once WITHOUT the
+        # token (today's pre-serialization behaviour for an un-migrated
+        # wrapper, T047) and report ticket-unused=true so a caller knows
+        # this ticket was never actually handed to the run it dispatched.
+        before = len(failures)
+        folds5 = [("leg-q", "queued item")]
+        repo5, base5, tip5 = make_repo(root, 5, folds5)
+        rc, out, outputs, calls = run_dispatch(
+            root, script, base5, repo5, IMPLEMENT_WORKFLOW,
+            folded_json=folded_json_for(folds5),
+            fold_queue_token="run-900-implement",
+            reject_fold_queue_token=True)
+        if rc != 0:
+            failures.append(f"case 5 (422 retry): step exited {rc}: {out}")
+        else:
+            if outputs.get("dispatched") != "true":
+                failures.append(f"case 5: expected dispatched=true after "
+                                f"the retry, got {outputs.get('dispatched')!r}")
+            if outputs.get("ticket-unused") != "true":
+                failures.append(f"case 5: expected ticket-unused=true, got "
+                                f"{outputs.get('ticket-unused')!r}")
+            if gh_call_count(calls, "workflow run") != 2:
+                failures.append(f"case 5: expected exactly 2 gh workflow "
+                                f"run calls (reject + retry), got "
+                                f"{gh_call_count(calls, 'workflow run')}.")
+            if gh_call_count(calls, "workflow run", "fold_queue_token") != 1:
+                failures.append("case 5: expected exactly 1 gh workflow run "
+                                "call carrying fold_queue_token (the first, "
+                                "rejected attempt) -- the retry must not "
+                                "carry it.")
+        if len(failures) == before:
+            print("[ok] case 5: fold-queue-token rejected with 422 -> "
+                 "retries without it, ticket-unused=true")
+
+        # Case 6: fold-queue-token accepted normally -> ticket-unused=false.
+        before = len(failures)
+        folds6 = [("leg-r", "ran item")]
+        repo6, base6, tip6 = make_repo(root, 9, folds6)
+        rc, out, outputs, calls = run_dispatch(
+            root, script, base6, repo6, IMPLEMENT_WORKFLOW,
+            folded_json=folded_json_for(folds6),
+            fold_queue_token="run-901-implement",
+            reject_fold_queue_token=False)
+        if rc != 0:
+            failures.append(f"case 6 (token accepted): step exited {rc}: {out}")
+        else:
+            if outputs.get("ticket-unused") != "false":
+                failures.append(f"case 6: expected ticket-unused=false when "
+                                f"the token is accepted normally, got "
+                                f"{outputs.get('ticket-unused')!r}")
+            if gh_call_count(calls, "workflow run") != 1:
+                failures.append(f"case 6: expected exactly 1 gh workflow "
+                                f"run call, got "
+                                f"{gh_call_count(calls, 'workflow run')}.")
+        if len(failures) == before:
+            print("[ok] case 6: fold-queue-token accepted -> "
+                 "ticket-unused=false")
     finally:
         import shutil
         shutil.rmtree(root, ignore_errors=True)
@@ -307,6 +373,18 @@ def _mutate_always_dispatches(script):
         sys.exit("::error::verify-fold-dispatch-composite --self-test: "
                  "expected one standalone-mode guard; update this harness.")
     return script.replace(needle, 'if false; then', 1)
+
+
+def _mutate_ticket_unused_never_set(script):
+    """T056 (B4): a caller relies on ticket-unused=true to know its
+    fold-queue ticket was abandoned by the 422-retry path. Reverting the
+    flag to always-false must be caught."""
+    needle = "ticket_unused=true"
+    if script.count(needle) != 1:
+        sys.exit("::error::verify-fold-dispatch-composite --self-test: "
+                 "expected one 'ticket_unused=true' assignment; update "
+                 "this harness.")
+    return script.replace(needle, "ticket_unused=false", 1)
 
 
 def self_test():
@@ -349,6 +427,19 @@ def self_test():
                   gh_call_count(calls2, "workflow run") > 0)
         check("a mutation that dispatches in standalone mode is caught",
              caught2, f"outputs={outputs2!r} rc={rc2}")
+
+        # A mutation that never reports ticket-unused=true (even on the
+        # 422-retry path) must be caught.
+        mutated4 = _mutate_ticket_unused_never_set(script)
+        repo4, base4, _tip4 = make_repo(root, 1, [("leg-w", "w")])
+        rc4, _out4, outputs4, calls4 = run_dispatch(
+            root, mutated4, base4, repo4, IMPLEMENT_WORKFLOW,
+            folded_json=folded_json_for([("leg-w", "w")]),
+            fold_queue_token="run-902-implement",
+            reject_fold_queue_token=True)
+        caught4 = (rc4 != 0 or outputs4.get("ticket-unused") != "true")
+        check("a mutation that never sets ticket-unused=true is caught",
+             caught4, f"outputs={outputs4!r} rc={rc4}")
 
         # Control: the unmutated step still behaves correctly.
         repo3, base3, _tip3 = make_repo(root, 1, [("leg-y", "y")])

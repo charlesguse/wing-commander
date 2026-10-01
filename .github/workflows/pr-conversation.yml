@@ -3400,8 +3400,13 @@ jobs:
           set -euo pipefail
           echo "id=${RUN_URL##*/}" >> "$GITHUB_OUTPUT"
 
+      # T056 (maintainer review of #821, B4): never correlates the
+      # dispatched run to this ticket when fold-dispatch reports
+      # ticket-unused -- that run was dispatched WITHOUT the ticket (the
+      # 422-retry path), so it does not hold it and must not be recorded as
+      # though it did.
       - name: Record this round's dispatched implement run
-        if: steps.dispatched-run-id.outputs.id != ''
+        if: steps.dispatched-run-id.outputs.id != '' && steps.fold-dispatch.outputs.ticket-unused != 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-fold-queue-ledger
         with:
           transform: record-implement-run
@@ -3438,8 +3443,19 @@ jobs:
       # timing out every later admission for this spec-dir. Runs after the
       # dispatch ticket's own release above so the implement ticket (its
       # immediate successor) has already become the queue head.
+      #
+      # T056 (maintainer review of #821, B4): also fires when fold-dispatch
+      # reports ticket-unused — a run WAS dispatched there (so
+      # dispatched-run-id IS set), but via the 422-retry path, which never
+      # received this ticket at all. fold-dispatch's own direct ledger
+      # release attempt for this case was a no-op (the dispatch-queue
+      # ticket released just above still held the head at that point in
+      # the job), so this is the one place that actually releases it, now
+      # that this ticket has reached the head.
       - name: Release an implement ticket this run's claim created but never handed to a real run
-        if: always() && needs.fold-turn-dispatch.outputs.implement-token != '' && steps.dispatched-run-id.outputs.id == ''
+        if: >-
+          always() && needs.fold-turn-dispatch.outputs.implement-token != '' &&
+          (steps.dispatched-run-id.outputs.id == '' || steps.fold-dispatch.outputs.ticket-unused == 'true')
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-fold-queue-release
         with:
           spec-dir: ${{ needs.classify-and-announce.outputs.spec-dir }}
