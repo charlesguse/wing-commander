@@ -505,3 +505,10 @@ Task: "Pass spec-identity-is-own: 'false' in .github/workflows/board-loop.yml:90
 
 - [ ] **FR-014 warning step can take down the whole inspection (blocks merge).** `watchdog.yml:679-694` runs `gh issue comment` with no `continue-on-error`, ahead of all eight collectors, `signal-ids` and `aggregate`, which use the implicit `success()`. If the comment fails, every collector, aggregate, both reports and diagnose are skipped.
   - [ ] Add `continue-on-error: true`, or better, fold the warning into the aggregate report text
+
+## Maintainer Feedback
+
+- [ ] **Name fallback leaves out `watchdog` on a false premise.** `action.yml:346-369` / `watchdog.yml:3613-3617` claim watchdog runs always carry `stage: watchdog` in a record, but the only watchdog record (`metrics-record-diagnose`) is written only when diagnose runs. A clean or early-failed watchdog run inspected by `run-id` resolves empty: the self-dispatch cap guard (:3627) is skipped, and four collectors report unresolved. The old run-name guard handled this case.
+  - [ ] Add `"Wing Commander · 8 watchdog") name_stage="watchdog"` to the name-fallback step
+  - [ ] Update `data-model.md` and the gate comment at `verify-no-reference-name-stage-match.py:66`
+  - [ ] Update both comments making the false "always carries a record" claim
