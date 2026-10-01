@@ -817,3 +817,9 @@ and evaporating into PR-body prose) that this feature exists to end.
   longer describes the shipped mechanism. Update it, and check whether the
   Project Structure section's touch-point list (~line 99-134) should name
   the "Dispatch next step" edit it currently omits.
+
+
+## Maintainer Feedback — constitution Sync Impact Report order/version drift (PR #836 review, item 11)
+
+- [ ] Move this PR's Sync Impact Report in `.specify/memory/constitution-history.md` (~:29) to the top of the list, above #901's 2026-10-01 report — currently it sits below that report even though both claim the same "2.1.0 → 2.2.0" range
+- [ ] Change this PR's report's Version line to `2.2.0 → 2.3.0` (matching `constitution.md:60`'s already-correct "2.3.0") and refresh its date to match when this PR's amendment actually lands
