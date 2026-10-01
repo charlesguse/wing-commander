@@ -1,0 +1,29 @@
+{
+  "$comment": [
+    "Registered exceptions to Gate 129's skill-board-loop-concurrency-claim",
+    "check, enforced by",
+    ".github/scripts/verify-skill-board-loop-concurrency-claim.py at",
+    "pull-request time -- see",
+    "specs/089-skill-example-drift/contracts/skill-drift-gate.md.",
+    "",
+    "The one claim this gate owns is",
+    ".claude/skills/spec-cross-reference/SKILL.md's Over-rated example's",
+    "assertion about board-loop.yml's concurrency configuration (job range,",
+    "ordinary group, directed group, cancel-in-progress). A PR that changes",
+    "board-loop.yml's concurrency shape and cannot also edit .claude/ (the",
+    "implement-stage case, FR-013) records a waiver entry here instead of",
+    "being stuck.",
+    "",
+    "Every entry is STALE-CHECKED in both directions, the same as",
+    "single-home-waivers.json and stage-invariant-waivers.json: an entry",
+    "whose {property, job} pair matches no divergence Gate 129 currently",
+    "computes fails the gate as stale, so a waiver cannot outlive the skill",
+    "update it was waiting on. A divergence with no matching entry fails the",
+    "gate as blocking, unwaived drift.",
+    "",
+    "No waivers are expected to exist at merge time for this feature's own",
+    "introduction (spec 089's own Assumptions section) -- board-loop.yml on",
+    "main already matches the skill's Over-rated example."
+  ],
+  "waivers": []
+}
