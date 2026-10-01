@@ -55,7 +55,7 @@ FR-014 warning) read this output; nothing below can be built without it.
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete.
 
-- [ ] T003 Add a new `id: name-fallback` step to
+- [X] T003 Add a new `id: name-fallback` step to
       `.github/actions/wing-commander-inspected-run-identity/action.yml`,
       immediately after the existing `id: stage` step (lines 285-318,
       which produces `record-stage`). The new step runs only when
@@ -71,7 +71,7 @@ FR-014 warning) read this output; nothing below can be built without it.
       Implements contracts/resolved-stage-identity.md Rule 1 and
       data-model.md's Resolved stage identity / Name-derived stage map
       tables.
-- [ ] T004 Wire `resolved-stage` and `resolved-stage-source` into the
+- [X] T004 Wire `resolved-stage` and `resolved-stage-source` into the
       composite's `outputs:` block (`.github/actions/wing-commander-
       inspected-run-identity/action.yml` lines 132-156, alongside the
       existing `record-stage` output at lines 151-156), sourced from
@@ -80,7 +80,7 @@ FR-014 warning) read this output; nothing below can be built without it.
       `$RUNNER_TEMP/spec-slug-metrics-record`) and must not change
       `record-stage`'s own value or type (Rule 4 — spec 109 keys
       `tool-denial` on it unchanged).
-- [ ] T005 Expose `resolved-stage`/`resolved-stage-source` as `collect`
+- [X] T005 Expose `resolved-stage`/`resolved-stage-source` as `collect`
       job outputs in `.github/workflows/watchdog.yml` (the job's
       `outputs:` block, lines 356-366), sourced from
       `steps.spec-slug.outputs.resolved-stage`/`-source` — the same

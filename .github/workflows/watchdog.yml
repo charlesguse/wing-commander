@@ -364,6 +364,8 @@ jobs:
       lifecycle-issue: ${{ steps.spec-slug.outputs.lifecycle-issue }}
       slug: ${{ steps.spec-slug.outputs.slug }}
       run-url: ${{ steps.run-meta.outputs.url }}
+      resolved-stage: ${{ steps.spec-slug.outputs.resolved-stage }}
+      resolved-stage-source: ${{ steps.spec-slug.outputs.resolved-stage-source }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
         uses: actions/checkout@v5

@@ -154,6 +154,18 @@ outputs:
       (lowercased, restricted to [a-z0-9._-]), or empty when the run left
       no readable record (#266).
     value: ${{ steps.stage.outputs.record-stage }}
+  resolved-stage:
+    description: >
+      `record-stage` if non-empty, else the FR-009 name-derived fallback
+      (the nine stages FR-014a names), else empty (#750). The one stage
+      identity every FR-002 consumer site except the slug-fallback
+      allowlist reads.
+    value: ${{ steps.name-fallback.outputs.resolved-stage }}
+  resolved-stage-source:
+    description: >
+      Which branch produced `resolved-stage`: `record`, `name`, or empty
+      when neither resolved anything (#750).
+    value: ${{ steps.name-fallback.outputs.resolved-stage-source }}
 
 runs:
   using: composite
@@ -316,3 +328,47 @@ runs:
           echo "stage: no metrics record of run ${RUN_ID:-?} names a stage -- the inspected run's stage is unresolved." >> "$GITHUB_STEP_SUMMARY"
         fi
         echo "record-stage=$record_stage" >> "$GITHUB_OUTPUT"
+
+    # #750 (R1/R2) -- the one site the FR-012 gate permits a reference
+    # display name to gate behavior. Runs only when the step above left
+    # record-stage empty; maps inputs.run-name through the fixed
+    # data-model.md table so every FR-002 consumer can read one
+    # resolved-stage output instead of matching a display name itself.
+    # Wing Commander · 8 watchdog is deliberately absent: the watchdog's
+    # own runs always carry stage: watchdog in their own record (spec.md
+    # Edge Cases, "Self-inspection"), so record-stage never falls through
+    # to this step for them.
+    - name: Resolve inspected run's stage from its display name, when the record left it unresolved
+      id: name-fallback
+      shell: bash
+      env:
+        RECORD_STAGE: ${{ steps.stage.outputs.record-stage }}
+        RUN_NAME: ${{ inputs.run-name }}
+      run: |
+        set -uo pipefail
+        name_stage=""
+        if [ -z "$RECORD_STAGE" ]; then
+          case "$RUN_NAME" in
+            "Wing Commander · 1 intake")        name_stage="intake" ;;
+            "Wing Commander · 2 clarify")       name_stage="clarify" ;;
+            "Wing Commander · 3 plan")          name_stage="plan" ;;
+            "Wing Commander · 4 tasks")         name_stage="tasks" ;;
+            "Wing Commander · 5 implement")     name_stage="implement" ;;
+            "Wing Commander · 6 finalize")      name_stage="finalize" ;;
+            "Wing Commander · 7 cleanup")       name_stage="cleanup" ;;
+            "Wing Commander · rebase")          name_stage="rebase" ;;
+            "Wing Commander · 9 pr conversation") name_stage="pr-conversation" ;;
+          esac
+        fi
+        resolved_stage="$RECORD_STAGE"
+        resolved_stage_source=""
+        if [ -n "$resolved_stage" ]; then
+          resolved_stage_source="record"
+        elif [ -n "$name_stage" ]; then
+          resolved_stage="$name_stage"
+          resolved_stage_source="name"
+        fi
+        {
+          echo "resolved-stage=$resolved_stage"
+          echo "resolved-stage-source=$resolved_stage_source"
+        } >> "$GITHUB_OUTPUT"
