@@ -52,6 +52,14 @@
 # genuinely malformed invocation (a missing required argument) exits
 # non-zero.
 #
+# review-gate-round-4 item 4: a path mentioned WITHOUT backtick quoting is
+# indistinguishable from prose merely naming a path in passing and is never
+# extracted as a candidate -- an accepted, narrow limitation of the
+# extraction rule (spec.md Edge Cases), not a case this script silently
+# mishandles. Loosening the rule to catch it risks the opposite failure
+# this script exists to avoid: mis-classifying ordinary prose as
+# out-of-boundary work.
+#
 # Emits, on stdout, key=value/heredoc-marker lines shaped for the caller
 # to append straight to $GITHUB_OUTPUT (count-tasks-checkboxes.sh's own
 # convention):

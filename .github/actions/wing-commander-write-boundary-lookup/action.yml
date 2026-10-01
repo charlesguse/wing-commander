@@ -96,20 +96,39 @@ runs:
           if [ "${#lines[@]}" -gt 0 ]; then
             fp_out="$(bash "$FP_SCRIPT" implement "$TASKS_PATH" "${lines[@]}")"
             fps="$(printf '%s\n' "$fp_out" | sed -n 's/^fingerprint=//p')"
+            # review-gate-round-4 item 9: every marker below is matched
+            # against the SAME issues_file, so match-issue-by-marker.sh's own
+            # batch mode reads and jq-parses it ONCE for every marker, not
+            # once per marker -- the sibling fingerprint call just above was
+            # already batched this way; this loop used to call
+            # match-issue-by-marker.sh once per line, forking jq and
+            # re-parsing the whole issues file each time.
             i=0
+            marker_lines=()
+            markers=()
             while IFS= read -r fp; do
               line="${lines[$i]}"
               i=$((i + 1))
               [ -z "$fp" ] && continue
-              marker="<!-- wing-commander-finding: fingerprint=$fp -->"
-              match_json="$(bash "$MATCH_SCRIPT" "$issues_file" "$marker")"
-              found_url=""
-              [ -n "$match_json" ] && found_url="$(printf '%s' "$match_json" | jq -r '.url // empty')"
-              if [ -n "$found_url" ]; then
-                tmp="$(mktemp)"
-                jq --arg line "$line" --arg url "$found_url" '. + [{"line": $line, "url": $url}]' "$mapping_file" > "$tmp" && mv "$tmp" "$mapping_file"
-              fi
+              marker_lines+=("$line")
+              markers+=("<!-- wing-commander-finding: fingerprint=$fp -->")
             done <<< "$fps"
+            if [ "${#markers[@]}" -gt 0 ]; then
+              match_out="$(bash "$MATCH_SCRIPT" "$issues_file" "${markers[@]}")"
+              j=0
+              while IFS= read -r match_json; do
+                line="${marker_lines[$j]}"
+                j=$((j + 1))
+                found_url=""
+                if [ -n "$match_json" ] && [ "$match_json" != "null" ]; then
+                  found_url="$(printf '%s' "$match_json" | jq -r '.url // empty')"
+                fi
+                if [ -n "$found_url" ]; then
+                  tmp="$(mktemp)"
+                  jq --arg line "$line" --arg url "$found_url" '. + [{"line": $line, "url": $url}]' "$mapping_file" > "$tmp" && mv "$tmp" "$mapping_file"
+                fi
+              done <<< "$match_out"
+            fi
           fi
         fi
         rendered=""

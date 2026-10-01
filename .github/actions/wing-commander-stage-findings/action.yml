@@ -416,10 +416,19 @@ runs:
             # it could. Mirrors finalize.yml's own caller of this script
             # (wing-commander-write-boundary-lookup), which already
             # tolerates a failed/empty fingerprint line without check=True.
-            script = os.path.join(
-                os.environ["GITHUB_ACTION_PATH"], "..", "_shared",
-                "compute-finding-fingerprint.sh")
+            #
+            # review-gate-round-4 item 5: the GITHUB_ACTION_PATH lookup and
+            # the subprocess call must share ONE try/except -- a missing
+            # env var used to raise KeyError outside this function's try
+            # block entirely, crashing the whole findings-prepare step
+            # (the exact cascade item 5 above exists to prevent) instead of
+            # degrading just this one finding. OSError covers a missing
+            # bash/script executable (FileNotFoundError is a subclass),
+            # which check=True alone does not catch.
             try:
+                script = os.path.join(
+                    os.environ["GITHUB_ACTION_PATH"], "..", "_shared",
+                    "compute-finding-fingerprint.sh")
                 proc = subprocess.run(
                     ["bash", script, stage, file_path, gate_or_artifact],
                     capture_output=True, text=True, check=True)
@@ -427,7 +436,7 @@ runs:
                     line.split("=", 1) for line in proc.stdout.strip().splitlines()
                     if "=" in line)
                 return values["fingerprint"], values.get("verified") == "true"
-            except (subprocess.CalledProcessError, KeyError, ValueError):
+            except (subprocess.CalledProcessError, KeyError, ValueError, OSError):
                 return None, False
 
         def compose_recap(finding):

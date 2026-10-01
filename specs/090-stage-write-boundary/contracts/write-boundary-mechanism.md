@@ -137,10 +137,15 @@ default `defect`).
 |---|---|---|
 | Recap phrase (created) | `"a defect was filed by the $STAGE stage"` | `"work the $STAGE stage could not complete under its write boundary was filed"` |
 | Recap phrase (commented) | `"a defect met by the $STAGE stage was recorded on an existing issue"` | `"work the $STAGE stage still could not complete under its write boundary was recorded on an existing issue"` |
-| `label-description` | `"...the $STAGE stage met a defect outside its own task"` | `"...the $STAGE stage was assigned work outside its write boundary"` |
+| `label-description` | `"...the $STAGE stage met a defect outside its own task"` | `"...the $STAGE stage was given work outside its write boundary"` |
 
 No other input, output, the fingerprint formula (§ below), the cap, or the
-dedup call changes for either kind.
+dedup call changes for either kind. (review-gate-round-4 item 2: the
+`routed-task` phrase above is shorter than an earlier draft's "was assigned
+work..." — GitHub caps a label description at 100 characters, and that
+wording ran over for the longest stage name, "implement"; the shipped
+phrase is the one that fits, and this contract now states it, not the
+draft it replaced.)
 
 **Internal refactor**: the anchor/fallback fingerprint computation (today
 inline, action.yml lines ~307-335) is extracted to

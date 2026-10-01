@@ -65,5 +65,27 @@ runs:
         TASKS_PATH: ${{ inputs.tasks-path }}
         SPEC_DIR: ${{ inputs.spec-dir }}
       run: |
-        bash "$GITHUB_ACTION_PATH/../_shared/classify-out-of-boundary-tasks.sh" \
-          "$UNCHECKED_ITEMS" "$NO_WRITE_PATHS" "$TASKS_PATH" "$SPEC_DIR" >> "$GITHUB_OUTPUT"
+        # review-gate-round-4 item 6: continue-on-error alone makes a
+        # genuine script crash indistinguishable from "nothing out of
+        # boundary" -- surfaced with ::warning:: instead, mirroring the
+        # sibling wing-commander-write-boundary-lookup composite's own
+        # failure handling for the equivalent case.
+        set +e
+        output="$(bash "$GITHUB_ACTION_PATH/../_shared/classify-out-of-boundary-tasks.sh" \
+          "$UNCHECKED_ITEMS" "$NO_WRITE_PATHS" "$TASKS_PATH" "$SPEC_DIR")"
+        rc=$?
+        set -e
+        if [ "$rc" -ne 0 ]; then
+          # Written to the step's own stdout, NOT redirected into
+          # $GITHUB_OUTPUT below -- an earlier draft piped this whole
+          # if/fi block into $GITHUB_OUTPUT, which silently swallowed the
+          # warning text into the output file instead of the log.
+          echo "::warning::wing-commander-write-boundary: classify-out-of-boundary-tasks.sh exited $rc -- treating this run as having nothing out-of-boundary rather than silently masking a real crash."
+          output="$(printf '%s\n' \
+            "findings-json<<WING_COMMANDER_WRITE_BOUNDARY_FINDINGS_EOF" \
+            "[]" \
+            "WING_COMMANDER_WRITE_BOUNDARY_FINDINGS_EOF" \
+            "all-unchecked-out-of-boundary=false" \
+            "out-of-boundary-count=0")"
+        fi
+        printf '%s\n' "$output" >> "$GITHUB_OUTPUT"

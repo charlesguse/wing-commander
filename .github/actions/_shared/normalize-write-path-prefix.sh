@@ -11,9 +11,10 @@
 #
 # Invoke with
 #   bash "$GITHUB_ACTION_PATH/../_shared/normalize-write-path-prefix.sh" <prefix>
-# Prints the normalized prefix (trimmed, exactly one trailing slash, "" for
-# an empty/whitespace-only input) on stdout. Never fails -- normalization
-# has no error case, only canonical and non-canonical input.
+# Prints the normalized prefix (trimmed, leading "./" stripped, exactly one
+# trailing slash, "" for an empty/whitespace-only/"./"-only input) on
+# stdout. Never fails -- normalization has no error case, only canonical
+# and non-canonical input.
 set -uo pipefail
 
 prefix="${1-}"
@@ -21,6 +22,15 @@ prefix="${1-}"
 # before this script existed.
 prefix="${prefix#"${prefix%%[![:space:]]*}"}"
 prefix="${prefix%"${prefix##*[![:space:]]}"}"
+
+# review-gate-round-4 item 1: strip every leading "./" the same way the
+# classifier's normalize_token() already strips it from candidate tokens --
+# otherwise a no-write-paths entry spelled "./.claude/" never normalizes to
+# the same prefix as ".claude/" and both classification and the Edit()/
+# Write() glob silently no-op for it.
+while [ "${prefix#./}" != "$prefix" ]; do
+  prefix="${prefix#./}"
+done
 
 if [ -z "$prefix" ]; then
   echo ""

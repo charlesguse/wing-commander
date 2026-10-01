@@ -830,16 +830,18 @@ def case_unverifiable_anchor_is_rejected_and_recorded():
           state and state["dropped_malformed"] == [] and state["dropped_cap"] == 0, state)
 
 
-def case_fingerprint_script_crash_drops_only_that_finding():
-    case = ("review-gate-round-1 item 5: compute-finding-fingerprint.sh "
-            "failing for one finding degrades only that finding, never "
-            "crashes the whole prepare step")
-    tmp = tempfile.mkdtemp(prefix="wc-sf-fp-crash-")
-    # Mirrors the REAL .github/ layout two levels deep (action-dir/../_shared
-    # and action-dir/../../scripts, exactly what the shipped prepare step
-    # resolves against GITHUB_ACTION_PATH) -- a shallower fake tree makes the
-    # step's OWN schema-validator import fail first, never reaching the
-    # fingerprint call this case targets.
+def _build_fake_fingerprint_action_tree(tmp, script_contents):
+    """Builds the fake .github/ layout (action-dir/../_shared and
+    action-dir/../../scripts, exactly what the shipped prepare step resolves
+    against GITHUB_ACTION_PATH) with a replacement
+    compute-finding-fingerprint.sh, returning the fake action dir to pass as
+    run_prepare's action_path. A shallower fake tree makes the step's OWN
+    schema-validator import fail first, never reaching the fingerprint call
+    these fixtures target.
+
+    review-gate-round-4 item 10: shared by both fingerprint-crash fixtures
+    below instead of each independently re-pasting this ~30-line builder, so
+    a future change to the fake tree's shape lands once."""
     dotgithub_dir = os.path.join(tmp, "dotgithub")
     fake_action_dir = os.path.join(dotgithub_dir, "actions", "fake-action")
     shared_dir = os.path.join(dotgithub_dir, "actions", "_shared")
@@ -865,13 +867,23 @@ def case_fingerprint_script_crash_drops_only_that_finding():
         fh.write(schema_text)
     fake_script = os.path.join(shared_dir, "compute-finding-fingerprint.sh")
     with open(fake_script, "w", encoding="utf-8", newline="\n") as fh:
-        fh.write(
-            "#!/usr/bin/env bash\n"
-            "case \"$3\" in\n"
-            "  *BREAKME*) exit 1 ;;\n"
-            "  *) echo \"fingerprint=deadbeef\"; echo \"verified=true\" ;;\n"
-            "esac\n")
+        fh.write(script_contents)
     os.chmod(fake_script, 0o755)
+    return fake_action_dir
+
+
+def case_fingerprint_script_crash_drops_only_that_finding():
+    case = ("review-gate-round-1 item 5: compute-finding-fingerprint.sh "
+            "failing for one finding degrades only that finding, never "
+            "crashes the whole prepare step")
+    tmp = tempfile.mkdtemp(prefix="wc-sf-fp-crash-")
+    fake_action_dir = _build_fake_fingerprint_action_tree(
+        tmp,
+        "#!/usr/bin/env bash\n"
+        "case \"$3\" in\n"
+        "  *BREAKME*) exit 1 ;;\n"
+        "  *) echo \"fingerprint=deadbeef\"; echo \"verified=true\" ;;\n"
+        "esac\n")
 
     breaking = valid_finding(
         title="T1 breaks fingerprinting",
@@ -908,35 +920,8 @@ def case_in_flight_fingerprint_crash_does_not_collide_two_findings():
             "broken finding onto the first as a false duplicate")
     tmp = tempfile.mkdtemp(prefix="wc-sf-fp-crash-inflight-")
     make_branch(tmp, [IN_FLIGHT_ANCHOR])
-    dotgithub_dir = os.path.join(tmp, "dotgithub")
-    fake_action_dir = os.path.join(dotgithub_dir, "actions", "fake-action")
-    shared_dir = os.path.join(dotgithub_dir, "actions", "_shared")
-    scripts_dir = os.path.join(dotgithub_dir, "scripts")
-    schemas_dir = os.path.join(dotgithub_dir, "schemas")
-    os.makedirs(fake_action_dir, exist_ok=True)
-    os.makedirs(shared_dir, exist_ok=True)
-    os.makedirs(scripts_dir, exist_ok=True)
-    os.makedirs(schemas_dir, exist_ok=True)
-    for name in ("verify-stage-finding-schema.py", "wc_schema_pattern.py"):
-        src = os.path.join(os.path.dirname(SCHEMA_VALIDATOR), name)
-        with open(src, encoding="utf-8") as fh:
-            text = fh.read()
-        with open(os.path.join(scripts_dir, name), "w", encoding="utf-8",
-                  newline="\n") as fh:
-            fh.write(text)
-    schema_src = os.path.join(REPO_ROOT, ".github", "schemas",
-                              "stage-finding.schema.json")
-    with open(schema_src, encoding="utf-8") as fh:
-        schema_text = fh.read()
-    with open(os.path.join(schemas_dir, "stage-finding.schema.json"),
-              "w", encoding="utf-8", newline="\n") as fh:
-        fh.write(schema_text)
-    fake_script = os.path.join(shared_dir, "compute-finding-fingerprint.sh")
-    with open(fake_script, "w", encoding="utf-8", newline="\n") as fh:
-        fh.write(
-            "#!/usr/bin/env bash\n"
-            "exit 1\n")
-    os.chmod(fake_script, 0o755)
+    fake_action_dir = _build_fake_fingerprint_action_tree(
+        tmp, "#!/usr/bin/env bash\nexit 1\n")
 
     broken_one = in_flight_finding(title="first in-flight finding that breaks fingerprinting")
     broken_two = in_flight_finding(title="second, unrelated in-flight finding that also breaks fingerprinting")

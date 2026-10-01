@@ -181,11 +181,27 @@ runs:
           # too.
           MATCH_SCRIPT="$GITHUB_ACTION_PATH/../_shared/match-issue-by-marker.sh"
           issues_file="$(mktemp)"
-          gh issue list --repo "$GITHUB_REPOSITORY" --label "$LABEL" --state "$scope" --json number,url,state,body --limit 1000 > "$issues_file" 2>/dev/null || echo "[]" > "$issues_file"
+          issues_err="$(mktemp)"
+          # review-gate-round-4 item 3: surfaced with ::warning:: rather
+          # than silently swallowed, matching wing-commander-write-boundary-
+          # lookup's own identical gh issue list call -- a transient gh API
+          # error here used to fall back to an empty list unannounced, which
+          # risks a silent duplicate issue creation below rather than this
+          # composite's own "report" operation finding the existing one.
+          if gh issue list --repo "$GITHUB_REPOSITORY" --label "$LABEL" --state "$scope" --json number,url,state,body --limit 1000 > "$issues_file" 2>"$issues_err"; then
+            :
+          else
+            echo "::warning::wing-commander-durable-failure-issue: gh issue list failed for label $LABEL -- $(cat "$issues_err") -- treating as no existing issue found this run, which risks a duplicate issue."
+            echo "[]" > "$issues_file"
+          fi
           match_json="$(bash "$MATCH_SCRIPT" "$issues_file" "$MARKER" 2>/dev/null || true)"
           existing=""
           matched_closed=""
-          if [ -n "$match_json" ]; then
+          # review-gate-round-4 item 9: match-issue-by-marker.sh now prints
+          # the literal "null" (never an empty line) for "no match", so a
+          # multi-marker caller never loses line alignment -- this
+          # single-marker caller's own no-match check has to recognize it.
+          if [ -n "$match_json" ] && [ "$match_json" != "null" ]; then
             match_state="$(printf '%s' "$match_json" | jq -r '.state')"
             match_number="$(printf '%s' "$match_json" | jq -r '.number')"
             if [ "$match_state" = "OPEN" ] || [ "$match_state" = "open" ]; then

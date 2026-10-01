@@ -388,8 +388,16 @@ runs:
         for item in "${write_paths_items[@]}"; do
           item="$(trim "$item")"
           [ -z "$item" ] && continue
-          [ -n "${write_paths_seen[$item]+x}" ] && continue
-          write_paths_seen["$item"]=1
+          # review-gate-round-4 item 7: dedup on the NORMALIZED form, the
+          # same one the glob below is built from -- deduping on raw text
+          # let two spellings of the same boundary (with vs. without a
+          # trailing slash, or a leading "./") both appear in the rendered
+          # statement and both append a glob deny, redundant but not
+          # conflicting since both normalize to the same glob.
+          normalized="$(bash "$GITHUB_ACTION_PATH/../_shared/normalize-write-path-prefix.sh" "$item")"
+          [ -z "$normalized" ] && continue
+          [ -n "${write_paths_seen[$normalized]+x}" ] && continue
+          write_paths_seen["$normalized"]=1
           if [ -z "$write_paths_list" ]; then
             write_paths_list="$item"
           else
@@ -401,12 +409,12 @@ runs:
           # glob deny per prefix, derived from the identical split this
           # loop already performs, never a second list.
           #
-          # review-gate-round-3: the trailing-slash canonicalization below
+          # review-gate-round-3: the trailing-slash canonicalization above
           # is the one shared transform classify-out-of-boundary-tasks.sh
           # also calls, so the classifier's "is this path out of boundary"
           # verdict and this glob's "is this path denied" verdict can never
           # independently drift apart on a no-trailing-slash prefix.
-          glob="$(bash "$GITHUB_ACTION_PATH/../_shared/normalize-write-path-prefix.sh" "$item")**"
+          glob="${normalized}**"
           if [ -z "$write_paths_glob_denies" ]; then
             write_paths_glob_denies="Edit($glob),Write($glob)"
           else

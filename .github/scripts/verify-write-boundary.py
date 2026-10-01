@@ -26,10 +26,11 @@ a truncated run (FR-013); (f) idempotency (FR-008/SC-004); (g) fingerprint
 single-home (research.md D6); (h) board-loop label separation
 (research.md D4); (i) enforcement parity (FR-004/FR-005, Principle V/IX);
 (j) finalize lookup failure handling; (k) prompt interpolation and Route
-step wiring -- see contracts/write-boundary-gate.md for the exact scenario
-tables. --self-test reintroduces each of the mutations that contract
-names, re-running the REAL pass-condition function each one targets
-against the mutated input, and asserts every one is caught.
+step wiring; (l) classify step failure handling -- see
+contracts/write-boundary-gate.md for the exact scenario tables.
+--self-test reintroduces each of the mutations that contract names,
+re-running the REAL pass-condition function each one targets against the
+mutated input, and asserts every one is caught.
 
 Usage: python3 .github/scripts/verify-write-boundary.py [--self-test]
 Requires: bash, jq, git (all present on ubuntu-latest runners).
@@ -449,6 +450,10 @@ STATEMENT_FIXTURES = [
     ("", "This run's agent may write any path in the checkout."),
     (".claude/", "This run's agent may not write: .claude/."),
     (".claude/,.git/", "This run's agent may not write: .claude/, .git/."),
+    # review-gate-round-4 item 7: two spellings of the same boundary
+    # (no trailing slash vs. one) must dedup to a single statement entry
+    # -- the dedup key is now the NORMALIZED form, not the raw text.
+    (".claude,.claude/", "This run's agent may not write: .claude."),
 ]
 
 
@@ -496,6 +501,10 @@ ENFORCEMENT_FIXTURES = [
     # SAME normalization to the classifier (CLASSIFY_FIXTURES above) rather
     # than loosening enforcement.
     ("specs", ["Edit(specs/**)", "Write(specs/**)"]),
+    # review-gate-round-4 item 1: a no-write-paths entry spelled with a
+    # leading "./" must normalize to the SAME glob as the bare prefix, on
+    # both sides of the parity check this fixture table exists to prove.
+    ("./.claude/", ["Edit(.claude/**)", "Write(.claude/**)"]),
 ]
 
 
@@ -518,6 +527,24 @@ def check_enforcement_parity(steps, root):
                 failures.append(f"(i) no-write-paths={no_write_paths!r}: "
                                 f"expected disallowed-tools to contain "
                                 f"{entry!r}, got {outputs.get('disallowed-tools')!r}")
+
+    # review-gate-round-4 item 7: two spellings of the same boundary
+    # (no trailing slash vs. one trailing slash) must dedup to exactly ONE
+    # Edit()/Write() deny pair, not a redundant duplicate of each.
+    workdir = tempfile.mkdtemp(dir=root)
+    rc, out, outputs, _ = run_compose(steps, ".claude,.claude/", workdir)
+    if rc != 0:
+        failures.append(f"(i) compose step exited {rc} for the two-spellings "
+                        f"dedup fixture: {out.strip()}")
+    else:
+        disallowed = outputs.get("disallowed-tools", "").split(",")
+        for entry in ("Edit(.claude/**)", "Write(.claude/**)"):
+            count = disallowed.count(entry)
+            if count != 1:
+                failures.append(f"(i) two spellings of the same boundary "
+                                f"(.claude, .claude/) produced {count} copies "
+                                f"of {entry!r} -- expected exactly 1, got "
+                                f"disallowed-tools={outputs.get('disallowed-tools')!r}")
     return failures
 
 
@@ -571,6 +598,22 @@ CLASSIFY_FIXTURES = [
     # denied edit every cycle.
     ("a leading './' on the candidate token does not defeat classification",
      "- [ ] T011 edit `./.claude/skills/foo/SKILL.md`", ".claude/", 1, "true"),
+    # review-gate-round-4 item 1: a no-write-paths entry itself spelled with
+    # a leading "./" (e.g. "./.claude/") must normalize to the same prefix
+    # as ".claude/", via the SAME shared helper the enforcement side calls
+    # (ENFORCEMENT_FIXTURES above) -- otherwise that entry silently no-ops.
+    ("a leading './' on the no-write-paths entry itself does not defeat "
+     "classification",
+     "- [ ] T012 edit `.claude/skills/foo/SKILL.md`", "./.claude/", 1, "true"),
+    # review-gate-round-4 item 4: an out-of-boundary path NOT backtick-quoted
+    # is indistinguishable from prose merely mentioning a path, so it falls
+    # through like "no path in its text" above -- an accepted, documented
+    # limitation of the backtick-quoting convention (spec.md Edge Cases),
+    # not a silently mishandled case. Locked in by this fixture so a future
+    # change to the extraction rule is deliberate, not accidental.
+    ("an out-of-boundary path without backtick quoting falls through "
+     "(accepted limitation, not a silent misclassification)",
+     "- [ ] T013 edit .claude/skills/foo/SKILL.md", ".claude/", 0, "false"),
 ]
 
 
@@ -1145,6 +1188,55 @@ def check_finalize_lookup(steps, root):
 
 
 # ---------------------------------------------------------------------------
+# (l) Classify step failure handling (review-gate-round-4 item 6)
+# ---------------------------------------------------------------------------
+
+def check_classify_failure_handling(steps, root):
+    """A genuine classify-out-of-boundary-tasks.sh crash must be surfaced
+    with ::warning::, not silently indistinguishable from "nothing is out
+    of boundary" -- continue-on-error alone cannot tell the two apart,
+    unlike the sibling wing-commander-write-boundary-lookup composite's own
+    failure handling for the equivalent gh issue list failure (check (j))."""
+    failures = []
+    workdir = tempfile.mkdtemp(dir=root)
+    action_dir = os.path.join(workdir, "actions", "fake-action")
+    shared_dir = os.path.join(workdir, "actions", "_shared")
+    os.makedirs(action_dir, exist_ok=True)
+    os.makedirs(shared_dir, exist_ok=True)
+    broken_script = os.path.join(shared_dir, "classify-out-of-boundary-tasks.sh")
+    with open(broken_script, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write("#!/usr/bin/env bash\nexit 1\n")
+    os.chmod(broken_script, 0o755)
+    runner_temp = os.path.join(workdir, "runner_temp")
+    os.makedirs(runner_temp, exist_ok=True)
+    env = {
+        "UNCHECKED_ITEMS": "- [ ] T001 edit `.claude/skills/foo/SKILL.md`",
+        "NO_WRITE_PATHS": ".claude/",
+        "TASKS_PATH": f"{SPEC_DIR}/tasks.md",
+        "SPEC_DIR": SPEC_DIR,
+        "GITHUB_ACTION_PATH": action_dir,
+    }
+    rc, out, outputs, _ = run_step(BASH, steps[CLASSIFY_STEP], workdir, env, runner_temp)
+    if rc != 0:
+        failures.append(f"(l) {CLASSIFY_STEP!r} exited {rc} on a classify-"
+                        f"script crash -- it must degrade safely, never "
+                        f"fail the job: {out.strip()}")
+        return failures
+    if "::warning::" not in out:
+        failures.append(f"(l) a classify-script crash produced no "
+                        f"::warning:: annotation -- got output={out!r}")
+    if outputs.get("all-unchecked-out-of-boundary") != "false":
+        failures.append(f"(l) a classify-script crash should degrade to "
+                        f"all-unchecked-out-of-boundary=false, got "
+                        f"{outputs.get('all-unchecked-out-of-boundary')!r}")
+    if outputs.get("findings-json", "").strip() not in ("[]", ""):
+        failures.append(f"(l) a classify-script crash should degrade to an "
+                        f"empty findings-json, got "
+                        f"{outputs.get('findings-json')!r}")
+    return failures
+
+
+# ---------------------------------------------------------------------------
 # Mutations (--self-test)
 # ---------------------------------------------------------------------------
 
@@ -1597,6 +1689,60 @@ def check_mutation_16():
     return ["mutation survived: collapse label defaults"]
 
 
+def _mut_classify_swallow_crash(steps):
+    """(17) review-gate-round-4 item 6: revert the classify step's own
+    ::warning:: + safe-fallback handling to a bare pass-through -- a
+    classify-script crash is then indistinguishable from "nothing out of
+    boundary" again, the exact regression continue-on-error alone used to
+    mask silently (condition (l))."""
+    marker = 'if [ "$rc" -ne 0 ]; then\n'
+    replacement = 'if false; then\n'
+    if marker not in steps[CLASSIFY_STEP]:
+        return None
+    mutated = copy.deepcopy(steps)
+    mutated[CLASSIFY_STEP] = mutated[CLASSIFY_STEP].replace(marker, replacement, 1)
+    return mutated
+
+
+def check_mutation_17(steps, root):
+    mutated = _mut_classify_swallow_crash(steps)
+    if mutated is None:
+        print("::error::mutation 'classify step swallows crash' changed nothing.")
+        return ["mutation inapplicable: classify step swallows crash"]
+    if check_classify_failure_handling(mutated, root):
+        print("Mutation OK -- classify step swallows crash: caught (l).")
+        return []
+    return ["mutation survived: classify step swallows crash"]
+
+
+def _mut_dedup_on_raw_text(steps):
+    """(18) review-gate-round-4 item 7: revert the write-paths dedup key
+    from the normalized prefix back to the raw item text, so two spellings
+    of the same boundary (with vs. without a trailing slash) again produce
+    a duplicated statement entry and a duplicated glob deny (condition
+    (i)'s dedup assertion)."""
+    marker = ('  [ -n "${write_paths_seen[$normalized]+x}" ] && continue\n'
+              '  write_paths_seen["$normalized"]=1')
+    replacement = ('  [ -n "${write_paths_seen[$item]+x}" ] && continue\n'
+                   '  write_paths_seen["$item"]=1')
+    if marker not in steps[COMPOSE_STEP]:
+        return None
+    mutated = copy.deepcopy(steps)
+    mutated[COMPOSE_STEP] = mutated[COMPOSE_STEP].replace(marker, replacement, 1)
+    return mutated
+
+
+def check_mutation_18(steps, root):
+    mutated = _mut_dedup_on_raw_text(steps)
+    if mutated is None:
+        print("::error::mutation 'dedup on raw text' changed nothing.")
+        return ["mutation inapplicable: dedup on raw text"]
+    if check_enforcement_parity(mutated, root):
+        print("Mutation OK -- dedup on raw text: caught (i).")
+        return []
+    return ["mutation survived: dedup on raw text"]
+
+
 def run_mutations(steps, root):
     failures = []
     failures.extend(check_mutation_1(steps, root))
@@ -1614,6 +1760,8 @@ def run_mutations(steps, root):
     failures.extend(check_mutation_14(steps, root))
     failures.extend(check_mutation_15(root))
     failures.extend(check_mutation_16())
+    failures.extend(check_mutation_17(steps, root))
+    failures.extend(check_mutation_18(steps, root))
     # (7) zero fixtures discovered/executed at all.
     if not CLASSIFY_FIXTURES or not STATEMENT_FIXTURES:
         failures.append("mutation survived: zero fixtures (Constitution VIII)")
@@ -1684,6 +1832,7 @@ def main():
             failures.extend(check_fingerprint_single_home())
             failures.extend(check_label_separation())
             failures.extend(check_finalize_lookup(steps, root))
+            failures.extend(check_classify_failure_handling(steps, root))
             failures.extend(check_gate_wired())
     finally:
         shutil.rmtree(root, ignore_errors=True)

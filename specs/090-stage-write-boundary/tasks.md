@@ -941,7 +941,7 @@ and evaporating into PR-body prose) that this feature exists to end.
 
 ## Review Gate Round 4 Findings
 
-- [ ] Review finding: no-write-paths prefix normalization never strips a leading './'
+- [x] Review finding: no-write-paths prefix normalization never strips a leading './'
 
   normalize-write-path-prefix.sh only trims whitespace and adds a trailing slash, so a no-write-paths entry like './.claude/' never matches tasks.md tokens (normalized without './'), making both classification and tool-grant enforcement silently no-op for that entry.
 
@@ -950,7 +950,9 @@ and evaporating into PR-body prose) that this feature exists to end.
 
   Detail: Gate 133's CLASSIFY_FIXTURES/ENFORCEMENT_FIXTURES never test a no-write-paths value with a leading './'.
 
-- [ ] Review finding: Contract still documents a label-description phrase the shipped code deliberately changed
+  Fixed: normalize-write-path-prefix.sh now strips every leading './' (a `while` loop, mirroring the classifier's own `normalize_token()` stripping it from candidate tokens) before the trailing-slash canonicalization, so "./.claude/" normalizes identically to ".claude/" on both the classification and enforcement sides that call this one shared helper. New CLASSIFY_FIXTURES/ENFORCEMENT_FIXTURES entries cover a no-write-paths value spelled with a leading './'.
+
+- [x] Review finding: Contract still documents a label-description phrase the shipped code deliberately changed
 
   write-boundary-mechanism.md §5 and tasks.md T018 say the routed-task label-description reads '...was assigned work outside its write boundary', but wing-commander-stage-findings/action.yml ships '...was given work outside its write boundary' to fit GitHub's 100-char cap, with the divergence only noted in a code comment.
 
@@ -959,7 +961,9 @@ and evaporating into PR-body prose) that this feature exists to end.
 
   Detail: CLAUDE.md states contracts under specs/*/contracts/ are live and fixed like code, not historical.
 
-- [ ] Review finding: gh issue list failure silently swallowed in durable-failure-issue, unlike its new sibling composite
+  Fixed: write-boundary-mechanism.md §5's table now states the shipped phrase, "...the $STAGE stage was given work outside its write boundary", with a note explaining why it is shorter than an earlier draft (GitHub's 100-character label-description cap, for the longest stage name). tasks.md's own T018 prose is an already-completed task's historical record, not corrected per CLAUDE.md's "once merged" rule for spec documents other than contracts -- the contract is the one that is live and fixed here.
+
+- [x] Review finding: gh issue list failure silently swallowed in durable-failure-issue, unlike its new sibling composite
 
   wing-commander-durable-failure-issue falls back to an empty issue list on a failed gh issue list with no warning and no test, while wing-commander-write-boundary-lookup (added in this same PR) emits ::warning:: on the identical failure and is gate-tested for it (Gate 133 check j).
 
@@ -968,7 +972,9 @@ and evaporating into PR-body prose) that this feature exists to end.
 
   Detail: A transient gh API error can cause a silent duplicate-issue-creation in durable-failure-issue.
 
-- [ ] Review finding: Classifier only extracts backtick-quoted path tokens from tasks.md lines
+  Fixed: wing-commander-durable-failure-issue's `gh issue list` call now follows the identical if/else + captured-stderr pattern wing-commander-write-boundary-lookup already uses, emitting `::warning::` naming the label and the captured stderr before falling back to an empty list. verify-reviewer-fail-closed.py's existing fingerprint-spoof/dedup fixtures (which drive this composite's real "report" operation through the real match-issue-by-marker.sh) still pass unchanged, confirming the success path is untouched.
+
+- [x] Review finding: Classifier only extracts backtick-quoted path tokens from tasks.md lines
 
   classify-out-of-boundary-tasks.sh's TOKEN_RE only matches backtick-quoted, slash-containing substrings, so a genuine out-of-boundary path written without backticks is never classified and the task is treated as ordinary, retryable work.
 
@@ -976,7 +982,9 @@ and evaporating into PR-body prose) that this feature exists to end.
 
   Detail: CLASSIFY_FIXTURES only cover backtick-quoted paths.
 
-- [ ] Review finding: compute_fingerprint()'s exception handling doesn't cover all crash modes
+  Fixed: confirmed as a deliberate, accepted limitation of the backtick-quoting convention research.md D3 already specifies, not a silent mishandling -- loosening the rule to also catch un-quoted paths risks the opposite failure this script exists to avoid (mis-classifying ordinary prose that merely mentions a path as out-of-boundary work), and every path reference in this repository's own tasks.md files is already backtick-quoted. Added a matching Edge Case to spec.md, a clarifying comment to classify-out-of-boundary-tasks.sh, and a new CLASSIFY_FIXTURES entry locking in the fall-through behavior so a future change to the extraction rule is deliberate, not accidental.
+
+- [x] Review finding: compute_fingerprint()'s exception handling doesn't cover all crash modes
 
   The GITHUB_ACTION_PATH env lookup sits outside the try/except in compute_fingerprint(), and the except clause omits OSError/FileNotFoundError, so a missing env var or unresolvable bash/script path can crash the whole findings-prepare step instead of dropping just one finding.
 
@@ -984,14 +992,18 @@ and evaporating into PR-body prose) that this feature exists to end.
 
   Detail: Contradicts the 'one failure must not cascade and lose every survivor' intent from review-gate-round-1 item 5.
 
-- [ ] Review finding: write-boundary classify step's continue-on-error masks real crashes with no warning
+  Fixed: moved the GITHUB_ACTION_PATH lookup inside compute_fingerprint()'s own try block and added OSError to the except tuple (FileNotFoundError is a subclass, covering a missing bash/script executable), so a missing env var or unresolvable path now degrades just that one finding the same way a nonzero script exit already did, instead of raising past the try/except entirely and crashing the whole prepare step.
+
+- [x] Review finding: write-boundary classify step's continue-on-error masks real crashes with no warning
 
   wing-commander-write-boundary's classify step uses continue-on-error with no failure signal, making a genuine script crash indistinguishable from 'nothing out of boundary', unlike the sibling wing-commander-write-boundary-lookup composite which warns on the equivalent failure.
 
   - .github/actions/wing-commander-write-boundary/action.yml
   - .github/actions/wing-commander-write-boundary-lookup/action.yml
 
-- [ ] Review finding: write-paths dedup is keyed on raw text, not the normalized form used for enforcement
+  Fixed: the classify step now captures classify-out-of-boundary-tasks.sh's own exit code explicitly and, on a nonzero exit, emits `::warning::` naming the exit code and falls back to the same "nothing out of boundary" output shape the caller already read on a crash -- mirroring wing-commander-write-boundary-lookup's own failure handling. `continue-on-error: true` stays as defense-in-depth for a crash this shell wrapper itself cannot catch. New Gate 133 pass condition (l) drives the real step against a stubbed, always-failing classify script and asserts the warning and the safe fallback outputs; mutation 17 reintroduces the silent swallow and confirms the gate catches it.
+
+- [x] Review finding: write-paths dedup is keyed on raw text, not the normalized form used for enforcement
 
   wing-commander-tool-args's write-paths-statement loop dedupes on the unnormalized no-write-paths entry while the Edit/Write glob is built from the normalized value, so two spellings of the same boundary (e.g. '.claude' and '.claude/') produce a duplicated statement and duplicate (redundant, not conflicting) deny entries.
 
@@ -999,21 +1011,29 @@ and evaporating into PR-body prose) that this feature exists to end.
 
   Detail: Not a security gap since both normalize to the same glob; ENFORCEMENT_FIXTURES don't cover two spellings of one prefix.
 
-- [ ] Review finding: Route step's output guard can't tell a crashed classifier from zero findings
+  Fixed: the compose step now computes each item's normalized form ONCE and dedupes on that (the same value the glob is built from), instead of deduping on the raw, pre-normalization text. New STATEMENT_FIXTURES/ENFORCEMENT_FIXTURES entries feed ".claude,.claude/" and assert exactly one statement entry and one Edit()/Write() deny pair, not two. Mutation 18 reverts the dedup key to raw text and confirms the gate catches it.
+
+- [x] Review finding: Route step's output guard can't tell a crashed classifier from zero findings
 
   implement.yml's 'Route out-of-boundary tasks' step gates on write-boundary-findings-json != '[]', but an upstream classify crash leaves the value as an unset empty string rather than '[]', so the comparison is still true and the step runs on an unintended signal, currently harmless only because the downstream loader treats blank input as zero findings.
 
   - .github/workflows/implement.yml
 
-- [ ] Review finding: Per-line issue-marker lookup wasn't batched even though the sibling fingerprint call in the same loop was
+  Fixed: resolved as a consequence of the classify-step fix above (item 6) rather than a separate change here -- the classify step's `findings-json` output is now ALWAYS valid JSON (either the real classification or the explicit `[]` fallback on a crash), never blank, so `write-boundary-cycle`/`-retry`'s output, and everything implement.yml carries forward from it (`steps.final.outputs.write-boundary-findings-json`), is never the unset-empty-string case this finding describes. No separate code change to implement.yml's own guard is required (Out of Scope, mirroring T032's precedent).
+
+- [x] Review finding: Per-line issue-marker lookup wasn't batched even though the sibling fingerprint call in the same loop was
 
   wing-commander-write-boundary-lookup batches the new fingerprint computation into one call per run, but still invokes match-issue-by-marker.sh once per unchecked tasks.md line, each forking bash+jq to re-read and re-parse the entire issues JSON file from disk.
 
   - .github/actions/wing-commander-write-boundary-lookup/action.yml
   - .github/actions/_shared/match-issue-by-marker.sh
 
-- [ ] Review finding: Two new fixture-crash test cases duplicate a ~30-line fake action-tree builder
+  Fixed: match-issue-by-marker.sh now accepts one or more trailing marker arguments against the same issues-json-file (backward compatible: a single-marker call, wing-commander-durable-failure-issue's own shape, still prints exactly one line), printing one line per marker -- the literal `null` for "no match" rather than an empty line, so a caller splitting stdout by line never loses alignment. wing-commander-write-boundary-lookup's loop now collects every marker into an array and calls the script once, matching results back to lines by position, instead of once per line. wing-commander-durable-failure-issue's own single-marker caller updated to recognize the `null` sentinel.
+
+- [x] Review finding: Two new fixture-crash test cases duplicate a ~30-line fake action-tree builder
 
   case_fingerprint_script_crash_drops_only_that_finding and case_in_flight_fingerprint_crash_does_not_collide_two_findings each independently build an identical fake .github/ action tree instead of sharing one helper, introduced fresh within this same diff.
 
   - .github/scripts/stage-findings-tests/run_fixtures.py
+
+  Fixed: extracted the shared builder into `_build_fake_fingerprint_action_tree(tmp, script_contents)`; both fixtures now call it with their own replacement compute-finding-fingerprint.sh contents instead of each re-pasting the ~30-line fake-tree construction.
