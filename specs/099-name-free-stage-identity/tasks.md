@@ -236,7 +236,7 @@ same finding, same facts (SC-001).
 
 ### Verification (FR-012, FR-013, SC-001, SC-002, SC-006, SC-008)
 
-- [ ] T031 [US1] Add `.github/scripts/verify-watchdog-resolved-stage-
+- [X] T031 [US1] Add `.github/scripts/verify-watchdog-resolved-stage-
       consumers.py`, a new fixture-driven gate script (following the
       `find_step`/`run_step` harness pattern `verify-metrics-summary-
       record-emission.py`'s `run_case` already uses), proving for each of
@@ -247,7 +247,7 @@ same finding, same facts (SC-001).
       record with no stage (`stage_available: false`), a missing record
       entirely, an unrecognised display name with no record, and a
       record-vs-name disagreement (record wins, per FR-009).
-- [ ] T032 [US1] Add `.github/scripts/verify-no-reference-name-stage-
+- [X] T032 [US1] Add `.github/scripts/verify-no-reference-name-stage-
       match.py` (Gate 126 — re-verify the number per T002) implementing
       contracts/stage-identity-name-gate.md: scan `watchdog.yml` and
       `wing-commander-inspected-run-identity/action.yml` for the ten
@@ -263,7 +263,7 @@ same finding, same facts (SC-001).
       outside `name-fallback`; a match inside `name-fallback`, which
       passes; a metrics-summary call site missing the key; the
       `name-fallback` step renamed/removed, which errors).
-- [ ] T033 [US1] Wire Gate 126 into `.github/workflows/lint-workflows.yml`:
+- [X] T033 [US1] Wire Gate 126 into `.github/workflows/lint-workflows.yml`:
       a `- name: "Gate 126 — ..."` step (`if: "!cancelled()"`, `run:
       python3 .github/scripts/verify-no-reference-name-stage-match.py`)
       immediately followed by a `"Gate 126 self-test — ..."` step running

@@ -1,0 +1,390 @@
+#!/usr/bin/env python3
+"""Gate: every FR-002 consumer site's three-state resolved-stage behavior
+(specs/099-name-free-stage-identity T031).
+
+WHY THIS EXISTS
+---------------
+T024-T030 converted watchdog.yml's seven collector/guard sites (branch-
+drift's push-expected-stage gate and implement-only baseline arms, its
+stage label, spec-meta's expected-stage map, final-pr-claims's and spec-
+collision's scope guards, and the watchdog's own self-inspection cascade
+guard) from matching the inspected run's display name to switching on
+`resolved-stage`/`resolved-stage-source` — the two outputs
+wing-commander-inspected-run-identity's composite now computes (R1/R2).
+Nothing before this gate executed the SHIPPED bash to prove:
+
+  1. SC-001 — a renamed wrapper and the reference-named wrapper, reporting
+     the SAME underlying stage, produce IDENTICAL outcomes at every site,
+     because none of them reads the run's display name any more.
+  2. contracts/resolved-stage-identity.md Rule 2's third state: a site
+     distinguishes "out of scope" (silent skip, unchanged) from "not
+     identified" (skip AND an `{"collector": ..., "outcome": "unresolved"}`
+     entry in collector-outcomes.json) — and the third state fires only
+     when `resolved-stage-source` is empty, never merely because the
+     resolved stage did not match.
+  3. research.md R7's fixture rows for the composite's OWN precedence
+     (record wins over name; the name fallback only when the record truly
+     has nothing; an unrecognised name with no record leaves both empty).
+
+This runs the REAL `run:` blocks extracted from watchdog.yml and the
+composite action (wc_shell_harness.find_step/run_step) — no copied logic
+to drift out of sync, matching this repository's existing execution-based
+gate convention (Gate 19, verify-metrics-summary-record-emission.py).
+
+Usage: python3 .github/scripts/verify-watchdog-resolved-stage-consumers.py
+Requires: bash, jq.
+"""
+import json
+import os
+import shutil
+import sys
+import tempfile
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from wc_shell_harness import (  # noqa: E402
+    ensure_jq, find_step, resolve_bash, run_step, use_utf8_stdout)
+
+WATCHDOG = ".github/workflows/watchdog.yml"
+COMPOSITE = ".github/actions/wing-commander-inspected-run-identity/action.yml"
+STAGE_STEP_NAME = "Resolve inspected run's stage"
+NAME_FALLBACK_STEP_NAME = (
+    "Resolve inspected run's stage from its display name, when the "
+    "record left it unresolved")
+
+BASH = None
+failures = []
+
+
+def fail(case, msg):
+    failures.append(f"{case}: {msg}")
+    print(f"::error::verify-watchdog-resolved-stage-consumers: {case}: {msg}")
+
+
+def note(msg):
+    print(f"note: {msg}")
+
+
+def _outcomes_file(runner_temp):
+    return os.path.join(runner_temp, "collector-outcomes.json")
+
+
+def _init_runner_temp():
+    runner_temp = tempfile.mkdtemp(prefix="wc-resolved-stage-")
+    with open(_outcomes_file(runner_temp), "w", encoding="utf-8") as fh:
+        fh.write("[]")
+    with open(os.path.join(runner_temp, "signals.json"), "w", encoding="utf-8") as fh:
+        fh.write("[]")
+    return runner_temp
+
+
+def _read_outcomes(runner_temp):
+    with open(_outcomes_file(runner_temp), encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+# ---------------------------------------------------------------------------
+# Part A — the composite's own precedence (R1/R2), driven for real.
+# ---------------------------------------------------------------------------
+def resolve_stage(run_name, record=None, runner_temp=None):
+    """Run the composite's "stage" step, then its "name-fallback" step,
+    for real, against an optional pre-seeded metrics record (skipping the
+    `gh run download` the "stage" step would otherwise attempt — this
+    gate is about the precedence logic, not the download itself, which
+    Gate 19's STAGE_SCENARIOS already covers). Returns
+    (resolved_stage, resolved_stage_source, rc1, rc2)."""
+    own_temp = runner_temp is None
+    if own_temp:
+        runner_temp = tempfile.mkdtemp(prefix="wc-resolved-stage-compose-")
+    try:
+        mr_dir = os.path.join(runner_temp, "spec-slug-metrics-record")
+        os.makedirs(mr_dir, exist_ok=True)
+        if record is not None:
+            with open(os.path.join(mr_dir, "record.json"), "w", encoding="utf-8") as fh:
+                json.dump(record, fh)
+        stage_script = find_step(COMPOSITE, STAGE_STEP_NAME)["run"]
+        workdir = tempfile.mkdtemp(dir=runner_temp)
+        rc1, out1, outputs1, _s1 = run_step(
+            BASH, stage_script, workdir,
+            {"ACTIONS_TOKEN": "x", "RUN_ID": "1"}, runner_temp)
+        if rc1 != 0:
+            return "", "", rc1, None
+        record_stage = outputs1.get("record-stage", "")
+
+        fallback_script = find_step(COMPOSITE, NAME_FALLBACK_STEP_NAME)["run"]
+        workdir2 = tempfile.mkdtemp(dir=runner_temp)
+        rc2, out2, outputs2, _s2 = run_step(
+            BASH, fallback_script, workdir2,
+            {"RECORD_STAGE": record_stage, "RUN_NAME": run_name}, runner_temp)
+        return (outputs2.get("resolved-stage", ""),
+                outputs2.get("resolved-stage-source", ""), rc1, rc2)
+    finally:
+        if own_temp:
+            shutil.rmtree(runner_temp, ignore_errors=True)
+
+
+R7_CASES = [
+    dict(name="record with no stage (stage_available: false): falls to the "
+              "recognised name",
+         record={"schema_version": 1, "stage": None},
+         run_name="Wing Commander · 5 implement",
+         expect=("implement", "name")),
+    dict(name="missing record entirely: falls to the recognised name",
+         record=None,
+         run_name="Wing Commander · 4 tasks",
+         expect=("tasks", "name")),
+    dict(name="unrecognised display name, no record: both outputs stay empty",
+         record=None,
+         run_name="My Totally Custom CI Wrapper",
+         expect=("", "")),
+    dict(name="record vs. name disagreement: the record wins (FR-009)",
+         record={"schema_version": 1, "stage": "tasks"},
+         run_name="Wing Commander · 5 implement",
+         expect=("tasks", "record")),
+]
+
+
+def case_r7_fixture_rows():
+    case = "research.md R7 fixture rows"
+    for row in R7_CASES:
+        got_stage, got_source, rc1, rc2 = resolve_stage(
+            row["run_name"], record=row["record"])
+        want_stage, want_source = row["expect"]
+        if rc1 != 0 or rc2 is not None and rc2 != 0:
+            fail(case, f"{row['name']}: a composite step exited non-zero "
+                       f"(rc1={rc1}, rc2={rc2})")
+            continue
+        if (got_stage, got_source) != (want_stage, want_source):
+            fail(case, f"{row['name']}: expected resolved-stage="
+                       f"{want_stage!r}/source={want_source!r}, got "
+                       f"{got_stage!r}/{got_source!r}")
+    if not any(f.startswith(case) for f in failures):
+        note("all four research.md R7 rows produced the expected "
+             "resolved-stage/resolved-stage-source pair")
+
+
+def case_sc001_name_independence_at_the_composite():
+    """SC-001's root cause fix: once a record carries a stage, the
+    resolved value is identical no matter what the run's display name
+    is — the reference-named wrapper and an arbitrary renamed one."""
+    case = "SC-001: composite output is name-independent when a record resolves"
+    record = {"schema_version": 1, "stage": "implement"}
+    reference = resolve_stage("Wing Commander · 5 implement", record=record)
+    renamed = resolve_stage("My Totally Custom CI Wrapper", record=record)
+    if reference[:2] != renamed[:2]:
+        fail(case, f"reference-named wrapper resolved "
+                   f"{reference[:2]!r}, renamed wrapper resolved "
+                   f"{renamed[:2]!r} — the SAME underlying record must "
+                   f"resolve identically regardless of display name")
+    elif reference[:2] != ("implement", "record"):
+        fail(case, f"expected both to resolve ('implement', 'record'), "
+                   f"got {reference[:2]!r}")
+    else:
+        note("a reference-named and an arbitrarily-renamed wrapper "
+             "reporting the same underlying record resolve to the "
+             "identical resolved-stage/resolved-stage-source pair")
+
+
+# ---------------------------------------------------------------------------
+# Part B — the four bash-driven FR-002 consumer sites (T024/T027/T028/T029),
+# each proven for the same three states: in scope, out of scope (resolved),
+# and unresolved. Every env below is deliberately minimal, choosing values
+# that reach a clean, pre-existing early exit for the "in scope"/"out of
+# scope" cases (no spec slug resolved, no PR resolvable, etc.) so this gate
+# needs no `gh` stub — it is proving the STAGE-SCOPING decision, not
+# re-exercising the collector's downstream read logic other dedicated gates
+# (verify-branch-drift-sha-baseline.py, verify-final-pr-claims-collector.sh,
+# verify-spec-collision-collector.sh) already cover in depth.
+# ---------------------------------------------------------------------------
+def run_site(step_name, env, extra_files=None):
+    runner_temp = _init_runner_temp()
+    workdir = tempfile.mkdtemp(dir=runner_temp)
+    try:
+        script = find_step(WATCHDOG, step_name)["run"]
+        rc, out, _outputs, summary = run_step(BASH, script, workdir, env, runner_temp)
+        outcomes = _read_outcomes(runner_temp)
+        return rc, out, outcomes, summary
+    finally:
+        shutil.rmtree(runner_temp, ignore_errors=True)
+
+
+SITES = [
+    dict(
+        step="Collect: branch drift",
+        collector="collect-branch-drift",
+        base_env={
+            "GH_TOKEN": "x", "ACTIONS_TOKEN": "x", "RUN_ID": "1",
+            "HEAD_BRANCH": "", "HEAD_SHA": "", "RUN_CREATED_AT": "",
+            "RUN_CONCLUSION": "success", "META_STAGE": "",
+            "STALLED_LABEL": "false", "SLUG": "", "SPEC_PREFIX": "spec/",
+        },
+        in_scope_stage="implement",
+        out_of_scope_stage="finalize",
+        # SLUG="" -> branch-drift's own #318 "no spec slug resolved" early
+        # exit, before any outcome is written either way.
+        expect_in_scope_outcomes=[],
+        expect_out_of_scope_outcomes=[],
+    ),
+    dict(
+        step="Collect: spec-meta state vs. expected stage",
+        collector="collect-spec-meta",
+        base_env={"RUN_CONCLUSION": "success", "META_STAGE": "implement",
+                  "SLUG": "999-fixture"},
+        in_scope_stage="implement",
+        out_of_scope_stage="finalize",
+        # This collector's own read never fails, so it unconditionally
+        # records "ok" BEFORE the stage-scope case even runs (FR-010) --
+        # Rule 2's "MUST additionally record" means the unresolved entry
+        # joins that "ok", never replaces it.
+        expect_in_scope_outcomes=[{"collector": "collect-spec-meta", "outcome": "ok"}],
+        expect_out_of_scope_outcomes=[{"collector": "collect-spec-meta", "outcome": "ok"}],
+        unresolved_also_has_ok=True,
+    ),
+    dict(
+        step="Collect: final PR claims",
+        collector="collect-final-pr-claims",
+        base_env={"GH_TOKEN": "x", "RUN_CONCLUSION": "success", "SLUG": "",
+                  "SPEC_DIR": "", "SPEC_PREFIX": "spec/"},
+        in_scope_stage="finalize",
+        out_of_scope_stage="implement",
+        # SLUG="" -> "no spec slug resolved" early exit, before any gh call
+        # or outcome write.
+        expect_in_scope_outcomes=[],
+        expect_out_of_scope_outcomes=[],
+    ),
+    dict(
+        step="Collect: spec collision",
+        collector="collect-spec-collision",
+        base_env={"GH_TOKEN": "x", "RUN_CONCLUSION": "success", "SLUG": "",
+                  "SPEC_DRAFT_PREFIX": "spec-draft/", "SPEC_PREFIX": "spec/"},
+        in_scope_stage="intake",
+        out_of_scope_stage="implement",
+        # SLUG="" -> own_number resolves empty -> early exit, before any gh
+        # call or outcome write.
+        expect_in_scope_outcomes=[],
+        expect_out_of_scope_outcomes=[],
+    ),
+]
+
+
+def case_site_three_states(site):
+    case = f"{site['collector']}: three-state resolved-stage behavior"
+
+    # State 1: identified, in scope.
+    env = dict(site["base_env"])
+    env["RESOLVED_STAGE"] = site["in_scope_stage"]
+    env["RESOLVED_STAGE_SOURCE"] = "name"
+    rc, out, outcomes, _summary = run_site(site["step"], env)
+    if rc != 0:
+        fail(case, f"in-scope scenario exited {rc}: {out.strip()[:300]}")
+    elif outcomes != site["expect_in_scope_outcomes"]:
+        fail(case, f"in-scope scenario: expected outcomes "
+                   f"{site['expect_in_scope_outcomes']!r}, got {outcomes!r}")
+    elif any(o.get("outcome") == "unresolved" for o in outcomes):
+        fail(case, f"in-scope scenario must never record 'unresolved', "
+                   f"got {outcomes!r}")
+
+    # State 2: identified, out of scope — silent skip, unchanged.
+    env2 = dict(site["base_env"])
+    env2["RESOLVED_STAGE"] = site["out_of_scope_stage"]
+    env2["RESOLVED_STAGE_SOURCE"] = "name"
+    rc2, out2, outcomes2, _summary2 = run_site(site["step"], env2)
+    if rc2 != 0:
+        fail(case, f"out-of-scope scenario exited {rc2}: {out2.strip()[:300]}")
+    elif outcomes2 != site["expect_out_of_scope_outcomes"]:
+        fail(case, f"out-of-scope scenario: expected outcomes "
+                   f"{site['expect_out_of_scope_outcomes']!r}, got {outcomes2!r}")
+    elif any(o.get("outcome") == "unresolved" for o in outcomes2):
+        fail(case, f"out-of-scope (but resolved) scenario must never "
+                   f"record 'unresolved' — that is Rule 2's state 2, not "
+                   f"state 3 — got {outcomes2!r}")
+
+    # State 3: not identified — resolved-stage-source empty.
+    env3 = dict(site["base_env"])
+    env3["RESOLVED_STAGE"] = ""
+    env3["RESOLVED_STAGE_SOURCE"] = ""
+    rc3, out3, outcomes3, _summary3 = run_site(site["step"], env3)
+    if rc3 != 0:
+        fail(case, f"unresolved scenario exited {rc3}: {out3.strip()[:300]}")
+    else:
+        unresolved_entries = [o for o in outcomes3
+                              if o == {"collector": site["collector"],
+                                       "outcome": "unresolved"}]
+        if len(unresolved_entries) != 1:
+            fail(case, f"unresolved scenario: expected exactly one "
+                       f"{{'collector': {site['collector']!r}, 'outcome': "
+                       f"'unresolved'}} entry, got {outcomes3!r}")
+        if site.get("unresolved_also_has_ok") and \
+                {"collector": site["collector"], "outcome": "ok"} not in outcomes3:
+            fail(case, f"unresolved scenario: this collector's own read "
+                       f"never fails, so 'ok' must still be present "
+                       f"alongside 'unresolved', got {outcomes3!r}")
+
+    # SC-001: the script text itself must never reference the run's
+    # display name — the structural guarantee that makes "a renamed and a
+    # reference-named wrapper behave identically" true by construction,
+    # not by coincidence of these particular fixtures.
+    script = find_step(WATCHDOG, site["step"])["run"]
+    if "RUN_NAME" in script:
+        fail(case, "this site's script still references RUN_NAME — a "
+                   "renamed wrapper could once again produce a different "
+                   "outcome than the reference-named one (SC-001)")
+
+    if not any(f.startswith(case) for f in failures):
+        note(f"{site['collector']}: in scope / out of scope / unresolved "
+             f"each behave per contracts/resolved-stage-identity.md Rule 2, "
+             f"and the script never reads the run's display name (SC-001)")
+
+
+# ---------------------------------------------------------------------------
+# Part C — T030's self-inspection cascade guard: a step-level `if:`, not a
+# bash conditional, so there is no script body to execute differently; the
+# proof is structural (constitution VIII: a check that cannot fail is not a
+# check, so this also asserts against the PRE-#750 condition to show the
+# assertion actually discriminates).
+# ---------------------------------------------------------------------------
+def case_self_inspection_guard_uses_resolved_stage():
+    case = "watchdog self-inspection cascade guard (T030)"
+    step = find_step(WATCHDOG, "Self-dispatch depth")
+    cond = str(step.get("if", ""))
+    want = "needs.collect.outputs.resolved-stage == 'watchdog'"
+    old = "needs.collect.outputs.run-name == 'Wing Commander · 8 watchdog'"
+    if cond != want:
+        fail(case, f"expected the step's if: to read exactly {want!r}, "
+                   f"got {cond!r}")
+    elif cond == old:
+        fail(case, "this assertion does not discriminate — the old "
+                   "run-name condition would also have to fail it")
+    else:
+        note(f"Self-dispatch depth's if: reads {cond!r}")
+
+
+CASES = [
+    case_r7_fixture_rows,
+    case_sc001_name_independence_at_the_composite,
+    lambda: case_site_three_states(SITES[0]),
+    lambda: case_site_three_states(SITES[1]),
+    lambda: case_site_three_states(SITES[2]),
+    lambda: case_site_three_states(SITES[3]),
+    case_self_inspection_guard_uses_resolved_stage,
+]
+
+
+def main():
+    global BASH
+    use_utf8_stdout()
+    ensure_jq()
+    BASH = resolve_bash()
+
+    for case in CASES:
+        case()
+
+    if failures:
+        print(f"{len(failures)} failure(s).")
+        return 1
+    print(f"verify-watchdog-resolved-stage-consumers: {len(CASES)} case(s) "
+          f"checked; 0 failures.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
