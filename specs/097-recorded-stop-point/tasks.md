@@ -604,3 +604,8 @@ kept to one session to avoid edit collisions).
 - [ ] **Blocking (FR-008/FR-006):** In `board_stop_check.py`, treat a stop-point record comment posted by `current_run_id` as still standing the item down, so the record's own `**Run:**` line does not move `find_stop_request()`'s baseline past the honoured stop within the same run. Keep FR-009/FR-016 intact (a later run's different run id is unaffected).
 - [ ] Add a fixture: a stop followed by this run's own stop-point record comment, same run id, asserting `stand_down=true`; add the corresponding Gate 128 check.
 - [ ] (Nice-to-have per reviewer) Gate triage's and review's continuation outputs on the stand-down too; leave route's to #901.
+
+## Maintainer Feedback
+
+- [ ] **Blocking (spec 086 FR-001):** Delete the "Ensure board-loop's own labels exist" step in `wing-commander-board-stop-check/action.yml` (`uses: ./.github/actions/wing-commander-board-labels`) — inside a composite, a `./`-prefixed `uses:` resolves against `$GITHUB_WORKSPACE`, which in fix/review/prove is the item's own (possibly attacker-controlled) branch checkout, giving a branch that edits that nested composite's `action.yml` App-token execution whenever a maintainer posts "stop".
+- [ ] If `prove` needs the labels ensured, add a top-level "Ensure board-loop's own labels exist" step there instead, resolved via `./.wc-pristine-repo/...` the way other jobs already do.
