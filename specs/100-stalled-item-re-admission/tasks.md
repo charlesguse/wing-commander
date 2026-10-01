@@ -470,3 +470,7 @@ T023's full suite run — this is the same regression concern noted under
 ## Maintainer Feedback (review of 7b4b0825, PR #885)
 
 - [ ] T033 [US3] Nit: add `-R "$GITHUB_REPOSITORY"` to the `gh pr view` call at board_item_marker.py:221, matching this script's other `gh` invocations.
+
+## Maintainer Feedback (review of 7b4b0825, PR #885)
+
+- [ ] T034 [US3] Nit: correct the docstring's line citation (currently board-loop.yml:3300-3321) to this PR's actual lines (:3335-3365), or note that line numbers drift and should be re-derived rather than hardcoded.
