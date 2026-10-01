@@ -978,9 +978,18 @@ set -uo pipefail
 LOG="{log}"
 echo "$*" >> "$LOG"
 if [ "$1 $2" = "issue list" ]; then
-  cat <<'JSON'
+  # Like gh: at most --limit results, 30 when none is passed (#705).
+  limit=30; prev=""
+  for a in "$@"; do if [ "$prev" = "--limit" ]; then limit="$a"; fi; prev="$a"; done
+  list="$(cat <<'JSON'
 {list_json}
 JSON
+)"
+  if sliced="$(printf '%s' "$list" | jq -c --argjson n "$limit" '.[:$n]' 2>/dev/null)"; then
+    printf '%s\n' "$sliced"
+  else
+    printf '%s\n' "$list"
+  fi
   exit 0
 fi
 if [ "$1 $2" = "label create" ]; then
@@ -1083,6 +1092,21 @@ def case_dedup_hit_open_comments_not_duplicates():
     check(case + ": no issue create call", "issue create" not in calls, calls)
     check(case + ": commented with the recap body, not the full body",
           "issue comment 42 --repo o/r --body-file " + recap in calls, calls)
+
+
+def case_dedup_hit_past_the_first_page_still_comments():
+    case = "a dedup match past gh's 30-issue default page still comments, not a duplicate issue (#705)"
+    tmp = tempfile.mkdtemp(prefix="wc-sf-dedup-")
+    marker = "<!-- wing-commander-finding: fingerprint=page31 -->"
+    newer = [{"number": 100 + i, "state": "CLOSED", "body": "other finding"} for i in range(30)]
+    list_json = json.dumps(newer + [{"number": 7, "state": "OPEN", "body": "oldest " + marker}])
+    rc, outputs, out, log = run_lookup(tmp, marker, "all", list_json)
+    with open(log, encoding="utf-8") as fh:
+        calls = fh.read()
+    check(case + ": exit 0", rc == 0, out)
+    check(case + ": action-taken=commented on the 31st issue",
+          outputs.get("action-taken") == "commented" and outputs.get("issue-number") == "7", (outputs, calls))
+    check(case + ": no issue create call", "issue create" not in calls, calls)
 
 
 def case_dedup_hit_closed_creates_and_links():
@@ -1517,6 +1541,7 @@ CASES = [
     case_missing_named_file_takes_fallback,
     case_fallback_issue_append_carries_each_findings_own_text,
     case_dedup_hit_open_comments_not_duplicates,
+    case_dedup_hit_past_the_first_page_still_comments,
     case_dedup_hit_closed_creates_and_links,
     case_no_dedup_match_creates,
     case_existing_no_marker_caller_is_byte_identical,

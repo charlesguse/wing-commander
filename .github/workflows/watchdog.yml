@@ -3098,9 +3098,12 @@ jobs:
           fi
 
           if [ -z "$reason" ]; then
-            # Same per-class required-key list the fingerprint step below
-            # projects to — kept in agreement deliberately, since both are
-            # asking "what identifies this class of problem."
+            # The facts each class's Finding must cite to count as grounded
+            # in its evidence. This is not the fingerprint's projection:
+            # `Compute fingerprint` below hashes only the class and its cited
+            # signal ids, and each signal's identity projection lives in the
+            # collect job's `Stamp signal ids` step, which differs for some
+            # classes (turn-budget-trend projects to stage/band there).
             case "$FINDING_CLASS" in
               denied-tool)           keys='["stage","tool"]' ;;
               lost-progress)         keys='["branch"]' ;;

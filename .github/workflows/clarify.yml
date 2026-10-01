@@ -1048,7 +1048,7 @@ jobs:
               ;;
             ready)
               if [ "$BLOCKED" != "true" ]; then
-                gh label create "stage:spec" --color 1D76DB --description "Spec drafted / awaiting review" --force
+                gh label create "stage:spec" --color 1D76DB --description "Spec drafted / awaiting review" --force || echo "::warning::wing-commander clarify: could not create the stage:spec label (the spec PR is still announced ready)." >> "$GITHUB_STEP_SUMMARY"
                 if ! gh issue edit "$ISSUE" --add-label "stage:spec"; then
                   echo "::warning::wing-commander clarify: could not add stage:spec to issue #$ISSUE (the spec PR was still announced ready)." >> "$GITHUB_STEP_SUMMARY"
                 fi
