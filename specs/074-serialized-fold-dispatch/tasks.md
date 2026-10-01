@@ -412,3 +412,9 @@ Task: "Add fixtures under wing-commander-fold-queue-release/tests/"
 ### Round-3 review of 9e87d013 (maintainer, 2026-10-01)
 
 - [ ] T069 **The redispatch poll window is too wide** (fold-cycle-guard.yml:520-521). `--created ">=$CANCELLED_AT" --limit 1` opens minutes before the redispatch, so on a shared wrapper it can pick another spec's run and record that id in the ledger. **Fix:** take a timestamp immediately before `gh workflow run`, as `fold-dispatch` does at :225.
+
+## Maintainer Feedback
+
+### Round-3 review of 9e87d013 (maintainer, 2026-10-01)
+
+- [ ] T070 **Nits:** (1) `::error::` lines at ledger.sh:213, :291, :323 and :349 still go to stdout. The peek-failure ones are swallowed by await's `peek_out=$(...)`. (2) In the 422 path, the ticketless redispatched run holds the implement ticket for the whole cycle, while `dispatch-once` deliberately does the opposite (T056). State the choice in contracts/fold-cycle-guard.md.
