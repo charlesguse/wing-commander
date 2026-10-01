@@ -474,3 +474,7 @@ T023's full suite run — this is the same regression concern noted under
 ## Maintainer Feedback (review of 7b4b0825, PR #885)
 
 - [ ] T034 [US3] Nit: correct the docstring's line citation (currently board-loop.yml:3300-3321) to this PR's actual lines (:3335-3365), or note that line numbers drift and should be re-derived rather than hardcoded.
+
+## Maintainer Feedback (review of 7b4b0825, PR #885)
+
+- [ ] T035 [US3] Nit: SC-006 claims 'a checked-in case shows the item stalling again once [the fresh budget] is spent', but T020's fixture only covers the round-0 starting value; the re-stall half is left to the review job's own pre-existing round-count logic, unexercised by any fixture here. Add a case (or an explicit pointer to an existing covering case elsewhere) that actually demonstrates the re-stall.
