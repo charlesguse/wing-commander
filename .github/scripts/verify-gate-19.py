@@ -2216,7 +2216,8 @@ def suite_stepsum(script, env, tmproot):
 # evidence-available's existing behavior (contracts/watchdog-read-outcome.md).
 # --------------------------------------------------------------------------
 AGGREGATE_STEP = "Aggregate signals"
-COLLECTOR_IDS = ["collect-execution-output", "collect-branch-drift",
+COLLECTOR_IDS = ["collect-execution-output", "collect-cycle-outcome",
+                 "collect-branch-drift",
                  "collect-spec-meta", "collect-step-summary",
                  "collect-annotations", "collect-turn-budget",
                  "collect-cost-report", "collect-final-pr-claims",
@@ -2250,7 +2251,7 @@ AGGREGATE_CASES = [
         expect_signals=SIGNALS_FIXTURE,
     ),
     dict(
-        name="one collector's read failed, the other eight succeeded",
+        name="one collector's read failed, the other nine succeeded",
         why="Acceptance Scenario 3 — untrusted-collectors names exactly the "
             "failed collector, evidence-available stays true (a partial "
             "failure still reaches a verdict), and this is true even though "
@@ -2267,7 +2268,7 @@ AGGREGATE_CASES = [
         expect_signals=SIGNALS_FIXTURE,
     ),
     dict(
-        name="all nine collector STEPS outright error: evidence-available "
+        name="all ten collector STEPS outright error: evidence-available "
              "flips to false",
         why="specs/046-watchdog-supervision-collectors leg-1 — the "
             "collectors-failed >= collectors-total comparison must track "

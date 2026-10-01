@@ -241,6 +241,125 @@ never silently repointed at an unrelated scenario.
    force-deleted from git, only removed from the working tree going
    forward.
 
+## Scenario 23 — The `{stage, tool}` denial separation survives partial-overlap matching (spec 109's own US3/SC-003)
+
+1. Replay the three runs behind `#761`/`#764`/`#780` (or a fixture with
+   three distinct `{stage, tool}` denial pairs — different stages, or
+   different tools within a stage).
+2. Expected: three separate `pipeline-defect` issues are filed, exactly as
+   before spec 109's overlap matching — confirm the three issues'
+   matchable id sets (data-model.md, Matchable id set) are pairwise
+   disjoint, since each pair's `tool-denial` signal id is unique to its
+   `{stage, tool}` (#266) and overlap matching only ever attaches on a
+   *shared* id.
+
+## Scenario 24 — Partial overlap attaches to the same issue across three citation sets (spec 109's own US1/SC-001)
+
+1. Replay, in order, three findings of one class: citing `{A,B}`, then
+   `{A,C,D}`, then `{D}` alone (the `#729`/`#732`/`#765` shape).
+2. Expected: the first files a `pipeline-defect` issue whose body carries
+   both the `fingerprint=` marker and a `signal-ids=A,B` marker. The
+   second comments on that same issue (`signal-ids=A,C,D`, "matched on A,
+   new: C, D"). The third also comments on it (`signal-ids=D`, "matched on
+   D, new: (none)") even though `D` was never in the original body — only
+   in the second occurrence's comment. `gh issue list --label
+   pipeline-defect --state all` shows exactly one issue for this class,
+   with two recurrence comments.
+
+## Scenario 25 — Disjoint citation sets file a second issue (spec 109's own US1, Acceptance Scenario 2)
+
+1. Given the issue from Scenario 24 (matchable set `{A,C,D}` after two
+   occurrences), replay a finding of the same class citing `{E,F}`.
+2. Expected: a *new* `pipeline-defect` issue is created — no id in common
+   with the existing one's matchable set, so nothing links them.
+
+## Scenario 26 — A converging implement cycle's red gate suite files nothing; a stalled or finalize-red one still files (spec 109's own US2/SC-002)
+
+1. Replay run 36484099706's finding set (or a fixture shaped like it: six
+   findings across six classes, every one citing only `gate-suite-failure`
+   signal ids) with a `Collect: cycle outcome` artifact recorded as
+   `converged=false, handoff=false`.
+2. Expected: zero `pipeline-defect` issues created; the lifecycle issue
+   carries six reports, each naming the `converging-gate-suite`
+   suppression and its reason — never `data-integrity` or `unknown`.
+3. Replay the identical finding set again, this time with the `stalled`
+   label set (or `spec-meta` stage `stalled`).
+4. Expected: all six are filed as normal `pipeline-defect` issues.
+5. Replay again with the cycle-outcome artifact recorded as
+   `handoff=true` (finalize reached, suite still red).
+6. Expected: all six are filed as normal.
+7. Replay again with no `Collect: cycle outcome` artifact at all
+   (undeterminable state).
+8. Expected: all six are filed as normal — the suppression never applies
+   on a guess (FR-010 of spec 059's cycle-outcome facts, FR-033 of this
+   spec).
+
+## Scenario 27 — A run with both gate-suite and unrelated evidence suppresses only the gate-suite findings (spec 109's own US2, Acceptance Scenario 5)
+
+1. Replay a converging-cycle run whose findings include four citing only
+   `gate-suite-failure` ids and one citing a `tool-denial` id (unrelated
+   evidence, same run).
+2. Expected: the four gate-suite findings are suppressed
+   (`converging-gate-suite`); the `tool-denial` finding is triaged and, if
+   it matches nothing, filed exactly as it would be without this feature.
+
+## Scenario 28 — Chained overlap: multi-match attaches to the lowest-numbered issue and names the other (spec 109's own US1/US3, FR-031)
+
+1. Given two open issues of one class, issue X citing `{A,B}` (lower
+   number) and issue Y citing `{B,C}` (higher number), replay a finding
+   citing `{A,C}`.
+2. Expected: exactly one write — a comment on issue X (the lower number).
+   That comment's text names issue Y as another match. Issue Y receives no
+   comment, is not closed, not relabeled, not reopened. Neither the
+   dedup-search step's outcome nor the lifecycle-issue report calls this
+   `data-integrity`.
+
+## Scenario 29 — A finding whose only overlap is with a closed issue still files new (spec 109's own US1, FR-014)
+
+1. Given a closed `pipeline-defect` issue whose recorded matchable set is
+   `{A,B}`, replay a finding of the same class citing `{A,C}` (partial
+   overlap with the closed issue only, no open issue matches).
+2. Expected: a new issue is created — the closed issue is not reopened,
+   not commented on. (Contrast with the *exact*-fingerprint case, which
+   still reopens a closed issue exactly as it does today.)
+
+## Scenario 30 — Truncated candidate list reads as `unknown`, never as `none` (spec 109's own US1/US4, FR-028)
+
+1. Simulate (fixture) a class label with exactly 200 open+closed
+   `pipeline-defect` issues, so `gh issue list --limit 200` returns a
+   full page.
+2. Expected: the dedup outcome is `unknown` regardless of whether any of
+   the 200 fetched candidates would have matched — reported as a lookup
+   that could not be trusted, never silently treated as "nothing found."
+
+## Scenario 31 — A candidate at the comment-read ceiling reads as `unknown`, never `none` or `overlap` (spec 109's own US1/US4, Review Gate Round 3)
+
+1. Simulate (fixture) a single OPEN candidate whose body already carries
+   a real matching id, and whose `comments` array came back from the
+   bulk `gh issue list --json ...,comments` call at 100 entries or more
+   — GitHub's GraphQL API serves a nested connection like this one as a
+   single un-paginated page, so a candidate at or past that ceiling may
+   be missing ids recorded only in later comments.
+2. Expected: the dedup outcome is `unknown`, even though the candidate's
+   body alone would otherwise overlap-match — never `none` (which would
+   file a duplicate) and never `overlap` computed against a matchable
+   set that might be incomplete. The same candidate one comment short of
+   the ceiling (99) still overlap-matches normally — the guard fires
+   only at its own threshold.
+
+## Scenario 32 — The mutation fixture proves each of the above can fail its own subject (spec 109's own US4, SC-005)
+
+For each of Scenarios 24, 26, 23, 28, 31, run the checked-in fixture's
+companion mutation (`.github/scripts/verify-watchdog-overlap-fanout.py
+--self-test`): reverting overlap matching to exact-set equality,
+disabling the Scenario 31 comment-read-ceiling guard, reverting the
+FR-033 filing condition to "always file," and reverting the
+`tool-denial` id projection to a shared key. Expected: each mutation makes
+the PR-time gate suite (`python3 .github/scripts/run-local-gates.py`)
+fail, and the failure names the specific fixture whose subject it broke —
+confirming these are checks that can fail, not decorations
+(Constitution VIII).
+
 See `contracts/watchdog-workflow.md` for the exact trigger/job-gate
 contracts and `data-model.md` for the full Finding, fingerprint, and
 triage-decision shapes each scenario above exercises.

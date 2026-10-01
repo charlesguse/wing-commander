@@ -165,6 +165,13 @@ def run_ensure_issue(step, decision_outputs, tmproot):
         "DEDUP_ISSUE": decision_outputs.get("dedup-issue", ""),
         "FINGERPRINT": decision_outputs.get("fingerprint", ""),
         "CANONICAL_FACTS": decision_outputs.get("canonical-facts", ""),
+        # spec 109: "Ensure pipeline-defect issue" now also reads these
+        # under `set -uo pipefail` on every branch, so a fixture that omits
+        # them fails on an unrelated unbound-variable error rather than
+        # proving anything about the dedup guard this harness exists for.
+        "CITED_IDS": decision_outputs.get("cited-ids", ""),
+        "DEDUP_MATCHED_ON": decision_outputs.get("matched-on", ""),
+        "DEDUP_OTHER_MATCHES": decision_outputs.get("other-matches", ""),
         "FINDING_CLASS": "denied-tool",
         "FINDING_DESCRIPTION": "test finding",
         "FINDING_EVIDENCE": json.dumps(
@@ -200,7 +207,13 @@ WRITE_SUPPRESSION_OUTPUTS = {("write-suppression", "suppressed"): "false"}
 FIXTURE_NONE = {"suppressed": False, "evidence-valid": True,
                 "evidence-reason": "", "fingerprint": "abc123",
                 "short-fingerprint": "abc123", "canonical-facts": "x",
-                "dedup": "none", "dedup-issue": ""}
+                "dedup": "none", "dedup-issue": "",
+                "cited-ids": "aaaaaaaaaaaaaaaa,bbbbbbbbbbbbbbbb",
+                "matched-on": "aaaaaaaaaaaaaaaa", "other-matches": "41,42"}
+# Consumed by "Ensure pipeline-defect issue" and "Report finding to lifecycle
+# issue" (review-gate round 2 of #806): Load triage decision must write each
+# of these in both branches, carried through from the artifact when present.
+FORWARDED_KEYS = ("cited-ids", "matched-on", "other-matches")
 FIXTURE_UNKNOWN = {"suppressed": False, "evidence-valid": True,
                    "evidence-reason": "", "fingerprint": "abc123",
                    "short-fingerprint": "abc123", "canonical-facts": "x",
@@ -221,6 +234,11 @@ def scenarios(decision_script, ensure_step, if_expr, tmproot):
         note(f"dedup=none, artifact present: Load triage decision exited "
              f"{rc}: {out.strip()}")
     else:
+        for key in FORWARDED_KEYS:
+            if outputs.get(key) != FIXTURE_NONE[key]:
+                note(f"dedup=none, artifact present: Load triage decision "
+                     f"wrote {key}={outputs.get(key)!r}, expected "
+                     f"{FIXTURE_NONE[key]!r} from the artifact.")
         step_outputs = dict(WRITE_SUPPRESSION_OUTPUTS)
         step_outputs.update({("decision", k): v for k, v in outputs.items()})
         fires = eval_if_expr(if_expr, step_outputs)
@@ -261,6 +279,11 @@ def scenarios(decision_script, ensure_step, if_expr, tmproot):
         note(f"missing triage-decision artifact: Load triage decision "
              f"exited {rc}: {out.strip()}")
     else:
+        missing_keys = [k for k in FORWARDED_KEYS if k not in outputs]
+        if missing_keys:
+            note(f"missing triage-decision artifact: Load triage decision "
+                 f"never wrote {missing_keys} -- the fallback must still "
+                 f"bind every output its consumers read.")
         if outputs.get("dedup") != "unknown":
             note(f"missing triage-decision artifact: dedup output is "
                  f"{outputs.get('dedup')!r}, expected 'unknown' — the "

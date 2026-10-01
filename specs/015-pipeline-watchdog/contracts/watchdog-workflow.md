@@ -54,13 +54,13 @@ proceed in parallel:
    a lifecycle issue to post to (in which case the run's job summary
    carries the report instead, and the job records that no lifecycle
    issue destination exists).
-3. Nine deterministic collector steps (one per FR-006 source, research.md
+3. Ten deterministic collector steps (one per FR-006 source, research.md
    table, plus the four supervision-gap collectors specs/046-watchdog-
    supervision-collectors added — collect-turn-budget, collect-cost-report,
-   collect-final-pr-claims, collect-spec-collision), each tolerating "this
-   source produced nothing for this run" as success, never as a failure —
-   a source being empty is data, not an error. All nine MUST check, before
-   emitting any signal, the
+   collect-final-pr-claims, collect-spec-collision — plus `Collect: cycle
+   outcome`, spec 109), each tolerating "this source produced nothing for
+   this run" as success, never as a failure — a source being empty is
+   data, not an error. All ten MUST check, before emitting any signal, the
    attribution invariant (FR-026): (a) the inspected run's relevant
    scope (the whole run, or the specific job/artifact the collector
    reads) did not conclude `skipped`/`cancelled`, and (b) the evidence
@@ -68,6 +68,22 @@ proceed in parallel:
    collector whose check fails emits no signal for that condition.
 4. Emit `signals.json` as a job output / uploaded artifact for `diagnose`
    to consume.
+
+**`Collect: cycle outcome` (spec 109, new)**: downloads the
+`wing-commander-cycle-outcome-*` artifact(s) `implement.yml`'s "Record
+cycle outcome for watchdog (cycle)"/"(retry)" steps upload — distinct
+`-cycle`/`-retry` names, since both can be uploaded within one job run;
+the `-retry` one is read when both are present, as a retry's outcome is
+the job's final word (contracts/watchdog-dedup-fanout-delta.md in that
+feature's own spec directory). A missing artifact (inspected run
+predates this feature, is not an implement run, or the upload never
+happened) is a successful empty contribution, same attribution guard as
+every other collector. Two effects: (1) records `{converged, handoff,
+gate-suite-outcome, gate-suite-first-failure}` as `collect` job outputs
+for `triage`'s FR-033 condition — never seen by `diagnose`; (2) when
+`gate-suite-outcome == "fail"`, appends one `gate-suite-failure` signal to
+`signals.json`, visible to `diagnose` exactly like any other collector's
+signal.
 
 **Failure mode**: if every collector step fails outright (not "empty,"
 but actually errors — e.g. the run's artifacts are expired past
@@ -106,16 +122,42 @@ Per Finding, deterministic (no agent):
 3. **Fingerprint**: `sha256(class + "|signals:" + sorted-joined(valid cited
    signal ids))`. No fallback branch — step 2 guarantees every Finding
    reaching this step already carries at least one valid signal id
-   (FR-006/FR-007 of spec 024).
-4. **Dedup lookup** (FR-020/FR-029 of spec 024): `gh issue list --repo
-   <repo> --label pipeline-defect --label "🐕 · <class>" --state all
-   --limit 200 --json number,state,body` — a bounded, strongly-consistent
-   direct read scoped to the finding's own class — followed by a local
-   `jq` filter over that bounded result set's bodies for the exact
-   `fingerprint=$FP` marker. Outcomes: `none` | `match-open` |
-   `match-closed` | `unknown` (the `gh issue list` call itself exited
-   non-zero) | `data-integrity` (>1 match). `unknown` MUST suppress
-   filing and MUST NOT share a code path with `none`.
+   (FR-006/FR-007 of spec 024). Unchanged by spec 109 — kept as the exact-
+   citation-set hash the closed-issue reopen path (FR-014) still reads.
+3a. **Gate-suite filing condition** (spec 109, FR-033/FR-034 — new, runs
+   before dedup): if every one of this finding's valid cited ids has kind
+   `gate-suite-failure`, AND `collect`'s cycle-outcome state is present
+   with `converged=false` and `handoff=false`, AND neither `spec-meta`
+   stage nor the `stalled` label say this cycle stalled: outcome
+   `converging-gate-suite`. Suppresses filing; dedup (step 4) does NOT run
+   for this Finding; reported under its own wording, never as
+   `data-integrity` or `unknown`.
+4. **Dedup lookup** (FR-020/FR-029 of spec 024; FR-030–FR-032 of spec 109):
+   `gh issue list --repo <repo> --label pipeline-defect --label
+   "🐕 · <class>" --state all --limit 200 --json number,state,body,comments`
+   (`comments` added by spec 109) — a bounded, strongly-consistent direct
+   read scoped to the finding's own class — followed by a local `jq`
+   filter over that bounded result set, in order: (a) candidate count ==
+   200 (the `--limit` ceiling) ⇒ `unknown` (spec 109: a truncated read is
+   not a completed one); (b) the exact `fingerprint=$FP` marker, unchanged
+   priority and mechanism — checked ahead of (c) regardless of any open
+   candidate's comment count, since it reads only `.body`, never
+   `.comments`; (c) any OPEN candidate whose `comments` array length is
+   >= 100 ⇒ `unknown` (spec 109, Review Gate Round 3: `gh issue list
+   --json comments` is a single un-paginated GraphQL page, so a candidate
+   at or past that ceiling may be missing ids recorded only in later
+   comments — a `none`/`overlap` computed against it is not trustworthy);
+   (d) for OPEN candidates only, an intersection between the finding's
+   cited ids and each candidate's matchable id set (data-model.md — body +
+   comment `signal-ids=` markers, capped at the 30 most-recently-added
+   distinct ids). Outcomes: `none` | `match-open` | `match-closed` |
+   `overlap` (spec 109: ≥1 open candidate's matchable set intersects;
+   comment lands on the lowest-numbered intersecting candidate, others
+   named per FR-031, never on a closed issue) | `unknown` (the `gh issue
+   list` call itself exited non-zero, or either truncation case above) |
+   `data-integrity` (>1 **exact**-fingerprint match — still an anomaly
+   under overlap matching too). `unknown` MUST suppress filing and MUST
+   NOT share a code path with `none`.
 
 No fix attempt is ever made — the watchdog is a pure reporter with no
 diff-producing step (FR-014 of spec 024).
@@ -125,18 +167,33 @@ diff-producing step (FR-014 of spec 024).
 Executes exactly what the dedup outcome selected:
 
 - **Dedup miss (`none`)**: create a new pipeline-defect issue carrying
-  the Finding's evidence; comment on the lifecycle issue linking it.
+  the Finding's evidence and a new `signal-ids=<cited ids>` marker
+  (spec 109) additive alongside the `fingerprint=` marker; comment on the
+  lifecycle issue linking it.
 - **Dedup hit, open (`match-open`)**: comment the fresh evidence on the
   existing pipeline-defect issue; comment on the lifecycle issue linking
   it.
 - **Dedup hit, closed (`match-closed`)**: reopen the existing
   pipeline-defect issue and comment the fresh evidence; comment on the
   lifecycle issue linking it.
-- **Lookup failed (`unknown`)**: suppress every write for this Finding;
-  report "dedup lookup failed — finding suppressed, needs a maintainer's
-  manual check" on the lifecycle issue. Checked before, and sharing no
-  code path with, the `none` branch above.
-- **`data-integrity`**: report only, no auto action (unchanged).
+- **Overlap match, open (`overlap`, spec 109)**: comment the fresh
+  evidence, plus a `signal-ids=` marker and which ids matched/are new
+  (FR-034), on the lowest-numbered matching pipeline-defect issue only;
+  any other matching issue is named in that comment (FR-031) but never
+  written to; comment on the lifecycle issue linking the one issue
+  written.
+- **Lookup failed or truncated (`unknown`)**: suppress every write for
+  this Finding; report "dedup lookup failed — finding suppressed, needs a
+  maintainer's manual check" (or the truncation-specific wording, spec
+  109) on the lifecycle issue. Checked before, and sharing no code path
+  with, the `none` branch above.
+- **`data-integrity`**: report only, no auto action (unchanged — still
+  reserved for >1 *exact*-fingerprint match).
+- **Converging-cycle gate-suite finding (`converging-gate-suite`, spec
+  109)**: no write of any kind; reported on the lifecycle issue under its
+  own wording (FR-011/FR-019 of this spec, FR-033 of spec 109) — never as
+  `data-integrity` or `unknown`, which mean "could not decide" rather than
+  "decided this is not a defect."
 
 No PR is ever opened by `act` (FR-014 of spec 024).
 
