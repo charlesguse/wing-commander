@@ -282,7 +282,7 @@ state. The item is not resolved to `triage`, and the three neighbouring
 states (PR OPEN, PR CLOSED-unmerged, PR state unresolvable) each behave as
 they do today.
 
-- [ ] T012 [US2] `.github/workflows/board-loop.yml`: the resume step's
+- [X] T012 [US2] `.github/workflows/board-loop.yml`: the resume step's
   "resolved by number but not OPEN" clause (currently `:792-810`,
   `elif pr_from_marker and marker_step in FIX_OR_LATER_STEPS:` → always
   `step = "triage"`) splits on `pr_state` (research.md D7):
@@ -311,7 +311,7 @@ they do today.
   `FIX_OR_LATER_STEPS` member (`board_eligibility.py:80`) — no new step
   name (FR-009). Clearing every other field satisfies FR-007's "no branch,
   round or base SHA from the merged attempt leaks".
-- [ ] T013 [US2] `.github/scripts/verify-board-loop-resume-gating.py`
+- [X] T013 [US2] `.github/scripts/verify-board-loop-resume-gating.py`
   (Gate 97): update `RESUME_CASES`' existing
   `("awaiting-merge, PR MERGED (issue still open) -> triage, FR-022
   cleared", ...)` case (currently `:886-888`) to expect `step = "prove"`
@@ -323,7 +323,7 @@ they do today.
   untouched by T012) exactly as they are. Add a self-test mutation
   (`--self-test`) asserting that reverting T012's first clause back to
   `step = "triage"` is caught.
-- [ ] T014 [US2] Follow quickstart.md Story 2 steps 1-3: confirm the
+- [X] T014 [US2] Follow quickstart.md Story 2 steps 1-3: confirm the
   `MERGED` case resolves to `prove` with every abandoned-attempt field
   cleared, and that PR OPEN / CLOSED-unmerged / unresolvable each remain
   byte-identical to today.

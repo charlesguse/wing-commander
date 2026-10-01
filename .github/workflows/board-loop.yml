@@ -1143,14 +1143,33 @@ jobs:
               or (marker_step in FIX_OR_LATER_STEPS and pr_state == "OPEN")
           ):
               step = marker_step
+          elif pr_from_marker and marker_step in FIX_OR_LATER_STEPS and pr_state == "MERGED":
+              # specs/096-durable-prove-entry research.md D7/FR-007/FR-008/
+              # FR-009: resolved by number, MERGED, and the issue is still
+              # open -- the loop's own fix landed but nothing proved it yet
+              # (board_prove_displacement's displacement case, or a run that
+              # simply has not reached prove-gate/prove this tick). This is
+              # never re-triaged as if the fix did not exist (FR-007): the
+              # issue goes straight to prove, with none of the abandoned
+              # attempt's PR number/state, branch, round or base-sha leaking
+              # forward (same FR-022 clearing the sibling clause below
+              # already does). `step = "prove"` is already a
+              # FIX_OR_LATER_STEPS member (board_eligibility.py) -- no new
+              # step name.
+              step = "prove"
+              reason = "merged fix -- awaiting proof"
+              pr_number = ""
+              pr_state = ""
+              branch = ""
+              round_ = "0"
+              base_sha = ""
           elif pr_from_marker and marker_step in FIX_OR_LATER_STEPS:
-              # Resolved by number but not OPEN -- disqualified (for an
-              # awaiting-merge marker: the handed-over PR was closed
-              # unmerged, or merged while the issue stayed open). Falls to
-              # the triage clause below, never the fallback clause: the
-              # marker named a real PR, so a different loop-owned PR must
-              # not be adopted in its place (SC-007). None of this
-              # abandoned attempt's state -- PR number/state, branch,
+              # Resolved by number but not OPEN and not MERGED -- disqualified
+              # (for an awaiting-merge marker: the handed-over PR was closed
+              # unmerged). Falls to the triage clause below, never the
+              # fallback clause: the marker named a real PR, so a different
+              # loop-owned PR must not be adopted in its place (SC-007). None
+              # of this abandoned attempt's state -- PR number/state, branch,
               # round, base-sha -- must leak into this triage output
               # (FR-022): a fresh triage->route->fix must cut a new branch
               # off current main and a fresh review must start at round 0.
