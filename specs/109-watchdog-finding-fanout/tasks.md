@@ -299,3 +299,13 @@ With two contributors (this run's shared-usage-window constraint caps concurrent
   - .github/workflows/watchdog.yml
 
   Detail: map([scan("signal-ids=([^ ]+)")] | map(.[0]) | join(",")) immediately followed by map(split(",") | map(select(length>0))) inside the overlap_matches jq program in the 'Dedup search' step.
+
+## Review Gate Round 4 Findings
+
+- [ ] Review finding: tasks.md T007/T008 still describe the shared-artifact-name design Round 1 review found buggy
+
+  T007/T008 (specs/109-watchdog-finding-fanout/tasks.md) say both implement.yml legs upload to the same artifact name wing-commander-cycle-outcome and call this mutually exclusive, but Review Gate Round 1 (logged later in the same file) found the two upload steps are not mutually exclusive and collide, and the shipped implement.yml/watchdog.yml now use distinct wing-commander-cycle-outcome-cycle/-retry names; the task text was never updated to match.
+
+  - specs/109-watchdog-finding-fanout/tasks.md
+
+  Detail: tasks.md lines ~3152-3153 (T007/T008) vs the 'Review Gate Round 1 Findings' entry further down the same file and the shipped .github/workflows/implement.yml upload steps using wing-commander-cycle-outcome-cycle / wing-commander-cycle-outcome-retry.
