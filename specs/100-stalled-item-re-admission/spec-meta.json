@@ -2,8 +2,10 @@
   "issue": 752,
   "spec_dir": "specs/100-stalled-item-re-admission",
   "feature_num": "100",
-  "stage": "review",
+  "stage": "implement",
   "iteration": 1,
   "spec_branch": "spec/100-stalled-item-re-admission",
-  "pending_re_review_from": []
+  "pending_re_review_from": [
+    "charlesguse"
+  ]
 }
