@@ -1934,7 +1934,7 @@ jobs:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           ISSUE_NUMBER: ${{ needs.select.outputs.issue-number || inputs.directed-issue }}
           PAUSED: ${{ steps.killswitch-recheck.outputs.paused }}
-          STOP_CAUSE: ${{ steps.killswitch-recheck.outputs.stop-cause }}
+          STOP_CAUSE_PHRASE: ${{ steps.killswitch-recheck.outputs.stop-cause-phrase }}
           DIRECTED_ATTRIBUTION: >-
             ${{ inputs.directed-stage != '' && format('_Directed proof run
             (stage: `{0}`), dispatched to prove PR #{1} -- selects no board
@@ -1947,14 +1947,10 @@ jobs:
 
           if [ "$PAUSED" = "true" ]; then
             # specs/097-recorded-stop-point FR-014: name the cause actually
-            # observed, never "kill switch" unconditionally.
-            case "$STOP_CAUSE" in
-              stop-request) cause="a maintainer stop request" ;;
-              kill-switch) cause="the kill switch" ;;
-              closed-issue) cause="the issue being closed" ;;
-              *) cause="an unrecognised stand-down cause ($STOP_CAUSE)" ;;
-            esac
-            echo "board-loop: $cause set immediately before triage's durable action -- standing down without acting." >> "$GITHUB_STEP_SUMMARY"
+            # observed, never "kill switch" unconditionally -- see
+            # wing-commander-board-stop-check/action.yml's `stop-cause-phrase`
+            # output, the one home for this prose (maintainer review fold leg-2).
+            echo "board-loop: $STOP_CAUSE_PHRASE set immediately before triage's durable action -- standing down without acting." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           if [ "$outcome" = "defer" ]; then
@@ -2038,9 +2034,12 @@ jobs:
           transcript-path: ${{ runner.temp }}/wing-commander-no-transcript.json
           model: ''
           stage: board-loop
+          # maintainer review fold leg-2: the stop-cause branch reads the
+          # composite's own `stop-cause-run-label` output (one home) rather
+          # than re-deriving "stopped (stop-request)"/"stood down
+          # (kill-switch)" per job.
           run-label: >-
-            ${{ (steps.killswitch-recheck.outputs.stop-cause == 'stop-request' && 'triage: stopped (stop-request)') ||
-                (steps.killswitch-recheck.outputs.stop-cause == 'kill-switch' && 'triage: stood down (kill-switch)') ||
+            ${{ steps.killswitch-recheck.outputs.stop-cause != '' && format('triage: {0}', steps.killswitch-recheck.outputs.stop-cause-run-label) ||
                 format('triage: {0}', steps.act.outputs.outcome) }}
           record-path: ${{ runner.temp }}/wing-commander-metrics-record-triage-outcome.json
 
@@ -2434,16 +2433,10 @@ jobs:
       - name: Record the stand-down (route)
         if: steps.killswitch-recheck.outputs.paused == 'true'
         env:
-          STOP_CAUSE: ${{ steps.killswitch-recheck.outputs.stop-cause }}
+          STOP_CAUSE_PHRASE: ${{ steps.killswitch-recheck.outputs.stop-cause-phrase }}
         run: |
           set -uo pipefail
-          case "$STOP_CAUSE" in
-            stop-request) cause="a maintainer stop request" ;;
-            kill-switch) cause="the kill switch" ;;
-            closed-issue) cause="the issue being closed" ;;
-            *) cause="an unrecognised stand-down cause ($STOP_CAUSE)" ;;
-          esac
-          echo "board-loop: $cause found immediately before route's durable action -- standing down without acting." >> "$GITHUB_STEP_SUMMARY"
+          echo "board-loop: $STOP_CAUSE_PHRASE found immediately before route's durable action -- standing down without acting." >> "$GITHUB_STEP_SUMMARY"
 
       # Board Item Marker (T014). A `spec` verdict ends the run for this
       # item with no branch cut (FR-021); a `fix` verdict proceeds to the
@@ -2615,9 +2608,11 @@ jobs:
           transcript-path: ${{ runner.temp }}/wing-commander-no-transcript.json
           model: ''
           stage: board-loop
+          # maintainer review fold leg-2: see triage's own run-label comment
+          # above -- same one-home `stop-cause-run-label` read, not a
+          # per-job re-derivation.
           run-label: >-
-            ${{ (steps.killswitch-recheck.outputs.stop-cause == 'stop-request' && 'route: stopped (stop-request)') ||
-                (steps.killswitch-recheck.outputs.stop-cause == 'kill-switch' && 'route: stood down (kill-switch)') ||
+            ${{ steps.killswitch-recheck.outputs.stop-cause != '' && format('route: {0}', steps.killswitch-recheck.outputs.stop-cause-run-label) ||
                 format('route: {0}', steps.decide.outputs.verdict) }}
           record-path: ${{ runner.temp }}/wing-commander-metrics-record-route-outcome.json
 
@@ -3004,16 +2999,10 @@ jobs:
       - name: Record the stand-down (fix)
         if: steps.gate-suite.outputs.outcome == 'pass' && steps.killswitch-recheck.outputs.paused == 'true'
         env:
-          STOP_CAUSE: ${{ steps.killswitch-recheck.outputs.stop-cause }}
+          STOP_CAUSE_PHRASE: ${{ steps.killswitch-recheck.outputs.stop-cause-phrase }}
         run: |
           set -uo pipefail
-          case "$STOP_CAUSE" in
-            stop-request) cause="a maintainer stop request" ;;
-            kill-switch) cause="the kill switch" ;;
-            closed-issue) cause="the issue being closed" ;;
-            *) cause="an unrecognised stand-down cause ($STOP_CAUSE)" ;;
-          esac
-          echo "board-loop: $cause found immediately before fix's durable action -- standing down without acting." >> "$GITHUB_STEP_SUMMARY"
+          echo "board-loop: $STOP_CAUSE_PHRASE found immediately before fix's durable action -- standing down without acting." >> "$GITHUB_STEP_SUMMARY"
 
       # FR-026/research.md D9: push only on green, then cross-link.
       - name: Push and open the PR
@@ -3262,9 +3251,11 @@ jobs:
           transcript-path: ${{ runner.temp }}/wing-commander-no-transcript.json
           model: ''
           stage: board-loop
+          # maintainer review fold leg-2: see triage's own run-label comment
+          # above -- same one-home `stop-cause-run-label` read, not a
+          # per-job re-derivation.
           run-label: >-
-            ${{ (steps.killswitch-recheck.outputs.stop-cause == 'stop-request' && 'fix: stopped (stop-request)') ||
-                (steps.killswitch-recheck.outputs.stop-cause == 'kill-switch' && 'fix: stood down (kill-switch)') ||
+            ${{ steps.killswitch-recheck.outputs.stop-cause != '' && format('fix: {0}', steps.killswitch-recheck.outputs.stop-cause-run-label) ||
                 format('fix: gate-suite {0}', steps.gate-suite.outputs.outcome) }}
           record-path: ${{ runner.temp }}/wing-commander-metrics-record-fix-outcome.json
 
@@ -4046,16 +4037,10 @@ jobs:
       - name: Record the stand-down (review)
         if: steps.killswitch-recheck.outputs.paused == 'true'
         env:
-          STOP_CAUSE: ${{ steps.killswitch-recheck.outputs.stop-cause }}
+          STOP_CAUSE_PHRASE: ${{ steps.killswitch-recheck.outputs.stop-cause-phrase }}
         run: |
           set -uo pipefail
-          case "$STOP_CAUSE" in
-            stop-request) cause="a maintainer stop request" ;;
-            kill-switch) cause="the kill switch" ;;
-            closed-issue) cause="the issue being closed" ;;
-            *) cause="an unrecognised stand-down cause ($STOP_CAUSE)" ;;
-          esac
-          echo "board-loop: $cause found immediately before review's durable action -- standing down without acting." >> "$GITHUB_STEP_SUMMARY"
+          echo "board-loop: $STOP_CAUSE_PHRASE found immediately before review's durable action -- standing down without acting." >> "$GITHUB_STEP_SUMMARY"
 
       # T042/T044/FR-030/FR-031: zero open in-scope findings advances to
       # readiness; findings remain and the round budget (research.md D18,
@@ -4355,9 +4340,11 @@ jobs:
           transcript-path: ${{ runner.temp }}/wing-commander-no-transcript.json
           model: ''
           stage: board-loop
+          # maintainer review fold leg-2: see triage's own run-label comment
+          # above -- same one-home `stop-cause-run-label` read, not a
+          # per-job re-derivation.
           run-label: >-
-            ${{ (steps.killswitch-recheck.outputs.stop-cause == 'stop-request' && 'review: stopped (stop-request)') ||
-                (steps.killswitch-recheck.outputs.stop-cause == 'kill-switch' && 'review: stood down (kill-switch)') ||
+            ${{ steps.killswitch-recheck.outputs.stop-cause != '' && format('review: {0}', steps.killswitch-recheck.outputs.stop-cause-run-label) ||
                 format('review: {0}', steps.round.outputs.outcome) }}
           record-path: ${{ runner.temp }}/wing-commander-metrics-record-review-outcome.json
 
@@ -4598,18 +4585,14 @@ jobs:
         if: steps.killswitch-recheck.outputs.paused == 'true'
         env:
           ISSUE_NUMBER: ${{ needs.select.outputs.issue-number || inputs.directed-issue }}
-          STOP_CAUSE: ${{ steps.killswitch-recheck.outputs.stop-cause }}
+          STOP_CAUSE_PHRASE: ${{ steps.killswitch-recheck.outputs.stop-cause-phrase }}
         run: |
           set -uo pipefail
           # specs/097-recorded-stop-point FR-014: name the cause actually
-          # observed, never "kill switch or stop request" unconditionally.
-          case "$STOP_CAUSE" in
-            stop-request) cause="a maintainer stop request" ;;
-            kill-switch) cause="the kill switch" ;;
-            closed-issue) cause="the issue being closed" ;;
-            *) cause="an unrecognised stand-down cause ($STOP_CAUSE)" ;;
-          esac
-          echo "board-loop: $cause found immediately before readiness's durable actions on issue #$ISSUE_NUMBER -- standing down without acting (#604)." >> "$GITHUB_STEP_SUMMARY"
+          # observed, never "kill switch or stop request" unconditionally --
+          # see wing-commander-board-stop-check/action.yml's
+          # `stop-cause-phrase` output (maintainer review fold leg-2).
+          echo "board-loop: $STOP_CAUSE_PHRASE found immediately before readiness's durable actions on issue #$ISSUE_NUMBER -- standing down without acting (#604)." >> "$GITHUB_STEP_SUMMARY"
 
       # Zero open in-scope findings is trusted from the state machine
       # itself, not re-derived: readiness is entered ONLY when review's own
@@ -4863,9 +4846,11 @@ jobs:
           # (contracts/metrics-classification.md): a stop-request/kill-switch
           # stand-down is distinguishable from an ordinary ready/not-ready
           # run from this one field alone.
+          # maintainer review fold leg-2: see triage's own run-label comment
+          # above -- same one-home `stop-cause-run-label` read, not a
+          # per-job re-derivation.
           run-label: >-
-            ${{ (steps.killswitch-recheck.outputs.stop-cause == 'stop-request' && 'readiness: stopped (stop-request)') ||
-                (steps.killswitch-recheck.outputs.stop-cause == 'kill-switch' && 'readiness: stood down (kill-switch)') ||
+            ${{ steps.killswitch-recheck.outputs.stop-cause != '' && format('readiness: {0}', steps.killswitch-recheck.outputs.stop-cause-run-label) ||
                 (steps.decide.outputs.ready == 'true' && 'ready' || 'not ready') }}
           record-path: ${{ runner.temp }}/wing-commander-metrics-record-readiness.json
           spec-identity-is-own: 'false'
@@ -5496,20 +5481,17 @@ jobs:
           DIRECTED_STAGE: ${{ steps.decide.outputs.directed-stage }}
           CONCLUSION: ${{ steps.redrive.outputs.conclusion }}
           DISAMBIGUATED_REASON: ${{ steps.disambiguate.outputs.reason }}
-          STOP_CAUSE: ${{ steps.killswitch-recheck.outputs.stop-cause }}
+          STOP_CAUSE_RUN_LABEL: ${{ steps.killswitch-recheck.outputs.stop-cause-run-label }}
         run: |
           set -uo pipefail
           # specs/097-recorded-stop-point FR-014/FR-015: name the cause
           # actually observed, distinguishably, in the metrics run_label
           # (contracts/metrics-classification.md) -- never an undifferentiated
-          # "stood down" for every cause.
+          # "stood down" for every cause. See wing-commander-board-stop-check/
+          # action.yml's `stop-cause-run-label` output, the one home for this
+          # suffix (maintainer review fold leg-2).
           if [ "${{ steps.killswitch-recheck.outputs.paused }}" = "true" ]; then
-            case "$STOP_CAUSE" in
-              stop-request) label="prove: stopped (stop-request)" ;;
-              kill-switch) label="prove: stood down (kill-switch)" ;;
-              closed-issue) label="prove: stood down (issue closed)" ;;
-              *) label="prove: stood down (unrecognised cause: $STOP_CAUSE)" ;;
-            esac
+            label="prove: $STOP_CAUSE_RUN_LABEL"
           elif [ "${{ steps.decide.outputs.actions-only }}" != "true" ]; then
             if [ "${{ inputs.directed-recovery }}" = "true" ]; then
               label="closed on merge evidence alone (recovered)"

@@ -89,6 +89,23 @@ outputs:
       "stop-request" -- specs/097-recorded-stop-point data-model.md "Stand-down
       cause". paused is unchanged and remains true iff stop-cause != "".
     value: ${{ steps.check.outputs.stop-cause }}
+  stop-cause-phrase:
+    description: >
+      The human-legible phrase naming stop-cause -- "a maintainer stop
+      request" | "the kill switch" | "the issue being closed" | "" (not
+      standing down). The one home for the prose every resume-stage job's
+      own stand-down message names (CLAUDE.md "Shared logic has exactly one
+      home"; was pasted into six `case "$STOP_CAUSE"` blocks in
+      board-loop.yml, maintainer review fold leg-2).
+    value: ${{ steps.check.outputs.stop-cause-phrase }}
+  stop-cause-run-label:
+    description: >
+      The metrics run-label suffix naming stop-cause -- "stopped
+      (stop-request)" | "stood down (kill-switch)" | "stood down (issue
+      closed)" | "" (not standing down) -- consumed by each resume-stage
+      job's own "Record run outcome" step instead of re-deriving the same
+      two-branch ternary six times (maintainer review fold leg-2).
+    value: ${{ steps.check.outputs.stop-cause-run-label }}
 
 runs:
   using: composite
@@ -159,6 +176,30 @@ runs:
           paused=false
         fi
 
+        # specs/097-recorded-stop-point (maintainer review fold leg-2,
+        # CLAUDE.md "Shared logic has exactly one home"): the prose/
+        # run-label pair for each stop-cause, computed once here instead of
+        # a `case "$STOP_CAUSE"` block pasted into each of board-loop.yml's
+        # six resume-stage jobs.
+        case "$stop_cause" in
+          stop-request)
+            stop_cause_phrase="a maintainer stop request"
+            stop_cause_run_label="stopped (stop-request)"
+            ;;
+          kill-switch)
+            stop_cause_phrase="the kill switch"
+            stop_cause_run_label="stood down (kill-switch)"
+            ;;
+          closed-issue)
+            stop_cause_phrase="the issue being closed"
+            stop_cause_run_label="stood down (issue closed)"
+            ;;
+          *)
+            stop_cause_phrase=""
+            stop_cause_run_label=""
+            ;;
+        esac
+
         if [ "$stand_down" = "true" ]; then
           # find_stop_request()'s own contract (Gate 87, mutation-proven)
           # already guarantees cancel_run_id is never this run's own id --
@@ -217,6 +258,8 @@ runs:
         fi
         echo "paused=$paused" >> "$GITHUB_OUTPUT"
         echo "stop-cause=$stop_cause" >> "$GITHUB_OUTPUT"
+        echo "stop-cause-phrase=$stop_cause_phrase" >> "$GITHUB_OUTPUT"
+        echo "stop-cause-run-label=$stop_cause_run_label" >> "$GITHUB_OUTPUT"
 
     # specs/097-recorded-stop-point: the durable consequence of an honoured
     # stop request -- the existing `stalled` marker shape plus board:stalled

@@ -45,6 +45,11 @@ WHAT IT CHECKS
    `marker-base-sha` (maintainer review fold leg-1) -- explicit empty
    strings count as wired (e.g. triage/route before a branch exists, or
    prove, which tracks no branch at all).
+9. Single home: `.github/workflows/board-loop.yml` never re-derives the
+   stop-cause -> prose/run-label mapping in a pasted `case "$STOP_CAUSE"`
+   block -- that mapping lives solely in wing-commander-board-stop-check's
+   own `stop-cause-phrase`/`stop-cause-run-label` outputs (CLAUDE.md "Shared
+   logic has exactly one home", maintainer review fold leg-2).
 
 Each check's own mutation is applied under --self-test and must be caught
 (Principle VIII, SC-009) -- see contracts/gate-135-stop-point-recording.md.
@@ -100,6 +105,11 @@ def _load_composite_steps(text=None):
 
 def _composite_text():
     with open(COMPOSITE, encoding="utf-8") as fh:
+        return fh.read()
+
+
+def _board_loop_text():
+    with open(BOARD_LOOP, encoding="utf-8") as fh:
         return fh.read()
 
 
@@ -383,6 +393,31 @@ def check_marker_inputs_wired(board_loop_doc=None, verbose=True):
     return failures
 
 
+# --- Check 9: the stop-cause case block has exactly one home -------------
+STOP_CAUSE_CASE_BLOCK_RE = re.compile(r'case\s+"\$STOP_CAUSE"')
+
+
+def check_no_pasted_stop_cause_case(text=None, verbose=True):
+    """CLAUDE.md "Shared logic has exactly one home" (maintainer review fold
+    leg-2): the stop-cause -> prose/run-label mapping lives solely in
+    wing-commander-board-stop-check/action.yml's own `stop-cause-phrase`/
+    `stop-cause-run-label` outputs; a `case "$STOP_CAUSE"` block pasted back
+    into board-loop.yml is this same logic re-derived a second time."""
+    text = text if text is not None else _board_loop_text()
+    match = STOP_CAUSE_CASE_BLOCK_RE.search(text)
+    if match:
+        if verbose:
+            print("::error::verify-stop-point-recording: {0} contains a "
+                  "`case \"$STOP_CAUSE\"` block -- the stop-cause phrase/run-label "
+                  "mapping must be read from wing-commander-board-stop-check's own "
+                  "`stop-cause-phrase`/`stop-cause-run-label` outputs, not re-derived "
+                  "(check 9).".format(BOARD_LOOP))
+        return 1
+    if verbose:
+        print("[ok] check 9: no pasted `case \"$STOP_CAUSE\"` block in board-loop.yml")
+    return 0
+
+
 CHECKS = (
     ("check 1", check_record_write_present),
     ("check 2", check_provenance),
@@ -392,6 +427,7 @@ CHECKS = (
     ("check 6", check_no_write_on_stand_down),
     ("check 7", check_no_wc_pristine_dependency),
     ("check 8", check_marker_inputs_wired),
+    ("check 9", check_no_pasted_stop_cause_case),
 )
 
 
@@ -652,6 +688,17 @@ def selftest_check8():
     return 0
 
 
+def selftest_check9():
+    case = 'a `case "$STOP_CAUSE"` block re-pasted into board-loop.yml -> check 9 fails'
+    mutated = _board_loop_text() + '\n            case "$STOP_CAUSE" in\n'
+    failures = check_no_pasted_stop_cause_case(text=mutated, verbose=False)
+    if not failures:
+        print("::error::verify-stop-point-recording self-test: {0}: NOT caught.".format(case))
+        return 1
+    print("note: mutation caught ({0}).".format(case))
+    return 0
+
+
 # maintainer review: a check deleted from CHECKS previously left both the
 # gate's own `run()` and `--self-test` at 0 failures -- nothing compared
 # CHECKS against what the self-tests actually exercise. This table is the
@@ -667,6 +714,7 @@ CHECK_SELFTEST_COVERAGE = {
     check_no_write_on_stand_down: (selftest_check6,),
     check_no_wc_pristine_dependency: (selftest_check7,),
     check_marker_inputs_wired: (selftest_check8,),
+    check_no_pasted_stop_cause_case: (selftest_check9,),
 }
 
 
@@ -699,7 +747,7 @@ def selftest_registry_coverage():
 SELFTESTS = (
     selftest_check1, selftest_check2, selftest_check3,
     selftest_check4, selftest_check4_samerun_record, selftest_check4_samerun_record_both,
-    selftest_check5, selftest_check6, selftest_check7, selftest_check8,
+    selftest_check5, selftest_check6, selftest_check7, selftest_check8, selftest_check9,
     selftest_registry_coverage,
 )
 
