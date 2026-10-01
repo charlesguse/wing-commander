@@ -329,3 +329,9 @@ Task: "Add fixtures under wing-commander-fold-queue-release/tests/"
 ### Follow-up review of 511913b3 (maintainer, 2026-09-30)
 
 - [ ] T059 **B7: ledger errors are invisible.** `fold-queue-ledger.sh:695` and `:728` write `::error::` to stdout, and every caller discards or captures stdout: `release:83`, `admit:93`, `claim-dispatch:122` and `ledger:64`. **Fix:** write them to `>&2`.
+
+## Maintainer Feedback
+
+### Follow-up review of 511913b3 (maintainer, 2026-09-30)
+
+- [ ] T060 **B8: the T049 extension only covers implement heads with status `in_progress` or `queued`** (`await.sh:106`). It misses a run with status `waiting` (environment approval), act heads held for confirmation (`confirm-timeout-minutes` defaults to 1440), and redispatched runs (B3). **Fix:** extend while the head's owning run is anything but `completed`. Add fixtures for the extension and for the uncorrelated reclaim.
