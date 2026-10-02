@@ -147,7 +147,7 @@ GATE_STALL_BLOCKED_PENDING = gate_stall(
 # (defaults to HEAD -- the branch has not advanced).
 REQUEST_TIME = "2024-01-01T00:00:00Z"
 
-BASE = dict(DETECT_RESULT="skipped", VERIFY_RESULT="skipped",
+BASE = dict(DETECT_RESULT="skipped", PIN_RESULT="skipped", VERIFY_RESULT="skipped",
             DECIDE_RESULT="skipped", DISPATCH_RESULT="skipped",
             HEAD_SHA="", HAS_NEW_WORK="", TAG_EXISTS="", LATEST_TAG="",
             VERDICT_JSON="", NEXT_VERSION="", COLLISION="",
@@ -202,6 +202,16 @@ SCENARIOS = [
         body_contains=["infrastructure", "verify-e2e produced no verdict",
                        "job result: failure", RUN_URL],
         summary_contains="verification failed",
+    ),
+    dict(
+        name="run cancelled during e2e-pin, so verify-e2e never started: "
+             "summarised, nothing filed -- not 'verify-e2e produced no verdict'",
+        env=dict(DETECT_RESULT="success", HAS_NEW_WORK="true", TAG_EXISTS="true",
+                 LATEST_TAG="v2.7.2", HEAD_SHA=HEAD, PIN_RESULT="cancelled",
+                 VERIFY_RESULT="skipped"),
+        action=None,
+        summary_contains="cancelled during e2e-pin",
+        summary_excludes="verification failed",
     ),
     dict(
         name="run cancelled during verify-e2e (a hung poll stopped by hand): "
@@ -690,6 +700,10 @@ def mut_ignore_verify_result(script):
     return blind_case(script, "VERIFY_RESULT")
 
 
+def mut_ignore_pin_result(script):
+    return blind_case(script, "PIN_RESULT")
+
+
 def mut_ignore_decide_result(script):
     return blind_case(script, "DECIDE_RESULT")
 
@@ -765,6 +779,7 @@ def mut_gate_stall_collapsed_into_pipeline_defect(script):
 MUTATIONS = [
     ("report ignoring detect's job result (#325 case 1)", mut_ignore_detect_result),
     ("report filing a cancelled verify-e2e as infrastructure", mut_ignore_verify_result),
+    ("report filing a run cancelled during e2e-pin as infrastructure", mut_ignore_pin_result),
     ("a succeeded verify-e2e with no verdict described as 'the job stopped'",
      mut_no_verdict_always_stopped),
     ("report ignoring decide-version's job result (#325 case 2)", mut_ignore_decide_result),

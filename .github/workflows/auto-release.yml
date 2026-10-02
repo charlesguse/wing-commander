@@ -94,6 +94,95 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           echo "detect: latest release $latest_tag ($tag_sha); head $head_sha; has-new-work=$has_new_work." >> "$GITHUB_STEP_SUMMARY"
 
+  # The test repository calls the stages through an annotated tag on the
+  # verified head, because that is the shape of every adopter's `@v2` or
+  # `@v2.x.y` pin: github.job_workflow_sha is then the tag object's SHA, not
+  # the commit's. A bare commit pin never exercised that, and v2.7.4 shipped
+  # a guard that failed only for adopters (#928). The tag is run-scoped,
+  # created on exactly the verified head and never moved, so the pin still
+  # names the commit under verification (specs/045 research.md D7);
+  # verify-e2e reads it back before the fixture names it. It stays until
+  # the next run's sweep below replaces it, never deleted when this run
+  # ends: the test repository's wrappers name it until they are
+  # re-scaffolded, and its own scheduled wrappers would fail at startup
+  # against a deleted tag between runs; a "Re-run failed jobs" of
+  # verify-e2e reuses it too. (The PR-closed wrappers that verify-e2e's
+  # "Close prior leftovers" fires still name the previous run's swept tag
+  # and fail at startup; they predate KICKOFF_TIME, so no verdict reads
+  # them.) So at most one e2e-verify-* tag exists at a
+  # time. Its own job so `contents: write` never reaches verify-e2e. Never
+  # exits non-zero: a failure publishes no tag and says why, and
+  # verify-e2e's pin check turns that into a fail-infra verdict.
+  e2e-pin:
+    needs: detect
+    if: needs.detect.outputs.has-new-work == 'true' && vars.WING_COMMANDER_AUTO_RELEASE_PAUSED != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      failure: ${{ steps.tag.outputs.failure }}
+    steps:
+      - name: Create the run-scoped annotated tag the test repository pins
+        id: tag
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ needs.detect.outputs.head-sha }}
+          PREFIX: e2e-verify-
+          TAG: e2e-verify-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -uo pipefail
+          err="$RUNNER_TEMP/e2e-pin-err.txt"
+          # One line: a captured gh error can span two, and a bare second
+          # line in $GITHUB_OUTPUT is an invalid-format failure of the step.
+          fail() {
+            local why
+            why="$(printf '%s' "$1" | tr '\r\n' '  ')"
+            { echo "tag="; printf 'failure=%s\n' "$why"; } >> "$GITHUB_OUTPUT"
+            echo "::error::wing-commander auto-release e2e-pin: $why"
+            exit 0
+          }
+
+          # One auto-release runs at a time (the concurrency group above), so
+          # an e2e pin tag that exists now is an earlier run's. Remove those
+          # first. A sweep that fails is only a warning: this run's own tag
+          # name is unique to the run attempt, and the next sweep retries.
+          if ! stale="$(gh api "repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/${PREFIX}" --jq '.[].ref' 2>"$err")"; then
+            echo "::warning::wing-commander auto-release e2e-pin: could not list earlier e2e pin tags: $(tail -c 300 "$err")"
+            stale=""
+          fi
+          while IFS= read -r ref; do
+            # matching-refs is a prefix match on the server; this keeps any
+            # other tag out of reach whatever it returns.
+            case "$ref" in
+              "refs/tags/${PREFIX}"*) ;;
+              *) continue ;;
+            esac
+            if gh api -X DELETE "repos/${GITHUB_REPOSITORY}/git/${ref}" >/dev/null 2>"$err"; then
+              echo "e2e-pin: removed ${ref#refs/tags/}, left by an earlier run"
+            else
+              echo "::warning::wing-commander auto-release e2e-pin: could not remove ${ref#refs/tags/}: $(tail -c 300 "$err")"
+            fi
+          done <<< "$stale"
+
+          # A tag object first, then the ref naming it: a ref pointed straight
+          # at the commit would be a lightweight tag, the shape no adopter pins.
+          if ! obj="$(gh api -X POST "repos/${GITHUB_REPOSITORY}/git/tags" \
+              -f tag="$TAG" -f object="$HEAD_SHA" -f type=commit \
+              -f message="wing-commander auto-release end-to-end pin for ${HEAD_SHA} (run ${GITHUB_RUN_ID}); replaced by the next auto-release run" \
+              --jq .sha 2>"$err")"; then
+            obj=""
+          fi
+          if [ -z "$obj" ]; then
+            fail "creating the annotated tag object for ${TAG}: $(tail -c 300 "$err")"
+          fi
+          if ! gh api -X POST "repos/${GITHUB_REPOSITORY}/git/refs" -f ref="refs/tags/${TAG}" -f sha="$obj" >/dev/null 2>"$err"; then
+            fail "creating refs/tags/${TAG}: $(tail -c 300 "$err")"
+          fi
+          { echo "tag=$TAG"; echo "failure="; } >> "$GITHUB_OUTPUT"
+          echo "e2e-pin: the test repository pins the stages at ${TAG}, an annotated tag on ${HEAD_SHA}." >> "$GITHUB_STEP_SUMMARY"
+
   # Resolve/validate the test repository, reset its default branch,
   # scaffold the published stages at the verified head, kick off the fixed
   # trivial feature, poll to a verdict, assert per-stage outputs. Every step
@@ -102,15 +191,18 @@ jobs:
   # D10/D11, data-model.md "End-to-end verdict") -- decide-version below
   # reads this job's `verdict` output unconditionally, so it must always be
   # valid JSON regardless of which step here stopped the run.
+  # !cancelled(), so a failed e2e-pin still reaches the pin check below,
+  # which names it in a fail-infra verdict rather than leaving the report
+  # to say only that verify-e2e never ran (#325).
   verify-e2e:
-    needs: detect
-    if: needs.detect.outputs.has-new-work == 'true' && vars.WING_COMMANDER_AUTO_RELEASE_PAUSED != 'true'
+    needs: [detect, e2e-pin]
+    if: ${{ !cancelled() && needs.detect.result == 'success' && needs.detect.outputs.has-new-work == 'true' && vars.WING_COMMANDER_AUTO_RELEASE_PAUSED != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 150
     permissions:
       contents: read
     outputs:
-      verdict: ${{ steps.config.outputs.verdict || steps.reachable.outputs.verdict || steps.maintainer-credential.outputs.verdict || steps.container-evidence-config.outputs.verdict || steps.cleanup.outputs.verdict || steps.reset.outputs.verdict || steps.speckit-version.outputs.verdict || steps.scaffold.outputs.verdict || steps.kickoff.outputs.verdict || steps.poll.outputs.verdict }}
+      verdict: ${{ steps.config.outputs.verdict || steps.reachable.outputs.verdict || steps.maintainer-credential.outputs.verdict || steps.container-evidence-config.outputs.verdict || steps.cleanup.outputs.verdict || steps.reset.outputs.verdict || steps.speckit-version.outputs.verdict || steps.pin.outputs.verdict || steps.scaffold.outputs.verdict || steps.kickoff.outputs.verdict || steps.poll.outputs.verdict }}
       # Carried separately from the verdict's `mode` field (data-model.md
       # "Execution mode") -- true only when the container leg was due by
       # date parity but the pause control (research.md D3) forced this run
@@ -841,6 +933,55 @@ jobs:
           echo "ok=true" >> "$GITHUB_OUTPUT"
           echo "version=$v" >> "$GITHUB_OUTPUT"
 
+      # The fixture calls the stages through e2e-pin's tag (see e2e-pin).
+      # Read it back before anything names it: it must be a tag object, not
+      # a lightweight ref, and peel to exactly the verified head. Anything
+      # else is a fail-infra verdict, and nothing is kicked off.
+      - name: Confirm the pin tag is an annotated tag on the verified head
+        id: pin
+        if: steps.speckit-version.outputs.ok == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PIN_TAG: ${{ needs.e2e-pin.outputs.tag }}
+          PIN_FAILURE: ${{ needs.e2e-pin.outputs.failure }}
+          E2E_REPO: ${{ steps.config.outputs.e2e-repo }}
+          HEAD_SHA: ${{ needs.detect.outputs.head-sha }}
+          MODE: ${{ steps.mode.outputs.mode }}
+        run: |
+          set -uo pipefail
+          err="$RUNNER_TEMP/auto-release-pin-err.txt"
+          problem=""
+          ref_type=""
+          ref_sha=""
+          if [ -z "$PIN_TAG" ]; then
+            problem="${PIN_FAILURE:-the e2e-pin job published no tag (it did not finish; see its log)}"
+          elif ! ref="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${PIN_TAG}" --jq '.object.type + " " + .object.sha' 2>"$err")"; then
+            ref=""
+            problem="reading refs/tags/${PIN_TAG}: $(tail -c 300 "$err")"
+          else
+            read -r ref_type ref_sha <<< "$ref"
+            if [ "$ref_type" != "tag" ]; then
+              problem="refs/tags/${PIN_TAG} names a ${ref_type:-nothing} directly (a lightweight tag), not a tag object"
+            elif ! peeled="$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${ref_sha}" --jq '.object.type + " " + .object.sha' 2>"$err")"; then
+              peeled=""
+              problem="reading the tag object ${ref_sha}: $(tail -c 300 "$err")"
+            elif [ "$peeled" != "commit ${HEAD_SHA}" ]; then
+              problem="refs/tags/${PIN_TAG} peels to ${peeled:-nothing}, not commit ${HEAD_SHA}"
+            fi
+          fi
+          if [ -n "$problem" ]; then
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            {
+              echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
+              bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "pinning the stages through an annotated tag on the verified head" "e2e-pin's tag is a tag object that peels to the verified head" "$problem" "$E2E_REPO" "$MODE"
+              echo 'AUTO_RELEASE_VERDICT_EOF'
+            } >> "$GITHUB_OUTPUT"
+            echo "::error::wing-commander auto-release verify-e2e: $problem"
+            exit 0
+          fi
+          echo "ok=true" >> "$GITHUB_OUTPUT"
+
       # continue-on-error: the scaffold step's own `command -v uvx` check
       # turns a failed install into a fail-infra verdict the report job can
       # name, where a hard failure here would leave `verdict` empty.
@@ -853,13 +994,14 @@ jobs:
       # version, plus the minimal wrapper set docs/adoption.md documents --
       # copied from THIS repository's own dogfooded wrappers (its local
       # `uses: ./.github/workflows/<stage>.yml` calls rewritten to the
-      # published cross-repository form, pinned at the exact unreleased
-      # commit under verification, never a tag or `@main` (research.md D7)).
+      # published cross-repository form, pinned through e2e-pin's annotated
+      # tag on the exact unreleased commit under verification, never a
+      # moving tag or `@main` (research.md D7, #928)).
       # Copying this repository's own wrapper files is the single home for
       # that content -- there is no second copy to drift from docs/adoption.md.
       - name: Scaffold the fixture and push it to the test repository
         id: scaffold
-        if: steps.speckit-version.outputs.ok == 'true'
+        if: steps.speckit-version.outputs.ok == 'true' && steps.pin.outputs.ok == 'true'
         shell: bash
         working-directory: e2e-test-repo
         env:
@@ -867,6 +1009,7 @@ jobs:
           E2E_REPO: ${{ steps.config.outputs.e2e-repo }}
           DEFAULT_BRANCH: ${{ steps.reachable.outputs.default-branch }}
           HEAD_SHA: ${{ needs.detect.outputs.head-sha }}
+          PIN_TAG: ${{ needs.e2e-pin.outputs.tag }}
           SPECKIT_VERSION: ${{ steps.speckit-version.outputs.version }}
           MODE: ${{ steps.mode.outputs.mode }}
         run: |
@@ -908,7 +1051,7 @@ jobs:
           for f in "${!stage_file[@]}"; do
             stage="${stage_file[$f]}"
             cp "../e2e-source/.github/workflows/$f" ".github/workflows/$f"
-            sed -i "s#uses: \./\.github/workflows/${stage}#uses: charlesguse/wing-commander/.github/workflows/${stage}@${HEAD_SHA}#" ".github/workflows/$f"
+            sed -i "s#uses: \./\.github/workflows/${stage}#uses: charlesguse/wing-commander/.github/workflows/${stage}@${PIN_TAG}#" ".github/workflows/$f"
             # A permanently-configured test-repository WING_COMMANDER_CONTAINER_IMAGE
             # must not leak container mode into a default-runner-turn run
             # (research.md D2). No rewrite on a container-mode turn -- the
@@ -939,7 +1082,7 @@ jobs:
           sed -i "s/branches: \[main\]/branches: [${DEFAULT_BRANCH}]/" .github/workflows/wing-commander-rebase.yml
 
           git add -A
-          git commit --quiet -m "chore: scaffold end-to-end verification fixture at ${HEAD_SHA:0:7}"
+          git commit --quiet -m "chore: scaffold end-to-end verification fixture at ${HEAD_SHA:0:7}" -m "The stages are pinned at ${PIN_TAG}, an annotated tag on ${HEAD_SHA} that the next auto-release run replaces."
           auth_url="https://x-access-token:${GH_TOKEN}@github.com/${E2E_REPO}.git"
           if ! git push --force --quiet "$auth_url" "HEAD:refs/heads/${DEFAULT_BRANCH}" 2>"$RUNNER_TEMP/auto-release-scaffold-push-err.txt"; then
             echo "ok=false" >> "$GITHUB_OUTPUT"
@@ -1192,10 +1335,11 @@ jobs:
           # (#930). A reviewer acts on a PR the stage has reported, so the
           # harness waits for the report too. The wait is measured from the
           # first time the PR was seen mergeable, never reset: the stage
-          # writes its label within a minute of opening the PR whatever the
-          # PR's merge state, so one still missing GATE_BLOCKED_ALLOWANCE_SECONDS
-          # later is a stage that failed after opening it, a pipeline defect
-          # (fail-wrong-output, specs/055 US3 scenario 4), not a gate stall.
+          # writes its label within a few minutes of opening the PR whatever
+          # the PR's merge state, so one still missing
+          # GATE_BLOCKED_ALLOWANCE_SECONDS later is a stage that failed after
+          # opening it, a pipeline defect (fail-wrong-output, specs/055 US3
+          # scenario 4), not a gate stall.
           # A poll budget that runs out mid-wait stays the generic timeout
           # (specs/070 FR-007). The spec-draft gate needs no wait: intake's
           # and clarify's reads of that PR only fill in a link or copy labels,
@@ -1890,9 +2034,13 @@ jobs:
   # Patch-vs-minor signal collection (research.md D5) plus tag-collision
   # detection (data-model.md "Version decision"). Never produces `major` --
   # there is no code path here that can (User Story 4, T019/T020).
+  # !cancelled(): verify-e2e can run after a failed e2e-pin (see there), and
+  # without a status function of its own this job would be skipped by that
+  # failure before its `if` is read (Gate 15). The verdict guard below is
+  # what gates it: a failed e2e-pin never yields a `pass`.
   decide-version:
     needs: [detect, verify-e2e]
-    if: fromJSON(needs.verify-e2e.outputs.verdict || '{}').outcome == 'pass' && vars.WING_COMMANDER_AUTO_RELEASE_PAUSED != 'true'
+    if: ${{ !cancelled() && needs.verify-e2e.result == 'success' && fromJSON(needs.verify-e2e.outputs.verdict || '{}').outcome == 'pass' && vars.WING_COMMANDER_AUTO_RELEASE_PAUSED != 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -2090,7 +2238,7 @@ jobs:
   # actually ran -- `always()` so a paused/no-op/failed run still reports.
   report:
     if: always() && vars.WING_COMMANDER_AUTO_RELEASE_PAUSED != 'true'
-    needs: [detect, verify-e2e, decide-version, dispatch-release]
+    needs: [detect, e2e-pin, verify-e2e, decide-version, dispatch-release]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -2147,6 +2295,7 @@ jobs:
           # decide-version crash as "release dispatch failed", both filing
           # nothing useful or pointing at a run that never existed.
           DETECT_RESULT: ${{ needs.detect.result }}
+          PIN_RESULT: ${{ needs.e2e-pin.result }}
           VERIFY_RESULT: ${{ needs.verify-e2e.result }}
           DECIDE_RESULT: ${{ needs.decide-version.result }}
           DISPATCH_RESULT: ${{ needs.dispatch-release.result }}
@@ -2251,6 +2400,16 @@ jobs:
             fi
             exit 0
           fi
+
+          # A run cancelled while e2e-pin ran never starts verify-e2e (its
+          # !cancelled() is false), so verify-e2e's own result cannot say
+          # so: read e2e-pin's. Summarised, never filed (#325).
+          case "$PIN_RESULT" in
+            cancelled)
+              echo "run cancelled during e2e-pin -- nothing verified, nothing cut" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+              ;;
+          esac
 
           # A cancelled verify-e2e wrote no verdict either, and is the run
           # being stopped (a hung poll cancelled by hand), not a failure:

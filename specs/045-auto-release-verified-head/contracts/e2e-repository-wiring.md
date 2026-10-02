@@ -44,9 +44,15 @@ prior state.
    `SPECKIT_SUPPORTED_VERSION`, plus the minimal wrapper set
    `docs/adoption.md` documents (`wing-commander-1-intake.yml` …
    `wing-commander-7-cleanup.yml`, `wing-commander-rebase.yml`), each
-   rewritten to `uses: charlesguse/wing-commander/.github/workflows/<stage>.yml@<head_sha>`
-   — the exact commit under verification, never a tag or `@main`
-   (research.md D7).
+   rewritten to `uses: charlesguse/wing-commander/.github/workflows/<stage>.yml@e2e-verify-<run id>-<attempt>`,
+   an annotated tag the `e2e-pin` job creates on the exact commit under
+   verification and never moves, so the pin still names that commit and
+   is never a moving tag or `@main` (research.md D7). An annotated tag is
+   the shape of an adopter's `@v2` pin: through one,
+   `github.job_workflow_sha` is the tag object's SHA, which a bare commit
+   pin never exercised (#928). verify-e2e reads the tag back before the
+   fixture names it. The tag stays until the next run's `e2e-pin` replaces
+   it, so the test repository's wrappers keep resolving between runs.
 5. **Kick off**: `gh issue create` (no label) with the fixed trivial-
    feature body (research.md D9), then a separate `gh issue edit --add-
    label spec-request` call (research.md D8 — creating with a label
