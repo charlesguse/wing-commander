@@ -24,7 +24,9 @@
 # verifies, inline, that .wing-commander-pipeline is still the trusted
 # checkout: not a symlink, holding a real .git directory, its own
 # repository's top level, and (when WC_PIPELINE_REF is a full SHA) at that
-# commit. A branch that tracks the path itself (say, a symlink to `.`)
+# commit - the SHA peeled first, so an annotated tag's object SHA (a stage
+# called through the annotated floating tag, say `@v2`) names the commit it
+# tags (#928). A branch that tracks the path itself (say, a symlink to `.`)
 # makes the forced checkout delete the whole untracked directory, .git
 # included, and without that check `git -C .wing-commander-pipeline` would
 # resolve to the root repository - the branch - and run the branch's own
