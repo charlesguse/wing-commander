@@ -4072,6 +4072,13 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-rebase-discover-selection.py
 
+      # watchdog.yml's own failure accounting (#811, #889): a handled rate
+      # limit is not an unhandled failure, and an unreadable self-dispatch
+      # chain counts as capped. Not numbered, as for the board status step.
+      - name: Watchdog counts a handled rate limit as handled and an unreadable self-dispatch chain as capped
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-watchdog-failure-accounting.py
+
       # Gate 82 — specs/057-autonomous-board-loop (FR-012/FR-064 bullet 1):
       # triage may close an issue on exactly two code-derived grounds, and
       # an agent's "already fixed on main" proposal must NEVER be one of

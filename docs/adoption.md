@@ -690,9 +690,12 @@ that limits how many times the watchdog may re-dispatch itself
 (`watchdog.yml`'s "Self-dispatch depth" step) counts prior runs with
 `gh run list --workflow 'Wing Commander · 8 watchdog'` — a literal
 workflow-name lookup, not a metrics-record read. If you rename your own
-watchdog wrapper, this count always resolves to zero prior runs, so the
-cap never fires. There is currently no record-based alternative for this
-one check.
+watchdog wrapper, that lookup fails, and the step treats a run list it
+cannot read as a capped chain: every watchdog run that inspects another
+watchdog run then files and comments on no pipeline-defect issue, and
+annotates why. Before this was fixed the failed lookup read as zero prior
+runs, so the cap never fired. There is currently no record-based
+alternative for this one check.
 
 Every reference-named example wrapper already shown in this document
 keeps working exactly as it does today either way: nothing here asks you

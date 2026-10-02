@@ -3893,8 +3893,22 @@ jobs:
           # Gate 12: `gh run list` needs Actions:read, which the App token
           # does not have (docs/setup.md) — a swallowed failure here reads
           # as "no prior runs" (depth 0), silently defeating the self-
-          # dispatch cap this step exists to enforce.
-          runs_json="$(GH_TOKEN="$ACTIONS_TOKEN" gh run list --repo "$GITHUB_REPOSITORY" --workflow 'Wing Commander · 8 watchdog' --json databaseId,event,createdAt --limit "$limit" --jq 'sort_by(.createdAt) | reverse' 2>/dev/null || echo '[]')"
+          # dispatch cap this step exists to enforce. So a failed read, or a
+          # jq failure over what it read, counts as capped, and the
+          # annotation says why. (An inspected run outside the listed
+          # window still reads as depth 0, as before.)
+          capped_unread() {
+            echo "::warning::self-dispatch depth: $1 — treating the chain as capped, so this self-inspection files and comments on no pipeline-defect issue"
+            {
+              echo "depth=unknown"
+              echo "cap=$cap"
+              echo "capped=true"
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          }
+          if ! runs_json="$(GH_TOKEN="$ACTIONS_TOKEN" gh run list --repo "$GITHUB_REPOSITORY" --workflow 'Wing Commander · 8 watchdog' --json databaseId,event,createdAt --limit "$limit" --jq 'sort_by(.createdAt) | reverse' 2>"$RUNNER_TEMP/sdd-err.txt")"; then
+            capped_unread "could not list prior watchdog runs: $(tr '\n' ' ' < "$RUNNER_TEMP/sdd-err.txt" | cut -c1-300)"
+          fi
           depth="$(printf '%s' "$runs_json" | jq --argjson rid "$RUN_ID" '
             (map(.databaseId) | index($rid)) as $start
             | if $start == null then 0
@@ -3907,7 +3921,7 @@ jobs:
                   end
                 ) | .count
               end
-          ' 2>/dev/null || echo 0)"
+          ' 2>/dev/null)" || capped_unread "could not compute the depth from the run list"
           {
             echo "depth=$depth"
             echo "cap=$cap"
@@ -4334,11 +4348,17 @@ jobs:
             fi
           done
           # Job green but the agent step inside it failed: report it as a
-          # failure of diagnose, unless the loop above already counted the job.
+          # failure of diagnose, unless the loop above already counted the job
+          # or the rate-limited path owns it (#811). A 429 fails the agent
+          # step by design, and "Report rate-limited" and the usage-limit
+          # issue already record it; counting it here as well filed a false
+          # watchdog-verify defect for every rate limit handled cleanly.
           case " $failed_jobs " in
             *" diagnose:"*) ;;
             *)
-              if [ "$DIAGNOSE_OUTCOME" = "diagnose-failed" ] || \
+              if [ "$DIAGNOSE_OUTCOME" = "rate-limited" ]; then
+                :
+              elif [ "$DIAGNOSE_OUTCOME" = "diagnose-failed" ] || \
                  { [ -n "$DIAGNOSE_AGENT_OUTCOME" ] && [ "$DIAGNOSE_AGENT_OUTCOME" != "success" ] && [ "$DIAGNOSE_AGENT_OUTCOME" != "skipped" ]; }; then
                 any_failed=true
                 failed_jobs="${failed_jobs}${failed_jobs:+ }diagnose:agent-step-${DIAGNOSE_AGENT_OUTCOME:-failure}"
