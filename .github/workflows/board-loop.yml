@@ -437,9 +437,9 @@ jobs:
             done
 
             # Reverse lookup: every disposition:duplicate issue (any state --
-            # the originating issue is itself closed once disposed), so its
-            # own newest marker's spec_request field can be matched back to
-            # a closed spec-request above (data-model.md's Board Item
+            # the originating issue is itself closed once disposed), so each
+            # of its duplicate markers' spec_request field can be matched back
+            # to a closed spec-request above (data-model.md's Board Item
             # Marker -- the spec-request itself carries no marker naming it
             # back, only the reciprocal cross-link comment).
             # maintainer review, fold leg-2: same unchecked-call problem as
@@ -476,8 +476,7 @@ jobs:
           import sys
 
           sys.path.insert(0, ".github/scripts")
-          from board_eligibility import DUPLICATE_STEP
-          from board_item_marker import read_marker_with_timestamp
+          from board_eligibility import originating_issues_by_spec_request
 
           with open(os.environ["CLOSED_SPEC_REQUESTS_PATH"], encoding="utf-8") as fh:
               closed_spec_requests = [row["number"] for row in json.load(fh)]
@@ -486,21 +485,15 @@ jobs:
           with open(os.environ["DISPOSED_COMMENTS_PATH"], encoding="utf-8") as fh:
               disposed_comments = json.load(fh)
 
-          bot_login = os.environ["BOT_LOGIN"]
-
-          originating_by_spec_request = {}
-          for number_str, comments in disposed_comments.items():
-              pair = read_marker_with_timestamp(comments, bot_login)
-              if pair is None:
-                  continue
-              _created_at, marker = pair
-              if marker.get("step") != DUPLICATE_STEP:
-                  continue
-              try:
-                  spec_request_number = int(marker.get("spec_request"))
-              except (TypeError, ValueError):
-                  continue
-              originating_by_spec_request[spec_request_number] = int(number_str)
+          # Every duplicate marker on each disposed issue, never only its
+          # overall-newest marker: one reopened and re-routed names two
+          # spec-requests (#874). Only the one its newest duplicate marker
+          # names is current: that is the only spec-request whose notice may
+          # tell the originating issue that reopening returns the request
+          # to the board (FR-006, FR-017). board_eligibility is the single
+          # home.
+          originating_by_spec_request = originating_issues_by_spec_request(
+              disposed_comments, os.environ["BOT_LOGIN"])
 
           def spec_meta_for_issue(issue_number):
               for path in glob.glob("specs/*/spec-meta.json"):
@@ -523,16 +516,18 @@ jobs:
           # notices on pre-existing closed spec-requests.
           spec_requests = []
           for number in closed_spec_requests:
-              originating = originating_by_spec_request.get(number)
-              if originating is None:
+              named = originating_by_spec_request.get(number)
+              if named is None:
                   continue
+              current = named["current"]
               spec_requests.append({
                   "number": number,
                   "spec_meta": spec_meta_for_issue(number),
                   "comments": spec_request_comments.get(str(number)) or [],
-                  "originating_issue": originating,
+                  "originating_issue": named["issue"] if current else None,
                   "originating_comments": (
-                      disposed_comments.get(str(originating)) if originating is not None else None),
+                      disposed_comments.get(str(named["issue"])) if current else None),
+                  "superseded_on": None if current else named["issue"],
               })
 
           with open(os.path.join(os.environ["RUNNER_TEMP"], "board-closed-without-landing-input.json"),
@@ -2574,7 +2569,7 @@ jobs:
           python3 .github/scripts/board_duplicate_disposition.py --originating "$ISSUE_NUMBER" \
             --spec-request-issue "$spec_request_number" --spec-request-url "$spec_url" \
             --reason "Routed to $spec_url" \
-            || { echo "::error::board-loop route (spec verdict): spec-request $spec_url was filed but disposing of issue #$ISSUE_NUMBER as a duplicate failed -- a later run resumes from its own pre-check."; exit 1; }
+            || { echo "::error::board-loop route (spec verdict): spec-request $spec_url was filed but disposing of issue #$ISSUE_NUMBER as a duplicate failed. Whether a later run finishes it depends on this site and on the step that failed (specs/108-routed-original-disposition/contracts/duplicate-disposition.md, failure semantics)."; exit 1; }
 
       # A fix-shaped item whose drafted diff edits a workflow file, while
       # the App holds no Workflows permission (docs/setup.md): this loop
@@ -3249,7 +3244,7 @@ jobs:
           python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_duplicate_disposition.py" --originating "$ISSUE_NUMBER" \
             --spec-request-issue "$spec_request_number" --spec-request-url "$spec_url" \
             --reason "Post-push backstop breach on $PR_URL (measured=$measured)" \
-            || { echo "::error::board-loop fix (post-push breach): spec-request $spec_url was filed but disposing of issue #$ISSUE_NUMBER as a duplicate failed -- a later run resumes from its own pre-check."; exit 1; }
+            || { echo "::error::board-loop fix (post-push breach): spec-request $spec_url was filed but disposing of issue #$ISSUE_NUMBER as a duplicate failed. Whether a later run finishes it depends on this site and on the step that failed (specs/108-routed-original-disposition/contracts/duplicate-disposition.md, failure semantics)."; exit 1; }
 
       - name: Cross-link the post-push-breach spec-request onto the originating issue
         if: steps.post-push-breach.outputs.spec-url != ''
@@ -4883,7 +4878,7 @@ jobs:
             python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_duplicate_disposition.py" --originating "$ISSUE_NUMBER" \
               --spec-request-issue "$spec_request_number" --spec-request-url "$spec_url" \
               --reason "$(printf '%s on PR #%s (measured: %s)' "$breach_what" "$PR_NUMBER" "$MEASURED")" \
-              || { echo "::error::board-loop readiness (backstop breach): spec-request $spec_url was filed but disposing of issue #$ISSUE_NUMBER as a duplicate failed -- a later run resumes from its own pre-check."; exit 1; }
+              || { echo "::error::board-loop readiness (backstop breach): spec-request $spec_url was filed but disposing of issue #$ISSUE_NUMBER as a duplicate failed. Whether a later run finishes it depends on this site and on the step that failed (specs/108-routed-original-disposition/contracts/duplicate-disposition.md, failure semantics)."; exit 1; }
           else
             body="$(printf 'Not ready on PR #%s: %s. Picked up again on a later run.' "$PR_NUMBER" "$unmet")"
             [ -n "$DIRECTED_ATTRIBUTION" ] && body="$(printf '%s\n\n%s' "$DIRECTED_ATTRIBUTION" "$body")"

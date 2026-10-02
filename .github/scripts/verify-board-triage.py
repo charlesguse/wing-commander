@@ -259,6 +259,10 @@ PIN_CASES = {
     # evidence; only losing a ref the run actually relied on is.
     "pins-main-adds-pin": "none",
     "pins-main-replaces-pin": "divergent",
+    # #800: main deleting one of two steps that pin an action loses a ref
+    # with nothing bumped in its place; replacing one of them is a bump.
+    "pins-main-deletes-one-step": "none",
+    "pins-main-replaces-one-of-two": "divergent",
 }
 EXPECTED = dict.fromkeys(list(TRIAGE_CASES) + list(PIN_CASES))
 
@@ -781,6 +785,10 @@ _SHAPES_TREE = {
     # #678: main adds a second step pinning the same action at a new ref.
     WF + "main-adds-pin.yml": "jobs:\n  a:\n    steps:\n"
                               "      - uses: owner/grow@1111111 # v1\n",
+    # #800: main deletes the second of two steps pinning the same action.
+    WF + "main-drops-step.yml": "jobs:\n  a:\n    steps:\n"
+                                "      - uses: owner/shrink@1111111 # v1\n"
+                                "      - uses: owner/shrink@2222222 # v2\n",
 }
 _OLD_TREE.update(_SHAPES_TREE)
 _BUMPS.update({
@@ -803,6 +811,9 @@ _BUMPS.update({
     WF + "main-adds-pin.yml": (
         "owner/grow@1111111 # v1",
         "owner/grow@1111111 # v1\n      - uses: owner/grow@2222222 # v2"),
+    # The run's second step is gone on main, nothing bumped: no bump.
+    WF + "main-drops-step.yml": (
+        "\n      - uses: owner/shrink@2222222 # v2", ""),
 })
 
 ALL_WORKFLOWS = sorted(_OLD_TREE)
@@ -844,6 +855,9 @@ SCOPING_CASES = (
     # #678
     ("main adding a second pin for an action the run pinned once does not count",
      WF + "main-adds-pin.yml", False, None),
+    # #800
+    ("main deleting one of two steps that pin an action does not count",
+     WF + "main-drops-step.yml", False, None),
 )
 
 
@@ -977,6 +991,26 @@ def _set_inequality_divergent_pin(workflow_file, run_pins, main_pins):
     return None
 
 
+def _lost_ref_divergent_pin(workflow_file, run_pins, main_pins):
+    """The pre-#800 comparison: any ref the run used that main lacks reads
+    as a bump, so main deleting one of two steps pinning an action flags
+    it with nothing bumped. Used only as a mutation."""
+    for action_ref, run_value in sorted(run_pins.items()):
+        main_value = main_pins.get(action_ref)
+        if main_value is None:
+            continue
+        run_refs = board_triage._ref_set(run_value)
+        main_refs = board_triage._ref_set(main_value)
+        if run_refs - main_refs:
+            return {
+                "workflow_file": workflow_file,
+                "action_ref": action_ref,
+                "run_pin": ", ".join(sorted(run_refs)),
+                "main_pin": ", ".join(sorted(main_refs)),
+            }
+    return None
+
+
 def _scope_filtered(keep):
     """A _scoped_workflow_files() mutation keeping only paths `keep`
     accepts -- the pre-#521 scope, which never reached composites or
@@ -998,6 +1032,9 @@ SCOPING_MUTATIONS = (
     ("pre-#678 set inequality: a pin main added reads as a bump",
      "_first_divergent_pin",
      lambda original: _set_inequality_divergent_pin),
+    ("pre-#800 lost ref: a step main deleted reads as a bump",
+     "_first_divergent_pin",
+     lambda original: _lost_ref_divergent_pin),
     ("composites dropped from the scope", "_scoped_workflow_files",
      _scope_filtered(lambda p: not p.startswith(AC))),
     (".yaml workflows dropped from the scope", "_scoped_workflow_files",
