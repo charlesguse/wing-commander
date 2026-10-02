@@ -101,11 +101,15 @@ jobs:
   # a guard that failed only for adopters (#928). The tag is run-scoped,
   # created on exactly the verified head and never moved, so the pin still
   # names the commit under verification (specs/045 research.md D7);
-  # verify-e2e reads it back before the fixture names it, and
-  # e2e-pin-cleanup deletes it. Its own job so `contents: write` never
-  # reaches verify-e2e. Never exits non-zero: a failure publishes no tag and
-  # says why, and verify-e2e's pin check turns that into a fail-infra
-  # verdict.
+  # verify-e2e reads it back before the fixture names it. It stays until
+  # the next run's sweep below replaces it, never deleted when this run
+  # ends: the test repository's wrappers name it until they are
+  # re-scaffolded, and its own scheduled and PR-triggered wrappers would
+  # fail at startup against a deleted tag; a "Re-run failed jobs" of
+  # verify-e2e reuses it too. So at most one e2e-verify-* tag exists at a
+  # time. Its own job so `contents: write` never reaches verify-e2e. Never
+  # exits non-zero: a failure publishes no tag and says why, and
+  # verify-e2e's pin check turns that into a fail-infra verdict.
   e2e-pin:
     needs: detect
     if: needs.detect.outputs.has-new-work == 'true' && vars.WING_COMMANDER_AUTO_RELEASE_PAUSED != 'true'
@@ -127,16 +131,20 @@ jobs:
         run: |
           set -uo pipefail
           err="$RUNNER_TEMP/e2e-pin-err.txt"
+          # One line: a captured gh error can span two, and a bare second
+          # line in $GITHUB_OUTPUT is an invalid-format failure of the step.
           fail() {
-            { echo "tag="; printf 'failure=%s\n' "$1"; } >> "$GITHUB_OUTPUT"
-            echo "::error::wing-commander auto-release e2e-pin: $1"
+            local why
+            why="$(printf '%s' "$1" | tr '\r\n' '  ')"
+            { echo "tag="; printf 'failure=%s\n' "$why"; } >> "$GITHUB_OUTPUT"
+            echo "::error::wing-commander auto-release e2e-pin: $why"
             exit 0
           }
 
           # One auto-release runs at a time (the concurrency group above), so
-          # an e2e pin tag that exists now was left by a run whose cleanup
-          # never ran. Remove those first. A sweep that fails is only a
-          # warning: this run's own tag name is unique to the run.
+          # an e2e pin tag that exists now is an earlier run's. Remove those
+          # first. A sweep that fails is only a warning: this run's own tag
+          # name is unique to the run attempt, and the next sweep retries.
           if ! stale="$(gh api "repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/${PREFIX}" --jq '.[].ref' 2>"$err")"; then
             echo "::warning::wing-commander auto-release e2e-pin: could not list earlier e2e pin tags: $(tail -c 300 "$err")"
             stale=""
@@ -159,7 +167,7 @@ jobs:
           # at the commit would be a lightweight tag, the shape no adopter pins.
           if ! obj="$(gh api -X POST "repos/${GITHUB_REPOSITORY}/git/tags" \
               -f tag="$TAG" -f object="$HEAD_SHA" -f type=commit \
-              -f message="wing-commander auto-release end-to-end pin for ${HEAD_SHA} (run ${GITHUB_RUN_ID}); deleted when the run ends" \
+              -f message="wing-commander auto-release end-to-end pin for ${HEAD_SHA} (run ${GITHUB_RUN_ID}); replaced by the next auto-release run" \
               --jq .sha 2>"$err")"; then
             obj=""
           fi
@@ -180,9 +188,12 @@ jobs:
   # D10/D11, data-model.md "End-to-end verdict") -- decide-version below
   # reads this job's `verdict` output unconditionally, so it must always be
   # valid JSON regardless of which step here stopped the run.
+  # !cancelled(), so a failed e2e-pin still reaches the pin check below,
+  # which names it in a fail-infra verdict rather than leaving the report
+  # to say only that verify-e2e never ran (#325).
   verify-e2e:
     needs: [detect, e2e-pin]
-    if: needs.detect.outputs.has-new-work == 'true' && vars.WING_COMMANDER_AUTO_RELEASE_PAUSED != 'true'
+    if: ${{ !cancelled() && needs.detect.result == 'success' && needs.detect.outputs.has-new-work == 'true' && vars.WING_COMMANDER_AUTO_RELEASE_PAUSED != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 150
     permissions:
@@ -941,7 +952,7 @@ jobs:
           ref_type=""
           ref_sha=""
           if [ -z "$PIN_TAG" ]; then
-            problem="${PIN_FAILURE:-the e2e-pin job published no tag}"
+            problem="${PIN_FAILURE:-the e2e-pin job published no tag (it did not finish; see its log)}"
           elif ! ref="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${PIN_TAG}" --jq '.object.type + " " + .object.sha' 2>"$err")"; then
             ref=""
             problem="reading refs/tags/${PIN_TAG}: $(tail -c 300 "$err")"
@@ -1068,7 +1079,7 @@ jobs:
           sed -i "s/branches: \[main\]/branches: [${DEFAULT_BRANCH}]/" .github/workflows/wing-commander-rebase.yml
 
           git add -A
-          git commit --quiet -m "chore: scaffold end-to-end verification fixture at ${HEAD_SHA:0:7}" -m "The stages are pinned at ${PIN_TAG}, an annotated tag on ${HEAD_SHA} that the run deletes when it ends."
+          git commit --quiet -m "chore: scaffold end-to-end verification fixture at ${HEAD_SHA:0:7}" -m "The stages are pinned at ${PIN_TAG}, an annotated tag on ${HEAD_SHA} that the next auto-release run replaces."
           auth_url="https://x-access-token:${GH_TOKEN}@github.com/${E2E_REPO}.git"
           if ! git push --force --quiet "$auth_url" "HEAD:refs/heads/${DEFAULT_BRANCH}" 2>"$RUNNER_TEMP/auto-release-scaffold-push-err.txt"; then
             echo "ok=false" >> "$GITHUB_OUTPUT"
@@ -2017,44 +2028,16 @@ jobs:
           write_verdict "pass" "" "$CEC_OBSERVED_IMAGE" "$execution_pass_observed" "$ISSUE_URL" "true"
           emit_verdict
 
-  # Deletes e2e-pin's tag once verify-e2e is done with it. always(), not
-  # !cancelled(): a cancelled run is exactly the one that would otherwise
-  # leave the tag behind. A failed delete is a warning, not a red run: the
-  # next run's e2e-pin sweeps every e2e-verify-* tag before creating its own.
-  e2e-pin-cleanup:
-    needs: [e2e-pin, verify-e2e]
-    if: always() && needs.e2e-pin.outputs.tag != ''
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Delete the run-scoped pin tag
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ needs.e2e-pin.outputs.tag }}
-        run: |
-          set -uo pipefail
-          err="$RUNNER_TEMP/e2e-pin-cleanup-err.txt"
-          case "$TAG" in
-            e2e-verify-*) ;;
-            *) echo "::warning::wing-commander auto-release e2e-pin-cleanup: refusing to delete ${TAG}, which is not an e2e pin tag."; exit 0 ;;
-          esac
-          if gh api -X DELETE "repos/${GITHUB_REPOSITORY}/git/refs/tags/${TAG}" >/dev/null 2>"$err"; then
-            echo "e2e-pin-cleanup: deleted ${TAG}." >> "$GITHUB_STEP_SUMMARY"
-          elif grep -q 'HTTP 422' "$err"; then
-            echo "e2e-pin-cleanup: ${TAG} was already gone." >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "::warning::wing-commander auto-release e2e-pin-cleanup: could not delete ${TAG}; the next run's e2e-pin removes it: $(tail -c 300 "$err")"
-            echo "e2e-pin-cleanup: could not delete ${TAG}; the next run's e2e-pin removes it." >> "$GITHUB_STEP_SUMMARY"
-          fi
-
   # Patch-vs-minor signal collection (research.md D5) plus tag-collision
   # detection (data-model.md "Version decision"). Never produces `major` --
   # there is no code path here that can (User Story 4, T019/T020).
+  # !cancelled(): verify-e2e can run after a failed e2e-pin (see there), and
+  # without a status function of its own this job would be skipped by that
+  # failure before its `if` is read (Gate 15). The verdict guard below is
+  # what gates it: a failed e2e-pin never yields a `pass`.
   decide-version:
     needs: [detect, verify-e2e]
-    if: fromJSON(needs.verify-e2e.outputs.verdict || '{}').outcome == 'pass' && vars.WING_COMMANDER_AUTO_RELEASE_PAUSED != 'true'
+    if: ${{ !cancelled() && needs.verify-e2e.result == 'success' && fromJSON(needs.verify-e2e.outputs.verdict || '{}').outcome == 'pass' && vars.WING_COMMANDER_AUTO_RELEASE_PAUSED != 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read

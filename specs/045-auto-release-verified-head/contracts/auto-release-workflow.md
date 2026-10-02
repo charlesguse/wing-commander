@@ -47,8 +47,9 @@ are an implementation-stage decision)
 | Job | Purpose | Depends on | Produces |
 |---|---|---|---|
 | `detect` | Resolve latest release tag and current head (data-model.md "Unreleased head", "Latest release tag"); short-circuit to a no-op summary line when there is no new work or no baseline tag (FR-003, FR-004) | — | `head_sha`, `has-new-work`, `latest-tag` outputs |
-| `verify-e2e` | Resolve/validate the test repository, reset its default branch, scaffold, kick off the trivial feature, poll to a terminal state, assert per-stage outputs, emit the verdict (data-model.md "End-to-end verdict") | `detect`, only when `has-new-work == 'true'` | `verdict` (JSON) output |
-| `decide-version` | Compute patch-vs-minor and the next version, detect a tag collision (data-model.md "Version decision") | `verify-e2e`, only when `verdict.outcome == 'pass'` | `next-version`, `collision` outputs |
+| `e2e-pin` | Replace the previous run's `e2e-verify-*` tag with this run's annotated tag on the head under verification, which the test repository's wrappers pin (#928); the only job holding `contents: write` | `detect`, only when `has-new-work == 'true'` | `tag`, `failure` outputs |
+| `verify-e2e` | Resolve/validate the test repository, reset its default branch, confirm `e2e-pin`'s tag, scaffold, kick off the trivial feature, poll to a terminal state, assert per-stage outputs, emit the verdict (data-model.md "End-to-end verdict") | `detect` and `e2e-pin`, only when `has-new-work == 'true'`; still runs when `e2e-pin` failed, so the verdict names that failure | `verdict` (JSON) output |
+| `decide-version` | Compute patch-vs-minor and the next version, detect a tag collision (data-model.md "Version decision") | `verify-e2e`, only when it succeeded and `verdict.outcome == 'pass'` | `next-version`, `collision` outputs |
 | `dispatch-release` | `gh workflow run release.yml` with the computed version, poll that run to a conclusion (research.md D12) | `decide-version`, only when `collision == 'false'` | `release-outcome` (`released` \| `failed`) output |
 | `report` | Write the `$GITHUB_STEP_SUMMARY` line for every path; on any `fail-*` outcome, file/update the durable `auto-release:failed` issue (data-model.md "Failure report"); on `released`, close any open one | `always()`, reads outputs from every prior job that ran | — |
 

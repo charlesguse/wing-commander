@@ -12,20 +12,22 @@ SHA with HEAD unpeeled: it passed every end-to-end run and failed every
 adopter (#928). The e2e could not have caught it, because nothing in it
 ever resolved a tag.
 
-The three pieces this checks:
+The two pieces this checks:
 
-  - e2e-pin (its own job, the only one holding `contents: write` besides
-    the cleanup) removes any e2e-verify-* tag an earlier run left behind,
-    touching no other tag even when the server returns one, then creates a
-    tag OBJECT on the verified head and a ref naming it. Any failure
-    publishes no tag and says why, and the step still exits 0.
+  - e2e-pin (its own job, the only one holding `contents: write`) removes
+    every e2e-verify-* tag an earlier run left, touching no other tag even
+    when the server returns one, then creates a tag OBJECT on the verified
+    head and a ref naming it. Nothing deletes this run's tag when the run
+    ends: the test repository's wrappers keep naming it until the next
+    run re-scaffolds them, so the next run's sweep is what replaces it.
+    Any failure publishes no tag and a one-line reason (a gh error can
+    span two lines, and a bare second line in $GITHUB_OUTPUT fails the
+    step), and the step still exits 0.
   - verify-e2e's pin check reads the tag back: a ref to a tag object that
     peels to exactly the verified head, or a fail-infra verdict naming
     what it found. A lightweight tag, a tag on another commit, a missing
-    tag and an e2e-pin failure are each told apart.
-  - e2e-pin-cleanup deletes this run's tag, treats one that is already
-    gone as success, only warns on any other failure, and refuses a name
-    that is not an e2e pin tag.
+    tag and an e2e-pin failure are each told apart. verify-e2e runs after
+    a failed e2e-pin (!cancelled()), so that failure is named too.
 
 The harness EXECUTES the shipped steps (wc_shell_harness.run_step) against
 a `gh` stub that keeps refs and tag objects in a JSON file and applies the
@@ -47,13 +49,12 @@ import sys
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from wc_shell_harness import (ensure_jq, find_job, find_step, resolve_bash,  # noqa: E402
+from wc_shell_harness import (ensure_jq, find_step, resolve_bash,  # noqa: E402
                               run_step, use_utf8_stdout)
 
 WORKFLOW = ".github/workflows/auto-release.yml"
 PIN_STEP = "Create the run-scoped annotated tag the test repository pins"
 CHECK_STEP = "Confirm the pin tag is an annotated tag on the verified head"
-CLEANUP_STEP = "Delete the run-scoped pin tag"
 SCAFFOLD_STEP = "Scaffold the fixture and push it to the test repository"
 VERDICT_SCRIPT = os.path.join(".github", "actions", "_shared", "auto-release-verdict.sh")
 
@@ -67,8 +68,11 @@ STALE = "e2e-verify-400-1"
 # {"object": sha, "type": "commit", "tag": name}}}. A ref whose sha is a
 # key of "tags" is annotated; any other ref names a commit directly.
 # STUB_FAIL is "METHOD path-glob" (fnmatch) for one call to fail with a
-# 403; STUB_MATCH_ALL=1 makes matching-refs return every tag, the way a
-# server that ignored the prefix would.
+# 403; STUB_FAIL_DNS=1 makes that failure gh's two-line connection error
+# instead; STUB_MATCH_ALL=1 makes matching-refs return every tag, the way a
+# server that ignored the prefix would. Like real gh, an HTTP error prints
+# its JSON body on stdout, --jq or not, and `gh: <message> (HTTP <n>)` on
+# stderr; POST refs refuses a sha that names no object.
 STUB_PY = r'''
 import fnmatch, hashlib, json, os, subprocess, sys
 
@@ -98,8 +102,11 @@ state = json.load(open(state_file))
 refs, tags = state["refs"], state["tags"]
 
 def fail(status, message):
+    sys.stdout.write(json.dumps({"message": message, "status": str(status)}) + "\n")
     sys.stderr.write("gh: %s (HTTP %d)\n" % (message, status))
     sys.exit(1)
+
+COMMITS = {"a" * 40, "b" * 40}
 
 def ref_obj(name):
     sha = refs[name]
@@ -109,6 +116,10 @@ spec = os.environ.get("STUB_FAIL", "")
 if spec:
     m, _, glob = spec.partition(" ")
     if m == method and fnmatch.fnmatchcase(path, glob):
+        if os.environ.get("STUB_FAIL_DNS"):
+            sys.stderr.write("error connecting to api.github.com\n"
+                             "check your internet connection or https://githubstatus.com\n")
+            sys.exit(1)
         fail(403, "Resource not accessible by integration")
 
 prefix = "repos/o/r/git/"
@@ -140,6 +151,8 @@ elif method == "POST" and sub == "tags":
 elif method == "POST" and sub == "refs":
     if fields["ref"] in refs:
         fail(422, "Reference already exists")
+    if fields["sha"] not in tags and fields["sha"] not in COMMITS:
+        fail(422, "Object does not exist")
     refs[fields["ref"]] = fields["sha"]
     body = ref_obj(fields["ref"])
 elif method == "DELETE" and sub.startswith("refs/"):
@@ -240,15 +253,31 @@ def verdict_of(outputs):
         return {}
 
 
+class _Stop(Exception):
+    pass
+
+
 def suite(steps, quiet=False):
-    pin, chk, clean = steps
+    """Every case, reported; quiet (a mutation run) stops at the first miss."""
     failed = []
 
     def ck(name, cond, detail=""):
         if not cond:
             failed.append(name)
+            if quiet:
+                raise _Stop()
         if not quiet:
             check(name, cond, detail)
+
+    try:
+        cases(steps, ck)
+    except _Stop:
+        pass
+    return failed
+
+
+def cases(steps, ck):
+    pin, chk = steps
 
     # --- e2e-pin, then the check against what it left -------------------
     sb = Sandbox(base_state())
@@ -268,15 +297,11 @@ def suite(steps, quiet=False):
         ck("the pin check passes the tag e2e-pin created, with no verdict",
            rc == 0 and o.get("ok") == "true" and "verdict" not in o,
            "rc={0} outputs={1}\n{2}".format(rc, o, out))
-        rc, out, o, summary, calls = sb.run(clean, {"TAG": TAG})
-        ck("e2e-pin-cleanup deletes this run's tag and leaves the others",
-           rc == 0 and "refs/tags/" + TAG not in sb.refs()
-           and sb.refs().get("refs/tags/v2") == V2_OBJ and "deleted " + TAG in summary,
-           "rc={0} refs={1}\n{2}".format(rc, sorted(sb.refs()), out))
-        rc, out, o, summary, calls = sb.run(clean, {"TAG": TAG})
-        ck("a tag that is already gone is not a failure",
-           rc == 0 and "already gone" in summary and "::warning::" not in out,
-           "rc={0}\n{1}\n{2}".format(rc, summary, out))
+        rc, out, o, summary, calls = sb.run(pin, dict(PIN_ENV, TAG="e2e-verify-501-1"))
+        ck("the next run's e2e-pin replaces this run's tag, so one exists at a time",
+           rc == 0 and "refs/tags/" + TAG not in sb.refs() and "refs/tags/e2e-verify-501-1" in sb.refs()
+           and sorted(r for r in sb.refs() if r.startswith("refs/tags/e2e-verify-")) == ["refs/tags/e2e-verify-501-1"],
+           "refs={0}".format(sorted(sb.refs())))
     finally:
         sb.close()
 
@@ -303,6 +328,18 @@ def suite(steps, quiet=False):
                "rc={0} outputs={1}\n{2}".format(rc, o, out))
         finally:
             sb.close()
+
+    sb = Sandbox(base_state())
+    try:
+        rc, out, o, summary, calls = sb.run(pin, dict(PIN_ENV, STUB_FAIL="POST repos/o/r/git/tags",
+                                                      STUB_FAIL_DNS="1"))
+        failure = o.get("failure", "")
+        ck("a two-line gh error reaches the failure output whole, on one line",
+           rc == 0 and o.get("tag") == "" and "error connecting to api.github.com" in failure
+           and "check your internet connection" in failure and "\n" not in failure,
+           "rc={0} outputs={1}\n{2}".format(rc, o, out))
+    finally:
+        sb.close()
 
     for name, fail in (("a sweep that cannot list is a warning; the tag is still created",
                         "GET repos/o/r/git/matching-refs/*"),
@@ -343,6 +380,8 @@ def suite(steps, quiet=False):
     check_case("e2e-pin's own failure reaches the verdict",
                base_state(), check_env(PIN_TAG="", PIN_FAILURE="creating refs/tags/x: HTTP 403"),
                "creating refs/tags/x: HTTP 403")
+    check_case("an e2e-pin that never finished is named as such",
+               base_state(), check_env(PIN_TAG="", PIN_FAILURE=""), "e2e-pin job published no tag")
     st = base_state()
     st["tags"]["e" * 40] = {"object": HEAD, "type": "commit", "tag": TAG}
     st["refs"]["refs/tags/" + TAG] = "e" * 40
@@ -355,41 +394,27 @@ def suite(steps, quiet=False):
     finally:
         sb.close()
 
-    # --- cleanup's refusals ----------------------------------------------
-    sb = Sandbox(base_state())
-    try:
-        rc, out, o, summary, calls = sb.run(clean, {"TAG": "v2"})
-        ck("e2e-pin-cleanup refuses a name that is not an e2e pin tag, calling nothing",
-           rc == 0 and sb.refs().get("refs/tags/v2") == V2_OBJ and calls.strip() == "",
-           "rc={0} calls={1!r}\n{2}".format(rc, calls, out))
-        st = base_state()
-        st["refs"]["refs/tags/" + TAG] = V2_OBJ
-        json.dump(st, open(sb.state, "w"))
-        rc, out, o, summary, calls = sb.run(clean, {"TAG": TAG, "STUB_FAIL": "DELETE repos/o/r/git/refs/tags/*"})
-        ck("a failed delete is a warning, not a red run",
-           rc == 0 and "::warning::" in out and "next run" in summary,
-           "rc={0}\n{1}".format(rc, out))
-    finally:
-        sb.close()
-    return failed
 
-
-def static_checks(job, steps):
-    pin_job, verify_job, clean_job = job
+def static_checks(jobs, steps):
+    writers = sorted(k for k, j in jobs.items()
+                     if ((j or {}).get("permissions") or {}).get("contents") == "write")
+    check("e2e-pin is the only job that can write contents",
+          writers == ["e2e-pin"], "contents: write jobs: {0}".format(writers))
+    verify_job = jobs["verify-e2e"]
+    verify_if = str(verify_job.get("if", ""))
+    check("verify-e2e needs e2e-pin and still runs when e2e-pin failed, so its check names it",
+          "e2e-pin" in (verify_job.get("needs") or []) and "!cancelled()" in verify_if
+          and "needs.detect.result == 'success'" in verify_if
+          and "needs.detect.outputs.has-new-work == 'true'" in verify_if,
+          "needs={0} if={1!r}".format(verify_job.get("needs"), verify_if))
+    deleters = ["{0} / {1}".format(name, (step or {}).get("name"))
+                for name, job in jobs.items() if name != "e2e-pin"
+                for step in (job or {}).get("steps") or []
+                if "-X DELETE" in ((step or {}).get("run") or "")
+                and "git/refs/tags" in ((step or {}).get("run") or "")]
+    check("nothing but e2e-pin's sweep deletes a tag, so the test repository's pin keeps resolving",
+          not deleters, "deleting steps: {0}".format(deleters))
     scaffold = steps["scaffold"]
-    check("verify-e2e needs e2e-pin, and only e2e-pin and its cleanup can write contents",
-          "e2e-pin" in (verify_job.get("needs") or [])
-          and (verify_job.get("permissions") or {}).get("contents") == "read"
-          and pin_job.get("permissions") == {"contents": "write"}
-          and clean_job.get("permissions") == {"contents": "write"},
-          "verify-e2e needs={0} perms={1}; e2e-pin perms={2}; cleanup perms={3}".format(
-              verify_job.get("needs"), verify_job.get("permissions"),
-              pin_job.get("permissions"), clean_job.get("permissions")))
-    clean_if = str(clean_job.get("if", ""))
-    check("e2e-pin-cleanup runs after verify-e2e whatever its result, cancellation included",
-          "verify-e2e" in (clean_job.get("needs") or []) and clean_if.startswith("always()")
-          and "needs.e2e-pin.outputs.tag != ''" in clean_if,
-          "needs={0} if={1!r}".format(clean_job.get("needs"), clean_if))
     run = scaffold.get("run", "")
     check("the fixture's uses: rewrite names the pin tag, never the bare head",
           "/.github/workflows/${stage}@${PIN_TAG}#" in run and "${stage}@${HEAD_SHA}" not in run
@@ -406,8 +431,7 @@ def static_checks(job, steps):
     pin_env = steps["pin"].get("env") or {}
     check("e2e-pin names its tag under its sweep prefix, unique to the run attempt",
           pin_env.get("PREFIX") == "e2e-verify-"
-          and pin_env.get("TAG") == "e2e-verify-${{ github.run_id }}-${{ github.run_attempt }}"
-          and "e2e-verify-*) ;;" in steps["cleanup"].get("run", ""),
+          and pin_env.get("TAG") == "e2e-verify-${{ github.run_id }}-${{ github.run_attempt }}",
           "env={0}".format(pin_env))
     check("the check reads e2e-pin's outputs",
           (steps["check"].get("env") or {}).get("PIN_TAG") == "${{ needs.e2e-pin.outputs.tag }}"
@@ -415,7 +439,7 @@ def static_checks(job, steps):
           "env={0}".format(steps["check"].get("env")))
 
 
-# (name, which step: 0 pin / 1 check / 2 cleanup, old, new)
+# (name, which step: 0 pin / 1 check, old, new)
 MUTATIONS = (
     ("the sweep's own prefix guard removed", 0,
      '"refs/tags/${PREFIX}"*) ;;', '*) ;;'),
@@ -423,14 +447,14 @@ MUTATIONS = (
      '-f sha="$obj"', '-f sha="$HEAD_SHA"'),
     ("an empty tag object accepted", 0,
      'if [ -z "$obj" ]; then', 'if false; then'),
+    ("a failed tag-object create's error body kept as the object", 0,
+     '\n  obj=""\n', '\n'),
+    ("the failure text left multi-line", 0,
+     'why="$(printf \'%s\' "$1" | tr \'\\r\\n\' \'  \')"', 'why="$1"'),
     ("the lightweight-tag check removed", 1,
      'if [ "$ref_type" != "tag" ]; then', 'if false; then'),
     ("the peel comparison removed", 1,
      'elif [ "$peeled" != "commit ${HEAD_SHA}" ]; then', 'elif false; then'),
-    ("cleanup's prefix refusal removed", 2,
-     'e2e-verify-*) ;;', '*) ;;'),
-    ("cleanup's already-gone tolerance removed", 2,
-     "elif grep -q 'HTTP 422' \"$err\"; then", 'elif false; then'),
 )
 
 
@@ -440,10 +464,10 @@ def main():
     ensure_jq()
     BASH = resolve_bash()
     steps = {"pin": find_step(WORKFLOW, PIN_STEP), "check": find_step(WORKFLOW, CHECK_STEP),
-             "cleanup": find_step(WORKFLOW, CLEANUP_STEP), "scaffold": find_step(WORKFLOW, SCAFFOLD_STEP)}
-    jobs = (find_job(WORKFLOW, "e2e-pin"), find_job(WORKFLOW, "verify-e2e"),
-            find_job(WORKFLOW, "e2e-pin-cleanup"))
-    scripts = [steps["pin"]["run"], steps["check"]["run"], steps["cleanup"]["run"]]
+             "scaffold": find_step(WORKFLOW, SCAFFOLD_STEP)}
+    import yaml
+    jobs = (yaml.safe_load(open(WORKFLOW, encoding="utf-8")) or {}).get("jobs") or {}
+    scripts = [steps["pin"]["run"], steps["check"]["run"]]
     for name, idx, old, _new in MUTATIONS:
         if scripts[idx].count(old) != 1:
             sys.exit("::error file={0}::mutation {1!r} no longer matches the step text "
