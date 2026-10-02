@@ -12,9 +12,10 @@ must:
   - pause with `gh variable set ... --body true`, and resume by deleting
     the variable (unset is its documented resting state), an already-unset
     variable included;
-  - refuse a resume dispatched by a bot account: resuming is never a
-    runtime action the pipeline takes on itself (specs/055-unattended-e2e-
-    gates FR-028);
+  - let anyone who can dispatch it pause, but only the repository owner
+    resume: resuming is never a runtime action the pipeline takes on
+    itself (specs/055-unattended-e2e-gates FR-028). The actor is
+    github.triggering_actor, so a bot re-running an owner's run is the bot;
   - fail, changing nothing, without its token, and on any other failed
     write;
   - read the variable back and fail unless it now holds what was asked.
@@ -90,7 +91,8 @@ def check(name, cond, detail=""):
         print("::error::verify-auto-release-switch: {0} -- {1}".format(name, detail))
 
 
-def run(script, paused, start=None, actor="charlesguse", token="t", fail="", set_noop=False):
+def run(script, paused, start=None, actor="charlesguse", token="t", fail="", set_noop=False,
+        owner="charlesguse"):
     """-> (rc, output, summary, calls, end state or None for unset)."""
     tmp = tempfile.mkdtemp(prefix="wc-ar-switch-")
     try:
@@ -107,7 +109,7 @@ def run(script, paused, start=None, actor="charlesguse", token="t", fail="", set
         runner_temp = os.path.join(tmp, "runner-temp")
         os.makedirs(runner_temp)
         env = {"PATH": bindir + os.pathsep + os.environ["PATH"],
-               "GH_TOKEN": token, "PAUSED": paused, "ACTOR": actor,
+               "GH_TOKEN": token, "PAUSED": paused, "ACTOR": actor, "OWNER": owner,
                "SWITCH_VAR": VAR, "GITHUB_REPOSITORY": "o/r",
                "STUB_STATE": state, "STUB_LOG": log, "STUB_FAIL": fail,
                "STUB_SET_NOOP": "1" if set_noop else ""}
@@ -143,10 +145,14 @@ def suite(script, quiet=False):
        "rc={0} end={1!r}\n{2}".format(rc, end, out))
     rc, out, summary, calls, end = run(script, "false", start="true", actor="wing-commander-bot[bot]")
     ck("FR-028: a bot account cannot resume, and nothing is written",
-       rc != 0 and end == "true" and calls.strip() == "" and "is a bot account" in out,
+       rc != 0 and end == "true" and calls.strip() == "" and "only the repository owner" in out,
        "rc={0} end={1!r}\n{2}\n{3}".format(rc, end, calls, out))
-    rc, out, summary, calls, end = run(script, "false", start="true", actor="matt")
-    ck("a person whose login ends in b, o or t can resume ([bot] is matched literally)",
+    rc, out, summary, calls, end = run(script, "false", start="true", actor="some-collaborator")
+    ck("a person other than the owner cannot resume either",
+       rc != 0 and end == "true" and calls.strip() == "",
+       "rc={0} end={1!r}\n{2}\n{3}".format(rc, end, calls, out))
+    rc, out, summary, calls, end = run(script, "false", start="true", actor="CharlesGuse")
+    ck("the owner check ignores login case",
        rc == 0 and end is None, "rc={0} end={1!r}\n{2}".format(rc, end, out))
     rc, out, summary, calls, end = run(script, "true", start=None, actor="github-actions[bot]")
     ck("a bot account can still pause",
@@ -172,8 +178,9 @@ def suite(script, quiet=False):
 
 
 MUTATIONS = (
-    ("the bot guard removed", '*"[bot]")\n', '*"[nobody]")\n'),
-    ("the bot guard unquoted (a glob for any login ending in b, o or t)", '*"[bot]")\n', '*[bot])\n'),
+    ("the owner check removed", 'if [ "${ACTOR,,}" != "${OWNER,,}" ]; then', 'if false; then'),
+    ("the owner check made case-sensitive", 'if [ "${ACTOR,,}" != "${OWNER,,}" ]; then',
+     'if [ "$ACTOR" != "$OWNER" ]; then'),
     ("any delete failure tolerated", '*"HTTP 404"*) ;;', '*) ;;'),
     ("the read-back comparison removed", 'if [ "$now" != "$want" ]; then', 'if false; then'),
     ("the empty-token check removed", 'if [ -z "$GH_TOKEN" ]; then', 'if false; then'),
@@ -184,7 +191,15 @@ def main():
     global BASH
     use_utf8_stdout()
     BASH = resolve_bash()
-    script = find_step(WORKFLOW, STEP)["run"]
+    step = find_step(WORKFLOW, STEP)
+    script = step["run"]
+    # The rule is only as good as the field it reads: github.actor would let
+    # a bot re-running an owner's resume run through as the owner.
+    env = step.get("env") or {}
+    check("ACTOR is github.triggering_actor and OWNER is github.repository_owner",
+          env.get("ACTOR") == "${{ github.triggering_actor }}"
+          and env.get("OWNER") == "${{ github.repository_owner }}",
+          "env is {0!r}".format(env))
     for name, old, _new in MUTATIONS:
         if script.count(old) != 1:
             sys.exit("::error file={0}::mutation {1!r} no longer matches the step text "

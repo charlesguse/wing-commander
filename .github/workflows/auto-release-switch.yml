@@ -10,12 +10,13 @@ name: "auto-release-switch"
 # holding Variables: Read and write on this repository and nothing else
 # (docs/setup.md). GITHUB_TOKEN cannot write variables, and the App is
 # deliberately not granted it: its token reaches agent steps, which must
-# never be able to flip a kill switch.
+# never be able to clear a kill switch.
 #
 # Resuming follows specs/055-unattended-e2e-gates FR-028/FR-029 (the
 # variable's row in docs/setup.md): never a runtime action the pipeline
-# takes on itself, so a dispatch by a bot account may pause but never
-# resume.
+# takes on itself. Anyone who can dispatch this, a bot included, may
+# pause; only the repository owner may resume. github.triggering_actor,
+# not github.actor: a bot re-running an owner's resume run is the bot.
 on:
   workflow_dispatch:
     inputs:
@@ -45,6 +46,7 @@ jobs:
           GH_TOKEN: ${{ secrets.WC_AUTO_RELEASE_SWITCH_TOKEN }}
           PAUSED: ${{ inputs.paused }}
           ACTOR: ${{ github.triggering_actor }}
+          OWNER: ${{ github.repository_owner }}
           SWITCH_VAR: WING_COMMANDER_AUTO_RELEASE_PAUSED
         run: |
           set -euo pipefail
@@ -58,12 +60,10 @@ jobs:
               want="true"
               ;;
             false)
-              case "$ACTOR" in
-                *"[bot]")
-                  echo "::error::auto-release-switch: $ACTOR is a bot account; resuming auto-release is never a runtime action the pipeline takes on itself (specs/055-unattended-e2e-gates FR-028). Nothing changed."
-                  exit 1
-                  ;;
-              esac
+              if [ "${ACTOR,,}" != "${OWNER,,}" ]; then
+                echo "::error::auto-release-switch: only the repository owner (@$OWNER) may resume auto-release, and @$ACTOR dispatched this. Resuming is never a runtime action the pipeline takes on itself (specs/055-unattended-e2e-gates FR-028). Nothing changed."
+                exit 1
+              fi
               # Deleted rather than set to "false": unset is the variable's
               # documented resting state. An already-unset variable is fine.
               if ! out="$(gh variable delete "$SWITCH_VAR" -R "$GITHUB_REPOSITORY" 2>&1)"; then
