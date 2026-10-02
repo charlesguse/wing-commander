@@ -5,13 +5,16 @@
 ```python
 def check_rate_limit(run_transcript_path: str) -> dict | None:
     """Returns evidence only when the cited run's transcript carries
-    rate-limit evidence (a `rate_limit_event`, or a terminal `api_error`
-    with `api_error_status: 429`) AND its terminal result is a failure
+    rate-limit evidence (a qualifying `rate_limit_event` -- status
+    "rejected", case-insensitive, or no status at all, as
+    wing-commander-agent-verdict counts it (#544) -- or a terminal
+    `api_error` with `api_error_status: 429`) AND its terminal result is a failure
     (`is_error: true` or `subtype` != "success") AND records one turn
     (finite `num_turns`, 0 <= n <= 1) AND zero cost (finite
     `total_cost_usd` == 0); else None. Missing, non-numeric or non-finite
     turns/cost → None. A `rate_limit_event` alone is not enough: ordinary
-    long runs emit informational ones (#402). The evidence quotes the
+    long runs emit informational ones (#402), and an informational one
+    ("allowed", "allowed_warning") is no evidence at all. The evidence quotes the
     transcript's own fields, never constants:
     {rate_limit_event: bool, rate_limit_status: str|None,
      terminal_reason: str|None, api_error_status: str|None,
@@ -192,3 +195,12 @@ Fixtures (FR-064 bullet 1), each a checked-in transcript/workflow-pin pair:
     changing `occurrence-bot-login`, and the triage job or watchdog
     changing App. Gate 96 proves the composite stages only that login's
     Bot comments and the newest reopen.
+13. Only a qualifying `rate_limit_event` is evidence (#544): a one-turn
+    $0 run that failed with a 529 and carries only informational events,
+    nested or top-level → `proceed`; a statusless event, and a nested
+    "REJECTED" → `closed, rate_limit`; a terminal 429 beside an
+    informational event → `closed, rate_limit`, quoting
+    `rate_limit_event: false`; with two qualifying events the last one
+    is quoted. Counting every event again, dropping the statusless case,
+    the case-insensitive compare, the top-level status fallback, or
+    the last-event rule must each fail these.

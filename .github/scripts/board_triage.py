@@ -13,8 +13,9 @@ here, in code, from the cited run's own transcript and current `main`.
 Ground 1 (rate limit) requires ALL of the following in the cited run's own
 execution-output transcript (spec.md's rate-limit story and edge cases,
 contracts/triage.md fixture 1):
-  - rate-limit evidence: a `rate_limit_event` record, or a terminal result
-    with `terminal_reason == "api_error"` and `api_error_status == "429"`;
+  - rate-limit evidence: a qualifying `rate_limit_event` record (status
+    "rejected" or none, #544), or a terminal result with
+    `terminal_reason == "api_error"` and `api_error_status == "429"`;
   - a failed run: the terminal result has `is_error: true` or a `subtype`
     other than "success" (wing-commander-agent-verdict's same test);
   - one turn: the terminal result's `num_turns` is a finite number in
@@ -92,18 +93,49 @@ def _zero_cost(result):
     return cost_usd is not None and cost_usd == 0
 
 
+def _rate_limit_status(record):
+    """A rate_limit_event's status: .rate_limit_info.status (the runtime's
+    nested shape), else a top-level .status (spec 047's fixture shape), else
+    None. Like agent-verdict's jq `//`, a null or false value at either
+    place counts as absent."""
+    info = record.get("rate_limit_info")
+    for status in ((info.get("status") if isinstance(info, dict) else None),
+                   record.get("status")):
+        if status is not None and status is not False:
+            return status
+    return None
+
+
+def _qualifying_rate_limit_event(records):
+    """The last rate_limit_event that refused the call: status "rejected",
+    compared case-insensitively, or no status at all (#544, the rule
+    wing-commander-agent-verdict applies). The runtime also writes
+    informational events ("allowed", "allowed_warning") during ordinary
+    runs, and every one names its status; counting those closed a run that
+    failed for another reason (a 529, say) as rate-limited."""
+    matches = []
+    for r in records:
+        if not (isinstance(r, dict) and r.get("type") == "rate_limit_event"):
+            continue
+        status = _rate_limit_status(r)
+        if status is None or (isinstance(status, str) and status.lower() == "rejected"):
+            matches.append(r)
+    return matches[-1] if matches else None
+
+
 def check_rate_limit(run_transcript_path):
     """Reads the cited run's own execution-output transcript and returns
     its own fields, quoted rather than asserted:
-    {"rate_limit_event": <bool, a rate_limit_event record is present>,
+    {"rate_limit_event": <bool, a qualifying rate_limit_event is present>,
      "rate_limit_status": <that record's rate_limit_info.status, or None>,
      "terminal_reason": <result's terminal_reason, or None>,
      "api_error_status": <result's api_error_status as a string, or None>,
      "num_turns": <result's num_turns>,
      "cost_usd": <result's total_cost_usd>}
     only when ALL of these hold:
-      1. rate-limit evidence -- a `rate_limit_event` record, or a terminal
-         result with `terminal_reason == "api_error"` and
+      1. rate-limit evidence -- a qualifying `rate_limit_event` record
+         (_qualifying_rate_limit_event(): rejected, or statusless), or a
+         terminal result with `terminal_reason == "api_error"` and
          `api_error_status == "429"`;
       2. a failed run -- the terminal result has `is_error: true` or a
          `subtype` other than "success"; a successful run never closes;
@@ -128,7 +160,7 @@ def check_rate_limit(run_transcript_path):
     if not result:
         return None
 
-    rate_limit_event = _last_of_type(records, "rate_limit_event")
+    rate_limit_event = _qualifying_rate_limit_event(records)
     terminal_reason = result.get("terminal_reason")
     raw_status = result.get("api_error_status")
     api_error_status = str(raw_status) if raw_status is not None else None

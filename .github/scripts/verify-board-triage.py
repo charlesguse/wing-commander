@@ -21,6 +21,14 @@ quote the transcript's own fields. Each guard has a fixture of its own
 run), closed cases pin the quoted evidence exactly, and a mutation per
 guard -- plus one hard-coding the evidence -- must be caught.
 
+#544: an informational event ("allowed", "allowed_warning") is no
+rate-limit evidence at all; only one that refused the call counts (status
+"rejected", case-insensitive, nested or top-level, or no status), the rule
+wing-commander-agent-verdict applies. Fixtures pin an informational-only
+529 (nested and top-level), a statusless event, an upper-case "REJECTED",
+a 429 beside an informational event, and the last of two qualifying
+events being quoted; a mutation per part of the rule must be caught.
+
 #578: an "already fixed" proposal was handed over only after the cited-run
 and evidence checks, so on an issue citing no run (most human-filed ones)
 it fell into the disagreement path and route filed an empty spec-request.
@@ -175,10 +183,39 @@ RATE_LIMIT_GUARD_CASES = {
     # cost guard alone (one turn).
     "429-one-turn-nonzero-cost": {"outcome": "proceed", "ground": None},
     "429-cost-missing": {"outcome": "proceed", "ground": None},
-    # failed-run guard alone: one turn, $0, but the run succeeded.
+    # failed-run guard alone: one turn, $0, a qualifying (rejected) event,
+    # but the run succeeded.
     "rate-limit-event-success": {"outcome": "proceed", "ground": None},
 }
 TRIAGE_CASES.update(RATE_LIMIT_GUARD_CASES)
+# #544: only an event that refused the call is rate-limit evidence. An
+# informational one ("allowed", "allowed_warning") on a run that failed for
+# another reason (a 529) never closes it; a statusless one still counts; and
+# a terminal 429 still closes beside an informational event, quoting no
+# qualifying event.
+TRIAGE_CASES["rate-limit-event-informational-529"] = {"outcome": "proceed", "ground": None}
+TRIAGE_CASES["rate-limit-event-statusless"] = {
+    "outcome": "closed", "ground": "rate_limit", "evidence": {
+        "rate_limit_event": True, "rate_limit_status": None,
+        "terminal_reason": "rate_limited", "api_error_status": None,
+        "num_turns": 1, "cost_usd": 0}}
+TRIAGE_CASES["rate-limit-event-uppercase-rejected"] = {
+    "outcome": "closed", "ground": "rate_limit", "evidence": {
+        "rate_limit_event": True, "rate_limit_status": "REJECTED",
+        "terminal_reason": "rate_limited", "api_error_status": None,
+        "num_turns": 1, "cost_usd": 0}}
+TRIAGE_CASES["rate-limit-event-toplevel-allowed-529"] = {"outcome": "proceed", "ground": None}
+# Two qualifying events: the last one is quoted (its status, None here).
+TRIAGE_CASES["rate-limit-event-last-qualifying"] = {
+    "outcome": "closed", "ground": "rate_limit", "evidence": {
+        "rate_limit_event": True, "rate_limit_status": None,
+        "terminal_reason": "rate_limited", "api_error_status": None,
+        "num_turns": 1, "cost_usd": 0}}
+TRIAGE_CASES["429-with-informational-event"] = {
+    "outcome": "closed", "ground": "rate_limit", "evidence": {
+        "rate_limit_event": False, "rate_limit_status": None,
+        "terminal_reason": "api_error", "api_error_status": "429",
+        "num_turns": 1, "cost_usd": 0}}
 # Evidence from a rate_limit_event alone (no api_error_status): hard-coded
 # "429"/True evidence would misquote this run.
 TRIAGE_CASES["rate-limit-event-only"] = {
@@ -331,6 +368,21 @@ RATE_LIMIT_MUTATIONS = (
     ("failed-run guard removed", "_failed", lambda orig: lambda result: True),
     ("evidence hard-coded instead of quoted", "check_rate_limit",
      _hardcoded_evidence),
+    ("any rate_limit_event counts again (pre-#544)", "_qualifying_rate_limit_event",
+     lambda orig: lambda records: board_triage._last_of_type(records, "rate_limit_event")),
+    ("status compared case-sensitively", "_qualifying_rate_limit_event",
+     lambda orig: lambda records: next(
+         (r for r in reversed(records) if isinstance(r, dict) and r.get("type") == "rate_limit_event"
+          and board_triage._rate_limit_status(r) in (None, "rejected")), None)),
+    ("top-level status fallback dropped", "_rate_limit_status",
+     lambda orig: lambda record: (record.get("rate_limit_info") or {}).get("status")
+     if isinstance(record.get("rate_limit_info"), dict) else None),
+    ("first qualifying event quoted instead of the last", "_qualifying_rate_limit_event",
+     lambda orig: lambda records: next((r for r in records if orig([r]) is r), None)),
+    ("a statusless event no longer counts", "_qualifying_rate_limit_event",
+     lambda orig: lambda records: next(
+         (r for r in reversed(records) if isinstance(r, dict) and r.get("type") == "rate_limit_event"
+          and str(board_triage._rate_limit_status(r) or "").lower() == "rejected"), None)),
 )
 
 
