@@ -510,11 +510,14 @@ jobs:
                 comments=""
                 read_failed "$slug" "lifecycle issue #$issue's comments" "$(cat "$err_file")"
               fi
+              # `shell: bash` is errexit: a jq failure here must keep the
+              # branch, never stop discovery for every branch.
               if [ -n "$comments" ]; then
                 marker="$(printf '%s\n' "$comments" | jq -rs --arg bot "$BOT_LOGIN" '
                   [.[] | select(.user.type == "Bot" and .user.login == $bot)
                    | [(.body // "") | scan("<!-- wing-commander-rebase: blocked [^>]*-->")] | last // empty]
-                  | last // empty')"
+                  | last // empty')" \
+                  || { marker=""; read_failed "$slug" "lifecycle issue #$issue's comments" "jq could not parse them"; }
               fi
               if [ -n "$marker" ]; then
                 m_branch="$(printf '%s' "$marker" | sed -n 's/.*branch-sha=\([0-9a-f]\{1,\}\).*/\1/p')"
