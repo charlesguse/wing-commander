@@ -82,9 +82,9 @@ def _spec_request_notice_body():
 
 def _superseded_notice_body(originating_issue):
     return ("This spec-request closed without its work landing. Its originating issue "
-            "#{0} has since been routed to a newer spec-request, which carries the request "
-            "now, so reopening the originating issue for this one would not return it to the "
-            "board.").format(originating_issue)
+            "#{0} has since been routed to a newer spec-request, so whether reopening it "
+            "returns the request to the board depends on that newer spec-request, not on "
+            "this one.").format(originating_issue)
 
 
 def _originating_notice_body(spec_request_number):

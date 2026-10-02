@@ -51,6 +51,8 @@ MARKER_READERS = ("read_marker_with_timestamp(", "find_latest_marker_matching(",
                   "last_marker_match(", "MARKER_RE")
 DUPLICATE_SIGNS = ("DUPLICATE_STEP", '"duplicate"', "'duplicate'")
 HEREDOC_RE = re.compile(r"<<-?\s*'?(\w+)'?[^\n]*\n(.*?)\n\s*\1\b", re.S)
+# A multi-line `python3 -c "..."` program is checked the same way.
+PYTHON_C_RE = re.compile(r'python3\s+(?:-I\s+)?-c\s+"(.*?)"\s*\)?', re.S)
 JQ_DUPLICATE_RE = re.compile(r"\.step\s*==\s*\\?\"duplicate\\?\"")
 
 failures = []
@@ -233,9 +235,11 @@ def inline_scans(blocks):
     and any jq program selecting on the duplicate step, in run: blocks."""
     bad = []
     for where, run in blocks:
-        for name, body in HEREDOC_RE.findall(run):
+        programs = [("heredoc " + name, body) for name, body in HEREDOC_RE.findall(run)]
+        programs += [("python3 -c", body) for body in PYTHON_C_RE.findall(run)]
+        for label, body in programs:
             if any(sign in body for sign in DUPLICATE_SIGNS) and any(r in body for r in MARKER_READERS):
-                bad.append("{0} (heredoc {1})".format(where, name))
+                bad.append("{0} ({1})".format(where, label))
         if JQ_DUPLICATE_RE.search(run):
             bad.append("{0} (jq selects on the duplicate step)".format(where))
     return bad
@@ -271,6 +275,11 @@ for number_str, comments in disposed_comments.items():
 PYEOF
 '''
 JQ_INLINED = '''jq '[.[] | select(.step == "duplicate")]' markers.json'''
+PYTHON_C_INLINED = '''spec="$(python3 -c "
+from board_item_marker import read_marker_with_timestamp
+pair = read_marker_with_timestamp(comments, bot)
+print(pair[1]['spec_request'] if pair and pair[1].get('step') == 'duplicate' else '')
+")"'''
 
 
 def _post_notices_ignoring_superseded(spec_requests, repository, run=None):
@@ -296,6 +305,10 @@ def main():
          board_eligibility.originating_issues_by_spec_request,
          board_eligibility.spec_request_numbers_to_resolve,
          blocks + [("mutated / jq scan", JQ_INLINED)]),
+        ("a python3 -c program scans duplicate markers inline",
+         board_eligibility.originating_issues_by_spec_request,
+         board_eligibility.spec_request_numbers_to_resolve,
+         blocks + [("mutated / python -c scan", PYTHON_C_INLINED)]),
         ("every duplicate marker treated as current (the first #874 fix)",
          _every_marker_current, board_eligibility.spec_request_numbers_to_resolve, blocks),
         ("the re-admission pre-read takes the oldest duplicate marker",
