@@ -469,9 +469,13 @@ def behavioural(repo_root):
         if _git(pipe_dir, "rev-parse", "HEAD").stdout.strip() != pipe_sha:
             bad.append("annotated tag: the checkout by tag object did not land on the tagged "
                        "commit, so this scenario does not reproduce #928")
-        r = _run_guard(ws_tag, script=GUARD_RUN.replace(
-            '"$(git -C "$p" rev-parse --verify -q "${WC_PIPELINE_REF}^{commit}" 2>/dev/null)"',
-            '"$WC_PIPELINE_REF"'), pipeline_ref=tag_sha)
+        peel = '"$(git -C "$p" rev-parse --verify -q "${WC_PIPELINE_REF}^{commit}" 2>/dev/null)"'
+        if GUARD_RUN.count(peel) != 1:
+            bad.append("annotated tag: GUARD_RUN no longer carries the #928 peel text exactly "
+                       "once, so the pre-#928 control below cannot be built from it. Update "
+                       "this scenario with the guard")
+        r = _run_guard(ws_tag, script=GUARD_RUN.replace(peel, '"$WC_PIPELINE_REF"'),
+                       pipeline_ref=tag_sha)
         if r.returncode == 0:
             bad.append("annotated tag: the pre-#928 guard (raw ref against HEAD) was expected "
                        "to refuse it, got a pass, so this scenario does not reproduce #928")
