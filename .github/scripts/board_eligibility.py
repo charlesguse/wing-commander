@@ -39,7 +39,8 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from board_item_marker import find_latest_marker_matching, read_marker_with_timestamp  # noqa: E402
+from board_item_marker import (  # noqa: E402
+    find_latest_marker_matching, find_markers_matching, read_marker_with_timestamp)
 
 MAINTAINER_ASSOCIATIONS = {"OWNER", "MEMBER", "COLLABORATOR"}
 
@@ -178,6 +179,33 @@ def _find_duplicate_marker(issue, comments, bot_login):
     found = find_latest_marker_matching(
         comments, bot_login, lambda marker: marker.get("step") == DUPLICATE_STEP)
     return found[1] if found else None
+
+
+def originating_issues_by_spec_request(comments_by_issue, bot_login):
+    """{spec_request number: originating issue number} over EVERY
+    loop-authored step == DUPLICATE_STEP marker on every issue in
+    `comments_by_issue` (keys: issue numbers, int or str). Every such
+    marker counts, not only an issue's overall-newest marker nor only its
+    newest duplicate one: an issue disposed as a duplicate of one
+    spec-request, then reopened and re-routed to a second, names both, and
+    the first spec-request's closed-without-landing notice needs its
+    originating issue too (#874). Should two issues name one spec-request,
+    the newest marker wins. The single home for this map: board-loop.yml's
+    closed-without-landing scan calls it rather than scanning inline."""
+    named = []
+    for number, comments in comments_by_issue.items():
+        try:
+            issue_number = int(number)
+        except (TypeError, ValueError):
+            continue
+        for created_at, marker in find_markers_matching(
+                comments, bot_login, lambda m: m.get("step") == DUPLICATE_STEP):
+            try:
+                named.append((created_at, int(marker.get("spec_request")), issue_number))
+            except (TypeError, ValueError):
+                continue
+    named.sort(key=lambda item: item[0])
+    return {spec_request: issue_number for _created_at, spec_request, issue_number in named}
 
 
 def spec_request_numbers_to_resolve(open_issues, comments_by_issue, bot_login):

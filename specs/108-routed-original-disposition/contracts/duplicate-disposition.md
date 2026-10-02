@@ -25,14 +25,17 @@ def dispose_as_duplicate(originating_issue: int, spec_request_issue: int,
 
 1. **Idempotency pre-check** (FR-009, data-model.md's Disposition
    invariant): read `originating_issue`'s current `state` and `labels`
-   (`gh issue view`). If `state == CLOSED` and `disposition:duplicate` is
-   already present, return `True` without any further call.
+   (`gh issue view`) and both issues' comments. Each of steps 2–4 then
+   runs only when the pre-check found its own result missing, so a
+   closed, labelled issue still gets the step-3 comment if it lacks one;
+   with all three present the call is a no-op returning `True`.
 2. **Label** (idempotent on GitHub's side regardless of the other steps'
    outcome): `gh issue edit <originating_issue> --add-label
    disposition:duplicate`.
 3. **Reason comment on the originating issue** (FR-003): one comment
-   stating `reason` and linking `spec_request_url`, posted only if step 1
-   found it were not already present.
+   stating `reason` and linking `spec_request_url`, carrying the step-7
+   marker in its body, posted only if step 1 found no loop-authored
+   duplicate comment naming this spec-request.
 4. **Close** (FR-001, FR-015, research.md D2):
    `gh api -X PATCH repos/OWNER/REPO/issues/<originating_issue> -f
    state=closed -f state_reason=duplicate`. If `state` was already `CLOSED`
@@ -53,13 +56,18 @@ def dispose_as_duplicate(originating_issue: int, spec_request_issue: int,
    step 1 found this comment already present (same idempotency rule).
 7. **Marker**: `board_item_marker.write_marker("duplicate", round=0,
    pr=None, branch=None, base_sha=None)` extended with `spec_request=
-   spec_request_issue` (data-model.md's Board Item Marker), posted as the
-   step's own status comment — same shape every other marker write uses,
-   never a second announcement convention.
+   spec_request_issue` (data-model.md's Board Item Marker), written inside
+   the step-3 comment's body, not as a separate write — same marker shape
+   every other marker write uses, never a second announcement convention.
 
-Any failure at steps 2–7 returns `False`; the caller's step fails the job
-(no `continue-on-error`), so a later run re-enters at step 1 and finishes
-whatever step 1's pre-check finds incomplete (FR-010). Step order matters
+`dispose_as_duplicate()` itself runs steps 1–4 (and 7, inside step 3);
+steps 5 and 6 are the workflow's own `wing-commander-outstanding-task-item`
+calls. Any failure at steps 2–4 returns `False`, and the caller's step
+fails the job (no `continue-on-error`). The function is idempotent, so
+calling it again for the same issue finishes whatever its pre-check finds
+incomplete (FR-010). A fresh scheduled run does NOT get there on its own
+(code review of #809, #888): see the failure semantics table below for
+where each partial state leaves the issue, and finish it by hand. Step order matters
 the other way from an earlier draft of this contract: labelling and
 commenting BEFORE closing means a crash after a successful close never
 strands the issue CLOSED with no `disposition:duplicate` label and no
@@ -88,7 +96,7 @@ guard" side of that boundary.
 | Scenario | State left behind | Next run's behaviour |
 |---|---|---|
 | Create guard fails (spec-request never filed) | Originating issue untouched, no `disposition:duplicate`, no marker change | Retries the create from scratch (unchanged create-guard behaviour, FR-011) |
-| Spec-request filed, label call fails | Originating issue still OPEN, no label, no comment | Pre-check finds `disposition:duplicate` absent; re-runs from step 2 (label) |
-| Spec-request filed, label succeeds, comment call fails | Originating issue OPEN + labelled, no reason comment | Pre-check's own comment-presence check (independent of labelled/closed state, per FR-009's "no duplicate comment" wording) finds it missing; re-enters at step 3 (comment) |
-| Spec-request filed, label+comment succeed, close call fails | Originating issue OPEN + labelled + commented | Pre-check finds `state != CLOSED`; re-enters at step 4 (close) — never re-posts a second comment, since the comment-presence check already found its own marker |
+| Spec-request filed, label call fails | Originating issue still OPEN, no label, no comment | Not finished by a scheduled run: the issue is eligible again, so the next run re-routes it and route's unconditional `gh issue create` files a second spec-request (#527). Finish by hand; a direct call's pre-check starts at step 2 (label) |
+| Spec-request filed, label succeeds, comment call fails | Originating issue OPEN + labelled, no reason comment | Not finished by a scheduled run: the label alone excludes the issue (`is_excluded()`), and with no duplicate marker the re-admission carve-out never applies, even after the spec-request closes. Only removing the label frees it. A direct call's comment-presence check (independent of labelled/closed state, per FR-009's "no duplicate comment" wording) re-enters at step 3 (comment) |
+| Spec-request filed, label+comment succeed, close call fails | Originating issue OPEN + labelled + commented | Not finished by a scheduled run: labelled and marked, the issue stays excluded while its spec-request is open. A direct call's pre-check finds `state != CLOSED` and re-enters at step 4 (close), never re-posting a second comment, since the comment-presence check already found its own marker |
 | Everything succeeds, run re-executes disposition on the same issue anyway (idempotency drill, FR-009) | No change | Pre-check finds everything present; no-op `True` |
