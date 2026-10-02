@@ -556,14 +556,6 @@ POLL_CLAMP_FIXED_TEXT = (
     "                emit_verdict\n"
     "                exit 0\n"
     "              fi\n"
-    "              # Same clamp for a PR still waiting on its stage's label.\n"
-    '              if [ -n "${gate_unreported_since[$prefix]}" ]; then\n'
-    '                write_verdict "fail-gate-stall" "${gate_name[$prefix]}" \\\n'
-    '                  "the stage that opened PR #${gate_pr_number[$prefix]} moves the issue to ${gate_ready_label[$prefix]} before the harness merges it" \\\n'
-    '                  "PR #${gate_pr_number[$prefix]} was still waiting for ${gate_ready_label[$prefix]} when the poll budget ran out, with the issue at [${labels}]"\n'
-    "                emit_verdict\n"
-    "                exit 0\n"
-    "              fi\n"
     "            done\n"
     '            write_verdict "fail-timeout" "end-to-end run reaching a terminal state" \\\n'
 )

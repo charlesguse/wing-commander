@@ -16,10 +16,12 @@ follows its own open-PR check the same way, behind `stage:review`.
 
 So a gate PR is merged only when the issue carries the label its stage
 writes after verifying it (`stage:plan` for plan/, `stage:review` for
-spec/, nothing for the spec-draft PR, which stays a draft until clarify
-is done). A stage that never writes it ends the attempt as that gate's
-fail-gate-stall after GATE_BLOCKED_ALLOWANCE_SECONDS, or when the poll
-budget runs out first, never as a generic timeout and never by merging.
+spec/, nothing for the spec-draft PR, whose open-PR reads degrade softly).
+A stage that never writes it, GATE_BLOCKED_ALLOWANCE_SECONDS after its PR
+was first mergeable, failed after opening that PR: the attempt ends
+fail-wrong-output naming the stage, a pipeline defect and not a gate stall
+(specs/055 US3 scenario 4). A poll budget that runs out mid-wait stays the
+generic fail-timeout (specs/070 FR-007).
 
 This harness EXECUTES the shipped poll step (wc_shell_harness.run_step)
 against a `gh` stub that serves one gate PR as mergeable and a sequence of
@@ -142,22 +144,43 @@ def run(script, gate, label_seq, **env_over):
         shutil.rmtree(root, ignore_errors=True)
 
 
+class _Stop(Exception):
+    pass
+
+
 def suite(script, quiet=False):
+    """Every case, reported; quiet (a mutation run) stops at the first miss."""
     failed = []
 
     def ck(name, cond, detail=""):
         if not cond:
             failed.append(name)
+            if quiet:
+                raise _Stop()
         if not quiet:
             check(name, cond, detail)
 
+    try:
+        cases(script, ck)
+    except _Stop:
+        pass
+    return failed
+
+
+def cases(script, ck):
     rc, out, v, merges, views = run(script, "plan/", ["stage:spec"])
     ck("a mergeable plan PR is not merged while the issue lacks stage:plan",
        rc == 0 and merges == 0 and views > 1, "rc={0} merges={1} views={2}\n{3}".format(rc, merges, views, out))
-    ck("... and the attempt ends as the plan gate's stall naming stage:plan, not a timeout",
-       v.get("outcome") == "fail-gate-stall" and v.get("failing_check") == "plan PR merge"
-       and "stage:plan" in (v.get("expected") or "") and "stage:spec" in (v.get("observed") or ""),
-       "verdict={0}".format(v))
+    ck("... and a poll budget that runs out mid-wait is the generic timeout (specs/070 FR-007)",
+       v.get("outcome") == "fail-timeout", "verdict={0}".format(v))
+
+    rc, out, v, merges, views = run(script, "plan/", ["stage:spec"],
+                                    GATE_BLOCKED_ALLOWANCE_SECONDS="0", POLL_BUDGET_SECONDS="3")
+    ck("a plan stage that never writes stage:plan is a pipeline defect, not a gate stall (specs/055 US3.4)",
+       rc == 0 and merges == 0 and v.get("outcome") == "fail-wrong-output"
+       and v.get("failing_check") == "the plan stage reports its PR (stage:plan)"
+       and "stage:spec" in (v.get("observed") or "") and "first became mergeable" in (v.get("observed") or ""),
+       "rc={0} merges={1} verdict={2}\n{3}".format(rc, merges, v, out))
 
     rc, out, v, merges, views = run(script, "plan/", ["stage:spec", "stage:spec", "stage:plan"])
     ck("the plan PR is merged once the plan stage has written stage:plan",
@@ -166,20 +189,17 @@ def suite(script, quiet=False):
 
     rc, out, v, merges, views = run(script, "spec/", ["stage:implement"])
     ck("a mergeable finalize PR waits for stage:review the same way",
-       rc == 0 and merges == 0 and v.get("failing_check") == "finalize PR merge"
-       and "stage:review" in (v.get("expected") or ""),
+       rc == 0 and merges == 0 and v.get("outcome") == "fail-timeout",
        "rc={0} merges={1} verdict={2}\n{3}".format(rc, merges, v, out))
+    rc, out, v, merges, views = run(script, "spec/", ["stage:implement"],
+                                    GATE_BLOCKED_ALLOWANCE_SECONDS="0", POLL_BUDGET_SECONDS="3")
+    ck("... and a finalize stage that never writes stage:review is named as that stage's defect",
+       merges == 0 and v.get("outcome") == "fail-wrong-output"
+       and v.get("failing_check") == "the finalize stage reports its PR (stage:review)",
+       "merges={0} verdict={1}".format(merges, v))
     rc, out, v, merges, views = run(script, "spec/", ["stage:implement", "stage:review"])
     ck("the finalize PR is merged once the issue is at stage:review",
        rc == 0 and merges == 1, "rc={0} merges={1}\n{2}".format(rc, merges, out))
-
-    rc, out, v, merges, views = run(script, "plan/", ["stage:spec"],
-                                    GATE_BLOCKED_ALLOWANCE_SECONDS="0", POLL_BUDGET_SECONDS="3")
-    ck("the wait is bounded by GATE_BLOCKED_ALLOWANCE_SECONDS inside the poll budget",
-       rc == 0 and merges == 0 and v.get("outcome") == "fail-gate-stall"
-       and "was mergeable for 0s" in (v.get("observed") or ""),
-       "rc={0} merges={1} verdict={2}\n{3}".format(rc, merges, v, out))
-    return failed
 
 
 MUTATIONS = (
@@ -188,11 +208,11 @@ MUTATIONS = (
      "if false; then"),
     ("plan's ready label dropped", '[plan/]="stage:plan"', '[plan/]=""'),
     ("finalize's ready label dropped", '[spec/]="stage:review"', '[spec/]=""'),
-    ("the wait's timer left running once the label arrives",
-     'gate_unreported_since[$prefix]=""\n' + ' ' * 16 + 'if merge_err=',
-     'if merge_err='),
-    ("the poll-budget clamp for an unreported PR removed",
-     'if [ -n "${gate_unreported_since[$prefix]}" ]; then', "if false; then"),
+    ("the unreported PR filed as a gate stall again",
+     'write_verdict "fail-wrong-output" "the ${gate_ready_stage[$prefix]} stage reports its PR',
+     'write_verdict "fail-gate-stall" "the ${gate_ready_stage[$prefix]} stage reports its PR'),
+    ("the wait left unbounded",
+     'start) gate_unreported_since[$prefix]="$SECONDS" ;;', 'start) ;;'),
 )
 
 
