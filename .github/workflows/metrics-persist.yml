@@ -145,6 +145,12 @@ on:
 
 permissions: {}
 
+# Pins bash for every run: step without its own shell:, a caller-supplied
+# container included -- see pr-conversation.yml.
+defaults:
+  run:
+    shell: bash -e {0}
+
 jobs:
   # specs/038-runner-container-passthrough: every published stage carries
   # this exact job, deliberately, even though this stage runs no agent step

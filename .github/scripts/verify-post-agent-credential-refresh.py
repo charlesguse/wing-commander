@@ -739,10 +739,13 @@ def check_job_full_subject(path, job_name, job):
     # window" (same boundaries as check 2). credential-status is different
     # BY DESIGN: it is deferred to the job's own last steps, after every
     # business-logic/report step (review-step-gating self-review, spec
-    # 052's own T042/data-model.md), so in a multi-agent-step job all of a
-    # job's credential-status calls cluster at the END, never inside any
-    # individual agent step's window. Its "position" is therefore checked
-    # by REFERENCE, not by sequential order: each agent step's own mint
+    # 052's own T042/data-model.md), except in rebase.yml, where it runs
+    # just before "Publish rebased branch", which reads it (#661). Either
+    # way it sits outside the agent step's window: in a multi-agent-step
+    # job, all of a job's credential-status calls cluster at the END, never
+    # inside any individual agent step's window. Its "position" is
+    # therefore checked by REFERENCE, not by sequential order: each agent
+    # step's own mint
     # step (found inside its window) must have some credential-status call,
     # anywhere in the job, whose `mint-outcome` names that exact mint
     # step's id -- the same reference a duplicated call cannot satisfy for

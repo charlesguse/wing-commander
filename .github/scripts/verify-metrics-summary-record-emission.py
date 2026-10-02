@@ -1115,6 +1115,55 @@ def case_container_pipefail_steps_pin_shell_bash():
              f"pin shell: bash")
 
 
+def case_container_steps_pin_shell_bash():
+    """Every `run:` step of a caller-supplied-container job resolves to a
+    bash pin, pipefail or not (#795, #793). A step with no effective
+    `shell:` takes the adopter image's own default shell, which need not
+    be bash, so any bash-only construct a later edit adds would break only
+    on that image. The pipefail case above is the subset whose failure was
+    seen first; this is the whole class. The fleet meets it through each
+    container-bound workflow's `defaults: run: shell: bash -e {0}` (the
+    canonical comment is in pr-conversation.yml). That is what Actions uses
+    on a host runner; inside a container an unpinned step otherwise runs
+    as the image's `sh -e {0}` even when bash is installed, so the pin
+    moved those steps from sh to bash. None of the 191 relied on behaviour
+    sh and bash differ on (code review of #934).
+    Shell precedence and the caller-supplied test come from wc_shell_pin,
+    shared with the container-shell-safety skill."""
+    case = "every container-bound run: step pins bash"
+    docs = _workflow_docs(case)
+    covered = 0
+    missing = []
+    for path, doc in sorted(docs.items()):
+        if doc is None:
+            continue
+        for job_name, job in (doc.get("jobs") or {}).items():
+            job = job or {}
+            if not is_container_bound(job):
+                continue
+            for step in job.get("steps") or []:
+                step = step or {}
+                if not step.get("run"):
+                    continue
+                covered += 1
+                if not pins_bash(effective_shell(step, job, doc)):
+                    missing.append(f"{path}: {job_name} / {step.get('name')!r}")
+    if missing:
+        fail(case, "every `run:` step in a job whose container image is "
+                   "caller-supplied must resolve to a bash pin (its own "
+                   "`shell:`, or a job- or workflow-level `defaults: run: "
+                   "shell:` whose program is bash). Without one it runs "
+                   "under the adopter image's default shell. Missing on: "
+                   + ", ".join(missing))
+    elif covered == 0:
+        fail(case, f"found zero run: steps in any caller-supplied-container "
+                   f"job across {len(docs)} scanned workflow(s); the scan "
+                   f"has stopped matching real steps.")
+    else:
+        note(f"{covered} run: step(s) in caller-supplied-container jobs "
+             f"across {len(docs)} scanned workflow(s) all pin bash")
+
+
 CASES = [
     case_healthy_transcript_emits_a_valid_record,
     case_missing_transcript_degrades,
@@ -1129,6 +1178,7 @@ CASES = [
     case_cost_line_formatter_has_exactly_one_home,
     case_cost_report_has_exactly_one_home,
     case_container_pipefail_steps_pin_shell_bash,
+    case_container_steps_pin_shell_bash,
 ]
 
 

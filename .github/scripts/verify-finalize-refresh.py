@@ -69,8 +69,10 @@ METADATA_STEP = "Commit metadata (stage -> review)"
 REPORT_MERGED_STEP = "Report the final pull request is already merged"
 REPORT_CLOSED_STEP = "Report the final pull request is closed"
 
-# #662: every step after PR_STEP that can fail the job is a named candidate
-# of the failed-step lookup, so the stall notice names it.
+# #662, #783: every step after the agent step that can fail the job is a
+# named candidate of the failed-step lookup, so the stall notice names it.
+AGENT_STEP = "Summarize change and extract remaining manual work"
+ANNOUNCE_PR_STEP = "Announce the implementation PR for review"
 CALLOUT = ".github/actions/wing-commander-callout/action.yml"
 CALLOUT_STEP = "Render and post callout"
 ANNOUNCE_REMAINING_STEP = "Announce remaining manual work on the lifecycle issue"
@@ -83,6 +85,8 @@ CANDIDATE_REPORTERS = ("Determine post-agent credential status",
 # step would replace the cause it reports with itself (the lookup names
 # the LAST failed candidate).
 CANDIDATE_EXEMPT = {
+    "Announce finalize failure (agent output)":
+        "steps.verify-agent-output.outputs.failed == 'true'",
     "Announce finalize failure (PR verification)":
         "steps.verify-pr.outputs.failed == 'true'",
 }
@@ -751,18 +755,20 @@ def test_structural():
 
 
 def check_post_pr_candidates(doc):
-    """#662: every step after PR_STEP in the finalize job that can fail the
-    job is a candidate of the failed-step lookup, read through its own id.
-    "Can fail" is every step without `continue-on-error: true`, minus the
-    lookup's own reporters and the CANDIDATE_EXEMPT entries, whose `if:`
-    must still hold the fragment that justifies them. Also: the remaining-
-    manual-work announcement still retries its post.
+    """#662, #783: every step after AGENT_STEP in the finalize job that can
+    fail the job is a candidate of the failed-step lookup, read through its
+    own id. #662 started the range at PR_STEP, which left "Assemble PR
+    body" and "Determine feature title" (and the post-agent reporters
+    before them) able to stall finalize unnamed. "Can fail" is every step
+    without `continue-on-error: true`, minus the lookup's own reporters and
+    the CANDIDATE_EXEMPT entries, whose `if:` must still hold the fragment
+    that justifies them. Also: both post-PR announcements still retry.
     """
     failures = []
     steps = ((doc.get("jobs") or {}).get("finalize") or {}).get("steps") or []
     names = [(s or {}).get("name") for s in steps]
-    if PR_STEP not in names or FAILED_STEP_STEP not in names:
-        return [f"candidates: {PR_STEP!r} or {FAILED_STEP_STEP!r} is "
+    if AGENT_STEP not in names or FAILED_STEP_STEP not in names:
+        return [f"candidates: {AGENT_STEP!r} or {FAILED_STEP_STEP!r} is "
                 f"missing from finalize.yml's finalize job."]
     lookup = steps[names.index(FAILED_STEP_STEP)]
     raw = str(((lookup.get("with") or {}).get("candidates-json")) or "")
@@ -777,7 +783,7 @@ def check_post_pr_candidates(doc):
             failures.append(f"candidates: {name!r} is listed but no step in "
                             f"the finalize job has that name.")
 
-    for step in steps[names.index(PR_STEP) + 1:]:
+    for step in steps[names.index(AGENT_STEP) + 1:]:
         name = step.get("name")
         if name in CANDIDATE_REPORTERS:
             continue
@@ -792,7 +798,7 @@ def check_post_pr_candidates(doc):
             continue
         if name not in candidates:
             failures.append(
-                f"candidates: {name!r} runs after {PR_STEP!r} and can fail "
+                f"candidates: {name!r} runs after {AGENT_STEP!r} and can fail "
                 f"the job, but is not in {FAILED_STEP_STEP!r}'s "
                 f"candidates-json -- a failure there stalls the lifecycle "
                 f"with a notice that does not name it (#662).")
@@ -803,12 +809,13 @@ def check_post_pr_candidates(doc):
                 f"candidates: {name!r}'s conclusion reads "
                 f"{candidates[name]!r}, not its own step's {want!r}.")
 
-    announce = steps[names.index(ANNOUNCE_REMAINING_STEP)] \
-        if ANNOUNCE_REMAINING_STEP in names else {}
-    if not str((announce.get("with") or {}).get("retry-delays") or "").strip():
-        failures.append(f"candidates: {ANNOUNCE_REMAINING_STEP!r} no longer "
-                        f"passes retry-delays -- one transient API error "
-                        f"stalls the lifecycle again (#662).")
+    for announce_name, issue in ((ANNOUNCE_REMAINING_STEP, "#662"),
+                                 (ANNOUNCE_PR_STEP, "#783")):
+        announce = steps[names.index(announce_name)] if announce_name in names else {}
+        if not str((announce.get("with") or {}).get("retry-delays") or "").strip():
+            failures.append(f"candidates: {announce_name!r} no longer "
+                            f"passes retry-delays -- one transient API error "
+                            f"stalls the lifecycle again ({issue}).")
     return failures
 
 
@@ -833,12 +840,31 @@ def _doc_mut_drop_retry(doc):
     step["with"].pop("retry-delays", None)
 
 
+def _doc_mut_drop_body_candidate(doc):
+    """#783: a pre-PR, post-agent step dropped from the candidates."""
+    step = next(s for s in doc["jobs"]["finalize"]["steps"]
+                if s.get("name") == FAILED_STEP_STEP)
+    entries = json.loads(step["with"]["candidates-json"])
+    step["with"]["candidates-json"] = json.dumps(
+        [c for c in entries if c["name"] != BODY_STEP])
+
+
+def _doc_mut_drop_announce_pr_retry(doc):
+    step = next(s for s in doc["jobs"]["finalize"]["steps"]
+                if s.get("name") == ANNOUNCE_PR_STEP)
+    step["with"].pop("retry-delays", None)
+
+
 DOC_MUTATIONS = [
     ("announce step dropped from the failed-step candidates",
      _doc_mut_drop_announce_candidate),
     ("unlisted hard-failing step added after the PR step",
      _doc_mut_new_unlisted_step),
     ("announce step's retry-delays removed", _doc_mut_drop_retry),
+    ("Assemble PR body dropped from the failed-step candidates (#783)",
+     _doc_mut_drop_body_candidate),
+    ("the review announcement's retry-delays removed (#783)",
+     _doc_mut_drop_announce_pr_retry),
 ]
 
 

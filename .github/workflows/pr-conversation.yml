@@ -241,6 +241,17 @@ on:
 
 permissions: {}
 
+# Every run: step without its own shell: runs as `bash -e {0}`. That is
+# what Actions uses on a host runner when no shell is named, but inside a
+# caller-supplied container: job an unpinned step runs as the image's
+# `sh -e {0}` instead, even when bash is installed (#795, #793). A step
+# that names `shell: bash` keeps that keyword's pipefail.
+# verify-metrics-summary-record-emission.py holds every run: step of a
+# container-bound job to a bash pin.
+defaults:
+  run:
+    shell: bash -e {0}
+
 jobs:
   verify-image-prerequisites:
     # This job now carries `if: inputs.container-image != ''` and reports
