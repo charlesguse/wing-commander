@@ -363,7 +363,8 @@ jobs:
             issue_number="$(printf '%s' "$row" | jq -r '.issue')"
             merged_pr="$(printf '%s' "$row" | jq -r '.merged_pr')"
             marker="$(python3 .github/scripts/board_item_marker.py --step prove \
-              --outcome-reason "$(printf '%s' "$row" | jq -r '.recorded_reason')")"
+              --outcome-reason "$(printf '%s' "$row" | jq -r '.recorded_reason')")" \
+              || { echo "::error::board-loop select: issue #$issue_number's prove marker could not be rendered -- nothing is posted (#786)."; exit 1; }
             gh issue comment "$issue_number" -R "$GITHUB_REPOSITORY" \
               --body "$(printf 'PR #%s merged, but its proof run never started -- the pull_request: closed run that would have entered prove-gate/prove was itself displaced from the queue before it began. This issue stays open.\n\n%s' "$merged_pr" "$marker")"
           done
@@ -1041,7 +1042,8 @@ jobs:
           # a stranded item a human must re-drive manually, never a
           # duplicate dispatch.
           marker="$(python3 .github/scripts/board_item_marker.py --step prove \
-            --outcome-reason "$outcome_reason" --recovery-attempted)"
+            --outcome-reason "$outcome_reason" --recovery-attempted)" \
+            || { echo "::error::board-loop: issue #$issue_number's recovery marker could not be rendered -- not dispatching, so this attempt is not spent with no durable record of it (#786)."; exit 1; }
           if ! GH_TOKEN="$BOT_TOKEN" gh issue comment "$issue_number" -R "$GITHUB_REPOSITORY" \
             --body "$(printf 'Recovering this issue'\''s stranded proof (%s) -- dispatching a directed prove run for PR #%s now, which will record its own outcome here.\n\n%s' "$outcome_reason" "$merged_pr" "$marker")"; then
             echo "::error::board-loop: could not post issue #$issue_number's recovery marker -- not dispatching, so this attempt is not spent with no durable record of it (FR-011a/SC-008)."
@@ -3073,7 +3075,8 @@ jobs:
           echo "pr-number=$pr_number" >> "$GITHUB_OUTPUT"
           echo "pr-url=$pr_url" >> "$GITHUB_OUTPUT"
 
-          marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step review --pr "$pr_number" --branch "$BRANCH" --base-sha "$BASE_SHA")"
+          marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step review --pr "$pr_number" --branch "$BRANCH" --base-sha "$BASE_SHA")" \
+            || { echo "::error::board-loop fix: PR #$pr_number is open but its review marker could not be rendered -- nothing is posted on issue #$ISSUE_NUMBER (#786)."; exit 1; }
           echo "$marker" > "$RUNNER_TEMP/board-fix-marker.txt"
 
       # T029/FR-021/FR-018: route_final_diff() re-applies the SAME backstop
@@ -4157,7 +4160,8 @@ jobs:
             # SHA this round reviewed is recorded on the comment itself so
             # a later resume's head_moved_since_last_review() can compare
             # SHAs directly -- see board_item_marker.py.
-            marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step readiness --pr "$PR_NUMBER" --branch "$BRANCH")"
+            marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step readiness --pr "$PR_NUMBER" --branch "$BRANCH")" \
+              || { echo "::error::board-loop review (converged): the readiness marker could not be rendered -- nothing is posted on issue #$ISSUE_NUMBER (#786)."; exit 1; }
             gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Review round %s converged -- zero open in-scope findings on PR #%s (head %s). Proceeding to readiness.\n\n%s' "$ROUND" "$PR_NUMBER" "$HEAD_SHA" "$marker")"
           elif [ "$STALL_REASON" = "parse-failed" ]; then
             # SF1/#499: distinct from the budget-spent message below -- this
@@ -4345,11 +4349,34 @@ jobs:
           PR_NUMBER: ${{ steps.pr.outputs.pr-number }}
           BRANCH: ${{ steps.pr.outputs.branch }}
           CURRENT_ROUND: ${{ steps.pr.outputs.round }}
+          REVIEWED_SHA: ${{ steps.checkout-pr.outputs.head-sha }}
+          CAN_PUSH_WORKFLOWS: ${{ vars.WING_COMMANDER_BOARD_CAN_PUSH_WORKFLOWS == 'true' }}
         run: |
           set -uo pipefail
-          git push origin "HEAD:refs/heads/$BRANCH"
+          # The fix job's pre-push hold, for review-fixup's own commit
+          # (found by the code review of #901) -- see fix's "Push and open
+          # the PR". Only the commits this push adds are checked: GitHub
+          # refuses them when they change a workflow file and the App holds
+          # no Workflows permission.
+          changed_paths="$(git diff --name-only "$REVIEWED_SHA" HEAD)"
+          if [ "$CAN_PUSH_WORKFLOWS" != "true" ] && grep -q '^\.github/workflows/' <<<"$changed_paths"; then
+            marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step stalled --issue "$ISSUE_NUMBER" --add-label "board:stalled")" \
+              || { echo "::error::board-loop review-fixup (workflow-scope hold): board:stalled could not be added to issue #$ISSUE_NUMBER -- no stalled marker is posted (#604)."; exit 1; }
+            gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'The review follow-up commit for PR #%s changes a file under `.github/workflows/`, which this loop cannot push (the App holds no Workflows permission). Nothing was pushed; the PR is unchanged. Held for a maintainer: address the review from a session whose token has the `workflow` scope, or grant the App Workflows (read and write) and set `WING_COMMANDER_BOARD_CAN_PUSH_WORKFLOWS` to `true`. Removing board:stalled is the sole re-eligibility condition.\n\n%s' "$PR_NUMBER" "$marker")" \
+              || { echo "::error::board-loop review-fixup (workflow-scope hold): board:stalled was applied to issue #$ISSUE_NUMBER but the stalled-marker comment could not be posted."; exit 1; }
+            python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --record-stall-summary --issue "$ISSUE_NUMBER" --from-step "review-fixup (workflow-scope hold)"
+            echo "board-loop: PR #$PR_NUMBER -- the review follow-up touches .github/workflows/, held for a maintainer instead of pushed." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          # The step's default shell is `bash -e`, so a refused push already
+          # stops it here; the check only names why in the annotation.
+          if ! git push origin "HEAD:refs/heads/$BRANCH"; then
+            echo "::error::board-loop review-fixup: the follow-up commit could not be pushed to $BRANCH -- the round is not advanced and no review-round comment is posted."
+            exit 1
+          fi
           next_round=$((CURRENT_ROUND + 1))
-          marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step review --round "$next_round" --pr "$PR_NUMBER" --branch "$BRANCH")"
+          marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step review --round "$next_round" --pr "$PR_NUMBER" --branch "$BRANCH")" \
+            || { echo "::error::board-loop review-fixup: the follow-up is pushed to $BRANCH, but the round $next_round marker could not be rendered -- nothing is posted on issue #$ISSUE_NUMBER (#786)."; exit 1; }
           gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Review round %s: pushed a follow-up commit addressing the in-scope findings on PR #%s. Re-reviewing on a later run.\n\n%s' "$next_round" "$PR_NUMBER" "$marker")"
 
       - name: Comment the failing gate on the issue (review-fixup, gate suite red)
@@ -5313,7 +5340,8 @@ jobs:
           recovery_suffix=""
           [ -n "$RECOVERY_NOTICE" ] && recovery_suffix="$(printf '\n\n%s' "$RECOVERY_NOTICE")"
 
-          marker="$(python3 .github/scripts/board_item_marker.py --step proven "${recovery_flag[@]}")"
+          marker="$(python3 .github/scripts/board_item_marker.py --step proven "${recovery_flag[@]}")" \
+            || { echo "::error::board-loop prove: the proven marker could not be rendered -- issue #$ISSUE_NUMBER is neither commented on nor closed (#786)."; exit 1; }
           gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
             --body "$(printf 'Closed on the merge of PR #%s alone: %s -- no Actions-only behaviour changed, so a re-driven run would prove nothing this merge did not.\n\n%s' "$PR_NUMBER" "$REASON" "$marker")$recovery_suffix"
           gh issue close "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY"
@@ -5471,50 +5499,51 @@ jobs:
           recovery_flag=()
           [ "$RECOVERY" = "true" ] && recovery_flag=(--recovery-attempted)
 
+          # One render per marker kind, before any write. errexit already
+          # stops the step on a failed render; the guard names why (#786).
+          if [ "$reason" = "success" ]; then
+            marker="$(python3 .github/scripts/board_item_marker.py --step proven "${recovery_flag[@]}")" \
+              || { echo "::error::board-loop prove: the proven marker could not be rendered -- issue #$ISSUE_NUMBER is neither commented on nor closed (#786)."; exit 1; }
+          else
+            marker="$(python3 .github/scripts/board_item_marker.py --step prove --outcome-reason "$reason" "${recovery_flag[@]}")" \
+              || { echo "::error::board-loop prove ($reason): the prove marker could not be rendered -- nothing is posted on issue #$ISSUE_NUMBER (#786)."; exit 1; }
+          fi
+
           case "$reason" in
             success)
-              marker="$(python3 .github/scripts/board_item_marker.py --step proven "${recovery_flag[@]}")"
               gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
                 --body "$attr_prefix$(printf 'Proven: %s was re-driven after the merge of PR #%s and concluded success -- %s\n\n%s' "$REDRIVE_WORKFLOW" "$PR_NUMBER" "$RUN_URL" "$marker")$recovery_suffix"
               gh issue close "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY"
               ;;
             failure)
-              marker="$(python3 .github/scripts/board_item_marker.py --step prove --outcome-reason "$reason" "${recovery_flag[@]}")"
               gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
                 --body "$attr_prefix$(printf 'Not proven: %s was re-driven after the merge of PR #%s and concluded failure -- %s. This issue stays open.\n\n%s' "$REDRIVE_WORKFLOW" "$PR_NUMBER" "$RUN_URL" "$marker")$recovery_suffix"
               ;;
             group-busy)
-              marker="$(python3 .github/scripts/board_item_marker.py --step prove --outcome-reason "$reason" "${recovery_flag[@]}")"
               gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
                 --body "$attr_prefix$(printf 'PR #%s merged, but the directed proof group was already occupied by another proof run -- nothing was dispatched. This issue stays open; group-busy is not a recoverable reason (FR-011c), so no automatic retry is scheduled -- a maintainer must re-drive it manually.\n\n%s' "$PR_NUMBER" "$marker")$recovery_suffix"
               ;;
             no-target)
-              marker="$(python3 .github/scripts/board_item_marker.py --step prove --outcome-reason "$reason" "${recovery_flag[@]}")"
               gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
                 --body "$attr_prefix$(printf 'PR #%s merged, but no directed run of board-loop.yml reaches the changed behaviour -- nothing was dispatched. This issue stays open for a maintainer to review.\n\n%s' "$PR_NUMBER" "$marker")$recovery_suffix"
               ;;
             nothing-reaches)
-              marker="$(python3 .github/scripts/board_item_marker.py --step prove --outcome-reason "$reason" "${recovery_flag[@]}")"
               gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
                 --body "$attr_prefix$(printf 'PR #%s merged, but no workflow in the repository reaches the changed behaviour (%s) -- nothing was dispatched. This issue stays open for a maintainer to review.\n\n%s' "$PR_NUMBER" "$REDRIVE_REASON" "$marker")$recovery_suffix"
               ;;
             not-started)
-              marker="$(python3 .github/scripts/board_item_marker.py --step prove --outcome-reason "$reason" "${recovery_flag[@]}")"
               gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
                 --body "$attr_prefix$(printf 'PR #%s merged, and %s was dispatched to prove it (%s), but that run never left the queue within the wait budget. This issue stays open.\n\n%s' "$PR_NUMBER" "$REDRIVE_WORKFLOW" "$RUN_URL" "$marker")$recovery_suffix"
               ;;
             unfinished)
-              marker="$(python3 .github/scripts/board_item_marker.py --step prove --outcome-reason "$reason" "${recovery_flag[@]}")"
               gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
                 --body "$attr_prefix$(printf 'PR #%s merged, and %s was dispatched to prove it (%s), but it did not reach a terminal conclusion within the wait budget. This issue stays open.\n\n%s' "$PR_NUMBER" "$REDRIVE_WORKFLOW" "$RUN_URL" "$marker")$recovery_suffix"
               ;;
             displaced)
-              marker="$(python3 .github/scripts/board_item_marker.py --step prove --outcome-reason "$reason" "${recovery_flag[@]}")"
               gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
                 --body "$attr_prefix$(printf 'PR #%s merged, but the proof run dispatched to prove it was evicted before it could ever be correlated. This issue stays open.\n\n%s' "$PR_NUMBER" "$marker")$recovery_suffix"
               ;;
             uncorrelated|*)
-              marker="$(python3 .github/scripts/board_item_marker.py --step prove --outcome-reason "$reason" "${recovery_flag[@]}")"
               gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
                 --body "$attr_prefix$(printf 'PR #%s merged, but the proof run could not be correlated (%s). This issue stays open.\n\n%s' "$PR_NUMBER" "$REDRIVE_REASON" "$marker")$recovery_suffix"
               ;;
