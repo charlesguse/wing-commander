@@ -77,8 +77,13 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wc_shell_harness import find_step, use_utf8_stdout  # noqa: E402
 
 ACTION_FILE = os.path.join(
-    ".github", "actions", "wing-commander-stage-findings", "action.yml")
-ACTION_STEP_NAME = "Extract, validate, cap, and prepare findings"
+    ".github", "actions", "_shared", "compute-finding-fingerprint.sh")
+# specs/090-stage-write-boundary T008 extracted the formula out of
+# wing-commander-stage-findings/action.yml's "Extract, validate, cap, and
+# prepare findings" step into this shared script, the one home
+# finalize.yml's routed-item lookup now also calls (research.md D6) -- this
+# gate follows the formula to its new home rather than checking a step that
+# no longer computes it inline.
 DATA_MODEL_FILE = os.path.join(
     "specs", "056-stage-found-defect-filing", "data-model.md")
 BOARD_LOOP_FILE = os.path.join(".github", "workflows", "board-loop.yml")
@@ -137,7 +142,7 @@ def _action_step_text(root):
     path = os.path.join(root, ACTION_FILE)
     if not os.path.isfile(path):
         return None, path
-    return find_step(path, ACTION_STEP_NAME)["run"], path
+    return _read(path), path
 
 
 def _board_loop_step_text(root):
@@ -173,10 +178,10 @@ def check_canonical_rule_sync(root="."):
                    f"norm() regex {NORM_REGEX_LITERAL!r} -- the doc side of "
                    f"FR-012's sync has drifted.")
     if NORM_REGEX_LITERAL not in code_text:
-        local_fail(f"{ACTION_FILE}'s {ACTION_STEP_NAME!r} step no longer "
-                   f"uses the norm() regex {NORM_REGEX_LITERAL!r} that "
-                   f"data-model.md's Fingerprint block states -- the code "
-                   f"side of FR-012's sync has drifted.")
+        local_fail(f"{ACTION_FILE} no longer uses the norm() regex "
+                   f"{NORM_REGEX_LITERAL!r} that data-model.md's Fingerprint "
+                   f"block states -- the code side of FR-012's sync has "
+                   f"drifted.")
 
     for tag, label in ((ANCHOR_TAG, "anchor|"), (FALLBACK_TAG, "fallback|")):
         in_doc = tag in doc_block
@@ -185,10 +190,9 @@ def check_canonical_rule_sync(root="."):
             local_fail(f"data-model.md's Fingerprint block no longer states "
                        f"the {label!r} shape tag (FR-012).")
         if not in_code:
-            local_fail(f"{ACTION_FILE}'s {ACTION_STEP_NAME!r} step no "
-                       f"longer carries the {label!r} shape tag that "
-                       f"data-model.md's Fingerprint block states "
-                       f"(FR-012).")
+            local_fail(f"{ACTION_FILE} no longer carries the {label!r} "
+                       f"shape tag that data-model.md's Fingerprint block "
+                       f"states (FR-012).")
 
     doc_anchor_m = WITH_ANCHOR_FORMULA_RE.search(doc_block)
     doc_fallback_m = FALLBACK_FORMULA_RE.search(doc_block)
@@ -326,19 +330,16 @@ def evaluate(root="."):
 # ----------------------------------------------------------------------------
 # --self-test
 # ----------------------------------------------------------------------------
-ACTION_TEMPLATE = """name: wing-commander-stage-findings
-runs:
-  using: composite
-  steps:
-    - name: Extract, validate, cap, and prepare findings
-      run: |
-        # norm() collapses every match of the regex {norm_regex} to one space.
-        fp = hashlib.sha256("{anchor_literal}".format(
-            STAGE, norm_path, norm_gate
-        ).encode("utf-8")).hexdigest()
-        fp = hashlib.sha256("{fallback_literal}".format(
-            STAGE, norm_path
-        ).encode("utf-8")).hexdigest()
+ACTION_TEMPLATE = """#!/usr/bin/env bash
+# norm() collapses every match of the regex {norm_regex} to one space.
+python3 - <<'PYEOF'
+fp = hashlib.sha256("{anchor_literal}".format(
+    STAGE, norm_path, norm_gate
+).encode("utf-8")).hexdigest()
+fp = hashlib.sha256("{fallback_literal}".format(
+    STAGE, norm_path
+).encode("utf-8")).hexdigest()
+PYEOF
 """
 
 DATA_MODEL_TEMPLATE = """# Data Model

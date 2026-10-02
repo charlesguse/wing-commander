@@ -4926,6 +4926,23 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-watchdog-resolved-stage-consumers.py --self-test
 
+      # Gate 133 — specs/090-stage-write-boundary: the implement stage's
+      # write boundary (no-write-paths) is stated in the prompt before the
+      # agent's first tool call, classified consistently by one shared
+      # composite, and routed as a tracked, non-authorizing item rather than
+      # re-surfacing every cycle (contracts/write-boundary-gate.md). Numbered
+      # 133, not this branch's original 126 reservation: Gate 126 and Gate
+      # 127 (both specs/091-gh-api-error-capture) claimed 126-127, and Gate
+      # 128 was independently claimed by spec 074/#821, before this branch's
+      # rebase landed (#660 tracks the allocation problem) — 133 is the next
+      # free number as of this cycle.
+      - name: "Gate 133 — the implement stage's write boundary is stated, classified, and routed consistently"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-write-boundary.py
+      - name: "Gate 133 self-test — write boundary"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-write-boundary.py --self-test
+
       # Gate 114 — specs/066-fine-grained-maintainer-token FR-017/FR-018: "a
       # classic PAT, not fine-grained" was asserted in at least four places
       # (docs/setup.md, auto-release.yml's credential-step comment, Gate

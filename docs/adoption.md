@@ -1316,6 +1316,15 @@ Findings filing: `findings-filing-enabled` (boolean, default `true`;
 `findings-cap` (number, `3`; `WING_COMMANDER_FINDINGS_CAP`) — see
 [Stage-found defect filing](#stage-found-defect-filing).
 
+Write boundary: `no-write-paths` (string, comma-separated path prefixes,
+default `.claude/`; `WING_COMMANDER_IMPLEMENT_NO_WRITE_PATHS`) — paths this
+stage's agent may not target with `Edit`/`Write`, stated in its prompt
+before its first tool call. `write-boundary-label-prefix` (string, default
+`route-out-of-boundary`; `WING_COMMANDER_WRITE_BOUNDARY_LABEL_PREFIX`) —
+label prefix for a task routed out of the write boundary; deliberately
+distinct from `findings-label-prefix` so the board loop never treats a
+routed item as fix-shaped authorization.
+
 One call = one cycle. The loop exists only through `self-workflow`
 re-dispatch, so you decide whether iteration is automatic (wrapper 5 above)
 or one-cycle-at-a-time manual.
@@ -1334,6 +1343,12 @@ Findings filing: `findings-filing-enabled` (boolean, default `true`;
 (string, `found-by`; `WING_COMMANDER_FINDINGS_LABEL_PREFIX`),
 `findings-cap` (number, `3`; `WING_COMMANDER_FINDINGS_CAP`) — see
 [Stage-found defect filing](#stage-found-defect-filing).
+
+Write boundary: `write-boundary-label-prefix` (string, default
+`route-out-of-boundary`; `WING_COMMANDER_WRITE_BOUNDARY_LABEL_PREFIX`) —
+this stage never classifies a task, only looks up an already-routed one by
+fingerprint so the remaining-manual-work list can point at its tracked
+issue instead of losing it as an orphan line.
 
 ### cleanup
 

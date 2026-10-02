@@ -50,6 +50,12 @@ inputs:
       "watchdog.diagnose" — lets one stage with multiple internal steps
       name the specific step in a validation failure.
     required: true
+  no-write-paths:
+    description: >
+      Passthrough of implement.yml's own no-write-paths input, unsplit
+      (specs/090-stage-write-boundary, FR-002, FR-019).
+    required: false
+    default: ""
 
 outputs:
   allowed-tools:
@@ -74,6 +80,16 @@ outputs:
       validation tasks unrun: the grant said one thing and the prompt said
       another.
     value: ${{ steps.compose.outputs.shell-commands }}
+  write-paths-statement:
+    description: >
+      A complete sentence stating exactly which paths this run's agent may
+      not target with Edit/Write, derived from no-write-paths the same way
+      shell-commands is derived from the composed tool lists
+      (specs/090-stage-write-boundary, contracts/write-boundary-mechanism.md
+      §2): "This run's agent may write any path in the checkout." when
+      no-write-paths is empty, or "This run's agent may not write:
+      <comma-joined, deduped, trimmed list>." otherwise.
+    value: ${{ steps.compose.outputs.write-paths-statement }}
 
 runs:
   using: composite
@@ -89,6 +105,7 @@ runs:
         EXTRA_DISALLOWED: ${{ inputs.extra-disallowed-tools }}
         ALLOWED_OVERRIDE: ${{ inputs.allowed-tools-override }}
         DISALLOWED_OVERRIDE: ${{ inputs.disallowed-tools-override }}
+        NO_WRITE_PATHS: ${{ inputs.no-write-paths }}
       run: |
         set -uo pipefail
 
@@ -359,9 +376,75 @@ runs:
         STATIC_SUFFIX=" Each command in a pipeline or \`;\`/\`&&\` chain is checked separately, and a \`>\`/\`>>\` redirect or a \`cd … &&\` prefix is denied regardless of this list — use the Read/Grep/Glob tools, or a single command, for anything multi-step."
         shell_commands="$shell_commands$STATIC_SUFFIX"
 
-        # 5. Emit (only reached once validation in step 1 passes).
+        # 5. Render "write-paths-statement" (specs/090-stage-write-boundary,
+        #    contracts/write-boundary-mechanism.md §2): split no-write-paths
+        #    on commas, trim, dedupe, drop empties, preserving first-seen
+        #    order -- the identical four-shape rendering pattern
+        #    shell_commands above already uses.
+        write_paths_list=""
+        write_paths_glob_denies=""
+        declare -A write_paths_seen=()
+        IFS=',' read -ra write_paths_items <<< "${NO_WRITE_PATHS:-}"
+        for item in "${write_paths_items[@]}"; do
+          item="$(trim "$item")"
+          [ -z "$item" ] && continue
+          # review-gate-round-4 item 7: dedup on the NORMALIZED form, the
+          # same one the glob below is built from -- deduping on raw text
+          # let two spellings of the same boundary (with vs. without a
+          # trailing slash, or a leading "./") both appear in the rendered
+          # statement and both append a glob deny, redundant but not
+          # conflicting since both normalize to the same glob.
+          normalized="$(bash "$GITHUB_ACTION_PATH/../_shared/normalize-write-path-prefix.sh" "$item")"
+          [ -z "$normalized" ] && continue
+          [ -n "${write_paths_seen[$normalized]+x}" ] && continue
+          write_paths_seen["$normalized"]=1
+          if [ -z "$write_paths_list" ]; then
+            write_paths_list="$item"
+          else
+            write_paths_list="$write_paths_list, $item"
+          fi
+          # PR #836 review, item 3: the composed tool grant must enforce
+          # the SAME boundary this sentence states, never just assert it
+          # in prose (FR-004/FR-005, Principle V/IX) -- one Edit()/Write()
+          # glob deny per prefix, derived from the identical split this
+          # loop already performs, never a second list.
+          #
+          # review-gate-round-3: the trailing-slash canonicalization above
+          # is the one shared transform classify-out-of-boundary-tasks.sh
+          # also calls, so the classifier's "is this path out of boundary"
+          # verdict and this glob's "is this path denied" verdict can never
+          # independently drift apart on a no-trailing-slash prefix.
+          glob="${normalized}**"
+          if [ -z "$write_paths_glob_denies" ]; then
+            write_paths_glob_denies="Edit($glob),Write($glob)"
+          else
+            write_paths_glob_denies="$write_paths_glob_denies,Edit($glob),Write($glob)"
+          fi
+        done
+        if [ -z "$write_paths_list" ]; then
+          write_paths_statement="This run's agent may write any path in the checkout."
+        else
+          write_paths_statement="This run's agent may not write: $write_paths_list."
+        fi
+
+        # Appended to effective_disallowed AFTER compose_list's own
+        # explicit-allow subtraction above (step 3), so neither
+        # extra-allowed-tools nor disallowed-tools-override can silently
+        # reopen a no-write-paths entry (FR-002/FR-003's boundary is not a
+        # default an adopter's append/override config can punch through).
+        if [ -n "$write_paths_glob_denies" ]; then
+          if [ -z "$effective_disallowed" ]; then
+            effective_disallowed="$write_paths_glob_denies"
+          else
+            effective_disallowed="$effective_disallowed,$write_paths_glob_denies"
+          fi
+        fi
+
+        # 6. Emit (only reached once validation in step 1 passes).
         echo "allowed-tools=$effective_allowed" >> "$GITHUB_OUTPUT"
         echo "disallowed-tools=$effective_disallowed" >> "$GITHUB_OUTPUT"
         echo "shell-commands=$shell_commands" >> "$GITHUB_OUTPUT"
+        echo "write-paths-statement=$write_paths_statement" >> "$GITHUB_OUTPUT"
         echo "✅ wing-commander-tool-args ($STEP_LABEL): composed tool lists." >> "$GITHUB_STEP_SUMMARY"
         echo "**Tooling statement**: $shell_commands" >> "$GITHUB_STEP_SUMMARY"
+        echo "**Write-paths statement**: $write_paths_statement" >> "$GITHUB_STEP_SUMMARY"

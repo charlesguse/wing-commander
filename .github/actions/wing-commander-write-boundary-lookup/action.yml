@@ -1,0 +1,146 @@
+# wing-commander-write-boundary-lookup -- for each unchecked tasks.md line,
+# look up whether a routed write-boundary item already carries its
+# fingerprint (specs/090-stage-write-boundary §6, FR-009, SC-005).
+#
+# A published stage workflow may not resolve `.github/actions/_shared/`
+# itself (Gate 60's promotion-prevention check, spec 049 FR-022) -- this
+# composite is finalize.yml's front door to `_shared/compute-finding-
+# fingerprint.sh`, the SAME formula wing-commander-stage-findings uses to
+# file a routed item, so both sides compute the identical value (research.md
+# D6). Loops over however many unchecked lines exist in ONE step (mirroring
+# wing-commander-write-boundary's own single-call-does-the-whole-text
+# shape) -- a composite cannot be invoked once per line, since GitHub
+# Actions has no loop construct over `uses:` steps.
+#
+# Constitution VII: this composite is part of the published surface; adding
+# it is a minor-version change at the next release.
+name: wing-commander-write-boundary-lookup
+description: >-
+  For each unchecked tasks.md line, recomputes its fingerprint via the
+  shared compute-finding-fingerprint.sh formula and looks up whether a
+  routed write-boundary item already carries it.
+inputs:
+  token:
+    description: The pipeline's existing GitHub App identity token, for `gh issue list`
+    required: true
+  unchecked-items:
+    description: The literal multi-line text wing-commander-tasks-checkbox-count's own unchecked-items output already produced
+    required: true
+  tasks-path:
+    description: e.g. specs/090-stage-write-boundary/tasks.md -- the fingerprint basis's file_path
+    required: true
+  label-prefix:
+    description: Wired from write-boundary-label-prefix
+    required: false
+    default: "route-out-of-boundary"
+outputs:
+  mapping:
+    description: JSON array of {line, url} for every unchecked line that matched a routed item; [] when none.
+    value: ${{ steps.lookup.outputs.mapping }}
+  rendered:
+    description: One "- <line> — routed, see <url>" per matched line, for the finalize prompt to relay verbatim.
+    value: ${{ steps.lookup.outputs.rendered }}
+runs:
+  using: composite
+  steps:
+    - name: Look up routed write-boundary items
+      id: lookup
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        UNCHECKED_ITEMS: ${{ inputs.unchecked-items }}
+        TASKS_PATH: ${{ inputs.tasks-path }}
+        LABEL_PREFIX: ${{ inputs.label-prefix }}
+      run: |
+        set -uo pipefail
+        FP_SCRIPT="$GITHUB_ACTION_PATH/../_shared/compute-finding-fingerprint.sh"
+        MATCH_SCRIPT="$GITHUB_ACTION_PATH/../_shared/match-issue-by-marker.sh"
+        mapping_file="$(mktemp)"
+        echo "[]" > "$mapping_file"
+        if [ -n "$UNCHECKED_ITEMS" ]; then
+          # PR #836 review, item 5 / review-gate-round-1 items 3 and 6:
+          # list-by-label-then-client-side-contains(marker) -- the SAME
+          # dedup lookup strategy wing-commander-durable-failure-issue's own
+          # "report" operation uses, never an unproven full-text `gh issue
+          # list --search` over an HTML-comment marker (GitHub's search
+          # index is not guaranteed to match that verbatim or promptly).
+          # The marker-match jq filter is the one shared script both
+          # composites call -- never a second copy of it. Why the `gh issue
+          # list` call itself stays INLINE here, never in a _shared/ script,
+          # and why an explicit --limit bounds it -- see
+          # wing-commander-durable-failure-issue/action.yml's own Gate 12
+          # rationale comment (canonical; not re-derived here). Fetched once
+          # for every unchecked line, not once per line. A failed `gh issue
+          # list` call is surfaced with ::warning:: rather than silently
+          # swallowed into "no routed items found" -- the consequence here
+          # is a routed item reaching the PR as orphan prose, not merely a
+          # redundant `gh issue create`.
+          issues_file="$(mktemp)"
+          issues_err="$(mktemp)"
+          if gh issue list --repo "$GITHUB_REPOSITORY" --label "${LABEL_PREFIX}:implement" --state all --json number,url,state,body --limit 1000 > "$issues_file" 2>"$issues_err"; then
+            :
+          else
+            echo "::warning::wing-commander-write-boundary-lookup: gh issue list failed for label ${LABEL_PREFIX}:implement -- $(cat "$issues_err") -- treating as no routed items found this run; a routed item may reach the PR as orphan prose."
+            echo "[]" > "$issues_file"
+          fi
+          # review-gate-round-3: every line below shares the same
+          # TASKS_PATH, so its content is read and normalized ONCE by
+          # compute-finding-fingerprint.sh's own batch mode -- one process,
+          # not one bash->python3 fork (and one file re-read) per unchecked
+          # line.
+          lines=()
+          while IFS= read -r line; do
+            [ -z "$line" ] && continue
+            lines+=("$line")
+          done <<< "$UNCHECKED_ITEMS"
+          if [ "${#lines[@]}" -gt 0 ]; then
+            fp_out="$(bash "$FP_SCRIPT" implement "$TASKS_PATH" "${lines[@]}")"
+            fps="$(printf '%s\n' "$fp_out" | sed -n 's/^fingerprint=//p')"
+            # review-gate-round-4 item 9: every marker below is matched
+            # against the SAME issues_file, so match-issue-by-marker.sh's own
+            # batch mode reads and jq-parses it ONCE for every marker, not
+            # once per marker -- the sibling fingerprint call just above was
+            # already batched this way; this loop used to call
+            # match-issue-by-marker.sh once per line, forking jq and
+            # re-parsing the whole issues file each time.
+            i=0
+            marker_lines=()
+            markers=()
+            while IFS= read -r fp; do
+              line="${lines[$i]}"
+              i=$((i + 1))
+              [ -z "$fp" ] && continue
+              marker_lines+=("$line")
+              markers+=("<!-- wing-commander-finding: fingerprint=$fp -->")
+            done <<< "$fps"
+            if [ "${#markers[@]}" -gt 0 ]; then
+              match_out="$(bash "$MATCH_SCRIPT" "$issues_file" "${markers[@]}")"
+              j=0
+              while IFS= read -r match_json; do
+                line="${marker_lines[$j]}"
+                j=$((j + 1))
+                found_url=""
+                if [ -n "$match_json" ] && [ "$match_json" != "null" ]; then
+                  found_url="$(printf '%s' "$match_json" | jq -r '.url // empty')"
+                fi
+                if [ -n "$found_url" ]; then
+                  tmp="$(mktemp)"
+                  jq --arg line "$line" --arg url "$found_url" '. + [{"line": $line, "url": $url}]' "$mapping_file" > "$tmp" && mv "$tmp" "$mapping_file"
+                fi
+              done <<< "$match_out"
+            fi
+          fi
+        fi
+        rendered=""
+        count=$(jq -r 'length' "$mapping_file")
+        if [ "$count" -gt 0 ]; then
+          rendered="$(jq -r '.[] | "- \(.line) — routed, see \(.url)"' "$mapping_file")"
+        fi
+        {
+          echo "mapping<<WING_COMMANDER_WRITE_BOUNDARY_LOOKUP_EOF"
+          cat "$mapping_file"
+          echo "WING_COMMANDER_WRITE_BOUNDARY_LOOKUP_EOF"
+          echo "rendered<<WING_COMMANDER_WRITE_BOUNDARY_RENDERED_EOF"
+          printf '%s\n' "$rendered"
+          echo "WING_COMMANDER_WRITE_BOUNDARY_RENDERED_EOF"
+        } >> "$GITHUB_OUTPUT"

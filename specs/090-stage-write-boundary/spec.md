@@ -355,6 +355,17 @@ the mechanism itself.
 - **An adopting repository with no `.claude/` skills of its own.** The boundary
   is a per-stage input on the published contract, so an adopter's default must
   be sensible without their configuring anything (Principle VI/VII).
+- **A task's out-of-boundary path is written without backtick quoting**
+  (every other path reference in this repository's own `tasks.md` files uses
+  backticks, including every `.claude/`-naming task this feature's own
+  fixtures model). The extraction rule only recognizes backtick-quoted,
+  slash-containing tokens (research.md D3); an un-quoted path is
+  indistinguishable from prose naming a path in passing, and loosening the
+  rule to catch it risks mis-classifying ordinary prose instead (the FR-015
+  failure mode this feature exists to avoid). This falls through to ordinary
+  unfinished-work handling, the same path as "names no path at all" above —
+  an accepted, narrow limitation of the convention, not a case the mechanism
+  silently mishandles.
 
 ## Requirements *(mandatory)*
 

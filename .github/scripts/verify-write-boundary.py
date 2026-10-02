@@ -1,0 +1,1848 @@
+#!/usr/bin/env python3
+"""Gate 133 — the implement stage's write boundary is stated, classified,
+and routed consistently (specs/090-stage-write-boundary,
+contracts/write-boundary-gate.md).
+
+WHY THIS EXISTS
+----------------
+Before this feature, implement.yml granted its agent an unscoped Write/Edit
+and stated no path it may not touch, so a task naming a path like
+`.claude/skills/spec-cross-reference/SKILL.md` (spec 060's T055) was
+discovered to be impossible only by being refused mid-cycle -- and because
+`/speckit-converge` is append-only and convergence is `unchecked-count ==
+0`, it then held the loop open every remaining cycle and evaporated into
+finalize.yml's remaining-manual-work prose with no owner. This gate is the
+SC-007 backstop: a future edit that disables the boundary check, drops the
+routing call, or lets the prompt statement drift from the no-write-paths
+input it is supposed to render fails this gate by name, rather than the
+next agent run discovering the hard way again.
+
+WHAT THIS CHECKS
+----------------
+(a) single definition (FR-003); (b) statement fidelity (FR-004/FR-005/
+SC-001/SC-007); (c) classification correctness (FR-006/FR-014/FR-015);
+(d) termination and reason (FR-007/FR-010/FR-011/FR-012); (e) no filing on
+a truncated run (FR-013); (f) idempotency (FR-008/SC-004); (g) fingerprint
+single-home (research.md D6); (h) board-loop label separation
+(research.md D4); (i) enforcement parity (FR-004/FR-005, Principle V/IX);
+(j) finalize lookup failure handling; (k) prompt interpolation and Route
+step wiring; (l) classify step failure handling -- see
+contracts/write-boundary-gate.md for the exact scenario tables.
+--self-test reintroduces each of the mutations that contract names,
+re-running the REAL pass-condition function each one targets against the
+mutated input, and asserts every one is caught.
+
+Usage: python3 .github/scripts/verify-write-boundary.py [--self-test]
+Requires: bash, jq, git (all present on ubuntu-latest runners).
+"""
+import copy
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+
+import yaml
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from wc_shell_harness import (ensure_jq, find_step, resolve_bash, run_step,
+                              parse_github_output, use_utf8_stdout)
+
+GATE_PREFIX = "Gate 133"
+THIS_SCRIPT = ".github/scripts/verify-write-boundary.py"
+LINT_WORKFLOW = ".github/workflows/lint-workflows.yml"
+
+STAGE = ".github/workflows/implement.yml"
+FINALIZE = ".github/workflows/finalize.yml"
+TOOL_ARGS_COMPOSITE = ".github/actions/wing-commander-tool-args/action.yml"
+WRITE_BOUNDARY_COMPOSITE = ".github/actions/wing-commander-write-boundary/action.yml"
+STAGE_FINDINGS_COMPOSITE = ".github/actions/wing-commander-stage-findings/action.yml"
+WRITE_BOUNDARY_LOOKUP_COMPOSITE = ".github/actions/wing-commander-write-boundary-lookup/action.yml"
+CLASSIFY_SCRIPT = ".github/actions/_shared/classify-out-of-boundary-tasks.sh"
+FINGERPRINT_SCRIPT = ".github/actions/_shared/compute-finding-fingerprint.sh"
+COUNT_TASKS_CHECKBOXES = ".github/actions/_shared/count-tasks-checkboxes.sh"
+
+COMPOSE_STEP = "Compose tool args"
+CLASSIFY_STEP = "Classify unchecked tasks against the write boundary"
+CYCLE_STEP = "Read back cycle outcome"
+RETRY_STEP = "Read back retry outcome"
+ROUTE_STEP = "Route out-of-boundary tasks"
+LOOKUP_STEP = "Look up routed write-boundary items"
+DISPATCH_STEP = "Dispatch next step"
+
+SPEC_PREFIX = "spec/"
+SLUG = "090-fixture"
+SPEC_DIR = f"specs/{SLUG}"
+ITERATION = "3"
+PRIOR_ITERATION = "2"
+AGENT_AUTHOR_RE = r"claude\[bot\]|wing-commander-bot\[bot\]"
+
+BASH = None
+
+# The literal quoted no-write-paths default (FR-003) -- pass condition (a)
+# greps for this outside its one declared home in STAGE.
+DEFAULT_LITERAL = '".claude/"'
+
+
+def sh(script, cwd):
+    """Run a helper snippet through the same bash the steps get (mirrors
+    verify-tasks-checkbox-convergence-signal.py's own `sh`)."""
+    fd, path = tempfile.mkstemp(suffix=".sh")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(script)
+        return subprocess.run([BASH, "-e", path.replace("\\", "/")], cwd=cwd,
+                              capture_output=True, text=True, encoding="utf-8",
+                              errors="replace")
+    finally:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+
+def write_file(repo, relpath, content):
+    path = os.path.join(repo, relpath)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(content)
+
+
+def git_commit(repo, message):
+    proc = sh(f"""cd '{repo}'
+git add -A
+git commit -q -m {json.dumps(message)}
+""", repo)
+    if proc.returncode != 0:
+        sys.exit(f"::error::commit {message!r} failed: {proc.stdout}{proc.stderr}")
+
+
+def git_push(repo, branch):
+    proc = sh(f"cd '{repo}' && git push -q origin '{branch}'", repo)
+    if proc.returncode != 0:
+        sys.exit(f"::error::push of '{branch}' failed: {proc.stdout}{proc.stderr}")
+
+
+def rev_parse(repo, rev="HEAD"):
+    return sh(f"cd '{repo}' && git rev-parse {rev}", repo).stdout.strip()
+
+
+def _meta(iteration, **extra):
+    meta = {"stage": "implement", "iteration": int(iteration), "spec_dir": SPEC_DIR}
+    meta.update(extra)
+    return json.dumps(meta) + "\n"
+
+
+def make_workspace(root, base_tasks_md):
+    branch = f"{SPEC_PREFIX}{SLUG}"
+    work = tempfile.mkdtemp(dir=root)
+    remote = os.path.join(work, "remote.git")
+    repo = os.path.join(work, "repo")
+    setup = f"""
+git init --bare -q -b main '{remote}'
+git clone -q '{remote}' '{repo}'
+cd '{repo}'
+git config user.email 'claude[bot]@users.noreply.invalid'
+git config user.name 'claude[bot]'
+"""
+    proc = sh(setup, work)
+    if proc.returncode != 0:
+        sys.exit(f"::error::harness could not build a git workspace: "
+                 f"{proc.stdout}{proc.stderr}")
+    write_file(repo, f"{SPEC_DIR}/tasks.md", base_tasks_md)
+    write_file(repo, f"{SPEC_DIR}/spec-meta.json", _meta(PRIOR_ITERATION))
+    write_file(repo, "README.md", "unrelated\n")
+    git_commit(repo, "seed")
+    git_push(repo, "main")
+    proc = sh(f"cd '{repo}' && git checkout -q -b '{branch}'", repo)
+    if proc.returncode != 0:
+        sys.exit(f"::error::branching failed: {proc.stdout}{proc.stderr}")
+    git_push(repo, branch)
+    base_sha = rev_parse(repo)
+    return work, repo, base_sha, branch
+
+
+def build_scenario(root, *, base_tasks_md, tip_tasks_md, advance=True,
+                    iteration=ITERATION):
+    work, repo, base_sha, branch = make_workspace(root, base_tasks_md)
+    if tip_tasks_md != base_tasks_md:
+        write_file(repo, f"{SPEC_DIR}/tasks.md", tip_tasks_md)
+        git_commit(repo, "implement: tick tasks")
+    if advance:
+        write_file(repo, f"{SPEC_DIR}/spec-meta.json", _meta(iteration))
+        git_commit(repo, "implement: advance lifecycle record")
+    git_push(repo, branch)
+    return work, repo, base_sha, branch
+
+
+def build_converge_scenario(root, *, base_tasks_md, tip_tasks_md, iteration=ITERATION):
+    """Like build_scenario, but commits the tasks.md change with a
+    `converge: ...` subject (PR #836 review, item 2; Gate 133 (d) scenario
+    4), simulating /speckit-converge's own append-and-commit convention
+    rather than a plain agent edit -- the ONLY thing that sets
+    `converge_sha` in the shipped read-back step."""
+    work, repo, base_sha, branch = make_workspace(root, base_tasks_md)
+    if tip_tasks_md != base_tasks_md:
+        write_file(repo, f"{SPEC_DIR}/tasks.md", tip_tasks_md)
+        git_commit(repo, "converge: append outstanding out-of-boundary work")
+    write_file(repo, f"{SPEC_DIR}/spec-meta.json", _meta(iteration))
+    git_commit(repo, "implement: advance lifecycle record")
+    git_push(repo, branch)
+    return work, repo, base_sha, branch
+
+
+def checkbox_count_env(repo, ref):
+    """Runs the REAL shared script -- see verify-tasks-checkbox-
+    convergence-signal.py's identical helper for the parsing rationale."""
+    script = os.path.abspath(COUNT_TASKS_CHECKBOXES).replace("\\", "/")
+    proc = sh(f"cd '{repo}' && bash '{script}' '{ref}' '{SPEC_DIR}/tasks.md'", repo)
+    if proc.returncode != 0:
+        sys.exit(f"::error::checkbox_count_env: count-tasks-checkboxes.sh failed "
+                 f"against a fixture that should be readable: {proc.stdout}{proc.stderr}")
+    lines = proc.stdout.splitlines()
+    checked = lines[0].split("=", 1)[1] if lines and "=" in lines[0] else "0"
+    unchecked = lines[1].split("=", 1)[1] if len(lines) > 1 and "=" in lines[1] else "0"
+    items = ""
+    if len(lines) > 2 and "<<" in lines[2]:
+        delim = lines[2].split("<<", 1)[1]
+        body = []
+        for line in lines[3:]:
+            if line == delim:
+                break
+            body.append(line)
+        items = "\n".join(body)
+    return checked, unchecked, items
+
+
+READ_SPEC_META = ".github/actions/_shared/read-spec-meta.sh"
+
+
+def read_spec_meta_env(repo):
+    script = os.path.abspath(READ_SPEC_META).replace("\\", "/")
+    proc = sh(f"cd '{repo}' && bash '{script}' '{SPEC_PREFIX}' '{SLUG}' '{SPEC_DIR}'", repo)
+    kv = dict(line.split("=", 1) for line in proc.stdout.splitlines() if "=" in line)
+    return {"META_IDENTITY_OK": kv.get("meta_identity_ok", ""),
+            "META_STAGE": kv.get("meta_stage", ""),
+            "META_ITERATION": kv.get("meta_iteration", "")}
+
+
+def run_classify(unchecked_items, no_write_paths, tasks_path=f"{SPEC_DIR}/tasks.md",
+                  spec_dir=SPEC_DIR, script_path=CLASSIFY_SCRIPT):
+    """Drives the SHIPPED classify-out-of-boundary-tasks.sh directly
+    (contracts/write-boundary-gate.md's Inputs section), never a Python
+    re-implementation of the classification rule. `script_path` is
+    overridable so --self-test can re-run THIS SAME function, via
+    check_classification, against a mutated copy of the script (PR #836
+    review, item 4) rather than a parallel hand-rolled invocation."""
+    script = os.path.abspath(script_path).replace("\\", "/")
+    proc = subprocess.run([BASH, script, unchecked_items, no_write_paths,
+                           tasks_path, spec_dir],
+                          capture_output=True, text=True, encoding="utf-8",
+                          errors="replace")
+    fd, out_path = tempfile.mkstemp()
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(proc.stdout)
+        outputs = parse_github_output(out_path)
+    finally:
+        os.remove(out_path)
+    return proc.returncode, proc.stdout + proc.stderr, outputs
+
+
+def classify_env(unchecked_items, no_write_paths):
+    """(all-unchecked-out-of-boundary, findings-json) for feeding a
+    read-back step's env the way write-boundary-cycle/-retry's own outputs
+    already would."""
+    rc, out, outputs = run_classify(unchecked_items, no_write_paths)
+    if rc != 0:
+        sys.exit(f"::error::classify_env: classify-out-of-boundary-tasks.sh "
+                 f"failed against a fixture that should classify cleanly: {out}")
+    return outputs.get("all-unchecked-out-of-boundary", "false"), outputs.get("findings-json", "[]")
+
+
+def _run_read_back_step(steps, step_key, repo, base_sha, *, verdict,
+                         result_key, result_value, no_write_paths=".claude/",
+                         iteration=ITERATION, extra_env=None):
+    """Shared body of run_cycle_step/run_retry_step (review-gate-round-3):
+    the two differed only in which step/env-key/result-value they drove, so
+    a shared env-building fix (e.g. WRITE_BOUNDARY_ALL_OOB) no longer has to
+    be pasted into both."""
+    runner_temp = tempfile.mkdtemp(dir=os.path.dirname(repo))
+    checked_base, _, _ = checkbox_count_env(repo, base_sha)
+    checked_tip, unchecked_tip, items_tip = checkbox_count_env(
+        repo, f"origin/{SPEC_PREFIX}{SLUG}")
+    all_oob, findings_json = classify_env(items_tip, no_write_paths)
+    env = {"SLUG": SLUG, "SPEC_DIR": SPEC_DIR, "ITERATION": str(iteration),
+           "BASE_SHA": base_sha, result_key: result_value,
+           "VERDICT": verdict, "SPEC_PREFIX": SPEC_PREFIX,
+           "AGENT_AUTHOR_RE": AGENT_AUTHOR_RE, "DEFAULT_BRANCH": "main",
+           "CHECKED_BASE": checked_base, "CHECKED_TIP": checked_tip,
+           "UNCHECKED_TIP": unchecked_tip, "REMAINING_TIP": items_tip,
+           "WRITE_BOUNDARY_ALL_OOB": all_oob,
+           "WRITE_BOUNDARY_FINDINGS_JSON": findings_json}
+    if extra_env:
+        env.update(extra_env)
+    env.update(read_spec_meta_env(repo))
+    return run_step(BASH, steps[step_key], repo, env, runner_temp)
+
+
+def run_cycle_step(steps, repo, base_sha, *, verdict, cycle_result,
+                    no_write_paths=".claude/", iteration=ITERATION):
+    return _run_read_back_step(
+        steps, CYCLE_STEP, repo, base_sha, verdict=verdict,
+        result_key="CYCLE_RESULT", result_value=cycle_result,
+        no_write_paths=no_write_paths, iteration=iteration)
+
+
+def run_retry_step(steps, repo, base_sha, *, verdict, retry_result,
+                    no_write_paths=".claude/", iteration=ITERATION):
+    """Mirrors run_cycle_step, driving the shipped retry arm's own "Read
+    back retry outcome" instead (PR #836 review, item 4 -- RETRY_STEP was
+    loaded into STEPS_CACHE but never exercised by any scenario)."""
+    return _run_read_back_step(
+        steps, RETRY_STEP, repo, base_sha, verdict=verdict,
+        result_key="RETRY_RESULT", result_value=retry_result,
+        no_write_paths=no_write_paths, iteration=iteration,
+        extra_env={"ESCALATION_MODEL": "escalation-model"})
+
+
+# PR #836 review-gate-round-1 item 1: drives the shipped "Dispatch next
+# step" body directly, logging every `gh` invocation so a scenario can
+# assert WHICH workflow got dispatched (redispatch the self-workflow for
+# another cycle vs. hand off to the next-workflow with converged=false)
+# rather than only inspecting the reason text "Consolidate final outcome"
+# composed -- the gap this finding named.
+GH_CALL_LOG_STUB = """#!/bin/sh
+echo "$*" >> "$GH_CALLS"
+exit 0
+"""
+
+
+def run_dispatch_step(steps, workdir, outputs, *, self_workflow="self-impl.yml",
+                       next_workflow="next-finalize.yml", iteration=ITERATION,
+                       max_iteration="5"):
+    runner_temp = tempfile.mkdtemp(dir=os.path.dirname(workdir))
+    bindir = os.path.join(workdir, "dispatch_bin")
+    os.makedirs(bindir, exist_ok=True)
+    calls_file = os.path.join(workdir, "dispatch_gh_calls")
+    open(calls_file, "w").close()
+    with open(os.path.join(bindir, "gh"), "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(GH_CALL_LOG_STUB)
+    os.chmod(os.path.join(bindir, "gh"), 0o755)
+    env = {
+        "APP_TOKEN": "app-token", "DISPATCH_TOKEN": "dispatch-token",
+        "SPEC_DIR": SPEC_DIR, "ISSUE": "675", "ITERATION": str(iteration),
+        "MAX": str(max_iteration),
+        "CONVERGED": outputs.get("converged", "false"),
+        "TRUNCATED": outputs.get("truncated", "false"),
+        "TRUNCATED_COUNT": "0",
+        "HANDOFF": outputs.get("handoff", "false"),
+        "ROUTED": outputs.get("routed", "false"),
+        "REASON": outputs.get("reason", ""),
+        "TIER": "sonnet",
+        "REMAINING": outputs.get("remaining", ""),
+        "SELF_WORKFLOW": self_workflow,
+        "NEXT_WORKFLOW": next_workflow,
+        "COST_LINE": "cost line",
+        "GH_CALLS": calls_file,
+        "PATH": bindir + os.pathsep + os.environ["PATH"],
+        "GITHUB_SERVER_URL": "https://github.example",
+        "GITHUB_REPOSITORY": "acme/repo",
+        "GITHUB_RUN_ID": "1",
+    }
+    rc, out, step_outputs, summary = run_step(BASH, steps[DISPATCH_STEP], workdir, env, runner_temp)
+    calls = open(calls_file, encoding="utf-8").read() if os.path.exists(calls_file) else ""
+    return rc, out, calls
+
+
+# ---------------------------------------------------------------------------
+# (a) Single definition
+# ---------------------------------------------------------------------------
+
+def check_single_definition(stage_text=None):
+    """`stage_text` is overridable so --self-test can re-run THIS SAME
+    function against a mutated copy of implement.yml's text (PR #836
+    review, item 4) instead of a parallel hand-rolled count."""
+    failures = []
+    if stage_text is None:
+        stage_text = open(STAGE, encoding="utf-8").read()
+    count = stage_text.count(DEFAULT_LITERAL)
+    if count != 1:
+        failures.append(
+            f"(a) {STAGE}: expected exactly one literal default "
+            f"{DEFAULT_LITERAL} for no-write-paths (FR-003), found {count}.")
+    for other in (TOOL_ARGS_COMPOSITE, WRITE_BOUNDARY_COMPOSITE):
+        text = open(other, encoding="utf-8").read()
+        if DEFAULT_LITERAL in text:
+            failures.append(
+                f"(a) {other}: contains a second literal {DEFAULT_LITERAL} "
+                f"default -- FR-003 requires the one declaration to live "
+                f"solely in {STAGE}.")
+
+    doc = yaml.safe_load(stage_text) or {}
+    # PR #836 review, item 4: also cover the classification call sites --
+    # condition (a) used to check only the two tool-args-* steps, never the
+    # two write-boundary-* steps that feed the read-back its own
+    # classification signal.
+    for job in (doc.get("jobs") or {}).values():
+        for step in (job or {}).get("steps") or []:
+            step_id = (step or {}).get("id")
+            if step_id in ("tool-args-cycle", "tool-args-retry",
+                            "write-boundary-cycle", "write-boundary-retry"):
+                with_block = (step or {}).get("with") or {}
+                got = with_block.get("no-write-paths")
+                if got != "${{ inputs.no-write-paths }}":
+                    failures.append(
+                        f"(a) {STAGE}: step id={step_id!r} does not wire "
+                        f"no-write-paths from ${{{{ inputs.no-write-paths "
+                        f"}}}} (got {got!r}).")
+    return failures
+
+
+# ---------------------------------------------------------------------------
+# (k) Prompt interpolation and Route step wiring (PR #836 review, item 4)
+# ---------------------------------------------------------------------------
+
+def check_prompt_and_route_wiring(stage_text=None):
+    """Neither prompt's write-paths-statement interpolation, nor the Route
+    step's findings-json/finding-kind wiring, had ever been asserted --
+    each could be silently deleted with every other (a)-(h) fixture still
+    green. `stage_text` is overridable so --self-test can re-run THIS SAME
+    function against a mutated copy of implement.yml's text."""
+    failures = []
+    if stage_text is None:
+        stage_text = open(STAGE, encoding="utf-8").read()
+    for token in ("${{ steps.tool-args-cycle.outputs.write-paths-statement }}",
+                  "${{ steps.tool-args-retry.outputs.write-paths-statement }}"):
+        if token not in stage_text:
+            failures.append(f"(k) {STAGE}: the prompt no longer interpolates "
+                            f"{token!r} -- the agent would never see the "
+                            f"write-boundary statement at all.")
+
+    doc = yaml.safe_load(stage_text) or {}
+    route_step = None
+    for job in (doc.get("jobs") or {}).values():
+        for step in (job or {}).get("steps") or []:
+            if (step or {}).get("name") == ROUTE_STEP:
+                route_step = step
+                break
+    if route_step is None:
+        failures.append(f"(k) no step named {ROUTE_STEP!r} found in {STAGE}.")
+    else:
+        with_block = route_step.get("with") or {}
+        if with_block.get("findings-json") != "${{ steps.final.outputs.write-boundary-findings-json }}":
+            failures.append(f"(k) {ROUTE_STEP!r}: findings-json is not wired "
+                            f"from steps.final.outputs.write-boundary-"
+                            f"findings-json -- got {with_block.get('findings-json')!r}.")
+        if with_block.get("finding-kind") != "routed-task":
+            failures.append(f"(k) {ROUTE_STEP!r}: finding-kind is not "
+                            f"'routed-task' -- got {with_block.get('finding-kind')!r}.")
+    return failures
+
+
+# ---------------------------------------------------------------------------
+# (b) Statement fidelity
+# ---------------------------------------------------------------------------
+
+STATEMENT_FIXTURES = [
+    ("", "This run's agent may write any path in the checkout."),
+    (".claude/", "This run's agent may not write: .claude/."),
+    (".claude/,.git/", "This run's agent may not write: .claude/, .git/."),
+    # review-gate-round-4 item 7: two spellings of the same boundary
+    # (no trailing slash vs. one) must dedup to a single statement entry
+    # -- the dedup key is now the NORMALIZED form, not the raw text.
+    (".claude,.claude/", "This run's agent may not write: .claude."),
+]
+
+
+def run_compose(steps, no_write_paths, runner_temp):
+    env = {"STEP_LABEL": "gate133", "DEFAULT_ALLOWED": "Read,Write",
+           "DEFAULT_DISALLOWED": "WebFetch", "EXTRA_ALLOWED": "",
+           "EXTRA_DISALLOWED": "", "ALLOWED_OVERRIDE": "__unset__",
+           "DISALLOWED_OVERRIDE": "__unset__", "NO_WRITE_PATHS": no_write_paths,
+           # review-gate-round-3: the compose step now shells out to
+           # $GITHUB_ACTION_PATH/../_shared/normalize-write-path-prefix.sh
+           # (mirroring wing-commander-write-boundary-lookup's own
+           # GITHUB_ACTION_PATH override above) -- real Actions sets this
+           # to the composite's own directory for every step inside it.
+           "GITHUB_ACTION_PATH": os.path.abspath(os.path.dirname(TOOL_ARGS_COMPOSITE))}
+    return run_step(BASH, steps[COMPOSE_STEP], runner_temp, env, runner_temp)
+
+
+def check_statement_fidelity(steps, root):
+    failures = []
+    for no_write_paths, expected in STATEMENT_FIXTURES:
+        workdir = tempfile.mkdtemp(dir=root)
+        rc, out, outputs, _ = run_compose(steps, no_write_paths, workdir)
+        if rc != 0:
+            failures.append(f"(b) compose step exited {rc} for "
+                            f"no-write-paths={no_write_paths!r}: {out.strip()}")
+            continue
+        got = outputs.get("write-paths-statement", "")
+        if got != expected:
+            failures.append(f"(b) no-write-paths={no_write_paths!r}: expected "
+                            f"write-paths-statement={expected!r}, got {got!r}")
+    return failures
+
+
+# ---------------------------------------------------------------------------
+# (i) Enforcement parity (PR #836 review, item 3)
+# ---------------------------------------------------------------------------
+
+ENFORCEMENT_FIXTURES = [
+    ("", []),
+    (".claude/", ["Edit(.claude/**)", "Write(.claude/**)"]),
+    (".claude/,.git/", ["Edit(.claude/**)", "Write(.claude/**)",
+                        "Edit(.git/**)", "Write(.git/**)"]),
+    # review-gate-round-1 item 2: a no-trailing-slash entry already
+    # normalizes to "specs/**" on the enforcement side -- the fix adds the
+    # SAME normalization to the classifier (CLASSIFY_FIXTURES above) rather
+    # than loosening enforcement.
+    ("specs", ["Edit(specs/**)", "Write(specs/**)"]),
+    # review-gate-round-4 item 1: a no-write-paths entry spelled with a
+    # leading "./" must normalize to the SAME glob as the bare prefix, on
+    # both sides of the parity check this fixture table exists to prove.
+    ("./.claude/", ["Edit(.claude/**)", "Write(.claude/**)"]),
+]
+
+
+def check_enforcement_parity(steps, root):
+    """The composed disallowed-tools list must enforce the SAME boundary
+    write-paths-statement states -- a stated-but-unenforced boundary is the
+    same failure as making no statement at all (PR #836 review, item 3;
+    FR-004/FR-005, Principle V/IX)."""
+    failures = []
+    for no_write_paths, expected_denies in ENFORCEMENT_FIXTURES:
+        workdir = tempfile.mkdtemp(dir=root)
+        rc, out, outputs, _ = run_compose(steps, no_write_paths, workdir)
+        if rc != 0:
+            failures.append(f"(i) compose step exited {rc} for "
+                            f"no-write-paths={no_write_paths!r}: {out.strip()}")
+            continue
+        disallowed = outputs.get("disallowed-tools", "").split(",")
+        for entry in expected_denies:
+            if entry not in disallowed:
+                failures.append(f"(i) no-write-paths={no_write_paths!r}: "
+                                f"expected disallowed-tools to contain "
+                                f"{entry!r}, got {outputs.get('disallowed-tools')!r}")
+
+    # review-gate-round-4 item 7: two spellings of the same boundary
+    # (no trailing slash vs. one trailing slash) must dedup to exactly ONE
+    # Edit()/Write() deny pair, not a redundant duplicate of each.
+    workdir = tempfile.mkdtemp(dir=root)
+    rc, out, outputs, _ = run_compose(steps, ".claude,.claude/", workdir)
+    if rc != 0:
+        failures.append(f"(i) compose step exited {rc} for the two-spellings "
+                        f"dedup fixture: {out.strip()}")
+    else:
+        disallowed = outputs.get("disallowed-tools", "").split(",")
+        for entry in ("Edit(.claude/**)", "Write(.claude/**)"):
+            count = disallowed.count(entry)
+            if count != 1:
+                failures.append(f"(i) two spellings of the same boundary "
+                                f"(.claude, .claude/) produced {count} copies "
+                                f"of {entry!r} -- expected exactly 1, got "
+                                f"disallowed-tools={outputs.get('disallowed-tools')!r}")
+    return failures
+
+
+# ---------------------------------------------------------------------------
+# (c) Classification correctness
+# ---------------------------------------------------------------------------
+
+CLASSIFY_FIXTURES = [
+    ("single out-of-boundary path",
+     "- [ ] T001 edit `.claude/skills/foo/SKILL.md`", ".claude/", 1, "true"),
+    ("several paths, one in-reach",
+     "- [ ] T002 edit `.claude/skills/foo/SKILL.md` and `.github/workflows/bar.yml`",
+     ".claude/", 0, "false"),
+    ("no path in text",
+     "- [ ] T003 write documentation", ".claude/", 0, "false"),
+    ("partial prefix match is not a match",
+     "- [ ] T004 edit `.claude-extra/foo`", ".claude/", 0, "false"),
+    ("empty boundary never classifies",
+     "- [ ] T005 edit `.claude/skills/foo/SKILL.md`", "", 0, "false"),
+    # US4/T031: a second no-write-paths entry classifies exactly like the
+    # first, with zero changes to the classifier itself.
+    ("a second boundary entry (.git/) classifies just like the first",
+     "- [ ] T006 edit `.git/hooks/pre-commit`", ".claude/,.git/", 1, "true"),
+    # PR #836 review, item 8 / spec.md Edge Cases: a task that would widen
+    # the stage's own grants (editing .claude/settings.json's
+    # permissions.allow) is exactly the case the boundary exists to deny --
+    # dedicated fixture so the outcome is asserted explicitly rather than
+    # left to fall out of the prefix comparison by coincidence.
+    (".claude/settings.json (the boundary-widening edge case) classifies out-of-boundary",
+     "- [ ] T007 grant Edit on `.claude/settings.json`", ".claude/", 1, "true"),
+    # PR #836 review, item 4: ".claude-extra/foo" above never even CONTAINS
+    # the substring ".claude/" (no "/" follows "claude"), so it does not
+    # distinguish a prefix-match classifier from a substring-match one --
+    # mutation 3 needs a path that CONTAINS ".claude/" without starting
+    # with it to tell the two apart.
+    ("a path containing but not starting with the boundary is not a match "
+     "(distinguishes prefix-match from substring-match)",
+     "- [ ] T008 edit `src/.claude/nested/thing.md`", ".claude/", 0, "false"),
+    # review-gate-round-1 item 2: a no-trailing-slash boundary entry must
+    # normalize the same way wing-commander-tool-args's enforcement glob
+    # does ("specs" -> "specs/**"), so a sibling directory that merely
+    # shares the prefix as a string ("specs-legacy/...") must NOT classify
+    # out-of-boundary -- enforcement never denies it either.
+    ("a no-trailing-slash boundary entry does not over-match a sibling "
+     "directory sharing the same string prefix",
+     "- [ ] T009 edit `specs-legacy/notes.md`", "specs", 0, "false"),
+    ("a no-trailing-slash boundary entry still classifies a real child path",
+     "- [ ] T010 edit `specs/foo.md`", "specs", 1, "true"),
+    # review-gate-round-1 item 2: a tasks.md line written with a leading
+    # "./" must still classify -- otherwise the agent keeps retrying a
+    # denied edit every cycle.
+    ("a leading './' on the candidate token does not defeat classification",
+     "- [ ] T011 edit `./.claude/skills/foo/SKILL.md`", ".claude/", 1, "true"),
+    # review-gate-round-4 item 1: a no-write-paths entry itself spelled with
+    # a leading "./" (e.g. "./.claude/") must normalize to the same prefix
+    # as ".claude/", via the SAME shared helper the enforcement side calls
+    # (ENFORCEMENT_FIXTURES above) -- otherwise that entry silently no-ops.
+    ("a leading './' on the no-write-paths entry itself does not defeat "
+     "classification",
+     "- [ ] T012 edit `.claude/skills/foo/SKILL.md`", "./.claude/", 1, "true"),
+    # review-gate-round-4 item 4: an out-of-boundary path NOT backtick-quoted
+    # is indistinguishable from prose merely mentioning a path, so it falls
+    # through like "no path in its text" above -- an accepted, documented
+    # limitation of the backtick-quoting convention (spec.md Edge Cases),
+    # not a silently mishandled case. Locked in by this fixture so a future
+    # change to the extraction rule is deliberate, not accidental.
+    ("an out-of-boundary path without backtick quoting falls through "
+     "(accepted limitation, not a silent misclassification)",
+     "- [ ] T013 edit .claude/skills/foo/SKILL.md", ".claude/", 0, "false"),
+]
+
+
+def check_classification(root, script_path=CLASSIFY_SCRIPT):
+    failures = []
+    for name, unchecked_items, no_write_paths, expect_count, expect_all in CLASSIFY_FIXTURES:
+        rc, out, outputs = run_classify(unchecked_items, no_write_paths,
+                                        script_path=script_path)
+        if rc != 0:
+            failures.append(f"(c) {name}: classify script exited {rc}: {out}")
+            continue
+        got_count = outputs.get("out-of-boundary-count", "")
+        got_all = outputs.get("all-unchecked-out-of-boundary", "")
+        if got_count != str(expect_count):
+            failures.append(f"(c) {name}: expected out-of-boundary-count="
+                            f"{expect_count}, got {got_count!r}")
+        if got_all != expect_all:
+            failures.append(f"(c) {name}: expected all-unchecked-out-of-"
+                            f"boundary={expect_all}, got {got_all!r}")
+    return failures
+
+
+# ---------------------------------------------------------------------------
+# (d) Termination and reason
+# ---------------------------------------------------------------------------
+
+def check_termination_and_reason(steps, root):
+    failures = []
+
+    # Only unchecked task is out-of-boundary, nothing else progressed.
+    base = "- [ ] T001 edit `.claude/skills/foo/SKILL.md`\n"
+    work, repo, base_sha, _ = build_scenario(root, base_tasks_md=base, tip_tasks_md=base)
+    rc, out, outputs, _ = run_cycle_step(steps, repo, base_sha, verdict="healthy",
+                                         cycle_result="success")
+    if rc != 0:
+        failures.append(f"(d) scenario 1: {CYCLE_STEP!r} exited {rc}: {out.strip()}")
+    else:
+        if outputs.get("handoff") != "true" or outputs.get("routed") != "true":
+            failures.append(f"(d) scenario 1: expected handoff=true routed=true, "
+                            f"got handoff={outputs.get('handoff')!r} "
+                            f"routed={outputs.get('routed')!r}")
+        reason = outputs.get("reason", "")
+        if "write boundary" not in reason or ".claude/skills/foo/SKILL.md" not in reason:
+            failures.append(f"(d) scenario 1: reason did not name the routed "
+                            f"task -- got {reason!r}")
+
+    # Same, but another task also got checked this cycle (progressed=true)
+    # -- ticking the last in-reach task on what may be the final iteration
+    # must still file the out-of-boundary task rather than let it reach the
+    # PR as orphan prose (PR #836 review, item 2, SC-005). handoff stays
+    # false (spec 059's own progress test is unaffected), but routed is
+    # now true and the reason narrative names the task.
+    base2 = "- [ ] T000 do something\n- [ ] T001 edit `.claude/skills/foo/SKILL.md`\n"
+    tip2 = "- [x] T000 do something\n- [ ] T001 edit `.claude/skills/foo/SKILL.md`\n"
+    work, repo, base_sha, _ = build_scenario(root, base_tasks_md=base2, tip_tasks_md=tip2)
+    rc, out, outputs, _ = run_cycle_step(steps, repo, base_sha, verdict="healthy",
+                                         cycle_result="success")
+    if rc != 0:
+        failures.append(f"(d) scenario 2: {CYCLE_STEP!r} exited {rc}: {out.strip()}")
+    else:
+        if outputs.get("handoff") != "false":
+            failures.append(f"(d) scenario 2: expected handoff=false (spec "
+                            f"059's own progress test is unaffected), got "
+                            f"handoff={outputs.get('handoff')!r}")
+        if outputs.get("routed") != "true":
+            failures.append(f"(d) scenario 2: expected routed=true -- ticking "
+                            f"the last in-reach task must not block filing the "
+                            f"still-unchecked out-of-boundary task (item 2), "
+                            f"got routed={outputs.get('routed')!r}")
+        reason = outputs.get("reason", "")
+        if "write boundary" not in reason or ".claude/skills/foo/SKILL.md" not in reason:
+            failures.append(f"(d) scenario 2: expected the routed narrative "
+                            f"naming the task, now that routed=true overrides "
+                            f"spec 059's generic hand-off text -- got "
+                            f"reason={reason!r}")
+        # review-gate-round-1 item 1: handoff=false, routed=true, iteration
+        # BELOW the cap used to fall into the ITERATION<MAX redispatch
+        # branch instead of terminating -- contradicting the reason text
+        # just asserted above. Drive the shipped "Dispatch next step" body
+        # with these exact outputs and assert it hands off to the
+        # next-workflow (converged=false) rather than redispatching the
+        # self-workflow for another cycle.
+        rc_dispatch, out_dispatch, calls = run_dispatch_step(steps, repo, outputs)
+        if rc_dispatch != 0:
+            failures.append(f"(d) scenario 2 dispatch: {DISPATCH_STEP!r} "
+                            f"exited {rc_dispatch}: {out_dispatch.strip()}")
+        else:
+            if "self-impl.yml" in calls:
+                failures.append(f"(d) scenario 2 dispatch: handoff=false "
+                                f"routed=true still redispatched the "
+                                f"self-workflow for another cycle instead of "
+                                f"terminating -- FR-010 -- gh calls: {calls!r}")
+            if "next-finalize.yml" not in calls or "converged=false" not in calls:
+                failures.append(f"(d) scenario 2 dispatch: expected a hand-off "
+                                f"to the next-workflow with converged=false -- "
+                                f"gh calls: {calls!r}")
+
+    # A converge: commit whose appended lines are all out-of-boundary must
+    # not disqualify routed either (PR #836 review, item 2): the converge
+    # commit here re-appends a second out-of-boundary line, so converge_sha
+    # is set and progressed=false, which used to force the generic
+    # "converge appended new work" text and routed=false.
+    base4 = "- [ ] T001 edit `.claude/skills/foo/SKILL.md`\n"
+    tip4 = ("- [ ] T001 edit `.claude/skills/foo/SKILL.md`\n"
+            "- [ ] T002 edit `.claude/skills/bar/SKILL.md`\n")
+    work, repo, base_sha, _ = build_converge_scenario(root, base_tasks_md=base4,
+                                                       tip_tasks_md=tip4)
+    rc, out, outputs, _ = run_cycle_step(steps, repo, base_sha, verdict="healthy",
+                                         cycle_result="success")
+    if rc != 0:
+        failures.append(f"(d) scenario 4: {CYCLE_STEP!r} exited {rc}: {out.strip()}")
+    else:
+        if outputs.get("routed") != "true":
+            failures.append(f"(d) scenario 4: a converge: commit whose "
+                            f"appended lines are all out-of-boundary must not "
+                            f"disqualify routed -- got "
+                            f"routed={outputs.get('routed')!r}")
+        reason = outputs.get("reason", "")
+        if "write boundary" not in reason or "converge appended new work" in reason:
+            failures.append(f"(d) scenario 4: expected the routed narrative "
+                            f"to override spec 059's \"converge appended new "
+                            f"work\" text -- got reason={reason!r}")
+
+    # Mixed unchecked set (one out-of-boundary, one ordinary).
+    base3 = "- [ ] T001 edit `.claude/skills/foo/SKILL.md`\n- [ ] T002 write docs\n"
+    work, repo, base_sha, _ = build_scenario(root, base_tasks_md=base3, tip_tasks_md=base3)
+    rc, out, outputs, _ = run_cycle_step(steps, repo, base_sha, verdict="healthy",
+                                         cycle_result="success")
+    if rc != 0:
+        failures.append(f"(d) scenario 3: {CYCLE_STEP!r} exited {rc}: {out.strip()}")
+    else:
+        if outputs.get("routed") != "false":
+            failures.append(f"(d) scenario 3: a mixed unchecked set must not "
+                            f"route -- got routed={outputs.get('routed')!r}")
+        if outputs.get("handoff") != "true":
+            failures.append(f"(d) scenario 3: expected handoff=true (spec "
+                            f"059's own hand-off condition, unaffected), got "
+                            f"handoff={outputs.get('handoff')!r}")
+        expected_reason = ("the cycle checked nothing new, so the loop is "
+                           "ending here rather than dispatching another cycle")
+        if outputs.get("reason", "") != expected_reason:
+            failures.append(f"(d) scenario 3: existing hand-off narrative "
+                            f"changed -- got reason={outputs.get('reason')!r}")
+        # PR #836 review, item 12: a mixed-stall remainder (routed=false,
+        # handoff=true, one out-of-boundary task and one ordinary task both
+        # unchecked) must still file the out-of-boundary task rather than
+        # let it evaporate into PR-body prose the moment the loop stalls
+        # instead of reaching a clean routed hand-off -- drive the REAL
+        # Route step's if: expression with this scenario's own shipped
+        # outputs, never a hand-rolled one-off assertion.
+        route_if = _find_route_if_expr()
+        route_context = {
+            "steps.final.outputs.ok": "true",
+            "steps.final.outputs.truncated": "false",
+            "steps.final.outputs.routed": outputs.get("routed", ""),
+            "steps.final.outputs.handoff": outputs.get("handoff", ""),
+            "steps.final.outputs.write-boundary-findings-json":
+                outputs.get("write-boundary-findings-json", ""),
+            "inputs.iteration": "1",
+            "steps.cap.outputs.max": "5",
+        }
+        try:
+            fires = eval_if_expr(route_if, route_context)
+        except Exception as exc:  # noqa: BLE001
+            failures.append(f"(d) scenario 3: could not evaluate "
+                            f"{ROUTE_STEP!r}'s if: expression {route_if!r}: "
+                            f"{exc}")
+        else:
+            if not fires:
+                failures.append(f"(d) scenario 3 (PR #836 review, item 12): "
+                                f"a mixed-stall remainder (routed=false, "
+                                f"handoff=true) with a non-empty "
+                                f"out-of-boundary findings-json must still "
+                                f"fire {ROUTE_STEP!r} -- if: was {route_if!r}, "
+                                f"context was {route_context!r}")
+
+    # Retry arm (PR #836 review, item 4): mirrors scenario 1 exactly, but
+    # drives the shipped "Read back retry outcome" step -- RETRY_STEP was
+    # loaded into STEPS_CACHE but no scenario had ever exercised it.
+    base5 = "- [ ] T001 edit `.claude/skills/foo/SKILL.md`\n"
+    work, repo, base_sha, _ = build_scenario(root, base_tasks_md=base5, tip_tasks_md=base5)
+    rc, out, outputs, _ = run_retry_step(steps, repo, base_sha, verdict="healthy",
+                                         retry_result="success")
+    if rc != 0:
+        failures.append(f"(d) scenario 5 (retry): {RETRY_STEP!r} exited {rc}: {out.strip()}")
+    else:
+        if outputs.get("handoff") != "true" or outputs.get("routed") != "true":
+            failures.append(f"(d) scenario 5 (retry): expected handoff=true "
+                            f"routed=true, got handoff={outputs.get('handoff')!r} "
+                            f"routed={outputs.get('routed')!r}")
+        reason = outputs.get("reason", "")
+        if "write boundary" not in reason or ".claude/skills/foo/SKILL.md" not in reason:
+            failures.append(f"(d) scenario 5 (retry): reason did not name the "
+                            f"routed task -- got {reason!r}")
+    return failures
+
+
+# ---------------------------------------------------------------------------
+# (e) No filing on a truncated run
+# ---------------------------------------------------------------------------
+
+def eval_if_expr(expr, context):
+    """A tiny, deliberately narrow evaluator for this repository's own
+    `if:` expressions -- substitutes each `steps.X.outputs.Y`/`inputs.X`
+    token with its modelled string value, maps `fromJSON(...)` to an
+    int-or-JSON parse, translates &&/|| to and/or, then evaluates the
+    result as a Python boolean expression. Sufficient for the fixed shape
+    this gate's own targets use; not a general GitHub Actions expression
+    engine."""
+    e = expr.strip()
+    if e.startswith("${{") and e.endswith("}}"):
+        e = e[3:-2].strip()
+    e = e.replace("!cancelled()", "True")
+    e = e.replace("&&", " and ").replace("||", " or ")
+    e = e.replace("fromJSON(", "_from_json(")
+
+    def repl(m):
+        return repr(context.get(m.group(0), ""))
+
+    e = re.sub(r"steps\.[\w.\-]+\.outputs\.[\w\-]+|inputs\.[\w\-]+", repl, e)
+
+    def _from_json(value):
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return json.loads(value)
+
+    return bool(eval(e, {"__builtins__": {}}, {"_from_json": _from_json}))
+
+
+def _find_route_if_expr(stage_text=None):
+    """The one lookup of the shipped Route step's `if:` text -- shared by
+    check_no_filing_on_truncated and check_termination_and_reason's
+    mixed-stall assertion (PR #836 review, item 12) rather than each
+    re-parsing implement.yml on its own."""
+    if stage_text is None:
+        stage_text = open(STAGE, encoding="utf-8").read()
+    doc = yaml.safe_load(stage_text) or {}
+    for job in (doc.get("jobs") or {}).values():
+        for s in (job or {}).get("steps") or []:
+            if (s or {}).get("name") == ROUTE_STEP:
+                return str(s.get("if", ""))
+    return None
+
+
+def check_no_filing_on_truncated(stage_text=None):
+    """`stage_text` is overridable so --self-test can re-run THIS SAME
+    function against a mutated copy of implement.yml's text (PR #836
+    review, item 4) instead of a parallel hand-rolled if:-expression
+    evaluation. The context sets every OTHER disjunct the Route step's
+    `if:` now reads (routed, handoff, a non-empty findings-json, and an
+    iteration already at the cap -- PR #836 review, item 12) so this stays
+    the strongest possible regression test for FR-013: truncated must win
+    even when every other condition would otherwise fire filing."""
+    failures = []
+    if_expr = _find_route_if_expr(stage_text)
+    if if_expr is None:
+        return [f"(e) no step named {ROUTE_STEP!r} found in {STAGE}."]
+    context = {"steps.final.outputs.ok": "true",
+               "steps.final.outputs.truncated": "true",
+               "steps.final.outputs.routed": "true",
+               "steps.final.outputs.handoff": "true",
+               "steps.final.outputs.write-boundary-findings-json":
+                   '[{"title":"x"}]',
+               "inputs.iteration": "5",
+               "steps.cap.outputs.max": "5"}
+    try:
+        result = eval_if_expr(if_expr, context)
+    except Exception as exc:  # noqa: BLE001 -- a malformed if: is itself the finding
+        return [f"(e) could not evaluate {ROUTE_STEP!r}'s if: expression "
+                f"{if_expr!r}: {exc}"]
+    if result:
+        failures.append(f"(e) {ROUTE_STEP!r}'s if: expression evaluates true "
+                        f"even when truncated=true (FR-013) -- if: was "
+                        f"{if_expr!r}")
+    return failures
+
+
+# ---------------------------------------------------------------------------
+# (f) Idempotency
+# ---------------------------------------------------------------------------
+
+def run_fingerprint(stage, file_path, gate_or_artifact, cwd=None,
+                    script_path=FINGERPRINT_SCRIPT):
+    """`script_path` is overridable so --self-test can re-run THIS SAME
+    function, via check_idempotency, against a mutated copy of the script
+    (PR #836 review, item 13) rather than a parallel hand-rolled
+    determinism check."""
+    script = os.path.abspath(script_path).replace("\\", "/")
+    proc = subprocess.run([BASH, script, stage, file_path, gate_or_artifact],
+                          capture_output=True, text=True, encoding="utf-8",
+                          errors="replace", cwd=cwd)
+    kv = dict(line.split("=", 1) for line in proc.stdout.splitlines() if "=" in line)
+    return proc.returncode, kv.get("fingerprint", ""), kv.get("verified", "")
+
+
+def check_idempotency(root, script_path=FINGERPRINT_SCRIPT):
+    """Runs with a real tasks.md present so the anchor path verifies (the
+    fallback shape is keyed only on (stage, file_path), never on
+    gate_or_artifact -- two different lines would collide there, which is
+    not what this pass condition is testing). `script_path` is overridable
+    so --self-test can re-run THIS SAME function against a mutated copy of
+    compute-finding-fingerprint.sh (PR #836 review, item 13)."""
+    failures = []
+    file_path = f"{SPEC_DIR}/tasks.md"
+    line = "- [ ] T001 edit `.claude/skills/foo/SKILL.md`"
+    workdir = tempfile.mkdtemp(dir=root)
+    write_file(workdir, file_path, line + "\n")
+    rc1, fp1, verified1 = run_fingerprint("implement", file_path, line,
+                                          cwd=workdir, script_path=script_path)
+    rc2, fp2, verified2 = run_fingerprint("implement", file_path, line,
+                                          cwd=workdir, script_path=script_path)
+    if rc1 != 0 or rc2 != 0:
+        failures.append(f"(f) compute-finding-fingerprint.sh exited nonzero "
+                        f"(rc1={rc1}, rc2={rc2}).")
+    elif verified1 != "true" or verified2 != "true":
+        failures.append(f"(f) fixture setup did not verify the anchor -- "
+                        f"verified1={verified1!r} verified2={verified2!r} "
+                        f"(the fallback shape does not depend on the line "
+                        f"text, so this fixture would prove nothing).")
+    elif fp1 != fp2:
+        failures.append(f"(f) the same line fingerprinted twice produced "
+                        f"different values: {fp1!r} vs {fp2!r}.")
+    # A trailing-whitespace-only change would not do: normalize_basis
+    # collapses whitespace, so it would (correctly) still verify to the
+    # SAME normalized anchor. Change an actual word instead.
+    reworded = line.replace("edit", "adjust")
+    write_file(workdir, file_path, line + "\n" + reworded + "\n")
+    rc3, fp3, verified3 = run_fingerprint("implement", file_path, reworded,
+                                          cwd=workdir, script_path=script_path)
+    if rc3 == 0 and verified3 == "true" and fp1 == fp3:
+        failures.append("(f) a line reworded by one character produced the "
+                        "SAME fingerprint as the original -- expected a "
+                        "different value (accepted, narrow limitation "
+                        "aside: re-wording is never detected as \"the same\" "
+                        "task).")
+    return failures
+
+
+def check_two_cycles_one_issue():
+    """SC-004's "two cycles -> one issue" is proven jointly, never
+    re-tested as a second copy of Gate 71's own nested-`uses:` test
+    infrastructure (PR #836 review, item 4): the assertions above already
+    show the SAME unchecked line fingerprints identically across two
+    simulated cycles; Gate 71 (stage-findings-tests/run-tests.sh) already
+    drives wing-commander-durable-failure-issue's real marker-based dedup
+    and proves a second report carrying the same marker is COMMENTED onto
+    the existing issue, never a second `gh issue create` -- generically,
+    for every finding-kind, since T018's finding-kind only swaps rendered
+    text, never the fingerprint or dedup logic. Together: same line -> same
+    fingerprint (here) -> same marker -> one issue (Gate 71). This
+    assertion only confirms that other link of the chain is still wired,
+    so a future removal of Gate 71 does not silently break SC-004's proof
+    without failing anything."""
+    wf = yaml.safe_load(open(LINT_WORKFLOW, encoding="utf-8")) or {}
+    for job in (wf.get("jobs") or {}).values():
+        for step in (job or {}).get("steps") or []:
+            name = (step or {}).get("name") or ""
+            if name.startswith("Gate 71") and "every required branch" in name:
+                if str(step.get("if", "")).strip().lower() == "false":
+                    return ["(f) Gate 71 (SC-004's other proof-chain link) "
+                            "is present but disabled (if: false)."]
+                if "stage-findings-tests/run-tests.sh" not in str(step.get("run", "")):
+                    return ["(f) Gate 71 step no longer invokes "
+                            "stage-findings-tests/run-tests.sh."]
+                return []
+    return ["(f) no Gate 71 step found in lint-workflows.yml -- SC-004's "
+            "'two cycles -> one issue' proof chain is broken."]
+
+
+# ---------------------------------------------------------------------------
+# (g) Fingerprint single-home
+# ---------------------------------------------------------------------------
+
+SHA_LITERAL_RE = re.compile(r'sha256\(\s*["\'](anchor|fallback)\|')
+
+
+def check_fingerprint_single_home(content_overrides=None):
+    """Scoped to the shipped call sites -- workflows, composite actions, and
+    _shared/ scripts -- mirroring verify-spec-meta-single-home.py's own
+    glob (Gate 61). Deliberately excludes .github/scripts/: a gate's own
+    fixtures (this script's mutation-6 replacement string, or Gate 71's
+    stage-findings-tests/run_fixtures.py, which independently re-derives
+    the formula as a pre-existing TEST ORACLE to assert the shipped
+    composite's real output against) are not the "second production copy"
+    D6 exists to catch. `content_overrides` ({normalized path: text}) lets
+    --self-test re-run THIS SAME function against a mutated copy of one
+    file's content (PR #836 review, item 4) instead of a parallel
+    hand-rolled regex search."""
+    failures = []
+    content_overrides = content_overrides or {}
+    import glob
+    allowed = {os.path.normpath(FINGERPRINT_SCRIPT)}
+    files = (glob.glob(".github/workflows/*.yml")
+            + glob.glob(".github/workflows/*.yaml")
+            + glob.glob(".github/actions/**/action.yml", recursive=True)
+            + glob.glob(".github/actions/**/action.yaml", recursive=True)
+            + glob.glob(".github/actions/_shared/*.sh"))
+    for f in sorted(files):
+        path = os.path.normpath(f)
+        if path in allowed:
+            continue
+        if path in content_overrides:
+            text = content_overrides[path]
+        else:
+            try:
+                text = open(path, encoding="utf-8", errors="replace").read()
+            except OSError:
+                continue
+        if SHA_LITERAL_RE.search(text):
+            failures.append(f"(g) {path}: contains a second "
+                            f"sha256(\"anchor|...\"/\"fallback|...\"-shaped "
+                            f"literal -- the one home is {FINGERPRINT_SCRIPT} "
+                            f"(research.md D6).")
+    return failures
+
+
+# ---------------------------------------------------------------------------
+# (h) Board-loop label separation
+# ---------------------------------------------------------------------------
+
+def check_label_separation(stage_text=None):
+    """`stage_text` is overridable so --self-test can re-run THIS SAME
+    function against a mutated copy of implement.yml's text (PR #836
+    review, item 13)."""
+    failures = []
+    if stage_text is None:
+        stage_text = open(STAGE, encoding="utf-8").read()
+    doc = yaml.safe_load(stage_text) or {}
+    # PyYAML (1.1 resolver) parses the bare `on:` key as the boolean True,
+    # not the string "on" -- mirrors board_prove.py's/verify-metrics-
+    # wrapper-trigger-drops-watchdog.py's own fallback.
+    on_block = doc.get("on") or doc.get(True) or {}
+    inputs = ((on_block or {}).get("workflow_call") or {}).get("inputs") or {}
+    write_boundary_default = (inputs.get("write-boundary-label-prefix") or {}).get("default")
+    findings_default = (inputs.get("findings-label-prefix") or {}).get("default")
+    if write_boundary_default == findings_default:
+        failures.append(f"(h) write-boundary-label-prefix's default "
+                        f"({write_boundary_default!r}) equals findings-"
+                        f"label-prefix's default -- research.md D4 requires "
+                        f"them distinct so the board loop never treats a "
+                        f"routed item as fix-shaped authorization.")
+    if write_boundary_default == "spec-request":
+        failures.append("(h) write-boundary-label-prefix's default is the "
+                        "literal string 'spec-request' -- that label is one "
+                        "of Principle X's authorized-entry classes.")
+    return failures
+
+
+# ---------------------------------------------------------------------------
+# SC-005: finalize.yml's routed-item lookup
+# ---------------------------------------------------------------------------
+
+# PR #836 review, item 5: the real step now calls `gh issue list --repo ...
+# --label ... --state all --json number,url,body` ONCE and matches the
+# marker client-side via jq contains() -- the SAME shape wing-commander-
+# durable-failure-issue's own dedup lookup uses -- rather than a per-line
+# `gh issue list --search`. This stub responds to that one call with a
+# JSON array carrying the marker in `body`, or fails it when FAIL_GH=true
+# (exercising the ::warning:: path, never silently swallowed).
+GH_LOOKUP_STUB = """#!/bin/sh
+args="$*"
+echo "$args" >> "$GH_CALLS"
+case "$args" in
+  *"issue list"*)
+    if [ "${FAIL_GH:-}" = "true" ]; then
+      echo "simulated API failure" >&2
+      exit 1
+    fi
+    printf '[{"number":42,"url":"%s","body":"body containing %s marker"}]' "$MATCH_URL" "$MATCH_MARKER"
+    ;;
+  *) printf '[]' ;;
+esac
+exit 0
+"""
+
+
+def check_finalize_lookup(steps, root):
+    failures = []
+    routed_line = "- [ ] T001 edit `.claude/skills/foo/SKILL.md`"
+    ordinary_line = "- [ ] T002 write docs"
+    unchecked_items = routed_line + "\n" + ordinary_line
+    tasks_path = f"{SPEC_DIR}/tasks.md"
+    match_url = "https://github.com/acme/repo/issues/42"
+
+    workdir = tempfile.mkdtemp(dir=root)
+    runner_temp = os.path.join(workdir, "runner_temp")
+    bindir = os.path.join(workdir, "bin")
+    calls_file = os.path.join(workdir, "gh_calls")
+    os.makedirs(runner_temp, exist_ok=True)
+    os.makedirs(bindir, exist_ok=True)
+    os.makedirs(os.path.join(workdir, SPEC_DIR), exist_ok=True)
+    write_file(workdir, tasks_path, unchecked_items + "\n")
+    open(calls_file, "w").close()
+
+    # Computed with the SAME cwd (workdir) the shipped step will use, so the
+    # anchor verifies against the identical tasks.md content and this
+    # matches what the shipped step independently (re)computes.
+    _, fp, verified = run_fingerprint("implement", tasks_path, routed_line, cwd=workdir)
+    if verified != "true":
+        failures.append(f"SC-005: fixture setup did not verify the anchor "
+                        f"for the routed line -- verified={verified!r}")
+    marker = f"<!-- wing-commander-finding: fingerprint={fp} -->"
+    with open(os.path.join(bindir, "gh"), "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(GH_LOOKUP_STUB)
+    os.chmod(os.path.join(bindir, "gh"), 0o755)
+
+    base_env = {
+        "GH_TOKEN": "x", "UNCHECKED_ITEMS": unchecked_items,
+        "TASKS_PATH": tasks_path, "LABEL_PREFIX": "route-out-of-boundary",
+        "MATCH_MARKER": marker, "MATCH_URL": match_url,
+        "GH_CALLS": calls_file, "GITHUB_REPOSITORY": "acme/repo",
+        # Actions sets this to the composite's own directory -- resolves
+        # $GITHUB_ACTION_PATH/../_shared/... to the REAL shared script
+        # (mirrors verify-chain-stop-notice-body.py's identical convention).
+        "GITHUB_ACTION_PATH": os.path.abspath(os.path.dirname(WRITE_BOUNDARY_LOOKUP_COMPOSITE)),
+        "PATH": bindir + os.pathsep + os.environ["PATH"],
+    }
+    env = dict(base_env, FAIL_GH="false")
+    rc, out, outputs, _ = run_step(BASH, steps[LOOKUP_STEP], workdir, env, runner_temp)
+    if rc != 0:
+        failures.append(f"SC-005: {LOOKUP_STEP!r} exited {rc}: {out.strip()}")
+        return failures
+    mapping = outputs.get("mapping", "[]")
+    try:
+        parsed = json.loads(mapping) if mapping.strip() else []
+    except ValueError:
+        failures.append(f"SC-005: mapping output was not valid JSON: {mapping!r}")
+        parsed = []
+    lines_mapped = {entry.get("line") for entry in parsed}
+    if routed_line not in lines_mapped:
+        failures.append(f"SC-005: the routed line was not present in the "
+                        f"lookup mapping -- mapping={mapping!r}")
+    if ordinary_line in lines_mapped:
+        failures.append(f"SC-005: the ordinary (unmatched) line was wrongly "
+                        f"present in the lookup mapping -- mapping={mapping!r}")
+    rendered = outputs.get("rendered", "")
+    if match_url not in rendered or "routed" not in rendered:
+        failures.append(f"SC-005: the rendered instruction did not reference "
+                        f"the routed item's URL -- rendered={rendered!r}")
+
+    # review-gate-round-1 item 3: the label this lookup reads
+    # (route-out-of-boundary:implement) accumulates across the repo's whole
+    # lifetime, not per-spec -- a `gh issue list` with no --limit silently
+    # caps at gh's own default of 30. Assert the shipped lookup's own `gh`
+    # invocation actually carries one.
+    calls_text = open(calls_file, encoding="utf-8").read() if os.path.exists(calls_file) else ""
+    if "--limit" not in calls_text:
+        failures.append(f"(3) {LOOKUP_STEP!r}: its `gh issue list` call "
+                        f"carries no --limit -- an older routed item's "
+                        f"fingerprint could silently stop matching once "
+                        f"more than gh's own default page size of such "
+                        f"issues exist -- gh calls recorded: {calls_text!r}")
+
+    # (j) A failed `gh issue list` must be surfaced, not silently swallowed
+    # into "no routed items found" (PR #836 review, item 5).
+    fail_env = dict(base_env, FAIL_GH="true")
+    rc2, out2, outputs2, _ = run_step(BASH, steps[LOOKUP_STEP], workdir, fail_env, runner_temp)
+    if rc2 != 0:
+        failures.append(f"(j) {LOOKUP_STEP!r} exited {rc2} on a failed `gh "
+                        f"issue list` -- it must degrade to an empty "
+                        f"mapping, never fail the job: {out2.strip()}")
+    else:
+        if "::warning::" not in out2:
+            failures.append(f"(j) a failed `gh issue list` produced no "
+                            f"::warning:: annotation -- got output={out2!r}")
+        mapping2 = outputs2.get("mapping", "[]")
+        if mapping2.strip() not in ("[]", ""):
+            failures.append(f"(j) a failed `gh issue list` should degrade "
+                            f"to an empty mapping -- got mapping={mapping2!r}")
+    return failures
+
+
+# ---------------------------------------------------------------------------
+# (l) Classify step failure handling (review-gate-round-4 item 6)
+# ---------------------------------------------------------------------------
+
+def check_classify_failure_handling(steps, root):
+    """A genuine classify-out-of-boundary-tasks.sh crash must be surfaced
+    with ::warning::, not silently indistinguishable from "nothing is out
+    of boundary" -- continue-on-error alone cannot tell the two apart,
+    unlike the sibling wing-commander-write-boundary-lookup composite's own
+    failure handling for the equivalent gh issue list failure (check (j))."""
+    failures = []
+    workdir = tempfile.mkdtemp(dir=root)
+    action_dir = os.path.join(workdir, "actions", "fake-action")
+    shared_dir = os.path.join(workdir, "actions", "_shared")
+    os.makedirs(action_dir, exist_ok=True)
+    os.makedirs(shared_dir, exist_ok=True)
+    broken_script = os.path.join(shared_dir, "classify-out-of-boundary-tasks.sh")
+    with open(broken_script, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write("#!/usr/bin/env bash\nexit 1\n")
+    os.chmod(broken_script, 0o755)
+    runner_temp = os.path.join(workdir, "runner_temp")
+    os.makedirs(runner_temp, exist_ok=True)
+    env = {
+        "UNCHECKED_ITEMS": "- [ ] T001 edit `.claude/skills/foo/SKILL.md`",
+        "NO_WRITE_PATHS": ".claude/",
+        "TASKS_PATH": f"{SPEC_DIR}/tasks.md",
+        "SPEC_DIR": SPEC_DIR,
+        "GITHUB_ACTION_PATH": action_dir,
+    }
+    rc, out, outputs, _ = run_step(BASH, steps[CLASSIFY_STEP], workdir, env, runner_temp)
+    if rc != 0:
+        failures.append(f"(l) {CLASSIFY_STEP!r} exited {rc} on a classify-"
+                        f"script crash -- it must degrade safely, never "
+                        f"fail the job: {out.strip()}")
+        return failures
+    if "::warning::" not in out:
+        failures.append(f"(l) a classify-script crash produced no "
+                        f"::warning:: annotation -- got output={out!r}")
+    if outputs.get("all-unchecked-out-of-boundary") != "false":
+        failures.append(f"(l) a classify-script crash should degrade to "
+                        f"all-unchecked-out-of-boundary=false, got "
+                        f"{outputs.get('all-unchecked-out-of-boundary')!r}")
+    if outputs.get("findings-json", "").strip() not in ("[]", ""):
+        failures.append(f"(l) a classify-script crash should degrade to an "
+                        f"empty findings-json, got "
+                        f"{outputs.get('findings-json')!r}")
+    return failures
+
+
+# ---------------------------------------------------------------------------
+# Mutations (--self-test)
+# ---------------------------------------------------------------------------
+
+def _mut_second_literal_default(steps):
+    """(1) no-write-paths hand-edited to a second literal default inside
+    wing-commander-write-boundary's call site."""
+    marker = "  no-write-paths: ${{ inputs.no-write-paths }}"
+    replacement = '  no-write-paths: ".claude/"'
+    text = open(STAGE, encoding="utf-8").read()
+    if marker not in text:
+        return None
+    return text.replace(marker, replacement, 1)
+
+
+def _mut_statement_drift(steps):
+    """(2) the rendered write-paths-statement mutated to include a prefix
+    absent from the input."""
+    marker = 'write_paths_statement="This run\'s agent may not write: $write_paths_list."'
+    replacement = ('write_paths_statement="This run\'s agent may not write: '
+                   '$write_paths_list, .ssh/."')
+    if marker not in steps[COMPOSE_STEP]:
+        return None
+    mutated = copy.deepcopy(steps)
+    mutated[COMPOSE_STEP] = mutated[COMPOSE_STEP].replace(marker, replacement, 1)
+    return mutated
+
+
+def _mut_substring_match():
+    """(3) the classification rule's prefix-match relaxed to a substring
+    match."""
+    script_path = os.path.abspath(CLASSIFY_SCRIPT)
+    text = open(script_path, encoding="utf-8").read()
+    marker = "return any(normalized.startswith(prefix) for prefix in prefixes)"
+    replacement = "return any(prefix in normalized for prefix in prefixes)"
+    if marker not in text:
+        return None
+    return script_path, text.replace(marker, replacement, 1)
+
+
+def _mut_routed_ignores_classification(steps):
+    """(4) the routed computation changed to ignore classification entirely
+    -- hard-coded true whenever ok && !truncated, even when the remaining
+    unchecked work is NOT all out-of-boundary (PR #836 review, item 2's fix
+    dropped the old handoff gate on `routed`; this mutation now targets the
+    classification gate that replaced it, never a resurrected handoff
+    check)."""
+    marker = ('routed=false\n'
+              'if [ "$ok" = "true" ] && [ "$truncated" = "false" ] && '
+              '[ "$WRITE_BOUNDARY_ALL_OOB" = "true" ]; then\n'
+              '  routed=true\nfi')
+    replacement = ('routed=false\n'
+                  'if [ "$ok" = "true" ] && [ "$truncated" = "false" ]; then\n'
+                  '  routed=true\nfi')
+    if marker not in steps[CYCLE_STEP]:
+        return None
+    mutated = copy.deepcopy(steps)
+    mutated[CYCLE_STEP] = mutated[CYCLE_STEP].replace(marker, replacement, 1)
+    return mutated
+
+
+def _mut_drop_truncated_guard():
+    """(5) the Route step's if: guard's `truncated` clause removed -- the
+    rest of the PR #836 review item 12 guard (findings-json non-empty,
+    routed/handoff/iteration-cap) stays intact, so this isolates the
+    truncated exclusion specifically."""
+    doc_text = open(STAGE, encoding="utf-8").read()
+    marker = ("steps.final.outputs.truncated != 'true' && "
+             "steps.final.outputs.write-boundary-findings-json != '[]'")
+    replacement = "steps.final.outputs.write-boundary-findings-json != '[]'"
+    if marker not in doc_text:
+        return None
+    return doc_text.replace(marker, replacement, 1)
+
+
+def _mut_inline_fingerprint_in_finalize():
+    """(6) compute-finding-fingerprint.sh re-implemented inline a second
+    time -- in the finalize-facing lookup composite, since that (never
+    finalize.yml itself, which may not resolve _shared/ directly -- Gate
+    60's promotion-prevention check) is where the call site lives."""
+    text = open(WRITE_BOUNDARY_LOOKUP_COMPOSITE, encoding="utf-8").read()
+    marker = 'bash "$FP_SCRIPT" implement "$TASKS_PATH" "${lines[@]}"'
+    replacement = ('python3 -c \'import hashlib; print("fingerprint=" + '
+                   'hashlib.sha256("anchor|implement|x".encode()).hexdigest())\'')
+    if marker not in text:
+        return None
+    return text.replace(marker, replacement, 1)
+
+
+def _mut_retry_routed_false(steps):
+    """(8) the retry arm's routed condition hard-coded to `if false`
+    (PR #836 review, item 4's regression check -- RETRY_STEP's own routed
+    computation had no mutation coverage at all)."""
+    marker = ('routed=false\n'
+              'if [ "$ok" = "true" ] && [ "$truncated" = "false" ] && '
+              '[ "$WRITE_BOUNDARY_ALL_OOB" = "true" ]; then\n'
+              '  routed=true\nfi')
+    replacement = 'routed=false\nif false; then\n  routed=true\nfi'
+    if marker not in steps[RETRY_STEP]:
+        return None
+    mutated = copy.deepcopy(steps)
+    mutated[RETRY_STEP] = mutated[RETRY_STEP].replace(marker, replacement, 1)
+    return mutated
+
+
+def _mut_drop_prompt_interpolation(token):
+    text = open(STAGE, encoding="utf-8").read()
+    if token not in text:
+        return None
+    return text.replace(token, "", 1)
+
+
+def _mut_route_findings_json_wiped():
+    """(10) the Route step's findings-json wired to a literal '[]' instead
+    of the cycle/retry classification output -- out-of-boundary tasks
+    would be silently filed as an empty batch."""
+    text = open(STAGE, encoding="utf-8").read()
+    marker = "findings-json: ${{ steps.final.outputs.write-boundary-findings-json }}"
+    replacement = "findings-json: '[]'"
+    if marker not in text:
+        return None
+    return text.replace(marker, replacement, 1)
+
+
+def check_mutation_1(steps, root):
+    mutated_text = _mut_second_literal_default(steps)
+    if mutated_text is None:
+        print("::error::mutation 'second literal default' changed nothing.")
+        return ["mutation inapplicable: second literal default"]
+    # PR #836 review, item 4: re-run the REAL pass condition (a) against
+    # the mutated text, rather than a parallel hand-rolled count -- a
+    # future edit that deletes check_single_definition's own call in
+    # main() would otherwise still pass --self-test.
+    if check_single_definition(stage_text=mutated_text):
+        print("Mutation OK -- second literal default: caught (a).")
+        return []
+    return ["mutation survived: second literal default"]
+
+
+def check_mutation_2(steps, root):
+    mutated = _mut_statement_drift(steps)
+    if mutated is None:
+        print("::error::mutation 'statement drift' changed nothing.")
+        return ["mutation inapplicable: statement drift"]
+    # PR #836 review, item 4: re-run the REAL check_statement_fidelity
+    # against the mutated compose step.
+    if check_statement_fidelity(mutated, root):
+        print("Mutation OK -- statement drift: caught (b).")
+        return []
+    return ["mutation survived: statement drift"]
+
+
+def check_mutation_3(root):
+    result = _mut_substring_match()
+    if result is None:
+        print("::error::mutation 'substring match' changed nothing.")
+        return ["mutation inapplicable: substring match"]
+    _script_path, mutated_text = result
+    fd, tmp_path = tempfile.mkstemp(suffix=".sh")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(mutated_text)
+        os.chmod(tmp_path, 0o755)
+        # PR #836 review, item 4: re-run the REAL check_classification
+        # against the mutated script -- the CLASSIFY_FIXTURES entry that
+        # actually distinguishes prefix-match from substring-match
+        # (`src/.claude/nested/thing.md`) is the one that catches this,
+        # never a hand-picked one-off fixture.
+        result2 = check_classification(root, script_path=tmp_path)
+    finally:
+        os.remove(tmp_path)
+    if result2:
+        print("Mutation OK -- substring match: caught (c).")
+        return []
+    return ["mutation survived: substring match"]
+
+
+def check_mutation_4(steps, root):
+    mutated = _mut_routed_ignores_classification(steps)
+    if mutated is None:
+        print("::error::mutation 'routed ignores classification' changed nothing.")
+        return ["mutation inapplicable: routed ignores classification"]
+    # PR #836 review, item 4: re-run the REAL check_termination_and_reason
+    # against the mutated cycle step.
+    if check_termination_and_reason(mutated, root):
+        print("Mutation OK -- routed ignores classification: caught (d)'s mixed-set scenario.")
+        return []
+    return ["mutation survived: routed ignores classification"]
+
+
+def check_mutation_5():
+    mutated_text = _mut_drop_truncated_guard()
+    if mutated_text is None:
+        print("::error::mutation 'drop truncated guard' changed nothing.")
+        return ["mutation inapplicable: drop truncated guard"]
+    # PR #836 review, item 4: re-run the REAL check_no_filing_on_truncated
+    # against the mutated text.
+    if check_no_filing_on_truncated(stage_text=mutated_text):
+        print("Mutation OK -- drop truncated guard: caught (e).")
+        return []
+    return ["mutation survived: drop truncated guard"]
+
+
+def check_mutation_6():
+    mutated_text = _mut_inline_fingerprint_in_finalize()
+    if mutated_text is None:
+        print("::error::mutation 'inline fingerprint in finalize' changed nothing.")
+        return ["mutation inapplicable: inline fingerprint in finalize"]
+    # PR #836 review, item 4: re-run the REAL check_fingerprint_single_home
+    # against the mutated file content.
+    norm_path = os.path.normpath(WRITE_BOUNDARY_LOOKUP_COMPOSITE)
+    if check_fingerprint_single_home(content_overrides={norm_path: mutated_text}):
+        print("Mutation OK -- inline fingerprint in finalize: caught (g).")
+        return []
+    return ["mutation survived: inline fingerprint in finalize"]
+
+
+def check_mutation_8(steps, root):
+    mutated = _mut_retry_routed_false(steps)
+    if mutated is None:
+        print("::error::mutation 'retry routed hard-coded false' changed nothing.")
+        return ["mutation inapplicable: retry routed hard-coded false"]
+    if check_termination_and_reason(mutated, root):
+        print("Mutation OK -- retry routed hard-coded false: caught (d) scenario 5 (retry).")
+        return []
+    return ["mutation survived: retry routed hard-coded false"]
+
+
+def check_mutation_9():
+    for label, token in (
+        ("cycle", "${{ steps.tool-args-cycle.outputs.write-paths-statement }}"),
+        ("retry", "${{ steps.tool-args-retry.outputs.write-paths-statement }}"),
+    ):
+        mutated_text = _mut_drop_prompt_interpolation(token)
+        if mutated_text is None:
+            print(f"::error::mutation 'drop {label} prompt interpolation' changed nothing.")
+            return [f"mutation inapplicable: drop {label} prompt interpolation"]
+        if check_prompt_and_route_wiring(stage_text=mutated_text):
+            print(f"Mutation OK -- drop {label} prompt interpolation: caught (k).")
+        else:
+            return [f"mutation survived: drop {label} prompt interpolation"]
+    return []
+
+
+def check_mutation_10():
+    mutated_text = _mut_route_findings_json_wiped()
+    if mutated_text is None:
+        print("::error::mutation 'Route step findings-json wiped' changed nothing.")
+        return ["mutation inapplicable: Route step findings-json wiped"]
+    if check_prompt_and_route_wiring(stage_text=mutated_text):
+        print("Mutation OK -- Route step findings-json wiped: caught (k).")
+        return []
+    return ["mutation survived: Route step findings-json wiped"]
+
+
+def _mut_dispatch_ignores_routed(steps):
+    """(11) review-gate-round-1 item 1: the dispatch step's elif dropped
+    back to checking HANDOFF alone, so a routed=true/handoff=false cycle
+    below the iteration cap redispatches another cycle instead of
+    terminating."""
+    marker = 'elif [ "$HANDOFF" = "true" ] || [ "$ROUTED" = "true" ]; then'
+    replacement = 'elif [ "$HANDOFF" = "true" ]; then'
+    if marker not in steps[DISPATCH_STEP]:
+        return None
+    mutated = copy.deepcopy(steps)
+    mutated[DISPATCH_STEP] = mutated[DISPATCH_STEP].replace(marker, replacement, 1)
+    return mutated
+
+
+def check_mutation_11(steps, root):
+    mutated = _mut_dispatch_ignores_routed(steps)
+    if mutated is None:
+        print("::error::mutation 'dispatch ignores routed' changed nothing.")
+        return ["mutation inapplicable: dispatch ignores routed"]
+    # Re-run the REAL check_termination_and_reason -- scenario 2's dispatch
+    # assertion is the one that targets this exact regression.
+    if check_termination_and_reason(mutated, root):
+        print("Mutation OK -- dispatch ignores routed: caught (d) scenario 2's dispatch assertion.")
+        return []
+    return ["mutation survived: dispatch ignores routed"]
+
+
+NORMALIZE_PREFIX_SCRIPT = ".github/actions/_shared/normalize-write-path-prefix.sh"
+
+
+def _mut_drop_prefix_normalization():
+    """(12) review-gate-round-1 item 2 / review-gate-round-3 single-home
+    follow-up: the SHARED normalize-write-path-prefix.sh helper's
+    trailing-slash normalization dropped, so a no-trailing-slash boundary
+    entry ("specs") over-matches a sibling directory ("specs-legacy/...")
+    enforcement never actually denies. The classifier itself no longer
+    normalizes inline -- it shells out to this one helper, also called by
+    wing-commander-tool-args/action.yml's compose step -- so this mutation
+    now targets the helper, not the classifier."""
+    helper_path = os.path.abspath(NORMALIZE_PREFIX_SCRIPT)
+    text = open(helper_path, encoding="utf-8").read()
+    marker = ('case "$prefix" in\n'
+              '  */) echo "$prefix" ;;\n'
+              '  *) echo "${prefix}/" ;;\n'
+              'esac')
+    replacement = 'echo "$prefix"'
+    if marker not in text:
+        return None
+    return helper_path, text.replace(marker, replacement, 1)
+
+
+def _mut_drop_limit_flag(steps):
+    """(13) review-gate-round-1 item 3: LOOKUP_STEP's --limit flag dropped,
+    reopening the silent-cap-at-30 defect."""
+    marker = '--json number,url,state,body --limit 1000 > "$issues_file"'
+    replacement = '--json number,url,state,body > "$issues_file"'
+    if marker not in steps[LOOKUP_STEP]:
+        return None
+    mutated = copy.deepcopy(steps)
+    mutated[LOOKUP_STEP] = mutated[LOOKUP_STEP].replace(marker, replacement, 1)
+    return mutated
+
+
+def check_mutation_13(steps, root):
+    mutated = _mut_drop_limit_flag(steps)
+    if mutated is None:
+        print("::error::mutation 'drop --limit flag' changed nothing.")
+        return ["mutation inapplicable: drop --limit flag"]
+    if check_finalize_lookup(mutated, root):
+        print("Mutation OK -- drop --limit flag: caught (3).")
+        return []
+    return ["mutation survived: drop --limit flag"]
+
+
+def check_mutation_12(root):
+    result = _mut_drop_prefix_normalization()
+    if result is None:
+        print("::error::mutation 'drop prefix normalization' changed nothing.")
+        return ["mutation inapplicable: drop prefix normalization"]
+    _helper_path, mutated_text = result
+    # The classifier resolves the shared helper by its own BASH_SOURCE
+    # dirname, so the mutated helper has to sit beside a copy of the
+    # classifier -- in the real tree's relative layout -- rather than at an
+    # arbitrary tmp path the classifier could never find.
+    tmp_dir = tempfile.mkdtemp()
+    try:
+        classify_src = os.path.abspath(CLASSIFY_SCRIPT)
+        tmp_classify = os.path.join(tmp_dir, os.path.basename(classify_src))
+        shutil.copy(classify_src, tmp_classify)
+        os.chmod(tmp_classify, 0o755)
+        tmp_helper = os.path.join(tmp_dir, os.path.basename(NORMALIZE_PREFIX_SCRIPT))
+        with open(tmp_helper, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(mutated_text)
+        os.chmod(tmp_helper, 0o755)
+        result2 = check_classification(root, script_path=tmp_classify)
+    finally:
+        shutil.rmtree(tmp_dir)
+    if result2:
+        print("Mutation OK -- drop prefix normalization: caught (c).")
+        return []
+    return ["mutation survived: drop prefix normalization"]
+
+
+def _mut_drop_enforcement_append(steps):
+    """(14) PR #836 review, item 13: strip the Edit()/Write() glob-deny
+    append from the compose step, so write_paths_glob_denies is still
+    computed and the write-paths-statement still renders, but the
+    composed disallowed-tools list no longer enforces it -- a stated-but-
+    unenforced boundary (condition (i))."""
+    marker = ('if [ -n "$write_paths_glob_denies" ]; then\n'
+             '  if [ -z "$effective_disallowed" ]; then\n'
+             '    effective_disallowed="$write_paths_glob_denies"\n'
+             '  else\n'
+             '    effective_disallowed="$effective_disallowed,$write_paths_glob_denies"\n'
+             '  fi\nfi')
+    if marker not in steps[COMPOSE_STEP]:
+        return None
+    mutated = copy.deepcopy(steps)
+    mutated[COMPOSE_STEP] = mutated[COMPOSE_STEP].replace(marker, "", 1)
+    return mutated
+
+
+def check_mutation_14(steps, root):
+    mutated = _mut_drop_enforcement_append(steps)
+    if mutated is None:
+        print("::error::mutation 'drop enforcement append' changed nothing.")
+        return ["mutation inapplicable: drop enforcement append"]
+    # Re-run the REAL check_enforcement_parity against the mutated compose
+    # step, never a parallel hand-rolled assertion (PR #836 review, item 4's
+    # established pattern, extended to condition (i) per item 13).
+    if check_enforcement_parity(mutated, root):
+        print("Mutation OK -- drop enforcement append: caught (i).")
+        return []
+    return ["mutation survived: drop enforcement append"]
+
+
+def _mut_break_fingerprint_determinism():
+    """(15) PR #836 review, item 13: salt the anchor-branch hash input
+    with a fresh value on every invocation, breaking condition (f)'s
+    idempotency guarantee -- the same unchecked line would fingerprint
+    differently across cycles, defeating SC-004's dedup."""
+    script_path = os.path.abspath(FINGERPRINT_SCRIPT)
+    text = open(script_path, encoding="utf-8").read()
+    marker = ('        fp = hashlib.sha256("anchor|{0}|{1}|{2}".format(\n'
+             '            STAGE, norm_path, norm_gate\n'
+             '        ).encode("utf-8")).hexdigest()')
+    replacement = ('        fp = hashlib.sha256("anchor|{0}|{1}|{2}".format(\n'
+                   '            STAGE, norm_path, norm_gate + str(os.urandom(4))\n'
+                   '        ).encode("utf-8")).hexdigest()')
+    if marker not in text:
+        return None
+    return script_path, text.replace(marker, replacement, 1)
+
+
+def check_mutation_15(root):
+    result = _mut_break_fingerprint_determinism()
+    if result is None:
+        print("::error::mutation 'break fingerprint determinism' changed nothing.")
+        return ["mutation inapplicable: break fingerprint determinism"]
+    _script_path, mutated_text = result
+    fd, tmp_path = tempfile.mkstemp(suffix=".sh")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(mutated_text)
+        os.chmod(tmp_path, 0o755)
+        result2 = check_idempotency(root, script_path=tmp_path)
+    finally:
+        os.remove(tmp_path)
+    if result2:
+        print("Mutation OK -- break fingerprint determinism: caught (f).")
+        return []
+    return ["mutation survived: break fingerprint determinism"]
+
+
+def _mut_collapse_label_defaults():
+    """(16) PR #836 review, item 13: collapse write-boundary-label-
+    prefix's default onto findings-label-prefix's default -- the board
+    loop would then treat a routed-but-unreachable task the same as a
+    fix-shaped defect (condition (h), research.md D4)."""
+    text = open(STAGE, encoding="utf-8").read()
+    marker = '        default: "route-out-of-boundary"'
+    replacement = "        default: found-by"
+    if marker not in text:
+        return None
+    return text.replace(marker, replacement, 1)
+
+
+def check_mutation_16():
+    mutated_text = _mut_collapse_label_defaults()
+    if mutated_text is None:
+        print("::error::mutation 'collapse label defaults' changed nothing.")
+        return ["mutation inapplicable: collapse label defaults"]
+    if check_label_separation(stage_text=mutated_text):
+        print("Mutation OK -- collapse label defaults: caught (h).")
+        return []
+    return ["mutation survived: collapse label defaults"]
+
+
+def _mut_classify_swallow_crash(steps):
+    """(17) review-gate-round-4 item 6: revert the classify step's own
+    ::warning:: + safe-fallback handling to a bare pass-through -- a
+    classify-script crash is then indistinguishable from "nothing out of
+    boundary" again, the exact regression continue-on-error alone used to
+    mask silently (condition (l))."""
+    marker = 'if [ "$rc" -ne 0 ]; then\n'
+    replacement = 'if false; then\n'
+    if marker not in steps[CLASSIFY_STEP]:
+        return None
+    mutated = copy.deepcopy(steps)
+    mutated[CLASSIFY_STEP] = mutated[CLASSIFY_STEP].replace(marker, replacement, 1)
+    return mutated
+
+
+def check_mutation_17(steps, root):
+    mutated = _mut_classify_swallow_crash(steps)
+    if mutated is None:
+        print("::error::mutation 'classify step swallows crash' changed nothing.")
+        return ["mutation inapplicable: classify step swallows crash"]
+    if check_classify_failure_handling(mutated, root):
+        print("Mutation OK -- classify step swallows crash: caught (l).")
+        return []
+    return ["mutation survived: classify step swallows crash"]
+
+
+def _mut_dedup_on_raw_text(steps):
+    """(18) review-gate-round-4 item 7: revert the write-paths dedup key
+    from the normalized prefix back to the raw item text, so two spellings
+    of the same boundary (with vs. without a trailing slash) again produce
+    a duplicated statement entry and a duplicated glob deny (condition
+    (i)'s dedup assertion)."""
+    marker = ('  [ -n "${write_paths_seen[$normalized]+x}" ] && continue\n'
+              '  write_paths_seen["$normalized"]=1')
+    replacement = ('  [ -n "${write_paths_seen[$item]+x}" ] && continue\n'
+                   '  write_paths_seen["$item"]=1')
+    if marker not in steps[COMPOSE_STEP]:
+        return None
+    mutated = copy.deepcopy(steps)
+    mutated[COMPOSE_STEP] = mutated[COMPOSE_STEP].replace(marker, replacement, 1)
+    return mutated
+
+
+def check_mutation_18(steps, root):
+    mutated = _mut_dedup_on_raw_text(steps)
+    if mutated is None:
+        print("::error::mutation 'dedup on raw text' changed nothing.")
+        return ["mutation inapplicable: dedup on raw text"]
+    if check_enforcement_parity(mutated, root):
+        print("Mutation OK -- dedup on raw text: caught (i).")
+        return []
+    return ["mutation survived: dedup on raw text"]
+
+
+def run_mutations(steps, root):
+    failures = []
+    failures.extend(check_mutation_1(steps, root))
+    failures.extend(check_mutation_2(steps, root))
+    failures.extend(check_mutation_3(root))
+    failures.extend(check_mutation_4(steps, root))
+    failures.extend(check_mutation_5())
+    failures.extend(check_mutation_6())
+    failures.extend(check_mutation_8(steps, root))
+    failures.extend(check_mutation_9())
+    failures.extend(check_mutation_10())
+    failures.extend(check_mutation_11(steps, root))
+    failures.extend(check_mutation_12(root))
+    failures.extend(check_mutation_13(steps, root))
+    failures.extend(check_mutation_14(steps, root))
+    failures.extend(check_mutation_15(root))
+    failures.extend(check_mutation_16())
+    failures.extend(check_mutation_17(steps, root))
+    failures.extend(check_mutation_18(steps, root))
+    # (7) zero fixtures discovered/executed at all.
+    if not CLASSIFY_FIXTURES or not STATEMENT_FIXTURES:
+        failures.append("mutation survived: zero fixtures (Constitution VIII)")
+    else:
+        print("Mutation OK -- zero fixtures would fail loudly (Constitution VIII): "
+              f"{len(CLASSIFY_FIXTURES)} classification, {len(STATEMENT_FIXTURES)} "
+              "statement fixture(s) are wired.")
+    return failures
+
+
+# ---------------------------------------------------------------------------
+
+def check_gate_wired():
+    wf = yaml.safe_load(open(LINT_WORKFLOW, encoding="utf-8")) or {}
+    for job in (wf.get("jobs") or {}).values():
+        for step in (job or {}).get("steps") or []:
+            name = (step or {}).get("name") or ""
+            if name.startswith(GATE_PREFIX):
+                if str(step.get("if", "")).strip().lower() == "false":
+                    return [f"{GATE_PREFIX} step is present in {LINT_WORKFLOW} "
+                            f"but disabled (if: false)."]
+                if THIS_SCRIPT not in str(step.get("run", "")):
+                    return [f"{GATE_PREFIX} step in {LINT_WORKFLOW} does not "
+                            f"invoke {THIS_SCRIPT}."]
+                return []
+    return [f"no step named {GATE_PREFIX!r} found in {LINT_WORKFLOW}."]
+
+
+STEPS_CACHE = {}
+
+
+def load_steps():
+    STEPS_CACHE[COMPOSE_STEP] = find_step(TOOL_ARGS_COMPOSITE, COMPOSE_STEP)["run"]
+    STEPS_CACHE[CLASSIFY_STEP] = find_step(WRITE_BOUNDARY_COMPOSITE, CLASSIFY_STEP)["run"]
+    STEPS_CACHE[CYCLE_STEP] = find_step(STAGE, CYCLE_STEP)["run"]
+    STEPS_CACHE[RETRY_STEP] = find_step(STAGE, RETRY_STEP)["run"]
+    STEPS_CACHE[LOOKUP_STEP] = find_step(WRITE_BOUNDARY_LOOKUP_COMPOSITE, LOOKUP_STEP)["run"]
+    STEPS_CACHE[DISPATCH_STEP] = find_step(STAGE, DISPATCH_STEP)["run"]
+    return STEPS_CACHE
+
+
+def main():
+    global BASH
+    use_utf8_stdout()
+    ensure_jq()
+    BASH = resolve_bash()
+    if not shutil.which("git"):
+        sys.exit("::error::git is not on PATH. The shipped steps under test "
+                 "commit and push, so nothing here can run without it.")
+
+    self_test = "--self-test" in sys.argv[1:]
+    steps = load_steps()
+    root = tempfile.mkdtemp()
+    failures = []
+    try:
+        if self_test:
+            failures.extend(run_mutations(steps, root))
+        else:
+            failures.extend(check_single_definition())
+            failures.extend(check_prompt_and_route_wiring())
+            failures.extend(check_statement_fidelity(steps, root))
+            failures.extend(check_enforcement_parity(steps, root))
+            failures.extend(check_classification(root))
+            failures.extend(check_termination_and_reason(steps, root))
+            failures.extend(check_no_filing_on_truncated())
+            failures.extend(check_idempotency(root))
+            failures.extend(check_two_cycles_one_issue())
+            failures.extend(check_fingerprint_single_home())
+            failures.extend(check_label_separation())
+            failures.extend(check_finalize_lookup(steps, root))
+            failures.extend(check_classify_failure_handling(steps, root))
+            failures.extend(check_gate_wired())
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+    label = "self-test" if self_test else "scenarios"
+    print(f"write boundary {label}: {len(failures)} failure(s).")
+    for f in failures:
+        print(f"::error::{f}")
+    sys.exit(1 if failures else 0)
+
+
+if __name__ == "__main__":
+    main()
