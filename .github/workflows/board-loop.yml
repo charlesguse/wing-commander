@@ -1661,12 +1661,18 @@ jobs:
       # Best-effort: an expired/missing artifact or an inaccessible run is
       # NOT a hard failure here -- board_triage.py's own evidence_unavailable
       # ground (FR-014) is exactly what a missing transcript path decides.
+      # Gate 12: the run, its artifacts and the artifact zip are Actions
+      # reads, which the documented App grant does not cover (docs/setup.md).
+      # On that grant every fetch 403s, quietly, and triage never sees a
+      # transcript. (This repository's own App reads them anyway, e.g. run
+      # 36087278355, so it holds more than the documented grant.) This
+      # job's github.token holds actions: write.
       - name: Fetch the cited run's own evidence, if reachable
         id: fetch
         if: steps.cite.outputs.run-id != ''
         continue-on-error: true
         env:
-          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
           RUN_ID: ${{ steps.cite.outputs.run-id }}
         run: |
           set -uo pipefail

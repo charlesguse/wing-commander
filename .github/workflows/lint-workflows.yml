@@ -893,8 +893,9 @@ jobs:
           # App installation token for the repository the stage runs in,
           # minted inside the composite, so the workflow only ever sees the
           # composite's output and nothing structural in the workflow file
-          # says it is an App token. It is the one App-token expression that
-          # has to be named here.
+          # says it is an App token. It and APP_TOKEN_ENV_EXPR below (the same
+          # token, exported to $GITHUB_ENV) are the App-token expressions
+          # that have to be named here.
           #
           # Every OTHER App token this repository mints is a workflow step
           # that `uses: actions/create-github-app-token` directly — e2e-stage's
@@ -914,10 +915,20 @@ jobs:
           DEFAULT_TOKEN_EXPRS = {"github.token", "secrets.GITHUB_TOKEN"}
 
 
+          # wing-commander-context also exports its App token to $GITHUB_ENV
+          # as WC_BOT_TOKEN, so in a job that runs it `env.WC_BOT_TOKEN` is
+          # the same App token. Left as "other", every call made under it
+          # went unchecked: board-loop triage's run-evidence fetch called
+          # the Actions API with it, which 403s under the documented grant.
+          APP_TOKEN_ENV_EXPR = "env.WC_BOT_TOKEN"
+          APP_TOKEN_ENV_EXPORTER = "/actions/wing-commander-context"
+
+
           def app_token_exprs_for(job):
               """APP_TOKEN_EXPRS plus `steps.<id>.outputs.token` for every step
               in THIS job that mints an installation token with
-              actions/create-github-app-token."""
+              actions/create-github-app-token, plus APP_TOKEN_ENV_EXPR when
+              THIS job runs wing-commander-context."""
               out = set(APP_TOKEN_EXPRS)
               for st in job.get("steps") or []:
                   st = st or {}
@@ -925,6 +936,8 @@ jobs:
                   uses = str(st.get("uses") or "")
                   if sid and uses.split("@")[0] == APP_TOKEN_MINTER:
                       out.add(f"steps.{sid}.outputs.token")
+                  if uses.split("@")[0].endswith(APP_TOKEN_ENV_EXPORTER):
+                      out.add(APP_TOKEN_ENV_EXPR)
               return out
 
           SUBCOMMAND_PERMS = {

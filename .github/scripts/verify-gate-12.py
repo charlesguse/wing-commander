@@ -124,6 +124,26 @@ def mkcase_minted(minter_uses, run_lines, docs=DOCS_OK, step_id="e2e-token"):
             "docs/setup.md": docs}
 
 
+def mkcase_ctx_env(run_lines, with_ctx=True, job_perms=ACTIONS_READ):
+    """A job whose second step runs `gh` under `env.WC_BOT_TOKEN`, the App
+    token wing-commander-context exports to $GITHUB_ENV. Gate 12 treats it
+    as the App token only in a job that runs that composite."""
+    ctx = ("      - name: ctx\n        id: ctx\n"
+           "        uses: ./.wc-pristine-repo/.github/actions/wing-commander-context\n"
+           if with_ctx else "")
+    run = "".join(f"          {l}\n" for l in run_lines)
+    return {".github/workflows/w.yml":
+                ("name: ctxenv\n"
+                 "on:\n  workflow_dispatch: {}\n"
+                 "jobs:\n  work:\n    runs-on: ubuntu-latest\n"
+                 f"    permissions:\n{job_perms}"
+                 "    steps:\n" + ctx +
+                 "      - name: call\n        env:\n"
+                 "          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}\n"
+                 "        run: |\n" + run),
+            "docs/setup.md": DOCS_OK}
+
+
 def mkcase(job_perms, job_env, env_lines, run_lines, docs=DOCS_OK):
     return {
         ".github/workflows/w.yml": wf(step(env_lines, run_lines),
@@ -408,6 +428,23 @@ CASES = [
               "      - name: mint\n        id: e2e-token\n"
               "        uses: actions/create-github-app-token@v3\n", ""),
       "docs/setup.md": DOCS_OK},
+     False, ("unrecognised token", "Unverified")),
+
+    ("env.WC_BOT_TOKEN in a job that runs wing-commander-context is the App "
+     "token: an Actions read under it fails (board-loop triage's run-evidence "
+     "fetch, which 403s under the documented App grant)",
+     mkcase_ctx_env(['gh api "repos/$REPO/actions/runs/$RUN_ID/artifacts"']),
+     True, ("App token", "actions")),
+
+    ("... and it is held to the App's real grant: an issue comment under it "
+     "passes",
+     mkcase_ctx_env(['gh issue comment "$N" --body hi']),
+     False, ()),
+
+    ("... and in a job that never runs wing-commander-context the same "
+     "expression stays unrecognised (reported unverified, neither passed as "
+     "the App nor failed)",
+     mkcase_ctx_env(['gh api "repos/$REPO/actions/runs/$RUN_ID/artifacts"'], with_ctx=False),
      False, ("unrecognised token", "Unverified")),
 
     ("an unresolvable gh api path (traced to a $(...) computed value) fails "
