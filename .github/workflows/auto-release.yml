@@ -104,9 +104,12 @@ jobs:
   # verify-e2e reads it back before the fixture names it. It stays until
   # the next run's sweep below replaces it, never deleted when this run
   # ends: the test repository's wrappers name it until they are
-  # re-scaffolded, and its own scheduled and PR-triggered wrappers would
-  # fail at startup against a deleted tag; a "Re-run failed jobs" of
-  # verify-e2e reuses it too. So at most one e2e-verify-* tag exists at a
+  # re-scaffolded, and its own scheduled wrappers would fail at startup
+  # against a deleted tag between runs; a "Re-run failed jobs" of
+  # verify-e2e reuses it too. (The PR-closed wrappers that verify-e2e's
+  # "Close prior leftovers" fires still name the previous run's swept tag
+  # and fail at startup; they predate KICKOFF_TIME, so no verdict reads
+  # them.) So at most one e2e-verify-* tag exists at a
   # time. Its own job so `contents: write` never reaches verify-e2e. Never
   # exits non-zero: a failure publishes no tag and says why, and
   # verify-e2e's pin check turns that into a fail-infra verdict.
@@ -2235,7 +2238,7 @@ jobs:
   # actually ran -- `always()` so a paused/no-op/failed run still reports.
   report:
     if: always() && vars.WING_COMMANDER_AUTO_RELEASE_PAUSED != 'true'
-    needs: [detect, verify-e2e, decide-version, dispatch-release]
+    needs: [detect, e2e-pin, verify-e2e, decide-version, dispatch-release]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -2292,6 +2295,7 @@ jobs:
           # decide-version crash as "release dispatch failed", both filing
           # nothing useful or pointing at a run that never existed.
           DETECT_RESULT: ${{ needs.detect.result }}
+          PIN_RESULT: ${{ needs.e2e-pin.result }}
           VERIFY_RESULT: ${{ needs.verify-e2e.result }}
           DECIDE_RESULT: ${{ needs.decide-version.result }}
           DISPATCH_RESULT: ${{ needs.dispatch-release.result }}
@@ -2396,6 +2400,16 @@ jobs:
             fi
             exit 0
           fi
+
+          # A run cancelled while e2e-pin ran never starts verify-e2e (its
+          # !cancelled() is false), so verify-e2e's own result cannot say
+          # so: read e2e-pin's. Summarised, never filed (#325).
+          case "$PIN_RESULT" in
+            cancelled)
+              echo "run cancelled during e2e-pin -- nothing verified, nothing cut" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+              ;;
+          esac
 
           # A cancelled verify-e2e wrote no verdict either, and is the run
           # being stopped (a hung poll cancelled by hand), not a failure:
