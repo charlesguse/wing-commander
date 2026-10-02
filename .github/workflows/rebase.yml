@@ -368,12 +368,21 @@ jobs:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           DB: ${{ steps.defbranch.outputs.name }}
           SPEC_PREFIX: ${{ inputs.spec-prefix }}
+          BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}[bot]
         run: |
           set -uo pipefail
 
           warn() {
             echo "::warning::wing-commander rebase discover: ${SPEC_PREFIX}$1 excluded — $2"
             echo "⚠️ \`${SPEC_PREFIX}$1\` excluded from auto-rebase: $2" >> "$GITHUB_STEP_SUMMARY"
+          }
+
+          # A read this step could not make (#831). The branch stays
+          # selected, as it would have been with no read at all: one extra
+          # rebase attempt is the safe direction. Unlike a quiet default,
+          # the annotation leaves a trace of why.
+          read_failed() {
+            echo "::warning::wing-commander rebase discover: ${SPEC_PREFIX}$1 kept — could not read $2: $(printf '%s' "$3" | tr '\n' ' ' | cut -c1-300)"
           }
 
           # A routine, expected exclusion. Deliberately not a ::warning:: —
@@ -395,6 +404,7 @@ jobs:
 
           main_sha="$(git rev-parse "refs/remotes/origin/$DB" 2>/dev/null || git rev-parse HEAD)"
 
+          err_file="$RUNNER_TEMP/rebase-discover-gh-err.txt"
           selected='[]'
           while read -r _sha ref; do
             [ -n "${ref:-}" ] || continue
@@ -448,23 +458,74 @@ jobs:
 
             issue="$(printf '%s' "$meta" | jq -r '.issue // empty')"
 
+            issue_state=""
+            blocked=false
+            if [ -n "$issue" ]; then
+              # Each failed read clears its variable (Gate 126): gh prints
+              # the error body to stdout.
+              if ! issue_read="$(gh api "repos/$GITHUB_REPOSITORY/issues/$issue" \
+                  --jq '"\(.state | ascii_downcase) \([.labels[].name] | index("rebase:blocked") != null)"' 2>"$err_file")"; then
+                issue_read=""
+                read_failed "$slug" "lifecycle issue #$issue" "$(cat "$err_file")"
+              fi
+              if [ -n "$issue_read" ]; then
+                read -r issue_state blocked <<< "$issue_read"
+              fi
+            fi
+
+            # #916: a spec whose lifecycle issue is closed (parked, not
+            # planned, or abandoned) and that has no open pull request is
+            # no one's work in flight, and rebasing it on every run spends
+            # agent turns on a branch nobody will merge. Reopening the
+            # issue, or opening a pull request from the branch, brings it
+            # back. `--head` matches the branch name in any repository, so
+            # a fork's same-named branch does not count.
+            if [ "$issue_state" = "closed" ]; then
+              if open_pr="$(gh pr list --repo "$GITHUB_REPOSITORY" \
+                  --head "${SPEC_PREFIX}$slug" --state open --limit 20 \
+                  --json number,isCrossRepository \
+                  --jq '[.[] | select(.isCrossRepository | not)] | .[0].number // empty' 2>"$err_file")"; then
+                if [ -z "$open_pr" ]; then
+                  note "$slug" "its lifecycle issue (#$issue) is closed and no pull request from it is open"
+                  continue
+                fi
+              else
+                read_failed "$slug" "its open pull requests" "$(cat "$err_file")"
+              fi
+            fi
+
             # Skip a branch already reported blocked if nothing has changed
             # since — same branch tip AND same default-branch tip as the most
-            # recent escalation marker (dedup).
-            if [ -n "$issue" ]; then
-              blocked="$(gh issue view "$issue" --json labels \
-                --jq '[.labels[].name] | index("rebase:blocked") != null' 2>/dev/null || echo false)"
-              if [ "$blocked" = "true" ]; then
-                marker="$(gh issue view "$issue" --json comments \
-                  --jq '[.comments[].body] | map(select(test("<!-- wing-commander-rebase: blocked"))) | last // empty' 2>/dev/null || echo '')"
-                if [ -n "$marker" ]; then
-                  m_branch="$(printf '%s' "$marker" | sed -n 's/.*branch-sha=\([0-9a-f]\{1,\}\).*/\1/p')"
-                  m_main="$(printf '%s' "$marker" | sed -n 's/.*main-sha=\([0-9a-f]\{1,\}\).*/\1/p')"
-                  branch_tip="$(git ls-remote origin "refs/heads/${SPEC_PREFIX}$slug" | awk '{print $1}')"
-                  if [ -n "$m_branch" ] && [ "$m_branch" = "$branch_tip" ] && [ "$m_main" = "$main_sha" ]; then
-                    echo "⏭️ \`${SPEC_PREFIX}$slug\` unchanged since it was reported blocked (branch=\`$branch_tip\`, $DB=\`$main_sha\`) — skipping (dedup)." >> "$GITHUB_STEP_SUMMARY"
-                    continue
-                  fi
+            # recent escalation marker (dedup). Only the App's own comments
+            # carry a marker (#831): anyone can comment on a public issue,
+            # and a quoted marker with the current SHAs would otherwise
+            # silence the re-escalation. The author test is the jq spelling
+            # of board_item_marker.is_loop_marker_author(), and the comments
+            # come from REST, all pages merged: `--json comments` has no
+            # user.type to test.
+            if [ "$blocked" = "true" ]; then
+              marker=""
+              if ! comments="$(gh api "repos/$GITHUB_REPOSITORY/issues/$issue/comments?per_page=100" \
+                  --paginate --jq '.[]' 2>"$err_file")"; then
+                comments=""
+                read_failed "$slug" "lifecycle issue #$issue's comments" "$(cat "$err_file")"
+              fi
+              # `shell: bash` is errexit: a jq failure here must keep the
+              # branch, never stop discovery for every branch.
+              if [ -n "$comments" ]; then
+                marker="$(printf '%s\n' "$comments" | jq -rs --arg bot "$BOT_LOGIN" '
+                  [.[] | select(.user.type == "Bot" and .user.login == $bot)
+                   | [(.body // "") | scan("<!-- wing-commander-rebase: blocked [^>]*-->")] | last // empty]
+                  | last // empty')" \
+                  || { marker=""; read_failed "$slug" "lifecycle issue #$issue's comments" "jq could not parse them"; }
+              fi
+              if [ -n "$marker" ]; then
+                m_branch="$(printf '%s' "$marker" | sed -n 's/.*branch-sha=\([0-9a-f]\{1,\}\).*/\1/p')"
+                m_main="$(printf '%s' "$marker" | sed -n 's/.*main-sha=\([0-9a-f]\{1,\}\).*/\1/p')"
+                branch_tip="$(git ls-remote origin "refs/heads/${SPEC_PREFIX}$slug" | awk '{print $1}')"
+                if [ -n "$m_branch" ] && [ "$m_branch" = "$branch_tip" ] && [ "$m_main" = "$main_sha" ]; then
+                  echo "⏭️ \`${SPEC_PREFIX}$slug\` unchanged since it was reported blocked (branch=\`$branch_tip\`, $DB=\`$main_sha\`) — skipping (dedup)." >> "$GITHUB_STEP_SUMMARY"
+                  continue
                 fi
               fi
             fi

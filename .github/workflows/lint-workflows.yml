@@ -4065,6 +4065,13 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-status.py
 
+      # rebase.yml's discover step (#916, #831) runs against a real local
+      # origin and a gh stub that applies its own --jq programs. Not
+      # numbered, for the same reason as the board status step above.
+      - name: Rebase discover skips closed-issue branches and reads only the App's dedup marker
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-rebase-discover-selection.py
+
       # Gate 82 — specs/057-autonomous-board-loop (FR-012/FR-064 bullet 1):
       # triage may close an issue on exactly two code-derived grounds, and
       # an agent's "already fixed on main" proposal must NEVER be one of
