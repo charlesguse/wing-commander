@@ -675,7 +675,8 @@ defects and asserts both the verdict and the error text.
 
 **Design**: a `discover` job selects every in-flight `spec/NNN-slug` branch
 (reading each branch's *own* `spec-meta.json` tip, skipping `stalled` and
-unidentifiable ones), then fans out one isolated `rebase` matrix job per
+unidentifiable ones, a branch whose PR has merged, and one whose lifecycle
+issue is closed with no open PR from the branch), then fans out one isolated `rebase` matrix job per
 branch. Each runs `git rebase origin/main`; clean ⇒ `push --force-with-lease`
 (a rejected lease means the branch moved meanwhile — skip silently, retry next
 run); conflicts ⇒ claude-code-action (`--model claude-sonnet-5`, prompt scoped
@@ -684,7 +685,8 @@ deterministic per-commit file-scope check before publish); still stuck ⇒ abort
 the rebase (branch left byte-for-byte untouched) and comment on the lifecycle
 issue for human help. The escalation comment carries a
 `<!-- wing-commander-rebase: blocked branch-sha=… main-sha=… -->` marker plus a
-`rebase:blocked` label; `discover` reads that marker to skip a branch whose
+`rebase:blocked` label; `discover` reads that marker, from the App's own
+comments only, to skip a branch whose
 `(branch, main)` pair hasn't changed since it was reported blocked, so a stall
 is only escalated once until either side moves (a subsequent success removes
 the label).
