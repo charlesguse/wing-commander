@@ -274,9 +274,10 @@ def run_shell(script, workdir, env_extra, runner_temp, path):
             f"unhandled ${{{{ }}}} expression; teach run_shell() to resolve it."
         )
 
-    # Neither workflow sets a step-level `shell:` or a `defaults:` block, so
-    # wc_shell_harness's default (`bash -e <file>`, no pipefail) is exactly
-    # what the runner does here. See that module for why the script goes over
+    # Neither workflow sets a step-level `shell:` on these steps, and both
+    # set `defaults: run: shell: bash -e {0}` (#795), so wc_shell_harness's
+    # default (`bash -e <file>`, no pipefail) is exactly what the runner
+    # does here. See that module for why the script goes over
     # as a file and why the bash and the decoding are both chosen explicitly.
     return run_step(BASH, script, workdir, env_extra, runner_temp)
 

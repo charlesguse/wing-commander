@@ -1058,7 +1058,8 @@ jobs:
       # The single shared publish path for a clean rebase and a scope-verified
       # AI resolution. The lease compares against the branch tip recorded at
       # checkout, so a push rejected because the branch moved meanwhile is
-      # skipped silently, with no lifecycle comment. On success, drop any
+      # skipped silently, with no lifecycle comment. Any other refusal after
+      # a failed post-agent credential fails the step instead (#661). On success, drop any
       # stale rebase:blocked label (auto-recovery).
       #
       # `!cancelled()` rather than `always()`: the status function is here to
@@ -1094,11 +1095,13 @@ jobs:
                 echo "${SPEC_PREFIX}$SLUG: removed rebase:blocked from #$ISSUE (auto-recovery)." >> "$GITHUB_STEP_SUMMARY"
               fi
             fi
-          elif [ "$CREDENTIAL_OK" = "false" ]; then
-            # Not a race: the wing-commander-bot credential was not
+          elif [ "$CREDENTIAL_OK" = "false" ] && ! grep -q '(stale info)' "$RUNNER_TEMP/push-err.txt"; then
+            # The lease did not refuse it ("stale info" is git's own lease
+            # rejection, which stays the branch race below whatever the
+            # credential), and the wing-commander-bot credential was not
             # re-established after the agent ran, so the refusal is most
             # likely authentication (#661). Fail loudly, naming it.
-            echo "::error::${SPEC_PREFIX}$SLUG: push refused after the post-agent wing-commander-bot credential could not be re-established. This is a credential failure, not a branch race; the rebased result was not published."
+            echo "::error::${SPEC_PREFIX}$SLUG: push refused after the post-agent wing-commander-bot credential could not be re-established. This is most likely a credential failure, not a branch race (the lease did not refuse it); the rebased result was not published."
             {
               echo "${SPEC_PREFIX}$SLUG: push refused with a failed post-agent credential; not treated as a branch race."
               sed 's/^/    /' "$RUNNER_TEMP/push-err.txt"

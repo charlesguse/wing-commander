@@ -1123,8 +1123,11 @@ def case_container_steps_pin_shell_bash():
     on that image. The pipefail case above is the subset whose failure was
     seen first; this is the whole class. The fleet meets it through each
     container-bound workflow's `defaults: run: shell: bash -e {0}` (the
-    canonical comment is in pr-conversation.yml), which is what Actions
-    uses on a runner anyway, so the pin changes nothing where bash exists.
+    canonical comment is in pr-conversation.yml). That is what Actions uses
+    on a host runner; inside a container an unpinned step otherwise runs
+    as the image's `sh -e {0}` even when bash is installed, so the pin
+    moved those steps from sh to bash. None of the 191 relied on behaviour
+    sh and bash differ on (code review of #934).
     Shell precedence and the caller-supplied test come from wc_shell_pin,
     shared with the container-shell-safety skill."""
     case = "every container-bound run: step pins bash"

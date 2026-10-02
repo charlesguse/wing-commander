@@ -14,15 +14,18 @@ still ended green with a message that blamed a race (#661, against spec
 
 So "Determine post-agent credential status" now runs ahead of the publish
 step, and the publish step reads its `ok` output:
-  - a refusal with `ok == false` fails the step, naming the credential;
-  - a refusal with `ok == true`, or empty because the agent never ran
-    (a clean rebase), stays the tolerated branch-moved warning;
+  - a refusal with `ok == false` that the lease did not cause fails the
+    step, naming the credential;
+  - a lease refusal ("stale info") stays the tolerated branch-moved
+    warning whatever `ok` says: the branch really did move;
+  - so does any refusal with `ok == true`, or with `ok` empty because the
+    agent never ran (a clean rebase);
   - a push that succeeds is unaffected whatever `ok` says.
 
 This harness EXECUTES the shipped publish step (wc_shell_harness.run_step)
-inside a real clone of a real local bare remote, with the branch moved
-underneath it by a second clone for the refusal cases, so the lease is
-git's own. Static checks pin the step order and the env wiring. Each
+inside a real clone of a real local bare remote. A race is the branch
+moved underneath it by a second clone, so the lease is git's own; a
+non-lease refusal is the remote's pre-receive hook declining the push. Static checks pin the step order and the env wiring. Each
 MUTATION reverts one rule and asserts the suite then fails.
 
 Usage: python3 .github/scripts/verify-rebase-publish-credential-refusal.py
@@ -70,7 +73,7 @@ def commit(cwd, name):
     return git(cwd, "rev-parse", "HEAD")
 
 
-def run(script, moved, credential_ok):
+def run(script, moved, credential_ok, declined=False):
     """-> (rc, output, summary, origin tip, local rebased sha, mover's sha)."""
     root = tempfile.mkdtemp(prefix="wc-rebase-publish-")
     try:
@@ -94,6 +97,11 @@ def run(script, moved, credential_ok):
             git(mover, "checkout", "-q", BRANCH)
             mover_sha = commit(mover, "moved")
             git(mover, "push", "-q", "origin", BRANCH)
+        if declined:
+            hook = os.path.join(origin, "hooks", "pre-receive")
+            with open(hook, "w", newline="\n") as fh:
+                fh.write("#!/bin/sh\necho 'denied: authentication required' >&2\nexit 1\n")
+            os.chmod(hook, 0o755)
         runner_temp = os.path.join(root, "runner-temp")
         os.makedirs(runner_temp)
         env = {"SLUG": BRANCH.split("/", 1)[1], "ISSUE": "", "GH_TOKEN": "t",
@@ -130,16 +138,29 @@ def suite(script, quiet=False):
     ck("a refusal after a clean rebase (agent never ran) is tolerated the same way",
        rc == 0 and tip == mover and "branch moved since checkout" in out,
        "rc={0}\n{1}".format(rc, out))
-    rc, out, summary, tip, rebased, mover = run(script, moved=True, credential_ok="false")
-    ck("a refusal after a failed post-agent credential fails, naming the credential (#661)",
-       rc != 0 and tip == mover and "::error::" in out and "credential" in out
+    rc, out, summary, tip, rebased, mover = run(script, moved=False, credential_ok="false",
+                                                declined=True)
+    ck("a non-lease refusal after a failed post-agent credential fails, naming the credential (#661)",
+       rc != 0 and tip != rebased and "::error::" in out and "credential" in out
        and "not a branch race" in out and "branch moved since checkout" not in out,
        "rc={0}\n{1}".format(rc, out))
+    rc, out, summary, tip, rebased, mover = run(script, moved=True, credential_ok="false")
+    ck("a lease refusal stays the branch-moved warning even after a failed credential",
+       rc == 0 and tip == mover and "branch moved since checkout" in out and "::error::" not in out,
+       "rc={0}\n{1}".format(rc, out))
+    rc, out, summary, tip, rebased, mover = run(script, moved=False, credential_ok="true",
+                                                declined=True)
+    ck("a non-lease refusal with a good credential is still tolerated",
+       rc == 0 and "branch moved since checkout" in out, "rc={0}\n{1}".format(rc, out))
     return failed
 
 
 MUTATIONS = (
-    ("the credential arm removed", 'elif [ "$CREDENTIAL_OK" = "false" ]; then', "elif false; then"),
+    ("the credential arm removed",
+     'elif [ "$CREDENTIAL_OK" = "false" ] && ! grep -q \'(stale info)\' "$RUNNER_TEMP/push-err.txt"; then',
+     "elif false; then"),
+    ("a lease refusal blamed on the credential",
+     ' && ! grep -q \'(stale info)\' "$RUNNER_TEMP/push-err.txt"; then', '; then'),
     ("the credential arm left non-fatal",
      '  } >> "$GITHUB_STEP_SUMMARY"\n  exit 1\nelse\n', '  } >> "$GITHUB_STEP_SUMMARY"\nelse\n'),
 )

@@ -89,7 +89,9 @@ else:
 
 `credential-refresh-ok` is published by `wing-commander-post-agent-
 credential-status` (a new step deferred to each job's own last steps, after
-every business-logic/report step). That composite never fails the job
+every business-logic/report step; in rebase.yml it runs instead just before
+"Publish rebased branch", which reads it to tell a credential refusal from a
+branch race, #661). That composite never fails the job
 itself (second maintainer review of PR #407) — it warns and publishes
 `ok=false` when the re-mint or refresh did not succeed, since a transient
 failure at this, the job's own last step, with every earlier step healthy,
