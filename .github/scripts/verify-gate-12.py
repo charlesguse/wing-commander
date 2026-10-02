@@ -385,6 +385,13 @@ CASES = [
             ['tip="$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq .sha)"']),
      True, ("commits", "contents")),
 
+    ("gh api .../actions/variables/... is the Variables permission, not "
+     "Actions: github.token with actions:write fails, naming variables "
+     "(code review of #924)",
+     mkcase(ACTIONS_WRITE, "", [DEFAULT_ENV],
+            ['v="$(gh api "repos/${GITHUB_REPOSITORY}/actions/variables/X" --jq .value)"']),
+     True, ("actions/variables", "variables")),
+
     ("gh pr close under the App token passes against the documented "
      "Pull requests: Read and write grant",
      mkcase("", "", [APP_ENV],

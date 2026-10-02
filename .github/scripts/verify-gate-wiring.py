@@ -64,7 +64,7 @@ import yaml
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wc_gate_registry import (  # noqa: E402
     LOOSE_PY_HEREDOC_RE, SCRIPTS_DIR, _self_check, gate_label, invocations,
-    pr_time_gates, pr_time_inline_steps, pr_time_invocations,
+    pr_time_gates, pr_time_inline_steps, pr_time_invocations, pr_time_script_calls,
     referenced_actions_script_paths, referenced_script_paths, shared_modules,
     workflow_files)
 
@@ -451,6 +451,32 @@ def check_local_runner_parity(root="."):
     return failures
 
 
+def check_local_runner_script_coverage(root="."):
+    """-> list of failure strings. Every script a PR-time lint step runs is
+    one run-local-gates.py runs too (#825): a gate script it recovers argv
+    for, or a script inside a heredoc step it runs verbatim. A step that
+    runs anything else (a composite's fixture suite, a harness not named
+    run-tests.sh) runs in CI only, and the local sweep stays green while
+    CI is red."""
+    failures = []
+    invoked = {script for script, _ in pr_time_invocations(root)}
+    inline = {name for name, _ in pr_time_inline_steps(root)[0]}
+    calls = pr_time_script_calls(root)
+    for name, script in calls:
+        if script in invoked or name in inline:
+            continue
+        failures.append(
+            f"lint-workflows.yml step {name!r} runs {script} in the PR-time "
+            f"suite, but run-local-gates.py does not run it, so the local "
+            f"sweep can be green while CI is red (#825). Move it to "
+            f"{SCRIPTS_DIR}/ as a verify-* gate or a <name>-tests/run-tests.sh "
+            f"harness, which the runner derives on its own.")
+    if not failures:
+        print(f"ok    all {len(calls)} script call(s) in the PR-time suite run "
+              f"in run-local-gates.py too")
+    return failures
+
+
 def check_forward_wiring(root="."):
     """-> (wiring dict, failures). Every check is invoked by some workflow.
 
@@ -549,6 +575,7 @@ def main():
 
     # --- argv: CI's gate set and the local runner's agree -----------------
     failures.extend(check_local_runner_parity())
+    failures.extend(check_local_runner_script_coverage())
 
     # --- triggers: every subject document a gate reads fires the suite ----
     failures.extend(check_subject_triggers())
@@ -583,6 +610,29 @@ def _write(root, relpath, content):
     os.makedirs(os.path.dirname(full), exist_ok=True)
     with open(full, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(content)
+
+
+def _fixture_uncovered_script_call():
+    """#825: a PR-time step running a script the local runner does not
+    derive (a fixture suite named run.sh) is reported; a run-tests.sh
+    harness beside it is not."""
+    root = tempfile.mkdtemp(prefix="wc-gate-wiring-")
+    try:
+        _write(root, ".github/scripts/widget-tests/run-tests.sh", "echo hi\n")
+        _write(root, ".github/scripts/gadget-tests/run.sh", "echo hi\n")
+        _write(root, ".github/workflows/lint-workflows.yml",
+               "on: pull_request\njobs:\n  lint:\n    runs-on: ubuntu-latest\n"
+               "    steps:\n"
+               "      - name: covered\n"
+               "        run: bash .github/scripts/widget-tests/run-tests.sh\n"
+               "      - name: uncovered\n"
+               "        run: bash .github/scripts/gadget-tests/run.sh\n")
+        failures = check_local_runner_script_coverage(root)
+        ok = (len(failures) == 1 and ".github/scripts/gadget-tests/run.sh" in failures[0]
+              and "'uncovered'" in failures[0])
+        return ok, f"got {failures!r}"
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
 
 
 def _fixture_orphaned_composite_harness():
@@ -672,6 +722,8 @@ def _fixture_actions_self_checkout_dedup():
 # A fixture builds and tears down its own tempdir, so a FAILing fixture never
 # leaves scratch state for the next one to trip over.
 FIXTURES = [
+    ("a PR-time step running a script the local runner does not derive is "
+     "reported (#825)", _fixture_uncovered_script_call),
     ("an unwired composite harness reports as orphaned",
      _fixture_orphaned_composite_harness),
     ("two run-tests.sh harnesses under different directories get distinct "

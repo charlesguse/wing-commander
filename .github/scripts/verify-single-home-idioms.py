@@ -525,11 +525,16 @@ def load_yaml(root, path):
         return None
 
 
-def step_run_line(step):
-    """1-based line of a step's own `run:` key (the step's start line if
-    the key's position is unknown) -- see _LineMarkedLoader."""
+def step_key_line(step, key):
+    """1-based line of a step's own `key:` (the step's start line if the
+    key's position is unknown) -- see _LineMarkedLoader."""
     key_lines = getattr(step, "key_lines", None) or {}
-    return key_lines.get("run") or getattr(step, "line", 0) or 1
+    return key_lines.get(key) or getattr(step, "line", 0) or 1
+
+
+def step_run_line(step):
+    """1-based line of a step's own `run:` key -- step_key_line()."""
+    return step_key_line(step, "run")
 
 
 def line_of(text, offset):
@@ -966,8 +971,8 @@ def check_token_mint(root="."):
                 step = step or {}
                 uses = str(step.get("uses") or "")
                 if step.get("continue-on-error") is True and CREATE_TOKEN_RE.match(uses):
-                    mint_ids.append((idx, step.get("id")))
-            for idx, step_id in mint_ids:
+                    mint_ids.append((idx, step.get("id"), step))
+            for idx, step_id, mint_step in mint_ids:
                 if not step_id:
                     continue
                 needle = f"steps.{step_id}.outcome"
@@ -977,9 +982,11 @@ def check_token_mint(root="."):
                                         for k in ("if", "run")) + " ".join(
                         str(v) for v in (later.get("env") or {}).values())
                     if needle in haystack:
-                        offset = text.find(str(step_id))
+                        # The mint step's own uses: line, never the first
+                        # text match of its id, which an earlier
+                        # steps.<id>.outputs read or comment wins (#882).
                         findings.append(Finding(
-                            path, "token-mint", line_of(text, max(offset, 0)),
+                            path, "token-mint", step_key_line(mint_step, "uses"),
                             f"continue-on-error create-github-app-token "
                             f"(id: {step_id}) + a later read of its .outcome"))
                         break
@@ -1107,10 +1114,11 @@ def check_local_action_before_checkout(root="."):
                     else:
                         ok, where = first_seg in seen_scoped, f"path: {first_seg}"
                     if not ok:
-                        offset = text.find(uses)
+                        # This step's own uses: line, never the first job
+                        # that calls the same local action (#882).
                         findings.append(Finding(
                             path, "composite-checkout-order",
-                            line_of(text, max(offset, 0)),
+                            step_key_line(step, "uses"),
                             f"job {job_id!r}: {uses} resolved before the "
                             f"actions/checkout@ step for {where}"))
             if seen_root and scoped_before_root is not None:
@@ -1781,6 +1789,70 @@ def selftest_per_step_line_attribution(check_key, violating_body):
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def _selftest_decoy_line(case, check_key, paste_path, content, expected_text, job=None):
+    """#882: the finding names the violating step's own line, the one
+    holding `expected_text`, not an earlier decoy holding the same text."""
+    tmp = tempfile.mkdtemp(prefix="wc-single-home-")
+    try:
+        _clean_tree(tmp)
+        lines = content.splitlines()
+        first = lines.index(expected_text)
+        expected_line = lines.index(expected_text, first + 1) + 1
+        _write(tmp, paste_path, content)
+        findings, hard = evaluate(tmp)
+        if hard:
+            fail(f"[{case}] unexpected hard failure(s): {hard}")
+            return
+        hits = [f for f in findings if f.check == check_key and f.path == paste_path
+                and (job is None or "job {0!r}".format(job) in f.text)]
+        if len(hits) != 1:
+            fail(f"[{case}] expected exactly one {check_key} finding at {paste_path}, "
+                 f"got: {findings}")
+        elif hits[0].line != expected_line:
+            fail(f"[{case}] finding pointed at line {hits[0].line}, expected "
+                 f"{expected_line} (the violating step's own line, not the decoy's)")
+        else:
+            note(f"[{case}] passed ({hits[0].path}:{hits[0].line})")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def selftest_token_mint_line_attribution():
+    """#882: an earlier step reading steps.<id>.outputs mentions the mint
+    step's id first; the finding must still name the mint step."""
+    _selftest_decoy_line(
+        "token-mint line attribution survives an earlier mention of the id",
+        "token-mint", ".github/workflows/third-token-decoy.yml",
+        "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - id: other\n"
+        "        uses: actions/create-github-app-token@v3\n"
+        "      - shell: bash\n        env:\n"
+        "          T: ${{ steps.mint.outputs.token }}\n"
+        "        run: echo hi\n"
+        "      - id: mint\n        continue-on-error: true\n"
+        "        uses: actions/create-github-app-token@v3\n"
+        "      - shell: bash\n        env:\n"
+        "          OUTCOME: ${{ steps.mint.outcome }}\n"
+        "        run: echo hi\n",
+        "        uses: actions/create-github-app-token@v3")
+
+
+def selftest_local_action_line_attribution():
+    """#882: job a calls the local action correctly after its checkout;
+    job b calls the same action before any checkout. The finding names
+    job b's own step, not job a's earlier, identical uses: line."""
+    _selftest_decoy_line(
+        "composite-checkout-order line attribution survives a repeated local uses:",
+        "composite-checkout-order", ".github/workflows/third-checkout-order-decoy.yml",
+        "on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - uses: actions/checkout@v5\n"
+        "      - uses: ./.github/actions/widget\n"
+        "  b:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - uses: ./.github/actions/widget\n"
+        "      - uses: actions/checkout@v5\n",
+        "      - uses: ./.github/actions/widget", job="b")
+
+
 def selftest_per_document_wrap_passes():
     """#575: loosening the transcript-normalise regex must not start
     flagging the per-document wrap -- the legitimate fallback read the
@@ -2201,6 +2273,8 @@ def run_selftest():
         "        with:\n          path: .wc-pristine-repo\n"
         "      - uses: actions/checkout@v5\n")
     selftest_composite_checkout_order_line_attribution()
+    selftest_token_mint_line_attribution()
+    selftest_local_action_line_attribution()
     # Every per-step check that reports step_run_line() gets the same
     # decoy test, so one regressing to a first-text-match lookup fails here.
     for check_key, body in PER_STEP_LINE_CASES:

@@ -44,6 +44,13 @@ ACTIONS_SHARED_DIR = ACTIONS_DIR + "/_shared"
 SUBDIR_ENTRYPOINT = "run-tests.sh"
 SHARED_PREFIX = "wc_"
 STANDALONE_VERIFY_RE = re.compile(r"verify-.*\.(?:py|sh)$")
+# #877: a harness under .github/actions/ is not always called run-tests.sh
+# (spec 074's fold-queue fixtures were `tests/run.sh`). A `run.sh`
+# anywhere, or any script inside a `tests`/`test` directory of a
+# composite, is a harness too.
+HARNESS_ENTRYPOINT_NAMES = (SUBDIR_ENTRYPOINT, "run.sh")
+HARNESS_DIR_NAMES = ("tests", "test")
+HARNESS_SCRIPT_RE = re.compile(r".*\.(?:sh|bash|py)$")
 
 
 def _rel(path):
@@ -84,9 +91,11 @@ def unsupported_actions_scripts(root="."):
     Walks exactly `<root>/.github/actions`, never a broader sweep from
     `<root>`, so a sibling checkout directory elsewhere in the tree is
     unreachable by construction. At each directory: a `run-tests.sh`
-    entrypoint is always flagged; a standalone `verify-*.py`/`verify-*.sh`
-    is flagged only when no `run-tests.sh` shares its directory (one that
-    does is a helper of that harness, not a second violation).
+    entrypoint is always flagged; otherwise a standalone
+    `verify-*.py`/`verify-*.sh`, a `run.sh`, and any script inside a
+    composite's `tests`/`test` directory are flagged (#877) -- a file that
+    shares its directory with a `run-tests.sh` is a helper of that
+    harness, not a second violation.
     `.github/actions/_shared/` is pruned from the walk entirely -- the
     carve-out is structural, not a name checked per file.
     """
@@ -101,10 +110,15 @@ def unsupported_actions_scripts(root="."):
         if rel_dir == ACTIONS_SHARED_DIR or rel_dir.startswith(ACTIONS_SHARED_DIR + "/"):
             dirnames[:] = []
             continue
+        in_tests_dir = any(part in HARNESS_DIR_NAMES
+                           for part in rel_dir.split("/")[3:])
         if SUBDIR_ENTRYPOINT in filenames:
             matches = [SUBDIR_ENTRYPOINT]
         else:
-            matches = sorted(n for n in filenames if STANDALONE_VERIFY_RE.match(n))
+            matches = sorted(
+                n for n in filenames
+                if STANDALONE_VERIFY_RE.match(n) or n in HARNESS_ENTRYPOINT_NAMES
+                or (in_tests_dir and HARNESS_SCRIPT_RE.match(n)))
         for name in matches:
             r = _rel(os.path.join(dirpath, name))
             out.append(r[len(prefix):] if prefix and r.startswith(prefix) else r)
@@ -346,6 +360,50 @@ def pr_time_invocations(root=".",
 # verify-gate-wiring.py imports it to decide whether a heredoc was MISSED,
 # so the two readers cannot disagree on membership.
 LOOSE_PY_HEREDOC_RE = re.compile(r"^[ \t]*python3? +[^\n]*<<", re.M)
+
+
+# A script a run: block executes: bash/sh/python, any flags, then a path
+# ending .sh/.py. A path carrying `$` (a runner temp file, a variable) is a
+# generated script, not one the repository ships, and is skipped.
+SCRIPT_CALL_RE = re.compile(
+    r"(?:^|[\s;&|(])(?:bash|sh|python3?)\s+(?:-\S+\s+)*[\"']?([\w./{}$-]+\.(?:sh|py))\b")
+
+
+def pr_time_script_calls(root=".",
+                         workflow=".github/workflows/lint-workflows.yml"):
+    """[(step name, script path)] for every script a PR-time step's run:
+    block executes, comment lines dropped.
+
+    pr_time_invocations() sees only the gate scripts gate_scripts() names,
+    so a step that runs anything else -- a composite's own fixture suite at
+    `.github/actions/<name>/tests/run.sh`, a harness not named
+    run-tests.sh -- runs in CI and is invisible to the local sweep, which
+    stays green while CI goes red (#825). This is the reader that sees
+    every script, for verify-gate-wiring.py to compare against the
+    runner's."""
+    path = os.path.join(root, workflow) if root != "." else workflow
+    try:
+        wf = yaml.safe_load(open(path, encoding="utf-8")) or {}
+    except (yaml.YAMLError, OSError):
+        return []
+    out = []
+    for job in (wf.get("jobs") or {}).values():
+        if not _job_runs_on_pull_request(job):
+            continue
+        for step in (job or {}).get("steps") or []:
+            run = (step or {}).get("run")
+            if not run:
+                continue
+            text = "\n".join(l for l in str(run).splitlines()
+                              if not l.lstrip().startswith("#"))
+            for m in SCRIPT_CALL_RE.finditer(text):
+                script = m.group(1)
+                if "$" in script:
+                    continue
+                while script.startswith("./"):
+                    script = script[2:]
+                out.append(((step or {}).get("name") or "", script))
+    return out
 
 
 def pr_time_inline_steps(root=".",

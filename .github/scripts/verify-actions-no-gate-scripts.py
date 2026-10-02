@@ -27,8 +27,10 @@ WHAT IT CHECKS
 --------------
 Calls wc_gate_registry.unsupported_actions_scripts(root), which walks
 .github/actions/ (.github/actions/_shared/ excluded -- the one structural
-carve-out, FR-014) and returns every run-tests.sh entrypoint, or standalone
-verify-*.py/verify-*.sh with no sibling run-tests.sh, at any depth (FR-012).
+carve-out, FR-014) and returns every run-tests.sh entrypoint, and, with no
+sibling run-tests.sh, every standalone verify-*.py/verify-*.sh, run.sh, or
+script inside a composite's tests/ or test/ directory, at any depth
+(FR-012, #877: a harness need not be named run-tests.sh to be one).
 Every result is an unconditional failure: there is no waiver file and no
 legitimate exception to register one in.
 
@@ -44,7 +46,8 @@ import sys
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from wc_gate_registry import unsupported_actions_scripts  # noqa: E402
+from wc_gate_registry import (  # noqa: E402
+    HARNESS_DIR_NAMES, HARNESS_ENTRYPOINT_NAMES, SUBDIR_ENTRYPOINT, unsupported_actions_scripts)
 
 SCRIPTS_DIR = ".github/scripts"
 THIS_FILE = "verify-actions-no-gate-scripts.py"
@@ -58,13 +61,24 @@ def supported_location(offending_path):
     """
     composite = offending_path.split("/")[2]
     basename = offending_path.split("/")[-1]
+    # Any entrypoint lands as run-tests.sh: that is the one name gate
+    # discovery (wc_gate_registry.gate_scripts) picks up there.
+    if basename in HARNESS_ENTRYPOINT_NAMES:
+        basename = SUBDIR_ENTRYPOINT
     return f"{SCRIPTS_DIR}/{composite}-tests/{basename}"
 
 
+def _kind(offending_path):
+    parts = offending_path.split("/")
+    if parts[-1] in HARNESS_ENTRYPOINT_NAMES:
+        return "test harness entrypoint"
+    if any(part in HARNESS_DIR_NAMES for part in parts[3:-1]):
+        return "test harness file"
+    return "standalone gate script"
+
+
 def failure_for(offending_path):
-    kind = ("test harness entrypoint"
-            if os.path.basename(offending_path) == "run-tests.sh"
-            else "standalone gate script")
+    kind = _kind(offending_path)
     supported = supported_location(offending_path)
     return (f"{offending_path} is a {kind} under .github/actions/; gate "
             f"discovery reads only {SCRIPTS_DIR}/, so it belongs at "
@@ -139,6 +153,38 @@ def _fixture_run_tests_nested():
         shutil.rmtree(root, ignore_errors=True)
 
 
+def _fixture_run_sh_in_tests():
+    """#877: a harness named tests/run.sh, and a helper script beside it,
+    both fail; the entrypoint's supported home is run-tests.sh."""
+    root = tempfile.mkdtemp(prefix="wc-actions-no-gate-scripts-")
+    try:
+        run_path = ".github/actions/widget/tests/run.sh"
+        helper_path = ".github/actions/widget/tests/helper.py"
+        _write(root, run_path, "echo hi\n")
+        _write(root, helper_path, "print('hi')\n")
+        offenders, failures = check(root)
+        joined = " ".join(failures)
+        ok = (offenders == sorted([helper_path, run_path])
+              and all(_assert_contract(p, failures) for p in (run_path, helper_path))
+              and ".github/scripts/widget-tests/run-tests.sh" in joined
+              and "test harness file" in joined)
+        return ok, f"got offenders={offenders!r} failures={failures!r}"
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def _fixture_runtime_helper_not_flagged():
+    """A composite's own runtime script outside any tests/ directory is
+    not a harness and is not flagged."""
+    root = tempfile.mkdtemp(prefix="wc-actions-no-gate-scripts-")
+    try:
+        _write(root, ".github/actions/widget/render.sh", "echo hi\n")
+        offenders, _ = check(root)
+        return offenders == [], f"got offenders={offenders!r}"
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def _fixture_standalone_verify_both():
     """A standalone verify-widget.py AND verify-widget.sh under
     .github/actions/<composite>/ both fail (research.md D8, third
@@ -204,6 +250,10 @@ FIXTURES = [
      "naming the path and the canonical location", _fixture_run_tests_direct),
     ("a run-tests.sh two levels deep fails the same way (FR-012 'at any "
      "depth')", _fixture_run_tests_nested),
+    ("a harness named tests/run.sh and a script beside it both fail (#877)",
+     _fixture_run_sh_in_tests),
+    ("a composite's runtime script outside tests/ is not flagged",
+     _fixture_runtime_helper_not_flagged),
     ("a standalone verify-widget.py AND verify-widget.sh under "
      ".github/actions/<composite>/ both fail", _fixture_standalone_verify_both),
     ("a helper at .github/actions/_shared/run-tests.sh is not flagged",

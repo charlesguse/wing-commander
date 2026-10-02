@@ -1036,6 +1036,10 @@ jobs:
               # Git database endpoints are under "Contents" in the
               # fine-grained permission reference.
               "git": "contents",
+              # .../actions/variables/... (path_category splits it out of
+              # "actions"): the "Variables" repository permission, as the
+              # `gh variable` entries in SUBCOMMAND_PERMS say.
+              "actions/variables": "variables",
               # specs/062-lifecycle-review-gate T024: POST .../statuses/{sha}
               # (Create a commit status) -- the REST reference lists
               # "Commit statuses" as its own fine-grained repository
@@ -1221,6 +1225,12 @@ jobs:
               else:
                   rest = rest[2:] if len(rest) >= 2 else []
                   scope = "CROSS"           # a literal, different owner/repo pair
+              if rest[:2] == ["actions", "variables"]:
+                  # Under actions/ by path, but the "Variables" permission's
+                  # surface, not "Actions" (fine-grained reference; code
+                  # review of #924) -- the same split SUBCOMMAND_PERMS
+                  # makes for `gh variable`.
+                  return scope, "actions/variables"
               return (scope, rest[0]) if rest else (scope, None)
 
 
