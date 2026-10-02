@@ -479,8 +479,8 @@ def mut_containment_exit_status_swallowed(script):
 def mut_containment_filter_reads_one_object(script):
     """The containment filter restored to `.full_name`, which cannot index
     the array each `user/repos` page is: every real run then failed as
-    "could not list reachable repositories" while every scenario here
-    passed against a pre-filtered stub (#766's class)."""
+    "the gh api call to list reachable repositories failed" (#925) while
+    every scenario here passed against a pre-filtered stub (#766's class)."""
     return script.replace("--paginate --jq '.[].full_name'", "--paginate --jq '.full_name'")
 
 

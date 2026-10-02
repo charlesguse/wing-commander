@@ -569,7 +569,8 @@ jobs:
           # itself failing -- ends the attempt naming repository names
           # only, never the token (FR-003a, FR-011, FR-012).
           # Each page is an array: `.[].full_name`, never `.full_name`, which
-          # cannot index one and failed every run as "could not list".
+          # cannot index one and failed every run as "the gh api call to list
+          # reachable repositories failed" (#925).
           if ! reachable_raw="$(GH_TOKEN="$MAINTAINER_TOKEN" gh api "user/repos?affiliation=owner,collaborator,organization_member" --paginate --jq '.[].full_name' 2>/dev/null)"; then
             echo "ok=false" >> "$GITHUB_OUTPUT"
             {
