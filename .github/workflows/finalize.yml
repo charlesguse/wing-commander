@@ -216,6 +216,12 @@ on:
 
 permissions: {}
 
+# Pins bash for every run: step without its own shell:, a caller-supplied
+# container included -- see pr-conversation.yml.
+defaults:
+  run:
+    shell: bash -e {0}
+
 jobs:
   verify-image-prerequisites:
     # This job now carries `if: inputs.container-image != ''` and reports
@@ -899,6 +905,7 @@ jobs:
           exit 1
 
       - name: Upload Claude execution log
+        id: upload-execution-log
         if: steps.lifecycle-gate.outputs.is-open == 'true' && always() && steps.summarize.outcome != 'skipped'
         uses: actions/upload-artifact@v6
         with:
@@ -928,6 +935,7 @@ jobs:
       # Durable record (specs/043-durable-metrics-record) — the artifact this
       # feature persists past the transcript's own retention window.
       - name: Upload metrics record
+        id: upload-metrics-record
         if: steps.lifecycle-gate.outputs.is-open == 'true' && always() && steps.summarize.outcome != 'skipped'
         uses: actions/upload-artifact@v6
         with:
@@ -1377,7 +1385,10 @@ jobs:
 
       # User Story 1's core fix (contracts/callout-points.md row 5): today
       # this moment posts no comment at all — a customer-visible silent
-      # stall until a human happens to notice the PR.
+      # stall until a human happens to notice the PR. Retried like the
+      # remaining-manual-work announcement below (#783): the PR is already
+      # open and labelled here, so one transient API error must not stall
+      # the lifecycle.
       - name: Announce the implementation PR for review
         id: announce-pr
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true'
@@ -1390,6 +1401,7 @@ jobs:
           pr-url: ${{ steps.verify-pr.outputs.pr-url }}
           pr-label: "the implementation PR"
           body: ${{ steps.cost-line.outputs.line }}
+          retry-delays: "5 15 45"
 
       # Direct commit onto the spec branch, no work branch — same shape the
       # implement stage already uses for its own metadata writes. Also
@@ -1485,11 +1497,11 @@ jobs:
       # continue-on-error (the callout below it must still run for a
       # rate-limited verdict, FR-015a), so its conclusion is always
       # "success" and it can never be this job's actual point of failure.
-      # Every hard-failing step after "Open or update the final pull
-      # request" is listed (#662) -- Gate 35 fails on one that is not.
-      # "Announce finalize failure (PR verification)" is the one exception:
-      # it runs only once "Verify the final pull request was created" has
-      # already failed, and naming it would hide that cause.
+      # Every hard-failing step after the agent step is listed (#662,
+      # #783) -- Gate 35 fails on one that is not. The two "Announce
+      # finalize failure" callouts are the exceptions: each runs only once
+      # the verify step it reports on has already failed, and naming it
+      # would hide that cause.
       - name: Determine failed post-agent step
         id: failed-step
         if: "!cancelled() && steps.summarize.outcome != 'skipped'"
@@ -1497,7 +1509,14 @@ jobs:
         with:
           candidates-json: >-
             [
+              {"name": "Record agent-ran signal", "conclusion": "${{ steps.agent-ran.conclusion }}"},
+              {"name": "Compute agent run verdict", "conclusion": "${{ steps.summarize-verdict.conclusion }}"},
+              {"name": "Upload Claude execution log", "conclusion": "${{ steps.upload-execution-log.conclusion }}"},
+              {"name": "Upload metrics record", "conclusion": "${{ steps.upload-metrics-record.conclusion }}"},
+              {"name": "Compute cost line", "conclusion": "${{ steps.cost-line.conclusion }}"},
               {"name": "Verify agent output", "conclusion": "${{ steps.verify-agent-output.conclusion }}"},
+              {"name": "Assemble PR body", "conclusion": "${{ steps.body.conclusion }}"},
+              {"name": "Determine feature title", "conclusion": "${{ steps.title.conclusion }}"},
               {"name": "Verify the final pull request was created", "conclusion": "${{ steps.verify-pr.conclusion }}"},
               {"name": "Flip stage label", "conclusion": "${{ steps.flip-label.conclusion }}"},
               {"name": "Report re-review request failure", "conclusion": "${{ steps.report-re-review.conclusion }}"},

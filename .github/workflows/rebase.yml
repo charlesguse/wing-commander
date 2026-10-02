@@ -182,6 +182,12 @@ on:
 
 permissions: {}
 
+# Pins bash for every run: step without its own shell:, a caller-supplied
+# container included -- see pr-conversation.yml.
+defaults:
+  run:
+    shell: bash -e {0}
+
 jobs:
   verify-image-prerequisites:
     # This job now carries `if: inputs.container-image != ''` and reports
@@ -1033,6 +1039,22 @@ jobs:
           echo "::error::wing-commander rebase stage: agent step rejected — verdict=$VERDICT: $REASON"
           exit 1
 
+      # Reads the mint/refresh outcomes of the two post-agent composites
+      # above (both have run by here). It sits ahead of "Publish rebased
+      # branch" so a refused push can be told apart: a refusal after a
+      # failed re-establishment is a credential failure, not a branch race
+      # (#661, spec 073 FR-003/FR-004). rebase.yml has no separate stalled
+      # job (spec.md Edge Cases), so the publish step and "Abandon and
+      # escalate" below read this step's `ok` output directly rather than
+      # through a job output relay.
+      - name: Determine post-agent credential status
+        id: credential-status
+        if: "!cancelled() && steps.agent.outcome != 'skipped'"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-post-agent-credential-status
+        with:
+          mint-outcome: ${{ steps.reestablish.outcome }}
+          refresh-outcome: ${{ steps.refresh-remote.outcome }}
+
       # The single shared publish path for a clean rebase and a scope-verified
       # AI resolution. The lease compares against the branch tip recorded at
       # checkout, so a push rejected because the branch moved meanwhile is
@@ -1056,6 +1078,10 @@ jobs:
           ISSUE: ${{ matrix.issue }}
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           SPEC_PREFIX: ${{ inputs.spec-prefix }}
+          # `false` only when the agent ran and the post-agent credential was
+          # not re-established; empty when the agent never ran (a clean
+          # rebase pushes with the credential checkout already proved).
+          CREDENTIAL_OK: ${{ steps.credential-status.outputs.ok }}
         run: |
           set -uo pipefail
           if git push --force-with-lease origin "HEAD:refs/heads/${SPEC_PREFIX}$SLUG" 2>"$RUNNER_TEMP/push-err.txt"; then
@@ -1068,6 +1094,16 @@ jobs:
                 echo "${SPEC_PREFIX}$SLUG: removed rebase:blocked from #$ISSUE (auto-recovery)." >> "$GITHUB_STEP_SUMMARY"
               fi
             fi
+          elif [ "$CREDENTIAL_OK" = "false" ]; then
+            # Not a race: the wing-commander-bot credential was not
+            # re-established after the agent ran, so the refusal is most
+            # likely authentication (#661). Fail loudly, naming it.
+            echo "::error::${SPEC_PREFIX}$SLUG: push refused after the post-agent wing-commander-bot credential could not be re-established. This is a credential failure, not a branch race; the rebased result was not published."
+            {
+              echo "${SPEC_PREFIX}$SLUG: push refused with a failed post-agent credential; not treated as a branch race."
+              sed 's/^/    /' "$RUNNER_TEMP/push-err.txt"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
           else
             echo "::warning::${SPEC_PREFIX}$SLUG: force-with-lease push rejected (branch moved since checkout) — skipping this run, no comment."
             {
@@ -1075,20 +1111,6 @@ jobs:
               sed 's/^/    /' "$RUNNER_TEMP/push-err.txt"
             } >> "$GITHUB_STEP_SUMMARY"
           fi
-
-      # Deferred to the job's last bot-acting step before the failure arm
-      # (review-step-gating skill, spec 052 self-review): reads the mint/
-      # refresh outcomes from the composites added above the agent step's
-      # own window. rebase.yml has no separate stalled job (spec.md Edge
-      # Cases), so "Abandon and escalate" below reads this step's `ok`
-      # output directly rather than through a job output relay.
-      - name: Determine post-agent credential status
-        id: credential-status
-        if: "!cancelled() && steps.agent.outcome != 'skipped'"
-        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-post-agent-credential-status
-        with:
-          mint-outcome: ${{ steps.reestablish.outcome }}
-          refresh-outcome: ${{ steps.refresh-remote.outcome }}
 
       # FR-004: names the specific post-agent step that failed, for
       # "Abandon and escalate" below to read directly -- rebase.yml has no

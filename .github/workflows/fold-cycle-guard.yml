@@ -98,6 +98,12 @@ on:
 
 permissions: {}
 
+# Pins bash for every run: step without its own shell:, a caller-supplied
+# container included -- see pr-conversation.yml.
+defaults:
+  run:
+    shell: bash -e {0}
+
 jobs:
   # specs/038-runner-container-passthrough -- deliberately left unbound
   # (no environment: block), asserted by Gate 7; every OTHER job of this
