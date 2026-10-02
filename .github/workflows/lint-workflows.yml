@@ -4079,6 +4079,13 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-watchdog-failure-accounting.py
 
+      # board-loop.yml's review-fixup push (found by the code review of
+      # #901): a workflow-file follow-up is held under board:stalled, and a
+      # refused push never advances the round. Not numbered, as above.
+      - name: Board loop review-fixup holds a workflow-file follow-up and never advances on a refused push
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-board-review-fixup-push.py
+
       # Gate 82 — specs/057-autonomous-board-loop (FR-012/FR-064 bullet 1):
       # triage may close an issue on exactly two code-derived grounds, and
       # an agent's "already fixed on main" proposal must NEVER be one of

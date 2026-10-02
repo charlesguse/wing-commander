@@ -1380,28 +1380,38 @@ def stall_label_findings(doc, scripts_root=ROOT):
             if not m:
                 continue
             arg = m.group(1).strip('"')
+            is_stall = False
             if arg.startswith("$"):
                 var = arg[1:]
                 can_stall = re.search(r"\b{0}=\"?stalled\"?(?:\s|;|$)".format(re.escape(var)), run, re.M)
-                if not can_stall:
-                    continue
-                stall_sites += 1
-                if not (_STALL_FLAGS.search(run) and "${stall_args[@]}" in line):
-                    findings.append(
-                        "{0}: --step \"${1}\" can be stalled but the invocation does not pass "
-                        "--issue \"$ISSUE_NUMBER\" --add-label \"board:stalled\" for it (#604)".format(where, var))
+                if can_stall:
+                    is_stall = True
+                    stall_sites += 1
+                    if not (_STALL_FLAGS.search(run) and "${stall_args[@]}" in line):
+                        findings.append(
+                            "{0}: --step \"${1}\" can be stalled but the invocation does not pass "
+                            "--issue \"$ISSUE_NUMBER\" --add-label \"board:stalled\" for it (#604)".format(where, var))
             elif arg == "stalled":
+                is_stall = True
                 stall_sites += 1
                 if not _STALL_FLAGS.search(line):
                     findings.append(
                         "{0}: renders a stalled marker without --issue \"$ISSUE_NUMBER\" --add-label "
                         "\"board:stalled\" -- the label must go on before the marker (#604)".format(where))
-            else:
+            if _FAIL_LOUD.search(line):
                 continue
-            if not _FAIL_LOUD.search(line):
+            if is_stall:
                 findings.append(
                     "{0}: a stalled-marker render is not followed by `|| {{ echo \"::error::...\"; exit 1; }}` "
                     "-- a failed board:stalled add would post a marker-less comment and carry on (#604)".format(where))
+            else:
+                # #786: errexit already stops a step on a failed render; the
+                # guard is what names why, and what keeps the render
+                # fail-closed if a step ever runs without errexit.
+                findings.append(
+                    "{0}: a `--step {1}` marker render is not followed by `|| {{ echo \"::error::...\"; "
+                    "exit 1; }}` -- a failed render must stop the step and say why, never leave a "
+                    "comment the next run cannot read as this step's (#786)".format(where, arg))
     if stall_sites == 0:
         findings.append("no stalled-marker site found in board-loop.yml -- the #604 check is vacuous")
     for title, args, gh_rc, want_marker, want_calls in STALL_CLI_CASES:
@@ -2146,9 +2156,10 @@ def _mutations(text):
     # stalls). The board reset of 2026-10-01 adds two workflow-scope holds
     # (route's, on the drafted diff, and fix's pre-push one, on the
     # fixer's real diff): a fix this loop cannot push is held under
-    # board:stalled, never filed as a spec.
-    if len(render_at) != 6:
-        raise AssertionError("self-test: expected 6 literal stalled renders, found {0}".format(len(render_at)))
+    # board:stalled, never filed as a spec. Review-fixup's push holds its
+    # own follow-up commit the same way (found by the code review of #901).
+    if len(render_at) != 7:
+        raise AssertionError("self-test: expected 7 literal stalled renders, found {0}".format(len(render_at)))
     for n, at in enumerate(render_at):
         flags_at = text.index(stall_flags, at)
         muts.append(("stalled render #{0}: no --issue/--add-label".format(n + 1),
@@ -2156,6 +2167,22 @@ def _mutations(text):
         guard_start = text.index(" \\\n", flags_at)
         guard_end = text.index("\n", text.index("exit 1; }", guard_start)) + 1
         muts.append(("stalled render #{0}: failure not checked".format(n + 1),
+                     text[:guard_start] + "\n" + text[guard_end:]))
+    # #786: every other render's fail-loud check, one mutation each. The
+    # guard is the last continuation line before the render's end, so a
+    # multi-line render (select's prove markers) loses only its guard.
+    other_at = [m.start() for m in re.finditer(r'board_item_marker\.py"? --step (?!stalled\b)', text)]
+    # select's two prove markers, fix's review hand-off and breach, review's
+    # readiness and round, readiness's awaiting-merge, triage's hand-over
+    # ("$marker_step"), and prove's three (close-on-merge, proven, prove).
+    if len(other_at) != 11:
+        raise AssertionError("self-test: expected 11 non-stalled marker renders, found {0}".format(len(other_at)))
+    for n, at in enumerate(other_at):
+        guard_at = text.index('|| { echo "::error::', at)
+        guard_start = text.rindex(" \\\n", at, guard_at)
+        guard_end = text.index("\n", text.index("exit 1; }", guard_at)) + 1
+        muts.append(("marker render #{0} ({1}): failure not checked".format(
+                         n + 1, text[at:text.index(" ", text.index("--step", at) + 7)].split("--step ")[-1]),
                      text[:guard_start] + "\n" + text[guard_end:]))
     # spec 108: route's spec-verdict site no longer posts a stalled marker
     # at all (contracts/duplicate-disposition.md) -- the pre-#604
