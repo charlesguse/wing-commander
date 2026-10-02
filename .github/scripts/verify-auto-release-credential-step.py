@@ -79,7 +79,8 @@ def _rfc(delta_days):
 #   gh api -i .../actions/runs?per_page=1                         specs/067 FR-003 Actions:read
 #     probe (container mode only) -> $STUB_ACTIONS_STATUS
 #     ($STUB_ACTIONS_TRANSPORT_FAIL=1 -> exit 1, no output)
-#   gh api user/repos?... --paginate --jq .full_name             containment (both shapes) -> $STUB_REPOS
+#   gh api user/repos?... --paginate --jq <program>              containment (both shapes): $STUB_REPOS as a
+#     JSON array page, through the caller's own --jq
 #     ($STUB_REPOS_TRANSPORT_FAIL=1 -> exit 1, no output -- research.md D4)
 STUB_GH = r'''#!/usr/bin/env bash
 if [ "$1" = "repo" ] && [ "$2" = "view" ]; then
@@ -134,7 +135,15 @@ if [ "$1" = "api" ]; then
   case "$2" in
     user/repos*)
       if [ "${STUB_REPOS_TRANSPORT_FAIL-0}" = "1" ]; then exit 1; fi
-      if [ -n "${STUB_REPOS-}" ]; then printf '%s' "$STUB_REPOS" | tr ';' '\n'; printf '\n'; fi
+      # The page as GitHub returns it, a JSON array of repository objects,
+      # run through the caller's own --jq the way gh applies it (#766). A
+      # pre-filtered list here let `--jq '.full_name'`, which cannot index
+      # an array, pass every scenario and fail every real run.
+      page="$(printf '%s' "${STUB_REPOS-}" | tr ';' '\n' | jq -R -s -c 'split("\n") | map(select(length > 0) | {full_name: .})')"
+      prog=""; prev=""
+      for a in "$@"; do [ "$prev" = "--jq" ] && prog="$a"; prev="$a"; done
+      if [ -n "$prog" ]; then printf '%s' "$page" | jq -r "$prog"; exit $?; fi
+      printf '%s\n' "$page"
       exit 0
       ;;
   esac
@@ -454,7 +463,7 @@ def mut_containment_exit_status_swallowed(script):
     """research.md D4 reverted: the `gh api` call's own exit status folded
     back into the same `2>/dev/null` swallow into `sort -u`, so a call that
     fails outright is indistinguishable from one that succeeds empty."""
-    old_start = 'if ! reachable_raw="$(GH_TOKEN="$MAINTAINER_TOKEN" gh api "user/repos?affiliation=owner,collaborator,organization_member" --paginate --jq \'.full_name\' 2>/dev/null)"; then'
+    old_start = 'if ! reachable_raw="$(GH_TOKEN="$MAINTAINER_TOKEN" gh api "user/repos?affiliation=owner,collaborator,organization_member" --paginate --jq \'.[].full_name\' 2>/dev/null)"; then'
     old_end = 'reachable_repos="$(printf \'%s\' "$reachable_raw" | sort -u)"'
     start = script.find(old_start)
     end = script.find(old_end)
@@ -463,8 +472,16 @@ def mut_containment_exit_status_swallowed(script):
     end += len(old_end)
     new = ('reachable_repos="$(GH_TOKEN="$MAINTAINER_TOKEN" gh api '
            '"user/repos?affiliation=owner,collaborator,organization_member" '
-           '--paginate --jq \'.full_name\' 2>/dev/null | sort -u)"')
+           '--paginate --jq \'.[].full_name\' 2>/dev/null | sort -u)"')
     return script[:start] + new + script[end:]
+
+
+def mut_containment_filter_reads_one_object(script):
+    """The containment filter restored to `.full_name`, which cannot index
+    the array each `user/repos` page is: every real run then failed as
+    "could not list reachable repositories" while every scenario here
+    passed against a pre-filtered stub (#766's class)."""
+    return script.replace("--paginate --jq '.[].full_name'", "--paginate --jq '.full_name'")
 
 
 MUTATIONS = [
@@ -484,6 +501,8 @@ MUTATIONS = [
      "the container-mode precheck", mut_container_permission_probe_removed),
     ("research.md D4 reverted: a gh api failure folded back into 'reached 0 repositories'",
      mut_containment_exit_status_swallowed),
+    ("the containment filter restored to `.full_name`, which cannot index a page",
+     mut_containment_filter_reads_one_object),
 ]
 
 
