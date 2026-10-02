@@ -1183,6 +1183,18 @@ jobs:
           # prefix` loop's own $pr_number, which only ever holds the last
           # prefix processed this iteration.
           declare -A gate_pr_number=([spec-draft/]="" [plan/]="" [spec/]="")
+          # The stage label each gate's own stage writes once it has verified
+          # its PR (plan.yml's "Verify plan PR and flip stage label",
+          # finalize.yml's "Flip stage label"). Merging before that label is
+          # on the issue races the stage: its verify step looks for an OPEN
+          # PR, finds the one the harness just merged gone, and fails before
+          # writing the label, while the merge still starts the next stage
+          # (#930). A reviewer acts on a PR the stage has reported, so the
+          # harness waits for the report too, for at most
+          # GATE_BLOCKED_ALLOWANCE_SECONDS. The spec-draft PR has no such
+          # step: it stays a draft until clarify is done with it.
+          declare -A gate_ready_label=([spec-draft/]="" [plan/]="stage:plan" [spec/]="stage:review")
+          declare -A gate_unreported_since=([spec-draft/]="" [plan/]="" [spec/]="")
           # A gate-driving read OR write (fetching comments/PR state, a
           # decision-script crash, posting the clarification reply, a PR
           # merge) that fails at the API level -- e.g. the harness
@@ -1316,16 +1328,34 @@ jobs:
                       merge)
                         gate_blocked_since[$prefix]=""
                         merge_number="$(printf '%s\n' "$merge_decision" | tail -n +2)"
-                        if merge_err="$(GH_TOKEN="$HARNESS_TOKEN" gh pr merge "$merge_number" --merge --repo "$E2E_REPO" 2>&1 >/dev/null)"; then
-                          gate_merged[$prefix]="true"
-                          gate_failures[$prefix]=0
+                        ready_label="${gate_ready_label[$prefix]}"
+                        if [ -n "$ready_label" ] && ! printf ',%s,' "$labels" | grep -q ",${ready_label},"; then
+                          allowance_decision="$(bash .github/actions/_shared/auto-release-e2e-gate-allowance-decision.sh \
+                            blocked-pending "${gate_unreported_since[$prefix]}" "$SECONDS" "$GATE_BLOCKED_ALLOWANCE_SECONDS")"
+                          case "$allowance_decision" in
+                            start) gate_unreported_since[$prefix]="$SECONDS" ;;
+                            stall)
+                              write_verdict "fail-gate-stall" "${gate_name[$prefix]}" \
+                                "the stage that opened PR #${merge_number} moves the issue to ${ready_label} before the harness merges it" \
+                                "PR #${merge_number} was mergeable for ${GATE_BLOCKED_ALLOWANCE_SECONDS}s while the issue stayed at [${labels}]"
+                              emit_verdict
+                              exit 0
+                              ;;
+                          esac
                         else
-                          gate_failures[$prefix]=$(( gate_failures[$prefix] + 1 ))
-                          gate_last_failure[$prefix]="$merge_err"
+                          gate_unreported_since[$prefix]=""
+                          if merge_err="$(GH_TOKEN="$HARNESS_TOKEN" gh pr merge "$merge_number" --merge --repo "$E2E_REPO" 2>&1 >/dev/null)"; then
+                            gate_merged[$prefix]="true"
+                            gate_failures[$prefix]=0
+                          else
+                            gate_failures[$prefix]=$(( gate_failures[$prefix] + 1 ))
+                            gate_last_failure[$prefix]="$merge_err"
+                          fi
                         fi
                         ;;
                       wait)
                         gate_blocked_since[$prefix]=""
+                        gate_unreported_since[$prefix]=""
                         ;;
                       blocked-pending)
                         allowance_decision="$(bash .github/actions/_shared/auto-release-e2e-gate-allowance-decision.sh \
@@ -1432,6 +1462,14 @@ jobs:
               if [ -n "${gate_blocked_since[$prefix]}" ]; then
                 write_verdict "fail-gate-stall" "${gate_name[$prefix]}" "gh pr merge succeeds" \
                   "PR #${gate_pr_number[$prefix]}: required checks never reported a result"
+                emit_verdict
+                exit 0
+              fi
+              # Same clamp for a PR still waiting on its stage's label.
+              if [ -n "${gate_unreported_since[$prefix]}" ]; then
+                write_verdict "fail-gate-stall" "${gate_name[$prefix]}" \
+                  "the stage that opened PR #${gate_pr_number[$prefix]} moves the issue to ${gate_ready_label[$prefix]} before the harness merges it" \
+                  "PR #${gate_pr_number[$prefix]} was still waiting for ${gate_ready_label[$prefix]} when the poll budget ran out, with the issue at [${labels}]"
                 emit_verdict
                 exit 0
               fi
