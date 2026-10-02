@@ -25,8 +25,9 @@ step, and the publish step reads its `ok` output:
 This harness EXECUTES the shipped publish step (wc_shell_harness.run_step)
 inside a real clone of a real local bare remote. A race is the branch
 moved underneath it by a second clone, so the lease is git's own; a
-non-lease refusal is the remote's pre-receive hook declining the push. Static checks pin the step order and the env wiring. Each
-MUTATION reverts one rule and asserts the suite then fails.
+non-lease refusal is the remote's pre-receive hook declining the push.
+Static checks pin the step order and the env wiring. Each MUTATION
+reverts one rule and asserts the suite then fails.
 
 Usage: python3 .github/scripts/verify-rebase-publish-credential-refusal.py
 Requires: bash, git.
@@ -185,6 +186,8 @@ def main():
           (publish.get("env") or {}).get("CREDENTIAL_OK") == "${{ steps.credential-status.outputs.ok }}",
           "env={0}".format(publish.get("env")))
     script = str(publish["run"])
+    check("the push runs under LC_ALL=C, so git's \"(stale info)\" is never translated",
+          "LC_ALL=C git push --force-with-lease" in script, "")
     for name, old, _new in MUTATIONS:
         if script.count(old) != 1:
             sys.exit("::error file={0}::mutation {1!r} no longer matches the publish step exactly "

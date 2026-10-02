@@ -1059,8 +1059,8 @@ jobs:
       # AI resolution. The lease compares against the branch tip recorded at
       # checkout, so a push rejected because the branch moved meanwhile is
       # skipped silently, with no lifecycle comment. Any other refusal after
-      # a failed post-agent credential fails the step instead (#661). On success, drop any
-      # stale rebase:blocked label (auto-recovery).
+      # a failed post-agent credential fails the step instead (#661). On
+      # success, drop any stale rebase:blocked label (auto-recovery).
       #
       # `!cancelled()` rather than `always()`: the status function is here to
       # stop a scope-verified result being dropped by an unrelated earlier
@@ -1085,7 +1085,9 @@ jobs:
           CREDENTIAL_OK: ${{ steps.credential-status.outputs.ok }}
         run: |
           set -uo pipefail
-          if git push --force-with-lease origin "HEAD:refs/heads/${SPEC_PREFIX}$SLUG" 2>"$RUNNER_TEMP/push-err.txt"; then
+          # LC_ALL=C: the credential arm below reads git's "(stale info)"
+          # lease rejection, which a translated locale would reword.
+          if LC_ALL=C git push --force-with-lease origin "HEAD:refs/heads/${SPEC_PREFIX}$SLUG" 2>"$RUNNER_TEMP/push-err.txt"; then
             echo "${SPEC_PREFIX}$SLUG: pushed rebased result (force-with-lease)." >> "$GITHUB_STEP_SUMMARY"
             if [ -n "$ISSUE" ]; then
               has_label="$(gh issue view "$ISSUE" --json labels \

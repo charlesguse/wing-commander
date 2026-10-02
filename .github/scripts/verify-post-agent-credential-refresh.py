@@ -743,8 +743,9 @@ def check_job_full_subject(path, job_name, job):
     # just before "Publish rebased branch", which reads it (#661). Either
     # way it sits outside the agent step's window: in a multi-agent-step
     # job, all of a job's credential-status calls cluster at the END, never
-    # inside any individual agent step's window. Its "position" is therefore checked
-    # by REFERENCE, not by sequential order: each agent step's own mint
+    # inside any individual agent step's window. Its "position" is
+    # therefore checked by REFERENCE, not by sequential order: each agent
+    # step's own mint
     # step (found inside its window) must have some credential-status call,
     # anywhere in the job, whose `mint-outcome` names that exact mint
     # step's id -- the same reference a duplicated call cannot satisfy for
