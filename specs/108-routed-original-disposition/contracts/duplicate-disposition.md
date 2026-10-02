@@ -65,16 +65,21 @@ steps 5 and 6 are the workflow's own `wing-commander-outstanding-task-item`
 calls. Any failure at steps 2–4 returns `False`, and the caller's step
 fails the job (no `continue-on-error`). The function is idempotent, so
 calling it again for the same issue finishes whatever its pre-check finds
-incomplete (FR-010). A fresh scheduled run does NOT get there on its own
-(code review of #809, #888): see the failure semantics table below for
-where each partial state leaves the issue, and finish it by hand. Step order matters
+incomplete (FR-010). Whether a later scheduled run makes that call depends
+on the call site and on which step failed (code review of #809, #888): see
+the failure semantics table below. A call made by hand must run with the
+App's token and `BOT_LOGIN=<app-slug>[bot]`. Its comment-presence check
+and every marker reader accept only the App's own comments, so a call
+under a person's token re-posts the comment, and the marker it writes is
+one no loop reader ever sees: the carve-out never re-admits that issue,
+and the closed-without-landing scan never matches it back. Step order matters
 the other way from an earlier draft of this contract: labelling and
 commenting BEFORE closing means a crash after a successful close never
 strands the issue CLOSED with no `disposition:duplicate` label and no
 marker. `is_excluded()` (`board_eligibility.py`) returns `(True, "closed")`
 on `state == CLOSED` alone, before it ever looks at labels
 (`board_eligibility.py`'s exclusion order) — so a closed-but-unlabelled
-issue is never re-selected for a later run's pre-check to resume, and the
+issue is never re-selected, so nothing would ever resume it, and the
 FR-017 closed-without-landing scan also can't find it without the label.
 Closing last means the only way an issue ends up CLOSED is with its label
 and marker already in place (maintainer review, fold leg-0: FR-006,
@@ -96,7 +101,7 @@ guard" side of that boundary.
 | Scenario | State left behind | Next run's behaviour |
 |---|---|---|
 | Create guard fails (spec-request never filed) | Originating issue untouched, no `disposition:duplicate`, no marker change | Retries the create from scratch (unchanged create-guard behaviour, FR-011) |
-| Spec-request filed, label call fails | Originating issue still OPEN, no label, no comment | Not finished by a scheduled run: the issue is eligible again, so the next run re-routes it and route's unconditional `gh issue create` files a second spec-request (#527). Finish by hand; a direct call's pre-check starts at step 2 (label) |
+| Spec-request filed, label call fails (or the pre-check read fails, changing nothing) | Originating issue still OPEN, no label, no comment | Depends on the site. At route, and on readiness's fresh backstop breach, a scheduled run does not finish it: the issue is eligible again, so the next run re-routes it and route's unconditional `gh issue create` files a second spec-request (#701). After fix's post-push breach, and on readiness's breach-retry, the step=breach marker posted before the create (#530) brings the next run back to readiness's breach-retry path. That path finds this same spec-request by its footer and PR number, reuses it, and calls the disposition again, which starts at step 2 (label) |
 | Spec-request filed, label succeeds, comment call fails | Originating issue OPEN + labelled, no reason comment | Not finished by a scheduled run: the label alone excludes the issue (`is_excluded()`), and with no duplicate marker the re-admission carve-out never applies, even after the spec-request closes. Only removing the label frees it. A direct call's comment-presence check (independent of labelled/closed state, per FR-009's "no duplicate comment" wording) re-enters at step 3 (comment) |
 | Spec-request filed, label+comment succeed, close call fails | Originating issue OPEN + labelled + commented | Not finished by a scheduled run: labelled and marked, the issue stays excluded while its spec-request is open. A direct call's pre-check finds `state != CLOSED` and re-enters at step 4 (close), never re-posting a second comment, since the comment-presence check already found its own marker |
 | Everything succeeds, run re-executes disposition on the same issue anyway (idempotency drill, FR-009) | No change | Pre-check finds everything present; no-op `True` |

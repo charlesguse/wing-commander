@@ -280,7 +280,10 @@ def _first_divergent_pin(workflow_file, run_pins, main_pins):
     never used (e.g. a second step added at a new ref) is not bump
     evidence (#678), and neither is main deleting one of the steps that
     pinned the action, which loses a ref with nothing bumped in its place
-    (#800): only the two together are. A map value is one ref (a string) or a list of the
+    (#800): only the two together are. Accepted gap: refs are compared as
+    sets, so main aligning a lagging step to its sibling's ref (run pins
+    v4 and v5, main pins v5 twice) reads the same as deleting the v4 step
+    and is not a bump. That errs toward leaving the issue open. A map value is one ref (a string) or a list of the
     refs the file pins that action at (_uses_pins()); order and repeats
     never matter. In the evidence, run_pin/main_pin are the ref itself when
     there is one, else the sorted refs joined with ", "."""

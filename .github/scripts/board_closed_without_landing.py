@@ -80,24 +80,39 @@ def _spec_request_notice_body():
             "returns the request to the board.")
 
 
+def _superseded_notice_body(originating_issue):
+    return ("This spec-request closed without its work landing. Its originating issue "
+            "#{0} has since been routed to a newer spec-request, which carries the request "
+            "now, so reopening the originating issue for this one would not return it to the "
+            "board.").format(originating_issue)
+
+
 def _originating_notice_body(spec_request_number):
     return ("The spec-request filed for this issue (#{0}) closed without its work landing -- "
             "reopening this issue returns the request to the board.").format(spec_request_number)
 
 
-def main():
-    payload = json.load(sys.stdin)
-    repository = os.environ.get("GITHUB_REPOSITORY")
-    if not repository:
-        print("::error::board_closed_without_landing: GITHUB_REPOSITORY is unset.", file=sys.stderr)
-        sys.exit(1)
-
-    spec_requests = payload.get("spec_requests") or []
+def post_notices(spec_requests, repository, run=None):
+    """Posts the notices for every entry closed_without_landing() keeps;
+    returns the number of failed posts. An entry carrying `superseded_on`
+    (#874) gets only its own superseded-wording notice; any other entry
+    gets its own notice and, when its originating issue resolved, that
+    issue's notice too."""
     failures = 0
     for entry in closed_without_landing(spec_requests):
         number = entry.get("number")
+        superseded_on = entry.get("superseded_on")
+        if superseded_on is not None:
+            # #874: the originating issue's newest duplicate marker names a
+            # later spec-request, so telling it "reopening returns the
+            # request to the board" would be false (FR-006, FR-017). Only
+            # the spec-request itself is told, in words that say so.
+            if not post_notice(number, repository, _superseded_notice_body(superseded_on),
+                                entry.get("comments"), run=run):
+                failures += 1
+            continue
         if not post_notice(number, repository, _spec_request_notice_body(),
-                            entry.get("comments")):
+                            entry.get("comments"), run=run):
             failures += 1
             continue
         originating = entry.get("originating_issue")
@@ -107,10 +122,18 @@ def main():
                   "notice was posted.".format(number))
             continue
         if not post_notice(originating, repository, _originating_notice_body(number),
-                            entry.get("originating_comments")):
+                            entry.get("originating_comments"), run=run):
             failures += 1
+    return failures
 
-    if failures:
+
+def main():
+    payload = json.load(sys.stdin)
+    repository = os.environ.get("GITHUB_REPOSITORY")
+    if not repository:
+        print("::error::board_closed_without_landing: GITHUB_REPOSITORY is unset.", file=sys.stderr)
+        sys.exit(1)
+    if post_notices(payload.get("spec_requests") or [], repository):
         sys.exit(1)
 
 

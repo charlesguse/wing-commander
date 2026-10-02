@@ -16,9 +16,11 @@ read of the originating issue's live state/labels/comments, so a run that
 finds everything already in place makes no further `gh` call at all.
 Failure semantics (FR-010/FR-011): any `gh` failure returns False
 immediately, leaving the issue in whatever partial state the failed
-attempt reached -- the next run's own pre-check resumes at whichever step
-was left undone, never re-filing a second spec-request or re-posting a
-duplicate comment.
+attempt reached. Calling this again for the same issue resumes at
+whichever step was left undone and never re-posts a duplicate comment,
+but whether a later SCHEDULED run makes that call depends on the call
+site and on which step failed (contracts/duplicate-disposition.md,
+failure semantics; #888).
 """
 import argparse
 import json
@@ -155,14 +157,14 @@ def dispose_as_duplicate(originating_issue, spec_request_issue, spec_request_url
         state_labels, ok = _view_issue(originating_issue, "state,labels", repository, run)
         if not ok:
             print("::error::board_duplicate_disposition: could not read issue #{0} (pre-check, step 1) "
-                  "-- disposition not attempted; a later run retries from the pre-check.".format(
+                  "-- disposition not attempted; nothing was changed (what a later run does: contracts/duplicate-disposition.md, failure semantics).".format(
                       originating_issue), file=sys.stderr)
             return False
         originating_comments, ok = _fetch_comments(originating_issue, repository, run)
         if not ok:
             print("::error::board_duplicate_disposition: could not read the comments of issue #{0} "
-                  "(pre-check, step 1) -- disposition not attempted; a later run retries from the "
-                  "pre-check.".format(originating_issue), file=sys.stderr)
+                  "(pre-check, step 1) -- disposition not attempted; nothing was changed (what a later run does: "
+                  "contracts/duplicate-disposition.md, failure semantics).".format(originating_issue), file=sys.stderr)
             return False
         originating = dict(state_labels)
         originating["comments"] = originating_comments
@@ -170,8 +172,8 @@ def dispose_as_duplicate(originating_issue, spec_request_issue, spec_request_url
         spec_request_comments, ok = _fetch_comments(spec_request_issue, repository, run)
         if not ok:
             print("::error::board_duplicate_disposition: could not read the comments of spec-request "
-                  "#{0} (pre-check, step 1) -- disposition not attempted; a later run retries from the "
-                  "pre-check.".format(spec_request_issue), file=sys.stderr)
+                  "#{0} (pre-check, step 1) -- disposition not attempted; nothing was changed (what a later run does: "
+                  "contracts/duplicate-disposition.md, failure semantics).".format(spec_request_issue), file=sys.stderr)
             return False
         spec_request = {"comments": spec_request_comments}
 
@@ -234,14 +236,14 @@ def main():
     state_labels, ok = _view_issue(args.originating, "state,labels", repository, subprocess.run)
     if not ok:
         print("::error::board_duplicate_disposition: could not read issue #{0} (pre-check, step 1) -- "
-              "disposition not attempted; a later run retries from the pre-check.".format(
+              "disposition not attempted; nothing was changed (what a later run does: contracts/duplicate-disposition.md, failure semantics).".format(
                   args.originating), file=sys.stderr)
         sys.exit(1)
     originating_comments, ok = _fetch_comments(args.originating, repository, subprocess.run)
     if not ok:
         print("::error::board_duplicate_disposition: could not read the comments of issue #{0} "
-              "(pre-check, step 1) -- disposition not attempted; a later run retries from the "
-              "pre-check.".format(args.originating), file=sys.stderr)
+              "(pre-check, step 1) -- disposition not attempted; nothing was changed (what a later run does: "
+              "contracts/duplicate-disposition.md, failure semantics).".format(args.originating), file=sys.stderr)
         sys.exit(1)
     originating = dict(state_labels)
     originating["comments"] = originating_comments
@@ -249,8 +251,8 @@ def main():
     spec_request_comments, ok = _fetch_comments(args.spec_request_issue, repository, subprocess.run)
     if not ok:
         print("::error::board_duplicate_disposition: could not read the comments of spec-request #{0} "
-              "(pre-check, step 1) -- disposition not attempted; a later run retries from the "
-              "pre-check.".format(args.spec_request_issue), file=sys.stderr)
+              "(pre-check, step 1) -- disposition not attempted; nothing was changed (what a later run does: "
+              "contracts/duplicate-disposition.md, failure semantics).".format(args.spec_request_issue), file=sys.stderr)
         sys.exit(1)
     spec_request = {"comments": spec_request_comments}
 
