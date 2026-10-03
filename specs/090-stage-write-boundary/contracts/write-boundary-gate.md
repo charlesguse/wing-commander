@@ -163,8 +163,10 @@ out-of-boundary routing on lifecycle issue", keyed on the Route step's
 `outcome == 'failure'`, on non-zero `dropped-api-failure`,
 `dropped-malformed` and `dropped-cap` outputs, and on an `outcome ==
 'success'` that filed and appended nothing (a crash in the composite's
-prepare step, or an all-errata drop, reports all-zero counts) -- the five
-OR-joined under one `!cancelled()`, so any one of them fires it -- and
+prepare step reports all-zero counts) -- the five OR-joined under one
+`!cancelled()`, so any one of them fires it, and evaluated to stay quiet
+on a successful route (`filed=1` or `appended=1`, every drop count 0) and
+to fire on one that filed nothing -- and
 posting through
 `wing-commander-callout` to `inputs.issue-number` -- the Route step is
 `continue-on-error` and its composite always exits 0, reporting an API

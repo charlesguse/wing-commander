@@ -9,7 +9,8 @@
 # shape (fenced-block or structured-array) -> validate each against
 # .github/schemas/stage-finding.schema.json -> drop spec-document errata
 # and route this spec's own in-flight defects to one lifecycle-issue
-# comment (board reset of 2026-10-01) -> cap survivors -> per
+# comment (board reset of 2026-10-01; a routed-task finding skips both)
+# -> cap survivors -> per
 # survivor, fingerprint + compose body + report through
 # wing-commander-durable-failure-issue (dedup by a marker embedded in the
 # issue body) -> cross-link onto the lifecycle issue via
@@ -82,9 +83,11 @@ inputs:
       (default) reproduces this composite's pre-existing rendered text
       byte-for-byte. routed-task swaps the recap phrases and
       label-description to describe work outside the stage's write
-      boundary rather than a defect -- no other input, output, the
-      fingerprint formula, the cap, or the dedup call changes for either
-      kind.
+      boundary rather than a defect, and files each finding even though
+      it cites only the spec's tasks.md -- never dropped as spec errata
+      or posted to the lifecycle issue as in-flight. No other input,
+      output, the fingerprint formula, the cap, or the dedup call changes
+      for either kind.
     required: false
     default: "defect"
 
@@ -345,6 +348,15 @@ runs:
             if not ok:
                 dropped_malformed.append(reason)
                 notes.append("dropped (malformed): {0}".format(reason))
+            elif IS_ROUTED:
+                # A routed task cites only its spec's tasks.md (the one
+                # file wing-commander-write-boundary's classifier names), a
+                # file the lifecycle's own branch changes -- so both filters
+                # below would take every one of them, and none would ever
+                # file. It is work for a human, not an errata or an in-
+                # flight defect: spec 090 FR-007/SC-005 file each one as a
+                # tracked issue, so it skips both.
+                survivors.append(item)
             elif is_spec_errata(item):
                 dropped_spec_errata += 1
                 notes.append("dropped (spec errata, fix in the spec's own PR): {0}".format(

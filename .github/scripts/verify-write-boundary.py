@@ -463,8 +463,8 @@ def check_prompt_and_route_wiring(stage_text=None):
         # error, a malformed entry or a task over the cap shows up only in
         # these output counts, so an outcome-only guard would almost never
         # fire. A success that filed and appended nothing lost every task
-        # too (a crash in the composite's prepare step, or an all-errata
-        # drop, reports all-zero counts).
+        # too (a crash in the composite's prepare step reports all-zero
+        # counts).
         filed_none = ("(steps.route-out-of-boundary.outcome == 'success' && "
                       "steps.route-out-of-boundary.outputs.filed == '0' && "
                       "steps.route-out-of-boundary.outputs.appended == '0')")
@@ -497,6 +497,33 @@ def check_prompt_and_route_wiring(stage_text=None):
         if (flag_step.get("with") or {}).get("issue-number") != "${{ inputs.issue-number }}":
             failures.append(f"(k) {FLAG_ROUTE_FAILURE_STEP!r}: issue-number is "
                             f"not the lifecycle issue (inputs.issue-number).")
+        # A route that filed or appended its tasks with no drop must leave
+        # the lifecycle issue alone; one that filed nothing must flag it.
+        # wing-commander-stage-findings' own fixtures (Gate 71) prove a
+        # routed task reaches filed=1 with every drop count 0.
+        route = "steps.route-out-of-boundary."
+        quiet = {route + "outcome": "success", route + "outputs.filed": "1",
+                 route + "outputs.appended": "0",
+                 route + "outputs.dropped-api-failure": "0",
+                 route + "outputs.dropped-malformed": "0",
+                 route + "outputs.dropped-cap": "0"}
+        for label, context, want in (
+                ("a successful route (filed=1)", quiet, False),
+                ("a successful route (appended=1)",
+                 dict(quiet, **{route + "outputs.filed": "0",
+                                route + "outputs.appended": "1"}), False),
+                ("a route that filed nothing",
+                 dict(quiet, **{route + "outputs.filed": "0"}), True)):
+            try:
+                fires = eval_if_expr(flag_if, context)
+            except Exception as exc:  # noqa: BLE001 -- an unparseable if: is a failure to report
+                failures.append(f"(k) {FLAG_ROUTE_FAILURE_STEP!r}: if: could "
+                                f"not be evaluated ({exc}) -- got {flag_if!r}.")
+                break
+            if fires != want:
+                failures.append(f"(k) {FLAG_ROUTE_FAILURE_STEP!r}: "
+                                f"{'fires' if fires else 'stays quiet'} on "
+                                f"{label} -- got {flag_if!r}.")
     return failures
 
 
@@ -960,7 +987,8 @@ def eval_if_expr(expr, context):
     def repl(m):
         return repr(context.get(m.group(0), ""))
 
-    e = re.sub(r"steps\.[\w.\-]+\.outputs\.[\w\-]+|inputs\.[\w\-]+", repl, e)
+    e = re.sub(r"steps\.[\w.\-]+\.outputs\.[\w\-]+|steps\.[\w\-]+\.outcome|inputs\.[\w\-]+",
+               repl, e)
 
     def _from_json(value):
         try:

@@ -139,8 +139,13 @@ default `defect`).
 | Recap phrase (commented) | `"a defect met by the $STAGE stage was recorded on an existing issue"` | `"work the $STAGE stage still could not complete under its write boundary was recorded on an existing issue"` |
 | `label-description` | `"...the $STAGE stage met a defect outside its own task"` | `"...the $STAGE stage was given work outside its write boundary"` |
 
-No other input, output, the fingerprint formula (§ below), the cap, or the
-dedup call changes for either kind. (review-gate-round-4 item 2: the
+A `routed-task` finding cites only the spec's `tasks.md` (§3's classifier
+names no other file), so it is never dropped as spec errata nor posted to
+the lifecycle issue as an in-flight defect -- both filters, added for
+`defect` findings at the 2026-10-01 board reset, would otherwise take every
+routed task and FR-007/SC-005 would file none. No other input, output, the
+fingerprint formula (§ below), the cap, or the dedup call changes for
+either kind. (review-gate-round-4 item 2: the
 `routed-task` phrase above is shorter than an earlier draft's "was assigned
 work..." — GitHub caps a label description at 100 characters, and that
 wording ran over for the longest stage name, "implement"; the shipped

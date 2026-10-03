@@ -2670,8 +2670,8 @@ jobs:
       # 'failure'` (a crash before the composite's own handling). A
       # success that filed and appended nothing is also a loss -- this
       # step only runs on a non-empty findings list, and the composite
-      # reports a crash in its own prepare step, or a finding it drops
-      # without a count output (spec errata), as all-zero counts. Same
+      # reports a crash in its own prepare step as all-zero counts (a
+      # routed-task finding is never dropped as spec errata). Same
       # ending-loop reasoning as the cap warning above: nothing
       # re-classifies them later, so the lifecycle issue is flagged for a
       # human to file them by hand (FR-007: never only as an annotation).
