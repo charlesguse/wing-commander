@@ -159,6 +159,8 @@ def act_steps(ifs_steps, ctx, arm):
         ],
         "verify failed": [
             "Download prepared branch bundle",
+            "Download verify diagnostics",
+            "Load verify diagnostics",
             "Fetch prepared branch from bundle",
             "Label the issue as failed",
             "Comment verification failure on the issue",
@@ -166,6 +168,8 @@ def act_steps(ifs_steps, ctx, arm):
         ],
         "verify passed": [
             "Download prepared branch bundle",
+            "Download verify diagnostics",
+            "Load verify diagnostics",
             "Fetch prepared branch from bundle",
             "Check for a pre-existing branch or pull request",
             "Open version-bump PR",
@@ -176,6 +180,8 @@ def act_steps(ifs_steps, ctx, arm):
         # must NOT, and the decline steps must run instead.
         "verify passed, preflight blocked": [
             "Download prepared branch bundle",
+            "Download verify diagnostics",
+            "Load verify diagnostics",
             "Fetch prepared branch from bundle",
             "Check for a pre-existing branch or pull request",
             "Decline — a pre-existing branch or pull request blocks this candidate",

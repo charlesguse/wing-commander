@@ -902,12 +902,15 @@ jobs:
           # that have to be named here.
           #
           # Every OTHER App token this repository mints is a workflow step
-          # that `uses: actions/create-github-app-token` directly — e2e-stage's
-          # `scratch-token` for the pre-created scratch repository, and
-          # auto-release.yml's `token` for the pre-onboarded end-to-end test
-          # repository (each a scope the context token cannot cover, since
-          # one installation token cannot span two owners). Those are
-          # recognised STRUCTURALLY, per job, by app_token_exprs_for() below:
+          # that `uses: actions/create-github-app-token` directly (e2e-stage's
+          # `scratch-token` for the pre-created scratch repository) or through
+          # the `_shared/scoped-app-token` composite, which wraps that action
+          # and re-exports its token (auto-release.yml's `token` for the
+          # pre-onboarded end-to-end test repository, auto-update-spec-kit's
+          # scratch-repository mints). Each is a scope the context token
+          # cannot cover, since one installation token cannot span two
+          # owners. Those are recognised STRUCTURALLY, per job, by
+          # app_token_exprs_for() below:
           # a step id is only an App token in the job that mints it, so a
           # generic id like `token` in some other job never inherits the
           # classification by name. Same App, same grant, so the same
@@ -916,6 +919,9 @@ jobs:
           # and its own classification — do not fold it into this one.
           APP_TOKEN_EXPRS = {"steps.ctx.outputs.token"}
           APP_TOKEN_MINTER = "actions/create-github-app-token"
+          # A step using this composite (by any COMPOSITE_USES_RE path) mints
+          # through APP_TOKEN_MINTER and outputs that token as `token`.
+          APP_TOKEN_MINTER_COMPOSITE = "_shared/scoped-app-token"
           DEFAULT_TOKEN_EXPRS = {"github.token", "secrets.GITHUB_TOKEN"}
 
 
@@ -931,14 +937,17 @@ jobs:
           def app_token_exprs_for(job):
               """APP_TOKEN_EXPRS plus `steps.<id>.outputs.token` for every step
               in THIS job that mints an installation token with
-              actions/create-github-app-token, plus APP_TOKEN_ENV_EXPR when
+              actions/create-github-app-token, directly or through the
+              scoped-app-token composite, plus APP_TOKEN_ENV_EXPR when
               THIS job runs wing-commander-context."""
               out = set(APP_TOKEN_EXPRS)
               for st in job.get("steps") or []:
                   st = st or {}
                   sid = st.get("id")
                   uses = str(st.get("uses") or "")
-                  if sid and uses.split("@")[0] == APP_TOKEN_MINTER:
+                  cm = COMPOSITE_USES_RE.match(uses.replace("\\", "/"))
+                  if sid and (uses.split("@")[0] == APP_TOKEN_MINTER
+                              or (cm and cm.group(1) == APP_TOKEN_MINTER_COMPOSITE)):
                       out.add(f"steps.{sid}.outputs.token")
                   if uses.split("@")[0].endswith(APP_TOKEN_ENV_EXPORTER):
                       out.add(APP_TOKEN_ENV_EXPR)
@@ -1012,10 +1021,12 @@ jobs:
           }
 
           # Permissions no `permissions:` block can grant GITHUB_TOKEN (the
-          # variables entries above): a call needing one 403s under
-          # github.token in every job, so check_call fails it even where the
-          # job declares no permissions: block to compare against.
-          DEFAULT_TOKEN_NEVER_GRANTED = frozenset({"variables"})
+          # variables entries above, and the Secrets and Administration
+          # surfaces API_CATEGORY_PERM maps actions/ sub-paths to): a call
+          # needing one 403s under github.token in every job, so check_call
+          # fails it even where the job declares no permissions: block to
+          # compare against.
+          DEFAULT_TOKEN_NEVER_GRANTED = frozenset({"variables", "secrets", "administration"})
 
           # `gh api PATH` — PATH's first segment under repos/{owner}/{repo}/ decides
           # the permission, the same way SUBCOMMAND_PERMS does for named subcommands.
@@ -1046,10 +1057,21 @@ jobs:
               # Git database endpoints are under "Contents" in the
               # fine-grained permission reference.
               "git": "contents",
-              # .../actions/variables/... (path_category splits it out of
-              # "actions"): the "Variables" repository permission, as the
-              # `gh variable` entries in SUBCOMMAND_PERMS say.
+              # .../actions/<sub>/... sub-paths that path_category splits out
+              # of "actions" (ACTIONS_SUBPATHS below) because GitHub's
+              # fine-grained permission reference files them under their own
+              # repository permission, not "Actions":
+              # - variables, organization-variables: "Variables", as the
+              #   `gh variable` entries in SUBCOMMAND_PERMS say;
+              # - secrets, organization-secrets: "Secrets";
+              # - permissions, runners: "Administration" (auto-release.yml's
+              #   maintainer-token probe reads .../actions/permissions).
               "actions/variables": "variables",
+              "actions/organization-variables": "variables",
+              "actions/secrets": "secrets",
+              "actions/organization-secrets": "secrets",
+              "actions/permissions": "administration",
+              "actions/runners": "administration",
               # specs/062-lifecycle-review-gate T024: POST .../statuses/{sha}
               # (Create a commit status) -- the REST reference lists
               # "Commit statuses" as its own fine-grained repository
@@ -1058,10 +1080,59 @@ jobs:
               "statuses": "statuses",
           }
 
+          # The sub-paths path_category splits out of "actions", read from the
+          # table itself so a new sub-path entry needs no second edit.
+          ACTIONS_SUBPATHS = frozenset(k.split("/", 1)[1] for k in API_CATEGORY_PERM
+                                       if k.startswith("actions/"))
+
+          # `gh api`'s own flags may precede the path in any order (`gh api -i
+          # -X POST PATH`); the parser before the code review of #939 allowed
+          # only -X/--method there and read `-i` as the PATH, hiding six
+          # auto-release.yml calls. A flag gh documents as taking a value
+          # consumes the next word, and so does a cluster of gh's one
+          # boolean short flag ending in one (`-iX POST`, as in `curl -iX
+          # POST`); any other word starting `-` (`-i`, `--method=POST`,
+          # `-H'Accept: x'`, `--`) is a switch. A valued flag
+          # standing alone is never a switch: the regex would otherwise
+          # backtrack it into one and take its value (`-X POST`'s `POST`) as
+          # the PATH, a non-repos/ path skipped as out of scope where a call
+          # with no PATH must fail loudly as unrecognised. A word is read the
+          # way the shell splits it, so a partly quoted value (`-f body="a
+          # b"`) is one word, not `body="a` plus a PATH `b"`, and so is a value
+          # holding a command substitution or an Actions expression with
+          # blanks in it (`-f sha=$(git rev-parse HEAD)`), which would
+          # otherwise free `rev-parse` as the PATH, including a substitution
+          # inside double quotes whose own quoted words hold blanks (`-f
+          # body="$(printf "%s %s" "$A" "$B")"`), and a value with a
+          # backslash-escaped quote (`-f body='it'\''s'`); an unclosed one is no
+          # word at all, so backtracking never splits it either. A backslash
+          # outside quotes is read only as an escape, never as a plain
+          # character too: a word with both readings has 2^n splittings, so a
+          # call with no PATH and a few dozen escapes (`--jq .a\.b\.c...`)
+          # would hang the gate instead of failing it. Words are
+          # separated the way the shell separates them on one command: blanks
+          # or a `\`-newline continuation, never a bare newline -- a call
+          # whose PATH sits on its continuation line is still resolved (not
+          # read as a PATH `\` and skipped as out of scope), and a call with
+          # no PATH never takes the next command's first word as one.
+          GH_API_SEP = r'(?:[ \t]|\\\n)+'
+          _CMD_SUB = r'\$\((?:[^()]|\([^()]*\))*\)'
+          SHELL_WORD = (r'(?:"(?:[^"\\$]|\\.|' + _CMD_SUB + r'|\$(?!\())*"|\'[^\']*\''
+                        r'|' + _CMD_SUB + r'|\$\{\{(?:[^}]|\}(?!\}))*\}\}'
+                        r'|\\.|(?!\$\(|\$\{\{)[^\s"\'\\])+')
+          GH_API_VALUE_FLAGS = ("-X", "--method", "-H", "--header", "-f", "--raw-field",
+                                "-F", "--field", "-q", "--jq", "-t", "--template",
+                                "-p", "--preview", "--hostname", "--input", "--cache")
+          _GH_API_VALUE_FLAG = ("(?:" + "|".join(re.escape(f) for f in GH_API_VALUE_FLAGS)
+                                + r"|-i+[XHfFqtp])")
+          GH_API_FLAGS = (
+              r'(?:' + _GH_API_VALUE_FLAG + GH_API_SEP + SHELL_WORD + GH_API_SEP +
+              r'|(?!' + _GH_API_VALUE_FLAG + r'(?:\s|\\\n|$))-' + SHELL_WORD + GH_API_SEP + r')*')
+
           GH_INVOKE_RE = re.compile(
               r'(?:GH_TOKEN=(?P<tokexpr>"(?:[^"\\]|\\.)*"|\$\{\{[^}]*\}\}|\$\w+)\s+)?'
               r'\bgh\s+(?:'
-              r'api\s+(?:(?:-X|--method)\s+\S+\s+)?(?P<apipath>"(?:[^"\\]|\\.)*"|\S+)'
+              r'api' + GH_API_SEP + GH_API_FLAGS + r'(?P<apipath>"(?:[^"\\]|\\.)*"|(?!\\\n)[^\s-]\S*)'
               r'|(?P<verb1>[a-zA-Z][\w-]*)(?:\s+(?P<verb2>[a-zA-Z][\w-]*))?'
               r')'
           )
@@ -1085,8 +1156,15 @@ jobs:
           # implicit POST never reaches this table. Both spellings, because
           # wing-commander-metrics-persist writes `--method PATCH` — which the
           # -X-only parser before #339 read as a PATH named `--method` and
-          # dropped as out of scope.
-          API_WRITE_METHOD_RE = re.compile(r'(?:^|\s)(?:-X|--method)\s+(?:POST|PATCH|PUT|DELETE)\b')
+          # dropped as out of scope. Every spelling gh accepts: `-X POST`,
+          # `-XPOST`, `-iX POST`, `--method POST`, `--method=POST`, quoted or not -- the
+          # flag parser above skips the attached forms as switches, so a
+          # space-only match here would read those writes as reads. The flag
+          # is found on the blanked call line (so one inside another flag's
+          # quoted value is not this call's), its method word on the raw one
+          # (blanking would erase a quoted `'POST'`) -- see api_level().
+          API_METHOD_FLAG_RE = re.compile(r'(?:^|\s)(?:-i*X|--method(?![\w-]))')
+          API_WRITE_METHOD_RE = re.compile(r'(?:POST|PATCH|PUT|DELETE)\b')
 
 
           def norm_expr(raw):
@@ -1102,7 +1180,11 @@ jobs:
           def strip_heredocs(text):
               """Heredoc bodies are data for another interpreter (python, jq), never
               bash commands — a `gh ...` mentioned inside one (an error message a gate
-              prints, e.g.) never actually runs. Strip them before scanning."""
+              prints, e.g.) never actually runs. Strip them before scanning.
+              A `<<WORD` the shell never executes is not an opener: auto-release's
+              `echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'` writes a $GITHUB_OUTPUT
+              delimiter, and reading it as a heredoc hid the rest of that step,
+              six maintainer-token `gh api` calls among it (code review of #939)."""
               out = []
               lines = text.splitlines()
               heredoc_re = re.compile(r"<<-?\s*'?(\w+)'?\s*$")
@@ -1110,6 +1192,10 @@ jobs:
               while i < len(lines):
                   line = lines[i]
                   m = heredoc_re.search(line)
+                  if m:
+                      prefix = "\n".join(out + [line[:m.start()]])
+                      if not executable_flags(prefix + "<")[-1]:
+                          m = None
                   out.append(line)
                   i += 1
                   if m:
@@ -1236,15 +1322,18 @@ jobs:
               if rest[0].startswith("$"):
                   rest = rest[1:]           # one token already carries owner/repo
                   scope = "SELF"
+              elif rest[:2] == ["{owner}", "{repo}"]:
+                  rest = rest[2:]           # gh fills these from the current repository
+                  scope = "SELF"
               else:
                   rest = rest[2:] if len(rest) >= 2 else []
                   scope = "CROSS"           # a literal, different owner/repo pair
-              if rest[:2] == ["actions", "variables"]:
-                  # Under actions/ by path, but the "Variables" permission's
-                  # surface, not "Actions" (fine-grained reference; code
-                  # review of #924) -- the same split SUBCOMMAND_PERMS
-                  # makes for `gh variable`.
-                  return scope, "actions/variables"
+              if rest[:1] == ["actions"] and len(rest) >= 2 and rest[1] in ACTIONS_SUBPATHS:
+                  # Under actions/ by path, but another permission's surface,
+                  # not "Actions" (fine-grained reference; code reviews of
+                  # #924 and #939) -- the same split SUBCOMMAND_PERMS makes
+                  # for `gh variable`.
+                  return scope, f"actions/{rest[1]}"
               return (scope, rest[0]) if rest else (scope, None)
 
 
@@ -1397,13 +1486,15 @@ jobs:
               command separator (`;`, `&&`, `||`, `|`), with every
               non-executable character blanked — so a `--method POST` inside
               a quoted value, in a trailing comment, or in the NEXT command on
-              the same line never reads as this call's method."""
-              out = []
+              the same line never reads as this call's method. -> (blanked,
+              raw): the same span unblanked, character-aligned with it, for
+              reading a quoted flag value."""
+              out, raw = [], []
               i, n = m.start(), len(text)
               while i < n:
                   c = text[i]
                   if flags[i] and c == "\\" and i + 1 < n and text[i + 1] == "\n":
-                      out.append(" "); i += 2; continue
+                      out.append(" "); raw.append(" "); i += 2; continue
                   if flags[i] and c == "\n":
                       break
                   if flags[i] and c in ";|":
@@ -1411,12 +1502,18 @@ jobs:
                   if flags[i] and c == "&" and not (i > 0 and text[i - 1] == ">"):
                       break
                   out.append(c if flags[i] else " ")
+                  raw.append(c)
                   i += 1
-              return "".join(out)
+              return "".join(out), "".join(raw)
 
 
           def api_level(cmdline):
-              return "write" if API_WRITE_METHOD_RE.search(cmdline) else "read"
+              blanked, raw = cmdline
+              for fm in API_METHOD_FLAG_RE.finditer(blanked):
+                  wm = re.match(r'(?:=|\s*)(' + SHELL_WORD + ')', raw[fm.end():])
+                  if wm and API_WRITE_METHOD_RE.match(re.sub(r'["\']', "", wm.group(1))):
+                      return "write"
+              return "read"
 
 
           def check_gh_invocation(where, m, cmdline, assigns, tok_kind, tok_detail,
@@ -5172,8 +5269,9 @@ jobs:
       # Gate 119 — gate_scripts() discovers .github/scripts/ only (FR-001), so
       # a test harness or standalone gate script placed under
       # .github/actions/ instead is invisible to Gate 10 and to
-      # run-local-gates.py alike: it belongs at
-      # .github/scripts/<composite>-tests/ instead, for the two reasons
+      # run-local-gates.py alike: a harness belongs at
+      # .github/scripts/<composite>-tests/ and a standalone verify-* at
+      # .github/scripts/ instead, for the two reasons
       # verify-actions-no-gate-scripts.py's own docstring gives. The
       # .github/actions/_shared/ carve-out is structural, not a waiver.
       - name: "Gate 119 — no test harness or standalone gate script lives under .github/actions/"

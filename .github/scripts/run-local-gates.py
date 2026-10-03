@@ -40,8 +40,9 @@ It ran their self-tests (verify-gate-N.py, synthetic fixtures) and never
 the shipped check over the real fleet, so PR #301 passed 61/61 locally
 and then failed Gate 12 in CI on a table entry no fixture exercises. Each
 such step's whole `run:` block now runs here VERBATIM under the resolved
-bash (wc_gate_registry.pr_time_inline_steps), labelled
-`inline-gate-N.sh`, with `python3` on PATH shimmed to THIS interpreter -
+bash -e, as CI's default `bash -e {0}` runs it
+(wc_gate_registry.pr_time_inline_steps), labelled `inline-gate-N.sh`
+(a repeated slug gets a `-2` suffix, so no step overwrites another), with `python3` on PATH shimmed to THIS interpreter -
 bare `python3` on Windows is the Microsoft Store stub, the same trap
 command_for avoids for the scripts. A heredoc step that cannot be run
 verbatim (an env: block, a `${{ }}` expression) is not silently dropped:
@@ -232,7 +233,17 @@ def command_for(script, bash, args=()):
     """
     if script.endswith(".py"):
         return [sys.executable, script] + list(args)
+    if script in _INLINE_SCRIPTS:
+        # CI runs a step with no shell: as `bash -e {0}`, so a failing
+        # command before the last fails the step there; plain `bash file`
+        # would pass it here. pr_time_inline_steps leaves a step that sets
+        # any other shell: unrunnable, so -e is the whole difference.
+        return [bash, "-e", script] + list(args)
     return [bash, script] + list(args)
+
+
+# Paths _write_inline_gates wrote, so command_for gives them CI's -e.
+_INLINE_SCRIPTS = set()
 
 
 def _inline_gate_files(bash):
@@ -257,15 +268,32 @@ def _inline_gate_files(bash):
     # workflows they read are UTF-8 (em-dashes in comments), and the
     # Python 3.14 default on Windows is still cp1252.
     os.environ.setdefault("PYTHONUTF8", "1")
+    return [(path, []) for path in _write_inline_gates(runnable, root)]
+
+
+def _write_inline_gates(runnable, root):
+    """Write each (step name, run text) to its own `inline-<slug>.sh`
+    under `root` and return the paths, in order. Split out of
+    _inline_gate_files so verify-gate-wiring.py's self-test can drive it
+    without touching this process's PATH."""
     out = []
+    seen = set()
     for name, run in runnable:
         head = re.match(r"Gate \d+", name)
         slug = (head.group(0).lower().replace(" ", "-") if head
                 else re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:40])
+        # Two steps sharing a slug would write one file and run it twice,
+        # so the second step never ran locally: suffix the later ones.
+        base, n = slug, 1
+        while slug in seen:
+            n += 1
+            slug = f"{base}-{n}"
+        seen.add(slug)
         path = os.path.join(root, f"inline-{slug}.sh")
         with open(path, "w", encoding="utf-8", newline="\n") as fh:
             fh.write(run if run.endswith("\n") else run + "\n")
-        out.append((path, []))
+        _INLINE_SCRIPTS.add(path)
+        out.append(path)
     return out
 
 

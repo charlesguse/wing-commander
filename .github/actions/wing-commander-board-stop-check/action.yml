@@ -17,6 +17,15 @@
 # write`) must. `initial-paused` and `check-issue-closed` are resolved by
 # the caller because a composite `run:` step cannot read the caller's
 # `vars` context directly.
+#
+# The two halves are not equally fresh (#794). The stop-request and
+# closed-issue reads are live API calls made when this composite runs. The
+# kill switch is not: `initial-paused` comes from the caller's `vars.`
+# expression, and the runner hands a job its `vars` once, when the job
+# starts, so a switch set after the calling job started is not seen here.
+# That half is defence in depth, and a pause takes effect on the next run
+# -- see lifecycle-review-gate.yml for the runner evidence on when a
+# step-level `vars.` expression is fixed.
 name: wing-commander-board-stop-check
 description: >
   Re-checks the kill switch and any maintainer stop request on a board-loop
@@ -54,7 +63,9 @@ inputs:
       The kill switch's own already-resolved boolean -- the caller's own
       `vars.WING_COMMANDER_BOARD_LOOP_PAUSED == 'true'` comparison,
       evaluated by the caller before this composite is invoked (a
-      composite step cannot read the caller's vars context directly).
+      composite step cannot read the caller's vars context directly). It
+      is only as fresh as the calling job's start; see this file's header
+      comment.
     required: true
   check-issue-closed:
     description: >
