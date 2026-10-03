@@ -1238,8 +1238,8 @@ jobs:
           # one of the call's own words counts: a `-X GET` inside another
           # flag's `$(...)`, backtick or `${...}` value (all executable, so
           # not blanked) belongs to that value, and reading it as the last
-          # method would turn `-X POST ... -f b="$(gh api ... -X GET)"`
-          # into a read.
+          # method would turn a `-X POST` call whose `-f` value runs a
+          # nested `-X GET` command into a read.
           API_METHOD_FLAG_RE = re.compile(r'(?:^|\s)(?P<flag>-i*X|--method(?![\w-]))')
           SHELL_WORD_RE = re.compile(SHELL_WORD)
           API_WRITE_METHOD_RE = re.compile(r'(?:POST|PATCH|PUT|DELETE)\b')
