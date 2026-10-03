@@ -248,6 +248,9 @@ caught:
     clause — re-runs (k) against the mutated text, must fail.
 21. A `${VAR:-<default>}` shell fallback copy of the default in a
     `_shared/` script — re-runs (m) against the mutated text, must fail.
+22. A copy of the default under a hyphenated `*-id:` key (e.g.
+    `issue-id:`), which must not be discounted as a step `id:` — re-runs
+    (m) against the mutated text, must fail.
 
 ## Out of scope for this gate
 
