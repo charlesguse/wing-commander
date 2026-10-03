@@ -2660,14 +2660,18 @@ jobs:
         run: |
           echo "::warning::Route out-of-boundary tasks: ${{ steps.route-out-of-boundary.outputs.dropped-cap }} out-of-boundary task(s) this cycle classified were dropped for exceeding the per-run filing cap -- the loop is ending on this cycle (a routed hand-off, a stall hand-off, or the iteration cap), so these will not be re-classified by a later cycle; file them by hand."
 
-      # The Route step is continue-on-error, so a failure there (an API
-      # error, a malformed findings array) would otherwise leave only a
-      # step-level annotation while the loop ends as if every out-of-
-      # boundary task had been filed. Same ending-loop reasoning as the cap
-      # warning above: nothing re-classifies them later, so the lifecycle
-      # issue is flagged for a human to file them by hand.
+      # A failed routing would otherwise leave only an annotation while the
+      # loop ends as if every out-of-boundary task had been filed. The
+      # composite always exits 0 (FR-022 of wing-commander-stage-findings):
+      # an API error or a malformed findings entry is counted in its
+      # `dropped-api-failure` / `dropped-malformed` outputs, not surfaced as
+      # a step failure, so the guard keys on those counts as well as on
+      # `outcome == 'failure'` (a crash before the composite's own
+      # handling). Same ending-loop reasoning as the cap warning above:
+      # nothing re-classifies them later, so the lifecycle issue is flagged
+      # for a human to file them by hand.
       - name: Flag failed out-of-boundary routing on lifecycle issue
-        if: ${{ !cancelled() && steps.route-out-of-boundary.outcome == 'failure' }}
+        if: ${{ !cancelled() && (steps.route-out-of-boundary.outcome == 'failure' || (steps.route-out-of-boundary.outputs.dropped-api-failure != '' && steps.route-out-of-boundary.outputs.dropped-api-failure != '0') || (steps.route-out-of-boundary.outputs.dropped-malformed != '' && steps.route-out-of-boundary.outputs.dropped-malformed != '0')) }}
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
         with:
@@ -2676,7 +2680,8 @@ jobs:
           kind: action
           summary: "Routing this cycle's out-of-boundary tasks failed, so some may not have been filed — file them by hand."
           body: >-
-            The "Route out-of-boundary tasks" step failed in
+            The "Route out-of-boundary tasks" step failed, or could not
+            file every task (an API error or a malformed entry), in
             [this run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}).
             The loop is ending on this cycle (a routed hand-off, a stall
             hand-off, or the iteration cap), so no later cycle will

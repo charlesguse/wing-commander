@@ -459,10 +459,15 @@ def check_prompt_and_route_wiring(stage_text=None):
                         f"nothing to the lifecycle issue.")
     else:
         flag_if = str(flag_step.get("if", ""))
-        if "steps.route-out-of-boundary.outcome == 'failure'" not in flag_if:
-            failures.append(f"(k) {FLAG_ROUTE_FAILURE_STEP!r}: if: does not "
-                            f"key on steps.route-out-of-boundary.outcome == "
-                            f"'failure' -- got {flag_if!r}.")
+        # wing-commander-stage-findings always exits 0 (its FR-022): an API
+        # error or a malformed entry shows up only in these output counts,
+        # so an outcome-only guard would almost never fire.
+        for clause in ("steps.route-out-of-boundary.outcome == 'failure'",
+                       "steps.route-out-of-boundary.outputs.dropped-api-failure != '0'",
+                       "steps.route-out-of-boundary.outputs.dropped-malformed != '0'"):
+            if clause not in flag_if:
+                failures.append(f"(k) {FLAG_ROUTE_FAILURE_STEP!r}: if: does "
+                                f"not key on {clause} -- got {flag_if!r}.")
         if not str(flag_step.get("uses", "")).endswith("/wing-commander-callout"):
             failures.append(f"(k) {FLAG_ROUTE_FAILURE_STEP!r}: does not post "
                             f"through wing-commander-callout -- got "
@@ -1854,6 +1859,23 @@ def check_mutation_21():
     return ["mutation survived: unkey route failure flag"]
 
 
+def check_mutation_22():
+    """(22) code review of #941: the failed-routing flag step's guard drops
+    its dropped-api-failure clause -- the composite always exits 0, so an
+    API failure would flag nothing. Re-runs (k), must fail."""
+    text = open(STAGE, encoding="utf-8").read()
+    marker = ("(steps.route-out-of-boundary.outputs.dropped-api-failure != '' && "
+              "steps.route-out-of-boundary.outputs.dropped-api-failure != '0')")
+    if marker not in text:
+        print("::error::mutation 'unkey route api-failure flag' changed nothing.")
+        return ["mutation inapplicable: unkey route api-failure flag"]
+    mutated = text.replace(marker, "false", 1)
+    if check_prompt_and_route_wiring(stage_text=mutated):
+        print("Mutation OK -- unkey route api-failure flag: caught (k).")
+        return []
+    return ["mutation survived: unkey route api-failure flag"]
+
+
 def _mut_classify_swallow_crash(steps):
     """(17) review-gate-round-4 item 6: revert the classify step's own
     ::warning:: + safe-fallback handling to a bare pass-through -- a
@@ -1930,6 +1952,7 @@ def run_mutations(steps, root):
     failures.extend(check_mutation_19())
     failures.extend(check_mutation_20())
     failures.extend(check_mutation_21())
+    failures.extend(check_mutation_22())
     # (7) zero fixtures discovered/executed at all.
     if not CLASSIFY_FIXTURES or not STATEMENT_FIXTURES:
         failures.append("mutation survived: zero fixtures (Constitution VIII)")

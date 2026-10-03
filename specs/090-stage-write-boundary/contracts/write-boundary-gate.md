@@ -154,10 +154,12 @@ deleted with every other pass condition still green.
 
 The same pass condition also requires a step named "Flag failed
 out-of-boundary routing on lifecycle issue", keyed on the Route step's
-`outcome == 'failure'` and posting through `wing-commander-callout` to
-`inputs.issue-number` -- the Route step is `continue-on-error`, so without
-it a failed routing ends the loop with nothing on the lifecycle issue
-(Maintenance backlog #889).
+`outcome == 'failure'` and on non-zero `dropped-api-failure` and
+`dropped-malformed` outputs, and posting through `wing-commander-callout`
+to `inputs.issue-number` -- the Route step is `continue-on-error` and its
+composite always exits 0, reporting an API error or a malformed entry only
+in those counts, so without it a failed routing ends the loop with nothing
+on the lifecycle issue (Maintenance backlog #889).
 
 **(m) Label prefix single home (Maintenance backlog #889).** `implement.
 yml`'s `write-boundary-label-prefix` default is the one home of the
@@ -228,6 +230,9 @@ caught:
     re-runs (m) against the mutated text, must fail.
 16. The failed-routing flag step's `if:` no longer keyed on the Route
     step's failure — re-runs (k) against the mutated text, must fail.
+17. The failed-routing flag step's `if:` stripped of its
+    `dropped-api-failure` clause — re-runs (k) against the mutated text,
+    must fail.
 
 ## Out of scope for this gate
 
