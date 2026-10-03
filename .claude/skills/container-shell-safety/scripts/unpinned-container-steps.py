@@ -7,12 +7,12 @@ THE DEFECT CLASS
 A job's `container: image:` can be an adopter's own image (PR #293:
 `container: image: ${{ inputs.container-image }}`), never one this repo
 controls. A `run:` step with no effective `shell:` (its own, or a job- or
-workflow-level `defaults: run: shell:`) has its shell resolved by Actions
-from whatever that image offers. On an image without bash reachable the
-way Actions expects, that can be `sh` -- and a step whose body uses a
-bash-only construct then fails outright (`set -o pipefail` -> "Illegal
-option -o pipefail"; an array assignment -> a syntax error; and so on),
-not on some steps, on every run against that image.
+workflow-level `defaults: run: shell:`) runs as `sh -e {0}` inside that
+container, bash installed or not -- the runner probes for bash only for a
+step on the host (see SKILL.md). On an image whose `/bin/sh` is not bash,
+a step whose body uses a bash-only construct then fails outright (`set -o
+pipefail` -> "Illegal option -o pipefail"; an array assignment -> a syntax
+error; and so on), not on some steps, on every run against that image.
 
 PR #293 fixed every step its own gate could prove used `set ... pipefail`
 -- 38 sites, found only after two review passes missed the first 26 and

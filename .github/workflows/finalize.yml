@@ -183,7 +183,8 @@ on:
           "<prefix>:<stage>" (specs/090-stage-write-boundary, FR-007). Used
           only for this stage's routed-item lookup — finalize.yml never
           classifies a task, only looks up one already filed by the
-          implement stage under this label.
+          implement stage under this label. The default's one home is
+          implement.yml's own input; Gate 133 (m) fails if this copy drifts.
         type: string
         required: false
         default: "route-out-of-boundary"

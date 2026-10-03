@@ -152,7 +152,22 @@ findings-json` and its `finding-kind` is the literal `routed-task` — none
 of these four facts had ever been asserted, so any one could be silently
 deleted with every other pass condition still green.
 
-A fixture or comparison failing any of (a)-(k) fails the gate, naming the
+The same pass condition also requires a step named "Flag failed
+out-of-boundary routing on lifecycle issue", keyed on the Route step's
+`outcome == 'failure'` and posting through `wing-commander-callout` to
+`inputs.issue-number` -- the Route step is `continue-on-error`, so without
+it a failed routing ends the loop with nothing on the lifecycle issue
+(Maintenance backlog #889).
+
+**(m) Label prefix single home (Maintenance backlog #889).** `implement.
+yml`'s `write-boundary-label-prefix` default is the one home of the
+routed-item label prefix. `finalize.yml`'s input default, `wing-commander-
+write-boundary-lookup`'s `label-prefix` default, and both wrappers'
+`vars.WING_COMMANDER_WRITE_BOUNDARY_LABEL_PREFIX || '<default>'` fallbacks
+each equal it, and no other quoted or `default:` literal of that value
+appears in a workflow or composite action.
+
+A fixture or comparison failing any of (a)-(m) fails the gate, naming the
 file, step, and scenario — matching Gate 51's `::error file=...::Gate NN:
 {msg}` format.
 
@@ -207,6 +222,12 @@ caught:
 13. `write-boundary-label-prefix`'s default collapsed onto
     `findings-label-prefix`'s default — re-runs (h) against the mutated
     text, must fail (PR #836 review, item 13).
+14. `finalize.yml`'s `write-boundary-label-prefix` default drifted from
+    `implement.yml`'s — re-runs (m) against the mutated text, must fail.
+15. A third literal copy of the default pasted into another workflow —
+    re-runs (m) against the mutated text, must fail.
+16. The failed-routing flag step's `if:` no longer keyed on the Route
+    step's failure — re-runs (k) against the mutated text, must fail.
 
 ## Out of scope for this gate
 
