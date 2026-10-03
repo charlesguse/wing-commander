@@ -371,8 +371,8 @@ def check_marker_inputs_wired(board_loop_doc=None, verbose=True):
     must wire BOTH `marker-branch` and `marker-base-sha` -- a site that
     omits either one silently loses the item's branch/base-sha on its
     stop-point record marker rather than failing anything (maintainer
-    review: nothing previously asserted these six call sites actually pass
-    them through)."""
+    review: nothing previously asserted these call sites -- seven today,
+    one per job from select to prove -- actually pass them through)."""
     if board_loop_doc is None:
         with open(BOARD_LOOP, encoding="utf-8") as fh:
             board_loop_doc = yaml.safe_load(fh)
@@ -409,37 +409,189 @@ def check_marker_inputs_wired(board_loop_doc=None, verbose=True):
 # braced or not, with or without a parameter-expansion operator
 # (`${STOP_CAUSE,,}`, `${STOP_CAUSE:-}`); a variable bound to the
 # composite's own `stop-cause` output (env: at any level, or a shell
-# assignment, with or without a `|| '...'` default), or aliased from one
-# (`c="$STOP_CAUSE"`); or the output's expression directly (code review of
-# #899, then of #940: the first form matched only `case "$STOP_CAUSE"`).
-_DEFAULT = r"(?:\|\|[^}]*)?"
-STOP_CAUSE_OUTPUT_RE = re.compile(r"\$\{\{\s*[\w.-]+\.outputs\.stop-cause\s*" + _DEFAULT + r"\}\}")
+# assignment, with or without a `|| '...'` default, the cause either
+# operand of the `||`), to a job output bound to it, or aliased from one
+# (`c="$STOP_CAUSE"`); or the expression of the output or of such an env
+# var directly (code review of #899, then of #940: the first form matched
+# only `case "$STOP_CAUSE"`).
+# A `|| '...'` default, its literal free to hold a `}`.
+_DEFAULT = r"(?:\|\|(?:'[^']*'|[^}'])*)?"
+# Operands ahead of the cause in a `||` chain (`x || <cause>`).
+_LEAD = r"(?:(?:'[^']*'|[^}'])*?\|\|\s*)?"
+_STOP_CAUSE = r"[\w.-]+\.outputs\.stop-cause(?![\w-])"
+
+
+def _cause_expr_re(causes, prefix=r"", suffix=r"", flags=0):
+    """`${{ <cause> }}` for any of `causes` (regex alternatives), a lead
+    and a default allowed, wrapped in `prefix`/`suffix`."""
+    return re.compile(prefix + r"\$\{\{\s*" + _LEAD + "(?:" + "|".join(causes) + r")\s*"
+                      + _DEFAULT + r"\}\}" + suffix, flags)
+
+
+STOP_CAUSE_OUTPUT_RE = _cause_expr_re([_STOP_CAUSE])
 CASE_SUBJECT_RE = re.compile(r'\bcase\s+"?\$\{?(\w+)[^}"\s]*\}?"?\s+in\b')
-CASE_ON_OUTPUT_RE = re.compile(
-    r'\bcase\s+"?\$\{\{\s*[\w.-]+\.outputs\.stop-cause\s*' + _DEFAULT + r'\}\}"?\s+in\b')
-SHELL_BINDING_RE = re.compile(
-    r"""\b(\w+)=["']?\$\{\{\s*[\w.-]+\.outputs\.stop-cause\s*""" + _DEFAULT + r"\}\}")
-SHELL_ALIAS_RE = re.compile(r"""\b(\w+)=["']?\$\{?(\w+)[^}"'\s]*\}?["']?(?=\s|;|$)""", re.M)
+# Where a shell assignment can start: the head of a command, never an
+# argument (`--cause=$X`) -- see _blank_quoted_args for quoted text. Every
+# word of a prefix list (`A=1 c="$X" cmd`), behind `env` and its options
+# too, is an assignment (code review of #954). A case arm's `)` and an
+# `if`/`while` condition head a command too (code review of #954, round 9:
+# main's unanchored alias regex caught `a) c="$STOP_CAUSE" ;;`). A
+# declaration builtin's options and `env -u NAME` are skipped (round 13).
+_CMD_POS_RE = re.compile(
+    r"(?:^|[;&|({)!]|\b(?:if|elif|while|until|then|do|else)\b"
+    r"|\b(?:export|local|readonly|declare|typeset)\b(?:[ \t]+-\S+)*)[ \t]*"
+    r"(?:env(?:[ \t]+(?:-[uC][ \t]+\S+|-\S+))*[ \t]+)?", re.M)
+_ASSIGN_WORD_RE = re.compile(
+    r"""\w+=(?:"(?:\\.|[^"\\])*"|'[^']*'|\$\{\{.*?\}\}|\\.|[^\s"';&|)])*""")
+SHELL_BINDING_PREFIX = r"""^(\w+)=["']?"""
+SHELL_ALIAS_RE = re.compile(r"""^(\w+)=["']?\$\{?(\w+)[^}"'\s]*\}?["']?$""")
+
+
+def _prefix_assignments(run):
+    """Every assignment word at a command's head in `run`, in order."""
+    words = []
+    for m in _CMD_POS_RE.finditer(run):
+        i = m.end()
+        while True:
+            w = _ASSIGN_WORD_RE.match(run, i)
+            if not w:
+                break
+            words.append(w.group(0))
+            i = w.end()
+            gap = re.match(r"[ \t]+", run[i:])
+            if not gap:
+                break
+            i += gap.end()
+    return words
+
+
+def _findall_assignments(pattern, run):
+    return [m.groups() if pattern.groups > 1 else m.group(1)
+            for w in _prefix_assignments(run) for m in [pattern.match(w)] if m]
 # The run-label/phrase picked by comparing the cause to a non-empty literal
 # in an expression -- the pre-leg-2 per-job ternary -- on either side of
-# the comparison, parenthesised or not, through the output itself, an env
-# var bound to it, or a job output bound to it. `stop-cause != ''` ("did
-# any stop win") is the comparison the callers legitimately make, and a
-# boolean flag (`&& 'true' || 'false'`) picks no prose.
-# The picked operand is a prose literal (not 'true'/'false', and not the
-# left side of a further comparison, as in a compound if:) or a format().
-_PICK = (r"\s*\)?\s*&&\s*\(?\s*"
+# the comparison, parenthesised (once or more) or not, through the output
+# itself, an env var bound to it, or a job output bound to it.
+# `stop-cause != ''` ("did any stop win") is the comparison the callers
+# legitimately make, and a boolean flag (`&& 'true' || 'false'`) picks no
+# prose. The picked operand is a prose literal (not 'true'/'false', and
+# not the left side of a further comparison, as in a compound if:) or a
+# format().
+_PICK = (r"(?:\s*\))*\s*&&\s*(?:\(\s*)*"
          r"(?:'(?!(?:true|false)')[^']*'(?!\s*(?:==|!=))|format\()")
 COMPOSITE_RUN_LABEL_RE = re.compile(r'stop_cause_run_label="([^"]+)"')
+
+
+def _blank_quoted_args(run):
+    """`run` with every quoted string that is not an assignment's value
+    emptied, so `echo "c=$STOP_CAUSE"` binds nothing while
+    `c="$STOP_CAUSE"` still does (code review of #940). A trailing
+    comment is dropped first, so its apostrophe (`# don't`) opens no
+    quote that would blank the lines after it. Quotes start afresh inside
+    `$( )`, in a double-quoted string or not, so
+    `x="$(printf 'a'"'"'s' "$r")"` closes where bash closes it and the
+    lines after it are still read (code review of #954)."""
+    return _blank_from(run, 0, False)[0]
+
+
+def _blank_from(run, i, nested):
+    """-> (blanked text, end) from `run[i:]`; `nested` stops at the `)`
+    closing a `$( )` and returns past it. A heredoc body is copied
+    through as raw text, never read for quotes, so its apostrophe
+    (`it's`) opens nothing; an arithmetic `<<` opens no heredoc (code
+    review of #954)."""
+    out, depth, pending = [], 0, []
+    while i < len(run):
+        ch = run[i]
+        if ch == "\\":
+            out.append(run[i:i + 2])
+            i += 2
+            continue
+        if ch == "\n" and pending:
+            i += 1
+            out.append("\n")
+            for delim in pending:
+                while i < len(run):
+                    end = run.find("\n", i)
+                    end = len(run) if end < 0 else end
+                    line = run[i:end]
+                    out.append(run[i:end + 1])
+                    i = end + 1
+                    if line.strip() == delim:
+                        break
+            pending = []
+            continue
+        if run.startswith("$((", i) or (
+                run.startswith("((", i) and (not i or run[i - 1] in " \t\n;&|(")):
+            j, level = i + (3 if ch == "$" else 2), 2
+            while j < len(run) and level:
+                level += {"(": 1, ")": -1}.get(run[j], 0)
+                j += 1
+            out.append(run[i:j])
+            i = j
+            continue
+        if run.startswith("<<<", i):
+            out.append("<<<")
+            i += 3
+            continue
+        m = re.match(r"<<-?[ \t]*\\?(['\"]?)([\w.+@%:,/-]+)\1", run[i:i + 80]) \
+            if run.startswith("<<", i) else None
+        if m:
+            out.append(run[i:i + m.end()])
+            pending.append(m.group(2))
+            i += m.end()
+            continue
+        if ch == "#" and (not i or run[i - 1] in " \t\n;&|("):
+            end = run.find("\n", i)
+            i = len(run) if end < 0 else end
+            continue
+        if run.startswith("$(", i) and not run.startswith("$((", i):
+            inner, i = _blank_from(run, i + 2, True)
+            out.append("$(" + inner + ")")
+            continue
+        if nested and ch == "(":
+            depth += 1
+        elif nested and ch == ")":
+            if not depth:
+                return "".join(out), i + 1
+            depth -= 1
+        elif ch == "'":
+            end = run.find("'", i + 1)
+            end = len(run) if end < 0 else end
+            keep = i and run[i - 1] == "="
+            out.append(run[i:end + 1] if keep else "''")
+            i = end + 1
+            continue
+        elif ch == '"':
+            keep = i and run[i - 1] == "="
+            body, j = [], i + 1
+            while j < len(run) and run[j] != '"':
+                if run[j] == "\\":
+                    body.append(run[j:j + 2] if keep else "")
+                    j += 2
+                elif run.startswith("$(", j) and not run.startswith("$((", j):
+                    inner, j = _blank_from(run, j + 2, True)
+                    body.append("$(" + inner + ")")
+                else:
+                    if keep:
+                        body.append(run[j])
+                    j += 1
+            # A blanked string keeps only its `$( )` commands, which run.
+            out.append('"' + "".join(body) + '"')
+            i = j + 1
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out), i
 
 
 def _non_comment_lines(text):
     return "\n".join(l for l in text.splitlines() if not l.lstrip().startswith("#"))
 
 
-def _bound_env_names(env):
+def _bound_env_names(env, bound_re=STOP_CAUSE_OUTPUT_RE):
     return {name for name, value in (env or {}).items()
-            if STOP_CAUSE_OUTPUT_RE.search(str(value))}
+            if bound_re.search(str(value))}
 
 
 def _strings(obj):
@@ -484,36 +636,55 @@ def _pasted_stop_cause_mappings(text, composite_text):
     job_outputs = {(job_id, name) for job_id, job in jobs.items()
                    for name, value in ((job or {}).get("outputs") or {}).items()
                    if STOP_CAUSE_OUTPUT_RE.search(str(value))}
-    base_causes = [r"[\w.-]+\.outputs\.stop-cause\b(?!-)"]
-    base_causes += [r"needs\." + re.escape(j) + r"\.outputs\." + re.escape(o) + r"\b"
+    base_causes = [_STOP_CAUSE]
+    base_causes += [r"needs\." + re.escape(j) + r"\.outputs\." + re.escape(o) + r"(?![\w-])"
                     for j, o in sorted(job_outputs)]
+    # An env var bound to a job output that is itself bound to the cause
+    # is bound to the cause too (code review of #940).
+    bound_re = _cause_expr_re(base_causes)
     found += _ternary_hits(
         [v for k, v in doc.items() if k != "jobs" for v in _strings(v)],
         base_causes + [r"env\." + re.escape(n) + r"\b" for n in sorted(workflow_env)])
     for job_id, job in jobs.items():
         job = job or {}
-        job_env = workflow_env | _bound_env_names(job.get("env"))
+        job_env = workflow_env | _bound_env_names(job.get("env"), bound_re)
         # Env names bound anywhere in THIS job; another job's binding of the
         # same name says nothing about this one (code review of #940).
         env_names = set(job_env)
         for step in job.get("steps") or []:
             step = step or {}
-            run = _non_comment_lines(str(step.get("run") or ""))
-            env_names |= _bound_env_names(step.get("env"))
-            bound = {"STOP_CAUSE"} | job_env | _bound_env_names(step.get("env"))
-            bound |= set(SHELL_BINDING_RE.findall(run))
+            raw_run = _non_comment_lines(str(step.get("run") or ""))
+            run = _blank_quoted_args(raw_run)
+            step_env = _bound_env_names(step.get("env"), bound_re)
+            env_names |= step_env
+            bound = {"STOP_CAUSE"} | job_env | step_env
+            # A shell assignment from a job output bound to the cause, or
+            # from a bound env var's expression, binds too, as `env:` does
+            # (code review of #954, round 11: only the output itself was
+            # read here).
+            shell_binding_re = _cause_expr_re(
+                base_causes + [r"env\." + re.escape(n) + r"\b"
+                               for n in sorted(job_env | step_env)],
+                prefix=SHELL_BINDING_PREFIX)
+            bound |= set(_findall_assignments(shell_binding_re, run))
             while True:
-                more = {lhs for lhs, rhs in SHELL_ALIAS_RE.findall(run)
+                more = {lhs for lhs, rhs in _findall_assignments(SHELL_ALIAS_RE, run)
                         if rhs.upper() in {b.upper() for b in bound}} - bound
                 if not more:
                     break
                 bound |= more
             bound_upper = {b.upper() for b in bound}
-            for m in CASE_SUBJECT_RE.finditer(run):
+            for m in CASE_SUBJECT_RE.finditer(raw_run):
                 if m.group(1).upper() in bound_upper:
                     found.append("job {0!r} step {1!r}: `{2}`".format(
                         job_id, step.get("name"), m.group(0)))
-            for m in CASE_ON_OUTPUT_RE.finditer(run):
+            # A `case` on the cause's expression, or on a bound env var's
+            # (`case "${{ env.C }}"`).
+            case_on_expr = _cause_expr_re(
+                base_causes + [r"env\." + re.escape(n) + r"\b"
+                               for n in sorted(job_env | step_env)],
+                prefix=r'\bcase\s+"?', suffix=r'"?\s+in\b')
+            for m in case_on_expr.finditer(raw_run):
                 found.append("job {0!r} step {1!r}: `{2}`".format(
                     job_id, step.get("name"), m.group(0)))
         found += _ternary_hits(
@@ -860,6 +1031,60 @@ CHECK9_MUTATIONS = (
     ("a ternary on an env var bound to the output",
      "        env:\n          CAUSE_ENV: ${{ steps.killswitch-recheck.outputs.stop-cause }}\n",
      "          echo \"${{ env.CAUSE_ENV == 'kill-switch' && 'halted' || 'paused' }}\"\n"),
+    # Code review of #940: the forms the first two rounds still missed.
+    ("a `case` on a bound env var's expression",
+     "        env:\n          C: ${{ steps.killswitch-recheck.outputs.stop-cause }}\n",
+     '          case "${{ env.C }}" in\n          esac\n'),
+    ("an env var bound with a default holding a `}`",
+     "        env:\n          C: ${{ steps.killswitch-recheck.outputs.stop-cause || '}' }}\n",
+     '          case "$C" in\n          esac\n'),
+    ("an env var bound with the cause as the second `||` operand",
+     "        env:\n          C: ${{ steps.other.outputs.x || steps.killswitch-recheck.outputs.stop-cause }}\n",
+     '          case "$C" in\n          esac\n'),
+    ("a doubly parenthesised ternary", "",
+     "          echo \"${{ ((steps.killswitch-recheck.outputs.stop-cause == 'stop-request')) "
+     "&& 'paused' || 'halted' }}\"\n"),
+    # Code review of #954: a trailing comment's apostrophe opened a quote.
+    ("a shell alias after a trailing comment with an apostrophe", "",
+     "          echo start # don't worry\n"
+     '          c="$STOP_CAUSE"\n          case "$c" in\n          esac\n'),
+    # Code review of #954, round 2: quotes restart inside `$( )`, and a
+    # prefix list or `env` assigns every word ahead of the command.
+    ("a shell alias after a `$( )` whose quotes nest", "",
+     "          x=\"$(printf 'a'\"'\"'s %s' \"$r\")\"\n"
+     "          echo \"issue #1, it's\"\n"
+     '          c="$STOP_CAUSE"\n          case "$c" in\n          esac\n'),
+    ("a shell alias second in a prefix list", "",
+     '          A=1 c="$STOP_CAUSE"\n          case "$c" in\n          esac\n'),
+    ("a shell alias behind env", "",
+     '          env -i c="$STOP_CAUSE" true\n          case "$c" in\n          esac\n'),
+    # Code review of #954, round 3: a heredoc body's apostrophe, and an
+    # arithmetic `<<`, opened nothing that hides the lines after them.
+    ("a shell alias after a heredoc body with an apostrophe", "",
+     "          cat <<EOF\n          it's done\n          EOF\n"
+     "          n=$(( 1 << k ))\n"
+     '          c="$STOP_CAUSE"\n          case "$c" in\n          esac\n'),
+    # Round 6: a delimiter bash accepts with a `-` in it.
+    ("a shell alias after a `-` delimited heredoc with an apostrophe", "",
+     "          cat <<'PY-EOF'\n          it's done\n          PY-EOF\n"
+     '          c="$STOP_CAUSE"\n          case "$c" in\n          esac\n'),
+    # Round 7: a backslash-quoted delimiter (`<<\EOF`) hides its body too.
+    ("a shell alias after a backslash-quoted heredoc with an apostrophe", "",
+     "          cat <<\\EOF\n          it's done\n          EOF\n"
+     '          c="$STOP_CAUSE"\n          case "$c" in\n          esac\n'),
+    # Round 9: a case arm's `)` and an `if` condition head a command.
+    ("a shell alias in a case arm", "",
+     '          case "$m" in\n          a) c="$STOP_CAUSE" ;;\n          esac\n'
+     '          case "$c" in\n          esac\n'),
+    ("a shell alias as an if condition", "",
+     '          if c="$STOP_CAUSE"; then :; fi\n          case "$c" in\n          esac\n'),
+    # Round 13: a declaration builtin's options, and `env -u NAME`.
+    ("a shell alias behind declare's options", "",
+     '          declare -l c="$STOP_CAUSE"\n          case "$c" in\n          esac\n'),
+    ("a shell alias behind local's options", "",
+     '          local -r c="$STOP_CAUSE"\n          case "$c" in\n          esac\n'),
+    ("a shell alias behind env -u NAME", "",
+     '          env -u X c="$STOP_CAUSE" true\n          case "$c" in\n          esac\n'),
 )
 # Legitimate shapes check 9 must leave alone: gating on the cause, and a
 # boolean flag that picks no prose.
@@ -874,6 +1099,11 @@ CHECK9_ALLOWED = (
      "          echo gated\n",
      "        if: steps.killswitch-recheck.outputs.stop-cause == 'stop-request' && "
      "'yes' == env.ALWAYS\n"),
+    # Code review of #940: SHELL_ALIAS_RE read these as assignments.
+    ("an assignment-shaped string inside quotes", "",
+     '          echo "c=$STOP_CAUSE"\n          case "$c" in\n          esac\n', ""),
+    ("an assignment-shaped flag argument", "",
+     '          tool --c=$STOP_CAUSE\n          case "$c" in\n          esac\n', ""),
 )
 
 
@@ -898,6 +1128,43 @@ def _mut_job_output_ternary(text):
                             "'kill-switch' && 'halted' || 'paused' }}\"\n"))
 
 
+def _mut_job_output_env_case(text):
+    """A job output bound to the cause, bound to an env var downstream,
+    then `case`d (code review of #940)."""
+    return (text.rstrip("\n") + "\n"
+            + "\n  zz-cause-out:\n    runs-on: ubuntu-latest\n    outputs:\n"
+              "      why: ${{ steps.killswitch-recheck.outputs.stop-cause }}\n"
+              "    steps:\n      - run: echo hi\n"
+            + _CHECK9_JOB.format(
+                env="        env:\n          W: ${{ needs.zz-cause-out.outputs.why }}\n",
+                run='          case "$W" in\n          esac\n'))
+
+
+def _mut_job_output_shell_case(text):
+    """A job output bound to the cause, assigned to a shell variable
+    downstream, then `case`d (code review of #954, round 11)."""
+    return (text.rstrip("\n") + "\n"
+            + "\n  zz-cause-out:\n    runs-on: ubuntu-latest\n    outputs:\n"
+              "      why: ${{ steps.killswitch-recheck.outputs.stop-cause }}\n"
+              "    steps:\n      - run: echo hi\n"
+            + _CHECK9_JOB.format(
+                env="",
+                run='          c="${{ needs.zz-cause-out.outputs.why }}"\n'
+                    '          case "$c" in\n          esac\n'))
+
+
+def _mut_alias_in_route_step(text):
+    """An aliased `case` pasted into route's real spec-request step, after
+    its `"$(jq -r '...' "...")"` line (code review of #954)."""
+    anchor = "          agent_proposal=\"$(jq -r '.decision.agent_proposal' "
+    if text.count(anchor) != 1:
+        raise AssertionError("board-loop.yml's agent_proposal= line moved")
+    head, tail = text.split(anchor, 1)
+    line, rest = tail.split("\n", 1)
+    return (head + anchor + line + "\n"
+            + '          c="$STOP_CAUSE"\n          case "$c" in\n          esac\n' + rest)
+
+
 def _mut_unparseable(text):
     """board-loop.yml that no longer parses."""
     return text.rstrip("\n") + "\n  zz-broken: [unclosed\n"
@@ -906,6 +1173,12 @@ def _mut_unparseable(text):
 CHECK9_TEXT_MUTATIONS = (
     ("a top-level env: binding of the cause, then a case on it", _mut_workflow_env_binding),
     ("a ternary on a job output bound to the cause", _mut_job_output_ternary),
+    ("an env var bound to a job output bound to the cause, then a case on it",
+     _mut_job_output_env_case),
+    ("a shell variable assigned from a job output bound to the cause, then a case on it",
+     _mut_job_output_shell_case),
+    ("an aliased case pasted into route's real spec-request step",
+     _mut_alias_in_route_step),
     ("an unparseable board-loop.yml (a finding, not a silent pass)", _mut_unparseable),
 )
 

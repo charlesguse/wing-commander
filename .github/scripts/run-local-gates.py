@@ -45,8 +45,8 @@ bash -e, as CI's default `bash -e {0}` runs it
 (a repeated slug gets a `-2` suffix, so no step overwrites another), with `python3` on PATH shimmed to THIS interpreter -
 bare `python3` on Windows is the Microsoft Store stub, the same trap
 command_for avoids for the scripts. A heredoc step that cannot be run
-verbatim (an env: block, a `${{ }}` expression) is not silently dropped:
-verify-gate-wiring.py fails on it.
+verbatim (an env: block, a shell:, a working-directory:, a `${{ }}`
+expression) is not silently dropped: verify-gate-wiring.py fails on it.
 
 WHAT IT DOES NOT RUN
 --------------------
