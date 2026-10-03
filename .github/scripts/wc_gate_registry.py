@@ -410,11 +410,19 @@ _ASSIGN_RE = re.compile(r"([A-Za-z_]\w*)=(.*)", re.S)
 _VAR_RE = re.compile(r"\$(?:\{([A-Za-z_]\w*)\}|([A-Za-z_]\w*))")
 _EXPR_RE = re.compile(r"\$\{\{.*?\}\}", re.S)
 # A shell in command position on a heredoc's line: `bash <<'EOF'`,
-# `cat <<EOF | sh -e`. Group 1 is the rest of its command, which
-# _feeds_shell reads to tell a shell running its stdin from one running a
-# script (whose stdin the heredoc merely is).
+# `cat <<EOF | sh -e`, `timeout 300 bash <<EOF`. Group 1 is the rest of its
+# command, which _feeds_shell reads to tell a shell running its stdin from
+# one running a script (whose stdin the heredoc merely is). A wrapper's own
+# options and operands (`-n 5`, `-u root`, a duration) are skipped as the
+# command reader skips them; xargs is left out, since its stdin is
+# arguments, not a script. Code review of #954, round 8: without the
+# wrapper words a wrapped shell's heredoc read as data and its scripts
+# vanished, where origin/main's raw-text regex saw them.
+_HEREDOC_WRAPPERS = sorted(_COMMAND_WRAPPERS - {"xargs"})
 _SHELL_ON_LINE_RE = re.compile(
-    r"(?:^|[;&|(!{]|\b(?:then|do|else|exec|time|sudo|env|command)\b)"
+    r"(?:^|[;&|(!{]|\b(?:then|do|else|exec|time|command)\b"
+    r"|\b(?:" + "|".join(_HEREDOC_WRAPPERS) + r")\b"
+    r"(?:[ \t]+(?!(?:bash|sh)(?![\w.-]))[^\s;&|()<>]+)*?)"
     r"[ \t]*(?:[A-Za-z_]\w*=\S*[ \t]+)*(?:bash|sh)(?![\w.-])([^;&|)\n]*)")
 
 
