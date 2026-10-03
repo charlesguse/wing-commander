@@ -58,6 +58,7 @@ import glob
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import textwrap
@@ -703,6 +704,50 @@ def _fixture_uncovered_script_shapes():
         shutil.rmtree(root, ignore_errors=True)
 
 
+def _fixture_inline_steps_match_ci():
+    """Code review of #939: run-local-gates.py writes two heredoc steps
+    whose names share a slug to two files, not one, and runs each under
+    CI's `bash -e {0}`, so a failing command before the last fails it.
+    A heredoc step under any shell: (step, job default or workflow
+    default) is unrunnable verbatim, since that changes CI's flags."""
+    import importlib.util
+    from wc_shell_harness import resolve_bash
+    root = tempfile.mkdtemp(prefix="wc-gate-wiring-")
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "wc_run_local_gates",
+            os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                         "run-local-gates.py"))
+        runner = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(runner)
+        paths = runner._write_inline_gates(
+            [("Lint: shared slug", "false\ntrue\n"),
+             ("Lint, shared slug", "true\n"),
+             ("Gate 9", "true\n"), ("Gate 9 again", "true\n")], root)
+        bash = resolve_bash()
+        rcs = [subprocess.run(runner.command_for(p, bash),
+                              capture_output=True).returncode for p in paths]
+        _write(root, ".github/workflows/lint-workflows.yml",
+               "on: pull_request\njobs:\n"
+               "  a:\n    runs-on: ubuntu-latest\n    steps:\n"
+               "      - name: plain\n        run: |\n"
+               "          python3 - <<'PYEOF'\n          PYEOF\n"
+               "      - name: step-shell\n        shell: bash\n        run: |\n"
+               "          python3 - <<'PYEOF'\n          PYEOF\n"
+               "  b:\n    runs-on: ubuntu-latest\n"
+               "    defaults:\n      run:\n        shell: bash\n    steps:\n"
+               "      - name: job-shell\n        run: |\n"
+               "          python3 - <<'PYEOF'\n          PYEOF\n")
+        runnable, unrunnable = pr_time_inline_steps(root)
+        ok = (len(set(paths)) == 4 and rcs[0] != 0 and rcs[1:] == [0, 0, 0]
+              and [n for n, _ in runnable] == ["plain"]
+              and sorted(n for n, _ in unrunnable) == ["job-shell", "step-shell"])
+        return ok, (f"got paths={paths!r} rcs={rcs!r} runnable={runnable!r} "
+                    f"unrunnable={unrunnable!r}")
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def _fixture_orphaned_composite_harness():
     """A composite harness with no invoking workflow reports as orphaned
     (FR-003 -- already-true behaviour; this fixture proves it, research.md
@@ -794,6 +839,9 @@ FIXTURES = [
      "reported (#825)", _fixture_uncovered_script_call),
     ("a script is seen however a step runs it, and an unresolvable script "
      "path fails (code review of #939)", _fixture_uncovered_script_shapes),
+    ("inline heredoc steps get distinct files, run under CI's bash -e, and "
+     "a shell: step is unrunnable verbatim (code review of #939)",
+     _fixture_inline_steps_match_ci),
     ("an unwired composite harness reports as orphaned",
      _fixture_orphaned_composite_harness),
     ("two run-tests.sh harnesses under different directories get distinct "

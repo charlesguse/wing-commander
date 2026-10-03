@@ -16,8 +16,9 @@ every adopter who pins it, and a fixture tree under
 .github/actions/<composite>/tests/ would be dead weight nobody there asked
 for (constitution VII).
 
-A composite's test harness or standalone gate script belongs at
-.github/scripts/<composite>-tests/ instead, for both reasons above. This
+A composite's test harness belongs at .github/scripts/<composite>-tests/
+instead, and a standalone gate script at .github/scripts/ itself (where
+gate discovery reads top-level verify-*), for both reasons above. This
 gate makes that placement rule mechanical rather than a convention someone
 has to remember -- see wc_gate_registry.unsupported_actions_scripts, which
 walks .github/actions/ the same mechanical way gate_scripts() walks
@@ -28,11 +29,20 @@ WHAT IT CHECKS
 Calls wc_gate_registry.unsupported_actions_scripts(root), which walks
 .github/actions/ (.github/actions/_shared/ excluded -- the one structural
 carve-out, FR-014) and returns every run-tests.sh entrypoint, and, with no
-sibling run-tests.sh, every standalone verify-*.py/verify-*.sh, or
-.sh/.bash/.py script inside a composite's tests/ or test/ directory, at
-any depth (FR-012, #877: a harness need not be named run-tests.sh to be
-one). A composite's own run.sh outside such a directory is its runtime
-entrypoint, not a harness, and is never flagged.
+sibling run-tests.sh, every standalone verify-*.py/verify-*.sh, every
+test-named file (test_*.py, *_test.sh, *.bats), and every file inside a
+composite's tests/, test/, spec/ or __tests__/ directory, fixture data
+included, at any depth (FR-012, #877: a harness need not be named
+run-tests.sh to be one). A composite's own run.sh outside such a
+directory is its runtime entrypoint, not a harness, and is never flagged.
+
+Each failure names a home: .github/scripts/verify-x.py for a standalone
+verify-x.py; .github/scripts/<composite>-tests/run-tests.sh for an
+entrypoint; for any other file, its path below the deepest directory
+holding a flagged entrypoint above it (else below its harness directory),
+so a nested tests/sub/run.sh and tests/sub/lib.sh land side by side.
+Two entrypoints in one composite both map to run-tests.sh; merging two
+harnesses into one is a choice for the author, not this gate.
 Every result is an unconditional failure: there is no waiver file and no
 legitimate exception to register one in.
 
@@ -49,33 +59,63 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wc_gate_registry import (  # noqa: E402
-    HARNESS_DIR_NAMES, HARNESS_ENTRYPOINT_NAMES, SUBDIR_ENTRYPOINT, unsupported_actions_scripts)
+    HARNESS_DIR_NAMES, HARNESS_ENTRYPOINT_NAMES, SUBDIR_ENTRYPOINT, TEST_FILE_RE,
+    unsupported_actions_scripts)
 
 SCRIPTS_DIR = ".github/scripts"
 THIS_FILE = "verify-actions-no-gate-scripts.py"
 
 
-def supported_location(offending_path):
-    """The .github/scripts/<composite>-tests/<basename> home an offending
-    .github/actions/<composite>/... path belongs at instead -- computed
-    mechanically from the offending path's own composite-directory name,
-    never a lookup table (contracts/enforcement-gate-cli.md Behavior item 2).
+def supported_location(offending_path, offenders=()):
+    """The .github/scripts/ home an offending .github/actions/<composite>/...
+    path belongs at instead -- computed mechanically from the offending
+    path's own composite-directory name, never a lookup table
+    (contracts/enforcement-gate-cli.md Behavior item 2).
+
+    A standalone verify-* goes to .github/scripts/<basename>: gate
+    discovery (wc_gate_registry.gate_scripts) reads top-level verify-* and
+    */run-tests.sh only, so a <composite>-tests/verify-x.py would stay
+    undiscovered. Everything else is a harness's and goes below
+    .github/scripts/<composite>-tests/, relative to its harness root (see
+    _harness_root), so files that `source` each other keep their places.
+    `offenders` is the whole result set, which locates the entrypoints.
     """
     parts = offending_path.split("/")
     composite = parts[2]
+    if _kind(offending_path) == "standalone gate script":
+        return f"{SCRIPTS_DIR}/{parts[-1]}"
     # Any entrypoint lands as run-tests.sh: that is the one name gate
     # discovery (wc_gate_registry.gate_scripts) picks up there.
-    if parts[-1] in HARNESS_ENTRYPOINT_NAMES:
+    if _is_entrypoint(parts):
         return f"{SCRIPTS_DIR}/{composite}-tests/{SUBDIR_ENTRYPOINT}"
-    # A harness's other files keep their place below its tests/ directory,
-    # so tests/fixtures/case.sh is not suggested a home beside run-tests.sh.
-    tests_at = _tests_dir_index(parts)
-    rest = parts[tests_at + 1:] if tests_at is not None else parts[-1:]
+    rest = parts[_harness_root(parts, offenders):]
     return f"{SCRIPTS_DIR}/{composite}-tests/{'/'.join(rest)}"
 
 
+def _is_entrypoint(parts):
+    """run-tests.sh anywhere, or a run.sh/run inside a harness directory."""
+    return (parts[-1] == SUBDIR_ENTRYPOINT
+            or (parts[-1] in HARNESS_ENTRYPOINT_NAMES
+                and _tests_dir_index(parts) is not None))
+
+
+def _harness_root(parts, offenders):
+    """Index into `parts` where the harness-relative path starts: just
+    below the deepest directory holding a flagged entrypoint that contains
+    this file (so tests/sub/lib.sh beside tests/sub/run.sh lands beside
+    run-tests.sh), else just below its first harness directory (so
+    tests/fixtures/case.sh keeps fixtures/), else the basename."""
+    entry_dirs = {tuple(o.split("/")[:-1]) for o in offenders
+                  if _is_entrypoint(o.split("/"))}
+    for i in range(len(parts) - 1, 2, -1):
+        if tuple(parts[:i]) in entry_dirs:
+            return i
+    tests_at = _tests_dir_index(parts)
+    return tests_at + 1 if tests_at is not None else len(parts) - 1
+
+
 def _tests_dir_index(parts):
-    """Index of the first tests/test directory below the composite, or None."""
+    """Index of the first harness directory below the composite, or None."""
     for i in range(3, len(parts) - 1):
         if parts[i] in HARNESS_DIR_NAMES:
             return i
@@ -84,16 +124,18 @@ def _tests_dir_index(parts):
 
 def _kind(offending_path):
     parts = offending_path.split("/")
-    if parts[-1] in HARNESS_ENTRYPOINT_NAMES:
+    if _is_entrypoint(parts):
         return "test harness entrypoint"
     if _tests_dir_index(parts) is not None:
         return "test harness file"
+    if TEST_FILE_RE.match(parts[-1]):
+        return "test file"
     return "standalone gate script"
 
 
-def failure_for(offending_path):
+def failure_for(offending_path, offenders=()):
     kind = _kind(offending_path)
-    supported = supported_location(offending_path)
+    supported = supported_location(offending_path, offenders)
     return (f"{offending_path} is a {kind} under .github/actions/; gate "
             f"discovery reads only {SCRIPTS_DIR}/, so it belongs at "
             f"{supported} instead. See {THIS_FILE} for why.")
@@ -102,7 +144,7 @@ def failure_for(offending_path):
 def check(root="."):
     """-> (offenders, failures)."""
     offenders = unsupported_actions_scripts(root)
-    return offenders, [failure_for(p) for p in offenders]
+    return offenders, [failure_for(p, offenders) for p in offenders]
 
 
 def main(root="."):
@@ -231,9 +273,77 @@ def _fixture_standalone_verify_both():
         _write(root, sh_path, "echo hi\n")
         offenders, failures = check(root)
         want = sorted([py_path, sh_path])
+        joined = " ".join(failures)
+        # Code review of #939: the advice is a home gate discovery reads
+        # (top-level verify-*), never .github/scripts/widget-tests/.
         ok = (offenders == want
-              and all(_assert_contract(p, failures) for p in want))
+              and all(_assert_contract(p, failures) for p in want)
+              and "belongs at .github/scripts/verify-widget.py " in joined
+              and "belongs at .github/scripts/verify-widget.sh " in joined
+              and "widget-tests" not in joined)
         return ok, f"got offenders={offenders!r} failures={failures!r}"
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def _home_of(failures, path):
+    """The `belongs at <home>` a failure names for `path`, or None."""
+    for f in failures:
+        if f.startswith(path + " "):
+            return f.split(" belongs at ", 1)[1].split(" instead.", 1)[0]
+    return None
+
+
+def _fixture_test_shapes():
+    """Code review of #939: test-named files beside action.yml, a .bats
+    file, an extensionless tests/run, fixture data under tests/, and
+    spec/ and __tests__/ directories are all caught, each with a home
+    below .github/scripts/widget-tests/."""
+    root = tempfile.mkdtemp(prefix="wc-actions-no-gate-scripts-")
+    try:
+        _write(root, ".github/actions/widget/action.yml", "name: widget\n")
+        want = {
+            ".github/actions/widget/test_widget.py": "test_widget.py",
+            ".github/actions/widget/widget_test.sh": "widget_test.sh",
+            ".github/actions/widget/widget.bats": "widget.bats",
+            ".github/actions/widget/tests/run": "run-tests.sh",
+            ".github/actions/widget/tests/case.bats": "case.bats",
+            ".github/actions/widget/tests/fixtures/event.json": "fixtures/event.json",
+            ".github/actions/widget/spec/widget_spec.rb": "widget_spec.rb",
+            ".github/actions/widget/__tests__/widget.test.js": "widget.test.js",
+        }
+        for path in want:
+            _write(root, path, "x\n")
+        offenders, failures = check(root)
+        got = {p: _home_of(failures, p) for p in want}
+        ok = (offenders == sorted(want)
+              and all(_assert_contract(p, failures) for p in want)
+              and all(got[p] == f"{SCRIPTS_DIR}/widget-tests/{h}"
+                      for p, h in want.items()))
+        return ok, f"got offenders={offenders!r} homes={got!r}"
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def _fixture_nested_harness_one_home():
+    """Code review of #939: a nested harness's entrypoint and the files
+    beside and below it share one home, so a relative `source` between
+    tests/sub/run.sh and tests/sub/lib.sh still resolves after the move."""
+    root = tempfile.mkdtemp(prefix="wc-actions-no-gate-scripts-")
+    try:
+        want = {
+            ".github/actions/widget/tests/sub/run.sh": "run-tests.sh",
+            ".github/actions/widget/tests/sub/lib.sh": "lib.sh",
+            ".github/actions/widget/tests/sub/data/case.json": "data/case.json",
+        }
+        for path in want:
+            _write(root, path, "x\n")
+        offenders, failures = check(root)
+        got = {p: _home_of(failures, p) for p in want}
+        ok = (offenders == sorted(want)
+              and all(got[p] == f"{SCRIPTS_DIR}/widget-tests/{h}"
+                      for p, h in want.items()))
+        return ok, f"got offenders={offenders!r} homes={got!r}"
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
@@ -291,7 +401,13 @@ FIXTURES = [
     ("a composite's runtime scripts outside tests/, its own run.sh "
      "included, are not flagged", _fixture_runtime_helper_not_flagged),
     ("a standalone verify-widget.py AND verify-widget.sh under "
-     ".github/actions/<composite>/ both fail", _fixture_standalone_verify_both),
+     ".github/actions/<composite>/ both fail, each told to move to "
+     ".github/scripts/", _fixture_standalone_verify_both),
+    ("test-named files, .bats, an extensionless tests/run, fixture data, "
+     "and spec/ and __tests__/ directories fail (code review of #939)",
+     _fixture_test_shapes),
+    ("a nested harness's files share one home with its entrypoint (code "
+     "review of #939)", _fixture_nested_harness_one_home),
     ("a helper at .github/actions/_shared/run-tests.sh is not flagged",
      _fixture_shared_not_flagged),
     ("a composite with no harness at all is a clean pass",

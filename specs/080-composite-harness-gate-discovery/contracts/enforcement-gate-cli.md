@@ -33,8 +33,10 @@ add to.
 2. For each result, emits one `::error::` line naming:
    - the offending path,
    - whether it is a test harness entrypoint (`run-tests.sh`, or a
-     `run.sh` inside a `tests/`/`test/` directory), another test harness
-     file inside such a directory (#877), or a standalone `verify-*`
+     `run.sh` or extensionless `run` inside a `tests/`/`test/`/`spec/`/
+     `__tests__/` directory), another file inside such a directory,
+     fixture data included (#877), a test-named file outside one
+     (`test_*.py`, `*_test.sh`, `*.bats`), or a standalone `verify-*`
      script (FR-006's "naming the offending path"),
    - the supported location it belongs at instead — computed
      mechanically from the offending path's own composite-directory name
@@ -42,10 +44,16 @@ add to.
      "belongs at `.github/scripts/wing-commander-widget-tests/run-tests.sh`
      instead" — FR-006's "naming... the supported location under
      `.github/scripts/`"). An entrypoint always lands as `run-tests.sh`,
-     the one name gate discovery picks up there; a harness file keeps its
-     path below the `tests/` directory
+     the one name gate discovery picks up there; any other harness or
+     test file keeps its path below the deepest directory holding a
+     flagged entrypoint above it, else below its `tests/` directory
      (`.../widget/tests/fixtures/case.sh` ->
-     `.github/scripts/widget-tests/fixtures/case.sh`),
+     `.github/scripts/widget-tests/fixtures/case.sh`;
+     `.../widget/tests/sub/lib.sh` beside `tests/sub/run.sh` ->
+     `.github/scripts/widget-tests/lib.sh`). A standalone `verify-*`
+     lands at `.github/scripts/<basename>`
+     (`.../widget/verify-x.py` -> `.github/scripts/verify-x.py`), since
+     gate discovery reads top-level `verify-*` and `*/run-tests.sh` only,
    - a pointer to this same file as the canonical explanation (FR-009's
      last sentence — this gate's own docstring carries the "why," so the
      message names its own filename, which Gate 47 also treats as a
