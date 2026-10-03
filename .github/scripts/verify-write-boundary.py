@@ -460,11 +460,13 @@ def check_prompt_and_route_wiring(stage_text=None):
     else:
         flag_if = str(flag_step.get("if", ""))
         # wing-commander-stage-findings always exits 0 (its FR-022): an API
-        # error or a malformed entry shows up only in these output counts,
-        # so an outcome-only guard would almost never fire.
+        # error, a malformed entry or a task over the cap shows up only in
+        # these output counts, so an outcome-only guard would almost never
+        # fire.
         for clause in ("steps.route-out-of-boundary.outcome == 'failure'",
                        "steps.route-out-of-boundary.outputs.dropped-api-failure != '0'",
-                       "steps.route-out-of-boundary.outputs.dropped-malformed != '0'"):
+                       "steps.route-out-of-boundary.outputs.dropped-malformed != '0'",
+                       "steps.route-out-of-boundary.outputs.dropped-cap != '0'"):
             if clause not in flag_if:
                 failures.append(f"(k) {FLAG_ROUTE_FAILURE_STEP!r}: if: does "
                                 f"not key on {clause} -- got {flag_if!r}.")

@@ -2663,25 +2663,27 @@ jobs:
       # A failed routing would otherwise leave only an annotation while the
       # loop ends as if every out-of-boundary task had been filed. The
       # composite always exits 0 (FR-022 of wing-commander-stage-findings):
-      # an API error or a malformed findings entry is counted in its
-      # `dropped-api-failure` / `dropped-malformed` outputs, not surfaced as
-      # a step failure, so the guard keys on those counts as well as on
-      # `outcome == 'failure'` (a crash before the composite's own
-      # handling). Same ending-loop reasoning as the cap warning above:
-      # nothing re-classifies them later, so the lifecycle issue is flagged
-      # for a human to file them by hand.
+      # an API error, a malformed findings entry, or a task over the per-
+      # run cap is counted in its `dropped-api-failure` / `dropped-
+      # malformed` / `dropped-cap` outputs, not surfaced as a step failure,
+      # so the guard keys on those counts as well as on `outcome ==
+      # 'failure'` (a crash before the composite's own handling). Same
+      # ending-loop reasoning as the cap warning above: nothing
+      # re-classifies them later, so the lifecycle issue is flagged for a
+      # human to file them by hand (FR-007: never only as an annotation).
       - name: Flag failed out-of-boundary routing on lifecycle issue
-        if: ${{ !cancelled() && (steps.route-out-of-boundary.outcome == 'failure' || (steps.route-out-of-boundary.outputs.dropped-api-failure != '' && steps.route-out-of-boundary.outputs.dropped-api-failure != '0') || (steps.route-out-of-boundary.outputs.dropped-malformed != '' && steps.route-out-of-boundary.outputs.dropped-malformed != '0')) }}
+        if: ${{ !cancelled() && (steps.route-out-of-boundary.outcome == 'failure' || (steps.route-out-of-boundary.outputs.dropped-api-failure != '' && steps.route-out-of-boundary.outputs.dropped-api-failure != '0') || (steps.route-out-of-boundary.outputs.dropped-malformed != '' && steps.route-out-of-boundary.outputs.dropped-malformed != '0') || (steps.route-out-of-boundary.outputs.dropped-cap != '' && steps.route-out-of-boundary.outputs.dropped-cap != '0')) }}
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
         with:
           token: ${{ env.WC_BOT_TOKEN }}
           issue-number: ${{ inputs.issue-number }}
           kind: action
-          summary: "Routing this cycle's out-of-boundary tasks failed, so some may not have been filed — file them by hand."
+          summary: "Some of this cycle's out-of-boundary tasks may not have been filed — file them by hand."
           body: >-
             The "Route out-of-boundary tasks" step failed, or could not
-            file every task (an API error or a malformed entry), in
+            file every task (an API error, a malformed entry, or more tasks
+            than the per-run filing cap), in
             [this run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}).
             The loop is ending on this cycle (a routed hand-off, a stall
             hand-off, or the iteration cap), so no later cycle will
