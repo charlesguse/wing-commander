@@ -45,17 +45,24 @@ The checked-out tree only: `.github/scripts/verify-*.py|.sh` and
    file and line — independent of whether that file is in the derived
    retrofit set, since a hand-rolled duplicate is a violation regardless
    of which gate wrote it (research.md D8).
-4. Prints a summary line: `verify-gh-error-stub-conformance: <n> retrofit
-   member(s) checked, <f> non-conforming stub(s), <d> duplicate literal(s);
-   <f+d> failure(s).`
-5. Exit code `1` if any failure was found, else `0`.
-6. `--self-test` covers: the retrofit-set derivation against fixture
+4. **Check for a hand-rolled shell-quote helper** (#889): scan every
+   `.github/scripts/**/*.py` and `**/*.sh` file other than this gate's own
+   for the `.replace("'", "'\\''")` idiom a stub builder uses to quote a
+   value into the stub's shell text. Fail on any match, naming the file and
+   line and the literal substring `shlex.quote` (the one home).
+5. Prints a summary line: `verify-gh-error-stub-conformance: <n> retrofit
+   member(s) checked, <f> non-conforming stub(s), <d> duplicate literal(s),
+   <q> hand-rolled shell quote(s); <f+d+q> failure(s).`
+6. Exit code `1` if any failure was found, else `0`.
+7. `--self-test` covers: the retrofit-set derivation against fixture
    harness/workflow pairs (a harness whose subject block has a covered
    capture is selected; one whose subject block has none is not); a
    fixture stub arm that hand-writes the JSON/stderr literal (fails,
    naming the fixture gate); a fixture stub arm that calls
    `gh_error_stub_arm(...)` (passes); a fixture duplicate literal placed
-   outside `wc_shell_harness.py` (fails); and a mutation of a real
+   outside `wc_shell_harness.py` (fails); a hand-rolled shell-quote
+   helper in a `.py` and in a `.sh`'s embedded Python (each fails) and a
+   `shlex.quote(...)` call (passes); and a mutation of a real
    member's shipped block — dropping a variable reset from the block
    `verify-auto-release-specs-fallback.py` executes — that makes *that
    harness's own self-test* fail where it passed before, proving the
@@ -80,6 +87,8 @@ before landing.
   should have called instead).
 - A duplicate-literal message MUST contain the offending file's path and
   the literal substring `wc_shell_harness.py` (naming the one home).
+- A hand-rolled shell-quote message MUST contain the offending file's path
+  and the literal substring `shlex.quote`.
 
 ## SC-004's cross-harness proof, concretely
 

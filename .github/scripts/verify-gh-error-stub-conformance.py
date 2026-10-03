@@ -14,8 +14,8 @@ CLAUDE.md's single-home rule forbids. wc_shell_harness.gh_error_stub_arm is
 now the one home (specs/091-gh-api-error-capture); this gate keeps it that
 way.
 
-TWO INDEPENDENT CHECKS
------------------------
+THREE INDEPENDENT CHECKS
+-------------------------
 1. Every harness-driven gate whose shipped subject block contains a
    covered `gh api` capture (the FR-015 retrofit set, research.md D7,
    derived by re-running wc_gh_capture's own scanner against each such
@@ -26,6 +26,11 @@ TWO INDEPENDENT CHECKS
    literal shape must not appear anywhere under `.github/scripts/` other
    than inside `wc_shell_harness.py` itself -- a hand-rolled duplicate is
    a violation regardless of which gate wrote it (research.md D8).
+3. Stub builders quote a value into the stub's shell text with
+   `shlex.quote`, never a hand-rolled `"'" + s.replace("'", ...) + "'"`
+   helper: four harnesses carried their own copy until #889 moved them
+   onto the standard library. Every `.py` and `.sh` under
+   `.github/scripts/` is scanned.
 
 Usage:
     python3 .github/scripts/verify-gh-error-stub-conformance.py
@@ -69,6 +74,10 @@ FIND_STEP_CALL_RE = re.compile(
 JSON_ERROR_LITERAL_RE = re.compile(
     r'"message"\s*:\s*"[^"]*"\s*,\s*"documentation_url"\s*:\s*"[^"]*"\s*,\s*'
     r'"status"\s*:\s*"?\d+"?')
+
+
+# The hand-rolled POSIX single-quote idiom: replace each `'` with `'\''`.
+HAND_QUOTE_RE = re.compile(r"""\.replace\(\s*"'"\s*,\s*"'\\\\''"\s*\)""")
 
 
 def posix(path):
@@ -154,6 +163,27 @@ def duplicate_literal_hits(paths):
     return hits
 
 
+def hand_quote_hits(paths):
+    """(path, line) for every hand-rolled shell-quote helper."""
+    hits = []
+    for path in paths:
+        if os.path.basename(path) == SELF_MODULE:
+            continue
+        with open(path, encoding="utf-8") as fh:
+            for i, line in enumerate(fh, 1):
+                if HAND_QUOTE_RE.search(line):
+                    hits.append((path, i))
+    return hits
+
+
+def hand_quote_messages(paths):
+    return [
+        "::error file={0},line={1}::Gate 127: this hand-rolled shell-quote "
+        "helper duplicates the standard library - call shlex.quote(...) "
+        "instead.".format(posix(path), line)
+        for path, line in hand_quote_hits(paths)]
+
+
 def evaluate(scripts, all_py_paths):
     """(members, non_conforming_messages, duplicate_messages)."""
     members = derive_retrofit_set(scripts)
@@ -185,14 +215,18 @@ def sweep():
     scripts = wc_gate_registry.gate_scripts()
     all_py = sorted(glob.glob(os.path.join(SCRIPTS_DIR, "**", "*.py"),
                               recursive=True))
+    all_sh = sorted(glob.glob(os.path.join(SCRIPTS_DIR, "**", "*.sh"),
+                              recursive=True))
     members, non_conforming, duplicates = evaluate(scripts, all_py)
-    for line in non_conforming + duplicates:
+    hand_quotes = hand_quote_messages(all_py + all_sh)
+    for line in non_conforming + duplicates + hand_quotes:
         print(line)
-    n, d = len(non_conforming), len(duplicates)
+    n, d, q = len(non_conforming), len(duplicates), len(hand_quotes)
     print("verify-gh-error-stub-conformance: {0} retrofit member(s) "
-          "checked, {1} non-conforming stub(s), {2} duplicate literal(s); "
-          "{3} failure(s).".format(len(members), n, d, n + d))
-    return 1 if (n + d) else 0
+          "checked, {1} non-conforming stub(s), {2} duplicate literal(s), "
+          "{3} hand-rolled shell quote(s); {4} failure(s).".format(
+              len(members), n, d, q, n + d + q))
+    return 1 if (n + d + q) else 0
 
 
 # --------------------------------------------------------------- self-test
@@ -278,6 +312,24 @@ LITERAL = '{"message":"Not Found","documentation_url":"https://docs.github.com/r
 '''
 
 
+_HAND_QUOTE_PY_SOURCE = """
+def shell_quote(s):
+    return "'" + s.replace("'", "'\\\\''") + "'"
+"""
+
+_HAND_QUOTE_SH_SOURCE = """#!/usr/bin/env bash
+python3 - <<'PY'
+def _sq(text):
+    return "'" + text.replace("'", "'\\\\''") + "'"
+PY
+"""
+
+_SHLEX_QUOTE_SOURCE = """
+import shlex
+STUB = "d=" + shlex.quote("/tmp/it's")
+"""
+
+
 def self_test():
     problems = []
     with tempfile.TemporaryDirectory() as tmp:
@@ -324,6 +376,24 @@ def self_test():
              any(dup in msg and "wc_shell_harness.py" in msg
                  for msg in duplicates)
              and not any(dup in msg for msg in non_conforming)),
+        ]
+        quote_py = os.path.join(tmp, "gate_quote.py")
+        quote_sh = os.path.join(tmp, "gate_quote.sh")
+        shlex_ok = os.path.join(tmp, "gate_shlex.py")
+        for path, source in ((quote_py, _HAND_QUOTE_PY_SOURCE),
+                             (quote_sh, _HAND_QUOTE_SH_SOURCE),
+                             (shlex_ok, _SHLEX_QUOTE_SOURCE)):
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(source)
+        quoted = hand_quote_messages([quote_py, quote_sh, shlex_ok])
+        checks += [
+            ("a hand-rolled shell-quote helper in a .py fails, naming "
+             "shlex.quote",
+             any(quote_py in msg and "shlex.quote" in msg for msg in quoted)),
+            ("a hand-rolled shell-quote helper in a .sh's Python fails",
+             any(quote_sh in msg for msg in quoted)),
+            ("a script calling shlex.quote(...) does not fail",
+             not any(shlex_ok in msg for msg in quoted)),
         ]
         for name, ok in checks:
             if ok:
