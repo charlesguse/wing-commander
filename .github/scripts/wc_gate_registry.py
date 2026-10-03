@@ -371,11 +371,14 @@ LOOSE_PY_HEREDOC_RE = re.compile(r"^[ \t]*python3? +[^\n]*<<", re.M)
 # bash/sh/python, any flags, then a path -- whose path need not start with
 # .github/; a path carrying `$` there (a runner temp file, a variable) is a
 # generated script, not one the repository ships, and is skipped.
-# REPO_SCRIPT_RE is any token naming a script under .github/, however it is
-# run: direct exec, a `\` continuation, a loop over a glob, an interpreter
-# flag that takes a value. Group 1 is whatever the token carries before
-# `.github/`: empty or `./` is a literal repo path; anything else (`$VAR/`,
-# an expression, a checkout prefix) is a path no reader can resolve.
+# REPO_SCRIPT_RE is any token naming a script under .github/: direct exec,
+# a `\` continuation, a loop over a glob, an interpreter flag that takes a
+# value, a `NAME=` assignment a later `bash "$NAME"` runs. Group 1 is
+# whatever the token carries before `.github/`: empty, `./`, `NAME=` or
+# `--flag=` is a literal repo path; anything else (`$VAR/`, an expression,
+# a checkout prefix) is a path no reader can resolve. Neither reader sees a
+# script reached through `working-directory:` or a directory variable
+# (`bash "$D/run.sh"`).
 SCRIPT_CALL_RE = re.compile(
     r"(?:^|[\s;&|(`])(?:bash|sh|python3?)\s+(?:-\S+\s+)*[\"']?([\w./{}$-]+\.(?:sh|bash|py))\b")
 REPO_SCRIPT_RE = re.compile(
@@ -422,7 +425,8 @@ def pr_time_script_calls(root=".",
                     scripts.add(re.sub(r"^(?:\./)+", "", m.group(1)))
             for m in REPO_SCRIPT_RE.finditer(text):
                 prefix, script = m.group(1), m.group(2)
-                if re.fullmatch(r"(?:\./)*", prefix) and not re.search(r"[$*?{}\[]", script):
+                literal = re.fullmatch(r"(?:--?[\w-]+=|[A-Za-z_]\w*=)?(?:\./)*", prefix)
+                if literal and not re.search(r"[$*?{}\[]", script):
                     scripts.add(script)
                 else:
                     unresolved.add(prefix + script)

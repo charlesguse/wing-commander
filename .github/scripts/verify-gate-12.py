@@ -399,6 +399,13 @@ CASES = [
             ['gh api "repos/${GITHUB_REPOSITORY}/actions/variables?per_page=30"']),
      True, ("actions/variables", "never grants")),
 
+    ("a `${VAR:?}` expansion is not a query string: "
+     "repos/${GITHUB_REPOSITORY:?}/actions/variables/X is still checked "
+     "(code review of #939)",
+     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
+            ['gh api "repos/${GITHUB_REPOSITORY:?}/actions/variables/X"']),
+     True, ("actions/variables", "never grants")),
+
     ("a Variables call under github.token fails even with no permissions: "
      "block to compare against: no block can grant it (code review of #939)",
      mkcase("", "", [DEFAULT_ENV],

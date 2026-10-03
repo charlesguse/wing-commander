@@ -1220,8 +1220,10 @@ jobs:
               """-> ('SELF'|'CROSS', category) for a repos/OWNER/REPO/... path, or
               ('OTHER', None) for anything else (org/user endpoints, GraphQL, etc.).
               A query string is not a path segment: `actions/variables?per_page=30`
-              is the Variables surface all the same."""
-              segs = [s for s in path_text.split("?", 1)[0].strip("/").split("/") if s]
+              is the Variables surface all the same. Only a `?` outside `${...}`
+              starts one; `${GITHUB_REPOSITORY:?}` is a parameter expansion."""
+              path_text = re.split(r"\?(?![^{}]*\})", path_text, maxsplit=1)[0]
+              segs = [s for s in path_text.strip("/").split("/") if s]
               if not segs or segs[0] != "repos":
                   return "OTHER", None
               rest = segs[1:]

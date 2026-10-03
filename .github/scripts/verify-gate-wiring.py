@@ -28,8 +28,9 @@ This closes it generally, in both directions:
             substring-matches the workflow text, one tokenizes it - and a
             gate only the first can see runs in CI and is silently absent
             from the local sweep. The same holds for any script, not only a
-            gate: every script a PR-time step runs, however it is run, is
-            one the local runner runs too (#825).
+            gate: every script a PR-time step names (through an
+            interpreter, by direct exec, across a continuation) is one the
+            local runner runs too (#825).
   triggers  every published document a gate treats as its subject is named
             by lint-workflows.yml's pull_request paths: filter. A gate that
             is wired but never TRIGGERED by an edit to the one file it
@@ -465,7 +466,8 @@ def check_local_runner_script_coverage(root="."):
     failures = []
     invocations = pr_time_invocations(root)
     covered = {script for script, _ in invocations}
-    covered |= {re.sub(r"^(?:\./)+", "", arg) for _, args in invocations for arg in args}
+    covered |= {re.sub(r"^(?:--?[\w-]+=)?(?:\./)*", "", arg)
+                for _, args in invocations for arg in args}
     steps = pr_time_script_calls(root)
     total = 0
     for name, scripts, unresolved in steps:
@@ -652,11 +654,13 @@ def _fixture_uncovered_script_call():
 
 
 def _fixture_uncovered_script_shapes():
-    """Code review of #939: a script is seen however a step runs it --
-    direct exec, a `\\` continuation, an interpreter flag that takes a
-    value -- and a path no reader can resolve (a variable, an expression,
-    a glob) fails rather than being skipped. A step named like a runnable
-    heredoc step, and an unnamed one, are read all the same."""
+    """Code review of #939: a script is seen through an interpreter, by
+    direct exec, across a `\\` continuation, behind an interpreter flag
+    that takes a value, or in a `NAME=` assignment; a path no reader can
+    resolve (a variable, an expression, a glob) fails rather than being
+    skipped; a script handed to a gate as a `--flag=` argument is the
+    gate's input, not a second call. A step named like a runnable heredoc
+    step, and an unnamed one, are read all the same."""
     root = tempfile.mkdtemp(prefix="wc-gate-wiring-")
     expr = "$" + "{{ github.workspace }}"
     try:
@@ -673,7 +677,7 @@ def _fixture_uncovered_script_shapes():
                "        run: ./.github/scripts/a-tests/run.sh\n"
                "      - run: |\n"
                "          bash \\\n"
-               "            .github/scripts/b-tests/run.sh\n"
+               "            tools/b.sh\n"
                "      - name: flagged\n"
                "        run: bash -o pipefail .github/scripts/c-tests/run.bash\n"
                "      - name: unresolved\n"
@@ -681,16 +685,19 @@ def _fixture_uncovered_script_shapes():
                "          for t in .github/actions/*/tests/run.sh; do bash \"$t\"; done\n"
                "          bash \"$GITHUB_WORKSPACE/.github/scripts/d.sh\"\n"
                f"          python3 {expr}/.github/scripts/e.py\n"
+               "      - name: assigned\n"
+               "        run: S=.github/scripts/g-tests/run.sh; bash \"$S\"\n"
                "      - name: covered\n"
-               "        run: bash .github/scripts/widget-tests/run-tests.sh\n")
+               "        run: bash .github/scripts/widget-tests/run-tests.sh "
+               "--case=.github/scripts/fixtures/case.sh\n")
         failures = check_local_runner_script_coverage(root)
         joined = "\n".join(failures)
-        want = [".github/scripts/a-tests/run.sh", ".github/scripts/b-tests/run.sh",
+        want = [".github/scripts/a-tests/run.sh", "runs tools/b.sh ",
                 ".github/scripts/c-tests/run.bash", "'.github/actions/*/tests/run.sh'",
                 "'$GITHUB_WORKSPACE/.github/scripts/d.sh'", "}}/.github/scripts/e.py'",
-                "'heredoc'", "'(unnamed step)'"]
-        ok = (len(failures) == 6 and all(w in joined for w in want)
-              and "widget-tests" not in joined)
+                "runs .github/scripts/g-tests/run.sh ", "'heredoc'", "'(unnamed step)'"]
+        ok = (len(failures) == 7 and all(w in joined for w in want)
+              and "widget-tests" not in joined and "case.sh" not in joined)
         return ok, f"got {failures!r}"
     finally:
         shutil.rmtree(root, ignore_errors=True)
