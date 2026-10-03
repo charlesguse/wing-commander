@@ -121,16 +121,17 @@ unchanged").
 
 ### Cancellation (FR-013)
 
-When the job was cancelled after the agent ran, `agent-conclusion` reads
-`cancelled` (GitHub Actions sets this on the agent step itself, which the
-`Record agent-ran signal` step — itself `if: always()` — reads before the
-job's own teardown). The reason string renders "...concluded: cancelled",
-which the survivor job's existing `!cancelled()` guard (spec 041 D4) — on
-the *job* condition, not this step's `if:` — already prevents from
-reaching the notice at all for a run cancelled cleanly; the enum value
-exists so a partially-completed cancellation (agent step cancelled, but the
-job's later steps still ran long enough to hit a genuine failure before the
-run-level cancel propagated) does not get mis-described as "never started."
+The `Record agent-ran signal` step is gated
+`!cancelled() && steps.<agent-id>.outcome != 'skipped'` (Publication,
+above), not `if: always()`: once the run itself is cancelled it does not
+run, so it never performs work in the cancel window, and `agent-ran` stays
+unset. The survivor job's existing `!cancelled()` guard (spec 041 D4) — on
+the *job* condition — keeps a cleanly cancelled run from reaching the
+notice at all, so the unset signal is never read there. `agent-conclusion`
+reads `cancelled` only when the agent step itself concluded `cancelled`
+while the run was not: the step still runs then, and the reason string
+renders "...concluded: cancelled" rather than mis-describing the stage as
+"never started."
 
 ## Lifecycle-record resume wording (FR-015)
 
