@@ -657,6 +657,19 @@ CASES = [
              'curl -X POST https://example.invalid']),
      False, ()),
 
+    ("... and a backtick closing the substitution the call sits in ends "
+     "it too: the next command's `-X GET` does not make the POST a read",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['c=`gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" -f body=x`; '
+             'curl -X GET https://example.invalid']),
+     True, ("issues", "write")),
+
+    ("... nor its `-X POST` make a read a write",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['c=`gh api "repos/${GITHUB_REPOSITORY}/issues/1" --jq .body`; '
+             'curl -X POST https://example.invalid']),
+     False, ()),
+
     ("... nor is one inside a backtick value",
      mkcase(ISSUES_READ, "", [DEFAULT_ENV],
             ['gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" -f body=`echo -X GET`']),
@@ -667,13 +680,31 @@ CASES = [
             ['gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" -f body=${X:- -X GET}']),
      True, ("issues", "write")),
 
-    ("an unquoted heredoc delimiter that does not end its word "
-     "(`<<EOF-1`) opens no heredoc cut at `EOF`: the call after it is "
-     "still scanned",
+    ("an unquoted heredoc delimiter is its whole word (`<<EOF-1` opens "
+     "one ending at `EOF-1`, not `EOF`): the call after it is still "
+     "scanned",
      mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
             ["cat <<EOF-1",
-             "x",
+             "EOF",
              "EOF-1",
+             'gh issue comment 1 --body hi']),
+     True, ("issue comment", "issues")),
+
+    ("... and its body is data, not shell: an apostrophe in it opens no "
+     "quote that hides that call",
+     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
+            ["cat <<EOF-1",
+             "don't",
+             "EOF-1",
+             'gh issue comment 1 --body hi']),
+     True, ("issue comment", "issues")),
+
+    ("... as is a quoted delimiter that is no plain word (`<<'END-X'`)",
+     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
+            ["cat <<'END-X'",
+             "don't",
+             'gh issue comment 1 --body in-the-body',
+             "END-X",
              'gh issue comment 1 --body hi']),
      True, ("issue comment", "issues")),
 

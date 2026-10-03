@@ -1235,14 +1235,16 @@ jobs:
               order, one after another, as bash does. A `<<` inside `$((...))`
               is a shift and a `<<<` a here-string, neither an opener; an
               unquoted delimiter must start like a name (`x << 2` is no
-              opener) and end its word: `<<EOF-1` read as `EOF` would hide
-              the rest of the step, so it is no opener either (code review
-              of #944)."""
+              opener) and is its whole word: `<<EOF-1`'s delimiter is
+              `EOF-1`, as bash reads it -- cut at `EOF`, the body would hide
+              the rest of the step, and read as no opener, the body's text
+              would be scanned as shell (code review of #944). A quoted
+              delimiter is everything between its quotes (`<<'END-X'`)."""
               out = []
               lines = text.splitlines()
               heredoc_re = re.compile(
-                  r"(?<!<)<<(?!<)-?[ \t]*(?:'(\w+)'|" + '"' + r"(\w+)" + '"'
-                  + r"|\\?([A-Za-z_]\w*)(?=[\s;|&<>)]|$))")
+                  r"(?<!<)<<(?!<)-?[ \t]*(?:'([^'\n]+)'|" + '"' + r'([^"\n]+)' + '"'
+                  + r"|\\?([A-Za-z_][^\s;|&<>()'" + '"' + r"`\\]*)(?=[\s;|&<>()]|$))")
               i = 0
               while i < len(lines):
                   line = lines[i]
@@ -1558,6 +1560,14 @@ jobs:
               out, raw = [], []
               i, n = m.start(), len(text)
               depth, in_bt = 0, False
+              # A call inside a backtick substitution ends at the backtick
+              # closing it, as one inside `$(...)` ends at its `)`; read as
+              # opening a nested value, it would carry the call on through
+              # the next command's flags. Counted on the call's own line.
+              outer_bt = sum(1 for j in range(text.rfind("\n", 0, m.start()) + 1,
+                                              m.start())
+                             if flags[j] and text[j] == "`"
+                             and not (j > 0 and text[j - 1] == "\\")) % 2 == 1
               while i < n:
                   c = text[i]
                   if flags[i] and c == "\\" and i + 1 < n and text[i + 1] == "\n":
@@ -1568,6 +1578,8 @@ jobs:
                       i += 2
                       continue
                   if flags[i] and c == "`":
+                      if outer_bt:
+                          break
                       in_bt = not in_bt
                   elif flags[i] and c == "(":
                       depth += 1
