@@ -160,3 +160,9 @@ post-agent step failure — it does so directly, job-locally, by reading
 `wing-commander-failed-post-agent-step`'s `outputs.step` from its own
 "Abandon and escalate" step, never through a job output a second job relays
 (contracts/wing-commander-context-relay.md's `rebase.yml` section).
+
+`board-loop.yml`'s five agent steps (triage's and route's proposals, the
+Fixer, the Reviewer and Review-fixup) publish this signal with no reader
+too, since their jobs became full Gate 68 subjects (#733/#848). The board
+loop routes a failed agent through its own verdict steps, not through a
+survivor job.
