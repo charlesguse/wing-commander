@@ -540,7 +540,6 @@ CASES = [
      "`gh api -iX POST PATH` never takes `POST` as the PATH, so the Issues "
      "write under issues:read fails",
      mkcase(ISSUES_READ, "", [DEFAULT_ENV],
-            # wc-gh-method-exempt: fixture -- Gate 28's parser does not read the `-iX` cluster's method
             ['gh api -iX POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" -f body=x']),
      True, ("issues", "write")),
 
@@ -558,6 +557,118 @@ CASES = [
              'print("gh issue comment 1 --body hi")',
              "PY"]),
      False, ()),
+
+    # --- the code review of #944's Gate 12 lines --------------------------
+    ("a method held in a variable is resolved through the step's "
+     "assignments: `-X \"$METHOD\"` with METHOD=POST is a write, so the "
+     "Issues call under issues:read fails",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['METHOD=POST',
+             'gh api -X "$METHOD" "repos/${GITHUB_REPOSITORY}/issues/1/comments" -f body=x']),
+     True, ("issues", "write")),
+
+    ("... one resolving to GET stays a read",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['METHOD=GET',
+             'gh api --method "${METHOD}" "repos/${GITHUB_REPOSITORY}/issues/1"']),
+     False, ()),
+
+    ("... and one that resolves to no literal fails loudly (fail closed), "
+     "never read as a read",
+     mkcase(ISSUES_WRITE, "", [DEFAULT_ENV],
+            ['gh api -X "$(pick_method)" "repos/${GITHUB_REPOSITORY}/issues/1"']),
+     True, ("cannot resolve this call's method", "pick_method")),
+
+    ("... nor does an unassigned variable",
+     mkcase(ISSUES_WRITE, "", [DEFAULT_ENV],
+            ['gh api -X "$UNSET_METHOD" "repos/${GITHUB_REPOSITORY}/issues/1"']),
+     True, ("cannot resolve this call's method", "UNSET_METHOD")),
+
+    ("gh keeps the LAST method flag: `-X POST ... -X GET` is a read, so "
+     "the Issues call under issues:read passes",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1" -X GET']),
+     False, ()),
+
+    ("... and `-X GET ... --method POST` is a write",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['gh api -X GET "repos/${GITHUB_REPOSITORY}/issues/1/comments" --method POST -f body=x']),
+     True, ("issues", "write")),
+
+    ("an unquoted `${X:-a b}` flag value is one word: its `b}` is never "
+     "the PATH, so the Issues write under issues:read fails",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['gh api -X POST -f body=${BODY:-no body} "repos/${GITHUB_REPOSITORY}/issues/1/comments"']),
+     True, ("issues", "write")),
+
+    ("... and so is a backtick substitution with blanks",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['gh api -X POST -f sha=`git rev-parse HEAD` "repos/${GITHUB_REPOSITORY}/issues/1/comments"']),
+     True, ("issues", "write")),
+
+    ("a flag value whose substitution nests three levels and holds a "
+     "quoted `)` is one word: its call's PATH is resolved and passes under "
+     "issues:write, not failed as having no PATH",
+     mkcase(ISSUES_WRITE, "", [DEFAULT_ENV],
+            ['gh api -X POST -f body="$(a "$(b "$(printf \')\')")")" "repos/${GITHUB_REPOSITORY}/issues/1/comments"']),
+     False, ()),
+
+    ("... while one nesting four levels is no word and still fails "
+     "closed, as having no PATH",
+     mkcase(ISSUES_WRITE, "", [DEFAULT_ENV],
+            ['gh api -X POST -f body=$(a $(b $(c $(d)))) "repos/${GITHUB_REPOSITORY}/issues/1/comments"']),
+     True, ("gh api", "SUBCOMMAND_PERMS")),
+
+    ("... and the new word parts stay linear: a call with no PATH whose "
+     "200 flag values each hold a `${...}`, a backtick and a nested "
+     "substitution with a quoted `)`, followed by unclosed openers, fails "
+     "loudly in well under the per-scenario timeout",
+     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
+            ["gh api -X GET "
+             + "-f a=${X:-a b}`c d`$(e \"$(f ')')\") " * 200
+             + "-f b=" + "$( ${ ` \"$(" * 50]),
+     True, ("gh api", "SUBCOMMAND_PERMS")),
+
+    ("a heredoc opener need not end its line: a `cat <<EOF | jq` body is "
+     "data, not shell",
+     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
+            ["cat <<EOF | jq -R .",
+             'gh issue comment 1 --body hi',
+             "EOF"]),
+     False, ()),
+
+    ("... nor does `python3 - <<'PY' > out`'s, and two openers on one line "
+     "take their bodies in order",
+     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
+            ["python3 - <<'PY' > out",
+             'print("gh issue comment 1 --body hi")',
+             "PY",
+             "paste <<A <<\"B\"",
+             'gh issue comment 1 --body a',
+             "A",
+             'gh issue comment 1 --body b',
+             "B"]),
+     False, ()),
+
+    ("... while the rest of the opener's line is still shell, and a call "
+     "after the last body is still scanned",
+     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
+            ["paste <<A <<B | gh issue comment 1 --body-file -",
+             "a",
+             "A",
+             "b",
+             "B",
+             "gh pr comment 1 --body hi"]),
+     True, ("issue comment", "pr comment")),
+
+    ("... and a `<<` shift inside `$((...))` or a `<<<` here-string opens "
+     "no heredoc",
+     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
+            ["n=$((1 << SHIFT))",
+             "jq . <<<\"$n\"",
+             'gh issue comment 1 --body hi',
+             "SHIFT"]),
+     True, ("issue comment", "issues")),
 
     ("gh api .../actions/permissions is the Administration permission, not "
      "Actions: github.token with actions:write fails, naming administration",

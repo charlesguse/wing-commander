@@ -1115,11 +1115,41 @@ jobs:
           # whose PATH sits on its continuation line is still resolved (not
           # read as a PATH `\` and skipped as out of scope), and a call with
           # no PATH never takes the next command's first word as one.
+          #
+          # A command substitution nests up to SUB_DEPTH parenthesis levels
+          # (`$(a "$(b "$(c)")")`, a subshell or `$((...))` counting as one),
+          # and a quoted `)` inside one (`$(printf ')')`, `$(echo ")")`) does
+          # not close it; one nested deeper is no word, so its call fails
+          # loudly as having no PATH (code review of #944). An unquoted
+          # parameter expansion (`${X:-a b}`, one inner `{...}` level) and a
+          # backtick substitution (`` `git rev-parse HEAD` ``) are one word
+          # part each, not split at their blanks. Every alternative inside a
+          # word, and inside each of these parts, starts on a character no
+          # other alternative there can start on, so a word has exactly one
+          # parse and a failed match backs out in linear time: this parser
+          # once hung the gate on catastrophic backtracking, and the
+          # self-test times adversarial inputs to keep it from doing so
+          # again.
           GH_API_SEP = r'(?:[ \t]|\\\n)+'
-          _CMD_SUB = r'\$\((?:[^()]|\([^()]*\))*\)'
+          SUB_DEPTH = 3
+
+
+          def _sub_body(depth):
+              """The inside of a `(...)` nesting at most `depth` levels."""
+              inner = _sub_body(depth - 1) if depth > 1 else None
+              dq = (r'"(?:[^"\\$]|\\.|\$(?!\()'
+                    + (r'|\$\(' + inner + r'\)' if inner else '') + r')*"')
+              return (r"(?:[^()'" + '"' + r"\\]|\\.|'[^']*'|" + dq
+                      + (r'|\(' + inner + r'\)' if inner else '') + r')*')
+
+
+          _CMD_SUB = r'\$\(' + _sub_body(SUB_DEPTH) + r'\)'
+          _PARAM_EXP = r'\$\{(?!\{)(?:[^{}]|\{[^{}]*\})*\}'
+          _BACKTICK = r'`(?:[^`\\]|\\.)*`'
           SHELL_WORD = (r'(?:"(?:[^"\\$]|\\.|' + _CMD_SUB + r'|\$(?!\())*"|\'[^\']*\''
                         r'|' + _CMD_SUB + r'|\$\{\{(?:[^}]|\}(?!\}))*\}\}'
-                        r'|\\.|(?!\$\(|\$\{\{)[^\s"\'\\])+')
+                        r'|' + _PARAM_EXP + r'|' + _BACKTICK +
+                        r'|\\.|(?!\$\(|\$\{)[^\s"\'\\`])+')
           GH_API_VALUE_FLAGS = ("-X", "--method", "-H", "--header", "-f", "--raw-field",
                                 "-F", "--field", "-q", "--jq", "-t", "--template",
                                 "-p", "--preview", "--hostname", "--input", "--cache")
@@ -1163,6 +1193,14 @@ jobs:
           # is found on the blanked call line (so one inside another flag's
           # quoted value is not this call's), its method word on the raw one
           # (blanking would erase a quoted `'POST'`) -- see api_level().
+          # When the call names its method more than once, gh (pflag) keeps
+          # the LAST value, so `-X POST ... -X GET` is a read and `-X GET
+          # ... -X POST` a write. A method held in a variable (`-X
+          # "$METHOD"`) is resolved through the step's assignments the way
+          # a PATH is; one that resolves to no literal (a `$(...)`, an
+          # Actions expression, an unassigned variable) fails the gate
+          # rather than being read as a read, by the same rule as an
+          # unresolvable PATH (code review of #944).
           API_METHOD_FLAG_RE = re.compile(r'(?:^|\s)(?:-i*X|--method(?![\w-]))')
           API_WRITE_METHOD_RE = re.compile(r'(?:POST|PATCH|PUT|DELETE)\b')
 
@@ -1184,22 +1222,36 @@ jobs:
               A `<<WORD` the shell never executes is not an opener: auto-release's
               `echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'` writes a $GITHUB_OUTPUT
               delimiter, and reading it as a heredoc hid the rest of that step,
-              six maintainer-token `gh api` calls among it (code review of #939)."""
+              six maintainer-token `gh api` calls among it (code review of #939).
+              An opener need not end its line: `cat <<EOF | jq ...` and
+              `python3 - <<'PY' > out` open one too, and the rest of that line
+              is still shell. Several openers on one line take their bodies in
+              order, one after another, as bash does. A `<<` inside `$((...))`
+              is a shift and a `<<<` a here-string, neither an opener; an
+              unquoted delimiter must start like a name (`x << 2` is no
+              opener) (code review of #944)."""
               out = []
               lines = text.splitlines()
-              heredoc_re = re.compile(r"<<-?\s*'?(\w+)'?\s*$")
+              heredoc_re = re.compile(
+                  r"(?<!<)<<(?!<)-?[ \t]*(?:'(\w+)'|" + '"' + r"(\w+)" + '"'
+                  + r"|\\?([A-Za-z_]\w*))")
               i = 0
               while i < len(lines):
                   line = lines[i]
-                  m = heredoc_re.search(line)
-                  if m:
-                      prefix = "\n".join(out + [line[:m.start()]])
-                      if not executable_flags(prefix + "<")[-1]:
-                          m = None
+                  delims = []
+                  found = list(heredoc_re.finditer(line))
+                  if found:
+                      base = len("\n".join(out)) + (1 if out else 0)
+                      flags = executable_flags("\n".join(out + [line]))
+                      for m in found:
+                          if not flags[base + m.start()]:
+                              continue
+                          if re.search(r"\(\((?:(?!\)\)).)*$", line[:m.start()]):
+                              continue
+                          delims.append(m.group(1) or m.group(2) or m.group(3))
                   out.append(line)
                   i += 1
-                  if m:
-                      delim = m.group(1)
+                  for delim in delims:
                       while i < len(lines) and lines[i].strip() != delim:
                           i += 1
                       if i < len(lines):
@@ -1507,13 +1559,40 @@ jobs:
               return "".join(out), "".join(raw)
 
 
-          def api_level(cmdline):
+          def resolve_methods(word, assigns):
+              """A method flag's word -> the literal methods it can hold, or
+              None when any of them is not a literal."""
+              word = re.sub(r'["\']', "", word)
+              if EXPR_OPEN in word or "`" in word or "$(" in word:
+                  return None
+              if "$" not in word:
+                  return [word]
+              out = []
+              for v in resolve_paths(word, assigns):
+                  v = None if v is None else re.sub(r'["\']', "", v)
+                  if v is None or "$" in v or "`" in v:
+                      return None
+                  out.append(v)
+              return out
+
+
+          def api_level(cmdline, assigns):
+              """-> (level, method word): "write" when the LAST method flag
+              can name a write, "read" when it names none or there is no
+              method flag; level None when that word is not resolvable."""
               blanked, raw = cmdline
+              word = None
               for fm in API_METHOD_FLAG_RE.finditer(blanked):
                   wm = re.match(r'(?:=|\s*)(' + SHELL_WORD + ')', raw[fm.end():])
-                  if wm and API_WRITE_METHOD_RE.match(re.sub(r'["\']', "", wm.group(1))):
-                      return "write"
-              return "read"
+                  if wm:
+                      word = wm.group(1)
+              if word is None:
+                  return "read", None
+              methods = resolve_methods(word, assigns)
+              if methods is None:
+                  return None, word
+              return ("write" if any(API_WRITE_METHOD_RE.match(x) for x in methods)
+                      else "read"), word
 
 
           def check_gh_invocation(where, m, cmdline, assigns, tok_kind, tok_detail,
@@ -1534,6 +1613,7 @@ jobs:
                           f"a reviewed exception.")
                       return
                   cats = {path_category(p) for p in resolved}
+                  level = None
                   for scope, cat in cats:
                       if scope != "SELF" or cat is None:
                           continue  # cross-repo / non-repos path: a different repo's permission model, out of scope
@@ -1547,8 +1627,19 @@ jobs:
                               f"rather than let an unrecognised call "
                               f"pass unchecked.")
                           continue
+                      if level is None:
+                          level, method_word = api_level(cmdline, assigns)
+                          if level is None:
+                              failures.append(
+                                  f"{where}: `gh api ... {method_word}` - Gate 12 "
+                                  f"cannot resolve this call's method to a literal "
+                                  f"value (it traces to a `$(...)` computed value, "
+                                  f"an Actions expression or an unset variable), so "
+                                  f"it cannot tell a read from a write. Assign the "
+                                  f"method a literal in this step.")
+                              return
                       check_call(where, f"gh api (.../{cat}/...)",
-                                 frozenset({(perm_cat, api_level(cmdline))}),
+                                 frozenset({(perm_cat, level)}),
                                  tok_kind, tok_detail, app_perms, job_perms,
                                  failures, notes)
                   return
