@@ -129,19 +129,14 @@ def read_marker_with_timestamp(issue_comments, bot_login):
     return find_latest_marker(issue_comments, bot_login)
 
 
-def find_latest_marker_matching(issue_comments, bot_login, predicate,
-                                marker_re=MARKER_RE, open_re=MARKER_OPEN_RE):
-    """As find_latest_marker(), but returns the newest loop-authored marker
-    satisfying `predicate(marker_dict)`, scanning every comment rather than
-    stopping at the single overall-newest one -- a later marker of a
-    different shape must never hide an earlier one a caller still needs
-    (spec 108 maintainer review, fold leg-0: board_eligibility's
-    re-admission carve-out needs the newest step=="duplicate" marker even
-    once a later route/fix marker becomes the issue's overall-newest).
-    Comments whose own marker is unparsable are skipped rather than
-    aborting the whole scan -- unlike find_latest_marker(), there is no
-    "trust the single newest, even if unparsable" contract to preserve
-    here. Returns (created_at, marker) or None."""
+def find_markers_matching(issue_comments, bot_login, predicate,
+                          marker_re=MARKER_RE, open_re=MARKER_OPEN_RE):
+    """Every loop-authored marker satisfying `predicate(marker_dict)`, as
+    (created_at, marker) pairs, oldest first: each comment's own last
+    marker, unparsable ones skipped. find_latest_marker_matching() is the
+    newest of these; a caller that needs every match (an issue disposed as
+    a duplicate, reopened and disposed again names two spec-requests,
+    #874) reads the whole list."""
     dated_matches = []
     for comment in issue_comments or []:
         if not is_loop_marker_author(comment, bot_login):
@@ -157,10 +152,26 @@ def find_latest_marker_matching(issue_comments, bot_login, predicate,
         if not isinstance(marker, dict) or not predicate(marker):
             continue
         dated_matches.append((comment.get("created_at") or "", marker))
-    if not dated_matches:
-        return None
     dated_matches.sort(key=lambda pair: pair[0])
-    return dated_matches[-1]
+    return dated_matches
+
+
+def find_latest_marker_matching(issue_comments, bot_login, predicate,
+                                marker_re=MARKER_RE, open_re=MARKER_OPEN_RE):
+    """As find_latest_marker(), but returns the newest loop-authored marker
+    satisfying `predicate(marker_dict)`, scanning every comment rather than
+    stopping at the single overall-newest one -- a later marker of a
+    different shape must never hide an earlier one a caller still needs
+    (spec 108 maintainer review, fold leg-0: board_eligibility's
+    re-admission carve-out needs the newest step=="duplicate" marker even
+    once a later route/fix marker becomes the issue's overall-newest).
+    Comments whose own marker is unparsable are skipped rather than
+    aborting the whole scan -- unlike find_latest_marker(), there is no
+    "trust the single newest, even if unparsable" contract to preserve
+    here. Returns (created_at, marker) or None."""
+    dated_matches = find_markers_matching(issue_comments, bot_login, predicate,
+                                          marker_re, open_re)
+    return dated_matches[-1] if dated_matches else None
 
 
 def read_marker(issue_comments, bot_login):

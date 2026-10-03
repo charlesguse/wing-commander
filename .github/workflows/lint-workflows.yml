@@ -1007,6 +1007,12 @@ jobs:
               ("variable", "delete"): frozenset({("variables", "write")}),
           }
 
+          # Permissions no `permissions:` block can grant GITHUB_TOKEN (the
+          # variables entries above): a call needing one 403s under
+          # github.token in every job, so check_call fails it even where the
+          # job declares no permissions: block to compare against.
+          DEFAULT_TOKEN_NEVER_GRANTED = frozenset({"variables"})
+
           # `gh api PATH` — PATH's first segment under repos/{owner}/{repo}/ decides
           # the permission, the same way SUBCOMMAND_PERMS does for named subcommands.
           # "branches": cleanup.yml's branch probe (#282) — GET
@@ -1036,6 +1042,10 @@ jobs:
               # Git database endpoints are under "Contents" in the
               # fine-grained permission reference.
               "git": "contents",
+              # .../actions/variables/... (path_category splits it out of
+              # "actions"): the "Variables" repository permission, as the
+              # `gh variable` entries in SUBCOMMAND_PERMS say.
+              "actions/variables": "variables",
               # specs/062-lifecycle-review-gate T024: POST .../statuses/{sha}
               # (Create a commit status) -- the REST reference lists
               # "Commit statuses" as its own fine-grained repository
@@ -1208,7 +1218,11 @@ jobs:
 
           def path_category(path_text):
               """-> ('SELF'|'CROSS', category) for a repos/OWNER/REPO/... path, or
-              ('OTHER', None) for anything else (org/user endpoints, GraphQL, etc.)."""
+              ('OTHER', None) for anything else (org/user endpoints, GraphQL, etc.).
+              A query string is not a path segment: `actions/variables?per_page=30`
+              is the Variables surface all the same. Only a `?` outside `${...}`
+              starts one; `${GITHUB_REPOSITORY:?}` is a parameter expansion."""
+              path_text = re.split(r"\?(?![^{}]*\})", path_text, maxsplit=1)[0]
               segs = [s for s in path_text.strip("/").split("/") if s]
               if not segs or segs[0] != "repos":
                   return "OTHER", None
@@ -1221,6 +1235,12 @@ jobs:
               else:
                   rest = rest[2:] if len(rest) >= 2 else []
                   scope = "CROSS"           # a literal, different owner/repo pair
+              if rest[:2] == ["actions", "variables"]:
+                  # Under actions/ by path, but the "Variables" permission's
+                  # surface, not "Actions" (fine-grained reference; code
+                  # review of #924) -- the same split SUBCOMMAND_PERMS
+                  # makes for `gh variable`.
+                  return scope, "actions/variables"
               return (scope, rest[0]) if rest else (scope, None)
 
 
@@ -1333,6 +1353,14 @@ jobs:
                   return
               if tok_kind == "default":
                   if not required:
+                      return
+                  never = sorted({cat for cat, _ in required} & DEFAULT_TOKEN_NEVER_GRANTED)
+                  if never:
+                      failures.append(
+                          f"{where}: {label} runs under github.token, which needs "
+                          f"{sorted(required)}, but GitHub never grants github.token "
+                          f"{never}: no permissions: block can add it. This 403s at "
+                          f"runtime; run the call under a dedicated token that holds it.")
                       return
                   if job_perms is None:
                       notes.append(f"{where}: {label} runs under github.token needing "
@@ -4116,6 +4144,14 @@ jobs:
       - name: Auto-release end-to-end run pins the stages through an annotated tag on the verified head
         if: "!cancelled()"
         run: python3 .github/scripts/verify-auto-release-e2e-pin.py
+
+      # board-loop.yml's two duplicate-marker scans each have one home in
+      # board_eligibility, and the closed-without-landing map reads every
+      # duplicate marker, not only an issue's newest (#874, #888). Not
+      # numbered, as above.
+      - name: Board loop reads duplicate markers only through their single homes
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-board-duplicate-marker-scans.py
 
       # rebase.yml's publish step fails, naming the credential, on a push
       # refused after a failed post-agent re-establishment, and keeps the

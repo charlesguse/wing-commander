@@ -36,6 +36,17 @@ the same already-notified closure):
   own lifecycle ended (Principle IV: "Any manual step that survives must
   be reported explicitly to the lifecycle issue").
 
+An originating issue can name more than one spec-request: disposed as a
+duplicate of one, then reopened and re-routed to a second (#874). Every
+duplicate marker is matched back, but only the spec-request its **newest**
+duplicate marker names is current: that is the one the re-admission
+carve-out reads (contracts/eligibility-and-readmission-delta.md, FR-006),
+so only its closure tells the originating issue that reopening returns the
+request to the board. A superseded spec-request that closes without
+landing gets its own notice alone, saying the originating issue has since
+been routed to a newer spec-request; the originating issue is not told
+anything about it.
+
 Idempotency is checked the same way the disposition module's own
 comment-presence check works (contracts/duplicate-disposition.md step 4/6):
 before posting, the step looks for its own previously-posted notice comment

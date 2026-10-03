@@ -385,6 +385,33 @@ CASES = [
             ['tip="$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq .sha)"']),
      True, ("commits", "contents")),
 
+    ("gh api .../actions/variables/... is the Variables permission, not "
+     "Actions: github.token with actions:write fails, naming variables "
+     "(code review of #924)",
+     mkcase(ACTIONS_WRITE, "", [DEFAULT_ENV],
+            ['v="$(gh api "repos/${GITHUB_REPOSITORY}/actions/variables/X" --jq .value)"']),
+     True, ("actions/variables", "variables")),
+
+    ("a query string does not hide the Variables surface: "
+     ".../actions/variables?per_page=30 under github.token with "
+     "actions:read still fails (code review of #939)",
+     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
+            ['gh api "repos/${GITHUB_REPOSITORY}/actions/variables?per_page=30"']),
+     True, ("actions/variables", "never grants")),
+
+    ("a `${VAR:?}` expansion is not a query string: "
+     "repos/${GITHUB_REPOSITORY:?}/actions/variables/X is still checked "
+     "(code review of #939)",
+     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
+            ['gh api "repos/${GITHUB_REPOSITORY:?}/actions/variables/X"']),
+     True, ("actions/variables", "never grants")),
+
+    ("a Variables call under github.token fails even with no permissions: "
+     "block to compare against: no block can grant it (code review of #939)",
+     mkcase("", "", [DEFAULT_ENV],
+            ['gh variable get WING_COMMANDER_AUTO_RELEASE_PAUSED']),
+     True, ("variables", "never grants")),
+
     ("gh pr close under the App token passes against the documented "
      "Pull requests: Read and write grant",
      mkcase("", "", [APP_ENV],

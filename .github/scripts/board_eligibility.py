@@ -39,7 +39,8 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from board_item_marker import find_latest_marker_matching, read_marker_with_timestamp  # noqa: E402
+from board_item_marker import (  # noqa: E402
+    find_latest_marker_matching, find_markers_matching, read_marker_with_timestamp)
 
 MAINTAINER_ASSOCIATIONS = {"OWNER", "MEMBER", "COLLABORATOR"}
 
@@ -178,6 +179,42 @@ def _find_duplicate_marker(issue, comments, bot_login):
     found = find_latest_marker_matching(
         comments, bot_login, lambda marker: marker.get("step") == DUPLICATE_STEP)
     return found[1] if found else None
+
+
+def originating_issues_by_spec_request(comments_by_issue, bot_login):
+    """{spec_request number: {"issue": originating issue number, "current":
+    bool}} over EVERY loop-authored step == DUPLICATE_STEP marker on every
+    issue in `comments_by_issue` (keys: issue numbers, int or str).
+
+    Every such marker counts, not only an issue's overall-newest marker: an
+    issue disposed as a duplicate of one spec-request, then reopened and
+    re-routed to a second, names both, and the first spec-request's own
+    closed-without-landing notice needs it too (#874). "current" is True
+    only for the spec-request the issue's NEWEST duplicate marker names --
+    the one the re-admission carve-out reads (_find_duplicate_marker(),
+    FR-006) -- so a caller tells the issue "reopening returns the request
+    to the board" only when that is true (FR-017); a superseded
+    spec-request's notice belongs on the spec-request alone. Should two
+    issues name one spec-request, the newest marker wins. The single home
+    for this map: board-loop.yml's closed-without-landing scan calls it
+    rather than scanning inline."""
+    named = []
+    for number, comments in comments_by_issue.items():
+        try:
+            issue_number = int(number)
+        except (TypeError, ValueError):
+            continue
+        markers = find_markers_matching(
+            comments, bot_login, lambda m: m.get("step") == DUPLICATE_STEP)
+        for index, (created_at, marker) in enumerate(markers):
+            try:
+                spec_request = int(marker.get("spec_request"))
+            except (TypeError, ValueError):
+                continue
+            named.append((created_at, spec_request, issue_number, index == len(markers) - 1))
+    named.sort(key=lambda item: item[0])
+    return {spec_request: {"issue": issue_number, "current": current}
+            for _created_at, spec_request, issue_number, current in named}
 
 
 def spec_request_numbers_to_resolve(open_issues, comments_by_issue, bot_login):
