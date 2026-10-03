@@ -1007,6 +1007,12 @@ jobs:
               ("variable", "delete"): frozenset({("variables", "write")}),
           }
 
+          # Permissions no `permissions:` block can grant GITHUB_TOKEN (the
+          # variables entries above): a call needing one 403s under
+          # github.token in every job, so check_call fails it even where the
+          # job declares no permissions: block to compare against.
+          DEFAULT_TOKEN_NEVER_GRANTED = frozenset({"variables"})
+
           # `gh api PATH` — PATH's first segment under repos/{owner}/{repo}/ decides
           # the permission, the same way SUBCOMMAND_PERMS does for named subcommands.
           # "branches": cleanup.yml's branch probe (#282) — GET
@@ -1212,8 +1218,10 @@ jobs:
 
           def path_category(path_text):
               """-> ('SELF'|'CROSS', category) for a repos/OWNER/REPO/... path, or
-              ('OTHER', None) for anything else (org/user endpoints, GraphQL, etc.)."""
-              segs = [s for s in path_text.strip("/").split("/") if s]
+              ('OTHER', None) for anything else (org/user endpoints, GraphQL, etc.).
+              A query string is not a path segment: `actions/variables?per_page=30`
+              is the Variables surface all the same."""
+              segs = [s for s in path_text.split("?", 1)[0].strip("/").split("/") if s]
               if not segs or segs[0] != "repos":
                   return "OTHER", None
               rest = segs[1:]
@@ -1343,6 +1351,14 @@ jobs:
                   return
               if tok_kind == "default":
                   if not required:
+                      return
+                  never = sorted({cat for cat, _ in required} & DEFAULT_TOKEN_NEVER_GRANTED)
+                  if never:
+                      failures.append(
+                          f"{where}: {label} runs under github.token, which needs "
+                          f"{sorted(required)}, but GitHub never grants github.token "
+                          f"{never}: no permissions: block can add it. This 403s at "
+                          f"runtime; run the call under a dedicated token that holds it.")
                       return
                   if job_perms is None:
                       notes.append(f"{where}: {label} runs under github.token needing "

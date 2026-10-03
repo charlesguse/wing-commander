@@ -45,9 +45,11 @@ SUBDIR_ENTRYPOINT = "run-tests.sh"
 SHARED_PREFIX = "wc_"
 STANDALONE_VERIFY_RE = re.compile(r"verify-.*\.(?:py|sh)$")
 # #877: a harness under .github/actions/ is not always called run-tests.sh
-# (spec 074's fold-queue fixtures were `tests/run.sh`). A `run.sh`
-# anywhere, or any script inside a `tests`/`test` directory of a
-# composite, is a harness too.
+# (spec 074's fold-queue fixtures were `tests/run.sh`). Any script inside
+# a `tests`/`test` directory of a composite is a harness too, and a
+# `run.sh` there is its entrypoint. A `run.sh` OUTSIDE such a directory is
+# not: `${{ github.action_path }}/run.sh` is how a composite runs its own
+# body, so it is matched by directory, never by name alone.
 HARNESS_ENTRYPOINT_NAMES = (SUBDIR_ENTRYPOINT, "run.sh")
 HARNESS_DIR_NAMES = ("tests", "test")
 HARNESS_SCRIPT_RE = re.compile(r".*\.(?:sh|bash|py)$")
@@ -92,10 +94,12 @@ def unsupported_actions_scripts(root="."):
     `<root>`, so a sibling checkout directory elsewhere in the tree is
     unreachable by construction. At each directory: a `run-tests.sh`
     entrypoint is always flagged; otherwise a standalone
-    `verify-*.py`/`verify-*.sh`, a `run.sh`, and any script inside a
-    composite's `tests`/`test` directory are flagged (#877) -- a file that
-    shares its directory with a `run-tests.sh` is a helper of that
-    harness, not a second violation.
+    `verify-*.py`/`verify-*.sh`, and any .sh/.bash/.py script inside a
+    composite's `tests`/`test` directory (its `run.sh` included), are
+    flagged (#877) -- a file that shares its directory with a
+    `run-tests.sh` is a helper of that harness, not a second violation.
+    A composite's runtime scripts outside such a directory, a top-level
+    `run.sh` among them, are not harnesses and are never flagged.
     `.github/actions/_shared/` is pruned from the walk entirely -- the
     carve-out is structural, not a name checked per file.
     """
@@ -117,7 +121,7 @@ def unsupported_actions_scripts(root="."):
         else:
             matches = sorted(
                 n for n in filenames
-                if STANDALONE_VERIFY_RE.match(n) or n in HARNESS_ENTRYPOINT_NAMES
+                if STANDALONE_VERIFY_RE.match(n)
                 or (in_tests_dir and HARNESS_SCRIPT_RE.match(n)))
         for name in matches:
             r = _rel(os.path.join(dirpath, name))
@@ -362,17 +366,29 @@ def pr_time_invocations(root=".",
 LOOSE_PY_HEREDOC_RE = re.compile(r"^[ \t]*python3? +[^\n]*<<", re.M)
 
 
-# A script a run: block executes: bash/sh/python, any flags, then a path
-# ending .sh/.py. A path carrying `$` (a runner temp file, a variable) is a
+# A script a run: block executes, read two ways so neither shape slips
+# (#825, code review of #939). SCRIPT_CALL_RE is an interpreter call --
+# bash/sh/python, any flags, then a path -- whose path need not start with
+# .github/; a path carrying `$` there (a runner temp file, a variable) is a
 # generated script, not one the repository ships, and is skipped.
+# REPO_SCRIPT_RE is any token naming a script under .github/, however it is
+# run: direct exec, a `\` continuation, a loop over a glob, an interpreter
+# flag that takes a value. Group 1 is whatever the token carries before
+# `.github/`: empty or `./` is a literal repo path; anything else (`$VAR/`,
+# an expression, a checkout prefix) is a path no reader can resolve.
 SCRIPT_CALL_RE = re.compile(
-    r"(?:^|[\s;&|(])(?:bash|sh|python3?)\s+(?:-\S+\s+)*[\"']?([\w./{}$-]+\.(?:sh|py))\b")
+    r"(?:^|[\s;&|(`])(?:bash|sh|python3?)\s+(?:-\S+\s+)*[\"']?([\w./{}$-]+\.(?:sh|bash|py))\b")
+REPO_SCRIPT_RE = re.compile(
+    r"([^\s\"'`;&|()<>]*?)(\.github/[^\s\"'`;&|()<>]*?\.(?:sh|bash|py))(?![\w.-])")
 
 
 def pr_time_script_calls(root=".",
                          workflow=".github/workflows/lint-workflows.yml"):
-    """[(step name, script path)] for every script a PR-time step's run:
-    block executes, comment lines dropped.
+    """[(step name, scripts, unresolved)] for every PR-time step whose run:
+    block executes a script, comment lines dropped and `\\` continuations
+    joined. `scripts` are repo-relative paths; `unresolved` are the script
+    tokens no reader can pin to one file (a `$` variable, a `${{ }}`
+    expression, a glob, a checkout prefix ahead of `.github/`).
 
     pr_time_invocations() sees only the gate scripts gate_scripts() names,
     so a step that runs anything else -- a composite's own fixture suite at
@@ -380,7 +396,10 @@ def pr_time_script_calls(root=".",
     run-tests.sh -- runs in CI and is invisible to the local sweep, which
     stays green while CI goes red (#825). This is the reader that sees
     every script, for verify-gate-wiring.py to compare against the
-    runner's."""
+    runner's. A python-heredoc step (LOOSE_PY_HEREDOC_RE, the grammar
+    pr_time_inline_steps decides membership with) is skipped: the runner
+    runs a runnable one verbatim, and an unrunnable one is already a
+    verify-gate-wiring.py failure."""
     path = os.path.join(root, workflow) if root != "." else workflow
     try:
         wf = yaml.safe_load(open(path, encoding="utf-8")) or {}
@@ -391,18 +410,25 @@ def pr_time_script_calls(root=".",
         if not _job_runs_on_pull_request(job):
             continue
         for step in (job or {}).get("steps") or []:
-            run = (step or {}).get("run")
-            if not run:
+            run = str((step or {}).get("run") or "")
+            if not run or LOOSE_PY_HEREDOC_RE.search(run):
                 continue
-            text = "\n".join(l for l in str(run).splitlines()
+            text = "\n".join(l for l in run.splitlines()
                               if not l.lstrip().startswith("#"))
+            text = text.replace("\\\n", " ")
+            scripts, unresolved = set(), set()
             for m in SCRIPT_CALL_RE.finditer(text):
-                script = m.group(1)
-                if "$" in script:
-                    continue
-                while script.startswith("./"):
-                    script = script[2:]
-                out.append(((step or {}).get("name") or "", script))
+                if "$" not in m.group(1):
+                    scripts.add(re.sub(r"^(?:\./)+", "", m.group(1)))
+            for m in REPO_SCRIPT_RE.finditer(text):
+                prefix, script = m.group(1), m.group(2)
+                if re.fullmatch(r"(?:\./)*", prefix) and not re.search(r"[$*?{}\[]", script):
+                    scripts.add(script)
+                else:
+                    unresolved.add(prefix + script)
+            if scripts or unresolved:
+                name = str(step.get("name") or "(unnamed step)")
+                out.append((name, sorted(scripts), sorted(unresolved)))
     return out
 
 

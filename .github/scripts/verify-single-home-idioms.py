@@ -1082,19 +1082,11 @@ def check_local_action_before_checkout(root="."):
         doc = load_yaml(root, path)
         if not isinstance(doc, dict) or not doc.get("jobs"):
             continue
-        text = read(root, path)
-        job_search_from = 0
         for job_id, steps in _step_lists(doc):
-            job_match = re.search(
-                r"(?m)^  " + re.escape(str(job_id)) + r":",
-                text[job_search_from:])
-            job_offset = (job_search_from + job_match.start()
-                          if job_match else job_search_from)
-            if job_match:
-                job_search_from = job_offset + 1
             seen_root = False
             seen_scoped = set()
             scoped_before_root = None
+            scoped_before_root_with = None
             for step in steps:
                 uses = str((step or {}).get("uses") or "")
                 if not uses:
@@ -1105,6 +1097,7 @@ def check_local_action_before_checkout(root="."):
                         seen_scoped.add(scoped_path)
                         if not seen_root and scoped_before_root is None:
                             scoped_before_root = scoped_path
+                            scoped_before_root_with = step.get("with")
                     else:
                         seen_root = True
                 elif uses.startswith("./"):
@@ -1122,10 +1115,12 @@ def check_local_action_before_checkout(root="."):
                             f"job {job_id!r}: {uses} resolved before the "
                             f"actions/checkout@ step for {where}"))
             if seen_root and scoped_before_root is not None:
-                offset = text.find(f"path: {scoped_before_root}", job_offset)
+                # The scoped checkout's own `path:` line, never an earlier
+                # step's identical `path:` in the same job (code review of
+                # #939, the same rule as #882's).
                 findings.append(Finding(
                     path, "composite-checkout-order",
-                    line_of(text, max(offset, 0)),
+                    step_key_line(scoped_before_root_with, "path"),
                     f"job {job_id!r}: a path-scoped actions/checkout@ step "
                     f"(path: {scoped_before_root}) precedes the job's root "
                     f"actions/checkout@ step -- the root checkout removes "
@@ -1853,6 +1848,24 @@ def selftest_local_action_line_attribution():
         "      - uses: ./.github/actions/widget", job="b")
 
 
+def selftest_scoped_checkout_line_attribution():
+    """Code review of #939: an earlier step in the same job carries the
+    identical `path:` line; the finding names the path-scoped checkout's
+    own, not the first textual match after the job's header."""
+    _selftest_decoy_line(
+        "composite-checkout-order line attribution survives an earlier identical path:",
+        "composite-checkout-order", ".github/workflows/third-scoped-checkout-decoy.yml",
+        "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - uses: actions/upload-artifact@v4\n"
+        "        with:\n"
+        "          path: .wc-pristine-repo\n"
+        "      - uses: actions/checkout@v5\n"
+        "        with:\n"
+        "          path: .wc-pristine-repo\n"
+        "      - uses: actions/checkout@v5\n",
+        "          path: .wc-pristine-repo", job="x")
+
+
 def selftest_per_document_wrap_passes():
     """#575: loosening the transcript-normalise regex must not start
     flagging the per-document wrap -- the legitimate fallback read the
@@ -2275,6 +2288,7 @@ def run_selftest():
     selftest_composite_checkout_order_line_attribution()
     selftest_token_mint_line_attribution()
     selftest_local_action_line_attribution()
+    selftest_scoped_checkout_line_attribution()
     # Every per-step check that reports step_run_line() gets the same
     # decoy test, so one regressing to a first-text-match lookup fails here.
     for check_key, body in PER_STEP_LINE_CASES:

@@ -27,7 +27,9 @@ This closes it generally, in both directions:
             reproduce. The two answers come from different readers - one
             substring-matches the workflow text, one tokenizes it - and a
             gate only the first can see runs in CI and is silently absent
-            from the local sweep.
+            from the local sweep. The same holds for any script, not only a
+            gate: every script a PR-time step runs, however it is run, is
+            one the local runner runs too (#825).
   triggers  every published document a gate treats as its subject is named
             by lint-workflows.yml's pull_request paths: filter. A gate that
             is wired but never TRIGGERED by an edit to the one file it
@@ -454,25 +456,39 @@ def check_local_runner_parity(root="."):
 def check_local_runner_script_coverage(root="."):
     """-> list of failure strings. Every script a PR-time lint step runs is
     one run-local-gates.py runs too (#825): a gate script it recovers argv
-    for, or a script inside a heredoc step it runs verbatim. A step that
+    for, or a script path handed to such a gate as an argument. A step that
     runs anything else (a composite's fixture suite, a harness not named
     run-tests.sh) runs in CI only, and the local sweep stays green while
-    CI is red."""
+    CI is red. A python-heredoc step is not read here: the runner runs a
+    runnable one verbatim, and check_local_runner_parity already fails an
+    unrunnable one."""
     failures = []
-    invoked = {script for script, _ in pr_time_invocations(root)}
-    inline = {name for name, _ in pr_time_inline_steps(root)[0]}
-    calls = pr_time_script_calls(root)
-    for name, script in calls:
-        if script in invoked or name in inline:
-            continue
-        failures.append(
-            f"lint-workflows.yml step {name!r} runs {script} in the PR-time "
-            f"suite, but run-local-gates.py does not run it, so the local "
-            f"sweep can be green while CI is red (#825). Move it to "
-            f"{SCRIPTS_DIR}/ as a verify-* gate or a <name>-tests/run-tests.sh "
-            f"harness, which the runner derives on its own.")
+    invocations = pr_time_invocations(root)
+    covered = {script for script, _ in invocations}
+    covered |= {re.sub(r"^(?:\./)+", "", arg) for _, args in invocations for arg in args}
+    steps = pr_time_script_calls(root)
+    total = 0
+    for name, scripts, unresolved in steps:
+        for path in unresolved:
+            failures.append(
+                f"lint-workflows.yml step {name!r} runs {path!r} in the PR-time "
+                f"suite, a script path this check cannot resolve to one "
+                f"repository file (a variable, an expression, a glob, or a "
+                f"checkout prefix), so it cannot tell whether "
+                f"run-local-gates.py runs it (#825). Name each script by its "
+                f"literal repo-relative path.")
+        for script in scripts:
+            total += 1
+            if script in covered:
+                continue
+            failures.append(
+                f"lint-workflows.yml step {name!r} runs {script} in the PR-time "
+                f"suite, but run-local-gates.py does not run it, so the local "
+                f"sweep can be green while CI is red (#825). Move it to "
+                f"{SCRIPTS_DIR}/ as a verify-* gate or a <name>-tests/run-tests.sh "
+                f"harness, which the runner derives on its own.")
     if not failures:
-        print(f"ok    all {len(calls)} script call(s) in the PR-time suite run "
+        print(f"ok    all {total} script call(s) in the PR-time suite run "
               f"in run-local-gates.py too")
     return failures
 
@@ -635,6 +651,51 @@ def _fixture_uncovered_script_call():
         shutil.rmtree(root, ignore_errors=True)
 
 
+def _fixture_uncovered_script_shapes():
+    """Code review of #939: a script is seen however a step runs it --
+    direct exec, a `\\` continuation, an interpreter flag that takes a
+    value -- and a path no reader can resolve (a variable, an expression,
+    a glob) fails rather than being skipped. A step named like a runnable
+    heredoc step, and an unnamed one, are read all the same."""
+    root = tempfile.mkdtemp(prefix="wc-gate-wiring-")
+    expr = "$" + "{{ github.workspace }}"
+    try:
+        _write(root, ".github/scripts/widget-tests/run-tests.sh", "echo hi\n")
+        _write(root, ".github/workflows/lint-workflows.yml",
+               "on: pull_request\njobs:\n  lint:\n    runs-on: ubuntu-latest\n"
+               "    steps:\n"
+               "      - name: heredoc\n"
+               "        run: |\n"
+               "          python3 - <<'PYEOF'\n"
+               "          print('hi')\n"
+               "          PYEOF\n"
+               "      - name: heredoc\n"
+               "        run: ./.github/scripts/a-tests/run.sh\n"
+               "      - run: |\n"
+               "          bash \\\n"
+               "            .github/scripts/b-tests/run.sh\n"
+               "      - name: flagged\n"
+               "        run: bash -o pipefail .github/scripts/c-tests/run.bash\n"
+               "      - name: unresolved\n"
+               "        run: |\n"
+               "          for t in .github/actions/*/tests/run.sh; do bash \"$t\"; done\n"
+               "          bash \"$GITHUB_WORKSPACE/.github/scripts/d.sh\"\n"
+               f"          python3 {expr}/.github/scripts/e.py\n"
+               "      - name: covered\n"
+               "        run: bash .github/scripts/widget-tests/run-tests.sh\n")
+        failures = check_local_runner_script_coverage(root)
+        joined = "\n".join(failures)
+        want = [".github/scripts/a-tests/run.sh", ".github/scripts/b-tests/run.sh",
+                ".github/scripts/c-tests/run.bash", "'.github/actions/*/tests/run.sh'",
+                "'$GITHUB_WORKSPACE/.github/scripts/d.sh'", "}}/.github/scripts/e.py'",
+                "'heredoc'", "'(unnamed step)'"]
+        ok = (len(failures) == 6 and all(w in joined for w in want)
+              and "widget-tests" not in joined)
+        return ok, f"got {failures!r}"
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def _fixture_orphaned_composite_harness():
     """A composite harness with no invoking workflow reports as orphaned
     (FR-003 -- already-true behaviour; this fixture proves it, research.md
@@ -724,6 +785,8 @@ def _fixture_actions_self_checkout_dedup():
 FIXTURES = [
     ("a PR-time step running a script the local runner does not derive is "
      "reported (#825)", _fixture_uncovered_script_call),
+    ("a script is seen however a step runs it, and an unresolvable script "
+     "path fails (code review of #939)", _fixture_uncovered_script_shapes),
     ("an unwired composite harness reports as orphaned",
      _fixture_orphaned_composite_harness),
     ("two run-tests.sh harnesses under different directories get distinct "
