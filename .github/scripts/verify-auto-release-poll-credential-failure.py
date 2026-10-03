@@ -36,6 +36,7 @@ regression it exists for. It makes no network call.
 """
 import json
 import os
+import shlex
 import shutil
 import sys
 import tempfile
@@ -76,10 +77,6 @@ BASE = {
 SLEEP_STUB = "#!/usr/bin/env bash\nexit 0\n"
 
 
-def _sq(text):
-    return "'" + text.replace("'", "'\\''") + "'"
-
-
 def gh_stub_script(slug_behaviors):
     """A `gh` stub answering exactly the calls this step makes before it
     ever finds a slug: the clarification gate's author-id and comments
@@ -118,7 +115,7 @@ def gh_stub_script(slug_behaviors):
         label = str(i) if i < len(slug_behaviors) else "*"
         lines.append(f"    {label})")
         if stderr:
-            lines.append(f"      printf '%s' {_sq(stderr)} 1>&2")
+            lines.append(f"      printf '%s' {shlex.quote(stderr)} 1>&2")
         lines.append(f"      exit {rc}")
         lines.append("      ;;")
     lines.append("  esac")

@@ -4939,6 +4939,8 @@ jobs:
       # wc_shell_harness.gh_error_stub_arm helper, never a hand-rolled
       # literal, and that canonical literal shape must not appear a second
       # time anywhere else under .github/scripts/ (FR-009-FR-012/FR-015).
+      # A stub builder quotes values with shlex.quote, never a hand-rolled
+      # helper (#889).
       - name: "Gate 127 — every gh-error-simulating stub in a covered-capture harness uses the one shared home"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-gh-error-stub-conformance.py
