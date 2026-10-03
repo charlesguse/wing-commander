@@ -118,8 +118,10 @@ drop-detection.
     check it (#735; the stale-waiver check Gate 105 already does for
     labels).
 11. Each agent step's credential-status call (the one check 6 finds by its
-    mint-outcome) passes a `refresh-outcome` naming that agent step's OWN
-    refresh-remote step, in its own window (code review of #947): the
+    mint-outcome) passes a `refresh-outcome` reading the `.outcome` of
+    that agent step's OWN refresh-remote step, in its own window (code
+    review of #947; `.conclusion` is always 'success' under the refresh
+    step's continue-on-error, code review of #951): the
     input defaults to 'success', so a dropped or cross-wired input leaves
     a failed refresh unattributed while check 6 still passes. A
     NO_REMOTE_REFRESH_JOBS job may omit it; if it passes one, every step
@@ -370,6 +372,15 @@ def _is_mint_step(step):
 # credential reference.
 _STEP_ID_RE = re.compile(
     r"steps(?:\.([\w-]+)|\[[\'\"]([\w-]+)[\'\"]\])", re.IGNORECASE)
+
+
+# A step reference plus the property read from it (group 3/4), e.g.
+# `steps.refresh-remote.outcome` / `steps['refresh-remote']['conclusion']`.
+# Used by check 11 to require .outcome of a continue-on-error refresh step.
+_STEP_PROP_RE = re.compile(
+    r"steps(?:\.([\w-]+)|\[[\'\"]([\w-]+)[\'\"]\])"
+    r"(?:\s*\.\s*([\w-]+)|\s*\[\s*[\'\"]([\w-]+)[\'\"]\s*\])?",
+    re.IGNORECASE)
 
 
 def _step_ref_re(step_id):
@@ -800,6 +811,24 @@ def check_job_full_subject(path, job_name, job):
             named = {(m.group(1) or m.group(2)).lower()
                      for m in _STEP_ID_RE.finditer(refresh_input)}
             allowed = {i.lower() for i in refresh_ids}
+            # The refresh step is continue-on-error: true, so only its
+            # .outcome records a failure -- .conclusion is always 'success'
+            # and .outputs.* carries no failure at all. A required job must
+            # read .outcome of every refresh step it names (code review of
+            # #951).
+            if required:
+                bad_props = sorted({
+                    (m.group(0)) for m in _STEP_PROP_RE.finditer(refresh_input)
+                    if (m.group(1) or m.group(2)).lower() in allowed
+                    and (m.group(3) or m.group(4) or "").lower() != "outcome"})
+                if bad_props:
+                    failures.append(
+                        f"{path} [{job_name}]: credential-status call "
+                        f"{call_name!r} for agent step {agent_name!r} reads "
+                        f"{', '.join(bad_props)} in refresh-outcome -- the "
+                        f"refresh step is continue-on-error: true, so only "
+                        f"its .outcome records a failed refresh (FR-004; "
+                        f"check 11)")
             if not refresh_input.strip():
                 if required:
                     failures.append(
@@ -1475,6 +1504,18 @@ def mut_implement_refresh_outcome_cross_wired(loaded):
     step["with"]["refresh-outcome"] = "${{ steps.refresh-remote-cycle.outcome }}"
 
 
+def mut_clarify_refresh_outcome_conclusion(loaded):
+    """Check 11 (code review of #951): refresh-outcome reads the window's
+    own refresh step's .conclusion, which is always 'success' under
+    continue-on-error: true, so a failed refresh is unattributed."""
+    job = loaded[".github/workflows/clarify.yml"]["jobs"]["clarify"]
+    step = _find_step(job, "Determine post-agent credential status")
+    assert step is not None, "fixture assumption broken: step renamed"
+    assert step["with"]["refresh-outcome"] == "${{ steps.refresh-remote.outcome }}", \
+        "fixture assumption broken: refresh-outcome changed"
+    step["with"]["refresh-outcome"] = "${{ steps.refresh-remote.conclusion }}"
+
+
 def mut_e2e_refresh_outcome_pre_agent(loaded):
     """Check 11, NO_REMOTE_REFRESH_JOBS arm: e2e-stage's refresh-outcome
     pointed at the PRE-agent scratch-token mint instead of its post-agent
@@ -1625,6 +1666,8 @@ SIMPLE_MUTATIONS = [
      mut_clarify_refresh_outcome_dropped),
     ("implement.yml's progress credential-status refresh-outcome pointed at "
      "the cycle agent step's refresh", mut_implement_refresh_outcome_cross_wired),
+    ("clarify.yml's credential-status refresh-outcome reads the refresh "
+     "step's .conclusion", mut_clarify_refresh_outcome_conclusion),
     ("e2e-stage's credential-status refresh-outcome pointed at the "
      "pre-agent scratch-token mint", mut_e2e_refresh_outcome_pre_agent),
     ("board-loop.yml's fixer remote refresh reverted to an inline block",
@@ -1690,6 +1733,11 @@ def self_test():
             (mut_implement_refresh_outcome_cross_wired,
              ".github/workflows/implement.yml [implement]: credential-status "
              "call 'Determine post-agent credential status (progress)'"),
+            (mut_clarify_refresh_outcome_conclusion,
+             ".github/workflows/clarify.yml [clarify]: credential-status "
+             "call 'Determine post-agent credential status' for agent step "
+             "'Fold answers into the draft spec' reads "
+             "steps.refresh-remote.conclusion"),
             (mut_e2e_refresh_outcome_pre_agent,
              ".github/workflows/auto-update-spec-kit.yml [e2e-stage]: "
              "credential-status call"),
