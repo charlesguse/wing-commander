@@ -1533,7 +1533,10 @@ jobs:
           fi
           records_json='[]'
           if [ -n "$durable" ]; then
-            records_json="$(printf '%s\n' "$durable" | jq -R -c 'fromjson? // empty' 2>/dev/null | jq -cs '.' 2>/dev/null || echo '[]')"
+            # The fallback replaces the value, never appends to it: under
+            # pipefail a failed first jq still lets the second print, and an
+            # `|| echo '[]'` inside the substitution would add a second line.
+            records_json="$(printf '%s\n' "$durable" | jq -R -c 'fromjson? // empty' 2>/dev/null | jq -cs '.' 2>/dev/null)" || records_json='[]'
           fi
 
           own_record="$(printf '%s' "$records_json" | jq -c --arg rid "$RUN_ID" '[.[] | select((.run.workflow_run_id // "") == $rid)] | last // empty' 2>/dev/null || true)"

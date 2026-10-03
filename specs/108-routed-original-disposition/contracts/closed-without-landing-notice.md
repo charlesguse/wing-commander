@@ -52,7 +52,12 @@ comment-presence check works (contracts/duplicate-disposition.md step 4/6):
 before posting, the step looks for its own previously-posted notice comment
 (a recognizable marker, e.g. an HTML comment following the
 `wing-commander-board-item` marker's own convention) on the target issue,
-and skips posting if found.
+and skips posting if found. The marker is keyed by the closed spec-request
+(`<!-- wing-commander-closed-without-landing spec-request=N -->`), so an
+originating issue already told about one spec-request's closure is still
+told about a later one's. A legacy bare marker, posted before the key, is
+still read: on the spec-request itself it is that closure's notice, and on
+an originating issue it counts for the spec-request its notice names.
 
 ## Relationship to re-admission (D6)
 
