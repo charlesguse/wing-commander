@@ -803,6 +803,22 @@ CASES = [
              ')"']),
      True, ("issues", "write")),
 
+    ("a `(` inside a `${...}` pattern (`${subject##*(#}`) opens no "
+     "level: the call still ends at its newline, so the next line's "
+     "`-X GET` is not its last method and the POST under issues:read fails",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['gh api -X POST repos/${GITHUB_REPOSITORY}/issues/${subject##*(#}/comments -f body=x',
+             'gh api "repos/${GITHUB_REPOSITORY}/issues/2" -X GET --jq .body']),
+     True, ("issues", "write")),
+
+    ("... nor inside a quoted `$(...)` (`\"$(echo ${subject##*(#})\"`): "
+     "the substitution's `)` still closes it, so the POST after it is "
+     "still scanned and fails under issues:read",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['pr="$(echo ${subject##*(#})"',
+             'gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" -f body=x']),
+     True, ("issues", "write")),
+
     ("an unquoted heredoc delimiter is its whole word (`<<EOF-1` opens "
      "one ending at `EOF-1`, not `EOF`): the call after it is still "
      "scanned",

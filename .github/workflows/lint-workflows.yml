@@ -1362,6 +1362,21 @@ jobs:
                       i += 1; continue
                   if c == "$" and i + 1 < n and text[i + 1] == "(":
                       stack.append("sub"); i += 2; continue
+                  # A `(` or `)` inside a `${...}` pattern
+                  # (`"$(echo ${subject##*(#})"`) is a literal character,
+                  # not a level: pushed as one, the substitution's own `)`
+                  # closed it instead, the closing `"` opened a new
+                  # double-quoted frame, and every call after it in the
+                  # step read as quoted text (code review of f703d73).
+                  if top in ("sub", "brace") and c == "$" and i + 1 < n and text[i + 1] == "{":
+                      stack.append("brace"); i += 2; continue
+                  if top == "brace":
+                      if c == "{":
+                          stack.append("brace")
+                      elif c == "}":
+                          stack.pop()
+                      i += 1
+                      continue
                   # A bare `(` inside a substitution (`$((p+1))`'s second
                   # one, a `$( (a) )` subshell) opens a level its own `)`
                   # closes; unpaired, the first `)` closed the substitution
@@ -1603,6 +1618,13 @@ jobs:
               out, raw = [], []
               i, n = m.start(), len(text)
               depth, in_bt = 0, False
+              # Open `${...}` braces, innermost last, each with the paren
+              # depth it opened at: a `(` or `)` directly inside one
+              # (`${subject##*(#}`) is a pattern character, not a level.
+              # Counted as one, the `(` never closed, and the call ran past
+              # its own newline through the next command's `-X GET`
+              # (code review of f703d73).
+              braces = []
               # A call inside a backtick substitution ends at the backtick
               # closing it, as one inside `$(...)` ends at its `)`; read as
               # opening a nested value, it would carry the call on through
@@ -1624,6 +1646,20 @@ jobs:
                       if outer_bt:
                           break
                       in_bt = not in_bt
+                  elif (flags[i] and c == "$" and i + 1 < n
+                          and text[i + 1] in "{("):
+                      if text[i + 1] == "{":
+                          braces.append(depth)
+                      else:
+                          depth += 1
+                      out.append(c + text[i + 1]); raw.append(c + text[i + 1])
+                      i += 2
+                      continue
+                  elif flags[i] and braces and braces[-1] == depth and c in "{}()":
+                      if c == "{":
+                          braces.append(depth)
+                      elif c == "}":
+                          braces.pop()
                   elif flags[i] and c == "(":
                       depth += 1
                   elif flags[i] and c == ")":
