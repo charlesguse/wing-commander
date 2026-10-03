@@ -442,7 +442,7 @@ _CMD_POS_RE = re.compile(
     r"(?:env(?:[ \t]+-\S+)*[ \t]+)?", re.M)
 _ASSIGN_WORD_RE = re.compile(
     r"""\w+=(?:"(?:\\.|[^"\\])*"|'[^']*'|\$\{\{.*?\}\}|\\.|[^\s"';&|)])*""")
-SHELL_BINDING_RE = _cause_expr_re([_STOP_CAUSE], prefix=r"""^(\w+)=["']?""")
+SHELL_BINDING_PREFIX = r"""^(\w+)=["']?"""
 SHELL_ALIAS_RE = re.compile(r"""^(\w+)=["']?\$\{?(\w+)[^}"'\s]*\}?["']?$""")
 
 
@@ -657,7 +657,15 @@ def _pasted_stop_cause_mappings(text, composite_text):
             step_env = _bound_env_names(step.get("env"), bound_re)
             env_names |= step_env
             bound = {"STOP_CAUSE"} | job_env | step_env
-            bound |= set(_findall_assignments(SHELL_BINDING_RE, run))
+            # A shell assignment from a job output bound to the cause, or
+            # from a bound env var's expression, binds too, as `env:` does
+            # (code review of #954, round 11: only the output itself was
+            # read here).
+            shell_binding_re = _cause_expr_re(
+                base_causes + [r"env\." + re.escape(n) + r"\b"
+                               for n in sorted(job_env | step_env)],
+                prefix=SHELL_BINDING_PREFIX)
+            bound |= set(_findall_assignments(shell_binding_re, run))
             while True:
                 more = {lhs for lhs, rhs in _findall_assignments(SHELL_ALIAS_RE, run)
                         if rhs.upper() in {b.upper() for b in bound}} - bound
@@ -1124,6 +1132,19 @@ def _mut_job_output_env_case(text):
                 run='          case "$W" in\n          esac\n'))
 
 
+def _mut_job_output_shell_case(text):
+    """A job output bound to the cause, assigned to a shell variable
+    downstream, then `case`d (code review of #954, round 11)."""
+    return (text.rstrip("\n") + "\n"
+            + "\n  zz-cause-out:\n    runs-on: ubuntu-latest\n    outputs:\n"
+              "      why: ${{ steps.killswitch-recheck.outputs.stop-cause }}\n"
+              "    steps:\n      - run: echo hi\n"
+            + _CHECK9_JOB.format(
+                env="",
+                run='          c="${{ needs.zz-cause-out.outputs.why }}"\n'
+                    '          case "$c" in\n          esac\n'))
+
+
 def _mut_alias_in_route_step(text):
     """An aliased `case` pasted into route's real spec-request step, after
     its `"$(jq -r '...' "...")"` line (code review of #954)."""
@@ -1146,6 +1167,8 @@ CHECK9_TEXT_MUTATIONS = (
     ("a ternary on a job output bound to the cause", _mut_job_output_ternary),
     ("an env var bound to a job output bound to the cause, then a case on it",
      _mut_job_output_env_case),
+    ("a shell variable assigned from a job output bound to the cause, then a case on it",
+     _mut_job_output_shell_case),
     ("an aliased case pasted into route's real spec-request step",
      _mut_alias_in_route_step),
     ("an unparseable board-loop.yml (a finding, not a silent pass)", _mut_unparseable),

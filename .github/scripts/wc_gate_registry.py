@@ -421,18 +421,28 @@ _EXPR_RE = re.compile(r"\$\{\{.*?\}\}", re.S)
 #
 # Round 10: `if`/`elif`/`while`/`until` open a command too (`if bash -s
 # <<EOF; then`), as _COMMAND_PREFIXES already says for the command reader.
-_HEREDOC_WRAPPERS = sorted(_COMMAND_WRAPPERS - {"xargs"})
+#
+# Round 11: any command word heads a wrapper here, known or not (`retry 3
+# bash <<EOF`, `xvfb-run -a bash <<EOF`), as the command reader looks past
+# a wrapper it does not know for an interpreter further on (round 5); only
+# a command whose arguments are data (_NON_EXEC_COMMANDS) or whose stdin
+# is arguments (xargs) is not one.
+_HEREDOC_NON_WRAPPERS = sorted(_NON_EXEC_COMMANDS | {"xargs", "bash", "sh"})
 # A shell option cluster whose `o`/`O` takes the next word as its value
 # (`-o pipefail`, `-eo pipefail` as GitHub's own default shell is invoked,
 # `+O extglob`). Code review of #954, round 10: only a lone `-o` was read
 # so, and `bash -eo pipefail -c "..."` took `pipefail` for the script.
 _SHELL_OPTION_VALUE_RE = re.compile(r"[-+](?!-)[A-Za-z]*[oO]")
+# Bash's long options that take the next word as their value.
+_SHELL_LONG_OPTIONS_WITH_VALUE = {"--rcfile", "--init-file"}
 _SHELL_ON_LINE_RE = re.compile(
     r"(?:^|[;&|(!{]|\b(?:if|elif|while|until|then|do|else|exec|time"
-    r"|command)\b"
-    r"|\b(?:" + "|".join(_HEREDOC_WRAPPERS) + r")\b"
-    r"(?:[ \t]+(?!(?:bash|sh)(?![\w.-]))[^\s;&|()<>]+)*?)"
-    r"[ \t]*(?:[A-Za-z_]\w*=\S*[ \t]+)*(?:bash|sh)(?![\w.-])([^;&|)\n]*)")
+    r"|command)\b)"
+    r"[ \t]*(?:[A-Za-z_]\w*=\S*[ \t]+)*"
+    r"(?:(?!(?:" + "|".join(re.escape(w) for w in _HEREDOC_NON_WRAPPERS)
+    + r")(?![\w.-]))[^\s;&|()<>]+"
+    r"(?:[ \t]+(?!(?:bash|sh)(?![\w.-]))[^\s;&|()<>]+)*?[ \t]+)?"
+    r"(?:bash|sh)(?![\w.-])([^;&|)\n]*)")
 
 
 def _feeds_shell(line):
@@ -446,14 +456,17 @@ def _feeds_shell(line):
             w = words[k]
             if w == "--":
                 break
+            if "s" in w[1:] and w.startswith("-") and not w.startswith("--") \
+                    and "c" not in w[1:]:
+                # Before an `o` cluster's value is skipped: `-so pipefail`.
+                dash_s = True
             if re.fullmatch(r"\d*[<>]+[-&|]?", w) or (
-                    _SHELL_OPTION_VALUE_RE.match(w) and "c" not in w[1:]):
+                    _SHELL_OPTION_VALUE_RE.match(w) and "c" not in w[1:]) \
+                    or w in _SHELL_LONG_OPTIONS_WITH_VALUE:
                 k += 2
                 continue
             if re.match(r"\d*[<>]", w) or w.startswith(("+", "--")) or (
                     w.startswith("-") and "c" not in w[1:]):
-                dash_s = dash_s or (w.startswith("-") and not w.startswith("--")
-                                    and "s" in w[1:])
                 k += 1
                 continue
             # `-s` reads stdin whatever follows: `bash -s arg` hands `arg`
