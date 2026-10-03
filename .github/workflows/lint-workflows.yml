@@ -1151,6 +1151,11 @@ jobs:
 
 
           _CMD_SUB = r'\$\(' + _sub_body(SUB_DEPTH) + r'\)'
+          # A process substitution (`-F body=@<(jq -n ...)`) is one word part
+          # like `$(...)`: read as plain characters, it split at its blanks
+          # and a `--method GET` inside it read as the call's last method
+          # (code review of #944).
+          _PROC_SUB = r'[<>]\(' + _sub_body(SUB_DEPTH) + r'\)'
           # A `${...}` value nests SUB_DEPTH levels of braces too
           # (`${A:-${B:-${C}}}`): capped at two, the third level's `-X GET`
           # started a word of its own after the PATH and read as the call's
@@ -1176,9 +1181,9 @@ jobs:
           _DQ_PARAM = r'\$\{(?!\{)' + _dq_brace_body(SUB_DEPTH) + r'\}'
           SHELL_WORD = (r'(?:"(?:[^"\\$]|\\.|' + _CMD_SUB + r'|' + _EXPR
                         + r'|' + _DQ_PARAM + r'|\$(?![({]))*"|\'[^\']*\''
-                        r'|' + _CMD_SUB + r'|' + _EXPR
+                        r'|' + _CMD_SUB + r'|' + _PROC_SUB + r'|' + _EXPR
                         + r'|' + _PARAM_EXP + r'|' + _BACKTICK +
-                        r'|\\.|(?!\$\(|\$\{)[^\s"\'\\`])+')
+                        r'|\\.|(?!\$\(|\$\{|[<>]\()[^\s"\'\\`])+')
           GH_API_VALUE_FLAGS = ("-X", "--method", "-H", "--header", "-f", "--raw-field",
                                 "-F", "--field", "-q", "--jq", "-t", "--template",
                                 "-p", "--preview", "--hostname", "--input", "--cache")
@@ -1587,7 +1592,8 @@ jobs:
               a `--method POST` inside a quoted value, in a trailing comment,
               or in the NEXT command on the same line never reads as this
               call's method. A separator inside one of the call's own `$(...)`
-              or backtick values does not end it, and a `)` closing a
+              or backtick values does not end it, a newline there included
+              (a multi-line `-f body="$(` ... `)"`), and a `)` closing a
               substitution the call itself sits in does: cut inside the
               value, the call's words would end in an unclosed `$(`, and a
               `-X GET | ...` in it would read as the call's last method
@@ -1625,7 +1631,7 @@ jobs:
                       if depth < 0:
                           break
                   nested = depth > 0 or in_bt
-                  if flags[i] and c == "\n":
+                  if flags[i] and c == "\n" and not nested:
                       break
                   if flags[i] and c in ";|" and not nested:
                       break

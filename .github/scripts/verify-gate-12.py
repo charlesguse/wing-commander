@@ -742,12 +742,12 @@ CASES = [
      True, ("cannot read this call's method", "deeper")),
 
     ("... and that word walk stays linear: a call with a PATH whose 200 "
-     "flag values each nest three levels, followed by unclosed openers, "
+     "flag values each nest three levels and end in a `<(...)`, followed by unclosed openers, "
      "fails closed in well under the per-scenario timeout",
      mkcase(ISSUES_WRITE, "", [DEFAULT_ENV],
             ['gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" '
-             + "-f a=${A:-${B:-${C} x} y}`c d`$(e \"$(f ')')\") " * 200
-             + "-f b=" + "$( ${ ` \"$( \"${X:-\" \"${{ " * 50]),
+             + "-f a=${A:-${B:-${C} x} y}`c d`$(e \"$(f ')')\")<(g) " * 200
+             + "-f b=" + "$( ${ ` \"$( \"${X:-\" <( \"${{ " * 50]),
      True, ("cannot read this call's method",)),
 
     ("... and so does an unquoted Actions expression the call's line is "
@@ -777,6 +777,31 @@ CASES = [
      mkcase(ISSUES_READ, "", [DEFAULT_ENV],
             ['gh api "repos/${GITHUB_REPOSITORY}/issues/1" --jq .body  # it\'s a read']),
      False, ()),
+
+    ("a method flag inside another flag's `<(...)` process substitution "
+     "is not the call's last method either: the POST stays a write, so "
+     "the Issues call under issues:read fails",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" '
+             '-F body=@<(gh api "repos/${GITHUB_REPOSITORY}/issues/2" --method GET --jq .body)']),
+     True, ("issues", "write")),
+
+    ("a newline inside the call's own `$(...)` value does not end the "
+     "call: a multi-line `-f body=\"$(` ... `)\"` POST is one word, read "
+     "as a write, and passes under issues:write",
+     mkcase(ISSUES_WRITE, "", [DEFAULT_ENV],
+            ['gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" -f body="$(',
+             '  cat body.md',
+             ')"']),
+     False, ()),
+
+    ("... and a `-X GET` on that value's own lines is no method of the "
+     "call: the POST under issues:read fails",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" -f body="$(',
+             '  gh api "repos/${GITHUB_REPOSITORY}/issues/2" -X GET --jq .body',
+             ')"']),
+     True, ("issues", "write")),
 
     ("an unquoted heredoc delimiter is its whole word (`<<EOF-1` opens "
      "one ending at `EOF-1`, not `EOF`): the call after it is still "
