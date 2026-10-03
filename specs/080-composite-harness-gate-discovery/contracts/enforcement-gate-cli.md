@@ -53,7 +53,16 @@ add to.
      `.github/scripts/widget-tests/lib.sh`). A standalone `verify-*`
      lands at `.github/scripts/<basename>`
      (`.../widget/verify-x.py` -> `.github/scripts/verify-x.py`), since
-     gate discovery reads top-level `verify-*` and `*/run-tests.sh` only,
+     gate discovery reads top-level `verify-*` and `*/run-tests.sh` only.
+     No single home keeps every relative path when a harness also has
+     files outside its entrypoint's directory, so when two or more
+     offenders map to the same home, each one's message adds a clash
+     note after the home, naming the others (sorted) — e.g.
+     `.../widget/tests/sub/lib.sh` and `.../widget/tests/lib.sh` (beside
+     `tests/sub/run.sh`) both get "belongs at
+     `.github/scripts/widget-tests/lib.sh` instead, but `<the other>`
+     maps there too: flatten, rename or restructure the harness so each
+     file has its own home before moving it",
    - a pointer to this same file as the canonical explanation (FR-009's
      last sentence — this gate's own docstring carries the "why," so the
      message names its own filename, which Gate 47 also treats as a

@@ -41,8 +41,14 @@ verify-x.py; .github/scripts/<composite>-tests/run-tests.sh for an
 entrypoint; for any other file, its path below the deepest directory
 holding a flagged entrypoint above it (else below its harness directory),
 so a nested tests/sub/run.sh and tests/sub/lib.sh land side by side.
-Two entrypoints in one composite both map to run-tests.sh; merging two
-harnesses into one is a choice for the author, not this gate.
+No single home can keep every relative path when a harness also has
+files outside its entrypoint's directory (tests/lib.sh beside
+tests/sub/run.sh and tests/sub/lib.sh), and two entrypoints in one
+composite both land as run-tests.sh. The mapping stays as it is, but when
+two or more offenders get the same home, each one's failure names the
+others that map there too (see _clash_note) rather than repeating the
+home silently: flattening, renaming or merging the harness is the
+author's choice, not this gate's.
 Every result is an unconditional failure: there is no waiver file and no
 legitimate exception to register one in.
 
@@ -53,6 +59,7 @@ Usage:
 """
 import argparse
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -133,18 +140,36 @@ def _kind(offending_path):
     return "standalone gate script"
 
 
-def failure_for(offending_path, offenders=()):
+def _clash_note(offending_path, supported, homes):
+    """`, but <others> map there too: ...` when other offenders share this
+    home (homes: offender -> its supported location), else ''. The others
+    are listed sorted, so the message is deterministic."""
+    others = sorted(o for o, h in homes.items()
+                    if h == supported and o != offending_path)
+    if not others:
+        return ""
+    verb = "maps" if len(others) == 1 else "map"
+    return (f", but {', '.join(others)} {verb} there too: flatten, rename "
+            f"or restructure the harness so each file has its own home "
+            f"before moving it")
+
+
+def failure_for(offending_path, offenders=(), homes=None):
+    if homes is None:
+        homes = {o: supported_location(o, offenders) for o in offenders}
     kind = _kind(offending_path)
     supported = supported_location(offending_path, offenders)
+    clash = _clash_note(offending_path, supported, homes)
     return (f"{offending_path} is a {kind} under .github/actions/; gate "
             f"discovery reads only {SCRIPTS_DIR}/, so it belongs at "
-            f"{supported} instead. See {THIS_FILE} for why.")
+            f"{supported} instead{clash}. See {THIS_FILE} for why.")
 
 
 def check(root="."):
     """-> (offenders, failures)."""
     offenders = unsupported_actions_scripts(root)
-    return offenders, [failure_for(p, offenders) for p in offenders]
+    homes = {o: supported_location(o, offenders) for o in offenders}
+    return offenders, [failure_for(p, offenders, homes) for p in offenders]
 
 
 def main(root="."):
@@ -290,7 +315,8 @@ def _home_of(failures, path):
     """The `belongs at <home>` a failure names for `path`, or None."""
     for f in failures:
         if f.startswith(path + " "):
-            return f.split(" belongs at ", 1)[1].split(" instead.", 1)[0]
+            home = f.split(" belongs at ", 1)[1]
+            return re.split(r" instead[.,]", home, maxsplit=1)[0]
     return None
 
 
@@ -344,6 +370,36 @@ def _fixture_nested_harness_one_home():
               and all(got[p] == f"{SCRIPTS_DIR}/widget-tests/{h}"
                       for p, h in want.items()))
         return ok, f"got offenders={offenders!r} homes={got!r}"
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def _fixture_harness_home_clash():
+    """Code review of #942: tests/lib.sh outside tests/sub/run.sh's
+    directory maps to the same home as tests/sub/lib.sh beside it. Both
+    failures name the clash instead of repeating the home silently; the
+    entrypoint, whose home is its own, carries no clash note."""
+    root = tempfile.mkdtemp(prefix="wc-actions-no-gate-scripts-")
+    try:
+        run_path = ".github/actions/widget/tests/sub/run.sh"
+        sub_lib = ".github/actions/widget/tests/sub/lib.sh"
+        top_lib = ".github/actions/widget/tests/lib.sh"
+        for path in (run_path, sub_lib, top_lib):
+            _write(root, path, "x\n")
+        offenders, failures = check(root)
+        by_path = {p: next((f for f in failures if f.startswith(p + " ")), "")
+                   for p in (run_path, sub_lib, top_lib)}
+        home = f"{SCRIPTS_DIR}/widget-tests/lib.sh"
+        ok = (offenders == sorted([run_path, sub_lib, top_lib])
+              and all(_assert_contract(p, failures)
+                      for p in (run_path, sub_lib, top_lib))
+              and _home_of(failures, sub_lib) == home
+              and _home_of(failures, top_lib) == home
+              and f"but {top_lib} maps there too" in by_path[sub_lib]
+              and f"but {sub_lib} maps there too" in by_path[top_lib]
+              and "own home before moving it" in by_path[sub_lib]
+              and "there too" not in by_path[run_path])
+        return ok, f"got offenders={offenders!r} failures={failures!r}"
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
@@ -408,6 +464,8 @@ FIXTURES = [
      _fixture_test_shapes),
     ("a nested harness's files share one home with its entrypoint (code "
      "review of #939)", _fixture_nested_harness_one_home),
+    ("two offenders mapped to one home each name the clash (code review "
+     "of #942)", _fixture_harness_home_clash),
     ("a helper at .github/actions/_shared/run-tests.sh is not flagged",
      _fixture_shared_not_flagged),
     ("a composite with no harness at all is a clean pass",
