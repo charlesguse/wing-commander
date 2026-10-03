@@ -424,7 +424,7 @@ def _feeds_shell(line):
     operand, no `-c` string). Code review of #954: such a body is code,
     and dropping it as data silently lost every script it runs."""
     for m in _SHELL_ON_LINE_RE.finditer(line):
-        words, k, stdin = m.group(1).split(), 0, True
+        words, k, stdin, dash_s = m.group(1).split(), 0, True, False
         while k < len(words):
             w = words[k]
             if w == "--":
@@ -434,9 +434,13 @@ def _feeds_shell(line):
                 continue
             if re.match(r"\d*[<>]", w) or w.startswith(("+", "--")) or (
                     w.startswith("-") and "c" not in w[1:]):
+                dash_s = dash_s or (w.startswith("-") and not w.startswith("--")
+                                    and "s" in w[1:])
                 k += 1
                 continue
-            stdin = False  # a script operand, or a `-c` string
+            # `-s` reads stdin whatever follows: `bash -s arg` hands `arg`
+            # to it as $1. Otherwise a script operand, or a `-c` string.
+            stdin = dash_s and not (w.startswith("-") and "c" in w[1:])
             break
         if stdin:
             return True
@@ -768,6 +772,15 @@ def _script_calls_in_run(run, env, workdir):
                         i += 1
                 if i < len(words) and words[i] in _NON_EXEC_COMMANDS:
                     continue
+                if i < len(words) and words[i] not in _INTERPRETERS \
+                        and words[i] != "cd" \
+                        and not SCRIPT_EXT_RE.search(words[i]):
+                    # A wrapper this reader does not know (`xvfb-run -a`,
+                    # `retry 3`, `env -C DIR`): an interpreter further on
+                    # still runs its script, as origin/main's regex read
+                    # it (code review of #954, round 5).
+                    i = next((k for k in range(i + 1, len(words))
+                              if words[k] in _INTERPRETERS), i)
                 if i < len(words) and words[i] == "cd":
                     target = words[i + 1] if i + 1 < len(words) else "~"
                     if target.startswith(("/", "~", "-")) or "$" in target \

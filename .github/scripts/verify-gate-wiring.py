@@ -887,7 +887,9 @@ def _fixture_script_call_stdin():
     """Code review of #954, round 4: a heredoc a shell runs (`bash
     <<'EOF'`, `cat <<EOF | bash`) is code, its scripts read, while one
     handed to a script stays data; `bash < x.sh` runs x.sh; nothing after
-    `python3 -m MOD` is a script; a python `-Wonce` hides no `-c`; and a
+    `python3 -m MOD` is a script; a python `-Wonce` hides no `-c`; `bash
+    -s arg` runs its stdin (round 5); an interpreter behind an unknown
+    wrapper (`retry 3`, `xvfb-run -a`) runs its script; and a
     step `env:` expression overrides a job's literal value, so the job's
     file is not reported as the script the step runs."""
     root = tempfile.mkdtemp(prefix="wc-gate-wiring-")
@@ -912,6 +914,15 @@ def _fixture_script_call_stdin():
                "          bash < tests/redirected.sh\n"
                "          python3 -m pytest tests/test_mod.py\n"
                "          python3 -Wonce tests/warned.py\n"
+               # Round 5: `bash -s arg` still runs its stdin, and an
+               # interpreter behind a wrapper this reader does not know
+               # still runs its script (origin/main's regex saw it).
+               "          bash -s arg <<EOF\n"
+               "          bash tests/sfed.sh\n"
+               "          EOF\n"
+               "          retry 3 bash tests/retried.sh\n"
+               "          xvfb-run -a bash tests/xvfb.sh\n"
+               "          xargs -a list bash tests/xargs.sh\n"
                "      - name: override\n"
                f"        env:\n          S: {expr}\n"
                "        run: bash \"$S\"\n")
@@ -921,8 +932,12 @@ def _fixture_script_call_stdin():
                 "runs .github/actions/i/tests/piped.sh ",
                 "runs .github/actions/i/tests/real.sh ",
                 "runs .github/actions/i/tests/redirected.sh ",
-                "runs .github/actions/i/tests/warned.py "]
-        ok = (len(failures) == 5 and all(w in joined for w in want)
+                "runs .github/actions/i/tests/warned.py ",
+                "runs .github/actions/i/tests/sfed.sh ",
+                "runs .github/actions/i/tests/retried.sh ",
+                "runs .github/actions/i/tests/xvfb.sh ",
+                "runs .github/actions/i/tests/xargs.sh "]
+        ok = (len(failures) == 9 and all(w in joined for w in want)
               and "data.sh" not in joined and "test_mod" not in joined
               and "job-env" not in joined)
         return ok, f"got {failures!r}"
