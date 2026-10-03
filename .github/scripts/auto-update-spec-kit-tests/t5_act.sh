@@ -334,13 +334,13 @@ cd - >/dev/null
 
 echo
 echo "=== #736: act loads verify's detail from the verify-diagnostics artifact ==="
-load_verify() { # load_verify <verify-passed> [detail] -- no detail: the artifact is missing
+load_verify() { # load_verify <verify-passed> [detail [file-attempt]] -- no detail: the artifact is missing
   new_step_env
   GHA_SUBST=()
-  export VERIFY_PASSED="$1" RUN_URL="https://github.com/charlesguse/wing-commander/actions/runs/424242"
+  export VERIFY_PASSED="$1" WANT_ATTEMPT=2 RUN_URL="https://github.com/charlesguse/wing-commander/actions/runs/424242"
   if [ "$#" -gt 1 ]; then
     mkdir -p "$RUNNER_TEMP/verify-diagnostics"
-    jq -n --arg d "$2" '{"failure-detail": $d}' > "$RUNNER_TEMP/verify-diagnostics/verify-diagnostics.json"
+    jq -n --arg d "$2" --arg a "${3:-2}" '{"failure-detail": $d, attempt: $a}' > "$RUNNER_TEMP/verify-diagnostics/verify-diagnostics.json"
   fi
   run_step 'auto-update-spec-kit__act__*load-verify-diagnostics*.sh' >"$WORK/load-verify.log" 2>&1
   LV_RC=$?
@@ -358,5 +358,13 @@ check_contains "act load: and points at the run" "$(out failure-detail)" "/actio
 check_contains "act load: missing artifact warns" "$(cat "$WORK/load-verify.log")" "no verify-diagnostics artifact"
 load_verify true
 check "act load: missing artifact on a pass -> empty detail" "$(out failure-detail)" ""
+# Re-run all jobs: attempt 1 passed and uploaded the pass-path pointer,
+# attempt 2 failed and its upload failed too. The stale pass text must not
+# become the failure callout's body.
+load_verify false "The e2e-stage ran in charlesguse/wing-commander-e2e-42 (attempt 1's pass)" 1
+check "act load: a stale attempt's artifact still exits 0" "$LV_RC" "0"
+check_not_contains "act load: a stale attempt's pass text is not the failure body" "$(out failure-detail)" "attempt 1's pass"
+check_contains "act load: a stale attempt's artifact gets the synthesized body" "$(out failure-detail)" "could not be loaded"
+check_contains "act load: a stale attempt's artifact warns" "$(cat "$WORK/load-verify.log")" "run attempt '1', not '2'"
 
 report "T5 act"

@@ -1696,9 +1696,16 @@ jobs:
     # implement job outputs: block (#309) for the runner's job-output
     # masker and what a withheld output costs. It travels in the
     # e2e-stage-diagnostics artifact instead ("Upload e2e-stage
-    # diagnostics" below; verify downloads it).
+    # diagnostics" below; verify downloads it). diagnostics-attempt is the
+    # run attempt that wrote it, stamped into the file too: artifacts
+    # outlive a re-run, so when this attempt's upload fails, a by-name
+    # download finds an earlier attempt's file, and the stamp is how the
+    # loader tells. A job output, not the reader's own run_attempt,
+    # because "Re-run failed jobs" carries a passed job's outputs and
+    # artifact into the next attempt without re-running it.
     outputs:
       passed: ${{ steps.readback.outputs.passed }}
+      diagnostics-attempt: ${{ github.run_attempt }}
       scratch-repo: ${{ steps.scratch-repo.outputs.full-name }}
       scratch-branch: ${{ steps.scratch-repo.outputs.branch }}
       agent-ran: ${{ steps.agent-ran.outputs.ran }}
@@ -2235,7 +2242,8 @@ jobs:
           # Guarded for the reason the find above is: this step must survive
           # to report. A failed write leaves no file, the upload below then
           # fails (tolerated), and verify synthesizes the detail.
-          jq -n --arg detail "$detail" '{"failure-detail": $detail}' \
+          jq -n --arg detail "$detail" --arg attempt "${GITHUB_RUN_ATTEMPT:-}" \
+            '{"failure-detail": $detail, attempt: $attempt}' \
             > "$RUNNER_TEMP/e2e-stage-diagnostics.json" \
             || echo "::warning::wing-commander auto-update-spec-kit e2e-stage: could not write e2e-stage-diagnostics.json — verify will report a synthesized detail."
 
@@ -2327,10 +2335,13 @@ jobs:
     # e2e-stage's is not -- see the e2e-stage job's outputs: block above in
     # this file. It folds in e2e-stage's read-back detail, so it travels on
     # in the verify-diagnostics artifact ("Upload verify diagnostics" below;
-    # act downloads it).
+    # act downloads it), stamped with diagnostics-attempt for the reason
+    # e2e-stage's is -- see the e2e-stage job's outputs: block above in
+    # this file.
     outputs:
       passed: ${{ steps.result.outputs.passed }}
       tier: ${{ steps.result.outputs.tier }}
+      diagnostics-attempt: ${{ github.run_attempt }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
         uses: actions/checkout@v5
@@ -2547,17 +2558,26 @@ jobs:
       # delimiter so a crafted body cannot end the block early. Every
       # command is guarded against the runner's `bash -e`: an unreadable
       # file degrades to an empty detail, the same as a missing one, and
-      # the combine step's synthesized message covers both.
+      # the combine step's synthesized message covers both. A file stamped
+      # with another run attempt than the one e2e-stage reports is an
+      # earlier attempt's, left behind by a failed upload in this one, and
+      # is treated as missing -- see the e2e-stage job's outputs: block.
       - name: Load e2e-stage diagnostics
         id: stage-diagnostics
         if: needs.e2e-stage.outputs.passed == 'false'
         shell: bash
+        env:
+          WANT_ATTEMPT: ${{ needs.e2e-stage.outputs.diagnostics-attempt }}
         run: |
           set -uo pipefail
           f="$RUNNER_TEMP/e2e-stage-diagnostics/e2e-stage-diagnostics.json"
           detail=""
-          if [ -f "$f" ]; then
+          got_attempt=""
+          [ -f "$f" ] && got_attempt=$(jq -r '.attempt // ""' "$f" 2>/dev/null || true)
+          if [ -f "$f" ] && [ "$got_attempt" = "$WANT_ATTEMPT" ]; then
             detail=$(jq -r '."failure-detail" // ""' "$f" 2>/dev/null || true)
+          elif [ -f "$f" ]; then
+            echo "::warning::wing-commander auto-update-spec-kit verify: the e2e-stage-diagnostics artifact is from run attempt '$got_attempt', not '$WANT_ATTEMPT' — this attempt's upload failed; reporting a synthesized stage-did-not-complete message instead of a stale detail."
           else
             echo "::warning::wing-commander auto-update-spec-kit verify: no e2e-stage-diagnostics artifact — the e2e-stage failure is reported with a synthesized stage-did-not-complete message instead of its read-back detail; read the e2e-stage job's log for the cause."
           fi
@@ -2615,7 +2635,8 @@ jobs:
           # Guarded so a failed write cannot kill the step before its
           # summary line; act synthesizes the detail when the file is gone.
           write_detail() {
-            jq -n --arg detail "$1" '{"failure-detail": $detail}' \
+            jq -n --arg detail "$1" --arg attempt "${GITHUB_RUN_ATTEMPT:-}" \
+              '{"failure-detail": $detail, attempt: $attempt}' \
               > "$RUNNER_TEMP/verify-diagnostics.json" \
               || echo "::warning::wing-commander auto-update-spec-kit verify: could not write verify-diagnostics.json — act will report a synthesized detail."
           }
@@ -2925,10 +2946,11 @@ jobs:
           name: verify-diagnostics
           path: ${{ runner.temp }}/verify-diagnostics
 
-      # Re-exposed as a STEP output -- see verify's "Load e2e-stage
-      # diagnostics" above in this file. A missing or unreadable artifact
-      # on a failed verdict becomes a synthesized detail that names the
-      # artifact and the run, so the failure callout is never bodyless
+      # Re-exposed as a STEP output, with the same run-attempt check -- see
+      # verify's "Load e2e-stage diagnostics" above in this file. A
+      # missing, stale or unreadable artifact on a failed verdict becomes a
+      # synthesized detail that names the artifact and the run, so the
+      # failure callout is never bodyless
       # (SC-004/FR-010: the issue text alone conveys the outcome). On a pass
       # it becomes empty, and the PR body simply omits the pointer. Every
       # command is guarded against the runner's `bash -e`, so this never
@@ -2939,18 +2961,23 @@ jobs:
         shell: bash
         env:
           VERIFY_PASSED: ${{ needs.verify.outputs.passed }}
+          WANT_ATTEMPT: ${{ needs.verify.outputs.diagnostics-attempt }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -uo pipefail
           f="$RUNNER_TEMP/verify-diagnostics/verify-diagnostics.json"
           detail=""
-          if [ -f "$f" ]; then
+          got_attempt=""
+          [ -f "$f" ] && got_attempt=$(jq -r '.attempt // ""' "$f" 2>/dev/null || true)
+          if [ -f "$f" ] && [ "$got_attempt" = "$WANT_ATTEMPT" ]; then
             detail=$(jq -r '."failure-detail" // ""' "$f" 2>/dev/null || true)
+          elif [ -f "$f" ]; then
+            echo "::warning::wing-commander auto-update-spec-kit act: the verify-diagnostics artifact is from run attempt '$got_attempt', not '$WANT_ATTEMPT' — this attempt's upload failed; the issue and PR text carry a synthesized detail instead of a stale one."
           else
             echo "::warning::wing-commander auto-update-spec-kit act: no verify-diagnostics artifact — the issue and PR text carry a synthesized detail instead of verify's own; read the verify job's log for it."
           fi
           if [ -z "$detail" ] && [ "$VERIFY_PASSED" != "true" ]; then
-            detail="verification did not pass, and its detail could not be loaded (the verify-diagnostics artifact is missing or unreadable) — read the verify job's step summary for the cause: $RUN_URL"
+            detail="verification did not pass, and its detail could not be loaded (the verify-diagnostics artifact is missing, stale or unreadable) — read the verify job's step summary for the cause: $RUN_URL"
           fi
           d="wc-verify-detail-eof-$RANDOM$RANDOM$RANDOM"
           printf 'failure-detail<<%s\n%s\n%s\n' "$d" "$detail" "$d" >> "$GITHUB_OUTPUT"

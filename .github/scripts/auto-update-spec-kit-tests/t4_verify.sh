@@ -134,12 +134,13 @@ new_step_env
 HERE="$PWD"; cd "$RUNNER_TEMP" || exit 1
 mkdir -p e2e-scratch/specs/001-throwaway
 printf '# Throwaway feature\n' > e2e-scratch/specs/001-throwaway/spec.md
-export DECIDE_OUTCOME=healthy
+export DECIDE_OUTCOME=healthy GITHUB_RUN_ATTEMPT=3
 GHA_SUBST=()
 run_step 'auto-update-spec-kit__e2e-stage__*read-back-stage-result*.sh' >/dev/null 2>&1
 cd "$HERE" || exit 1
 check "S1 e2e-stage readback passes with a real spec.md" "$(out passed)" "true"
 check "S1 a passing readback writes an empty detail" "$(diag e2e-stage-diagnostics.json)" ""
+check "S1 the detail file is stamped with the run attempt" "$(jq -r .attempt "$RUNNER_TEMP/e2e-stage-diagnostics.json")" "3"
 check "S1 no failure-detail step output (#736)" "$(grep -c '^failure-detail' "$GITHUB_OUTPUT")" "0"
 
 echo
@@ -494,12 +495,13 @@ check_contains "S7 combined detail states the stage did not complete" "$C_DETAIL
 check_not_contains "S7 combined detail is not candidate-artifact wording" "$C_DETAIL" "spec.md"
 
 echo "--- #736: verify loads e2e-stage's detail from its artifact, never a job output ---"
-load_stage() { # load_stage [detail] -- no argument: the artifact is missing
+load_stage() { # load_stage [detail [file-attempt]] -- no argument: the artifact is missing
   new_step_env
   GHA_SUBST=()
+  export WANT_ATTEMPT=2
   if [ "$#" -gt 0 ]; then
     mkdir -p "$RUNNER_TEMP/e2e-stage-diagnostics"
-    jq -n --arg d "$1" '{"failure-detail": $d}' > "$RUNNER_TEMP/e2e-stage-diagnostics/e2e-stage-diagnostics.json"
+    jq -n --arg d "$1" --arg a "${2:-2}" '{"failure-detail": $d, attempt: $a}' > "$RUNNER_TEMP/e2e-stage-diagnostics/e2e-stage-diagnostics.json"
   fi
   run_step 'auto-update-spec-kit__verify__*load-e2e-stage-diagnostics*.sh' >"$WORK/load-stage.log" 2>&1
   L_RC=$?
@@ -512,6 +514,10 @@ load_stage
 check "load: missing artifact still exits 0" "$L_RC" "0"
 check "load: missing artifact -> empty detail" "$(out failure-detail)" ""
 check_contains "load: missing artifact warns" "$(cat "$WORK/load-stage.log")" "no e2e-stage-diagnostics artifact"
+load_stage "a stale detail from attempt 1" 1
+check "load: a stale attempt's artifact still exits 0" "$L_RC" "0"
+check "load: a stale attempt's artifact is treated as missing" "$(out failure-detail)" ""
+check_contains "load: a stale attempt's artifact warns" "$(cat "$WORK/load-stage.log")" "run attempt '1', not '2'"
 echo "  ...and combine synthesizes the stage message from that empty detail"
 combine minor true "" success true "" success false ""
 check "combine: missing stage detail still fails" "$C_PASSED" "false"

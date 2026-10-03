@@ -41,17 +41,21 @@ In the same isolated worktree the lightweight tier already created
    carried forward verbatim (already phrased per FR-021's
    completion-vs-shape distinction, research.md). That detail reaches
    `verify` in the `e2e-stage-diagnostics` artifact, never as a job output
-   (#736; a job output must not carry diagnostic text, #287/#309); a
-   missing artifact leaves it empty and `combine` synthesizes the
-   stage-did-not-complete message.
+   (#736; a job output must not carry diagnostic text, #287/#309). The
+   file is stamped with the run attempt that wrote it, which e2e-stage
+   also publishes as its `diagnostics-attempt` output; a missing artifact,
+   or one stamped with another attempt (an earlier attempt's, left behind
+   by a failed upload), leaves the detail empty and `combine` synthesizes
+   the stage-did-not-complete message.
 
 `end_to_end.passed` is `true` only if all four checks above pass — same
 single-boolean combine shape `combine` already expects from specs/027, so
 `combine`'s own logic (tier selection, folding `lightweight`/`end-to-end`
 into one `passed`/`failure-detail`) requires no structural change, only a
 richer `failure-detail` source. `combine`'s `failure-detail` travels to
-`act` the same way, in the `verify-diagnostics` artifact (#736); `verify`'s
-job outputs are `passed` and `tier` only.
+`act` the same way, in the `verify-diagnostics` artifact (#736), with the
+same run-attempt stamp; `verify`'s job outputs are `passed`, `tier` and
+`diagnostics-attempt`.
 
 ## `e2e-stage` job (new)
 
@@ -63,6 +67,7 @@ e2e-stage:
   outputs:
     passed: ${{ steps.readback.outputs.passed }}
     # failure-detail: in the e2e-stage-diagnostics artifact (#736)
+    diagnostics-attempt: ${{ github.run_attempt }}
     scratch-repo: ${{ steps.scratch-repo.outputs.full-name }}
     scratch-branch: ${{ steps.scratch-repo.outputs.branch }}
   steps:
