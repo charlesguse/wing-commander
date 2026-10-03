@@ -2450,8 +2450,7 @@ jobs:
               except (OSError, UnicodeDecodeError):
                   return None
 
-          contract_unknown = []
-          widened = drafted_contract_widened(file_changes, read_text, unknown=contract_unknown)
+          widened = drafted_contract_widened(file_changes, read_text)
 
           proposal_extracted = os.environ.get("PROPOSAL_EXTRACTED") == "true"
           decision = route(
@@ -2460,8 +2459,7 @@ jobs:
               measure_backstop, widened_paths_override=widened,
               proposal_extracted=proposal_extracted,
               workflow_push_blocked=blocked,
-              agent_rate_limited=os.environ.get("ROUTE_AGENT_VERDICT") == "rate-limited",
-              contract_unknown_paths=contract_unknown)
+              agent_rate_limited=os.environ.get("ROUTE_AGENT_VERDICT") == "rate-limited")
 
           runner_temp = os.environ["RUNNER_TEMP"]
           with open(os.path.join(runner_temp, "board-route-decision.json"), "w", encoding="utf-8") as fh:
@@ -2609,7 +2607,8 @@ jobs:
           CAN_PUSH_WORKFLOWS: ${{ vars.WING_COMMANDER_BOARD_CAN_PUSH_WORKFLOWS == 'true' }}
         run: |
           set -uo pipefail
-          held="$(python3 .github/scripts/board_workflow_scope_hold.py --site route --issue "$ISSUE_NUMBER" --add-label "board:stalled" --can-push-workflows "$CAN_PUSH_WORKFLOWS" --route-decision "$RUNNER_TEMP/board-route-decision.json")" \
+          held="$(jq -r '.decision.measured.workflow_paths // [] | .[]' "$RUNNER_TEMP/board-route-decision.json" \
+            | python3 .github/scripts/board_workflow_scope_hold.py --site route --issue "$ISSUE_NUMBER" --add-label "board:stalled" --can-push-workflows "$CAN_PUSH_WORKFLOWS")" \
             || exit 1
           if [ "$held" != "held" ]; then
             echo "::error::board-loop route (workflow-scope hold): route's verdict is hold, but no path in its decision is one this loop cannot push -- issue #$ISSUE_NUMBER was not held."

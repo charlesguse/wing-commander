@@ -230,47 +230,20 @@ def _apply_drafted_diff(old_text, diff_text):
     return "\n".join(result) + ("\n" if result else "")
 
 
-COMPOSITE_CONTRACT_KEY_RE = re.compile(r"^(inputs|outputs):")
-
-
-def _unapplied_diff_signals_contract(path, diff):
-    """For a drafted diff _apply_drafted_diff() could not place: True when
-    one of its own added or removed lines names the contract outright -- a
-    workflow's `workflow_call` trigger, or a composite's column-0
-    `inputs:`/`outputs:` key. A wholly new file always applies, so the
-    create case never reaches here."""
-    changed = [line[1:] for line in (diff or "").splitlines()
-               if line[:1] in ("+", "-") and not line.startswith(("+++", "---"))]
-    if _is_workflow_path(path):
-        return any(WORKFLOW_CALL_RE.search(line) for line in changed)
-    if _is_wc_composite_action_path(path):
-        return any(COMPOSITE_CONTRACT_KEY_RE.match(line) for line in changed)
-    return False
-
-
-def drafted_contract_widened(file_changes, read_text, unknown=None):
+def drafted_contract_widened(file_changes, read_text):
     """The pre-push half of FR-021's contract check, run on the route
     agent's drafted change (`file-changes`: [{"path", "diff"}]) against
     main's own file content -- `read_text(path)` returns it, or None for a
     file main does not have. Each drafted diff is applied to main's text by
     content (_apply_drafted_diff()), and the path is returned when
     contract_changed() says the result widens or breaks the published
-    contract (Principle VII). A diff that cannot be applied is an unknown,
-    not a widening: it counts only when its own changed lines carry a
-    contract signal (_unapplied_diff_signals_contract()). Anything else is
-    left to the precise check on the pushed diff, route_final_diff()
-    (FR-021), which files the spec as a breach if the real change widens
-    a contract -- the way route() leaves a rate-limited agent's missing
-    proposal to a later run instead of guessing. Counting every unappliable
-    diff on a file with a contract block sent plain plumbing fixes to a
-    spec-proposal (#936). A change to a workflow's `run:` code or a
-    composite's `runs:` steps is never a contract change, however many
-    workflow files it edits.
-
-    `unknown`, when a list, receives each path whose effect is left
-    unknown. A workflow file this loop cannot push is held, never pushed,
-    so no final-diff check follows: route() records those paths, and the
-    hold comment tells the maintainer the contract effect is unchecked."""
+    contract (Principle VII). A diff that cannot be applied counts as a
+    contract change for a file that has a contract block, or when it adds
+    `workflow_call` -- where it lands cannot be known, so it is treated as
+    touching it (never under-protects). A change to a workflow's `run:`
+    code or a composite's `runs:` steps is never a contract change, however
+    many workflow files it edits. The pushed diff is checked again by
+    route_final_diff()."""
     widened = []
     for fc in file_changes or []:
         if not isinstance(fc, dict):
@@ -282,14 +255,11 @@ def drafted_contract_widened(file_changes, read_text, unknown=None):
         old_text = read_text(path)
         new_text = _apply_drafted_diff(old_text, diff)
         if new_text is None:
-            if _unapplied_diff_signals_contract(path, diff):
+            adds_trigger = any(
+                line.startswith("+") and not line.startswith("+++") and WORKFLOW_CALL_RE.search(line)
+                for line in diff.splitlines())
+            if _contract_block(path, old_text) is not None or adds_trigger:
                 widened.append(path)
-            else:
-                if unknown is not None:
-                    unknown.append(path)
-                print("note: board_route_backstop: the drafted diff for {0} could not be applied "
-                      "to main; whether it changes a contract is left to the final-diff "
-                      "check.".format(path), file=sys.stderr)
             continue
         if contract_changed(path, old_text, new_text):
             widened.append(path)
@@ -399,7 +369,7 @@ def route(agent_proposal, file_changes, board_max_files, board_max_lines,
           measure_backstop, diff_paths=None, diff_text=None, file_contents=None,
           widened_paths_override=None, proposal_extracted=True,
           workflow_push_blocked=None, base_contents=None,
-          agent_rate_limited=False, contract_unknown_paths=None):
+          agent_rate_limited=False):
     """FR-016..FR-020. `measure_backstop` is a callable
     (file_changes, max_files, max_lines) -> (over_threshold, files, lines)
     -- the runtime caller (board-loop.yml) supplies one that shells out to
@@ -431,11 +401,7 @@ def route(agent_proposal, file_changes, board_max_files, board_max_lines,
     it before route runs) keeps it in flight, and the next run triages it
     again -- a rate-limited triage then defers too and posts nothing
     (board_triage.defer_on_rate_limit()) -- and routes it once the usage
-    window resets.
-    `contract_unknown_paths` (drafted_contract_widened()'s `unknown`): on a
-    hold, the held paths among them are recorded as
-    `measured.contract_unknown_paths`, because a held fix is never pushed
-    and so never reaches route_final_diff()'s contract check."""
+    window resets."""
     category = normalize_category(agent_proposal)
     if category is None:
         agent_proposal, proposal_extracted = "spec", False
@@ -485,9 +451,6 @@ def route(agent_proposal, file_changes, board_max_files, board_max_lines,
         measured["contract_touched_paths"] = widened_paths
     if reason == "workflow_scope":
         measured["workflow_paths"] = list(workflow_push_blocked)
-        unchecked = [p for p in contract_unknown_paths or [] if p in measured["workflow_paths"]]
-        if unchecked:
-            measured["contract_unknown_paths"] = unchecked
 
     return {
         "agent_proposal": agent_proposal,

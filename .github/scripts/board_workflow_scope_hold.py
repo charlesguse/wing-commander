@@ -22,10 +22,6 @@ stall summary line, only once that comment has posted.
         --site fix --issue N --add-label "board:stalled" \\
         --can-push-workflows "$CAN_PUSH_WORKFLOWS" [--pr N] [--branch B --base-sha S]
 
-Route passes `--route-decision board-route-decision.json` instead of
-stdin: the held paths are its decision's, and any whose drafted diff
-could not be applied are named in the comment as contract-unchecked.
-
 Prints `held` (the item is now stalled; the caller must not push) or
 `clear` (nothing this loop cannot push). Exits 1, with an `::error::`
 naming the site, when the hold could not be completed.
@@ -55,12 +51,9 @@ def render_paths(paths):
     return ", ".join(shown) or "a file under `.github/workflows/`"
 
 
-def hold_comment(site, paths, pr=None, contract_unknown=None):
+def hold_comment(site, paths, pr=None):
     """The human-legible half of the hold comment for `site`; the stalled
-    marker follows it. `contract_unknown`: route's held paths whose drafted
-    diff could not be applied to main (drafted_contract_widened()), so
-    whether they change a published contract was never checked -- a held
-    fix is never pushed, so route_final_diff() never sees it."""
+    marker follows it."""
     named = render_paths(paths)
     if site == "route":
         lead = ("Route found this fix-shaped, but its change edits {0}, and this loop cannot "
@@ -76,20 +69,13 @@ def hold_comment(site, paths, pr=None, contract_unknown=None):
                 "push (the App holds no Workflows permission). Nothing was pushed; the PR is "
                 "unchanged.").format(pr, named)
         action = "address the review"
-    unchecked = ""
-    if contract_unknown:
-        unchecked = (" Route could not apply its drafted diff for {0} to main, so whether the "
-                     "change touches a published contract (an `on: workflow_call:` block) is "
-                     "unchecked: a contract change is spec-shaped, not a fix (FR-019).").format(
-                         render_paths(contract_unknown))
-    return ("{0}{1} Held for a maintainer: {2} from a session whose token has the `workflow` "
+    return ("{0} Held for a maintainer: {1} from a session whose token has the `workflow` "
             "scope, or grant the App Workflows (read and write) and set "
             "`WING_COMMANDER_BOARD_CAN_PUSH_WORKFLOWS` to `true`. Removing board:stalled is "
-            "the sole re-eligibility condition.").format(lead, unchecked, action)
+            "the sole re-eligibility condition.").format(lead, action)
 
 
-def hold(site, issue, label, paths, pr=None, branch=None, base_sha=None, run=None,
-         contract_unknown=None):
+def hold(site, issue, label, paths, pr=None, branch=None, base_sha=None, run=None):
     """Stalls `issue` for the workflow-scope `paths`. True once the comment
     has posted; False, with an `::error::` on stderr, when it could not."""
     where = "board-loop {0} (workflow-scope hold)".format(site)
@@ -99,7 +85,7 @@ def hold(site, issue, label, paths, pr=None, branch=None, base_sha=None, run=Non
         return False
     marker = write_marker(STALLED_STEP, 0, None, branch, base_sha)
     run = run or subprocess.run
-    body = "{0}\n\n{1}".format(hold_comment(site, paths, pr, contract_unknown), marker)
+    body = "{0}\n\n{1}".format(hold_comment(site, paths, pr), marker)
     try:
         ok = run(["gh", "issue", "comment", str(issue), "-R", os.environ.get("GITHUB_REPOSITORY", ""),
                   "--body", body], stdout=sys.stderr).returncode == 0
@@ -125,35 +111,19 @@ def main(argv=None, stdin=None, run=None):
     parser.add_argument("--pr", type=int, default=None)
     parser.add_argument("--branch", default=None)
     parser.add_argument("--base-sha", default=None)
-    parser.add_argument("--route-decision", default=None,
-                        help="route only: board-route-decision.json, read for the held paths "
-                             "(measured.workflow_paths) and contract_unknown_paths instead of stdin")
     args = parser.parse_args(argv)
     from board_eligibility import STALLED_LABEL
     if args.add_label != STALLED_LABEL:
         parser.error("--add-label must be {0} (#604)".format(STALLED_LABEL))
     if args.site == "review-fixup" and args.pr is None:
         parser.error("--site review-fixup needs --pr N")
-    if (args.site == "route") != (args.route_decision is not None):
-        parser.error("--route-decision goes with --site route, and only with it")
-    contract_unknown = []
-    if args.route_decision:
-        import json
-        with open(args.route_decision, encoding="utf-8") as fh:
-            measured = (json.load(fh).get("decision") or {}).get("measured") or {}
-        changed = [p for p in measured.get("workflow_paths") or [] if isinstance(p, str)]
-        contract_unknown = [p for p in measured.get("contract_unknown_paths") or []
-                            if isinstance(p, str)]
-    else:
-        changed = [line.strip() for line in (stdin or sys.stdin).read().splitlines()
-                   if line.strip()]
+    changed = [line.strip() for line in (stdin or sys.stdin).read().splitlines() if line.strip()]
     blocked = workflow_push_blocked_paths(changed, args.can_push_workflows == "true")
     if not blocked:
         print("clear")
         return 0
     if not hold(args.site, args.issue, args.add_label, blocked, pr=args.pr,
-                branch=args.branch, base_sha=args.base_sha, run=run,
-                contract_unknown=contract_unknown):
+                branch=args.branch, base_sha=args.base_sha, run=run):
         return 1
     print("held")
     return 0
