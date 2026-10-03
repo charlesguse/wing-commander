@@ -59,9 +59,10 @@ WHAT IT CHECKS, over `#` comments in .github/workflows/*.yml
     record of what was there, so retiring a block is a visible change to
     it, made together with the pointers that relied on the block.
 
-A quoted `-- see` example skips (a)'s self-pointer test and (b), never
-(a)'s existence test: a quoted pointer naming a file that does not exist
-is still wrong. An aux `(see X.yml)` naming its own file is a self-pointer
+A quoted `-- see` example skips (a)'s self-pointer test, (b) and (c),
+never (a)'s existence test: a quoted pointer naming a file that does not
+exist is still wrong. Its target is looked for inside its own quotes, or
+in the rest of the block if the quote never closes. An aux `(see X.yml)` naming its own file is a self-pointer
 too. Every violation names the pointer's own line, not its block's first.
 
 Deliberately excluded: rewriting or deduplicating comment prose. This
@@ -267,8 +268,10 @@ def extract_pointers(root, path):
                 # Only the quoted span: a filename later in the same block
                 # is prose about something else, and a placeholder
                 # (`-- see FILE`) names nothing (code review of #945).
+                # An unclosed quote falls back to the rest of the block, so
+                # the existence test fails closed rather than skipping.
                 close = suffix.find(joined[m.start() - 1])
-                suffix = suffix[:close] if close != -1 else ""
+                suffix = suffix[:close] if close != -1 else suffix
             tm = TARGET_RE.search(suffix)
             target = tm.group(1) if tm else None
             rec = {
@@ -763,7 +766,8 @@ def self_test():
               any("extras.yml:9:" in v and "gone-quoted.yml" in v for v in p),
               f"got {p!r}")
         check("an aux '(see X.yml)' pointer naming its own file fails (a)",
-              any("extras.yml:11:" in v and "names its own file" in v for v in p),
+              any("extras.yml:11:" in v and "names its own file" in v
+                  and "'(see extras.yml)'" in v for v in p),
               f"got {p!r}")
 
         os.remove(os.path.join(wf, "extras.yml"))
@@ -796,6 +800,17 @@ def self_test():
         p, _ = check_pointers(td)
         check("a quoted placeholder is not read as naming a later filename",
               not any("action.yml" in v for v in p), f"got {p!r}")
+        _write(os.path.join(wf, "good.yml"), (
+            "on: push\n"
+            "jobs:\n"
+            "  a:\n"
+            "    steps:\n"
+            "      # Quoted but never closed: \"-- see gone-unclosed.yml and more prose.\n"
+            "      - run: echo unclosed\n"))
+        p, _ = check_pointers(td)
+        check("a quoted pointer whose quote never closes still has its target checked",
+              any("gone-unclosed.yml" in v and "does not exist" in v for v in p),
+              f"got {p!r}")
 
     print(f"{failures} failure(s).")
     return 1 if failures else 0

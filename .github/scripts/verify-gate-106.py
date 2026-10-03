@@ -329,7 +329,8 @@ def suite_config(script, env, tmproot, source_root=REPO_ROOT):
 # caller's own `--jq` program through real jq (#766). Pre-filtered output
 # never ran that program, so a wrong key in it (`.runs[]` for
 # `.workflow_runs[]`) passed. A `*_RAW` variable bypasses jq: gh output the
-# shipped code must itself refuse to parse.
+# shipped code must itself refuse to parse. A jobs read for a run id with no
+# fixture fails the way GitHub's 404 does.
 STUB_GH_EXECUTION = r'''#!/usr/bin/env bash
 jq_prog=""
 prev=""
@@ -454,7 +455,7 @@ EXECUTION_BASE_ENV = dict(
     # of them -- one value per matched item, as a paginated read through
     # `--jq '.workflow_runs[] | {...}'` does.
     GH_STUB_RUNS_REST=runs_page((111, WRAPPER_PATH)), GH_STUB_RUNS_RAW="",
-    GH_STUB_JOBS_111=jobs_page(JOB_CONTAINERIZED), GH_STUB_JOBS_222=jobs_page(),
+    GH_STUB_JOBS_111=jobs_page(JOB_CONTAINERIZED),
     GH_STUB_JOBS_333=jobs_page(), GH_STUB_JOBS_RAW_111="",
     GH_STUB_RUNS_FAIL="", GH_STUB_RUNS_ERR="",
     GH_STUB_JOBS_FAIL="", GH_STUB_JOBS_ERR="",
@@ -588,6 +589,12 @@ EXECUTION_SCENARIOS = [
     dict(
         name="MR(#509) a run's job data does not parse: unreadable, not an empty job list",
         env=dict(GH_STUB_JOBS_RAW_111="{garbled"),
+        reached_pass=False,
+        failing_check="container-mode evidence unreadable",
+    ),
+    dict(
+        name="#766 a stage run's jobs read 404s: unreadable, not 'not containerized'",
+        env=dict(GH_STUB_RUNS_REST=runs_page((111, WRAPPER_PATH), (444, WRAPPER_PATH))),
         reached_pass=False,
         failing_check="container-mode evidence unreadable",
     ),

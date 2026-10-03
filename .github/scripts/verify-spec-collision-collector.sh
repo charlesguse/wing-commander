@@ -86,6 +86,7 @@ fi
 if ! python3 - <<'PY'
 import json
 import os
+import shlex
 import shutil
 import sys
 import tempfile
@@ -117,10 +118,6 @@ exit 1
 """
 
 
-def shell_quote(s):
-    return "'" + s.replace("'", "'\\''") + "'"
-
-
 def run_case(*, prs=(), dirs=(), files=(), stage="intake", stage_source="name",
              conclusion="success", slug="046-watchdog-supervision-collectors",
              fail_list=False, draft_prefix="", spec_prefix=""):
@@ -140,7 +137,7 @@ def run_case(*, prs=(), dirs=(), files=(), stage="intake", stage_source="name",
         if fail_list:
             open(os.path.join(fixtures, "fail-list"), "w").close()
         with open(os.path.join(bindir, "gh"), "w", encoding="utf-8", newline="\n") as fh:
-            fh.write(STUB_GH.replace("__FIXTURE_DIR__", shell_quote(fixtures)))
+            fh.write(STUB_GH.replace("__FIXTURE_DIR__", shlex.quote(fixtures)))
         os.chmod(os.path.join(bindir, "gh"), 0o755)
         for name in ("signals.json", "collector-outcomes.json"):
             with open(os.path.join(runner_temp, name), "w", encoding="utf-8") as fh:

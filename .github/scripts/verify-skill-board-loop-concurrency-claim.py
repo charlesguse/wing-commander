@@ -570,6 +570,10 @@ def apply_waivers(findings, waivers):
     return blocking, waived_lines, stale
 
 
+def format_ok_line(prop):
+    return "[ok] {0}: {1} matches the skill's claim".format(prop, property_source_label(prop))
+
+
 def format_stale_waiver(waiver):
     return (
         "::error::verify-skill-board-loop-concurrency-claim: stale waiver -- "
@@ -585,7 +589,7 @@ def run():
     blocking, waived_lines, stale = apply_waivers(findings, waivers)
 
     for prop in ok_properties:
-        print("[ok] {0}: {1} matches the skill's claim".format(prop, property_source_label(prop)))
+        print(format_ok_line(prop))
     for finding in blocking:
         print(format_finding(finding))
     for line in waived_lines:
@@ -1021,9 +1025,9 @@ def run_selftest():
     # Code review of #945: the [ok] and stale-waiver lines name each
     # property's own source file, not board-loop.yml for all of them.
     check("an [ok] line for a group-name property names concurrency-groups.md",
-          property_source_label("ordinary-group-name-mismatch") == "concurrency-groups.md"
-          and property_source_label("directed-group-name-mismatch") == "concurrency-groups.md"
-          and property_source_label("job-range-mismatch") == "board-loop.yml")
+          "concurrency-groups.md matches" in format_ok_line("ordinary-group-name-mismatch")
+          and "concurrency-groups.md matches" in format_ok_line("directed-group-name-mismatch")
+          and "board-loop.yml matches" in format_ok_line("job-range-mismatch"))
     stale_line = format_stale_waiver(WaiverEntry(
         index=0, property="ordinary-group-name-mismatch", job=None, issue="#1",
         permanent=None, reason=None))
