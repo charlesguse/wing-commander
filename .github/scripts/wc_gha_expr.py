@@ -157,6 +157,11 @@ class Parser:
     def __init__(self, src, ctx, known=None):
         self.toks, self.i, self.ctx = tokenize(src), 0, ctx
         self.known = known
+        # >0 while reading an `&&`/`||` right-hand side GitHub never
+        # evaluates: a guarded `fromJSON('')` must not fail the expression
+        # (code review of #954). Unmodelled names still raise -- a gate
+        # must not pass on a construct it cannot read in any scenario.
+        self.skip = 0
 
     def peek(self):
         return self.toks[self.i] if self.i < len(self.toks) else (None, None)
@@ -174,11 +179,19 @@ class Parser:
             raise ValueError(f"trailing tokens from {self.peek()[1]!r}")
         return v
 
+    def _rhs(self, read, skipped):
+        """Read one `&&`/`||` operand, unevaluated when `skipped`."""
+        self.skip += skipped
+        try:
+            return read()
+        finally:
+            self.skip -= skipped
+
     def or_(self):
         v = self.and_()
         while self.peek() == ("op", "||"):
             self.take()
-            rhs = self.and_()
+            rhs = self._rhs(self.and_, truthy(v))
             v = v if truthy(v) else rhs
         return v
 
@@ -186,7 +199,7 @@ class Parser:
         v = self.cmp()
         while self.peek() == ("op", "&&"):
             self.take()
-            rhs = self.cmp()
+            rhs = self._rhs(self.cmp, not truthy(v))
             v = rhs if truthy(v) else v
         return v
 
@@ -230,6 +243,8 @@ class Parser:
         self.take(")")
         fn = FUNCS.get(name.lower())
         if fn is not None:
+            if self.skip:
+                return None
             return fn(*args)
         key = f"{name.lower()}()"
         if key in self.ctx:
@@ -293,7 +308,15 @@ if __name__ == "__main__":
     # contains() on an array is element equality, not a substring of it.
     assert evaluate("contains(fromJSON('[\"ab\"]'), 'a')", {}) is False
     assert evaluate("contains(fromJSON('[\"ab\"]'), 'AB')", {}) is True
-    for bad, known in (("env.X == 'y'", ("steps.",)), ("fromJSON('[')", None)):
+    # Code review of #954: `&&`/`||` stop as GitHub's do, so a guarded
+    # fromJSON of an unset output does not fail the evaluation.
+    assert evaluate("a == 'true' || fromJSON(b) >= 1", {"a": "true"}) is True
+    assert evaluate("a == 'x' && fromJSON(b)", {"a": "y"}) is False
+    assert evaluate("startsWith(a, '[') && fromJSON(a) || a",
+                    {"a": "ubuntu-latest"}) == "ubuntu-latest"
+    for bad, known in (("env.X == 'y'", ("steps.",)), ("fromJSON('[')", None),
+                       ("true || env.X", ("steps.",)),
+                       ("false && nope()", None)):
         try:
             evaluate(bad, {}, known)
         except ValueError:

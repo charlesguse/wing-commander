@@ -418,9 +418,18 @@ _EXPR_RE = re.compile(r"\$\{\{.*?\}\}", re.S)
 # arguments, not a script. Code review of #954, round 8: without the
 # wrapper words a wrapped shell's heredoc read as data and its scripts
 # vanished, where origin/main's raw-text regex saw them.
+#
+# Round 10: `if`/`elif`/`while`/`until` open a command too (`if bash -s
+# <<EOF; then`), as _COMMAND_PREFIXES already says for the command reader.
 _HEREDOC_WRAPPERS = sorted(_COMMAND_WRAPPERS - {"xargs"})
+# A shell option cluster whose `o`/`O` takes the next word as its value
+# (`-o pipefail`, `-eo pipefail` as GitHub's own default shell is invoked,
+# `+O extglob`). Code review of #954, round 10: only a lone `-o` was read
+# so, and `bash -eo pipefail -c "..."` took `pipefail` for the script.
+_SHELL_OPTION_VALUE_RE = re.compile(r"[-+](?!-)[A-Za-z]*[oO]")
 _SHELL_ON_LINE_RE = re.compile(
-    r"(?:^|[;&|(!{]|\b(?:then|do|else|exec|time|command)\b"
+    r"(?:^|[;&|(!{]|\b(?:if|elif|while|until|then|do|else|exec|time"
+    r"|command)\b"
     r"|\b(?:" + "|".join(_HEREDOC_WRAPPERS) + r")\b"
     r"(?:[ \t]+(?!(?:bash|sh)(?![\w.-]))[^\s;&|()<>]+)*?)"
     r"[ \t]*(?:[A-Za-z_]\w*=\S*[ \t]+)*(?:bash|sh)(?![\w.-])([^;&|)\n]*)")
@@ -437,7 +446,8 @@ def _feeds_shell(line):
             w = words[k]
             if w == "--":
                 break
-            if w in ("-o", "+o", "-O", "+O") or re.fullmatch(r"\d*[<>]+[-&|]?", w):
+            if re.fullmatch(r"\d*[<>]+[-&|]?", w) or (
+                    _SHELL_OPTION_VALUE_RE.match(w) and "c" not in w[1:]):
                 k += 2
                 continue
             if re.match(r"\d*[<>]", w) or w.startswith(("+", "--")) or (
@@ -634,7 +644,7 @@ def _expand(token, env):
 
 _CMDSUB_RE = re.compile(r"__WC_CMDSUB_(\d+)__")
 # Interpreter options that take the next word as their value.
-_VALUE_OPTIONS = {"-o", "+o", "-O", "+O", "--rcfile", "--init-file",
+_VALUE_OPTIONS = {"--rcfile", "--init-file",
                   "-W", "-X", "--check-hash-based-pycs"}
 
 
@@ -648,6 +658,13 @@ def _code_string_index(interpreter, args):
     while k < len(args) and args[k][:1] in ("-", "+") \
             and args[k] not in ("-", "--"):
         opt = args[k]
+        if interpreter in ("bash", "sh") and _SHELL_OPTION_VALUE_RE.match(opt):
+            # `-eo pipefail` (round 10): o/O takes the next word, and a
+            # `c` in the same cluster puts the code string after it.
+            if "c" in opt[1:]:
+                return k + 2
+            k += 2
+            continue
         if opt in _VALUE_OPTIONS:
             k += 2
             continue

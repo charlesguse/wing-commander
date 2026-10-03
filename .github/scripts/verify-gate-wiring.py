@@ -891,7 +891,8 @@ def _fixture_script_call_stdin():
     -s arg` runs its stdin (round 5); an interpreter behind an unknown
     wrapper (`retry 3`, `xvfb-run -a`) runs its script; a shell behind
     a known wrapper (`timeout 300 bash <<EOF`) runs its heredoc (round 8);
-    and a
+    `-eo pipefail` takes `pipefail` as the option's value, and a shell
+    after `if` runs its heredoc (round 10); and a
     step `env:` expression overrides a job's literal value, so the job's
     file is not reported as the script the step runs."""
     root = tempfile.mkdtemp(prefix="wc-gate-wiring-")
@@ -929,6 +930,18 @@ def _fixture_script_call_stdin():
                "          timeout 300 bash <<EOF\n"
                "          bash tests/wrapped.sh\n"
                "          EOF\n"
+               # Round 10: an option cluster's `o` takes `pipefail` as
+               # its value, and a shell after `if`/`while` runs its
+               # heredoc.
+               "          bash -eo pipefail -c \"bash tests/clustered.sh\"\n"
+               "          bash -eo pipefail <<EOF\n"
+               "          bash tests/clustered-hd.sh\n"
+               "          EOF\n"
+               "          if bash -s <<EOF; then\n"
+               "          bash tests/if-hd.sh\n"
+               "          EOF\n"
+               "            :\n"
+               "          fi\n"
                "      - name: override\n"
                f"        env:\n          S: {expr}\n"
                "        run: bash \"$S\"\n")
@@ -943,8 +956,11 @@ def _fixture_script_call_stdin():
                 "runs .github/actions/i/tests/retried.sh ",
                 "runs .github/actions/i/tests/xvfb.sh ",
                 "runs .github/actions/i/tests/xargs.sh ",
-                "runs .github/actions/i/tests/wrapped.sh "]
-        ok = (len(failures) == 10 and all(w in joined for w in want)
+                "runs .github/actions/i/tests/wrapped.sh ",
+                "runs .github/actions/i/tests/clustered.sh ",
+                "runs .github/actions/i/tests/clustered-hd.sh ",
+                "runs .github/actions/i/tests/if-hd.sh "]
+        ok = (len(failures) == 13 and all(w in joined for w in want)
               and "data.sh" not in joined and "test_mod" not in joined
               and "job-env" not in joined)
         return ok, f"got {failures!r}"
