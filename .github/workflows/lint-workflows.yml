@@ -1085,17 +1085,22 @@ jobs:
           # -X POST PATH`); the parser before the code review of #939 allowed
           # only -X/--method there and read `-i` as the PATH, hiding six
           # auto-release.yml calls. A flag gh documents as taking a value
-          # consumes the next word; any other `-x`/`--long[=v]` is a switch. A
-          # word is read the way the shell splits it, so a partly quoted value
-          # (`-f body="a b"`) is one word, not `body="a` plus a PATH `b"`.
+          # consumes the next word; any other word starting `-` (`-i`,
+          # `--method=POST`, `-H'Accept: x'`, `--`) is a switch. A valued flag
+          # standing alone is never a switch: the regex would otherwise
+          # backtrack it into one and take its value (`-X POST`'s `POST`) as
+          # the PATH, a non-repos/ path skipped as out of scope where a call
+          # with no PATH must fail loudly as unrecognised. A word is read the
+          # way the shell splits it, so a partly quoted value (`-f body="a
+          # b"`) is one word, not `body="a` plus a PATH `b"`.
           SHELL_WORD = r'(?:"(?:[^"\\]|\\.)*"|\'[^\']*\'|[^\s"\'])+'
           GH_API_VALUE_FLAGS = ("-X", "--method", "-H", "--header", "-f", "--raw-field",
                                 "-F", "--field", "-q", "--jq", "-t", "--template",
                                 "-p", "--preview", "--hostname", "--input", "--cache")
+          _GH_API_VALUE_FLAG = "(?:" + "|".join(re.escape(f) for f in GH_API_VALUE_FLAGS) + ")"
           GH_API_FLAGS = (
-              r'(?:(?:' + "|".join(re.escape(f) for f in GH_API_VALUE_FLAGS) + r')'
-              r'\s+' + SHELL_WORD + r'\s+'
-              r'|--?[A-Za-z][\w-]*(?:=' + SHELL_WORD + r')?\s+)*')
+              r'(?:' + _GH_API_VALUE_FLAG + r'\s+' + SHELL_WORD + r'\s+'
+              r'|(?!' + _GH_API_VALUE_FLAG + r'(?:\s|$))-' + SHELL_WORD + r'\s+)*')
 
           GH_INVOKE_RE = re.compile(
               r'(?:GH_TOKEN=(?P<tokexpr>"(?:[^"\\]|\\.)*"|\$\{\{[^}]*\}\}|\$\w+)\s+)?'
@@ -1127,9 +1132,12 @@ jobs:
           # dropped as out of scope. Every spelling gh accepts: `-X POST`,
           # `-XPOST`, `--method POST`, `--method=POST`, quoted or not -- the
           # flag parser above skips the attached forms as switches, so a
-          # space-only match here would read those writes as reads.
-          API_WRITE_METHOD_RE = re.compile(
-              r'(?:^|\s)(?:-X\s*|--method(?:\s+|=))["\']?(?:POST|PATCH|PUT|DELETE)\b')
+          # space-only match here would read those writes as reads. The flag
+          # is found on the blanked call line (so one inside another flag's
+          # quoted value is not this call's), its method word on the raw one
+          # (blanking would erase a quoted `'POST'`) -- see api_level().
+          API_METHOD_FLAG_RE = re.compile(r'(?:^|\s)(?:-X|--method(?![\w-]))')
+          API_WRITE_METHOD_RE = re.compile(r'(?:POST|PATCH|PUT|DELETE)\b')
 
 
           def norm_expr(raw):
@@ -1451,13 +1459,15 @@ jobs:
               command separator (`;`, `&&`, `||`, `|`), with every
               non-executable character blanked — so a `--method POST` inside
               a quoted value, in a trailing comment, or in the NEXT command on
-              the same line never reads as this call's method."""
-              out = []
+              the same line never reads as this call's method. -> (blanked,
+              raw): the same span unblanked, character-aligned with it, for
+              reading a quoted flag value."""
+              out, raw = [], []
               i, n = m.start(), len(text)
               while i < n:
                   c = text[i]
                   if flags[i] and c == "\\" and i + 1 < n and text[i + 1] == "\n":
-                      out.append(" "); i += 2; continue
+                      out.append(" "); raw.append(" "); i += 2; continue
                   if flags[i] and c == "\n":
                       break
                   if flags[i] and c in ";|":
@@ -1465,12 +1475,18 @@ jobs:
                   if flags[i] and c == "&" and not (i > 0 and text[i - 1] == ">"):
                       break
                   out.append(c if flags[i] else " ")
+                  raw.append(c)
                   i += 1
-              return "".join(out)
+              return "".join(out), "".join(raw)
 
 
           def api_level(cmdline):
-              return "write" if API_WRITE_METHOD_RE.search(cmdline) else "read"
+              blanked, raw = cmdline
+              for fm in API_METHOD_FLAG_RE.finditer(blanked):
+                  wm = re.match(r'(?:=|\s*)(' + SHELL_WORD + ')', raw[fm.end():])
+                  if wm and API_WRITE_METHOD_RE.match(re.sub(r'["\']', "", wm.group(1))):
+                      return "write"
+              return "read"
 
 
           def check_gh_invocation(where, m, cmdline, assigns, tok_kind, tok_detail,

@@ -438,6 +438,43 @@ CASES = [
             ['gh api -f body="a b" -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments"']),
      True, ("issues", "write")),
 
+    ("... a quoted method is still that method: `-X 'POST'` under "
+     "github.token with only issues:read fails (the call line blanks "
+     "quoted text, so the method word is read from the raw line)",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ["gh api -X 'POST' \"repos/${GITHUB_REPOSITORY}/issues/1/comments\" -f body=x"]),
+     True, ("issues", "write")),
+
+    ("... and so is `--method=\"PATCH\"`",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['gh api --method="PATCH" "repos/${GITHUB_REPOSITORY}/issues/1" -f state=closed']),
+     True, ("issues", "write")),
+
+    ("... while a method word inside another flag's quoted value is not "
+     "this call's method: `-f body=\"x -X POST\"` stays a read",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['gh api -f body="x -X POST" "repos/${GITHUB_REPOSITORY}/issues/1"']),
+     False, ()),
+
+    ("a valued flag is never re-read as a switch to free its value as the "
+     "PATH: `gh api -H 'Accept: x' -X POST -- PATH` resolves PATH, not "
+     "`POST`",
+     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
+            ["gh api -H 'Accept: x' -X POST -- \"repos/${GITHUB_REPOSITORY}/issues/1/comments\" -f body=x"]),
+     True, ("issues", "write")),
+
+    ("... and an attached short-flag value (`-H'...'`) is one switch word, "
+     "so `--jq '.id'` keeps its value and PATH is still resolved",
+     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
+            ["gh api --jq '.id' -H'Accept: application/json' \"repos/${GITHUB_REPOSITORY}/issues/1\""]),
+     True, ("issues", "read")),
+
+    ("... and a `gh api` whose flags leave no PATH fails loudly rather "
+     "than passing with a flag value as its PATH",
+     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
+            ["gh api --jq '.id' -X GET"]),
+     True, ("gh api", "SUBCOMMAND_PERMS")),
+
     ("a `<<WORD` inside quotes is not a heredoc opener: a call after "
      "`echo 'v<<EOF'` is still scanned",
      mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
