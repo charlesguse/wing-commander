@@ -154,9 +154,12 @@ deleted with every other pass condition still green.
 
 The same pass condition also requires a step named "Flag failed
 out-of-boundary routing on lifecycle issue", keyed on the Route step's
-`outcome == 'failure'` and on non-zero `dropped-api-failure`,
-`dropped-malformed` and `dropped-cap` outputs -- the four OR-joined under
-one `!cancelled()`, so any one of them fires it -- and posting through
+`outcome == 'failure'`, on non-zero `dropped-api-failure`,
+`dropped-malformed` and `dropped-cap` outputs, and on an `outcome ==
+'success'` that filed and appended nothing (a crash in the composite's
+prepare step, or an all-errata drop, reports all-zero counts) -- the five
+OR-joined under one `!cancelled()`, so any one of them fires it -- and
+posting through
 `wing-commander-callout` to `inputs.issue-number` -- the Route step is
 `continue-on-error` and its composite always exits 0, reporting an API
 error, a malformed entry or a task over the per-run cap only in those
@@ -168,9 +171,10 @@ yml`'s `write-boundary-label-prefix` default is the one home of the
 routed-item label prefix. `finalize.yml`'s input default, `wing-commander-
 write-boundary-lookup`'s `label-prefix` default, and both wrappers'
 `vars.WING_COMMANDER_WRITE_BOUNDARY_LABEL_PREFIX || '<default>'` fallbacks
-each equal it, and no other quoted, `=`-assigned or YAML-value (any key
-but `id:`) literal of that value appears in a workflow, composite action
-or `_shared/` script.
+each equal it, and no other standalone occurrence of that value (quoted,
+`=`-assigned, a YAML value, a `${VAR:-<value>}` fallback or a bare shell
+argument -- anything but an `id:` value or a `steps.<id>` reference)
+appears in a workflow, composite action or `_shared/` script.
 
 A fixture or comparison failing any of (a)-(m) fails the gate, naming the
 file, step, and scenario — matching Gate 51's `::error file=...::Gate NN:
@@ -240,6 +244,10 @@ caught:
     OR-joined — re-runs (k) against the mutated text, must fail.
 19. An unquoted copy of the default passed as a `with:` value in another
     workflow — re-runs (m) against the mutated text, must fail.
+20. The failed-routing flag step's `if:` stripped of its filed-nothing
+    clause — re-runs (k) against the mutated text, must fail.
+21. A `${VAR:-<default>}` shell fallback copy of the default in a
+    `_shared/` script — re-runs (m) against the mutated text, must fail.
 
 ## Out of scope for this gate
 

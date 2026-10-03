@@ -462,11 +462,17 @@ def check_prompt_and_route_wiring(stage_text=None):
         # wing-commander-stage-findings always exits 0 (its FR-022): an API
         # error, a malformed entry or a task over the cap shows up only in
         # these output counts, so an outcome-only guard would almost never
-        # fire.
+        # fire. A success that filed and appended nothing lost every task
+        # too (a crash in the composite's prepare step, or an all-errata
+        # drop, reports all-zero counts).
+        filed_none = ("(steps.route-out-of-boundary.outcome == 'success' && "
+                      "steps.route-out-of-boundary.outputs.filed == '0' && "
+                      "steps.route-out-of-boundary.outputs.appended == '0')")
         for clause in ("steps.route-out-of-boundary.outcome == 'failure'",
                        "steps.route-out-of-boundary.outputs.dropped-api-failure != '0'",
                        "steps.route-out-of-boundary.outputs.dropped-malformed != '0'",
-                       "steps.route-out-of-boundary.outputs.dropped-cap != '0'"):
+                       "steps.route-out-of-boundary.outputs.dropped-cap != '0'",
+                       filed_none):
             if clause not in flag_if:
                 failures.append(f"(k) {FLAG_ROUTE_FAILURE_STEP!r}: if: does "
                                 f"not key on {clause} -- got {flag_if!r}.")
@@ -477,11 +483,12 @@ def check_prompt_and_route_wiring(stage_text=None):
         shape = re.sub(r"\(steps\.route-out-of-boundary\.outputs\.([\w-]+) != '' "
                        r"&& steps\.route-out-of-boundary\.outputs\.\1 != '0'\)",
                        "X", flag_if)
+        shape = shape.replace(filed_none, "X")
         shape = shape.replace("steps.route-out-of-boundary.outcome == 'failure'", "X")
         shape = " ".join(shape.split())
-        if shape != "${{ !cancelled() && (X || X || X || X) }}":
+        if shape != "${{ !cancelled() && (X || X || X || X || X) }}":
             failures.append(f"(k) {FLAG_ROUTE_FAILURE_STEP!r}: if: is not "
-                            f"!cancelled() && (<four clauses OR-joined>), each "
+                            f"!cancelled() && (<five clauses OR-joined>), each "
                             f"count guarded by != '' -- got {flag_if!r}.")
         if not str(flag_step.get("uses", "")).endswith("/wing-commander-callout"):
             failures.append(f"(k) {FLAG_ROUTE_FAILURE_STEP!r}: does not post "
@@ -1178,15 +1185,19 @@ def check_label_prefix_single_home(content_overrides=None):
                                 f"{w!r}, expected {expected_wiring!r} -- the "
                                 f"fallback must equal {STAGE}'s default.")
 
-    # Any other quoted literal, or any YAML value (`default:`, a `with:`
-    # key such as `label-prefix:`, an `=` shell assignment) of the value,
+    # Any other standalone occurrence of the value -- quoted, a YAML value
+    # (`default:`, a `with:` key such as `label-prefix:`), an `=` shell
+    # assignment, a `${VAR:-<value>}` fallback, a bare shell argument --
     # is an unregistered copy. Step ids (`id: <value>`) and `steps.<id>`
-    # references are not label literals.
+    # references are not label literals; neither is the value embedded in
+    # a longer name (`x-route-out-of-boundary`).
     registered = {os.path.normpath(p): 1 for p in
                   (STAGE, FINALIZE, WRITE_BOUNDARY_LOOKUP_COMPOSITE,
                    IMPLEMENT_WRAPPER, FINALIZE_WRAPPER)}
-    literal_re = re.compile(r"""(?:["'=]|(?<!\bid):[ \t]*)"""
-                            + re.escape(canonical) + r"""(?![\w-])""")
+    literal_re = re.compile(r"(?<![\w.])(?<!\w-)" + re.escape(canonical)
+                            + r"(?![\w-])")
+    step_id_re = re.compile(r"\bid:[ \t]*[\"']?" + re.escape(canonical)
+                            + r"(?![\w-])")
     files = set(glob.glob(".github/workflows/*.yml")
                 + glob.glob(".github/workflows/*.yaml")
                 + glob.glob(".github/actions/**/action.yml", recursive=True)
@@ -1199,7 +1210,7 @@ def check_label_prefix_single_home(content_overrides=None):
             text = read(path)
         except OSError:
             continue
-        count = len(literal_re.findall(text))
+        count = len(literal_re.findall(text)) - len(step_id_re.findall(text))
         if count > registered.get(path, 0):
             failures.append(f"(m) {path}: {count} literal copy(ies) of "
                             f"{canonical!r} where {registered.get(path, 0)} "
@@ -1924,6 +1935,37 @@ def check_mutation_24():
     return ["mutation survived: unquoted label default copy"]
 
 
+def check_mutation_25():
+    """(25) code review of #941: the failed-routing flag step's guard drops
+    its filed-nothing clause -- a crash in the composite's prepare step, or
+    every task dropped as spec errata, reports all-zero counts and would
+    flag nothing. Re-runs (k), must fail."""
+    text = open(STAGE, encoding="utf-8").read()
+    marker = (" || (steps.route-out-of-boundary.outcome == 'success' && "
+              "steps.route-out-of-boundary.outputs.filed == '0' && "
+              "steps.route-out-of-boundary.outputs.appended == '0')")
+    if marker not in text:
+        print("::error::mutation 'unkey route filed-nothing flag' changed nothing.")
+        return ["mutation inapplicable: unkey route filed-nothing flag"]
+    mutated = text.replace(marker, "", 1)
+    if check_prompt_and_route_wiring(stage_text=mutated):
+        print("Mutation OK -- unkey route filed-nothing flag: caught (k).")
+        return []
+    return ["mutation survived: unkey route filed-nothing flag"]
+
+
+def check_mutation_26():
+    """(26) code review of #941: a `${VAR:-<default>}` shell fallback copy
+    of the label default in a _shared/ script -- re-runs (m), must fail."""
+    path = os.path.normpath(CLASSIFY_SCRIPT)
+    text = open(path, encoding="utf-8").read()
+    mutated = text + '\n# PREFIX="${PREFIX:-route-out-of-boundary}"\n'
+    if check_label_prefix_single_home({path: mutated}):
+        print("Mutation OK -- shell fallback label default copy: caught (m).")
+        return []
+    return ["mutation survived: shell fallback label default copy"]
+
+
 def _mut_classify_swallow_crash(steps):
     """(17) review-gate-round-4 item 6: revert the classify step's own
     ::warning:: + safe-fallback handling to a bare pass-through -- a
@@ -2003,6 +2045,8 @@ def run_mutations(steps, root):
     failures.extend(check_mutation_22())
     failures.extend(check_mutation_23())
     failures.extend(check_mutation_24())
+    failures.extend(check_mutation_25())
+    failures.extend(check_mutation_26())
     # (7) zero fixtures discovered/executed at all.
     if not CLASSIFY_FIXTURES or not STATEMENT_FIXTURES:
         failures.append("mutation survived: zero fixtures (Constitution VIII)")
