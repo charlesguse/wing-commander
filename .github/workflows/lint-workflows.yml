@@ -898,12 +898,15 @@ jobs:
           # that have to be named here.
           #
           # Every OTHER App token this repository mints is a workflow step
-          # that `uses: actions/create-github-app-token` directly — e2e-stage's
-          # `scratch-token` for the pre-created scratch repository, and
-          # auto-release.yml's `token` for the pre-onboarded end-to-end test
-          # repository (each a scope the context token cannot cover, since
-          # one installation token cannot span two owners). Those are
-          # recognised STRUCTURALLY, per job, by app_token_exprs_for() below:
+          # that `uses: actions/create-github-app-token` directly (e2e-stage's
+          # `scratch-token` for the pre-created scratch repository) or through
+          # the `_shared/scoped-app-token` composite, which wraps that action
+          # and re-exports its token (auto-release.yml's `token` for the
+          # pre-onboarded end-to-end test repository, auto-update-spec-kit's
+          # scratch-repository mints). Each is a scope the context token
+          # cannot cover, since one installation token cannot span two
+          # owners. Those are recognised STRUCTURALLY, per job, by
+          # app_token_exprs_for() below:
           # a step id is only an App token in the job that mints it, so a
           # generic id like `token` in some other job never inherits the
           # classification by name. Same App, same grant, so the same
@@ -912,6 +915,9 @@ jobs:
           # and its own classification — do not fold it into this one.
           APP_TOKEN_EXPRS = {"steps.ctx.outputs.token"}
           APP_TOKEN_MINTER = "actions/create-github-app-token"
+          # A step using this composite (by any COMPOSITE_USES_RE path) mints
+          # through APP_TOKEN_MINTER and outputs that token as `token`.
+          APP_TOKEN_MINTER_COMPOSITE = "_shared/scoped-app-token"
           DEFAULT_TOKEN_EXPRS = {"github.token", "secrets.GITHUB_TOKEN"}
 
 
@@ -927,14 +933,17 @@ jobs:
           def app_token_exprs_for(job):
               """APP_TOKEN_EXPRS plus `steps.<id>.outputs.token` for every step
               in THIS job that mints an installation token with
-              actions/create-github-app-token, plus APP_TOKEN_ENV_EXPR when
+              actions/create-github-app-token, directly or through the
+              scoped-app-token composite, plus APP_TOKEN_ENV_EXPR when
               THIS job runs wing-commander-context."""
               out = set(APP_TOKEN_EXPRS)
               for st in job.get("steps") or []:
                   st = st or {}
                   sid = st.get("id")
                   uses = str(st.get("uses") or "")
-                  if sid and uses.split("@")[0] == APP_TOKEN_MINTER:
+                  cm = COMPOSITE_USES_RE.match(uses.replace("\\", "/"))
+                  if sid and (uses.split("@")[0] == APP_TOKEN_MINTER
+                              or (cm and cm.group(1) == APP_TOKEN_MINTER_COMPOSITE)):
                       out.add(f"steps.{sid}.outputs.token")
                   if uses.split("@")[0].endswith(APP_TOKEN_ENV_EXPORTER):
                       out.add(APP_TOKEN_ENV_EXPR)
@@ -1008,10 +1017,12 @@ jobs:
           }
 
           # Permissions no `permissions:` block can grant GITHUB_TOKEN (the
-          # variables entries above): a call needing one 403s under
-          # github.token in every job, so check_call fails it even where the
-          # job declares no permissions: block to compare against.
-          DEFAULT_TOKEN_NEVER_GRANTED = frozenset({"variables"})
+          # variables entries above, and the Secrets and Administration
+          # surfaces API_CATEGORY_PERM maps actions/ sub-paths to): a call
+          # needing one 403s under github.token in every job, so check_call
+          # fails it even where the job declares no permissions: block to
+          # compare against.
+          DEFAULT_TOKEN_NEVER_GRANTED = frozenset({"variables", "secrets", "administration"})
 
           # `gh api PATH` — PATH's first segment under repos/{owner}/{repo}/ decides
           # the permission, the same way SUBCOMMAND_PERMS does for named subcommands.
@@ -1042,10 +1053,21 @@ jobs:
               # Git database endpoints are under "Contents" in the
               # fine-grained permission reference.
               "git": "contents",
-              # .../actions/variables/... (path_category splits it out of
-              # "actions"): the "Variables" repository permission, as the
-              # `gh variable` entries in SUBCOMMAND_PERMS say.
+              # .../actions/<sub>/... sub-paths that path_category splits out
+              # of "actions" (ACTIONS_SUBPATHS below) because GitHub's
+              # fine-grained permission reference files them under their own
+              # repository permission, not "Actions":
+              # - variables, organization-variables: "Variables", as the
+              #   `gh variable` entries in SUBCOMMAND_PERMS say;
+              # - secrets, organization-secrets: "Secrets";
+              # - permissions, runners: "Administration" (auto-release.yml's
+              #   maintainer-token probe reads .../actions/permissions).
               "actions/variables": "variables",
+              "actions/organization-variables": "variables",
+              "actions/secrets": "secrets",
+              "actions/organization-secrets": "secrets",
+              "actions/permissions": "administration",
+              "actions/runners": "administration",
               # specs/062-lifecycle-review-gate T024: POST .../statuses/{sha}
               # (Create a commit status) -- the REST reference lists
               # "Commit statuses" as its own fine-grained repository
@@ -1054,10 +1076,28 @@ jobs:
               "statuses": "statuses",
           }
 
+          # The sub-paths path_category splits out of "actions", read from the
+          # table itself so a new sub-path entry needs no second edit.
+          ACTIONS_SUBPATHS = frozenset(k.split("/", 1)[1] for k in API_CATEGORY_PERM
+                                       if k.startswith("actions/"))
+
+          # `gh api`'s own flags may precede the path in any order (`gh api -i
+          # -X POST PATH`); the parser before the code review of #939 allowed
+          # only -X/--method there and read `-i` as the PATH, hiding six
+          # auto-release.yml calls. A flag gh documents as taking a value
+          # consumes the next word; any other `-x`/`--long[=v]` is a switch.
+          GH_API_VALUE_FLAGS = ("-X", "--method", "-H", "--header", "-f", "--raw-field",
+                                "-F", "--field", "-q", "--jq", "-t", "--template",
+                                "-p", "--preview", "--hostname", "--input", "--cache")
+          GH_API_FLAGS = (
+              r'(?:(?:' + "|".join(re.escape(f) for f in GH_API_VALUE_FLAGS) + r')'
+              r'\s+(?:"(?:[^"\\]|\\.)*"|\'[^\']*\'|\S+)\s+'
+              r'|--?[A-Za-z][\w-]*(?:=\S+)?\s+)*')
+
           GH_INVOKE_RE = re.compile(
               r'(?:GH_TOKEN=(?P<tokexpr>"(?:[^"\\]|\\.)*"|\$\{\{[^}]*\}\}|\$\w+)\s+)?'
               r'\bgh\s+(?:'
-              r'api\s+(?:(?:-X|--method)\s+\S+\s+)?(?P<apipath>"(?:[^"\\]|\\.)*"|\S+)'
+              r'api\s+' + GH_API_FLAGS + r'(?P<apipath>"(?:[^"\\]|\\.)*"|[^\s-]\S*)'
               r'|(?P<verb1>[a-zA-Z][\w-]*)(?:\s+(?P<verb2>[a-zA-Z][\w-]*))?'
               r')'
           )
@@ -1098,7 +1138,11 @@ jobs:
           def strip_heredocs(text):
               """Heredoc bodies are data for another interpreter (python, jq), never
               bash commands — a `gh ...` mentioned inside one (an error message a gate
-              prints, e.g.) never actually runs. Strip them before scanning."""
+              prints, e.g.) never actually runs. Strip them before scanning.
+              A `<<WORD` the shell never executes is not an opener: auto-release's
+              `echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'` writes a $GITHUB_OUTPUT
+              delimiter, and reading it as a heredoc hid the rest of that step,
+              six maintainer-token `gh api` calls among it (code review of #939)."""
               out = []
               lines = text.splitlines()
               heredoc_re = re.compile(r"<<-?\s*'?(\w+)'?\s*$")
@@ -1106,6 +1150,10 @@ jobs:
               while i < len(lines):
                   line = lines[i]
                   m = heredoc_re.search(line)
+                  if m:
+                      prefix = "\n".join(out + [line[:m.start()]])
+                      if not executable_flags(prefix + "<")[-1]:
+                          m = None
                   out.append(line)
                   i += 1
                   if m:
@@ -1232,15 +1280,18 @@ jobs:
               if rest[0].startswith("$"):
                   rest = rest[1:]           # one token already carries owner/repo
                   scope = "SELF"
+              elif rest[:2] == ["{owner}", "{repo}"]:
+                  rest = rest[2:]           # gh fills these from the current repository
+                  scope = "SELF"
               else:
                   rest = rest[2:] if len(rest) >= 2 else []
                   scope = "CROSS"           # a literal, different owner/repo pair
-              if rest[:2] == ["actions", "variables"]:
-                  # Under actions/ by path, but the "Variables" permission's
-                  # surface, not "Actions" (fine-grained reference; code
-                  # review of #924) -- the same split SUBCOMMAND_PERMS
-                  # makes for `gh variable`.
-                  return scope, "actions/variables"
+              if rest[:1] == ["actions"] and len(rest) >= 2 and rest[1] in ACTIONS_SUBPATHS:
+                  # Under actions/ by path, but another permission's surface,
+                  # not "Actions" (fine-grained reference; code reviews of
+                  # #924 and #939) -- the same split SUBCOMMAND_PERMS makes
+                  # for `gh variable`.
+                  return scope, f"actions/{rest[1]}"
               return (scope, rest[0]) if rest else (scope, None)
 
 

@@ -406,6 +406,76 @@ CASES = [
             ['gh api "repos/${GITHUB_REPOSITORY:?}/actions/variables/X"']),
      True, ("actions/variables", "never grants")),
 
+    # --- the code review of #939's Gate 12 lines --------------------------
+    ("gh api flags before the path are skipped, not read as the path: "
+     "`gh api -i -X POST .../issues/...` under github.token with only "
+     "actions:read fails, naming issues",
+     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
+            ['s="$(gh api -i -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" -f body=x)"']),
+     True, ("issues", "write")),
+
+    ("... a valued flag consumes its value: `gh api -H 'Accept: x' --silent "
+     "PATH` resolves PATH (.../commits/... is a Contents read)",
+     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
+            ["gh api -H 'Accept: application/json' --silent \"repos/${GITHUB_REPOSITORY}/commits/main\""]),
+     True, ("commits", "contents")),
+
+    ("a `<<WORD` inside quotes is not a heredoc opener: a call after "
+     "`echo 'v<<EOF'` is still scanned",
+     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
+            ["echo 'verdict<<VERDICT_EOF'",
+             'gh issue comment 1 --body hi',
+             "echo 'VERDICT_EOF'"]),
+     True, ("issue comment", "issues")),
+
+    ("... while a real heredoc body still hides its text",
+     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
+            ["python3 - <<'PY'",
+             'print("gh issue comment 1 --body hi")',
+             "PY"]),
+     False, ()),
+
+    ("gh api .../actions/permissions is the Administration permission, not "
+     "Actions: github.token with actions:write fails, naming administration",
+     mkcase(ACTIONS_WRITE, "", [DEFAULT_ENV],
+            ['gh api "repos/${GITHUB_REPOSITORY}/actions/permissions"']),
+     True, ("actions/permissions", "administration", "never grants")),
+
+    ("gh api .../actions/secrets/... is the Secrets permission",
+     mkcase(ACTIONS_WRITE, "", [DEFAULT_ENV],
+            ['gh api "repos/${GITHUB_REPOSITORY}/actions/secrets/public-key"']),
+     True, ("actions/secrets", "secrets")),
+
+    ("gh api .../actions/organization-variables is the Variables permission",
+     mkcase(ACTIONS_WRITE, "", [DEFAULT_ENV],
+            ['gh api "repos/${GITHUB_REPOSITORY}/actions/organization-variables"']),
+     True, ("actions/organization-variables", "variables")),
+
+    ("... and other actions/ sub-paths stay Actions: .../actions/runs under "
+     "github.token with actions:read passes",
+     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
+            ['gh api "repos/${GITHUB_REPOSITORY}/actions/runs?per_page=1"']),
+     False, ()),
+
+    ("gh's repos/{owner}/{repo}/ placeholders are this repository, so the "
+     "call is checked: an Actions read under the App token fails",
+     mkcase("", "", [APP_ENV],
+            ['gh api "repos/{owner}/{repo}/actions/runs"']),
+     True, ("App token", "actions")),
+
+    ("a token minted through the _shared/scoped-app-token composite IS the "
+     "App token: its Actions read fails against the documented grant",
+     mkcase_minted("./.github/actions/_shared/scoped-app-token",
+                   ['gh run list --repo "$E2E_REPO"'], step_id="token"),
+     True, ("run list", "App token", "actions")),
+
+    ("... by its published-stage path too, and an issue create under it "
+     "passes",
+     mkcase_minted("./.wing-commander-pipeline/.github/actions/_shared/scoped-app-token",
+                   ['gh issue create --repo "$E2E_REPO" --title t --body b'],
+                   step_id="token"),
+     False, ()),
+
     ("a Variables call under github.token fails even with no permissions: "
      "block to compare against: no block can grant it (code review of #939)",
      mkcase("", "", [DEFAULT_ENV],
