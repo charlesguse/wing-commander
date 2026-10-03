@@ -1200,8 +1200,14 @@ jobs:
           # a PATH is; one that resolves to no literal (a `$(...)`, an
           # Actions expression, an unassigned variable) fails the gate
           # rather than being read as a read, by the same rule as an
-          # unresolvable PATH (code review of #944).
-          API_METHOD_FLAG_RE = re.compile(r'(?:^|\s)(?:-i*X|--method(?![\w-]))')
+          # unresolvable PATH (code review of #944). Only a flag starting
+          # one of the call's own words counts: a `-X GET` inside another
+          # flag's `$(...)`, backtick or `${...}` value (all executable, so
+          # not blanked) belongs to that value, and reading it as the last
+          # method would turn `-X POST ... -f b="$(gh api ... -X GET)"`
+          # into a read.
+          API_METHOD_FLAG_RE = re.compile(r'(?:^|\s)(?P<flag>-i*X|--method(?![\w-]))')
+          SHELL_WORD_RE = re.compile(SHELL_WORD)
           API_WRITE_METHOD_RE = re.compile(r'(?:POST|PATCH|PUT|DELETE)\b')
 
 
@@ -1229,12 +1235,14 @@ jobs:
               order, one after another, as bash does. A `<<` inside `$((...))`
               is a shift and a `<<<` a here-string, neither an opener; an
               unquoted delimiter must start like a name (`x << 2` is no
-              opener) (code review of #944)."""
+              opener) and end its word: `<<EOF-1` read as `EOF` would hide
+              the rest of the step, so it is no opener either (code review
+              of #944)."""
               out = []
               lines = text.splitlines()
               heredoc_re = re.compile(
                   r"(?<!<)<<(?!<)-?[ \t]*(?:'(\w+)'|" + '"' + r"(\w+)" + '"'
-                  + r"|\\?([A-Za-z_]\w*))")
+                  + r"|\\?([A-Za-z_]\w*)(?=[\s;|&<>)]|$))")
               i = 0
               while i < len(lines):
                   line = lines[i]
@@ -1581,8 +1589,19 @@ jobs:
               can name a write, "read" when it names none or there is no
               method flag; level None when that word is not resolvable."""
               blanked, raw = cmdline
+              starts = set()
+              i, n = 0, len(raw)
+              while i < n:
+                  if raw[i].isspace():
+                      i += 1
+                      continue
+                  starts.add(i)
+                  wm = SHELL_WORD_RE.match(raw, i)
+                  i = wm.end() if wm else (re.compile(r'\S*').match(raw, i).end())
               word = None
               for fm in API_METHOD_FLAG_RE.finditer(blanked):
+                  if fm.start("flag") not in starts:
+                      continue
                   wm = re.match(r'(?:=|\s*)(' + SHELL_WORD + ')', raw[fm.end():])
                   if wm:
                       word = wm.group(1)

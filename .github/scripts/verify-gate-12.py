@@ -629,6 +629,34 @@ CASES = [
              + "-f b=" + "$( ${ ` \"$(" * 50]),
      True, ("gh api", "SUBCOMMAND_PERMS")),
 
+    ("a method flag inside another flag's `$(...)` value is not the "
+     "call's last method: the POST stays a write, so the Issues call under "
+     "issues:read fails",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" '
+             '-f body="$(gh api "repos/${GITHUB_REPOSITORY}/issues/2" --method GET --jq .body)"']),
+     True, ("issues", "write")),
+
+    ("... nor is one inside a backtick value",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" -f body=`echo -X GET`']),
+     True, ("issues", "write")),
+
+    ("... nor one inside a `${...}` value",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" -f body=${X:- -X GET}']),
+     True, ("issues", "write")),
+
+    ("an unquoted heredoc delimiter that does not end its word "
+     "(`<<EOF-1`) opens no heredoc cut at `EOF`: the call after it is "
+     "still scanned",
+     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
+            ["cat <<EOF-1",
+             "x",
+             "EOF-1",
+             'gh issue comment 1 --body hi']),
+     True, ("issue comment", "issues")),
+
     ("a heredoc opener need not end its line: a `cat <<EOF | jq` body is "
      "data, not shell",
      mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
