@@ -2036,7 +2036,13 @@ jobs:
             sc_outcome="failed"
           fi
 
-          dir_claimants="$(find specs -mindepth 1 -maxdepth 1 -type d -name '[0-9][0-9][0-9]-*' 2>/dev/null | jq -R -c '{dir: ., number: .[6:9]}' 2>/dev/null | jq -cs '.' 2>/dev/null || echo '[]')"
+          # A repository with no specs/ yet makes `find` fail; under pipefail
+          # an `|| echo '[]'` inside the substitution then APPENDED a second
+          # `[]` to jq's own `[]`, --argjson below refused the two-line
+          # value, and the collector died recording no outcome (#898, found
+          # by executing this step). The listing tolerates its own absence;
+          # the fallback replaces the value instead of appending to it.
+          dir_claimants="$( { find specs -mindepth 1 -maxdepth 1 -type d -name '[0-9][0-9][0-9]-*' 2>/dev/null || true; } | jq -R -c '{dir: ., number: .[6:9]}' | jq -cs '.')" || dir_claimants='[]'
 
           filter_input="$(jq -n --arg own "$own_number" --argjson prs "$pr_claimants" --argjson dirs "$dir_claimants" \
             '{own_number:$own, pr_claimants:$prs, dir_claimants:$dirs}')"

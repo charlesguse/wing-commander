@@ -1,0 +1,18 @@
+{
+  "_comment": "Every named canonical comment block -- a `# (canonical copy: <name>; do not condense)` marker in a workflow. Gate 47 (verify-comment-canonical-pointers.py, part (d)) fails when a block listed here is gone from its file, or a marker is missing from this list. A deleted block used to pass: its `-- see <file>` pointers kept resolving to other comments sharing their words (#747). Removing a row is how a block is retired; the pointers that relied on it go in the same change.",
+  "blocks": [
+    {"file": "clarify.yml", "name": "image-prerequisites-skip", "topic": "verify-image-prerequisites skips itself when no container image is configured"},
+    {"file": "clarify.yml", "name": "credential-reestablishment", "topic": "re-minting the one-hour App installation token after the agent step (spec 052)"},
+    {"file": "clarify.yml", "name": "push-credential-retry", "topic": "the agent prompt's retry-bound paragraph for a git push failing on an expired credential (spec 071)"},
+    {"file": "clarify.yml", "name": "synchronous-subagents", "topic": "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: headless runs have no turn-boundary resume"},
+    {"file": "clarify.yml", "name": "allowed-bots", "topic": "allowed_bots lists github-actions and the pipeline's own App bot"},
+    {"file": "clarify.yml", "name": "inspection-guidance", "topic": "#266: inspect files with Grep/Glob/Read, never shell loops or unlisted commands"},
+    {"file": "clarify.yml", "name": "anchor-rule", "topic": "#569: gate_or_artifact moves the dedup key only once found inside file_path"},
+    {"file": "clarify.yml", "name": "push-rescue", "topic": "the deterministic rescue for work the agent could not push itself (spec 071 FR-015)"},
+    {"file": "clarify.yml", "name": "cost-report-tolerance", "topic": "FR-009: a lost cost comment must not change the run's conclusion"},
+    {"file": "clarify.yml", "name": "budget-observability", "topic": "FR-017: a fully used turn budget on a healthy run is observability, not failure"},
+    {"file": "clarify.yml", "name": "failed-step-naming", "topic": "naming a credential re-establishment failure ahead of the generic post-agent step failure (spec 052)"},
+    {"file": "finalize.yml", "name": "handoff-validation", "topic": "refuse anything that does not look like a spec hand-off; only validated values reach prompts"},
+    {"file": "intake.yml", "name": "metrics-summary", "topic": "surfacing the run's own metrics in the run summary"}
+  ]
+}

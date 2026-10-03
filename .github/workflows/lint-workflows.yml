@@ -3539,9 +3539,12 @@ jobs:
       # Gate 47 — what makes CLAUDE.md's "Shared logic has exactly one
       # home" claim true: every `-- see FILE` pointer must name a file
       # that exists, its topic prose must share vocabulary with that
-      # file's own text (resolving is not enough), and every
+      # file's own text (resolving is not enough), every
       # `(canonical copy` marker must have at least one such pointer
-      # aimed at it from elsewhere.
+      # aimed at it from elsewhere, and every canonical block is named
+      # and listed in canonical-comment-blocks.json, so deleting one
+      # fails here instead of leaving its pointers resolving to some
+      # other comment (#747).
       - name: Gate 47 — comment pointers and canonical-copy markers are real
         if: "!cancelled()"
         run: python3 .github/scripts/verify-comment-canonical-pointers.py

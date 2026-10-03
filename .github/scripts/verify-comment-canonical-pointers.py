@@ -46,6 +46,23 @@ WHAT IT CHECKS, over `#` comments in .github/workflows/*.yml
     stage names. A marker is justified when some pointer from ANOTHER file
     resolves here and its topic words overlap the block's (test (b)).
 
+(d) EVERY CANONICAL BLOCK IS NAMED AND REGISTERED. A marker reads
+    `(canonical copy: <name>; do not condense)`, and
+    .github/scripts/canonical-comment-blocks.json lists every (file, name)
+    pair. A registered block that is gone from its file fails, and so does
+    a marker the register does not list, an unnamed marker, or a name used
+    twice in one file. Test (b) cannot see a deleted block: its pointers
+    keep resolving to whatever other comment in the same file shares their
+    words (#747 -- deleting clarify.yml's #266 inspection guidance passed
+    with all four of its pointers still "resolving"). The register is the
+    record of what was there, so retiring a block is a visible change to
+    it, made together with the pointers that relied on the block.
+
+A quoted `-- see` example skips (a)'s self-pointer test and (b), never
+(a)'s existence test: a quoted pointer naming a file that does not exist
+is still wrong. An aux `(see X.yml)` naming its own file is a self-pointer
+too. Every violation names the pointer's own line, not its block's first.
+
 Deliberately excluded: rewriting or deduplicating comment prose. This
 checks only that the pointer mechanism is wired to something real.
 
@@ -55,6 +72,7 @@ USAGE
     python3 .github/scripts/verify-comment-canonical-pointers.py --self-test
 """
 import glob
+import json
 import os
 import re
 import sys
@@ -73,6 +91,9 @@ QUOTE_CHARS = ('"', "`")
 # and matching on the shorter fragment alone turns that prose into a
 # phantom marker instance. Every real marker in this repo carries both.
 CANONICAL_MARK_PARTS = ("(canonical copy", "do not condense")
+# Part (d): the name a marker carries, `(canonical copy: <name>; ...`.
+CANONICAL_NAME_RE = re.compile(r"\(canonical copy:\s*([a-z0-9][a-z0-9-]*)\s*;")
+CANONICAL_REGISTER = SCRIPTS_DIR + "/canonical-comment-blocks.json"
 
 # A concrete file the pointer names: `something.yml`, `something.yaml`,
 # `something.py`, or a (possibly path-qualified) `something.md`. Bounded by
@@ -158,15 +179,35 @@ def _joined(block):
     A line ending in "/" or "-" is a continuation marker in this repo's
     prose, so those joins skip the space; everything else gets one.
     """
+    return _joined_with_lines(block)[0]
+
+
+def _joined_with_lines(block):
+    """_joined(block), plus [(offset, lineno)] for where each source line
+    starts in it -- so a pointer found in the joined text reports its own
+    line, not the block's first (#747 review of #829)."""
     out = ""
-    for _, text in block["lines"]:
+    starts = []
+    for lineno, text in block["lines"]:
         if not out:
+            starts.append((0, lineno))
             out = text
         elif out.endswith(("/", "-")):
+            starts.append((len(out), lineno))
             out += text
         else:
+            starts.append((len(out) + 1, lineno))
             out += " " + text
-    return out
+    return out, starts
+
+
+def _line_at(starts, offset):
+    line = starts[0][1] if starts else 0
+    for start, lineno in starts:
+        if start > offset:
+            break
+        line = lineno
+    return line
 
 
 def file_comment_text(path):
@@ -213,19 +254,22 @@ def extract_pointers(root, path):
     """
     out = []
     for block in comment_blocks(path):
-        joined = _joined(block)
+        joined, starts = _joined_with_lines(block)
         for m in POINTER_MARK.finditer(joined):
-            if m.start() > 0 and joined[m.start() - 1] in QUOTE_CHARS:
-                continue  # a quoted example of the pointer form -- (a)
+            # A quoted example of the pointer form -- (a): kept, so the
+            # file it names must still exist, but never a self-pointer or
+            # a topic to test.
+            quoted = m.start() > 0 and joined[m.start() - 1] in QUOTE_CHARS
             prefix = joined[:m.start()]
             suffix = joined[m.end():]
             tm = TARGET_RE.search(suffix)
             target = tm.group(1) if tm else None
             rec = {
                 "file": path,
-                "line": block["start"],
+                "line": _line_at(starts, m.start()),
                 "prefix": _local_topic(prefix),
                 "target": target,
+                "quoted": quoted,
             }
             if target:
                 rec["target_path"] = resolve_target_path(root, target)
@@ -239,7 +283,7 @@ def extract_aux_pointers(root, path):
     .github/workflows/ (see module docstring part (c))."""
     out = []
     for block in comment_blocks(path):
-        joined = _joined(block)
+        joined, starts = _joined_with_lines(block)
         for regex in AUX_POINTER_RES:
             for m in regex.finditer(joined):
                 target = m.group(1) + ".yml"
@@ -249,7 +293,7 @@ def extract_aux_pointers(root, path):
                 prefix = joined[:m.start()]
                 out.append({
                     "file": path,
-                    "line": block["start"],
+                    "line": _line_at(starts, m.start()),
                     "prefix": _local_topic(prefix),
                     "target": target,
                     "target_path": target_path,
@@ -273,9 +317,12 @@ def extract_canonical_blocks(path):
             continue
         rest = " ".join(text for lineno, text in block["lines"]
                          if lineno != marker_line)
+        marker_text = dict(block["lines"])[marker_line]
+        nm = CANONICAL_NAME_RE.search(marker_text)
         out.append({
             "file": path,
             "line": marker_line,
+            "name": nm.group(1) if nm else None,
             "words": significant_words(rest),
         })
     return out
@@ -301,12 +348,14 @@ def check_pointers(root):
             if p["target"] is None:
                 continue  # same-file pointer -- nothing external to check
 
-            # (a) the named file exists.
+            # (a) the named file exists -- quoted or not.
             if not os.path.isfile(p["target_path"]):
                 violations.append(
                     f"{p['file']}:{p['line']}: pointer '-- see {p['target']}' "
                     f"names a file that does not exist ({p['target_path']!r})")
                 continue
+            if p["quoted"]:
+                continue  # a quoted example names a real file; nothing more to test
 
             # (a) a pointer naming its own file points nowhere (#704).
             if (os.path.normcase(os.path.abspath(p["target_path"]))
@@ -328,6 +377,14 @@ def check_pointers(root):
                     f"(topic: {p['prefix']!r}) shares no significant word "
                     f"with {p['target']}'s own text -- looks aimed at the "
                     f"wrong file")
+    for path in workflow_files(root):
+        for p in extract_aux_pointers(root, path):
+            if (os.path.normcase(os.path.abspath(p["target_path"]))
+                    == os.path.normcase(os.path.abspath(p["file"]))):
+                violations.append(
+                    f"{p['file']}:{p['line']}: pointer '(see {p['target']})' "
+                    f"names its own file -- a self-pointer resolves to "
+                    f"nothing; drop it, or point at the real canonical copy")
     return violations, count
 
 
@@ -366,10 +423,61 @@ def check_canonical_markers(root):
     return violations, count
 
 
+def check_canonical_register(root):
+    """Runs (d): every canonical block is named, and the named set equals
+    the register's.
+
+    -> violations: list[str]
+    """
+    violations = []
+    found = {}
+    for path in workflow_files(root):
+        base = os.path.basename(path)
+        for block in extract_canonical_blocks(path):
+            if block["name"] is None:
+                violations.append(
+                    f"{block['file']}:{block['line']}: canonical marker carries "
+                    f"no name -- write `(canonical copy: <name>; do not "
+                    f"condense)` and list ({base}, <name>) in "
+                    f"{CANONICAL_REGISTER} (#747)")
+                continue
+            key = (base, block["name"])
+            if key in found:
+                violations.append(
+                    f"{block['file']}:{block['line']}: canonical name "
+                    f"{block['name']!r} is already used at {base}:{found[key]}")
+                continue
+            found[key] = block["line"]
+    register_path = os.path.join(root, CANONICAL_REGISTER)
+    try:
+        with open(register_path, encoding="utf-8") as f:
+            rows = json.load(f).get("blocks") or []
+        registered = {(r["file"], r["name"]) for r in rows}
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
+        if not found:
+            return violations
+        return violations + [f"{CANONICAL_REGISTER}:1: cannot read the canonical "
+                             f"block register ({exc}) -- part (d) has nothing to "
+                             f"compare the markers against"]
+    for base, name in sorted(registered - set(found)):
+        violations.append(
+            f"{WORKFLOWS_DIR}/{base}:1: canonical block {base}#{name}, listed in "
+            f"{CANONICAL_REGISTER}, is gone. Its `-- see {base}` pointers now "
+            f"resolve to whatever other comment shares their words (#747). "
+            f"Restore the block, or retire it: drop its register row and every "
+            f"pointer that relied on it, in one change.")
+    for base, name in sorted(set(found) - registered):
+        violations.append(
+            f"{WORKFLOWS_DIR}/{base}:{found[(base, name)]}: canonical block "
+            f"{base}#{name} is not listed in {CANONICAL_REGISTER} -- add a row "
+            f"so deleting it later fails this gate")
+    return violations
+
+
 def run_gate(root="."):
     p_violations, p_count = check_pointers(root)
     c_violations, c_count = check_canonical_markers(root)
-    violations = p_violations + c_violations
+    violations = p_violations + c_violations + check_canonical_register(root)
 
     for v in violations:
         file_part = v.split(":", 1)[0]
@@ -556,6 +664,98 @@ def self_test():
         check("aux '(see X stage)' pointer justifies a canonical marker",
               not any("aux-canon.yml" in v for v in c),
               f"got {c!r}")
+        os.remove(os.path.join(wf, "aux-canon.yml"))
+        os.remove(os.path.join(wf, "aux-pointer.yml"))
+
+        # Part (d), #747: the reproduction. canon.yml's block is deleted
+        # while another comment there keeps good.yml's pointer resolving --
+        # (b) still passes, and only the register notices.
+        register = os.path.join(td, CANONICAL_REGISTER)
+
+        def write_register(*pairs):
+            _write(register, json.dumps(
+                {"blocks": [{"file": f, "name": n} for f, n in pairs]}))
+
+        _write(os.path.join(wf, "canon.yml"), (
+            "on: push\n"
+            "jobs:\n"
+            "  a:\n"
+            "    steps:\n"
+            "      # (canonical copy: subagent-sync; do not condense)\n"
+            "      # Force subagents synchronous -- headless has no turn-boundary\n"
+            "      # resume, so a backgrounded subagent silently drops work.\n"
+            "      - run: echo canonical\n"))
+        write_register(("canon.yml", "subagent-sync"))
+        check("a named, registered canonical block passes (d)",
+              not check_canonical_register(td),
+              f"got {check_canonical_register(td)!r}")
+        _write(os.path.join(wf, "canon.yml"), (
+            "on: push\n"
+            "jobs:\n"
+            "  a:\n"
+            "    steps:\n"
+            "      # An unrelated note that happens to say headless and resume.\n"
+            "      - run: echo canonical\n"))
+        p, _ = check_pointers(td)
+        d = check_canonical_register(td)
+        check("a deleted canonical block still passes (b) -- the #747 blind spot",
+              not p, f"got {p!r}")
+        check("a deleted canonical block fails (d), naming it (#747)",
+              any("canon.yml#subagent-sync" in v and "is gone" in v for v in d),
+              f"got {d!r}")
+
+        _write(os.path.join(wf, "canon.yml"), (
+            "on: push\n"
+            "jobs:\n"
+            "  a:\n"
+            "    steps:\n"
+            "      # (canonical copy: subagent-sync; do not condense)\n"
+            "      # Force subagents synchronous.\n"
+            "      - run: echo one\n"
+            "      # (canonical copy: subagent-sync; do not condense)\n"
+            "      # The same name again.\n"
+            "      - run: echo two\n"
+            "      # (canonical copy; do not condense)\n"
+            "      # A marker with no name.\n"
+            "      - run: echo three\n"
+            "      # (canonical copy: never-registered; do not condense)\n"
+            "      # A named marker the register does not list.\n"
+            "      - run: echo four\n"))
+        d = check_canonical_register(td)
+        check("a canonical name used twice in one file fails (d)",
+              any("canon.yml:8" in v and "already used" in v for v in d), f"got {d!r}")
+        check("an unnamed canonical marker fails (d)",
+              any("canon.yml:11" in v and "carries no name" in v for v in d), f"got {d!r}")
+        check("a canonical marker missing from the register fails (d)",
+              any("canon.yml#never-registered" in v and "not listed" in v for v in d),
+              f"got {d!r}")
+
+        # A quoted pointer is not exempt from its target existing; an aux
+        # pointer naming its own file is a self-pointer; a pointer reports
+        # its own line, not its block's first (#747, review of #829).
+        _write(os.path.join(wf, "extras.yml"), (
+            "on: push\n"
+            "jobs:\n"
+            "  a:\n"
+            "    steps:\n"
+            "      # A block whose pointer sits on its third line: the\n"
+            "      # subagent synchronous headless resume rule\n"
+            "      # -- see nowhere-at-all.yml.\n"
+            "      - run: echo own-line\n"
+            "      # Quoted, but naming a missing file: `-- see gone-quoted.yml`.\n"
+            "      - run: echo quoted\n"
+            "      # Surface this run's metrics (see extras.yml).\n"
+            "      - run: echo aux-self\n"))
+        p, _ = check_pointers(td)
+        check("a pointer's violation names its own line, not its block's first",
+              any("extras.yml:7:" in v and "nowhere-at-all.yml" in v for v in p),
+              f"got {p!r}")
+        check("a quoted pointer naming a missing file still fails (a)",
+              any("extras.yml:9:" in v and "gone-quoted.yml" in v for v in p),
+              f"got {p!r}")
+        check("an aux '(see X.yml)' pointer naming its own file fails (a)",
+              any("extras.yml:11:" in v and "names its own file" in v for v in p),
+              f"got {p!r}")
 
     print(f"{failures} failure(s).")
     return 1 if failures else 0
