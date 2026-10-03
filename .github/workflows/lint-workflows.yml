@@ -5169,8 +5169,9 @@ jobs:
       # Gate 119 — gate_scripts() discovers .github/scripts/ only (FR-001), so
       # a test harness or standalone gate script placed under
       # .github/actions/ instead is invisible to Gate 10 and to
-      # run-local-gates.py alike: it belongs at
-      # .github/scripts/<composite>-tests/ instead, for the two reasons
+      # run-local-gates.py alike: a harness belongs at
+      # .github/scripts/<composite>-tests/ and a standalone verify-* at
+      # .github/scripts/ instead, for the two reasons
       # verify-actions-no-gate-scripts.py's own docstring gives. The
       # .github/actions/_shared/ carve-out is structural, not a waiver.
       - name: "Gate 119 — no test harness or standalone gate script lives under .github/actions/"

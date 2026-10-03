@@ -45,14 +45,18 @@ SUBDIR_ENTRYPOINT = "run-tests.sh"
 SHARED_PREFIX = "wc_"
 STANDALONE_VERIFY_RE = re.compile(r"verify-.*\.(?:py|sh)$")
 # #877: a harness under .github/actions/ is not always called run-tests.sh
-# (spec 074's fold-queue fixtures were `tests/run.sh`). Any script inside
-# a `tests`/`test` directory of a composite is a harness too, and a
-# `run.sh` there is its entrypoint. A `run.sh` OUTSIDE such a directory is
-# not: `${{ github.action_path }}/run.sh` is how a composite runs its own
-# body, so it is matched by directory, never by name alone.
-HARNESS_ENTRYPOINT_NAMES = (SUBDIR_ENTRYPOINT, "run.sh")
-HARNESS_DIR_NAMES = ("tests", "test")
-HARNESS_SCRIPT_RE = re.compile(r".*\.(?:sh|bash|py)$")
+# (spec 074's fold-queue fixtures were `tests/run.sh`). Every file inside
+# a `tests`/`test`/`spec`/`__tests__` directory of a composite belongs to
+# a harness -- its scripts, `.bats` files and fixture data alike -- and a
+# `run.sh` or extensionless `run` there is its entrypoint. Neither is
+# outside such a directory: `${{ github.action_path }}/run.sh` is how a
+# composite runs its own body, so it is matched by directory, never by
+# name alone. Outside one, a test-named file (`test_*.py`, `*_test.sh`,
+# `*.bats`) is a test too (code review of #939).
+HARNESS_ENTRYPOINT_NAMES = (SUBDIR_ENTRYPOINT, "run.sh", "run")
+HARNESS_DIR_NAMES = ("tests", "test", "spec", "__tests__")
+TEST_FILE_RE = re.compile(
+    r"(?:test_.+\.(?:py|sh|bash)|.+_test\.(?:py|sh|bash)|.+\.bats)$")
 
 
 def _rel(path):
@@ -94,10 +98,11 @@ def unsupported_actions_scripts(root="."):
     `<root>`, so a sibling checkout directory elsewhere in the tree is
     unreachable by construction. At each directory: a `run-tests.sh`
     entrypoint is always flagged; otherwise a standalone
-    `verify-*.py`/`verify-*.sh`, and any .sh/.bash/.py script inside a
-    composite's `tests`/`test` directory (its `run.sh` included), are
-    flagged (#877) -- a file that shares its directory with a
-    `run-tests.sh` is a helper of that harness, not a second violation.
+    `verify-*.py`/`verify-*.sh`, a test-named file (TEST_FILE_RE), and
+    every file inside a composite's harness directory (HARNESS_DIR_NAMES;
+    its `run.sh` and fixture data included), are flagged (#877) -- a
+    file that shares its directory with a `run-tests.sh` is a helper of
+    that harness, not a second violation.
     A composite's runtime scripts outside such a directory, a top-level
     `run.sh` among them, are not harnesses and are never flagged.
     `.github/actions/_shared/` is pruned from the walk entirely -- the
@@ -121,8 +126,8 @@ def unsupported_actions_scripts(root="."):
         else:
             matches = sorted(
                 n for n in filenames
-                if STANDALONE_VERIFY_RE.match(n)
-                or (in_tests_dir and HARNESS_SCRIPT_RE.match(n)))
+                if in_tests_dir or STANDALONE_VERIFY_RE.match(n)
+                or TEST_FILE_RE.match(n))
         for name in matches:
             r = _rel(os.path.join(dirpath, name))
             out.append(r[len(prefix):] if prefix and r.startswith(prefix) else r)
@@ -442,10 +447,11 @@ def pr_time_inline_steps(root=".",
     a python heredoc.
 
     `runnable` is [(step name, run text)]: steps a local sweep can execute
-    VERBATIM - the whole run: block under bash, exactly as CI does - because
-    they carry no `env:` and no `${{ }}` expression the runner would have to
-    invent a value for. `unrunnable` is [(step name, reason)] for the rest.
-    Returned rather than dropped so verify-gate-wiring.py can fail on a
+    VERBATIM - the whole run: block under `bash -e`, exactly as CI does -
+    because they carry no `env:`, no `${{ }}` expression the runner would
+    have to invent a value for, and no `shell:` (step, job or workflow
+    default) that would change CI's `bash -e {0}`. `unrunnable` is
+    [(step name, reason)] for the rest. Returned rather than dropped so verify-gate-wiring.py can fail on a
     heredoc gate that quietly stopped being rehearsed locally, the same way
     check_local_runner_parity fails on a script gate the tokenizer cannot
     read.
@@ -456,9 +462,12 @@ def pr_time_inline_steps(root=".",
     except (yaml.YAMLError, OSError):
         return [], []
     runnable, unrunnable = [], []
+    wf_shell = ((wf.get("defaults") or {}).get("run") or {}).get("shell")
     for job in (wf.get("jobs") or {}).values():
         if not _job_runs_on_pull_request(job):
             continue
+        job_shell = (((job or {}).get("defaults") or {}).get("run")
+                     or {}).get("shell") or wf_shell
         for step in (job or {}).get("steps") or []:
             run = str((step or {}).get("run") or "")
             if not LOOSE_PY_HEREDOC_RE.search(run):
@@ -466,6 +475,12 @@ def pr_time_inline_steps(root=".",
             name = str(step.get("name") or "(unnamed step)")
             if step.get("env"):
                 unrunnable.append((name, "the step carries an env: block"))
+            elif step.get("shell") or job_shell:
+                # run-local-gates.py runs every inline step as CI's
+                # no-shell default, `bash -e {0}`; any shell: changes the
+                # flags (bash's is -eo pipefail), so it is not verbatim.
+                unrunnable.append((name, "the step runs under a shell: "
+                                         "other than CI's default"))
             elif "${{" in run:
                 unrunnable.append((name, "the run: block carries a ${{ }} "
                                          "expression"))
