@@ -101,14 +101,18 @@ Fails loudly, not vacuously, when any fixture file under the direct,
 heredoc, or round-outcome cases is missing, matching
 verify-board-eligibility.py's own rule.
 
---self-test mutates the shipped workflow and asserts each check family
-detects its own regression: clause 2 dropping the call to
-head_moved_since_last_review() (static); clause 2a's breach carve-out
-deleted (static) or bypassed before it is reached, which the static
-check cannot see (executed); review dropping one stall arm's
---record-stall-summary call (FR-011); and a stall-site step made
-continue-on-error (FR-010). The last three were added after the code
-review of #885 found only two families mutated.
+--self-test mutates the shipped workflow (or, for the direct check, the
+decision function) and asserts each check family detects its own
+regression: clause 2 dropping the call to head_moved_since_last_review()
+(static); clause 2a's breach carve-out deleted (static) or bypassed
+before it is reached, which the static check cannot see (executed);
+review dropping one stall arm's --record-stall-summary call (FR-011); a
+stall-site step made continue-on-error (FR-010);
+head_moved_since_last_review() always reporting a moved head (direct);
+and the round budget compared with -le, so a spent budget continues
+(round outcome). The code review of #885 found only two families
+mutated; the carve-out and continue-on-error mutations followed, and the
+code review of #940 the direct and round-outcome ones.
 """
 import argparse
 import json
@@ -176,7 +180,9 @@ def _fake_run(pr_view, calls):
     return run
 
 
-def direct_call_findings():
+def direct_call_findings(head_moved=head_moved_since_last_review):
+    """`head_moved` is overridable so --self-test can run THIS check against
+    a broken decision function."""
     findings = []
     for case in DIRECT_CASES:
         case_dir = os.path.join(FIXTURES_DIR, case)
@@ -189,7 +195,7 @@ def direct_call_findings():
         pr_view = _load_json(os.path.join(case_dir, "pr-view.json"))
         expected = _load_json(os.path.join(case_dir, "expected.json"))
         calls = []
-        got = head_moved_since_last_review(
+        got = head_moved(
             expected["pr_number"], comments, expected["bot_login"], run=_fake_run(pr_view, calls))
         if got != expected["moved"]:
             findings.append("{0}: head_moved_since_last_review() returned {1!r}, expected {2!r}".format(
@@ -311,7 +317,19 @@ def heredoc_findings(doc, scripts_root=ROOT):
 # SC-006).
 # ---------------------------------------------------------------------------
 
-def round_outcome_restall_findings():
+def _doc_step(doc, name):
+    for job in (doc.get("jobs") or {}).values():
+        for step in (job or {}).get("steps") or []:
+            if isinstance(step, dict) and step.get("name") == name:
+                return step
+    return None
+
+
+def round_outcome_restall_findings(doc=None):
+    """`doc` is the parsed workflow to run the step from -- the real file
+    when omitted -- so --self-test can mutate it (code review of #940: this
+    check read board-loop.yml from disk and ignored the doc every other
+    check takes)."""
     case_dir = os.path.join(FIXTURES_DIR, "fresh-budget-after-readmission",
                             "re-stall-after-fresh-budget-spent")
     env_path = os.path.join(case_dir, "round-outcome-env.json")
@@ -321,7 +339,10 @@ def round_outcome_restall_findings():
         return ["re-stall-after-fresh-budget-spent: missing fixture file(s) {0}".format(missing)]
     env = _load_json(env_path)
     expected = _load_json(expected_path)
-    step = wc_shell_harness.find_step(WORKFLOW, "Decide the round outcome")
+    step = (_doc_step(doc, "Decide the round outcome") if doc is not None
+            else wc_shell_harness.find_step(WORKFLOW, "Decide the round outcome"))
+    if step is None:
+        return ["review: no \"Decide the round outcome\" step found"]
     bash = wc_shell_harness.resolve_bash()
     workdir = tempfile.mkdtemp(prefix="wc-round-outcome-")
     try:
@@ -386,7 +407,7 @@ def run_summary_findings(doc):
 
 def all_findings(doc, scripts_root=ROOT):
     return (clause2_structural_findings(doc) + direct_call_findings()
-            + heredoc_findings(doc, scripts_root) + round_outcome_restall_findings()
+            + heredoc_findings(doc, scripts_root) + round_outcome_restall_findings(doc)
             + no_extra_invocation_findings(doc) + run_summary_findings(doc))
 
 
@@ -435,7 +456,7 @@ def run_selftest(text):
     # Code review of #885: the breach carve-out (clause 2a) and FR-010's
     # continue-on-error rule had no mutation behind them.
     carve_out = "          elif pr_from_fallback:\n              if marker_step == BREACH_STEP:\n"
-    if carve_out not in text:
+    if text.count(carve_out) != 1:
         failures.append("self-test: fixture text not found for the clause 2a breach carve-out: "
                         "{0!r}".format(carve_out))
     else:
@@ -475,6 +496,29 @@ def run_selftest(text):
             failures.append("mutation `a stall-site step made continue-on-error` was NOT detected")
         else:
             print("  detected: a stall-site step made continue-on-error -> {0}".format(found[0]))
+
+    # Code review of #940: the direct-call and round-outcome families had
+    # no mutation either.
+    found = direct_call_findings(head_moved=lambda *a, **k: True)
+    if not found:
+        failures.append("mutation `head_moved_since_last_review() always reports a moved "
+                        "head` was NOT detected")
+    else:
+        print("  detected: head_moved_since_last_review() always True -> {0}".format(found[0]))
+
+    budget_check = 'elif [ "$ROUND" -lt "$ROUND_BUDGET" ]; then'
+    if text.count(budget_check) != 1:
+        failures.append("self-test: fixture text not found exactly once for the round "
+                        "budget comparison: {0!r}".format(budget_check))
+    else:
+        mutated_doc = yaml.safe_load(text.replace(
+            budget_check, 'elif [ "$ROUND" -le "$ROUND_BUDGET" ]; then', 1))
+        found = round_outcome_restall_findings(mutated_doc)
+        if not found:
+            failures.append("mutation `the round budget compared with -le, so a spent budget "
+                            "continues` was NOT detected")
+        else:
+            print("  detected: the round budget compared with -le -> {0}".format(found[0][:160]))
 
     for f in failures:
         print("FAIL: " + f)

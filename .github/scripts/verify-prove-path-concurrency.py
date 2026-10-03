@@ -13,7 +13,8 @@ PR numbers to two distinct group names, neither of which collides with the
 shared ordinary (`wing-commander-board-loop`) or directed-proof
 (`wing-commander-board-loop-directed-proof`) literal; a scheduled run and
 an ordinary dispatch resolve to the ordinary group and a directed dispatch
-to the directed-proof group (the contract's group table); and
+to the directed-proof group (specs/060-self-redrive-concurrency/contracts/
+concurrency-groups.md's "Groups, per job" table, the canonical one); and
 `prove-gate`/`prove` resolve to identical raw group text.
 
 Evaluated, never pattern-matched: a regex for the `format(...)` arm (this
@@ -27,13 +28,14 @@ of #893).
 """
 import argparse
 import os
+import re
 import sys
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from board_prove import (  # noqa: E402
     DIRECTED_GROUP, ORDINARY_GROUP, read_job_concurrency_group)
-from wc_gha_expr import interpolate  # noqa: E402
+from wc_gha_expr import FUNCS, interpolate, tokenize  # noqa: E402
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 REPO_BOARD_LOOP = os.path.join(REPO_ROOT, ".github", "workflows", "board-loop.yml")
@@ -51,6 +53,17 @@ def render_group(group_text, event_name, pr_number=None, directed_stage=""):
         "github.event.pull_request.number": pr_number,
         "inputs.directed-stage": directed_stage if event_name == "workflow_dispatch" else None,
     }
+    # A context name this table does not model would evaluate as null and
+    # could quietly steer the result, so it is an error, not a guess.
+    for expr in re.findall(r"\$\{\{(.*?)\}\}", group_text, re.S):
+        tokens = tokenize(expr)
+        for i, (kind, val) in enumerate(tokens):
+            is_call = i + 1 < len(tokens) and tokens[i + 1] == ("op", "(")
+            if (kind == "name" and not is_call and val not in ("true", "false", "null")
+                    and val not in ctx):
+                raise ValueError("unmodelled context name {0!r}".format(val))
+            if kind == "name" and is_call and val.lower() not in FUNCS:
+                raise ValueError("unmodelled function {0!r}".format(val))
     return interpolate(group_text, ctx)
 
 
@@ -73,7 +86,7 @@ def check(workflow_path, label, failures):
             render_b = render_group(group, "pull_request", PR_NUMBER_B)
             others = [(event, stage, want, render_group(group, event, None, stage))
                       for event, stage, want in NON_PULL_REQUEST_RUNS]
-        except ValueError as exc:
+        except Exception as exc:  # noqa: BLE001 -- any evaluation failure is the finding
             failures.append(
                 "{0}: {1}'s concurrency group cannot be evaluated ({2}) -- this gate "
                 "cannot tell what group a run joins.".format(label, job, exc))
@@ -82,7 +95,8 @@ def check(workflow_path, label, failures):
             if got != want:
                 failures.append(
                     "{0}: {1}'s group resolves to {2!r} for a {3} run{4}, not {5!r} "
-                    "(contracts/prove-path-concurrency.md's group table).".format(
+                    "(specs/060-self-redrive-concurrency/contracts/concurrency-groups.md's "
+                    "\"Groups, per job\" table).".format(
                         label, job, got, event,
                         " with directed-stage {0!r}".format(stage) if stage else "", want))
         if render_a == render_b:
@@ -173,6 +187,13 @@ UNGUARDED_DIRECTED_GROUP = (
     "${{ (github.event_name == 'pull_request' && format('wing-commander-board-loop-prove-"
     "{0}', github.event.pull_request.number)) || '" + DIRECTED_GROUP + "' }}")
 
+# Regression: a clause reads a context name this gate does not model, so
+# its value here (null) need not be what GitHub resolves -- refused rather
+# than evaluated on a guess.
+UNMODELLED_NAME_GROUP = _directed_expr(
+    "((github.event_name == 'pull_request' || github.event.action == 'closed') && "
+    "format('wing-commander-board-loop-prove-{0}', github.event.pull_request.number))")
+
 FIXTURE_CASES = [
     ("pass: per-merge key on both jobs", PASS_GROUP, PASS_GROUP, False),
     ("fail: pull_request branch reverted to the shared literal",
@@ -187,6 +208,8 @@ FIXTURE_CASES = [
      DEAD_ARM_GROUP, DEAD_ARM_GROUP, True),
     ("fail: a scheduled run joins the directed-proof group",
      UNGUARDED_DIRECTED_GROUP, UNGUARDED_DIRECTED_GROUP, True),
+    ("fail: a clause reads a context name the gate does not model",
+     UNMODELLED_NAME_GROUP, UNMODELLED_NAME_GROUP, True),
     ("fail: prove-gate and prove diverge", PASS_GROUP, SHARED_LITERAL_GROUP, True),
 ]
 

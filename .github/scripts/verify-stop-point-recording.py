@@ -46,11 +46,15 @@ WHAT IT CHECKS
    strings count as wired (e.g. triage/route before a branch exists, or
    prove, which tracks no branch at all).
 9. Single home: `.github/workflows/board-loop.yml` never re-derives the
-   stop-cause -> prose/run-label mapping -- no `case` on the cause in any
-   spelling (quoted or not, the STOP_CAUSE name, a variable bound to the
-   composite's `stop-cause` output, or that output's expression), no
-   expression ternary picking prose by comparing the cause to a literal,
-   and none of the composite's own run-labels re-typed. That mapping lives
+   stop-cause -> prose/run-label mapping -- no `case` on the cause (the
+   STOP_CAUSE name quoted or not, braced or with an expansion operator; a
+   variable bound to the composite's `stop-cause` output through env: or
+   a shell assignment, with or without a default, or aliased from one; or
+   that output's expression), no expression ternary picking prose by
+   comparing the cause to a literal (either side, parenthesised or not,
+   through the output, a bound env var or a bound job output), and none
+   of the composite's own run-labels re-typed. An if/elif chain on the
+   cause is not read. That mapping lives
    solely in wing-commander-board-stop-check's own `stop-cause-phrase`/
    `stop-cause-run-label` outputs (CLAUDE.md "Shared logic has exactly one
    home", maintainer review fold leg-2; code review of #899).
@@ -401,27 +405,38 @@ def check_marker_inputs_wired(board_loop_doc=None, verbose=True):
 
 
 # --- Check 9: the stop-cause case block has exactly one home -------------
-# A `case` on the stop-cause in any spelling: the STOP_CAUSE name itself,
-# quoted or not, braced or not; a variable the same step binds to the
-# composite's own `stop-cause` output (env: or a shell assignment); or the
-# output's expression directly (code review of #899: the first form
-# matched only `case "$STOP_CAUSE"`).
-CASE_SUBJECT_RE = re.compile(r'\bcase\s+"?\$\{?(\w+)\}?"?\s+in\b')
-CASE_ON_OUTPUT_RE = re.compile(r'\bcase\s+"?\$\{\{\s*[\w.-]+\.outputs\.stop-cause\s*\}\}"?\s+in\b')
-STOP_CAUSE_OUTPUT_RE = re.compile(r"\$\{\{\s*[\w.-]+\.outputs\.stop-cause\s*\}\}")
-SHELL_BINDING_RE = re.compile(r"""\b(\w+)=["']?\$\{\{\s*[\w.-]+\.outputs\.stop-cause\s*\}\}""")
+# A `case` on the stop-cause: the STOP_CAUSE name itself, quoted or not,
+# braced or not, with or without a parameter-expansion operator
+# (`${STOP_CAUSE,,}`, `${STOP_CAUSE:-}`); a variable bound to the
+# composite's own `stop-cause` output (env: at any level, or a shell
+# assignment, with or without a `|| '...'` default), or aliased from one
+# (`c="$STOP_CAUSE"`); or the output's expression directly (code review of
+# #899, then of #940: the first form matched only `case "$STOP_CAUSE"`).
+_DEFAULT = r"(?:\|\|[^}]*)?"
+STOP_CAUSE_OUTPUT_RE = re.compile(r"\$\{\{\s*[\w.-]+\.outputs\.stop-cause\s*" + _DEFAULT + r"\}\}")
+CASE_SUBJECT_RE = re.compile(r'\bcase\s+"?\$\{?(\w+)[^}"\s]*\}?"?\s+in\b')
+CASE_ON_OUTPUT_RE = re.compile(
+    r'\bcase\s+"?\$\{\{\s*[\w.-]+\.outputs\.stop-cause\s*' + _DEFAULT + r'\}\}"?\s+in\b')
+SHELL_BINDING_RE = re.compile(
+    r"""\b(\w+)=["']?\$\{\{\s*[\w.-]+\.outputs\.stop-cause\s*""" + _DEFAULT + r"\}\}")
+SHELL_ALIAS_RE = re.compile(r"""\b(\w+)=["']?\$\{?(\w+)[^}"'\s]*\}?["']?(?=\s|;|$)""", re.M)
 # The run-label/phrase picked by comparing the cause to a non-empty literal
-# in an expression -- the pre-leg-2 per-job ternary. `stop-cause != ''`
-# ("did any stop win") is the one comparison the callers legitimately make.
-CAUSE_TERNARY_RES = (
-    re.compile(r"outputs\.stop-cause\s*(?:==|!=)\s*'[^']+'\s*&&\s*(?:'|format\()"),
-    re.compile(r"'[^']+'\s*(?:==|!=)\s*[\w.-]+\.outputs\.stop-cause\s*&&\s*(?:'|format\()"),
-)
+# in an expression -- the pre-leg-2 per-job ternary -- on either side of
+# the comparison, parenthesised or not, through the output itself, an env
+# var bound to it, or a job output bound to it. `stop-cause != ''` ("did
+# any stop win") is the comparison the callers legitimately make, and a
+# boolean flag (`&& 'true' || 'false'`) picks no prose.
+_PICK = r"\s*\)?\s*&&\s*\(?\s*(?:'(?!(?:true|false)')|format\()"
 COMPOSITE_RUN_LABEL_RE = re.compile(r'stop_cause_run_label="([^"]+)"')
 
 
 def _non_comment_lines(text):
     return "\n".join(l for l in text.splitlines() if not l.lstrip().startswith("#"))
+
+
+def _bound_env_names(env):
+    return {name for name, value in (env or {}).items()
+            if STOP_CAUSE_OUTPUT_RE.search(str(value))}
 
 
 def _pasted_stop_cause_mappings(text, composite_text):
@@ -431,24 +446,45 @@ def _pasted_stop_cause_mappings(text, composite_text):
     code = _non_comment_lines(text)
     try:
         doc = yaml.safe_load(text) or {}
-    except yaml.YAMLError:
-        doc = {}
-    for job_id, job in ((doc.get("jobs") or {}) if isinstance(doc, dict) else {}).items():
-        job_env = (job or {}).get("env") or {}
-        for step in (job or {}).get("steps") or []:
-            run = _non_comment_lines(str((step or {}).get("run") or ""))
-            env = dict(job_env, **((step or {}).get("env") or {}))
-            bound = {name for name, value in env.items()
-                     if STOP_CAUSE_OUTPUT_RE.search(str(value))}
+    except yaml.YAMLError as exc:
+        return ["board-loop.yml does not parse ({0}), so check 9 cannot read its "
+                "steps".format(str(exc).splitlines()[0])]
+    jobs = (doc.get("jobs") or {}) if isinstance(doc, dict) else {}
+    workflow_env = _bound_env_names(doc.get("env") if isinstance(doc, dict) else {})
+    env_names, job_outputs = set(workflow_env), set()
+    for job_id, job in jobs.items():
+        job = job or {}
+        job_env = workflow_env | _bound_env_names(job.get("env"))
+        env_names |= job_env
+        job_outputs |= {(job_id, name) for name, value in (job.get("outputs") or {}).items()
+                        if re.search(r"outputs\.stop-cause\b(?!-)", str(value))}
+        for step in job.get("steps") or []:
+            step = step or {}
+            run = _non_comment_lines(str(step.get("run") or ""))
+            bound = {"STOP_CAUSE"} | job_env | _bound_env_names(step.get("env"))
+            env_names |= _bound_env_names(step.get("env"))
             bound |= set(SHELL_BINDING_RE.findall(run))
+            while True:
+                more = {lhs for lhs, rhs in SHELL_ALIAS_RE.findall(run)
+                        if rhs.upper() in {b.upper() for b in bound}} - bound
+                if not more:
+                    break
+                bound |= more
+            bound_upper = {b.upper() for b in bound}
             for m in CASE_SUBJECT_RE.finditer(run):
-                if m.group(1).upper() == "STOP_CAUSE" or m.group(1) in bound:
+                if m.group(1).upper() in bound_upper:
                     found.append("job {0!r} step {1!r}: `{2}`".format(
-                        job_id, (step or {}).get("name"), m.group(0)))
+                        job_id, step.get("name"), m.group(0)))
             for m in CASE_ON_OUTPUT_RE.finditer(run):
                 found.append("job {0!r} step {1!r}: `{2}`".format(
-                    job_id, (step or {}).get("name"), m.group(0)))
-    for pattern in CAUSE_TERNARY_RES:
+                    job_id, step.get("name"), m.group(0)))
+    causes = [r"[\w.-]+\.outputs\.stop-cause\b(?!-)"]
+    causes += [r"env\." + re.escape(n) + r"\b" for n in sorted(env_names)]
+    causes += [r"needs\." + re.escape(j) + r"\.outputs\." + re.escape(o) + r"\b"
+               for j, o in sorted(job_outputs)]
+    cause = "(?:" + "|".join(causes) + ")"
+    for pattern in (re.compile(cause + r"\s*(?:==|!=)\s*'[^']+'" + _PICK),
+                    re.compile(r"'[^']+'\s*(?:==|!=)\s*" + cause + _PICK)):
         for m in pattern.finditer(code):
             found.append("an expression picking prose by cause: `{0}`".format(m.group(0)))
     for label in sorted(set(COMPOSITE_RUN_LABEL_RE.findall(composite_text))):
@@ -775,6 +811,32 @@ CHECK9_MUTATIONS = (
      "&& 'paused' || 'halted' }}\"\n"),
     ("one of the composite's run-labels re-typed", "",
      '          label="triage: stopped (stop-request)"\n'),
+    ("a parameter-expansion `case ${STOP_CAUSE,,}`", "",
+     "          case \"${STOP_CAUSE,,}\" in\n          esac\n"),
+    ("an env var bound to the output with a default", 
+     "        env:\n          C: ${{ steps.killswitch-recheck.outputs.stop-cause || 'none' }}\n",
+     '          case "$C" in\n          esac\n'),
+    ("a two-hop shell alias of STOP_CAUSE", "",
+     '          c="$STOP_CAUSE"\n          case "$c" in\n          esac\n'),
+    ("a parenthesised ternary", "",
+     "          echo \"${{ (steps.killswitch-recheck.outputs.stop-cause == 'stop-request') "
+     "&& 'paused' || 'halted' }}\"\n"),
+    ("a literal-first ternary", "",
+     "          echo \"${{ 'kill-switch' == steps.killswitch-recheck.outputs.stop-cause "
+     "&& 'halted' || 'paused' }}\"\n"),
+    ("a ternary on an env var bound to the output",
+     "        env:\n          CAUSE_ENV: ${{ steps.killswitch-recheck.outputs.stop-cause }}\n",
+     "          echo \"${{ env.CAUSE_ENV == 'kill-switch' && 'halted' || 'paused' }}\"\n"),
+)
+# Legitimate shapes check 9 must leave alone: gating on the cause, and a
+# boolean flag that picks no prose.
+CHECK9_ALLOWED = (
+    ("an if: gated on the cause", "",
+     "          echo gated\n",
+     "        if: steps.killswitch-recheck.outputs.stop-cause == 'stop-request'\n"),
+    ("a boolean flag derived from the cause", "",
+     "          echo \"${{ steps.killswitch-recheck.outputs.stop-cause == 'stop-request' "
+     "&& 'true' || 'false' }}\"\n", ""),
 )
 
 
@@ -790,6 +852,20 @@ def selftest_check9():
             failures += 1
         else:
             print("note: mutation caught ({0}).".format(case))
+    for name, env, run, step_if in CHECK9_ALLOWED:
+        case = "{0} -> check 9 leaves it alone".format(name)
+        job = _CHECK9_JOB.format(env=env, run=run)
+        if step_if:
+            job = job.replace("      - name: re-pasted mapping\n",
+                              "      - name: re-pasted mapping\n" + step_if, 1)
+        mutated = base.rstrip("\n") + "\n" + job
+        yaml.safe_load(mutated)
+        if check_no_pasted_stop_cause_case(text=mutated, verbose=False):
+            print("::error::verify-stop-point-recording self-test: {0}: wrongly "
+                  "flagged.".format(case))
+            failures += 1
+        else:
+            print("note: negative control held ({0}).".format(case))
     return failures
 
 
@@ -812,9 +888,11 @@ CHECK_SELFTEST_COVERAGE = {
 }
 
 
+# One literal path, not os.path.join pieces: verify-gate-wiring.py finds a
+# gate's subject documents by their path text, and requires lint-workflows'
+# pull_request paths: filter to name each one.
 CONTRACT = os.path.join(
-    REPO_ROOT, "specs", "097-recorded-stop-point", "contracts",
-    "gate-135-stop-point-recording.md")
+    REPO_ROOT, "specs/097-recorded-stop-point/contracts/gate-135-stop-point-recording.md")
 CONTRACT_ROW_RE = re.compile(r"^\|\s*(\d+)\s*\|", re.M)
 
 

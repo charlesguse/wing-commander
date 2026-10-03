@@ -418,11 +418,41 @@ def run_directed_dispatch_reaches_prove_gate():
     return failures
 
 
+def run_board_pr_owned_jq_single_home():
+    """BOARD_PR_OWNED_JQ's program text lives once, in board-loop.yml's
+    top-level env:, and every reader takes it from there (CLAUDE.md "Shared
+    logic has exactly one home"; code review of #940). This fixture used to
+    re-type it; this check fails on the next copy anywhere under .github/."""
+    failures = 0
+    copies = []
+    for top in ("workflows", "actions", "scripts"):
+        for dirpath, dirnames, filenames in os.walk(os.path.join(REPO_ROOT, ".github", top)):
+            dirnames[:] = [d for d in dirnames if d != "__pycache__"]
+            for name in filenames:
+                path = os.path.join(dirpath, name)
+                try:
+                    with open(path, encoding="utf-8") as fh:
+                        n = fh.read().count(BOARD_PR_OWNED_JQ)
+                except (OSError, UnicodeDecodeError):
+                    continue
+                if n:
+                    copies.append((os.path.relpath(path, REPO_ROOT), n))
+    if copies != [(os.path.relpath(REPO_BOARD_LOOP, REPO_ROOT), 1)]:
+        failures += 1
+        print("::error::verify-board-prove-recovery: BOARD_PR_OWNED_JQ's program text "
+              "must appear exactly once, in board-loop.yml's top-level env:, found "
+              "{0!r} -- read it from there instead of re-typing it.".format(copies))
+    else:
+        print("[ok] BOARD_PR_OWNED_JQ's program text has one home, board-loop.yml's env:")
+    return failures
+
+
 def run():
     failures = (run_is_recoverable() + run_find_recoverable_items() + run_marker_round_trip()
                 + run_directed_recovery_input_spelling()
                 + run_displacement_writer_passes_outcome_reason()
-                + run_directed_dispatch_reaches_prove_gate())
+                + run_directed_dispatch_reaches_prove_gate()
+                + run_board_pr_owned_jq_single_home())
     print("verify-board-prove-recovery: {0} failure(s).".format(failures))
     return 1 if failures else 0
 

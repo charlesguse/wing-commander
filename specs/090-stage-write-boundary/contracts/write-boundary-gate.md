@@ -216,7 +216,8 @@ caught:
 14. The Route step's `fromJSON(inputs.iteration) >=
     fromJSON(steps.cap.outputs.max)` disjunct dropped — re-runs (d)'s
     iteration-cap scenario against the mutated text, must fail (code
-    review of #836).
+    review of #836; the gate's own mutation 19, since its numbering and
+    this list's have drifted apart).
 
 ## Out of scope for this gate
 

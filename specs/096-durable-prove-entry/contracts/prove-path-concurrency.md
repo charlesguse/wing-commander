@@ -64,7 +64,9 @@ real `board-loop.yml`, using `board_prove.read_job_concurrency_group()`
    requires.
 2. The same expression resolves a scheduled run and an ordinary
    dispatch to `wing-commander-board-loop`, and a directed dispatch to
-   `wing-commander-board-loop-directed-proof` — the table above.
+   `wing-commander-board-loop-directed-proof` — the canonical "Groups, per
+   job" table in
+   `specs/060-self-redrive-concurrency/contracts/concurrency-groups.md`.
 3. `prove-gate` and `prove` resolve to identical raw group text (both
    branches), so the two jobs chained by `needs:` can never desync into
    different groups.
