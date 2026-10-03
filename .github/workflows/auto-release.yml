@@ -1694,7 +1694,9 @@ jobs:
               "gh api issues/comments succeeds" "$RUNNER_TEMP/auto-release-final-comments-err.txt"
           fi
           comments_json="$(jq -cs '.' "$RUNNER_TEMP/auto-release-final-comments.ndjson" 2>/dev/null || echo '[]')"
-          markers_json="$(printf '%s' "$comments_json" | bash .github/actions/_shared/auto-release-e2e-clarify-decision.sh markers 2>/dev/null || echo '[]')"
+          # `|| markers_json='[]'` sits outside the substitution so a failed
+          # read replaces the value; inside it, pipefail would append `[]`.
+          markers_json="$(printf '%s' "$comments_json" | bash .github/actions/_shared/auto-release-e2e-clarify-decision.sh markers 2>/dev/null)" || markers_json='[]'
           if printf '%s' "$markers_json" | jq -e 'length > 0' >/dev/null 2>&1; then
             questionnaire_posted=true
           else

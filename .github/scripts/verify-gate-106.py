@@ -163,18 +163,47 @@ def check_structural(text):
 # --------------------------------------------------------------------------
 # Executed-step half: container-evidence-config (T012)
 # --------------------------------------------------------------------------
-STUB_GH_CONFIG = r'''#!/usr/bin/env bash
+# Both stubs below hold what GitHub returns and reduce it with the caller's
+# own `--jq`/`-q` program through real jq, as gh does (#766). Pre-filtered
+# output never ran that program, so a wrong key in it passed. `emit BODY
+# [RAW]` prints RAW verbatim when set (gh output the shipped code must
+# itself refuse to parse), else BODY through the caller's program.
+STUB_GH_JQ_PRELUDE = r'''#!/usr/bin/env bash
+jq_prog=""
+prev=""
+for arg in "$@"; do
+  case "$prev" in --jq|-q) jq_prog="$arg" ;; esac
+  prev="$arg"
+done
+emit() {
+  if [ -n "${2:-}" ]; then printf '%s\n' "$2"; return 0; fi
+  if [ -n "$jq_prog" ]; then printf '%s' "$1" | jq -rc "$jq_prog"; else printf '%s' "$1"; fi
+}
+'''
+
+# `gh variable list --json name,value` prints the repository's variables
+# as a JSON array of {name, value}; checks.sh's read_repo_container_image_
+# variable selects WING_COMMANDER_CONTAINER_IMAGE from it with `-q`.
+STUB_GH_CONFIG = STUB_GH_JQ_PRELUDE + r'''
 if [ "$1 $2" = "variable list" ]; then
   if [ "${GH_STUB_VAR_FAIL:-}" = "true" ]; then
     echo "${GH_STUB_VAR_ERR:-unexpected error}" >&2
     exit 1
   fi
-  printf '%s' "${GH_STUB_VAR_VALUE-}"
-  exit 0
+  emit "${GH_STUB_VARS_JSON:-[]}"
+  exit $?
 fi
 echo "unexpected gh invocation: $*" >&2
 exit 1
 '''
+
+
+def variables(**pairs):
+    """`gh variable list --json name,value` output for NAME=value pairs."""
+    return json.dumps([{"name": k, "value": v} for k, v in pairs.items()])
+
+
+IMAGE_VAR = "WING_COMMANDER_CONTAINER_IMAGE"
 
 
 REPO_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")
@@ -210,7 +239,7 @@ def render_step(step):
 CONFIG_BASE_ENV = dict(
     E2E_REPO="owner/e2e-target", HEAD_SHA=HEAD, MODE="container",
     WC_SOURCE_CONTAINER_IMAGE="ghcr.io/example/image:1.2.3",
-    GH_STUB_VAR_VALUE="", GH_STUB_VAR_FAIL="", GH_STUB_VAR_ERR="",
+    GH_STUB_VARS_JSON="[]", GH_STUB_VAR_FAIL="", GH_STUB_VAR_ERR="",
 )
 
 CONFIG_SCENARIOS = [
@@ -221,19 +250,19 @@ CONFIG_SCENARIOS = [
     ),
     dict(
         name="FR-005(i) not configured: variable absent on the test repository",
-        env=dict(GH_STUB_VAR_VALUE=""),
+        env=dict(GH_STUB_VARS_JSON=variables(OTHER_VARIABLE="ghcr.io/example/image:1.2.3")),
         ok="false",
         failing_check="container image not configured on the test repository",
     ),
     dict(
         name="FR-005(i) not configured: variable present but empty (Edge Case)",
-        env=dict(GH_STUB_VAR_VALUE=""),
+        env=dict(GH_STUB_VARS_JSON=variables(**{IMAGE_VAR: ""})),
         ok="false",
         failing_check="container image not configured on the test repository",
     ),
     dict(
         name="FR-005(ii) drift: variable set to a different image",
-        env=dict(GH_STUB_VAR_VALUE="ghcr.io/example/image:9.9.9"),
+        env=dict(GH_STUB_VARS_JSON=variables(**{IMAGE_VAR: "ghcr.io/example/image:9.9.9"})),
         ok="false",
         failing_check="container image configured but does not match this repository's pin",
     ),
@@ -251,7 +280,12 @@ CONFIG_SCENARIOS = [
     ),
     dict(
         name="FR-005(vi) configured and matching: proceeds",
-        env=dict(GH_STUB_VAR_VALUE="ghcr.io/example/image:1.2.3"),
+        # Variables whose names contain the image variable's, either side
+        # of it: only an exact-name select picks the right value.
+        env=dict(GH_STUB_VARS_JSON=variables(**{
+            IMAGE_VAR + "_PREVIOUS": "ghcr.io/example/image:0.0.1",
+            IMAGE_VAR: "ghcr.io/example/image:1.2.3",
+            "OLD_" + IMAGE_VAR: "ghcr.io/example/image:0.0.2"})),
         ok="true", verdict=None,
         expected_image="ghcr.io/example/image:1.2.3",
         observed_image="ghcr.io/example/image:1.2.3",
@@ -325,23 +359,11 @@ def suite_config(script, env, tmproot, source_root=REPO_ROOT):
 # Executed-step half: poll step's execution-evidence fragment (T012)
 # --------------------------------------------------------------------------
 # The stub holds REST-shaped responses -- `{"workflow_runs": [...]}`,
-# `{"jobs": [...]}`, what GitHub returns -- and reduces them with the
-# caller's own `--jq` program through real jq (#766). Pre-filtered output
-# never ran that program, so a wrong key in it (`.runs[]` for
-# `.workflow_runs[]`) passed. A `*_RAW` variable bypasses jq: gh output the
-# shipped code must itself refuse to parse. A jobs read for a run id with no
-# fixture fails the way GitHub's 404 does.
-STUB_GH_EXECUTION = r'''#!/usr/bin/env bash
-jq_prog=""
-prev=""
-for arg in "$@"; do
-  [ "$prev" = "--jq" ] && jq_prog="$arg"
-  prev="$arg"
-done
-emit() {
-  if [ -n "$2" ]; then printf '%s\n' "$2"; return 0; fi
-  if [ -n "$jq_prog" ]; then printf '%s' "$1" | jq -rc "$jq_prog"; else printf '%s' "$1"; fi
-}
+# `{"jobs": [...]}` -- through STUB_GH_JQ_PRELUDE's `emit`, so a wrong key
+# in the shipped `--jq` (`.runs[]` for `.workflow_runs[]`) fails. A `*_RAW`
+# variable is emit's RAW. A jobs read for a run id with no fixture fails
+# the way GitHub's 404 does.
+STUB_GH_EXECUTION = STUB_GH_JQ_PRELUDE + r'''
 if [ "$1" = "api" ]; then
   case "$2" in
     repos/*/actions/runs\?*)
@@ -737,6 +759,44 @@ WORKFLOW_MUTATIONS = [
      mut_cleanup_guard_loosened),
 ]
 
+def _mut_checks_text(text, old, new):
+    if text.count(old) != 1:
+        fail(f"verify-gate-106: expected exactly one {old!r} in "
+             f"{CHECKS_SCRIPT_REL} to mutate, found {text.count(old)} -- "
+             f"update this gate alongside it.")
+    return text.replace(old, new, 1)
+
+
+def mut_config_jq_wrong_key(text):
+    """A wrong key in read_repo_container_image_variable's `-q` select."""
+    return _mut_checks_text(
+        text, 'select(.name=="WING_COMMANDER_CONTAINER_IMAGE")',
+        'select(.key=="WING_COMMANDER_CONTAINER_IMAGE")')
+
+
+def mut_config_jq_wrong_field(text):
+    """A wrong value field in read_repo_container_image_variable's `-q`."""
+    return _mut_checks_text(
+        text, 'select(.name=="WING_COMMANDER_CONTAINER_IMAGE") | .value',
+        'select(.name=="WING_COMMANDER_CONTAINER_IMAGE") | .val')
+
+
+def mut_config_jq_substring_match(text):
+    """The exact-name select loosened to a substring match."""
+    return _mut_checks_text(
+        text, 'select(.name=="WING_COMMANDER_CONTAINER_IMAGE")',
+        'select(.name | contains("WING_COMMANDER_CONTAINER_IMAGE"))')
+
+
+CHECKS_MUTATIONS = [
+    ("the variable-list -q selects .key instead of .name",
+     mut_config_jq_wrong_key),
+    ("the variable-list -q prints .val instead of .value",
+     mut_config_jq_wrong_field),
+    ("the variable-list -q matches any name containing the variable's",
+     mut_config_jq_substring_match),
+]
+
 DECISION_MUTATIONS = [
     ("the config decision's drift comparison disabled (a differing "
      "image would read as configured)",
@@ -744,8 +804,8 @@ DECISION_MUTATIONS = [
 ]
 
 
-def run_full_suite(workflow_text, decision_text, tmproot):
-    """Stage a (possibly mutated) copy of the two subject files into a
+def run_full_suite(workflow_text, decision_text, tmproot, checks_text=None):
+    """Stage a (possibly mutated) copy of the subject files into a
     scratch root and run every scenario against it. Returns the combined
     failures list; empty means everything passed. `root` (not the real
     repository) is used as every scenario's source_root, so a mutated
@@ -765,6 +825,10 @@ def run_full_suite(workflow_text, decision_text, tmproot):
         dst = os.path.join(root, rel)
         os.makedirs(os.path.dirname(dst), exist_ok=True)
         shutil.copyfile(src, dst)
+    if checks_text is not None:
+        with open(os.path.join(root, CHECKS_SCRIPT_REL), "w",
+                  encoding="utf-8", newline="\n") as fh:
+            fh.write(checks_text)
 
     failures = list(check_structural(workflow_text))
 
@@ -790,7 +854,7 @@ def run_full_suite(workflow_text, decision_text, tmproot):
 BASH = None
 
 
-def run_selftest(workflow_text, decision_text):
+def run_selftest(workflow_text, decision_text, checks_text):
     tmproot = tempfile.mkdtemp()
     failures = []
     try:
@@ -818,6 +882,19 @@ def run_selftest(workflow_text, decision_text):
             else:
                 print(f"::error::MUTATION SURVIVED - {label}.")
                 failures.append(f"mutation survived: {label}")
+        for label, mutate in CHECKS_MUTATIONS:
+            mutated = mutate(checks_text)
+            if mutated == checks_text:
+                print(f"::error::mutation {label!r} changed nothing.")
+                failures.append(f"mutation inapplicable: {label}")
+                continue
+            broke = run_full_suite(workflow_text, decision_text, tmproot,
+                                   checks_text=mutated)
+            if broke:
+                print(f"Mutation OK - {label}: {len(broke)} assertion(s) fail.")
+            else:
+                print(f"::error::MUTATION SURVIVED - {label}.")
+                failures.append(f"mutation survived: {label}")
     finally:
         shutil.rmtree(tmproot, ignore_errors=True)
     return failures
@@ -833,6 +910,7 @@ def main():
 
     workflow_text = read(WORKFLOW)
     decision_text = read(DECISION_SCRIPT_REL)
+    checks_text = read(CHECKS_SCRIPT_REL)
 
     self_test = "--self-test" in sys.argv[1:]
 
@@ -843,7 +921,7 @@ def main():
             print(f"::error::{f}")
 
         if self_test:
-            failures += run_selftest(workflow_text, decision_text)
+            failures += run_selftest(workflow_text, decision_text, checks_text)
     finally:
         shutil.rmtree(tmproot, ignore_errors=True)
 

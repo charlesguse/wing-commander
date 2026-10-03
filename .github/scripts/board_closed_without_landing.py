@@ -33,7 +33,18 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 FINALIZE_TERMINAL_STAGE = "review"
+# The legacy bare marker, posted before notices were keyed by spec-request.
+# Still read (see _has_notice()), never written.
 NOTICE_MARKER = "<!-- wing-commander-closed-without-landing -->"
+NOTICE_MARKER_KEYED = "<!-- wing-commander-closed-without-landing spec-request={0} -->"
+
+
+def notice_marker(spec_request_number):
+    """The marker a notice about `spec_request_number`'s closure carries.
+    Keyed, because an originating issue can be reopened and re-routed to a
+    second spec-request: a bare marker left by the first closure's notice
+    suppressed the second's (found by the code review of #937)."""
+    return NOTICE_MARKER_KEYED.format(spec_request_number)
 
 
 def closed_without_landing(spec_requests):
@@ -50,21 +61,34 @@ def closed_without_landing(spec_requests):
     return result
 
 
-def _has_notice(comments):
-    return any(NOTICE_MARKER in (comment.get("body") or "") for comment in comments or [])
+def _has_notice(comments, issue_number, spec_request_number):
+    """True when `comments` (on `issue_number`) already carry the notice
+    about `spec_request_number`'s closure: its keyed marker, or a legacy
+    bare marker that can only have been about it -- on the spec-request
+    itself, which has one closure, or on an originating issue whose notice
+    names `(#N)` (_originating_notice_body())."""
+    keyed = notice_marker(spec_request_number)
+    named = "(#{0})".format(spec_request_number)
+    for comment in comments or []:
+        body = comment.get("body") or ""
+        if keyed in body:
+            return True
+        if NOTICE_MARKER in body and (issue_number == spec_request_number or named in body):
+            return True
+    return False
 
 
-def post_notice(issue_number, repository, body, existing_comments, run=None):
-    """Posts `body` + NOTICE_MARKER on `issue_number` unless
-    `existing_comments` already carries the marker (idempotency, same
-    presence-check shape as board_duplicate_disposition.py's own comment
-    gating). Returns True on success (including the already-posted no-op),
-    False on any `gh` failure."""
-    if _has_notice(existing_comments):
+def post_notice(issue_number, repository, body, existing_comments, spec_request_number, run=None):
+    """Posts `body` + notice_marker(spec_request_number) on `issue_number`
+    unless `existing_comments` already carries that notice (idempotency,
+    same presence-check shape as board_duplicate_disposition.py's own
+    comment gating). Returns True on success (including the already-posted
+    no-op), False on any `gh` failure."""
+    if _has_notice(existing_comments, issue_number, spec_request_number):
         return True
     run = run or subprocess.run
     proc = run(["gh", "issue", "comment", str(issue_number), "-R", repository,
-                "--body", "{0}\n\n{1}".format(body, NOTICE_MARKER)],
+                "--body", "{0}\n\n{1}".format(body, notice_marker(spec_request_number))],
                capture_output=True, text=True)
     if proc.returncode != 0:
         print("::error::board_closed_without_landing: could not post the closed-without-landing "
@@ -108,11 +132,11 @@ def post_notices(spec_requests, repository, run=None):
             # request to the board" would be false (FR-006, FR-017). Only
             # the spec-request itself is told, in words that say so.
             if not post_notice(number, repository, _superseded_notice_body(superseded_on),
-                                entry.get("comments"), run=run):
+                                entry.get("comments"), number, run=run):
                 failures += 1
             continue
         if not post_notice(number, repository, _spec_request_notice_body(),
-                            entry.get("comments"), run=run):
+                            entry.get("comments"), number, run=run):
             failures += 1
             continue
         originating = entry.get("originating_issue")
@@ -122,7 +146,7 @@ def post_notices(spec_requests, repository, run=None):
                   "notice was posted.".format(number))
             continue
         if not post_notice(originating, repository, _originating_notice_body(number),
-                            entry.get("originating_comments"), run=run):
+                            entry.get("originating_comments"), number, run=run):
             failures += 1
     return failures
 

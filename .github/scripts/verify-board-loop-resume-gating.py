@@ -2153,13 +2153,11 @@ def _mutations(text):
     # at all -- they dispose of the originating issue as a duplicate
     # instead (contracts/duplicate-disposition.md) -- so the count drops
     # from 7 to 4 (triage's hand-over, fix's gate-red, review's three
-    # stalls). The board reset of 2026-10-01 adds two workflow-scope holds
-    # (route's, on the drafted diff, and fix's pre-push one, on the
-    # fixer's real diff): a fix this loop cannot push is held under
-    # board:stalled, never filed as a spec. Review-fixup's push holds its
-    # own follow-up commit the same way (found by the code review of #901).
-    if len(render_at) != 7:
-        raise AssertionError("self-test: expected 7 literal stalled renders, found {0}".format(len(render_at)))
+    # stalls). The three workflow-scope holds (route's, fix's pre-push and
+    # review-fixup's) render theirs inside board_workflow_scope_hold.py,
+    # their one home, which verify-board-route-backstop.py gates.
+    if len(render_at) != 4:
+        raise AssertionError("self-test: expected 4 literal stalled renders, found {0}".format(len(render_at)))
     for n, at in enumerate(render_at):
         flags_at = text.index(stall_flags, at)
         muts.append(("stalled render #{0}: no --issue/--add-label".format(n + 1),

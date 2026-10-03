@@ -170,10 +170,176 @@ def hold_wiring_problems(workflow_text):
     if len(holds) != 1:
         problems.append("board-loop.yml route job: expected exactly one step gated on "
                         "`steps.decide.outputs.verdict == 'hold'`, found {0}".format(len(holds)))
-    elif "--step stalled" not in str(holds[0].get("run", "")):
-        problems.append("board-loop.yml route job: the hold step does not render a "
-                        "`--step stalled` marker, so a held item is never parked")
+    return problems + workflow_scope_single_home_problems(doc, workflow_text)
+
+
+# The three workflow-scope hold sites (found by the code review of #921):
+# (job, --site value, step name). board_workflow_scope_hold.py is the one
+# home of the path check and the hold sequence; each site calls it.
+HOLD_SITES = (
+    ("route", "route", "Hold a workflow-file fix for a maintainer"),
+    ("fix", "fix", "Push and open the PR"),
+    ("review", "review-fixup", "Push the follow-up commit and advance the round"),
+)
+HOLD_HELPER = "board_workflow_scope_hold.py"
+CAN_PUSH_EXPR = "${{ vars.WING_COMMANDER_BOARD_CAN_PUSH_WORKFLOWS == 'true' }}"
+# An inline copy of the check: a shell test of a path against
+# .github/workflows/ (grep, case or [[ ]]), anywhere in board-loop.yml.
+INLINE_CHECK_RE = re.compile(
+    r"^[^#\n]*(?:\bgrep\b|\bcase\b|\[\[)[^#\n]*\.github/workflows/", re.MULTILINE)
+# An inline copy of the hold comment's prose.
+INLINE_HOLD_PROSE = "which this loop cannot push"
+
+
+def workflow_scope_single_home_problems(doc, workflow_text):
+    """Each hold site calls board_workflow_scope_hold.py with its own
+    --site, the board:stalled label named at the call site, and the
+    maintainer's CAN_PUSH_WORKFLOWS switch; and board-loop.yml carries no
+    second copy of the check or of the hold comment."""
+    problems = []
+    jobs = (doc or {}).get("jobs") or {}
+    for job, site, name in HOLD_SITES:
+        steps = [st for st in (jobs.get(job) or {}).get("steps") or []
+                 if isinstance(st, dict) and st.get("name") == name]
+        if len(steps) != 1:
+            problems.append("board-loop.yml {0} job: expected one step named {1!r}, found "
+                            "{2}".format(job, name, len(steps)))
+            continue
+        run = str(steps[0].get("run", ""))
+        if not re.search(re.escape(HOLD_HELPER) + r'"? --site ' + re.escape(site) + " ", run):
+            problems.append("board-loop.yml {0} job, {1!r}: no `{2} --site {3}` call -- the "
+                            "workflow-scope check and hold must go through it".format(
+                                job, name, HOLD_HELPER, site))
+        for needle in ('--add-label "board:stalled"',
+                       '--can-push-workflows "$CAN_PUSH_WORKFLOWS"'):
+            if needle not in run:
+                problems.append("board-loop.yml {0} job, {1!r}: `{2}` not found -- the "
+                                "workflow-scope check and hold must go through {3}".format(
+                                    job, name, needle, HOLD_HELPER))
+        if '[ "$held"' not in run:
+            problems.append("board-loop.yml {0} job, {1!r}: the helper's held/clear answer "
+                            "is never read".format(job, name))
+        env = steps[0].get("env") or {}
+        if str(env.get("CAN_PUSH_WORKFLOWS", "")).replace(" ", "") != CAN_PUSH_EXPR.replace(" ", ""):
+            problems.append("board-loop.yml {0} job, {1!r}: CAN_PUSH_WORKFLOWS is not "
+                            "`{2}`".format(job, name, CAN_PUSH_EXPR))
+    for m in INLINE_CHECK_RE.finditer(workflow_text):
+        problems.append("board-loop.yml:{0}: an inline `.github/workflows/` path check -- "
+                        "use {1}, the check's one home".format(
+                            workflow_text.count("\n", 0, m.start()) + 1, HOLD_HELPER))
+    if INLINE_HOLD_PROSE in workflow_text:
+        problems.append("board-loop.yml: an inline copy of the workflow-scope hold comment "
+                        "(`{0}`) -- {1} is its one home".format(INLINE_HOLD_PROSE, HOLD_HELPER))
     return problems
+
+
+class _Proc:
+    def __init__(self, returncode):
+        self.returncode = returncode
+
+
+def _run_hold(argv, stdin_text, fail_on=None):
+    """Runs board_workflow_scope_hold.main() with a recording `gh` stub;
+    `fail_on` ("edit" or "comment") makes that gh call fail. Returns
+    (rc, stdout, gh calls, step-summary text)."""
+    import io
+    import tempfile
+    from contextlib import redirect_stderr, redirect_stdout
+    import board_workflow_scope_hold as hold_mod
+    calls = []
+
+    def run(args, **_kwargs):
+        calls.append(list(args))
+        return _Proc(1 if fail_on and args[:3] == ["gh", "issue", fail_on] else 0)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        summary = os.path.join(tmp, "summary")
+        open(summary, "w").close()
+        saved = {k: os.environ.get(k) for k in ("GITHUB_REPOSITORY", "GITHUB_STEP_SUMMARY")}
+        os.environ.update(GITHUB_REPOSITORY="o/r", GITHUB_STEP_SUMMARY=summary)
+        out = io.StringIO()
+        try:
+            with redirect_stdout(out), redirect_stderr(io.StringIO()):
+                rc = hold_mod.main(argv, stdin=io.StringIO(stdin_text), run=run)
+        finally:
+            for k, v in saved.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+        with open(summary, encoding="utf-8") as fh:
+            return rc, out.getvalue().strip(), calls, fh.read()
+
+
+def hold_helper_failures():
+    """board_workflow_scope_hold.py, executed: the check and the hold
+    sequence every workflow-scope hold site shares (found by the code
+    review of #921)."""
+    import board_workflow_scope_hold as hold_mod
+    failures = 0
+    base = ["--issue", "7", "--add-label", "board:stalled"]
+    wf = ".github/workflows/x.yml\nsrc/a.py\n"
+
+    def ck(title, cond, detail=""):
+        nonlocal failures
+        if cond:
+            print("[ok] board_workflow_scope_hold: {0}".format(title))
+        else:
+            failures += 1
+            print("::error::verify-board-route-backstop: board_workflow_scope_hold: {0} -- "
+                  "{1}".format(title, detail))
+
+    rc, out, calls, _ = _run_hold(["--site", "fix", "--can-push-workflows", "false"] + base,
+                                  "src/a.py\n.github/actions/wing-commander-x/action.yml\n")
+    ck("no workflow file -> clear, nothing posted", rc == 0 and out == "clear" and calls == [],
+       "rc={0} out={1!r} calls={2!r}".format(rc, out, calls))
+    rc, out, calls, _ = _run_hold(["--site", "fix", "--can-push-workflows", "true"] + base, wf)
+    ck("a workflow file with the App's Workflows permission -> clear",
+       rc == 0 and out == "clear" and calls == [], "rc={0} out={1!r}".format(rc, out))
+    rc, out, calls, summary = _run_hold(
+        ["--site", "fix", "--can-push-workflows", "false", "--branch", "board/fix-7",
+         "--base-sha", "abc"] + base, wf + "./.github/workflows/sub/y`z.yml\n")
+    body = calls[1][-1] if len(calls) == 2 else ""
+    ck("a workflow file -> label first, then one comment, then the summary line",
+       rc == 0 and out == "held" and len(calls) == 2
+       and calls[0][:3] == ["gh", "issue", "edit"] and "board:stalled" in calls[0]
+       and calls[1][:4] == ["gh", "issue", "comment", "7"]
+       and "`.github/workflows/x.yml`" in body and "y`z" not in body
+       and "src/a.py" not in body and '"step": "stalled"' in body
+       and '"branch": "board/fix-7"' in body
+       and "fix (workflow-scope hold)" in summary,
+       "rc={0} out={1!r} calls={2!r} summary={3!r}".format(rc, out, calls, summary))
+    rc, out, calls, summary = _run_hold(
+        ["--site", "review-fixup", "--can-push-workflows", "false", "--pr", "70"] + base, wf)
+    ck("review-fixup's comment names its PR",
+       rc == 0 and out == "held" and "PR #70" in calls[-1][-1]
+       and "review-fixup (workflow-scope hold)" in summary,
+       "rc={0} calls={1!r}".format(rc, calls))
+    rc, out, calls, summary = _run_hold(["--site", "route", "--can-push-workflows", "false"] + base,
+                                        "./.github/workflows/a b.yml\n", fail_on=None)
+    ck("an unrenderable path falls back to naming the directory",
+       rc == 0 and "a file under `.github/workflows/`" in calls[-1][-1]
+       and "a b" not in calls[-1][-1], "calls={0!r}".format(calls))
+    rc, out, calls, summary = _run_hold(["--site", "fix", "--can-push-workflows", "false"] + base,
+                                        wf, fail_on="edit")
+    ck("a failed label add posts nothing and fails (#604)",
+       rc == 1 and out == "" and len(calls) == 1 and summary == "",
+       "rc={0} out={1!r} calls={2!r}".format(rc, out, calls))
+    rc, out, calls, summary = _run_hold(["--site", "fix", "--can-push-workflows", "false"] + base,
+                                        wf, fail_on="comment")
+    ck("a failed comment fails and records no summary line (FR-011)",
+       rc == 1 and out == "" and summary == "", "rc={0} out={1!r} summary={2!r}".format(rc, out, summary))
+
+    # The check is workflow_push_blocked_paths(), not a copy: a helper
+    # that never blocks must fail the held case above.
+    original = hold_mod.workflow_push_blocked_paths
+    hold_mod.workflow_push_blocked_paths = lambda paths, can_push: []
+    try:
+        rc, out, _, _ = _run_hold(["--site", "fix", "--can-push-workflows", "false"] + base, wf)
+    finally:
+        hold_mod.workflow_push_blocked_paths = original
+    ck("mutation caught (the helper's check never blocks)", out != "held")
+    return failures
 
 
 def _load(path):
@@ -455,6 +621,8 @@ def run():
             print("::error::verify-board-route-backstop: normalize_category("
                   "{0!r}) == {1!r}, expected {2!r}.".format(raw, got, want))
 
+    failures += hold_helper_failures()
+
     try:
         with open(BOARD_LOOP, encoding="utf-8") as fh:
             workflow_text = fh.read()
@@ -479,8 +647,23 @@ def run():
                  "widened = []"),
                 ("hold step gated off", "steps.decide.outputs.verdict == 'hold'",
                  "steps.decide.outputs.verdict == 'held'"),
-                ("hold step stops stalling", "--step stalled --issue \"$ISSUE_NUMBER\" --add-label \"board:stalled\")\" \\\n            || { echo \"::error::board-loop route (workflow-scope hold)",
-                 "--step route)\" \\\n            || { echo \"::error::board-loop route (workflow-scope hold)")):
+                ("hold step stops stalling", "board_workflow_scope_hold.py --site route ",
+                 "board_item_marker.py --step route "),
+                ("fix's pre-push check pasted back inline",
+                 '          held="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_workflow_scope_hold.py" --site fix ',
+                 '          if [ "$CAN_PUSH_WORKFLOWS" != "true" ] && grep -q \'^\\.github/workflows/\' <<<"$changed_paths"; then exit 0; fi\n'
+                 '          held="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_workflow_scope_hold.py" --site fix '),
+                ("review-fixup's call names the wrong site",
+                 "board_workflow_scope_hold.py\" --site review-fixup ", "board_workflow_scope_hold.py\" --site fix "),
+                ("review-fixup ignores the answer", 'if [ "$held" = "held" ]; then\n            exit 0\n          fi\n          # The step\'s default shell',
+                 "# The step's default shell"),
+                ("a hold comment pasted back inline",
+                 "          changed_paths=\"$(git diff --name-only \"$REVIEWED_SHA\" HEAD)\"\n",
+                 "          changed_paths=\"$(git diff --name-only \"$REVIEWED_SHA\" HEAD)\"\n"
+                 "          # The follow-up changes a workflow file, which this loop cannot push.\n"),
+                ("fix's switch dropped",
+                 "          BASE_SHA: ${{ steps.base.outputs.base-sha }}\n          CAN_PUSH_WORKFLOWS: ${{ vars.WING_COMMANDER_BOARD_CAN_PUSH_WORKFLOWS == 'true' }}\n",
+                 "          BASE_SHA: ${{ steps.base.outputs.base-sha }}\n          CAN_PUSH_WORKFLOWS: 'false'\n")):
             if old not in workflow_text:
                 failures += 1
                 print("::error::verify-board-route-backstop: mutation {0!r} "

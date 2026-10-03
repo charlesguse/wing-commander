@@ -67,7 +67,7 @@ drop-detection.
    of size zero fails the gate as misconfigured; a SUBJECT_FLOOR member
    missing from the derived set fails the gate, naming the pair (FR-022,
    Constitution Principle VIII; spec 072 FR-004).
-5. Every "Record agent-ran signal", "Refresh authenticated spec-branch
+5. Every "Record agent-ran signal", "Refresh authenticated [spec-branch]
    remote (post-agent...)", and "Determine failed post-agent step" step,
    in EVERY job in every loaded workflow file, resolves through its one
    shared composite home (`.github/actions/wing-commander-agent-ran-signal`,
@@ -117,6 +117,16 @@ drop-detection.
     and would otherwise leave the exemption in place with nothing left to
     check it (#735; the stale-waiver check Gate 105 already does for
     labels).
+11. Each agent step's credential-status call (the one check 6 finds by its
+    mint-outcome) passes a `refresh-outcome` reading the `.outcome` of
+    that agent step's OWN refresh-remote step, in its own window (code
+    review of #947; `.conclusion` is always 'success' under the refresh
+    step's continue-on-error, code review of #951): the
+    input defaults to 'success', so a dropped or cross-wired input leaves
+    a failed refresh unattributed while check 6 still passes. A
+    NO_REMOTE_REFRESH_JOBS job may omit it; if it passes one, every step
+    it names must sit in that agent step's window. Step references in
+    checks 6 and 11 match case-insensitively, as GitHub resolves them.
 
 Static structure only (`yaml.safe_load`) -- this gate's subject is step
 *ordering and reference shape*, not step *behaviour*, so no
@@ -149,8 +159,11 @@ Reviewer's agent-ran signal, and the Reviewer's own credential-status call
 (whose mint id prefixes review-fixup's); a derived subject with no floor
 membership and no exemption; the derived set emptied; a SUBJECT_FLOOR
 member this feature itself adds losing its agent step; and an EXEMPT_JOBS
-entry's named job renamed away, leaving the entry stale (#735) -- and
-asserts each one fails.
+entry's named job renamed away, leaving the entry stale (#735); a
+credential-status call's refresh-outcome dropped, pointed at another
+agent step's refresh, or (e2e-stage) at a pre-agent step; and board-loop's
+fixer refresh step reverted to an inline block -- and asserts each one
+fails. Negative control: step references spelled in upper case pass.
 
 Usage: python3 .github/scripts/verify-post-agent-credential-refresh.py [--self-test]
 """
@@ -234,7 +247,10 @@ OVER_BUDGET_NAME_RE = re.compile(
 SINGLE_HOME_STEPS = [
     (re.compile(r"^Record agent-ran signal\b"),
      "wing-commander-agent-ran-signal"),
-    (re.compile(r"^Refresh authenticated spec-branch remote \(post-agent"),
+    # board-loop's fix and review jobs name theirs "Refresh authenticated
+    # remote (post-agent, <agent>)" -- no spec branch there (code review
+    # of #947).
+    (re.compile(r"^Refresh authenticated (?:spec-branch )?remote \(post-agent"),
      "wing-commander-refresh-remote"),
     (re.compile(r"^Determine failed post-agent step$"),
      "wing-commander-failed-post-agent-step"),
@@ -354,19 +370,45 @@ def _is_mint_step(step):
 # ANY step id, so an unrelated step dumped for logging/diagnostics -- not
 # the credential mint -- would otherwise be reported as a stale
 # credential reference.
-_STEP_ID_RE = re.compile(r"steps(?:\.([\w-]+)|\[[\'\"]([\w-]+)[\'\"]\])")
+_STEP_ID_RE = re.compile(
+    r"steps(?:\.([\w-]+)|\[[\'\"]([\w-]+)[\'\"]\])", re.IGNORECASE)
+
+
+# A step reference plus the property read from it (group 3/4), e.g.
+# `steps.refresh-remote.outcome` / `steps['refresh-remote']['conclusion']`.
+# Used by check 11 to require .outcome of a continue-on-error refresh step.
+_STEP_PROP_RE = re.compile(
+    r"steps(?:\.([\w-]+)|\[[\'\"]([\w-]+)[\'\"]\])"
+    r"(?:\s*\.\s*([\w-]+)|\s*\[\s*[\'\"]([\w-]+)[\'\"]\s*\])?",
+    re.IGNORECASE)
+
+
+def _step_ref_re(step_id):
+    """A `steps.<step_id>` / `steps['<step_id>']` reference to exactly this
+    id. (?![\w-]), not \b: a hyphen is a word boundary, so
+    `reestablish-review\b` also matched review-fixup's
+    `steps.reestablish-review-fixup.outcome` and hid a deleted Reviewer
+    credential-status call (code review of #733/#848). Case-insensitive:
+    GitHub expressions resolve context and property names in any case, so
+    `STEPS.reestablish.outcome` is the same reference (code review of
+    #947)."""
+    return re.compile(
+        rf"steps(?:\.{re.escape(step_id)}(?![\w-])"
+        rf"|\[[\'\"]{re.escape(step_id)}[\'\"]\])",
+        re.IGNORECASE)
 
 
 def _toJSON_dump_is_mint(matched_text, mint_ids):
     """A `toJSON(steps.<id>...)` match only implicates a credential when
     <id> names a mint step in this job. `toJSON(steps)` (the whole
     context, no id to extract) always implicates one when the job has a
-    mint step at all, since the dumped context necessarily carries it."""
-    if matched_text == "toJSON(steps)":
+    mint step at all, since the dumped context necessarily carries it.
+    Compared case-insensitively, as GitHub resolves the expression."""
+    if matched_text.lower() == "tojson(steps)":
         return bool(mint_ids)
     m = _STEP_ID_RE.search(matched_text)
     ref_id = (m.group(1) or m.group(2)) if m else None
-    return ref_id in mint_ids
+    return ref_id is not None and ref_id.lower() in {str(i).lower() for i in mint_ids}
 
 
 def _is_relay_step(step):
@@ -644,7 +686,7 @@ def check_job_full_subject(path, job_name, job):
             continue
         name = (step or {}).get("name", "<unnamed step>")
         m = TOKEN_REF_RE.search(_step_text(step))
-        if m and m.group(0).startswith("toJSON(") and not _toJSON_dump_is_mint(m.group(0), mint_ids):
+        if m and m.group(0).lower().startswith("tojson(") and not _toJSON_dump_is_mint(m.group(0), mint_ids):
             continue
         if m:
             failures.append(
@@ -720,18 +762,12 @@ def check_job_full_subject(path, job_name, job):
             ((s or {}).get("id") for s in between if _is_mint_step(s)), None)
         if mint_id is None or not mint_id_re.match(str(mint_id)):
             continue  # no mint id to cross-reference; check 2 already flags a missing mint.
-        mint_ref_re = re.compile(
-            # (?![\w-]), not \b: a hyphen is a word boundary, so
-            # `reestablish-review\b` also matched review-fixup's
-            # `steps.reestablish-review-fixup.outcome` and hid a deleted
-            # Reviewer credential-status call (code review of #733/#848).
-            rf"steps(?:\.{re.escape(mint_id)}(?![\w-])"
-            rf"|\[[\'\"]{re.escape(mint_id)}[\'\"]\])")
-        referenced = any(
-            "wing-commander-post-agent-credential-status" in str((s or {}).get("uses", ""))
-            and mint_ref_re.search(_step_text(s))
-            for s in steps)
-        if not referenced:
+        mint_ref_re = _step_ref_re(mint_id)
+        status_calls = [
+            s for s in steps
+            if "wing-commander-post-agent-credential-status" in str((s or {}).get("uses", ""))
+            and mint_ref_re.search(_step_text(s))]
+        if not status_calls:
             failures.append(
                 f"{path} [{job_name}]: agent step {agent_name!r}'s mint "
                 f"step (id: {mint_id!r}) is never referenced by any "
@@ -740,6 +776,78 @@ def check_job_full_subject(path, job_name, job):
                 f"no credential-status call of its OWN, even though the "
                 f"job-wide total may look sufficient (FR-020, FR-021, "
                 f"third maintainer review of PR #407 hole (c))")
+            continue
+
+        # check 11 -- the same call's refresh-outcome names THIS window's
+        # refresh step (code review of #947). The input defaults to
+        # 'success', so dropping it, or pointing it at another agent step's
+        # refresh, still passes check 6 while a failed refresh in this
+        # window is never attributed to the credential. A job that never
+        # refreshes a remote (NO_REMOTE_REFRESH_JOBS) may omit the input;
+        # when it passes one (e2e-stage's scratch-token re-mint), every
+        # step it names must sit in this window, and a value naming no step
+        # (a literal 'skipped') passes as omitting it would (code review
+        # of #951).
+        window_ids = {str((s or {}).get("id")) for s in between if (s or {}).get("id")}
+        if (path, job_name) in NO_REMOTE_REFRESH_JOBS:
+            refresh_ids, required = window_ids, False
+        else:
+            refresh_steps = [s for s in between
+                             if "wing-commander-refresh-remote" in str((s or {}).get("uses", ""))]
+            refresh_ids = {str(s["id"]) for s in refresh_steps
+                           if (s or {}).get("id") and mint_id_re.match(str(s["id"]))}
+            required = True
+            if refresh_steps and not refresh_ids:
+                failures.append(
+                    f"{path} [{job_name}]: agent step {agent_name!r}'s "
+                    f"wing-commander-refresh-remote call has no id, so no "
+                    f"credential-status call can name its outcome (check 11)")
+                continue
+            if not refresh_steps:
+                continue  # the missing refresh call is check 6's failure.
+        for call in status_calls:
+            call_name = (call or {}).get("name", "<unnamed step>")
+            refresh_input = str(((call or {}).get("with") or {}).get("refresh-outcome", ""))
+            named = {(m.group(1) or m.group(2)).lower()
+                     for m in _STEP_ID_RE.finditer(refresh_input)}
+            allowed = {i.lower() for i in refresh_ids}
+            # The refresh step is continue-on-error: true, so only its
+            # .outcome records a failure -- .conclusion is always 'success'
+            # and .outputs.* carries no failure at all. A required job must
+            # read .outcome of every refresh step it names (code review of
+            # #951).
+            if required:
+                bad_props = sorted({
+                    (m.group(0)) for m in _STEP_PROP_RE.finditer(refresh_input)
+                    if (m.group(1) or m.group(2)).lower() in allowed
+                    and (m.group(3) or m.group(4) or "").lower() != "outcome"})
+                if bad_props:
+                    failures.append(
+                        f"{path} [{job_name}]: credential-status call "
+                        f"{call_name!r} for agent step {agent_name!r} reads "
+                        f"{', '.join(bad_props)} in refresh-outcome -- the "
+                        f"refresh step is continue-on-error: true, so only "
+                        f"its .outcome records a failed refresh (FR-004; "
+                        f"check 11)")
+            if not refresh_input.strip():
+                if required:
+                    failures.append(
+                        f"{path} [{job_name}]: credential-status call "
+                        f"{call_name!r} for agent step {agent_name!r} has no "
+                        f"refresh-outcome -- it defaults to 'success', so a "
+                        f"failed refresh of this agent step's remote is "
+                        f"never attributed to the credential (FR-004; "
+                        f"check 11)")
+            elif not named <= allowed or (required and not named & allowed):
+                failures.append(
+                    f"{path} [{job_name}]: credential-status call "
+                    f"{call_name!r} for agent step {agent_name!r} passes "
+                    f"refresh-outcome {refresh_input!r}, which does not "
+                    f"name this agent step's own "
+                    f"{'refresh-remote step' if required else 'post-agent steps'}"
+                    f" ({', '.join(sorted(refresh_ids)) or 'none'}) -- a "
+                    f"failed refresh here would be attributed to another "
+                    f"window, or to nothing (FR-004; check 11)")
 
     # check 7 (the failed-post-agent-step composite CALL must exist, not
     # merely be well-formed when present under a recognized name) -- third
@@ -1373,6 +1481,88 @@ def mut_board_loop_reviewer_status_deleted(loaded):
     _delete_step_by_id(job, "credential-status-review")
 
 
+def mut_clarify_refresh_outcome_dropped(loaded):
+    """Check 11 (code review of #947): the refresh-outcome input dropped,
+    so it defaults to 'success' and a failed refresh is unattributed."""
+    job = loaded[".github/workflows/clarify.yml"]["jobs"]["clarify"]
+    step = _find_step(job, "Determine post-agent credential status")
+    assert step is not None, "fixture assumption broken: step renamed"
+    assert "refresh-outcome" in step["with"], \
+        "fixture assumption broken: refresh-outcome already missing"
+    del step["with"]["refresh-outcome"]
+
+
+def mut_implement_refresh_outcome_cross_wired(loaded):
+    """Check 11: the progress agent step's credential-status call reads the
+    cycle agent step's refresh outcome -- check 6 still sees its own
+    mint-outcome, so only check 11 catches it."""
+    job = loaded[".github/workflows/implement.yml"]["jobs"]["implement"]
+    step = _find_step(job, "Determine post-agent credential status (progress)")
+    assert step is not None, "fixture assumption broken: step renamed"
+    assert step["with"]["refresh-outcome"] == "${{ steps.refresh-remote-progress.outcome }}", \
+        "fixture assumption broken: refresh-outcome changed"
+    step["with"]["refresh-outcome"] = "${{ steps.refresh-remote-cycle.outcome }}"
+
+
+def mut_clarify_refresh_outcome_conclusion(loaded):
+    """Check 11 (code review of #951): refresh-outcome reads the window's
+    own refresh step's .conclusion, which is always 'success' under
+    continue-on-error: true, so a failed refresh is unattributed."""
+    job = loaded[".github/workflows/clarify.yml"]["jobs"]["clarify"]
+    step = _find_step(job, "Determine post-agent credential status")
+    assert step is not None, "fixture assumption broken: step renamed"
+    assert step["with"]["refresh-outcome"] == "${{ steps.refresh-remote.outcome }}", \
+        "fixture assumption broken: refresh-outcome changed"
+    step["with"]["refresh-outcome"] = "${{ steps.refresh-remote.conclusion }}"
+
+
+def mut_e2e_refresh_outcome_pre_agent(loaded):
+    """Check 11, NO_REMOTE_REFRESH_JOBS arm: e2e-stage's refresh-outcome
+    pointed at the PRE-agent scratch-token mint instead of its post-agent
+    re-mint."""
+    job = loaded[".github/workflows/auto-update-spec-kit.yml"]["jobs"]["e2e-stage"]
+    step = _find_step(job, "Determine post-agent credential status")
+    assert step is not None, "fixture assumption broken: step renamed"
+    value = step["with"]["refresh-outcome"]
+    assert "steps.scratch-token-post-agent." in value, \
+        "fixture assumption broken: refresh-outcome changed"
+    step["with"]["refresh-outcome"] = value.replace(
+        "steps.scratch-token-post-agent.", "steps.scratch-token.")
+
+
+def mut_board_loop_fixer_refresh_inlined(loaded):
+    """Check 5 (code review of #947): board-loop names its refresh steps
+    "Refresh authenticated remote (post-agent, <agent>)", which the
+    single-home pattern used to miss. Reverted to an inline block."""
+    job = loaded[".github/workflows/board-loop.yml"]["jobs"]["fix"]
+    step = _find_step(job, "Refresh authenticated remote (post-agent, fixer)")
+    assert step is not None, "fixture assumption broken: step renamed"
+    step.pop("uses", None)
+    step.pop("with", None)
+    step["run"] = 'git remote set-url origin "https://x-access-token:${WC_BOT_TOKEN}@github.com/o/r"'
+
+
+def mut_upper_case_step_references(loaded):
+    """NEGATIVE control (code review of #947): GitHub resolves `STEPS.x`
+    and `Steps.X` like `steps.x`, so upper-case references to the window's
+    own mint and refresh steps must still pass checks 6 and 11."""
+    job = loaded[".github/workflows/clarify.yml"]["jobs"]["clarify"]
+    step = _find_step(job, "Determine post-agent credential status")
+    assert step is not None, "fixture assumption broken: step renamed"
+    step["with"]["mint-outcome"] = "${{ STEPS.reestablish.outcome }}"
+    step["with"]["refresh-outcome"] = "${{ Steps['Refresh-Remote'].outcome }}"
+
+
+def mut_e2e_refresh_outcome_literal(loaded):
+    """NEGATIVE control (code review of #951): a NO_REMOTE_REFRESH_JOBS job
+    may omit refresh-outcome, so a value naming no step at all (a literal
+    'skipped') must pass check 11 just as omitting it does."""
+    job = loaded[".github/workflows/auto-update-spec-kit.yml"]["jobs"]["e2e-stage"]
+    step = _find_step(job, "Determine post-agent credential status")
+    assert step is not None, "fixture assumption broken: step renamed"
+    step["with"]["refresh-outcome"] = "skipped"
+
+
 def mut_exempt_job_deleted(loaded):
     """#735: an EXEMPT_JOBS entry naming a job that no longer exists must
     fail. Deleting auto-update-spec-kit.yml's evaluate-path job (not a
@@ -1472,6 +1662,16 @@ SIMPLE_MUTATIONS = [
      "deleted", mut_board_loop_reviewer_status_deleted),
     ("an EXEMPT_JOBS entry's named job deleted, leaving the entry "
      "stale (#735)", mut_exempt_job_deleted),
+    ("clarify.yml's credential-status refresh-outcome dropped",
+     mut_clarify_refresh_outcome_dropped),
+    ("implement.yml's progress credential-status refresh-outcome pointed at "
+     "the cycle agent step's refresh", mut_implement_refresh_outcome_cross_wired),
+    ("clarify.yml's credential-status refresh-outcome reads the refresh "
+     "step's .conclusion", mut_clarify_refresh_outcome_conclusion),
+    ("e2e-stage's credential-status refresh-outcome pointed at the "
+     "pre-agent scratch-token mint", mut_e2e_refresh_outcome_pre_agent),
+    ("board-loop.yml's fixer remote refresh reverted to an inline block",
+     mut_board_loop_fixer_refresh_inlined),
 ]
 
 
@@ -1522,6 +1722,59 @@ def self_test():
         if not (len(broke) == 1 and broke[0].startswith(want)):
             problems.append(f"{mutate.__name__} did not fail with {want!r}: "
                             f"{broke!r}")
+
+    # Check 11's and check 5's mutations must fail on the check that owns
+    # them (code review of #947).
+    for mutate, want in (
+            (mut_clarify_refresh_outcome_dropped,
+             ".github/workflows/clarify.yml [clarify]: credential-status "
+             "call 'Determine post-agent credential status' for agent step "
+             "'Fold answers into the draft spec' has no refresh-outcome"),
+            (mut_implement_refresh_outcome_cross_wired,
+             ".github/workflows/implement.yml [implement]: credential-status "
+             "call 'Determine post-agent credential status (progress)'"),
+            (mut_clarify_refresh_outcome_conclusion,
+             ".github/workflows/clarify.yml [clarify]: credential-status "
+             "call 'Determine post-agent credential status' for agent step "
+             "'Fold answers into the draft spec' reads "
+             "steps.refresh-remote.conclusion"),
+            (mut_e2e_refresh_outcome_pre_agent,
+             ".github/workflows/auto-update-spec-kit.yml [e2e-stage]: "
+             "credential-status call"),
+            (mut_board_loop_fixer_refresh_inlined,
+             ".github/workflows/board-loop.yml [fix] step 'Refresh "
+             "authenticated remote (post-agent, fixer)' does not call the "
+             "wing-commander-refresh-remote composite")):
+        mutated = copy.deepcopy(base)
+        mutate(mutated)
+        broke = scan(mutated)
+        if not any(b.startswith(want) for b in broke):
+            problems.append(f"{mutate.__name__} did not fail with {want!r}: "
+                            f"{broke!r}")
+
+    mutated = copy.deepcopy(base)
+    mut_upper_case_step_references(mutated)
+    broke = scan(mutated)
+    if broke:
+        problems.append(
+            "upper-case step references (STEPS.reestablish, "
+            "Steps['Refresh-Remote']) were not recognised: "
+            f"{'; '.join(broke)}")
+    else:
+        print("Mutation OK (negative control) -- upper-case step references "
+              "are recognised: 0 assertion(s) fail.")
+
+    mutated = copy.deepcopy(base)
+    mut_e2e_refresh_outcome_literal(mutated)
+    broke = scan(mutated)
+    if broke:
+        problems.append(
+            "a NO_REMOTE_REFRESH_JOBS refresh-outcome naming no step "
+            "('skipped') was flagged -- expected 0 assertions, got: "
+            f"{'; '.join(broke)}")
+    else:
+        print("Mutation OK (negative control) -- a literal refresh-outcome "
+              "in a NO_REMOTE_REFRESH_JOBS job passes: 0 assertion(s) fail.")
 
     # Negative control: unlike SIMPLE_MUTATIONS, this mutation must NOT
     # break the gate (#439 review) -- it proves the toJSON(steps.<id>)

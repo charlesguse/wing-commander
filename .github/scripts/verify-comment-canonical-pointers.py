@@ -22,7 +22,8 @@ WHAT IT CHECKS, over `#` comments in .github/workflows/*.yml
     always a sibling stage's pointer pasted back into the canonical file,
     it points nowhere, and test (b) below would pass it trivially because
     a file's comments always share vocabulary with themselves. A `-- see`
-    written inside quotes (`"-- see clarify.yml."`) is a canonical block
+    written inside quotes (`"-- see clarify.yml."`, or the same in single
+    quotes or backticks) is a canonical block
     QUOTING the pointer form its siblings use, not a pointer: only a file
     named inside the quotes is checked to exist (anywhere later in the
     block if the quote never closes, so an unclosed quote fails closed),
@@ -89,7 +90,7 @@ SCRIPTS_DIR = ".github/scripts"
 POINTER_MARK = re.compile(r"--\s*see\b", re.IGNORECASE)
 # A `-- see` opened by one of these is quoted prose describing the pointer
 # form, not a pointer -- part (a) of the module docstring.
-QUOTE_CHARS = ('"', "`")
+QUOTE_CHARS = ('"', "'", "`")
 # Both fragments together, not just "(canonical copy" alone: a rationale
 # comment (this gate's own Gate 47 block included) can legitimately
 # mention the marker phrase in backticks while explaining the convention,
@@ -637,7 +638,9 @@ def self_test():
             "      # headless has no turn-boundary resume -- see self-point.yml.\n"
             "      - run: echo self\n"
             "      # Or in code style: `-- see self-point.yml`.\n"
-            "      - run: echo backtick\n"))
+            "      - run: echo backtick\n"
+            "      # Or single-quoted: '-- see self-point.yml.'\n"
+            "      - run: echo single\n"))
         p, _ = check_pointers(td)
         check("pointer naming its own file is caught",
               any("self-point.yml:7" in v and "names its own file" in v
@@ -648,6 +651,9 @@ def self_test():
               f"got {p!r}")
         check("backtick-quoted '-- see' example is not treated as a self-pointer",
               not any("self-point.yml:9" in v for v in p),
+              f"got {p!r}")
+        check("single-quoted '-- see' example is not treated as a self-pointer",
+              not any("self-point.yml:11" in v for v in p),
               f"got {p!r}")
         os.remove(os.path.join(wf, "self-point.yml"))
 

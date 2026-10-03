@@ -1524,10 +1524,14 @@ jobs:
 # comment body ending in the board_item_marker.py write_marker() HTML
 # comment (contracts/board-item-marker.md); the marker is never the comment's
 # only content. Every durable action (a close, a label, a push, a PR) is
-# preceded by a fresh re-check of the kill switch (research.md D2, FR-051),
-# not only at job start -- Phase 8/T052 additionally layers the stop-comment
-# and issue-state re-check (research.md D17) onto this same re-check point in
-# every job this pattern already touches.
+# preceded by a re-check through wing-commander-board-stop-check (research.md
+# D2, FR-051), not only at job start -- Phase 8/T052 layered the stop-comment
+# and issue-state re-check (research.md D17) onto that same point. Only those
+# two reads are live. The kill-switch half reads `vars`, which the runner
+# fixes when the job starts (#794), so a pause set after a job started is not
+# seen by any of its re-checks and takes effect on the next run: defence in
+# depth, not a mid-run kill -- see lifecycle-review-gate.yml's
+# KILL_SWITCH_PAUSED for the runner evidence.
 # =============================================================================
 
   # Phase 3 (User Story 1, contracts/triage.md): triage reads the cited run's
@@ -2591,23 +2595,25 @@ jobs:
       # already is. It is never filed as a spec -- the spec lifecycle is
       # for design trade-offs, and sending push-permission cases there
       # turned one-line comment fixes into specs with owner questions (the
-      # 2026-10-01 board reset). See workflow_push_blocked_paths().
+      # 2026-10-01 board reset). board_workflow_scope_hold.py is the one
+      # home of the check and the hold, for this site, fix's pre-push check
+      # and review-fixup's.
       - name: Hold a workflow-file fix for a maintainer
         id: hold
         if: steps.killswitch-recheck.outputs.paused != 'true' && steps.decide.outputs.verdict == 'hold'
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           ISSUE_NUMBER: ${{ needs.select.outputs.issue-number }}
+          CAN_PUSH_WORKFLOWS: ${{ vars.WING_COMMANDER_BOARD_CAN_PUSH_WORKFLOWS == 'true' }}
         run: |
           set -uo pipefail
-          # The paths are agent-drafted: only a plain path charset is
-          # rendered, inside a code span; anything else is left out.
-          paths="$(jq -r '.decision.measured.workflow_paths // [] | map(select(test("^[A-Za-z0-9._/-]{1,200}$"))) | map("`" + . + "`") | join(", ")' "$RUNNER_TEMP/board-route-decision.json")"
-          marker="$(python3 .github/scripts/board_item_marker.py --step stalled --issue "$ISSUE_NUMBER" --add-label "board:stalled")" \
-            || { echo "::error::board-loop route (workflow-scope hold): board:stalled could not be added to issue #$ISSUE_NUMBER -- no stalled marker is posted (#604)."; exit 1; }
-          gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Route found this fix-shaped, but its change edits %s, and this loop cannot push a workflow file (the App holds no Workflows permission). Held for a maintainer: fix it from a session whose token has the `workflow` scope, or grant the App Workflows (read and write) and set `WING_COMMANDER_BOARD_CAN_PUSH_WORKFLOWS` to `true`. Removing board:stalled is the sole re-eligibility condition.\n\n%s' "${paths:-a workflow file}" "$marker")" \
-            || { echo "::error::board-loop route (workflow-scope hold): board:stalled was applied to issue #$ISSUE_NUMBER but the stalled-marker comment could not be posted."; exit 1; }
-          python3 .github/scripts/board_item_marker.py --record-stall-summary --issue "$ISSUE_NUMBER" --from-step "route (workflow-scope hold)"
+          held="$(jq -r '.decision.measured.workflow_paths // [] | .[]' "$RUNNER_TEMP/board-route-decision.json" \
+            | python3 .github/scripts/board_workflow_scope_hold.py --site route --issue "$ISSUE_NUMBER" --add-label "board:stalled" --can-push-workflows "$CAN_PUSH_WORKFLOWS")" \
+            || exit 1
+          if [ "$held" != "held" ]; then
+            echo "::error::board-loop route (workflow-scope hold): route's verdict is hold, but no path in its decision is one this loop cannot push -- issue #$ISSUE_NUMBER was not held."
+            exit 1
+          fi
 
       # research.md D9: every artifact this loop spins off outside the
       # originating issue is cross-linked through this one composite
@@ -3070,15 +3076,13 @@ jobs:
           # would refuse (the App holds no Workflows permission) -- held the
           # same way, never left to fail and be resumed into the same
           # refusal on every later run.
-          # Captured first: `git diff | grep -q` under pipefail can fail on
-          # the SIGPIPE grep's early exit sends, and read as "no match".
+          # The check and the hold: board_workflow_scope_hold.py (route's
+          # "Hold a workflow-file fix for a maintainer"). The paths are
+          # captured first, never piped from `git diff`, so a reader that
+          # stops early cannot fail the diff with SIGPIPE under pipefail.
           changed_paths="$(git diff --name-only "$BASE_SHA" HEAD)"
-          if [ "$CAN_PUSH_WORKFLOWS" != "true" ] && grep -q '^\.github/workflows/' <<<"$changed_paths"; then
-            marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step stalled --branch "$BRANCH" --base-sha "$BASE_SHA" --issue "$ISSUE_NUMBER" --add-label "board:stalled")" \
-              || { echo "::error::board-loop fix (workflow-scope hold): board:stalled could not be added to issue #$ISSUE_NUMBER -- no stalled marker is posted (#604)."; exit 1; }
-            gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'The fix for this issue changes a file under `.github/workflows/`, which this loop cannot push (the App holds no Workflows permission). Nothing was pushed; the work is on no branch. Held for a maintainer: fix it from a session whose token has the `workflow` scope, or grant the App Workflows (read and write) and set `WING_COMMANDER_BOARD_CAN_PUSH_WORKFLOWS` to `true`. Removing board:stalled is the sole re-eligibility condition.\n\n%s' "$marker")"
-            python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --record-stall-summary --issue "$ISSUE_NUMBER" --from-step "fix (workflow-scope hold)"
-            echo "board-loop: issue #$ISSUE_NUMBER -- the fixer's change touches .github/workflows/, held for a maintainer instead of pushed." >> "$GITHUB_STEP_SUMMARY"
+          held="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_workflow_scope_hold.py" --site fix --issue "$ISSUE_NUMBER" --add-label "board:stalled" --can-push-workflows "$CAN_PUSH_WORKFLOWS" --branch "$BRANCH" --base-sha "$BASE_SHA" <<<"$changed_paths")"
+          if [ "$held" = "held" ]; then
             exit 0
           fi
           git push origin "HEAD:refs/heads/$BRANCH"
@@ -4404,13 +4408,9 @@ jobs:
           # refuses them when they change a workflow file and the App holds
           # no Workflows permission.
           changed_paths="$(git diff --name-only "$REVIEWED_SHA" HEAD)"
-          if [ "$CAN_PUSH_WORKFLOWS" != "true" ] && grep -q '^\.github/workflows/' <<<"$changed_paths"; then
-            marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step stalled --issue "$ISSUE_NUMBER" --add-label "board:stalled")" \
-              || { echo "::error::board-loop review-fixup (workflow-scope hold): board:stalled could not be added to issue #$ISSUE_NUMBER -- no stalled marker is posted (#604)."; exit 1; }
-            gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'The review follow-up commit for PR #%s changes a file under `.github/workflows/`, which this loop cannot push (the App holds no Workflows permission). Nothing was pushed; the PR is unchanged. Held for a maintainer: address the review from a session whose token has the `workflow` scope, or grant the App Workflows (read and write) and set `WING_COMMANDER_BOARD_CAN_PUSH_WORKFLOWS` to `true`. Removing board:stalled is the sole re-eligibility condition.\n\n%s' "$PR_NUMBER" "$marker")" \
-              || { echo "::error::board-loop review-fixup (workflow-scope hold): board:stalled was applied to issue #$ISSUE_NUMBER but the stalled-marker comment could not be posted."; exit 1; }
-            python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --record-stall-summary --issue "$ISSUE_NUMBER" --from-step "review-fixup (workflow-scope hold)"
-            echo "board-loop: PR #$PR_NUMBER -- the review follow-up touches .github/workflows/, held for a maintainer instead of pushed." >> "$GITHUB_STEP_SUMMARY"
+          held="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_workflow_scope_hold.py" --site review-fixup --issue "$ISSUE_NUMBER" --add-label "board:stalled" --can-push-workflows "$CAN_PUSH_WORKFLOWS" --pr "$PR_NUMBER" <<<"$changed_paths")" \
+            || exit 1
+          if [ "$held" = "held" ]; then
             exit 0
           fi
           # The step's default shell is `bash -e`, so a refused push already

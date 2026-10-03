@@ -29,6 +29,7 @@ Requires: bash, jq (same prerequisites every other shell-harness gate needs).
 """
 import copy
 import os
+import shlex
 import shutil
 import sys
 import tempfile
@@ -75,11 +76,6 @@ def find_step(path, name):
              f"not drop the check.")
 
 
-def _sq(text):
-    """Single-quote `text` for embedding in the generated `/bin/sh` stub."""
-    return "'" + text.replace("'", "'\\''") + "'"
-
-
 def gh_stub_script(behaviors):
     """A `#!/bin/sh` stub for `bindir/gh` that varies by call count.
 
@@ -110,9 +106,9 @@ def gh_stub_script(behaviors):
         if sleep_secs:
             lines.append(f"    sleep {sleep_secs}")
         if stdout:
-            lines.append(f"    printf '%s' {_sq(stdout)}")
+            lines.append(f"    printf '%s' {shlex.quote(stdout)}")
         if stderr:
-            lines.append(f"    printf '%s' {_sq(stderr)} 1>&2")
+            lines.append(f"    printf '%s' {shlex.quote(stderr)} 1>&2")
         lines.append(f"    exit {rc}")
         lines.append("    ;;")
     lines.append("esac")

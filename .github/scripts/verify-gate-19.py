@@ -51,6 +51,7 @@ import copy
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -123,13 +124,9 @@ done
 '''
 
 
-def shell_quote(s):
-    return "'" + s.replace("'", "'\\''") + "'"
-
-
 def stub_gh(bindir, fixture_dir):
     path = os.path.join(bindir, "gh")
-    content = STUB_GH_TEMPLATE.replace("__FIXTURE_DIR__", shell_quote(fixture_dir))
+    content = STUB_GH_TEMPLATE.replace("__FIXTURE_DIR__", shlex.quote(fixture_dir))
     with open(path, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(content)
     os.chmod(path, 0o755)
@@ -193,7 +190,7 @@ def stub_jq(bindir):
         sys.exit("::error::verify-gate-19: jq not found on PATH")
     path = os.path.join(bindir, "jq")
     content = STUB_JQ_TEMPLATE.replace(
-        "__REAL_JQ__", shell_quote(real.replace(os.sep, "/")))
+        "__REAL_JQ__", shlex.quote(real.replace(os.sep, "/")))
     with open(path, "w", encoding="utf-8", newline=chr(10)) as fh:
         fh.write(content)
     os.chmod(path, 0o755)
@@ -628,7 +625,7 @@ exit 1
 
 def stub_bin(bindir, name, template, msg):
     path = os.path.join(bindir, name)
-    content = template.replace("__MSG__", shell_quote(msg))
+    content = template.replace("__MSG__", shlex.quote(msg))
     with open(path, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(content)
     os.chmod(path, 0o755)
@@ -2110,7 +2107,7 @@ esac
 
 def stub_stepsum_gh(bindir, fixture_dir):
     path = os.path.join(bindir, "gh")
-    content = STUB_GH_STEPSUM_TEMPLATE.replace("__FIXTURE_DIR__", shell_quote(fixture_dir))
+    content = STUB_GH_STEPSUM_TEMPLATE.replace("__FIXTURE_DIR__", shlex.quote(fixture_dir))
     with open(path, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(content)
     os.chmod(path, 0o755)
