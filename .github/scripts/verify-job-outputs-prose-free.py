@@ -145,23 +145,28 @@ from wc_published_stages import published_stages  # noqa: E402
 PROSE_FREE_KEYS = {"id", "confirm-environment", "index"}
 
 # (file, job, output) -> why it is tolerated. See REGISTERED EXCEPTIONS.
-# Two groups, both pre-dating this gate. PROSE: the value really can carry
-# model-authored text, so these are #287's defect class waiting to recur —
-# each needs the artifact treatment in its own change (#309 gave it to
-# watchdog's findings and implement's final-reason/agent-final-message).
-# ENUM: the value is a fixed token or boolean the step chose, computed from
+# Every output named here pre-dates this gate (verify's two were first
+# flagged when #736's artifact carried e2e-stage's taint into that job
+# under rule (e)). There used to be two groups. PROSE: the
+# value really could carry model-authored text, #287's defect class
+# waiting to recur. Each got the artifact treatment in its own change
+# (#309 for watchdog's findings and implement's
+# final-reason/agent-final-message, #736 for auto-update-spec-kit's
+# e2e-stage failure-detail), so none remain; a new one gets that
+# treatment, not an entry here. ENUM: the value is a fixed token or boolean the step chose, computed from
 # a tainted read; a masked substring there is implausible, but the rule
 # cannot tell an enum write from a prose write without shell dataflow, and
 # a declaration shape for "one of these literals" does not exist yet.
 EXCEPTIONS = {
-    # PROSE (tracked on #736)
-    (".github/workflows/auto-update-spec-kit.yml", "e2e-stage", "failure-detail"):
-        "PROSE: the e2e read-back's diagnostic, built from the agent "
-        "verdict's free-text reason.",
     # ENUM
     (".github/workflows/auto-update-spec-kit.yml", "e2e-stage", "passed"):
         "ENUM: true/false chosen by the read-back step, which consumes the "
         "agent verdict's free-text reason.",
+    (".github/workflows/auto-update-spec-kit.yml", "verify", "passed"):
+        "ENUM: true/false chosen by the combine step, which also folds in "
+        "the e2e-stage-diagnostics artifact's detail.",
+    (".github/workflows/auto-update-spec-kit.yml", "verify", "tier"):
+        "ENUM: lightweight / lightweight+end-to-end, from the release type.",
     (".github/workflows/implement.yml", "implement", "final-ok"):
         "ENUM: true/false chosen by the consolidate step.",
     (".github/workflows/implement.yml", "implement", "final-tier"):

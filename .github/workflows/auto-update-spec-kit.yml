@@ -1691,9 +1691,14 @@ jobs:
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
+    # #736: the read-back's failure detail is NOT here. It is diagnostic
+    # text, and a job output must never carry it -- see implement.yml's
+    # implement job outputs: block (#309) for the runner's job-output
+    # masker and what a withheld output costs. It travels in the
+    # e2e-stage-diagnostics artifact instead ("Upload e2e-stage
+    # diagnostics" below; verify downloads it).
     outputs:
       passed: ${{ steps.readback.outputs.passed }}
-      failure-detail: ${{ steps.readback.outputs.failure-detail }}
       scratch-repo: ${{ steps.scratch-repo.outputs.full-name }}
       scratch-branch: ${{ steps.scratch-repo.outputs.branch }}
       agent-ran: ${{ steps.agent-ran.outputs.ran }}
@@ -2187,7 +2192,9 @@ jobs:
 
       # T011: deterministic read-back — never trusts agent narration,
       # exactly like evaluate-path's decide-outcome (FR-021's
-      # completion-vs-shape distinction).
+      # completion-vs-shape distinction). #736: the detail is written to a
+      # file for the artifact below, not lifted as a job output -- see the
+      # outputs: block above in this file.
       - name: Read back stage result
         id: readback
         shell: bash
@@ -2225,11 +2232,32 @@ jobs:
           fi
 
           echo "passed=$pass" >> "$GITHUB_OUTPUT"
-          {
-            echo "failure-detail<<AUTOUPDATE_EOF"
-            echo "$detail"
-            echo "AUTOUPDATE_EOF"
-          } >> "$GITHUB_OUTPUT"
+          # Guarded for the reason the find above is: this step must survive
+          # to report. A failed write leaves no file, the upload below then
+          # fails (tolerated), and verify synthesizes the detail.
+          jq -n --arg detail "$detail" '{"failure-detail": $detail}' \
+            > "$RUNNER_TEMP/e2e-stage-diagnostics.json" \
+            || echo "::warning::wing-commander auto-update-spec-kit e2e-stage: could not write e2e-stage-diagnostics.json — verify will report a synthesized detail."
+
+      # #736: the detail reaches verify as an artifact, never as a job
+      # output -- see the outputs: block above in this file. `overwrite:
+      # true` -- see pr-conversation.yml: a "Re-run all jobs" keeps the run
+      # id, and upload-artifact v4+ refuses a name that already exists in
+      # it. Gated on a failed read-back: a pass has no detail to carry and
+      # verify does not download on a pass. continue-on-error because
+      # verify's combine step already synthesizes a stage-did-not-complete
+      # message when the detail is missing; a failed upload must not also
+      # strand "Determine post-agent credential status" below.
+      - name: Upload e2e-stage diagnostics
+        if: steps.readback.outputs.passed == 'false'
+        continue-on-error: true
+        uses: actions/upload-artifact@v6
+        with:
+          name: e2e-stage-diagnostics
+          path: ${{ runner.temp }}/e2e-stage-diagnostics.json
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 90
 
       # T012: best-effort — a push failure here must never flip `passed`,
       # since the gating assertion already happened against the local
@@ -2295,9 +2323,13 @@ jobs:
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
+    # #736: the composed failure detail is NOT here, for the reason
+    # e2e-stage's is not -- see the e2e-stage job's outputs: block above in
+    # this file. It folds in e2e-stage's read-back detail, so it travels on
+    # in the verify-diagnostics artifact ("Upload verify diagnostics" below;
+    # act downloads it).
     outputs:
       passed: ${{ steps.result.outputs.passed }}
-      failure-detail: ${{ steps.result.outputs.failure-detail }}
       tier: ${{ steps.result.outputs.tier }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
@@ -2494,14 +2526,53 @@ jobs:
             echo "AUTOUPDATE_EOF"
           } >> "$GITHUB_OUTPUT"
 
+      # #736: e2e-stage's failure detail comes from the artifact its
+      # read-back wrote, not from a job output -- see the e2e-stage job's
+      # outputs: block above in this file. Downloaded only when e2e-stage
+      # reported a failed read-back; a stage that died before its read-back
+      # published no `passed` and uploaded nothing, and "Combine
+      # verification result" below already synthesizes that case.
+      # continue-on-error: a failed upload or download degrades to the same
+      # synthesized message, with a warning from the load step below.
+      - name: Download e2e-stage diagnostics
+        if: needs.e2e-stage.outputs.passed == 'false'
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: e2e-stage-diagnostics
+          path: ${{ runner.temp }}/e2e-stage-diagnostics
+
+      # Re-exposed as a STEP output, which the runner stores unmasked and
+      # never puts through the job-output secret check. Random heredoc
+      # delimiter so a crafted body cannot end the block early. Every
+      # command is guarded against the runner's `bash -e`: an unreadable
+      # file degrades to an empty detail, the same as a missing one, and
+      # the combine step's synthesized message covers both.
+      - name: Load e2e-stage diagnostics
+        id: stage-diagnostics
+        if: needs.e2e-stage.outputs.passed == 'false'
+        shell: bash
+        run: |
+          set -uo pipefail
+          f="$RUNNER_TEMP/e2e-stage-diagnostics/e2e-stage-diagnostics.json"
+          detail=""
+          if [ -f "$f" ]; then
+            detail=$(jq -r '."failure-detail" // ""' "$f" 2>/dev/null || true)
+          else
+            echo "::warning::wing-commander auto-update-spec-kit verify: no e2e-stage-diagnostics artifact — the e2e-stage failure is reported with a synthesized stage-did-not-complete message instead of its read-back detail; read the e2e-stage job's log for the cause."
+          fi
+          d="wc-e2e-detail-eof-$RANDOM$RANDOM$RANDOM"
+          printf 'failure-detail<<%s\n%s\n%s\n' "$d" "$detail" "$d" >> "$GITHUB_OUTPUT"
+
       - name: Discard isolated worktree
         if: always() && steps.lightweight.outputs.worktree != ''
         run: git worktree remove --force "${{ steps.lightweight.outputs.worktree }}" 2>/dev/null || rm -rf "${{ steps.lightweight.outputs.worktree }}"
 
       # `always()` is load-bearing, for exactly the reason the T037/FR-021
       # arm inside this script already exists — applied to this job instead
-      # of e2e-stage. This step is the sole producer of verify's `passed`,
-      # `failure-detail` and `tier` outputs, and `act` narrates the whole
+      # of e2e-stage. This step is the sole producer of verify's `passed`
+      # and `tier` outputs and of the failure detail in the
+      # verify-diagnostics artifact (#736), and `act` narrates the whole
       # cycle from them. Under the default `success()` condition a failure
       # in ANY earlier step here (the artifact download, the bundle fetch,
       # the App-token mint, the pipeline checkout) skips it, leaving
@@ -2528,7 +2599,7 @@ jobs:
           E2E_DETAIL: ${{ steps.end-to-end.outputs.failure-detail }}
           STAGE_RESULT: ${{ needs.e2e-stage.result }}
           STAGE_PASSED: ${{ needs.e2e-stage.outputs.passed }}
-          STAGE_DETAIL: ${{ needs.e2e-stage.outputs.failure-detail }}
+          STAGE_DETAIL: ${{ steps.stage-diagnostics.outputs.failure-detail }}
           SCRATCH_REPO: ${{ needs.e2e-stage.outputs.scratch-repo }}
           SCRATCH_BRANCH: ${{ needs.e2e-stage.outputs.scratch-branch }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -2539,6 +2610,15 @@ jobs:
           else
             tier="lightweight+end-to-end"
           fi
+          # #736: the detail goes to a file for the artifact below, never to
+          # a job output -- see the outputs: block above in this file.
+          # Guarded so a failed write cannot kill the step before its
+          # summary line; act synthesizes the detail when the file is gone.
+          write_detail() {
+            jq -n --arg detail "$1" '{"failure-detail": $detail}' \
+              > "$RUNNER_TEMP/verify-diagnostics.json" \
+              || echo "::warning::wing-commander auto-update-spec-kit verify: could not write verify-diagnostics.json — act will report a synthesized detail."
+          }
 
           # The lightweight tier is unconditional in this job, so any outcome
           # other than success means a step BEFORE it failed and no tier ever
@@ -2550,10 +2630,8 @@ jobs:
             {
               echo "tier=$tier"
               echo "passed=false"
-              echo "failure-detail<<AUTOUPDATE_EOF"
-              echo "the verify job never reached its $tier check (the lightweight tier's outcome was '$LW_OUTCOME') — this is a stage/infrastructure problem, not a candidate defect. The pin is unchanged and nothing was pushed. Read the failing step's own log line for the cause: $RUN_URL"
-              echo "AUTOUPDATE_EOF"
             } >> "$GITHUB_OUTPUT"
+            write_detail "the verify job never reached its $tier check (the lightweight tier's outcome was '$LW_OUTCOME') — this is a stage/infrastructure problem, not a candidate defect. The pin is unchanged and nothing was pushed. Read the failing step's own log line for the cause: $RUN_URL"
             echo "verify: never reached the $tier check — the lightweight tier's outcome was '${LW_OUTCOME:-skipped}'." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
@@ -2568,11 +2646,11 @@ jobs:
               passed=false
               # T037/FR-021: a job-level failure before the read-back step
               # ever runs (e.g. resolving the scratch repository or the
-              # scaffold step failing) leaves STAGE_DETAIL empty —
-              # synthesize a
-              # stage-did-not-complete message here so the narration is
-              # never blank or reduced to just the scratch-repo pointer
-              # below.
+              # scaffold step failing) leaves STAGE_DETAIL empty, and so
+              # does a missing e2e-stage-diagnostics artifact (#736) —
+              # synthesize a stage-did-not-complete message here so the
+              # narration is never blank or reduced to just the
+              # scratch-repo pointer below.
               if [ -n "$STAGE_DETAIL" ]; then
                 detail="$STAGE_DETAIL"
               else
@@ -2598,15 +2676,34 @@ jobs:
           {
             echo "tier=$tier"
             echo "passed=$passed"
-            echo "failure-detail<<AUTOUPDATE_EOF"
-            echo "$detail"
-            echo "AUTOUPDATE_EOF"
           } >> "$GITHUB_OUTPUT"
+          write_detail "$detail"
           if [ "$passed" = "true" ]; then
             echo "verify: $tier verification passed for the prepared candidate." >> "$GITHUB_STEP_SUMMARY"
           else
             echo "verify: $tier verification **failed** — $detail" >> "$GITHUB_STEP_SUMMARY"
           fi
+
+      # #736: the composed detail reaches act as an artifact, never as a job
+      # output -- see the outputs: block above in this file. Uploaded on a
+      # pass too: the pass path's PR body carries the scratch-repository
+      # pointer this detail holds. `always()` for the reason "Combine
+      # verification result" carries it, gated on that step having written
+      # the file. `overwrite: true` -- see pr-conversation.yml: a "Re-run
+      # all jobs" keeps the run id, and upload-artifact v4+ refuses a name
+      # that already exists in it. continue-on-error because act's load
+      # step already degrades to a synthesized detail when the artifact is
+      # missing, and this is the job's last step.
+      - name: Upload verify diagnostics
+        if: always() && steps.result.outcome == 'success'
+        continue-on-error: true
+        uses: actions/upload-artifact@v6
+        with:
+          name: verify-diagnostics
+          path: ${{ runner.temp }}/verify-diagnostics.json
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 90
 
   # Opens the version-bump PR (pass), or leaves the pin unchanged and flags
   # the issue (fail); also the rollback destination when health-check fails.
@@ -2814,6 +2911,50 @@ jobs:
           name: auto-update-spec-kit-prepare-bundle
           path: ${{ runner.temp }}/prepare-bundle
 
+      # #736: verify's failure detail (and, on a pass, its scratch-repository
+      # pointer) comes from the artifact verify uploaded, not from a job
+      # output -- see the verify job's outputs: block above in this file.
+      # Gated like every other verify consumer below. continue-on-error: a
+      # verify whose combine step never ran, or whose upload failed, has no
+      # artifact, and the load step below then synthesizes the detail.
+      - name: Download verify diagnostics
+        if: needs.health-check.outputs.pinned-ok != 'false' && needs.prepare.result == 'success'
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: verify-diagnostics
+          path: ${{ runner.temp }}/verify-diagnostics
+
+      # Re-exposed as a STEP output -- see verify's "Load e2e-stage
+      # diagnostics" above in this file. A missing or unreadable artifact
+      # on a failed verdict becomes a synthesized detail that names the
+      # artifact and the run, so the failure callout is never bodyless
+      # (SC-004/FR-010: the issue text alone conveys the outcome). On a pass
+      # it becomes empty, and the PR body simply omits the pointer. Every
+      # command is guarded against the runner's `bash -e`, so this never
+      # fails: the label and comment steps below carry no always().
+      - name: Load verify diagnostics
+        id: verify-diagnostics
+        if: needs.health-check.outputs.pinned-ok != 'false' && needs.prepare.result == 'success'
+        shell: bash
+        env:
+          VERIFY_PASSED: ${{ needs.verify.outputs.passed }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -uo pipefail
+          f="$RUNNER_TEMP/verify-diagnostics/verify-diagnostics.json"
+          detail=""
+          if [ -f "$f" ]; then
+            detail=$(jq -r '."failure-detail" // ""' "$f" 2>/dev/null || true)
+          else
+            echo "::warning::wing-commander auto-update-spec-kit act: no verify-diagnostics artifact — the issue and PR text carry a synthesized detail instead of verify's own; read the verify job's log for it."
+          fi
+          if [ -z "$detail" ] && [ "$VERIFY_PASSED" != "true" ]; then
+            detail="verification did not pass, and its detail could not be loaded (the verify-diagnostics artifact is missing or unreadable) — read the verify job's step summary for the cause: $RUN_URL"
+          fi
+          d="wc-verify-detail-eof-$RANDOM$RANDOM$RANDOM"
+          printf 'failure-detail<<%s\n%s\n%s\n' "$d" "$detail" "$d" >> "$GITHUB_OUTPUT"
+
       - name: Fetch prepared branch from bundle
         shell: bash
         if: needs.health-check.outputs.pinned-ok != 'false' && needs.prepare.result == 'success'
@@ -2905,7 +3046,7 @@ jobs:
           CANDIDATE: ${{ needs.prepare.outputs.candidate-version }}
           ISSUE: ${{ needs.prepare.outputs.issue-number }}
           TIER: ${{ needs.verify.outputs.tier }}
-          DETAIL: ${{ needs.verify.outputs.failure-detail }}
+          DETAIL: ${{ steps.verify-diagnostics.outputs.failure-detail }}
           DB: ${{ steps.defbranch.outputs.name }}
         run: |
           set -euo pipefail
@@ -2966,7 +3107,7 @@ jobs:
           issue-number: ${{ needs.prepare.outputs.issue-number }}
           kind: info
           summary: "Verification failed — the candidate was not adopted"
-          body: ${{ needs.verify.outputs.failure-detail }}
+          body: ${{ steps.verify-diagnostics.outputs.failure-detail }}
 
       - name: Apply the failed label
         shell: bash

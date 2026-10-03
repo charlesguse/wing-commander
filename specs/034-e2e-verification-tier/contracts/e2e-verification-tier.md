@@ -37,15 +37,21 @@ In the same isolated worktree the lightweight tier already created
 4. **e2e-stage result** (from the new `e2e-stage` job, `needs: e2e-stage`
    added to `verify`'s existing `needs: prepare`): if
    `needs.e2e-stage.result` is not `success`, or its `passed` output is not
-   `true`, `end_to_end.passed=false` with `needs.e2e-stage.outputs.failure-detail`
+   `true`, `end_to_end.passed=false` with e2e-stage's read-back detail
    carried forward verbatim (already phrased per FR-021's
-   completion-vs-shape distinction, research.md).
+   completion-vs-shape distinction, research.md). That detail reaches
+   `verify` in the `e2e-stage-diagnostics` artifact, never as a job output
+   (#736; a job output must not carry diagnostic text, #287/#309); a
+   missing artifact leaves it empty and `combine` synthesizes the
+   stage-did-not-complete message.
 
 `end_to_end.passed` is `true` only if all four checks above pass — same
 single-boolean combine shape `combine` already expects from specs/027, so
 `combine`'s own logic (tier selection, folding `lightweight`/`end-to-end`
 into one `passed`/`failure-detail`) requires no structural change, only a
-richer `failure-detail` source.
+richer `failure-detail` source. `combine`'s `failure-detail` travels to
+`act` the same way, in the `verify-diagnostics` artifact (#736); `verify`'s
+job outputs are `passed` and `tier` only.
 
 ## `e2e-stage` job (new)
 
@@ -56,7 +62,7 @@ e2e-stage:
   runs-on: ubuntu-latest
   outputs:
     passed: ${{ steps.readback.outputs.passed }}
-    failure-detail: ${{ steps.readback.outputs.failure-detail }}
+    # failure-detail: in the e2e-stage-diagnostics artifact (#736)
     scratch-repo: ${{ steps.scratch-repo.outputs.full-name }}
     scratch-branch: ${{ steps.scratch-repo.outputs.branch }}
   steps:
@@ -82,7 +88,9 @@ e2e-stage:
     #    agent narration: steps.decide.outcome != 'success' OR no non-empty
     #    specs/*/spec.md in the clone -> passed=false with a failure-detail
     #    that states explicitly whether the stage failed to complete or
-    #    completed without the documented output (FR-021).
+    #    completed without the documented output (FR-021), written to
+    #    e2e-stage-diagnostics.json and uploaded as the
+    #    e2e-stage-diagnostics artifact on a failed read-back (#736).
     # 6. Best-effort: if passed, push the produced spec.md to the scratch
     #    repo too (non-gating — failure here does not flip `passed`).
 ```

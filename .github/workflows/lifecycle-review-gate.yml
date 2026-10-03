@@ -312,11 +312,20 @@ jobs:
           # (the `merge` job's own KILL_SWITCH_PAUSED points here): defence
           # in depth, NOT a guaranteed mid-run kill. An earlier revision of
           # this comment claimed a step-level `vars.` expression is resolved
-          # when the step runs, so a switch set mid-run is seen here; that
-          # mechanism is not something GitHub documents, and this is a
-          # `vars.` expression rather than a live Variables API read (one
-          # the App has no permission for, and T078 asks for none), so it
-          # can only ever be as fresh as the context this run was handed. A
+          # when the step runs, so a switch set mid-run is seen here. It is
+          # not (#794). GitHub's docs say only that `vars` holds the
+          # organization, repository and environment variables, nothing
+          # about refreshing it; the runner shows what happens. In
+          # actions/runner (src/Runner.Worker/ExecutionContext.cs,
+          # InitializeJob, at commit d7bc179b), `vars` arrives inside the
+          # job request message's ContextData, which is copied into the
+          # job's expression values once, when the job starts. Every step's
+          # `env:`, `with:` and `if:` is evaluated against that copy, and
+          # nothing in the runner fetches `vars` again. So a step-level
+          # `vars.` expression is fixed no later than the start of its job,
+          # and a switch set after that is invisible to every step of it.
+          # This is a `vars.` expression, not a live Variables API read (one
+          # the App has no permission for, and T078 asks for none). A
           # maintainer who sets the switch while the run is already in
           # flight is NOT guaranteed to be seen by it. The bound that always
           # holds is the one to rely on: the `kill-switch` job plus the

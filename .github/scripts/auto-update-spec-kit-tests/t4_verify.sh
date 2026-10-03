@@ -24,6 +24,12 @@ seed_worktree() { # seed_worktree <dir>
   cp "$REPO"/.specify/templates/*.md "$wt/.specify/templates/"
 }
 
+# #736: the e2e-stage read-back and the combine step write their failure
+# detail to a $RUNNER_TEMP file for an artifact, never to a job output.
+diag() { # diag <file> -> that file's failure-detail field ("" when absent)
+  jq -r '."failure-detail" // ""' "$RUNNER_TEMP/$1" 2>/dev/null
+}
+
 echo "--- Scenario 7: tier selection (patch = lightweight only; minor/major adds e2e) ---"
 # LW_OUTCOME is the lightweight STEP's own outcome, distinct from the
 # verdict it published: `success` means the tier ran and reached a verdict
@@ -38,7 +44,7 @@ combine() { # combine <release-type> <lw-passed> <lw-detail> <e2e-outcome> <e2e-
   export SCRATCH_BRANCH="${11:-auto-update-spec-kit/e2e-42}" LW_OUTCOME="${12:-success}"
   export RUN_URL="https://github.com/charlesguse/wing-commander/actions/runs/424242"
   run_step 'auto-update-spec-kit__verify__*combine*.sh' >/dev/null 2>&1
-  C_TIER="$(out tier)"; C_PASSED="$(out passed)"; C_DETAIL="$(out failure-detail)"; C_SUM="$(summary)"
+  C_TIER="$(out tier)"; C_PASSED="$(out passed)"; C_DETAIL="$(diag verify-diagnostics.json)"; C_SUM="$(summary)"
 }
 
 # Scenario 8 (Edge Case, US4/T028): a patch jump never reaches e2e-stage at
@@ -133,6 +139,8 @@ GHA_SUBST=()
 run_step 'auto-update-spec-kit__e2e-stage__*read-back-stage-result*.sh' >/dev/null 2>&1
 cd "$HERE" || exit 1
 check "S1 e2e-stage readback passes with a real spec.md" "$(out passed)" "true"
+check "S1 a passing readback writes an empty detail" "$(diag e2e-stage-diagnostics.json)" ""
+check "S1 no failure-detail step output (#736)" "$(grep -c '^failure-detail' "$GITHUB_OUTPUT")" "0"
 
 echo
 echo "--- Scenario 2: missing expected artifact fails, no fallback, single outcome (US2, FR-004, SC-002) ---"
@@ -249,7 +257,7 @@ GHA_SUBST=()
 run_step 'auto-update-spec-kit__e2e-stage__*read-back-stage-result*.sh' >/dev/null 2>&1
 cd "$HERE" || exit 1
 check "S4 incomplete stage -> not passed" "$(out passed)" "false"
-S4_DETAIL="$(out failure-detail)"
+S4_DETAIL="$(diag e2e-stage-diagnostics.json)"
 check_contains "S4 detail states the stage did not complete" "$S4_DETAIL" "did not complete"
 
 echo "  (or: the agent step never reached a healthy verdict at all, simulating a timeout)"
@@ -271,7 +279,7 @@ GHA_SUBST=()
 run_step 'auto-update-spec-kit__e2e-stage__*read-back-stage-result*.sh' >/dev/null 2>&1
 cd "$HERE" || exit 1
 check "S5 no spec.md -> not passed" "$(out passed)" "false"
-S5_DETAIL="$(out failure-detail)"
+S5_DETAIL="$(diag e2e-stage-diagnostics.json)"
 check_contains "S5 detail names the expected non-empty spec.md" "$S5_DETAIL" "spec.md"
 check "S4 vs S5 wording differ (a maintainer can tell infra from candidate defect)" "$([ "$S4_DETAIL" = "$S5_DETAIL" ] && echo same || echo different)" "different"
 
@@ -293,7 +301,7 @@ RB_RC=$?
 cd "$HERE" || exit 1
 check "S5 missing e2e-scratch entirely -> step still exits 0" "$RB_RC" "0"
 check "S5 missing e2e-scratch -> reports rather than dies" "$(out passed)" "false"
-check_contains "S5 missing e2e-scratch -> detail still written" "$(out failure-detail)" "spec.md"
+check_contains "S5 missing e2e-scratch -> detail still written" "$(diag e2e-stage-diagnostics.json)" "spec.md"
 
 echo "  (repeat with an empty spec.md — the agent wrote the file but left it blank)"
 new_step_env
@@ -484,5 +492,29 @@ combine minor true "" success true "" failure
 check "S7 stage-not-run combined result is not passed" "$C_PASSED" "false"
 check_contains "S7 combined detail states the stage did not complete" "$C_DETAIL" "did not complete"
 check_not_contains "S7 combined detail is not candidate-artifact wording" "$C_DETAIL" "spec.md"
+
+echo "--- #736: verify loads e2e-stage's detail from its artifact, never a job output ---"
+load_stage() { # load_stage [detail] -- no argument: the artifact is missing
+  new_step_env
+  GHA_SUBST=()
+  if [ "$#" -gt 0 ]; then
+    mkdir -p "$RUNNER_TEMP/e2e-stage-diagnostics"
+    jq -n --arg d "$1" '{"failure-detail": $d}' > "$RUNNER_TEMP/e2e-stage-diagnostics/e2e-stage-diagnostics.json"
+  fi
+  run_step 'auto-update-spec-kit__verify__*load-e2e-stage-diagnostics*.sh' >"$WORK/load-stage.log" 2>&1
+  L_RC=$?
+}
+load_stage "$(printf 'expected a non-empty specs/*/spec.md\nAUTOUPDATE_EOF\nsecond line')"
+check "load: step exits 0" "$L_RC" "0"
+check_contains "load: multi-line detail survives, delimiter text included" "$(out failure-detail)" "second line"
+check_contains "load: a body naming the old fixed delimiter cannot end the block" "$(out failure-detail)" "AUTOUPDATE_EOF"
+load_stage
+check "load: missing artifact still exits 0" "$L_RC" "0"
+check "load: missing artifact -> empty detail" "$(out failure-detail)" ""
+check_contains "load: missing artifact warns" "$(cat "$WORK/load-stage.log")" "no e2e-stage-diagnostics artifact"
+echo "  ...and combine synthesizes the stage message from that empty detail"
+combine minor true "" success true "" success false ""
+check "combine: missing stage detail still fails" "$C_PASSED" "false"
+check_contains "combine: missing stage detail is synthesized" "$C_DETAIL" "did not complete"
 
 report "T4 verify"
