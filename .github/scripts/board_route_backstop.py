@@ -230,6 +230,24 @@ def _apply_drafted_diff(old_text, diff_text):
     return "\n".join(result) + ("\n" if result else "")
 
 
+COMPOSITE_CONTRACT_KEY_RE = re.compile(r"^(inputs|outputs):")
+
+
+def _unapplied_diff_signals_contract(path, diff):
+    """For a drafted diff _apply_drafted_diff() could not place: True when
+    one of its own added or removed lines names the contract outright -- a
+    workflow's `workflow_call` trigger, or a composite's column-0
+    `inputs:`/`outputs:` key. A wholly new file always applies, so the
+    create case never reaches here."""
+    changed = [line[1:] for line in (diff or "").splitlines()
+               if line[:1] in ("+", "-") and not line.startswith(("+++", "---"))]
+    if _is_workflow_path(path):
+        return any(WORKFLOW_CALL_RE.search(line) for line in changed)
+    if _is_wc_composite_action_path(path):
+        return any(COMPOSITE_CONTRACT_KEY_RE.match(line) for line in changed)
+    return False
+
+
 def drafted_contract_widened(file_changes, read_text):
     """The pre-push half of FR-021's contract check, run on the route
     agent's drafted change (`file-changes`: [{"path", "diff"}]) against
@@ -237,13 +255,17 @@ def drafted_contract_widened(file_changes, read_text):
     file main does not have. Each drafted diff is applied to main's text by
     content (_apply_drafted_diff()), and the path is returned when
     contract_changed() says the result widens or breaks the published
-    contract (Principle VII). A diff that cannot be applied counts as a
-    contract change for a file that has a contract block, or when it adds
-    `workflow_call` -- where it lands cannot be known, so it is treated as
-    touching it (never under-protects). A change to a workflow's `run:`
-    code or a composite's `runs:` steps is never a contract change, however
-    many workflow files it edits. The pushed diff is checked again by
-    route_final_diff()."""
+    contract (Principle VII). A diff that cannot be applied is an unknown,
+    not a widening: it counts only when its own changed lines carry a
+    contract signal (_unapplied_diff_signals_contract()). Anything else is
+    left to the precise check on the pushed diff, route_final_diff()
+    (FR-021), which files the spec as a breach if the real change widens
+    a contract -- the way route() leaves a rate-limited agent's missing
+    proposal to a later run instead of guessing. Counting every unappliable
+    diff on a file with a contract block sent plain plumbing fixes to a
+    spec-proposal (#936). A change to a workflow's `run:` code or a
+    composite's `runs:` steps is never a contract change, however many
+    workflow files it edits."""
     widened = []
     for fc in file_changes or []:
         if not isinstance(fc, dict):
@@ -255,11 +277,12 @@ def drafted_contract_widened(file_changes, read_text):
         old_text = read_text(path)
         new_text = _apply_drafted_diff(old_text, diff)
         if new_text is None:
-            adds_trigger = any(
-                line.startswith("+") and not line.startswith("+++") and WORKFLOW_CALL_RE.search(line)
-                for line in diff.splitlines())
-            if _contract_block(path, old_text) is not None or adds_trigger:
+            if _unapplied_diff_signals_contract(path, diff):
                 widened.append(path)
+            else:
+                print("note: board_route_backstop: the drafted diff for {0} could not be applied "
+                      "to main; whether it changes a contract is left to the final-diff "
+                      "check.".format(path), file=sys.stderr)
             continue
         if contract_changed(path, old_text, new_text):
             widened.append(path)

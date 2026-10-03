@@ -95,7 +95,9 @@ stall-marker render is matched by at least one
 board_item_marker.record_stall_summary() -- CLAUDE.md single-home rule):
 review's one step carries three of each (one per stall arm), so a mutation
 dropping any single arm's call is caught by name, not masked by the other
-two arms' calls satisfying a step-wide "any at all" check.
+two arms' calls satisfying a step-wide "any at all" check. A
+board_workflow_scope_hold.py call counts as its own summary call: the
+helper records it once the hold comment posts.
 
 Fails loudly, not vacuously, when any fixture file under the direct,
 heredoc, or round-outcome cases is missing, matching
@@ -389,7 +391,10 @@ def run_summary_findings(doc):
     for job_key, step in _stall_sites(doc):
         run_text = str(step.get("run", ""))
         stall_count = run_text.count(STALL_MARKER_PHRASE)
-        summary_count = run_text.count("--record-stall-summary")
+        # board_workflow_scope_hold.py records its own summary line after
+        # its comment posts (verify-board-route-backstop.py executes it).
+        summary_count = (run_text.count("--record-stall-summary")
+                         + run_text.count("board_workflow_scope_hold.py"))
         if summary_count < stall_count:
             findings.append(
                 "{0}/{1}: {2} stalled-marker render(s) but only {3} --record-stall-summary call(s) "

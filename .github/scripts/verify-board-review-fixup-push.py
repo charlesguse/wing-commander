@@ -146,7 +146,7 @@ def suite(script, quiet=False):
 
 MUTATIONS = (
     ("workflow-scope hold removed",
-     'if [ "$CAN_PUSH_WORKFLOWS" != "true" ] && grep', 'if false && grep'),
+     'if [ "$held" = "held" ]; then', 'if false; then'),
     ("refused push not annotated (the bare pre-fix push)",
      'if ! git push origin "HEAD:refs/heads/$BRANCH"; then\n', 'git push origin "HEAD:refs/heads/$BRANCH"\nif false; then\n'),
 )
