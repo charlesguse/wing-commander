@@ -511,6 +511,19 @@ CASES = [
             ['gh api -X POST -f body=${{ steps.x.outputs.y }}']),
      True, ("gh api", "SUBCOMMAND_PERMS")),
 
+    ("... and so is a double-quoted value holding a substitution whose own "
+     "quoted words have blanks: `-f body=\"$(printf \"%s %s\" ...)\"` never "
+     "frees `%s\"` as the PATH, so the Issues write under issues:read fails",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['gh api -X POST -f body="$(printf "%s %s" "$A" "$B")" "repos/${GITHUB_REPOSITORY}/issues/1/comments"']),
+     True, ("issues", "write")),
+
+    ("... and a value with a backslash-escaped quote (`-f body='it'\\''s'`) "
+     "is one word, so its call is resolved, not failed as having no PATH",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ["gh api -X POST -f body='it'\\''s' \"repos/${GITHUB_REPOSITORY}/issues/1/comments\""]),
+     True, ("issues", "write")),
+
     ("a `<<WORD` inside quotes is not a heredoc opener: a call after "
      "`echo 'v<<EOF'` is still scanned",
      mkcase(ACTIONS_READ, "", [DEFAULT_ENV],

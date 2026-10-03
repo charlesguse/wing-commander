@@ -1095,7 +1095,10 @@ jobs:
           # b"`) is one word, not `body="a` plus a PATH `b"`, and so is a value
           # holding a command substitution or an Actions expression with
           # blanks in it (`-f sha=$(git rev-parse HEAD)`), which would
-          # otherwise free `rev-parse` as the PATH; an unclosed one is no
+          # otherwise free `rev-parse` as the PATH, including a substitution
+          # inside double quotes whose own quoted words hold blanks (`-f
+          # body="$(printf "%s %s" "$A" "$B")"`), and a value with a
+          # backslash-escaped quote (`-f body='it'\''s'`); an unclosed one is no
           # word at all, so backtracking never splits it either. Words are
           # separated the way the shell separates them on one command: blanks
           # or a `\`-newline continuation, never a bare newline -- a call
@@ -1103,9 +1106,10 @@ jobs:
           # read as a PATH `\` and skipped as out of scope), and a call with
           # no PATH never takes the next command's first word as one.
           GH_API_SEP = r'(?:[ \t]|\\\n)+'
-          SHELL_WORD = (r'(?:"(?:[^"\\]|\\.)*"|\'[^\']*\''
-                        r'|\$\((?:[^()]|\([^()]*\))*\)|\$\{\{(?:[^}]|\}(?!\}))*\}\}'
-                        r'|(?!\$\(|\$\{\{)[^\s"\'])+')
+          _CMD_SUB = r'\$\((?:[^()]|\([^()]*\))*\)'
+          SHELL_WORD = (r'(?:"(?:[^"\\$]|\\.|' + _CMD_SUB + r'|\$(?!\())*"|\'[^\']*\''
+                        r'|' + _CMD_SUB + r'|\$\{\{(?:[^}]|\}(?!\}))*\}\}'
+                        r'|\\.|(?!\$\(|\$\{\{)[^\s"\'])+')
           GH_API_VALUE_FLAGS = ("-X", "--method", "-H", "--header", "-f", "--raw-field",
                                 "-F", "--field", "-q", "--jq", "-t", "--template",
                                 "-p", "--preview", "--hostname", "--input", "--cache")
