@@ -23,8 +23,8 @@ lint-workflows.yml` as a "Gate 135 — ..." step plus a "Gate 135 self-test
 | 5 | Selection exclusion | a fixture issue carrying `{"step": "stalled", "round": 0, "pr": null, "branch": null, "base_sha": null}` plus `board:stalled` is still returned by `board_eligibility.in_flight_candidate()` or `select()` | it is excluded by both, on every one of ten simulated successive selection passes (SC-001) |
 | 6 | No write on kill-switch-only / closed-issue | a fixture composite invocation with `stop-cause` resolving to `"kill-switch"` or `"closed-issue"` still reaches the record-write block | it never does (FR-011/FR-013) |
 | 7 | No caller-populated snapshot dependency | the composite's own script resolutions reference `$RUNNER_TEMP/wc-pristine` (maintainer review fold leg-0) | they resolve only via `$GITHUB_ACTION_PATH`, never a caller-populated snapshot (spec 086 FR-003) |
-| 8 | Marker inputs wired | any `wing-commander-board-stop-check` call site in `board-loop.yml` omits `marker-branch` or `marker-base-sha` from its `with:` block (maintainer review fold leg-1; found prove's own call site had never been wired) | all six call sites wire both, explicit empty strings counting as wired (FR-010) |
-| 9 | Single home (stop-cause case block) | `board-loop.yml` re-derives the mapping: a `case` on the cause (the `STOP_CAUSE` name quoted or not, braced or with an expansion operator; a variable bound to the composite's `stop-cause` output through `env:` or a shell assignment, with or without a default, or aliased from one; or that output's expression), an expression ternary picking prose by comparing the cause to a literal (either side, parenthesised or not, through the output, a bound env var or a bound job output; a `'true'`/`'false'` flag picks no prose), or one of the composite's own run-labels re-typed (maintainer review fold leg-2; code reviews of #899 and #940). An if/elif chain on the cause is not read | the stop-cause → prose/run-label mapping is read solely from the composite's own `stop-cause-phrase`/`stop-cause-run-label` outputs (CLAUDE.md "Shared logic has exactly one home") |
+| 8 | Marker inputs wired | any `wing-commander-board-stop-check` call site in `board-loop.yml` omits `marker-branch` or `marker-base-sha` from its `with:` block (maintainer review fold leg-1; found prove's own call site had never been wired) | every call site wires both, explicit empty strings counting as wired (FR-010); seven today: select, triage, route, fix, review, readiness and prove |
+| 9 | Single home (stop-cause case block) | `board-loop.yml` re-derives the mapping: a `case` on the cause (the `STOP_CAUSE` name quoted or not, braced or with an expansion operator; a variable bound to the composite's `stop-cause` output, or to a job output bound to it, through `env:` or a shell assignment, with or without a default (whose literal may hold a `}`), the cause either operand of a `||`, or aliased from one by an assignment at the head of a command, never one inside a quoted string or a `--flag=` argument; or the expression of that output or of such an env var), an expression ternary picking prose by comparing the cause to a literal (either side, parenthesised any number of times or not, through the output, a bound env var or a bound job output; a `'true'`/`'false'` flag picks no prose), or one of the composite's own run-labels re-typed (maintainer review fold leg-2; code reviews of #899 and #940). An if/elif chain on the cause is not read | the stop-cause → prose/run-label mapping is read solely from the composite's own `stop-cause-phrase`/`stop-cause-run-label` outputs (CLAUDE.md "Shared logic has exactly one home") |
 
 Check 4 additionally compares each function's answer against a fixture's
 own `expected.stand_down` when the fixture carries one, not only the two
@@ -70,16 +70,20 @@ check then reports failure:
 7. Revert the `check` step's `board_stop_check.py` invocation to
    `$RUNNER_TEMP/wc-pristine/scripts/board_stop_check.py` (the pre-fold-
    leg-0 shape) → check 7 fails.
-8. Drop `marker-branch` from one of the six `wing-commander-board-stop-
+8. Drop `marker-branch` from one of the seven `wing-commander-board-stop-
    check` call sites → check 8 fails.
 9. Re-paste the mapping into `board-loop.yml` in each form check 9 names
    (`case "$STOP_CAUSE"`, an unquoted braced `case ${STOP_CAUSE}`,
    `${STOP_CAUSE,,}`, a renamed env var with or without a default, a shell
    variable assigned from the output, a two-hop alias, a `case` on the
    expression itself, a run-label ternary plain, parenthesised,
-   literal-first or through a bound env var, a re-typed run-label) →
-   check 9 fails on every one; an `if:` gated on the cause and a boolean
-   flag derived from it are left alone.
+   literal-first or through a bound env var, a re-typed run-label; and,
+   from the code reviews of #940, a `case "${{ env.C }}"` on a bound env
+   var, an env var bound to a bound job output, a default holding a `}`,
+   the cause as the second `||` operand, a doubly parenthesised ternary)
+   → check 9 fails on every one; an `if:` gated on the cause, a boolean
+   flag derived from it, and an assignment-shaped string inside quotes or
+   `--flag=` argument are left alone.
 
 `--self-test` also reverts the same-run-id baseline fix in BOTH
 `find_stop_request()` and `find_stop_command_comment()` together (so they

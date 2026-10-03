@@ -1,9 +1,9 @@
 """Job-level `if:` gating: evaluate the REAL expressions from the workflow.
 
-Expressions are read out of the YAML (never retyped), translated to Python with
-a faithful model of the Actions subset in use (==, !=, &&, ||, parens,
-always(), contains(fromJSON(...), x)), and driven through each quickstart
-scenario's job-result matrix. GitHub semantics modelled:
+Expressions are read out of the YAML (never retyped), evaluated by
+wc_gha_expr (the one evaluator; this file translated them to Python and
+`eval`-ed them until the code review of #940), and driven through each
+quickstart scenario's job-result matrix. GitHub semantics modelled:
   * a skipped/never-run job's `needs.X.outputs.Y` renders as the empty string
   * an unset `steps.X.outputs.Y` (a step that has not run yet) also renders
     as the empty string, the same way
@@ -16,6 +16,9 @@ import re
 import sys
 
 import yaml
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from wc_gha_expr import evaluate_if as gha_evaluate_if  # noqa: E402
 
 REPO = subprocess.run(
     ["git", "-C", os.path.dirname(os.path.abspath(__file__)), "rev-parse", "--show-toplevel"],
@@ -39,41 +42,23 @@ def load_step_ifs(path, job):
             for s in doc["jobs"][job]["steps"]]
 
 
+class _Ctx(dict):
+    """A scenario's context, read the way lookup() renders an unset
+    reference. always() holds; cancelled() is false: no scenario in this
+    file models an actually-cancelled workflow run (spec 058's entry jobs
+    gained !cancelled() so they tolerate a skipped
+    verify-image-prerequisites, Gate 15)."""
+
+    def get(self, key, default=None):
+        return lookup(key, self)
+
+
 def evaluate(expr, ctx):
-    """Translate the Actions expression subset to Python and evaluate it."""
+    """Whether an `if:` lets its job or step run, by wc_gha_expr."""
     if not expr:
         return True  # no `if:` == runs (subject to needs succeeding)
-    e = expr
-    def _ref(name):
-        return repr(lookup(name, ctx))
-
-    e = re.sub(r"\balways\(\)", "True", e)
-    # spec 058: entry jobs gained !cancelled() so they explicitly tolerate
-    # a skipped verify-image-prerequisites (Gate 15). No scenario in this
-    # file models an actually-cancelled workflow run, so cancelled() reads
-    # False here -- the same ungated-baseline assumption always() -> True
-    # already makes above.
-    e = re.sub(r"\bcancelled\(\)", "False", e)
-    # contains(fromJSON('[...]'), X) -> (X in [...])
-    def _contains(m):
-        return "(%s in %s)" % (_ref(m.group(2).strip()), m.group(1))
-    e = re.sub(r"contains\(\s*fromJSON\('(\[[^)]*?\])'\)\s*,\s*([^)]+?)\s*\)", _contains, e)
-    # contains(<ref>, 'x'): membership when the ctx value is a list
-    # (github.event.issue.labels.*.name), substring when it is a string
-    # (github.event.issue.body) -- both as GitHub's contains() behaves.
-    # The wrapper's issue_comment pre-filter uses both.
-    def _contains_ref(m):
-        val = lookup(m.group(1), ctx)
-        if isinstance(val, str):
-            return repr(m.group(2) in val)
-        return "(%r in %r)" % (m.group(2), list(val or []))
-    e = re.sub(r"contains\(\s*([A-Za-z0-9_.*\-]+)\s*,\s*'([^']*)'\s*\)", _contains_ref, e)
-    # `!x` (not `!=`) -> `not x`
-    e = re.sub(r"!(?=\s*[A-Za-z(])", " not ", e)
-    e = e.replace("&&", " and ").replace("||", " or ").replace("'", '"')
-
-    e = re.sub(r"\b(inputs|needs|vars|steps|github)\.[A-Za-z0-9_.\-]+", lambda m: repr(lookup(m.group(0), ctx)), e)
-    return bool(eval(e, {"__builtins__": {}}, {}))
+    return gha_evaluate_if(
+        expr, _Ctx(ctx, **{"always()": True, "cancelled()": False}))
 
 
 def lookup(ref, ctx):

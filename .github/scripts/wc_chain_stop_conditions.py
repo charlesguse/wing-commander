@@ -10,13 +10,11 @@ extract and evaluate the same seven survivor-job `if:` conditions
 hyphenated filename, so this lives under the `wc_` prefix — shared module,
 exempt from the gate-wiring rule (`wc_gate_registry.py`), imported by both.
 
-The evaluator (research.md D8): a small transpiler, not a general GitHub
-Actions expression interpreter. `&&`/`||`/`!cancelled()` map onto Python's
-`and`/`or`/`not`, and `needs.<job>.result` / `needs.<job>.outputs.<name>` /
-`inputs.<name>` map onto dict lookups against a modelled context — then the
-whole thing is `eval()`-ed. Deliberately narrower than a real GHA evaluator
-(no `success()`/`failure()`/`fromJSON`/functions beyond `cancelled()`)
-because the seven conditions this feature ships use exactly this subset.
+The evaluator is wc_gha_expr, the one evaluator (code review of #940:
+research.md D8's Python-`eval` transpiler compared case-sensitively where
+GitHub does not). `needs.<job>.result` / `needs.<job>.outputs.<name>` /
+`inputs.<name>` are read from a modelled context and `cancelled()` from
+the caller; any other reference or status function is a ValueError.
 """
 import copy
 import os
@@ -24,40 +22,22 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from wc_gha_expr import evaluate_if as gha_evaluate_if  # noqa: E402
 from wc_shell_harness import find_job  # noqa: E402
-
-_OUTPUT_RE = re.compile(r"needs\.([A-Za-z0-9_-]+)\.outputs\.([A-Za-z0-9_-]+)")
-_RESULT_RE = re.compile(r"needs\.([A-Za-z0-9_-]+)\.result\b")
-_INPUT_RE = re.compile(r"inputs\.([A-Za-z0-9_-]+)\b")
-_CANCELLED_RE = re.compile(r"!\s*cancelled\(\)")
-
-
-def transpile(expr):
-    """GHA expression subset -> Python source, evaluable against a context."""
-    out = expr
-    out = _CANCELLED_RE.sub("(not CANCELLED)", out)
-    out = out.replace("cancelled()", "CANCELLED")
-    out = _OUTPUT_RE.sub(r"NEEDS.get('\1', {}).get('outputs', {}).get('\2', '')", out)
-    out = _RESULT_RE.sub(r"NEEDS.get('\1', {}).get('result', '')", out)
-    out = _INPUT_RE.sub(r"INPUTS.get('\1', '')", out)
-    out = out.replace("&&", " and ").replace("||", " or ")
-    # The whole expression is wrapped in one outer paren pair so a bare
-    # `X &&\n( Y )` shaped condition — valid YAML, invalid bare Python
-    # continuation — parses: Python only allows an implicit line break
-    # inside brackets, and the multi-line conditions this feature ships
-    # break BEFORE that inner paren opens.
-    return "(" + out + ")"
-
 
 def evaluate(expr, needs, inputs, cancelled):
     """True/False for GHA expression `expr` under the given modelled context."""
-    src = transpile(expr)
+    ctx = {"cancelled()": cancelled}
+    for job, data in (needs or {}).items():
+        ctx[f"needs.{job}.result"] = (data or {}).get("result", "")
+        for name, value in ((data or {}).get("outputs") or {}).items():
+            ctx[f"needs.{job}.outputs.{name}"] = value
+    for name, value in (inputs or {}).items():
+        ctx[f"inputs.{name}"] = value
     try:
-        return bool(eval(src, {"__builtins__": {}},  # noqa: S307
-                         {"NEEDS": needs, "INPUTS": inputs, "CANCELLED": cancelled}))
-    except Exception as exc:  # noqa: BLE001 — report, do not crash the caller
-        raise ValueError(f"could not evaluate {expr!r} (transpiled: {src!r}): "
-                         f"{exc}") from exc
+        return gha_evaluate_if(expr, ctx, known=("needs.", "inputs."))
+    except ValueError as exc:
+        raise ValueError(f"could not evaluate {expr!r}: {exc}") from exc
 
 
 def _split_top_level(expr, op):

@@ -32,6 +32,7 @@ that enforces it reads the same directory the author just added a file to.
 """
 import glob
 import os
+import posixpath
 import re
 import shlex
 
@@ -371,32 +372,269 @@ def pr_time_invocations(root=".",
 LOOSE_PY_HEREDOC_RE = re.compile(r"^[ \t]*python3? +[^\n]*<<", re.M)
 
 
-# A script a run: block executes, read two ways so neither shape slips
-# (#825, code review of #939). SCRIPT_CALL_RE is an interpreter call --
-# bash/sh/python, any flags, then a path -- whose path need not start with
-# .github/; a path carrying `$` there (a runner temp file, a variable) is a
-# generated script, not one the repository ships, and is skipped.
-# REPO_SCRIPT_RE is any token naming a script under .github/: direct exec,
-# a `\` continuation, a loop over a glob, an interpreter flag that takes a
-# value, a `NAME=` assignment a later `bash "$NAME"` runs. Group 1 is
-# whatever the token carries before `.github/`: empty, `./`, `NAME=` or
-# `--flag=` is a literal repo path; anything else (`$VAR/`, an expression,
-# a checkout prefix) is a path no reader can resolve. Neither reader sees a
-# script reached through `working-directory:` or a directory variable
-# (`bash "$D/run.sh"`).
-SCRIPT_CALL_RE = re.compile(
-    r"(?:^|[\s;&|(`])(?:bash|sh|python3?)\s+(?:-\S+\s+)*[\"']?([\w./{}$-]+\.(?:sh|bash|py))\b")
+# A script a run: block executes (#825, code review of #939), read off
+# shell tokens rather than raw text, so a path an `echo`/`printf` prints, a
+# `test -f`/`[ -f ]` probes, a trailing `# comment` mentions or a URL
+# carries is not mistaken for a call. Per simple command: an interpreter
+# (`bash`/`sh`/`python`/`python3`) runs its first script-named argument,
+# and a command word naming a script runs it directly; any other token
+# naming a script under .github/ -- a loop over a glob, a `NAME=`
+# assignment a later `bash "$NAME"` runs, a `--flag=` value handed to a
+# gate -- is read too, so a shape this reader has not met fails loud
+# rather than vanishing. `$NAME`/`${NAME}` is resolved from the step's own
+# literal assignments and literal `env:` (step, job, workflow), and a
+# relative path from a literal `working-directory:` (step, then job and
+# workflow `defaults.run`).
+#
+# REPO_SCRIPT_RE reads one token. Group 1 is whatever it carries before
+# `.github/`: empty, `./`, `NAME=` or `--flag=` is a literal repo path;
+# anything else (`$VAR/`, an expression, a checkout prefix) is a path no
+# reader can resolve.
 REPO_SCRIPT_RE = re.compile(
     r"([^\s\"'`;&|()<>]*?)(\.github/[^\s\"'`;&|()<>]*?\.(?:sh|bash|py))(?![\w.-])")
+SCRIPT_EXT_RE = re.compile(r"\.(?:sh|bash|py)$")
+_INTERPRETERS = {"bash", "sh", "python", "python3"}
+# A command whose arguments are data, never a script it runs.
+_NON_EXEC_COMMANDS = {"echo", "printf", "test", "[", "[[", ":"}
+# Words that open a command without being one.
+_COMMAND_PREFIXES = {"if", "then", "else", "elif", "while", "until", "do",
+                     "!", "{", "}", "time", "exec", "command", "export",
+                     "readonly", "local", "declare"}
+_REDIRECTS = {">", ">>", "<", ">&", "<&", "&>", "<<", "<<<", ">|", "<<-"}
+_ASSIGN_RE = re.compile(r"([A-Za-z_]\w*)=(.*)", re.S)
+_VAR_RE = re.compile(r"\$(?:\{([A-Za-z_]\w*)\}|([A-Za-z_]\w*))")
+_EXPR_RE = re.compile(r"\$\{\{.*?\}\}", re.S)
+
+
+def _shell_prepass(text, i=0, nested=False):
+    """-> (text, [inner text, ...], end): `text` as bash reads its words,
+    with comments and heredoc bodies dropped and each `$( )` lifted out
+    into its own entry (nested ones too), leaving one placeholder word.
+
+    Needed because shlex alone cannot read a run: block: its
+    `comments=True` starts a comment at ANY `#`, mid-word too (`a#b`, a
+    URL fragment), and it has no notion that quotes reset inside `$( )`,
+    so `x="$(bash a.sh "$y")"` reads as two strings around a bare word and
+    an apostrophe further on unbalances the rest. A heredoc body is data,
+    like an `echo`'s arguments."""
+    out, subs, pending = [], [], []
+    quote, prev, depth = None, " ", 0
+    while i < len(text):
+        ch = text[i]
+        if quote == "'":
+            quote = None if ch == "'" else quote
+        elif ch == "\\" and i + 1 < len(text):
+            out.append(text[i:i + 2])
+            i, prev = i + 2, "x"
+            continue
+        elif text.startswith("$(", i) and not text.startswith("$((", i):
+            inner, inner_subs, i = _shell_prepass(text, i + 2, nested=True)
+            subs += [inner] + inner_subs
+            out.append("__WC_CMDSUB__")
+            prev = "x"
+            continue
+        elif quote == '"':
+            quote = None if ch == '"' else quote
+        elif ch in "'\"":
+            quote = ch
+        elif ch == "#" and (prev.isspace() or prev in ";&|()"):
+            end = text.find("\n", i)
+            i = len(text) if end < 0 else end
+            continue
+        elif nested and ch == "(":
+            depth += 1
+        elif nested and ch == ")":
+            if not depth:
+                return "".join(out), subs, i + 1
+            depth -= 1
+        elif text.startswith("<<", i) and not text.startswith("<<<", i):
+            # A word delimiter; `$((x << 2))` shifts, it opens nothing.
+            m = re.match(r"<<-?[ \t]*(['\"]?)([A-Za-z_]\w*)\1", text[i:])
+            if m:
+                out.append(text[i:i + m.end()])
+                pending.append(m.group(2))
+                i, prev = i + m.end(), "x"
+                continue
+        elif ch == "\n" and pending:
+            for delim in pending:
+                while i < len(text):
+                    end = text.find("\n", i + 1)
+                    end = len(text) if end < 0 else end
+                    line, i = text[i + 1:end], end
+                    if line.strip() == delim:
+                        break
+            pending = []
+            out.append("\n")
+            prev = "\n"
+            continue
+        out.append(ch)
+        prev = ch
+        i += 1
+    return "".join(out), subs, i
+
+
+def _shell_commands(text):
+    """Yield (tokens, ok) per logical line of a prepassed run: block: its
+    shlex tokens with `;`, `&&`, `|`, `(` and their kin as their own
+    tokens, or (raw line, False) for a line no amount of joining balances.
+    A line whose quote opens on it and closes on a later one is joined to
+    them, as bash reads it."""
+    lines = text.replace("\\\n", " ").split("\n")
+    i = 0
+    while i < len(lines):
+        buf, j = lines[i], i
+        while True:
+            lexer = shlex.shlex(buf, posix=True, punctuation_chars=True)
+            lexer.whitespace_split = True
+            lexer.commenters = ""
+            try:
+                yield list(lexer), True
+                break
+            except ValueError:
+                if j + 1 >= len(lines):
+                    yield buf, False
+                    break
+                j += 1
+                buf += "\n" + lines[j]
+        i = j + 1
+
+
+def _split_simple_commands(tokens):
+    """[[token, ...], ...]: one list per simple command, split on the
+    control operators shlex hands back as all-punctuation tokens."""
+    out, cur = [], []
+    for tok in tokens:
+        if tok and all(c in ";&|()" for c in tok):
+            if cur:
+                out.append(cur)
+            cur = []
+        else:
+            cur.append(tok)
+    if cur:
+        out.append(cur)
+    return out
+
+
+def _literal_env(*blocks):
+    """NAME -> value for every env: entry with no `${{ }}` expression."""
+    env = {}
+    for block in blocks:
+        for k, v in (block or {}).items() if isinstance(block, dict) else ():
+            if v is not None and "${{" not in str(v):
+                env[str(k)] = str(v)
+    return env
+
+
+def _expand(token, env):
+    """`token` with every `$NAME`/`${NAME}` that `env` knows replaced."""
+    return _VAR_RE.sub(
+        lambda m: env.get(m.group(1) or m.group(2), m.group(0)), token)
+
+
+def _script_calls_in_run(run, env, workdir):
+    """(scripts, unresolved) for one run: block -- see REPO_SCRIPT_RE."""
+    scripts, unresolved = set(), set()
+    env = dict(env)
+    # `${{ x }}` holds spaces; collapse it to one token-safe word so it
+    # reaches the classifier whole, as a path no reader can resolve.
+    text = _EXPR_RE.sub(lambda m: re.sub(r"\s+", "", m.group(0)), run)
+    wd_ok = workdir is None or not re.search(r"[$*?{}\[]", workdir)
+
+    def relative(path):
+        path = re.sub(r"^(?:\./)+", "", path)
+        if workdir is None or path.startswith("/"):
+            return path
+        return posixpath.normpath(posixpath.join(workdir, path))
+
+    def interpreted(path):
+        # An interpreter's argument, or a command word: a `$` left after
+        # expansion is a generated script (a runner temp file) unless it
+        # names .github/, which REPO_SCRIPT_RE then reports.
+        if "$" in path or path.startswith("/") or "://" in path:
+            return
+        if not wd_ok:
+            unresolved.add(f"{workdir}/{path}")
+        elif re.search(r"[*?{}\[]", path):
+            unresolved.add(relative(path))
+        else:
+            scripts.add(relative(path))
+
+    def repo_token(token):
+        if "://" in token:
+            return
+        for m in REPO_SCRIPT_RE.finditer(token):
+            prefix, script = m.group(1), m.group(2)
+            literal = re.fullmatch(
+                r"(?:--?[\w-]+=|[A-Za-z_]\w*=)?(?:\./)*", prefix)
+            if literal and not re.search(r"[$*?{}\[]", script):
+                if not wd_ok:
+                    unresolved.add(f"{workdir}/{script}")
+                else:
+                    scripts.add(relative(script))
+            else:
+                unresolved.add(prefix + script)
+
+    outer, subs, _ = _shell_prepass(text)
+    lines = [line for part in [outer] + subs for line in _shell_commands(part)]
+    for tokens, ok in lines:
+        if not ok:
+            # An unbalanced quote to the end of the block: no command can
+            # be read off it, so every script it names is unresolved.
+            for m in REPO_SCRIPT_RE.finditer(tokens):
+                unresolved.add(m.group(1) + m.group(2))
+            continue
+        for cmd in _split_simple_commands(tokens):
+            words = []
+            skip_next = False
+            for tok in cmd:
+                if skip_next:
+                    skip_next = False
+                    continue
+                if tok in _REDIRECTS or re.fullmatch(r"\d*[<>]+&?", tok):
+                    skip_next = True
+                    continue
+                words.append(_expand(tok, env))
+            i = 0
+            while i < len(words) and (words[i] in _COMMAND_PREFIXES
+                                      or _ASSIGN_RE.fullmatch(words[i])):
+                m = _ASSIGN_RE.fullmatch(words[i])
+                if m and "$" not in m.group(2):
+                    env[m.group(1)] = m.group(2)
+                i += 1
+            if i < len(words) and words[i] in _NON_EXEC_COMMANDS:
+                continue
+            if i < len(words) and words[i] in _INTERPRETERS:
+                arg = next((w for w in words[i + 1:]
+                            if SCRIPT_EXT_RE.search(w)), None)
+                if arg is not None and ".github/" not in arg:
+                    interpreted(arg)
+            elif i < len(words) and SCRIPT_EXT_RE.search(words[i]) \
+                    and ".github/" not in words[i]:
+                interpreted(words[i])
+            for word in words:
+                repo_token(word)
+    return scripts, unresolved
+
+
+def _working_directory(wf, job, step):
+    """The step's effective `working-directory:`, or None."""
+    for block in (step,
+                  ((job or {}).get("defaults") or {}).get("run"),
+                  ((wf or {}).get("defaults") or {}).get("run")):
+        wd = (block or {}).get("working-directory")
+        if wd:
+            return str(wd).rstrip("/")
+    return None
 
 
 def pr_time_script_calls(root=".",
                          workflow=".github/workflows/lint-workflows.yml"):
     """[(step name, scripts, unresolved)] for every PR-time step whose run:
-    block executes a script, comment lines dropped and `\\` continuations
-    joined. `scripts` are repo-relative paths; `unresolved` are the script
-    tokens no reader can pin to one file (a `$` variable, a `${{ }}`
-    expression, a glob, a checkout prefix ahead of `.github/`).
+    block executes a script (REPO_SCRIPT_RE says how it is read).
+    `scripts` are repo-relative paths; `unresolved` are the script tokens
+    no reader can pin to one file (a `$` variable the step does not set
+    literally, a `${{ }}` expression, a glob, a checkout prefix ahead of
+    `.github/`, a `working-directory:` that is not literal).
 
     pr_time_invocations() sees only the gate scripts gate_scripts() names,
     so a step that runs anything else -- a composite's own fixture suite at
@@ -421,20 +659,10 @@ def pr_time_script_calls(root=".",
             run = str((step or {}).get("run") or "")
             if not run or LOOSE_PY_HEREDOC_RE.search(run):
                 continue
-            text = "\n".join(l for l in run.splitlines()
-                              if not l.lstrip().startswith("#"))
-            text = text.replace("\\\n", " ")
-            scripts, unresolved = set(), set()
-            for m in SCRIPT_CALL_RE.finditer(text):
-                if "$" not in m.group(1):
-                    scripts.add(re.sub(r"^(?:\./)+", "", m.group(1)))
-            for m in REPO_SCRIPT_RE.finditer(text):
-                prefix, script = m.group(1), m.group(2)
-                literal = re.fullmatch(r"(?:--?[\w-]+=|[A-Za-z_]\w*=)?(?:\./)*", prefix)
-                if literal and not re.search(r"[$*?{}\[]", script):
-                    scripts.add(script)
-                else:
-                    unresolved.add(prefix + script)
+            env = _literal_env(wf.get("env"), (job or {}).get("env"),
+                               step.get("env"))
+            scripts, unresolved = _script_calls_in_run(
+                run, env, _working_directory(wf, job, step))
             if scripts or unresolved:
                 name = str(step.get("name") or "(unnamed step)")
                 out.append((name, sorted(scripts), sorted(unresolved)))
@@ -449,8 +677,10 @@ def pr_time_inline_steps(root=".",
     `runnable` is [(step name, run text)]: steps a local sweep can execute
     VERBATIM - the whole run: block under `bash -e`, exactly as CI does -
     because they carry no `env:`, no `${{ }}` expression the runner would
-    have to invent a value for, and no `shell:` (step, job or workflow
-    default) that would change CI's `bash -e {0}`. `unrunnable` is
+    have to invent a value for, no `shell:` (step, job or workflow
+    default) that would change CI's `bash -e {0}`, and no
+    `working-directory:` (the same three places) that would move it off
+    the repository root the runner runs it from. `unrunnable` is
     [(step name, reason)] for the rest. Returned rather than dropped so verify-gate-wiring.py can fail on a
     heredoc gate that quietly stopped being rehearsed locally, the same way
     check_local_runner_parity fails on a script gate the tokenizer cannot
@@ -481,6 +711,12 @@ def pr_time_inline_steps(root=".",
                 # flags (bash's is -eo pipefail), so it is not verbatim.
                 unrunnable.append((name, "the step runs under a shell: "
                                          "other than CI's default"))
+            elif _working_directory(wf, job, step):
+                # run-local-gates.py runs every inline step from the
+                # repository root (code review of #942).
+                unrunnable.append((name, "the step runs under a "
+                                         "working-directory: other than "
+                                         "the repository root"))
             elif "${{" in run:
                 unrunnable.append((name, "the run: block carries a ${{ }} "
                                          "expression"))

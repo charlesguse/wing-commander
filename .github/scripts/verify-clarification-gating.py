@@ -80,6 +80,7 @@ import tempfile
 import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from wc_gha_expr import evaluate_if as gha_evaluate_if  # noqa: E402
 from wc_shell_harness import (  # noqa: E402
     ensure_jq, resolve_bash, run_step, use_utf8_stdout)
 
@@ -207,59 +208,33 @@ def load_steps(stage):
 
 
 # --------------------------------------------------------------------------
-# A deliberately small GitHub-expression evaluator
+# Evaluating a shipped if: -- by wc_gha_expr, the one evaluator
 # --------------------------------------------------------------------------
-TERM = re.compile(r"^\s*(?P<lhs>[A-Za-z0-9_.\-]+)\s*(?P<op>==|!=)\s*'(?P<rhs>[^']*)'\s*$")
-
-
 def evaluate_if(expr, ctx, step_name, path):
-    """Evaluate an `if:` built from `&&`-joined `path == 'lit'` terms.
+    """Whether a step's `if:` lets it run, against modelled step outputs.
 
-    Anything richer (||, !, functions, expression interpolation) is a hard
-    error rather than a guess: silently mis-evaluating a condition is the very
+    `always()` holds and `!cancelled()` holds: no scenario here models a
+    cancelled run, and always() only cancels the implicit success() GitHub
+    Actions would otherwise AND onto every `if:` -- every caller tracks
+    job_failed separately (the `not job_failed and evaluate_if(...)` call
+    sites). Any other status function, a reference to anything but a step
+    output, or a construct wc_gha_expr does not model is a hard error
+    rather than a guess: silently mis-evaluating a condition is the very
     failure mode this harness exists to catch.
     """
     if expr is None:
         return True
-    expr = str(expr).strip()
-    # !cancelled() is the one bare-! term this harness special-cases (see
-    # below) -- stripped here before the blanket "!" guard so a step whose
-    # if: contains it doesn't hard-error before reaching that special case.
-    stripped = expr.replace("!cancelled()", "").replace("!=", "")
-    if "||" in expr or "${{" in expr or "!" in stripped:
+    try:
+        return gha_evaluate_if(
+            str(expr), dict({"always()": True, "cancelled()": False}, **ctx),
+            known=("steps.",))
+    except ValueError as exc:
         sys.exit(
             f"::error file={path}::step {step_name!r} has an if: this harness "
-            f"cannot evaluate ({expr!r}). Extend evaluate_if() in "
-            f"verify-clarification-gating.py rather than dropping the step."
+            f"cannot evaluate ({expr!r}: {exc}). Model what it reads in the "
+            f"scenario context, or extend wc_gha_expr, rather than dropping "
+            f"the step."
         )
-    for term in expr.split("&&"):
-        term = term.strip()
-        # always() only cancels the implicit success() GitHub Actions would
-        # otherwise AND onto every `if:` — it says nothing about any ctx
-        # value. Every caller already tracks job_failed separately from this
-        # evaluator (see the `not job_failed and evaluate_if(...)` call
-        # sites), so a bare always() term is a no-op here, not a hard error.
-        if term == "always()":
-            continue
-        # !cancelled() says nothing about any ctx value either — none of
-        # INTAKE_SCENARIOS/CLARIFY_SCENARIOS model a cancelled run, so, like
-        # always(), it is a no-op here. This is NOT a general `!`-support
-        # relaxation: every other use of `!` still hits the hard-error below.
-        if term == "!cancelled()":
-            continue
-        m = TERM.match(term)
-        if not m:
-            sys.exit(
-                f"::error file={path}::step {step_name!r} has an if: term this "
-                f"harness cannot parse ({term!r}). Extend evaluate_if()."
-            )
-        actual = ctx.get(m.group("lhs"), "")
-        if m.group("op") == "==":
-            if actual != m.group("rhs"):
-                return False
-        elif actual == m.group("rhs"):
-            return False
-    return True
 
 
 # --------------------------------------------------------------------------

@@ -42,6 +42,7 @@ import tempfile
 import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from wc_gha_expr import evaluate_if as gha_evaluate_if
 from wc_shell_harness import ensure_jq, resolve_bash, run_step, use_utf8_stdout
 
 WATCHDOG = ".github/workflows/watchdog.yml"
@@ -104,29 +105,21 @@ def run_decision(script, artifact, tmproot):
     return rc, out, outputs
 
 
-IF_CLAUSE_RE = re.compile(
-    r"^steps\.([\w-]+)\.outputs\.([\w-]+)\s*(!=|==)\s*'([^']*)'$")
-
-
 def eval_if_expr(if_expr, outputs):
-    """Evaluate this repository's `steps.X.outputs.Y (!=|==) 'literal' &&
-    ...` if: expressions against concrete step outputs. Only the shape
-    this workflow actually uses is supported — anything else is a hard
-    error so this gate cannot silently mis-evaluate a future guard shape
-    it was never updated for."""
-    for clause in (c.strip() for c in if_expr.split("&&")):
-        m = IF_CLAUSE_RE.match(clause)
-        if not m:
-            sys.exit(f"::error file={WATCHDOG}::verify-act-dedup-guard: "
-                     f"unsupported if: clause {clause!r} in "
-                     f"{ENSURE_STEP!r} — update this gate alongside the "
-                     f"guard.")
-        step_id, output_name, op, literal = m.groups()
-        actual = outputs.get((step_id, output_name), "")
-        matched = actual == literal
-        if not (matched if op == "==" else not matched):
-            return False
-    return True
+    """Whether the guard fires against concrete step outputs, keyed
+    (step id, output name), by wc_gha_expr -- the one evaluator, so this
+    gate reads `!=` with GitHub's case-insensitive rule like every other.
+    A reference to anything but a step output, or a construct the
+    evaluator does not model, is a hard error so this gate cannot silently
+    mis-evaluate a future guard shape it was never updated for."""
+    ctx = {f"steps.{step_id}.outputs.{name}": value
+           for (step_id, name), value in outputs.items()}
+    try:
+        return gha_evaluate_if(if_expr, ctx, known=("steps.",))
+    except ValueError as exc:
+        sys.exit(f"::error file={WATCHDOG}::verify-act-dedup-guard: "
+                 f"cannot evaluate {ENSURE_STEP!r}'s if: ({exc}) -- update "
+                 f"this gate alongside the guard.")
 
 
 GH_STUB = r'''#!/usr/bin/env bash

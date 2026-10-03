@@ -92,6 +92,20 @@ SUBJECT_PATH_RE = re.compile(
     r"|docs/[^\s*?\[\]]+\.md"
     r"|\.specify/memory/[^\s*?\[\]]+\.md)$")
 
+# Two more shapes a gate reads as its subject, which _folded_join first
+# made visible (code reviews of #940): a feature's own top-level document
+# (verify-maintainer-credential-canonical-statement.py compares
+# specs/055-*/research.md and spec.md with docs/setup.md;
+# verify-dedup-key-canonical-rule.py reads specs/056-*/data-model.md) and
+# a skill (verify-skill-board-loop-concurrency-claim.py checks
+# spec-cross-reference/SKILL.md's example). Subjects only when the file
+# exists: self-tests name made-up ones as fixture keys
+# (specs/999-example-feature/spec.md, .claude/skills/foo/SKILL.md), which
+# no PR can edit into breaking a gate.
+ON_DISK_SUBJECT_PATH_RE = re.compile(
+    r"^(?:specs/[^\s*?\[\]/]+/[^\s*?\[\]/]+\.md"
+    r"|\.claude/skills/[^\s*?\[\]/]+/SKILL\.md)$")
+
 # `python3 - <<'PYEOF' ... PYEOF` inside a run: block, which is how the
 # larger gates in lint-workflows.yml are written. The opener may carry
 # script arguments before the delimiter (watchdog.yml's signal-id stamp
@@ -160,14 +174,48 @@ def _string_constants(source):
         tree = ast.parse(source)
     except SyntaxError:
         return []             # not this gate's job; the script's own run fails
-    return [node.value.strip() for node in ast.walk(tree)
-            if isinstance(node, ast.Constant) and isinstance(node.value, str)]
+    out = [node.value.strip() for node in ast.walk(tree)
+           if isinstance(node, ast.Constant) and isinstance(node.value, str)]
+    return out + [path for node in ast.walk(tree)
+                  if (path := _folded_join(node)) is not None]
+
+
+def _folded_join(node):
+    """The repo-relative path an `os.path.join(...)` call spells, or None.
+
+    A path split across join arguments
+    (`os.path.join(REPO_ROOT, "specs", "060-...", "contracts", "x.md")`,
+    Gate 101's) has no single string constant holding it, so neither
+    reader saw it and the document's own edits never had to trigger its
+    gate (code reviews of #940). Folded when every argument after a
+    leading root -- any non-constant first arguments, such as `REPO_ROOT`
+    or a fixture's temp dir -- is a string constant; a `"."` component is
+    dropped. A call with a non-constant argument further in is not a
+    constant path and is left alone."""
+    if not (isinstance(node, ast.Call) and not node.keywords
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "join"
+            and ast.unparse(node.func.value) in ("os.path", "posixpath",
+                                                 "path")):
+        return None
+    args = list(node.args)
+    while args and not (isinstance(args[0], ast.Constant)
+                        and isinstance(args[0].value, str)):
+        args.pop(0)
+    if not args or not all(isinstance(a, ast.Constant)
+                           and isinstance(a.value, str) for a in args):
+        return None
+    parts = [p for a in args for p in a.value.strip().split("/")
+             if p not in ("", ".")]
+    return "/".join(parts) if len(parts) > 1 else None
 
 
 def _subject_paths_in_source(source):
     """Every subject-document path appearing as a string constant."""
     return [value for value in _string_constants(source)
-            if SUBJECT_PATH_RE.match(value)]
+            if SUBJECT_PATH_RE.match(value)
+            or (ON_DISK_SUBJECT_PATH_RE.match(value)
+                and os.path.isfile(value))]
 
 
 def _check_heredoc_reader(scanned):
@@ -476,8 +524,9 @@ def check_local_runner_script_coverage(root="."):
             failures.append(
                 f"lint-workflows.yml step {name!r} runs {path!r} in the PR-time "
                 f"suite, a script path this check cannot resolve to one "
-                f"repository file (a variable, an expression, a glob, or a "
-                f"checkout prefix), so it cannot tell whether "
+                f"repository file (a variable, an expression, a glob, a "
+                f"checkout prefix, or a working-directory: that is not "
+                f"literal), so it cannot tell whether "
                 f"run-local-gates.py runs it (#825). Name each script by its "
                 f"literal repo-relative path.")
         for script in scripts:
@@ -704,12 +753,88 @@ def _fixture_uncovered_script_shapes():
         shutil.rmtree(root, ignore_errors=True)
 
 
+def _fixture_script_call_tokens():
+    """Code review of #939: a script path an `echo`/`printf` prints, a
+    `test -f`/`[ -x ]` probes, a trailing comment or a heredoc body
+    mentions, or a URL carries is not a call; a script reached through a
+    literal `working-directory:`, a directory variable the step assigns or
+    a literal `env:` sets, or a `$( )` with quotes of its own, is; and a
+    `working-directory:` holding an expression leaves the path
+    unresolved."""
+    root = tempfile.mkdtemp(prefix="wc-gate-wiring-")
+    expr = "$" + "{{ inputs.dir }}"
+    try:
+        _write(root, ".github/workflows/lint-workflows.yml",
+               "on: pull_request\njobs:\n  lint:\n    runs-on: ubuntu-latest\n"
+               "    steps:\n"
+               "      - name: mentions\n"
+               "        run: |\n"
+               "          echo \"run .github/scripts/m-tests/run.sh\"\n"
+               "          printf '%s\\n' .github/scripts/m-tests/run.sh\n"
+               "          test -f .github/scripts/m-tests/run.sh && "
+               "[ -x .github/scripts/m-tests/run.sh ]\n"
+               "          curl -o /dev/null https://example.com/.github/scripts/m.sh\n"
+               "          true # bash .github/scripts/m-tests/run.sh\n"
+               "          cat <<'EOF'\n"
+               "          it's bash .github/scripts/m-tests/run.sh\n"
+               "          EOF\n"
+               "      - name: workdir\n"
+               "        working-directory: .github/actions/w\n"
+               "        run: bash tests/run.sh\n"
+               "      - name: dirvar\n"
+               "        env:\n          E: .github/actions/u/tests\n"
+               "        run: |\n"
+               "          D=.github/actions/v/tests\n"
+               "          bash \"$D/run.sh\" && bash \"${E}/run.sh\"\n"
+               "      - name: cmdsub\n"
+               "        run: |\n"
+               "          out=\"$(bash .github/scripts/y-tests/run.sh \"$a\")\" # it's\n"
+               "      - name: exprdir\n"
+               f"        working-directory: {expr}\n"
+               "        run: bash run.sh\n")
+        failures = check_local_runner_script_coverage(root)
+        joined = "\n".join(failures)
+        want = ["runs .github/actions/w/tests/run.sh ",
+                "runs .github/actions/v/tests/run.sh ",
+                "runs .github/actions/u/tests/run.sh ",
+                "runs .github/scripts/y-tests/run.sh ",
+                "'exprdir' runs '" + expr + "/run.sh'"]
+        ok = (len(failures) == 5 and all(w in joined for w in want)
+              and "m-tests" not in joined and "m.sh" not in joined)
+        return ok, f"got {failures!r}"
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def _fixture_folded_join_subjects():
+    """Code reviews of #940: a subject path split across os.path.join
+    arguments after a root is read as the path it spells, a `"."`
+    component dropped; a join with a non-constant argument further in is
+    not a constant path. A feature's own document or a skill is a subject
+    only when it exists on disk."""
+    source = (
+        "import os\n"
+        "A = os.path.join(REPO_ROOT, 'specs', '060-x', 'contracts', 'c.md')\n"
+        "B = os.path.join('.', 'docs', 'adoption.md')\n"
+        "C = os.path.join(root, 'specs', slug, 'contracts', 'c.md')\n"
+        "D = os.path.join('specs', '999-made-up', 'spec.md')\n"
+        "E = os.path.join('.claude', 'skills', 'spec-cross-reference', 'SKILL.md')\n")
+    got = sorted(_subject_paths_in_source(source))
+    want = sorted(["specs/060-x/contracts/c.md", "docs/adoption.md"]
+                  + ([".claude/skills/spec-cross-reference/SKILL.md"]
+                     if os.path.isfile(".claude/skills/spec-cross-reference/SKILL.md")
+                     else []))
+    return got == want and len(want) == 3, f"got {got!r}, want {want!r}"
+
+
 def _fixture_inline_steps_match_ci():
     """Code review of #939: run-local-gates.py writes two heredoc steps
     whose names share a slug to two files, not one, and runs each under
     CI's `bash -e {0}`, so a failing command before the last fails it.
     A heredoc step under any shell: (step, job default or workflow
-    default) is unrunnable verbatim, since that changes CI's flags."""
+    default) is unrunnable verbatim, since that changes CI's flags, and
+    so is one under a working-directory:, since the runner runs it from
+    the repository root (code review of #942)."""
     import importlib.util
     from wc_shell_harness import resolve_bash
     root = tempfile.mkdtemp(prefix="wc-gate-wiring-")
@@ -737,11 +862,21 @@ def _fixture_inline_steps_match_ci():
                "  b:\n    runs-on: ubuntu-latest\n"
                "    defaults:\n      run:\n        shell: bash\n    steps:\n"
                "      - name: job-shell\n        run: |\n"
+               "          python3 - <<'PYEOF'\n          PYEOF\n"
+               "  c:\n    runs-on: ubuntu-latest\n    steps:\n"
+               "      - name: step-wd\n        working-directory: sub\n"
+               "        run: |\n"
+               "          python3 - <<'PYEOF'\n          PYEOF\n"
+               "  d:\n    runs-on: ubuntu-latest\n"
+               "    defaults:\n      run:\n        working-directory: sub\n"
+               "    steps:\n"
+               "      - name: job-wd\n        run: |\n"
                "          python3 - <<'PYEOF'\n          PYEOF\n")
         runnable, unrunnable = pr_time_inline_steps(root)
         ok = (len(set(paths)) == 4 and rcs[0] != 0 and rcs[1:] == [0, 0, 0]
               and [n for n, _ in runnable] == ["plain"]
-              and sorted(n for n, _ in unrunnable) == ["job-shell", "step-shell"])
+              and sorted(n for n, _ in unrunnable)
+              == ["job-shell", "job-wd", "step-shell", "step-wd"])
         return ok, (f"got paths={paths!r} rcs={rcs!r} runnable={runnable!r} "
                     f"unrunnable={unrunnable!r}")
     finally:
@@ -839,8 +974,14 @@ FIXTURES = [
      "reported (#825)", _fixture_uncovered_script_call),
     ("a script is seen however a step runs it, and an unresolvable script "
      "path fails (code review of #939)", _fixture_uncovered_script_shapes),
+    ("a script path a step only mentions is not a call, and one reached "
+     "through working-directory:, a variable or $( ) is (code review of "
+     "#939)", _fixture_script_call_tokens),
+    ("a subject path split across os.path.join arguments is read whole "
+     "(code reviews of #940)", _fixture_folded_join_subjects),
     ("inline heredoc steps get distinct files, run under CI's bash -e, and "
-     "a shell: step is unrunnable verbatim (code review of #939)",
+     "a shell: or working-directory: step is unrunnable verbatim (code "
+     "reviews of #939 and #942)",
      _fixture_inline_steps_match_ci),
     ("an unwired composite harness reports as orphaned",
      _fixture_orphaned_composite_harness),
