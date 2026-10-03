@@ -36,6 +36,13 @@ included, at any depth (FR-012, #877: a harness need not be named
 run-tests.sh to be one). A composite's own run.sh outside such a
 directory is its runtime entrypoint, not a harness, and is never flagged.
 
+Inside a harness directory, a run.sh or extensionless run is the
+harness's entrypoint only when no shallower directory of the same
+composite already holds one (a run-tests.sh, or a run/run.sh that itself
+qualifies): tests/fixtures/bin/run under tests/run.sh is a fixture stub,
+an ordinary harness file, while a lone tests/sub/run.sh is still the
+entrypoint (code review of #942).
+
 Each failure names a home: .github/scripts/verify-x.py for a standalone
 verify-x.py; .github/scripts/<composite>-tests/run-tests.sh for an
 entrypoint; for any other file, its path below the deepest directory
@@ -48,7 +55,9 @@ composite both land as run-tests.sh. The mapping stays as it is, but when
 two or more offenders get the same home, each one's failure names the
 others that map there too (see _clash_note) rather than repeating the
 home silently: flattening, renaming or merging the harness is the
-author's choice, not this gate's.
+author's choice, not this gate's. Likewise, when a home already exists
+on disk (an existing .github/scripts/verify-x.py, say), the failure says
+so, so following the advice never overwrites a file unannounced.
 Every result is an unconditional failure: there is no waiver file and no
 legitimate exception to register one in.
 
@@ -58,6 +67,7 @@ Usage:
     python3 .github/scripts/verify-actions-no-gate-scripts.py --root <path>
 """
 import argparse
+import functools
 import os
 import re
 import shutil
@@ -89,21 +99,50 @@ def supported_location(offending_path, offenders=()):
     """
     parts = offending_path.split("/")
     composite = parts[2]
-    if _kind(offending_path) == "standalone gate script":
+    if _kind(offending_path, offenders) == "standalone gate script":
         return f"{SCRIPTS_DIR}/{parts[-1]}"
     # Any entrypoint lands as run-tests.sh: that is the one name gate
     # discovery (wc_gate_registry.gate_scripts) picks up there.
-    if _is_entrypoint(parts):
+    if _is_entrypoint(parts, offenders):
         return f"{SCRIPTS_DIR}/{composite}-tests/{SUBDIR_ENTRYPOINT}"
     rest = parts[_harness_root(parts, offenders):]
     return f"{SCRIPTS_DIR}/{composite}-tests/{'/'.join(rest)}"
 
 
-def _is_entrypoint(parts):
-    """run-tests.sh anywhere, or a run.sh/run inside a harness directory."""
-    return (parts[-1] == SUBDIR_ENTRYPOINT
-            or (parts[-1] in HARNESS_ENTRYPOINT_NAMES
-                and _tests_dir_index(parts) is not None))
+def _is_entrypoint(parts, offenders=()):
+    """run-tests.sh anywhere, or a run.sh/run inside a harness directory
+    with no entrypoint offender in a shallower directory above it (see
+    _entry_dirs)."""
+    return _qualifies(parts, _entry_dirs(tuple(offenders)))
+
+
+def _qualifies(parts, entry_dirs):
+    """_is_entrypoint against an already-known set of entrypoint
+    directories. Only strictly shallower directories count: a sibling
+    run-tests.sh already keeps its directory's other files out of the
+    result set (wc_gate_registry.unsupported_actions_scripts)."""
+    if parts[-1] == SUBDIR_ENTRYPOINT:
+        return True
+    if (parts[-1] not in HARNESS_ENTRYPOINT_NAMES
+            or _tests_dir_index(parts) is None):
+        return False
+    return not any(tuple(parts[:i]) in entry_dirs
+                   for i in range(3, len(parts) - 1))
+
+
+@functools.lru_cache(maxsize=None)
+def _entry_dirs(offenders):
+    """Directories (as part tuples) holding a qualifying entrypoint
+    offender. Offenders are taken shallowest first, so whether a deeper
+    run/run.sh qualifies is decided against the shallower ones already
+    known (code review of #942: tests/fixtures/bin/run under tests/run.sh
+    is a fixture stub, not a second entrypoint)."""
+    dirs = set()
+    for o in sorted(offenders, key=lambda p: p.count("/")):
+        parts = o.split("/")
+        if _qualifies(parts, dirs):
+            dirs.add(tuple(parts[:-1]))
+    return frozenset(dirs)
 
 
 def _harness_root(parts, offenders):
@@ -112,8 +151,7 @@ def _harness_root(parts, offenders):
     this file (so tests/sub/lib.sh beside tests/sub/run.sh lands beside
     run-tests.sh), else just below its first harness directory (so
     tests/fixtures/case.sh keeps fixtures/), else the basename."""
-    entry_dirs = {tuple(o.split("/")[:-1]) for o in offenders
-                  if _is_entrypoint(o.split("/"))}
+    entry_dirs = _entry_dirs(tuple(offenders))
     for i in range(len(parts) - 1, 2, -1):
         if tuple(parts[:i]) in entry_dirs:
             return i
@@ -129,9 +167,9 @@ def _tests_dir_index(parts):
     return None
 
 
-def _kind(offending_path):
+def _kind(offending_path, offenders=()):
     parts = offending_path.split("/")
-    if _is_entrypoint(parts):
+    if _is_entrypoint(parts, offenders):
         return "test harness entrypoint"
     if _tests_dir_index(parts) is not None:
         return "test harness file"
@@ -154,22 +192,35 @@ def _clash_note(offending_path, supported, homes):
             f"before moving it")
 
 
-def failure_for(offending_path, offenders=(), homes=None):
+def _taken_note(supported, root):
+    """`, but a file already exists there: ...` when `supported` already
+    exists under `root` (code review of #942: following the advice must
+    not overwrite an existing gate unannounced), else ''. No root, no
+    disk check."""
+    if root is None or not os.path.lexists(
+            os.path.join(root, *supported.split("/"))):
+        return ""
+    return ", but a file already exists there: rename it before moving it"
+
+
+def failure_for(offending_path, offenders=(), homes=None, root=None):
     if homes is None:
         homes = {o: supported_location(o, offenders) for o in offenders}
-    kind = _kind(offending_path)
+    kind = _kind(offending_path, offenders)
     supported = supported_location(offending_path, offenders)
     clash = _clash_note(offending_path, supported, homes)
+    taken = _taken_note(supported, root)
     return (f"{offending_path} is a {kind} under .github/actions/; gate "
             f"discovery reads only {SCRIPTS_DIR}/, so it belongs at "
-            f"{supported} instead{clash}. See {THIS_FILE} for why.")
+            f"{supported} instead{clash}{taken}. See {THIS_FILE} for why.")
 
 
 def check(root="."):
     """-> (offenders, failures)."""
     offenders = unsupported_actions_scripts(root)
     homes = {o: supported_location(o, offenders) for o in offenders}
-    return offenders, [failure_for(p, offenders, homes) for p in offenders]
+    return offenders, [failure_for(p, offenders, homes, root)
+                       for p in offenders]
 
 
 def main(root="."):
@@ -404,6 +455,62 @@ def _fixture_harness_home_clash():
         shutil.rmtree(root, ignore_errors=True)
 
 
+def _fixture_nested_run_stub_not_entrypoint():
+    """Code review of #942: an extensionless run stub under
+    tests/fixtures/bin/ beside tests/run.sh is fixture data, not a second
+    entrypoint: it keeps fixtures/bin/ in its home, carries no clash with
+    tests/run.sh, and data.txt beside it keeps fixtures/bin/ too."""
+    root = tempfile.mkdtemp(prefix="wc-actions-no-gate-scripts-")
+    try:
+        want = {
+            ".github/actions/widget/tests/run.sh": "run-tests.sh",
+            ".github/actions/widget/tests/fixtures/bin/run": "fixtures/bin/run",
+            ".github/actions/widget/tests/fixtures/bin/data.txt":
+                "fixtures/bin/data.txt",
+        }
+        for path in want:
+            _write(root, path, "x\n")
+        offenders, failures = check(root)
+        got = {p: _home_of(failures, p) for p in want}
+        stub = ".github/actions/widget/tests/fixtures/bin/run"
+        stub_failure = next((f for f in failures if f.startswith(stub + " ")), "")
+        ok = (offenders == sorted(want)
+              and all(_assert_contract(p, failures) for p in want)
+              and all(got[p] == f"{SCRIPTS_DIR}/widget-tests/{h}"
+                      for p, h in want.items())
+              and "is a test harness file" in stub_failure
+              and not any("there too" in f for f in failures))
+        return ok, f"got offenders={offenders!r} failures={failures!r}"
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def _fixture_home_already_exists():
+    """Code review of #942: a verify-gate-wiring.py under a composite
+    whose home .github/scripts/verify-gate-wiring.py already exists gets
+    a note saying so; a verify-fresh.py whose home is free does not."""
+    root = tempfile.mkdtemp(prefix="wc-actions-no-gate-scripts-")
+    try:
+        taken = ".github/actions/foo/verify-gate-wiring.py"
+        fresh = ".github/actions/foo/verify-fresh.py"
+        _write(root, taken, "print('hi')\n")
+        _write(root, fresh, "print('hi')\n")
+        _write(root, f"{SCRIPTS_DIR}/verify-gate-wiring.py", "print('gate')\n")
+        offenders, failures = check(root)
+        by_path = {p: next((f for f in failures if f.startswith(p + " ")), "")
+                   for p in (taken, fresh)}
+        ok = (offenders == sorted([taken, fresh])
+              and all(_assert_contract(p, failures) for p in (taken, fresh))
+              and _home_of(failures, taken)
+              == f"{SCRIPTS_DIR}/verify-gate-wiring.py"
+              and "but a file already exists there: rename it before "
+                  "moving it" in by_path[taken]
+              and "already exists" not in by_path[fresh])
+        return ok, f"got offenders={offenders!r} failures={failures!r}"
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def _fixture_shared_not_flagged():
     """A helper at .github/actions/_shared/run-tests.sh is NOT flagged --
     the carve-out is structural (research.md D8, fourth bullet; spec.md
@@ -466,6 +573,11 @@ FIXTURES = [
      "review of #939)", _fixture_nested_harness_one_home),
     ("two offenders mapped to one home each name the clash (code review "
      "of #942)", _fixture_harness_home_clash),
+    ("a run stub under tests/fixtures/bin/ beside tests/run.sh is a "
+     "harness file, not a second entrypoint (code review of #942)",
+     _fixture_nested_run_stub_not_entrypoint),
+    ("a home that already exists on disk is named in the failure (code "
+     "review of #942)", _fixture_home_already_exists),
     ("a helper at .github/actions/_shared/run-tests.sh is not flagged",
      _fixture_shared_not_flagged),
     ("a composite with no harness at all is a clean pass",

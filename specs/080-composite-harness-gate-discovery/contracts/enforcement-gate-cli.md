@@ -34,7 +34,11 @@ add to.
    - the offending path,
    - whether it is a test harness entrypoint (`run-tests.sh`, or a
      `run.sh` or extensionless `run` inside a `tests/`/`test/`/`spec/`/
-     `__tests__/` directory), another file inside such a directory,
+     `__tests__/` directory with no entrypoint already in a shallower
+     directory of the same composite -- so `tests/fixtures/bin/run`
+     under `tests/run.sh` is a fixture stub, while a lone
+     `tests/sub/run.sh` is still the entrypoint), another file inside
+     such a directory,
      fixture data included (#877), a test-named file outside one
      (`test_*.py`, `*_test.sh`, `*.bats`), or a standalone `verify-*`
      script (FR-006's "naming the offending path"),
@@ -62,7 +66,12 @@ add to.
      `tests/sub/run.sh`) both get "belongs at
      `.github/scripts/widget-tests/lib.sh` instead, but `<the other>`
      maps there too: flatten, rename or restructure the harness so each
-     file has its own home before moving it",
+     file has its own home before moving it". When the home already
+     exists under the root (any kind of offender, e.g.
+     `.../foo/verify-gate-wiring.py` with
+     `.github/scripts/verify-gate-wiring.py` already present), the
+     message adds ", but a file already exists there:
+     rename it before moving it" after the home and any clash note,
    - a pointer to this same file as the canonical explanation (FR-009's
      last sentence — this gate's own docstring carries the "why," so the
      message names its own filename, which Gate 47 also treats as a
