@@ -409,6 +409,38 @@ _REDIRECTS = {">", ">>", "<", ">&", "<&", "&>", "<<", "<<<", ">|", "<<-"}
 _ASSIGN_RE = re.compile(r"([A-Za-z_]\w*)=(.*)", re.S)
 _VAR_RE = re.compile(r"\$(?:\{([A-Za-z_]\w*)\}|([A-Za-z_]\w*))")
 _EXPR_RE = re.compile(r"\$\{\{.*?\}\}", re.S)
+# A shell in command position on a heredoc's line: `bash <<'EOF'`,
+# `cat <<EOF | sh -e`. Group 1 is the rest of its command, which
+# _feeds_shell reads to tell a shell running its stdin from one running a
+# script (whose stdin the heredoc merely is).
+_SHELL_ON_LINE_RE = re.compile(
+    r"(?:^|[;&|(!{]|\b(?:then|do|else|exec|time|sudo|env|command)\b)"
+    r"[ \t]*(?:[A-Za-z_]\w*=\S*[ \t]+)*(?:bash|sh)(?![\w.-])([^;&|)\n]*)")
+
+
+def _feeds_shell(line):
+    """True when a heredoc opened on `line` is the stdin a shell runs as
+    its script: some `bash`/`sh` on it takes only options (no script
+    operand, no `-c` string). Code review of #954: such a body is code,
+    and dropping it as data silently lost every script it runs."""
+    for m in _SHELL_ON_LINE_RE.finditer(line):
+        words, k, stdin = m.group(1).split(), 0, True
+        while k < len(words):
+            w = words[k]
+            if w == "--":
+                break
+            if w in ("-o", "+o", "-O", "+O") or re.fullmatch(r"\d*[<>]+[-&|]?", w):
+                k += 2
+                continue
+            if re.match(r"\d*[<>]", w) or w.startswith(("+", "--")) or (
+                    w.startswith("-") and "c" not in w[1:]):
+                k += 1
+                continue
+            stdin = False  # a script operand, or a `-c` string
+            break
+        if stdin:
+            return True
+    return False
 
 
 def _shell_prepass(text, i=0, nested=False, subs=None):
@@ -494,6 +526,9 @@ def _shell_prepass(text, i=0, nested=False, subs=None):
                 i, prev = i + m.end(), "x"
                 continue
         elif ch == "\n" and pending:
+            so_far = "".join(out)
+            shell_stdin = _feeds_shell(so_far[so_far.rfind("\n") + 1:])
+            body = []
             for delim in pending:
                 while i < len(text):
                     end = text.find("\n", i + 1)
@@ -501,8 +536,17 @@ def _shell_prepass(text, i=0, nested=False, subs=None):
                     line, i = text[i + 1:end], end
                     if line.strip() == delim:
                         break
+                    body.append(line)
             pending = []
             out.append("\n")
+            if shell_stdin:
+                # A body a shell runs is read as a run: block of its own,
+                # at the point the shell runs it.
+                index = len(subs)
+                subs.append("")
+                subs[index], _, _ = _shell_prepass("\n".join(body),
+                                                   subs=subs)
+                out.append(f"__WC_CMDSUB_{index}__\n")
             prev = "\n"
             continue
         out.append(ch)
@@ -563,6 +607,10 @@ def _literal_env(*blocks):
         for k, v in (block or {}).items() if isinstance(block, dict) else ():
             if v is not None and "${{" not in str(v):
                 env[str(k)] = str(v)
+            else:
+                # An expression overrides the outer block's literal value
+                # at runtime, so the name is no longer known.
+                env.pop(str(k), None)
     return env
 
 
@@ -581,7 +629,9 @@ _VALUE_OPTIONS = {"-o", "+o", "-O", "+O", "--rcfile", "--init-file",
 def _code_string_index(interpreter, args):
     """The index in `args` of a `-c` code string, or None: only the
     options ahead of the first operand are the interpreter's, and `c` may
-    sit in a cluster (`-ec`, `-xc`)."""
+    sit in a cluster (`-ec`, `-xc`). `python -m MOD` returns len(args):
+    what follows is the module's arguments, never a script operand. A
+    python `-W`/`-X` carries its value attached (`-Wonce`), not a `c`."""
     k = 0
     while k < len(args) and args[k][:1] in ("-", "+") \
             and args[k] not in ("-", "--"):
@@ -589,8 +639,12 @@ def _code_string_index(interpreter, args):
         if opt in _VALUE_OPTIONS:
             k += 2
             continue
-        if opt == "-m" and interpreter.startswith("python"):
-            return None
+        if interpreter.startswith("python"):
+            if opt == "-m":
+                return len(args)
+            if opt[:2] in ("-W", "-X"):
+                k += 1
+                continue
         if not opt.startswith("--") and "c" in opt[1:]:
             return k + 1
         k += 1
@@ -679,14 +733,17 @@ def _script_calls_in_run(run, env, workdir):
                         env.update(saved)
                     continue
                 words = []
-                skip_next = False
+                skip_next = None
+                stdin = None
                 for tok in cmd:
                     run_subs(tok, env, wd)
                     if skip_next:
-                        skip_next = False
+                        if skip_next in ("<", "0<"):
+                            stdin = _expand(tok, env)
+                        skip_next = None
                         continue
                     if tok in _REDIRECTS or re.fullmatch(r"\d*[<>]+&?", tok):
-                        skip_next = True
+                        skip_next = tok
                         continue
                     words.append(_expand(tok, env))
                 i = 0
@@ -734,6 +791,11 @@ def _script_calls_in_run(run, env, workdir):
                     else:
                         arg = next((w for w in args if SCRIPT_EXT_RE.search(w)),
                                    None)
+                        if arg is None and stdin is not None \
+                                and SCRIPT_EXT_RE.search(stdin):
+                            # `bash < x.sh`: the redirect is the script.
+                            arg = stdin
+                            repo_token(stdin, wd)
                         if arg is not None and ".github/" not in arg:
                             interpreted(arg, wd)
                     if inline is not None:

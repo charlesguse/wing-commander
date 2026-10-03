@@ -883,6 +883,53 @@ def _fixture_script_call_scoping():
         shutil.rmtree(root, ignore_errors=True)
 
 
+def _fixture_script_call_stdin():
+    """Code review of #954, round 4: a heredoc a shell runs (`bash
+    <<'EOF'`, `cat <<EOF | bash`) is code, its scripts read, while one
+    handed to a script stays data; `bash < x.sh` runs x.sh; nothing after
+    `python3 -m MOD` is a script; a python `-Wonce` hides no `-c`; and a
+    step `env:` expression overrides a job's literal value, so the job's
+    file is not reported as the script the step runs."""
+    root = tempfile.mkdtemp(prefix="wc-gate-wiring-")
+    expr = "$" + "{{ inputs.s }}"
+    try:
+        _write(root, ".github/workflows/lint-workflows.yml",
+               "on: pull_request\njobs:\n  lint:\n    runs-on: ubuntu-latest\n"
+               "    env:\n      S: .github/scripts/job-env.sh\n"
+               "    steps:\n"
+               "      - name: stdin\n"
+               "        working-directory: .github/actions/i\n"
+               "        run: |\n"
+               "          bash <<'EOF'\n"
+               "          bash tests/heredoc.sh\n"
+               "          EOF\n"
+               "          cat <<EOF | sh -e\n"
+               "          bash tests/piped.sh\n"
+               "          EOF\n"
+               "          bash tests/real.sh <<EOF\n"
+               "          bash tests/data.sh\n"
+               "          EOF\n"
+               "          bash < tests/redirected.sh\n"
+               "          python3 -m pytest tests/test_mod.py\n"
+               "          python3 -Wonce tests/warned.py\n"
+               "      - name: override\n"
+               f"        env:\n          S: {expr}\n"
+               "        run: bash \"$S\"\n")
+        failures = check_local_runner_script_coverage(root)
+        joined = "\n".join(failures)
+        want = ["runs .github/actions/i/tests/heredoc.sh ",
+                "runs .github/actions/i/tests/piped.sh ",
+                "runs .github/actions/i/tests/real.sh ",
+                "runs .github/actions/i/tests/redirected.sh ",
+                "runs .github/actions/i/tests/warned.py "]
+        ok = (len(failures) == 5 and all(w in joined for w in want)
+              and "data.sh" not in joined and "test_mod" not in joined
+              and "job-env" not in joined)
+        return ok, f"got {failures!r}"
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def _fixture_folded_join_subjects():
     """Code reviews of #940: a subject path split across os.path.join
     arguments after a root is read as the path it spells, a `"."`
@@ -1059,6 +1106,9 @@ FIXTURES = [
      "a `( )` group's cd ends at its `)`, and a non-literal reassignment "
      "drops the earlier value (code review of #954)",
      _fixture_script_call_scoping),
+    ("a heredoc or `<` a shell runs is code, `python3 -m` takes no "
+     "script, `-Wonce` hides no -c, and a step env: expression overrides "
+     "a job literal (code review of #954)", _fixture_script_call_stdin),
     ("a subject path split across os.path.join arguments is read whole "
      "(code reviews of #940)", _fixture_folded_join_subjects),
     ("inline heredoc steps get distinct files, run under CI's bash -e, and "
