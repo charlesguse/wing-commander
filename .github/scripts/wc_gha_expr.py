@@ -40,6 +40,7 @@ prefixes it models (`("steps.", "inputs.")`): a reference outside them is a
 ValueError too, and one inside them that the context lacks is null, as an
 unset step output is.
 """
+import inspect
 import json
 import math
 import re
@@ -105,6 +106,9 @@ def truthy(v):
 def loose_eq(a, b):
     if isinstance(a, str) and isinstance(b, str):
         return a.lower() == b.lower()
+    if isinstance(a, (list, dict)) or isinstance(b, (list, dict)):
+        # Arrays and objects are equal only as the same instance.
+        return a is b
     if type(a) is type(b):
         return a == b
     x, y = to_num(a), to_num(b)
@@ -247,6 +251,11 @@ class Parser:
         if fn is not None:
             if self.skip:
                 return None
+            try:
+                inspect.signature(fn).bind(*args)
+            except TypeError:
+                raise ValueError(f"{name}() called with {len(args)} "
+                                 f"argument(s)") from None
             return fn(*args)
         key = f"{name.lower()}()"
         if key in self.ctx:
@@ -318,7 +327,9 @@ if __name__ == "__main__":
                     {"a": "ubuntu-latest"}) == "ubuntu-latest"
     for bad, known in (("env.X == 'y'", ("steps.",)), ("fromJSON('[')", None),
                        ("true || env.X", ("steps.",)),
-                       ("false && nope()", None)):
+                       ("false && nope()", None),
+                       # A bad-arity call is a ValueError, never a TypeError.
+                       ("startsWith(a)", None), ("fromJSON()", None)):
         try:
             evaluate(bad, {}, known)
         except ValueError:
@@ -329,4 +340,6 @@ if __name__ == "__main__":
     assert evaluate("fromJSON(a) == 1", {"a": '[{"k":1}]'}) is False
     assert evaluate("fromJSON(a) < 1", {"a": '{"k":1}'}) is False
     assert evaluate("contains(fromJSON(a), 1)", {"a": '[{"k":1}]'}) is False
+    # Arrays and objects are equal only as the same instance.
+    assert evaluate("fromJSON('[1]') == fromJSON('[1]')", {}) is False
     print("wc_gha_expr self-test: ok")

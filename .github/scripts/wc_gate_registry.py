@@ -562,7 +562,13 @@ def _shell_prepass(text, i=0, nested=False, subs=None):
                 continue
         elif ch == "\n" and pending:
             so_far = "".join(out)
-            shell_stdin = _feeds_shell(so_far[so_far.rfind("\n") + 1:])
+            # The whole logical line: a `\` continuation joins the lines
+            # ahead of it (`bash \` then `-s <<EOF`; round 13).
+            start = so_far.rfind("\n") + 1
+            while start and so_far[:start - 1].endswith("\\"):
+                start = so_far.rfind("\n", 0, start - 1) + 1
+            shell_stdin = _feeds_shell(
+                so_far[start:].replace("\\\n", " "))
             body = []
             for delim in pending:
                 while i < len(text):
@@ -762,6 +768,13 @@ def _script_calls_in_run(run, env, workdir):
                 for m in REPO_SCRIPT_RE.finditer(tokens):
                     unresolved.add(m.group(1) + m.group(2))
                 continue
+            # `printf '...' | bash`: the data a shell reads off a pipe is
+            # code, so it is read for scripts as origin/main's regex did
+            # (code review of #954, round 13).
+            piped_to_shell = any(
+                tok == "|" and k + 1 < len(tokens)
+                and tokens[k + 1] in ("bash", "sh")
+                for k, tok in enumerate(tokens))
             for cmd in _split_simple_commands(tokens):
                 if cmd == "(":
                     # A `( )` group is a subshell: its `cd` and its
@@ -823,6 +836,9 @@ def _script_calls_in_run(run, env, workdir):
                                                    words[i - 1]))):
                         i += 1
                 if i < len(words) and words[i] in _NON_EXEC_COMMANDS:
+                    if piped_to_shell:
+                        for word in words[i + 1:]:
+                            repo_token(word, wd)
                     continue
                 if i < len(words) and words[i] not in _INTERPRETERS \
                         and words[i] != "cd" \

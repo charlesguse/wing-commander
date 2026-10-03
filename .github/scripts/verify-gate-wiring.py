@@ -894,7 +894,9 @@ def _fixture_script_call_stdin():
     `-eo pipefail` takes `pipefail` as the option's value, and a shell
     after `if` runs its heredoc (round 10); a shell behind an unknown
     wrapper (`retry 3 bash <<EOF`) runs its heredoc, and `-so pipefail`
-    still reads stdin (round 11); and a
+    still reads stdin (round 11); a shell on a `\\`-continued line
+    runs its heredoc, and printf piped to a shell prints code (round
+    13); and a
     step `env:` expression overrides a job's literal value, so the job's
     file is not reported as the script the step runs."""
     root = tempfile.mkdtemp(prefix="wc-gate-wiring-")
@@ -955,6 +957,15 @@ def _fixture_script_call_stdin():
                "          echo bash <<EOF\n"
                "          bash tests/echo-data.sh\n"
                "          EOF\n"
+               # Round 13: a shell on a `\\`-continued line runs the
+               # heredoc opened on the next, and printf piped to a shell
+               # prints code.
+               "          bash \\\n"
+               "            -s <<EOF\n"
+               "          bash tests/continued-hd.sh\n"
+               "          EOF\n"
+               "      - name: printed\n"
+               "        run: printf 'bash .github/scripts/printed.sh\\n' | bash\n"
                "      - name: override\n"
                f"        env:\n          S: {expr}\n"
                "        run: bash \"$S\"\n")
@@ -974,8 +985,10 @@ def _fixture_script_call_stdin():
                 "runs .github/actions/i/tests/clustered-hd.sh ",
                 "runs .github/actions/i/tests/if-hd.sh ",
                 "runs .github/actions/i/tests/retried-hd.sh ",
-                "runs .github/actions/i/tests/so-hd.sh "]
-        ok = (len(failures) == 15 and all(w in joined for w in want)
+                "runs .github/actions/i/tests/so-hd.sh ",
+                "runs .github/actions/i/tests/continued-hd.sh ",
+                "runs .github/scripts/printed.sh "]
+        ok = (len(failures) == 17 and all(w in joined for w in want)
               and "data.sh" not in joined and "test_mod" not in joined
               and "job-env" not in joined)
         return ok, f"got {failures!r}"

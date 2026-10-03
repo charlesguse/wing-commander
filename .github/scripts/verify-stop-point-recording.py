@@ -435,11 +435,12 @@ CASE_SUBJECT_RE = re.compile(r'\bcase\s+"?\$\{?(\w+)[^}"\s]*\}?"?\s+in\b')
 # word of a prefix list (`A=1 c="$X" cmd`), behind `env` and its options
 # too, is an assignment (code review of #954). A case arm's `)` and an
 # `if`/`while` condition head a command too (code review of #954, round 9:
-# main's unanchored alias regex caught `a) c="$STOP_CAUSE" ;;`).
+# main's unanchored alias regex caught `a) c="$STOP_CAUSE" ;;`). A
+# declaration builtin's options and `env -u NAME` are skipped (round 13).
 _CMD_POS_RE = re.compile(
-    r"(?:^|[;&|({)!]|\b(?:if|elif|while|until|then|do|else|export|local|readonly"
-    r"|declare|typeset)\b)[ \t]*"
-    r"(?:env(?:[ \t]+-\S+)*[ \t]+)?", re.M)
+    r"(?:^|[;&|({)!]|\b(?:if|elif|while|until|then|do|else)\b"
+    r"|\b(?:export|local|readonly|declare|typeset)\b(?:[ \t]+-\S+)*)[ \t]*"
+    r"(?:env(?:[ \t]+(?:-[uC][ \t]+\S+|-\S+))*[ \t]+)?", re.M)
 _ASSIGN_WORD_RE = re.compile(
     r"""\w+=(?:"(?:\\.|[^"\\])*"|'[^']*'|\$\{\{.*?\}\}|\\.|[^\s"';&|)])*""")
 SHELL_BINDING_PREFIX = r"""^(\w+)=["']?"""
@@ -1077,6 +1078,13 @@ CHECK9_MUTATIONS = (
      '          case "$c" in\n          esac\n'),
     ("a shell alias as an if condition", "",
      '          if c="$STOP_CAUSE"; then :; fi\n          case "$c" in\n          esac\n'),
+    # Round 13: a declaration builtin's options, and `env -u NAME`.
+    ("a shell alias behind declare's options", "",
+     '          declare -l c="$STOP_CAUSE"\n          case "$c" in\n          esac\n'),
+    ("a shell alias behind local's options", "",
+     '          local -r c="$STOP_CAUSE"\n          case "$c" in\n          esac\n'),
+    ("a shell alias behind env -u NAME", "",
+     '          env -u X c="$STOP_CAUSE" true\n          case "$c" in\n          esac\n'),
 )
 # Legitimate shapes check 9 must leave alone: gating on the cause, and a
 # boolean flag that picks no prose.
