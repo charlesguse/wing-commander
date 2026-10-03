@@ -317,14 +317,6 @@ def heredoc_findings(doc, scripts_root=ROOT):
 # SC-006).
 # ---------------------------------------------------------------------------
 
-def _doc_step(doc, name):
-    for job in (doc.get("jobs") or {}).values():
-        for step in (job or {}).get("steps") or []:
-            if isinstance(step, dict) and step.get("name") == name:
-                return step
-    return None
-
-
 def round_outcome_restall_findings(doc=None):
     """`doc` is the parsed workflow to run the step from -- the real file
     when omitted -- so --self-test can mutate it (code review of #940: this
@@ -339,7 +331,8 @@ def round_outcome_restall_findings(doc=None):
         return ["re-stall-after-fresh-budget-spent: missing fixture file(s) {0}".format(missing)]
     env = _load_json(env_path)
     expected = _load_json(expected_path)
-    step = (_doc_step(doc, "Decide the round outcome") if doc is not None
+    step = (_find_step(doc, "review", lambda s: s.get("name") == "Decide the round outcome")
+            if doc is not None
             else wc_shell_harness.find_step(WORKFLOW, "Decide the round outcome"))
     if step is None:
         return ["review: no \"Decide the round outcome\" step found"]
@@ -499,7 +492,9 @@ def run_selftest(text):
 
     # Code review of #940: the direct-call and round-outcome families had
     # no mutation either.
-    found = direct_call_findings(head_moved=lambda *a, **k: True)
+    # Still makes the real live lookup, so only the verdict is wrong.
+    found = direct_call_findings(
+        head_moved=lambda *a, **k: (head_moved_since_last_review(*a, **k), True)[1])
     if not found:
         failures.append("mutation `head_moved_since_last_review() always reports a moved "
                         "head` was NOT detected")

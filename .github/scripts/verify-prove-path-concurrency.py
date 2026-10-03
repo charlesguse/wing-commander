@@ -245,6 +245,8 @@ def self_test():
             print("[ok] fixture `{0}` -> {1}".format(
                 name, "fails as expected" if expect_failure else "passes as expected"))
 
+    for finding in failures:
+        print("::error::verify-prove-path-concurrency --self-test: {0}".format(finding))
     print("verify-prove-path-concurrency --self-test: {0} failure(s).".format(len(failures)))
     return 1 if failures else 0
 

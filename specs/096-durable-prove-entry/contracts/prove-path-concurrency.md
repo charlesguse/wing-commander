@@ -26,9 +26,9 @@ of site Gate 101 already checks (8 per-job `concurrency:` comments,
 `board-loop-workflow.md`'s "Concurrency" section, this feature's
 equivalent of `concurrency-groups.md`).
 
-## Groups, per job (supersedes `concurrency-groups.md`'s `prove-gate`/`prove` row)
+## Groups, per job (folded into `concurrency-groups.md`'s `prove-gate`/`prove` row, now the canonical table)
 
-| Job | Group (ordinary trigger) | Group (`directed-stage != ''`) | `cancel-in-progress` |
+| Job | Group (`pull_request: closed`) | Group (`directed-stage != ''`) | `cancel-in-progress` |
 |---|---|---|---|
 | `prove-gate`, `prove` | `wing-commander-board-loop-prove-{github.event.pull_request.number}` (was: `wing-commander-board-loop`) | `wing-commander-board-loop-directed-proof` (unchanged) | `false` |
 
