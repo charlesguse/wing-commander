@@ -1157,9 +1157,27 @@ jobs:
           # last method (code review of #944).
           _PARAM_EXP = r'\$\{(?!\{)' + _brace_body(SUB_DEPTH) + r'\}'
           _BACKTICK = r'`(?:[^`\\]|\\.)*`'
-          SHELL_WORD = (r'(?:"(?:[^"\\$]|\\.|' + _CMD_SUB + r'|\$(?!\())*"|\'[^\']*\''
-                        r'|' + _CMD_SUB + r'|\$\{\{(?:[^}]|\}(?!\}))*\}\}'
-                        r'|' + _PARAM_EXP + r'|' + _BACKTICK +
+          _EXPR = r'\$\{\{(?:[^}]|\}(?!\}))*\}\}'
+
+
+          def _dq_brace_body(depth):
+              """The inside of a `${...}` within double quotes, nesting at
+              most `depth` levels of braces. A quoted string inside it
+              (`"${X:-"a b"}"`) is part of the expansion, as bash reads it:
+              closing the outer quote at its first inner `"` left the text
+              between the inner quotes unquoted, so `"${X:-" -X GET "}"`
+              read as two words and its `-X GET` as the call's last method
+              (code review of #944)."""
+              inner = _dq_brace_body(depth - 1) if depth > 1 else None
+              return (r'(?:[^{}"\\]|\\.|"(?:[^"\\]|\\.)*"'
+                      + (r'|\{' + inner + r'\}' if inner else '') + r')*')
+
+
+          _DQ_PARAM = r'\$\{(?!\{)' + _dq_brace_body(SUB_DEPTH) + r'\}'
+          SHELL_WORD = (r'(?:"(?:[^"\\$]|\\.|' + _CMD_SUB + r'|' + _EXPR
+                        + r'|' + _DQ_PARAM + r'|\$(?![({]))*"|\'[^\']*\''
+                        r'|' + _CMD_SUB + r'|' + _EXPR
+                        + r'|' + _PARAM_EXP + r'|' + _BACKTICK +
                         r'|\\.|(?!\$\(|\$\{)[^\s"\'\\`])+')
           GH_API_VALUE_FLAGS = ("-X", "--method", "-H", "--header", "-f", "--raw-field",
                                 "-F", "--field", "-q", "--jq", "-t", "--template",
@@ -1648,9 +1666,21 @@ jobs:
 
 
           def api_level(cmdline, assigns):
-              """-> (level, method word): "write" when the LAST method flag
-              can name a write, "read" when it names none or there is no
-              method flag; level None when that word is not resolvable."""
+              """-> (level, why): "write" when the LAST method flag can name
+              a write, "read" when it names none or there is no method flag;
+              level None, with `why` naming the word, when Gate 12 cannot
+              read the call's method.
+
+              Every word of the call must parse as one whole SHELL_WORD.
+              One that does not -- a value nesting deeper than SUB_DEPTH, an
+              opener it never closes -- fails the call closed, as an
+              unresolvable method does in resolve_methods(): split at its
+              blanks instead, a `-X GET` inside it started a word of its own
+              and read as the call's last method, so every new depth limit
+              was one more level for a write to hide behind (code review of
+              #944). With no fallback split, the depth limits are safe by
+              construction. A word starting where nothing executes is the
+              call's trailing comment, and ends the walk."""
               blanked, raw = cmdline
               starts = set()
               i, n = 0, len(raw)
@@ -1658,9 +1688,22 @@ jobs:
                   if raw[i].isspace():
                       i += 1
                       continue
+                  if blanked[i] == " ":
+                      break
                   starts.add(i)
                   wm = SHELL_WORD_RE.match(raw, i)
-                  i = wm.end() if wm else (re.compile(r'\S*').match(raw, i).end())
+                  if not wm or (wm.end() < n and not raw[wm.end()].isspace()):
+                      return None, (
+                          f"`gh api ... {raw[i:i + 40]}` - Gate 12 cannot read "
+                          f"this call's method: this word does not parse as "
+                          f"one shell word. It nests deeper than {SUB_DEPTH} "
+                          f"levels of " + "`$(...)` or `${...}`, or opens a "
+                          "quote, substitution or expression the call's line "
+                          "ends inside (an unquoted `||` or `&&` ends it), and "
+                          "split at its blanks, a method flag inside it would "
+                          "read as the call's own. Move the value into a "
+                          "variable assigned before the call.")
+                  i = wm.end()
               word = None
               for fm in API_METHOD_FLAG_RE.finditer(blanked):
                   if fm.start("flag") not in starts:
@@ -1672,9 +1715,14 @@ jobs:
                   return "read", None
               methods = resolve_methods(word, assigns)
               if methods is None:
-                  return None, word
+                  return None, (
+                      f"`gh api ... {word}` - Gate 12 cannot resolve this "
+                      f"call's method to a literal value (it traces to a "
+                      f"`$(...)` computed value, an Actions expression or an "
+                      f"unset variable), so it cannot tell a read from a "
+                      f"write. Assign the method a literal in this step.")
               return ("write" if any(API_WRITE_METHOD_RE.match(x) for x in methods)
-                      else "read"), word
+                      else "read"), None
 
 
           def check_gh_invocation(where, m, cmdline, assigns, tok_kind, tok_detail,
@@ -1710,15 +1758,9 @@ jobs:
                               f"pass unchecked.")
                           continue
                       if level is None:
-                          level, method_word = api_level(cmdline, assigns)
+                          level, why = api_level(cmdline, assigns)
                           if level is None:
-                              failures.append(
-                                  f"{where}: `gh api ... {method_word}` - Gate 12 "
-                                  f"cannot resolve this call's method to a literal "
-                                  f"value (it traces to a `$(...)` computed value, "
-                                  f"an Actions expression or an unset variable), so "
-                                  f"it cannot tell a read from a write. Assign the "
-                                  f"method a literal in this step.")
+                              failures.append(f"{where}: {why}")
                               return
                       check_call(where, f"gh api (.../{cat}/...)",
                                  frozenset({(perm_cat, level)}),

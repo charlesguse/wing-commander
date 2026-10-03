@@ -719,6 +719,65 @@ CASES = [
             ['gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" -f body=${X:- -X GET}']),
      True, ("issues", "write")),
 
+    ("a word of the call nested deeper than Gate 12 parses fails the "
+     "call closed, never split at its blanks: the `-X GET` inside a "
+     "four-level `${...}` value after the PATH is no method of the "
+     "call, so the call fails as unreadable rather than passing as a "
+     "read under issues:read",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" '
+             '-f body=${A:-${B:-${C:-${D}}} -X GET}']),
+     True, ("cannot read this call's method", "deeper")),
+
+    ("... nor the one inside a four-level `$(...)` value",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" '
+             '-f body=$(a $(b $(c $(d))) -X GET)']),
+     True, ("cannot read this call's method", "deeper")),
+
+    ("... nor the one after an opener the call never closes",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" '
+             '-f body=$(echo -X GET']),
+     True, ("cannot read this call's method", "deeper")),
+
+    ("... and that word walk stays linear: a call with a PATH whose 200 "
+     "flag values each nest three levels, followed by unclosed openers, "
+     "fails closed in well under the per-scenario timeout",
+     mkcase(ISSUES_WRITE, "", [DEFAULT_ENV],
+            ['gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" '
+             + "-f a=${A:-${B:-${C} x} y}`c d`$(e \"$(f ')')\") " * 200
+             + "-f b=" + "$( ${ ` \"$( \"${X:-\" \"${{ " * 50]),
+     True, ("cannot read this call's method",)),
+
+    ("... and so does an unquoted Actions expression the call's line is "
+     "cut inside at its `||`, naming that cause",
+     mkcase(ISSUES_WRITE, "", [DEFAULT_ENV],
+            ['gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" '
+             '-f body=${{ inputs.a || inputs.b }}']),
+     True, ("cannot read this call's method", "`||`")),
+
+    ("a quoted string inside a double-quoted `${...}` is part of that "
+     "word, as bash reads it: the `-X GET` in `\"${X:-\" -X GET \"}\"` is "
+     "not the call's last method, so the POST under issues:read fails",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" '
+             '-f body="${X:-" -X GET "}"']),
+     True, ("issues", "write")),
+
+    ("... and a `\"${BODY:-\"no body\"}\"` value before the PATH is one "
+     "word: the PATH is resolved and the write passes under issues:write",
+     mkcase(ISSUES_WRITE, "", [DEFAULT_ENV],
+            ['gh api -X POST -f body="${BODY:-"no body"}" '
+             '"repos/${GITHUB_REPOSITORY}/issues/1/comments"']),
+     False, ()),
+
+    ("... while a trailing comment's unbalanced quote is no word of the "
+     "call: the read passes",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['gh api "repos/${GITHUB_REPOSITORY}/issues/1" --jq .body  # it\'s a read']),
+     False, ()),
+
     ("an unquoted heredoc delimiter is its whole word (`<<EOF-1` opens "
      "one ending at `EOF-1`, not `EOF`): the call after it is still "
      "scanned",
