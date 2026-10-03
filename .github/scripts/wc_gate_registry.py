@@ -411,10 +411,12 @@ _VAR_RE = re.compile(r"\$(?:\{([A-Za-z_]\w*)\}|([A-Za-z_]\w*))")
 _EXPR_RE = re.compile(r"\$\{\{.*?\}\}", re.S)
 
 
-def _shell_prepass(text, i=0, nested=False):
+def _shell_prepass(text, i=0, nested=False, subs=None):
     """-> (text, [inner text, ...], end): `text` as bash reads its words,
     with comments and heredoc bodies dropped and each `$( )` lifted out
-    into its own entry (nested ones too), leaving one placeholder word.
+    into its own entry of `subs` (nested ones too; pass a list to append
+    to it), leaving the placeholder word `__WC_CMDSUB_<index>__`, so the
+    reader runs each body at the point bash does (code review of #954).
 
     Needed because shlex alone cannot read a run: block: its
     `comments=True` starts a comment at ANY `#`, mid-word too (`a#b`, a
@@ -422,7 +424,8 @@ def _shell_prepass(text, i=0, nested=False):
     so `x="$(bash a.sh "$y")"` reads as two strings around a bare word and
     an apostrophe further on unbalances the rest. A heredoc body is data,
     like an `echo`'s arguments."""
-    out, subs, pending = [], [], []
+    out, pending = [], []
+    subs = [] if subs is None else subs
     quote, prev, depth = None, " ", 0
     while i < len(text):
         ch = text[i]
@@ -433,9 +436,11 @@ def _shell_prepass(text, i=0, nested=False):
             i, prev = i + 2, "x"
             continue
         elif text.startswith("$(", i) and not text.startswith("$((", i):
-            inner, inner_subs, i = _shell_prepass(text, i + 2, nested=True)
-            subs += [inner] + inner_subs
-            out.append("__WC_CMDSUB__")
+            index = len(subs)
+            subs.append("")
+            subs[index], _, i = _shell_prepass(text, i + 2, nested=True,
+                                               subs=subs)
+            out.append(f"__WC_CMDSUB_{index}__")
             prev = "x"
             continue
         elif quote == '"':
@@ -552,35 +557,47 @@ def _expand(token, env):
         lambda m: env.get(m.group(1) or m.group(2), m.group(0)), token)
 
 
+_CMDSUB_RE = re.compile(r"__WC_CMDSUB_(\d+)__")
+
+
 def _script_calls_in_run(run, env, workdir):
-    """(scripts, unresolved) for one run: block -- see REPO_SCRIPT_RE."""
+    """(scripts, unresolved) for one run: block -- see REPO_SCRIPT_RE.
+
+    Commands are read in the order bash runs them: a `$( )` body before
+    the command that holds it, with a copy of the variables in effect
+    there (a subshell's assignments do not leak out); a `bash -c`/`sh -c`
+    string as a run: block of its own, never as a script path; and a
+    literal `cd` moves the directory later relative paths resolve from
+    (code review of #954)."""
     scripts, unresolved = set(), set()
-    env = dict(env)
     # `${{ x }}` holds spaces; collapse it to one token-safe word so it
     # reaches the classifier whole, as a path no reader can resolve.
     text = _EXPR_RE.sub(lambda m: re.sub(r"\s+", "", m.group(0)), run)
-    wd_ok = workdir is None or not re.search(r"[$*?{}\[]", workdir)
+    subs = []
 
-    def relative(path):
+    def literal_dir(wd):
+        return wd is None or not re.search(r"[$*?{}\[]", wd)
+
+    def relative(path, wd):
         path = re.sub(r"^(?:\./)+", "", path)
-        if workdir is None or path.startswith("/"):
+        if wd is None or path.startswith("/"):
             return path
-        return posixpath.normpath(posixpath.join(workdir, path))
+        return posixpath.normpath(posixpath.join(wd, path))
 
-    def interpreted(path):
+    def interpreted(path, wd):
         # An interpreter's argument, or a command word: a `$` left after
         # expansion is a generated script (a runner temp file) unless it
         # names .github/, which REPO_SCRIPT_RE then reports.
         if "$" in path or path.startswith("/") or "://" in path:
             return
-        if not wd_ok:
-            unresolved.add(f"{workdir}/{path}")
+        if not literal_dir(wd):
+            unresolved.add(f"{wd}/{path}")
         elif re.search(r"[*?{}\[]", path):
-            unresolved.add(relative(path))
+            unresolved.add(relative(path, wd))
         else:
-            scripts.add(relative(path))
+            scripts.add(relative(path, wd))
 
-    def repo_token(token):
+    def repo_token(token, wd):
         if "://" in token:
             return
         for m in REPO_SCRIPT_RE.finditer(token):
@@ -588,60 +605,93 @@ def _script_calls_in_run(run, env, workdir):
             literal = re.fullmatch(
                 r"(?:--?[\w-]+=|[A-Za-z_]\w*=)?(?:\./)*", prefix)
             if literal and not re.search(r"[$*?{}\[]", script):
-                if not wd_ok:
-                    unresolved.add(f"{workdir}/{script}")
+                if not literal_dir(wd):
+                    unresolved.add(f"{wd}/{script}")
                 else:
-                    scripts.add(relative(script))
+                    scripts.add(relative(script, wd))
             else:
                 unresolved.add(prefix + script)
 
-    outer, subs, _ = _shell_prepass(text)
-    lines = [line for part in [outer] + subs for line in _shell_commands(part)]
-    for tokens, ok in lines:
-        if not ok:
-            # An unbalanced quote to the end of the block: no command can
-            # be read off it, so every script it names is unresolved.
-            for m in REPO_SCRIPT_RE.finditer(tokens):
-                unresolved.add(m.group(1) + m.group(2))
-            continue
-        for cmd in _split_simple_commands(tokens):
-            words = []
-            skip_next = False
-            for tok in cmd:
-                if skip_next:
-                    skip_next = False
-                    continue
-                if tok in _REDIRECTS or re.fullmatch(r"\d*[<>]+&?", tok):
-                    skip_next = True
-                    continue
-                words.append(_expand(tok, env))
-            i = 0
-            while i < len(words) and (words[i] in _COMMAND_PREFIXES
-                                      or _ASSIGN_RE.fullmatch(words[i])):
-                m = _ASSIGN_RE.fullmatch(words[i])
-                if m and "$" not in m.group(2):
-                    env[m.group(1)] = m.group(2)
-                i += 1
-            while i < len(words) and words[i] in _COMMAND_WRAPPERS:
-                i += 1
-                while i < len(words) and (
-                        words[i].startswith("-") or _ASSIGN_RE.fullmatch(words[i])
-                        or re.fullmatch(r"[\d.]+[smhd]?", words[i])
-                        or (i and re.fullmatch(r"-[nuIgpLPs]|--user|--adjustment",
-                                               words[i - 1]))):
-                    i += 1
-            if i < len(words) and words[i] in _NON_EXEC_COMMANDS:
+    def run_subs(token, env, wd):
+        for m in _CMDSUB_RE.finditer(token):
+            read(subs[int(m.group(1))], dict(env), wd)
+
+    def read(prepassed, env, wd):
+        """Read one prepassed block in the order bash runs it."""
+        for tokens, ok in _shell_commands(prepassed):
+            if not ok:
+                # An unbalanced quote to the end of the block: no command
+                # can be read off it, so every script it names is
+                # unresolved.
+                run_subs(tokens, env, wd)
+                for m in REPO_SCRIPT_RE.finditer(tokens):
+                    unresolved.add(m.group(1) + m.group(2))
                 continue
-            if i < len(words) and words[i] in _INTERPRETERS:
-                arg = next((w for w in words[i + 1:]
-                            if SCRIPT_EXT_RE.search(w)), None)
-                if arg is not None and ".github/" not in arg:
-                    interpreted(arg)
-            elif i < len(words) and SCRIPT_EXT_RE.search(words[i]) \
-                    and ".github/" not in words[i]:
-                interpreted(words[i])
-            for word in words:
-                repo_token(word)
+            for cmd in _split_simple_commands(tokens):
+                words = []
+                skip_next = False
+                for tok in cmd:
+                    run_subs(tok, env, wd)
+                    if skip_next:
+                        skip_next = False
+                        continue
+                    if tok in _REDIRECTS or re.fullmatch(r"\d*[<>]+&?", tok):
+                        skip_next = True
+                        continue
+                    words.append(_expand(tok, env))
+                i = 0
+                while i < len(words) and (words[i] in _COMMAND_PREFIXES
+                                          or _ASSIGN_RE.fullmatch(words[i])):
+                    m = _ASSIGN_RE.fullmatch(words[i])
+                    if m and "$" not in m.group(2):
+                        env[m.group(1)] = m.group(2)
+                    i += 1
+                while i < len(words) and words[i] in _COMMAND_WRAPPERS:
+                    i += 1
+                    while i < len(words) and (
+                            words[i].startswith("-") or _ASSIGN_RE.fullmatch(words[i])
+                            or re.fullmatch(r"[\d.]+[smhd]?", words[i])
+                            or (i and re.fullmatch(r"-[nuIgpLPs]|--user|--adjustment",
+                                                   words[i - 1]))):
+                        i += 1
+                if i < len(words) and words[i] in _NON_EXEC_COMMANDS:
+                    continue
+                if i < len(words) and words[i] == "cd":
+                    target = words[i + 1] if i + 1 < len(words) else "~"
+                    if target.startswith(("/", "~", "-")) or "$" in target \
+                            or "__WC_CMDSUB_" in target:
+                        # A directory no reader can pin down.
+                        wd = "$PWD"
+                    elif literal_dir(wd):
+                        wd = relative(target, wd)
+                    continue
+                inline = None
+                if i < len(words) and words[i] in _INTERPRETERS:
+                    args = words[i + 1:]
+                    if "-c" in args:
+                        # `-c STRING`: the string is code, not a path; a
+                        # shell's is read as a run: block of its own.
+                        k = args.index("-c")
+                        if words[i] in ("bash", "sh") and k + 1 < len(args):
+                            inline = k + 1
+                    else:
+                        arg = next((w for w in args if SCRIPT_EXT_RE.search(w)),
+                                   None)
+                        if arg is not None and ".github/" not in arg:
+                            interpreted(arg, wd)
+                    if inline is not None:
+                        inner, _, _ = _shell_prepass(args[inline], subs=subs)
+                        read(inner, dict(env), wd)
+                        inline += i + 1
+                elif i < len(words) and SCRIPT_EXT_RE.search(words[i]) \
+                        and ".github/" not in words[i]:
+                    interpreted(words[i], wd)
+                for k, word in enumerate(words):
+                    if k != inline:
+                        repo_token(word, wd)
+
+    outer, _, _ = _shell_prepass(text, subs=subs)
+    read(outer, dict(env), workdir)
     return scripts, unresolved
 
 

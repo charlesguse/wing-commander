@@ -431,12 +431,39 @@ def _cause_expr_re(causes, prefix=r"", suffix=r"", flags=0):
 STOP_CAUSE_OUTPUT_RE = _cause_expr_re([_STOP_CAUSE])
 CASE_SUBJECT_RE = re.compile(r'\bcase\s+"?\$\{?(\w+)[^}"\s]*\}?"?\s+in\b')
 # Where a shell assignment can start: the head of a command, never an
-# argument (`--cause=$X`) -- see _blank_quoted_args for quoted text.
-_CMD_POS = r"(?:^|[;&|({]|\b(?:then|do|else|export|local|readonly|declare|typeset)\b)[ \t]*"
-SHELL_BINDING_RE = _cause_expr_re([_STOP_CAUSE], prefix=_CMD_POS + r"""(\w+)=["']?""",
-                                  flags=re.M)
-SHELL_ALIAS_RE = re.compile(_CMD_POS + r"""(\w+)=["']?\$\{?(\w+)[^}"'\s]*\}?["']?(?=\s|;|$)""",
-                            re.M)
+# argument (`--cause=$X`) -- see _blank_quoted_args for quoted text. Every
+# word of a prefix list (`A=1 c="$X" cmd`), behind `env` and its options
+# too, is an assignment (code review of #954).
+_CMD_POS_RE = re.compile(
+    r"(?:^|[;&|({]|\b(?:then|do|else|export|local|readonly|declare|typeset)\b)[ \t]*"
+    r"(?:env(?:[ \t]+-\S+)*[ \t]+)?", re.M)
+_ASSIGN_WORD_RE = re.compile(
+    r"""\w+=(?:"(?:\\.|[^"\\])*"|'[^']*'|\$\{\{.*?\}\}|\\.|[^\s"';&|)])*""")
+SHELL_BINDING_RE = _cause_expr_re([_STOP_CAUSE], prefix=r"""^(\w+)=["']?""")
+SHELL_ALIAS_RE = re.compile(r"""^(\w+)=["']?\$\{?(\w+)[^}"'\s]*\}?["']?$""")
+
+
+def _prefix_assignments(run):
+    """Every assignment word at a command's head in `run`, in order."""
+    words = []
+    for m in _CMD_POS_RE.finditer(run):
+        i = m.end()
+        while True:
+            w = _ASSIGN_WORD_RE.match(run, i)
+            if not w:
+                break
+            words.append(w.group(0))
+            i = w.end()
+            gap = re.match(r"[ \t]+", run[i:])
+            if not gap:
+                break
+            i += gap.end()
+    return words
+
+
+def _findall_assignments(pattern, run):
+    return [m.groups() if pattern.groups > 1 else m.group(1)
+            for w in _prefix_assignments(run) for m in [pattern.match(w)] if m]
 # The run-label/phrase picked by comparing the cause to a non-empty literal
 # in an expression -- the pre-leg-2 per-job ternary -- on either side of
 # the comparison, parenthesised (once or more) or not, through the output
@@ -456,8 +483,17 @@ def _blank_quoted_args(run):
     emptied, so `echo "c=$STOP_CAUSE"` binds nothing while
     `c="$STOP_CAUSE"` still does (code review of #940). A trailing
     comment is dropped first, so its apostrophe (`# don't`) opens no
-    quote that would blank the lines after it."""
-    out, i = [], 0
+    quote that would blank the lines after it. Quotes start afresh inside
+    `$( )`, in a double-quoted string or not, so
+    `x="$(printf 'a'"'"'s' "$r")"` closes where bash closes it and the
+    lines after it are still read (code review of #954)."""
+    return _blank_from(run, 0, False)[0]
+
+
+def _blank_from(run, i, nested):
+    """-> (blanked text, end) from `run[i:]`; `nested` stops at the `)`
+    closing a `$( )` and returns past it."""
+    out, depth = [], 0
     while i < len(run):
         ch = run[i]
         if ch == "\\":
@@ -468,19 +504,44 @@ def _blank_quoted_args(run):
             end = run.find("\n", i)
             i = len(run) if end < 0 else end
             continue
-        if ch in "\"'":
-            end = i + 1
-            while end < len(run) and run[end] != ch:
-                end += 2 if ch == '"' and run[end] == "\\" else 1
-            if i and run[i - 1] == "=":
-                out.append(run[i:end + 1])
-            else:
-                out.append(ch + ch)
+        if run.startswith("$(", i) and not run.startswith("$((", i):
+            inner, i = _blank_from(run, i + 2, True)
+            out.append("$(" + inner + ")")
+            continue
+        if nested and ch == "(":
+            depth += 1
+        elif nested and ch == ")":
+            if not depth:
+                return "".join(out), i + 1
+            depth -= 1
+        elif ch == "'":
+            end = run.find("'", i + 1)
+            end = len(run) if end < 0 else end
+            keep = i and run[i - 1] == "="
+            out.append(run[i:end + 1] if keep else "''")
             i = end + 1
+            continue
+        elif ch == '"':
+            keep = i and run[i - 1] == "="
+            body, j = [], i + 1
+            while j < len(run) and run[j] != '"':
+                if run[j] == "\\":
+                    body.append(run[j:j + 2] if keep else "")
+                    j += 2
+                elif run.startswith("$(", j) and not run.startswith("$((", j):
+                    inner, j = _blank_from(run, j + 2, True)
+                    body.append("$(" + inner + ")")
+                else:
+                    if keep:
+                        body.append(run[j])
+                    j += 1
+            # A blanked string keeps only its `$( )` commands, which run.
+            out.append('"' + "".join(body) + '"')
+            i = j + 1
             continue
         out.append(ch)
         i += 1
-    return "".join(out)
+    return "".join(out), i
 
 
 def _non_comment_lines(text):
@@ -556,9 +617,9 @@ def _pasted_stop_cause_mappings(text, composite_text):
             step_env = _bound_env_names(step.get("env"), bound_re)
             env_names |= step_env
             bound = {"STOP_CAUSE"} | job_env | step_env
-            bound |= set(SHELL_BINDING_RE.findall(run))
+            bound |= set(_findall_assignments(SHELL_BINDING_RE, run))
             while True:
-                more = {lhs for lhs, rhs in SHELL_ALIAS_RE.findall(run)
+                more = {lhs for lhs, rhs in _findall_assignments(SHELL_ALIAS_RE, run)
                         if rhs.upper() in {b.upper() for b in bound}} - bound
                 if not more:
                     break
@@ -938,6 +999,16 @@ CHECK9_MUTATIONS = (
     ("a shell alias after a trailing comment with an apostrophe", "",
      "          echo start # don't worry\n"
      '          c="$STOP_CAUSE"\n          case "$c" in\n          esac\n'),
+    # Code review of #954, round 2: quotes restart inside `$( )`, and a
+    # prefix list or `env` assigns every word ahead of the command.
+    ("a shell alias after a `$( )` whose quotes nest", "",
+     "          x=\"$(printf 'a'\"'\"'s %s' \"$r\")\"\n"
+     "          echo \"issue #1, it's\"\n"
+     '          c="$STOP_CAUSE"\n          case "$c" in\n          esac\n'),
+    ("a shell alias second in a prefix list", "",
+     '          A=1 c="$STOP_CAUSE"\n          case "$c" in\n          esac\n'),
+    ("a shell alias behind env", "",
+     '          env -i c="$STOP_CAUSE" true\n          case "$c" in\n          esac\n'),
 )
 # Legitimate shapes check 9 must leave alone: gating on the cause, and a
 # boolean flag that picks no prose.
@@ -993,6 +1064,18 @@ def _mut_job_output_env_case(text):
                 run='          case "$W" in\n          esac\n'))
 
 
+def _mut_alias_in_route_step(text):
+    """An aliased `case` pasted into route's real spec-request step, after
+    its `"$(jq -r '...' "...")"` line (code review of #954)."""
+    anchor = "          agent_proposal=\"$(jq -r '.decision.agent_proposal' "
+    if text.count(anchor) != 1:
+        raise AssertionError("board-loop.yml's agent_proposal= line moved")
+    head, tail = text.split(anchor, 1)
+    line, rest = tail.split("\n", 1)
+    return (head + anchor + line + "\n"
+            + '          c="$STOP_CAUSE"\n          case "$c" in\n          esac\n' + rest)
+
+
 def _mut_unparseable(text):
     """board-loop.yml that no longer parses."""
     return text.rstrip("\n") + "\n  zz-broken: [unclosed\n"
@@ -1003,6 +1086,8 @@ CHECK9_TEXT_MUTATIONS = (
     ("a ternary on a job output bound to the cause", _mut_job_output_ternary),
     ("an env var bound to a job output bound to the cause, then a case on it",
      _mut_job_output_env_case),
+    ("an aliased case pasted into route's real spec-request step",
+     _mut_alias_in_route_step),
     ("an unparseable board-loop.yml (a finding, not a silent pass)", _mut_unparseable),
 )
 

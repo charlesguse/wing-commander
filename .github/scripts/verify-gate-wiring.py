@@ -805,7 +805,20 @@ def _fixture_script_call_tokens():
                "        run: |\n"
                "          timeout 300 bash tests/run.sh\n"
                "          env A=1 nice -n 5 bash tests/more.sh\n"
-               "          sudo -u runner python3 tests/x.py\n")
+               "          sudo -u runner python3 tests/x.py\n"
+               # Code review of #954, round 2: a `$( )` body runs where it
+               # stands, with the variables set by then, and a `-c`
+               # string is code (its `cd` included), never a path.
+               "      - name: order\n"
+               "        run: |\n"
+               "          out=\"$(bash \"$O/run.sh\")\"; O=.github/actions/o\n"
+               "          D=.github/actions/p; out=\"$(bash \"$D/run.sh\")\"\n"
+               "          D=.github/actions/q\n"
+               "      - name: dashc\n"
+               "        working-directory: .github/actions/c\n"
+               "        run: |\n"
+               "          bash -c \"cd tests && ./run.sh\"\n"
+               "          sh -c 'bash more/run.sh'\n")
         failures = check_local_runner_script_coverage(root)
         joined = "\n".join(failures)
         want = ["runs .github/actions/w/tests/run.sh ",
@@ -816,9 +829,14 @@ def _fixture_script_call_tokens():
                 "runs .github/scripts/h-tests/run.sh ",
                 "runs .github/actions/t/tests/run.sh ",
                 "runs .github/actions/t/tests/more.sh ",
-                "runs .github/actions/t/tests/x.py "]
-        ok = (len(failures) == 9 and all(w in joined for w in want)
-              and "m-tests" not in joined and "m.sh" not in joined)
+                "runs .github/actions/t/tests/x.py ",
+                "runs .github/actions/p/run.sh ",
+                "runs .github/actions/c/tests/run.sh ",
+                "runs .github/actions/c/more/run.sh "]
+        ok = (len(failures) == 12 and all(w in joined for w in want)
+              and "m-tests" not in joined and "m.sh" not in joined
+              and "actions/o/" not in joined and "actions/q/" not in joined
+              and "cd tests" not in joined)
         return ok, f"got {failures!r}"
     finally:
         shutil.rmtree(root, ignore_errors=True)
