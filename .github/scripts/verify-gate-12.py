@@ -46,6 +46,11 @@ _N = chr(10)
 
 STEP_PREFIX = "Gate 12"
 
+# One scenario runs in well under a second; a gate still running after this
+# long is backtracking without bound, which on the real fleet is a CI job
+# that hangs until its timeout instead of failing.
+CASE_TIMEOUT_S = 30
+
 
 # ---------------------------------------------------------------- fixtures
 #
@@ -405,6 +410,195 @@ CASES = [
      mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
             ['gh api "repos/${GITHUB_REPOSITORY:?}/actions/variables/X"']),
      True, ("actions/variables", "never grants")),
+
+    # --- the code review of #939's Gate 12 lines --------------------------
+    ("gh api flags before the path are skipped, not read as the path: "
+     "`gh api -i -X POST .../issues/...` under github.token with only "
+     "actions:read fails, naming issues",
+     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
+            ['s="$(gh api -i -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" -f body=x)"']),
+     True, ("issues", "write")),
+
+    ("... a valued flag consumes its value: `gh api -H 'Accept: x' --silent "
+     "PATH` resolves PATH (.../commits/... is a Contents read)",
+     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
+            ["gh api -H 'Accept: application/json' --silent \"repos/${GITHUB_REPOSITORY}/commits/main\""]),
+     True, ("commits", "contents")),
+
+    ("... `--method=PATCH` is a write: the attached spelling the flag "
+     "parser skips as a switch is not read as a read, so github.token with "
+     "only issues:read fails",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['gh api --method=PATCH "repos/${GITHUB_REPOSITORY}/issues/1" -f state=closed']),
+     True, ("issues", "write")),
+
+    ("... and so is `-XPOST`",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['gh api -XPOST "repos/${GITHUB_REPOSITORY}/issues/1/comments" -f body=x']),
+     True, ("issues", "write")),
+
+    ("... a partly quoted flag value is one shell word: `-f body=\"a b\"` "
+     "does not leave `b\"` behind as the PATH",
+     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
+            ['gh api -f body="a b" -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments"']),
+     True, ("issues", "write")),
+
+    ("... a quoted method is still that method: `-X 'POST'` under "
+     "github.token with only issues:read fails (the call line blanks "
+     "quoted text, so the method word is read from the raw line)",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ["gh api -X 'POST' \"repos/${GITHUB_REPOSITORY}/issues/1/comments\" -f body=x"]),
+     True, ("issues", "write")),
+
+    ("... and so is `--method=\"PATCH\"`",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['gh api --method="PATCH" "repos/${GITHUB_REPOSITORY}/issues/1" -f state=closed']),
+     True, ("issues", "write")),
+
+    ("... while a method word inside another flag's quoted value is not "
+     "this call's method: `-f body=\"x -X POST\"` stays a read",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            [
+                # wc-gh-method-exempt: fixture -- a method word inside a quoted value is not the call's method
+                'gh api -f body="x -X POST" "repos/${GITHUB_REPOSITORY}/issues/1"']),
+     False, ()),
+
+    ("a valued flag is never re-read as a switch to free its value as the "
+     "PATH: `gh api -H 'Accept: x' -X POST -- PATH` resolves PATH, not "
+     "`POST`",
+     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
+            ["gh api -H 'Accept: x' -X POST -- \"repos/${GITHUB_REPOSITORY}/issues/1/comments\" -f body=x"]),
+     True, ("issues", "write")),
+
+    ("... and an attached short-flag value (`-H'...'`) is one switch word, "
+     "so `--jq '.id'` keeps its value and PATH is still resolved",
+     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
+            ["gh api --jq '.id' -H'Accept: application/json' \"repos/${GITHUB_REPOSITORY}/issues/1\""]),
+     True, ("issues", "read")),
+
+    ("... and a `gh api` whose flags leave no PATH fails loudly rather "
+     "than passing with a flag value as its PATH",
+     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
+            ["gh api --jq '.id' -X GET"]),
+     True, ("gh api", "SUBCOMMAND_PERMS")),
+
+    ("... a line continuation is whitespace, never the PATH: `gh api -X "
+     "GET \\` with PATH on the next line resolves it (.../actions/... "
+     "under github.token with only issues:read fails, naming actions)",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ["gh api -X GET \\",
+             '  "repos/${GITHUB_REPOSITORY}/actions/workflows/w.yml/runs" --jq .total_count']),
+     True, ("actions", "read")),
+
+    ("... and the flags never reach past the end of the line: a `gh api` "
+     "with no PATH followed by another command fails loudly, not with "
+     "that command's first word as its PATH",
+     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
+            ["gh api --jq '.id' -X GET", "echo done"]),
+     True, ("gh api", "SUBCOMMAND_PERMS")),
+
+    ("a valued flag's value holding a command substitution with blanks is "
+     "one word: `-f sha=$(git rev-parse HEAD)` never frees `rev-parse` as "
+     "the PATH, so the Issues write under issues:read fails",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['gh api -X POST -f sha=$(git rev-parse HEAD) "repos/${GITHUB_REPOSITORY}/issues/1/comments"']),
+     True, ("issues", "write")),
+
+    ("... and so is an Actions expression with blanks: `-f body=${{ x.y }}` "
+     "never frees `x.y` as the PATH",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['gh api -X POST -f body=${{ steps.x.outputs.y }} "repos/${GITHUB_REPOSITORY}/issues/1/comments"']),
+     True, ("issues", "write")),
+
+    ("... so a call whose only words are such flags has no PATH and fails "
+     "loudly, not skipped with an expression fragment as its PATH",
+     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
+            ['gh api -X POST -f body=${{ steps.x.outputs.y }}']),
+     True, ("gh api", "SUBCOMMAND_PERMS")),
+
+    ("... and so is a double-quoted value holding a substitution whose own "
+     "quoted words have blanks: `-f body=\"$(printf \"%s %s\" ...)\"` never "
+     "frees `%s\"` as the PATH, so the Issues write under issues:read fails",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['gh api -X POST -f body="$(printf "%s %s" "$A" "$B")" "repos/${GITHUB_REPOSITORY}/issues/1/comments"']),
+     True, ("issues", "write")),
+
+    ("... and a value with a backslash-escaped quote (`-f body='it'\\''s'`) "
+     "is one word, so its call is resolved, not failed as having no PATH",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ["gh api -X POST -f body='it'\\''s' \"repos/${GITHUB_REPOSITORY}/issues/1/comments\""]),
+     True, ("issues", "write")),
+
+    ("... and an unquoted escape is only an escape: a call with no PATH "
+     "whose value holds forty `\\.` escapes fails loudly in well under the "
+     "per-scenario timeout, not after 2^40 backtracking splits",
+     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
+            ["gh api -X GET --jq .a" + "\\.b" * 40]),
+     True, ("gh api", "SUBCOMMAND_PERMS")),
+
+    ("a short-flag cluster ending in a valued flag consumes its value: "
+     "`gh api -iX POST PATH` never takes `POST` as the PATH, so the Issues "
+     "write under issues:read fails",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            # wc-gh-method-exempt: fixture -- Gate 28's parser does not read the `-iX` cluster's method
+            ['gh api -iX POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" -f body=x']),
+     True, ("issues", "write")),
+
+    ("a `<<WORD` inside quotes is not a heredoc opener: a call after "
+     "`echo 'v<<EOF'` is still scanned",
+     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
+            ["echo 'verdict<<VERDICT_EOF'",
+             'gh issue comment 1 --body hi',
+             "echo 'VERDICT_EOF'"]),
+     True, ("issue comment", "issues")),
+
+    ("... while a real heredoc body still hides its text",
+     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
+            ["python3 - <<'PY'",
+             'print("gh issue comment 1 --body hi")',
+             "PY"]),
+     False, ()),
+
+    ("gh api .../actions/permissions is the Administration permission, not "
+     "Actions: github.token with actions:write fails, naming administration",
+     mkcase(ACTIONS_WRITE, "", [DEFAULT_ENV],
+            ['gh api "repos/${GITHUB_REPOSITORY}/actions/permissions"']),
+     True, ("actions/permissions", "administration", "never grants")),
+
+    ("gh api .../actions/secrets/... is the Secrets permission",
+     mkcase(ACTIONS_WRITE, "", [DEFAULT_ENV],
+            ['gh api "repos/${GITHUB_REPOSITORY}/actions/secrets/public-key"']),
+     True, ("actions/secrets", "secrets")),
+
+    ("gh api .../actions/organization-variables is the Variables permission",
+     mkcase(ACTIONS_WRITE, "", [DEFAULT_ENV],
+            ['gh api "repos/${GITHUB_REPOSITORY}/actions/organization-variables"']),
+     True, ("actions/organization-variables", "variables")),
+
+    ("... and other actions/ sub-paths stay Actions: .../actions/runs under "
+     "github.token with actions:read passes",
+     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
+            ['gh api "repos/${GITHUB_REPOSITORY}/actions/runs?per_page=1"']),
+     False, ()),
+
+    ("gh's repos/{owner}/{repo}/ placeholders are this repository, so the "
+     "call is checked: an Actions read under the App token fails",
+     mkcase("", "", [APP_ENV],
+            ['gh api "repos/{owner}/{repo}/actions/runs"']),
+     True, ("App token", "actions")),
+
+    ("a token minted through the _shared/scoped-app-token composite IS the "
+     "App token: its Actions read fails against the documented grant",
+     mkcase_minted("./.github/actions/_shared/scoped-app-token",
+                   ['gh run list --repo "$E2E_REPO"'], step_id="token"),
+     True, ("run list", "App token", "actions")),
+
+    ("... by its published-stage path too, and an issue create under it "
+     "passes",
+     mkcase_minted("./.wing-commander-pipeline/.github/actions/_shared/scoped-app-token",
+                   ['gh issue create --repo "$E2E_REPO" --title t --body b'],
+                   step_id="token"),
+     False, ()),
 
     ("a Variables call under github.token fails even with no permissions: "
      "block to compare against: no block can grant it (code review of #939)",
@@ -881,13 +1075,22 @@ def main():
                 os.makedirs(os.path.dirname(full), exist_ok=True)
                 io.open(full, "w", encoding="utf-8").write(body)
 
-            proc = subprocess.run([sys.executable, gate_path], cwd=case_dir,
-                                  capture_output=True, text=True,
-                                  encoding="utf-8", errors="replace")
+            problems = []
+            try:
+                proc = subprocess.run([sys.executable, gate_path], cwd=case_dir,
+                                      capture_output=True, text=True,
+                                      encoding="utf-8", errors="replace",
+                                      timeout=CASE_TIMEOUT_S)
+            except subprocess.TimeoutExpired:
+                problems.append(f"the gate did not finish within {CASE_TIMEOUT_S}s "
+                                f"(a regex backtracking without bound?)")
+                failures.append((name, problems, ""))
+                print(f"FAIL  {name}")
+                print(f"        - {problems[0]}")
+                continue
             out = (proc.stdout or "") + (proc.stderr or "")
             fired = proc.returncode != 0
 
-            problems = []
             if fired != expect_fail:
                 problems.append(
                     f"expected the gate to {'FAIL' if expect_fail else 'PASS'}, "

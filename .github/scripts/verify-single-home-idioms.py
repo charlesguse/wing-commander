@@ -833,14 +833,19 @@ def check_board_stop_check(root="."):
         doc = load_yaml(root, path)
         if doc is None:
             continue
-        text = read(root, path)
         for _ctx, steps in _step_lists(doc):
             run_text = "\n".join(str((step or {}).get("run") or "") for step in steps)
             decision_match = BOARD_STOP_CHECK_DECISION_RE.search(run_text)
             if decision_match and BOARD_STOP_CHECK_CANCEL in run_text:
-                offset = text.find(decision_match.group(0))
+                # The step that obtains the decision, by its own run: key
+                # -- never text.find(), whose first match in the file can
+                # sit in another job's step list (#882's class).
+                decision_step = next(
+                    step for step in steps
+                    if BOARD_STOP_CHECK_DECISION_RE.search(
+                        str((step or {}).get("run") or "")))
                 findings.append(Finding(
-                    path, "board-stop-check", line_of(text, max(offset, 0)),
+                    path, "board-stop-check", step_run_line(decision_step),
                     f"{decision_match.group(0)!r} (obtains a stop decision) + "
                     f"'gh run cancel' (performs a cancellation), in the same "
                     f"step list"))
@@ -1866,6 +1871,23 @@ def selftest_scoped_checkout_line_attribution():
         "          path: .wc-pristine-repo", job="x")
 
 
+def selftest_board_stop_check_line_attribution():
+    """Code review of #939: job a references board_stop_check.py with no
+    cancellation (a legitimate consumer); job b pastes the whole idiom.
+    The finding names job b's decision step, not job a's earlier match."""
+    _selftest_decoy_line(
+        "board-stop-check line attribution survives an earlier job's identical decision",
+        "board-stop-check", ".github/workflows/third-board-stop-decoy.yml",
+        "on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - shell: bash\n        run: |\n"
+        "          python3 .github/scripts/board_stop_check.py < in.json\n"
+        "  b:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - shell: bash\n        run: |\n"
+        "          python3 .github/scripts/board_stop_check.py < in.json\n"
+        "      - shell: bash\n        run: gh run cancel \"$ID\"\n",
+        "        run: |")
+
+
 def selftest_per_document_wrap_passes():
     """#575: loosening the transcript-normalise regex must not start
     flagging the per-document wrap -- the legitimate fallback read the
@@ -2287,6 +2309,7 @@ def run_selftest():
         "      - uses: actions/checkout@v5\n")
     selftest_composite_checkout_order_line_attribution()
     selftest_token_mint_line_attribution()
+    selftest_board_stop_check_line_attribution()
     selftest_local_action_line_attribution()
     selftest_scoped_checkout_line_attribution()
     # Every per-step check that reports step_run_line() gets the same

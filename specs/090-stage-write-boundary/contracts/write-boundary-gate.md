@@ -98,6 +98,12 @@ unreachable:
 - A mixed unchecked set (one out-of-boundary, one ordinary) →
   `all-unchecked-out-of-boundary=false`, `routed=false`, existing narrative
   unchanged.
+- The same mixed set on a cycle that progressed (`handoff=false`,
+  `routed=false`) → the real Route step's `if:` fires at and past the
+  iteration cap and not below it, and the shipped dispatch step takes the
+  terminal "Iteration cap reached" hand-off at the cap and redispatches
+  below it, so the last cycle files the out-of-boundary task and no
+  earlier one does (the `iteration >= max` disjunct; code review of #836).
 
 **(e) No filing on a truncated run (FR-013).** A synthetic truncated cycle
 with an out-of-boundary-shaped `tasks.md` at the tip → the "Route
@@ -231,24 +237,29 @@ caught:
 13. `write-boundary-label-prefix`'s default collapsed onto
     `findings-label-prefix`'s default — re-runs (h) against the mutated
     text, must fail (PR #836 review, item 13).
-14. `finalize.yml`'s `write-boundary-label-prefix` default drifted from
+14. The Route step's `fromJSON(inputs.iteration) >=
+    fromJSON(steps.cap.outputs.max)` disjunct dropped — re-runs (d)'s
+    iteration-cap scenario against the mutated text, must fail (code
+    review of #836; the gate's own mutation 19, since its numbering and
+    this list's have drifted apart).
+15. `finalize.yml`'s `write-boundary-label-prefix` default drifted from
     `implement.yml`'s — re-runs (m) against the mutated text, must fail.
-15. A third literal copy of the default pasted into another workflow —
+16. A third literal copy of the default pasted into another workflow —
     re-runs (m) against the mutated text, must fail.
-16. The failed-routing flag step's `if:` no longer keyed on the Route
+17. The failed-routing flag step's `if:` no longer keyed on the Route
     step's failure — re-runs (k) against the mutated text, must fail.
-17. The failed-routing flag step's `if:` stripped of its
+18. The failed-routing flag step's `if:` stripped of its
     `dropped-api-failure` clause — re-runs (k) against the mutated text,
     must fail.
-18. The failed-routing flag step's clauses AND-joined instead of
+19. The failed-routing flag step's clauses AND-joined instead of
     OR-joined — re-runs (k) against the mutated text, must fail.
-19. An unquoted copy of the default passed as a `with:` value in another
+20. An unquoted copy of the default passed as a `with:` value in another
     workflow — re-runs (m) against the mutated text, must fail.
-20. The failed-routing flag step's `if:` stripped of its filed-nothing
+21. The failed-routing flag step's `if:` stripped of its filed-nothing
     clause — re-runs (k) against the mutated text, must fail.
-21. A `${VAR:-<default>}` shell fallback copy of the default in a
+22. A `${VAR:-<default>}` shell fallback copy of the default in a
     `_shared/` script — re-runs (m) against the mutated text, must fail.
-22. A copy of the default under a hyphenated `*-id:` key (e.g.
+23. A copy of the default under a hyphenated `*-id:` key (e.g.
     `issue-id:`), which must not be discounted as a step `id:` — re-runs
     (m) against the mutated text, must fail.
 

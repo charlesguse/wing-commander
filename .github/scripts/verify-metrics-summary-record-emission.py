@@ -79,7 +79,7 @@ import tempfile
 import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from wc_gate_registry import workflow_files  # noqa: E402
+from wc_gate_registry import ACTIONS_DIR, workflow_files  # noqa: E402
 from wc_shell_harness import (  # noqa: E402
     ensure_jq, find_step, resolve_bash, run_step, use_utf8_stdout)
 from wc_shell_pin import effective_shell, is_container_bound, pins_bash  # noqa: E402
@@ -1130,7 +1130,8 @@ def case_container_steps_pin_shell_bash():
     moved those steps from sh to bash. None of the 191 relied on behaviour
     sh and bash differ on (code review of #934).
     Shell precedence and the caller-supplied test come from wc_shell_pin,
-    shared with the container-shell-safety skill."""
+    shared with the container-shell-safety skill. Composite-action steps
+    are held to the same bar by case_composite_action_steps_pin_bash."""
     case = "every container-bound run: step pins bash"
     docs = _workflow_docs(case)
     covered = 0
@@ -1165,6 +1166,55 @@ def case_container_steps_pin_shell_bash():
              f"across {len(docs)} scanned workflow(s) all pin bash")
 
 
+def case_composite_action_steps_pin_bash():
+    """Every `run:` step of a composite action pins bash through its own
+    `shell:` (#795). The workflow-level `defaults: run: shell:` above never
+    reaches a composite action: the runner reads `defaults` only outside an
+    action's scope, and Actions requires `shell:` on every composite `run:`
+    step. So the step's own keyword is the only pin there, and a `shell: sh`
+    would run under the image's sh in a container job with nothing else to
+    catch it. A custom template whose program is bash counts, as above."""
+    case = "every composite-action run: step pins bash"
+    covered = 0
+    missing = []
+    for dirpath, _dirs, names in sorted(os.walk(ACTIONS_DIR)):
+        for name in sorted(names):
+            if name not in ("action.yml", "action.yaml"):
+                continue
+            path = os.path.join(dirpath, name).replace(os.sep, "/")
+            try:
+                doc = yaml.safe_load(open(path, encoding="utf-8")) or {}
+            except yaml.YAMLError as exc:
+                fail(case, f"{path}: could not parse as YAML ({exc}) -- "
+                           f"cannot confirm its steps are covered, so this "
+                           f"gate fails rather than silently dropping the "
+                           f"file from coverage.")
+                continue
+            runs = doc.get("runs") or {}
+            if runs.get("using") != "composite":
+                continue
+            for step in runs.get("steps") or []:
+                step = step or {}
+                if not step.get("run"):
+                    continue
+                covered += 1
+                if not pins_bash(step.get("shell")):
+                    missing.append(f"{path}: {step.get('name')!r}")
+    if missing:
+        fail(case, "every `run:` step of a composite action must set its "
+                   "own `shell:` to bash (the keyword, or a command "
+                   "template whose program is bash); workflow `defaults:` "
+                   "do not apply inside a composite action, so a step "
+                   "without one runs under the adopter image's default "
+                   "shell. Missing on: " + ", ".join(missing))
+    elif covered == 0:
+        fail(case, f"found zero run: steps in any composite action under "
+                   f"{ACTIONS_DIR}; the scan has stopped matching real "
+                   f"steps.")
+    else:
+        note(f"{covered} composite-action run: step(s) all pin bash")
+
+
 CASES = [
     case_healthy_transcript_emits_a_valid_record,
     case_missing_transcript_degrades,
@@ -1180,6 +1230,7 @@ CASES = [
     case_cost_report_has_exactly_one_home,
     case_container_pipefail_steps_pin_shell_bash,
     case_container_steps_pin_shell_bash,
+    case_composite_action_steps_pin_bash,
 ]
 
 
