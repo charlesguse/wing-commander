@@ -456,7 +456,7 @@ EXECUTION_BASE_ENV = dict(
     # `--jq '.workflow_runs[] | {...}'` does.
     GH_STUB_RUNS_REST=runs_page((111, WRAPPER_PATH)), GH_STUB_RUNS_RAW="",
     GH_STUB_JOBS_111=jobs_page(JOB_CONTAINERIZED),
-    GH_STUB_JOBS_333=jobs_page(), GH_STUB_JOBS_RAW_111="",
+    GH_STUB_JOBS_RAW_111="",
     GH_STUB_RUNS_FAIL="", GH_STUB_RUNS_ERR="",
     GH_STUB_JOBS_FAIL="", GH_STUB_JOBS_ERR="",
 )

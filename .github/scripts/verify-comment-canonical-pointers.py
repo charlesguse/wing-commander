@@ -24,8 +24,10 @@ WHAT IT CHECKS, over `#` comments in .github/workflows/*.yml
     a file's comments always share vocabulary with themselves. A `-- see`
     written inside quotes (`"-- see clarify.yml."`) is a canonical block
     QUOTING the pointer form its siblings use, not a pointer: only a file
-    named inside the quotes is checked to exist, and it never counts as a
-    self-pointer, a topic to test, or a pointer justifying a marker (c).
+    named inside the quotes is checked to exist (anywhere later in the
+    block if the quote never closes, so an unclosed quote fails closed),
+    and it never counts as a self-pointer, a topic to test, or a pointer
+    justifying a marker (c).
 
 (b) EVERY CROSS-FILE POINTER'S TOPIC SHOWS UP AT THE TARGET. Resolving a
     path proves the file exists, not that the pointer aims at the right
@@ -62,8 +64,9 @@ WHAT IT CHECKS, over `#` comments in .github/workflows/*.yml
 A quoted `-- see` example skips (a)'s self-pointer test, (b) and (c),
 never (a)'s existence test: a quoted pointer naming a file that does not
 exist is still wrong. Its target is looked for inside its own quotes, or
-in the rest of the block if the quote never closes. An aux `(see X.yml)` naming its own file is a self-pointer
-too. Every violation names the pointer's own line, not its block's first.
+in the rest of the block if the quote never closes. An aux `(see X.yml)`
+naming its own file is a self-pointer too. Every violation names the
+pointer's own line, not its block's first.
 
 Deliberately excluded: rewriting or deduplicating comment prose. This
 checks only that the pointer mechanism is wired to something real.
@@ -252,6 +255,7 @@ def extract_pointers(root, path):
     """Every `-- see` pointer in `path`.
 
     -> list of dicts: file, line, prefix, target (None if same-file),
+       quoted, unclosed (a quoted pointer whose quote never closes),
        target_path (resolved, only if target is not None)
     """
     out = []
@@ -262,6 +266,7 @@ def extract_pointers(root, path):
             # file it names must still exist, but never a self-pointer or
             # a topic to test.
             quoted = m.start() > 0 and joined[m.start() - 1] in QUOTE_CHARS
+            unclosed = False
             prefix = joined[:m.start()]
             suffix = joined[m.end():]
             if quoted:
@@ -271,7 +276,8 @@ def extract_pointers(root, path):
                 # An unclosed quote falls back to the rest of the block, so
                 # the existence test fails closed rather than skipping.
                 close = suffix.find(joined[m.start() - 1])
-                suffix = suffix[:close] if close != -1 else suffix
+                unclosed = close == -1
+                suffix = suffix if unclosed else suffix[:close]
             tm = TARGET_RE.search(suffix)
             target = tm.group(1) if tm else None
             rec = {
@@ -280,6 +286,7 @@ def extract_pointers(root, path):
                 "prefix": _local_topic(prefix),
                 "target": target,
                 "quoted": quoted,
+                "unclosed": unclosed,
             }
             if target:
                 rec["target_path"] = resolve_target_path(root, target)
@@ -361,9 +368,14 @@ def check_pointers(root):
 
             # (a) the named file exists -- quoted or not.
             if not os.path.isfile(p["target_path"]):
+                # An unclosed quote's target was read from the rest of the
+                # block, so the fix may be closing the quote, not the file.
+                hint = (" (its quote never closes, so this name was read"
+                        " from later in the block)" if p["unclosed"] else "")
                 violations.append(
                     f"{p['file']}:{p['line']}: pointer '-- see {p['target']}' "
-                    f"names a file that does not exist ({p['target_path']!r})")
+                    f"names a file that does not exist ({p['target_path']!r})"
+                    f"{hint}")
                 continue
             if p["quoted"]:
                 continue  # a quoted example names a real file; nothing more to test
@@ -809,7 +821,8 @@ def self_test():
             "      - run: echo unclosed\n"))
         p, _ = check_pointers(td)
         check("a quoted pointer whose quote never closes still has its target checked",
-              any("gone-unclosed.yml" in v and "does not exist" in v for v in p),
+              any("gone-unclosed.yml" in v and "does not exist" in v
+                  and "quote never closes" in v for v in p),
               f"got {p!r}")
 
     print(f"{failures} failure(s).")
