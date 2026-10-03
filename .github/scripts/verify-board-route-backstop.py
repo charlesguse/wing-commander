@@ -153,7 +153,10 @@ def hold_wiring_problems(workflow_text):
     for needle, why in (
             ("workflow_push_blocked_paths(", "computes the paths this loop cannot push"),
             ("workflow_push_blocked=blocked", "passes them into route()"),
-            ("drafted_contract_widened(file_changes, read_text)", "checks the drafted diff for a contract change"),
+            ("drafted_contract_widened(file_changes, read_text, unknown=contract_unknown)",
+             "checks the drafted diff for a contract change"),
+            ("contract_unknown_paths=contract_unknown",
+             "tells a hold which paths' contract effect went unchecked"),
             ("widened_paths_override=widened", "passes that check into route()"),
             ('agent_rate_limited=os.environ.get("ROUTE_AGENT_VERDICT") == "rate-limited"',
              "defers a rate-limited agent's missing proposal instead of filing a spec")):
@@ -216,6 +219,9 @@ def workflow_scope_single_home_problems(doc, workflow_text):
                 problems.append("board-loop.yml {0} job, {1!r}: `{2}` not found -- the "
                                 "workflow-scope check and hold must go through {3}".format(
                                     job, name, needle, HOLD_HELPER))
+        if site == "route" and "--route-decision " not in run:
+            problems.append("board-loop.yml route job, {0!r}: the helper is not given "
+                            "--route-decision, so contract-unchecked paths go unnamed".format(name))
         if '[ "$held"' not in run:
             problems.append("board-loop.yml {0} job, {1!r}: the helper's held/clear answer "
                             "is never read".format(job, name))
@@ -238,7 +244,7 @@ class _Proc:
         self.returncode = returncode
 
 
-def _run_hold(argv, stdin_text, fail_on=None):
+def _run_hold(argv, stdin_text, fail_on=None, decision=None):
     """Runs board_workflow_scope_hold.main() with a recording `gh` stub;
     `fail_on` ("edit" or "comment") makes that gh call fail. Returns
     (rc, stdout, gh calls, step-summary text)."""
@@ -255,6 +261,11 @@ def _run_hold(argv, stdin_text, fail_on=None):
     with tempfile.TemporaryDirectory() as tmp:
         summary = os.path.join(tmp, "summary")
         open(summary, "w").close()
+        if decision is not None:
+            decision_path = os.path.join(tmp, "decision.json")
+            with open(decision_path, "w", encoding="utf-8") as fh:
+                json.dump({"decision": decision}, fh)
+            argv = argv + ["--route-decision", decision_path]
         saved = {k: os.environ.get(k) for k in ("GITHUB_REPOSITORY", "GITHUB_STEP_SUMMARY")}
         os.environ.update(GITHUB_REPOSITORY="o/r", GITHUB_STEP_SUMMARY=summary)
         out = io.StringIO()
@@ -315,11 +326,22 @@ def hold_helper_failures():
        rc == 0 and out == "held" and "PR #70" in calls[-1][-1]
        and "review-fixup (workflow-scope hold)" in summary,
        "rc={0} calls={1!r}".format(rc, calls))
-    rc, out, calls, summary = _run_hold(["--site", "route", "--can-push-workflows", "false"] + base,
-                                        "./.github/workflows/a b.yml\n", fail_on=None)
+    rc, out, calls, summary = _run_hold(
+        ["--site", "route", "--can-push-workflows", "false"] + base, "",
+        decision={"measured": {"workflow_paths": ["./.github/workflows/a b.yml"]}})
     ck("an unrenderable path falls back to naming the directory",
        rc == 0 and "a file under `.github/workflows/`" in calls[-1][-1]
-       and "a b" not in calls[-1][-1], "calls={0!r}".format(calls))
+       and "a b" not in calls[-1][-1] and "unchecked" not in calls[-1][-1],
+       "calls={0!r}".format(calls))
+    rc, out, calls, summary = _run_hold(
+        ["--site", "route", "--can-push-workflows", "false"] + base, "",
+        decision={"measured": {"workflow_paths": [".github/workflows/x.yml", ".github/workflows/y.yml"],
+                               "contract_unknown_paths": [".github/workflows/y.yml"]}})
+    body = calls[-1][-1] if calls else ""
+    ck("route names the paths whose contract effect went unchecked",
+       rc == 0 and out == "held" and "for `.github/workflows/y.yml` to main" in body
+       and "unchecked" in body and "route (workflow-scope hold)" in summary,
+       "rc={0} calls={1!r}".format(rc, calls))
     rc, out, calls, summary = _run_hold(["--site", "fix", "--can-push-workflows", "false"] + base,
                                         wf, fail_on="edit")
     ck("a failed label add posts nothing and fails (#604)",
@@ -637,6 +659,26 @@ def run():
 
     failures += hold_helper_failures()
 
+    # An unappliable drafted diff on a held workflow file never reaches
+    # route_final_diff() (a hold never pushes): route() records it.
+    unknown = []
+    unappliable = [{"path": ".github/workflows/w.yml", "diff": "@@ -1 +1 @@\n-nope\n+x\n"}]
+    got_widened = drafted_contract_widened(unappliable, lambda _p: "on:\n  workflow_call:\n",
+                                           unknown=unknown)
+    held = route("fix", unappliable, 3, 40, lambda *_a: (False, 1, 2),
+                 widened_paths_override=got_widened, workflow_push_blocked=[".github/workflows/w.yml"],
+                 contract_unknown_paths=unknown)
+    fixed = route("fix", unappliable, 3, 40, lambda *_a: (False, 1, 2),
+                  widened_paths_override=got_widened, contract_unknown_paths=unknown)
+    if (got_widened == [] and unknown == [".github/workflows/w.yml"]
+            and held["measured"].get("contract_unknown_paths") == [".github/workflows/w.yml"]
+            and "contract_unknown_paths" not in fixed["measured"]):
+        print("[ok] a held path whose drafted diff could not be applied is recorded as contract-unchecked")
+    else:
+        failures += 1
+        print("::error::verify-board-route-backstop: contract_unknown_paths: widened={0!r} "
+              "unknown={1!r} held={2!r} fixed={3!r}".format(got_widened, unknown, held, fixed))
+
     try:
         with open(BOARD_LOOP, encoding="utf-8") as fh:
             workflow_text = fh.read()
@@ -657,8 +699,13 @@ def run():
                  "ROUTE_AGENT_VERDICT: ${{ steps.triage-verdict.outputs.verdict }}"),
                 ("pre-push contract check dropped", "widened_paths_override=widened",
                  "widened_paths_override=[]"),
-                ("drafted contract check never run", "widened = drafted_contract_widened(file_changes, read_text)",
+                ("drafted contract check never run",
+                 "widened = drafted_contract_widened(file_changes, read_text, unknown=contract_unknown)",
                  "widened = []"),
+                ("unchecked contract paths not passed to route()",
+                 "contract_unknown_paths=contract_unknown)", "contract_unknown_paths=None)"),
+                ("route's hold reads stdin, not its decision",
+                 ' --route-decision "$RUNNER_TEMP/board-route-decision.json"', ""),
                 ("hold step gated off", "steps.decide.outputs.verdict == 'hold'",
                  "steps.decide.outputs.verdict == 'held'"),
                 ("hold step stops stalling", "board_workflow_scope_hold.py --site route ",

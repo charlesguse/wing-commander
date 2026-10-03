@@ -248,7 +248,7 @@ def _unapplied_diff_signals_contract(path, diff):
     return False
 
 
-def drafted_contract_widened(file_changes, read_text):
+def drafted_contract_widened(file_changes, read_text, unknown=None):
     """The pre-push half of FR-021's contract check, run on the route
     agent's drafted change (`file-changes`: [{"path", "diff"}]) against
     main's own file content -- `read_text(path)` returns it, or None for a
@@ -265,7 +265,12 @@ def drafted_contract_widened(file_changes, read_text):
     diff on a file with a contract block sent plain plumbing fixes to a
     spec-proposal (#936). A change to a workflow's `run:` code or a
     composite's `runs:` steps is never a contract change, however many
-    workflow files it edits."""
+    workflow files it edits.
+
+    `unknown`, when a list, receives each path whose effect is left
+    unknown. A workflow file this loop cannot push is held, never pushed,
+    so no final-diff check follows: route() records those paths, and the
+    hold comment tells the maintainer the contract effect is unchecked."""
     widened = []
     for fc in file_changes or []:
         if not isinstance(fc, dict):
@@ -280,6 +285,8 @@ def drafted_contract_widened(file_changes, read_text):
             if _unapplied_diff_signals_contract(path, diff):
                 widened.append(path)
             else:
+                if unknown is not None:
+                    unknown.append(path)
                 print("note: board_route_backstop: the drafted diff for {0} could not be applied "
                       "to main; whether it changes a contract is left to the final-diff "
                       "check.".format(path), file=sys.stderr)
@@ -392,7 +399,7 @@ def route(agent_proposal, file_changes, board_max_files, board_max_lines,
           measure_backstop, diff_paths=None, diff_text=None, file_contents=None,
           widened_paths_override=None, proposal_extracted=True,
           workflow_push_blocked=None, base_contents=None,
-          agent_rate_limited=False):
+          agent_rate_limited=False, contract_unknown_paths=None):
     """FR-016..FR-020. `measure_backstop` is a callable
     (file_changes, max_files, max_lines) -> (over_threshold, files, lines)
     -- the runtime caller (board-loop.yml) supplies one that shells out to
@@ -424,7 +431,11 @@ def route(agent_proposal, file_changes, board_max_files, board_max_lines,
     it before route runs) keeps it in flight, and the next run triages it
     again -- a rate-limited triage then defers too and posts nothing
     (board_triage.defer_on_rate_limit()) -- and routes it once the usage
-    window resets."""
+    window resets.
+    `contract_unknown_paths` (drafted_contract_widened()'s `unknown`): on a
+    hold, the held paths among them are recorded as
+    `measured.contract_unknown_paths`, because a held fix is never pushed
+    and so never reaches route_final_diff()'s contract check."""
     category = normalize_category(agent_proposal)
     if category is None:
         agent_proposal, proposal_extracted = "spec", False
@@ -474,6 +485,9 @@ def route(agent_proposal, file_changes, board_max_files, board_max_lines,
         measured["contract_touched_paths"] = widened_paths
     if reason == "workflow_scope":
         measured["workflow_paths"] = list(workflow_push_blocked)
+        unchecked = [p for p in contract_unknown_paths or [] if p in measured["workflow_paths"]]
+        if unchecked:
+            measured["contract_unknown_paths"] = unchecked
 
     return {
         "agent_proposal": agent_proposal,
