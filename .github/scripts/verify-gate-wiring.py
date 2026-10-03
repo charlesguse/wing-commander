@@ -92,6 +92,20 @@ SUBJECT_PATH_RE = re.compile(
     r"|docs/[^\s*?\[\]]+\.md"
     r"|\.specify/memory/[^\s*?\[\]]+\.md)$")
 
+# Two more shapes a gate reads as its subject, which _folded_join first
+# made visible (code reviews of #940): a feature's own top-level document
+# (verify-maintainer-credential-canonical-statement.py compares
+# specs/055-*/research.md and spec.md with docs/setup.md;
+# verify-dedup-key-canonical-rule.py reads specs/056-*/data-model.md) and
+# a skill (verify-skill-board-loop-concurrency-claim.py checks
+# spec-cross-reference/SKILL.md's example). Subjects only when the file
+# exists: self-tests name made-up ones as fixture keys
+# (specs/999-example-feature/spec.md, .claude/skills/foo/SKILL.md), which
+# no PR can edit into breaking a gate.
+ON_DISK_SUBJECT_PATH_RE = re.compile(
+    r"^(?:specs/[^\s*?\[\]/]+/[^\s*?\[\]/]+\.md"
+    r"|\.claude/skills/[^\s*?\[\]/]+/SKILL\.md)$")
+
 # `python3 - <<'PYEOF' ... PYEOF` inside a run: block, which is how the
 # larger gates in lint-workflows.yml are written. The opener may carry
 # script arguments before the delimiter (watchdog.yml's signal-id stamp
@@ -160,14 +174,48 @@ def _string_constants(source):
         tree = ast.parse(source)
     except SyntaxError:
         return []             # not this gate's job; the script's own run fails
-    return [node.value.strip() for node in ast.walk(tree)
-            if isinstance(node, ast.Constant) and isinstance(node.value, str)]
+    out = [node.value.strip() for node in ast.walk(tree)
+           if isinstance(node, ast.Constant) and isinstance(node.value, str)]
+    return out + [path for node in ast.walk(tree)
+                  if (path := _folded_join(node)) is not None]
+
+
+def _folded_join(node):
+    """The repo-relative path an `os.path.join(...)` call spells, or None.
+
+    A path split across join arguments
+    (`os.path.join(REPO_ROOT, "specs", "060-...", "contracts", "x.md")`,
+    Gate 101's) has no single string constant holding it, so neither
+    reader saw it and the document's own edits never had to trigger its
+    gate (code reviews of #940). Folded when every argument after a
+    leading root -- any non-constant first arguments, such as `REPO_ROOT`
+    or a fixture's temp dir -- is a string constant; a `"."` component is
+    dropped. A call with a non-constant argument further in is not a
+    constant path and is left alone."""
+    if not (isinstance(node, ast.Call) and not node.keywords
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "join"
+            and ast.unparse(node.func.value) in ("os.path", "posixpath",
+                                                 "path")):
+        return None
+    args = list(node.args)
+    while args and not (isinstance(args[0], ast.Constant)
+                        and isinstance(args[0].value, str)):
+        args.pop(0)
+    if not args or not all(isinstance(a, ast.Constant)
+                           and isinstance(a.value, str) for a in args):
+        return None
+    parts = [p for a in args for p in a.value.strip().split("/")
+             if p not in ("", ".")]
+    return "/".join(parts) if len(parts) > 1 else None
 
 
 def _subject_paths_in_source(source):
     """Every subject-document path appearing as a string constant."""
     return [value for value in _string_constants(source)
-            if SUBJECT_PATH_RE.match(value)]
+            if SUBJECT_PATH_RE.match(value)
+            or (ON_DISK_SUBJECT_PATH_RE.match(value)
+                and os.path.isfile(value))]
 
 
 def _check_heredoc_reader(scanned):
@@ -476,8 +524,9 @@ def check_local_runner_script_coverage(root="."):
             failures.append(
                 f"lint-workflows.yml step {name!r} runs {path!r} in the PR-time "
                 f"suite, a script path this check cannot resolve to one "
-                f"repository file (a variable, an expression, a glob, or a "
-                f"checkout prefix), so it cannot tell whether "
+                f"repository file (a variable, an expression, a glob, a "
+                f"checkout prefix, or a working-directory: that is not "
+                f"literal), so it cannot tell whether "
                 f"run-local-gates.py runs it (#825). Name each script by its "
                 f"literal repo-relative path.")
         for script in scripts:
@@ -704,12 +753,320 @@ def _fixture_uncovered_script_shapes():
         shutil.rmtree(root, ignore_errors=True)
 
 
+def _fixture_script_call_tokens():
+    """Code review of #939: a script path an `echo`/`printf` prints, a
+    `test -f`/`[ -x ]` probes, a trailing comment or a heredoc body
+    mentions, or a URL carries is not a call; a script reached through a
+    literal `working-directory:`, a directory variable the step assigns or
+    a literal `env:` sets, or a `$( )` with quotes of its own, is; and a
+    `working-directory:` holding an expression leaves the path
+    unresolved."""
+    root = tempfile.mkdtemp(prefix="wc-gate-wiring-")
+    expr = "$" + "{{ inputs.dir }}"
+    try:
+        _write(root, ".github/workflows/lint-workflows.yml",
+               "on: pull_request\njobs:\n  lint:\n    runs-on: ubuntu-latest\n"
+               "    steps:\n"
+               "      - name: mentions\n"
+               "        run: |\n"
+               "          echo \"run .github/scripts/m-tests/run.sh\"\n"
+               "          printf '%s\\n' .github/scripts/m-tests/run.sh\n"
+               "          test -f .github/scripts/m-tests/run.sh && "
+               "[ -x .github/scripts/m-tests/run.sh ]\n"
+               "          curl -o /dev/null https://example.com/.github/scripts/m.sh\n"
+               "          true # bash .github/scripts/m-tests/run.sh\n"
+               "          cat <<'EOF'\n"
+               "          it's bash .github/scripts/m-tests/run.sh\n"
+               "          EOF\n"
+               "      - name: workdir\n"
+               "        working-directory: .github/actions/w\n"
+               "        run: bash tests/run.sh\n"
+               "      - name: dirvar\n"
+               "        env:\n          E: .github/actions/u/tests\n"
+               "        run: |\n"
+               "          D=.github/actions/v/tests\n"
+               "          bash \"$D/run.sh\" && bash \"${E}/run.sh\"\n"
+               "      - name: cmdsub\n"
+               "        run: |\n"
+               "          out=\"$(bash .github/scripts/y-tests/run.sh \"$a\")\" # it's\n"
+               "      - name: exprdir\n"
+               f"        working-directory: {expr}\n"
+               "        run: bash run.sh\n"
+               # Code review of #954: a here-string or an arithmetic shift
+               # opens no heredoc, and a wrapper command hides no
+               # interpreter.
+               "      - name: herestring\n"
+               "        run: |\n"
+               "          read a <<< \"hello\"\n"
+               "          n=$(( 1 << k )); (( n <<= k ))\n"
+               "          bash .github/scripts/h-tests/run.sh\n"
+               "      - name: wrapped\n"
+               "        working-directory: .github/actions/t\n"
+               "        run: |\n"
+               "          timeout 300 bash tests/run.sh\n"
+               "          env A=1 nice -n 5 bash tests/more.sh\n"
+               "          sudo -u runner python3 tests/x.py\n"
+               # Code review of #954, round 2: a `$( )` body runs where it
+               # stands, with the variables set by then, and a `-c`
+               # string is code (its `cd` included), never a path.
+               "      - name: order\n"
+               "        run: |\n"
+               "          out=\"$(bash \"$O/run.sh\")\"; O=.github/actions/o\n"
+               "          D=.github/actions/p; out=\"$(bash \"$D/run.sh\")\"\n"
+               "          D=.github/actions/q\n"
+               "      - name: dashc\n"
+               "        working-directory: .github/actions/c\n"
+               "        run: |\n"
+               "          bash -c \"cd tests && ./run.sh\"\n"
+               "          sh -c 'bash more/run.sh'\n")
+        failures = check_local_runner_script_coverage(root)
+        joined = "\n".join(failures)
+        want = ["runs .github/actions/w/tests/run.sh ",
+                "runs .github/actions/v/tests/run.sh ",
+                "runs .github/actions/u/tests/run.sh ",
+                "runs .github/scripts/y-tests/run.sh ",
+                "'exprdir' runs '" + expr + "/run.sh'",
+                "runs .github/scripts/h-tests/run.sh ",
+                "runs .github/actions/t/tests/run.sh ",
+                "runs .github/actions/t/tests/more.sh ",
+                "runs .github/actions/t/tests/x.py ",
+                "runs .github/actions/p/run.sh ",
+                "runs .github/actions/c/tests/run.sh ",
+                "runs .github/actions/c/more/run.sh "]
+        ok = (len(failures) == 12 and all(w in joined for w in want)
+              and "m-tests" not in joined and "m.sh" not in joined
+              and "actions/o/" not in joined and "actions/q/" not in joined
+              and "cd tests" not in joined)
+        return ok, f"got {failures!r}"
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def _fixture_script_call_scoping():
+    """Code review of #954, round 3: a backtick substitution runs its
+    script; `-c` (alone or in a cluster like `-ec`) is code only ahead of
+    the script, so `bash x.sh -c foo` still runs x.sh; a `cd` inside a
+    `( )` group ends at its `)`; and a variable reassigned from something
+    no reader can pin down (`$OTHER`, a `$( )`) no longer carries its
+    earlier literal value, nor a `$( )` placeholder, into a path."""
+    root = tempfile.mkdtemp(prefix="wc-gate-wiring-")
+    try:
+        _write(root, ".github/workflows/lint-workflows.yml",
+               "on: pull_request\njobs:\n  lint:\n    runs-on: ubuntu-latest\n"
+               "    steps:\n"
+               "      - name: scoped\n"
+               "        working-directory: .github/actions/s\n"
+               "        env:\n          E: tests/stale-env.sh\n"
+               "        run: |\n"
+               "          x=`bash tests/tick.sh`\n"
+               "          bash tests/trail.sh -c foo\n"
+               "          python3 tests/trail.py -c cfg\n"
+               "          bash -ec 'bash tests/inner.sh'\n"
+               "          (cd sub && bash a.sh)\n"
+               "          bash b.sh\n"
+               "          S=tests/stale.sh; S=$OTHER; bash \"$S\"\n"
+               "          E=$(pick); bash \"$E\"\n"
+               "          D=$(dirname x); bash \"$D/tests/run.sh\"\n")
+        failures = check_local_runner_script_coverage(root)
+        joined = "\n".join(failures)
+        want = ["runs .github/actions/s/tests/tick.sh ",
+                "runs .github/actions/s/tests/trail.sh ",
+                "runs .github/actions/s/tests/trail.py ",
+                "runs .github/actions/s/tests/inner.sh ",
+                "runs .github/actions/s/sub/a.sh ",
+                "runs .github/actions/s/b.sh "]
+        ok = (len(failures) == 6 and all(w in joined for w in want)
+              and "stale" not in joined and "WC_CMDSUB" not in joined
+              and "bash tests" not in joined)
+        return ok, f"got {failures!r}"
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def _fixture_script_call_stdin():
+    """Code review of #954, round 4: a heredoc a shell runs (`bash
+    <<'EOF'`, `cat <<EOF | bash`) is code, its scripts read, while one
+    handed to a script stays data; `bash < x.sh` runs x.sh; nothing after
+    `python3 -m MOD` is a script; a python `-Wonce` hides no `-c`; `bash
+    -s arg` runs its stdin (round 5); an interpreter behind an unknown
+    wrapper (`retry 3`, `xvfb-run -a`) runs its script; a shell behind
+    a known wrapper (`timeout 300 bash <<EOF`) runs its heredoc (round 8);
+    `-eo pipefail` takes `pipefail` as the option's value, and a shell
+    after `if` runs its heredoc (round 10); a shell behind an unknown
+    wrapper (`retry 3 bash <<EOF`) runs its heredoc, and `-so pipefail`
+    still reads stdin (round 11); a shell on a `\\`-continued line
+    runs its heredoc, and printf piped to a shell prints code (round
+    13); and a
+    step `env:` expression overrides a job's literal value, so the job's
+    file is not reported as the script the step runs."""
+    root = tempfile.mkdtemp(prefix="wc-gate-wiring-")
+    expr = "$" + "{{ inputs.s }}"
+    try:
+        _write(root, ".github/workflows/lint-workflows.yml",
+               "on: pull_request\njobs:\n  lint:\n    runs-on: ubuntu-latest\n"
+               "    env:\n      S: .github/scripts/job-env.sh\n"
+               "    steps:\n"
+               "      - name: stdin\n"
+               "        working-directory: .github/actions/i\n"
+               "        run: |\n"
+               "          bash <<'EOF'\n"
+               "          bash tests/heredoc.sh\n"
+               "          EOF\n"
+               "          cat <<EOF | sh -e\n"
+               "          bash tests/piped.sh\n"
+               "          EOF\n"
+               "          bash tests/real.sh <<EOF\n"
+               "          bash tests/data.sh\n"
+               "          EOF\n"
+               "          bash < tests/redirected.sh\n"
+               "          python3 -m pytest tests/test_mod.py\n"
+               "          python3 -Wonce tests/warned.py\n"
+               # Round 5: `bash -s arg` still runs its stdin, and an
+               # interpreter behind a wrapper this reader does not know
+               # still runs its script (origin/main's regex saw it).
+               "          bash -s arg <<EOF\n"
+               "          bash tests/sfed.sh\n"
+               "          EOF\n"
+               "          retry 3 bash tests/retried.sh\n"
+               "          xvfb-run -a bash tests/xvfb.sh\n"
+               "          xargs -a list bash tests/xargs.sh\n"
+               # Round 8: a shell behind a wrapper still runs its heredoc.
+               "          timeout 300 bash <<EOF\n"
+               "          bash tests/wrapped.sh\n"
+               "          EOF\n"
+               # Round 10: an option cluster's `o` takes `pipefail` as
+               # its value, and a shell after `if`/`while` runs its
+               # heredoc.
+               "          bash -eo pipefail -c \"bash tests/clustered.sh\"\n"
+               "          bash -eo pipefail <<EOF\n"
+               "          bash tests/clustered-hd.sh\n"
+               "          EOF\n"
+               "          if bash -s <<EOF; then\n"
+               "          bash tests/if-hd.sh\n"
+               "          EOF\n"
+               "            :\n"
+               "          fi\n"
+               # Round 11: a shell behind a wrapper this reader does not
+               # know runs its heredoc too, and `-so` still reads stdin.
+               "          retry 3 bash <<EOF\n"
+               "          bash tests/retried-hd.sh\n"
+               "          EOF\n"
+               "          bash -so pipefail arg <<EOF\n"
+               "          bash tests/so-hd.sh\n"
+               "          EOF\n"
+               "          echo bash <<EOF\n"
+               "          bash tests/echo-data.sh\n"
+               "          EOF\n"
+               # Round 13: a shell on a `\\`-continued line runs the
+               # heredoc opened on the next, and printf piped to a shell
+               # prints code.
+               "          bash \\\n"
+               "            -s <<EOF\n"
+               "          bash tests/continued-hd.sh\n"
+               "          EOF\n"
+               "      - name: printed\n"
+               "        run: printf 'bash .github/scripts/printed.sh\\n' | bash\n"
+               "      - name: override\n"
+               f"        env:\n          S: {expr}\n"
+               "        run: bash \"$S\"\n")
+        failures = check_local_runner_script_coverage(root)
+        joined = "\n".join(failures)
+        want = ["runs .github/actions/i/tests/heredoc.sh ",
+                "runs .github/actions/i/tests/piped.sh ",
+                "runs .github/actions/i/tests/real.sh ",
+                "runs .github/actions/i/tests/redirected.sh ",
+                "runs .github/actions/i/tests/warned.py ",
+                "runs .github/actions/i/tests/sfed.sh ",
+                "runs .github/actions/i/tests/retried.sh ",
+                "runs .github/actions/i/tests/xvfb.sh ",
+                "runs .github/actions/i/tests/xargs.sh ",
+                "runs .github/actions/i/tests/wrapped.sh ",
+                "runs .github/actions/i/tests/clustered.sh ",
+                "runs .github/actions/i/tests/clustered-hd.sh ",
+                "runs .github/actions/i/tests/if-hd.sh ",
+                "runs .github/actions/i/tests/retried-hd.sh ",
+                "runs .github/actions/i/tests/so-hd.sh ",
+                "runs .github/actions/i/tests/continued-hd.sh ",
+                "runs .github/scripts/printed.sh "]
+        ok = (len(failures) == 17 and all(w in joined for w in want)
+              and "data.sh" not in joined and "test_mod" not in joined
+              and "job-env" not in joined)
+        return ok, f"got {failures!r}"
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def _fixture_script_call_scope_reset():
+    """Code review of #954, round 6: `cd "$GITHUB_WORKSPACE"` returns to
+    the checkout root, where repo paths still resolve; `D=x cmd` sets D
+    for that command only, so a later `$D` keeps the job's literal value;
+    and a heredoc delimiter bash accepts with a `-` in it (`<<'PY-EOF'`)
+    still hides its body, an apostrophe there blanking nothing after.
+    Round 7: so does a backslash-quoted one (`<<\\EOF`)."""
+    root = tempfile.mkdtemp(prefix="wc-gate-wiring-")
+    try:
+        _write(root, ".github/workflows/lint-workflows.yml",
+               "on: pull_request\njobs:\n  lint:\n    runs-on: ubuntu-latest\n"
+               "    env:\n      D: .github/actions/j\n"
+               "    steps:\n"
+               "      - name: reset\n"
+               "        working-directory: .github/actions/i\n"
+               "        run: |\n"
+               "          cd \"$GITHUB_WORKSPACE\"\n"
+               "          bash .github/scripts/rooted.sh\n"
+               "          D=.github/actions/k bash .github/scripts/prefixed.sh\n"
+               "          bash \"$D/scoped.sh\"\n"
+               "          cat <<'PY-EOF'\n"
+               "          it's data\n"
+               "          PY-EOF\n"
+               "          cat <<\\EOF\n"
+               "          it's data: bash .github/scripts/inbody.sh\n"
+               "          EOF\n"
+               "          bash .github/scripts/after.sh\n")
+        failures = check_local_runner_script_coverage(root)
+        joined = "\n".join(failures)
+        want = ["runs .github/scripts/rooted.sh ",
+                "runs .github/scripts/prefixed.sh ",
+                "runs .github/actions/j/scoped.sh ",
+                "runs .github/scripts/after.sh "]
+        ok = (len(failures) == 4 and all(w in joined for w in want)
+              and "actions/k" not in joined and "$PWD" not in joined
+              and "inbody.sh" not in joined)
+        return ok, f"got {failures!r}"
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def _fixture_folded_join_subjects():
+    """Code reviews of #940: a subject path split across os.path.join
+    arguments after a root is read as the path it spells, a `"."`
+    component dropped; a join with a non-constant argument further in is
+    not a constant path. A feature's own document or a skill is a subject
+    only when it exists on disk."""
+    source = (
+        "import os\n"
+        "A = os.path.join(REPO_ROOT, 'specs', '060-x', 'contracts', 'c.md')\n"
+        "B = os.path.join('.', 'docs', 'adoption.md')\n"
+        "C = os.path.join(root, 'specs', slug, 'contracts', 'c.md')\n"
+        "D = os.path.join('specs', '999-made-up', 'spec.md')\n"
+        "E = os.path.join('.claude', 'skills', 'spec-cross-reference', 'SKILL.md')\n")
+    got = sorted(_subject_paths_in_source(source))
+    # Spelled in pieces: a literal here would itself read as a subject.
+    skill = "/".join((".claude", "skills", "spec-cross-reference", "SKILL.md"))
+    want = sorted(["/".join(("specs", "060-x", "contracts", "c.md")),
+                   "/".join(("docs", "adoption.md"))]
+                  + ([skill] if os.path.isfile(skill) else []))
+    return got == want and len(want) == 3, f"got {got!r}, want {want!r}"
+
+
 def _fixture_inline_steps_match_ci():
     """Code review of #939: run-local-gates.py writes two heredoc steps
     whose names share a slug to two files, not one, and runs each under
     CI's `bash -e {0}`, so a failing command before the last fails it.
     A heredoc step under any shell: (step, job default or workflow
-    default) is unrunnable verbatim, since that changes CI's flags."""
+    default) is unrunnable verbatim, since that changes CI's flags, and
+    so is one under a working-directory:, since the runner runs it from
+    the repository root (code review of #942)."""
     import importlib.util
     from wc_shell_harness import resolve_bash
     root = tempfile.mkdtemp(prefix="wc-gate-wiring-")
@@ -737,11 +1094,21 @@ def _fixture_inline_steps_match_ci():
                "  b:\n    runs-on: ubuntu-latest\n"
                "    defaults:\n      run:\n        shell: bash\n    steps:\n"
                "      - name: job-shell\n        run: |\n"
+               "          python3 - <<'PYEOF'\n          PYEOF\n"
+               "  c:\n    runs-on: ubuntu-latest\n    steps:\n"
+               "      - name: step-wd\n        working-directory: sub\n"
+               "        run: |\n"
+               "          python3 - <<'PYEOF'\n          PYEOF\n"
+               "  d:\n    runs-on: ubuntu-latest\n"
+               "    defaults:\n      run:\n        working-directory: sub\n"
+               "    steps:\n"
+               "      - name: job-wd\n        run: |\n"
                "          python3 - <<'PYEOF'\n          PYEOF\n")
         runnable, unrunnable = pr_time_inline_steps(root)
         ok = (len(set(paths)) == 4 and rcs[0] != 0 and rcs[1:] == [0, 0, 0]
               and [n for n, _ in runnable] == ["plain"]
-              and sorted(n for n, _ in unrunnable) == ["job-shell", "step-shell"])
+              and sorted(n for n, _ in unrunnable)
+              == ["job-shell", "job-wd", "step-shell", "step-wd"])
         return ok, (f"got paths={paths!r} rcs={rcs!r} runnable={runnable!r} "
                     f"unrunnable={unrunnable!r}")
     finally:
@@ -839,8 +1206,24 @@ FIXTURES = [
      "reported (#825)", _fixture_uncovered_script_call),
     ("a script is seen however a step runs it, and an unresolvable script "
      "path fails (code review of #939)", _fixture_uncovered_script_shapes),
+    ("a script path a step only mentions is not a call, and one reached "
+     "through working-directory:, a variable or $( ) is (code review of "
+     "#939)", _fixture_script_call_tokens),
+    ("a backtick runs its script, `-c` is code only ahead of the script, "
+     "a `( )` group's cd ends at its `)`, and a non-literal reassignment "
+     "drops the earlier value (code review of #954)",
+     _fixture_script_call_scoping),
+    ("a heredoc or `<` a shell runs is code, `python3 -m` takes no "
+     "script, `-Wonce` hides no -c, and a step env: expression overrides "
+     "a job literal (code review of #954)", _fixture_script_call_stdin),
+    ("cd \"$GITHUB_WORKSPACE\" returns to the root, a prefix assignment "
+     "ends with its command, and a `-` heredoc delimiter hides its body "
+     "(code review of #954, round 6)", _fixture_script_call_scope_reset),
+    ("a subject path split across os.path.join arguments is read whole "
+     "(code reviews of #940)", _fixture_folded_join_subjects),
     ("inline heredoc steps get distinct files, run under CI's bash -e, and "
-     "a shell: step is unrunnable verbatim (code review of #939)",
+     "a shell: or working-directory: step is unrunnable verbatim (code "
+     "reviews of #939 and #942)",
      _fixture_inline_steps_match_ci),
     ("an unwired composite harness reports as orphaned",
      _fixture_orphaned_composite_harness),

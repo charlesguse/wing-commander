@@ -32,6 +32,7 @@ that enforces it reads the same directory the author just added a file to.
 """
 import glob
 import os
+import posixpath
 import re
 import shlex
 
@@ -371,32 +372,554 @@ def pr_time_invocations(root=".",
 LOOSE_PY_HEREDOC_RE = re.compile(r"^[ \t]*python3? +[^\n]*<<", re.M)
 
 
-# A script a run: block executes, read two ways so neither shape slips
-# (#825, code review of #939). SCRIPT_CALL_RE is an interpreter call --
-# bash/sh/python, any flags, then a path -- whose path need not start with
-# .github/; a path carrying `$` there (a runner temp file, a variable) is a
-# generated script, not one the repository ships, and is skipped.
-# REPO_SCRIPT_RE is any token naming a script under .github/: direct exec,
-# a `\` continuation, a loop over a glob, an interpreter flag that takes a
-# value, a `NAME=` assignment a later `bash "$NAME"` runs. Group 1 is
-# whatever the token carries before `.github/`: empty, `./`, `NAME=` or
-# `--flag=` is a literal repo path; anything else (`$VAR/`, an expression,
-# a checkout prefix) is a path no reader can resolve. Neither reader sees a
-# script reached through `working-directory:` or a directory variable
-# (`bash "$D/run.sh"`).
-SCRIPT_CALL_RE = re.compile(
-    r"(?:^|[\s;&|(`])(?:bash|sh|python3?)\s+(?:-\S+\s+)*[\"']?([\w./{}$-]+\.(?:sh|bash|py))\b")
+# A script a run: block executes (#825, code review of #939), read off
+# shell tokens rather than raw text, so a path an `echo`/`printf` prints, a
+# `test -f`/`[ -f ]` probes, a trailing `# comment` mentions or a URL
+# carries is not mistaken for a call. Per simple command: an interpreter
+# (`bash`/`sh`/`python`/`python3`) runs its first script-named argument,
+# and a command word naming a script runs it directly; any other token
+# naming a script under .github/ -- a loop over a glob, a `NAME=`
+# assignment a later `bash "$NAME"` runs, a `--flag=` value handed to a
+# gate -- is read too, so a shape this reader has not met fails loud
+# rather than vanishing. `$NAME`/`${NAME}` is resolved from the step's own
+# literal assignments and literal `env:` (step, job, workflow), and a
+# relative path from a literal `working-directory:` (step, then job and
+# workflow `defaults.run`).
+#
+# REPO_SCRIPT_RE reads one token. Group 1 is whatever it carries before
+# `.github/`: empty, `./`, `NAME=` or `--flag=` is a literal repo path;
+# anything else (`$VAR/`, an expression, a checkout prefix) is a path no
+# reader can resolve.
 REPO_SCRIPT_RE = re.compile(
     r"([^\s\"'`;&|()<>]*?)(\.github/[^\s\"'`;&|()<>]*?\.(?:sh|bash|py))(?![\w.-])")
+SCRIPT_EXT_RE = re.compile(r"\.(?:sh|bash|py)$")
+_INTERPRETERS = {"bash", "sh", "python", "python3"}
+# A command whose arguments are data, never a script it runs.
+_NON_EXEC_COMMANDS = {"echo", "printf", "test", "[", "[[", ":"}
+# Words that open a command without being one.
+_COMMAND_PREFIXES = {"if", "then", "else", "elif", "while", "until", "do",
+                     "!", "{", "}", "time", "exec", "command", "export",
+                     "readonly", "local", "declare"}
+# Commands that run their trailing words as a command: their own options
+# (`-n 10`, `-u root`, `--signal=KILL`) and leading operands (a timeout's
+# duration, env's `NAME=value`) are skipped to reach the interpreter.
+_COMMAND_WRAPPERS = {"timeout", "env", "nice", "nohup", "xargs", "sudo",
+                     "stdbuf", "ionice", "setsid", "chronic"}
+_REDIRECTS = {">", ">>", "<", ">&", "<&", "&>", "<<", "<<<", ">|", "<<-"}
+_ASSIGN_RE = re.compile(r"([A-Za-z_]\w*)=(.*)", re.S)
+_VAR_RE = re.compile(r"\$(?:\{([A-Za-z_]\w*)\}|([A-Za-z_]\w*))")
+_EXPR_RE = re.compile(r"\$\{\{.*?\}\}", re.S)
+# A shell in command position on a heredoc's line: `bash <<'EOF'`,
+# `cat <<EOF | sh -e`, `timeout 300 bash <<EOF`. Group 1 is the rest of its
+# command, which _feeds_shell reads to tell a shell running its stdin from
+# one running a script (whose stdin the heredoc merely is). A wrapper's own
+# options and operands (`-n 5`, `-u root`, a duration) are skipped as the
+# command reader skips them; xargs is left out, since its stdin is
+# arguments, not a script. Code review of #954, round 8: without the
+# wrapper words a wrapped shell's heredoc read as data and its scripts
+# vanished, where origin/main's raw-text regex saw them.
+#
+# Round 10: `if`/`elif`/`while`/`until` open a command too (`if bash -s
+# <<EOF; then`), as _COMMAND_PREFIXES already says for the command reader.
+#
+# Round 11: any command word heads a wrapper here, known or not (`retry 3
+# bash <<EOF`, `xvfb-run -a bash <<EOF`), as the command reader looks past
+# a wrapper it does not know for an interpreter further on (round 5); only
+# a command whose arguments are data (_NON_EXEC_COMMANDS) or whose stdin
+# is arguments (xargs) is not one.
+_HEREDOC_NON_WRAPPERS = sorted(_NON_EXEC_COMMANDS | {"xargs", "bash", "sh"})
+# A shell option cluster whose `o`/`O` takes the next word as its value
+# (`-o pipefail`, `-eo pipefail` as GitHub's own default shell is invoked,
+# `+O extglob`). Code review of #954, round 10: only a lone `-o` was read
+# so, and `bash -eo pipefail -c "..."` took `pipefail` for the script.
+_SHELL_OPTION_VALUE_RE = re.compile(r"[-+](?!-)[A-Za-z]*[oO]")
+# Bash's long options that take the next word as their value.
+_SHELL_LONG_OPTIONS_WITH_VALUE = {"--rcfile", "--init-file"}
+_SHELL_ON_LINE_RE = re.compile(
+    r"(?:^|[;&|(!{]|\b(?:if|elif|while|until|then|do|else|exec|time"
+    r"|command)\b)"
+    r"[ \t]*(?:[A-Za-z_]\w*=\S*[ \t]+)*"
+    r"(?:(?!(?:" + "|".join(re.escape(w) for w in _HEREDOC_NON_WRAPPERS)
+    + r")(?![\w.-]))[^\s;&|()<>]+"
+    r"(?:[ \t]+(?!(?:bash|sh)(?![\w.-]))[^\s;&|()<>]+)*?[ \t]+)?"
+    r"(?:bash|sh)(?![\w.-])([^;&|)\n]*)")
+
+
+def _feeds_shell(line):
+    """True when a heredoc opened on `line` is the stdin a shell runs as
+    its script: some `bash`/`sh` on it takes only options (no script
+    operand, no `-c` string). Code review of #954: such a body is code,
+    and dropping it as data silently lost every script it runs."""
+    for m in _SHELL_ON_LINE_RE.finditer(line):
+        words, k, stdin, dash_s = m.group(1).split(), 0, True, False
+        while k < len(words):
+            w = words[k]
+            if w == "--":
+                break
+            if "s" in w[1:] and w.startswith("-") and not w.startswith("--") \
+                    and "c" not in w[1:]:
+                # Before an `o` cluster's value is skipped: `-so pipefail`.
+                dash_s = True
+            if re.fullmatch(r"\d*[<>]+[-&|]?", w) or (
+                    _SHELL_OPTION_VALUE_RE.match(w) and "c" not in w[1:]) \
+                    or w in _SHELL_LONG_OPTIONS_WITH_VALUE:
+                k += 2
+                continue
+            if re.match(r"\d*[<>]", w) or w.startswith(("+", "--")) or (
+                    w.startswith("-") and "c" not in w[1:]):
+                k += 1
+                continue
+            # `-s` reads stdin whatever follows: `bash -s arg` hands `arg`
+            # to it as $1. Otherwise a script operand, or a `-c` string.
+            stdin = dash_s and not (w.startswith("-") and "c" in w[1:])
+            break
+        if stdin:
+            return True
+    return False
+
+
+def _shell_prepass(text, i=0, nested=False, subs=None):
+    """-> (text, [inner text, ...], end): `text` as bash reads its words,
+    with comments and heredoc bodies dropped and each `$( )` lifted out
+    into its own entry of `subs` (nested ones too; pass a list to append
+    to it), leaving the placeholder word `__WC_CMDSUB_<index>__`, so the
+    reader runs each body at the point bash does (code review of #954).
+
+    Needed because shlex alone cannot read a run: block: its
+    `comments=True` starts a comment at ANY `#`, mid-word too (`a#b`, a
+    URL fragment), and it has no notion that quotes reset inside `$( )`,
+    so `x="$(bash a.sh "$y")"` reads as two strings around a bare word and
+    an apostrophe further on unbalances the rest. A heredoc body is data,
+    like an `echo`'s arguments."""
+    out, pending = [], []
+    subs = [] if subs is None else subs
+    quote, prev, depth = None, " ", 0
+    while i < len(text):
+        ch = text[i]
+        if quote == "'":
+            quote = None if ch == "'" else quote
+        elif ch == "\\" and i + 1 < len(text):
+            out.append(text[i:i + 2])
+            i, prev = i + 2, "x"
+            continue
+        elif text.startswith("$(", i) and not text.startswith("$((", i):
+            index = len(subs)
+            subs.append("")
+            subs[index], _, i = _shell_prepass(text, i + 2, nested=True,
+                                               subs=subs)
+            out.append(f"__WC_CMDSUB_{index}__")
+            prev = "x"
+            continue
+        elif ch == "`":
+            # The older `cmd` spelling of `$( )`, unescaped one level.
+            j = i + 1
+            while j < len(text) and text[j] != "`":
+                j += 2 if text[j] == "\\" else 1
+            index = len(subs)
+            subs.append("")
+            subs[index], _, _ = _shell_prepass(
+                re.sub(r"\\([`$\\])", r"\1", text[i + 1:j]), subs=subs)
+            out.append(f"__WC_CMDSUB_{index}__")
+            i, prev = j + 1, "x"
+            continue
+        elif quote == '"':
+            quote = None if ch == '"' else quote
+        elif ch in "'\"":
+            quote = ch
+        elif ch == "#" and (prev.isspace() or prev in ";&|()"):
+            end = text.find("\n", i)
+            i = len(text) if end < 0 else end
+            continue
+        elif text.startswith("$((", i) or (
+                text.startswith("((", i) and (prev.isspace() or prev in ";&|(")):
+            # Arithmetic: `<<` inside shifts (`$((1 << n))`), it opens no
+            # heredoc, so the expression is copied through to its `))`.
+            j, level = i + (3 if ch == "$" else 2), 2
+            while j < len(text) and level:
+                level += {"(": 1, ")": -1}.get(text[j], 0)
+                j += 1
+            out.append(text[i:j])
+            i, prev = j, "x"
+            continue
+        elif nested and ch == "(":
+            depth += 1
+        elif nested and ch == ")":
+            if not depth:
+                return "".join(out), subs, i + 1
+            depth -= 1
+        elif text.startswith("<<<", i):
+            # A here-string: its word is an argument, not a delimiter.
+            out.append("<<<")
+            i, prev = i + 3, "x"
+            continue
+        elif text.startswith("<<", i):
+            # A word delimiter, bare, quoted or backslash-quoted (`<<\EOF`).
+            m = re.match(r"<<-?[ \t]*\\?(['\"]?)([\w.+@%:,/-]+)\1", text[i:])
+            if m:
+                out.append(text[i:i + m.end()])
+                pending.append(m.group(2))
+                i, prev = i + m.end(), "x"
+                continue
+        elif ch == "\n" and pending:
+            so_far = "".join(out)
+            # The whole logical line: a `\` continuation joins the lines
+            # ahead of it (`bash \` then `-s <<EOF`; round 13).
+            start = so_far.rfind("\n") + 1
+            while start and so_far[:start - 1].endswith("\\"):
+                start = so_far.rfind("\n", 0, start - 1) + 1
+            shell_stdin = _feeds_shell(
+                so_far[start:].replace("\\\n", " "))
+            body = []
+            for delim in pending:
+                while i < len(text):
+                    end = text.find("\n", i + 1)
+                    end = len(text) if end < 0 else end
+                    line, i = text[i + 1:end], end
+                    if line.strip() == delim:
+                        break
+                    body.append(line)
+            pending = []
+            out.append("\n")
+            if shell_stdin:
+                # A body a shell runs is read as a run: block of its own,
+                # at the point the shell runs it.
+                index = len(subs)
+                subs.append("")
+                subs[index], _, _ = _shell_prepass("\n".join(body),
+                                                   subs=subs)
+                out.append(f"__WC_CMDSUB_{index}__\n")
+            prev = "\n"
+            continue
+        out.append(ch)
+        prev = ch
+        i += 1
+    return "".join(out), subs, i
+
+
+def _shell_commands(text):
+    """Yield (tokens, ok) per logical line of a prepassed run: block: its
+    shlex tokens with `;`, `&&`, `|`, `(` and their kin as their own
+    tokens, or (raw line, False) for a line no amount of joining balances.
+    A line whose quote opens on it and closes on a later one is joined to
+    them, as bash reads it."""
+    lines = text.replace("\\\n", " ").split("\n")
+    i = 0
+    while i < len(lines):
+        buf, j = lines[i], i
+        while True:
+            lexer = shlex.shlex(buf, posix=True, punctuation_chars=True)
+            lexer.whitespace_split = True
+            lexer.commenters = ""
+            try:
+                yield list(lexer), True
+                break
+            except ValueError:
+                if j + 1 >= len(lines):
+                    yield buf, False
+                    break
+                j += 1
+                buf += "\n" + lines[j]
+        i = j + 1
+
+
+def _split_simple_commands(tokens):
+    """[[token, ...] | "(" | ")", ...]: one list per simple command, split
+    on the control operators shlex hands back as all-punctuation tokens,
+    with each `(`/`)` they carry kept as a marker so a reader can scope a
+    subshell group's `cd` and assignments to it."""
+    out, cur = [], []
+    for tok in tokens:
+        if tok and all(c in ";&|()" for c in tok):
+            if cur:
+                out.append(cur)
+            cur = []
+            out.extend(c for c in tok if c in "()")
+        else:
+            cur.append(tok)
+    if cur:
+        out.append(cur)
+    return out
+
+
+def _literal_env(*blocks):
+    """NAME -> value for every env: entry with no `${{ }}` expression."""
+    env = {}
+    for block in blocks:
+        for k, v in (block or {}).items() if isinstance(block, dict) else ():
+            if v is not None and "${{" not in str(v):
+                env[str(k)] = str(v)
+            else:
+                # An expression overrides the outer block's literal value
+                # at runtime, so the name is no longer known.
+                env.pop(str(k), None)
+    return env
+
+
+def _expand(token, env):
+    """`token` with every `$NAME`/`${NAME}` that `env` knows replaced."""
+    return _VAR_RE.sub(
+        lambda m: env.get(m.group(1) or m.group(2), m.group(0)), token)
+
+
+_CMDSUB_RE = re.compile(r"__WC_CMDSUB_(\d+)__")
+# Interpreter options that take the next word as their value.
+_VALUE_OPTIONS = {"--rcfile", "--init-file",
+                  "-W", "-X", "--check-hash-based-pycs"}
+
+
+def _code_string_index(interpreter, args):
+    """The index in `args` of a `-c` code string, or None: only the
+    options ahead of the first operand are the interpreter's, and `c` may
+    sit in a cluster (`-ec`, `-xc`). `python -m MOD` returns len(args):
+    what follows is the module's arguments, never a script operand. A
+    python `-W`/`-X` carries its value attached (`-Wonce`), not a `c`."""
+    k = 0
+    while k < len(args) and args[k][:1] in ("-", "+") \
+            and args[k] not in ("-", "--"):
+        opt = args[k]
+        if interpreter in ("bash", "sh") and _SHELL_OPTION_VALUE_RE.match(opt):
+            # `-eo pipefail` (round 10): o/O takes the next word, and a
+            # `c` in the same cluster puts the code string after it.
+            if "c" in opt[1:]:
+                return k + 2
+            k += 2
+            continue
+        if opt in _VALUE_OPTIONS:
+            k += 2
+            continue
+        if interpreter.startswith("python"):
+            if opt == "-m":
+                return len(args)
+            if opt[:2] in ("-W", "-X"):
+                k += 1
+                continue
+        if not opt.startswith("--") and "c" in opt[1:]:
+            return k + 1
+        k += 1
+    return None
+
+
+def _script_calls_in_run(run, env, workdir):
+    """(scripts, unresolved) for one run: block -- see REPO_SCRIPT_RE.
+
+    Commands are read in the order bash runs them: a `$( )` body before
+    the command that holds it, with a copy of the variables in effect
+    there (a subshell's assignments do not leak out); a `bash -c`/`sh -c`
+    string as a run: block of its own, never as a script path; and a
+    literal `cd` moves the directory later relative paths resolve from
+    (code review of #954)."""
+    scripts, unresolved = set(), set()
+    # `${{ x }}` holds spaces; collapse it to one token-safe word so it
+    # reaches the classifier whole, as a path no reader can resolve.
+    text = _EXPR_RE.sub(lambda m: re.sub(r"\s+", "", m.group(0)), run)
+    subs = []
+
+    def literal_dir(wd):
+        return wd is None or not re.search(r"[$*?{}\[]", wd)
+
+    def relative(path, wd):
+        path = re.sub(r"^(?:\./)+", "", path)
+        if wd is None or path.startswith("/"):
+            return path
+        return posixpath.normpath(posixpath.join(wd, path))
+
+    def interpreted(path, wd):
+        # An interpreter's argument, or a command word: a `$` left after
+        # expansion is a generated script (a runner temp file) unless it
+        # names .github/, which REPO_SCRIPT_RE then reports.
+        if "$" in path or "__WC_CMDSUB_" in path or path.startswith("/") \
+                or "://" in path:
+            return
+        if not literal_dir(wd):
+            unresolved.add(f"{wd}/{path}")
+        elif re.search(r"[*?{}\[]", path):
+            unresolved.add(relative(path, wd))
+        else:
+            scripts.add(relative(path, wd))
+
+    def repo_token(token, wd):
+        if "://" in token:
+            return
+        for m in REPO_SCRIPT_RE.finditer(token):
+            prefix, script = m.group(1), m.group(2)
+            literal = re.fullmatch(
+                r"(?:--?[\w-]+=|[A-Za-z_]\w*=)?(?:\./)*", prefix)
+            if literal and not re.search(r"[$*?{}\[]", script):
+                if not literal_dir(wd):
+                    unresolved.add(f"{wd}/{script}")
+                else:
+                    scripts.add(relative(script, wd))
+            else:
+                unresolved.add(prefix + script)
+
+    def run_subs(token, env, wd):
+        for m in _CMDSUB_RE.finditer(token):
+            read(subs[int(m.group(1))], dict(env), wd)
+
+    def read(prepassed, env, wd):
+        """Read one prepassed block in the order bash runs it."""
+        groups = []
+        for tokens, ok in _shell_commands(prepassed):
+            if not ok:
+                # An unbalanced quote to the end of the block: no command
+                # can be read off it, so every script it names is
+                # unresolved.
+                run_subs(tokens, env, wd)
+                for m in REPO_SCRIPT_RE.finditer(tokens):
+                    unresolved.add(m.group(1) + m.group(2))
+                continue
+            # `printf '...' | bash`: the data a shell reads off a pipe is
+            # code, so it is read for scripts as origin/main's regex did
+            # (code review of #954, round 13).
+            piped_to_shell = any(
+                tok == "|" and k + 1 < len(tokens)
+                and tokens[k + 1] in ("bash", "sh")
+                for k, tok in enumerate(tokens))
+            for cmd in _split_simple_commands(tokens):
+                if cmd == "(":
+                    # A `( )` group is a subshell: its `cd` and its
+                    # assignments end at its `)`.
+                    groups.append((wd, dict(env)))
+                    continue
+                if cmd == ")":
+                    if groups:  # else a `case` pattern's `)`
+                        wd, saved = groups.pop()
+                        env.clear()
+                        env.update(saved)
+                    continue
+                words = []
+                skip_next = None
+                stdin = None
+                for tok in cmd:
+                    run_subs(tok, env, wd)
+                    if skip_next:
+                        if skip_next in ("<", "0<"):
+                            stdin = _expand(tok, env)
+                        skip_next = None
+                        continue
+                    if tok in _REDIRECTS or re.fullmatch(r"\d*[<>]+&?", tok):
+                        skip_next = tok
+                        continue
+                    words.append(_expand(tok, env))
+                i = 0
+                assigned = {}
+                declared = False
+                while i < len(words) and (words[i] in _COMMAND_PREFIXES
+                                          or _ASSIGN_RE.fullmatch(words[i])):
+                    m = _ASSIGN_RE.fullmatch(words[i])
+                    if m and ("$" in m.group(2)
+                              or "__WC_CMDSUB_" in m.group(2)):
+                        # A value no reader can pin down replaces the
+                        # earlier literal one too.
+                        assigned[m.group(1)] = None
+                    elif m:
+                        assigned[m.group(1)] = m.group(2)
+                    elif words[i] in ("export", "readonly", "local",
+                                      "declare"):
+                        declared = True
+                    i += 1
+                if declared or i >= len(words):
+                    # `D=x` alone, or `export D=x`: the shell keeps it.
+                    # `D=x cmd` sets D for cmd only (code review of #954,
+                    # round 6).
+                    for name, value in assigned.items():
+                        if value is None:
+                            env.pop(name, None)
+                        else:
+                            env[name] = value
+                while i < len(words) and words[i] in _COMMAND_WRAPPERS:
+                    i += 1
+                    while i < len(words) and (
+                            words[i].startswith("-") or _ASSIGN_RE.fullmatch(words[i])
+                            or re.fullmatch(r"[\d.]+[smhd]?", words[i])
+                            or (i and re.fullmatch(r"-[nuIgpLPs]|--user|--adjustment",
+                                                   words[i - 1]))):
+                        i += 1
+                if i < len(words) and words[i] in _NON_EXEC_COMMANDS:
+                    if piped_to_shell:
+                        for word in words[i + 1:]:
+                            repo_token(word, wd)
+                    continue
+                if i < len(words) and words[i] not in _INTERPRETERS \
+                        and words[i] != "cd" \
+                        and not SCRIPT_EXT_RE.search(words[i]):
+                    # A wrapper this reader does not know (`xvfb-run -a`,
+                    # `retry 3`, `env -C DIR`): an interpreter further on
+                    # still runs its script, as origin/main's regex read
+                    # it (code review of #954, round 5).
+                    i = next((k for k in range(i + 1, len(words))
+                              if words[k] in _INTERPRETERS), i)
+                if i < len(words) and words[i] == "cd":
+                    target = words[i + 1] if i + 1 < len(words) else "~"
+                    if re.fullmatch(r"(?:\$\{?GITHUB_WORKSPACE\}?|\$\{\{\s*"
+                                    r"github\.workspace\s*\}\})/*", target):
+                        # The checkout root, where origin/main's regex
+                        # read every repo path from (code review of #954,
+                        # round 6).
+                        wd = None
+                    elif target.startswith(("/", "~", "-")) or "$" in target \
+                            or "__WC_CMDSUB_" in target:
+                        # A directory no reader can pin down.
+                        wd = "$PWD"
+                    elif literal_dir(wd):
+                        wd = relative(target, wd)
+                    continue
+                inline = None
+                if i < len(words) and words[i] in _INTERPRETERS:
+                    args = words[i + 1:]
+                    k = _code_string_index(words[i], args)
+                    if k is not None:
+                        # `-c STRING` (or `-ec`): the string is code, not a
+                        # path; a shell's is read as a run: block of its
+                        # own. Only the options ahead of the script count:
+                        # `bash x.sh -c foo` hands `-c` to x.sh.
+                        if words[i] in ("bash", "sh") and k < len(args):
+                            inline = k
+                    else:
+                        arg = next((w for w in args if SCRIPT_EXT_RE.search(w)),
+                                   None)
+                        if arg is None and stdin is not None \
+                                and SCRIPT_EXT_RE.search(stdin):
+                            # `bash < x.sh`: the redirect is the script.
+                            arg = stdin
+                            repo_token(stdin, wd)
+                        if arg is not None and ".github/" not in arg:
+                            interpreted(arg, wd)
+                    if inline is not None:
+                        inner, _, _ = _shell_prepass(args[inline], subs=subs)
+                        read(inner, dict(env), wd)
+                        inline += i + 1
+                elif i < len(words) and SCRIPT_EXT_RE.search(words[i]) \
+                        and ".github/" not in words[i]:
+                    interpreted(words[i], wd)
+                for k, word in enumerate(words):
+                    if k != inline:
+                        repo_token(word, wd)
+
+    outer, _, _ = _shell_prepass(text, subs=subs)
+    read(outer, dict(env), workdir)
+    return scripts, unresolved
+
+
+def _working_directory(wf, job, step):
+    """The step's effective `working-directory:`, or None."""
+    for block in (step,
+                  ((job or {}).get("defaults") or {}).get("run"),
+                  ((wf or {}).get("defaults") or {}).get("run")):
+        wd = (block or {}).get("working-directory")
+        if wd:
+            return str(wd).rstrip("/")
+    return None
 
 
 def pr_time_script_calls(root=".",
                          workflow=".github/workflows/lint-workflows.yml"):
     """[(step name, scripts, unresolved)] for every PR-time step whose run:
-    block executes a script, comment lines dropped and `\\` continuations
-    joined. `scripts` are repo-relative paths; `unresolved` are the script
-    tokens no reader can pin to one file (a `$` variable, a `${{ }}`
-    expression, a glob, a checkout prefix ahead of `.github/`).
+    block executes a script (REPO_SCRIPT_RE says how it is read).
+    `scripts` are repo-relative paths; `unresolved` are the script tokens
+    no reader can pin to one file (a `$` variable the step does not set
+    literally, a `${{ }}` expression, a glob, a checkout prefix ahead of
+    `.github/`, a `working-directory:` that is not literal).
 
     pr_time_invocations() sees only the gate scripts gate_scripts() names,
     so a step that runs anything else -- a composite's own fixture suite at
@@ -421,20 +944,10 @@ def pr_time_script_calls(root=".",
             run = str((step or {}).get("run") or "")
             if not run or LOOSE_PY_HEREDOC_RE.search(run):
                 continue
-            text = "\n".join(l for l in run.splitlines()
-                              if not l.lstrip().startswith("#"))
-            text = text.replace("\\\n", " ")
-            scripts, unresolved = set(), set()
-            for m in SCRIPT_CALL_RE.finditer(text):
-                if "$" not in m.group(1):
-                    scripts.add(re.sub(r"^(?:\./)+", "", m.group(1)))
-            for m in REPO_SCRIPT_RE.finditer(text):
-                prefix, script = m.group(1), m.group(2)
-                literal = re.fullmatch(r"(?:--?[\w-]+=|[A-Za-z_]\w*=)?(?:\./)*", prefix)
-                if literal and not re.search(r"[$*?{}\[]", script):
-                    scripts.add(script)
-                else:
-                    unresolved.add(prefix + script)
+            env = _literal_env(wf.get("env"), (job or {}).get("env"),
+                               step.get("env"))
+            scripts, unresolved = _script_calls_in_run(
+                run, env, _working_directory(wf, job, step))
             if scripts or unresolved:
                 name = str(step.get("name") or "(unnamed step)")
                 out.append((name, sorted(scripts), sorted(unresolved)))
@@ -449,8 +962,10 @@ def pr_time_inline_steps(root=".",
     `runnable` is [(step name, run text)]: steps a local sweep can execute
     VERBATIM - the whole run: block under `bash -e`, exactly as CI does -
     because they carry no `env:`, no `${{ }}` expression the runner would
-    have to invent a value for, and no `shell:` (step, job or workflow
-    default) that would change CI's `bash -e {0}`. `unrunnable` is
+    have to invent a value for, no `shell:` (step, job or workflow
+    default) that would change CI's `bash -e {0}`, and no
+    `working-directory:` (the same three places) that would move it off
+    the repository root the runner runs it from. `unrunnable` is
     [(step name, reason)] for the rest. Returned rather than dropped so verify-gate-wiring.py can fail on a
     heredoc gate that quietly stopped being rehearsed locally, the same way
     check_local_runner_parity fails on a script gate the tokenizer cannot
@@ -481,6 +996,12 @@ def pr_time_inline_steps(root=".",
                 # flags (bash's is -eo pipefail), so it is not verbatim.
                 unrunnable.append((name, "the step runs under a shell: "
                                          "other than CI's default"))
+            elif _working_directory(wf, job, step):
+                # run-local-gates.py runs every inline step from the
+                # repository root (code review of #942).
+                unrunnable.append((name, "the step runs under a "
+                                         "working-directory: other than "
+                                         "the repository root"))
             elif "${{" in run:
                 unrunnable.append((name, "the run: block carries a ${{ }} "
                                          "expression"))

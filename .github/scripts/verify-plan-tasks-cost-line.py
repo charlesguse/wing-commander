@@ -49,10 +49,7 @@ log its argv rather than call the network. Two scenarios:
     comment here would double-post alongside the report once it fires).
 
 A third check confirms the report's own `if:` evaluates true on a
-mode == 'pr' run (agent-pr ran, agent-auto skipped) -- the `||` and
-dual-mode condition are not expressible in verify-clarification-gating.py's
-restricted `evaluate_if()` grammar (which hard-errors on `||`), so this gate
-carries its own small evaluator rather than importing that one.
+mode == 'pr' run (agent-pr ran, agent-auto skipped), by wc_gha_expr.
 
 Self-test (--self-test): loads the real shipped steps, then reintroduces
 each way this could regress -- the report dropped entirely, the dispatch
@@ -76,6 +73,7 @@ import tempfile
 import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from wc_gha_expr import evaluate_if as gha_evaluate_if  # noqa: E402
 from wc_shell_harness import resolve_bash, run_step, use_utf8_stdout  # noqa: E402
 
 FILES = {
@@ -108,53 +106,16 @@ def load_all():
 
 
 # --------------------------------------------------------------------------
-# A tiny evaluator for the report step's dual-mode `if:` -- unlike
-# verify-clarification-gating.py's evaluate_if(), this one supports the one
-# `||` group these two workflows' report steps actually use, since that
-# grammar hard-errors on `||` by design (see that module's docstring).
+# The report step's dual-mode `if:`, evaluated by wc_gha_expr (the one
+# evaluator). `always()` and `!cancelled()` hold: no run here is cancelled.
 # --------------------------------------------------------------------------
-TERM_RE = re.compile(r"^\s*([A-Za-z0-9_.\-]+)\s*(==|!=)\s*'([^']*)'\s*$")
-
-
-def _eval_term(term, ctx):
-    term = term.strip()
-    if term in ("always()", "!cancelled()"):
-        return True
-    m = TERM_RE.match(term)
-    if not m:
-        raise ValueError(f"cannot parse if: term {term!r}")
-    lhs, op, rhs = m.groups()
-    actual = ctx.get(lhs, "")
-    return (actual == rhs) if op == "==" else (actual != rhs)
-
-
 def eval_dual_mode_if(expr, ctx):
-    """Evaluate an `A && B && ... && (C || D)` expression -- the one shape
-    every report step's `if:` in this file actually has. Not a general
-    parser: a second parenthesized group, or nesting, is a hard error."""
-    expr = str(expr).strip()
-    # "always()" is itself a parenthesized (empty) group -- only a group
-    # that actually contains a `||` is the OR group this function handles.
-    groups = [g for g in re.findall(r"\(([^()]*)\)", expr) if "||" in g]
-    if len(groups) > 1:
-        raise ValueError(f"cannot evaluate if: with more than one "
-                         f"OR group: {expr!r}")
-    if groups:
-        or_result = any(_eval_term(p, ctx) for p in groups[0].split("||"))
-        replacement = "true" if or_result else "false"
-        expr = re.sub(r"\(([^()]*)\)",
-                      lambda m: replacement if "||" in m.group(1) else m.group(0),
-                      expr)
-    result = True
-    for term in expr.split("&&"):
-        term = term.strip()
-        if term in ("true", "false"):
-            if term == "false":
-                result = False
-            continue
-        if not _eval_term(term, ctx):
-            result = False
-    return result
+    """Whether the report step's `if:` fires against modelled step
+    outputs. A reference to anything but a step output, or a construct
+    wc_gha_expr does not model, is a ValueError."""
+    return gha_evaluate_if(
+        str(expr), dict({"always()": True, "cancelled()": False}, **ctx),
+        known=("steps.",))
 
 
 # --------------------------------------------------------------------------

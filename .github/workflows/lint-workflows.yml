@@ -86,6 +86,17 @@ on:
       # CHECKS must name exactly its rows, so a PR removing a check edits
       # the table too, and an edit to the table alone has to run the gate.
       - "specs/097-recorded-stop-point/contracts/gate-135-stop-point-recording.md"
+      # Gates 100, 101, 114, 120 and 129 read these documents through an
+      # os.path.join, which verify-gate-wiring.py did not fold until the
+      # code reviews of #940; each gate compares its document with code,
+      # so an edit to the document alone has to run the gate.
+      - "docs/adoption.md"
+      - "specs/057-autonomous-board-loop/contracts/board-loop-workflow.md"
+      - "specs/060-self-redrive-concurrency/contracts/concurrency-groups.md"
+      - "specs/055-unattended-e2e-gates/research.md"
+      - "specs/055-unattended-e2e-gates/spec.md"
+      - "specs/056-stage-found-defect-filing/data-model.md"
+      - ".claude/skills/spec-cross-reference/SKILL.md"
   # Gate 1 only — it reads how GitHub actually registered the workflows on
   # the default branch, which a PR's files cannot tell us.
   push:
