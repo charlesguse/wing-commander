@@ -56,7 +56,8 @@ A step is prose-tainted when any of these hold:
       artifact an `actions/upload-artifact` step in a prose-tainted step of
       the same file uploaded, in any job of the file. A `${{ ... }}` in
       either name is a wildcard, as is a `pattern:` glob (a whole `[...]`,
-      `{...}` or extglob group is one wildcard; a leading `!` negation
+      `{...}` or extglob group is one wildcard, a glob with any `(` or `\`
+      is a wildcard as a whole; a leading `!` negation
       matches any tainted upload); a download with
       no `name:` (every artifact) or with `artifact-ids:` matches any
       tainted upload.
@@ -260,9 +261,12 @@ def composite_declares_prose(uses, root="."):
 # metacharacter. A whole `[...]` class, `{...}` brace set or `?(...)`-style
 # extglob group is one wildcard, not letters that must appear literally, and
 # a leading `!` negates the pattern, so it reads every artifact (code review
-# of #951). A tainted upload and a download whose names can denote the
-# same string share taint. This over-taints rather than letting an
-# expression name carry prose past the gate unseen (code review of #943).
+# of #951). Extglob groups nest and `\` escapes the next character, which a
+# flat regex cannot follow, so a glob carrying either `(` or `\` is one
+# wildcard as a whole (code review of #951). A tainted upload and a
+# download whose names can denote the same string share taint. This
+# over-taints rather than letting an expression name carry prose past the
+# gate unseen (code review of #943).
 EXPR = re.compile(r"\$\{\{.*?\}\}", re.DOTALL)
 GLOB_META = re.compile(r"[?*+@!]?\([^)]*\)?|\[[^\]]*\]?|\{[^}]*\}?|[*?\]}]")
 # actions/upload-artifact's own default when `with.name` is absent.
@@ -275,7 +279,9 @@ def _name_template(name, glob=False):
     for i, part in enumerate(EXPR.split(name)):
         if i:
             out.append(None)
-        if glob:
+        if glob and ("(" in part or "\\" in part):
+            out.append(None)
+        elif glob:
             for chunk_i, chunk in enumerate(GLOB_META.split(part)):
                 if chunk_i:
                     out.append(None)
@@ -770,7 +776,8 @@ FIXTURE_ARTIFACT_GLOBS = [
     _artifact_fixture("          name: findings-3\n",
                       f"          pattern: {pat!r}\n")
     for pat in ("findings-[0-9]", "findings-{3,4}",
-                "{findings,decisions}-*", "!decisions")]
+                "{findings,decisions}-*", "!decisions",
+                "findings-@(3|+(4))", "findings-\\3")]
 FIXTURE_ARTIFACT_GLOB_DISJOINT = _artifact_fixture(
     "          name: findings-3\n", "          pattern: 'decisions-[0-9]'\n")
 FIXTURE_ARTIFACT_ALL = _artifact_fixture(_UP_MATRIX, "")
@@ -953,7 +960,7 @@ def self_test():
 
     for f in failures:
         print(f"::error::self-test: {f}")
-    print(f"Gate 49 self-test: 24 fixture(s), {len(mutations)} subject "
+    print(f"Gate 49 self-test: 26 fixture(s), {len(mutations)} subject "
           f"mutation(s), 1 twin-step subject; {len(failures)} failure(s).")
     return 1 if failures else 0
 
