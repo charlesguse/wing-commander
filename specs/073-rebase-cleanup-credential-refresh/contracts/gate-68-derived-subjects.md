@@ -149,13 +149,13 @@ assert, at minimum, one failing mutation for:
 - a derived subject in neither full/agentless/exempt state (§3 "neither"
   regression),
 - each exemption's `condition` broken in the direction that should fail it
-  (bound removed, bound raised past threshold) — one mutation per
-  `EXEMPT_JOBS` entry this feature adds — and, since `board-loop.yml`'s
-  four jobs were promoted to full subjects (#733/#848), each failing as a
-  full subject: triage's post-agent context call deleted, the Reviewer's
-  agent-ran signal deleted, and the Reviewer's own credential-status call
-  deleted (its mint id is a prefix of review-fixup's, so the mint
-  cross-reference must match whole ids).
+  (bound removed, bound raised past threshold) — both for every
+  `EXEMPT_JOBS` entry, as FR-012 asks of each bounded job — and, since
+  `board-loop.yml`'s four jobs were promoted to full subjects (#733/#848),
+  three mutations that fail as a full subject would: triage's post-agent
+  context call deleted, the Reviewer's agent-ran signal deleted, and the
+  Reviewer's own credential-status call deleted (its mint id is a prefix
+  of review-fixup's, so the mint cross-reference must match whole ids).
 
 See `data-model.md`'s Derived Subject / Subject Floor / Exempt Job
 sections for the field-level shape these mutations operate on, and

@@ -3944,7 +3944,7 @@ jobs:
       # never simply absent), each agent step's own composite calls are
       # checked by position, not merely by a job-wide total, and every
       # exempt entry's own condition still holds -- see
-      # verify-post-agent-credential-refresh.py's own docstring (checks 1-9)
+      # verify-post-agent-credential-refresh.py's own docstring (checks 1-10)
       # for the current, authoritative list.
       - name: Gate 68 — every post-agent step holds a fresh credential and every observability callout is tolerated
         if: "!cancelled()"

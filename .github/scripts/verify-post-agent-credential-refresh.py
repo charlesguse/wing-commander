@@ -142,9 +142,8 @@ credential-status call deleted while cycle's is duplicated, leaving the
 job-wide total unchanged (hole (c)); rebase.yml's publish arm reverted to
 the pre-agent credential, its post-agent context re-mint deleted, and its
 refresh-remote call deleted; each exempt entry's condition broken in the
-direction that should fail it (cleanup.yml's and watchdog.yml's bound
-removed and raised past the credential's lifetime, and both
-auto-update-spec-kit.yml entries' bound removed); board-loop.yml's
+direction that should fail it (each of the four bounded jobs' bound
+removed, and raised past the credential's lifetime -- spec 073 FR-012); board-loop.yml's
 promoted jobs (#733/#848) losing triage's post-agent context call, the
 Reviewer's agent-ran signal, and the Reviewer's own credential-status call
 (whose mint id prefixes review-fixup's); a derived subject with no floor
@@ -295,9 +294,11 @@ NO_REMOTE_REFRESH_JOBS = {
     # issues through env.WC_BOT_TOKEN directly. claude-code-action does
     # rewrite origin with its own token when each agent step starts, so
     # .git/config holds a token that goes stale; refreshing it is moot
-    # because no step after the agent uses the git remote (true of every
-    # entry here). Promoted from EXEMPT_JOBS to full subjects with fix and
-    # review (#733/#848, tracked on #889).
+    # because no step after the agent uses origin's persisted credential.
+    # That is what every entry here shares: e2e-stage and
+    # classify-and-announce reach a remote only through explicit
+    # token-bearing URLs. Promoted from EXEMPT_JOBS to full subjects with
+    # fix and review (#733/#848, tracked on #889).
     (".github/workflows/board-loop.yml", "triage"),
     (".github/workflows/board-loop.yml", "route"),
     # T009 (spec 052's own tasks.md): classify-and-announce resolves
@@ -308,8 +309,8 @@ NO_REMOTE_REFRESH_JOBS = {
     # specs/062-lifecycle-review-gate T020: the review job checks out the
     # lifecycle PR's head ref with persist-credentials: false and never
     # pushes -- its only write is the `gh api` review post (through
-    # env.WC_BOT_TOKEN directly), so there is no persisted git remote
-    # credential to refresh either.
+    # env.WC_BOT_TOKEN directly), so no step after its agent uses origin's
+    # persisted credential either.
     (".github/workflows/lifecycle-review-gate.yml", "review"),
 }
 
@@ -1273,13 +1274,44 @@ def mut_watchdog_bound_removed(loaded):
     del step["timeout-minutes"]
 
 
-def _mut_auto_update_bound_removed(loaded, job_name, step_name):
-    job = loaded[".github/workflows/auto-update-spec-kit.yml"]["jobs"][job_name]
+def _mut_bound(loaded, path, job_name, step_name, raise_to=None):
+    """Remove the agent step's timeout-minutes, or raise it past the
+    credential's lifetime when `raise_to` is given."""
+    job = loaded[path]["jobs"][job_name]
     step = _find_step(job, step_name)
     assert step is not None, "fixture assumption broken: step renamed"
     assert step.get("timeout-minutes") == 10, \
-        "fixture assumption broken: bound already missing"
-    del step["timeout-minutes"]
+        "fixture assumption broken: bound already changed"
+    if raise_to is None:
+        del step["timeout-minutes"]
+    else:
+        step["timeout-minutes"] = raise_to
+
+
+def _mut_auto_update_bound_removed(loaded, job_name, step_name):
+    _mut_bound(loaded, ".github/workflows/auto-update-spec-kit.yml",
+               job_name, step_name)
+
+
+def mut_watchdog_bound_raised(loaded):
+    """watchdog.yml's exemption-condition regression, upper-bound
+    direction. Spec 073 FR-012 asks for "a removed and an over-long
+    wall-clock bound" for each bounded job; cleanup.yml had both and
+    watchdog.yml only the first (code review of #947)."""
+    _mut_bound(loaded, ".github/workflows/watchdog.yml", "diagnose",
+               "Diagnose", raise_to=90)
+
+
+def mut_evaluate_path_bound_raised(loaded):
+    """auto-update-spec-kit.yml's evaluate-path, upper-bound direction."""
+    _mut_bound(loaded, ".github/workflows/auto-update-spec-kit.yml",
+               "evaluate-path", "Decide upgrade path", raise_to=90)
+
+
+def mut_comment_reply_bound_raised(loaded):
+    """auto-update-spec-kit.yml's comment-reply, upper-bound direction."""
+    _mut_bound(loaded, ".github/workflows/auto-update-spec-kit.yml",
+               "comment-reply", "Interpret the maintainer's reply", raise_to=90)
 
 
 def mut_evaluate_path_bound_removed(loaded):
@@ -1422,10 +1454,16 @@ SIMPLE_MUTATIONS = [
     ("cleanup.yml's teardown-done exemption bound raised past the "
      "credential's lifetime", mut_cleanup_bound_raised),
     ("watchdog.yml's diagnose exemption bound removed", mut_watchdog_bound_removed),
+    ("watchdog.yml's diagnose exemption bound raised past the credential's "
+     "lifetime", mut_watchdog_bound_raised),
     ("auto-update-spec-kit.yml's evaluate-path exemption bound removed",
      mut_evaluate_path_bound_removed),
+    ("auto-update-spec-kit.yml's evaluate-path exemption bound raised",
+     mut_evaluate_path_bound_raised),
     ("auto-update-spec-kit.yml's comment-reply exemption bound removed",
      mut_comment_reply_bound_removed),
+    ("auto-update-spec-kit.yml's comment-reply exemption bound raised",
+     mut_comment_reply_bound_raised),
     ("board-loop.yml's triage (a full subject) post-agent context call deleted",
      mut_board_loop_triage_context_deleted),
     ("board-loop.yml's review: the Reviewer's agent-ran signal deleted",
@@ -1471,15 +1509,17 @@ def self_test():
 
     # The promoted review job's two mutations must fail on the check that
     # owns them, not on something they happen to trip (#733/#848).
+    review_job = ".github/workflows/board-loop.yml [review]: agent step 'Reviewer'"
     for mutate, want in (
             (mut_board_loop_reviewer_agent_ran_deleted,
-             "'Reviewer' has no wing-commander-agent-ran-signal call"),
+             review_job + " has no wing-commander-agent-ran-signal call"),
             (mut_board_loop_reviewer_status_deleted,
-             "(id: 'reestablish-review') is never referenced")):
+             review_job + "'s mint step (id: 'reestablish-review') is never "
+             "referenced")):
         mutated = copy.deepcopy(base)
         mutate(mutated)
         broke = scan(mutated)
-        if not any(want in b for b in broke):
+        if not (len(broke) == 1 and broke[0].startswith(want)):
             problems.append(f"{mutate.__name__} did not fail with {want!r}: "
                             f"{broke!r}")
 
