@@ -1196,7 +1196,9 @@ def check_label_prefix_single_home(content_overrides=None):
                    IMPLEMENT_WRAPPER, FINALIZE_WRAPPER)}
     literal_re = re.compile(r"(?<![\w.])(?<!\w-)" + re.escape(canonical)
                             + r"(?![\w-])")
-    step_id_re = re.compile(r"\bid:[ \t]*[\"']?" + re.escape(canonical)
+    # `(?<![\w-])` rather than `\b`: `\b` also matches inside a
+    # hyphenated key (`issue-id:`), which would subtract a real copy.
+    step_id_re = re.compile(r"(?<![\w-])id:[ \t]*[\"']?" + re.escape(canonical)
                             + r"(?![\w-])")
     files = set(glob.glob(".github/workflows/*.yml")
                 + glob.glob(".github/workflows/*.yaml")
@@ -1966,6 +1968,19 @@ def check_mutation_26():
     return ["mutation survived: shell fallback label default copy"]
 
 
+def check_mutation_27():
+    """(27) code review of #941: a copy of the label default under a
+    hyphenated `*-id:` key -- must not be discounted as a step id.
+    Re-runs (m), must fail."""
+    path = os.path.normpath(".github/workflows/rebase.yml")
+    text = open(path, encoding="utf-8").read()
+    mutated = text + "\n#          issue-id: route-out-of-boundary\n"
+    if check_label_prefix_single_home({path: mutated}):
+        print("Mutation OK -- *-id: key label default copy: caught (m).")
+        return []
+    return ["mutation survived: *-id: key label default copy"]
+
+
 def _mut_classify_swallow_crash(steps):
     """(17) review-gate-round-4 item 6: revert the classify step's own
     ::warning:: + safe-fallback handling to a bare pass-through -- a
@@ -2047,6 +2062,7 @@ def run_mutations(steps, root):
     failures.extend(check_mutation_24())
     failures.extend(check_mutation_25())
     failures.extend(check_mutation_26())
+    failures.extend(check_mutation_27())
     # (7) zero fixtures discovered/executed at all.
     if not CLASSIFY_FIXTURES or not STATEMENT_FIXTURES:
         failures.append("mutation survived: zero fixtures (Constitution VIII)")
