@@ -98,6 +98,12 @@ unreachable:
 - A mixed unchecked set (one out-of-boundary, one ordinary) →
   `all-unchecked-out-of-boundary=false`, `routed=false`, existing narrative
   unchanged.
+- The same mixed set on a cycle that progressed (`handoff=false`,
+  `routed=false`) → the real Route step's `if:` fires at and past the
+  iteration cap and not below it, and the shipped dispatch step takes the
+  terminal "Iteration cap reached" hand-off at the cap and redispatches
+  below it, so the last cycle files the out-of-boundary task and no
+  earlier one does (the `iteration >= max` disjunct; code review of #836).
 
 **(e) No filing on a truncated run (FR-013).** A synthetic truncated cycle
 with an out-of-boundary-shaped `tasks.md` at the tip → the "Route
@@ -207,6 +213,11 @@ caught:
 13. `write-boundary-label-prefix`'s default collapsed onto
     `findings-label-prefix`'s default — re-runs (h) against the mutated
     text, must fail (PR #836 review, item 13).
+14. The Route step's `fromJSON(inputs.iteration) >=
+    fromJSON(steps.cap.outputs.max)` disjunct dropped — re-runs (d)'s
+    iteration-cap scenario against the mutated text, must fail (code
+    review of #836; the gate's own mutation 19, since its numbering and
+    this list's have drifted apart).
 
 ## Out of scope for this gate
 
