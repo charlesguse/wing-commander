@@ -25,9 +25,9 @@ resolves to exactly one disposition:
 
 - `full_subject` (the default): checks 1, 2 and 6/7 below all apply.
 - `exempt`: an EXEMPT_JOBS entry names a mechanically-asserted condition
-  (a wall-clock bound, or adoption of the post-agent composites) in place of
-  checks 1/2/6/7; the condition is evaluated every run and the gate fails,
-  naming the entry, when it no longer holds.
+  (a wall-clock bound) in place of checks 1/2/6/7; the condition is
+  evaluated every run and the gate fails, naming the entry, when it no
+  longer holds.
 - `agentless_in_scope`: the pre-existing AGENTLESS_JOBS set (today just
   `tasks-approved`, which never runs an agent step by design and therefore
   never actually reaches this branch via derivation -- kept for the jobs
@@ -108,10 +108,9 @@ drop-detection.
    agent ran, without ever matching check 1's direct `steps.<id>.outputs.token`
    reference pattern.
 9. Every `exempt` entry's own condition -- a wall-clock bound present and at
-   or under 10 minutes, or adoption of the post-agent composites -- is
-   asserted true on every run; the gate fails, naming the entry, its reason
-   and its deciding issue, when it is not (FR-007, spec 073; Constitution
-   Principle IX).
+   or under 10 minutes -- is asserted true on every run; the gate fails,
+   naming the entry, its reason and its deciding issue, when it is not
+   (FR-007, spec 073; Constitution Principle IX).
 10. Every EXEMPT_JOBS key names a (workflow, job) pair that actually
     resolves -- checked directly against EXEMPT_JOBS's own keys, not just
     the derived set, since a renamed or deleted job drops out of derivation
@@ -143,9 +142,11 @@ credential-status call deleted while cycle's is duplicated, leaving the
 job-wide total unchanged (hole (c)); rebase.yml's publish arm reverted to
 the pre-agent credential, its post-agent context re-mint deleted, and its
 refresh-remote call deleted; each exempt entry's condition broken in the
-direction that should fail it (cleanup.yml's and watchdog.yml's bound
-removed and raised past the credential's lifetime, board-loop.yml's
-adopted composite call deleted); a derived subject with no floor
+direction that should fail it (each of the four bounded jobs' bound
+removed, and raised past the credential's lifetime -- spec 073 FR-012); board-loop.yml's
+promoted jobs (#733/#848) losing triage's post-agent context call, the
+Reviewer's agent-ran signal, and the Reviewer's own credential-status call
+(whose mint id prefixes review-fixup's); a derived subject with no floor
 membership and no exemption; the derived set emptied; a SUBJECT_FLOOR
 member this feature itself adds losing its agent step; and an EXEMPT_JOBS
 entry's named job renamed away, leaving the entry stale (#735) -- and
@@ -288,6 +289,18 @@ REQUIRED_PER_AGENT_STEP_COMPOSITES = [
 ]
 NO_REMOTE_REFRESH_JOBS = {
     (".github/workflows/auto-update-spec-kit.yml", "e2e-stage"),
+    # board-loop's triage and route check out with persist-credentials:
+    # false and never push -- their writes are comments, labels and filed
+    # issues through env.WC_BOT_TOKEN directly. claude-code-action does
+    # rewrite origin with its own token when each agent step starts, so
+    # .git/config holds a token that goes stale; refreshing it is moot
+    # because no step after the agent uses origin's persisted credential.
+    # That is what every entry here shares: e2e-stage and
+    # classify-and-announce reach a remote only through explicit
+    # token-bearing URLs. Promoted from EXEMPT_JOBS to full subjects with
+    # fix and review (#733/#848, tracked on #889).
+    (".github/workflows/board-loop.yml", "triage"),
+    (".github/workflows/board-loop.yml", "route"),
     # T009 (spec 052's own tasks.md): classify-and-announce resolves
     # spec-meta.json via the contents API rather than a "Checkout spec
     # branch" step, so there is no persisted git remote credential to
@@ -296,8 +309,8 @@ NO_REMOTE_REFRESH_JOBS = {
     # specs/062-lifecycle-review-gate T020: the review job checks out the
     # lifecycle PR's head ref with persist-credentials: false and never
     # pushes -- its only write is the `gh api` review post (through
-    # env.WC_BOT_TOKEN directly), so there is no persisted git remote
-    # credential to refresh either.
+    # env.WC_BOT_TOKEN directly), so no step after its agent uses origin's
+    # persisted credential either.
     (".github/workflows/lifecycle-review-gate.yml", "review"),
 }
 
@@ -417,31 +430,6 @@ def _wall_clock_bound_ok(job, max_minutes=10):
     return True
 
 
-def _composite_adoption_ok(job):
-    """Every agent step's own post-step window (up to the next agent step
-    or the job's end -- the same by-position walk check 7 performs for
-    full_subject jobs) contains a wing-commander-context call AND a
-    wing-commander-post-agent-credential-status call. Deliberately does NOT
-    require wing-commander-agent-ran-signal, which board-loop.yml never
-    adopted (contract Section 3, "Composite adoption"; research.md D4/D7)."""
-    steps = list((job or {}).get("steps") or [])
-    agent_idxs = [i for i, s in enumerate(steps) if _is_agent_step(s)]
-    if not agent_idxs:
-        return False
-    boundaries = agent_idxs[1:] + [len(steps)]
-    for idx, boundary in zip(agent_idxs, boundaries):
-        between = steps[idx + 1:boundary]
-        has_context = any(
-            "wing-commander-context" in str((s or {}).get("uses", ""))
-            for s in between)
-        has_status = any(
-            "wing-commander-post-agent-credential-status" in str((s or {}).get("uses", ""))
-            for s in between)
-        if not (has_context and has_status):
-            return False
-    return True
-
-
 # path -> set of job names -- the checked-in floor a derived subject's
 # disappearance is compared against (research.md D3; contract Section 2).
 # Nine pre-existing entries (spec 052's FR-007 stages) plus seven this
@@ -494,47 +482,6 @@ EXEMPT_JOBS = {
             "design for a short job, not debt awaiting a fix."),
         decided_by=(558,),
         condition=_wall_clock_bound_ok,
-    ),
-    (".github/workflows/board-loop.yml", "triage"): ExemptionEntry(
-        reason=(
-            "already consumes wing-commander-context and "
-            "wing-commander-post-agent-credential-status after its agent "
-            "step voluntarily (spec 057); provisional -- promoting to "
-            "full_subject is a re-classification, not a new remedy, and "
-            "is tracked on the maintenance backlog #889 (was #733)"),
-        issue=(889,),
-        decided_by=(558, 410),
-        condition=_composite_adoption_ok,
-    ),
-    (".github/workflows/board-loop.yml", "route"): ExemptionEntry(
-        reason=(
-            "already consumes wing-commander-context and "
-            "wing-commander-post-agent-credential-status after its agent "
-            "step voluntarily (spec 057); provisional, promotion tracked "
-            "on #889 (was #733)"),
-        issue=(889,),
-        decided_by=(558, 410),
-        condition=_composite_adoption_ok,
-    ),
-    (".github/workflows/board-loop.yml", "fix"): ExemptionEntry(
-        reason=(
-            "already consumes wing-commander-context and "
-            "wing-commander-post-agent-credential-status after its agent "
-            "step voluntarily (spec 057); provisional, promotion tracked "
-            "on #889 (was #733)"),
-        issue=(889,),
-        decided_by=(558, 410),
-        condition=_composite_adoption_ok,
-    ),
-    (".github/workflows/board-loop.yml", "review"): ExemptionEntry(
-        reason=(
-            "already consumes wing-commander-context and "
-            "wing-commander-post-agent-credential-status after EACH of its "
-            "two agent steps (Reviewer, Review-fixup) voluntarily (spec "
-            "057); provisional, promotion tracked on #889 (was #733)"),
-        issue=(889,),
-        decided_by=(558, 410),
-        condition=_composite_adoption_ok,
     ),
     (".github/workflows/auto-update-spec-kit.yml", "evaluate-path"): ExemptionEntry(
         reason=(
@@ -774,7 +721,11 @@ def check_job_full_subject(path, job_name, job):
         if mint_id is None or not mint_id_re.match(str(mint_id)):
             continue  # no mint id to cross-reference; check 2 already flags a missing mint.
         mint_ref_re = re.compile(
-            rf"steps(?:\.{re.escape(mint_id)}\b"
+            # (?![\w-]), not \b: a hyphen is a word boundary, so
+            # `reestablish-review\b` also matched review-fixup's
+            # `steps.reestablish-review-fixup.outcome` and hid a deleted
+            # Reviewer credential-status call (code review of #733/#848).
+            rf"steps(?:\.{re.escape(mint_id)}(?![\w-])"
             rf"|\[[\'\"]{re.escape(mint_id)}[\'\"]\])")
         referenced = any(
             "wing-commander-post-agent-credential-status" in str((s or {}).get("uses", ""))
@@ -1323,11 +1274,66 @@ def mut_watchdog_bound_removed(loaded):
     del step["timeout-minutes"]
 
 
-def mut_board_loop_composite_deleted(loaded):
-    """board-loop.yml's exemption-condition regression: one job's adopted
-    post-agent wing-commander-context call deleted -- must fail naming the
-    job, not silently keep treating it as exempt (spec.md FR-007,
-    research.md D7)."""
+def _mut_bound(loaded, path, job_name, step_name, raise_to=None):
+    """Remove the agent step's timeout-minutes, or raise it past the
+    credential's lifetime when `raise_to` is given."""
+    job = loaded[path]["jobs"][job_name]
+    step = _find_step(job, step_name)
+    assert step is not None, "fixture assumption broken: step renamed"
+    assert step.get("timeout-minutes") == 10, \
+        "fixture assumption broken: bound already changed"
+    if raise_to is None:
+        del step["timeout-minutes"]
+    else:
+        step["timeout-minutes"] = raise_to
+
+
+def _mut_auto_update_bound_removed(loaded, job_name, step_name):
+    _mut_bound(loaded, ".github/workflows/auto-update-spec-kit.yml",
+               job_name, step_name)
+
+
+def mut_watchdog_bound_raised(loaded):
+    """watchdog.yml's exemption-condition regression, upper-bound
+    direction. Spec 073 FR-012 asks for "a removed and an over-long
+    wall-clock bound" for each bounded job; cleanup.yml had both and
+    watchdog.yml only the first (code review of #947)."""
+    _mut_bound(loaded, ".github/workflows/watchdog.yml", "diagnose",
+               "Diagnose", raise_to=90)
+
+
+def mut_evaluate_path_bound_raised(loaded):
+    """auto-update-spec-kit.yml's evaluate-path, upper-bound direction."""
+    _mut_bound(loaded, ".github/workflows/auto-update-spec-kit.yml",
+               "evaluate-path", "Decide upgrade path", raise_to=90)
+
+
+def mut_comment_reply_bound_raised(loaded):
+    """auto-update-spec-kit.yml's comment-reply, upper-bound direction."""
+    _mut_bound(loaded, ".github/workflows/auto-update-spec-kit.yml",
+               "comment-reply", "Interpret the maintainer's reply", raise_to=90)
+
+
+def mut_evaluate_path_bound_removed(loaded):
+    """auto-update-spec-kit.yml's evaluate-path exemption-condition
+    regression: the agent step's timeout-minutes: 10 removed, so the
+    contract's one condition-broken mutation per EXEMPT_JOBS entry holds
+    for all four (code review of #733/#848)."""
+    _mut_auto_update_bound_removed(loaded, "evaluate-path", "Decide upgrade path")
+
+
+def mut_comment_reply_bound_removed(loaded):
+    """auto-update-spec-kit.yml's comment-reply exemption-condition
+    regression, as above."""
+    _mut_auto_update_bound_removed(
+        loaded, "comment-reply", "Interpret the maintainer's reply")
+
+
+def mut_board_loop_triage_context_deleted(loaded):
+    """board-loop.yml's triage, a full subject since #733/#848 (it was a
+    composite-adoption exemption until then): its post-agent
+    wing-commander-context call deleted -- must fail naming the job (check
+    2), not pass as the exemption it no longer is."""
     job = loaded[".github/workflows/board-loop.yml"]["jobs"]["triage"]
     steps = job["steps"]
     agent_idx = next((i for i, s in enumerate(steps) if _is_agent_step(s)), None)
@@ -1338,6 +1344,33 @@ def mut_board_loop_composite_deleted(loaded):
         None)
     assert ctx_idx is not None, "fixture assumption broken: composite call moved"
     del steps[ctx_idx]
+
+
+def _delete_step_by_id(job, step_id):
+    steps = job["steps"]
+    idx = next((i for i, s in enumerate(steps)
+                if (s or {}).get("id") == step_id), None)
+    assert idx is not None, f"fixture assumption broken: no step id {step_id!r}"
+    del steps[idx]
+
+
+def mut_board_loop_reviewer_agent_ran_deleted(loaded):
+    """board-loop.yml's review job, a full subject since #733/#848: the
+    Reviewer's agent-ran-signal call deleted. The composite-adoption
+    exemption it replaced never required this call, so only the promotion
+    makes it fail (check 6)."""
+    job = loaded[".github/workflows/board-loop.yml"]["jobs"]["review"]
+    _delete_step_by_id(job, "agent-ran-review")
+
+
+def mut_board_loop_reviewer_status_deleted(loaded):
+    """board-loop.yml's review job: the Reviewer's own credential-status
+    call deleted. Its mint id `reestablish-review` is a prefix of
+    review-fixup's `reestablish-review-fixup`, so check 6's mint
+    cross-reference must not accept review-fixup's call as the Reviewer's
+    (code review of #733/#848)."""
+    job = loaded[".github/workflows/board-loop.yml"]["jobs"]["review"]
+    _delete_step_by_id(job, "credential-status-review")
 
 
 def mut_exempt_job_deleted(loaded):
@@ -1421,8 +1454,22 @@ SIMPLE_MUTATIONS = [
     ("cleanup.yml's teardown-done exemption bound raised past the "
      "credential's lifetime", mut_cleanup_bound_raised),
     ("watchdog.yml's diagnose exemption bound removed", mut_watchdog_bound_removed),
-    ("board-loop.yml's triage exemption composite call deleted",
-     mut_board_loop_composite_deleted),
+    ("watchdog.yml's diagnose exemption bound raised past the credential's "
+     "lifetime", mut_watchdog_bound_raised),
+    ("auto-update-spec-kit.yml's evaluate-path exemption bound removed",
+     mut_evaluate_path_bound_removed),
+    ("auto-update-spec-kit.yml's evaluate-path exemption bound raised",
+     mut_evaluate_path_bound_raised),
+    ("auto-update-spec-kit.yml's comment-reply exemption bound removed",
+     mut_comment_reply_bound_removed),
+    ("auto-update-spec-kit.yml's comment-reply exemption bound raised",
+     mut_comment_reply_bound_raised),
+    ("board-loop.yml's triage (a full subject) post-agent context call deleted",
+     mut_board_loop_triage_context_deleted),
+    ("board-loop.yml's review: the Reviewer's agent-ran signal deleted",
+     mut_board_loop_reviewer_agent_ran_deleted),
+    ("board-loop.yml's review: the Reviewer's own credential-status call "
+     "deleted", mut_board_loop_reviewer_status_deleted),
     ("an EXEMPT_JOBS entry's named job deleted, leaving the entry "
      "stale (#735)", mut_exempt_job_deleted),
 ]
@@ -1459,6 +1506,22 @@ def self_test():
     if not (len(broke) == 1 and "EXEMPT_JOBS entry names" in broke[0]):
         problems.append("a stale EXEMPT_JOBS entry was not caught by check "
                         f"10 alone (#735): {broke!r}")
+
+    # The promoted review job's two mutations must fail on the check that
+    # owns them, not on something they happen to trip (#733/#848).
+    review_job = ".github/workflows/board-loop.yml [review]: agent step 'Reviewer'"
+    for mutate, want in (
+            (mut_board_loop_reviewer_agent_ran_deleted,
+             review_job + " has no wing-commander-agent-ran-signal call"),
+            (mut_board_loop_reviewer_status_deleted,
+             review_job + "'s mint step (id: 'reestablish-review') is never "
+             "referenced")):
+        mutated = copy.deepcopy(base)
+        mutate(mutated)
+        broke = scan(mutated)
+        if not (len(broke) == 1 and broke[0].startswith(want)):
+            problems.append(f"{mutate.__name__} did not fail with {want!r}: "
+                            f"{broke!r}")
 
     # Negative control: unlike SIMPLE_MUTATIONS, this mutation must NOT
     # break the gate (#439 review) -- it proves the toJSON(steps.<id>)

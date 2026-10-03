@@ -630,11 +630,11 @@ jobs:
 
       # T020/spec 052 (Gate 68): every agent step is followed, before the
       # next agent step or the job's end, by its own agent-ran-signal and
-      # context-remint calls -- this job is not exempt like board-loop.yml's
-      # reviewer, since it is a new subject, not an established exemption.
-      # No wing-commander-refresh-remote call: this job never persists a
-      # git remote credential (its only write is the `gh api` review post,
-      # via env.WC_BOT_TOKEN directly) -- registered in
+      # context-remint calls -- this job is a full subject, not an
+      # exemption.
+      # No wing-commander-refresh-remote call: no step after the agent uses
+      # origin's persisted credential (its only write is the `gh api` review
+      # post, via env.WC_BOT_TOKEN directly) -- registered in
       # verify-post-agent-credential-refresh.py's NO_REMOTE_REFRESH_JOBS,
       # matching pr-conversation.yml's classify-and-announce precedent.
       - name: Record agent-ran signal

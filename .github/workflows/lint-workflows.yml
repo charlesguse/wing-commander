@@ -3931,11 +3931,10 @@ jobs:
       # every job in every .github/workflows/*.yml file with an agent step
       # -- rather than a fixed count of stages, checked against a checked-in
       # floor (so a disappearing subject fails loudly) and an exemption
-      # record (a wall-clock bound, or adoption of the post-agent
-      # composites) for the jobs that do not carry the full mechanism. Every
-      # full_subject job relays its mint into env.WC_BOT_TOKEN /
-      # env.WC_SCRATCH_TOKEN and re-mints it immediately after each agent
-      # step; this asserts no post-agent step reads the stale
+      # record (a wall-clock bound) for the jobs that do not carry the full
+      # mechanism. Every full_subject job relays its mint into
+      # env.WC_BOT_TOKEN / env.WC_SCRATCH_TOKEN and re-mints it immediately
+      # after each agent step; this asserts no post-agent step reads the stale
       # steps.<id>.outputs.token form (nor a pre-agent step's $GITHUB_ENV
       # relay of one under a different name), no agent step in a job runs
       # unrefreshed, every "Report over-budget agent run" copy carries
@@ -3945,7 +3944,7 @@ jobs:
       # never simply absent), each agent step's own composite calls are
       # checked by position, not merely by a job-wide total, and every
       # exempt entry's own condition still holds -- see
-      # verify-post-agent-credential-refresh.py's own docstring (checks 1-9)
+      # verify-post-agent-credential-refresh.py's own docstring (checks 1-10)
       # for the current, authoritative list.
       - name: Gate 68 — every post-agent step holds a fresh credential and every observability callout is tolerated
         if: "!cancelled()"
