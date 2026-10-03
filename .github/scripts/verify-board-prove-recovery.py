@@ -12,6 +12,8 @@ import shutil
 import sys
 import tempfile
 
+import yaml
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from board_item_marker import write_marker, read_marker_with_timestamp  # noqa: E402
 from board_prove_displacement import RECORDED_REASON  # noqa: E402
@@ -31,12 +33,24 @@ BASH = None
 REPO = "acme/widgets"
 
 GATE_STEP_NAME = "Resolve the originating issue and decide whether prove is entered"
-# board-loop.yml's own top-level env: block (BOARD_PR_OWNED_JQ) -- not part
-# of the step's own `run:` text find_step() returns, so the harness supplies
-# it directly, same as a real run would via job-level env: merging.
-BOARD_PR_OWNED_JQ = (
-    'any(.labels[]?; .name == "board:owned") and '
-    '((.head.repo.full_name // "") == $repo)')
+
+
+def _board_pr_owned_jq():
+    """board-loop.yml's own top-level env: BOARD_PR_OWNED_JQ -- not part of
+    the step's `run:` text find_step() returns, so the harness supplies it
+    the way a real run's env: merging would. Read from its one home, never
+    re-typed here: a copy would keep this fixture green on a program the
+    workflow no longer runs (code review of #893)."""
+    with open(REPO_BOARD_LOOP, encoding="utf-8") as fh:
+        prog = (yaml.safe_load(fh) or {}).get("env", {}).get("BOARD_PR_OWNED_JQ")
+    if not prog:
+        sys.exit("::error file={0}::verify-board-prove-recovery: board-loop.yml's "
+                 "top-level env: has no BOARD_PR_OWNED_JQ for the prove-gate step "
+                 "to read.".format(REPO_BOARD_LOOP))
+    return prog
+
+
+BOARD_PR_OWNED_JQ = _board_pr_owned_jq()
 
 GH_API_STUB = r"""#!/bin/sh
 case " $* " in

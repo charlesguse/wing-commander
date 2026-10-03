@@ -56,13 +56,23 @@ real `board-loop.yml`, using `board_prove.read_job_concurrency_group()`
 (research.md D8, a small extraction from the existing
 `joins_directed_group()`):
 
-1. `prove-gate` and `prove`'s raw (unevaluated) `pull_request`-branch group
-   text is not the literal `wing-commander-board-loop`.
-2. That text contains the literal substring
-   `github.event.pull_request.number` — the per-merge key FR-004 requires.
+1. Each job's whole group expression, evaluated the way GitHub resolves
+   it (`wc_gha_expr`) for a `pull_request` event, renders two distinct PR
+   numbers to two distinct group names, neither of them
+   `wing-commander-board-loop` or
+   `wing-commander-board-loop-directed-proof` — the per-merge key FR-004
+   requires.
+2. The same expression resolves a scheduled run and an ordinary
+   dispatch to `wing-commander-board-loop`, and a directed dispatch to
+   `wing-commander-board-loop-directed-proof` — the table above.
 3. `prove-gate` and `prove` resolve to identical raw group text (both
    branches), so the two jobs chained by `needs:` can never desync into
    different groups.
+
+The expression is evaluated, never pattern-matched: a per-merge arm whose
+text is intact but which can never win (shadowed by an earlier `||`
+literal, or `&&`-ed with a false clause) still matches any pattern for
+that arm (code review of #893).
 
 Reachable through the gate registry the same way every other gate is
 (`.github/scripts/wc_gate_registry.py`'s filename convention plus a
@@ -81,6 +91,10 @@ Fixtures (FR-020), both directions:
   merges" edge case.
 - **Fail (3)**: `prove-gate` and `prove`'s group text diverges (one keyed
   by PR number, the other left on the shared group).
+- **Fail (4)**: the per-merge arm intact but unreachable — after the
+  ordinary literal, or `&&`-ed with a clause a `pull_request` run never
+  meets — and the directed-proof arm left unguarded, so a scheduled run
+  joins it.
 
 ## Acceptance mapping
 

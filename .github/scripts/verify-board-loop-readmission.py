@@ -101,9 +101,14 @@ Fails loudly, not vacuously, when any fixture file under the direct,
 heredoc, or round-outcome cases is missing, matching
 verify-board-eligibility.py's own rule.
 
---self-test mutates the shipped workflow text (drops the call to
-head_moved_since_last_review() from clause 2) and asserts the static check
-detects it.
+--self-test mutates the shipped workflow and asserts each check family
+detects its own regression: clause 2 dropping the call to
+head_moved_since_last_review() (static); clause 2a's breach carve-out
+deleted (static) or bypassed before it is reached, which the static
+check cannot see (executed); review dropping one stall arm's
+--record-stall-summary call (FR-011); and a stall-site step made
+continue-on-error (FR-010). The last three were added after the code
+review of #885 found only two families mutated.
 """
 import argparse
 import json
@@ -426,6 +431,50 @@ def run_selftest(text):
             failures.append("mutation `review drops one stall arm's --record-stall-summary call` was NOT detected")
         else:
             print("  detected: review drops one stall arm's summary call -> {0}".format(found[0]))
+
+    # Code review of #885: the breach carve-out (clause 2a) and FR-010's
+    # continue-on-error rule had no mutation behind them.
+    carve_out = "          elif pr_from_fallback:\n              if marker_step == BREACH_STEP:\n"
+    if carve_out not in text:
+        failures.append("self-test: fixture text not found for the clause 2a breach carve-out: "
+                        "{0!r}".format(carve_out))
+    else:
+        mutated_doc = yaml.safe_load(text.replace(
+            carve_out, "          elif pr_from_fallback:\n              if False:\n", 1))
+        found = clause2_structural_findings(mutated_doc)
+        if not any("breach carve-out" in f for f in found):
+            failures.append("mutation `clause 2a's breach carve-out deleted` was NOT detected")
+        else:
+            print("  detected: clause 2a's breach carve-out deleted -> {0}".format(found[0]))
+        # Bypassed rather than deleted: the carve-out's text survives, so
+        # only executing the heredoc against the breach fixtures sees it.
+        mutated_doc = yaml.safe_load(text.replace(
+            carve_out,
+            "          elif pr_from_fallback:\n"
+            "              marker_step = STALLED_STEP if marker_step == BREACH_STEP else marker_step\n"
+            "              if marker_step == BREACH_STEP:\n", 1))
+        if clause2_structural_findings(mutated_doc):
+            failures.append("self-test: the bypassed-carve-out mutation is visible to the static "
+                            "check, so it no longer proves the executed check")
+        found = heredoc_findings(mutated_doc)
+        if not found:
+            failures.append("mutation `clause 2a's breach carve-out bypassed before it is "
+                            "reached` was NOT detected")
+        else:
+            print("  detected: clause 2a's breach carve-out bypassed -> {0}".format(found[0]))
+
+    sites = _stall_sites(base_doc)
+    if not sites:
+        failures.append("self-test: no stall-site step found to make continue-on-error")
+    else:
+        mutated_doc = yaml.safe_load(text)
+        job_key, site = _stall_sites(mutated_doc)[0]
+        site["continue-on-error"] = True
+        found = no_extra_invocation_findings(mutated_doc)
+        if not found:
+            failures.append("mutation `a stall-site step made continue-on-error` was NOT detected")
+        else:
+            print("  detected: a stall-site step made continue-on-error -> {0}".format(found[0]))
 
     for f in failures:
         print("FAIL: " + f)
