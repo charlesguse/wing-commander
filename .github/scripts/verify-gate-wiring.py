@@ -950,7 +950,8 @@ def _fixture_script_call_scope_reset():
     the checkout root, where repo paths still resolve; `D=x cmd` sets D
     for that command only, so a later `$D` keeps the job's literal value;
     and a heredoc delimiter bash accepts with a `-` in it (`<<'PY-EOF'`)
-    still hides its body, an apostrophe there blanking nothing after."""
+    still hides its body, an apostrophe there blanking nothing after.
+    Round 7: so does a backslash-quoted one (`<<\\EOF`)."""
     root = tempfile.mkdtemp(prefix="wc-gate-wiring-")
     try:
         _write(root, ".github/workflows/lint-workflows.yml",
@@ -967,6 +968,9 @@ def _fixture_script_call_scope_reset():
                "          cat <<'PY-EOF'\n"
                "          it's data\n"
                "          PY-EOF\n"
+               "          cat <<\\EOF\n"
+               "          it's data: bash .github/scripts/inbody.sh\n"
+               "          EOF\n"
                "          bash .github/scripts/after.sh\n")
         failures = check_local_runner_script_coverage(root)
         joined = "\n".join(failures)
@@ -975,7 +979,8 @@ def _fixture_script_call_scope_reset():
                 "runs .github/actions/j/scoped.sh ",
                 "runs .github/scripts/after.sh "]
         ok = (len(failures) == 4 and all(w in joined for w in want)
-              and "actions/k" not in joined and "$PWD" not in joined)
+              and "actions/k" not in joined and "$PWD" not in joined
+              and "inbody.sh" not in joined)
         return ok, f"got {failures!r}"
     finally:
         shutil.rmtree(root, ignore_errors=True)

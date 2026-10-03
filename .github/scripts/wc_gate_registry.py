@@ -522,8 +522,8 @@ def _shell_prepass(text, i=0, nested=False, subs=None):
             i, prev = i + 3, "x"
             continue
         elif text.startswith("<<", i):
-            # A word delimiter.
-            m = re.match(r"<<-?[ \t]*(['\"]?)([\w.+@%:,/-]+)\1", text[i:])
+            # A word delimiter, bare, quoted or backslash-quoted (`<<\EOF`).
+            m = re.match(r"<<-?[ \t]*\\?(['\"]?)([\w.+@%:,/-]+)\1", text[i:])
             if m:
                 out.append(text[i:i + m.end()])
                 pending.append(m.group(2))
