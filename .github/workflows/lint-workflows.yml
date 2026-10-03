@@ -82,6 +82,10 @@ on:
       # file is exactly the change that flips that gate from failing to
       # passing, so it has to run it.
       - ".specify/memory/constitution.md"
+      # Gate 135's registry self-test reads this contract's check table:
+      # CHECKS must name exactly its rows, so a PR removing a check edits
+      # the table too, and an edit to the table alone has to run the gate.
+      - "specs/097-recorded-stop-point/contracts/gate-135-stop-point-recording.md"
   # Gate 1 only — it reads how GitHub actually registered the workflows on
   # the default branch, which a PR's files cannot tell us.
   push:
@@ -5043,7 +5047,7 @@ jobs:
       - name: "Gate 134 — resume's board:owned fallback resolves review vs. readiness from whether the PR's head moved since the last converged review, never unconditionally"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-loop-readmission.py
-      - name: "Gate 134 self-test — clause 2 reverted to the pre-FR-006 unconditional review form is detected"
+      - name: "Gate 134 self-test — clause 2 reverted to unconditional review, the breach carve-out deleted or bypassed, a dropped stall summary, a continue-on-error stall site, a broken head-moved decision, and a loosened round budget are each detected"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-loop-readmission.py --self-test
 
@@ -5094,7 +5098,7 @@ jobs:
       - name: "Gate 137 — prove-gate/prove's own pull_request-branch concurrency group is per-merge and never desyncs"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-prove-path-concurrency.py
-      - name: "Gate 137 self-test — a shared-key regression, an event-name swap, and a prove-gate/prove desync each fail"
+      - name: "Gate 137 self-test — a shared-key regression, an event-name swap, a shadowed or dead per-merge arm, an unguarded directed arm, an unmodelled context name, and a prove-gate/prove desync each fail"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-prove-path-concurrency.py --self-test
 

@@ -12,6 +12,8 @@ import shutil
 import sys
 import tempfile
 
+import yaml
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from board_item_marker import write_marker, read_marker_with_timestamp  # noqa: E402
 from board_prove_displacement import RECORDED_REASON  # noqa: E402
@@ -31,12 +33,24 @@ BASH = None
 REPO = "acme/widgets"
 
 GATE_STEP_NAME = "Resolve the originating issue and decide whether prove is entered"
-# board-loop.yml's own top-level env: block (BOARD_PR_OWNED_JQ) -- not part
-# of the step's own `run:` text find_step() returns, so the harness supplies
-# it directly, same as a real run would via job-level env: merging.
-BOARD_PR_OWNED_JQ = (
-    'any(.labels[]?; .name == "board:owned") and '
-    '((.head.repo.full_name // "") == $repo)')
+
+
+def _board_pr_owned_jq():
+    """board-loop.yml's own top-level env: BOARD_PR_OWNED_JQ -- not part of
+    the step's `run:` text find_step() returns, so the harness supplies it
+    the way a real run's env: merging would. Read from its one home, never
+    re-typed here: a copy would keep this fixture green on a program the
+    workflow no longer runs (code review of #893)."""
+    with open(REPO_BOARD_LOOP, encoding="utf-8") as fh:
+        prog = (yaml.safe_load(fh) or {}).get("env", {}).get("BOARD_PR_OWNED_JQ")
+    if not prog:
+        sys.exit("::error file={0}::verify-board-prove-recovery: board-loop.yml's "
+                 "top-level env: has no BOARD_PR_OWNED_JQ for the prove-gate step "
+                 "to read.".format(REPO_BOARD_LOOP))
+    return prog
+
+
+BOARD_PR_OWNED_JQ = _board_pr_owned_jq()
 
 GH_API_STUB = r"""#!/bin/sh
 case " $* " in
@@ -404,11 +418,72 @@ def run_directed_dispatch_reaches_prove_gate():
     return failures
 
 
+def _jq_copies(root, board_loop_rel, prog):
+    """-> [(repo-relative path, clause, count)] for every file under
+    root/.github holding one of the program's ` and `-joined clauses,
+    board-loop.yml's own env: line excepted once. Matched clause by clause,
+    not on the whole text: the copy this fixture used to carry split the
+    program across two adjacent Python literals at exactly that boundary,
+    which a whole-text count never sees (code review of #940)."""
+    clauses = [c.strip() for c in prog.split(" and ") if c.strip()]
+    found = []
+    for dirpath, dirnames, filenames in os.walk(os.path.join(root, ".github")):
+        dirnames[:] = [d for d in dirnames if d != "__pycache__"]
+        for name in filenames:
+            path = os.path.join(dirpath, name)
+            try:
+                with open(path, encoding="utf-8") as fh:
+                    text = fh.read()
+            except (OSError, UnicodeDecodeError):
+                continue
+            rel = os.path.relpath(path, root).replace(os.sep, "/")
+            for clause in clauses:
+                n = text.count(clause) - (1 if rel == board_loop_rel else 0)
+                if n:
+                    found.append((rel, clause, n))
+    return found
+
+
+def run_board_pr_owned_jq_single_home():
+    """BOARD_PR_OWNED_JQ's program text lives once, in board-loop.yml's
+    top-level env:, and every reader takes it from there (CLAUDE.md "Shared
+    logic has exactly one home"; code review of #940). This fixture used to
+    re-type it; this check fails on the next copy anywhere under .github/,
+    and is shown catching the split-literal form it replaced."""
+    failures = 0
+    board_loop_rel = os.path.relpath(REPO_BOARD_LOOP, REPO_ROOT).replace(os.sep, "/")
+    copies = _jq_copies(REPO_ROOT, board_loop_rel, BOARD_PR_OWNED_JQ)
+    if copies:
+        failures += 1
+        print("::error::verify-board-prove-recovery: BOARD_PR_OWNED_JQ's program text "
+              "must appear only in board-loop.yml's top-level env:, found {0!r} -- read "
+              "it from there instead of re-typing it.".format(copies))
+    else:
+        print("[ok] BOARD_PR_OWNED_JQ's program text has one home, board-loop.yml's env:")
+    head, _, tail = BOARD_PR_OWNED_JQ.partition(" and ")
+    with tempfile.TemporaryDirectory() as root:
+        os.makedirs(os.path.join(root, ".github", "workflows"))
+        os.makedirs(os.path.join(root, ".github", "scripts"))
+        with open(os.path.join(root, board_loop_rel), "w", encoding="utf-8") as fh:
+            fh.write("env:\n  BOARD_PR_OWNED_JQ: '{0}'\n".format(BOARD_PR_OWNED_JQ))
+        with open(os.path.join(root, ".github", "scripts", "fixture.py"), "w",
+                  encoding="utf-8") as fh:
+            fh.write("PROG = (\n    {0!r}\n    {1!r})\n".format(head + " and ", tail))
+        if not _jq_copies(root, board_loop_rel, BOARD_PR_OWNED_JQ):
+            failures += 1
+            print("::error::verify-board-prove-recovery: a copy split across two Python "
+                  "literals was NOT caught by the single-home check")
+        else:
+            print("[ok] the single-home check catches a copy split across Python literals")
+    return failures
+
+
 def run():
     failures = (run_is_recoverable() + run_find_recoverable_items() + run_marker_round_trip()
                 + run_directed_recovery_input_spelling()
                 + run_displacement_writer_passes_outcome_reason()
-                + run_directed_dispatch_reaches_prove_gate())
+                + run_directed_dispatch_reaches_prove_gate()
+                + run_board_pr_owned_jq_single_home())
     print("verify-board-prove-recovery: {0} failure(s).".format(failures))
     return 1 if failures else 0
 

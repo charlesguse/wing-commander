@@ -811,6 +811,75 @@ def check_termination_and_reason(steps, root):
     return failures
 
 
+def check_route_fires_at_iteration_cap(steps, root, stage_text=None):
+    """The Route step's third disjunct, `fromJSON(inputs.iteration) >=
+    fromJSON(steps.cap.outputs.max)`, had no scenario behind it (code
+    review of #836): a cycle that progressed (handoff=false) on a mixed
+    remainder (routed=false) files its out-of-boundary task only because
+    this is the last cycle the loop will run. Drives the shipped cycle step
+    for the outputs, the REAL Route `if:` at, past and below the cap, and
+    the shipped dispatch step at and below the cap, so the filing and the
+    terminal "Iteration cap reached" arm are shown to coincide."""
+    failures = []
+    base = ("- [ ] T000 do something\n- [ ] T001 edit `.claude/skills/foo/SKILL.md`\n"
+            "- [ ] T002 write docs\n")
+    tip = ("- [x] T000 do something\n- [ ] T001 edit `.claude/skills/foo/SKILL.md`\n"
+           "- [ ] T002 write docs\n")
+    work, repo, base_sha, _ = build_scenario(root, base_tasks_md=base, tip_tasks_md=tip)
+    rc, out, outputs, _ = run_cycle_step(steps, repo, base_sha, verdict="healthy",
+                                         cycle_result="success")
+    if rc != 0:
+        return [f"(d) scenario 6 (iteration cap): {CYCLE_STEP!r} exited {rc}: {out.strip()}"]
+    findings_json = outputs.get("write-boundary-findings-json", "")
+    if outputs.get("routed") != "false" or outputs.get("handoff") != "false":
+        failures.append(f"(d) scenario 6 (iteration cap): expected a progressed mixed "
+                        f"remainder (routed=false handoff=false), got "
+                        f"routed={outputs.get('routed')!r} handoff={outputs.get('handoff')!r}")
+    if findings_json in ("", "[]"):
+        failures.append(f"(d) scenario 6 (iteration cap): expected the out-of-boundary "
+                        f"task in write-boundary-findings-json, got {findings_json!r}")
+    route_if = _find_route_if_expr(stage_text)
+    if route_if is None:
+        return failures + [f"(d) scenario 6: no step named {ROUTE_STEP!r} found in {STAGE}."]
+    for iteration, max_iteration, want in (("5", "5", True), ("6", "5", True), ("4", "5", False)):
+        context = {
+            "steps.final.outputs.ok": "true",
+            "steps.final.outputs.truncated": "false",
+            "steps.final.outputs.routed": outputs.get("routed", ""),
+            "steps.final.outputs.handoff": outputs.get("handoff", ""),
+            "steps.final.outputs.write-boundary-findings-json": findings_json,
+            "inputs.iteration": iteration,
+            "steps.cap.outputs.max": max_iteration,
+        }
+        try:
+            fires = eval_if_expr(route_if, context)
+        except Exception as exc:  # noqa: BLE001 -- a malformed if: is itself the finding
+            failures.append(f"(d) scenario 6: could not evaluate {ROUTE_STEP!r}'s if: "
+                            f"{route_if!r}: {exc}")
+            break
+        if fires != want:
+            failures.append(f"(d) scenario 6 (iteration cap): at iteration {iteration} of "
+                            f"{max_iteration} a progressed mixed remainder must "
+                            f"{'' if want else 'not '}fire {ROUTE_STEP!r} -- this is "
+                            f"{'' if want else 'not '}the loop's last cycle -- if: was "
+                            f"{route_if!r}")
+    for iteration, terminal in (("5", True), ("4", False)):
+        rc_d, out_d, calls = run_dispatch_step(steps, repo, outputs, iteration=iteration,
+                                               max_iteration="5")
+        if rc_d != 0:
+            failures.append(f"(d) scenario 6 dispatch at {iteration} of 5: {DISPATCH_STEP!r} "
+                            f"exited {rc_d}: {out_d.strip()}")
+        elif terminal and ("self-impl.yml" in calls or "converged=false" not in calls):
+            failures.append(f"(d) scenario 6 dispatch at the cap: expected the terminal "
+                            f"hand-off (next-workflow, converged=false) the filing above "
+                            f"assumes -- gh calls: {calls!r}")
+        elif not terminal and "self-impl.yml" not in calls:
+            failures.append(f"(d) scenario 6 dispatch below the cap: expected another "
+                            f"cycle, which is why the Route step must not file yet -- "
+                            f"gh calls: {calls!r}")
+    return failures
+
+
 # ---------------------------------------------------------------------------
 # (e) No filing on a truncated run
 # ---------------------------------------------------------------------------
@@ -1743,6 +1812,27 @@ def check_mutation_18(steps, root):
     return ["mutation survived: dedup on raw text"]
 
 
+def _mut_drop_iteration_cap_disjunct(stage_text):
+    """(19) code review of #836: the Route step's `iteration >= max`
+    disjunct dropped, so the loop's last cycle never files a mixed
+    remainder's out-of-boundary task."""
+    disjunct = " || fromJSON(inputs.iteration) >= fromJSON(steps.cap.outputs.max)"
+    if stage_text.count(disjunct) != 1:
+        return None
+    return stage_text.replace(disjunct, "", 1)
+
+
+def check_mutation_19(steps, root):
+    mutated = _mut_drop_iteration_cap_disjunct(open(STAGE, encoding="utf-8").read())
+    if mutated is None:
+        print("::error::mutation 'Route drops the iteration-cap disjunct' changed nothing.")
+        return ["mutation inapplicable: Route drops the iteration-cap disjunct"]
+    if check_route_fires_at_iteration_cap(steps, root, stage_text=mutated):
+        print("Mutation OK -- Route drops the iteration-cap disjunct: caught (d) scenario 6.")
+        return []
+    return ["mutation survived: Route drops the iteration-cap disjunct"]
+
+
 def run_mutations(steps, root):
     failures = []
     failures.extend(check_mutation_1(steps, root))
@@ -1762,6 +1852,7 @@ def run_mutations(steps, root):
     failures.extend(check_mutation_16())
     failures.extend(check_mutation_17(steps, root))
     failures.extend(check_mutation_18(steps, root))
+    failures.extend(check_mutation_19(steps, root))
     # (7) zero fixtures discovered/executed at all.
     if not CLASSIFY_FIXTURES or not STATEMENT_FIXTURES:
         failures.append("mutation survived: zero fixtures (Constitution VIII)")
@@ -1826,6 +1917,7 @@ def main():
             failures.extend(check_enforcement_parity(steps, root))
             failures.extend(check_classification(root))
             failures.extend(check_termination_and_reason(steps, root))
+            failures.extend(check_route_fires_at_iteration_cap(steps, root))
             failures.extend(check_no_filing_on_truncated())
             failures.extend(check_idempotency(root))
             failures.extend(check_two_cycles_one_issue())
