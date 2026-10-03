@@ -95,7 +95,8 @@ def run_prepare(tmp, channel_mode, findings=None, transcript_result_text=None,
                 spec_dir="specs/056-stage-found-defect-filing",
                 run_url="https://example.invalid/actions/runs/1",
                 label_prefix="found-by", findings_json_literal=None,
-                lifecycle_issue_number="", action_path=None):
+                lifecycle_issue_number="", action_path=None,
+                finding_kind="defect"):
     out_dir = os.path.join(tmp, "wc-stage-findings")
     state_file = os.path.join(out_dir, "state.json")
     exec_path = os.path.join(tmp, "claude-execution-output.json")
@@ -105,6 +106,7 @@ def run_prepare(tmp, channel_mode, findings=None, transcript_result_text=None,
         "CAP": cap, "FINDINGS_JSON": "", "EXECUTION_OUTPUT_PATH": "",
         "OUT_DIR": out_dir, "STATE_FILE": state_file,
         "LIFECYCLE_ISSUE_NUMBER": lifecycle_issue_number,
+        "FINDING_KIND": finding_kind,
         # review-gate-round-1 item 5: overridable so a case can point this
         # at a fake action dir whose sibling _shared/compute-finding-
         # fingerprint.sh is deliberately broken, proving the prepare step
@@ -1560,6 +1562,85 @@ def case_comment_failed_is_recorded_as_dropped_naming_the_open_issue():
           "unexpected action-taken" not in out, out)
 
 
+ROUTED_SPEC_DIR = "specs/090-stage-write-boundary"
+ROUTED_TASKS_MD = ROUTED_SPEC_DIR + "/tasks.md"
+CLASSIFY_SCRIPT = os.path.join(REPO_ROOT, ".github", "actions", "_shared",
+                               "classify-out-of-boundary-tasks.sh")
+
+
+def routed_findings(unchecked_items):
+    """The findings-json the shipped classifier hands implement.yml's Route
+    step -- never a hand-built copy of its shape, so a routed task here
+    cites exactly what a real one does (only its spec's tasks.md)."""
+    proc = subprocess.run(
+        [BASH, CLASSIFY_SCRIPT.replace("\\", "/"), unchecked_items, ".claude/",
+         ROUTED_TASKS_MD, ROUTED_SPEC_DIR],
+        capture_output=True, text=True, encoding="utf-8", errors="replace")
+    m = re.search(r"findings-json<<(\S+)\n(.*?)\n\1", proc.stdout, re.S)
+    if proc.returncode != 0 or not m:
+        raise RuntimeError("classify-out-of-boundary-tasks.sh failed: "
+                           + proc.stdout + proc.stderr)
+    return json.loads(m.group(2))
+
+
+def case_routed_task_files_despite_citing_only_tasks_md():
+    case = ("a routed-task finding citing only its spec's tasks.md, which the "
+            "lifecycle's branch changed, files -- neither spec errata nor in flight")
+    tmp = tempfile.mkdtemp(prefix="wc-sf-routed-")
+    make_branch(tmp, [ROUTED_TASKS_MD])
+    findings = routed_findings(
+        "- [ ] T055 Update `.claude/skills/spec-cross-reference/SKILL.md`")
+    check(case + ": the classifier cites only tasks.md",
+          len(findings) == 1
+          and findings[0]["evidence"]["file_paths"] == [ROUTED_TASKS_MD]
+          and findings[0]["fingerprint_basis"]["file_path"] == ROUTED_TASKS_MD,
+          findings)
+    rc, outputs, state, out = run_prepare(
+        tmp, "structured-array", findings=findings, spec_dir=ROUTED_SPEC_DIR,
+        label_prefix="write-boundary", lifecycle_issue_number="560",
+        finding_kind="routed-task")
+    check(case + ": exit 0", rc == 0, out)
+    check(case + ": slot 0 present", outputs.get("survivor-0-present") == "true", out)
+    check(case + ": nothing dropped as spec errata",
+          state and state.get("dropped_spec_errata") == 0, state)
+    check(case + ": nothing routed to the lifecycle issue",
+          outputs.get("lifecycle-count") == "0"
+          and state and state.get("routed_to_lifecycle") == 0, state)
+
+    # The defect kind still treats the same finding as spec errata.
+    tmp_defect = tempfile.mkdtemp(prefix="wc-sf-routed-defect-")
+    make_branch(tmp_defect, [ROUTED_TASKS_MD])
+    _rc, d_outputs, d_state, _out = run_prepare(
+        tmp_defect, "structured-array", findings=findings,
+        spec_dir=ROUTED_SPEC_DIR, lifecycle_issue_number="560")
+    check(case + ": a defect citing only tasks.md is still spec errata",
+          d_outputs.get("survivor-0-present") == "false"
+          and d_state and d_state.get("dropped_spec_errata") == 1, d_state)
+
+    # Slot 0 filed -> the counts implement.yml's "Flag failed out-of-
+    # boundary routing on lifecycle issue" step reads: a successful route
+    # reports filed=1 and no drops, so that flag stays quiet.
+    state_file = os.path.join(tmp, "wc-stage-findings", "state.json")
+    rc, rec_out, _o, _s = run_step(BASH, RECORD_SCRIPT, tmp, {
+        "STATE_FILE": state_file, "STAGE": "implement", "ISSUE_NUMBER": "101",
+        "ACTION_TAKEN": "created", "TITLE": outputs.get("survivor-0-title", ""),
+        "WHAT": outputs.get("survivor-0-what", ""),
+        "LIFECYCLE_ISSUE_NUMBER": "560", "GITHUB_REPOSITORY": "o/r",
+        "CREATED_PHRASE": outputs.get("created-phrase", ""),
+        "COMMENTED_PHRASE": outputs.get("commented-phrase", "")}, tmp)
+    check(case + ": record exit 0", rc == 0, rec_out)
+    rc, sum_out, summary_outputs, _ = run_step(
+        BASH, SUMMARY_SCRIPT, tmp, {"STAGE": "implement", "STATE_FILE": state_file}, tmp)
+    check(case + ": summary exit 0", rc == 0, sum_out)
+    check(case + ": filed=1 and every drop count is 0",
+          {k: summary_outputs.get(k) for k in (
+              "filed", "appended", "dropped-malformed", "dropped-cap",
+              "dropped-api-failure")}
+          == {"filed": "1", "appended": "0", "dropped-malformed": "0",
+              "dropped-cap": "0", "dropped-api-failure": "0"},
+          summary_outputs)
+
+
 # --- outstanding-task-item cross-link phrasing (T049) ----------------------
 def run_record(tmp, issue_number, action_taken, lifecycle_issue_number,
               title="t", what="w", stage="implement",
@@ -1660,6 +1741,7 @@ CASES = [
     case_spec_errata_is_dropped_and_counted,
     case_spec_errata_dot_slash_and_mixed_paths,
     case_live_contract_finding_still_files,
+    case_routed_task_files_despite_citing_only_tasks_md,
     case_in_flight_finding_goes_to_the_lifecycle_issue,
     case_in_flight_needs_the_anchor_changed_on_the_branch,
     case_in_flight_title_cannot_form_a_marker,
