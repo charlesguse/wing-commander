@@ -606,6 +606,31 @@ CASES = [
             ['gh api -X POST -f sha=`git rev-parse HEAD` "repos/${GITHUB_REPOSITORY}/issues/1/comments"']),
      True, ("issues", "write")),
 
+    ("... and a method an Actions expression supplies fails closed even "
+     "assigned unquoted with no blanks, which the PATH resolver's "
+     "expression normalising reduces to a bare literal",
+     mkcase(ISSUES_WRITE, "", [DEFAULT_ENV],
+            ['METHOD=${{inputs.method}}',
+             'gh api -X "$METHOD" "repos/${GITHUB_REPOSITORY}/issues/1"']),
+     True, ("cannot resolve this call's method", "METHOD")),
+
+    ("a `${...}` flag value nesting three levels after the PATH is one "
+     "word: the `-X GET` inside it is not the call's last method, so the "
+     "POST under issues:read fails",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" '
+             '-f body=${A:-${B:-${C} -X GET}}']),
+     True, ("issues", "write")),
+
+    ("... and that nesting stays linear: a call with no PATH whose 200 "
+     "flag values each nest `${...}` three levels, followed by unclosed "
+     "openers, fails loudly in well under the per-scenario timeout",
+     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
+            ["gh api -X GET "
+             + "-f a=${A:-${B:-${C} x} y} " * 200
+             + "-f b=" + "${A:-${B:-{ " * 50]),
+     True, ("gh api", "SUBCOMMAND_PERMS")),
+
     ("a flag value whose substitution nests three levels and holds a "
      "quoted `)` is one word: its call's PATH is resolved and passes under "
      "issues:write, not failed as having no PATH",

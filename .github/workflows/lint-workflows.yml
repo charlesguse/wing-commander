@@ -1143,8 +1143,19 @@ jobs:
                       + (r'|\(' + inner + r'\)' if inner else '') + r')*')
 
 
+          def _brace_body(depth):
+              """The inside of a `{...}` nesting at most `depth` levels."""
+              inner = _brace_body(depth - 1) if depth > 1 else None
+              return (r'(?:[^{}]' + (r'|\{' + inner + r'\}' if inner else '')
+                      + r')*')
+
+
           _CMD_SUB = r'\$\(' + _sub_body(SUB_DEPTH) + r'\)'
-          _PARAM_EXP = r'\$\{(?!\{)(?:[^{}]|\{[^{}]*\})*\}'
+          # A `${...}` value nests SUB_DEPTH levels of braces too
+          # (`${A:-${B:-${C}}}`): capped at two, the third level's `-X GET`
+          # started a word of its own after the PATH and read as the call's
+          # last method (code review of #944).
+          _PARAM_EXP = r'\$\{(?!\{)' + _brace_body(SUB_DEPTH) + r'\}'
           _BACKTICK = r'`(?:[^`\\]|\\.)*`'
           SHELL_WORD = (r'(?:"(?:[^"\\$]|\\.|' + _CMD_SUB + r'|\$(?!\())*"|\'[^\']*\''
                         r'|' + _CMD_SUB + r'|\$\{\{(?:[^}]|\}(?!\}))*\}\}'
@@ -1609,20 +1620,30 @@ jobs:
               return "".join(out), "".join(raw)
 
 
-          def resolve_methods(word, assigns):
+          def resolve_methods(word, assigns, depth=0):
               """A method flag's word -> the literal methods it can hold, or
-              None when any of them is not a literal."""
+              None when any of them is not a literal. Walks the assignments
+              itself rather than through resolve_paths(), whose norm_expr()
+              strips an Actions expression assigned unquoted and unspaced
+              (`METHOD=` then the expression) down to its bare text,
+              `inputs.m` -- a literal no write method matches, so a method
+              the caller supplies read as a read (code review of #944)."""
               word = re.sub(r'["\']', "", word)
-              if EXPR_OPEN in word or "`" in word or "$(" in word:
+              if (depth > 5 or EXPR_OPEN in word or "`" in word
+                      or "$(" in word):
                   return None
               if "$" not in word:
                   return [word]
+              vm = re.fullmatch(r'\$(?:(\w+)|\{(\w+)\})', word)
+              varname = vm and (vm.group(1) or vm.group(2))
+              if not varname or varname not in assigns:
+                  return None
               out = []
-              for v in resolve_paths(word, assigns):
-                  v = None if v is None else re.sub(r'["\']', "", v)
-                  if v is None or "$" in v or "`" in v:
+              for v in assigns[varname]:
+                  sub = resolve_methods(v, assigns, depth + 1)
+                  if sub is None:
                       return None
-                  out.append(v)
+                  out.extend(sub)
               return out
 
 
