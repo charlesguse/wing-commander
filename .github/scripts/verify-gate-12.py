@@ -453,7 +453,9 @@ CASES = [
     ("... while a method word inside another flag's quoted value is not "
      "this call's method: `-f body=\"x -X POST\"` stays a read",
      mkcase(ISSUES_READ, "", [DEFAULT_ENV],
-            ['gh api -f body="x -X POST" "repos/${GITHUB_REPOSITORY}/issues/1"']),
+            [
+                # wc-gh-method-exempt: fixture -- a method word inside a quoted value is not the call's method
+                'gh api -f body="x -X POST" "repos/${GITHUB_REPOSITORY}/issues/1"']),
      False, ()),
 
     ("a valued flag is never re-read as a switch to free its value as the "
@@ -488,6 +490,25 @@ CASES = [
      "that command's first word as its PATH",
      mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
             ["gh api --jq '.id' -X GET", "echo done"]),
+     True, ("gh api", "SUBCOMMAND_PERMS")),
+
+    ("a valued flag's value holding a command substitution with blanks is "
+     "one word: `-f sha=$(git rev-parse HEAD)` never frees `rev-parse` as "
+     "the PATH, so the Issues write under issues:read fails",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['gh api -X POST -f sha=$(git rev-parse HEAD) "repos/${GITHUB_REPOSITORY}/issues/1/comments"']),
+     True, ("issues", "write")),
+
+    ("... and so is an Actions expression with blanks: `-f body=${{ x.y }}` "
+     "never frees `x.y` as the PATH",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['gh api -X POST -f body=${{ steps.x.outputs.y }} "repos/${GITHUB_REPOSITORY}/issues/1/comments"']),
+     True, ("issues", "write")),
+
+    ("... so a call whose only words are such flags has no PATH and fails "
+     "loudly, not skipped with an expression fragment as its PATH",
+     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
+            ['gh api -X POST -f body=${{ steps.x.outputs.y }}']),
      True, ("gh api", "SUBCOMMAND_PERMS")),
 
     ("a `<<WORD` inside quotes is not a heredoc opener: a call after "

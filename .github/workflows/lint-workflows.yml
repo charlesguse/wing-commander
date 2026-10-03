@@ -1092,14 +1092,20 @@ jobs:
           # the PATH, a non-repos/ path skipped as out of scope where a call
           # with no PATH must fail loudly as unrecognised. A word is read the
           # way the shell splits it, so a partly quoted value (`-f body="a
-          # b"`) is one word, not `body="a` plus a PATH `b"`. Words are
+          # b"`) is one word, not `body="a` plus a PATH `b"`, and so is a value
+          # holding a command substitution or an Actions expression with
+          # blanks in it (`-f sha=$(git rev-parse HEAD)`), which would
+          # otherwise free `rev-parse` as the PATH; an unclosed one is no
+          # word at all, so backtracking never splits it either. Words are
           # separated the way the shell separates them on one command: blanks
           # or a `\`-newline continuation, never a bare newline -- a call
           # whose PATH sits on its continuation line is still resolved (not
           # read as a PATH `\` and skipped as out of scope), and a call with
           # no PATH never takes the next command's first word as one.
           GH_API_SEP = r'(?:[ \t]|\\\n)+'
-          SHELL_WORD = r'(?:"(?:[^"\\]|\\.)*"|\'[^\']*\'|[^\s"\'])+'
+          SHELL_WORD = (r'(?:"(?:[^"\\]|\\.)*"|\'[^\']*\''
+                        r'|\$\((?:[^()]|\([^()]*\))*\)|\$\{\{(?:[^}]|\}(?!\}))*\}\}'
+                        r'|(?!\$\(|\$\{\{)[^\s"\'])+')
           GH_API_VALUE_FLAGS = ("-X", "--method", "-H", "--header", "-f", "--raw-field",
                                 "-F", "--field", "-q", "--jq", "-t", "--template",
                                 "-p", "--preview", "--hostname", "--input", "--cache")
