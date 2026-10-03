@@ -443,6 +443,18 @@ def _shell_prepass(text, i=0, nested=False, subs=None):
             out.append(f"__WC_CMDSUB_{index}__")
             prev = "x"
             continue
+        elif ch == "`":
+            # The older `cmd` spelling of `$( )`, unescaped one level.
+            j = i + 1
+            while j < len(text) and text[j] != "`":
+                j += 2 if text[j] == "\\" else 1
+            index = len(subs)
+            subs.append("")
+            subs[index], _, _ = _shell_prepass(
+                re.sub(r"\\([`$\\])", r"\1", text[i + 1:j]), subs=subs)
+            out.append(f"__WC_CMDSUB_{index}__")
+            i, prev = j + 1, "x"
+            continue
         elif quote == '"':
             quote = None if ch == '"' else quote
         elif ch in "'\"":
@@ -526,14 +538,17 @@ def _shell_commands(text):
 
 
 def _split_simple_commands(tokens):
-    """[[token, ...], ...]: one list per simple command, split on the
-    control operators shlex hands back as all-punctuation tokens."""
+    """[[token, ...] | "(" | ")", ...]: one list per simple command, split
+    on the control operators shlex hands back as all-punctuation tokens,
+    with each `(`/`)` they carry kept as a marker so a reader can scope a
+    subshell group's `cd` and assignments to it."""
     out, cur = [], []
     for tok in tokens:
         if tok and all(c in ";&|()" for c in tok):
             if cur:
                 out.append(cur)
             cur = []
+            out.extend(c for c in tok if c in "()")
         else:
             cur.append(tok)
     if cur:
@@ -558,6 +573,28 @@ def _expand(token, env):
 
 
 _CMDSUB_RE = re.compile(r"__WC_CMDSUB_(\d+)__")
+# Interpreter options that take the next word as their value.
+_VALUE_OPTIONS = {"-o", "+o", "-O", "+O", "--rcfile", "--init-file",
+                  "-W", "-X", "--check-hash-based-pycs"}
+
+
+def _code_string_index(interpreter, args):
+    """The index in `args` of a `-c` code string, or None: only the
+    options ahead of the first operand are the interpreter's, and `c` may
+    sit in a cluster (`-ec`, `-xc`)."""
+    k = 0
+    while k < len(args) and args[k][:1] in ("-", "+") \
+            and args[k] not in ("-", "--"):
+        opt = args[k]
+        if opt in _VALUE_OPTIONS:
+            k += 2
+            continue
+        if opt == "-m" and interpreter.startswith("python"):
+            return None
+        if not opt.startswith("--") and "c" in opt[1:]:
+            return k + 1
+        k += 1
+    return None
 
 
 def _script_calls_in_run(run, env, workdir):
@@ -588,7 +625,8 @@ def _script_calls_in_run(run, env, workdir):
         # An interpreter's argument, or a command word: a `$` left after
         # expansion is a generated script (a runner temp file) unless it
         # names .github/, which REPO_SCRIPT_RE then reports.
-        if "$" in path or path.startswith("/") or "://" in path:
+        if "$" in path or "__WC_CMDSUB_" in path or path.startswith("/") \
+                or "://" in path:
             return
         if not literal_dir(wd):
             unresolved.add(f"{wd}/{path}")
@@ -618,6 +656,7 @@ def _script_calls_in_run(run, env, workdir):
 
     def read(prepassed, env, wd):
         """Read one prepassed block in the order bash runs it."""
+        groups = []
         for tokens, ok in _shell_commands(prepassed):
             if not ok:
                 # An unbalanced quote to the end of the block: no command
@@ -628,6 +667,17 @@ def _script_calls_in_run(run, env, workdir):
                     unresolved.add(m.group(1) + m.group(2))
                 continue
             for cmd in _split_simple_commands(tokens):
+                if cmd == "(":
+                    # A `( )` group is a subshell: its `cd` and its
+                    # assignments end at its `)`.
+                    groups.append((wd, dict(env)))
+                    continue
+                if cmd == ")":
+                    if groups:  # else a `case` pattern's `)`
+                        wd, saved = groups.pop()
+                        env.clear()
+                        env.update(saved)
+                    continue
                 words = []
                 skip_next = False
                 for tok in cmd:
@@ -643,7 +693,12 @@ def _script_calls_in_run(run, env, workdir):
                 while i < len(words) and (words[i] in _COMMAND_PREFIXES
                                           or _ASSIGN_RE.fullmatch(words[i])):
                     m = _ASSIGN_RE.fullmatch(words[i])
-                    if m and "$" not in m.group(2):
+                    if m and ("$" in m.group(2)
+                              or "__WC_CMDSUB_" in m.group(2)):
+                        # A value no reader can pin down replaces the
+                        # earlier literal one too.
+                        env.pop(m.group(1), None)
+                    elif m:
                         env[m.group(1)] = m.group(2)
                     i += 1
                 while i < len(words) and words[i] in _COMMAND_WRAPPERS:
@@ -668,12 +723,14 @@ def _script_calls_in_run(run, env, workdir):
                 inline = None
                 if i < len(words) and words[i] in _INTERPRETERS:
                     args = words[i + 1:]
-                    if "-c" in args:
-                        # `-c STRING`: the string is code, not a path; a
-                        # shell's is read as a run: block of its own.
-                        k = args.index("-c")
-                        if words[i] in ("bash", "sh") and k + 1 < len(args):
-                            inline = k + 1
+                    k = _code_string_index(words[i], args)
+                    if k is not None:
+                        # `-c STRING` (or `-ec`): the string is code, not a
+                        # path; a shell's is read as a run: block of its
+                        # own. Only the options ahead of the script count:
+                        # `bash x.sh -c foo` hands `-c` to x.sh.
+                        if words[i] in ("bash", "sh") and k < len(args):
+                            inline = k
                     else:
                         arg = next((w for w in args if SCRIPT_EXT_RE.search(w)),
                                    None)

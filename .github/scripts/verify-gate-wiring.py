@@ -842,6 +842,47 @@ def _fixture_script_call_tokens():
         shutil.rmtree(root, ignore_errors=True)
 
 
+def _fixture_script_call_scoping():
+    """Code review of #954, round 3: a backtick substitution runs its
+    script; `-c` (alone or in a cluster like `-ec`) is code only ahead of
+    the script, so `bash x.sh -c foo` still runs x.sh; a `cd` inside a
+    `( )` group ends at its `)`; and a variable reassigned from something
+    no reader can pin down (`$OTHER`, a `$( )`) no longer carries its
+    earlier literal value, nor a `$( )` placeholder, into a path."""
+    root = tempfile.mkdtemp(prefix="wc-gate-wiring-")
+    try:
+        _write(root, ".github/workflows/lint-workflows.yml",
+               "on: pull_request\njobs:\n  lint:\n    runs-on: ubuntu-latest\n"
+               "    steps:\n"
+               "      - name: scoped\n"
+               "        working-directory: .github/actions/s\n"
+               "        env:\n          E: tests/stale-env.sh\n"
+               "        run: |\n"
+               "          x=`bash tests/tick.sh`\n"
+               "          bash tests/trail.sh -c foo\n"
+               "          python3 tests/trail.py -c cfg\n"
+               "          bash -ec 'bash tests/inner.sh'\n"
+               "          (cd sub && bash a.sh)\n"
+               "          bash b.sh\n"
+               "          S=tests/stale.sh; S=$OTHER; bash \"$S\"\n"
+               "          E=$(pick); bash \"$E\"\n"
+               "          D=$(dirname x); bash \"$D/tests/run.sh\"\n")
+        failures = check_local_runner_script_coverage(root)
+        joined = "\n".join(failures)
+        want = ["runs .github/actions/s/tests/tick.sh ",
+                "runs .github/actions/s/tests/trail.sh ",
+                "runs .github/actions/s/tests/trail.py ",
+                "runs .github/actions/s/tests/inner.sh ",
+                "runs .github/actions/s/sub/a.sh ",
+                "runs .github/actions/s/b.sh "]
+        ok = (len(failures) == 6 and all(w in joined for w in want)
+              and "stale" not in joined and "WC_CMDSUB" not in joined
+              and "bash tests" not in joined)
+        return ok, f"got {failures!r}"
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def _fixture_folded_join_subjects():
     """Code reviews of #940: a subject path split across os.path.join
     arguments after a root is read as the path it spells, a `"."`
@@ -1014,6 +1055,10 @@ FIXTURES = [
     ("a script path a step only mentions is not a call, and one reached "
      "through working-directory:, a variable or $( ) is (code review of "
      "#939)", _fixture_script_call_tokens),
+    ("a backtick runs its script, `-c` is code only ahead of the script, "
+     "a `( )` group's cd ends at its `)`, and a non-literal reassignment "
+     "drops the earlier value (code review of #954)",
+     _fixture_script_call_scoping),
     ("a subject path split across os.path.join arguments is read whole "
      "(code reviews of #940)", _fixture_folded_join_subjects),
     ("inline heredoc steps get distinct files, run under CI's bash -e, and "

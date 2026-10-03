@@ -492,13 +492,50 @@ def _blank_quoted_args(run):
 
 def _blank_from(run, i, nested):
     """-> (blanked text, end) from `run[i:]`; `nested` stops at the `)`
-    closing a `$( )` and returns past it."""
-    out, depth = [], 0
+    closing a `$( )` and returns past it. A heredoc body is copied
+    through as raw text, never read for quotes, so its apostrophe
+    (`it's`) opens nothing; an arithmetic `<<` opens no heredoc (code
+    review of #954)."""
+    out, depth, pending = [], 0, []
     while i < len(run):
         ch = run[i]
         if ch == "\\":
             out.append(run[i:i + 2])
             i += 2
+            continue
+        if ch == "\n" and pending:
+            i += 1
+            out.append("\n")
+            for delim in pending:
+                while i < len(run):
+                    end = run.find("\n", i)
+                    end = len(run) if end < 0 else end
+                    line = run[i:end]
+                    out.append(run[i:end + 1])
+                    i = end + 1
+                    if line.strip() == delim:
+                        break
+            pending = []
+            continue
+        if run.startswith("$((", i) or (
+                run.startswith("((", i) and (not i or run[i - 1] in " \t\n;&|(")):
+            j, level = i + (3 if ch == "$" else 2), 2
+            while j < len(run) and level:
+                level += {"(": 1, ")": -1}.get(run[j], 0)
+                j += 1
+            out.append(run[i:j])
+            i = j
+            continue
+        if run.startswith("<<<", i):
+            out.append("<<<")
+            i += 3
+            continue
+        m = re.match(r"<<-?[ \t]*(['\"]?)([A-Za-z_]\w*)\1", run[i:i + 80]) \
+            if run.startswith("<<", i) else None
+        if m:
+            out.append(run[i:i + m.end()])
+            pending.append(m.group(2))
+            i += m.end()
             continue
         if ch == "#" and (not i or run[i - 1] in " \t\n;&|("):
             end = run.find("\n", i)
@@ -1009,6 +1046,12 @@ CHECK9_MUTATIONS = (
      '          A=1 c="$STOP_CAUSE"\n          case "$c" in\n          esac\n'),
     ("a shell alias behind env", "",
      '          env -i c="$STOP_CAUSE" true\n          case "$c" in\n          esac\n'),
+    # Code review of #954, round 3: a heredoc body's apostrophe, and an
+    # arithmetic `<<`, opened nothing that hides the lines after them.
+    ("a shell alias after a heredoc body with an apostrophe", "",
+     "          cat <<EOF\n          it's done\n          EOF\n"
+     "          n=$(( 1 << k ))\n"
+     '          c="$STOP_CAUSE"\n          case "$c" in\n          esac\n'),
 )
 # Legitimate shapes check 9 must leave alone: gating on the cause, and a
 # boolean flag that picks no prose.
