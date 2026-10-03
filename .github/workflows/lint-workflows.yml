@@ -1328,6 +1328,14 @@ jobs:
                       i += 1; continue
                   if c == "$" and i + 1 < n and text[i + 1] == "(":
                       stack.append("sub"); i += 2; continue
+                  # A bare `(` inside a substitution (`$((p+1))`'s second
+                  # one, a `$( (a) )` subshell) opens a level its own `)`
+                  # closes; unpaired, the first `)` closed the substitution
+                  # and the last one read as quoted text, so cmdline_of's
+                  # depth count never got back to 0 and the call ran on
+                  # through the next command's flags (code review of #944).
+                  if top == "sub" and c == "(":
+                      stack.append("sub"); i += 1; continue
                   if top == "sub" and c == ")":
                       stack.pop(); i += 1; continue
                   i += 1

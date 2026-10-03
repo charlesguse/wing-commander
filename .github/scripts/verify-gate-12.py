@@ -670,6 +670,20 @@ CASES = [
              'curl -X POST https://example.invalid']),
      False, ()),
 
+    ("an arithmetic `$((...))` inside the call's quoted PATH closes "
+     "both its levels: the `;` after it still ends the call, so the next "
+     "command's `-X GET` does not make the POST a read",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments?p=$((p+1))" '
+             '-f body=x; curl -X GET https://example.invalid']),
+     True, ("issues", "write")),
+
+    ("... nor the `-X POST` after a `|` make that read a write",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['gh api "repos/${GITHUB_REPOSITORY}/issues?page=$((p+1))" --jq .x '
+             '| curl -X POST https://example.invalid']),
+     False, ()),
+
     ("... nor is one inside a backtick value",
      mkcase(ISSUES_READ, "", [DEFAULT_ENV],
             ['gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" -f body=`echo -X GET`']),
