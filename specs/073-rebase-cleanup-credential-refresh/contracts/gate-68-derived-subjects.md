@@ -88,9 +88,19 @@ EXEMPT_JOBS: dict[tuple[str, str], ExemptionEntry]
 
 class ExemptionEntry:
     reason: str            # prose; informational, not itself checked
-    issue: tuple[int, ...] # the deciding issue(s), e.g. (558,) or (558, 410)
+    issue: tuple[int, ...] # the OPEN tracker for retiring the entry, or ()
     condition: Callable[[dict], bool]  # takes the job's parsed YAML
+    permanent: bool        # True when the entry is the design, not debt
+    permanent_reason: str | None  # one line; required when permanent
+    decided_by: tuple[int, ...]   # provenance: the deciding issue(s), e.g. (558,)
 ```
+
+`issue` and `decided_by` are different fields. `decided_by` records the
+issue(s) that decided the exemption and is kept after they close. `issue`
+names the open issue tracking the exemption's retirement; an entry with
+nothing to retire carries `issue=()` with `permanent=True` and a
+`permanent_reason`. Gate 124 (`verify-waiver-citations.py`) holds every
+entry to exactly one of the two and checks only `issue` for openness.
 
 - Every `(workflow_path, job_name)` in `derived_subjects` MUST resolve to
   exactly one of: **full subject** (every post-agent composite check
@@ -104,7 +114,7 @@ class ExemptionEntry:
   mode (spec 072 FR-013).
 - `condition` MUST be evaluated on every run for every exempt entry. A
   `condition` that returns `False` fails the gate, naming the entry and
-  its `reason`/`issue`, so an exemption cannot silently stop holding —
+  its `reason`/`decided_by`, so an exemption cannot silently stop holding —
   raising `cleanup.yml`'s bound past 10 minutes is caught the same run it
   happens.
 - An exemption with no `condition` (or a condition that is always `True`)
@@ -115,12 +125,16 @@ class ExemptionEntry:
 
 ### Entries this feature adds
 
-| `(workflow_path, job_name)` | `condition` shape | `issue` |
+Every entry is permanent (`issue=()`, `permanent=True`): an agent step
+bounded by its own 10-minute timeout is the design for a short job, not
+debt awaiting a fix.
+
+| `(workflow_path, job_name)` | `condition` shape | `decided_by` |
 |---|---|---|
 | `(".github/workflows/cleanup.yml", "teardown-done")` | wall-clock bound, `<= 10` min | `(558,)` |
 | `(".github/workflows/watchdog.yml", "diagnose")` | wall-clock bound, `<= 10` min | `(558,)` |
-| `(".github/workflows/auto-update-spec-kit.yml", "evaluate-path")` | wall-clock bound, `<= 10` min | mechanizes spec 052's existing prose exclusion |
-| `(".github/workflows/auto-update-spec-kit.yml", "comment-reply")` | wall-clock bound, `<= 10` min | mechanizes spec 052's existing prose exclusion |
+| `(".github/workflows/auto-update-spec-kit.yml", "evaluate-path")` | wall-clock bound, `<= 10` min | `(558,)`; mechanizes spec 052's existing prose exclusion |
+| `(".github/workflows/auto-update-spec-kit.yml", "comment-reply")` | wall-clock bound, `<= 10` min | `(558,)`; mechanizes spec 052's existing prose exclusion |
 
 The last two rows are not new *dispositions* (both jobs were already
 excluded from `SUBJECTS` by spec 052) — they are new *mechanically checked*
