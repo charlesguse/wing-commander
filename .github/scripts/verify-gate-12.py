@@ -46,6 +46,11 @@ _N = chr(10)
 
 STEP_PREFIX = "Gate 12"
 
+# One scenario runs in well under a second; a gate still running after this
+# long is backtracking without bound, which on the real fleet is a CI job
+# that hangs until its timeout instead of failing.
+CASE_TIMEOUT_S = 30
+
 
 # ---------------------------------------------------------------- fixtures
 #
@@ -522,6 +527,21 @@ CASES = [
      "is one word, so its call is resolved, not failed as having no PATH",
      mkcase(ISSUES_READ, "", [DEFAULT_ENV],
             ["gh api -X POST -f body='it'\\''s' \"repos/${GITHUB_REPOSITORY}/issues/1/comments\""]),
+     True, ("issues", "write")),
+
+    ("... and an unquoted escape is only an escape: a call with no PATH "
+     "whose value holds forty `\\.` escapes fails loudly in well under the "
+     "per-scenario timeout, not after 2^40 backtracking splits",
+     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
+            ["gh api -X GET --jq .a" + "\\.b" * 40]),
+     True, ("gh api", "SUBCOMMAND_PERMS")),
+
+    ("a short-flag cluster ending in a valued flag consumes its value: "
+     "`gh api -iX POST PATH` never takes `POST` as the PATH, so the Issues "
+     "write under issues:read fails",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            # wc-gh-method-exempt: fixture -- Gate 28's parser does not read the `-iX` cluster's method
+            ['gh api -iX POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" -f body=x']),
      True, ("issues", "write")),
 
     ("a `<<WORD` inside quotes is not a heredoc opener: a call after "
@@ -1055,13 +1075,22 @@ def main():
                 os.makedirs(os.path.dirname(full), exist_ok=True)
                 io.open(full, "w", encoding="utf-8").write(body)
 
-            proc = subprocess.run([sys.executable, gate_path], cwd=case_dir,
-                                  capture_output=True, text=True,
-                                  encoding="utf-8", errors="replace")
+            problems = []
+            try:
+                proc = subprocess.run([sys.executable, gate_path], cwd=case_dir,
+                                      capture_output=True, text=True,
+                                      encoding="utf-8", errors="replace",
+                                      timeout=CASE_TIMEOUT_S)
+            except subprocess.TimeoutExpired:
+                problems.append(f"the gate did not finish within {CASE_TIMEOUT_S}s "
+                                f"(a regex backtracking without bound?)")
+                failures.append((name, problems, ""))
+                print(f"FAIL  {name}")
+                print(f"        - {problems[0]}")
+                continue
             out = (proc.stdout or "") + (proc.stderr or "")
             fired = proc.returncode != 0
 
-            problems = []
             if fired != expect_fail:
                 problems.append(
                     f"expected the gate to {'FAIL' if expect_fail else 'PASS'}, "

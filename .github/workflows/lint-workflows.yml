@@ -1085,8 +1085,10 @@ jobs:
           # -X POST PATH`); the parser before the code review of #939 allowed
           # only -X/--method there and read `-i` as the PATH, hiding six
           # auto-release.yml calls. A flag gh documents as taking a value
-          # consumes the next word; any other word starting `-` (`-i`,
-          # `--method=POST`, `-H'Accept: x'`, `--`) is a switch. A valued flag
+          # consumes the next word, and so does a cluster of gh's one
+          # boolean short flag ending in one (`-iX POST`, as in `curl -iX
+          # POST`); any other word starting `-` (`-i`, `--method=POST`,
+          # `-H'Accept: x'`, `--`) is a switch. A valued flag
           # standing alone is never a switch: the regex would otherwise
           # backtrack it into one and take its value (`-X POST`'s `POST`) as
           # the PATH, a non-repos/ path skipped as out of scope where a call
@@ -1099,7 +1101,11 @@ jobs:
           # inside double quotes whose own quoted words hold blanks (`-f
           # body="$(printf "%s %s" "$A" "$B")"`), and a value with a
           # backslash-escaped quote (`-f body='it'\''s'`); an unclosed one is no
-          # word at all, so backtracking never splits it either. Words are
+          # word at all, so backtracking never splits it either. A backslash
+          # outside quotes is read only as an escape, never as a plain
+          # character too: a word with both readings has 2^n splittings, so a
+          # call with no PATH and a few dozen escapes (`--jq .a\.b\.c...`)
+          # would hang the gate instead of failing it. Words are
           # separated the way the shell separates them on one command: blanks
           # or a `\`-newline continuation, never a bare newline -- a call
           # whose PATH sits on its continuation line is still resolved (not
@@ -1109,11 +1115,12 @@ jobs:
           _CMD_SUB = r'\$\((?:[^()]|\([^()]*\))*\)'
           SHELL_WORD = (r'(?:"(?:[^"\\$]|\\.|' + _CMD_SUB + r'|\$(?!\())*"|\'[^\']*\''
                         r'|' + _CMD_SUB + r'|\$\{\{(?:[^}]|\}(?!\}))*\}\}'
-                        r'|\\.|(?!\$\(|\$\{\{)[^\s"\'])+')
+                        r'|\\.|(?!\$\(|\$\{\{)[^\s"\'\\])+')
           GH_API_VALUE_FLAGS = ("-X", "--method", "-H", "--header", "-f", "--raw-field",
                                 "-F", "--field", "-q", "--jq", "-t", "--template",
                                 "-p", "--preview", "--hostname", "--input", "--cache")
-          _GH_API_VALUE_FLAG = "(?:" + "|".join(re.escape(f) for f in GH_API_VALUE_FLAGS) + ")"
+          _GH_API_VALUE_FLAG = ("(?:" + "|".join(re.escape(f) for f in GH_API_VALUE_FLAGS)
+                                + r"|-i+[XHfFqtp])")
           GH_API_FLAGS = (
               r'(?:' + _GH_API_VALUE_FLAG + GH_API_SEP + SHELL_WORD + GH_API_SEP +
               r'|(?!' + _GH_API_VALUE_FLAG + r'(?:\s|\\\n|$))-' + SHELL_WORD + GH_API_SEP + r')*')
@@ -1146,13 +1153,13 @@ jobs:
           # wing-commander-metrics-persist writes `--method PATCH` — which the
           # -X-only parser before #339 read as a PATH named `--method` and
           # dropped as out of scope. Every spelling gh accepts: `-X POST`,
-          # `-XPOST`, `--method POST`, `--method=POST`, quoted or not -- the
+          # `-XPOST`, `-iX POST`, `--method POST`, `--method=POST`, quoted or not -- the
           # flag parser above skips the attached forms as switches, so a
           # space-only match here would read those writes as reads. The flag
           # is found on the blanked call line (so one inside another flag's
           # quoted value is not this call's), its method word on the raw one
           # (blanking would erase a quoted `'POST'`) -- see api_level().
-          API_METHOD_FLAG_RE = re.compile(r'(?:^|\s)(?:-X|--method(?![\w-]))')
+          API_METHOD_FLAG_RE = re.compile(r'(?:^|\s)(?:-i*X|--method(?![\w-]))')
           API_WRITE_METHOD_RE = re.compile(r'(?:POST|PATCH|PUT|DELETE)\b')
 
 
