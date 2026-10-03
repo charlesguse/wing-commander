@@ -32,14 +32,20 @@ add to.
 1. Calls `wc_gate_registry.unsupported_actions_scripts(root)`.
 2. For each result, emits one `::error::` line naming:
    - the offending path,
-   - whether it is a `run-tests.sh` harness entrypoint or a standalone
-     `verify-*` script (FR-006's "naming the offending path"),
+   - whether it is a test harness entrypoint (`run-tests.sh`, or a
+     `run.sh` inside a `tests/`/`test/` directory), another test harness
+     file inside such a directory (#877), or a standalone `verify-*`
+     script (FR-006's "naming the offending path"),
    - the supported location it belongs at instead — computed
      mechanically from the offending path's own composite-directory name
      (e.g. `.github/actions/wing-commander-widget/tests/run-tests.sh` ->
      "belongs at `.github/scripts/wing-commander-widget-tests/run-tests.sh`
      instead" — FR-006's "naming... the supported location under
-     `.github/scripts/`"),
+     `.github/scripts/`"). An entrypoint always lands as `run-tests.sh`,
+     the one name gate discovery picks up there; a harness file keeps its
+     path below the `tests/` directory
+     (`.../widget/tests/fixtures/case.sh` ->
+     `.github/scripts/widget-tests/fixtures/case.sh`),
    - a pointer to this same file as the canonical explanation (FR-009's
      last sentence — this gate's own docstring carries the "why," so the
      message names its own filename, which Gate 47 also treats as a
