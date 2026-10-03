@@ -433,9 +433,12 @@ CASE_SUBJECT_RE = re.compile(r'\bcase\s+"?\$\{?(\w+)[^}"\s]*\}?"?\s+in\b')
 # Where a shell assignment can start: the head of a command, never an
 # argument (`--cause=$X`) -- see _blank_quoted_args for quoted text. Every
 # word of a prefix list (`A=1 c="$X" cmd`), behind `env` and its options
-# too, is an assignment (code review of #954).
+# too, is an assignment (code review of #954). A case arm's `)` and an
+# `if`/`while` condition head a command too (code review of #954, round 9:
+# main's unanchored alias regex caught `a) c="$STOP_CAUSE" ;;`).
 _CMD_POS_RE = re.compile(
-    r"(?:^|[;&|({]|\b(?:then|do|else|export|local|readonly|declare|typeset)\b)[ \t]*"
+    r"(?:^|[;&|({)!]|\b(?:if|elif|while|until|then|do|else|export|local|readonly"
+    r"|declare|typeset)\b)[ \t]*"
     r"(?:env(?:[ \t]+-\S+)*[ \t]+)?", re.M)
 _ASSIGN_WORD_RE = re.compile(
     r"""\w+=(?:"(?:\\.|[^"\\])*"|'[^']*'|\$\{\{.*?\}\}|\\.|[^\s"';&|)])*""")
@@ -1060,6 +1063,12 @@ CHECK9_MUTATIONS = (
     ("a shell alias after a backslash-quoted heredoc with an apostrophe", "",
      "          cat <<\\EOF\n          it's done\n          EOF\n"
      '          c="$STOP_CAUSE"\n          case "$c" in\n          esac\n'),
+    # Round 9: a case arm's `)` and an `if` condition head a command.
+    ("a shell alias in a case arm", "",
+     '          case "$m" in\n          a) c="$STOP_CAUSE" ;;\n          esac\n'
+     '          case "$c" in\n          esac\n'),
+    ("a shell alias as an if condition", "",
+     '          if c="$STOP_CAUSE"; then :; fi\n          case "$c" in\n          esac\n'),
 )
 # Legitimate shapes check 9 must leave alone: gating on the cause, and a
 # boolean flag that picks no prose.
