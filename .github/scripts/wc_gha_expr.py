@@ -83,6 +83,8 @@ def to_num(v):
         return 1.0 if v else 0.0
     if isinstance(v, (int, float)):
         return float(v)
+    if not isinstance(v, str):
+        return math.nan  # a fromJSON array or object is NaN, as on GitHub
     s = v.strip()
     if s == "":
         return 0.0
@@ -323,4 +325,8 @@ if __name__ == "__main__":
             pass
         else:
             raise AssertionError(f"{bad!r} must be a ValueError")
+    # A fromJSON array or object compares as NaN -- false, never a crash.
+    assert evaluate("fromJSON(a) == 1", {"a": '[{"k":1}]'}) is False
+    assert evaluate("fromJSON(a) < 1", {"a": '{"k":1}'}) is False
+    assert evaluate("contains(fromJSON(a), 1)", {"a": '[{"k":1}]'}) is False
     print("wc_gha_expr self-test: ok")
