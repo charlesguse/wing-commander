@@ -400,6 +400,11 @@ _NON_EXEC_COMMANDS = {"echo", "printf", "test", "[", "[[", ":"}
 _COMMAND_PREFIXES = {"if", "then", "else", "elif", "while", "until", "do",
                      "!", "{", "}", "time", "exec", "command", "export",
                      "readonly", "local", "declare"}
+# Commands that run their trailing words as a command: their own options
+# (`-n 10`, `-u root`, `--signal=KILL`) and leading operands (a timeout's
+# duration, env's `NAME=value`) are skipped to reach the interpreter.
+_COMMAND_WRAPPERS = {"timeout", "env", "nice", "nohup", "xargs", "sudo",
+                     "stdbuf", "ionice", "setsid", "chronic"}
 _REDIRECTS = {">", ">>", "<", ">&", "<&", "&>", "<<", "<<<", ">|", "<<-"}
 _ASSIGN_RE = re.compile(r"([A-Za-z_]\w*)=(.*)", re.S)
 _VAR_RE = re.compile(r"\$(?:\{([A-Za-z_]\w*)\}|([A-Za-z_]\w*))")
@@ -441,14 +446,30 @@ def _shell_prepass(text, i=0, nested=False):
             end = text.find("\n", i)
             i = len(text) if end < 0 else end
             continue
+        elif text.startswith("$((", i) or (
+                text.startswith("((", i) and (prev.isspace() or prev in ";&|(")):
+            # Arithmetic: `<<` inside shifts (`$((1 << n))`), it opens no
+            # heredoc, so the expression is copied through to its `))`.
+            j, level = i + (3 if ch == "$" else 2), 2
+            while j < len(text) and level:
+                level += {"(": 1, ")": -1}.get(text[j], 0)
+                j += 1
+            out.append(text[i:j])
+            i, prev = j, "x"
+            continue
         elif nested and ch == "(":
             depth += 1
         elif nested and ch == ")":
             if not depth:
                 return "".join(out), subs, i + 1
             depth -= 1
-        elif text.startswith("<<", i) and not text.startswith("<<<", i):
-            # A word delimiter; `$((x << 2))` shifts, it opens nothing.
+        elif text.startswith("<<<", i):
+            # A here-string: its word is an argument, not a delimiter.
+            out.append("<<<")
+            i, prev = i + 3, "x"
+            continue
+        elif text.startswith("<<", i):
+            # A word delimiter.
             m = re.match(r"<<-?[ \t]*(['\"]?)([A-Za-z_]\w*)\1", text[i:])
             if m:
                 out.append(text[i:i + m.end()])
@@ -601,6 +622,14 @@ def _script_calls_in_run(run, env, workdir):
                 if m and "$" not in m.group(2):
                     env[m.group(1)] = m.group(2)
                 i += 1
+            while i < len(words) and words[i] in _COMMAND_WRAPPERS:
+                i += 1
+                while i < len(words) and (
+                        words[i].startswith("-") or _ASSIGN_RE.fullmatch(words[i])
+                        or re.fullmatch(r"[\d.]+[smhd]?", words[i])
+                        or (i and re.fullmatch(r"-[nuIgpLPs]|--user|--adjustment",
+                                               words[i - 1]))):
+                    i += 1
             if i < len(words) and words[i] in _NON_EXEC_COMMANDS:
                 continue
             if i < len(words) and words[i] in _INTERPRETERS:

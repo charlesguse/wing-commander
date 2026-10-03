@@ -791,15 +791,33 @@ def _fixture_script_call_tokens():
                "          out=\"$(bash .github/scripts/y-tests/run.sh \"$a\")\" # it's\n"
                "      - name: exprdir\n"
                f"        working-directory: {expr}\n"
-               "        run: bash run.sh\n")
+               "        run: bash run.sh\n"
+               # Code review of #954: a here-string or an arithmetic shift
+               # opens no heredoc, and a wrapper command hides no
+               # interpreter.
+               "      - name: herestring\n"
+               "        run: |\n"
+               "          read a <<< \"hello\"\n"
+               "          n=$(( 1 << k )); (( n <<= k ))\n"
+               "          bash .github/scripts/h-tests/run.sh\n"
+               "      - name: wrapped\n"
+               "        working-directory: .github/actions/t\n"
+               "        run: |\n"
+               "          timeout 300 bash tests/run.sh\n"
+               "          env A=1 nice -n 5 bash tests/more.sh\n"
+               "          sudo -u runner python3 tests/x.py\n")
         failures = check_local_runner_script_coverage(root)
         joined = "\n".join(failures)
         want = ["runs .github/actions/w/tests/run.sh ",
                 "runs .github/actions/v/tests/run.sh ",
                 "runs .github/actions/u/tests/run.sh ",
                 "runs .github/scripts/y-tests/run.sh ",
-                "'exprdir' runs '" + expr + "/run.sh'"]
-        ok = (len(failures) == 5 and all(w in joined for w in want)
+                "'exprdir' runs '" + expr + "/run.sh'",
+                "runs .github/scripts/h-tests/run.sh ",
+                "runs .github/actions/t/tests/run.sh ",
+                "runs .github/actions/t/tests/more.sh ",
+                "runs .github/actions/t/tests/x.py "]
+        ok = (len(failures) == 9 and all(w in joined for w in want)
               and "m-tests" not in joined and "m.sh" not in joined)
         return ok, f"got {failures!r}"
     finally:
@@ -820,10 +838,11 @@ def _fixture_folded_join_subjects():
         "D = os.path.join('specs', '999-made-up', 'spec.md')\n"
         "E = os.path.join('.claude', 'skills', 'spec-cross-reference', 'SKILL.md')\n")
     got = sorted(_subject_paths_in_source(source))
-    want = sorted(["specs/060-x/contracts/c.md", "docs/adoption.md"]
-                  + ([".claude/skills/spec-cross-reference/SKILL.md"]
-                     if os.path.isfile(".claude/skills/spec-cross-reference/SKILL.md")
-                     else []))
+    # Spelled in pieces: a literal here would itself read as a subject.
+    skill = "/".join((".claude", "skills", "spec-cross-reference", "SKILL.md"))
+    want = sorted(["/".join(("specs", "060-x", "contracts", "c.md")),
+                   "/".join(("docs", "adoption.md"))]
+                  + ([skill] if os.path.isfile(skill) else []))
     return got == want and len(want) == 3, f"got {got!r}, want {want!r}"
 
 

@@ -454,13 +454,19 @@ COMPOSITE_RUN_LABEL_RE = re.compile(r'stop_cause_run_label="([^"]+)"')
 def _blank_quoted_args(run):
     """`run` with every quoted string that is not an assignment's value
     emptied, so `echo "c=$STOP_CAUSE"` binds nothing while
-    `c="$STOP_CAUSE"` still does (code review of #940)."""
+    `c="$STOP_CAUSE"` still does (code review of #940). A trailing
+    comment is dropped first, so its apostrophe (`# don't`) opens no
+    quote that would blank the lines after it."""
     out, i = [], 0
     while i < len(run):
         ch = run[i]
         if ch == "\\":
             out.append(run[i:i + 2])
             i += 2
+            continue
+        if ch == "#" and (not i or run[i - 1] in " \t\n;&|("):
+            end = run.find("\n", i)
+            i = len(run) if end < 0 else end
             continue
         if ch in "\"'":
             end = i + 1
@@ -928,6 +934,10 @@ CHECK9_MUTATIONS = (
     ("a doubly parenthesised ternary", "",
      "          echo \"${{ ((steps.killswitch-recheck.outputs.stop-cause == 'stop-request')) "
      "&& 'paused' || 'halted' }}\"\n"),
+    # Code review of #954: a trailing comment's apostrophe opened a quote.
+    ("a shell alias after a trailing comment with an apostrophe", "",
+     "          echo start # don't worry\n"
+     '          c="$STOP_CAUSE"\n          case "$c" in\n          esac\n'),
 )
 # Legitimate shapes check 9 must leave alone: gating on the cause, and a
 # boolean flag that picks no prose.
