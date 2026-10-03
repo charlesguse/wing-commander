@@ -158,7 +158,31 @@ findings-json` and its `finding-kind` is the literal `routed-task` — none
 of these four facts had ever been asserted, so any one could be silently
 deleted with every other pass condition still green.
 
-A fixture or comparison failing any of (a)-(k) fails the gate, naming the
+The same pass condition also requires a step named "Flag failed
+out-of-boundary routing on lifecycle issue", keyed on the Route step's
+`outcome == 'failure'`, on non-zero `dropped-api-failure`,
+`dropped-malformed` and `dropped-cap` outputs, and on an `outcome ==
+'success'` that filed and appended nothing (a crash in the composite's
+prepare step, or an all-errata drop, reports all-zero counts) -- the five
+OR-joined under one `!cancelled()`, so any one of them fires it -- and
+posting through
+`wing-commander-callout` to `inputs.issue-number` -- the Route step is
+`continue-on-error` and its composite always exits 0, reporting an API
+error, a malformed entry or a task over the per-run cap only in those
+counts, so without it an unfiled task ends the loop with nothing on the
+lifecycle issue (Maintenance backlog #889; FR-007).
+
+**(m) Label prefix single home (Maintenance backlog #889).** `implement.
+yml`'s `write-boundary-label-prefix` default is the one home of the
+routed-item label prefix. `finalize.yml`'s input default, `wing-commander-
+write-boundary-lookup`'s `label-prefix` default, and both wrappers'
+`vars.WING_COMMANDER_WRITE_BOUNDARY_LABEL_PREFIX || '<default>'` fallbacks
+each equal it, and no other standalone occurrence of that value (quoted,
+`=`-assigned, a YAML value, a `${VAR:-<value>}` fallback or a bare shell
+argument -- anything but an `id:` value or a `steps.<id>` reference)
+appears in a workflow, composite action or `_shared/` script.
+
+A fixture or comparison failing any of (a)-(m) fails the gate, naming the
 file, step, and scenario — matching Gate 51's `::error file=...::Gate NN:
 {msg}` format.
 
@@ -218,6 +242,26 @@ caught:
     iteration-cap scenario against the mutated text, must fail (code
     review of #836; the gate's own mutation 19, since its numbering and
     this list's have drifted apart).
+15. `finalize.yml`'s `write-boundary-label-prefix` default drifted from
+    `implement.yml`'s — re-runs (m) against the mutated text, must fail.
+16. A third literal copy of the default pasted into another workflow —
+    re-runs (m) against the mutated text, must fail.
+17. The failed-routing flag step's `if:` no longer keyed on the Route
+    step's failure — re-runs (k) against the mutated text, must fail.
+18. The failed-routing flag step's `if:` stripped of its
+    `dropped-api-failure` clause — re-runs (k) against the mutated text,
+    must fail.
+19. The failed-routing flag step's clauses AND-joined instead of
+    OR-joined — re-runs (k) against the mutated text, must fail.
+20. An unquoted copy of the default passed as a `with:` value in another
+    workflow — re-runs (m) against the mutated text, must fail.
+21. The failed-routing flag step's `if:` stripped of its filed-nothing
+    clause — re-runs (k) against the mutated text, must fail.
+22. A `${VAR:-<default>}` shell fallback copy of the default in a
+    `_shared/` script — re-runs (m) against the mutated text, must fail.
+23. A copy of the default under a hyphenated `*-id:` key (e.g.
+    `issue-id:`), which must not be discounted as a step `id:` — re-runs
+    (m) against the mutated text, must fail.
 
 ## Out of scope for this gate
 

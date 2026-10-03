@@ -40,11 +40,12 @@ Every "Compute cost line" call site also runs inside a job whose
 controls (implement.yml's verify-image-prerequisites checks a tool only
 for PRESENCE, not for which shell Actions resolves by default inside that
 image). None of these `run:` steps declared a `shell:` key, so each one's
-own `set -uo pipefail` line ran under whatever shell Actions picked for
-that container -- on an adopter image without bash reachable the way
-Actions expects, that can be `sh`, which does not understand `-o
-pipefail` and dies with "Illegal option -o pipefail" before the step ever
-writes its output. Every call site now pins `shell: bash` so the step
+own `set -uo pipefail` line ran under `sh -e {0}`, the runner's default
+for any unpinned step inside a container whether or not the image has bash
+(.claude/skills/container-shell-safety/SKILL.md) -- on an adopter image
+whose `/bin/sh` is not bash, that `sh` does not understand `-o pipefail`
+and dies with "Illegal option -o pipefail" before the step ever writes its
+output. Every call site now pins `shell: bash` so the step
 runs under the same bash `required-tools.txt` already requires the image
 to carry, independent of container shell-resolution.
 

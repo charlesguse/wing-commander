@@ -26,7 +26,8 @@ a truncated run (FR-013); (f) idempotency (FR-008/SC-004); (g) fingerprint
 single-home (research.md D6); (h) board-loop label separation
 (research.md D4); (i) enforcement parity (FR-004/FR-005, Principle V/IX);
 (j) finalize lookup failure handling; (k) prompt interpolation and Route
-step wiring; (l) classify step failure handling -- see
+step wiring; (l) classify step failure handling; (m) write-boundary label
+prefix single home -- see
 contracts/write-boundary-gate.md for the exact scenario tables.
 --self-test reintroduces each of the mutations that contract names,
 re-running the REAL pass-condition function each one targets against the
@@ -60,6 +61,9 @@ TOOL_ARGS_COMPOSITE = ".github/actions/wing-commander-tool-args/action.yml"
 WRITE_BOUNDARY_COMPOSITE = ".github/actions/wing-commander-write-boundary/action.yml"
 STAGE_FINDINGS_COMPOSITE = ".github/actions/wing-commander-stage-findings/action.yml"
 WRITE_BOUNDARY_LOOKUP_COMPOSITE = ".github/actions/wing-commander-write-boundary-lookup/action.yml"
+IMPLEMENT_WRAPPER = ".github/workflows/wing-commander-5-implement.yml"
+FINALIZE_WRAPPER = ".github/workflows/wing-commander-6-finalize.yml"
+LABEL_PREFIX_VAR = "WING_COMMANDER_WRITE_BOUNDARY_LABEL_PREFIX"
 CLASSIFY_SCRIPT = ".github/actions/_shared/classify-out-of-boundary-tasks.sh"
 FINGERPRINT_SCRIPT = ".github/actions/_shared/compute-finding-fingerprint.sh"
 COUNT_TASKS_CHECKBOXES = ".github/actions/_shared/count-tasks-checkboxes.sh"
@@ -69,6 +73,7 @@ CLASSIFY_STEP = "Classify unchecked tasks against the write boundary"
 CYCLE_STEP = "Read back cycle outcome"
 RETRY_STEP = "Read back retry outcome"
 ROUTE_STEP = "Route out-of-boundary tasks"
+FLAG_ROUTE_FAILURE_STEP = "Flag failed out-of-boundary routing on lifecycle issue"
 LOOKUP_STEP = "Look up routed write-boundary items"
 DISPATCH_STEP = "Dispatch next step"
 
@@ -439,6 +444,59 @@ def check_prompt_and_route_wiring(stage_text=None):
         if with_block.get("finding-kind") != "routed-task":
             failures.append(f"(k) {ROUTE_STEP!r}: finding-kind is not "
                             f"'routed-task' -- got {with_block.get('finding-kind')!r}.")
+    # Maintenance backlog #889: the Route step is continue-on-error, so a
+    # failure there must flag the lifecycle issue, not end the loop with
+    # the unfiled tasks visible only as a step annotation.
+    flag_step = None
+    for job in (doc.get("jobs") or {}).values():
+        for step in (job or {}).get("steps") or []:
+            if (step or {}).get("name") == FLAG_ROUTE_FAILURE_STEP:
+                flag_step = step
+                break
+    if flag_step is None:
+        failures.append(f"(k) no step named {FLAG_ROUTE_FAILURE_STEP!r} found "
+                        f"in {STAGE} -- a failed {ROUTE_STEP!r} would post "
+                        f"nothing to the lifecycle issue.")
+    else:
+        flag_if = str(flag_step.get("if", ""))
+        # wing-commander-stage-findings always exits 0 (its FR-022): an API
+        # error, a malformed entry or a task over the cap shows up only in
+        # these output counts, so an outcome-only guard would almost never
+        # fire. A success that filed and appended nothing lost every task
+        # too (a crash in the composite's prepare step, or an all-errata
+        # drop, reports all-zero counts).
+        filed_none = ("(steps.route-out-of-boundary.outcome == 'success' && "
+                      "steps.route-out-of-boundary.outputs.filed == '0' && "
+                      "steps.route-out-of-boundary.outputs.appended == '0')")
+        for clause in ("steps.route-out-of-boundary.outcome == 'failure'",
+                       "steps.route-out-of-boundary.outputs.dropped-api-failure != '0'",
+                       "steps.route-out-of-boundary.outputs.dropped-malformed != '0'",
+                       "steps.route-out-of-boundary.outputs.dropped-cap != '0'",
+                       filed_none):
+            if clause not in flag_if:
+                failures.append(f"(k) {FLAG_ROUTE_FAILURE_STEP!r}: if: does "
+                                f"not key on {clause} -- got {flag_if!r}.")
+        # Each clause must be enough on its own: they are OR-joined under
+        # one !cancelled(). Collapse each clause (and each count's
+        # `!= ''` guard) to X and compare the shape -- an `&&` between two
+        # clauses would need all four at once and almost never fire.
+        shape = re.sub(r"\(steps\.route-out-of-boundary\.outputs\.([\w-]+) != '' "
+                       r"&& steps\.route-out-of-boundary\.outputs\.\1 != '0'\)",
+                       "X", flag_if)
+        shape = shape.replace(filed_none, "X")
+        shape = shape.replace("steps.route-out-of-boundary.outcome == 'failure'", "X")
+        shape = " ".join(shape.split())
+        if shape != "${{ !cancelled() && (X || X || X || X || X) }}":
+            failures.append(f"(k) {FLAG_ROUTE_FAILURE_STEP!r}: if: is not "
+                            f"!cancelled() && (<five clauses OR-joined>), each "
+                            f"count guarded by != '' -- got {flag_if!r}.")
+        if not str(flag_step.get("uses", "")).endswith("/wing-commander-callout"):
+            failures.append(f"(k) {FLAG_ROUTE_FAILURE_STEP!r}: does not post "
+                            f"through wing-commander-callout -- got "
+                            f"{flag_step.get('uses')!r}.")
+        if (flag_step.get("with") or {}).get("issue-number") != "${{ inputs.issue-number }}":
+            failures.append(f"(k) {FLAG_ROUTE_FAILURE_STEP!r}: issue-number is "
+                            f"not the lifecycle issue (inputs.issue-number).")
     return failures
 
 
@@ -1133,6 +1191,107 @@ def check_label_separation(stage_text=None):
 
 
 # ---------------------------------------------------------------------------
+# (m) write-boundary-label-prefix default: one home
+# ---------------------------------------------------------------------------
+
+def _workflow_call_input_default(text, name):
+    doc = yaml.safe_load(text) or {}
+    on_block = doc.get("on") or doc.get(True) or {}
+    inputs = ((on_block or {}).get("workflow_call") or {}).get("inputs") or {}
+    return (inputs.get(name) or {}).get("default")
+
+
+def check_label_prefix_single_home(content_overrides=None):
+    """Maintenance backlog #889: the `route-out-of-boundary` default lives
+    in implement.yml's `write-boundary-label-prefix` input -- the stage
+    that files routed items under it. Every other place GitHub Actions
+    forces a literal (finalize.yml's input default, the lookup composite's
+    `label-prefix` default, and the two wrappers' `vars.` fallbacks) must
+    carry that same value, and no unregistered literal copy may appear in
+    a workflow or composite. A drifted copy would have finalize look up
+    routed items under a label implement never files. `content_overrides`
+    ({normalized path: text}) lets --self-test re-run THIS SAME function
+    against a mutated copy of one file."""
+    import glob
+    failures = []
+    content_overrides = content_overrides or {}
+
+    def read(path):
+        path = os.path.normpath(path)
+        if path in content_overrides:
+            return content_overrides[path]
+        return open(path, encoding="utf-8").read()
+
+    canonical = _workflow_call_input_default(read(STAGE), "write-boundary-label-prefix")
+    if not canonical:
+        return [f"(m) {STAGE}: write-boundary-label-prefix has no default -- "
+                f"it is the one home of the routed-item label prefix."]
+
+    copy_default = _workflow_call_input_default(read(FINALIZE), "write-boundary-label-prefix")
+    if copy_default != canonical:
+        failures.append(f"(m) {FINALIZE}: write-boundary-label-prefix's default "
+                        f"{copy_default!r} differs from {STAGE}'s {canonical!r} "
+                        f"-- finalize would look up routed items under a label "
+                        f"implement never files.")
+    lookup_doc = yaml.safe_load(read(WRITE_BOUNDARY_LOOKUP_COMPOSITE)) or {}
+    lookup_default = ((lookup_doc.get("inputs") or {}).get("label-prefix") or {}).get("default")
+    if lookup_default != canonical:
+        failures.append(f"(m) {WRITE_BOUNDARY_LOOKUP_COMPOSITE}: label-prefix's "
+                        f"default {lookup_default!r} differs from {STAGE}'s "
+                        f"{canonical!r}.")
+    expected_wiring = f"${{{{ vars.{LABEL_PREFIX_VAR} || '{canonical}' }}}}"
+    for wrapper in (IMPLEMENT_WRAPPER, FINALIZE_WRAPPER):
+        doc = yaml.safe_load(read(wrapper)) or {}
+        wired = [((job or {}).get("with") or {}).get("write-boundary-label-prefix")
+                 for job in (doc.get("jobs") or {}).values()]
+        wired = [w for w in wired if w is not None]
+        if not wired:
+            failures.append(f"(m) {wrapper}: no job passes "
+                            f"write-boundary-label-prefix.")
+        for w in wired:
+            if w != expected_wiring:
+                failures.append(f"(m) {wrapper}: write-boundary-label-prefix is "
+                                f"{w!r}, expected {expected_wiring!r} -- the "
+                                f"fallback must equal {STAGE}'s default.")
+
+    # Any other standalone occurrence of the value -- quoted, a YAML value
+    # (`default:`, a `with:` key such as `label-prefix:`), an `=` shell
+    # assignment, a `${VAR:-<value>}` fallback, a bare shell argument --
+    # is an unregistered copy. Step ids (`id: <value>`) and `steps.<id>`
+    # references are not label literals; neither is the value embedded in
+    # a longer name (`x-route-out-of-boundary`).
+    registered = {os.path.normpath(p): 1 for p in
+                  (STAGE, FINALIZE, WRITE_BOUNDARY_LOOKUP_COMPOSITE,
+                   IMPLEMENT_WRAPPER, FINALIZE_WRAPPER)}
+    literal_re = re.compile(r"(?<![\w.])(?<!\w-)" + re.escape(canonical)
+                            + r"(?![\w-])")
+    # `(?<![\w-])` rather than `\b`: `\b` also matches inside a
+    # hyphenated key (`issue-id:`), which would subtract a real copy.
+    step_id_re = re.compile(r"(?<![\w-])id:[ \t]*[\"']?" + re.escape(canonical)
+                            + r"(?![\w-])")
+    files = set(glob.glob(".github/workflows/*.yml")
+                + glob.glob(".github/workflows/*.yaml")
+                + glob.glob(".github/actions/**/action.yml", recursive=True)
+                + glob.glob(".github/actions/**/action.yaml", recursive=True)
+                + glob.glob(".github/actions/_shared/*.sh"))
+    files |= {p for p in content_overrides}
+    for f in sorted(files):
+        path = os.path.normpath(f)
+        try:
+            text = read(path)
+        except OSError:
+            continue
+        count = len(literal_re.findall(text)) - len(step_id_re.findall(text))
+        if count > registered.get(path, 0):
+            failures.append(f"(m) {path}: {count} literal copy(ies) of "
+                            f"{canonical!r} where {registered.get(path, 0)} "
+                            f"is registered -- the one home is {STAGE}'s "
+                            f"write-boundary-label-prefix default; wire "
+                            f"inputs.write-boundary-label-prefix instead.")
+    return failures
+
+
+# ---------------------------------------------------------------------------
 # SC-005: finalize.yml's routed-item lookup
 # ---------------------------------------------------------------------------
 
@@ -1758,6 +1917,139 @@ def check_mutation_16():
     return ["mutation survived: collapse label defaults"]
 
 
+def check_mutation_20():
+    """(20) Maintenance backlog #889: finalize.yml's label-prefix default
+    drifted from implement.yml's -- re-runs (m), must fail."""
+    text = open(FINALIZE, encoding="utf-8").read()
+    marker = '        default: "route-out-of-boundary"'
+    if marker not in text:
+        print("::error::mutation 'drift finalize label default' changed nothing.")
+        return ["mutation inapplicable: drift finalize label default"]
+    mutated = text.replace(marker, '        default: "route-out-of-scope"', 1)
+    if check_label_prefix_single_home({os.path.normpath(FINALIZE): mutated}):
+        print("Mutation OK -- drift finalize label default: caught (m).")
+        return []
+    return ["mutation survived: drift finalize label default"]
+
+
+def check_mutation_21():
+    """(21) Maintenance backlog #889: a third literal copy of the default
+    pasted into another workflow -- re-runs (m), must fail."""
+    path = os.path.normpath(".github/workflows/rebase.yml")
+    text = open(path, encoding="utf-8").read()
+    mutated = text + "\n# label: 'route-out-of-boundary'\n"
+    if check_label_prefix_single_home({path: mutated}):
+        print("Mutation OK -- unregistered label default copy: caught (m).")
+        return []
+    return ["mutation survived: unregistered label default copy"]
+
+
+def check_mutation_22():
+    """(22) Maintenance backlog #889: the failed-routing flag step's guard
+    no longer keys on the Route step's failure -- re-runs (k), must fail."""
+    text = open(STAGE, encoding="utf-8").read()
+    marker = "steps.route-out-of-boundary.outcome == 'failure'"
+    if marker not in text:
+        print("::error::mutation 'unkey route failure flag' changed nothing.")
+        return ["mutation inapplicable: unkey route failure flag"]
+    mutated = text.replace(marker, "steps.route-out-of-boundary.outcome == 'skipped'", 1)
+    if check_prompt_and_route_wiring(stage_text=mutated):
+        print("Mutation OK -- unkey route failure flag: caught (k).")
+        return []
+    return ["mutation survived: unkey route failure flag"]
+
+
+def check_mutation_23():
+    """(23) code review of #941: the failed-routing flag step's guard drops
+    its dropped-api-failure clause -- the composite always exits 0, so an
+    API failure would flag nothing. Re-runs (k), must fail."""
+    text = open(STAGE, encoding="utf-8").read()
+    marker = ("(steps.route-out-of-boundary.outputs.dropped-api-failure != '' && "
+              "steps.route-out-of-boundary.outputs.dropped-api-failure != '0')")
+    if marker not in text:
+        print("::error::mutation 'unkey route api-failure flag' changed nothing.")
+        return ["mutation inapplicable: unkey route api-failure flag"]
+    mutated = text.replace(marker, "false", 1)
+    if check_prompt_and_route_wiring(stage_text=mutated):
+        print("Mutation OK -- unkey route api-failure flag: caught (k).")
+        return []
+    return ["mutation survived: unkey route api-failure flag"]
+
+
+def check_mutation_24():
+    """(24) code review of #941: the failed-routing flag step's clauses
+    AND-joined instead of OR-joined -- the step would need a crash and
+    all three drop counts at once. Re-runs (k), must fail."""
+    text = open(STAGE, encoding="utf-8").read()
+    marker = ("steps.route-out-of-boundary.outcome == 'failure' || "
+              "(steps.route-out-of-boundary.outputs.dropped-api-failure")
+    if marker not in text:
+        print("::error::mutation 'and-join route failure flag' changed nothing.")
+        return ["mutation inapplicable: and-join route failure flag"]
+    mutated = text.replace(marker, marker.replace(" || ", " && "), 1)
+    if check_prompt_and_route_wiring(stage_text=mutated):
+        print("Mutation OK -- and-join route failure flag: caught (k).")
+        return []
+    return ["mutation survived: and-join route failure flag"]
+
+
+def check_mutation_25():
+    """(25) code review of #941: an unquoted copy of the label default
+    passed as a `with:` value in another workflow -- re-runs (m), must
+    fail."""
+    path = os.path.normpath(".github/workflows/rebase.yml")
+    text = open(path, encoding="utf-8").read()
+    mutated = text + "\n#          label-prefix: route-out-of-boundary\n"
+    if check_label_prefix_single_home({path: mutated}):
+        print("Mutation OK -- unquoted label default copy: caught (m).")
+        return []
+    return ["mutation survived: unquoted label default copy"]
+
+
+def check_mutation_26():
+    """(26) code review of #941: the failed-routing flag step's guard drops
+    its filed-nothing clause -- a crash in the composite's prepare step, or
+    every task dropped as spec errata, reports all-zero counts and would
+    flag nothing. Re-runs (k), must fail."""
+    text = open(STAGE, encoding="utf-8").read()
+    marker = (" || (steps.route-out-of-boundary.outcome == 'success' && "
+              "steps.route-out-of-boundary.outputs.filed == '0' && "
+              "steps.route-out-of-boundary.outputs.appended == '0')")
+    if marker not in text:
+        print("::error::mutation 'unkey route filed-nothing flag' changed nothing.")
+        return ["mutation inapplicable: unkey route filed-nothing flag"]
+    mutated = text.replace(marker, "", 1)
+    if check_prompt_and_route_wiring(stage_text=mutated):
+        print("Mutation OK -- unkey route filed-nothing flag: caught (k).")
+        return []
+    return ["mutation survived: unkey route filed-nothing flag"]
+
+
+def check_mutation_27():
+    """(27) code review of #941: a `${VAR:-<default>}` shell fallback copy
+    of the label default in a _shared/ script -- re-runs (m), must fail."""
+    path = os.path.normpath(CLASSIFY_SCRIPT)
+    text = open(path, encoding="utf-8").read()
+    mutated = text + '\n# PREFIX="${PREFIX:-route-out-of-boundary}"\n'
+    if check_label_prefix_single_home({path: mutated}):
+        print("Mutation OK -- shell fallback label default copy: caught (m).")
+        return []
+    return ["mutation survived: shell fallback label default copy"]
+
+
+def check_mutation_28():
+    """(28) code review of #941: a copy of the label default under a
+    hyphenated `*-id:` key -- must not be discounted as a step id.
+    Re-runs (m), must fail."""
+    path = os.path.normpath(".github/workflows/rebase.yml")
+    text = open(path, encoding="utf-8").read()
+    mutated = text + "\n#          issue-id: route-out-of-boundary\n"
+    if check_label_prefix_single_home({path: mutated}):
+        print("Mutation OK -- *-id: key label default copy: caught (m).")
+        return []
+    return ["mutation survived: *-id: key label default copy"]
+
+
 def _mut_classify_swallow_crash(steps):
     """(17) review-gate-round-4 item 6: revert the classify step's own
     ::warning:: + safe-fallback handling to a bare pass-through -- a
@@ -1853,6 +2145,15 @@ def run_mutations(steps, root):
     failures.extend(check_mutation_17(steps, root))
     failures.extend(check_mutation_18(steps, root))
     failures.extend(check_mutation_19(steps, root))
+    failures.extend(check_mutation_20())
+    failures.extend(check_mutation_21())
+    failures.extend(check_mutation_22())
+    failures.extend(check_mutation_23())
+    failures.extend(check_mutation_24())
+    failures.extend(check_mutation_25())
+    failures.extend(check_mutation_26())
+    failures.extend(check_mutation_27())
+    failures.extend(check_mutation_28())
     # (7) zero fixtures discovered/executed at all.
     if not CLASSIFY_FIXTURES or not STATEMENT_FIXTURES:
         failures.append("mutation survived: zero fixtures (Constitution VIII)")
@@ -1923,6 +2224,7 @@ def main():
             failures.extend(check_two_cycles_one_issue())
             failures.extend(check_fingerprint_single_home())
             failures.extend(check_label_separation())
+            failures.extend(check_label_prefix_single_home())
             failures.extend(check_finalize_lookup(steps, root))
             failures.extend(check_classify_failure_handling(steps, root))
             failures.extend(check_gate_wired())

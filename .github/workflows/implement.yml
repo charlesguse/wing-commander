@@ -2632,10 +2632,10 @@ jobs:
           # FR-007/SC-005 (PR #836 review, item 6): deliberately NOT wired
           # from findings-filing-enabled -- routing a task outside the
           # write boundary is a structural part of this loop's own
-          # termination condition (the loop has already decided
-          # routed=true), not the optional defect-reporting channel that
-          # toggle governs, so disabling defect filing must not silently
-          # disable routing too.
+          # termination (the loop is ending on a routed hand-off, a stall
+          # hand-off, or the iteration cap), not the optional defect-
+          # reporting channel that toggle governs, so disabling defect
+          # filing must not silently disable routing too.
           enabled: "true"
           channel-mode: structured-array
           findings-json: ${{ steps.final.outputs.write-boundary-findings-json }}
@@ -2648,16 +2648,52 @@ jobs:
 
       # FR-007/SC-005 (PR #836 review, item 6): wing-commander-stage-findings
       # clamps its own per-run cap to 3 (MAX_SLOTS) regardless of what
-      # findings-cap requests, so a cycle whose only unchecked work is 4+
-      # out-of-boundary tasks loses the 4th silently -- the loop has
-      # already terminated on this cycle's routed hand-off, so no later
-      # cycle re-classifies it. Surfaced as a warning annotation rather
-      # than left buried only in the composite's own step summary.
+      # findings-cap requests, so a cycle that classified 4+ out-of-
+      # boundary tasks loses the 4th silently -- the Route step only runs
+      # when the loop is ending (a routed hand-off, a stall hand-off with
+      # a mixed remainder, or the iteration cap), so no later cycle
+      # re-classifies it. Surfaced as a warning annotation rather than left
+      # buried only in the composite's own step summary.
       - name: Warn on dropped out-of-boundary tasks (cap exceeded)
         if: ${{ !cancelled() && steps.route-out-of-boundary.outputs.dropped-cap != '' && steps.route-out-of-boundary.outputs.dropped-cap != '0' }}
         shell: bash
         run: |
-          echo "::warning::Route out-of-boundary tasks: ${{ steps.route-out-of-boundary.outputs.dropped-cap }} out-of-boundary task(s) this cycle classified were dropped for exceeding the per-run filing cap -- the loop has already ended on this cycle's routed hand-off, so these will not be re-classified by a later cycle; file them by hand."
+          echo "::warning::Route out-of-boundary tasks: ${{ steps.route-out-of-boundary.outputs.dropped-cap }} out-of-boundary task(s) this cycle classified were dropped for exceeding the per-run filing cap -- the loop is ending on this cycle (a routed hand-off, a stall hand-off, or the iteration cap), so these will not be re-classified by a later cycle; file them by hand."
+
+      # A failed routing would otherwise leave only an annotation while the
+      # loop ends as if every out-of-boundary task had been filed. The
+      # composite always exits 0 (FR-022 of wing-commander-stage-findings):
+      # an API error, a malformed findings entry, or a task over the per-
+      # run cap is counted in its `dropped-api-failure` / `dropped-
+      # malformed` / `dropped-cap` outputs, not surfaced as a step failure,
+      # so the guard keys on those counts as well as on `outcome ==
+      # 'failure'` (a crash before the composite's own handling). A
+      # success that filed and appended nothing is also a loss -- this
+      # step only runs on a non-empty findings list, and the composite
+      # reports a crash in its own prepare step, or a finding it drops
+      # without a count output (spec errata), as all-zero counts. Same
+      # ending-loop reasoning as the cap warning above: nothing
+      # re-classifies them later, so the lifecycle issue is flagged for a
+      # human to file them by hand (FR-007: never only as an annotation).
+      - name: Flag failed out-of-boundary routing on lifecycle issue
+        if: ${{ !cancelled() && (steps.route-out-of-boundary.outcome == 'failure' || (steps.route-out-of-boundary.outputs.dropped-api-failure != '' && steps.route-out-of-boundary.outputs.dropped-api-failure != '0') || (steps.route-out-of-boundary.outputs.dropped-malformed != '' && steps.route-out-of-boundary.outputs.dropped-malformed != '0') || (steps.route-out-of-boundary.outputs.dropped-cap != '' && steps.route-out-of-boundary.outputs.dropped-cap != '0') || (steps.route-out-of-boundary.outcome == 'success' && steps.route-out-of-boundary.outputs.filed == '0' && steps.route-out-of-boundary.outputs.appended == '0')) }}
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
+          issue-number: ${{ inputs.issue-number }}
+          kind: action
+          summary: "Some of this cycle's out-of-boundary tasks may not have been filed — file them by hand."
+          body: >-
+            The "Route out-of-boundary tasks" step failed, filed none of
+            them, or could not file every task (an API error, a malformed
+            entry, or more tasks than the per-run filing cap), in
+            [this run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}).
+            The loop is ending on this cycle (a routed hand-off, a stall
+            hand-off, or the iteration cap), so no later cycle will
+            re-classify these tasks. Check the step's log for which tasks
+            were filed under the `${{ inputs.write-boundary-label-prefix }}:implement`
+            label, and file the rest by hand.
 
       # When the cycle is judged failed, the most useful diagnostic is usually
       # the agent's own final message (e.g. "push rejected — the App lacks the
