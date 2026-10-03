@@ -4531,6 +4531,15 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-rebase-publish-credential-refusal.py
 
+      # implement.yml's gate-suite preflight checks for run-local-gates.py
+      # ahead of the tools, so an adopter repository with no suite skips
+      # it, the agent prompt says so, and the cycle-outcome artifact
+      # records skipped rather than fail (#935, #936). Not numbered, as
+      # above.
+      - name: Implement gate-suite preflight skips a repository with no local gate suite
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-implement-gate-suite-preflight.py
+
       # rebase.yml's discover step (#916, #831) runs against a real local
       # origin and a gh stub that applies its own --jq programs. Not
       # numbered, for the same reason as the board status step above.

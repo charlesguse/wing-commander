@@ -60,6 +60,12 @@ only for `implement.cycle`/`implement.retry`, run by a deterministic step
 ahead of the agent step under an explicit timeout, preceded by a preflight
 for its prerequisites (pyyaml, jq, actionlint) that degrades to a step-
 summary note rather than a denial or a stage failure when one is missing.
+A repository with no `.github/scripts/run-local-gates.py` (an adopter's)
+degrades the same way, checked ahead of the tools: the preflight's
+`script-exists` output is `false`, the suite is skipped, the agent prompt
+says the repository has no local gate suite in place of the "already ran
+once" paragraph, and the cycle-outcome artifact records `gate-suite-outcome:
+"skipped"`, never `"fail"` (#935).
 `CLAUDE.md`'s "Before pushing" instruction to run it is scoped to that
 audience plus human/local sessions.
 
