@@ -1085,14 +1085,17 @@ jobs:
           # -X POST PATH`); the parser before the code review of #939 allowed
           # only -X/--method there and read `-i` as the PATH, hiding six
           # auto-release.yml calls. A flag gh documents as taking a value
-          # consumes the next word; any other `-x`/`--long[=v]` is a switch.
+          # consumes the next word; any other `-x`/`--long[=v]` is a switch. A
+          # word is read the way the shell splits it, so a partly quoted value
+          # (`-f body="a b"`) is one word, not `body="a` plus a PATH `b"`.
+          SHELL_WORD = r'(?:"(?:[^"\\]|\\.)*"|\'[^\']*\'|[^\s"\'])+'
           GH_API_VALUE_FLAGS = ("-X", "--method", "-H", "--header", "-f", "--raw-field",
                                 "-F", "--field", "-q", "--jq", "-t", "--template",
                                 "-p", "--preview", "--hostname", "--input", "--cache")
           GH_API_FLAGS = (
               r'(?:(?:' + "|".join(re.escape(f) for f in GH_API_VALUE_FLAGS) + r')'
-              r'\s+(?:"(?:[^"\\]|\\.)*"|\'[^\']*\'|\S+)\s+'
-              r'|--?[A-Za-z][\w-]*(?:=\S+)?\s+)*')
+              r'\s+' + SHELL_WORD + r'\s+'
+              r'|--?[A-Za-z][\w-]*(?:=' + SHELL_WORD + r')?\s+)*')
 
           GH_INVOKE_RE = re.compile(
               r'(?:GH_TOKEN=(?P<tokexpr>"(?:[^"\\]|\\.)*"|\$\{\{[^}]*\}\}|\$\w+)\s+)?'
@@ -1121,8 +1124,12 @@ jobs:
           # implicit POST never reaches this table. Both spellings, because
           # wing-commander-metrics-persist writes `--method PATCH` — which the
           # -X-only parser before #339 read as a PATH named `--method` and
-          # dropped as out of scope.
-          API_WRITE_METHOD_RE = re.compile(r'(?:^|\s)(?:-X|--method)\s+(?:POST|PATCH|PUT|DELETE)\b')
+          # dropped as out of scope. Every spelling gh accepts: `-X POST`,
+          # `-XPOST`, `--method POST`, `--method=POST`, quoted or not -- the
+          # flag parser above skips the attached forms as switches, so a
+          # space-only match here would read those writes as reads.
+          API_WRITE_METHOD_RE = re.compile(
+              r'(?:^|\s)(?:-X\s*|--method(?:\s+|=))["\']?(?:POST|PATCH|PUT|DELETE)\b')
 
 
           def norm_expr(raw):

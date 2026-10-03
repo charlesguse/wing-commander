@@ -420,6 +420,24 @@ CASES = [
             ["gh api -H 'Accept: application/json' --silent \"repos/${GITHUB_REPOSITORY}/commits/main\""]),
      True, ("commits", "contents")),
 
+    ("... `--method=PATCH` is a write: the attached spelling the flag "
+     "parser skips as a switch is not read as a read, so github.token with "
+     "only issues:read fails",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['gh api --method=PATCH "repos/${GITHUB_REPOSITORY}/issues/1" -f state=closed']),
+     True, ("issues", "write")),
+
+    ("... and so is `-XPOST`",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['gh api -XPOST "repos/${GITHUB_REPOSITORY}/issues/1/comments" -f body=x']),
+     True, ("issues", "write")),
+
+    ("... a partly quoted flag value is one shell word: `-f body=\"a b\"` "
+     "does not leave `b\"` behind as the PATH",
+     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
+            ['gh api -f body="a b" -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments"']),
+     True, ("issues", "write")),
+
     ("a `<<WORD` inside quotes is not a heredoc opener: a call after "
      "`echo 'v<<EOF'` is still scanned",
      mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
