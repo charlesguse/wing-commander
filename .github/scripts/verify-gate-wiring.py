@@ -945,6 +945,42 @@ def _fixture_script_call_stdin():
         shutil.rmtree(root, ignore_errors=True)
 
 
+def _fixture_script_call_scope_reset():
+    """Code review of #954, round 6: `cd "$GITHUB_WORKSPACE"` returns to
+    the checkout root, where repo paths still resolve; `D=x cmd` sets D
+    for that command only, so a later `$D` keeps the job's literal value;
+    and a heredoc delimiter bash accepts with a `-` in it (`<<'PY-EOF'`)
+    still hides its body, an apostrophe there blanking nothing after."""
+    root = tempfile.mkdtemp(prefix="wc-gate-wiring-")
+    try:
+        _write(root, ".github/workflows/lint-workflows.yml",
+               "on: pull_request\njobs:\n  lint:\n    runs-on: ubuntu-latest\n"
+               "    env:\n      D: .github/actions/j\n"
+               "    steps:\n"
+               "      - name: reset\n"
+               "        working-directory: .github/actions/i\n"
+               "        run: |\n"
+               "          cd \"$GITHUB_WORKSPACE\"\n"
+               "          bash .github/scripts/rooted.sh\n"
+               "          D=.github/actions/k bash .github/scripts/prefixed.sh\n"
+               "          bash \"$D/scoped.sh\"\n"
+               "          cat <<'PY-EOF'\n"
+               "          it's data\n"
+               "          PY-EOF\n"
+               "          bash .github/scripts/after.sh\n")
+        failures = check_local_runner_script_coverage(root)
+        joined = "\n".join(failures)
+        want = ["runs .github/scripts/rooted.sh ",
+                "runs .github/scripts/prefixed.sh ",
+                "runs .github/actions/j/scoped.sh ",
+                "runs .github/scripts/after.sh "]
+        ok = (len(failures) == 4 and all(w in joined for w in want)
+              and "actions/k" not in joined and "$PWD" not in joined)
+        return ok, f"got {failures!r}"
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def _fixture_folded_join_subjects():
     """Code reviews of #940: a subject path split across os.path.join
     arguments after a root is read as the path it spells, a `"."`
@@ -1124,6 +1160,9 @@ FIXTURES = [
     ("a heredoc or `<` a shell runs is code, `python3 -m` takes no "
      "script, `-Wonce` hides no -c, and a step env: expression overrides "
      "a job literal (code review of #954)", _fixture_script_call_stdin),
+    ("cd \"$GITHUB_WORKSPACE\" returns to the root, a prefix assignment "
+     "ends with its command, and a `-` heredoc delimiter hides its body "
+     "(code review of #954, round 6)", _fixture_script_call_scope_reset),
     ("a subject path split across os.path.join arguments is read whole "
      "(code reviews of #940)", _fixture_folded_join_subjects),
     ("inline heredoc steps get distinct files, run under CI's bash -e, and "

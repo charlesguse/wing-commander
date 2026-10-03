@@ -530,7 +530,7 @@ def _blank_from(run, i, nested):
             out.append("<<<")
             i += 3
             continue
-        m = re.match(r"<<-?[ \t]*(['\"]?)([A-Za-z_]\w*)\1", run[i:i + 80]) \
+        m = re.match(r"<<-?[ \t]*(['\"]?)([\w.+@%:,/-]+)\1", run[i:i + 80]) \
             if run.startswith("<<", i) else None
         if m:
             out.append(run[i:i + m.end()])
@@ -1051,6 +1051,10 @@ CHECK9_MUTATIONS = (
     ("a shell alias after a heredoc body with an apostrophe", "",
      "          cat <<EOF\n          it's done\n          EOF\n"
      "          n=$(( 1 << k ))\n"
+     '          c="$STOP_CAUSE"\n          case "$c" in\n          esac\n'),
+    # Round 6: a delimiter bash accepts with a `-` in it.
+    ("a shell alias after a `-` delimited heredoc with an apostrophe", "",
+     "          cat <<'PY-EOF'\n          it's done\n          PY-EOF\n"
      '          c="$STOP_CAUSE"\n          case "$c" in\n          esac\n'),
 )
 # Legitimate shapes check 9 must leave alone: gating on the cause, and a

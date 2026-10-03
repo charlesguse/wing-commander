@@ -523,7 +523,7 @@ def _shell_prepass(text, i=0, nested=False, subs=None):
             continue
         elif text.startswith("<<", i):
             # A word delimiter.
-            m = re.match(r"<<-?[ \t]*(['\"]?)([A-Za-z_]\w*)\1", text[i:])
+            m = re.match(r"<<-?[ \t]*(['\"]?)([\w.+@%:,/-]+)\1", text[i:])
             if m:
                 out.append(text[i:i + m.end()])
                 pending.append(m.group(2))
@@ -751,6 +751,8 @@ def _script_calls_in_run(run, env, workdir):
                         continue
                     words.append(_expand(tok, env))
                 i = 0
+                assigned = {}
+                declared = False
                 while i < len(words) and (words[i] in _COMMAND_PREFIXES
                                           or _ASSIGN_RE.fullmatch(words[i])):
                     m = _ASSIGN_RE.fullmatch(words[i])
@@ -758,10 +760,22 @@ def _script_calls_in_run(run, env, workdir):
                               or "__WC_CMDSUB_" in m.group(2)):
                         # A value no reader can pin down replaces the
                         # earlier literal one too.
-                        env.pop(m.group(1), None)
+                        assigned[m.group(1)] = None
                     elif m:
-                        env[m.group(1)] = m.group(2)
+                        assigned[m.group(1)] = m.group(2)
+                    elif words[i] in ("export", "readonly", "local",
+                                      "declare"):
+                        declared = True
                     i += 1
+                if declared or i >= len(words):
+                    # `D=x` alone, or `export D=x`: the shell keeps it.
+                    # `D=x cmd` sets D for cmd only (code review of #954,
+                    # round 6).
+                    for name, value in assigned.items():
+                        if value is None:
+                            env.pop(name, None)
+                        else:
+                            env[name] = value
                 while i < len(words) and words[i] in _COMMAND_WRAPPERS:
                     i += 1
                     while i < len(words) and (
@@ -783,7 +797,13 @@ def _script_calls_in_run(run, env, workdir):
                               if words[k] in _INTERPRETERS), i)
                 if i < len(words) and words[i] == "cd":
                     target = words[i + 1] if i + 1 < len(words) else "~"
-                    if target.startswith(("/", "~", "-")) or "$" in target \
+                    if re.fullmatch(r"(?:\$\{?GITHUB_WORKSPACE\}?|\$\{\{\s*"
+                                    r"github\.workspace\s*\}\})/*", target):
+                        # The checkout root, where origin/main's regex
+                        # read every repo path from (code review of #954,
+                        # round 6).
+                        wd = None
+                    elif target.startswith(("/", "~", "-")) or "$" in target \
                             or "__WC_CMDSUB_" in target:
                         # A directory no reader can pin down.
                         wd = "$PWD"
