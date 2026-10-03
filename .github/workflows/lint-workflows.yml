@@ -1115,11 +1115,75 @@ jobs:
           # whose PATH sits on its continuation line is still resolved (not
           # read as a PATH `\` and skipped as out of scope), and a call with
           # no PATH never takes the next command's first word as one.
+          #
+          # A command substitution nests up to SUB_DEPTH parenthesis levels
+          # (`$(a "$(b "$(c)")")`, a subshell or `$((...))` counting as one),
+          # and a quoted `)` inside one (`$(printf ')')`, `$(echo ")")`) does
+          # not close it; one nested deeper is no word, so its call fails
+          # loudly as having no PATH (code review of #944). An unquoted
+          # parameter expansion (`${X:-a b}`, one inner `{...}` level) and a
+          # backtick substitution (`` `git rev-parse HEAD` ``) are one word
+          # part each, not split at their blanks. Every alternative inside a
+          # word, and inside each of these parts, starts on a character no
+          # other alternative there can start on, so a word has exactly one
+          # parse and a failed match backs out in linear time: this parser
+          # once hung the gate on catastrophic backtracking, and the
+          # self-test times adversarial inputs to keep it from doing so
+          # again.
           GH_API_SEP = r'(?:[ \t]|\\\n)+'
-          _CMD_SUB = r'\$\((?:[^()]|\([^()]*\))*\)'
-          SHELL_WORD = (r'(?:"(?:[^"\\$]|\\.|' + _CMD_SUB + r'|\$(?!\())*"|\'[^\']*\''
-                        r'|' + _CMD_SUB + r'|\$\{\{(?:[^}]|\}(?!\}))*\}\}'
-                        r'|\\.|(?!\$\(|\$\{\{)[^\s"\'\\])+')
+          SUB_DEPTH = 3
+
+
+          def _sub_body(depth):
+              """The inside of a `(...)` nesting at most `depth` levels."""
+              inner = _sub_body(depth - 1) if depth > 1 else None
+              dq = (r'"(?:[^"\\$]|\\.|\$(?!\()'
+                    + (r'|\$\(' + inner + r'\)' if inner else '') + r')*"')
+              return (r"(?:[^()'" + '"' + r"\\]|\\.|'[^']*'|" + dq
+                      + (r'|\(' + inner + r'\)' if inner else '') + r')*')
+
+
+          def _brace_body(depth):
+              """The inside of a `{...}` nesting at most `depth` levels."""
+              inner = _brace_body(depth - 1) if depth > 1 else None
+              return (r'(?:[^{}]' + (r'|\{' + inner + r'\}' if inner else '')
+                      + r')*')
+
+
+          _CMD_SUB = r'\$\(' + _sub_body(SUB_DEPTH) + r'\)'
+          # A process substitution (`-F body=@<(jq -n ...)`) is one word part
+          # like `$(...)`: read as plain characters, it split at its blanks
+          # and a `--method GET` inside it read as the call's last method
+          # (code review of #944).
+          _PROC_SUB = r'[<>]\(' + _sub_body(SUB_DEPTH) + r'\)'
+          # A `${...}` value nests SUB_DEPTH levels of braces too
+          # (`${A:-${B:-${C}}}`): capped at two, the third level's `-X GET`
+          # started a word of its own after the PATH and read as the call's
+          # last method (code review of #944).
+          _PARAM_EXP = r'\$\{(?!\{)' + _brace_body(SUB_DEPTH) + r'\}'
+          _BACKTICK = r'`(?:[^`\\]|\\.)*`'
+          _EXPR = r'\$\{\{(?:[^}]|\}(?!\}))*\}\}'
+
+
+          def _dq_brace_body(depth):
+              """The inside of a `${...}` within double quotes, nesting at
+              most `depth` levels of braces. A quoted string inside it
+              (`"${X:-"a b"}"`) is part of the expansion, as bash reads it:
+              closing the outer quote at its first inner `"` left the text
+              between the inner quotes unquoted, so `"${X:-" -X GET "}"`
+              read as two words and its `-X GET` as the call's last method
+              (code review of #944)."""
+              inner = _dq_brace_body(depth - 1) if depth > 1 else None
+              return (r'(?:[^{}"\\]|\\.|"(?:[^"\\]|\\.)*"'
+                      + (r'|\{' + inner + r'\}' if inner else '') + r')*')
+
+
+          _DQ_PARAM = r'\$\{(?!\{)' + _dq_brace_body(SUB_DEPTH) + r'\}'
+          SHELL_WORD = (r'(?:"(?:[^"\\$]|\\.|' + _CMD_SUB + r'|' + _EXPR
+                        + r'|' + _DQ_PARAM + r'|\$(?![({]))*"|\'[^\']*\''
+                        r'|' + _CMD_SUB + r'|' + _PROC_SUB + r'|' + _EXPR
+                        + r'|' + _PARAM_EXP + r'|' + _BACKTICK +
+                        r'|\\.|(?!\$\(|\$\{|[<>]\()[^\s"\'\\`])+')
           GH_API_VALUE_FLAGS = ("-X", "--method", "-H", "--header", "-f", "--raw-field",
                                 "-F", "--field", "-q", "--jq", "-t", "--template",
                                 "-p", "--preview", "--hostname", "--input", "--cache")
@@ -1163,7 +1227,21 @@ jobs:
           # is found on the blanked call line (so one inside another flag's
           # quoted value is not this call's), its method word on the raw one
           # (blanking would erase a quoted `'POST'`) -- see api_level().
-          API_METHOD_FLAG_RE = re.compile(r'(?:^|\s)(?:-i*X|--method(?![\w-]))')
+          # When the call names its method more than once, gh (pflag) keeps
+          # the LAST value, so `-X POST ... -X GET` is a read and `-X GET
+          # ... -X POST` a write. A method held in a variable (`-X
+          # "$METHOD"`) is resolved through the step's assignments the way
+          # a PATH is; one that resolves to no literal (a `$(...)`, an
+          # Actions expression, an unassigned variable) fails the gate
+          # rather than being read as a read, by the same rule as an
+          # unresolvable PATH (code review of #944). Only a flag starting
+          # one of the call's own words counts: a `-X GET` inside another
+          # flag's `$(...)`, backtick or `${...}` value (all executable, so
+          # not blanked) belongs to that value, and reading it as the last
+          # method would turn a `-X POST` call whose `-f` value runs a
+          # nested `-X GET` command into a read.
+          API_METHOD_FLAG_RE = re.compile(r'(?:^|\s)(?P<flag>-i*X|--method(?![\w-]))')
+          SHELL_WORD_RE = re.compile(SHELL_WORD)
           API_WRITE_METHOD_RE = re.compile(r'(?:POST|PATCH|PUT|DELETE)\b')
 
 
@@ -1184,22 +1262,40 @@ jobs:
               A `<<WORD` the shell never executes is not an opener: auto-release's
               `echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'` writes a $GITHUB_OUTPUT
               delimiter, and reading it as a heredoc hid the rest of that step,
-              six maintainer-token `gh api` calls among it (code review of #939)."""
+              six maintainer-token `gh api` calls among it (code review of #939).
+              An opener need not end its line: `cat <<EOF | jq ...` and
+              `python3 - <<'PY' > out` open one too, and the rest of that line
+              is still shell. Several openers on one line take their bodies in
+              order, one after another, as bash does. A `<<` inside `$((...))`
+              is a shift and a `<<<` a here-string, neither an opener; an
+              unquoted delimiter must start like a name (`x << 2` is no
+              opener) and is its whole word: `<<EOF-1`'s delimiter is
+              `EOF-1`, as bash reads it -- cut at `EOF`, the body would hide
+              the rest of the step, and read as no opener, the body's text
+              would be scanned as shell (code review of #944). A quoted
+              delimiter is everything between its quotes (`<<'END-X'`)."""
               out = []
               lines = text.splitlines()
-              heredoc_re = re.compile(r"<<-?\s*'?(\w+)'?\s*$")
+              heredoc_re = re.compile(
+                  r"(?<!<)<<(?!<)-?[ \t]*(?:'([^'\n]+)'|" + '"' + r'([^"\n]+)' + '"'
+                  + r"|\\?([A-Za-z_][^\s;|&<>()'" + '"' + r"`\\]*)(?=[\s;|&<>()]|$))")
               i = 0
               while i < len(lines):
                   line = lines[i]
-                  m = heredoc_re.search(line)
-                  if m:
-                      prefix = "\n".join(out + [line[:m.start()]])
-                      if not executable_flags(prefix + "<")[-1]:
-                          m = None
+                  delims = []
+                  found = list(heredoc_re.finditer(line))
+                  if found:
+                      base = len("\n".join(out)) + (1 if out else 0)
+                      flags = executable_flags("\n".join(out + [line]))
+                      for m in found:
+                          if not flags[base + m.start()]:
+                              continue
+                          if re.search(r"\(\((?:(?!\)\)).)*$", line[:m.start()]):
+                              continue
+                          delims.append(m.group(1) or m.group(2) or m.group(3))
                   out.append(line)
                   i += 1
-                  if m:
-                      delim = m.group(1)
+                  for delim in delims:
                       while i < len(lines) and lines[i].strip() != delim:
                           i += 1
                       if i < len(lines):
@@ -1266,6 +1362,29 @@ jobs:
                       i += 1; continue
                   if c == "$" and i + 1 < n and text[i + 1] == "(":
                       stack.append("sub"); i += 2; continue
+                  # A `(` or `)` inside a `${...}` pattern
+                  # (`"$(echo ${subject##*(#})"`) is a literal character,
+                  # not a level: pushed as one, the substitution's own `)`
+                  # closed it instead, the closing `"` opened a new
+                  # double-quoted frame, and every call after it in the
+                  # step read as quoted text (code review of f703d73).
+                  if top in ("sub", "brace") and c == "$" and i + 1 < n and text[i + 1] == "{":
+                      stack.append("brace"); i += 2; continue
+                  if top == "brace":
+                      if c == "{":
+                          stack.append("brace")
+                      elif c == "}":
+                          stack.pop()
+                      i += 1
+                      continue
+                  # A bare `(` inside a substitution (`$((p+1))`'s second
+                  # one, a `$( (a) )` subshell) opens a level its own `)`
+                  # closes; unpaired, the first `)` closed the substitution
+                  # and the last one read as quoted text, so cmdline_of's
+                  # depth count never got back to 0 and the call ran on
+                  # through the next command's flags (code review of #944).
+                  if top == "sub" and c == "(":
+                      stack.append("sub"); i += 1; continue
                   if top == "sub" and c == ")":
                       stack.pop(); i += 1; continue
                   i += 1
@@ -1483,23 +1602,77 @@ jobs:
           def cmdline_of(text, flags, m):
               """This invocation's own arguments: from the match to the end of
               its logical line (following `\\` continuations) or the next
-              command separator (`;`, `&&`, `||`, `|`), with every
-              non-executable character blanked — so a `--method POST` inside
-              a quoted value, in a trailing comment, or in the NEXT command on
-              the same line never reads as this call's method. -> (blanked,
-              raw): the same span unblanked, character-aligned with it, for
-              reading a quoted flag value."""
+              command separator (`;`, `&&`, `||`, `|`) at this call's own
+              nesting level, with every non-executable character blanked — so
+              a `--method POST` inside a quoted value, in a trailing comment,
+              or in the NEXT command on the same line never reads as this
+              call's method. A separator inside one of the call's own `$(...)`
+              or backtick values does not end it, a newline there included
+              (a multi-line `-f body="$(` ... `)"`), and a `)` closing a
+              substitution the call itself sits in does: cut inside the
+              value, the call's words would end in an unclosed `$(`, and a
+              `-X GET | ...` in it would read as the call's last method
+              (code review of 4b06261). -> (blanked, raw): the same span
+              unblanked, character-aligned with it, for reading a quoted flag
+              value."""
               out, raw = [], []
               i, n = m.start(), len(text)
+              depth, in_bt = 0, False
+              # Open `${...}` braces, innermost last, each with the paren
+              # depth it opened at: a `(` or `)` directly inside one
+              # (`${subject##*(#}`) is a pattern character, not a level.
+              # Counted as one, the `(` never closed, and the call ran past
+              # its own newline through the next command's `-X GET`
+              # (code review of f703d73).
+              braces = []
+              # A call inside a backtick substitution ends at the backtick
+              # closing it, as one inside `$(...)` ends at its `)`; read as
+              # opening a nested value, it would carry the call on through
+              # the next command's flags. Counted on the call's own line.
+              outer_bt = sum(1 for j in range(text.rfind("\n", 0, m.start()) + 1,
+                                              m.start())
+                             if flags[j] and text[j] == "`"
+                             and not (j > 0 and text[j - 1] == "\\")) % 2 == 1
               while i < n:
                   c = text[i]
                   if flags[i] and c == "\\" and i + 1 < n and text[i + 1] == "\n":
                       out.append(" "); raw.append(" "); i += 2; continue
-                  if flags[i] and c == "\n":
+                  if flags[i] and c == "\\" and i + 1 < n:
+                      out.append(c + (text[i + 1] if flags[i + 1] else " "))
+                      raw.append(c + text[i + 1])
+                      i += 2
+                      continue
+                  if flags[i] and c == "`":
+                      if outer_bt:
+                          break
+                      in_bt = not in_bt
+                  elif (flags[i] and c == "$" and i + 1 < n
+                          and text[i + 1] in "{("):
+                      if text[i + 1] == "{":
+                          braces.append(depth)
+                      else:
+                          depth += 1
+                      out.append(c + text[i + 1]); raw.append(c + text[i + 1])
+                      i += 2
+                      continue
+                  elif flags[i] and braces and braces[-1] == depth and c in "{}()":
+                      if c == "{":
+                          braces.append(depth)
+                      elif c == "}":
+                          braces.pop()
+                  elif flags[i] and c == "(":
+                      depth += 1
+                  elif flags[i] and c == ")":
+                      depth -= 1
+                      if depth < 0:
+                          break
+                  nested = depth > 0 or in_bt
+                  if flags[i] and c == "\n" and not nested:
                       break
-                  if flags[i] and c in ";|":
+                  if flags[i] and c in ";|" and not nested:
                       break
-                  if flags[i] and c == "&" and not (i > 0 and text[i - 1] == ">"):
+                  if (flags[i] and c == "&" and not nested
+                          and not (i > 0 and text[i - 1] == ">")):
                       break
                   out.append(c if flags[i] else " ")
                   raw.append(c)
@@ -1507,13 +1680,91 @@ jobs:
               return "".join(out), "".join(raw)
 
 
-          def api_level(cmdline):
+          def resolve_methods(word, assigns, depth=0):
+              """A method flag's word -> the literal methods it can hold, or
+              None when any of them is not a literal. Walks the assignments
+              itself rather than through resolve_paths(), whose norm_expr()
+              strips an Actions expression assigned unquoted and unspaced
+              (`METHOD=` then the expression) down to its bare text,
+              `inputs.m` -- a literal no write method matches, so a method
+              the caller supplies read as a read (code review of #944)."""
+              word = re.sub(r'["\']', "", word)
+              if (depth > 5 or EXPR_OPEN in word or "`" in word
+                      or "$(" in word):
+                  return None
+              if "$" not in word:
+                  return [word]
+              vm = re.fullmatch(r'\$(?:(\w+)|\{(\w+)\})', word)
+              varname = vm and (vm.group(1) or vm.group(2))
+              if not varname or varname not in assigns:
+                  return None
+              out = []
+              for v in assigns[varname]:
+                  sub = resolve_methods(v, assigns, depth + 1)
+                  if sub is None:
+                      return None
+                  out.extend(sub)
+              return out
+
+
+          def api_level(cmdline, assigns):
+              """-> (level, why): "write" when the LAST method flag can name
+              a write, "read" when it names none or there is no method flag;
+              level None, with `why` naming the word, when Gate 12 cannot
+              read the call's method.
+
+              Every word of the call must parse as one whole SHELL_WORD.
+              One that does not -- a value nesting deeper than SUB_DEPTH, an
+              opener it never closes -- fails the call closed, as an
+              unresolvable method does in resolve_methods(): split at its
+              blanks instead, a `-X GET` inside it started a word of its own
+              and read as the call's last method, so every new depth limit
+              was one more level for a write to hide behind (code review of
+              #944). With no fallback split, the depth limits are safe by
+              construction. A word starting where nothing executes is the
+              call's trailing comment, and ends the walk."""
               blanked, raw = cmdline
+              starts = set()
+              i, n = 0, len(raw)
+              while i < n:
+                  if raw[i].isspace():
+                      i += 1
+                      continue
+                  if blanked[i] == " ":
+                      break
+                  starts.add(i)
+                  wm = SHELL_WORD_RE.match(raw, i)
+                  if not wm or (wm.end() < n and not raw[wm.end()].isspace()):
+                      return None, (
+                          f"`gh api ... {raw[i:i + 40]}` - Gate 12 cannot read "
+                          f"this call's method: this word does not parse as "
+                          f"one shell word. It nests deeper than {SUB_DEPTH} "
+                          f"levels of " + "`$(...)` or `${...}`, or opens a "
+                          "quote, substitution or expression the call's line "
+                          "ends inside (an unquoted `||` or `&&` ends it), and "
+                          "split at its blanks, a method flag inside it would "
+                          "read as the call's own. Move the value into a "
+                          "variable assigned before the call.")
+                  i = wm.end()
+              word = None
               for fm in API_METHOD_FLAG_RE.finditer(blanked):
+                  if fm.start("flag") not in starts:
+                      continue
                   wm = re.match(r'(?:=|\s*)(' + SHELL_WORD + ')', raw[fm.end():])
-                  if wm and API_WRITE_METHOD_RE.match(re.sub(r'["\']', "", wm.group(1))):
-                      return "write"
-              return "read"
+                  if wm:
+                      word = wm.group(1)
+              if word is None:
+                  return "read", None
+              methods = resolve_methods(word, assigns)
+              if methods is None:
+                  return None, (
+                      f"`gh api ... {word}` - Gate 12 cannot resolve this "
+                      f"call's method to a literal value (it traces to a "
+                      f"`$(...)` computed value, an Actions expression or an "
+                      f"unset variable), so it cannot tell a read from a "
+                      f"write. Assign the method a literal in this step.")
+              return ("write" if any(API_WRITE_METHOD_RE.match(x) for x in methods)
+                      else "read"), None
 
 
           def check_gh_invocation(where, m, cmdline, assigns, tok_kind, tok_detail,
@@ -1534,6 +1785,7 @@ jobs:
                           f"a reviewed exception.")
                       return
                   cats = {path_category(p) for p in resolved}
+                  level = None
                   for scope, cat in cats:
                       if scope != "SELF" or cat is None:
                           continue  # cross-repo / non-repos path: a different repo's permission model, out of scope
@@ -1547,8 +1799,13 @@ jobs:
                               f"rather than let an unrecognised call "
                               f"pass unchecked.")
                           continue
+                      if level is None:
+                          level, why = api_level(cmdline, assigns)
+                          if level is None:
+                              failures.append(f"{where}: {why}")
+                              return
                       check_call(where, f"gh api (.../{cat}/...)",
-                                 frozenset({(perm_cat, api_level(cmdline))}),
+                                 frozenset({(perm_cat, level)}),
                                  tok_kind, tok_detail, app_perms, job_perms,
                                  failures, notes)
                   return
