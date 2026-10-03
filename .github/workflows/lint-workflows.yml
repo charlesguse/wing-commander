@@ -1543,23 +1543,45 @@ jobs:
           def cmdline_of(text, flags, m):
               """This invocation's own arguments: from the match to the end of
               its logical line (following `\\` continuations) or the next
-              command separator (`;`, `&&`, `||`, `|`), with every
-              non-executable character blanked — so a `--method POST` inside
-              a quoted value, in a trailing comment, or in the NEXT command on
-              the same line never reads as this call's method. -> (blanked,
-              raw): the same span unblanked, character-aligned with it, for
-              reading a quoted flag value."""
+              command separator (`;`, `&&`, `||`, `|`) at this call's own
+              nesting level, with every non-executable character blanked — so
+              a `--method POST` inside a quoted value, in a trailing comment,
+              or in the NEXT command on the same line never reads as this
+              call's method. A separator inside one of the call's own `$(...)`
+              or backtick values does not end it, and a `)` closing a
+              substitution the call itself sits in does: cut inside the
+              value, the call's words would end in an unclosed `$(`, and a
+              `-X GET | ...` in it would read as the call's last method
+              (code review of 4b06261). -> (blanked, raw): the same span
+              unblanked, character-aligned with it, for reading a quoted flag
+              value."""
               out, raw = [], []
               i, n = m.start(), len(text)
+              depth, in_bt = 0, False
               while i < n:
                   c = text[i]
                   if flags[i] and c == "\\" and i + 1 < n and text[i + 1] == "\n":
                       out.append(" "); raw.append(" "); i += 2; continue
+                  if flags[i] and c == "\\" and i + 1 < n:
+                      out.append(c + (text[i + 1] if flags[i + 1] else " "))
+                      raw.append(c + text[i + 1])
+                      i += 2
+                      continue
+                  if flags[i] and c == "`":
+                      in_bt = not in_bt
+                  elif flags[i] and c == "(":
+                      depth += 1
+                  elif flags[i] and c == ")":
+                      depth -= 1
+                      if depth < 0:
+                          break
+                  nested = depth > 0 or in_bt
                   if flags[i] and c == "\n":
                       break
-                  if flags[i] and c in ";|":
+                  if flags[i] and c in ";|" and not nested:
                       break
-                  if flags[i] and c == "&" and not (i > 0 and text[i - 1] == ">"):
+                  if (flags[i] and c == "&" and not nested
+                          and not (i > 0 and text[i - 1] == ">")):
                       break
                   out.append(c if flags[i] else " ")
                   raw.append(c)

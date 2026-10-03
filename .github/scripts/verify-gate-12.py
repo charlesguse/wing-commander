@@ -637,6 +637,26 @@ CASES = [
              '-f body="$(gh api "repos/${GITHUB_REPOSITORY}/issues/2" --method GET --jq .body)"']),
      True, ("issues", "write")),
 
+    ("... even when a `|` inside that `$(...)` value cuts the inner "
+     "command short: the call does not end inside its own value",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" '
+             '-f body="$(gh api repos/o/r/issues/2 --method GET --jq .body | head -1)"']),
+     True, ("issues", "write")),
+
+    ("... or a `;` inside an unquoted backtick value",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" '
+             '-f body=`gh api repos/o/r/issues/2 -X GET; true`']),
+     True, ("issues", "write")),
+
+    ("... while a `)` closing the substitution the call sits in does end "
+     "it: the next command's `-X POST` is not this read's method",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['x="$(gh api "repos/${GITHUB_REPOSITORY}/issues/2" --jq .body)" '
+             'curl -X POST https://example.invalid']),
+     False, ()),
+
     ("... nor is one inside a backtick value",
      mkcase(ISSUES_READ, "", [DEFAULT_ENV],
             ['gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" -f body=`echo -X GET`']),
