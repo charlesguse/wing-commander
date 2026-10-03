@@ -33,6 +33,21 @@ BOARD_LOOP_YML = os.path.join(REPO_ROOT, ".github", "workflows", "board-loop.yml
 DRIFT_WAIVERS_PATH = os.path.join(
     REPO_ROOT, ".github", "scripts", "skill-example-drift-waivers.json")
 
+# The workflow-side file each property is compared against -- the label an
+# [ok] line or a stale-waiver line names. Most come from board-loop.yml
+# itself; the two group-name properties compare SKILL.md with
+# concurrency-groups.md's table (contracts/skill-drift-gate.md step 6), so
+# naming board-loop.yml there named the wrong file (code review of #813).
+PROPERTY_SOURCE = {
+    "ordinary-group-name-mismatch": CONCURRENCY_GROUPS_MD,
+    "directed-group-name-mismatch": CONCURRENCY_GROUPS_MD,
+}
+
+
+def property_source_label(prop):
+    return os.path.basename(PROPERTY_SOURCE.get(prop, BOARD_LOOP_YML))
+
+
 # The Over-rated example's anchor phrase (spec-cross-reference/SKILL.md).
 ANCHOR = "**Over-rated.**"
 
@@ -99,7 +114,7 @@ def extract_skill_claim(text, path):
             skill_location=(path, None), workflow_location=(path, None),
             expected="an Over-rated example paragraph ({0!r}) naming the job "
                      "range and both concurrency groups".format(ANCHOR),
-            actual="no {0!r} anchor found in {1}".format(
+            actual="no {0!r} anchor in {1}".format(
                 ANCHOR, os.path.relpath(path, REPO_ROOT)))
 
     line_no = text.count("\n", 0, idx) + 1
@@ -139,9 +154,9 @@ def extract_skill_claim(text, path):
         return None, DriftFinding(
             property="subject-missing", job=None,
             skill_location=(path, line_no), workflow_location=(path, line_no),
-            expected="the Over-rated paragraph starting at {0}:{1} to carry {2}".format(
-                rel_path, line_no, "; ".join(missing)),
-            actual="a paragraph without it")
+            expected=", ".join(missing),
+            actual="the Over-rated paragraph starting at {0}:{1} without {2}".format(
+                rel_path, line_no, "it" if len(missing) == 1 else "them"))
 
     return SkillClaim(
         job_range_start=range_match.group(1),
@@ -364,7 +379,7 @@ def compute_drift_findings(claim, classifications, facts):
             findings.append(DriftFinding(
                 property="ordinary-group-name-mismatch", job=None,
                 skill_location=claim.location,
-                workflow_location=(CONCURRENCY_GROUPS_MD, None),
+                workflow_location=(PROPERTY_SOURCE["ordinary-group-name-mismatch"], None),
                 expected="ordinary group `{0}`".format(claim.ordinary_group),
                 actual="ordinary group `{0}`".format(real_ordinary)))
         # Sourced only from jobs board-loop.yml itself gives a conditional
@@ -382,7 +397,7 @@ def compute_drift_findings(claim, classifications, facts):
             findings.append(DriftFinding(
                 property="directed-group-name-mismatch", job=None,
                 skill_location=claim.location,
-                workflow_location=(CONCURRENCY_GROUPS_MD, None),
+                workflow_location=(PROPERTY_SOURCE["directed-group-name-mismatch"], None),
                 expected="directed group `{0}`".format(claim.directed_group),
                 actual="directed group `{0}`".format(real_directed)))
 
@@ -426,6 +441,18 @@ def format_finding(finding):
     naming the wrong file."""
     job_clause = " for job '{0}'".format(finding.job) if finding.job else ""
     workflow_label = os.path.basename(finding.workflow_location[0])
+    if finding.property == "subject-missing":
+        # Nothing CLAIMS a missing subject: it is what this gate needs in
+        # order to compare at all, so it gets its own shape rather than the
+        # "<file> claims X; <file> has Y" one (code review of #813).
+        return (
+            "::error::verify-skill-board-loop-concurrency-claim: subject-missing -- "
+            "this gate reads {workflow_label} ({workflow_loc}) and needs {expected}; "
+            "it found {actual}. Restore it, or update this gate in the same "
+            "change.".format(
+                workflow_label=workflow_label,
+                workflow_loc=_loc(finding.workflow_location),
+                expected=finding.expected, actual=finding.actual))
     return (
         "::error::verify-skill-board-loop-concurrency-claim: {property}{job_clause} "
         "-- SKILL.md ({skill_loc}) claims {expected}; {workflow_label} ({workflow_loc}) "
@@ -452,7 +479,7 @@ def evaluate():
             property="subject-missing", job=None,
             skill_location=(SKILL_MD, None), workflow_location=(SKILL_MD, None),
             expected="{0} to exist".format(os.path.relpath(SKILL_MD, REPO_ROOT)),
-            actual="file not found"))
+            actual="no such file"))
     else:
         claim, missing = extract_skill_claim(_read(SKILL_MD), SKILL_MD)
         if missing:
@@ -463,7 +490,7 @@ def evaluate():
             property="subject-missing", job=None,
             skill_location=(SKILL_MD, None), workflow_location=(CONCURRENCY_GROUPS_MD, None),
             expected="{0} to exist".format(os.path.relpath(CONCURRENCY_GROUPS_MD, REPO_ROOT)),
-            actual="file not found"))
+            actual="no such file"))
     else:
         classifications = extract_job_classifications(_read(CONCURRENCY_GROUPS_MD))
         if not classifications:
@@ -472,21 +499,21 @@ def evaluate():
                 skill_location=(SKILL_MD, None),
                 workflow_location=(CONCURRENCY_GROUPS_MD, None),
                 expected="a non-empty 'Groups, per job' table",
-                actual="no classification rows found"))
+                actual="no classification rows"))
 
     if not os.path.isfile(BOARD_LOOP_YML):
         findings.append(DriftFinding(
             property="subject-missing", job=None,
             skill_location=(SKILL_MD, None), workflow_location=(BOARD_LOOP_YML, None),
             expected="{0} to exist".format(os.path.relpath(BOARD_LOOP_YML, REPO_ROOT)),
-            actual="file not found"))
+            actual="no such file"))
     else:
         facts = extract_workflow_concurrency_facts(_read(BOARD_LOOP_YML))
         if not facts:
             findings.append(DriftFinding(
                 property="subject-missing", job=None,
                 skill_location=(SKILL_MD, None), workflow_location=(BOARD_LOOP_YML, None),
-                expected="a readable jobs: map", actual="no jobs found"))
+                expected="a readable jobs: map", actual="no jobs"))
 
     ok_properties = []
     all_properties = (
@@ -543,13 +570,17 @@ def apply_waivers(findings, waivers):
     return blocking, waived_lines, stale
 
 
+def format_ok_line(prop):
+    return "[ok] {0}: {1} matches the skill's claim".format(prop, property_source_label(prop))
+
+
 def format_stale_waiver(waiver):
     return (
         "::error::verify-skill-board-loop-concurrency-claim: stale waiver -- "
         "{0} entry {1} ({2}, job={3}) no longer matches any current divergence; "
-        "remove it now that the skill and board-loop.yml agree again.".format(
+        "remove it now that the skill and {4} agree again.".format(
             os.path.relpath(DRIFT_WAIVERS_PATH, REPO_ROOT), waiver.index,
-            waiver.property, waiver.job))
+            waiver.property, waiver.job, property_source_label(waiver.property)))
 
 
 def run():
@@ -558,7 +589,7 @@ def run():
     blocking, waived_lines, stale = apply_waivers(findings, waivers)
 
     for prop in ok_properties:
-        print("[ok] {0}: board-loop.yml matches the skill's claim".format(prop))
+        print(format_ok_line(prop))
     for finding in blocking:
         print(format_finding(finding))
     for line in waived_lines:
@@ -669,8 +700,9 @@ def run_selftest():
         rendered = format_finding(internal_missing) if internal_missing else ""
         check("the subject-missing message for {0} names the skill file, "
               "not board-loop.yml, with a repo-relative path".format(case),
-              "; fixture-skill.md (" in rendered
+              "reads fixture-skill.md (" in rendered
               and "board-loop.yml (" not in rendered
+              and " claims " not in rendered
               and REPO_ROOT not in rendered)
 
     # --- extract_skill_claim: the two FR-008-driven checks contracts/
@@ -989,6 +1021,18 @@ def run_selftest():
           renamed_directed_message is not None
           and "concurrency-groups.md (" in renamed_directed_message
           and "board-loop.yml (" not in renamed_directed_message)
+
+    # Code review of #945: the [ok] and stale-waiver lines name each
+    # property's own source file, not board-loop.yml for all of them.
+    check("an [ok] line for a group-name property names concurrency-groups.md",
+          "concurrency-groups.md matches" in format_ok_line("ordinary-group-name-mismatch")
+          and "concurrency-groups.md matches" in format_ok_line("directed-group-name-mismatch")
+          and "board-loop.yml matches" in format_ok_line("job-range-mismatch"))
+    stale_line = format_stale_waiver(WaiverEntry(
+        index=0, property="ordinary-group-name-mismatch", job=None, issue="#1",
+        permanent=None, reason=None))
+    check("a stale group-name waiver says the skill and concurrency-groups.md agree again",
+          "the skill and concurrency-groups.md agree again" in stale_line)
 
     total = len(failures)
     print("verify-skill-board-loop-concurrency-claim --self-test: {0} failure(s).".format(total))

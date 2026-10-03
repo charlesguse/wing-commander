@@ -311,7 +311,7 @@ jobs:
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
-    # (canonical copy; do not condense)
+    # (canonical copy: image-prerequisites-skip; do not condense)
     # verify-image-prerequisites now carries its own job-level `if:` and
     # reports `skipped` when no image is configured (#224's old
     # never-skip invariant is gone -- see specs/058-per-job-minute-floor/
@@ -441,7 +441,7 @@ jobs:
           json=$(gh issue view "$ISSUE" --json labels --jq '[.labels[] | {name: .name}]')
           echo "json=$json" >> "$GITHUB_OUTPUT"
 
-      # (canonical copy; do not condense)
+      # (canonical copy: credential-reestablishment; do not condense)
       # Credential re-establishment (spec 052, FR-001/FR-002/FR-004): the
       # minted App installation token has a one-hour lifetime, shorter than
       # some agent runs. `wing-commander-context` relays its mint into the
@@ -602,7 +602,7 @@ jobs:
         with:
           intended-turns: ${{ inputs.max-turns }}
 
-      # (canonical copy; do not condense)
+      # (canonical copy: push-credential-retry; do not condense)
       # This step's prompt below carries the retry-bound paragraph for a
       # `git push` that fails with the credential-expiry signature
       # (specs/071-agent-push-credential, research.md D7).
@@ -618,7 +618,7 @@ jobs:
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           SPECIFY_FEATURE_DIRECTORY: ${{ steps.ctx.outputs.spec-dir }}
-          # (canonical copy; do not condense)
+          # (canonical copy: synchronous-subagents; do not condense)
           # Force subagents synchronous — headless has no turn-boundary resume,
           # so a backgrounded subagent silently yields an unbuilt deliverable
           # (anthropics/claude-code-action#1462 / #1499).
@@ -628,7 +628,7 @@ jobs:
           anthropic_api_key: ${{ secrets.anthropic-api-key }}
           use_bedrock: ${{ inputs.use-bedrock }}
           github_token: ${{ env.WC_BOT_TOKEN }}
-          # (canonical copy; do not condense)
+          # (canonical copy: allowed-bots; do not condense)
           # Wrappers may dispatch this stage via GITHUB_TOKEN (custom
           # triggers); the action rejects bot actors unless allow-listed.
           # The pipeline's own App bot is the actor whenever one stage
@@ -637,14 +637,14 @@ jobs:
           # filter form is the bare slug, no [bot] suffix.
           allowed_bots: "github-actions,${{ steps.ctx.outputs.bot-slug }}"
 
-          # (canonical copy; do not condense)
+          # (canonical copy: inspection-guidance; do not condense)
           # #266: the prompt below tells the agent to inspect files with the
           # Grep, Glob and Read tools, never shell loops or unlisted commands
           # (`for f in ...; do cat "$f"`, `awk`): the stage's allowlist
           # denies those by design, and each denial costs a turn and files a
           # denied-tool watchdog finding.
 
-          # (canonical copy; do not condense)
+          # (canonical copy: anchor-rule; do not condense)
           # #569: the settled anchor rule the prompt below states --
           # "gate_or_artifact" only moves the dedup key once it is found,
           # normalized, inside the file "file_path" names (the anchor
@@ -788,7 +788,7 @@ jobs:
         with:
           token: ${{ env.WC_BOT_TOKEN }}
 
-      # (canonical copy; do not condense)
+      # (canonical copy: push-rescue; do not condense)
       # Deterministic rescue for work the agent could not push itself --
       # runs whether or not a later agent step ever would have carried it
       # along (specs/071-agent-push-credential, FR-015). Every other
@@ -1178,7 +1178,7 @@ jobs:
       # STOP, judging the reply to answer no open question); this covers
       # every outcome the same way intake.yml's copy does.
       #
-      # (canonical copy; do not condense)
+      # (canonical copy: cost-report-tolerance; do not condense)
       # FR-009 tolerance: a lost cost comment must not change the run's
       # conclusion. continue-on-error: true below is what makes that true —
       # an API error or a permissions blip posting this report leaves the
@@ -1196,7 +1196,7 @@ jobs:
           cost-line: ${{ steps.cost-line.outputs.line }}
           stage-label: Clarify
 
-      # (canonical copy; do not condense)
+      # (canonical copy: budget-observability; do not condense)
       # Observability, not failure (FR-017) — the intended budget was fully
       # used but the run finished healthy; the runaway ceiling above is the
       # only hard stop. This tolerance is enforced, not just documented
@@ -1381,7 +1381,7 @@ jobs:
             echo "spec-dir=" >> "$GITHUB_OUTPUT"
           fi
 
-      # (canonical copy; do not condense)
+      # (canonical copy: failed-step-naming; do not condense)
       # FR-004/FR-011 (spec 052, maintainer review of PR #407): a credential
       # re-establishment failure is named as such, ahead of the generic
       # agent-ran branch; otherwise, a real post-agent step failure names

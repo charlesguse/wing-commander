@@ -7,10 +7,17 @@
 # FILTER below is EXTRACTED from watchdog.yml's live SPEC_COLLISION_FILTER
 # at run time (wc_shell_harness.extract_quoted_var), not a hand-typed copy —
 # mutation testing found a hand copy here stayed green through a shipped
-# collision-threshold break (constitution VIII). No live gh pr list call is
-# needed: this feeds the exact claimant-enumeration fixture inputs the
-# surrounding bash would have already derived from `gh pr list` and the
-# checked-out `specs/` directory listing.
+# collision-threshold break (constitution VIII). The first half feeds that
+# filter claimant fixtures directly.
+#
+# The second half EXECUTES the whole shipped step (wc_shell_harness.
+# find_step/run_step), with `gh` stubbed to a canned `gh pr list` and a
+# real `specs/` tree in the working directory, the way its siblings
+# verify-final-pr-claims-collector.sh and verify-branch-drift-sha-
+# baseline.py do (#898): the bash that builds pr_claimants from the PR
+# list and the branch prefixes, dir_claimants from the directory listing,
+# and writes signals.json/collector-outcomes.json, plus the scope guard,
+# never ran before.
 #
 # Usage: .github/scripts/verify-spec-collision-collector.sh
 # Exit code: 0 = all assertions passed; 1 = an assertion failed.
@@ -73,21 +80,173 @@ else
   note "the same PR observed twice correctly did not self-collide"
 fi
 
-# ── Note on the non-intake-run fixture (scope guard): that guard is a
-#    bash-level `if [ "$RESOLVED_STAGE" != "intake" ]` exit-0 before this
-#    filter is ever invoked (#750: resolved-stage replaces the old
-#    reference-display-name comparison) — verified by inspecting the
-#    shipped step directly, the same way verify-turn-budget-collector.sh
-#    verifies its own attribution guard.
-WATCHDOG_YML=".github/workflows/watchdog.yml"
-if [ -f "$WATCHDOG_YML" ]; then
-  if grep -A25 'id: collect-spec-collision' "$WATCHDOG_YML" | grep -q '"\$RESOLVED_STAGE" != "intake"'; then
-    note "collect-spec-collision carries the intake-only scope guard"
-  else
-    reason "collect-spec-collision no longer scopes itself to intake-completion runs"
-  fi
+# ── The shipped step itself, executed (#898). The scope guard (#750:
+#    resolved-stage, not the old display-name comparison) is exercised by
+#    running it, not by grepping for its text.
+if ! python3 - <<'PY'
+import json
+import os
+import shlex
+import shutil
+import sys
+import tempfile
+
+sys.path.insert(0, ".github/scripts")
+from wc_shell_harness import ensure_jq, find_step, resolve_bash, run_step, use_utf8_stdout  # noqa: E402
+
+use_utf8_stdout()
+ensure_jq()
+BASH = resolve_bash()
+WATCHDOG = ".github/workflows/watchdog.yml"
+STEP = "Collect: spec collision"
+SCRIPT = find_step(WATCHDOG, STEP)["run"]
+if "${{" in SCRIPT:
+    sys.exit(f"::error file={WATCHDOG}::verify-spec-collision-collector could not "
+             f"resolve every ${{{{ }}}} expression in {STEP!r}.")
+
+# `gh pr list --json number,headRefName` prints the JSON array itself; a
+# fail-list file makes the call fail the way an API error does.
+STUB_GH = r"""#!/usr/bin/env bash
+d=__FIXTURE_DIR__
+if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
+  [ -f "$d/fail-list" ] && { echo "HTTP 502" >&2; exit 1; }
+  cat "$d/pr-list.json"
+  exit 0
+fi
+echo "unexpected gh invocation: $*" >&2
+exit 1
+"""
+
+
+def run_case(*, prs=(), dirs=(), files=(), stage="intake", stage_source="name",
+             conclusion="success", slug="046-watchdog-supervision-collectors",
+             fail_list=False, draft_prefix="", spec_prefix=""):
+    tmp = tempfile.mkdtemp()
+    try:
+        workdir, runner_temp, bindir, fixtures = (os.path.join(tmp, d) for d in
+                                                   ("work", "rt", "bin", "fx"))
+        for d in (workdir, runner_temp, bindir, fixtures):
+            os.makedirs(d)
+        for name in dirs:
+            os.makedirs(os.path.join(workdir, "specs", name))
+        for name in files:
+            os.makedirs(os.path.join(workdir, "specs"), exist_ok=True)
+            open(os.path.join(workdir, "specs", name), "w").close()
+        with open(os.path.join(fixtures, "pr-list.json"), "w", encoding="utf-8") as fh:
+            json.dump([{"number": n, "headRefName": b} for n, b in prs], fh)
+        if fail_list:
+            open(os.path.join(fixtures, "fail-list"), "w").close()
+        with open(os.path.join(bindir, "gh"), "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(STUB_GH.replace("__FIXTURE_DIR__", shlex.quote(fixtures)))
+        os.chmod(os.path.join(bindir, "gh"), 0o755)
+        for name in ("signals.json", "collector-outcomes.json"):
+            with open(os.path.join(runner_temp, name), "w", encoding="utf-8") as fh:
+                fh.write("[]")
+        env = {"GITHUB_REPOSITORY": "charlesguse/wing-commander", "GH_TOKEN": "dummy",
+               "RESOLVED_STAGE": stage, "RESOLVED_STAGE_SOURCE": stage_source,
+               "RUN_CONCLUSION": conclusion, "SLUG": slug,
+               "SPEC_DRAFT_PREFIX": draft_prefix, "SPEC_PREFIX": spec_prefix,
+               "PATH": bindir + os.pathsep + os.environ["PATH"]}
+        rc, out, _outputs, _summary = run_step(BASH, SCRIPT, workdir, env, runner_temp)
+        with open(os.path.join(runner_temp, "signals.json"), encoding="utf-8") as fh:
+            signals = json.load(fh)
+        with open(os.path.join(runner_temp, "collector-outcomes.json"), encoding="utf-8") as fh:
+            outcomes = json.load(fh)
+        return rc, out, signals, outcomes
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+failures = []
+
+
+def check(tag, cond, detail):
+    if cond:
+        print(f"::notice::verify-spec-collision-collector: [executed: {tag}] ok")
+    else:
+        failures.append(tag)
+        print(f"::error::verify-spec-collision-collector: [executed: {tag}] {detail}")
+
+
+def claimants(signals):
+    return [c for s in signals if s.get("source") == "spec-collision"
+            for c in s["facts"]["claimants"]]
+
+
+def outcome(outcomes):
+    return [o["outcome"] for o in outcomes if o.get("collector") == "collect-spec-collision"]
+
+
+rc, out, sig, oc = run_case(prs=[(301, "spec-draft/046-watchdog-supervision-collectors"),
+                                 (305, "spec/046-a-different-feature"),
+                                 (312, "spec-draft/047-unrelated"),
+                                 (320, "feature/046-not-a-spec-branch")])
+check("two open PRs under the draft and spec prefixes collide, with no specs/ directory yet",
+      rc == 0 and sorted(c.get("pr") for c in claimants(sig)) == [301, 305]
+      and outcome(oc) == ["ok"],
+      f"rc={rc} signals={sig} outcomes={oc}\n{out}")
+
+rc, out, sig, oc = run_case(prs=[(301, "spec-draft/046-watchdog-supervision-collectors")],
+                            dirs=["046-old-landed-spec", "045-other", "notes"])
+check("an open PR and a specs/ directory on main collide",
+      rc == 0 and sorted(c["kind"] for c in claimants(sig)) == ["main-directory", "open-pr"]
+      and any(c.get("dir") == "specs/046-old-landed-spec" for c in claimants(sig))
+      and outcome(oc) == ["ok"],
+      f"rc={rc} signals={sig} outcomes={oc}\n{out}")
+
+rc, out, sig, oc = run_case(prs=[(301, "spec-draft/046-watchdog-supervision-collectors")],
+                            dirs=["046"], files=["046-notes.md"])
+check("a specs/ entry that is not a NNN-name directory is no claimant",
+      rc == 0 and sig == [] and outcome(oc) == ["ok"],
+      f"rc={rc} signals={sig} outcomes={oc}\n{out}")
+
+rc, out, sig, oc = run_case(prs=[])
+check("an empty PR list and no specs/ directory record ok and no signal (spec 046 FR-007)",
+      rc == 0 and sig == [] and outcome(oc) == ["ok"],
+      f"rc={rc} signals={sig} outcomes={oc}\n{out}")
+
+rc, out, sig, oc = run_case(slug="unnumbered-spec", prs=[(301, "spec-draft/046-a"),
+                                                         (305, "spec/046-b")])
+check("a slug with no three-digit number is skipped: no signal, no outcome",
+      rc == 0 and sig == [] and oc == [], f"rc={rc} signals={sig} outcomes={oc}\n{out}")
+
+rc, out, sig, oc = run_case(prs=[(301, "spec-draft/046-watchdog-supervision-collectors"),
+                                 (312, "spec-draft/047-unrelated")], dirs=["047-x"])
+check("distinct numbers produce no signal and an ok outcome",
+      rc == 0 and sig == [] and outcome(oc) == ["ok"], f"rc={rc} signals={sig} outcomes={oc}\n{out}")
+
+rc, out, sig, oc = run_case(prs=[(301, "drafts/046-a"), (305, "specs-live/046-b")],
+                            draft_prefix="drafts/", spec_prefix="specs-live/")
+check("configured branch prefixes are honoured",
+      rc == 0 and sorted(c.get("pr") for c in claimants(sig)) == [301, 305],
+      f"rc={rc} signals={sig}\n{out}")
+
+rc, out, sig, oc = run_case(fail_list=True, dirs=["046-a", "046-b"])
+check("a failed gh pr list records outcome failed and still reads specs/",
+      rc == 0 and outcome(oc) == ["failed"] and len(claimants(sig)) == 2,
+      f"rc={rc} signals={sig} outcomes={oc}\n{out}")
+
+rc, out, sig, oc = run_case(stage="plan", prs=[(301, "spec-draft/046-a"), (305, "spec/046-b")])
+check("a non-intake run is out of scope: no signal, no outcome",
+      rc == 0 and sig == [] and oc == [], f"rc={rc} signals={sig} outcomes={oc}\n{out}")
+
+rc, out, sig, oc = run_case(stage="", stage_source="", prs=[(301, "spec-draft/046-a"),
+                                                          (305, "spec/046-b")])
+check("an unidentified stage records outcome unresolved, no signal",
+      rc == 0 and sig == [] and outcome(oc) == ["unresolved"],
+      f"rc={rc} signals={sig} outcomes={oc}\n{out}")
+
+rc, out, sig, oc = run_case(conclusion="cancelled", prs=[(301, "spec-draft/046-a"),
+                                                        (305, "spec/046-b")])
+check("a cancelled run is skipped", rc == 0 and sig == [] and oc == [],
+      f"rc={rc} signals={sig} outcomes={oc}\n{out}")
+
+sys.exit(1 if failures else 0)
+PY
+then
+  reason "the shipped \"Collect: spec collision\" step misbehaved under execution (see the [executed: ...] errors above)"
 else
-  reason "cannot find $WATCHDOG_YML to verify the scope guard — run this from the repository root"
+  note "the shipped step, executed, enumerates claimants, records outcomes and keeps its scope guard"
 fi
 
 if [ "${#fail_reasons[@]}" -eq 0 ]; then

@@ -324,7 +324,24 @@ def suite_config(script, env, tmproot, source_root=REPO_ROOT):
 # --------------------------------------------------------------------------
 # Executed-step half: poll step's execution-evidence fragment (T012)
 # --------------------------------------------------------------------------
+# The stub holds REST-shaped responses -- `{"workflow_runs": [...]}`,
+# `{"jobs": [...]}`, what GitHub returns -- and reduces them with the
+# caller's own `--jq` program through real jq (#766). Pre-filtered output
+# never ran that program, so a wrong key in it (`.runs[]` for
+# `.workflow_runs[]`) passed. A `*_RAW` variable bypasses jq: gh output the
+# shipped code must itself refuse to parse. A jobs read for a run id with no
+# fixture fails the way GitHub's 404 does.
 STUB_GH_EXECUTION = r'''#!/usr/bin/env bash
+jq_prog=""
+prev=""
+for arg in "$@"; do
+  [ "$prev" = "--jq" ] && jq_prog="$arg"
+  prev="$arg"
+done
+emit() {
+  if [ -n "$2" ]; then printf '%s\n' "$2"; return 0; fi
+  if [ -n "$jq_prog" ]; then printf '%s' "$1" | jq -rc "$jq_prog"; else printf '%s' "$1"; fi
+}
 if [ "$1" = "api" ]; then
   case "$2" in
     repos/*/actions/runs\?*)
@@ -332,32 +349,24 @@ if [ "$1" = "api" ]; then
         echo "${GH_STUB_RUNS_ERR:-unexpected error}" >&2
         exit 1
       fi
-      printf '%s' "${GH_STUB_RUNS_JSON:-}"
-      exit 0
+      emit "${GH_STUB_RUNS_REST:-}" "${GH_STUB_RUNS_RAW:-}"
+      exit $?
       ;;
-    repos/*/actions/runs/111/jobs)
+    repos/*/actions/runs/*/jobs)
       if [ "${GH_STUB_JOBS_FAIL:-}" = "true" ]; then
         echo "${GH_STUB_JOBS_ERR:-unexpected error}" >&2
         exit 1
       fi
-      printf '%s\n' "${GH_STUB_JOBS_111:-}"
-      exit 0
-      ;;
-    repos/*/actions/runs/222/jobs)
-      if [ "${GH_STUB_JOBS_FAIL:-}" = "true" ]; then
-        echo "${GH_STUB_JOBS_ERR:-unexpected error}" >&2
+      id="${2#repos/*/actions/runs/}"
+      id="${id%/jobs}"
+      body_var="GH_STUB_JOBS_$id"
+      raw_var="GH_STUB_JOBS_RAW_$id"
+      if [ -z "${!body_var+x}" ] && [ -z "${!raw_var:-}" ]; then
+        echo "HTTP 404: no fixture for run $id" >&2
         exit 1
       fi
-      printf '%s\n' "${GH_STUB_JOBS_222:-}"
-      exit 0
-      ;;
-    repos/*/actions/runs/333/jobs)
-      if [ "${GH_STUB_JOBS_FAIL:-}" = "true" ]; then
-        echo "${GH_STUB_JOBS_ERR:-unexpected error}" >&2
-        exit 1
-      fi
-      printf '%s\n' "${GH_STUB_JOBS_333:-}"
-      exit 0
+      emit "${!body_var:-}" "${!raw_var:-}"
+      exit $?
       ;;
     *) echo "unexpected gh api invocation: $*" >&2; exit 1 ;;
   esac
@@ -365,6 +374,18 @@ fi
 echo "unexpected gh invocation: $*" >&2
 exit 1
 '''
+
+
+def runs_page(*runs):
+    """A REST `GET .../actions/runs` page for (id, path) pairs."""
+    return json.dumps({"total_count": len(runs),
+                       "workflow_runs": [{"id": i, "path": p} for i, p in runs]})
+
+
+def jobs_page(*jobs):
+    """A REST `GET .../actions/runs/{id}/jobs` page for JOB_* fixtures."""
+    return json.dumps({"total_count": len(jobs), "jobs": [json.loads(j) for j in jobs]})
+
 
 WRAPPER_PATH = ".github/workflows/wing-commander-5-implement.yml"
 
@@ -430,13 +451,12 @@ EXECUTION_BASE_ENV = dict(
     HARNESS_TOKEN="dummy-token", HARNESS_LOGIN="dummy-login",
     ISSUE="1", ISSUE_URL="https://example.invalid/issues/1",
     KICKOFF_TIME="2026-01-01T00:00:00Z",
-    # Newline-joined individual JSON objects, matching what `gh api
-    # --paginate --jq '.workflow_runs[] | {...}'` actually streams (one
-    # value per matched item, not one aggregate array) -- see JOB_*'s own
-    # multi-job fixtures below for the same shape.
-    GH_STUB_RUNS_JSON=json.dumps({"databaseId": 111, "path": WRAPPER_PATH}),
-    GH_STUB_JOBS_111=JOB_CONTAINERIZED, GH_STUB_JOBS_222="",
-    GH_STUB_JOBS_333="",
+    # REST pages; the stub streams what the shipped `--jq` program makes
+    # of them -- one value per matched item, as a paginated read through
+    # `--jq '.workflow_runs[] | {...}'` does.
+    GH_STUB_RUNS_REST=runs_page((111, WRAPPER_PATH)), GH_STUB_RUNS_RAW="",
+    GH_STUB_JOBS_111=jobs_page(JOB_CONTAINERIZED),
+    GH_STUB_JOBS_RAW_111="",
     GH_STUB_RUNS_FAIL="", GH_STUB_RUNS_ERR="",
     GH_STUB_JOBS_FAIL="", GH_STUB_JOBS_ERR="",
 )
@@ -449,7 +469,7 @@ EXECUTION_SCENARIOS = [
     ),
     dict(
         name="FR-005(iv) a stage job did not execute inside a container",
-        env=dict(GH_STUB_JOBS_111=JOB_NOT_CONTAINERIZED),
+        env=dict(GH_STUB_JOBS_111=jobs_page(JOB_NOT_CONTAINERIZED)),
         reached_pass=False,
         failing_check="container image configured but stage jobs did not execute inside a container",
     ),
@@ -488,21 +508,20 @@ EXECUTION_SCENARIOS = [
     # it pollute the enumeration.
     dict(
         name="MF(PR#628) a skipped conditional job (e.g. stalled) present: still reaches pass",
-        env=dict(GH_STUB_JOBS_111="\n".join([JOB_CONTAINERIZED, JOB_SKIPPED])),
+        env=dict(GH_STUB_JOBS_111=jobs_page(JOB_CONTAINERIZED, JOB_SKIPPED)),
         reached_pass=True,
     ),
     dict(
         name="MF(PR#628) the host-side verify-image-prerequisites job present: still reaches pass",
-        env=dict(GH_STUB_JOBS_111="\n".join(
-            [JOB_CONTAINERIZED, JOB_VERIFY_IMAGE_PREREQUISITES])),
+        env=dict(GH_STUB_JOBS_111=jobs_page(
+            JOB_CONTAINERIZED, JOB_VERIFY_IMAGE_PREREQUISITES)),
         reached_pass=True,
     ),
     dict(
         name="MF(PR#628) an unrelated workflow run created after kickoff_time: excluded, still reaches pass",
-        env=dict(GH_STUB_RUNS_JSON="\n".join([
-            json.dumps({"databaseId": 111, "path": WRAPPER_PATH}),
-            json.dumps({"databaseId": 333, "path": ".github/workflows/unrelated.yml"}),
-        ]), GH_STUB_JOBS_333=JOB_NOT_CONTAINERIZED),
+        env=dict(GH_STUB_RUNS_REST=runs_page(
+            (111, WRAPPER_PATH), (333, ".github/workflows/unrelated.yml")),
+            GH_STUB_JOBS_333=jobs_page(JOB_NOT_CONTAINERIZED)),
         reached_pass=True,
     ),
     # Maintainer review of #509: the job-name exclusion used exact matching,
@@ -515,33 +534,33 @@ EXECUTION_SCENARIOS = [
     # exclusion list are in place.
     dict(
         name="MR(#509) the reusable-workflow-shaped verify-image-prerequisites job ('implement / verify-image-prerequisites') present: still reaches pass",
-        env=dict(GH_STUB_JOBS_111="\n".join(
-            [JOB_CONTAINERIZED, JOB_VERIFY_IMAGE_PREREQUISITES])),
+        env=dict(GH_STUB_JOBS_111=jobs_page(
+            JOB_CONTAINERIZED, JOB_VERIFY_IMAGE_PREREQUISITES)),
         reached_pass=True,
     ),
     dict(
         name="MR(#509) the resolve-model wrapper job present: still reaches pass",
-        env=dict(GH_STUB_JOBS_111="\n".join([JOB_CONTAINERIZED, JOB_RESOLVE_MODEL])),
+        env=dict(GH_STUB_JOBS_111=jobs_page(JOB_CONTAINERIZED, JOB_RESOLVE_MODEL)),
         reached_pass=True,
     ),
     dict(
         name="MR(#509) the sweep wrapper job present: still reaches pass",
-        env=dict(GH_STUB_JOBS_111="\n".join([JOB_CONTAINERIZED, JOB_SWEEP])),
+        env=dict(GH_STUB_JOBS_111=jobs_page(JOB_CONTAINERIZED, JOB_SWEEP)),
         reached_pass=True,
     ),
     dict(
         name="MR(#509) the redispatch wrapper job present: still reaches pass",
-        env=dict(GH_STUB_JOBS_111="\n".join([JOB_CONTAINERIZED, JOB_REDISPATCH])),
+        env=dict(GH_STUB_JOBS_111=jobs_page(JOB_CONTAINERIZED, JOB_REDISPATCH)),
         reached_pass=True,
     ),
     dict(
         name="MR(#509) a queued job (steps: [], conclusion: null) present: still reaches pass",
-        env=dict(GH_STUB_JOBS_111="\n".join([JOB_CONTAINERIZED, JOB_QUEUED])),
+        env=dict(GH_STUB_JOBS_111=jobs_page(JOB_CONTAINERIZED, JOB_QUEUED)),
         reached_pass=True,
     ),
     dict(
         name="MR(#509) a job cancelled by a concurrency group present: still reaches pass",
-        env=dict(GH_STUB_JOBS_111="\n".join([JOB_CONTAINERIZED, JOB_CANCELLED])),
+        env=dict(GH_STUB_JOBS_111=jobs_page(JOB_CONTAINERIZED, JOB_CANCELLED)),
         reached_pass=True,
     ),
     # Maintainer review of #509's fail-open finding: zero containerized jobs
@@ -550,26 +569,38 @@ EXECUTION_SCENARIOS = [
     # carry NO positive evidence that anything ran in a container.
     dict(
         name="MR(#509) an empty run list observed: fails rather than passing on no evidence",
-        env=dict(GH_STUB_RUNS_JSON=""),
+        env=dict(GH_STUB_RUNS_REST=runs_page()),
         reached_pass=False,
         failing_check="container image configured but stage jobs did not execute inside a container",
     ),
     dict(
         name="MR(#509) every job in the run is excluded: fails rather than passing on no evidence",
-        env=dict(GH_STUB_JOBS_111="\n".join(
-            [JOB_VERIFY_IMAGE_PREREQUISITES, JOB_RESOLVE_MODEL, JOB_SWEEP, JOB_REDISPATCH])),
+        env=dict(GH_STUB_JOBS_111=jobs_page(
+            JOB_VERIFY_IMAGE_PREREQUISITES, JOB_RESOLVE_MODEL, JOB_SWEEP, JOB_REDISPATCH)),
         reached_pass=False,
         failing_check="container image configured but stage jobs did not execute inside a container",
     ),
     dict(
         name="MR(#509) the run list does not parse: unreadable, not an empty run list",
-        env=dict(GH_STUB_RUNS_JSON="{not json"),
+        env=dict(GH_STUB_RUNS_RAW="{not json"),
         reached_pass=False,
         failing_check="container-mode evidence unreadable",
     ),
     dict(
         name="MR(#509) a run's job data does not parse: unreadable, not an empty job list",
-        env=dict(GH_STUB_JOBS_111="{garbled"),
+        env=dict(GH_STUB_JOBS_RAW_111="{garbled"),
+        reached_pass=False,
+        failing_check="container-mode evidence unreadable",
+    ),
+    dict(
+        name="#766 a stage run's jobs read 404s: unreadable, not 'not containerized'",
+        env=dict(GH_STUB_RUNS_REST=runs_page((111, WRAPPER_PATH), (444, WRAPPER_PATH))),
+        reached_pass=False,
+        failing_check="container-mode evidence unreadable",
+    ),
+    dict(
+        name="#766 the REST run list does not parse: gh --jq fails, unreadable",
+        env=dict(GH_STUB_RUNS_REST="{not json"),
         reached_pass=False,
         failing_check="container-mode evidence unreadable",
     ),
@@ -646,19 +677,10 @@ def mut_config_drift_ignored(text):
 
 
 def mut_execution_gate_removed_in_workflow(text):
-    old = FRAGMENT_START_MARKER
-    if text.count(old) != 1:
-        fail(f"verify-gate-106: expected exactly one {old!r} marker in "
-             f"{WORKFLOW}, found {text.count(old)}.")
-    start = text.index(old)
-    end = text.index(FRAGMENT_END_MARKER, start)
-    fragment = text[start:end]
-    needle = 'if [ -n "$failing_check" ]; then'
-    if fragment.count(needle) != 1:
-        fail("verify-gate-106: could not locate the execution fragment's "
-             "failing_check branch to mutate -- update this gate alongside it.")
-    mutated_fragment = fragment.replace(needle, 'if false; then', 1)
-    return text[:start] + mutated_fragment + text[end:]
+    if text.count(FRAGMENT_START_MARKER) != 1:
+        fail(f"verify-gate-106: expected exactly one {FRAGMENT_START_MARKER!r} "
+             f"marker in {WORKFLOW}, found {text.count(FRAGMENT_START_MARKER)}.")
+    return _mut_fragment_text(text, 'if [ -n "$failing_check" ]; then', 'if false; then')
 
 
 def mut_cleanup_guard_loosened(text):
@@ -680,7 +702,32 @@ def mut_cleanup_guard_loosened(text):
         1)
 
 
+def _mut_fragment_text(text, old, new):
+    start = text.index(FRAGMENT_START_MARKER)
+    end = text.index(FRAGMENT_END_MARKER, start)
+    fragment = text[start:end]
+    if fragment.count(old) != 1:
+        fail(f"verify-gate-106: expected exactly one {old!r} in the execution "
+             f"fragment to mutate, found {fragment.count(old)} -- update this "
+             f"gate alongside it.")
+    return text[:start] + fragment.replace(old, new, 1) + text[end:]
+
+
+def mut_runs_jq_wrong_key(text):
+    """#766: a wrong top-level key in the run-list --jq program."""
+    return _mut_fragment_text(text, "--jq '.workflow_runs[] |", "--jq '.runs[] |")
+
+
+def mut_jobs_jq_wrong_key(text):
+    """#766: a wrong top-level key in the jobs --jq program."""
+    return _mut_fragment_text(text, "--jq '.jobs[]'", "--jq '.job[]'")
+
+
 WORKFLOW_MUTATIONS = [
+    ("the run-list --jq reads .runs[] instead of .workflow_runs[] (#766)",
+     mut_runs_jq_wrong_key),
+    ("the jobs --jq reads .job[] instead of .jobs[] (#766)",
+     mut_jobs_jq_wrong_key),
     ("the execution-evidence fragment's failing_check branch removed "
      "(a non-containerized stage job would reach pass)",
      mut_execution_gate_removed_in_workflow),

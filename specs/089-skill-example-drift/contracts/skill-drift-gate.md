@@ -81,11 +81,11 @@ names the file that actually disagrees:
 
 ```
 ::error::verify-skill-board-loop-concurrency-claim: <property> for job
-'<job>' — SKILL.md (.claude/skills/spec-cross-reference/SKILL.md:<line>)
+'<job>' -- SKILL.md (.claude/skills/spec-cross-reference/SKILL.md:<line>)
 claims <expected>; board-loop.yml (.github/workflows/board-loop.yml:<line>)
-has <actual>. Waive with a skill-example-drift-waivers.json entry
-{"property": "<property>", "job": "<job>"} naming a tracking issue, or fix
-the drift.
+has <actual>. Waive with a skill-example-drift-waivers.json entry naming
+property "<property>" and job "<job>", and a tracking issue, or fix the
+drift.
 ```
 
 `ordinary-group-name-mismatch`/`directed-group-name-mismatch` set
@@ -96,6 +96,21 @@ those two properties instead. A `subject-missing` finding for a SKILL.md-
 internal problem (a missing anchor, backtick token, queuing word, or script
 pointer) sets both locations to SKILL.md itself, since the disagreement
 never involves `board-loop.yml` at all.
+
+Nothing *claims* a missing subject — it is what the gate needs in order to
+compare at all — so `subject-missing` has its own shape (code review of
+#813):
+
+```
+::error::verify-skill-board-loop-concurrency-claim: subject-missing -- this
+gate reads <file> (<path>[:<line>]) and needs <what is needed>; it found
+<what was there>. Restore it, or update this gate in the same change.
+```
+
+An `[ok]` line, and a stale-waiver line's "now that the skill and <file>
+agree again", name the file that property is compared against:
+`concurrency-groups.md` for the two group-name properties, `board-loop.yml`
+for the rest.
 
 A stale-waiver failure names the entry's location in the JSON file and
 states which property no longer diverges.

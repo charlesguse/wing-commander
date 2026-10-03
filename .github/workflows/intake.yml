@@ -981,7 +981,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 90
 
-      # (canonical copy; do not condense)
+      # (canonical copy: metrics-summary; do not condense)
       # Surface this run's own metrics (model, turns/budget, duration, tokens,
       # cost) in the run summary so tuning signals are legible without
       # downloading the artifact above. Pure read of that same transcript.
