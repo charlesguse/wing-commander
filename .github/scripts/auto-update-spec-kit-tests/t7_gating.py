@@ -57,8 +57,15 @@ def evaluate(expr, ctx):
     """Whether an `if:` lets its job or step run, by wc_gha_expr."""
     if not expr:
         return True  # no `if:` == runs (subject to needs succeeding)
+    # `known`: a reference outside these contexts fails loud, as the
+    # retired eval's NameError did, never a guessed "" (code review of
+    # #954, round 14).
     return gha_evaluate_if(
-        expr, _Ctx(ctx, **{"always()": True, "cancelled()": False}))
+        expr, _Ctx(ctx, **{"always()": True, "cancelled()": False}),
+        known=_KNOWN)
+
+
+_KNOWN = ("inputs.", "needs.", "vars.", "steps.", "github.")
 
 
 def lookup(ref, ctx):

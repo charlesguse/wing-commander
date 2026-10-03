@@ -249,13 +249,16 @@ class Parser:
         self.take(")")
         fn = FUNCS.get(name.lower())
         if fn is not None:
-            if self.skip:
-                return None
+            # Arity before the short-circuit skip: GitHub rejects a
+            # bad-arity call when it parses the expression, on a side it
+            # never evaluates too (code review of #954, round 14).
             try:
                 inspect.signature(fn).bind(*args)
             except TypeError:
                 raise ValueError(f"{name}() called with {len(args)} "
                                  f"argument(s)") from None
+            if self.skip:
+                return None
             return fn(*args)
         key = f"{name.lower()}()"
         if key in self.ctx:
@@ -329,7 +332,9 @@ if __name__ == "__main__":
                        ("true || env.X", ("steps.",)),
                        ("false && nope()", None),
                        # A bad-arity call is a ValueError, never a TypeError.
-                       ("startsWith(a)", None), ("fromJSON()", None)):
+                       ("startsWith(a)", None), ("fromJSON()", None),
+                       ("false && startsWith(a)", None),
+                       ("true || fromJSON()", None)):
         try:
             evaluate(bad, {}, known)
         except ValueError:
