@@ -774,7 +774,9 @@ def check_job_full_subject(path, job_name, job):
         # window is never attributed to the credential. A job that never
         # refreshes a remote (NO_REMOTE_REFRESH_JOBS) may omit the input;
         # when it passes one (e2e-stage's scratch-token re-mint), every
-        # step it names must sit in this window.
+        # step it names must sit in this window, and a value naming no step
+        # (a literal 'skipped') passes as omitting it would (code review
+        # of #951).
         window_ids = {str((s or {}).get("id")) for s in between if (s or {}).get("id")}
         if (path, job_name) in NO_REMOTE_REFRESH_JOBS:
             refresh_ids, required = window_ids, False
@@ -807,7 +809,7 @@ def check_job_full_subject(path, job_name, job):
                         f"failed refresh of this agent step's remote is "
                         f"never attributed to the credential (FR-004; "
                         f"check 11)")
-            elif not named or not named <= allowed or (required and not named & allowed):
+            elif not named <= allowed or (required and not named & allowed):
                 failures.append(
                     f"{path} [{job_name}]: credential-status call "
                     f"{call_name!r} for agent step {agent_name!r} passes "
@@ -1510,6 +1512,16 @@ def mut_upper_case_step_references(loaded):
     step["with"]["refresh-outcome"] = "${{ Steps['Refresh-Remote'].outcome }}"
 
 
+def mut_e2e_refresh_outcome_literal(loaded):
+    """NEGATIVE control (code review of #951): a NO_REMOTE_REFRESH_JOBS job
+    may omit refresh-outcome, so a value naming no step at all (a literal
+    'skipped') must pass check 11 just as omitting it does."""
+    job = loaded[".github/workflows/auto-update-spec-kit.yml"]["jobs"]["e2e-stage"]
+    step = _find_step(job, "Determine post-agent credential status")
+    assert step is not None, "fixture assumption broken: step renamed"
+    step["with"]["refresh-outcome"] = "skipped"
+
+
 def mut_exempt_job_deleted(loaded):
     """#735: an EXEMPT_JOBS entry naming a job that no longer exists must
     fail. Deleting auto-update-spec-kit.yml's evaluate-path job (not a
@@ -1703,6 +1715,18 @@ def self_test():
     else:
         print("Mutation OK (negative control) -- upper-case step references "
               "are recognised: 0 assertion(s) fail.")
+
+    mutated = copy.deepcopy(base)
+    mut_e2e_refresh_outcome_literal(mutated)
+    broke = scan(mutated)
+    if broke:
+        problems.append(
+            "a NO_REMOTE_REFRESH_JOBS refresh-outcome naming no step "
+            "('skipped') was flagged -- expected 0 assertions, got: "
+            f"{'; '.join(broke)}")
+    else:
+        print("Mutation OK (negative control) -- a literal refresh-outcome "
+              "in a NO_REMOTE_REFRESH_JOBS job passes: 0 assertion(s) fail.")
 
     # Negative control: unlike SIMPLE_MUTATIONS, this mutation must NOT
     # break the gate (#439 review) -- it proves the toJSON(steps.<id>)

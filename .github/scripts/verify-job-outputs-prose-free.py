@@ -55,7 +55,9 @@ A step is prose-tainted when any of these hold:
   (e) it is an `actions/download-artifact` step whose `with.name` matches an
       artifact an `actions/upload-artifact` step in a prose-tainted step of
       the same file uploaded, in any job of the file. A `${{ ... }}` in
-      either name is a wildcard, as is a `pattern:` glob; a download with
+      either name is a wildcard, as is a `pattern:` glob (a whole `[...]`,
+      `{...}` or extglob group is one wildcard; a leading `!` negation
+      matches any tainted upload); a download with
       no `name:` (every artifact) or with `artifact-ids:` matches any
       tainted upload.
 
@@ -255,11 +257,14 @@ def composite_declares_prose(uses, root="."):
 # Rule (e) on a name that is not one literal string. `${{ ... }}` (a matrix
 # index, strategy.job-index) is unknown until the run, so it reads as a
 # wildcard that can stand for any text; so does a download `pattern:` glob
-# metacharacter. A tainted upload and a download whose names can denote the
+# metacharacter. A whole `[...]` class, `{...}` brace set or `?(...)`-style
+# extglob group is one wildcard, not letters that must appear literally, and
+# a leading `!` negates the pattern, so it reads every artifact (code review
+# of #951). A tainted upload and a download whose names can denote the
 # same string share taint. This over-taints rather than letting an
 # expression name carry prose past the gate unseen (code review of #943).
 EXPR = re.compile(r"\$\{\{.*?\}\}", re.DOTALL)
-GLOB_META = re.compile(r"[*?\[\]{}!]")
+GLOB_META = re.compile(r"[?*+@!]?\([^)]*\)?|\[[^\]]*\]?|\{[^}]*\}?|[*?\]}]")
 # actions/upload-artifact's own default when `with.name` is absent.
 DEFAULT_ARTIFACT_NAME = "artifact"
 
@@ -317,6 +322,8 @@ def _download_reads_tainted(step, tainted_artifacts):
     elif w.get("artifact-ids"):
         return True
     elif w.get("pattern"):
+        if str(w["pattern"]).lstrip().startswith("!"):
+            return True  # a negated glob selects everything it does not exclude.
         want = _name_template(str(w["pattern"]), glob=True)
     else:
         return True
@@ -757,6 +764,15 @@ FIXTURE_ARTIFACT_EXPR_DISJOINT = _artifact_fixture(
     _UP_MATRIX, "          name: decisions-${{ matrix.index }}\n")
 FIXTURE_ARTIFACT_PATTERN = _artifact_fixture(
     _UP_MATRIX, "          pattern: findings-*\n")
+# A class, brace set or negation is one wildcard, not literal letters
+# (code review of #951); each of these fetches the upload `findings-3`.
+FIXTURE_ARTIFACT_GLOBS = [
+    _artifact_fixture("          name: findings-3\n",
+                      f"          pattern: {pat!r}\n")
+    for pat in ("findings-[0-9]", "findings-{3,4}",
+                "{findings,decisions}-*", "!decisions")]
+FIXTURE_ARTIFACT_GLOB_DISJOINT = _artifact_fixture(
+    "          name: findings-3\n", "          pattern: 'decisions-[0-9]'\n")
 FIXTURE_ARTIFACT_ALL = _artifact_fixture(_UP_MATRIX, "")
 FIXTURE_ARTIFACT_IDS = _artifact_fixture(
     _UP_MATRIX, "          artifact-ids: ${{ inputs.ids }}\n")
@@ -860,6 +876,11 @@ def self_test():
            FIXTURE_ARTIFACT_EXPR_DISJOINT, False)
     expect("download by a pattern: glob over a tainted upload",
            FIXTURE_ARTIFACT_PATTERN, True, "prose-tainted")
+    for fixture in FIXTURE_ARTIFACT_GLOBS:
+        expect("download by a class/brace/negated pattern: glob",
+               fixture, True, "prose-tainted")
+    expect("pattern: glob whose literal parts cannot meet the upload",
+           FIXTURE_ARTIFACT_GLOB_DISJOINT, False)
     expect("download with no name (every artifact of the run)",
            FIXTURE_ARTIFACT_ALL, True, "prose-tainted")
     expect("download by artifact-ids",
@@ -932,7 +953,7 @@ def self_test():
 
     for f in failures:
         print(f"::error::self-test: {f}")
-    print(f"Gate 49 self-test: 19 fixture(s), {len(mutations)} subject "
+    print(f"Gate 49 self-test: 24 fixture(s), {len(mutations)} subject "
           f"mutation(s), 1 twin-step subject; {len(failures)} failure(s).")
     return 1 if failures else 0
 
