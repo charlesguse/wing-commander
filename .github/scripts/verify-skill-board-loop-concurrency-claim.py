@@ -154,7 +154,7 @@ def extract_skill_claim(text, path):
         return None, DriftFinding(
             property="subject-missing", job=None,
             skill_location=(path, line_no), workflow_location=(path, line_no),
-            expected="; ".join(missing),
+            expected=", ".join(missing),
             actual="the Over-rated paragraph starting at {0}:{1} without {2}".format(
                 rel_path, line_no, "it" if len(missing) == 1 else "them"))
 
@@ -499,7 +499,7 @@ def evaluate():
                 skill_location=(SKILL_MD, None),
                 workflow_location=(CONCURRENCY_GROUPS_MD, None),
                 expected="a non-empty 'Groups, per job' table",
-                actual="no classification rows found"))
+                actual="no classification rows"))
 
     if not os.path.isfile(BOARD_LOOP_YML):
         findings.append(DriftFinding(
@@ -513,7 +513,7 @@ def evaluate():
             findings.append(DriftFinding(
                 property="subject-missing", job=None,
                 skill_location=(SKILL_MD, None), workflow_location=(BOARD_LOOP_YML, None),
-                expected="a readable jobs: map", actual="no jobs found"))
+                expected="a readable jobs: map", actual="no jobs"))
 
     ok_properties = []
     all_properties = (
@@ -1017,6 +1017,18 @@ def run_selftest():
           renamed_directed_message is not None
           and "concurrency-groups.md (" in renamed_directed_message
           and "board-loop.yml (" not in renamed_directed_message)
+
+    # Code review of #945: the [ok] and stale-waiver lines name each
+    # property's own source file, not board-loop.yml for all of them.
+    check("an [ok] line for a group-name property names concurrency-groups.md",
+          property_source_label("ordinary-group-name-mismatch") == "concurrency-groups.md"
+          and property_source_label("directed-group-name-mismatch") == "concurrency-groups.md"
+          and property_source_label("job-range-mismatch") == "board-loop.yml")
+    stale_line = format_stale_waiver(WaiverEntry(
+        index=0, property="ordinary-group-name-mismatch", job=None, issue="#1",
+        permanent=None, reason=None))
+    check("a stale group-name waiver says the skill and concurrency-groups.md agree again",
+          "the skill and concurrency-groups.md agree again" in stale_line)
 
     total = len(failures)
     print("verify-skill-board-loop-concurrency-claim --self-test: {0} failure(s).".format(total))

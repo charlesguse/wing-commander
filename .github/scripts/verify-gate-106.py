@@ -360,6 +360,10 @@ if [ "$1" = "api" ]; then
       id="${id%/jobs}"
       body_var="GH_STUB_JOBS_$id"
       raw_var="GH_STUB_JOBS_RAW_$id"
+      if [ -z "${!body_var+x}" ] && [ -z "${!raw_var:-}" ]; then
+        echo "HTTP 404: no fixture for run $id" >&2
+        exit 1
+      fi
       emit "${!body_var:-}" "${!raw_var:-}"
       exit $?
       ;;
@@ -666,19 +670,10 @@ def mut_config_drift_ignored(text):
 
 
 def mut_execution_gate_removed_in_workflow(text):
-    old = FRAGMENT_START_MARKER
-    if text.count(old) != 1:
-        fail(f"verify-gate-106: expected exactly one {old!r} marker in "
-             f"{WORKFLOW}, found {text.count(old)}.")
-    start = text.index(old)
-    end = text.index(FRAGMENT_END_MARKER, start)
-    fragment = text[start:end]
-    needle = 'if [ -n "$failing_check" ]; then'
-    if fragment.count(needle) != 1:
-        fail("verify-gate-106: could not locate the execution fragment's "
-             "failing_check branch to mutate -- update this gate alongside it.")
-    mutated_fragment = fragment.replace(needle, 'if false; then', 1)
-    return text[:start] + mutated_fragment + text[end:]
+    if text.count(FRAGMENT_START_MARKER) != 1:
+        fail(f"verify-gate-106: expected exactly one {FRAGMENT_START_MARKER!r} "
+             f"marker in {WORKFLOW}, found {text.count(FRAGMENT_START_MARKER)}.")
+    return _mut_fragment_text(text, 'if [ -n "$failing_check" ]; then', 'if false; then')
 
 
 def mut_cleanup_guard_loosened(text):

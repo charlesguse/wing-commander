@@ -23,8 +23,9 @@ WHAT IT CHECKS, over `#` comments in .github/workflows/*.yml
     it points nowhere, and test (b) below would pass it trivially because
     a file's comments always share vocabulary with themselves. A `-- see`
     written inside quotes (`"-- see clarify.yml."`) is a canonical block
-    QUOTING the pointer form its siblings use, not a pointer, and is not
-    scanned.
+    QUOTING the pointer form its siblings use, not a pointer: only a file
+    named inside the quotes is checked to exist, and it never counts as a
+    self-pointer, a topic to test, or a pointer justifying a marker (c).
 
 (b) EVERY CROSS-FILE POINTER'S TOPIC SHOWS UP AT THE TARGET. Resolving a
     path proves the file exists, not that the pointer aims at the right
@@ -262,6 +263,12 @@ def extract_pointers(root, path):
             quoted = m.start() > 0 and joined[m.start() - 1] in QUOTE_CHARS
             prefix = joined[:m.start()]
             suffix = joined[m.end():]
+            if quoted:
+                # Only the quoted span: a filename later in the same block
+                # is prose about something else, and a placeholder
+                # (`-- see FILE`) names nothing (code review of #945).
+                close = suffix.find(joined[m.start() - 1])
+                suffix = suffix[:close] if close != -1 else ""
             tm = TARGET_RE.search(suffix)
             target = tm.group(1) if tm else None
             rec = {
@@ -297,6 +304,7 @@ def extract_aux_pointers(root, path):
                     "prefix": _local_topic(prefix),
                     "target": target,
                     "target_path": target_path,
+                    "text": m.group(0),
                 })
     return out
 
@@ -382,7 +390,7 @@ def check_pointers(root):
             if (os.path.normcase(os.path.abspath(p["target_path"]))
                     == os.path.normcase(os.path.abspath(p["file"]))):
                 violations.append(
-                    f"{p['file']}:{p['line']}: pointer '(see {p['target']})' "
+                    f"{p['file']}:{p['line']}: pointer '{p['text']}' "
                     f"names its own file -- a self-pointer resolves to "
                     f"nothing; drop it, or point at the real canonical copy")
     return violations, count
@@ -396,7 +404,8 @@ def check_canonical_markers(root):
     files = workflow_files(root)
     all_pointers = []
     for path in files:
-        all_pointers.extend(extract_pointers(root, path))
+        # A quoted example is not a pointer, so it never justifies a marker.
+        all_pointers.extend(p for p in extract_pointers(root, path) if not p["quoted"])
         all_pointers.extend(extract_aux_pointers(root, path))
 
     violations = []
@@ -619,10 +628,10 @@ def self_test():
               any("self-point.yml:7" in v and "names its own file" in v
                   for v in p),
               f"got {p!r}")
-        check("quoted '-- see' example is not scanned as a pointer",
+        check("quoted '-- see' example is not treated as a self-pointer",
               not any("self-point.yml:5" in v for v in p),
               f"got {p!r}")
-        check("backtick-quoted '-- see' example is not scanned as a pointer",
+        check("backtick-quoted '-- see' example is not treated as a self-pointer",
               not any("self-point.yml:9" in v for v in p),
               f"got {p!r}")
         os.remove(os.path.join(wf, "self-point.yml"))
@@ -756,6 +765,37 @@ def self_test():
         check("an aux '(see X.yml)' pointer naming its own file fails (a)",
               any("extras.yml:11:" in v and "names its own file" in v for v in p),
               f"got {p!r}")
+
+        os.remove(os.path.join(wf, "extras.yml"))
+
+        # Code review of #945: a quoted example is not a pointer, so it
+        # never justifies a canonical marker (c); and a quoted example's
+        # target is looked for only inside its quotes, so a placeholder
+        # followed later by an unrelated filename is not a missing file.
+        _write(os.path.join(wf, "canon.yml"), (
+            "on: push\n"
+            "jobs:\n"
+            "  a:\n"
+            "    steps:\n"
+            "      # (canonical copy: subagent-sync; do not condense)\n"
+            "      # Force subagents synchronous -- headless has no resume.\n"
+            "      - run: echo canonical\n"))
+        write_register(("canon.yml", "subagent-sync"))
+        _write(os.path.join(wf, "good.yml"), (
+            "on: push\n"
+            "jobs:\n"
+            "  a:\n"
+            "    steps:\n"
+            "      # Siblings describe synchronous subagents with \"-- see canon.yml.\" here.\n"
+            "      # Every `-- see FILE` pointer must name a real file; the shared logic\n"
+            "      # itself lives in each composite's action.yml.\n"
+            "      - run: echo quoted-only\n"))
+        c, _ = check_canonical_markers(td)
+        check("a quoted '-- see' example does not justify a canonical marker",
+              any("canon.yml" in v for v in c), f"got {c!r}")
+        p, _ = check_pointers(td)
+        check("a quoted placeholder is not read as naming a later filename",
+              not any("action.yml" in v for v in p), f"got {p!r}")
 
     print(f"{failures} failure(s).")
     return 1 if failures else 0

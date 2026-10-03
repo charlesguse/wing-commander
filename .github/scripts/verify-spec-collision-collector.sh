@@ -117,9 +117,13 @@ exit 1
 """
 
 
-def run_case(*, prs=(), dirs=(), stage="intake", stage_source="name", conclusion="success",
-             slug="046-watchdog-supervision-collectors", fail_list=False,
-             draft_prefix="", spec_prefix=""):
+def shell_quote(s):
+    return "'" + s.replace("'", "'\\''") + "'"
+
+
+def run_case(*, prs=(), dirs=(), files=(), stage="intake", stage_source="name",
+             conclusion="success", slug="046-watchdog-supervision-collectors",
+             fail_list=False, draft_prefix="", spec_prefix=""):
     tmp = tempfile.mkdtemp()
     try:
         workdir, runner_temp, bindir, fixtures = (os.path.join(tmp, d) for d in
@@ -128,12 +132,15 @@ def run_case(*, prs=(), dirs=(), stage="intake", stage_source="name", conclusion
             os.makedirs(d)
         for name in dirs:
             os.makedirs(os.path.join(workdir, "specs", name))
+        for name in files:
+            os.makedirs(os.path.join(workdir, "specs"), exist_ok=True)
+            open(os.path.join(workdir, "specs", name), "w").close()
         with open(os.path.join(fixtures, "pr-list.json"), "w", encoding="utf-8") as fh:
             json.dump([{"number": n, "headRefName": b} for n, b in prs], fh)
         if fail_list:
             open(os.path.join(fixtures, "fail-list"), "w").close()
         with open(os.path.join(bindir, "gh"), "w", encoding="utf-8", newline="\n") as fh:
-            fh.write(STUB_GH.replace("__FIXTURE_DIR__", "'" + fixtures + "'"))
+            fh.write(STUB_GH.replace("__FIXTURE_DIR__", shell_quote(fixtures)))
         os.chmod(os.path.join(bindir, "gh"), 0o755)
         for name in ("signals.json", "collector-outcomes.json"):
             with open(os.path.join(runner_temp, name), "w", encoding="utf-8") as fh:
@@ -186,8 +193,25 @@ rc, out, sig, oc = run_case(prs=[(301, "spec-draft/046-watchdog-supervision-coll
                             dirs=["046-old-landed-spec", "045-other", "notes"])
 check("an open PR and a specs/ directory on main collide",
       rc == 0 and sorted(c["kind"] for c in claimants(sig)) == ["main-directory", "open-pr"]
-      and any(c.get("dir") == "specs/046-old-landed-spec" for c in claimants(sig)),
-      f"rc={rc} signals={sig}\n{out}")
+      and any(c.get("dir") == "specs/046-old-landed-spec" for c in claimants(sig))
+      and outcome(oc) == ["ok"],
+      f"rc={rc} signals={sig} outcomes={oc}\n{out}")
+
+rc, out, sig, oc = run_case(prs=[(301, "spec-draft/046-watchdog-supervision-collectors")],
+                            dirs=["046"], files=["046-notes.md"])
+check("a specs/ entry that is not a NNN-name directory is no claimant",
+      rc == 0 and sig == [] and outcome(oc) == ["ok"],
+      f"rc={rc} signals={sig} outcomes={oc}\n{out}")
+
+rc, out, sig, oc = run_case(prs=[])
+check("an empty PR list and no specs/ directory record ok and no signal (spec 046 FR-007)",
+      rc == 0 and sig == [] and outcome(oc) == ["ok"],
+      f"rc={rc} signals={sig} outcomes={oc}\n{out}")
+
+rc, out, sig, oc = run_case(slug="unnumbered-spec", prs=[(301, "spec-draft/046-a"),
+                                                         (305, "spec/046-b")])
+check("a slug with no three-digit number is skipped: no signal, no outcome",
+      rc == 0 and sig == [] and oc == [], f"rc={rc} signals={sig} outcomes={oc}\n{out}")
 
 rc, out, sig, oc = run_case(prs=[(301, "spec-draft/046-watchdog-supervision-collectors"),
                                  (312, "spec-draft/047-unrelated")], dirs=["047-x"])
