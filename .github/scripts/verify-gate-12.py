@@ -475,6 +475,21 @@ CASES = [
             ["gh api --jq '.id' -X GET"]),
      True, ("gh api", "SUBCOMMAND_PERMS")),
 
+    ("... a line continuation is whitespace, never the PATH: `gh api -X "
+     "GET \\` with PATH on the next line resolves it (.../actions/... "
+     "under github.token with only issues:read fails, naming actions)",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ["gh api -X GET \\",
+             '  "repos/${GITHUB_REPOSITORY}/actions/workflows/w.yml/runs" --jq .total_count']),
+     True, ("actions", "read")),
+
+    ("... and the flags never reach past the end of the line: a `gh api` "
+     "with no PATH followed by another command fails loudly, not with "
+     "that command's first word as its PATH",
+     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
+            ["gh api --jq '.id' -X GET", "echo done"]),
+     True, ("gh api", "SUBCOMMAND_PERMS")),
+
     ("a `<<WORD` inside quotes is not a heredoc opener: a call after "
      "`echo 'v<<EOF'` is still scanned",
      mkcase(ACTIONS_READ, "", [DEFAULT_ENV],

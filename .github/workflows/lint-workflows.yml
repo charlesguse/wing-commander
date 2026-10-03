@@ -1092,20 +1092,26 @@ jobs:
           # the PATH, a non-repos/ path skipped as out of scope where a call
           # with no PATH must fail loudly as unrecognised. A word is read the
           # way the shell splits it, so a partly quoted value (`-f body="a
-          # b"`) is one word, not `body="a` plus a PATH `b"`.
+          # b"`) is one word, not `body="a` plus a PATH `b"`. Words are
+          # separated the way the shell separates them on one command: blanks
+          # or a `\`-newline continuation, never a bare newline -- a call
+          # whose PATH sits on its continuation line is still resolved (not
+          # read as a PATH `\` and skipped as out of scope), and a call with
+          # no PATH never takes the next command's first word as one.
+          GH_API_SEP = r'(?:[ \t]|\\\n)+'
           SHELL_WORD = r'(?:"(?:[^"\\]|\\.)*"|\'[^\']*\'|[^\s"\'])+'
           GH_API_VALUE_FLAGS = ("-X", "--method", "-H", "--header", "-f", "--raw-field",
                                 "-F", "--field", "-q", "--jq", "-t", "--template",
                                 "-p", "--preview", "--hostname", "--input", "--cache")
           _GH_API_VALUE_FLAG = "(?:" + "|".join(re.escape(f) for f in GH_API_VALUE_FLAGS) + ")"
           GH_API_FLAGS = (
-              r'(?:' + _GH_API_VALUE_FLAG + r'\s+' + SHELL_WORD + r'\s+'
-              r'|(?!' + _GH_API_VALUE_FLAG + r'(?:\s|$))-' + SHELL_WORD + r'\s+)*')
+              r'(?:' + _GH_API_VALUE_FLAG + GH_API_SEP + SHELL_WORD + GH_API_SEP +
+              r'|(?!' + _GH_API_VALUE_FLAG + r'(?:\s|\\\n|$))-' + SHELL_WORD + GH_API_SEP + r')*')
 
           GH_INVOKE_RE = re.compile(
               r'(?:GH_TOKEN=(?P<tokexpr>"(?:[^"\\]|\\.)*"|\$\{\{[^}]*\}\}|\$\w+)\s+)?'
               r'\bgh\s+(?:'
-              r'api\s+' + GH_API_FLAGS + r'(?P<apipath>"(?:[^"\\]|\\.)*"|[^\s-]\S*)'
+              r'api' + GH_API_SEP + GH_API_FLAGS + r'(?P<apipath>"(?:[^"\\]|\\.)*"|(?!\\\n)[^\s-]\S*)'
               r'|(?P<verb1>[a-zA-Z][\w-]*)(?:\s+(?P<verb2>[a-zA-Z][\w-]*))?'
               r')'
           )
