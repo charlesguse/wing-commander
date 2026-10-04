@@ -40,6 +40,13 @@ maintains, in the same commit as any `records.jsonl` append:
   "discovered_at"}` (FR-028, research.md R-C4). The high-water mark
   still advances past such a run — it is accounted for, not retried.
 
+A sweep whose window holds no `metrics-record*` artifact at all (only
+runs that uploaded none, so discovery counts zero and the retrieve step
+is skipped) is a successful zero-record contribution, not a failure: it
+still advances `sweep-state.json` to the latest `concluded_at` in its
+window, in a commit carrying no records. With nothing retrieved, no run
+is held back from the mark.
+
 A completion-triggered run (empty `since`, the unchanged nine-stage
 path) writes neither file.
 

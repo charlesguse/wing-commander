@@ -433,8 +433,21 @@ runs:
             # MF-03: exclude any run the retrieve step held back (a live
             # artifact whose download merely failed) -- absent/empty means
             # every run counts, unchanged from before this file existed.
-            hold_back="$(jq -R -s -c 'split("\n") | map(select(length > 0))' "$dir/mark-hold-back.txt" 2>/dev/null || echo '[]')"
-            hwm="$(printf '%s' "$SWEEP_RUNS" | jq -r --argjson hb "$hold_back" '[.[] | select((.run_id|tostring) as $rid | ($hb | index($rid)) == null) | .concluded_at] | max // empty' 2>/dev/null)"
+            # Absent is the zero-artifact sweep: discover counted 0, so the
+            # retrieve step's `if:` skipped it and nothing created the file.
+            # The fallback REPLACES jq's output rather than appending to it:
+            # `jq -R -s` on a missing file still prints `[]` before exiting
+            # 2, so an inner `|| echo '[]'` made hold_back two documents,
+            # `--argjson` below refused them, and errexit killed this step
+            # with exit 2 and no message (sweeps 2026-09-28/10-03/10-04).
+            hold_back='[]'
+            if [ -f "$dir/mark-hold-back.txt" ]; then
+              hold_back="$(jq -R -s -c 'split("\n") | map(select(length > 0))' "$dir/mark-hold-back.txt" 2>/dev/null)" || hold_back='[]'
+            fi
+            if ! hwm="$(printf '%s' "$SWEEP_RUNS" | jq -r --argjson hb "$hold_back" '[.[] | select((.run_id|tostring) as $rid | ($hb | index($rid)) == null) | .concluded_at] | max // empty' 2>"$dir/hwm-err.txt")"; then
+              echo "::error::wing-commander-metrics-persist: could not compute the sweep high-water mark -- $(cat "$dir/hwm-err.txt" 2>/dev/null)"
+              exit 1
+            fi
             if [ -n "$hwm" ]; then
               printf '{"high_water_mark":"%s"}\n' "$hwm" > sweep-state.json
               git add sweep-state.json
