@@ -135,7 +135,9 @@ timestamp it processed, in the same commit as any records append (a
 fixture forcing a push rejection proves both files retry together, not
 independently — research.md R-C2); a second sweep started from the
 advanced mark does not re-list runs the first one already accounted for
-except within the fixed one-hour overlap (research.md R-C3).
+except within the fixed one-hour overlap (research.md R-C3); a sweep
+whose window holds no metrics-record artifact (the retrieve step skipped)
+succeeds and still advances the mark to its latest concluded run.
 
 ### `verify-metrics-expired-artifact-outcome` (new)
 

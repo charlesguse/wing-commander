@@ -181,8 +181,53 @@ def filter_failures(bash, mutate=None):
     return broke
 
 
+# A window holding only runs that uploaded no metrics-record artifact (the
+# watchdog/rebase/cleanup runs of a quiet weekend). discover counts 0, so
+# the retrieve step's own `if:` skips it and never creates the hold-back
+# file the append step reads. The scheduled sweeps of 2026-09-28, 10-03 and
+# 10-04 died here with exit 2 and no message: the hold-back read's fallback
+# was appended to jq's own `[]`, and `--argjson` refused the two documents.
+QUIET_LATEST = "2026-10-04T05:58:05Z"
+QUIET_RUNS = [
+    {"run_id": "8001", "workflow": ".github/workflows/wing-commander-rebase.yml",
+     "concluded_at": "2026-10-02T04:32:46Z", "records": []},
+    {"run_id": "8002", "workflow": ".github/workflows/wing-commander-8-watchdog.yml",
+     "concluded_at": QUIET_LATEST, "records": []},
+]
+
+
+def zero_artifact_failures(bash, mutate=None):
+    """A sweep that discovers no artifact at all still succeeds and still
+    advances the mark, in a commit of its own (FR-027)."""
+    broke = []
+    work = tempfile.mkdtemp(prefix="wc-gate77-z-")
+    try:
+        state = run_sweep(work, QUIET_RUNS, bash=bash, mutate=mutate)
+        skipped = [s for s in state["steps"] if s[1] == "skipped"]
+        if not skipped:
+            broke.append("the zero-artifact fixture did not skip the retrieve "
+                         "step -- it no longer models the sweep that failed")
+        if state["rc"] != 0:
+            name, rc, out = state["steps"][-1]
+            broke.append(f"a sweep whose window holds no metrics-record "
+                         f"artifact failed in {name!r} with exit {rc}: "
+                         f"{out.strip()[:300]!r}")
+            return broke
+        if state["sweep_state"] != {"high_water_mark": QUIET_LATEST}:
+            broke.append(f"a zero-artifact sweep left sweep-state.json at "
+                         f"{state['sweep_state']!r}, not {QUIET_LATEST} -- "
+                         f"every later sweep would re-list the same window")
+        if state["records"]:
+            broke.append(f"a zero-artifact sweep appended records: "
+                         f"{state['records'][:2]}")
+    finally:
+        cleanup(work)
+    return broke
+
+
 def suite(bash, mutate=None):
-    return write_failures(bash, mutate) + read_failures(bash, mutate) + filter_failures(bash, mutate)
+    return (write_failures(bash, mutate) + read_failures(bash, mutate)
+            + filter_failures(bash, mutate) + zero_artifact_failures(bash, mutate))
 
 
 # --------------------------------------------------------------------------
@@ -235,8 +280,20 @@ def mut_workflow_allowlist_not_applied(name, script):
         ' | select(($wf | length) == 0 or ((.workflow as $cw | $wf | index($cw)) != null))', "")
 
 
+def mut_hold_back_fallback_appended(name, script):
+    if name != APPEND:
+        return script
+    # The shipped shape before the fix: no existence check, and the
+    # fallback inside the substitution, appended to jq's own output.
+    return script.replace(
+        'if [ -f "$dir/mark-hold-back.txt" ]; then', "if true; then").replace(
+        '2>/dev/null)" || hold_back=\'[]\'', '2>/dev/null || echo \'[]\')"')
+
+
 MUTATIONS = [
     ("the mark advances in its own commit", mut_mark_committed_separately),
+    ("the hold-back read appends its fallback to jq's own output "
+     "(zero-artifact sweep)", mut_hold_back_fallback_appended),
     ("the mark is taken from the first run, not the latest",
      mut_mark_taken_from_the_first_run),
     ("the fixed one-hour overlap is dropped", mut_overlap_dropped),
@@ -274,7 +331,7 @@ def main():
         else:
             print(f"::error::MUTATION SURVIVED - {label} broke nothing in this gate.")
             mutation_failures += 1
-    print(f"Gate 77: 1 contended sweep + 3 window shape(s), "
+    print(f"Gate 77: 1 contended sweep + 1 zero-artifact sweep + 3 window shape(s), "
           f"{len(MUTATIONS)} mutation(s); {len(failures)} failure(s), "
           f"{mutation_failures} mutation failure(s).")
     return 1 if failures or mutation_failures else 0
