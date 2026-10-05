@@ -87,6 +87,7 @@ on:
       - "Wing Commander · 7 cleanup"
       - "Wing Commander · rebase"
       - "Wing Commander · 9 pr conversation"
+      - "board-loop"   # added after this feature (#889); also swept
       # "Wing Commander · 8 watchdog" REMOVED (FR-030(b)) — after FR-031
       # a healthy inspection emits no record, and a signal-bearing one
       # is reached by the sweep below, not this trigger.
