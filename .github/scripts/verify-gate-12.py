@@ -750,13 +750,6 @@ CASES = [
              + "-f b=" + "$( ${ ` \"$( \"${X:-\" <( \"${{ " * 50]),
      True, ("cannot read this call's method",)),
 
-    ("... and so does an unquoted Actions expression the call's line is "
-     "cut inside at its `||`, naming that cause",
-     mkcase(ISSUES_WRITE, "", [DEFAULT_ENV],
-            ['gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" '
-             '-f body=${{ inputs.a || inputs.b }}']),
-     True, ("cannot read this call's method", "`||`")),
-
     ("a quoted string inside a double-quoted `${...}` is part of that "
      "word, as bash reads it: the `-X GET` in `\"${X:-\" -X GET \"}\"` is "
      "not the call's last method, so the POST under issues:read fails",
@@ -1383,6 +1376,122 @@ CASES = [
           "        uses: ./.github/actions/wing-commander-probe" + _N),
       "docs/setup.md": DOCS_ISSUES_READONLY},
      True, ("issue create", "App token", "issues")),
+
+    # --- the code review of #956's Gate 12 lines --------------------------
+    ("a backtick substitution inside double quotes runs: the `gh api -X "
+     "POST` inside `\"...`...`\"` is scanned, and the Issues write under "
+     "issues:read fails",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['echo "posted `gh api -X POST repos/${GITHUB_REPOSITORY}/issues/1/comments -f body=x --jq .id`"']),
+     True, ("issues", "write")),
+
+    ("... as is a subcommand call there",
+     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
+            ['echo "`gh issue comment 1 --body hi`"']),
+     True, ("issue comment", "issues")),
+
+    ("... and that call ends at the backtick closing it: the next "
+     "command's `-X POST` does not make the read a write",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['echo "id `gh api repos/${GITHUB_REPOSITORY}/issues/1 --jq .id`"; '
+             'curl -X POST https://example.invalid']),
+     False, ()),
+
+    ("... while an escaped backtick inside double quotes is text, not a "
+     "substitution",
+     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
+            ['echo "run \\`gh issue comment 1 --body hi\\` yourself"']),
+     False, ()),
+
+    ("a `((` inside quotes opens no arithmetic: the `<<EOF` after it on "
+     "the line is a real heredoc, and its body is data, not shell",
+     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
+            ['echo "((" ; cat <<EOF',
+             'gh issue comment 1 --body hi',
+             'EOF']),
+     False, ()),
+
+    ("a `${...}` inside a quoted `$(...)` is one part of it: an unbalanced "
+     "`(` in its pattern (`${t//(/}`) does not stop the word parsing, so "
+     "the PATH is resolved and the write passes under issues:write",
+     mkcase(ISSUES_WRITE, "", [DEFAULT_ENV],
+            ['gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" '
+             '-f body="$(echo ${t//(/})"']),
+     False, ()),
+
+    ("an Actions expression inside a `${...}` default is one word part, "
+     "not two brace levels: `${A:-${B:-${{ inputs.b }}}}` before the PATH "
+     "parses, and the write passes under issues:write",
+     mkcase(ISSUES_WRITE, "", [DEFAULT_ENV],
+            ['gh api -X POST -f body=${A:-${B:-${{ inputs.b }}}} '
+             '"repos/${GITHUB_REPOSITORY}/issues/1/comments"']),
+     False, ()),
+
+    ("a bare `{` inside `${...}` is no level -- bash closes the expansion "
+     "at its first `}`: the `)` and `\"` after `${X:-{}` still close their "
+     "frames, so the write on the next line is scanned and fails under "
+     "issues:read",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['x="$(echo ${X:-{})"',
+             'gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" -f body=x']),
+     True, ("issues", "write")),
+
+    ("a ` #` inside an unquoted `${...}` (`${x%% #*}`) starts no comment: "
+     "the call after it on the line is scanned",
+     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
+            ['y=${x%% #*}; gh issue comment 1 --body hi']),
+     True, ("issue comment", "issues")),
+
+    ("... nor inside a quoted `$(...)`: its `}` and `)` close their frames, "
+     "and the call after it is scanned",
+     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
+            ['y="$(echo ${x%% #*})"; gh issue comment 1 --body hi']),
+     True, ("issue comment", "issues")),
+
+    ("an unquoted Actions expression's `||` does not cut the call's line: "
+     "the call is classified, and the write passes under issues:write",
+     mkcase(ISSUES_WRITE, "", [DEFAULT_ENV],
+            ['gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" '
+             '-f body=${{ inputs.a || inputs.b }}']),
+     False, ()),
+
+    ("... and fails under issues:read as a write, not as unreadable",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" '
+             '-f body=${{ inputs.a || inputs.b }}']),
+     True, ("issues", "write")),
+
+    ("a `# comment` line inside a multi-line `$(...)` value is no word of "
+     "the call: the POST passes under issues:write",
+     mkcase(ISSUES_WRITE, "", [DEFAULT_ENV],
+            ['gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" -f body="$(',
+             "  # the maintainer's note",
+             '  cat body.md',
+             ')"']),
+     False, ()),
+
+    ("... nor is a trailing comment on one of its lines",
+     mkcase(ISSUES_WRITE, "", [DEFAULT_ENV],
+            ['gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" -f body="$(',
+             "  cat body.md  # it's the body",
+             ')"']),
+     False, ()),
+
+    ("... while a `-X GET` on that value's lines after such a comment is "
+     "still no method of the call: the POST under issues:read fails",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" -f body="$(',
+             "  # it's the body",
+             '  gh api "repos/${GITHUB_REPOSITORY}/issues/2" -X GET --jq .body',
+             ')"']),
+     True, ("issues", "write")),
+
+    ("2000 calls each after an opener never closed stay linear: the step "
+     "fails closed in well under the per-scenario timeout",
+     mkcase(ISSUES_WRITE, "", [DEFAULT_ENV],
+            ['gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" -f a=$(']
+            * 2000),
+     True, ("cannot read this call's method",)),
 ]
 
 

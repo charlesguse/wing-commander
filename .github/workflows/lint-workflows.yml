@@ -1137,7 +1137,7 @@ jobs:
           # and a quoted `)` inside one (`$(printf ')')`, `$(echo ")")`) does
           # not close it; one nested deeper is no word, so its call fails
           # loudly as having no PATH (code review of #944). An unquoted
-          # parameter expansion (`${X:-a b}`, one inner `{...}` level) and a
+          # parameter expansion (`${X:-a b}`, nesting as a substitution does) and a
           # backtick substitution (`` `git rev-parse HEAD` ``) are one word
           # part each, not split at their blanks. Every alternative inside a
           # word, and inside each of these parts, starts on a character no
@@ -1155,15 +1155,39 @@ jobs:
               inner = _sub_body(depth - 1) if depth > 1 else None
               dq = (r'"(?:[^"\\$]|\\.|\$(?!\()'
                     + (r'|\$\(' + inner + r'\)' if inner else '') + r')*"')
-              return (r"(?:[^()'" + '"' + r"\\]|\\.|'[^']*'|" + dq
+              # A `${...}` inside it is one part, whose own `(` or `)`
+              # (`$(echo ${t//(/})`) is a pattern character, not a level:
+              # read as one, the word never parsed and its call failed
+              # closed (code review of #956). `$` is a part of its own so
+              # that part starts on a character nothing else here does.
+              return (r"(?:[^()'" + '"' + r"\\$]|\\.|'[^']*'|" + dq
+                      + r'|\$(?!\{(?!\{))|' + _PARAM_EXP_AT(depth)
                       + (r'|\(' + inner + r'\)' if inner else '') + r')*')
 
 
+          _EXPR = r'\$\{\{(?:[^}]|\}(?!\}))*\}\}'
+
+
           def _brace_body(depth):
-              """The inside of a `{...}` nesting at most `depth` levels."""
+              """The inside of a `${...}` nesting at most `depth` levels of
+              `${...}`. Only a `${` opens a level: bash closes the expansion
+              at its first `}` (`${X:-{a}b}` is `{a` then `b}`), so a bare
+              `{` counted as one let an unbalanced `${X:-{}` run on past its
+              real end (code review of #956). An Actions expression inside
+              one (an expression as the default of `${A:-${B:-...}}`) is one
+              part of it, never two brace levels: counted as two, the word
+              nested too deep to parse and its call failed closed (code
+              review of #956)."""
               inner = _brace_body(depth - 1) if depth > 1 else None
-              return (r'(?:[^{}]' + (r'|\{' + inner + r'\}' if inner else '')
+              return (r'(?:[^}$]|\$(?!\{)|' + _EXPR
+                      + (r'|\$\{(?!\{)' + inner + r'\}' if inner else '')
                       + r')*')
+
+
+          def _PARAM_EXP_AT(depth):
+              """A `${...}` (not an Actions expression) nesting at most
+              `depth` levels."""
+              return r'\$\{(?!\{)' + _brace_body(depth) + r'\}'
 
 
           _CMD_SUB = r'\$\(' + _sub_body(SUB_DEPTH) + r'\)'
@@ -1176,9 +1200,8 @@ jobs:
           # (`${A:-${B:-${C}}}`): capped at two, the third level's `-X GET`
           # started a word of its own after the PATH and read as the call's
           # last method (code review of #944).
-          _PARAM_EXP = r'\$\{(?!\{)' + _brace_body(SUB_DEPTH) + r'\}'
+          _PARAM_EXP = _PARAM_EXP_AT(SUB_DEPTH)
           _BACKTICK = r'`(?:[^`\\]|\\.)*`'
-          _EXPR = r'\$\{\{(?:[^}]|\}(?!\}))*\}\}'
 
 
           def _dq_brace_body(depth):
@@ -1190,8 +1213,9 @@ jobs:
               read as two words and its `-X GET` as the call's last method
               (code review of #944)."""
               inner = _dq_brace_body(depth - 1) if depth > 1 else None
-              return (r'(?:[^{}"\\]|\\.|"(?:[^"\\]|\\.)*"'
-                      + (r'|\{' + inner + r'\}' if inner else '') + r')*')
+              return (r'(?:[^}"\\$]|\\.|"(?:[^"\\]|\\.)*"|\$(?!\{)|' + _EXPR
+                      + (r'|\$\{(?!\{)' + inner + r'\}' if inner else '')
+                      + r')*')
 
 
           _DQ_PARAM = r'\$\{(?!\{)' + _dq_brace_body(SUB_DEPTH) + r'\}'
@@ -1258,6 +1282,7 @@ jobs:
           # nested `-X GET` command into a read.
           API_METHOD_FLAG_RE = re.compile(r'(?:^|\s)(?P<flag>-i*X|--method(?![\w-]))')
           SHELL_WORD_RE = re.compile(SHELL_WORD)
+          EXPR_RE = re.compile(_EXPR)
           API_WRITE_METHOD_RE = re.compile(r'(?:POST|PATCH|PUT|DELETE)\b')
 
 
@@ -1303,10 +1328,17 @@ jobs:
                   if found:
                       base = len("\n".join(out)) + (1 if out else 0)
                       flags = executable_flags("\n".join(out + [line]))
+                      # The `((` that makes a `<<` a shift is read on the
+                      # line's executable characters only: a quoted `((`
+                      # (`echo "((" ; cat <<EOF`) opens no arithmetic, and
+                      # read as one it hid a real heredoc and scanned its
+                      # body as shell (code review of #956).
+                      code = "".join(ch if flags[base + k] else " "
+                                     for k, ch in enumerate(line))
                       for m in found:
                           if not flags[base + m.start()]:
                               continue
-                          if re.search(r"\(\((?:(?!\)\)).)*$", line[:m.start()]):
+                          if re.search(r"\(\((?:(?!\)\)).)*$", code[:m.start()]):
                               continue
                           delims.append(m.group(1) or m.group(2) or m.group(3))
                   out.append(line)
@@ -1324,13 +1356,14 @@ jobs:
               return "\n".join(l for l in text.splitlines() if not l.strip().startswith("#"))
 
 
-          def executable_flags(text):
+          def executable_flags(text, comments=None):
               """True per character where shell would actually EXECUTE what it finds,
               as opposed to inside a single-quoted or (non-substitution) double-quoted
               literal — e.g. the "gh workflow run ..." inside an `echo "...gh..."`
               human-facing message never runs. `$( ... )` command substitutions stay
               executable even nested inside double quotes, because bash really does
-              run them there."""
+              run them there, and so do backtick ones. `comments`, when given, is
+              filled with True per character of a shell comment."""
               n = len(text)
               flags = [True] * n
               stack = []
@@ -1349,6 +1382,26 @@ jobs:
                           stack.pop()
                       i += 1
                       continue
+                  # A backtick substitution inside double quotes runs, as a
+                  # `$(...)` there does: read as quoted text, the `gh api -X
+                  # POST` in `echo "id `gh api ...`"` was never scanned at
+                  # all (code review of #956). Its opening backtick is
+                  # executable, so cmdline_of() sees the call sit inside it.
+                  if c == "`" and top == "dq":
+                      flags[i] = True
+                      stack.append("bt"); i += 1; continue
+                  if c == "`" and top == "bt":
+                      stack.pop(); i += 1; continue
+                  # An Actions expression is replaced before the shell ever
+                  # runs: its braces, `||` and quotes are no shell syntax.
+                  if (top != "dq" and c == "$"
+                          and text.startswith(EXPR_OPEN, i)):
+                      j = text.find("}}", i + 3)
+                      if j >= 0:
+                          for k in range(i, j + 2):
+                              flags[k] = cur_exec
+                          i = j + 2
+                          continue
                   # T068: a `#` starting a word outside quotes opens a shell
                   # comment running to end of line. strip_comments() only drops
                   # WHOLE-line comments, so a TRAILING one reached this scanner
@@ -1356,11 +1409,19 @@ jobs:
                   # job must fail`) pushed a bogus frame that hid every call
                   # after it — that is what kept wing-commander-watchdog-test's
                   # real `gh workflow run` invisible to Gate 12.
-                  if c == "#" and top != "dq" and (i == 0 or text[i - 1] in " \t\n"):
+                  # Nor does one inside a `${...}` (`${x%% #*}`): bash reads
+                  # the expansion as a unit, so read as a comment there,
+                  # its `}` and any `)` after it went unseen, their frames
+                  # stayed open, and a call after it on the line was never
+                  # scanned (code review of #956).
+                  if (c == "#" and top not in ("dq", "brace")
+                          and (i == 0 or text[i - 1] in " \t\n")):
                       j = text.find("\n", i)
                       j = n if j < 0 else j
                       for k in range(i, j):
                           flags[k] = False
+                          if comments is not None:
+                              comments[k] = True
                       i = j
                       continue
                   # T068: an apostrophe inside a DOUBLE-quoted string is a
@@ -1383,13 +1444,15 @@ jobs:
                   # not a level: pushed as one, the substitution's own `)`
                   # closed it instead, the closing `"` opened a new
                   # double-quoted frame, and every call after it in the
-                  # step read as quoted text (code review of f703d73).
-                  if top in ("sub", "brace") and c == "$" and i + 1 < n and text[i + 1] == "{":
+                  # step read as quoted text (code review of f703d73). Only
+                  # a `${` opens a level inside one: bash closes it at its
+                  # first `}`, so a bare `{` counted as a level kept an
+                  # unbalanced `${X:-{}` open past its end (code review of
+                  # #956).
+                  if top != "dq" and c == "$" and i + 1 < n and text[i + 1] == "{":
                       stack.append("brace"); i += 2; continue
                   if top == "brace":
-                      if c == "{":
-                          stack.append("brace")
-                      elif c == "}":
+                      if c == "}":
                           stack.pop()
                       i += 1
                       continue
@@ -1615,7 +1678,18 @@ jobs:
                            f"permission model. Unverified.")
 
 
-          def cmdline_of(text, flags, m):
+          def closers_after(text, flags):
+              """-> three lists: per position, how many executable `)`, `}`
+              and backticks the text still holds from there on."""
+              n = len(text)
+              out = ([0] * (n + 1), [0] * (n + 1), [0] * (n + 1))
+              for i in range(n - 1, -1, -1):
+                  for arr, ch in zip(out, ")}`"):
+                      arr[i] = arr[i + 1] + (1 if flags[i] and text[i] == ch else 0)
+              return out
+
+
+          def cmdline_of(text, flags, m, comments=None, closers=None):
               """This invocation's own arguments: from the match to the end of
               its logical line (following `\\` continuations) or the next
               command separator (`;`, `&&`, `||`, `|`) at this call's own
@@ -1630,7 +1704,17 @@ jobs:
               `-X GET | ...` in it would read as the call's last method
               (code review of 4b06261). -> (blanked, raw): the same span
               unblanked, character-aligned with it, for reading a quoted flag
-              value."""
+              value. A shell comment inside the call's span (a `# note` on
+              a line of its multi-line `$(...)` value) is blanked in both:
+              its apostrophe made the value no word, and the call failed
+              closed (code review of #956). `comments` and `closers` are
+              executable_flags()'s comment mask and closers_after(), passed
+              in so a step's many calls share one pass over it."""
+              if comments is None:
+                  comments = [False] * len(text)
+              if closers is None:
+                  closers = closers_after(text, flags)
+              close_paren, close_brace, close_bt = closers
               out, raw = [], []
               i, n = m.start(), len(text)
               depth, in_bt = 0, False
@@ -1651,6 +1735,17 @@ jobs:
                              and not (j > 0 and text[j - 1] == "\\")) % 2 == 1
               while i < n:
                   c = text[i]
+                  if comments[i]:
+                      out.append(" "); raw.append(" "); i += 1; continue
+                  # An Actions expression is one value, whatever it holds:
+                  # its `||`, `&&` or `|` cut the call short, and the call
+                  # failed closed as unreadable (code review of #956).
+                  if flags[i] and c == "$" and text.startswith(EXPR_OPEN, i):
+                      em = EXPR_RE.match(text, i)
+                      if em:
+                          out.append(em.group(0)); raw.append(em.group(0))
+                          i = em.end()
+                          continue
                   if flags[i] and c == "\\" and i + 1 < n and text[i + 1] == "\n":
                       out.append(" "); raw.append(" "); i += 2; continue
                   if flags[i] and c == "\\" and i + 1 < n:
@@ -1671,10 +1766,8 @@ jobs:
                       out.append(c + text[i + 1]); raw.append(c + text[i + 1])
                       i += 2
                       continue
-                  elif flags[i] and braces and braces[-1] == depth and c in "{}()":
-                      if c == "{":
-                          braces.append(depth)
-                      elif c == "}":
+                  elif flags[i] and braces and braces[-1] == depth and c in "}()":
+                      if c == "}":
                           braces.pop()
                   elif flags[i] and c == "(":
                       depth += 1
@@ -1682,8 +1775,20 @@ jobs:
                       depth -= 1
                       if depth < 0:
                           break
-                  nested = depth > 0 or in_bt
+                  # Inside a `${...}` too: bash reads `${X:-a|b}` as one
+                  # expansion.
+                  nested = depth > 0 or in_bt or bool(braces)
                   if flags[i] and c == "\n" and not nested:
+                      break
+                  # A value the rest of the step can never close (invalid
+                  # bash) ends here, unclosed, so its word fails closed: run
+                  # on to the end of the step, every call after such an
+                  # opener rescanned the rest of it, and 2000 of them took
+                  # about 50s (code review of #956).
+                  if (flags[i] and c == "\n"
+                          and (close_paren[i] < depth
+                               or close_brace[i] < len(braces)
+                               or (in_bt and not close_bt[i]))):
                       break
                   if flags[i] and c in ";|" and not nested:
                       break
@@ -1757,9 +1862,9 @@ jobs:
                           f"one shell word. It nests deeper than {SUB_DEPTH} "
                           f"levels of " + "`$(...)` or `${...}`, or opens a "
                           "quote, substitution or expression the call's line "
-                          "ends inside (an unquoted `||` or `&&` ends it), and "
-                          "split at its blanks, a method flag inside it would "
-                          "read as the call's own. Move the value into a "
+                          "ends inside, and split at its blanks, a method "
+                          "flag inside it would read as the call's own. Move "
+                          "the value into a "
                           "variable assigned before the call.")
                   i = wm.end()
               word = None
@@ -1846,9 +1951,11 @@ jobs:
               """[(match, cmdline, assigns)] for every `gh` invocation in a run:
               block that the shell would actually execute."""
               text = strip_comments(strip_heredocs(run))
-              flags = executable_flags(text)
+              comments = [False] * len(text)
+              flags = executable_flags(text, comments)
+              closers = closers_after(text, flags)
               assigns = collect_assignments(text)
-              return [(m, cmdline_of(text, flags, m), assigns)
+              return [(m, cmdline_of(text, flags, m, comments, closers), assigns)
                       for m in GH_INVOKE_RE.finditer(text) if flags[m.start()]]
 
 
