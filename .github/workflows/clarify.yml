@@ -907,9 +907,9 @@ jobs:
           f="$RUNNER_TEMP/claude-execution-output.json"
           agent_ok="$(jq -r '([.[] | select(.type=="result")] | last) as $r
             | if $r != null and $r.is_error == false and $r.subtype == "success"
-              then "true" else "false" end' "$f" 2>/dev/null || echo false)"
+              then "true" else "false" end' "$f" 2>/dev/null)" || agent_ok=false
           if [ "$agent_ok" != "true" ]; then
-            err=$(jq -r '[.[] | select(.type=="result")] | last | .result // "missing or invalid terminal result"' "$f" 2>/dev/null || echo "missing execution output file")
+            err=$(jq -r '[.[] | select(.type=="result")] | last | .result // "missing or invalid terminal result"' "$f" 2>/dev/null) || err="missing execution output file"
             echo "::error::wing-commander clarify stage: the agent run did not complete with a valid result — $err"
             exit 1
           fi
@@ -918,7 +918,7 @@ jobs:
             # Name the shape actually received: the fix is different for a
             # bare array (agent skipped the schema wrapper) than for prose,
             # and this is the only place that distinction is visible.
-            got="$(printf '%s' "$raw" | jq -r 'type' 2>/dev/null || echo 'not JSON')"
+            got="$(printf '%s' "$raw" | jq -r 'type' 2>/dev/null)" || got='not JSON'
             echo "::error::wing-commander clarify stage: the agent's structured result is missing a valid answered/clarifications shape (received: $got). The fold may ALREADY be committed and pushed to the spec PR — check the PR before re-running; no callout was posted for it."
             exit 1
           fi
@@ -956,17 +956,17 @@ jobs:
           # `answered`/`clarifications` — extracted here, at this stage's one
           # deterministic read-back point, never taken from the agent's
           # prose directly by the filing composite (FR-010).
-          findings_json="$(printf '%s' "$raw" | jq -c 'if type=="object" and (.findings|type)=="array" then .findings else [] end' 2>/dev/null || echo '[]')"
+          findings_json="$(printf '%s' "$raw" | jq -c 'if type=="object" and (.findings|type)=="array" then .findings else [] end' 2>/dev/null)" || findings_json='[]'
           {
             echo "findings-json<<WC_CLARIFY_FINDINGS_EOF"
             echo "$findings_json"
             echo "WC_CLARIFY_FINDINGS_EOF"
           } >> "$GITHUB_OUTPUT"
-          answered="$(printf '%s' "$raw" | jq -r 'if type=="object" and (.answered|type)=="boolean" then .answered else false end' 2>/dev/null || echo false)"
+          answered="$(printf '%s' "$raw" | jq -r 'if type=="object" and (.answered|type)=="boolean" then .answered else false end' 2>/dev/null)" || answered=false
           if [ "$answered" != "true" ]; then
             echo "outcome=none" >> "$GITHUB_OUTPUT"
           else
-            count="$(printf '%s' "$raw" | jq 'if (.clarifications|type)=="array" then (.clarifications|length) else 0 end' 2>/dev/null || echo 0)"
+            count="$(printf '%s' "$raw" | jq 'if (.clarifications|type)=="array" then (.clarifications|length) else 0 end' 2>/dev/null)" || count=0
             if [ "$count" -gt 0 ]; then
               echo "outcome=needs-clarification" >> "$GITHUB_OUTPUT"
               structured=true

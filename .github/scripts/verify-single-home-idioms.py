@@ -169,6 +169,14 @@ repository's clone, where no such helper exists), so the call fails only
 on the error path it exists to report. Anchor it at `$GITHUB_WORKSPACE/`
 instead.
 
+Plus a substitution-fallback pass (#889, #959): a command substitution
+whose body ends `|| echo ...` / `|| printf ...` -- in a workflow or
+composite `run:`, or a `.github/actions/**/*.sh` script -- appends its
+fallback to whatever the command printed before failing (jq's `[]`
+then `[]` again). The one home for the fallback is the assignment:
+`x="$(cmd)" || x='[]'`. The `[ ... ] && echo a || echo b` test ternary
+is exempt; anything else safe is waived with its reason.
+
 Waivers: `.github/scripts/single-home-waivers.json`, same shape as Gate
 31's `stage-invariant-waivers.json` -- `{file, check, pattern, count,
 issue, reason}`, stale-checked in both directions (`issue` -- open, or
@@ -325,7 +333,8 @@ DECLARED_HOMES = {
     "pr-branch": ".github/actions/_shared/resolve-pr-branch/action.yml",
 }
 CHECK_NAMES = tuple(DECLARED_HOMES) + ("promotion", "composite-checkout-order",
-                                        "shared-path-workdir")
+                                        "shared-path-workdir",
+                                        "substitution-fallback")
 
 ORPHAN_FRAGMENTS = (
     "checkout --quiet --orphan",
@@ -1280,6 +1289,177 @@ def check_shared_path_workdir(root="."):
     return findings
 
 
+# --------------------------------------------------------------------------
+# substitution-fallback (#889, #959): `x="$(cmd || echo '[]')"` appends
+# the fallback to whatever `cmd` already printed when `cmd` prints and then
+# exits non-zero -- jq emitting `[]` before failing on a later document gave
+# `[]\n[]`, which every downstream `--argjson` rejected. The fallback
+# belongs at the assignment, where it replaces instead of appends:
+# `x="$(cmd)" || x='[]'`. One rule for every workflow `run:`, composite
+# `run:` and `.github/actions/**/*.sh` script.
+#
+# Exempt without a waiver: the test ternary, `$([ "$a" = x ] && echo y ||
+# echo z)` -- every command left of the `||` but the last is a `[`/`[[`/
+# `test` that prints nothing, and the last is the `echo`/`printf` itself,
+# so at most one of the two echoes ever prints. Nothing else is guessed
+# safe: a command that "cannot print on failure" is fixed or waived with
+# its reason, never inferred here.
+#
+# A `$(` is found anywhere in the text, including inside a single-quoted
+# literal outside any substitution: modelling the outer quoting would let
+# an apostrophe in a heredoc body desync it and hide every real site after
+# it. That errs toward a finding, which a waiver can name.
+# --------------------------------------------------------------------------
+SUBST_FALLBACK_HINT = ('x="$(cmd)" || x=\'fallback\' (an assignment-level '
+                       'fallback replaces what cmd printed; one inside the '
+                       '$( ) appends to it)')
+_SF_FALLBACK_RE = re.compile(r"(?:echo|printf)(?:\s|$)")
+_SF_TEST_RE = re.compile(r"(?:\[\[?|test)(?:\s|$)")
+_SF_BLOCK_KEY_RE = re.compile(r"\brun:\s*[|>][-+0-9]*\s*(?:#.*)?$")
+
+
+def _scan_substitution(text, start):
+    """Parse the `$( ... )` whose body begins at `start` (just past the
+    `$(`). Returns (end, ops): `end` is the index of the closing `)` (or
+    None if unbalanced), `ops` the (kind, index) of each `&&`/`||`/`|`/
+    `;`/newline at the body's own top level -- outside quotes and nested
+    substitutions/subshells. A newline is recorded only where it separates
+    commands: not at the body's start, after `&&`/`||`/`|`/`|&`/`;` (bash
+    continues the list across any blank or comment lines there) or after
+    another newline. Heredoc bodies are not modelled; a run block that
+    needs one inside a substitution is rare enough to waive."""
+    stack = ["sub"]
+    ops = []
+    cont = True  # no command since the body's start or the last operator
+    i, n = start, len(text)
+    while i < n:
+        c = text[i]
+        top = stack[-1]
+        if top == "dq":
+            if c == "\\":
+                i += 2
+                continue
+            if c == '"':
+                stack.pop()
+            elif text.startswith("$(", i):
+                stack.append("sub")
+                i += 2
+                continue
+            i += 1
+            continue
+        # top is "sub" (a `$(` or a bare `(` subshell)
+        comment = c == "#" and (i == start or text[i - 1] in " \t\n;")
+        if (len(stack) == 1 and c not in " \t\n" and not comment
+                and text[i:i + 2] != "\\\n"):
+            cont = False
+        if c == "\\":
+            i += 2
+            continue
+        if c == "'":
+            close = text.find("'", i + 1)
+            i = n if close < 0 else close + 1
+            continue
+        if c == '"':
+            stack.append("dq")
+            i += 1
+            continue
+        if comment:
+            nl = text.find("\n", i)
+            i = n if nl < 0 else nl
+            continue
+        if text.startswith("$(", i) or c == "(":
+            stack.append("sub")
+            i += 2 if c == "$" else 1
+            continue
+        if c == ")":
+            stack.pop()
+            if not stack:
+                return i, ops
+            i += 1
+            continue
+        if len(stack) == 1:
+            two = text[i:i + 2]
+            if two in ("&&", "||", "|&"):
+                ops.append((two if two != "|&" else "|", i))
+                cont = True
+                i += 2
+                continue
+            if c == "|" or c == ";":
+                ops.append((c, i))
+                cont = True
+            elif c == "\n" and not cont:
+                ops.append(("\n", i))
+                cont = True
+        i += 1
+    return None, ops
+
+
+def substitution_fallbacks(text):
+    """Every `$( ... )` in `text` whose body ends `|| echo ...` or
+    `|| printf ...`, minus the test ternary. Yields (offset, body)."""
+    for m in re.finditer(r"\$\((?!\()", text):
+        start = m.end()
+        end, ops = _scan_substitution(text, start)
+        if end is None:
+            continue
+        ors = [i for kind, i in ops if kind == "||"]
+        if not ors:
+            continue
+        last_or = ors[-1]
+        # The `||` must be the body's last list operator: one followed by
+        # another command (`... || printf x\n done`, a loop's body) is not
+        # a fallback for the whole substitution.
+        if any(i > last_or and (kind != "\n" or text[i:end].strip())
+               for kind, i in ops):
+            continue
+        # Past any comment lines bash skips after a line-ending `||`.
+        tail = re.sub(r"^(?:\s*#[^\n]*\n)*\s*", "", text[last_or + 2:end])
+        if not _SF_FALLBACK_RE.match(tail):
+            continue
+        # The test ternary: `[ ... ] && [ ... ] && echo a || echo b` --
+        # every command before the final `||` joined by `&&` alone (no
+        # earlier `||`, `|`, `;` or newline), each a test but the last.
+        cuts = [start] + [i + 2 for kind, i in ops
+                          if kind == "&&" and i < last_or] + [last_or]
+        segs = [text[a:b].strip() for a, b in zip(cuts, cuts[1:])]
+        if (len(segs) >= 2 and _SF_FALLBACK_RE.match(segs[-1])
+                and all(_SF_TEST_RE.match(s) for s in segs[:-1])
+                and all(kind == "&&" for kind, i in ops if i < last_or)):
+            continue
+        yield m.start(), " ".join(text[start:end].replace("\\\n", " ").split())
+
+
+def check_substitution_fallback(root="."):
+    findings = []
+    for path in all_subject_files(root):
+        if path.endswith(".sh"):
+            text = read(root, path)
+            for off, body in substitution_fallbacks(text):
+                findings.append(Finding(path, "substitution-fallback",
+                                        line_of(text, off), body))
+            continue
+        doc = load_yaml(root, path)
+        if doc is None:
+            continue
+        lines = read(root, path).split("\n")
+        for _ctx, steps in _step_lists(doc):
+            for step in steps:
+                run = (step or {}).get("run")
+                if not isinstance(run, str) or not run:
+                    continue
+                base = step_run_line(step)
+                # A block scalar's first line sits under the `run:` key --
+                # read off the key's own line, since a one-line `run: |`
+                # body carries no inner newline to tell it from `run: x`.
+                if _SF_BLOCK_KEY_RE.search(lines[base - 1] if base <= len(lines) else ""):
+                    base += 1
+                for off, body in substitution_fallbacks(run):
+                    findings.append(Finding(
+                        path, "substitution-fallback",
+                        base + run.count("\n", 0, off), body))
+    return findings
+
+
 ALL_CHECKS = {
     "orphan-reset": check_orphan_reset,
     "extraheader-refresh": check_extraheader_refresh,
@@ -1304,6 +1484,7 @@ ALL_CHECKS = {
     "promotion": check_promotion,
     "composite-checkout-order": check_local_action_before_checkout,
     "shared-path-workdir": check_shared_path_workdir,
+    "substitution-fallback": check_substitution_fallback,
 }
 
 
@@ -1424,6 +1605,8 @@ def report(findings, hard_failures):
     for f in findings:
         if f.check == "shared-path-workdir":
             home = SHARED_PATH_WORKDIR_HINT
+        elif f.check == "substitution-fallback":
+            home = SUBST_FALLBACK_HINT
         else:
             home = DECLARED_HOMES.get(f.check, "(promotion: no single home -- "
                                                 "an internal helper must not be "
@@ -2259,6 +2442,134 @@ def selftest_shared_path_workdir_waivable():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+SUBST_FALLBACK_WF = ("on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n"
+                     "    steps:\n      - shell: bash\n        run: |\n")
+
+
+def selftest_substitution_fallback_safe_shapes_pass():
+    case = ("substitution-fallback: the assignment-level fallback, the test "
+            "ternary (also opened on its own line, or continued past a "
+            "blank line), `|| true` and a loop body's `||` pass")
+    tmp = tempfile.mkdtemp(prefix="wc-single-home-")
+    try:
+        _clean_tree(tmp)
+        _write(tmp, ".github/workflows/safe-subst.yml", SUBST_FALLBACK_WF +
+               "          a=\"$(jq -c '.x' \"$f\" 2>/dev/null)\" || a='[]'\n"
+               "          b=$(printf '%s' \"$r\" | jq length) || b=0\n"
+               "          c=\"$([ \"$x\" = y ] && [ -n \"$z\" ] && echo true || echo false)\"\n"
+               "          d=\"$(jq -r '.n' \"$f\" 2>/dev/null || true)\"\n"
+               "          e=\"$(jq -r '.[]' \"$f\" | while read -r n; do\n"
+               "            [ -d \"$n\" ] || printf '%s\\n' \"$n\"\n"
+               "          done)\"\n"
+               "          g=\"$(\n"
+               "            [ -f \"$f\" ] &&\n\n"
+               "            echo y || echo n\n"
+               "          )\"\n")
+        _write(tmp, ".github/actions/_shared/safe-subst.sh",
+               "#!/usr/bin/env bash\n"
+               "n=\"$(git rev-list --count \"$a..HEAD\" 2>/dev/null)\" || n=0\n")
+        findings, hard = evaluate(tmp)
+        hits = [f for f in findings if f.check == "substitution-fallback"]
+        if hard:
+            fail(f"[{case}] unexpected hard failure(s): {hard}")
+        elif hits:
+            fail(f"[{case}] unexpected finding(s): {hits}")
+        else:
+            note(f"[{case}] passed")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def selftest_substitution_fallback_waivable():
+    case = "substitution-fallback: a waiver naming the check suppresses it"
+    tmp = tempfile.mkdtemp(prefix="wc-single-home-")
+    try:
+        _clean_tree(tmp)
+        path = ".github/workflows/waived-subst.yml"
+        _write(tmp, path, SUBST_FALLBACK_WF +
+               "          t=\"$(date -u -d \"$at\" +%s 2>/dev/null || echo 0)\"\n")
+        _write(tmp, WAIVERS_PATH, json.dumps({"waivers": [{
+            "file": path, "check": "substitution-fallback",
+            "pattern": r"^date -u -d ", "count": 1, "issue": "#1",
+            "reason": "self-test"}]}))
+        findings, hard = evaluate(tmp)
+        hits = [f for f in findings if f.check == "substitution-fallback"]
+        if hard:
+            fail(f"[{case}] unexpected hard failure(s): {hard}")
+        elif hits:
+            fail(f"[{case}] waived finding(s) still reported: {hits}")
+        else:
+            note(f"[{case}] passed")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def selftest_substitution_fallback_line():
+    """The finding names the substitution's own line, not the `run:` key."""
+    case = "substitution-fallback: the finding names the substitution's line"
+    tmp = tempfile.mkdtemp(prefix="wc-single-home-")
+    try:
+        _clean_tree(tmp)
+        path = ".github/workflows/subst-line.yml"
+        content = (SUBST_FALLBACK_WF + "          set -uo pipefail\n"
+                   "          echo unrelated\n"
+                   "          x=\"$(jq -c '.' \"$f\" || echo '[]')\"\n")
+        _write(tmp, path, content)
+        expected = content.splitlines().index(
+            "          x=\"$(jq -c '.' \"$f\" || echo '[]')\"") + 1
+        findings, _hard = evaluate(tmp)
+        hits = [f for f in findings if f.check == "substitution-fallback"]
+        if [h.line for h in hits] != [expected]:
+            fail(f"[{case}] expected one finding at line {expected}, got {hits}")
+        else:
+            note(f"[{case}] passed ({path}:{expected})")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def selftest_substitution_fallback_line_one_line_block():
+    """A one-line `run: |` body: the finding names the body's line, not
+    the `run:` key one line above it."""
+    case = ("substitution-fallback: a one-line `run: |` finding names the "
+            "body's line")
+    tmp = tempfile.mkdtemp(prefix="wc-single-home-")
+    try:
+        _clean_tree(tmp)
+        path = ".github/workflows/subst-line-one.yml"
+        body = "          x=\"$(jq -c '.' \"$f\" || echo '[]')\""
+        content = SUBST_FALLBACK_WF + body + "\n"
+        _write(tmp, path, content)
+        expected = content.splitlines().index(body) + 1
+        findings, _hard = evaluate(tmp)
+        hits = [f for f in findings if f.check == "substitution-fallback"]
+        if [h.line for h in hits] != [expected]:
+            fail(f"[{case}] expected one finding at line {expected}, got {hits}")
+        else:
+            note(f"[{case}] passed ({path}:{expected})")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def selftest_substitution_fallback_semantics():
+    """Pins the rule's reason in a real bash: a command that prints and
+    then fails makes the in-substitution fallback APPEND (#959's
+    `[]\n[]`), and the assignment-level fallback REPLACE."""
+    global BASH
+    case = "substitution-fallback: in-$( ) appends, assignment-level replaces"
+    if BASH is None:
+        BASH = resolve_bash()
+    script = ("emit() { echo '[]'; return 1; }\n"
+              "a=\"$(emit || echo '[]')\"\n"
+              "b=\"$(emit)\" || b='[]'\n"
+              "printf '%s|%s' \"$a\" \"$b\"\n")
+    out = subprocess.run([BASH, "-c", script], capture_output=True,
+                         text=True).stdout
+    if out != "[]\n[]|[]":
+        fail(f"[{case}] expected '[]\\n[]|[]', got {out!r}")
+    else:
+        note(f"[{case}] passed")
+
+
 def run_selftest():
     use_utf8_stdout()
     selftest_clean_tree_passes()
@@ -2546,6 +2857,52 @@ def run_selftest():
         "          bash .github/actions/_shared/auto-release-verdict.sh a b\n")
     selftest_shared_path_workdir_anchored_passes()
     selftest_shared_path_workdir_waivable()
+    # #889/#959: a fallback printed inside the substitution -- the jq
+    # case, the pipeline case, a multi-line gh call, a composite step, and
+    # a _shared/ script -- fails.
+    selftest_third_paste_fails(
+        "substitution-fallback", ".github/workflows/third-subst-jq.yml",
+        SUBST_FALLBACK_WF + "          hold_back=\"$(jq -c '[.[] | "
+        "select(.held)]' \"$missing_file\" 2>/dev/null || echo '[]')\"\n")
+    selftest_third_paste_fails(
+        "substitution-fallback", ".github/workflows/third-subst-pipeline.yml",
+        SUBST_FALLBACK_WF + "          set -o pipefail\n"
+        "          n=\"$(printf '%s' \"$raw\" | jq 'length' 2>/dev/null "
+        "|| printf 0)\"\n")
+    selftest_third_paste_fails(
+        "substitution-fallback", ".github/workflows/third-subst-multiline.yml",
+        SUBST_FALLBACK_WF + "          prs=$(gh pr list --json number \\\n"
+        "            --jq '.' 2>/dev/null \\\n"
+        "            || echo '[]')\n")
+    selftest_third_paste_fails(
+        "substitution-fallback", ".github/actions/third-subst/action.yml",
+        "runs:\n  using: composite\n  steps:\n    - shell: bash\n      run: |\n"
+        "        echo \"json=$(jq -c . \"$P\" 2>/dev/null || printf '{}')\"\n")
+    selftest_third_paste_fails(
+        "substitution-fallback", ".github/actions/_shared/third-subst.sh",
+        "#!/usr/bin/env bash\nx=\"$(gh api \"$u\" --jq .n || echo 0)\"\n")
+    # A bare `||` ending a line continues the list: the fallback on the
+    # next line is still inside the substitution.
+    selftest_third_paste_fails(
+        "substitution-fallback", ".github/workflows/third-subst-or-newline.yml",
+        SUBST_FALLBACK_WF + "          n=\"$(jq length \"$f\" 2>/dev/null ||\n"
+        "            echo 0)\"\n")
+    selftest_third_paste_fails(
+        "substitution-fallback",
+        ".github/workflows/third-subst-or-comment.yml",
+        SUBST_FALLBACK_WF + "          n=\"$(jq length \"$f\" 2>/dev/null || # none\n"
+        "\n            echo 0)\"\n")
+    # Not a test ternary: a non-test command (`jq`) runs before the last
+    # `||`, so its output and the fallback's can both land.
+    selftest_third_paste_fails(
+        "substitution-fallback", ".github/workflows/third-subst-fake-ternary.yml",
+        SUBST_FALLBACK_WF + "          v=\"$([ -f a ] || jq . f && echo y "
+        "|| echo n)\"\n")
+    selftest_substitution_fallback_safe_shapes_pass()
+    selftest_substitution_fallback_waivable()
+    selftest_substitution_fallback_line()
+    selftest_substitution_fallback_line_one_line_block()
+    selftest_substitution_fallback_semantics()
     selftest_composite_checkout_order_line_attribution()
     selftest_token_mint_line_attribution()
     selftest_board_stop_check_line_attribution()

@@ -115,7 +115,7 @@ runs:
           jq -s '[.[] | select(.name | startswith("metrics-record"))]' "$dir/artifacts.ndjson" \
             > "$dir/artifacts.json" 2>/dev/null || echo '[]' > "$dir/artifacts.json"
 
-          count="$(jq 'length' "$dir/artifacts.json" 2>/dev/null || echo 0)"
+          count="$(jq 'length' "$dir/artifacts.json" 2>/dev/null)" || count=0
           echo "Discovered $count metrics-record* artifact(s) for run $rid." >> "$GITHUB_STEP_SUMMARY"
           total=$(( total + count ))
         done
@@ -233,7 +233,7 @@ runs:
         # match keeps job_id: null and record_key in its emission-time
         # run_id:job_key:step_index form rather than guess wrong — a
         # known limitation, not a silent one.
-        jobs_json="$(cat "$dir/jobs.json" 2>/dev/null || echo '[]')"
+        jobs_json="$(cat "$dir/jobs.json" 2>/dev/null)" || jobs_json='[]'
 
         if [ -d "$dl_dir" ]; then
           for adir in "$dl_dir"/metrics-record*/; do
@@ -329,7 +329,7 @@ runs:
                   )
                 ) as $valid
                 | if $valid then "true" else "false" end
-              ' 2>/dev/null || echo false)"
+              ' 2>/dev/null)" || ok=false
 
               if [ "$ok" != "true" ]; then
                 rejected="$rejected $key"
@@ -488,7 +488,7 @@ runs:
           git add "$DEST_PATH"
           n="$(wc -l < "$to_append" | tr -d ' ')"
           if [ -n "${SWEEP_RUNS:-}" ]; then
-            sweep_n="$(printf '%s' "$SWEEP_RUNS" | jq -r 'length' 2>/dev/null || echo 0)"
+            sweep_n="$(printf '%s' "$SWEEP_RUNS" | jq -r 'length' 2>/dev/null)" || sweep_n=0
             git commit -m "metrics: sweep appended $n record(s) across $sweep_n run(s)" --allow-empty >/dev/null
           elif [ "$branch_is_new" = "true" ]; then
             git commit -m "metrics: initialize $DEST_PATH with $n record(s) from run ${RUN_ID}" --allow-empty >/dev/null
@@ -586,7 +586,7 @@ runs:
                   cost: (map(select(.cost_available==true) | .cost_usd) | add // 0)
                 }) | sort_by(.stage))
             }
-          ' "$recs" 2>/dev/null || echo '{}')"
+          ' "$recs" 2>/dev/null)" || totals='{}'
 
           history="$(jq -s -r '
             map(

@@ -332,7 +332,7 @@ jobs:
             exit 1
           fi
           cancelled_at="$(printf '%s' "$run_json" | jq -r '.updated_at')"
-          cancelled_epoch=$(date -u -d "$cancelled_at" +%s 2>/dev/null || echo 0)
+          cancelled_epoch=$(date -u -d "$cancelled_at" +%s 2>/dev/null) || cancelled_epoch=0
 
           # research.md D6's residual collision: a correlated entrant is
           # another ticket for this SAME spec-dir granted within a short
@@ -351,7 +351,7 @@ jobs:
 
           correlated=false
           if [ -n "$head_granted_at" ] && [ "$cancelled_epoch" -gt 0 ]; then
-            granted_epoch=$(date -u -d "$head_granted_at" +%s 2>/dev/null || echo 0)
+            granted_epoch=$(date -u -d "$head_granted_at" +%s 2>/dev/null) || granted_epoch=0
             if [ "$granted_epoch" -gt 0 ]; then
               diff=$(( cancelled_epoch - granted_epoch ))
               [ "$diff" -lt 0 ] && diff=$(( -diff ))

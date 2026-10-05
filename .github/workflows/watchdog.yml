@@ -2214,7 +2214,7 @@ jobs:
           # step's overall shell exit code, which the existing
           # `2>/dev/null || echo '<empty>'` fallbacks make near-impossible
           # to fail on a single bad read (contracts/watchdog-read-outcome.md).
-          untrusted="$(jq -c '[.[] | select(.outcome=="failed") | .collector] | unique' "$RUNNER_TEMP/collector-outcomes.json" 2>/dev/null || echo '[]')"
+          untrusted="$(jq -c '[.[] | select(.outcome=="failed") | .collector] | unique' "$RUNNER_TEMP/collector-outcomes.json" 2>/dev/null)" || untrusted='[]'
           echo "untrusted-collectors=$untrusted" >> "$GITHUB_OUTPUT"
           # #750/FR-005/FR-006: a THIRD, distinct outcome — "this collector
           # could not tell whether it was in scope because the inspected
@@ -2224,7 +2224,7 @@ jobs:
           # claim). stage-unresolved-collectors feeds the report strings
           # below so an unresolved stage is never silently reported as an
           # unqualified clean pass (SC-003).
-          unresolved="$(jq -c '[.[] | select(.outcome=="unresolved") | .collector] | unique' "$RUNNER_TEMP/collector-outcomes.json" 2>/dev/null || echo '[]')"
+          unresolved="$(jq -c '[.[] | select(.outcome=="unresolved") | .collector] | unique' "$RUNNER_TEMP/collector-outcomes.json" 2>/dev/null)" || unresolved='[]'
           echo "stage-unresolved-collectors=$unresolved" >> "$GITHUB_OUTPUT"
           if [ "$failed" -ge "$total" ]; then
             echo "evidence-available=false" >> "$GITHUB_OUTPUT"
@@ -2251,7 +2251,7 @@ jobs:
           # unqualified claim — see Gate 127 for the `0`/`[]` default this
           # jq call falls back to when stage-unresolved-collectors was
           # never computed.
-          stage_unresolved_count="$(printf '%s' "${STAGE_UNRESOLVED:-[]}" | jq 'length' 2>/dev/null || echo 0)"
+          stage_unresolved_count="$(printf '%s' "${STAGE_UNRESOLVED:-[]}" | jq 'length' 2>/dev/null)" || stage_unresolved_count=0
           suffix=""
           if [ "$stage_unresolved_count" -gt 0 ] 2>/dev/null; then
             suffix="; $stage_unresolved_count evidence class(es) not examined because the inspected run's stage could not be identified"
@@ -2296,7 +2296,7 @@ jobs:
           total="${COLLECTORS_TOTAL:-10}"
           # #750/SC-003: see the "could not inspect" step above for why this
           # is never folded into the collectors-failed accounting.
-          stage_unresolved_count="$(printf '%s' "${STAGE_UNRESOLVED:-[]}" | jq 'length' 2>/dev/null || echo 0)"
+          stage_unresolved_count="$(printf '%s' "${STAGE_UNRESOLVED:-[]}" | jq 'length' 2>/dev/null)" || stage_unresolved_count=0
           suffix=""
           if [ "$stage_unresolved_count" -gt 0 ] 2>/dev/null; then
             suffix="; $stage_unresolved_count evidence class(es) not examined because the inspected run's stage could not be identified"
@@ -2512,7 +2512,7 @@ jobs:
           classes="$(gh label list --repo "$GITHUB_REPOSITORY" --limit 200 --json name \
             --jq '[.[].name | select(startswith($ENV.LABEL_PREFIX)) | sub("^" + $ENV.LABEL_PREFIX; "")
                    | ascii_downcase | gsub("[^a-z0-9-]"; "")] | map(select(length > 0)) | unique' \
-            2>/dev/null || echo '[]')"
+            2>/dev/null)" || classes='[]'
           if [ -z "$classes" ] || [ "$classes" = "[]" ]; then
             # No registry yet (fresh consumer repo, or the label query failed).
             # Fall back to a free-text class so diagnosis still works; dedup is
@@ -2533,7 +2533,7 @@ jobs:
           # fingerprint step ever runs (spec 024 FR-027) — the
           # normalizedFacts fallback this comment used to describe was
           # deleted by T030.
-          sig_ids="$(jq -c '[.[].id] | unique' "${{ runner.temp }}/watchdog-signals.json" 2>/dev/null || echo '[]')"
+          sig_ids="$(jq -c '[.[].id] | unique' "${{ runner.temp }}/watchdog-signals.json" 2>/dev/null)" || sig_ids='[]'
           if [ "$sig_ids" = "[]" ] || [ -z "$sig_ids" ]; then
             sigid_schema='{"type":"string"}'
           else
@@ -2856,13 +2856,13 @@ jobs:
             # directly instead.
             agent_ok="$(jq -r '([.[] | select(.type=="result")] | last) as $r
               | if $r != null and $r.is_error == false and $r.subtype == "success"
-                then "true" else "false" end' "$file" 2>/dev/null || echo false)"
+                then "true" else "false" end' "$file" 2>/dev/null)" || agent_ok=false
             raw="$(jq -r '[.[] | select(.type=="result")] | last | .result // empty' "$file" 2>/dev/null || true)"
             # Structured output arrives as the object {"findings": [...]} —
             # unwrap it. A bare array is still accepted so an older execution
             # log, or a result that skipped the schema tool, degrades to the
             # previous shape rather than to zero Findings.
-            findings="$(printf '%s' "$raw" | jq -c 'if type=="object" and (.findings|type)=="array" then .findings elif type=="array" then . else [] end' 2>/dev/null || echo '[]')"
+            findings="$(printf '%s' "$raw" | jq -c 'if type=="object" and (.findings|type)=="array" then .findings elif type=="array" then . else [] end' 2>/dev/null)" || findings='[]'
           fi
           # Resolve the "__new__" class escape deterministically — the agent
           # proposes a name, it never authors the final one. proposedClass is
@@ -3015,7 +3015,7 @@ jobs:
           total="${COLLECTORS_TOTAL:-10}"
           # #750/SC-003: see collect's own "could not inspect" step for why
           # this is never folded into the collectors-failed accounting.
-          stage_unresolved_count="$(printf '%s' "${STAGE_UNRESOLVED:-[]}" | jq 'length' 2>/dev/null || echo 0)"
+          stage_unresolved_count="$(printf '%s' "${STAGE_UNRESOLVED:-[]}" | jq 'length' 2>/dev/null)" || stage_unresolved_count=0
           suffix=""
           if [ "$stage_unresolved_count" -gt 0 ] 2>/dev/null; then
             suffix="; $stage_unresolved_count evidence class(es) not examined because the inspected run's stage could not be identified"
@@ -3305,12 +3305,12 @@ jobs:
         run: |
           set -uo pipefail
           reason=""
-          cited_count="$(printf '%s' "$EVIDENCE" | jq '[ .[]?.signalId // empty ] | length' 2>/dev/null || echo 0)"
+          cited_count="$(printf '%s' "$EVIDENCE" | jq '[ .[]?.signalId // empty ] | length' 2>/dev/null)" || cited_count=0
           if [ "$cited_count" -eq 0 ]; then
             reason="evidence is empty — no signal id cited"
           else
-            known="$(printf '%s' "$SIGNALS" | jq -c '[ .[]?.id // empty ]' 2>/dev/null || echo '[]')"
-            unresolved="$(printf '%s' "$EVIDENCE" | jq -c --argjson k "$known" '[ .[]?.signalId // empty | select(. as $x | ($k | index($x)) == null) ]' 2>/dev/null || echo '[]')"
+            known="$(printf '%s' "$SIGNALS" | jq -c '[ .[]?.id // empty ]' 2>/dev/null)" || known='[]'
+            unresolved="$(printf '%s' "$EVIDENCE" | jq -c --argjson k "$known" '[ .[]?.signalId // empty | select(. as $x | ($k | index($x)) == null) ]' 2>/dev/null)" || unresolved='[]'
             if [ "$(printf '%s' "$unresolved" | jq 'length')" -gt 0 ]; then
               reason="evidence cites signal id(s) $unresolved that this run did not emit"
             fi
@@ -3341,11 +3341,11 @@ jobs:
               # No fixed key list for this class — require at least one
               # non-empty fact so a totally empty normalizedFacts still
               # fails (a finding must be grounded in SOMETHING).
-              nonempty="$(printf '%s' "$FACTS" | jq '[ to_entries[] | select(.value != null and .value != "" and .value != []) ] | length' 2>/dev/null || echo 0)"
+              nonempty="$(printf '%s' "$FACTS" | jq '[ to_entries[] | select(.value != null and .value != "" and .value != []) ] | length' 2>/dev/null)" || nonempty=0
               [ "$nonempty" -gt 0 ] || reason="normalizedFacts carries no non-empty fact, and class '$FINDING_CLASS' has no fixed key list"
             else
               missing="$(jq -cn --argjson facts "$FACTS" --argjson keys "$keys" \
-                '[ $keys[] | select(($facts[.] // null) as $v | $v == null or $v == "" or $v == []) ]' 2>/dev/null || echo '[]')"
+                '[ $keys[] | select(($facts[.] // null) as $v | $v == null or $v == "" or $v == []) ]' 2>/dev/null)" || missing='[]'
               if [ "$(printf '%s' "$missing" | jq 'length')" -gt 0 ]; then
                 reason="normalizedFacts is missing or empty for required key(s) $missing (class '$FINDING_CLASS')"
               fi
@@ -3392,10 +3392,10 @@ jobs:
           # The schema enum should make an unknown id impossible; this is the
           # belt-and-braces that keeps a hallucinated id from silently
           # becoming half of a fingerprint.
-          cited="$(printf '%s' "$EVIDENCE" | jq -c '[ .[]?.signalId // empty ] | unique' 2>/dev/null || echo '[]')"
-          known="$(printf '%s' "$SIGNALS" | jq -c '[ .[]?.id // empty ]' 2>/dev/null || echo '[]')"
-          valid="$(jq -cn --argjson c "$cited" --argjson k "$known" '$c | map(select(. as $x | $k | index($x)))' 2>/dev/null || echo '[]')"
-          bogus="$(jq -cn --argjson c "$cited" --argjson v "$valid" '$c - $v' 2>/dev/null || echo '[]')"
+          cited="$(printf '%s' "$EVIDENCE" | jq -c '[ .[]?.signalId // empty ] | unique' 2>/dev/null)" || cited='[]'
+          known="$(printf '%s' "$SIGNALS" | jq -c '[ .[]?.id // empty ]' 2>/dev/null)" || known='[]'
+          valid="$(jq -cn --argjson c "$cited" --argjson k "$known" '$c | map(select(. as $x | $k | index($x)))' 2>/dev/null)" || valid='[]'
+          bogus="$(jq -cn --argjson c "$cited" --argjson v "$valid" '$c - $v' 2>/dev/null)" || bogus='[]'
           if [ "$(printf '%s' "$bogus" | jq 'length')" -gt 0 ]; then
             echo "::warning::watchdog dedup: finding cited signal id(s) $bogus that this run did not emit — ignored for fingerprinting."
           fi
