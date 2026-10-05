@@ -268,9 +268,10 @@ def drafted_contract_widened(file_changes, read_text, unknown=None):
     workflow files it edits.
 
     `unknown`, when a list, receives each path whose effect is left
-    unknown. A workflow file this loop cannot push is held, never pushed,
-    so no final-diff check follows: route() records those paths, and the
-    hold comment tells the maintainer the contract effect is unchecked."""
+    unknown. A change with a workflow file this loop cannot push is held,
+    never pushed, so no final-diff check follows: route() records those
+    paths, and the hold comment tells the maintainer the contract effect is
+    unchecked."""
     widened = []
     for fc in file_changes or []:
         if not isinstance(fc, dict):
@@ -433,9 +434,10 @@ def route(agent_proposal, file_changes, board_max_files, board_max_lines,
     (board_triage.defer_on_rate_limit()) -- and routes it once the usage
     window resets.
     `contract_unknown_paths` (drafted_contract_widened()'s `unknown`): on a
-    hold, the held paths among them are recorded as
-    `measured.contract_unknown_paths`, because a held fix is never pushed
-    and so never reaches route_final_diff()'s contract check."""
+    hold, all of them -- a composite held alongside a workflow file too --
+    are recorded as `measured.contract_unknown_paths`, because a held fix
+    is never pushed and so never reaches route_final_diff()'s contract
+    check."""
     category = normalize_category(agent_proposal)
     if category is None:
         agent_proposal, proposal_extracted = "spec", False
@@ -485,7 +487,9 @@ def route(agent_proposal, file_changes, board_max_files, board_max_lines,
         measured["contract_touched_paths"] = widened_paths
     if reason == "workflow_scope":
         measured["workflow_paths"] = list(workflow_push_blocked)
-        unchecked = [p for p in contract_unknown_paths or [] if p in measured["workflow_paths"]]
+        # Every unknown path, not only the held workflow files: a composite
+        # in the same change is never pushed by this loop either.
+        unchecked = list(dict.fromkeys(contract_unknown_paths or []))
         if unchecked:
             measured["contract_unknown_paths"] = unchecked
 

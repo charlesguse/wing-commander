@@ -50,15 +50,16 @@ SITES = ("route", "fix", "review-fixup")
 RENDERABLE_PATH_RE = re.compile(r"^[A-Za-z0-9._/-]{1,200}$")
 
 
-def render_paths(paths):
+def render_paths(paths, fallback="a file under `.github/workflows/`"):
     shown = ["`{0}`".format(p) for p in paths if RENDERABLE_PATH_RE.match(p)]
-    return ", ".join(shown) or "a file under `.github/workflows/`"
+    return ", ".join(shown) or fallback
 
 
 def hold_comment(site, paths, pr=None, contract_unknown=None):
     """The human-legible half of the hold comment for `site`; the stalled
-    marker follows it. `contract_unknown`: route's held paths whose drafted
-    diff could not be applied to main (drafted_contract_widened()), so
+    marker follows it. `contract_unknown`: the paths in route's held change
+    whose drafted diff could not be applied to main
+    (drafted_contract_widened()) -- a composite as well as a workflow -- so
     whether they change a published contract was never checked -- a held
     fix is never pushed, so route_final_diff() never sees it."""
     named = render_paths(paths)
@@ -79,9 +80,10 @@ def hold_comment(site, paths, pr=None, contract_unknown=None):
     unchecked = ""
     if contract_unknown:
         unchecked = (" Route could not apply its drafted diff for {0} to main, so whether the "
-                     "change touches a published contract (an `on: workflow_call:` block) is "
-                     "unchecked: a contract change is spec-shaped, not a fix (FR-019).").format(
-                         render_paths(contract_unknown))
+                     "change touches a published contract (a workflow's `on: workflow_call:` "
+                     "block, or a composite's `inputs:`/`outputs:`) is unchecked: a contract "
+                     "change is spec-shaped, not a fix (FR-019).").format(
+                         render_paths(contract_unknown, "a file it drafted"))
     return ("{0}{1} Held for a maintainer: {2} from a session whose token has the `workflow` "
             "scope, or grant the App Workflows (read and write) and set "
             "`WING_COMMANDER_BOARD_CAN_PUSH_WORKFLOWS` to `true`. Removing board:stalled is "

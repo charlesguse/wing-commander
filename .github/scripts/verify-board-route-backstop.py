@@ -335,6 +335,14 @@ def hold_helper_failures():
        "calls={0!r}".format(calls))
     rc, out, calls, summary = _run_hold(
         ["--site", "route", "--can-push-workflows", "false"] + base, "",
+        decision={"measured": {"workflow_paths": [".github/workflows/x.yml"],
+                               "contract_unknown_paths": [".github/actions/wing-commander-m/action.yml"]}})
+    body = calls[-1][-1] if calls else ""
+    ck("route names a held change's unchecked composite and its inputs:/outputs:",
+       rc == 0 and out == "held" and "`.github/actions/wing-commander-m/action.yml`" in body
+       and "`inputs:`/`outputs:`" in body, "rc={0} calls={1!r}".format(rc, calls))
+    rc, out, calls, summary = _run_hold(
+        ["--site", "route", "--can-push-workflows", "false"] + base, "",
         decision={"measured": {"workflow_paths": [".github/workflows/x.yml", ".github/workflows/y.yml"],
                                "contract_unknown_paths": [".github/workflows/y.yml"]}})
     body = calls[-1][-1] if calls else ""
@@ -678,6 +686,28 @@ def run():
         failures += 1
         print("::error::verify-board-route-backstop: contract_unknown_paths: widened={0!r} "
               "unknown={1!r} held={2!r} fixed={3!r}".format(got_widened, unknown, held, fixed))
+
+    # A composite in a held change is never pushed either: an unappliable
+    # drafted diff that adds an input under its existing inputs: (no
+    # column-0 signal) is recorded too, not only the held workflow file.
+    unknown = []
+    mixed = [{"path": ".github/workflows/w.yml", "diff": "@@ -1 +1 @@\n-on: push\n+on: [push]\n"},
+             {"path": ".github/actions/wing-commander-m/action.yml",
+              "diff": "@@ -3,1 +3,2 @@\n missing: context\n+  new-input:\n"}]
+    mains = {".github/workflows/w.yml": "on: push\n",
+             ".github/actions/wing-commander-m/action.yml": "inputs:\n  a:\n    description: a\n"}
+    got_widened = drafted_contract_widened(mixed, mains.get, unknown=unknown)
+    held = route("fix", mixed, 3, 40, lambda *_a: (False, 2, 3),
+                 widened_paths_override=got_widened, workflow_push_blocked=[".github/workflows/w.yml"],
+                 contract_unknown_paths=unknown)
+    if (got_widened == [] and held["reason"] == "workflow_scope"
+            and held["measured"].get("contract_unknown_paths")
+            == [".github/actions/wing-commander-m/action.yml"]):
+        print("[ok] a held change's unappliable composite diff is recorded as contract-unchecked")
+    else:
+        failures += 1
+        print("::error::verify-board-route-backstop: held composite contract_unknown_paths: "
+              "widened={0!r} unknown={1!r} held={2!r}".format(got_widened, unknown, held))
 
     try:
         with open(BOARD_LOOP, encoding="utf-8") as fh:

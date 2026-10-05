@@ -66,7 +66,7 @@ def route_final_diff(route_decision: RouteDecision, final_diff: dict) -> RouteDe
 
 | agent_proposal | backstop verdict | `reason` | Outcome |
 |---|---|---|---|
-| fix | under threshold, no contract change, drafted diff edits a file under `.github/workflows/`, `WING_COMMANDER_BOARD_CAN_PUSH_WORKFLOWS` off | `workflow_scope` | held: `board:stalled` and a comment naming the files, for a maintainer whose token has the `workflow` scope; a held path whose drafted diff could not be applied to main is named in that comment as contract-unchecked. Never filed as a spec. The fix job's pre-push check holds the same way when the fixer's real diff edits one |
+| fix | under threshold, no contract change, drafted diff edits a file under `.github/workflows/`, `WING_COMMANDER_BOARD_CAN_PUSH_WORKFLOWS` off | `workflow_scope` | held: `board:stalled` and a comment naming the files, for a maintainer whose token has the `workflow` scope; any path in the held change whose drafted diff could not be applied to main, a composite as well as a workflow, is named in that comment as contract-unchecked. Never filed as a spec. The fix job's pre-push check holds the same way when the fixer's real diff edits one |
 
 ## Decision table
 
