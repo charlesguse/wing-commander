@@ -43,8 +43,12 @@ trigger list must match the shipped one too, as the 058 delta's must, and
 a spelled-out count of the completion path's workflows in the live docs
 must equal the shipped list's length.
 
-Twelve subject mutations and two discovery mutations must each break an
-assertion.
+Seventeen subject mutations and two discovery mutations must each break an
+assertion. Each check in suite() is the only one some mutation trips --
+a mutation that a second check also catches would keep passing with its
+target check deleted -- except the missing-`if:` check, which the
+pause-switch check strictly subsumes (an empty guard cannot read the
+pause variable) and which exists to name the cause.
 
 Wiring: lint-workflows.yml, Gate 79.
 """
@@ -252,7 +256,8 @@ COUNT_CLAIM_FILES = [WRAPPER, CONTRACT, WRAPPER_CONTRACT,
                      os.path.join("docs", "adoption.md")]
 _NUMWORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven",
              "eight", "nine", "ten", "eleven", "twelve", "thirteen",
-             "fourteen", "fifteen"]
+             "fourteen", "fifteen", "sixteen", "seventeen", "eighteen",
+             "nineteen", "twenty"]
 _COUNT_CLAIM = re.compile(
     r"\b(" + "|".join(_NUMWORDS) + r")"
     r"(?:-stage(?:[\s#]+)path|(?:[\s#]+)completion-trigger(?:[\s#]+)workflows)\b",
@@ -478,26 +483,78 @@ def suite(subject):
 # --------------------------------------------------------------------------
 # Mutations
 # --------------------------------------------------------------------------
-def mut_watchdog_restored(subject):
+def _trigger_list(subject, workflows):
+    """The subject with its trigger list replaced and every document that
+    restates it (both contracts, the count prose) kept in step -- so the
+    one check a trigger-list mutation targets is the only one that can
+    catch it, rather than a contract comparison catching it by accident."""
     s = dict(subject)
-    s["workflows"] = subject["workflows"] + [WATCHDOG_NAME]
-    return s
-
-
-def mut_board_loop_on_trigger(subject):
-    s = dict(subject)
-    s["workflows"] = subject["workflows"] + [BOARD_LOOP_NAME]
-    s["wrapper-contract-workflows"] = list(s["workflows"])
-    s["documented-workflows"] = list(s["workflows"])
-    s["count-claims"] = [(p, ln, len(s["workflows"]))
+    s["workflows"] = list(workflows)
+    s["wrapper-contract-workflows"] = list(workflows)
+    s["documented-workflows"] = list(workflows)
+    s["count-claims"] = [(p, ln, len(workflows))
                          for p, ln, _ in subject["count-claims"]]
     return s
 
 
-def mut_cron_collides(subject):
+def _schedule(subject, crons):
+    """The subject with its cron list replaced, the delta contract's
+    published cron kept in step (same reason as _trigger_list)."""
     s = dict(subject)
+    s["schedule"] = list(crons)
+    s["documented-schedule"] = list(crons)
+    return s
+
+
+def mut_watchdog_restored(subject):
+    return _trigger_list(subject, subject["workflows"] + [WATCHDOG_NAME])
+
+
+def mut_board_loop_on_trigger(subject):
+    return _trigger_list(subject, subject["workflows"] + [BOARD_LOOP_NAME])
+
+
+def mut_trigger_emptied(subject):
+    # Only the sweep-only owners remain uploaders, so the coverage check
+    # has nothing to demand of the trigger and the empty-list check alone
+    # stands between this and a per-completion path that silently went.
+    s = _trigger_list(subject, [])
+    s["record-owners"] = {p: n for p, n in subject["record-owners"].items()
+                          if n in SWEEP_ONLY}
+    return s
+
+
+def mut_cron_collides(subject):
     collide = other_crons()
-    s["schedule"] = [collide[0][1]] if collide else ["43 5 * * *"]
+    return _schedule(subject, [collide[0][1]] if collide else ["43 5 * * *"])
+
+
+def mut_second_cron(subject):
+    # A second entry that collides with nothing, so only the
+    # one-daily-sweep count can catch it.
+    taken = {minute_hour(c) for _, c in other_crons()} | {
+        minute_hour(c) for c in subject["schedule"]}
+    spare = next(f"{m} {h} * * *" for h in range(24) for m in range(60)
+                 if (str(m), str(h)) not in taken)
+    return _schedule(subject, subject["schedule"] + [spare])
+
+
+def mut_delta_contract_drifts(subject):
+    s = dict(subject)
+    s["documented-workflows"] = subject["workflows"] + [WATCHDOG_NAME]
+    return s
+
+
+def mut_discovery_finds_nothing(subject):
+    s = dict(subject)
+    s["record-owners"] = {}
+    return s
+
+
+def mut_since_input_dropped(subject):
+    s = dict(subject)
+    s["dispatch-inputs"] = {k: v for k, v in subject["dispatch-inputs"].items()
+                            if k != "since"}
     return s
 
 
@@ -533,16 +590,9 @@ def _first_named_owner(subject):
 
 
 def mut_owner_dropped_from_trigger(subject):
-    s = dict(subject)
     _, name = _first_named_owner(subject)
-    s["workflows"] = [w for w in subject["workflows"] if w != name]
-    s["wrapper-contract-workflows"] = list(s["workflows"])
-    s["documented-workflows"] = list(s["workflows"])
-    # Keep the count prose in step with the shorter list, so only the
-    # trigger-coverage check can catch this mutation.
-    s["count-claims"] = [(p, ln, len(s["workflows"]))
-                         for p, ln, _ in subject["count-claims"]]
-    return s
+    return _trigger_list(subject,
+                         [w for w in subject["workflows"] if w != name])
 
 
 def mut_owner_dropped_from_sweep(subject):
@@ -600,12 +650,23 @@ MUTATIONS = [
      mut_wrapper_contract_drifts),
     ("live prose keeps a stale completion-workflow count",
      mut_stale_count_claim),
-    ("the watchdog is restored to the completion trigger", mut_watchdog_restored),
+    ("the watchdog is restored to the completion trigger, docs and all",
+     mut_watchdog_restored),
     ("the sweep-only board-loop joins the completion trigger, docs and all",
      mut_board_loop_on_trigger),
+    ("the completion trigger is emptied, docs and all",
+     mut_trigger_emptied),
+    ("the 058 delta contract's trigger list drifts from the shipped one",
+     mut_delta_contract_drifts),
+    ("record-owner discovery finds nothing in the repository",
+     mut_discovery_finds_nothing),
     ("the published contract's cron drifts from the shipped one",
      mut_contract_cron_drifts),
-    ("the sweep's cron collides with another schedule", mut_cron_collides),
+    ("the sweep's cron collides with another schedule, docs and all",
+     mut_cron_collides),
+    ("a second, non-colliding cron entry is added, docs and all",
+     mut_second_cron),
+    ("workflow_dispatch loses its `since` input", mut_since_input_dropped),
     ("the schedule also reaches the single-run job", mut_schedule_reaches_persist),
     ("the sweep job stops honouring the pause switch", mut_sweep_unpausable),
 ]
@@ -615,6 +676,11 @@ def main():
     use_utf8_stdout()
     subject = load_subject()
     failures = suite(subject) + discovery_failures()
+    claim = (f"{_NUMWORDS[len(MUTATIONS)].capitalize()} subject mutations "
+             f"and {_NUMWORDS[len(DISCOVERY_MUTATIONS)]} discovery mutations")
+    if claim not in " ".join((__doc__ or "").split()):
+        failures.append(f"this gate's docstring does not say {claim!r} -- "
+                        f"its mutation count is stale")
     for f in failures:
         print(f"::error::{f}")
     mutation_failures = 0
