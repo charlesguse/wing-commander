@@ -2532,11 +2532,29 @@ def _self_test_git_read_wrapper():
                         "-m", "x"], check=True)
         base = {"PATH": os.environ.get("PATH", ""), "HOME": tmpdir,
                 "GIT_TEST_ASSUME_DIFFERENT_OWNER": "1"}
-        for extra, want in (
-                ({"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "safe.directory",
-                  "GIT_CONFIG_VALUE_0": "*"}, 0),
-                ({"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "core.pager",
-                  "GIT_CONFIG_VALUE_0": "cat"}, 2)):
+        cases = [({"GIT_CONFIG_COUNT": "1",
+                   "GIT_CONFIG_KEY_0": "safe.directory",
+                   "GIT_CONFIG_VALUE_0": "*"}, 0)]
+        # The refusal case proves something only where plain git, under the
+        # same simulated ownership and an empty HOME, refuses the repo. A
+        # host whose system gitconfig already trusts it (safe.directory=*
+        # in /etc/gitconfig), or a git that ignores the test switch, opens
+        # it anyway; the wrapper cannot narrow that (it drops
+        # GIT_CONFIG_NOSYSTEM with the rest), so there the case is skipped
+        # with a note rather than failed.
+        probe = subprocess.run(["git", "rev-parse", "--show-toplevel"],
+                               cwd=repo, capture_output=True, text=True,
+                               env=base)
+        if probe.returncode != 0:
+            cases.append(({"GIT_CONFIG_COUNT": "1",
+                           "GIT_CONFIG_KEY_0": "core.pager",
+                           "GIT_CONFIG_VALUE_0": "cat"}, 2))
+        else:
+            print("note: plain git opens the simulated foreign-owned repo "
+                  "on this host (its system gitconfig trusts it, or git "
+                  "ignores GIT_TEST_ASSUME_DIFFERENT_OWNER), so the "
+                  "wrapper's no-safe.directory refusal case is skipped.")
+        for extra, want in cases:
             result = subprocess.run(
                 [sys.executable, "-I", os.path.abspath(GIT_READ_WRAPPER),
                  "log", "-1", "--format=%s"],
