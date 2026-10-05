@@ -76,6 +76,9 @@ on:
       # adopter forking that wrapper reads. Editing the document alone is
       # the one change that can make it disagree with the file it describes.
       - "specs/058-per-job-minute-floor/contracts/metrics-persist-sweep-delta.md"
+      # Gate 79 also compares the 043 wrapper contract's published trigger
+      # list against the shipped wrapper's (#889).
+      - "specs/043-durable-metrics-record/contracts/wrapper-contract.md"
       # Gate 113's subject: the constitution names the classes of merge the
       # bot may perform, and the gate fails when the pipeline can perform
       # one the document does not name. An amendment PR editing only this
@@ -4454,7 +4457,11 @@ jobs:
       # one job this feature deliberately added. Also evaluates both job
       # guards against all four trigger shapes, so a schedule cannot reach
       # the single-run job (it would persist run-id '') and a completion
-      # cannot reach the sweep.
+      # cannot reach the sweep. And (#889) every workflow that uploads a
+      # metrics-record artifact, directly, through a composite, or through
+      # a reusable workflow it calls, is in the sweep's workflow paths and,
+      # unless sweep-only (watchdog, board-loop), the completion trigger --
+      # board-loop.yml was in neither, so its records expired unpersisted.
       - name: Gate 79 — the metrics wrapper drops the watchdog trigger and its sweep cron stands alone
         if: "!cancelled()"
         run: python3 .github/scripts/verify-metrics-wrapper-trigger-drops-watchdog.py

@@ -24,9 +24,12 @@ retry path is the one under test; and metrics-persist.yml's own window
 step for the read, against a destination branch that does and does not
 already carry a mark.
 
-Four mutations -- the mark written in a second commit, the mark taken from
-the first run rather than the latest, the one-hour overlap dropped, and the
-mark read but ignored -- must each break an assertion.
+Seven mutations -- the mark written in a second commit, the hold-back
+read appending its fallback to jq's own output, the mark taken from the
+first run rather than the latest, the one-hour overlap dropped, the mark
+read but ignored, a skipped run not dropped before the composite, and the
+caller's workflow-path allowlist not applied -- must each break an
+assertion.
 
 Wiring: lint-workflows.yml, Gate 77.
 """

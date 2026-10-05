@@ -161,6 +161,17 @@ repository (FR-030(b), FR-030(c) — a literal-list comparison, matching
 the discovery-based convention this repository already uses for its
 comment-canonical-pointer and wiring gates).
 
+Extended by #889: every workflow that uploads a `metrics-record*`
+artifact (directly, through a local composite, or through a reusable
+workflow it calls) is named in both `workflow_run.workflows` (the
+watchdog and `board-loop` excepted, which are sweep-only and must stay
+off it) and the `sweep` job's
+`sweep-workflow-paths`; the discovery is pinned by a fixture tree, and
+the 043 wrapper contract's published trigger list must match the
+shipped one. A spelled-out count of the completion path's workflows
+("N completion-trigger workflows", "N-stage path") in the live wrapper,
+stage, contracts or docs/adoption.md must equal the shipped list's length.
+
 ## Wiring assertions common to all new/amended gates
 
 - `verify-gate-wiring.py` (existing, unchanged) picks up each new script
