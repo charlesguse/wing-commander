@@ -1185,13 +1185,21 @@ def _run_readiness_backstop(code, resume_step, scripts_root):
         os.makedirs(pristine)
         os.symlink(os.path.join(os.path.abspath(scripts_root), ".github", "scripts"),
                    os.path.join(pristine, "scripts"))
-        for name in ("board-readiness-final-diff.patch", "board-readiness-final-diff-paths.txt"):
-            open(os.path.join(tmp, name), "w").close()
+        open(os.path.join(tmp, "board-readiness-final-diff.patch"), "w").close()
+        # The step lists its paths with diff_name_list(BASE_SHA): an empty
+        # repository diffed against its own HEAD.
+        work = os.path.join(tmp, "work")
+        os.makedirs(work)
+        git = ["git", "-C", work, "-c", "user.name=t", "-c", "user.email=t@t"]
+        subprocess.run(git[:3] + ["init", "-q"], check=True)
+        subprocess.run(git + ["commit", "-q", "--allow-empty", "-m", "base"], check=True)
+        base_sha = subprocess.run(git[:3] + ["rev-parse", "HEAD"], check=True,
+                                  capture_output=True, text=True).stdout.strip()
         out_path = os.path.join(tmp, "github_output")
-        env = dict(os.environ, RUNNER_TEMP=tmp, GITHUB_OUTPUT=out_path,
+        env = dict(os.environ, RUNNER_TEMP=tmp, GITHUB_OUTPUT=out_path, BASE_SHA=base_sha,
                    BOARD_MAX_FILES="6", BOARD_MAX_LINES="120", RESUME_STEP=resume_step)
         proc = subprocess.run([sys.executable, "-"], input=code, text=True,
-                              capture_output=True, env=env, cwd=tmp)
+                              capture_output=True, env=env, cwd=work)
         outputs = {}
         if os.path.exists(out_path):
             with open(out_path, encoding="utf-8") as fh:

@@ -61,12 +61,15 @@ def route_final_diff(route_decision: RouteDecision, final_diff: dict) -> RouteDe
   contract effect named as unchecked (#936, #955).
 - The final-diff check (`route_final_diff()`) also compares against the
   base side (`read_base_contents()`), so a contract removed is a breach,
-  not only one added.
+  not only one added. Its paths come from `diff_name_list()` and its patch
+  from `git diff --no-renames`, so a `workflow_call` workflow moved out of
+  `.github/workflows/` is a contract removed, not an unrelated new file
+  (#889).
 - A new verdict, `hold`, comes before `fix`:
 
 | agent_proposal | backstop verdict | `reason` | Outcome |
 |---|---|---|---|
-| fix | under threshold, no contract change, drafted diff edits a file under `.github/workflows/`, `WING_COMMANDER_BOARD_CAN_PUSH_WORKFLOWS` off | `workflow_scope` | held: `board:stalled` and a comment naming the files, for a maintainer whose token has the `workflow` scope; any path in the held change whose drafted diff could not be applied to main, a composite as well as a workflow, is named in that comment as contract-unchecked. Never filed as a spec. The fix job's pre-push check holds the same way when the fixer's real diff edits one |
+| fix | under threshold, no contract change, drafted diff edits a file under `.github/workflows/`, `WING_COMMANDER_BOARD_CAN_PUSH_WORKFLOWS` off | `workflow_scope` | held: `board:stalled` and a comment naming the files, for a maintainer whose token has the `workflow` scope; any path in the held change whose drafted diff could not be applied to main, a composite as well as a workflow, is named in that comment as contract-unchecked. Never filed as a spec. The fix job's pre-push check holds the same way when the fixer's real diff edits one, and review-fixup's on its follow-up commit; each lists the real diff itself (`diff_name_list()`: NUL-separated, so a non-ASCII path is never C-quoted, and `--no-renames`, so a rename is its deleted path and its added one), whatever route drafted, and its comment names whether that diff changes a published contract (`contract_widened()` against the base), since a held change never reaches `route_final_diff()`. An unreadable or malformed route decision is an `::error::` naming the site, and nothing is held (#889) |
 
 ## Decision table
 

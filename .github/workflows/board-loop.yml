@@ -3078,11 +3078,11 @@ jobs:
           # same way, never left to fail and be resumed into the same
           # refusal on every later run.
           # The check and the hold: board_workflow_scope_hold.py (route's
-          # "Hold a workflow-file fix for a maintainer"). The paths are
-          # captured first, never piped from `git diff`, so a reader that
-          # stops early cannot fail the diff with SIGPIPE under pipefail.
-          changed_paths="$(git diff --name-only "$BASE_SHA" HEAD)"
-          held="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_workflow_scope_hold.py" --site fix --issue "$ISSUE_NUMBER" --add-label "board:stalled" --can-push-workflows "$CAN_PUSH_WORKFLOWS" --branch "$BRANCH" --base-sha "$BASE_SHA" <<<"$changed_paths")"
+          # "Hold a workflow-file fix for a maintainer"). It lists the
+          # paths changed since --diff-base itself (diff_name_list(): never
+          # C-quoted, a rename as both paths), whatever route drafted, and
+          # names the real diff's contract effect in the hold comment.
+          held="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_workflow_scope_hold.py" --site fix --issue "$ISSUE_NUMBER" --add-label "board:stalled" --can-push-workflows "$CAN_PUSH_WORKFLOWS" --diff-base "$BASE_SHA" --branch "$BRANCH" --base-sha "$BASE_SHA")"
           if [ "$held" = "held" ]; then
             exit 0
           fi
@@ -3123,8 +3123,10 @@ jobs:
           BOARD_MAX_LINES: ${{ env.BOARD_MAX_LINES }}
         run: |
           set -uo pipefail
-          git diff "$BASE_SHA" HEAD > "$RUNNER_TEMP/board-fix-final-diff.patch"
-          git diff --name-only "$BASE_SHA" HEAD > "$RUNNER_TEMP/board-fix-final-diff-paths.txt"
+          # --no-renames, here and in diff_name_list(): a rename is its
+          # deleted path and its added one, so a contract moved away is
+          # still compared against the base.
+          git -c core.quotePath=false diff --no-renames "$BASE_SHA" HEAD > "$RUNNER_TEMP/board-fix-final-diff.patch"
 
           python3 -I - <<'PYEOF'
           import json
@@ -3132,19 +3134,14 @@ jobs:
           import sys
 
           sys.path.insert(0, os.path.join(os.environ["RUNNER_TEMP"], "wc-pristine", "scripts"))
-          from board_route_backstop import read_base_contents, route_final_diff
+          from board_route_backstop import (diff_name_list, read_base_contents,
+                                            read_worktree_contents, route_final_diff)
 
           runner_temp = os.environ["RUNNER_TEMP"]
           with open(os.path.join(runner_temp, "board-fix-final-diff.patch"), encoding="utf-8") as fh:
               diff_text = fh.read()
-          with open(os.path.join(runner_temp, "board-fix-final-diff-paths.txt"), encoding="utf-8") as fh:
-              diff_paths = [line.strip() for line in fh if line.strip()]
-
-          file_contents = {}
-          for path in diff_paths:
-              if os.path.isfile(path):
-                  with open(path, encoding="utf-8") as fh:
-                      file_contents[path] = fh.read()
+          diff_paths = diff_name_list(os.environ["BASE_SHA"])
+          file_contents = read_worktree_contents(diff_paths)
 
           files = len(diff_paths)
           lines = sum(1 for line in diff_text.splitlines()
@@ -4408,8 +4405,7 @@ jobs:
           # the PR". Only the commits this push adds are checked: GitHub
           # refuses them when they change a workflow file and the App holds
           # no Workflows permission.
-          changed_paths="$(git diff --name-only "$REVIEWED_SHA" HEAD)"
-          held="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_workflow_scope_hold.py" --site review-fixup --issue "$ISSUE_NUMBER" --add-label "board:stalled" --can-push-workflows "$CAN_PUSH_WORKFLOWS" --pr "$PR_NUMBER" <<<"$changed_paths")" \
+          held="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_workflow_scope_hold.py" --site review-fixup --issue "$ISSUE_NUMBER" --add-label "board:stalled" --can-push-workflows "$CAN_PUSH_WORKFLOWS" --diff-base "$REVIEWED_SHA" --pr "$PR_NUMBER")" \
             || exit 1
           if [ "$held" = "held" ]; then
             exit 0
@@ -4631,8 +4627,9 @@ jobs:
           set -uo pipefail
           base_sha="$(git merge-base origin/main HEAD)"
           export BASE_SHA="$base_sha"
-          git diff "$base_sha" HEAD > "$RUNNER_TEMP/board-readiness-final-diff.patch"
-          git diff --name-only "$base_sha" HEAD > "$RUNNER_TEMP/board-readiness-final-diff-paths.txt"
+          # --no-renames: see fix's "Re-apply the route backstop to the
+          # final diff".
+          git -c core.quotePath=false diff --no-renames "$base_sha" HEAD > "$RUNNER_TEMP/board-readiness-final-diff.patch"
 
           python3 -I - <<'PYEOF'
           import json
@@ -4641,19 +4638,14 @@ jobs:
 
           sys.path.insert(0, os.path.join(os.environ["RUNNER_TEMP"], "wc-pristine", "scripts"))
           from board_eligibility import BREACH_STEP
-          from board_route_backstop import contract_widened, read_base_contents
+          from board_route_backstop import (contract_widened, diff_name_list,
+                                            read_base_contents, read_worktree_contents)
 
           runner_temp = os.environ["RUNNER_TEMP"]
           with open(os.path.join(runner_temp, "board-readiness-final-diff.patch"), encoding="utf-8") as fh:
               diff_text = fh.read()
-          with open(os.path.join(runner_temp, "board-readiness-final-diff-paths.txt"), encoding="utf-8") as fh:
-              diff_paths = [line.strip() for line in fh if line.strip()]
-
-          file_contents = {}
-          for path in diff_paths:
-              if os.path.isfile(path):
-                  with open(path, encoding="utf-8") as fh:
-                      file_contents[path] = fh.read()
+          diff_paths = diff_name_list(os.environ["BASE_SHA"])
+          file_contents = read_worktree_contents(diff_paths)
 
           files = len(diff_paths)
           lines = sum(1 for line in diff_text.splitlines()
