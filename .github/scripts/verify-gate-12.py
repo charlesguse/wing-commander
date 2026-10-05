@@ -1565,6 +1565,30 @@ CASES = [
              'gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" -f body=x',
              "echo '`'"]),
      True, ("issues", "write")),
+
+    ("a backslash before an Actions expression escapes the value GitHub "
+     "puts there, not its `$`: `\\${{ contains(x, '`') }}` runs as "
+     "`\\false`, so the backtick in the expression ends no backtick "
+     "substitution, and its apostrophe hides no write on the next line",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ["x=`echo \\${{ contains(github.ref, '`') }}`",
+             'gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" -f body=x']),
+     True, ("issues", "write")),
+
+    ("... inside double quotes too, where its `\"` closed them",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ["x=\"\\${{ contains(github.ref, '\"') }}\"",
+             'gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" -f body=x']),
+     True, ("issues", "write")),
+
+    ("an Actions expression inside single quotes is replaced too: "
+     "`x='${{ contains(x, '`') }}`'` runs as `x='false`'`, one quoted word, "
+     "so the expression's quotes and backtick open no substitution whose "
+     "end leaves an apostrophe hiding the write on the next line",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ["x='${{ contains(github.ref, '`') }}`'",
+             'gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" -f body=x']),
+     True, ("issues", "write")),
 ]
 
 

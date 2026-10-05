@@ -1397,11 +1397,30 @@ jobs:
                   top = stack[-1] if stack else None
                   cur_exec = top not in ("sq", "dq")
                   flags[i] = cur_exec
-                  if c == "\\" and top != "sq" and i + 1 < n:
+                  # A backslash before an Actions expression escapes the
+                  # value GitHub puts there, not the expression's `$`: read
+                  # as `\$`, an expression testing for a backtick string
+                  # ended the backtick substitution holding it there, and
+                  # the quote after it hid the call on the next line (code
+                  # review of #969).
+                  if (c == "\\" and top != "sq" and i + 1 < n
+                          and not EXPR_RE.match(text, i + 1)):
                       flags[i + 1] = cur_exec
                       i += 2
                       continue
+                  # An Actions expression inside single quotes is replaced
+                  # too: read as text, the quotes of its string literals
+                  # closed and reopened the frame, and a backtick between
+                  # them opened a substitution the backtick scan (which
+                  # skips expressions) ended elsewhere, so an apostrophe
+                  # after it hid the next line's call (code review of #969).
                   if top == "sq":
+                      em = EXPR_RE.match(text, i) if c == "$" else None
+                      if em:
+                          for k in range(i + 1, em.end()):
+                              flags[k] = False
+                          i = em.end()
+                          continue
                       if c == "'":
                           stack.pop()
                       i += 1
@@ -1421,7 +1440,9 @@ jobs:
                       while k < n and text[k] != "`":
                           em = (EXPR_RE.match(text, k)
                                 if text.startswith(EXPR_OPEN, k) else None)
-                          k = em.end() if em else k + (2 if text[k] == "\\" else 1)
+                          k = em.end() if em else k + (
+                              2 if text[k] == "\\" and not EXPR_RE.match(text, k + 1)
+                              else 1)
                       flags[i] = True
                       stack.append("bt")
                       bt_ends.append(min([k, n] + bt_ends[-1:]))
