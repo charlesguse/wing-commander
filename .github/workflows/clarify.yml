@@ -306,6 +306,25 @@ jobs:
             && fromJSON(format('{{"username":{0},"password":{1}}}', toJSON(secrets.container-registry-username), toJSON(secrets.container-registry-password)))
             || fromJSON('{}')
         }}
+      # Git safe.directory for the caller's container image; every other
+      # stage's container: block points here. The workspace is bind-mounted from the host, owned by the runner's uid,
+      # while steps in a caller's image run as that image's user (root when it
+      # declares no USER), so git >= 2.35.2 refuses every repository in it as
+      # "dubious ownership" -- `git config` then dies "not in a git directory"
+      # (exit 128). actions/checkout adds safe.directory only to a temporary
+      # HOME for its own run, so nothing after it inherits the exception. These
+      # three variables are command-scope git config, which git honors for
+      # safe.directory from 2.38 on (older git reads it only from system or
+      # global config, so an image whose git is older still fails here), set
+      # on the container itself so they reach every step, composite and
+      # action in it; git_read.py carries them across its GIT_CONFIG* drop. "*", not a path: the workspace path inside
+      # the container differs from github.workspace, nested checkouts each need
+      # their own entry, and the container is single-tenant and discarded with
+      # the job. Never depend on the adopter's image for this (Gate 22).
+      env:
+        GIT_CONFIG_COUNT: "1"
+        GIT_CONFIG_KEY_0: safe.directory
+        GIT_CONFIG_VALUE_0: "*"
     # environment-binding empirical basis (FR-013) -- see
     # specs/031-stage-environment-binding/contracts/environment-binding.md.
     environment:
@@ -1302,6 +1321,11 @@ jobs:
             && fromJSON(format('{{"username":{0},"password":{1}}}', toJSON(secrets.container-registry-username), toJSON(secrets.container-registry-password)))
             || fromJSON('{}')
         }}
+      # Git safe.directory for the caller's container image -- see above in this file.
+      env:
+        GIT_CONFIG_COUNT: "1"
+        GIT_CONFIG_KEY_0: safe.directory
+        GIT_CONFIG_VALUE_0: "*"
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}

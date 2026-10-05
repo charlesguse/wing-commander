@@ -99,11 +99,34 @@ CREDENTIALS_DRIFTED = """\
         }}
 """
 
+# The git safe.directory provision every container: block carries
+# (2026-10-05: without it every git call in a caller's image died
+# "dubious ownership" / "not in a git directory").
+GIT_ENV_OK = """\
+      env:
+        GIT_CONFIG_COUNT: "1"
+        GIT_CONFIG_KEY_0: safe.directory
+        GIT_CONFIG_VALUE_0: "*"
+"""
+
 BOUND = f"""\
     runs-on: ${{{{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}}}
     container:
       image: ${{{{ inputs.container-image }}}}
+{CREDENTIALS_OK}{GIT_ENV_OK}"""
+
+# The fleet as it stood at 386893f: image and credentials bound, no git
+# provision, so git refused the host-owned workspace inside the image.
+BOUND_NO_GIT_ENV = f"""\
+    runs-on: ${{{{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}}}
+    container:
+      image: ${{{{ inputs.container-image }}}}
 {CREDENTIALS_OK}"""
+
+# A path instead of "*": github.workspace is the HOST path, not the
+# container's /__w path, and a nested checkout needs its own entry.
+BOUND_GIT_ENV_PATH = BOUND.replace('GIT_CONFIG_VALUE_0: "*"',
+                                   "GIT_CONFIG_VALUE_0: /__w/repo/repo")
 
 # Same binding, no whitespace inside the expressions — the gate compares the
 # input/secret a value forwards, not the byte string, so this must still pass.
@@ -111,7 +134,7 @@ BOUND_TIGHT = f"""\
     runs-on: ${{{{startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner}}}}
     container:
       image: ${{{{inputs.container-image}}}}
-{CREDENTIALS_OK_TIGHT}"""
+{CREDENTIALS_OK_TIGHT}{GIT_ENV_OK}"""
 
 BOUND_NO_CONTAINER = """\
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
@@ -264,6 +287,15 @@ CASES = [
      "now fails (specs/044 D5 -- credentials must reach every job)",
      {"stage.yml": stage(job("only", BOUND_NO_CREDENTIALS))},
      True, ("'only'", "container.credentials")),
+
+    ("the 2026-10-05 regression: image and credentials bound but no git "
+     "safe.directory provision in container.env",
+     {"stage.yml": stage(job("first", BOUND), job("second", BOUND_NO_GIT_ENV))},
+     True, ("'second'", "container.env", "dubious ownership")),
+
+    ("a git safe.directory provision naming one path instead of '*' fails",
+     {"stage.yml": stage(job("only", BOUND_GIT_ENV_PATH))},
+     True, ("'only'", "container.env")),
 
     ("container.image hardcoded instead of forwarding the input",
      {"stage.yml": stage(job("only", BOUND_LITERAL_IMAGE))},
