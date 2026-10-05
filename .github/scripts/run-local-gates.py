@@ -161,7 +161,8 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wc_gate_registry import (gate_label, pr_time_inline_steps,  # noqa: E402
                               pr_time_invocations)
-from wc_shell_harness import ensure_jq, resolve_bash, use_utf8_stdout  # noqa: E402
+from wc_shell_harness import (UNSPECIFIED_SHELL_HOSTED, ensure_jq,  # noqa: E402
+                              resolve_bash, use_utf8_stdout)
 
 
 TIMING_CACHE_PATH = os.path.join(tempfile.gettempdir(),
@@ -234,11 +235,15 @@ def command_for(script, bash, args=()):
     if script.endswith(".py"):
         return [sys.executable, script] + list(args)
     if script in _INLINE_SCRIPTS:
-        # CI runs a step with no shell: as `bash -e {0}`, so a failing
-        # command before the last fails the step there; plain `bash file`
-        # would pass it here. pr_time_inline_steps leaves a step that sets
-        # any other shell: unrunnable, so -e is the whole difference.
-        return [bash, "-e", script] + list(args)
+        # CI runs a step with no shell: as `bash -e {0}` (errexit, no
+        # pipefail -- wc_shell_harness.UNSPECIFIED_SHELL_HOSTED is that
+        # mapping's one home), so a failing command before the last fails
+        # the step there; plain `bash file` would pass it here.
+        # pr_time_inline_steps leaves a step that sets any shell:
+        # unrunnable, so lint-workflows.yml (no defaults.run.shell, no
+        # container) always lands on that default.
+        return ([bash if a == "bash" else script if a == "{0}" else a
+                 for a in UNSPECIFIED_SHELL_HOSTED] + list(args))
     return [bash, script] + list(args)
 
 

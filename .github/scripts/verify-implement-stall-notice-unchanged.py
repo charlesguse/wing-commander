@@ -56,7 +56,8 @@ import tempfile
 import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from wc_shell_harness import find_step, resolve_bash, run_step  # noqa: E402
+from wc_shell_harness import (find_step, resolve_bash, run_step,  # noqa: E402
+                              step_shell)
 
 STAGE = ".github/workflows/implement.yml"
 FIXTURE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -184,6 +185,9 @@ def check_dependency_reason_branch(script=None):
             return failures
 
     bash = resolve_bash()
+    # The self-test hands in drifted one-line copies run_step cannot trace
+    # back to the composite step on its own, so name the step they stand in for.
+    shell = step_shell(STALL_REASON_COMPOSITE, DEPENDENCY_STEP_NAME)
     failures = []
     with tempfile.TemporaryDirectory() as workdir, \
          tempfile.TemporaryDirectory() as runner_temp:
@@ -193,7 +197,7 @@ def check_dependency_reason_branch(script=None):
              "ENTRY_RESULT": "failure",
              "AGENT_RAN": "true", "AGENT_CONCLUSION": "failure",
              "CREDENTIAL_REFRESH_OK": "true", "FAILED_STEP": ""},
-            runner_temp)
+            runner_temp, shell=shell)
         reason = outputs.get("reason", "")
         if NEVER_STARTED_PHRASE in reason:
             failures.append(
@@ -212,7 +216,7 @@ def check_dependency_reason_branch(script=None):
              "ENTRY_RESULT": "failure",
              "AGENT_RAN": "true", "AGENT_CONCLUSION": "failure",
              "CREDENTIAL_REFRESH_OK": "true", "FAILED_STEP": "push"},
-            runner_temp)
+            runner_temp, shell=shell)
         reason = outputs.get("reason", "")
         if "'push'" not in reason:
             failures.append(
@@ -227,7 +231,7 @@ def check_dependency_reason_branch(script=None):
              "ENTRY_RESULT": "failure",
              "AGENT_RAN": "true", "AGENT_CONCLUSION": "success",
              "CREDENTIAL_REFRESH_OK": "false", "FAILED_STEP": ""},
-            runner_temp)
+            runner_temp, shell=shell)
         reason = outputs.get("reason", "")
         if "credential" not in reason:
             failures.append(
@@ -245,7 +249,7 @@ def check_dependency_reason_branch(script=None):
              "ENTRY_RESULT": "failure",
              "AGENT_RAN": "true", "AGENT_CONCLUSION": "success",
              "CREDENTIAL_REFRESH_OK": "false", "FAILED_STEP": "push"},
-            runner_temp)
+            runner_temp, shell=shell)
         reason = outputs.get("reason", "")
         if "'push'" not in reason:
             failures.append(
@@ -263,7 +267,7 @@ def check_dependency_reason_branch(script=None):
              "ENTRY_RESULT": "failure",
              "AGENT_RAN": "", "AGENT_CONCLUSION": "",
              "CREDENTIAL_REFRESH_OK": "", "FAILED_STEP": ""},
-            runner_temp)
+            runner_temp, shell=shell)
         reason = outputs.get("reason", "")
         if reason != NEVER_STARTED_PHRASE:
             failures.append(
