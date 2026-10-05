@@ -2638,6 +2638,17 @@ jobs:
               "toJSON(secrets.container-registry-password))) "
               "|| fromJSON('{}') " + DOLLAR_CLOSE
           )
+          # The git safe.directory provision (2026-10-05 regression: every
+          # git call in a container job died "dubious ownership" / "not in
+          # a git directory" the first time this repository ran its stages
+          # in an image). Required on every container: block, not only on
+          # jobs whose run: text says `git`: composites and actions
+          # (checkout's post step, the agent action) run git where no
+          # grep of the job would see it. Why the container image needs
+          # this safe.directory provision, and why "*" -- see clarify.yml.
+          EXPECTED_CONTAINER_ENV = {"GIT_CONFIG_COUNT": "1",
+                                    "GIT_CONFIG_KEY_0": "safe.directory",
+                                    "GIT_CONFIG_VALUE_0": "*"}
 
           # (workflow filename, job name) -> reason. Constitution VII: a job
           # that must deviate carries a registered, machine-checked
@@ -2830,6 +2841,17 @@ jobs:
                                 f"{EXPECTED_CREDENTIALS!r} verbatim on every job that "
                                 f"carries container.image (specs/044 D5) — either this "
                                 f"job never got the binding, or it drifted from it.")
+                          failures += 1
+                          ok = False
+                      cenv = container.get("env") or {}
+                      if not isinstance(cenv, dict) or any(
+                              str(cenv.get(k)) != v for k, v in EXPECTED_CONTAINER_ENV.items()):
+                          print(f"::error file={f}::job {jname!r} container.env is "
+                                f"{container.get('env')!r}; every container: block must "
+                                f"carry {EXPECTED_CONTAINER_ENV!r} so git trusts the "
+                                f"host-owned workspace inside a caller's image. Without "
+                                f"it every git call in the job fails 'detected dubious "
+                                f"ownership' / 'not in a git directory' (exit 128).")
                           failures += 1
                           ok = False
                   bound += ok

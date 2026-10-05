@@ -2509,6 +2509,61 @@ def _self_test_git_read_wrapper():
             failures.append(f"wrapper --output call exited "
                             f"{result.returncode} (want 2) or wrote "
                             f"{target}: {result.stderr!r}")
+    # Inside a caller's container image the workspace is owned by another
+    # uid, and the stage's container.env safe.directory=* (see clarify.yml)
+    # is what lets git open it. clean_env drops every GIT_CONFIG* variable,
+    # so the wrapper must carry safe.directory back as -c (and nothing
+    # else), or every agent git read there is refused as "not inside a git
+    # work tree". GIT_TEST_ASSUME_DIFFERENT_OWNER is git's own switch for
+    # simulating that ownership mismatch.
+    safe = w.safe_directories({"GIT_CONFIG_COUNT": "2",
+                               "GIT_CONFIG_KEY_0": "core.pager",
+                               "GIT_CONFIG_VALUE_0": "x",
+                               "GIT_CONFIG_KEY_1": "safe.directory",
+                               "GIT_CONFIG_VALUE_1": "*"})
+    if safe != ["*"]:
+        failures.append(f"wrapper safe_directories kept {safe!r}, want "
+                        f"['*'] (safe.directory only)")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        repo = os.path.join(tmpdir, "repo")
+        subprocess.run(["git", "init", "-q", repo], check=True)
+        subprocess.run(["git", "-C", repo, "-c", "user.name=t", "-c",
+                        "user.email=t@e", "commit", "-q", "--allow-empty",
+                        "-m", "x"], check=True)
+        base = {"PATH": os.environ.get("PATH", ""), "HOME": tmpdir,
+                "GIT_TEST_ASSUME_DIFFERENT_OWNER": "1"}
+        cases = [({"GIT_CONFIG_COUNT": "1",
+                   "GIT_CONFIG_KEY_0": "safe.directory",
+                   "GIT_CONFIG_VALUE_0": "*"}, 0)]
+        # The refusal case proves something only where plain git, under the
+        # same simulated ownership and an empty HOME, refuses the repo. A
+        # host whose system gitconfig already trusts it (safe.directory=*
+        # in /etc/gitconfig), or a git that ignores the test switch, opens
+        # it anyway; the wrapper cannot narrow that (it drops
+        # GIT_CONFIG_NOSYSTEM with the rest), so there the case is skipped
+        # with a note rather than failed.
+        probe = subprocess.run(["git", "rev-parse", "--show-toplevel"],
+                               cwd=repo, capture_output=True, text=True,
+                               env=base)
+        if probe.returncode != 0:
+            cases.append(({"GIT_CONFIG_COUNT": "1",
+                           "GIT_CONFIG_KEY_0": "core.pager",
+                           "GIT_CONFIG_VALUE_0": "cat"}, 2))
+        else:
+            print("note: plain git opens the simulated foreign-owned repo "
+                  "on this host (its system gitconfig trusts it, or git "
+                  "ignores GIT_TEST_ASSUME_DIFFERENT_OWNER), so the "
+                  "wrapper's no-safe.directory refusal case is skipped.")
+        for extra, want in cases:
+            result = subprocess.run(
+                [sys.executable, "-I", os.path.abspath(GIT_READ_WRAPPER),
+                 "log", "-1", "--format=%s"],
+                cwd=repo, capture_output=True, text=True,
+                env={**base, **extra})
+            if result.returncode != want:
+                failures.append(f"wrapper log in a foreign-owned repo with "
+                                f"{extra!r} exited {result.returncode} (want "
+                                f"{want}): {result.stderr.strip()[:200]!r}")
     if not failures:
         print(f"note: {GIT_READ_WRAPPER} unit tests passed ({len(allowed)} "
               f"read-only calls allowed, {len(refused)} write/other "
