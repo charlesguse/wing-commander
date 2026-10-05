@@ -1400,13 +1400,20 @@ jobs:
                   if c == "`" and top == "bt":
                       stack.pop(); i += 1; continue
                   # An Actions expression is replaced before the shell ever
-                  # runs: its braces, `||` and quotes are no shell syntax.
-                  if (top != "dq" and c == "$"
-                          and text.startswith(EXPR_OPEN, i)):
+                  # runs: its braces, `||`, quotes and backticks are no
+                  # shell syntax, inside double quotes too, and nothing in
+                  # it executes. Its `$` keeps the frame's flag, so
+                  # cmdline_of() still reads it as one value. Scanned as
+                  # text in double quotes, the backtick of a `'`'` literal
+                  # in a double-quoted expression opened a substitution
+                  # that hid the rest of the step; counted as executable, one
+                  # outside quotes made cmdline_of() end the next call on
+                  # its line at its first backtick (code review of #969).
+                  if c == "$" and text.startswith(EXPR_OPEN, i):
                       em = EXPR_RE.match(text, i)
                       if em:
-                          for k in range(i, em.end()):
-                              flags[k] = cur_exec
+                          for k in range(i + 1, em.end()):
+                              flags[k] = False
                           i = em.end()
                           continue
                   # `$$` is the shell's PID, not a `$` opening the `${`

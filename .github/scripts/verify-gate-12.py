@@ -1530,6 +1530,23 @@ CASES = [
             ["echo $${ #it's",
              'gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" -f body=x']),
      True, ("issues", "write")),
+
+    ("an Actions expression inside double quotes is no shell text either: "
+     "the backtick in `\"${{ contains(x, '`') }}\"` opens no substitution, "
+     "so the write on the next line is scanned and fails under issues:read",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ["f=\"${{ contains(github.event.comment.body, '`') }}\"",
+             'gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" -f body=x']),
+     True, ("issues", "write")),
+
+    ("... and a backtick inside one outside quotes does not end the next "
+     "call on its line at that call's own first backtick: its `-X POST` "
+     "after a backtick value still fails under issues:read",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ["x=${{ contains(inputs.a, '`') }}; gh api "
+             '"repos/${GITHUB_REPOSITORY}/issues/1/comments" '
+             "-f body=`cat body.md` -X POST"]),
+     True, ("issues", "write")),
 ]
 
 
