@@ -538,6 +538,10 @@ def mut_owner_dropped_from_trigger(subject):
     s["workflows"] = [w for w in subject["workflows"] if w != name]
     s["wrapper-contract-workflows"] = list(s["workflows"])
     s["documented-workflows"] = list(s["workflows"])
+    # Keep the count prose in step with the shorter list, so only the
+    # trigger-coverage check can catch this mutation.
+    s["count-claims"] = [(p, ln, len(s["workflows"]))
+                         for p, ln, _ in subject["count-claims"]]
     return s
 
 
