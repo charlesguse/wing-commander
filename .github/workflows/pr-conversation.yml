@@ -352,6 +352,11 @@ jobs:
             && fromJSON(format('{{"username":{0},"password":{1}}}', toJSON(secrets.container-registry-username), toJSON(secrets.container-registry-password)))
             || fromJSON('{}')
         }}
+      # Git safe.directory for the caller's container image -- see clarify.yml.
+      env:
+        GIT_CONFIG_COUNT: "1"
+        GIT_CONFIG_KEY_0: safe.directory
+        GIT_CONFIG_VALUE_0: "*"
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
@@ -458,6 +463,11 @@ jobs:
             && fromJSON(format('{{"username":{0},"password":{1}}}', toJSON(secrets.container-registry-username), toJSON(secrets.container-registry-password)))
             || fromJSON('{}')
         }}
+      # Git safe.directory for the caller's container image -- see clarify.yml.
+      env:
+        GIT_CONFIG_COUNT: "1"
+        GIT_CONFIG_KEY_0: safe.directory
+        GIT_CONFIG_VALUE_0: "*"
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
@@ -1561,6 +1571,11 @@ jobs:
             && fromJSON(format('{{"username":{0},"password":{1}}}', toJSON(secrets.container-registry-username), toJSON(secrets.container-registry-password)))
             || fromJSON('{}')
         }}
+      # Git safe.directory for the caller's container image -- see clarify.yml.
+      env:
+        GIT_CONFIG_COUNT: "1"
+        GIT_CONFIG_KEY_0: safe.directory
+        GIT_CONFIG_VALUE_0: "*"
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
@@ -1695,6 +1710,11 @@ jobs:
             && fromJSON(format('{{"username":{0},"password":{1}}}', toJSON(secrets.container-registry-username), toJSON(secrets.container-registry-password)))
             || fromJSON('{}')
         }}
+      # Git safe.directory for the caller's container image -- see clarify.yml.
+      env:
+        GIT_CONFIG_COUNT: "1"
+        GIT_CONFIG_KEY_0: safe.directory
+        GIT_CONFIG_VALUE_0: "*"
     permissions:
       contents: write
       pull-requests: write
@@ -3017,6 +3037,11 @@ jobs:
             && fromJSON(format('{{"username":{0},"password":{1}}}', toJSON(secrets.container-registry-username), toJSON(secrets.container-registry-password)))
             || fromJSON('{}')
         }}
+      # Git safe.directory for the caller's container image -- see clarify.yml.
+      env:
+        GIT_CONFIG_COUNT: "1"
+        GIT_CONFIG_KEY_0: safe.directory
+        GIT_CONFIG_VALUE_0: "*"
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
@@ -3244,6 +3269,11 @@ jobs:
             && fromJSON(format('{{"username":{0},"password":{1}}}', toJSON(secrets.container-registry-username), toJSON(secrets.container-registry-password)))
             || fromJSON('{}')
         }}
+      # Git safe.directory for the caller's container image -- see clarify.yml.
+      env:
+        GIT_CONFIG_COUNT: "1"
+        GIT_CONFIG_KEY_0: safe.directory
+        GIT_CONFIG_VALUE_0: "*"
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
@@ -3565,6 +3595,11 @@ jobs:
             && fromJSON(format('{{"username":{0},"password":{1}}}', toJSON(secrets.container-registry-username), toJSON(secrets.container-registry-password)))
             || fromJSON('{}')
         }}
+      # Git safe.directory for the caller's container image -- see clarify.yml.
+      env:
+        GIT_CONFIG_COUNT: "1"
+        GIT_CONFIG_KEY_0: safe.directory
+        GIT_CONFIG_VALUE_0: "*"
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
@@ -3807,6 +3842,11 @@ jobs:
             && fromJSON(format('{{"username":{0},"password":{1}}}', toJSON(secrets.container-registry-username), toJSON(secrets.container-registry-password)))
             || fromJSON('{}')
         }}
+      # Git safe.directory for the caller's container image -- see clarify.yml.
+      env:
+        GIT_CONFIG_COUNT: "1"
+        GIT_CONFIG_KEY_0: safe.directory
+        GIT_CONFIG_VALUE_0: "*"
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
@@ -3882,6 +3922,11 @@ jobs:
             && fromJSON(format('{{"username":{0},"password":{1}}}', toJSON(secrets.container-registry-username), toJSON(secrets.container-registry-password)))
             || fromJSON('{}')
         }}
+      # Git safe.directory for the caller's container image -- see clarify.yml.
+      env:
+        GIT_CONFIG_COUNT: "1"
+        GIT_CONFIG_KEY_0: safe.directory
+        GIT_CONFIG_VALUE_0: "*"
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
@@ -4024,6 +4069,11 @@ jobs:
             && fromJSON(format('{{"username":{0},"password":{1}}}', toJSON(secrets.container-registry-username), toJSON(secrets.container-registry-password)))
             || fromJSON('{}')
         }}
+      # Git safe.directory for the caller's container image -- see clarify.yml.
+      env:
+        GIT_CONFIG_COUNT: "1"
+        GIT_CONFIG_KEY_0: safe.directory
+        GIT_CONFIG_VALUE_0: "*"
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
