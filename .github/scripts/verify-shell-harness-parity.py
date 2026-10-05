@@ -32,7 +32,8 @@ It also pins production_shell()'s resolution table, that an explicit
 shell= is honoured, that a script traceable to no shipped step is refused
 rather than guessed at, that one whose plausible origins (near-copies of a
 step) run under different shells is refused too, that a shipped-step cache
-file another user could have written is not trusted, and that no other harness
+file another user could have written is not trusted (nor a FIFO
+planted at its name allowed to block the reader), and that no other harness
 script carries a shell argv of its own (the mapping's single home is
 wc_shell_harness).
 
@@ -387,6 +388,47 @@ def case_foreign_cache_ignored():
             harness.shell_for_script.cache_clear()
 
 
+def case_cache_fifo_does_not_hang():
+    """Anyone can create a FIFO at the computable cache name. Opening it
+    for reading blocks until a writer appears, so a reader that opens
+    before checking the file type hangs every gate that traces a script.
+    The harness must fall back to a fresh parse instead."""
+    case = "FIFO planted at the shipped-step cache name"
+    if not hasattr(os, "mkfifo"):
+        return
+    import subprocess
+    saved = tempfile.tempdir
+    with tempfile.TemporaryDirectory() as tmp:
+        try:
+            tempfile.tempdir = tmp
+            harness.shipped_step_shells.cache_clear()
+            harness.shipped_step_shells()
+            caches = glob.glob(os.path.join(tmp, "wc-shipped-step-shells-*"))
+            if len(caches) != 1:
+                fail(case, f"expected one cache file in {tmp}, saw {caches}")
+                return
+            os.remove(caches[0])
+            os.mkfifo(caches[0])
+            env = dict(os.environ, TMPDIR=tmp)
+            try:
+                proc = subprocess.run(
+                    [sys.executable, "-c",
+                     "import sys; sys.path.insert(0, sys.argv[1]); "
+                     "import wc_shell_harness as h; "
+                     "print(len(h.shipped_step_shells()))", HERE],
+                    env=env, capture_output=True, text=True, timeout=60)
+            except subprocess.TimeoutExpired:
+                fail(case, "shipped_step_shells() blocked opening a FIFO "
+                           "at the cache path")
+                return
+            if proc.returncode != 0 or not proc.stdout.strip().isdigit():
+                fail(case, f"shipped_step_shells() failed: {proc.stderr}")
+        finally:
+            tempfile.tempdir = saved
+            harness.shipped_step_shells.cache_clear()
+            harness.shell_for_script.cache_clear()
+
+
 # A literal shell argv anywhere but the harness is a second home for the
 # mapping -- the shape that let `bash -e` drift from production unnoticed.
 _LITERAL_SHELL_RE = re.compile(
@@ -429,6 +471,7 @@ def main():
                       must_survive=True)
     case_every_composite_traced(steps)
     case_foreign_cache_ignored()
+    case_cache_fifo_does_not_hang()
     case_single_home()
     if failures:
         print(f"FAIL: {len(failures)} failure(s).")

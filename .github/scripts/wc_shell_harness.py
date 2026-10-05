@@ -399,6 +399,8 @@ def shipped_step_shells():
     # JSON alone is not enough there: the cached argv is what run_step
     # execs, and the key is computable from public files, so a cache file
     # this user did not write (or one anyone else can write) is ignored.
+    # O_NONBLOCK and the S_ISREG check: a FIFO planted at the name would
+    # otherwise block the open forever.
     key = hashlib.sha256()
     for path in [os.path.abspath(__file__)] + paths:
         key.update(path.encode("utf-8") + b"\0")
@@ -407,9 +409,12 @@ def shipped_step_shells():
     cache = os.path.join(tempfile.gettempdir(),
                          f"wc-shipped-step-shells-{key.hexdigest()[:24]}.json")
     try:
-        fd = os.open(cache, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        fd = os.open(cache, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                     | getattr(os, "O_NONBLOCK", 0))
         with os.fdopen(fd, encoding="utf-8") as fh:
             st = os.fstat(fh.fileno())
+            if not stat.S_ISREG(st.st_mode):
+                raise OSError("cache is not a regular file")
             if hasattr(os, "geteuid") and (st.st_uid != os.geteuid()
                                            or st.st_mode & 0o022):
                 raise OSError("cache not written by this user")
