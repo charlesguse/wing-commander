@@ -396,6 +396,9 @@ def shipped_step_shells():
     # traces a script -- dozens per suite run. The parse is cached on disk
     # under a key over this module and every file read, so any edit to
     # either misses the cache. JSON, not pickle: the temp dir is shared.
+    # JSON alone is not enough there: the cached argv is what run_step
+    # execs, and the key is computable from public files, so a cache file
+    # this user did not write (or one anyone else can write) is ignored.
     key = hashlib.sha256()
     for path in [os.path.abspath(__file__)] + paths:
         key.update(path.encode("utf-8") + b"\0")
@@ -404,10 +407,16 @@ def shipped_step_shells():
     cache = os.path.join(tempfile.gettempdir(),
                          f"wc-shipped-step-shells-{key.hexdigest()[:24]}.json")
     try:
-        with open(cache, encoding="utf-8") as fh:
+        fd = os.open(cache, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(fd, encoding="utf-8") as fh:
+            st = os.fstat(fh.fileno())
+            if hasattr(os, "geteuid") and (st.st_uid != os.geteuid()
+                                           or st.st_mode & 0o022):
+                raise OSError("cache not written by this user")
             runs = json.load(fh)
     except (OSError, ValueError):
         runs = _shipped_runs(root, paths)
+        tmp = None
         try:
             fd, tmp = tempfile.mkstemp(dir=os.path.dirname(cache),
                                        suffix=".tmp")
@@ -415,7 +424,10 @@ def shipped_step_shells():
                 json.dump(runs, fh)
             os.replace(tmp, cache)
         except OSError:
-            pass    # an unwritable temp dir only costs the next process a parse
+            # an unwritable temp dir (or another user's file at `cache`)
+            # only costs the next process a parse
+            if tmp is not None and os.path.exists(tmp):
+                os.remove(tmp)
     out = []
     for run, argv, where in runs:
         # A harness substitutes the `${{ }}` expressions the runner would

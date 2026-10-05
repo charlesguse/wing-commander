@@ -31,7 +31,8 @@ it:
 It also pins production_shell()'s resolution table, that an explicit
 shell= is honoured, that a script traceable to no shipped step is refused
 rather than guessed at, that one whose plausible origins (near-copies of a
-step) run under different shells is refused too, and that no other harness
+step) run under different shells is refused too, that a shipped-step cache
+file another user could have written is not trusted, and that no other harness
 script carries a shell argv of its own (the mapping's single home is
 wc_shell_harness).
 
@@ -352,6 +353,40 @@ def case_every_composite_traced(steps):
                        f"`shell: bash`")
 
 
+def case_foreign_cache_ignored():
+    """The shipped-step parse is cached in the shared temp dir under a key
+    anyone can compute from the public files, and its argv is what run_step
+    execs. A cache file another user could have written must be re-derived,
+    not trusted."""
+    case = "shipped-step cache written by someone else"
+    if not hasattr(os, "geteuid"):
+        return          # per-user temp dir; no other writer to refuse
+    import json
+    saved = tempfile.tempdir
+    with tempfile.TemporaryDirectory() as tmp:
+        try:
+            tempfile.tempdir = tmp
+            harness.shipped_step_shells.cache_clear()
+            harness.shipped_step_shells()
+            caches = glob.glob(os.path.join(tmp, "wc-shipped-step-shells-*"))
+            if len(caches) != 1:
+                fail(case, f"expected one cache file in {tmp}, saw {caches}")
+                return
+            planted = os.path.join(tmp, "planted-shell")
+            with open(caches[0], "w", encoding="utf-8") as fh:
+                json.dump([["echo planted\n", [planted, "{0}"], "x.yml: s"]],
+                          fh)
+            os.chmod(caches[0], 0o666)
+            harness.shipped_step_shells.cache_clear()
+            if any(planted in e[1] for e in harness.shipped_step_shells()):
+                fail(case, "a world-writable cache file was trusted: its "
+                           "argv would be exec'd by run_step")
+        finally:
+            tempfile.tempdir = saved
+            harness.shipped_step_shells.cache_clear()
+            harness.shell_for_script.cache_clear()
+
+
 # A literal shell argv anywhere but the harness is a second home for the
 # mapping -- the shape that let `bash -e` drift from production unnoticed.
 _LITERAL_SHELL_RE = re.compile(
@@ -393,6 +428,7 @@ def main():
     case_shipped_step(bash, steps, "workflow-unspecified-hosted",
                       must_survive=True)
     case_every_composite_traced(steps)
+    case_foreign_cache_ignored()
     case_single_home()
     if failures:
         print(f"FAIL: {len(failures)} failure(s).")
