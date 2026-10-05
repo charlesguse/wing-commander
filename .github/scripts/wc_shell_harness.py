@@ -336,18 +336,8 @@ def step_shell(path, name):
              f"renamed, update the workflow and its harness together.")
 
 
-@functools.lru_cache(maxsize=1)
-def shipped_step_shells():
-    """[(run_text, argv, where, template_regex_or_None, significant_lines)]
-    for every `run:` step in .github/workflows/ and .github/actions/."""
-    import glob
-    import re
-    root = os.path.dirname(os.path.dirname(os.path.dirname(
-        os.path.abspath(__file__))))
-    paths = sorted(
-        glob.glob(os.path.join(root, ".github", "workflows", "*.y*ml"))
-        + glob.glob(os.path.join(root, ".github", "actions", "*",
-                                 "action.y*ml")))
+def _shipped_runs(root, paths):
+    """[(run_text, argv, where)] for every `run:` step in `paths`."""
     out = []
     for path in paths:
         rel = os.path.relpath(path, root).replace(os.sep, "/")
@@ -359,15 +349,59 @@ def shipped_step_shells():
                 argv = production_shell(step, job, wf)
             except ValueError:
                 continue    # a composite step the runner itself would refuse
-            # A harness substitutes the `${{ }}` expressions the runner would
-            # have expanded before handing the block over, so the shipped
-            # text is a template for what arrives: each one is a wildcard.
-            rx = None
-            if "${{" in run:
-                parts = re.split(r"\$\{\{.*?\}\}", run, flags=re.S)
-                rx = re.compile("(?s)" + ".*?".join(map(re.escape, parts)))
-            out.append((run, argv, f"{rel}: {step.get('name') or '<unnamed>'}",
-                        rx, _significant_lines(run)))
+            out.append((run, list(argv),
+                        f"{rel}: {step.get('name') or '<unnamed>'}"))
+    return out
+
+
+@functools.lru_cache(maxsize=1)
+def shipped_step_shells():
+    """[(run_text, argv, where, template_regex_or_None, significant_lines)]
+    for every `run:` step in .github/workflows/ and .github/actions/."""
+    import glob
+    import hashlib
+    import json
+    import re
+    root = os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))))
+    paths = sorted(
+        glob.glob(os.path.join(root, ".github", "workflows", "*.y*ml"))
+        + glob.glob(os.path.join(root, ".github", "actions", "*",
+                                 "action.y*ml")))
+    # Parsing every workflow costs ~3s, paid by each gate process that
+    # traces a script -- dozens per suite run. The parse is cached on disk
+    # under a key over this module and every file read, so any edit to
+    # either misses the cache. JSON, not pickle: the temp dir is shared.
+    key = hashlib.sha256()
+    for path in [os.path.abspath(__file__)] + paths:
+        key.update(path.encode("utf-8") + b"\0")
+        with open(path, "rb") as fh:
+            key.update(fh.read() + b"\0")
+    cache = os.path.join(tempfile.gettempdir(),
+                         f"wc-shipped-step-shells-{key.hexdigest()[:24]}.json")
+    try:
+        with open(cache, encoding="utf-8") as fh:
+            runs = json.load(fh)
+    except (OSError, ValueError):
+        runs = _shipped_runs(root, paths)
+        try:
+            fd, tmp = tempfile.mkstemp(dir=os.path.dirname(cache),
+                                       suffix=".tmp")
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                json.dump(runs, fh)
+            os.replace(tmp, cache)
+        except OSError:
+            pass    # an unwritable temp dir only costs the next process a parse
+    out = []
+    for run, argv, where in runs:
+        # A harness substitutes the `${{ }}` expressions the runner would
+        # have expanded before handing the block over, so the shipped
+        # text is a template for what arrives: each one is a wildcard.
+        rx = None
+        if "${{" in run:
+            parts = re.split(r"\$\{\{.*?\}\}", run, flags=re.S)
+            rx = re.compile("(?s)" + ".*?".join(map(re.escape, parts)))
+        out.append((run, tuple(argv), where, rx, _significant_lines(run)))
     return out
 
 
@@ -379,18 +413,25 @@ def _significant_lines(text):
 # A script that matches no shipped step verbatim is a harness's MUTATED copy
 # of one (a self-test's drifted line, an injected stub call) far more often
 # than anything else, and it must run under the shell of the step it was
-# cut from. It is matched to the shipped step(s) holding the largest share
-# of its significant lines; below this share the match means nothing and
-# run_step refuses rather than guess.
+# cut from. Every shipped step holding at least this share of its
+# significant lines is a plausible origin; below it the match means nothing
+# and run_step refuses rather than guess.
+#
+# The plausible origins must ALL run under one shell -- it is not enough
+# that the single nearest one does. Near-copies of a step live in several
+# workflows under different shells (implement.yml's and cleanup.yml's "Mark
+# lifecycle record stalled" share 7 of 9 lines; one is `bash -e`, the other
+# `shell: bash`), so "nearest wins" let a one-line mutation, or an unrelated
+# edit to the other copy, silently move a script to the other shell and
+# change a gate's verdict. Disagreement refuses instead; the caller names
+# its step with shell=step_shell(path, name).
 NEAREST_STEP_MIN_SHARE = 0.5
 
 
-@functools.lru_cache(maxsize=512)
-def shell_for_script(script):
-    """(argv, where) for the shipped step `script` came from, else
-    (None, why). Exact text first, then `${{ }}`-substituted text, then the
-    nearest shipped step by shared lines (see NEAREST_STEP_MIN_SHARE)."""
-    entries = shipped_step_shells()
+def match_shell(script, entries):
+    """(argv, where) for the step in `entries` (shipped_step_shells() rows)
+    that `script` is, or was cut from, else (None, why). The pure core of
+    shell_for_script, so the rule can be tested on entries of one's own."""
     texts = {script, script if script.endswith("\n") else script + "\n"}
     hits = {(e[1], e[2]) for e in entries if e[0] in texts}
     if not hits:
@@ -405,6 +446,16 @@ def shell_for_script(script):
             return None, (f"no shipped run: step shares as much as "
                           f"{NEAREST_STEP_MIN_SHARE:.0%} of its lines "
                           f"(best {best:.0%})")
+        plausible = sorted(((sc, argv, where) for sc, argv, where in scored
+                            if sc >= NEAREST_STEP_MIN_SHARE),
+                           key=lambda t: (-t[0], t[2]))
+        if len({argv for _sc, argv, _w in plausible}) > 1:
+            return None, (
+                "it shares at least "
+                f"{NEAREST_STEP_MIN_SHARE:.0%} of its lines with shipped "
+                "steps that run under different shells: " + "; ".join(
+                    f"{where} ({sc:.0%}, {' '.join(argv)})"
+                    for sc, argv, where in plausible[:4]))
         hits = {(argv, where) for sc, argv, where in scored if sc == best}
     argvs = {argv for argv, _w in hits}
     wheres = sorted(where for _a, where in hits)
@@ -412,6 +463,14 @@ def shell_for_script(script):
         return None, ("it matches shipped steps that run under different "
                       "shells: " + "; ".join(wheres[:4]))
     return argvs.pop(), wheres[0]
+
+
+@functools.lru_cache(maxsize=512)
+def shell_for_script(script):
+    """(argv, where) for the shipped step `script` came from, else
+    (None, why). Exact text first, then `${{ }}`-substituted text, then the
+    shipped steps sharing its lines (see NEAREST_STEP_MIN_SHARE)."""
+    return match_shell(script, shipped_step_shells())
 
 
 def run_step(bash, script, workdir, env_extra, runner_temp, path_prepend=None,

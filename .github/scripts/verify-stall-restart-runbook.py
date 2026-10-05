@@ -63,7 +63,7 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wc_shell_harness import (ensure_jq, find_step, resolve_bash, run_step,
-                              use_utf8_stdout)
+                              step_shell, use_utf8_stdout)
 
 STAGE = ".github/workflows/implement.yml"
 
@@ -177,7 +177,10 @@ def scenario(steps, seeded, iteration, root):
         BASH, steps[MARK_STEP], repo,
         {"SPEC_DIR": SPEC_DIR, "SLUG": SLUG, "BOT_SLUG": "wing-commander-bot",
          "ITERATION": str(iteration)},
-        runner_temp)
+        runner_temp,
+        # cleanup.yml carries a near-copy of this step under `shell: bash`,
+        # so a mutated copy cannot be traced back by its lines alone
+        shell=step_shell(STAGE, MARK_STEP))
     if rc != 0:
         failures.append(f"{where}: {MARK_STEP!r} exited {rc}: {out.strip()}")
         return failures

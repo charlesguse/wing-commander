@@ -30,8 +30,10 @@ it:
 
 It also pins production_shell()'s resolution table, that an explicit
 shell= is honoured, that a script traceable to no shipped step is refused
-rather than guessed at, and that no other harness script carries a shell
-argv of its own (the mapping's single home is wc_shell_harness).
+rather than guessed at, that one whose plausible origins (near-copies of a
+step) run under different shells is refused too, and that no other harness
+script carries a shell argv of its own (the mapping's single home is
+wc_shell_harness).
 
 Usage: python3 .github/scripts/verify-shell-harness-parity.py
 Requires: bash. See wc_shell_harness.py for running this on Windows.
@@ -201,6 +203,40 @@ def case_explicit_shell_and_refusal(bash):
         pass
 
 
+def case_divergent_near_copies():
+    """Two near-copies of one step under different shells: a mutated copy
+    nearer the `bash -e` one must be refused, not run under it -- the next
+    one-line edit to either copy would otherwise flip its shell silently."""
+    case = "near-copies under different shells"
+    match = getattr(harness, "match_shell", None)
+    if match is None:
+        fail(case, "wc_shell_harness has no match_shell(): the tracing rule "
+                   "cannot be exercised on entries of this gate's own")
+        return
+    common = [f'echo "shared line number {i}" >> "$GITHUB_STEP_SUMMARY"'
+              for i in range(7)]
+    plain = "\n".join(common + ['jq ".a" in.json > "$RUNNER_TEMP/out.json"',
+                                'mv "$RUNNER_TEMP/out.json" in.json']) + "\n"
+    piped = "\n".join(common + ['jq ".b" in.json > "$RUNNER_TEMP/out.json"',
+                                'cp "$RUNNER_TEMP/out.json" other.json']) + "\n"
+    entries = [
+        (plain, harness.UNSPECIFIED_SHELL_HOSTED, "a.yml: Mark", None,
+         harness._significant_lines(plain)),
+        (piped, harness.NAMED_SHELLS["bash"], "b.yml: Mark", None,
+         harness._significant_lines(piped)),
+    ]
+    mutated = plain.replace('".a"', '".a | .x = 0"')
+    argv, why = match(mutated, entries)
+    if argv is not None:
+        fail(case, f"a mutated copy sharing 8/9 lines with a `bash -e` step "
+                   f"and 7/9 with a `shell: bash` copy of it was run under "
+                   f"{' '.join(argv)} instead of being refused")
+    argv, why = match(mutated, entries[:1])
+    if tuple(argv or ()) != harness.UNSPECIFIED_SHELL_HOSTED:
+        fail(case, f"with no rival copy the same script was not traced to its "
+                   f"one plausible origin: {why}")
+
+
 # A literal shell argv anywhere but the harness is a second home for the
 # mapping -- the shape that let `bash -e` drift from production unnoticed.
 _LITERAL_SHELL_RE = re.compile(
@@ -232,6 +268,7 @@ def main():
     steps = shipped_steps()
     case_resolution_table()
     case_explicit_shell_and_refusal(bash)
+    case_divergent_near_copies()
     case_shipped_step(bash, steps, "composite-bash", must_survive=False)
     case_shipped_step(bash, steps, "workflow-bash-over-default",
                       must_survive=False)
