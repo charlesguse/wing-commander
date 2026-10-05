@@ -206,7 +206,7 @@ while :; do
   # kind is checked against the round's correlated implement-run-id
   # instead.
   if [ -n "$head_token" ] && [ "$head_token" != "$TOKEN" ] && [ -n "$head_granted_at" ]; then
-    head_granted_epoch=$(date -u -d "$head_granted_at" +%s 2>/dev/null || echo 0)
+    head_granted_epoch=$(date -u -d "$head_granted_at" +%s 2>/dev/null) || head_granted_epoch=0
     if [ "$head_granted_epoch" -gt 0 ]; then
       age_minutes=$(( (now_ts - head_granted_epoch) / 60 ))
       if [ "$age_minutes" -ge "$STALE_AFTER_MINUTES" ]; then

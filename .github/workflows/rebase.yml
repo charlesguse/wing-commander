@@ -1091,7 +1091,7 @@ jobs:
             echo "${SPEC_PREFIX}$SLUG: pushed rebased result (force-with-lease)." >> "$GITHUB_STEP_SUMMARY"
             if [ -n "$ISSUE" ]; then
               has_label="$(gh issue view "$ISSUE" --json labels \
-                --jq '[.labels[].name] | index("rebase:blocked") != null' 2>/dev/null || echo false)"
+                --jq '[.labels[].name] | index("rebase:blocked") != null' 2>/dev/null)" || has_label=false
               if [ "$has_label" = "true" ]; then
                 gh issue edit "$ISSUE" --remove-label "rebase:blocked" || true
                 echo "${SPEC_PREFIX}$SLUG: removed rebase:blocked from #$ISSUE (auto-recovery)." >> "$GITHUB_STEP_SUMMARY"

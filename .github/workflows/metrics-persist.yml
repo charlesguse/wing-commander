@@ -393,7 +393,7 @@ jobs:
           # this list itself).
           runs="$(jq -s -c --arg w "$window_start" --argjson wf "$workflow_paths" \
             '[.[] | select(.concluded_at >= $w) | select(.conclusion != "skipped") | select(($wf | length) == 0 or ((.workflow as $cw | $wf | index($cw)) != null))]' \
-            "$cand" 2>/dev/null || echo '[]')"
+            "$cand" 2>/dev/null)" || runs='[]'
           echo "Sweep window from $window_start: $(printf '%s' "$runs" | jq 'length') completed run(s)." >> "$GITHUB_STEP_SUMMARY"
           echo "since=$since" >> "$GITHUB_OUTPUT"
           echo "sweep-runs=$runs" >> "$GITHUB_OUTPUT"

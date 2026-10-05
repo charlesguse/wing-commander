@@ -130,7 +130,7 @@ runs:
                 *"[attempt:${ATTEMPT_TOKEN}]"*) ;;
                 *) continue ;;
               esac
-              created_epoch="$(date -u -d "$row_created" +%s 2>/dev/null || echo 0)"
+              created_epoch="$(date -u -d "$row_created" +%s 2>/dev/null)" || created_epoch=0
               if [ "$created_epoch" -ge "$request_time" ]; then
                 count=$((count + 1))
                 match_id="$row_id"
@@ -157,13 +157,13 @@ runs:
           wait_attempt=0
           status=""
           while [ "$wait_attempt" -lt "$WAIT_ATTEMPTS" ]; do
-            status="$(gh run view "$correlated_run_id" --json status --jq .status 2>/dev/null || echo "")"
+            status="$(gh run view "$correlated_run_id" --json status --jq .status 2>/dev/null)" || status=""
             [ "$status" = "completed" ] && break
             wait_attempt=$((wait_attempt + 1))
             sleep "$POLL_INTERVAL_SECONDS"
           done
           if [ "$status" = "completed" ]; then
-            conclusion="$(gh run view "$correlated_run_id" --json conclusion --jq .conclusion 2>/dev/null || echo "")"
+            conclusion="$(gh run view "$correlated_run_id" --json conclusion --jq .conclusion 2>/dev/null)" || conclusion=""
           else
             conclusion="timeout"
           fi

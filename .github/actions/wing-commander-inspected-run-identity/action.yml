@@ -286,7 +286,7 @@ runs:
         # of a time at or before this watchdog run started" bound.
         stalled_label=false
         if [ -n "$issue" ]; then
-          stalled_label="$(gh issue view "$issue" --json labels --jq '[.labels[].name] | index("stage:stalled") != null' 2>/dev/null || echo false)"
+          stalled_label="$(gh issue view "$issue" --json labels --jq '[.labels[].name] | index("stage:stalled") != null' 2>/dev/null)" || stalled_label=false
         fi
 
         {

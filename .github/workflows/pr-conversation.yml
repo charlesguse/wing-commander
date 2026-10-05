@@ -1065,15 +1065,15 @@ jobs:
           f="$RUNNER_TEMP/claude-execution-output.json"
           agent_ok="$(jq -r '([.[] | select(.type=="result")] | last) as $r
             | if $r != null and $r.is_error == false and $r.subtype == "success"
-              then "true" else "false" end' "$f" 2>/dev/null || echo false)"
+              then "true" else "false" end' "$f" 2>/dev/null)" || agent_ok=false
           if [ "$agent_ok" != "true" ]; then
-            err=$(jq -r '[.[] | select(.type=="result")] | last | .result // "missing or invalid terminal result"' "$f" 2>/dev/null || echo "missing execution output file")
+            err=$(jq -r '[.[] | select(.type=="result")] | last | .result // "missing or invalid terminal result"' "$f" 2>/dev/null) || err="missing execution output file"
             echo "::error::wing-commander pr-conversation stage: the classify agent run did not complete with a valid result — $err"
             exit 1
           fi
           raw="$(jq -r '[.[] | select(.type=="result")] | last | .result // empty' "$f" 2>/dev/null || true)"
           if ! printf '%s' "$raw" | jq -e '(type=="object") and (.classifications | type)=="array" and ((.classifications | length) >= 1)' >/dev/null 2>&1; then
-            got="$(printf '%s' "$raw" | jq -r 'type' 2>/dev/null || echo 'not JSON')"
+            got="$(printf '%s' "$raw" | jq -r 'type' 2>/dev/null)" || got='not JSON'
             echo "::error::wing-commander pr-conversation stage: the classify agent's structured result is missing a valid classifications array (received: $got)."
             exit 1
           fi
@@ -1218,7 +1218,7 @@ jobs:
           # request by claiming a match that was never verified.
           perm_prs='[]'
           if [ "$(printf '%s' "$raw" | jq -r 'any(.category == "manual-step-permission" and ((.["drafted-content"] // {}) | has("needs-permission")))')" = "true" ]; then
-            perm_prs=$(gh search prs --repo "$GITHUB_REPOSITORY" --label permission-request --state all --json number,title,url 2>/dev/null || echo '[]')
+            perm_prs=$(gh search prs --repo "$GITHUB_REPOSITORY" --label permission-request --state all --json number,title,url 2>/dev/null) || perm_prs='[]'
             printf '%s' "$perm_prs" | jq -e 'type == "array"' >/dev/null 2>&1 || perm_prs='[]'
           fi
           # T061: built with `jq -n --arg`, NOT `printf | jq -R`. `jq -R`
@@ -2439,9 +2439,9 @@ jobs:
           f="$RUNNER_TEMP/claude-execution-output.json"
           agent_ok="$(jq -r '([.[] | select(.type=="result")] | last) as $r
             | if $r != null and $r.is_error == false and $r.subtype == "success"
-              then "true" else "false" end' "$f" 2>/dev/null || echo false)"
+              then "true" else "false" end' "$f" 2>/dev/null)" || agent_ok=false
           if [ "$agent_ok" != "true" ]; then
-            err=$(jq -r '[.[] | select(.type=="result")] | last | .result // "missing or invalid terminal result"' "$f" 2>/dev/null || echo "missing execution output file")
+            err=$(jq -r '[.[] | select(.type=="result")] | last | .result // "missing or invalid terminal result"' "$f" 2>/dev/null) || err="missing execution output file"
             echo "::error::wing-commander pr-conversation stage: the act agent run did not complete with a valid result — $err"
             exit 1
           fi

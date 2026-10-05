@@ -1218,7 +1218,7 @@ jobs:
           if [ "${{ steps.decide-verdict.outputs.verdict }}" = "healthy" ] && [ -f "$file" ]; then
             agent_ok="$(jq -r '([.[] | select(.type=="result")] | last) as $r
               | if $r != null and $r.is_error == false and $r.subtype == "success"
-                then "true" else "false" end' "$file" 2>/dev/null || echo false)"
+                then "true" else "false" end' "$file" 2>/dev/null)" || agent_ok=false
             if [ "$agent_ok" = "true" ]; then
               raw="$(jq -r '[.[] | select(.type=="result")] | last | .result // empty' "$file" 2>/dev/null || true)"
               parsed_outcome="$(printf '%s' "$raw" | jq -r '.outcome // empty' 2>/dev/null || true)"
@@ -1226,8 +1226,8 @@ jobs:
                 clean-bump|needs-migration|ambiguous-options)
                   outcome="$parsed_outcome"
                   reasoning="$(printf '%s' "$raw" | jq -r '.reasoning // empty' 2>/dev/null || true)"
-                  sources="$(printf '%s' "$raw" | jq -c '.sources // []' 2>/dev/null || echo '[]')"
-                  options="$(printf '%s' "$raw" | jq -c '.options // null' 2>/dev/null || echo 'null')"
+                  sources="$(printf '%s' "$raw" | jq -c '.sources // []' 2>/dev/null)" || sources='[]'
+                  options="$(printf '%s' "$raw" | jq -c '.options // null' 2>/dev/null)" || options='null'
                   ;;
               esac
             fi
@@ -2522,7 +2522,7 @@ jobs:
           fi
           if [ "$pass" = "true" ]; then
             st_feature_dir="$(printf '%s' "$st_out" | tail -1 | jq -r '.FEATURE_DIR // empty' 2>/dev/null || true)"
-            available_docs="$(printf '%s' "$st_out" | tail -1 | jq -c '.AVAILABLE_DOCS' 2>/dev/null || echo null)"
+            available_docs="$(printf '%s' "$st_out" | tail -1 | jq -c '.AVAILABLE_DOCS' 2>/dev/null)" || available_docs=null
             tasks_template="$(printf '%s' "$st_out" | tail -1 | jq -r '.TASKS_TEMPLATE // empty' 2>/dev/null || true)"
             if [ -z "$st_feature_dir" ] || ! printf '%s' "$available_docs" | jq -e 'type == "array"' >/dev/null 2>&1 || [ -z "$tasks_template" ] || [ ! -s "$tasks_template" ]; then
               pass=false
@@ -3587,10 +3587,10 @@ jobs:
           if [ "${{ steps.interpret-verdict.outputs.verdict }}" = "healthy" ] && [ -f "$file" ]; then
             agent_ok="$(jq -r '([.[] | select(.type=="result")] | last) as $r
               | if $r != null and $r.is_error == false and $r.subtype == "success"
-                then "true" else "false" end' "$file" 2>/dev/null || echo false)"
+                then "true" else "false" end' "$file" 2>/dev/null)" || agent_ok=false
             if [ "$agent_ok" = "true" ]; then
               raw="$(jq -r '[.[] | select(.type=="result")] | last | .result // empty' "$file" 2>/dev/null || true)"
-              rec="$(printf '%s' "$raw" | jq -r '.recognized // false' 2>/dev/null || echo false)"
+              rec="$(printf '%s' "$raw" | jq -r '.recognized // false' 2>/dev/null)" || rec=false
               if [ "$rec" = "true" ]; then
                 chosen="$(printf '%s' "$raw" | jq -r '.chosen_option // empty' 2>/dev/null || true)"
                 [ -n "$chosen" ] && recognized=true
