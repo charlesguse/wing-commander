@@ -28,6 +28,7 @@ class failures.
 | FR-005 case | `failing_check` (exact string, for `report`'s classification and SC-005) | `expected` | `observed` |
 |---|---|---|---|
 | (i) never configured | `container image not configured on the test repository` | This repository's pinned image reference | `(unset)` or `(empty)` |
+| (i, this repository) never pinned here | `container image not configured on this repository` | This repository's `WING_COMMANDER_CONTAINER_IMAGE` variable set to the image the test repository must run (#889) | `(unset or empty)` |
 | (ii) drift | `container image configured but does not match this repository's pin` | This repository's pinned image reference | The test repository's differing value |
 | (iii) configured but unpullable/unauthorized | *(unchanged — existing chain-stop-notice detection, `auto-release.yml` ~lines 1091–1113)* | *(unchanged)* | *(unchanged)* |
 | (iv) configured but not executed in a container | `container image configured but stage jobs did not execute inside a container` | The stage jobs expected to run containerized | The stage job name(s) observed without container initialization |
@@ -48,6 +49,9 @@ under each of these conditions (FR-004, US2):
 - The read is refused by a transient condition (rate limit, transient API
   error) — distinct `failing_check` from a hard read failure, never
   reported as "not configured."
+- A stage run's Jobs API read returns no jobs at all -- `container-mode
+  evidence unreadable`, never evidence that the run's jobs were
+  containerized (#889).
 - This repository's own pin is unreadable at comparison time — fails
   closed, never compared as if empty (FR-007's last sentence).
 
