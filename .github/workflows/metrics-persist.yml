@@ -53,7 +53,8 @@ on:
           Owned by the caller (constitution VI/VII: the stage does not
           hardcode which workflows in the consumer repository can carry a
           record) — the reference wrapper passes its nine completion-trigger
-          workflows plus wing-commander-8-watchdog.yml. Empty (the default)
+          workflows plus wing-commander-8-watchdog.yml (and this repository's
+          own board-loop.yml, which a consumer does not have). Empty (the default)
           applies no restriction, so a caller that has not yet adopted this
           input keeps today's unfiltered sweep. Ignored outside sweep mode.
         type: string
