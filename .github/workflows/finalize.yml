@@ -797,9 +797,9 @@ jobs:
             3. Write a human-readable narrative (a few short paragraphs,
                plain markdown, no top-level heading) summarizing what this
                specification built, to
-               ${{ runner.temp }}/finalize-summary.md.
+               ${{ steps.ctx.outputs.runner-temp }}/finalize-summary.md.
             4. Write the remaining manual work to
-               ${{ runner.temp }}/finalize-remaining.md, one item per line:
+               ${{ steps.ctx.outputs.runner-temp }}/finalize-remaining.md, one item per line:
                every tasks.md item that is still unchecked (`- [ ]`), plus
                any checked item whose text marks it as inherently human-only
                work (e.g. review, merge, deploy, credential/secret setup)
@@ -994,8 +994,8 @@ jobs:
           SUMMARIZE_VERDICT: ${{ steps.summarize-verdict.outputs.verdict }}
         run: |
           if [ "$SUMMARIZE_VERDICT" != "healthy" ] \
-             || [ ! -f "${{ runner.temp }}/finalize-summary.md" ] \
-             || [ ! -f "${{ runner.temp }}/finalize-remaining.md" ]; then
+             || [ ! -f "$RUNNER_TEMP/finalize-summary.md" ] \
+             || [ ! -f "$RUNNER_TEMP/finalize-remaining.md" ]; then
             msg="wing-commander finalize stage: the change-summary/remaining-work step did not complete successfully."
             echo "::error::$msg"
             echo "failed=true" >> "$GITHUB_OUTPUT"
@@ -1079,8 +1079,8 @@ jobs:
           DB: ${{ steps.defbranch.outputs.name }}
         run: |
           set -uo pipefail
-          remaining_file="${{ runner.temp }}/finalize-remaining.md"
-          narrative_file="${{ runner.temp }}/finalize-narrative.md"
+          remaining_file="$RUNNER_TEMP/finalize-remaining.md"
+          narrative_file="$RUNNER_TEMP/finalize-narrative.md"
           : > "$narrative_file"
           if [ "$CONVERGED" = "false" ]; then
             n=$(grep -cv '^[[:space:]]*$' "$remaining_file" || true)
@@ -1089,7 +1089,7 @@ jobs:
               echo ""
             } >> "$narrative_file"
           fi
-          cat "${{ runner.temp }}/finalize-summary.md" >> "$narrative_file"
+          cat "$RUNNER_TEMP/finalize-summary.md" >> "$narrative_file"
           {
             echo ""
             echo "## How to see it"
@@ -1117,15 +1117,15 @@ jobs:
           tip=$(git rev-parse HEAD)
           short_sha=$(git rev-parse --short HEAD)
 
-          prior_body_file="${{ runner.temp }}/finalize-prior-body.md"
+          prior_body_file="$RUNNER_TEMP/finalize-prior-body.md"
           : > "$prior_body_file"
           if [ "$PR_STATE" = "open" ]; then
             gh pr view "$EXISTING_PR" --json body --jq '.body // ""' > "$prior_body_file" 2>/dev/null || true
           fi
 
-          before_file="${{ runner.temp }}/finalize-before-region.md"
-          after_file="${{ runner.temp }}/finalize-after-region.md"
-          foldlog_file="${{ runner.temp }}/finalize-existing-foldlog.md"
+          before_file="$RUNNER_TEMP/finalize-before-region.md"
+          after_file="$RUNNER_TEMP/finalize-after-region.md"
+          foldlog_file="$RUNNER_TEMP/finalize-existing-foldlog.md"
           : > "$before_file"; : > "$after_file"; : > "$foldlog_file"
           if grep -q '<!-- wing-commander-finalize:state:begin -->' "$prior_body_file" 2>/dev/null; then
             # `0,/pattern/` (GNU sed's documented extension), NOT `1,/pattern/`:
@@ -1191,7 +1191,7 @@ jobs:
             fi
           fi
 
-          body_file="${{ runner.temp }}/finalize-pr-body.md"
+          body_file="$RUNNER_TEMP/finalize-pr-body.md"
           {
             if [ -s "$before_file" ]; then
               cat "$before_file"
@@ -1447,7 +1447,7 @@ jobs:
         id: remaining
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true'
         run: |
-          remaining_file="${{ runner.temp }}/finalize-remaining.md"
+          remaining_file="$RUNNER_TEMP/finalize-remaining.md"
           if [ -s "$remaining_file" ] && [ -n "$(tr -d '[:space:]' < "$remaining_file")" ]; then
             echo "has-remaining=true" >> "$GITHUB_OUTPUT"
           else

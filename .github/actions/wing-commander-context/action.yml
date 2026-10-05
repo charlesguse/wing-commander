@@ -62,10 +62,41 @@ outputs:
   spec-dir:
     description: specs/NNN-slug parsed from the spec:* label (empty if none)
     value: ${{ steps.resolve.outputs.spec_dir }}
+  runner-temp:
+    description: >
+      The runner temp directory as the job's own steps see it ($RUNNER_TEMP,
+      read inside the job). Use it wherever a runner.temp path is embedded
+      in free text a step consumes, such as an agent prompt.
+    value: ${{ steps.paths.outputs.runner_temp }}
+  workspace:
+    description: >
+      The workspace directory as the job's own steps see it
+      ($GITHUB_WORKSPACE, read inside the job). The github.workspace
+      counterpart of runner-temp.
+    value: ${{ steps.paths.outputs.workspace }}
 
 runs:
   using: composite
   steps:
+    # Container-side paths -- the canonical comment. In a job with a
+    # `container:` (specs/038-runner-container-passthrough), the expressions
+    # `${{ runner.temp }}` and `${{ github.workspace }}` evaluate to the HOST
+    # paths (/home/runner/work/...), while the container mounts them at
+    # /__w/... . The runner rewrites a host path back only where it is the
+    # leading part of a whole environment value (a step's `env:` value, or
+    # a `with:` input a JavaScript action receives as INPUT_*). It never
+    # rewrites a `run:` body or a path in the middle of a value, such as a
+    # prompt. A `run:` body reads $RUNNER_TEMP / $GITHUB_WORKSPACE; free text
+    # reads these outputs, which hold the in-job values in both container
+    # and host jobs. Gate 43's
+    # case_container_jobs_use_in_job_paths enforces the rule.
+    - name: Resolve in-job runner paths
+      id: paths
+      shell: bash
+      run: |
+        echo "runner_temp=$RUNNER_TEMP" >> "$GITHUB_OUTPUT"
+        echo "workspace=$GITHUB_WORKSPACE" >> "$GITHUB_OUTPUT"
+
     - name: Mint wing-commander-bot App token
       id: app-token
       uses: actions/create-github-app-token@v3

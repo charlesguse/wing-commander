@@ -728,10 +728,10 @@ jobs:
                replace the section with a note that all clarifications are
                resolved (with a link to the answer comment). Leave the rest of
                the body untouched. Write the new body with the Write tool to
-               exactly ${{ runner.temp }}/clarify-pr-body.md -- not under the
+               exactly ${{ steps.ctx.outputs.runner-temp }}/clarify-pr-body.md -- not under the
                repository (a path inside .git/ is denied outright, and any
                other path there would be swept into the commit) -- then apply
-               it with gh pr edit <num> --body-file ${{ runner.temp }}/clarify-pr-body.md;
+               it with gh pr edit <num> --body-file ${{ steps.ctx.outputs.runner-temp }}/clarify-pr-body.md;
                do not build the body by redirecting shell output into a file.
             6. Return your final result matching the provided schema: `answered`
                is `true` if the reply (step 2) addressed at least one open
@@ -1154,7 +1154,7 @@ jobs:
                 + "**Your choice**: _Reply on this issue_\n"
               )
             | join("\n")
-          ' > "${{ runner.temp }}/clarify-followup.md"
+          ' > "$RUNNER_TEMP/clarify-followup.md"
 
       - name: Announce remaining clarification questions
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.outcome == 'needs-clarification'

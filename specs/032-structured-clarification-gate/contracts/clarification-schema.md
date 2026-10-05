@@ -120,8 +120,8 @@ the PR-description update, the commit/push) unchanged — only the
 
 ## Read-back: locating the structured result
 
-Both new deterministic steps parse `${{ runner.temp
-}}/claude-execution-output.json` — the same artifact `watchdog.yml`'s
+Both new deterministic steps parse
+`$RUNNER_TEMP/claude-execution-output.json` — the same artifact `watchdog.yml`'s
 `Read back diagnose outcome` and `auto-update-spec-kit.yml`'s `Read back
 interpretation` steps already parse — with the identical extraction
 idiom:
