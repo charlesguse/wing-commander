@@ -266,14 +266,27 @@ def parse_github_output(path):
 #     (the runner execs sh there whatever the image ships -- see the
 #     container-shell-safety skill).
 #   * Any other value is a custom shell, run exactly as written with {0}
-#     the script file; the runner appends {0} when the template omits it.
-#     The `defaults.run.shell: bash -e {0}` several workflows set is one of
-#     these, which is why a step there that ALSO says `shell: bash` gets
-#     pipefail and its neighbours do not.
+#     the script file -- substituted wherever it appears, inside an
+#     argument too (`bash -c ". '{0}'"`), as the runner does; the runner
+#     appends {0} when the template omits it. The `defaults.run.shell:
+#     bash -e {0}` several workflows set is one of these, which is why a
+#     step there that ALSO says `shell: bash` gets pipefail and its
+#     neighbours do not.
+#   * pwsh, powershell, cmd and python are named shells too, mapped here
+#     so a step using one resolves to what the runner really runs. run_step
+#     refuses every template whose program is not bash or sh (RUNNABLE_
+#     SHELL_PROGRAMS): it writes the block, after a bash PATH preamble, to
+#     a .sh file, which reproduces nothing else -- a pwsh step would fail
+#     to exec here, and a python one would run the preamble as python.
 NAMED_SHELLS = {
     "bash": ("bash", "--noprofile", "--norc", "-eo", "pipefail", "{0}"),
     "sh": ("sh", "-e", "{0}"),
+    "pwsh": ("pwsh", "-command", ". '{0}'"),
+    "powershell": ("powershell", "-command", ". '{0}'"),
+    "cmd": ("%ComSpec%", "/D", "/E:ON", "/V:OFF", "/S", "/C", 'CALL "{0}"'),
+    "python": ("python", "{0}"),
 }
+RUNNABLE_SHELL_PROGRAMS = ("bash", "sh")
 UNSPECIFIED_SHELL_HOSTED = ("bash", "-e", "{0}")
 UNSPECIFIED_SHELL_CONTAINER = ("sh", "-e", "{0}")
 
@@ -309,7 +322,15 @@ def production_shell(step, job=None, workflow=None):
     if shell in NAMED_SHELLS:
         return NAMED_SHELLS[shell]
     argv = tuple(shlex.split(shell))
-    return argv if "{0}" in argv else argv + ("{0}",)
+    return argv if any("{0}" in a for a in argv) else argv + ("{0}",)
+
+
+def _shell_program(template):
+    """The program a shell template execs, as a bare lowercase name
+    (`/usr/bin/bash` and `C:\\...\\bash.exe` are both `bash`)."""
+    prog = str(template[0]) if template else ""
+    prog = prog.replace("\\", "/").rsplit("/", 1)[-1].lower()
+    return prog[:-4] if prog.endswith(".exe") else prog
 
 
 def _iter_steps(path):
@@ -357,7 +378,8 @@ def _shipped_runs(root, paths):
 @functools.lru_cache(maxsize=1)
 def shipped_step_shells():
     """[(run_text, argv, where, template_regex_or_None, significant_lines)]
-    for every `run:` step in .github/workflows/ and .github/actions/."""
+    for every `run:` step in .github/workflows/ and .github/actions/
+    (composites at any depth)."""
     import glob
     import hashlib
     import json
@@ -366,8 +388,10 @@ def shipped_step_shells():
         os.path.abspath(__file__))))
     paths = sorted(
         glob.glob(os.path.join(root, ".github", "workflows", "*.y*ml"))
-        + glob.glob(os.path.join(root, ".github", "actions", "*",
-                                 "action.y*ml")))
+        # Any depth: the composites under .github/actions/_shared/ are
+        # shipped steps too.
+        + glob.glob(os.path.join(root, ".github", "actions", "**",
+                                 "action.y*ml"), recursive=True))
     # Parsing every workflow costs ~3s, paid by each gate process that
     # traces a script -- dozens per suite run. The parse is cached on disk
     # under a key over this module and every file read, so any edit to
@@ -522,6 +546,13 @@ def run_step(bash, script, workdir, env_extra, runner_temp, path_prepend=None,
                 f"  script begins: {script[:200]!r}")
     else:
         shell_template = tuple(shell)
+    if _shell_program(shell_template) not in RUNNABLE_SHELL_PROGRAMS:
+        raise RuntimeError(
+            f"run_step: cannot reproduce `{' '.join(shell_template)}`: the "
+            "harness runs a step as a bash or sh script file and nothing "
+            "else (see NAMED_SHELLS). Test this step with a harness that "
+            "runs its real interpreter.\n"
+            f"  script begins: {script[:200]!r}")
     out_file = os.path.join(workdir, "gh_output")
     sum_file = os.path.join(workdir, "gh_summary")
     open(out_file, "w").close()
@@ -597,7 +628,7 @@ def run_step(bash, script, workdir, env_extra, runner_temp, path_prepend=None,
         fh.write(script)
     argv = [{"bash": bash, "sh": shutil.which("sh") or "sh"}.get(arg, arg)
             for arg in shell_template]
-    argv = [script_file.replace("\\", "/") if arg == "{0}" else arg
+    argv = [arg.replace("{0}", script_file.replace("\\", "/"))
             for arg in argv]
     proc = subprocess.run(argv,
                           cwd=workdir, env=env, capture_output=True,

@@ -75,8 +75,8 @@ def shipped_steps():
     workflow-bash-over-default, workflow-unspecified-hosted -- this gate's
     own reading of the YAML, independent of the harness's."""
     out = []
-    for path in sorted(glob.glob(os.path.join(ROOT, ".github", "actions", "*",
-                                              "action.yml"))):
+    for path in sorted(glob.glob(os.path.join(ROOT, ".github", "actions", "**",
+                                              "action.y*ml"), recursive=True)):
         doc = yaml.safe_load(open(path, encoding="utf-8")) or {}
         for step in (doc.get("runs") or {}).get("steps") or []:
             if isinstance(step.get("run"), str) and step.get("shell") == "bash":
@@ -237,6 +237,94 @@ def case_divergent_near_copies():
                    f"one plausible origin: {why}")
 
 
+def case_unrunnable_shells(bash):
+    """A shell the harness cannot run faithfully must be refused, not run
+    under bash: run_step writes the block (and its bash PATH preamble) to a
+    file and executes it, which reproduces only a bash or sh step. pwsh,
+    powershell and cmd used to fall through as custom shells, and `shell:
+    python` ran its script after a bash preamble -- a gate built on either
+    would test something no runner executes."""
+    case = "shells the harness cannot reproduce"
+    for shell in ("pwsh", "powershell", "cmd", "python", "pwsh -File {0}",
+                  "python3 {0}", "perl {0}"):
+        try:
+            argv = harness.production_shell({"shell": shell})
+        except ValueError as exc:
+            argv = None
+            why = str(exc)
+        if argv is not None:
+            try:
+                run_probe(bash, PROBE, shell=argv)
+                fail(case, f"shell: {shell} resolved to {' '.join(argv)} and "
+                           f"run_step ran the block under it instead of "
+                           f"refusing")
+                continue
+            except RuntimeError as exc:
+                why = str(exc)
+            except OSError as exc:
+                fail(case, f"shell: {shell} resolved to {' '.join(argv)} and "
+                           f"run_step tried to exec it instead of refusing: "
+                           f"{exc}")
+                continue
+        if "cannot" not in why:
+            fail(case, f"shell: {shell} was refused without saying why: {why}")
+    # ...while every bash/sh form keeps running.
+    for shell in ("bash", "sh", "bash -e {0}", "bash -x", "/bin/bash -e {0}"):
+        try:
+            rc, out, _ = run_probe(bash, "echo probe\n",
+                                   shell=harness.production_shell(
+                                       {"shell": shell}))
+        except (ValueError, RuntimeError) as exc:
+            fail(case, f"shell: {shell} was refused: {exc}")
+            continue
+        if rc != 0:
+            fail(case, f"shell: {shell} did not run a trivial block: {out}")
+
+
+def case_placeholder_inside_argument(bash):
+    """The runner substitutes {0} wherever it appears in the template
+    (`bash -c ". '{0}'"`), not only as a whole argument; run_step used to
+    hand bash the literal `{0}`."""
+    case = "{0} inside an argument"
+    argv = harness.production_shell({"shell": "bash -ec \". '{0}'\""})
+    if argv != ("bash", "-ec", ". '{0}'"):
+        fail(case, f"custom shell parsed as {argv}")
+        return
+    try:
+        rc, out, outputs = run_probe(bash, PROBE, shell=argv)
+    except RuntimeError as exc:
+        fail(case, f"run_step refused a bash custom shell: {exc}")
+        return
+    if rc != 0 or outputs.get("probe") != "survived":
+        fail(case, f"`bash -ec \". '{{0}}'\"` did not run the script file "
+                   f"(exit {rc}): {out.strip()[:300]}")
+
+
+def case_every_composite_traced(steps):
+    """Every composite `shell: bash` step, at any depth under
+    .github/actions/ (the _shared/ ones included), must be traced by its
+    exact text to the pipefail shell. The harness's table once globbed only
+    .github/actions/*/action.yml, so a _shared/ composite's step was
+    refused as untraceable, or traced by its lines to a near-copy in a
+    workflow running under another shell."""
+    case = "every composite step traced"
+    for path, name, run, kind in steps:
+        if kind != "composite-bash":
+            continue
+        argv, where = harness.shell_for_script(run)
+        if argv is None:
+            # Byte-identical copies elsewhere under another shell are the
+            # one legitimate refusal; the harness says so by name.
+            if "different shells" in (where or ""):
+                continue
+            fail(case, f"{os.path.relpath(path, ROOT)}: {name!r} is not in "
+                       f"the harness's shipped-step table: {where}")
+        elif tuple(argv) != harness.NAMED_SHELLS["bash"]:
+            fail(case, f"{os.path.relpath(path, ROOT)}: {name!r} traced to "
+                       f"{where} under {' '.join(argv)}, not its own "
+                       f"`shell: bash`")
+
+
 # A literal shell argv anywhere but the harness is a second home for the
 # mapping -- the shape that let `bash -e` drift from production unnoticed.
 _LITERAL_SHELL_RE = re.compile(
@@ -269,11 +357,14 @@ def main():
     case_resolution_table()
     case_explicit_shell_and_refusal(bash)
     case_divergent_near_copies()
+    case_unrunnable_shells(bash)
+    case_placeholder_inside_argument(bash)
     case_shipped_step(bash, steps, "composite-bash", must_survive=False)
     case_shipped_step(bash, steps, "workflow-bash-over-default",
                       must_survive=False)
     case_shipped_step(bash, steps, "workflow-unspecified-hosted",
                       must_survive=True)
+    case_every_composite_traced(steps)
     case_single_home()
     if failures:
         print(f"FAIL: {len(failures)} failure(s).")
