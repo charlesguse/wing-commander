@@ -1315,6 +1315,7 @@ SUBST_FALLBACK_HINT = ('x="$(cmd)" || x=\'fallback\' (an assignment-level '
                        '$( ) appends to it)')
 _SF_FALLBACK_RE = re.compile(r"(?:echo|printf)(?:\s|$)")
 _SF_TEST_RE = re.compile(r"(?:\[\[?|test)(?:\s|$)")
+_SF_BLOCK_KEY_RE = re.compile(r"\brun:\s*[|>][-+0-9]*\s*(?:#.*)?$")
 
 
 def _scan_substitution(text, start):
@@ -1426,14 +1427,17 @@ def check_substitution_fallback(root="."):
         doc = load_yaml(root, path)
         if doc is None:
             continue
+        lines = read(root, path).split("\n")
         for _ctx, steps in _step_lists(doc):
             for step in steps:
                 run = (step or {}).get("run")
                 if not isinstance(run, str) or not run:
                     continue
                 base = step_run_line(step)
-                # A block scalar's first line sits under the `run:` key.
-                if "\n" in run.rstrip("\n"):
+                # A block scalar's first line sits under the `run:` key --
+                # read off the key's own line, since a one-line `run: |`
+                # body carries no inner newline to tell it from `run: x`.
+                if _SF_BLOCK_KEY_RE.search(lines[base - 1] if base <= len(lines) else ""):
                     base += 1
                 for off, body in substitution_fallbacks(run):
                     findings.append(Finding(
@@ -2504,6 +2508,29 @@ def selftest_substitution_fallback_line():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def selftest_substitution_fallback_line_one_line_block():
+    """A one-line `run: |` body: the finding names the body's line, not
+    the `run:` key one line above it."""
+    case = ("substitution-fallback: a one-line `run: |` finding names the "
+            "body's line")
+    tmp = tempfile.mkdtemp(prefix="wc-single-home-")
+    try:
+        _clean_tree(tmp)
+        path = ".github/workflows/subst-line-one.yml"
+        body = "          x=\"$(jq -c '.' \"$f\" || echo '[]')\""
+        content = SUBST_FALLBACK_WF + body + "\n"
+        _write(tmp, path, content)
+        expected = content.splitlines().index(body) + 1
+        findings, _hard = evaluate(tmp)
+        hits = [f for f in findings if f.check == "substitution-fallback"]
+        if [h.line for h in hits] != [expected]:
+            fail(f"[{case}] expected one finding at line {expected}, got {hits}")
+        else:
+            note(f"[{case}] passed ({path}:{expected})")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def selftest_substitution_fallback_semantics():
     """Pins the rule's reason in a real bash: a command that prints and
     then fails makes the in-substitution fallback APPEND (#959's
@@ -2838,6 +2865,7 @@ def run_selftest():
     selftest_substitution_fallback_safe_shapes_pass()
     selftest_substitution_fallback_waivable()
     selftest_substitution_fallback_line()
+    selftest_substitution_fallback_line_one_line_block()
     selftest_substitution_fallback_semantics()
     selftest_composite_checkout_order_line_attribution()
     selftest_token_mint_line_attribution()
