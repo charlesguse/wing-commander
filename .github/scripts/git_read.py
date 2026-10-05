@@ -79,7 +79,15 @@ one of these options is refused too.
 The script runs git as `git --no-pager -c diff.external= -c
 core.pager=cat <subcommand> --no-ext-diff --no-textconv <args...>`, with
 GIT_EXTERNAL_DIFF, GIT_PAGER and every GIT_CONFIG* variable dropped from
-its environment, and exits with git's own status. A refused call exits 2
+its environment, and exits with git's own status. The one setting carried
+across that drop is safe.directory: each `safe.directory` entry the job's
+GIT_CONFIG_COUNT/KEY_n/VALUE_n names is passed back as `-c
+safe.directory=<value>` (to the work-tree probe too). A stage's
+container: block sets it so git trusts the host-owned workspace inside a
+caller's image (see clarify.yml); dropped with the rest, every call there
+died "dubious ownership" and the wrapper refused it as outside a work
+tree. It only widens which repositories git will open, never what a
+permitted subcommand reads or runs. A refused call exits 2
 and runs nothing.
 
 Gate 93 (verify-issue-context-single-home.py) fails if a read-only
@@ -189,17 +197,40 @@ def clean_env(environ):
             and not k.startswith(DROPPED_ENV_PREFIXES)}
 
 
-def command(argv):
-    """The git command line a permitted `argv` runs."""
-    return ["git", *GIT_GLOBAL_OPTIONS, argv[0], *SUBCOMMAND_OPTIONS,
-            *argv[1:]]
+def safe_directories(environ):
+    """The `safe.directory` values `environ`'s GIT_CONFIG_COUNT/KEY_n/
+    VALUE_n entries name, in order -- the one setting clean_env drops that
+    the wrapper passes back, as `-c` options. Every other key is ignored."""
+    try:
+        count = int(environ.get("GIT_CONFIG_COUNT", "0"))
+    except ValueError:
+        return []
+    return [environ.get(f"GIT_CONFIG_VALUE_{i}", "")
+            for i in range(max(count, 0))
+            if environ.get(f"GIT_CONFIG_KEY_{i}", "").lower()
+            == "safe.directory"]
+
+
+def safe_directory_options(environ):
+    """`-c safe.directory=<value>` for each of safe_directories(environ)."""
+    return [opt for value in safe_directories(environ)
+            for opt in ("-c", f"safe.directory={value}")]
+
+
+def command(argv, environ=None):
+    """The git command line a permitted `argv` runs, carrying the
+    safe.directory entries of `environ` (default: none)."""
+    return ["git", *GIT_GLOBAL_OPTIONS,
+            *safe_directory_options(environ or {}), argv[0],
+            *SUBCOMMAND_OPTIONS, *argv[1:]]
 
 
 def main(argv):
     env = clean_env(os.environ)
     reason = refusal(argv)
     if reason is None:
-        top = subprocess.run(["git", "rev-parse", "--show-toplevel"],
+        top = subprocess.run(["git", *safe_directory_options(os.environ),
+                              "rev-parse", "--show-toplevel"],
                              capture_output=True, text=True, env=env)
         if top.returncode != 0 or not top.stdout.strip():
             reason = ("refused: not inside a git work tree, where git diff "
@@ -210,7 +241,7 @@ def main(argv):
     if reason is not None:
         print(f"git_read: {reason}", file=sys.stderr)
         return 2
-    os.execvpe("git", command(argv), env)
+    os.execvpe("git", command(argv, os.environ), env)
     return 127  # not reached: execvpe replaces this process or raises
 
 

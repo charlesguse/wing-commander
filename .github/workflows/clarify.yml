@@ -314,8 +314,10 @@ jobs:
       # (exit 128). actions/checkout adds safe.directory only to a temporary
       # HOME for its own run, so nothing after it inherits the exception. These
       # three variables are command-scope git config, which git honors for
-      # safe.directory, set on the container itself so they reach every step,
-      # composite and action in it. "*", not a path: the workspace path inside
+      # safe.directory from 2.38 on (older git reads it only from system or
+      # global config, so an image whose git is older still fails here), set
+      # on the container itself so they reach every step, composite and
+      # action in it; git_read.py carries them across its GIT_CONFIG* drop. "*", not a path: the workspace path inside
       # the container differs from github.workspace, nested checkouts each need
       # their own entry, and the container is single-tenant and discarded with
       # the job. Never depend on the adopter's image for this (Gate 22).

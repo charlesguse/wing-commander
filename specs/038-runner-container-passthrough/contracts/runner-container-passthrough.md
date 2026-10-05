@@ -301,7 +301,12 @@ bind-mounted from the host and owned by the runner's uid, while steps in
 the image run as the image's user, so without it git refuses every
 repository in the job as "dubious ownership" (`git config` reports "not in
 a git directory", exit 128). The pipeline supplies this rather than the
-adopter's image. The values are non-empty literals, the same class as the
+adopter's image. git honors command-scope `safe.directory` only from 2.38
+(earlier releases, including distro builds that backported the 2.35.2
+ownership check, read it from system or global config alone), so an image
+with an older git still fails, and the image prerequisite check, which
+tests presence only, does not catch it. `git_read.py` drops every
+`GIT_CONFIG*` variable and passes `safe.directory` back as `-c`. The values are non-empty literals, the same class as the
 "placeholder values" row of the table above, so `image: ''` is expected to
 still run with no container; the e2e default-runner leg is what proves it.
 
