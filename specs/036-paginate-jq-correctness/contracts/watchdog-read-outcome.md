@@ -38,7 +38,7 @@ precisely the case this feature makes visible for the first time).
 ## What's new for the `diagnose` job
 
 The `diagnose` job already materializes `needs.collect.outputs.signals`
-into `${{ runner.temp }}/watchdog-signals.json` before the agent step runs
+into `$RUNNER_TEMP/watchdog-signals.json` before the agent step runs
 (`watchdog.yml:976-982`). This feature adds one sibling file, written the
 same way from the new output:
 
@@ -46,7 +46,7 @@ same way from the new output:
 - name: Write untrusted-collectors file
   env:
     UNTRUSTED: ${{ needs.collect.outputs.untrusted-collectors }}
-  run: printf '%s' "$UNTRUSTED" > "${{ runner.temp }}/watchdog-untrusted-collectors.json"
+  run: printf '%s' "$UNTRUSTED" > "$RUNNER_TEMP/watchdog-untrusted-collectors.json"
 ```
 
 The diagnose agent's prompt (`watchdog.yml:~1122` onward) gains one
