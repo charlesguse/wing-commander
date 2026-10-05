@@ -4459,9 +4459,9 @@ jobs:
       # the single-run job (it would persist run-id '') and a completion
       # cannot reach the sweep. And (#889) every workflow that uploads a
       # metrics-record artifact, directly, through a composite, or through
-      # a reusable workflow it calls, is in both the completion trigger
-      # (watchdog excepted) and the sweep's workflow paths -- board-loop.yml
-      # was in neither, so its records expired unpersisted.
+      # a reusable workflow it calls, is in the sweep's workflow paths and,
+      # unless sweep-only (watchdog, board-loop), the completion trigger --
+      # board-loop.yml was in neither, so its records expired unpersisted.
       - name: Gate 79 — the metrics wrapper drops the watchdog trigger and its sweep cron stands alone
         if: "!cancelled()"
         run: python3 .github/scripts/verify-metrics-wrapper-trigger-drops-watchdog.py

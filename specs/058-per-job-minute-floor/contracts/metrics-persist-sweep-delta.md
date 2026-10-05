@@ -47,8 +47,8 @@ still advances `sweep-state.json` to the latest `concluded_at` in its
 window, in a commit carrying no records. With nothing retrieved, no run
 is held back from the mark.
 
-A completion-triggered run (empty `since`, the unchanged per-completion
-path over the trigger list below) writes neither file.
+A completion-triggered run (empty `since`, the unchanged nine-stage
+path) writes neither file.
 
 ## Wrapper — sweep trigger added, watchdog removed from the completion trigger
 
@@ -87,7 +87,6 @@ on:
       - "Wing Commander · 7 cleanup"
       - "Wing Commander · rebase"
       - "Wing Commander · 9 pr conversation"
-      - "board-loop"   # added after this feature (#889); also swept
       # "Wing Commander · 8 watchdog" REMOVED (FR-030(b)) — after FR-031
       # a healthy inspection emits no record, and a signal-bearing one
       # is reached by the sweep below, not this trigger.

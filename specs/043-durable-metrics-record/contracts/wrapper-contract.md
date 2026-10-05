@@ -25,9 +25,6 @@ on:
       - "Wing Commander · 7 cleanup"
       - "Wing Commander · rebase"
       - "Wing Commander · 9 pr conversation"
-      # This repository's own board loop (#889) -- not a stage wrapper,
-      # but it uploads metrics-record artifacts of its own.
-      - "board-loop"
       # "Wing Commander · 8 watchdog" moved to the daily sweep in spec 058
       # (specs/058-per-job-minute-floor/contracts/metrics-persist-sweep-delta.md).
     types: [completed]
@@ -40,8 +37,9 @@ on:
 
 Every workflow in this repository that uploads a `metrics-record*`
 artifact (itself, through a local composite, or through a reusable
-workflow it calls) is named in this list -- the watchdog excepted, which
-is sweep-only -- and in the sweep's `sweep-workflow-paths`. Gate 79
+workflow it calls) is named in this list -- the watchdog and this repository's own
+`board-loop` excepted, which are sweep-only -- and in the sweep's
+`sweep-workflow-paths`. Gate 79
 (`verify-metrics-wrapper-trigger-drops-watchdog.py`) derives that set
 from the workflows and fails on a missing one, and compares this block's
 list against the shipped wrapper's.

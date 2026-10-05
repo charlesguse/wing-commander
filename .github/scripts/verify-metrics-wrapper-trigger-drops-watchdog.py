@@ -29,8 +29,12 @@ local composite that does, or through a reusable workflow it calls -- is
 named in BOTH the wrapper's `workflow_run.workflows` (by display name) and
 its sweep's `sweep-workflow-paths` (by path). A workflow missing from both
 is a record nobody persists, and nothing fails: the artifact simply
-expires. board-loop.yml shipped that way. The watchdog is the one
-sweep-only exception (FR-030(b) above). The discovery itself is pinned by
+expires. board-loop.yml shipped that way. The watchdog (FR-030(b) above)
+and board-loop are the sweep-only exceptions, and must stay OFF the
+completion trigger: board-loop runs hourly and nothing reads its records
+promptly, so a per-completion run is the same ~24 job-minutes a day the
+watchdog's removal was made to save (FR-030(a) keeps the trigger to the
+promptly-read stages). The discovery itself is pinned by
 an in-memory fixture tree (a direct uploader, a composite uploader, a
 reusable uploader reached through its caller, a non-uploader), so a
 discovery that stops following one of those edges fails here instead of
@@ -39,7 +43,7 @@ trigger list must match the shipped one too, as the 058 delta's must, and
 a spelled-out count of the completion path's workflows in the live docs
 must equal the shipped list's length.
 
-Eleven subject mutations and two discovery mutations must each break an
+Twelve subject mutations and two discovery mutations must each break an
 assertion.
 
 Wiring: lint-workflows.yml, Gate 79.
@@ -71,9 +75,10 @@ WRAPPER_CONTRACT = os.path.join("specs", "043-durable-metrics-record",
 ACTIONS = os.path.join(".github", "actions")
 WATCHDOG_NAME = "Wing Commander · 8 watchdog"
 WATCHDOG_PATH = ".github/workflows/wing-commander-8-watchdog.yml"
-# Record owners deliberately absent from workflow_run.workflows: reached by
-# the daily sweep only (FR-030(b)). Their paths must still be swept.
-SWEEP_ONLY = {WATCHDOG_NAME}
+BOARD_LOOP_NAME = "board-loop"
+# Record owners that must be ABSENT from workflow_run.workflows: reached by
+# the daily sweep only (FR-030(a)/(b)). Their paths must still be swept.
+SWEEP_ONLY = {WATCHDOG_NAME, BOARD_LOOP_NAME}
 RECORD_PREFIX = "metrics-record"
 SWEEP_JOB = "sweep"
 PERSIST_JOB = "persist"
@@ -372,6 +377,13 @@ def suite(subject):
                      f"workflow_run.workflows -- that reinstates one whole "
                      f"persistence run per inspection, and after FR-031 a "
                      f"healthy inspection has no record for it to find")
+    for name in sorted(SWEEP_ONLY - {WATCHDOG_NAME}):
+        if name in subject["workflows"]:
+            broke.append(f"{WRAPPER} lists the sweep-only {name!r} under "
+                         f"workflow_run.workflows -- nothing reads its "
+                         f"records promptly, so that is a persistence run "
+                         f"per completion for what the daily sweep already "
+                         f"collects (FR-030(a))")
     if not subject["workflows"]:
         broke.append(f"{WRAPPER} lists no workflow_run workflows at all -- the "
                      f"per-completion path for the promptly-read stages "
@@ -472,6 +484,16 @@ def mut_watchdog_restored(subject):
     return s
 
 
+def mut_board_loop_on_trigger(subject):
+    s = dict(subject)
+    s["workflows"] = subject["workflows"] + [BOARD_LOOP_NAME]
+    s["wrapper-contract-workflows"] = list(s["workflows"])
+    s["documented-workflows"] = list(s["workflows"])
+    s["count-claims"] = [(p, ln, len(s["workflows"]))
+                         for p, ln, _ in subject["count-claims"]]
+    return s
+
+
 def mut_cron_collides(subject):
     s = dict(subject)
     collide = other_crons()
@@ -547,7 +569,9 @@ def mut_wrapper_contract_drifts(subject):
 
 def mut_stale_count_claim(subject):
     s = dict(subject)
-    s["count-claims"] = subject["count-claims"] + [(CONTRACT, 50, 9)]
+    # One off the shipped length -- the "ten" this list briefly carried.
+    s["count-claims"] = subject["count-claims"] + [
+        (CONTRACT, 50, len(subject["workflows"]) + 1)]
     return s
 
 
@@ -570,9 +594,11 @@ MUTATIONS = [
      mut_new_owner_unlisted),
     ("the 043 wrapper contract's trigger list drifts from the shipped one",
      mut_wrapper_contract_drifts),
-    ("live prose keeps the pre-board-loop nine-workflow count",
+    ("live prose keeps a stale completion-workflow count",
      mut_stale_count_claim),
     ("the watchdog is restored to the completion trigger", mut_watchdog_restored),
+    ("the sweep-only board-loop joins the completion trigger, docs and all",
+     mut_board_loop_on_trigger),
     ("the published contract's cron drifts from the shipped one",
      mut_contract_cron_drifts),
     ("the sweep's cron collides with another schedule", mut_cron_collides),

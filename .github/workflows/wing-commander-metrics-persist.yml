@@ -1,6 +1,6 @@
 # Metrics persist (thin wrapper) — contracts/wrapper-contract.md.
 # Reacts to the completion of any of this pipeline's other stage wrappers
-# and of board-loop.yml (workflow_run) and to manual workflow_dispatch re-invocation for an
+# (workflow_run) and to manual workflow_dispatch re-invocation for an
 # arbitrary already-concluded run (research.md R11/R19a — workflow_run
 # only fires for workflows already on the default branch, so this is the
 # only way to exercise/re-drive persistence before or independent of that).
@@ -26,11 +26,14 @@ on:
       - "Wing Commander · 7 cleanup"
       - "Wing Commander · rebase"
       - "Wing Commander · 9 pr conversation"
-      # Not a stage wrapper, but its select job uploads a metrics-record
-      # artifact on every run, and its later jobs one each (#889). Gate 79
-      # fails if a workflow that uploads one is missing from this list or
-      # from the sweep's sweep-workflow-paths below.
-      - "board-loop"
+      # "board-loop" is deliberately ABSENT too (#889). It uploads a
+      # metrics-record artifact on every run, but it runs hourly and nothing
+      # reads its records back promptly, so a persistence run per completion
+      # would bill ~24 job-minutes a day for what the daily sweep below
+      # already collects (FR-030(a) keeps this trigger to the promptly-read
+      # stages). Gate 79 fails if a workflow that uploads a record is
+      # missing from the sweep's sweep-workflow-paths, or from this list
+      # unless it is one of these two sweep-only owners.
       # "Wing Commander · 8 watchdog" is deliberately ABSENT
       # (specs/058-per-job-minute-floor FR-030(b)). After FR-031 a healthy
       # inspection runs no agent and so emits no record at all, and this
@@ -152,9 +155,10 @@ jobs:
       since: ${{ inputs.since }}
       sweep: true
       # MF-02: the wrapper, not the stage, owns which workflows in THIS
-      # repository can carry a record (constitution VI/VII) -- the ten
+      # repository can carry a record (constitution VI/VII) -- the nine
       # completion-trigger workflows above plus the watchdog, whose healthy
-      # (agent-free) inspections this sweep exists to pick up (FR-030(b)).
+      # (agent-free) inspections this sweep exists to pick up (FR-030(b)),
+      # and board-loop, which is sweep-only (#889).
       sweep-workflow-paths: >-
         [".github/workflows/wing-commander-1-intake.yml",
          ".github/workflows/wing-commander-2-clarify.yml",
