@@ -67,9 +67,9 @@ passed:
    "Read,Glob,Grep,Bash(git log:*),Bash(git diff:*),Bash(git show:*),Write"`,
    `--disallowedTools "WebSearch,WebFetch"`, no `git commit`/`git
    push`/`gh` tool access) writes exactly two files:
-   - A change-summary narrative (`${{ runner.temp }}/finalize-summary.md`).
+   - A change-summary narrative (`$RUNNER_TEMP/finalize-summary.md`).
    - The remaining-manual-work list — unchecked and human-only items from
-     `tasks.md`, one per line (`${{ runner.temp }}/finalize-remaining.md`),
+     `tasks.md`, one per line (`$RUNNER_TEMP/finalize-remaining.md`),
      empty if none remain.
 2. **On outright failure** (the action step fails, or either file is
    missing/unreadable afterward — FR-015): report the failure on the

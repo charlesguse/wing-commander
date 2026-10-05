@@ -754,7 +754,7 @@ jobs:
             2. Write a short, human-readable narrative (a few sentences,
                plain markdown, no top-level heading) summarizing what this
                specification delivered, to
-               ${{ runner.temp }}/cleanup-summary.md.
+               ${{ steps.ctx.outputs.runner-temp }}/cleanup-summary.md.
 
             Constraints: read-only — do not run git commit, git push, or any
             gh command; do not edit any file other than the temp file above.
@@ -876,7 +876,7 @@ jobs:
         env:
           COST_LINE: ${{ steps.cost-line.outputs.line }}
         run: |
-          f="${{ runner.temp }}/cleanup-summary.md"
+          f="$RUNNER_TEMP/cleanup-summary.md"
           verdict="${{ steps.summarize-verdict.outputs.verdict }}"
           # A rate-limited verdict gets its own fallback line (FR-015a,
           # specs/047-rate-limited-verdict): "automated summary unavailable"

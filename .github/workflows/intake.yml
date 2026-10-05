@@ -721,12 +721,12 @@ jobs:
                write its body (a summary of the spec, then the line
                'Closes nothing — lifecycle issue: #${{ inputs.issue-number }}')
                with the Write tool to exactly
-               ${{ runner.temp }}/intake-pr-body.md -- not under the
+               ${{ steps.ctx.outputs.runner-temp }}/intake-pr-body.md -- not under the
                repository; --body-file avoids the quoting hazards of a
                multi-line --body on the command line -- then run:
                gh pr create --base ${{ steps.defbranch.outputs.name }} --head ${{ inputs.spec-draft-prefix }}<NNN-slug> \
                  --title "Spec: <feature name> (#${{ inputs.issue-number }})" \
-                 --body-file ${{ runner.temp }}/intake-pr-body.md
+                 --body-file ${{ steps.ctx.outputs.runner-temp }}/intake-pr-body.md
             7. Update the lifecycle issue #${{ inputs.issue-number }}:
                - Create the spec identity label first (adding a nonexistent label fails):
                  gh label create "spec:<NNN-slug>" --color C5DEF5 --description "Lifecycle: <spec-dir>" --force
@@ -1294,7 +1294,7 @@ jobs:
                 + "**Your choice**: _Reply on this issue_\n"
               )
             | join("\n")
-          ' > "${{ runner.temp }}/intake-clarification.md"
+          ' > "$RUNNER_TEMP/intake-clarification.md"
 
       - name: Announce clarification needed
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.needed == 'true'

@@ -26,6 +26,8 @@ would be exactly the kind of two-approximations-of-one-fact drift
 CLAUDE.md's "shared logic has exactly one home" rule exists to prevent.
 """
 
+import re as _re
+
 
 def pins_bash(shell):
     """True if a `shell:` value pins bash -- either the bare `bash`
@@ -65,3 +67,70 @@ def is_container_bound(job):
     if not isinstance(container, dict):
         return False
     return "inputs.container-image" in str(container.get("image", ""))
+
+
+# Host-path expressions in container jobs. The canonical explanation is the
+# "Container-side paths" comment in
+# .github/actions/wing-commander-context/action.yml; in short: inside a
+# `container:` job these contexts evaluate to the HOST path, and the runner
+# maps a host path back to its container mount only where it leads a whole
+# environment value (ContainerStepHost translates every env entry, which
+# covers a step's `env:` and a JavaScript action's INPUT_* from `with:`).
+HOST_PATH_CONTEXTS = ("runner.temp", "runner.workspace", "runner.tool_cache",
+                      "github.workspace", "github.action_path")
+_CTX_ALT = "|".join(_re.escape(c) for c in HOST_PATH_CONTEXTS)
+_EXPR_RE = _re.compile(r"\$\{\{(?:(?!\}\}).)*\}\}", _re.S)
+_CTX_RE = _re.compile(r"(?<![\w.-])(?:" + _CTX_ALT + r")(?![\w-])")
+
+
+def host_path_exprs(text):
+    """The `${{ }}` expressions in `text` that read a host-path context,
+    including one wrapped in a function call such as format(...)."""
+    return [m.group(0) for m in _EXPR_RE.finditer(str(text))
+            if _CTX_RE.search(m.group(0))]
+
+
+_LEADING_RE = _re.compile(r"\$\{\{\s*(?:" + _CTX_ALT + r")\s*\}\}(?:/[^\n]*)?")
+
+
+def host_path_value_is_translated(value):
+    """True if `value`, used as a whole env/with/working-directory value,
+    reaches a container step with its host path translated: the expression
+    is the value's very start, it is the only such expression, and the
+    value is one line (translation is a prefix rewrite of the whole value,
+    so a second line or a second path is left as the host path)."""
+    value = str(value)
+    return (_LEADING_RE.fullmatch(value) is not None
+            and len(host_path_exprs(value)) == 1)
+
+
+def host_path_misuses(step):
+    """(field, expression) pairs in `step` where a host-path context
+    expression would reach a container step untranslated: anywhere in a
+    `run:` body, and in any `env:`, `with:` or `working-directory:` value
+    that is not the single leading expression of a one-line value."""
+    step = step or {}
+    out = []
+    run = step.get("run")
+    if run:
+        out += [("run", expr) for expr in host_path_exprs(run)]
+    values = [(f"env.{k}", v) for k, v in (step.get("env") or {}).items()]
+    values += [(f"with.{k}", v) for k, v in (step.get("with") or {}).items()]
+    if step.get("working-directory") is not None:
+        values.append(("working-directory", step["working-directory"]))
+    for field, value in values:
+        found = host_path_exprs(value)
+        if found and not host_path_value_is_translated(value):
+            out += [(field, expr) for expr in found]
+    return out
+
+
+def env_host_path_misuses(env):
+    """The same test for a job- or workflow-level `env:` map, whose values
+    reach every step's environment and are translated the same way."""
+    out = []
+    for k, v in (env or {}).items():
+        found = host_path_exprs(v)
+        if found and not host_path_value_is_translated(v):
+            out += [(f"env.{k}", expr) for expr in found]
+    return out

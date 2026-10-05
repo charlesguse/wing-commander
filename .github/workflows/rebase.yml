@@ -801,7 +801,7 @@ jobs:
             2. Run `git diff --name-only --diff-filter=U` to list the
                conflicted files for this stop. BEFORE resolving them, append
                each of those file paths (one per line) to the manifest file
-               ${{ runner.temp }}/conflict-manifest.txt using the Edit tool.
+               ${{ steps.ctx.outputs.runner-temp }}/conflict-manifest.txt using the Edit tool.
             3. Edit ONLY the conflict-marked files, removing the conflict
                markers so the result reconciles this branch's change with the
                default branch's. Do not touch any file that is not

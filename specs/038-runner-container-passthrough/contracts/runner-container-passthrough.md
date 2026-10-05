@@ -360,6 +360,31 @@ synthetic stage fixtures each carrying one known defect, mirroring Gate
 implementation-stage work; this contract fixes their scope so `tasks.md` can
 enumerate concretely.
 
+## Paths inside a container job
+
+When `container-image` is set, the expressions `${{ runner.temp }}`,
+`${{ runner.workspace }}`, `${{ runner.tool_cache }}`, `${{ github.workspace }}`
+and `${{ github.action_path }}` evaluate to the host path
+(`/home/runner/work/...`), which the container mounts elsewhere (`/__w/...`).
+The runner rewrites such a path only where it leads a whole, one-line
+environment value: a step's `env:` value, or a `with:` input that a
+JavaScript action receives as `INPUT_*`. It never rewrites a `run:` body or a
+path in the middle of a value, such as an agent prompt. So every stage job
+follows one rule, identical in container and host jobs:
+
+- a `run:` body reads `$RUNNER_TEMP` / `$GITHUB_WORKSPACE`;
+- free text reads `wing-commander-context`'s `runner-temp` / `workspace`
+  outputs, which that composite computes inside the job;
+- an `env:` or `with:` value may carry the expression only as its whole
+  value's leading part, on one line.
+
+Gate 43's `case_container_jobs_use_in_job_paths`
+(`verify-metrics-summary-record-emission.py`) enforces this on every
+caller-supplied-container job and every composite action. The canonical
+explanation is the "Container-side paths" comment in
+`.github/actions/wing-commander-context/action.yml`. Nothing changes for an
+adopter: this is how the stages are written, not an input.
+
 ## Non-goals (unchanged from the spec's Assumptions/Edge Cases, restated for
 this contract's boundary)
 

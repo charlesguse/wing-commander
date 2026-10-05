@@ -1716,7 +1716,7 @@ jobs:
             --arg outcome "$outcome" \
             --arg firstfailure "${FIRST_FAILURE:-}" \
             '{converged: $converged, handoff: $handoff, "gate-suite-outcome": $outcome, "gate-suite-first-failure": (if $firstfailure == "" then null else $firstfailure end)}' \
-            > "${{ runner.temp }}/wing-commander-cycle-outcome-cycle.json"
+            > "$RUNNER_TEMP/wing-commander-cycle-outcome-cycle.json"
 
       - name: Upload cycle outcome artifact (cycle)
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true'
@@ -2500,7 +2500,7 @@ jobs:
             --arg outcome "$outcome" \
             --arg firstfailure "${FIRST_FAILURE:-}" \
             '{converged: $converged, handoff: $handoff, "gate-suite-outcome": $outcome, "gate-suite-first-failure": (if $firstfailure == "" then null else $firstfailure end)}' \
-            > "${{ runner.temp }}/wing-commander-cycle-outcome-retry.json"
+            > "$RUNNER_TEMP/wing-commander-cycle-outcome-retry.json"
 
       - name: Upload cycle outcome artifact (retry)
         if: steps.lifecycle-gate.outputs.is-open == 'true' && (steps.retry.outcome == 'success' || steps.retry.outcome == 'failure')
