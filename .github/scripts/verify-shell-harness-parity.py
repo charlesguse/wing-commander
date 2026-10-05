@@ -116,6 +116,13 @@ def pick(steps, kind):
     return max(cands, key=lambda s: (len(s[2].splitlines()), s[0], s[1]))
 
 
+def probe_survived(outputs):
+    """Whether the probe's pipeline let the step go on: read from the line
+    it writes after that pipeline, never from the exit code -- the step
+    body's own exit, after the probe, proves nothing about pipefail."""
+    return outputs.get("probe") == "survived"
+
+
 def run_probe(bash, script, **kw):
     with tempfile.TemporaryDirectory() as work:
         rc, out, outputs, _ = harness.run_step(bash, script, work, {}, work, **kw)
@@ -131,7 +138,7 @@ def case_shipped_step(bash, steps, kind, must_survive):
     except RuntimeError as exc:
         fail(case, f"run_step could not place the probed step: {exc}")
         return
-    survived = rc == 0 and outputs.get("probe") == "survived"
+    survived = probe_survived(outputs)
     if must_survive and not survived:
         fail(case, f"production runs this step as `bash -e {{0}}` (no "
                    f"pipefail), but under the harness a pipeline whose first "
@@ -143,6 +150,26 @@ def case_shipped_step(bash, steps, kind, must_survive):
                    "strict than CI")
     else:
         print(f"ok: {case} -- probe {'survived' if survived else 'failed the step'}")
+
+
+def case_probe_verdict_ignores_body(bash):
+    """The probed subject is a real shipped step run with none of its
+    inputs, so its own body may well exit non-zero after the probe. That
+    exit says nothing about pipefail: if it were read as "the probe failed
+    the step", a harness that dropped pipefail would still pass the
+    must-fail cases whenever the chosen step happens to fail on its own."""
+    case = "probe verdict independent of the step body"
+    body_fails = PROBE.replace("exit 0\n", "") + "exit 3\n"
+    rc, _o, outputs = run_probe(bash, body_fails,
+                                shell=harness.UNSPECIFIED_SHELL_HOSTED)
+    if not probe_survived(outputs):
+        fail(case, f"under `bash -e` the probe ran past its pipeline (probe="
+                   f"{outputs.get('probe')!r}) but a later exit {rc} in the "
+                   f"step body was read as the probe failing the step")
+    rc, _o, outputs = run_probe(bash, body_fails,
+                                shell=harness.NAMED_SHELLS["bash"])
+    if probe_survived(outputs):
+        fail(case, "under pipefail the probe's pipeline was read as survived")
 
 
 def case_resolution_table():
@@ -355,6 +382,7 @@ def main():
     bash = harness.resolve_bash()
     steps = shipped_steps()
     case_resolution_table()
+    case_probe_verdict_ignores_body(bash)
     case_explicit_shell_and_refusal(bash)
     case_divergent_near_copies()
     case_unrunnable_shells(bash)
