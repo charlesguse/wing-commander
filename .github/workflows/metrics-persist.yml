@@ -52,7 +52,7 @@ on:
           intake.yml", ...]) a sweep is allowed to discover records from.
           Owned by the caller (constitution VI/VII: the stage does not
           hardcode which workflows in the consumer repository can carry a
-          record) — the reference wrapper passes its nine completion-trigger
+          record) — the reference wrapper passes its ten completion-trigger
           workflows plus wing-commander-8-watchdog.yml. Empty (the default)
           applies no restriction, so a caller that has not yet adopted this
           input keeps today's unfiltered sweep. Ignored outside sweep mode.

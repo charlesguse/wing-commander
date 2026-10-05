@@ -47,8 +47,8 @@ still advances `sweep-state.json` to the latest `concluded_at` in its
 window, in a commit carrying no records. With nothing retrieved, no run
 is held back from the mark.
 
-A completion-triggered run (empty `since`, the unchanged nine-stage
-path) writes neither file.
+A completion-triggered run (empty `since`, the unchanged per-completion
+path over the trigger list below) writes neither file.
 
 ## Wrapper — sweep trigger added, watchdog removed from the completion trigger
 

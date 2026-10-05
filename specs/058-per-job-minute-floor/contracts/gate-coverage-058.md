@@ -167,7 +167,9 @@ workflow it calls) is named in both `workflow_run.workflows` (the
 watchdog excepted, which is sweep-only) and the `sweep` job's
 `sweep-workflow-paths`; the discovery is pinned by a fixture tree, and
 the 043 wrapper contract's published trigger list must match the
-shipped one.
+shipped one. A spelled-out count of the completion path's workflows
+("N completion-trigger workflows", "N-stage path") in the live wrapper,
+stage, contracts or docs/adoption.md must equal the shipped list's length.
 
 ## Wiring assertions common to all new/amended gates
 

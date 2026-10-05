@@ -35,9 +35,11 @@ an in-memory fixture tree (a direct uploader, a composite uploader, a
 reusable uploader reached through its caller, a non-uploader), so a
 discovery that stops following one of those edges fails here instead of
 quietly shrinking the required set. The 043 wrapper contract's published
-trigger list must match the shipped one too, as the 058 delta's must.
+trigger list must match the shipped one too, as the 058 delta's must, and
+a spelled-out count of the completion path's workflows in the live docs
+must equal the shipped list's length.
 
-Ten subject mutations and two discovery mutations must each break an
+Eleven subject mutations and two discovery mutations must each break an
 assertion.
 
 Wiring: lint-workflows.yml, Gate 79.
@@ -235,6 +237,35 @@ def record_owners(root=".", follow_composites=True, follow_callers=True):
     return owners
 
 
+# Prose that states how many workflows the completion path covers. It went
+# stale once already: "the unchanged nine-stage path" outlived board-loop's
+# addition (#889). A spelled-out count before "completion-trigger
+# workflows" or "-stage path" in these live files must equal the shipped
+# trigger list's length; prose that names no number is not checked.
+COUNT_CLAIM_FILES = [WRAPPER, CONTRACT, WRAPPER_CONTRACT,
+                     os.path.join(WORKFLOWS, "metrics-persist.yml"),
+                     os.path.join("docs", "adoption.md")]
+_NUMWORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven",
+             "eight", "nine", "ten", "eleven", "twelve", "thirteen",
+             "fourteen", "fifteen"]
+_COUNT_CLAIM = re.compile(
+    r"\b(" + "|".join(_NUMWORDS) + r")"
+    r"(?:-stage(?:[\s#]+)path|(?:[\s#]+)completion-trigger(?:[\s#]+)workflows)\b",
+    re.IGNORECASE)
+
+
+def count_claims():
+    """[(file, line, count)] for every count claim in COUNT_CLAIM_FILES."""
+    out = []
+    for path in COUNT_CLAIM_FILES:
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+        for m in _COUNT_CLAIM.finditer(text):
+            out.append((path, text.count("\n", 0, m.start()) + 1,
+                        _NUMWORDS.index(m.group(1).lower())))
+    return out
+
+
 def sweep_paths(jobs):
     raw = (((jobs.get(SWEEP_JOB) or {}).get("with") or {})
            .get("sweep-workflow-paths") or "[]")
@@ -310,6 +341,7 @@ def load_subject():
         "sweep-paths": sweep_paths(dict(doc.get("jobs") or {})),
         "record-owners": record_owners(),
         "wrapper-contract-workflows": wrapper_contract_workflows(),
+        "count-claims": count_claims(),
     }
 
 
@@ -387,6 +419,13 @@ def suite(subject):
         broke.append(f"{WRAPPER_CONTRACT}'s published workflow_run list "
                      f"{subject['wrapper-contract-workflows']} does not match "
                      f"the shipped one {subject['workflows']}")
+
+    for path, line, n in subject["count-claims"]:
+        if n != len(subject["workflows"]):
+            broke.append(f"{path}:{line} says the completion path covers {n} "
+                         f"workflow(s); {WRAPPER} ships "
+                         f"{len(subject['workflows'])} -- stale prose about "
+                         f"the trigger list (#889)")
 
     if "since" not in subject["dispatch-inputs"]:
         broke.append("workflow_dispatch declares no `since` input -- the "
@@ -506,6 +545,12 @@ def mut_wrapper_contract_drifts(subject):
     return s
 
 
+def mut_stale_count_claim(subject):
+    s = dict(subject)
+    s["count-claims"] = subject["count-claims"] + [(CONTRACT, 50, 9)]
+    return s
+
+
 DISCOVERY_MUTATIONS = [
     ("discovery stops following local composites",
      {"follow_composites": False}),
@@ -525,6 +570,8 @@ MUTATIONS = [
      mut_new_owner_unlisted),
     ("the 043 wrapper contract's trigger list drifts from the shipped one",
      mut_wrapper_contract_drifts),
+    ("live prose keeps the pre-board-loop nine-workflow count",
+     mut_stale_count_claim),
     ("the watchdog is restored to the completion trigger", mut_watchdog_restored),
     ("the published contract's cron drifts from the shipped one",
      mut_contract_cron_drifts),
