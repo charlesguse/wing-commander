@@ -198,11 +198,11 @@ def run_scenarios(root):
 
 MUTATION_MARKER = (
     'if git rev-parse --verify --quiet "refs/remotes/origin/$branch" >/dev/null; then\n'
-    '            count="$(git rev-list --count "refs/remotes/origin/${branch}..HEAD" 2>/dev/null || echo 0)"\n'
+    '            count="$(git rev-list --count "refs/remotes/origin/${branch}..HEAD" 2>/dev/null)" || count=0\n'
     '          else\n'
-    '            count="$(git rev-list --count "${BEFORE_SHA}..HEAD" 2>/dev/null || echo 0)"\n'
+    '            count="$(git rev-list --count "${BEFORE_SHA}..HEAD" 2>/dev/null)" || count=0\n'
     '          fi')
-MUTATION_REPLACEMENT = 'count="$(git rev-list --count "${BEFORE_SHA}..HEAD" 2>/dev/null || echo 0)"'
+MUTATION_REPLACEMENT = 'count="$(git rev-list --count "${BEFORE_SHA}..HEAD" 2>/dev/null)" || count=0'
 
 
 def self_test():

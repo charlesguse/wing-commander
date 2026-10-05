@@ -884,9 +884,9 @@ jobs:
           f="$RUNNER_TEMP/claude-execution-output.json"
           agent_ok="$(jq -r '([.[] | select(.type=="result")] | last) as $r
             | if $r != null and $r.is_error == false and $r.subtype == "success"
-              then "true" else "false" end' "$f" 2>/dev/null || echo false)"
+              then "true" else "false" end' "$f" 2>/dev/null)" || agent_ok=false
           if [ "$agent_ok" != "true" ]; then
-            err=$(jq -r '[.[] | select(.type=="result")] | last | .result // "missing or invalid terminal result"' "$f" 2>/dev/null || echo "missing execution output file")
+            err=$(jq -r '[.[] | select(.type=="result")] | last | .result // "missing or invalid terminal result"' "$f" 2>/dev/null) || err="missing execution output file"
             echo "::error::wing-commander intake stage: the agent run did not complete with a valid result — $err"
             echo "valid=false" >> "$GITHUB_OUTPUT"
             exit 0
@@ -934,7 +934,7 @@ jobs:
         run: |
           f="$RUNNER_TEMP/claude-execution-output.json"
           raw="$(jq -r '[.[] | select(.type=="result")] | last | .result // empty' "$f" 2>/dev/null || true)"
-          findings_json="$(printf '%s' "$raw" | jq -c 'if type=="object" and (.findings|type)=="array" then .findings else [] end' 2>/dev/null || echo '[]')"
+          findings_json="$(printf '%s' "$raw" | jq -c 'if type=="object" and (.findings|type)=="array" then .findings else [] end' 2>/dev/null)" || findings_json='[]'
           {
             echo "findings-json<<WC_INTAKE_FINDINGS_EOF"
             echo "$findings_json"
@@ -1088,8 +1088,8 @@ jobs:
         run: |
           f="$RUNNER_TEMP/claude-execution-output.json"
           raw="$(jq -r '[.[] | select(.type=="result")] | last | .result // empty' "$f" 2>/dev/null || true)"
-          count="$(printf '%s' "$raw" | jq 'if type=="object" and (.clarifications|type)=="array" then (.clarifications|length) else 0 end' 2>/dev/null || echo 0)"
-          specified="$(printf '%s' "$raw" | jq -r 'if type=="object" and (.specified|type)=="boolean" then .specified else false end' 2>/dev/null || echo false)"
+          count="$(printf '%s' "$raw" | jq 'if type=="object" and (.clarifications|type)=="array" then (.clarifications|length) else 0 end' 2>/dev/null)" || count=0
+          specified="$(printf '%s' "$raw" | jq -r 'if type=="object" and (.specified|type)=="boolean" then .specified else false end' 2>/dev/null)" || specified=false
           echo "specified=$specified" >> "$GITHUB_OUTPUT"
           if [ "$specified" = "true" ] && [ "$count" -gt 0 ]; then
             echo "needed=true" >> "$GITHUB_OUTPUT"

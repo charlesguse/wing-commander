@@ -402,10 +402,11 @@ runs:
             def modelpart: if .model_available then .model else "model unavailable" end;
             "**Cost**: " + costpart + " · " + turnspart + " · " + modelpart
           ' "$RECORD_PATH" 2>/dev/null || true)"
+          record_json="$(jq -c . "$RECORD_PATH" 2>/dev/null)" || record_json='{}'
 
           {
             echo "record-key=$RECORD_KEY"
-            echo "record-json=$(jq -c . "$RECORD_PATH" 2>/dev/null || printf '{}')"
+            echo "record-json=$record_json"
             # cost-line is heredoc-delimited, not echoed: its modelpart can
             # carry a newline from a multiline model input, unlike the
             # controlled record-key and the always-one-line jq -c

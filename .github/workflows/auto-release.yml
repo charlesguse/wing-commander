@@ -1300,7 +1300,7 @@ jobs:
           # PR #389, second review).
           assert_merged_by_harness() {
             local gate_label="$1" pr_json="$2" merged_by
-            merged_by="$(printf '%s' "$pr_json" | jq -r '.mergedBy.login // ""' 2>/dev/null || echo "")"
+            merged_by="$(printf '%s' "$pr_json" | jq -r '.mergedBy.login // ""' 2>/dev/null)" || merged_by=""
             if [ "$pr_json" = "null" ] || [ "$(printf '%s' "$merged_by" | tr '[:upper:]' '[:lower:]')" != "$(printf '%s' "$HARNESS_LOGIN" | tr '[:upper:]' '[:lower:]')" ]; then
               local observed="merged, but not attributed to the configured maintainer identity"
               [ "$pr_json" = "null" ] && observed="no merged PR found"
@@ -1480,7 +1480,7 @@ jobs:
                   gate_last_failure[$prefix]="$(tail -c 300 "$RUNNER_TEMP/auto-release-pr-list-err.txt")"
                 else
                   pr_json="$(cat "$RUNNER_TEMP/auto-release-pr-list.json")"
-                  pr_number="$(printf '%s' "$pr_json" | jq -r '.[0].number // "?"' 2>/dev/null || echo '?')"
+                  pr_number="$(printf '%s' "$pr_json" | jq -r '.[0].number // "?"' 2>/dev/null)" || pr_number='?'
                   gate_pr_number[$prefix]="$pr_number"
                   if ! merge_decision="$(printf '%s' "$pr_json" \
                       | bash .github/actions/_shared/auto-release-e2e-merge-decision.sh "$prefix" "$slug" "${gate_expected_base[$prefix]}" \
@@ -1689,7 +1689,7 @@ jobs:
             fail_infra_on_read "reading the issue's label timeline for the pass-path stage-label assertion" \
               "gh api issues/timeline succeeds" "$RUNNER_TEMP/auto-release-timeline-err.txt"
           fi
-          timeline="$(printf '%s' "$timeline_raw" | jq -R -s -c 'split("\n") | map(select(length > 0))' 2>/dev/null || echo '[]')"
+          timeline="$(printf '%s' "$timeline_raw" | jq -R -s -c 'split("\n") | map(select(length > 0))' 2>/dev/null)" || timeline='[]'
 
           # --- Clarification-gate reads, moved up (research.md D5.2) ---
           # comments_json and markers_json used to be computed after the
@@ -1707,7 +1707,7 @@ jobs:
             fail_infra_on_read "reading the issue's comments for the pass-path clarification assertion" \
               "gh api issues/comments succeeds" "$RUNNER_TEMP/auto-release-final-comments-err.txt"
           fi
-          comments_json="$(jq -cs '.' "$RUNNER_TEMP/auto-release-final-comments.ndjson" 2>/dev/null || echo '[]')"
+          comments_json="$(jq -cs '.' "$RUNNER_TEMP/auto-release-final-comments.ndjson" 2>/dev/null)" || comments_json='[]'
           # `|| markers_json='[]'` sits outside the substitution so a failed
           # read replaces the value; inside it, pipefail would append `[]`.
           markers_json="$(printf '%s' "$comments_json" | bash .github/actions/_shared/auto-release-e2e-clarify-decision.sh markers 2>/dev/null)" || markers_json='[]'
@@ -1842,7 +1842,7 @@ jobs:
             fi
           fi
           clarification_satisfied="$(printf '%s' "$comments_json" \
-            | bash .github/actions/_shared/auto-release-e2e-clarify-decision.sh satisfied "$author_id" 2>/dev/null || echo unsatisfied)"
+            | bash .github/actions/_shared/auto-release-e2e-clarify-decision.sh satisfied "$author_id" 2>/dev/null)" || clarification_satisfied=unsatisfied
           if [ "$clarification_satisfied" != "ok" ]; then
             write_verdict "fail-wrong-output" "clarification gate answered before stage:done" \
               "a qualifying reply after every open question" "question opened, never answered"
@@ -1876,17 +1876,17 @@ jobs:
             fail_infra_on_read "reading merged PRs for head spec-draft/${slug}" \
               "gh pr list succeeds" "$RUNNER_TEMP/auto-release-prlist-err.txt"
           fi
-          spec_draft_pr="$(printf '%s' "$spec_draft_pr_raw" | jq -c '.[0] // null' 2>/dev/null || echo null)"
+          spec_draft_pr="$(printf '%s' "$spec_draft_pr_raw" | jq -c '.[0] // null' 2>/dev/null)" || spec_draft_pr=null
           if ! plan_pr_raw="$(read_merged_pr "plan/${slug}" 2>"$RUNNER_TEMP/auto-release-prlist-err.txt")"; then
             fail_infra_on_read "reading merged PRs for head plan/${slug}" \
               "gh pr list succeeds" "$RUNNER_TEMP/auto-release-prlist-err.txt"
           fi
-          plan_pr="$(printf '%s' "$plan_pr_raw" | jq -c '.[0] // null' 2>/dev/null || echo null)"
+          plan_pr="$(printf '%s' "$plan_pr_raw" | jq -c '.[0] // null' 2>/dev/null)" || plan_pr=null
           if ! finalize_pr_raw="$(read_merged_pr "spec/${slug}" 2>"$RUNNER_TEMP/auto-release-prlist-err.txt")"; then
             fail_infra_on_read "reading merged PRs for head spec/${slug}" \
               "gh pr list succeeds" "$RUNNER_TEMP/auto-release-prlist-err.txt"
           fi
-          finalize_pr="$(printf '%s' "$finalize_pr_raw" | jq -c '.[0] // null' 2>/dev/null || echo null)"
+          finalize_pr="$(printf '%s' "$finalize_pr_raw" | jq -c '.[0] // null' 2>/dev/null)" || finalize_pr=null
 
           # --- PR-merge gates pass assertion (FR-016/FR-018, maintainer
           # feedback) -- see assert_merged_by_harness above. ---
@@ -1894,11 +1894,11 @@ jobs:
           assert_merged_by_harness "plan PR merge" "$plan_pr"
           assert_merged_by_harness "finalize PR merge" "$finalize_pr"
 
-          spec_draft_pr_out="$(printf '%s' "$spec_draft_pr" | jq -c 'if . == null then null else {number, mergedAt} end' 2>/dev/null || echo null)"
-          plan_pr_out="$(printf '%s' "$plan_pr" | jq -c 'if . == null then null else {number, mergedAt} end' 2>/dev/null || echo null)"
-          finalize_pr_out="$(printf '%s' "$finalize_pr" | jq -c 'if . == null then null else {number, mergedAt} end' 2>/dev/null || echo null)"
+          spec_draft_pr_out="$(printf '%s' "$spec_draft_pr" | jq -c 'if . == null then null else {number, mergedAt} end' 2>/dev/null)" || spec_draft_pr_out=null
+          plan_pr_out="$(printf '%s' "$plan_pr" | jq -c 'if . == null then null else {number, mergedAt} end' 2>/dev/null)" || plan_pr_out=null
+          finalize_pr_out="$(printf '%s' "$finalize_pr" | jq -c 'if . == null then null else {number, mergedAt} end' 2>/dev/null)" || finalize_pr_out=null
 
-          clarification_comment_ids="$(printf '%s' "$comments_json" | jq -c --argjson markers "$markers_json" --arg login "$HARNESS_LOGIN" '{questions: [ $markers[].id ], replies: [ .[] | select(((.user.login // "") | ascii_downcase) == ($login | ascii_downcase)) | .id ]}' 2>/dev/null || echo '{"questions":[],"replies":[]}')"
+          clarification_comment_ids="$(printf '%s' "$comments_json" | jq -c --argjson markers "$markers_json" --arg login "$HARNESS_LOGIN" '{questions: [ $markers[].id ], replies: [ .[] | select(((.user.login // "") | ascii_downcase) == ($login | ascii_downcase)) | .id ]}' 2>/dev/null)" || clarification_comment_ids='{"questions":[],"replies":[]}'
           {
             echo "spec-draft-pr=$spec_draft_pr_out"
             echo "plan-pr=$plan_pr_out"
@@ -2473,7 +2473,7 @@ jobs:
             VERDICT_JSON="$(bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "verify-e2e produced no verdict" "a JSON verdict from verify-e2e on every path" "$no_verdict_observed" "$RUN_URL")"
           fi
           outcome="$(printf '%s' "$VERDICT_JSON" | jq -r '.outcome // empty' 2>/dev/null || true)"
-          mode="$(printf '%s' "$VERDICT_JSON" | jq -r '.mode // "unknown"' 2>/dev/null || echo unknown)"
+          mode="$(printf '%s' "$VERDICT_JSON" | jq -r '.mode // "unknown"' 2>/dev/null)" || mode=unknown
           # FR-009 Acceptance Scenario: a paused run must read as "container
           # mode not exercised: paused", never a plain default-runner pass
           # that looks the same as an unpaused rotation turn.
@@ -2482,10 +2482,10 @@ jobs:
           fi
 
           if [ "$outcome" != "pass" ]; then
-            failing_check="$(printf '%s' "$VERDICT_JSON" | jq -r '.failing_check // "unknown"' 2>/dev/null || echo unknown)"
-            expected="$(printf '%s' "$VERDICT_JSON" | jq -r '.expected // "unknown"' 2>/dev/null || echo unknown)"
-            observed="$(printf '%s' "$VERDICT_JSON" | jq -r '.observed // "unknown"' 2>/dev/null || echo unknown)"
-            evidence_url="$(printf '%s' "$VERDICT_JSON" | jq -r '.evidence_url // "unknown"' 2>/dev/null || echo unknown)"
+            failing_check="$(printf '%s' "$VERDICT_JSON" | jq -r '.failing_check // "unknown"' 2>/dev/null)" || failing_check=unknown
+            expected="$(printf '%s' "$VERDICT_JSON" | jq -r '.expected // "unknown"' 2>/dev/null)" || expected=unknown
+            observed="$(printf '%s' "$VERDICT_JSON" | jq -r '.observed // "unknown"' 2>/dev/null)" || observed=unknown
+            evidence_url="$(printf '%s' "$VERDICT_JSON" | jq -r '.evidence_url // "unknown"' 2>/dev/null)" || evidence_url=unknown
             # specs/055-unattended-e2e-gates FR-021: a stalled gate is
             # classified distinctly from both an infrastructure problem and
             # a generic pipeline defect (contracts/verdict-extension.md).
@@ -2527,7 +2527,7 @@ jobs:
           # review). The default now comes from a plain shell variable,
           # which bash does not brace-match either.
           clarification_comment_ids_default='{}'
-          question_count="$(printf '%s' "${CLARIFICATION_COMMENT_IDS:-$clarification_comment_ids_default}" | jq '.questions | length' 2>/dev/null || echo 0)"
+          question_count="$(printf '%s' "${CLARIFICATION_COMMENT_IDS:-$clarification_comment_ids_default}" | jq '.questions | length' 2>/dev/null)" || question_count=0
           if [ -n "$CLARIFICATION_ROUNDS_ANSWERED" ] && [ "$CLARIFICATION_ROUNDS_ANSWERED" != "0" ]; then
             clarification_line="clarification: answered (${CLARIFICATION_ROUNDS_ANSWERED} harness round(s); comments ${CLARIFICATION_COMMENT_IDS:-unknown})"
           elif [ "$question_count" != "0" ]; then
