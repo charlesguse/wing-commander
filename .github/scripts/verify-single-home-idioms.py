@@ -1265,7 +1265,9 @@ def check_shared_path_workdir(root="."):
                 if not run:
                     continue
                 wd = str(step.get("working-directory") or job_wd).strip()
-                if wd in ROOT_WORKDIRS:
+                # A trailing slash names the same directory
+                # (`${{ github.workspace }}/` is the root; #960 second review).
+                if wd.rstrip("/") in ROOT_WORKDIRS:
                     continue
                 m = BARE_SHARED_REF_RE.search(str(run))
                 if m:
@@ -2210,6 +2212,12 @@ def selftest_shared_path_workdir_anchored_passes():
                "          bash ${{ github.workspace }}/.github/actions/_shared/auto-release-verdict.sh a\n"
                "          cp ../e2e-source/.github/actions/_shared/x.sh .\n"
                "      - shell: bash\n        run: |\n"
+               "          bash .github/actions/_shared/auto-release-verdict.sh a\n"
+               # The workspace root written with a trailing slash is still
+               # the root (#960 second review).
+               "      - shell: bash\n        working-directory: ${{ github.workspace }}/\n        run: |\n"
+               "          bash .github/actions/_shared/auto-release-verdict.sh a\n"
+               "      - shell: bash\n        working-directory: $GITHUB_WORKSPACE/\n        run: |\n"
                "          bash .github/actions/_shared/auto-release-verdict.sh a\n")
         findings, hard = evaluate(tmp)
         hits = [f for f in findings if f.check == "shared-path-workdir"]
