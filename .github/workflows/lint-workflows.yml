@@ -92,9 +92,11 @@ on:
       # Gates 100, 101, 114, 120 and 129 read these documents through an
       # os.path.join, which verify-gate-wiring.py did not fold until the
       # code reviews of #940; each gate compares its document with code,
-      # so an edit to the document alone has to run the gate.
+      # so an edit to the document alone has to run the gate. Gate 84
+      # reads labels-and-cross-links.md's board:stalled sources (#889).
       - "docs/adoption.md"
       - "specs/057-autonomous-board-loop/contracts/board-loop-workflow.md"
+      - "specs/057-autonomous-board-loop/contracts/labels-and-cross-links.md"
       - "specs/060-self-redrive-concurrency/contracts/concurrency-groups.md"
       - "specs/055-unattended-e2e-gates/research.md"
       - "specs/055-unattended-e2e-gates/spec.md"

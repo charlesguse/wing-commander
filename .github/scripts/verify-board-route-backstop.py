@@ -32,6 +32,7 @@ import glob
 import json
 import os
 import re
+import subprocess
 import sys
 import unicodedata
 
@@ -39,9 +40,9 @@ import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from board_route_backstop import (  # noqa: E402
-    RATIONALE_MAX_CHARS, contract_widened, drafted_contract_widened, normalize_category,
-    normalize_repo_path, one_line_rationale, route, route_final_diff,
-    workflow_push_blocked_paths)
+    RATIONALE_MAX_CHARS, contract_widened, diff_name_list, drafted_contract_widened,
+    normalize_category, normalize_repo_path, one_line_rationale, read_base_contents,
+    read_worktree_contents, route, route_final_diff, workflow_push_blocked_paths)
 
 FIXTURES_DIR = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "tests", "board-route-backstop")
@@ -222,6 +223,10 @@ def workflow_scope_single_home_problems(doc, workflow_text):
         if site == "route" and "--route-decision " not in run:
             problems.append("board-loop.yml route job, {0!r}: the helper is not given "
                             "--route-decision, so contract-unchecked paths go unnamed".format(name))
+        if site != "route" and not re.search(r'--diff-base "\$[A-Z_]+"', run):
+            problems.append("board-loop.yml {0} job, {1!r}: the helper is not given "
+                            "--diff-base, so it never lists the real diff itself (#889: "
+                            "quotePath, renames) nor checks its contract".format(job, name))
         if '[ "$held"' not in run:
             problems.append("board-loop.yml {0} job, {1!r}: the helper's held/clear answer "
                             "is never read".format(job, name))
@@ -236,7 +241,77 @@ def workflow_scope_single_home_problems(doc, workflow_text):
     if INLINE_HOLD_PROSE in workflow_text:
         problems.append("board-loop.yml: an inline copy of the workflow-scope hold comment "
                         "(`{0}`) -- {1} is its one home".format(INLINE_HOLD_PROSE, HOLD_HELPER))
+    return problems + diff_listing_problems(doc, workflow_text)
+
+
+# A changed-path listing spelled in board-loop.yml (#889): `git diff
+# --name-only` C-quotes a non-ASCII path under core.quotePath and detects
+# renames, so a `.github/workflows/é.yml` edit, or a workflow_call workflow
+# moved out of .github/workflows/, read as no workflow file / no contract
+# removed. board_route_backstop.diff_name_list() is the listing's one home.
+NAME_LISTING_RE = re.compile(r"^[^#\n]*\bgit\b[^#\n]*\bdiff\b[^#\n]*--name-(?:only|status)",
+                             re.MULTILINE)
+# (job, step id) of the final-diff checks that read a patch and its paths.
+FINAL_DIFF_STEPS = (("fix", "final-diff-backstop"), ("readiness", "final-diff-backstop"))
+
+
+def diff_listing_problems(doc, workflow_text):
+    problems = []
+    for m in NAME_LISTING_RE.finditer(workflow_text):
+        problems.append("board-loop.yml:{0}: a `git diff --name-only` listing -- use "
+                        "board_route_backstop.diff_name_list() (-z, --no-renames), the "
+                        "listing's one home (#889)".format(
+                            workflow_text.count("\n", 0, m.start()) + 1))
+    jobs = (doc or {}).get("jobs") or {}
+    for job, step_id in FINAL_DIFF_STEPS:
+        steps = [st for st in (jobs.get(job) or {}).get("steps") or []
+                 if isinstance(st, dict) and st.get("id") == step_id]
+        if len(steps) != 1:
+            problems.append("board-loop.yml {0} job: expected one step with id {1}, found "
+                            "{2}".format(job, step_id, len(steps)))
+            continue
+        run = str(steps[0].get("run", ""))
+        if "diff_name_list(" not in run:
+            problems.append("board-loop.yml {0} job, {1}: its paths are not listed by "
+                            "diff_name_list()".format(job, step_id))
+        diffs = [line for line in run.splitlines()
+                 if re.search(r"\bgit\b.*\bdiff\b", line) and not line.lstrip().startswith("#")]
+        if not diffs:
+            problems.append("board-loop.yml {0} job, {1}: no `git diff` patch found".format(
+                job, step_id))
+        for line in diffs:
+            if "--no-renames" not in line or "core.quotePath=false" not in line:
+                problems.append("board-loop.yml {0} job, {1}: `{2}` lacks --no-renames or "
+                                "core.quotePath=false, so its patch disagrees with its "
+                                "paths (#889)".format(job, step_id, line.strip()))
     return problems
+
+
+LABELS_CONTRACT = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), os.pardir, os.pardir, "specs",
+    "057-autonomous-board-loop", "contracts", "labels-and-cross-links.md")
+# What the board:stalled row must say of each HOLD_SITES site, in order.
+STALLED_ROW_SOURCES = ("route's `hold` verdict", "the fix job's pre-push check",
+                       "review-fixup's pre-push check")
+
+
+def stalled_sources_problems(text=None):
+    """Spec 057's labels contract lists every source of board:stalled; each
+    workflow-scope hold site is one (review-fixup's, added by #901, was
+    missing -- found by the code review of #953)."""
+    if text is None:
+        try:
+            with open(LABELS_CONTRACT, encoding="utf-8") as fh:
+                text = fh.read()
+        except OSError as exc:
+            return ["cannot read {0}: {1}".format(LABELS_CONTRACT, exc)]
+    rows = [line for line in text.splitlines() if line.startswith("| `board:stalled` |")]
+    if len(rows) != 1:
+        return ["labels-and-cross-links.md: expected one `board:stalled` row, found "
+                "{0}".format(len(rows))]
+    return ["labels-and-cross-links.md: the `board:stalled` row does not name {0!r} as a "
+            "source, though board-loop.yml's {1} site holds with it".format(phrase, site[1])
+            for phrase, site in zip(STALLED_ROW_SOURCES, HOLD_SITES) if phrase not in rows[0]]
 
 
 class _Proc:
@@ -244,10 +319,49 @@ class _Proc:
         self.returncode = returncode
 
 
-def _run_hold(argv, stdin_text, fail_on=None, decision=None):
+def _git(repo, *args):
+    return subprocess.run(["git", "-C", repo, "-c", "user.name=t", "-c", "user.email=t@t"]
+                          + list(args), check=True, capture_output=True).stdout
+
+
+def _make_repo(tmp, base_files, head_files, renames=()):
+    """A git repository at tmp/repo: `base_files` ({path: text}) committed,
+    then `renames` ((old, new) `git mv`s) and `head_files` ({path: text, or
+    None to delete}) committed on top. Returns (repo, base sha)."""
+    repo = os.path.join(tmp, "repo")
+    os.makedirs(repo)
+    _git(repo, "init", "-q")
+
+    def write(files):
+        for path, text in files.items():
+            full = os.path.join(repo, path)
+            if text is None:
+                _git(repo, "rm", "-q", "--", path)
+                continue
+            os.makedirs(os.path.dirname(full), exist_ok=True)
+            with open(full, "w", encoding="utf-8") as fh:
+                fh.write(text)
+            _git(repo, "add", "--", path)
+
+    write(dict(base_files or {}, **{"README": "r\n"}))
+    _git(repo, "commit", "-q", "-m", "base")
+    base = _git(repo, "rev-parse", "HEAD").decode().strip()
+    for old, new in renames:
+        os.makedirs(os.path.dirname(os.path.join(repo, new)), exist_ok=True)
+        _git(repo, "mv", old, new)
+    write(head_files or {})
+    _git(repo, "commit", "-q", "--allow-empty", "-m", "head")
+    return repo, base
+
+
+def _run_hold(argv, head_files=None, fail_on=None, decision=None, decision_text=None,
+              base_files=None, renames=()):
     """Runs board_workflow_scope_hold.main() with a recording `gh` stub;
-    `fail_on` ("edit" or "comment") makes that gh call fail. Returns
-    (rc, stdout, gh calls, step-summary text)."""
+    `fail_on` ("edit" or "comment") makes that gh call fail. Fix and
+    review-fixup run in a real repository whose head commit changes
+    `head_files` (and `renames`) from `base_files`, passed as --diff-base;
+    route reads `decision` (or the raw `decision_text`, "" for a missing
+    file). Returns (rc, stdout, gh calls, step-summary text, stderr)."""
     import io
     import tempfile
     from contextlib import redirect_stderr, redirect_stdout
@@ -258,38 +372,52 @@ def _run_hold(argv, stdin_text, fail_on=None, decision=None):
         calls.append(list(args))
         return _Proc(1 if fail_on and args[:3] == ["gh", "issue", fail_on] else 0)
 
+    cwd = os.getcwd()
     with tempfile.TemporaryDirectory() as tmp:
         summary = os.path.join(tmp, "summary")
         open(summary, "w").close()
+        decision_path = os.path.join(tmp, "decision.json")
         if decision is not None:
-            decision_path = os.path.join(tmp, "decision.json")
             with open(decision_path, "w", encoding="utf-8") as fh:
                 json.dump({"decision": decision}, fh)
+        elif decision_text:
+            with open(decision_path, "w", encoding="utf-8") as fh:
+                fh.write(decision_text)
+        if "route" in argv:
             argv = argv + ["--route-decision", decision_path]
+        else:
+            repo, base = _make_repo(tmp, base_files, head_files, renames)
+            argv = argv + ["--diff-base", base]
+            os.chdir(repo)
         saved = {k: os.environ.get(k) for k in ("GITHUB_REPOSITORY", "GITHUB_STEP_SUMMARY")}
         os.environ.update(GITHUB_REPOSITORY="o/r", GITHUB_STEP_SUMMARY=summary)
-        out = io.StringIO()
+        out, err = io.StringIO(), io.StringIO()
         try:
-            with redirect_stdout(out), redirect_stderr(io.StringIO()):
-                rc = hold_mod.main(argv, stdin=io.StringIO(stdin_text), run=run)
+            with redirect_stdout(out), redirect_stderr(err):
+                rc = hold_mod.main(argv, run=run)
         finally:
+            os.chdir(cwd)
             for k, v in saved.items():
                 if v is None:
                     os.environ.pop(k, None)
                 else:
                     os.environ[k] = v
         with open(summary, encoding="utf-8") as fh:
-            return rc, out.getvalue().strip(), calls, fh.read()
+            return rc, out.getvalue().strip(), calls, fh.read(), err.getvalue()
+
+
+WC_STAGE = "name: s\non:\n  workflow_call:\n    inputs:\n      a:\n        type: string\njobs: {}\n"
 
 
 def hold_helper_failures():
     """board_workflow_scope_hold.py, executed: the check and the hold
     sequence every workflow-scope hold site shares (found by the code
-    review of #921)."""
+    review of #921), and the fix sites' own listing and contract check of
+    the real diff (#889)."""
     import board_workflow_scope_hold as hold_mod
     failures = 0
     base = ["--issue", "7", "--add-label", "board:stalled"]
-    wf = ".github/workflows/x.yml\nsrc/a.py\n"
+    wf = {".github/workflows/x.yml": "on: push\n", "src/a.py": "a\n"}
 
     def ck(title, cond, detail=""):
         nonlocal failures
@@ -300,16 +428,17 @@ def hold_helper_failures():
             print("::error::verify-board-route-backstop: board_workflow_scope_hold: {0} -- "
                   "{1}".format(title, detail))
 
-    rc, out, calls, _ = _run_hold(["--site", "fix", "--can-push-workflows", "false"] + base,
-                                  "src/a.py\n.github/actions/wing-commander-x/action.yml\n")
+    rc, out, calls, _, _ = _run_hold(
+        ["--site", "fix", "--can-push-workflows", "false"] + base,
+        {"src/a.py": "a\n", ".github/actions/wing-commander-x/action.yml": "name: x\n"})
     ck("no workflow file -> clear, nothing posted", rc == 0 and out == "clear" and calls == [],
        "rc={0} out={1!r} calls={2!r}".format(rc, out, calls))
-    rc, out, calls, _ = _run_hold(["--site", "fix", "--can-push-workflows", "true"] + base, wf)
+    rc, out, calls, _, _ = _run_hold(["--site", "fix", "--can-push-workflows", "true"] + base, wf)
     ck("a workflow file with the App's Workflows permission -> clear",
        rc == 0 and out == "clear" and calls == [], "rc={0} out={1!r}".format(rc, out))
-    rc, out, calls, summary = _run_hold(
+    rc, out, calls, summary, _ = _run_hold(
         ["--site", "fix", "--can-push-workflows", "false", "--branch", "board/fix-7",
-         "--base-sha", "abc"] + base, wf + "./.github/workflows/sub/y`z.yml\n")
+         "--base-sha", "abc"] + base, dict(wf, **{".github/workflows/sub/y`z.yml": "on: push\n"}))
     body = calls[1][-1] if len(calls) == 2 else ""
     ck("a workflow file -> label first, then one comment, then the summary line",
        rc == 0 and out == "held" and len(calls) == 2
@@ -320,29 +449,29 @@ def hold_helper_failures():
        and '"branch": "board/fix-7"' in body
        and "fix (workflow-scope hold)" in summary,
        "rc={0} out={1!r} calls={2!r} summary={3!r}".format(rc, out, calls, summary))
-    rc, out, calls, summary = _run_hold(
+    rc, out, calls, summary, _ = _run_hold(
         ["--site", "review-fixup", "--can-push-workflows", "false", "--pr", "70"] + base, wf)
     ck("review-fixup's comment names its PR",
        rc == 0 and out == "held" and "PR #70" in calls[-1][-1]
        and "review-fixup (workflow-scope hold)" in summary,
        "rc={0} calls={1!r}".format(rc, calls))
-    rc, out, calls, summary = _run_hold(
-        ["--site", "route", "--can-push-workflows", "false"] + base, "",
+    rc, out, calls, summary, _ = _run_hold(
+        ["--site", "route", "--can-push-workflows", "false"] + base,
         decision={"measured": {"workflow_paths": ["./.github/workflows/a b.yml"]}})
     ck("an unrenderable path falls back to naming the directory",
        rc == 0 and "a file under `.github/workflows/`" in calls[-1][-1]
        and "a b" not in calls[-1][-1] and "unchecked" not in calls[-1][-1],
        "calls={0!r}".format(calls))
-    rc, out, calls, summary = _run_hold(
-        ["--site", "route", "--can-push-workflows", "false"] + base, "",
+    rc, out, calls, summary, _ = _run_hold(
+        ["--site", "route", "--can-push-workflows", "false"] + base,
         decision={"measured": {"workflow_paths": [".github/workflows/x.yml"],
                                "contract_unknown_paths": [".github/actions/wing-commander-m/action.yml"]}})
     body = calls[-1][-1] if calls else ""
     ck("route names a held change's unchecked composite and its inputs:/outputs:",
        rc == 0 and out == "held" and "`.github/actions/wing-commander-m/action.yml`" in body
        and "`inputs:`/`outputs:`" in body, "rc={0} calls={1!r}".format(rc, calls))
-    rc, out, calls, summary = _run_hold(
-        ["--site", "route", "--can-push-workflows", "false"] + base, "",
+    rc, out, calls, summary, _ = _run_hold(
+        ["--site", "route", "--can-push-workflows", "false"] + base,
         decision={"measured": {"workflow_paths": [".github/workflows/x.yml", ".github/workflows/y.yml"],
                                "contract_unknown_paths": [".github/workflows/y.yml"]}})
     body = calls[-1][-1] if calls else ""
@@ -350,25 +479,107 @@ def hold_helper_failures():
        rc == 0 and out == "held" and "for `.github/workflows/y.yml` to main" in body
        and "unchecked" in body and "route (workflow-scope hold)" in summary,
        "rc={0} calls={1!r}".format(rc, calls))
-    rc, out, calls, summary = _run_hold(["--site", "fix", "--can-push-workflows", "false"] + base,
-                                        wf, fail_on="edit")
+    rc, out, calls, summary, _ = _run_hold(["--site", "fix", "--can-push-workflows", "false"] + base,
+                                           wf, fail_on="edit")
     ck("a failed label add posts nothing and fails (#604)",
        rc == 1 and out == "" and len(calls) == 1 and summary == "",
        "rc={0} out={1!r} calls={2!r}".format(rc, out, calls))
-    rc, out, calls, summary = _run_hold(["--site", "fix", "--can-push-workflows", "false"] + base,
-                                        wf, fail_on="comment")
+    rc, out, calls, summary, _ = _run_hold(["--site", "fix", "--can-push-workflows", "false"] + base,
+                                           wf, fail_on="comment")
     ck("a failed comment fails and records no summary line (FR-011)",
        rc == 1 and out == "" and summary == "", "rc={0} out={1!r} summary={2!r}".format(rc, out, summary))
+
+    # #889 (code review of #953): a non-ASCII workflow path, which a plain
+    # `git diff --name-only` C-quotes ("\303\251") under core.quotePath.
+    rc, out, calls, _, _ = _run_hold(["--site", "fix", "--can-push-workflows", "false"] + base,
+                                     {".github/workflows/\u00e9.yml": "on: push\n"})
+    ck("a non-ASCII workflow path is held (core.quotePath)",
+       rc == 0 and out == "held" and len(calls) == 2, "rc={0} out={1!r}".format(rc, out))
+    # #889 (code review of #955): a workflow renamed out of
+    # .github/workflows/ still changes a workflow path.
+    rc, out, calls, _, _ = _run_hold(
+        ["--site", "review-fixup", "--can-push-workflows", "false", "--pr", "70"] + base,
+        base_files={".github/workflows/stage.yml": WC_STAGE},
+        renames=((".github/workflows/stage.yml", "docs/stage.yml"),))
+    body = calls[-1][-1] if calls else ""
+    ck("a workflow renamed away is held and its contract removal named",
+       rc == 0 and out == "held" and "`.github/workflows/stage.yml`" in body
+       and "published contract of `.github/workflows/stage.yml`" in body,
+       "rc={0} out={1!r} calls={2!r}".format(rc, out, calls))
+    # #889 (code review of #953): route drafted no workflow file, the
+    # fixer's real change edits one -- the fix site lists and checks the
+    # real diff itself, and says what its contract effect is.
+    rc, out, calls, _, _ = _run_hold(
+        ["--site", "fix", "--can-push-workflows", "false"] + base,
+        {".github/workflows/stage.yml": WC_STAGE.replace("type: string", "type: boolean")},
+        base_files={".github/workflows/stage.yml": WC_STAGE})
+    body = calls[-1][-1] if calls else ""
+    ck("fix's real diff changing a workflow_call input is named as a contract change",
+       rc == 0 and out == "held" and "published contract of `.github/workflows/stage.yml`" in body
+       and "spec-shaped" in body, "rc={0} calls={1!r}".format(rc, calls))
+    rc, out, calls, _, _ = _run_hold(
+        ["--site", "fix", "--can-push-workflows", "false"] + base,
+        {".github/workflows/stage.yml": WC_STAGE.replace("jobs: {}", "jobs: {} # x")},
+        base_files={".github/workflows/stage.yml": WC_STAGE})
+    body = calls[-1][-1] if calls else ""
+    ck("fix's real diff leaving the contract alone says so",
+       rc == 0 and out == "held" and "changes no published contract" in body
+       and "spec-shaped" not in body, "rc={0} calls={1!r}".format(rc, calls))
+    # #889 (code review of #955): an unreadable or malformed decision is
+    # an ::error:: naming the site, never a traceback.
+    for title, text in (("missing", ""), ("not JSON", "{"), ("not an object", "[1]"),
+                        ("no measured", '{"decision": {"measured": 3}}'),
+                        ("paths not a list", '{"decision": {"measured": {"workflow_paths": "x"}}}')):
+        try:
+            rc, out, calls, _, err = _run_hold(
+                ["--site", "route", "--can-push-workflows", "false"] + base, decision_text=text)
+        except Exception as exc:  # the defect: a traceback out of main()
+            rc, out, calls, err = "raised", "", [], repr(exc)
+        ck("route decision {0}: ::error:: naming the site, nothing posted".format(title),
+           rc == 1 and out == "" and calls == []
+           and "::error::board-loop route (workflow-scope hold): cannot read route's decision" in err,
+           "rc={0!r} err={1!r}".format(rc, err))
+    # diff_name_list() itself, against real git output.
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        repo, sha = _make_repo(tmp, {".github/workflows/stage.yml": WC_STAGE},
+                               {".github/workflows/\u00e9.yml": "on: push\n"},
+                               renames=((".github/workflows/stage.yml", "docs/stage.yml"),))
+        cwd = os.getcwd()
+        os.chdir(repo)
+        try:
+            listed = sorted(diff_name_list(sha))
+            widened = contract_widened(listed, "", read_worktree_contents(listed),
+                                       read_base_contents(sha, listed))
+        finally:
+            os.chdir(cwd)
+    ck("diff_name_list(): unquoted, a rename as both paths",
+       listed == sorted([".github/workflows/\u00e9.yml", ".github/workflows/stage.yml",
+                         "docs/stage.yml"]), "listed={0!r}".format(listed))
+    ck("the final-diff check sees a workflow_call workflow moved away",
+       widened == [".github/workflows/stage.yml"], "widened={0!r}".format(widened))
 
     # The check is workflow_push_blocked_paths(), not a copy: a helper
     # that never blocks must fail the held case above.
     original = hold_mod.workflow_push_blocked_paths
     hold_mod.workflow_push_blocked_paths = lambda paths, can_push: []
     try:
-        rc, out, _, _ = _run_hold(["--site", "fix", "--can-push-workflows", "false"] + base, wf)
+        rc, out, _, _, _ = _run_hold(["--site", "fix", "--can-push-workflows", "false"] + base, wf)
     finally:
         hold_mod.workflow_push_blocked_paths = original
     ck("mutation caught (the helper's check never blocks)", out != "held")
+    # The listing is diff_name_list(): the old quoted, rename-detecting
+    # listing must fail the non-ASCII case.
+    original = hold_mod.diff_name_list
+    hold_mod.diff_name_list = lambda b: subprocess.run(
+        ["git", "diff", "--name-only", b, "HEAD"], capture_output=True, text=True,
+        check=True).stdout.splitlines()
+    try:
+        rc, out, _, _, _ = _run_hold(["--site", "fix", "--can-push-workflows", "false"] + base,
+                                     {".github/workflows/\u00e9.yml": "on: push\n"})
+    finally:
+        hold_mod.diff_name_list = original
+    ck("mutation caught (a quoted `git diff --name-only` listing)", out != "held")
     return failures
 
 
@@ -709,6 +920,19 @@ def run():
         print("::error::verify-board-route-backstop: held composite contract_unknown_paths: "
               "widened={0!r} unknown={1!r} held={2!r}".format(got_widened, unknown, held))
 
+    for problem in stalled_sources_problems():
+        failures += 1
+        print("::error::verify-board-route-backstop: " + problem)
+    if os.path.isfile(LABELS_CONTRACT):
+        with open(LABELS_CONTRACT, encoding="utf-8") as fh:
+            labels_text = fh.read()
+        if stalled_sources_problems(labels_text.replace(STALLED_ROW_SOURCES[2], "")):
+            print("[ok] mutation caught (review-fixup dropped from the board:stalled sources)")
+        else:
+            failures += 1
+            print("::error::verify-board-route-backstop: mutation 'review-fixup dropped from "
+                  "the board:stalled sources' was NOT caught.")
+
     try:
         with open(BOARD_LOOP, encoding="utf-8") as fh:
             workflow_text = fh.read()
@@ -734,7 +958,7 @@ def run():
                  "widened = []"),
                 ("unchecked contract paths not passed to route()",
                  "contract_unknown_paths=contract_unknown)", "contract_unknown_paths=None)"),
-                ("route's hold reads stdin, not its decision",
+                ("route's hold not given its decision",
                  ' --route-decision "$RUNNER_TEMP/board-route-decision.json"', ""),
                 ("hold step gated off", "steps.decide.outputs.verdict == 'hold'",
                  "steps.decide.outputs.verdict == 'held'"),
@@ -749,9 +973,20 @@ def run():
                 ("review-fixup ignores the answer", 'if [ "$held" = "held" ]; then\n            exit 0\n          fi\n          # The step\'s default shell',
                  "# The step's default shell"),
                 ("a hold comment pasted back inline",
-                 "          changed_paths=\"$(git diff --name-only \"$REVIEWED_SHA\" HEAD)\"\n",
-                 "          changed_paths=\"$(git diff --name-only \"$REVIEWED_SHA\" HEAD)\"\n"
+                 "          # no Workflows permission.\n",
+                 "          # no Workflows permission.\n"
                  "          # The follow-up changes a workflow file, which this loop cannot push.\n"),
+                ("fix's listing pasted back as `git diff --name-only`",
+                 '          held="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_workflow_scope_hold.py" --site fix ',
+                 '          changed_paths="$(git diff --name-only "$BASE_SHA" HEAD)"\n'
+                 '          held="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_workflow_scope_hold.py" --site fix '),
+                ("review-fixup's --diff-base dropped",
+                 ' --diff-base "$REVIEWED_SHA"', ""),
+                ("fix's final diff detects renames again",
+                 'git -c core.quotePath=false diff --no-renames "$BASE_SHA" HEAD',
+                 'git diff "$BASE_SHA" HEAD'),
+                ("the final diffs list their own paths",
+                 'diff_paths = diff_name_list(os.environ["BASE_SHA"])', "diff_paths = []"),
                 ("fix's switch dropped",
                  "          BASE_SHA: ${{ steps.base.outputs.base-sha }}\n          CAN_PUSH_WORKFLOWS: ${{ vars.WING_COMMANDER_BOARD_CAN_PUSH_WORKFLOWS == 'true' }}\n",
                  "          BASE_SHA: ${{ steps.base.outputs.base-sha }}\n          CAN_PUSH_WORKFLOWS: 'false'\n")):

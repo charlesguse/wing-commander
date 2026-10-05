@@ -340,6 +340,39 @@ def read_base_contents(base_sha, paths):
     return contents
 
 
+def diff_name_list(base_sha, head="HEAD"):
+    """The paths changed between `base_sha` and `head`, as the repository
+    stores them -- the one home for this listing (board-loop.yml's
+    workflow-scope holds via board_workflow_scope_hold.py, and its fix and
+    readiness final-diff checks; verify-board-route-backstop.py fails on a
+    `git diff --name-only` in board-loop.yml). `-z`: a plain listing
+    C-quotes a non-ASCII path under core.quotePath (`"\\303\\251.yml"`), so
+    `.github/workflows/é.yml` read as no workflow file and GitHub then
+    refused the push (found by the code review of #953). `--no-renames`: a
+    rename lists its deleted path and its added one, so a `workflow_call`
+    workflow moved out of `.github/workflows/` still has its contract
+    removal compared (found by the code review of #955). Raises
+    subprocess.CalledProcessError when git fails."""
+    import subprocess
+    out = subprocess.run(["git", "diff", "-z", "--no-renames", "--name-only", base_sha, head],
+                         capture_output=True, check=True).stdout
+    return [p for p in out.decode("utf-8", "surrogateescape").split("\0") if p]
+
+
+def read_worktree_contents(paths):
+    """{path: its text in the checkout} for each of `paths` that is a file
+    there (a deleted path has none) -- the `file_contents`
+    contract_widened() reads, in one home for the same callers as
+    diff_name_list()."""
+    import os
+    contents = {}
+    for path in paths:
+        if os.path.isfile(path):
+            with open(path, encoding="utf-8", errors="replace") as fh:
+                contents[path] = fh.read()
+    return contents
+
+
 def contract_widened(diff_paths, diff_text, file_contents=None, base_contents=None):
     """research.md D6. `file_contents`: optional {path: new-side full text}
     -- when omitted, this function cannot determine protected line ranges
