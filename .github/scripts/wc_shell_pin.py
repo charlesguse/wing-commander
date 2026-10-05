@@ -134,3 +134,20 @@ def env_host_path_misuses(env):
         if found and not host_path_value_is_translated(v):
             out += [(f"env.{k}", expr) for expr in found]
     return out
+
+
+_INPUTS_RE = _re.compile(r"(?<![\w.-])inputs\.")
+
+
+def composite_run_input_exprs(step):
+    """The `${{ }}` expressions in a composite step's `run:` body that read
+    `inputs.*`. A composite input is substituted into a `run:` body as the
+    caller evaluated it, so a caller's leading `${{ runner.temp }}/...`
+    `with:` value -- translated when it reaches a step as an env value --
+    lands in the body as the untranslated host path. Composites read their
+    inputs through `env:` instead."""
+    run = (step or {}).get("run")
+    if not run:
+        return []
+    return [m.group(0) for m in _EXPR_RE.finditer(str(run))
+            if _INPUTS_RE.search(m.group(0))]

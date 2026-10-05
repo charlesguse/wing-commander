@@ -83,8 +83,8 @@ from wc_gate_registry import ACTIONS_DIR, workflow_files  # noqa: E402
 from wc_shell_harness import (  # noqa: E402
     ensure_jq, find_step, resolve_bash, run_step, use_utf8_stdout)
 from wc_shell_pin import (  # noqa: E402
-    effective_shell, env_host_path_misuses, host_path_exprs,
-    host_path_misuses, is_container_bound, pins_bash)
+    composite_run_input_exprs, effective_shell, env_host_path_misuses,
+    host_path_exprs, host_path_misuses, is_container_bound, pins_bash)
 
 ACTION = ".github/actions/wing-commander-metrics-summary/action.yml"
 STEP_NAME = "Render agent run metrics summary"
@@ -1233,8 +1233,10 @@ def case_container_jobs_use_in_job_paths():
     "Container-side paths" comment in that composite (-- see
     wing-commander-context/action.yml). Composite actions are held to the
     same rule, input defaults included, because any of them may run in a
-    container job; they read their inputs through `env:`, so a leading
-    host-path input reaches them translated."""
+    container job; they must read their inputs through `env:` (checked
+    below), so a leading host-path input reaches them translated -- a
+    `${{ inputs.x }}` in a composite `run:` body would receive it as the
+    untranslated host path."""
     case = "container steps read in-job paths, not host-path expressions"
     docs = _workflow_docs(case)
     seen = 0
@@ -1283,6 +1285,9 @@ def case_container_jobs_use_in_job_paths():
                                            "working-directory")]))
                 bad += [f"{path}: {step.get('name')!r} {f}: {e}"
                         for f, e in host_path_misuses(step)]
+                bad += [f"{path}: {step.get('name')!r} run: {e} (read the "
+                        f"input through env:)"
+                        for e in composite_run_input_exprs(step)]
     if bad:
         fail(case, "a host-path context expression reaches a container "
                    "step untranslated (the container sees the host path, "
@@ -1327,8 +1332,13 @@ def case_in_job_path_detector_detects():
     wrong += [k for k, st in passed.items() if host_path_misuses(st)]
     if env_host_path_misuses({"X": "a ${{ runner.temp }}"}) == []:
         wrong.append("job env mid-value")
+    if not composite_run_input_exprs({"run": 'cat "${{ inputs.body-file }}"'}):
+        wrong.append("composite run: reads an input")
+    if composite_run_input_exprs({"env": {"F": "${{ inputs.body-file }}"},
+                                  "run": 'cat "$F" "${{ github.event.inputs.x }}"'}):
+        wrong.append("composite env: input read")
     if wrong:
-        fail(case, "wc_shell_pin.host_path_misuses misclassifies: "
+        fail(case, "wc_shell_pin's in-job path detectors misclassify: "
                    + ", ".join(wrong))
 
 
