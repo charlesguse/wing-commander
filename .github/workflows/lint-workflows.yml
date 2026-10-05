@@ -5458,6 +5458,17 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-watchdog-resolved-stage-consumers.py --self-test
 
+      # Gate 140 — the step harness (wc_shell_harness.run_step) runs each
+      # step under the shell production gives that step: a `shell: bash`
+      # step (every composite one) as `bash --noprofile --norc -eo pipefail`,
+      # a workflow step that names no shell as `bash -e`. It used to run
+      # everything as `bash -e`, so a pipeline whose early stage fails passed
+      # under the gates and failed in CI (#889). Probes a real shipped step
+      # of each shape and pins the resolution table and its single home.
+      - name: "Gate 140 — the step harness runs each step under its production shell, pipefail where the runner applies it"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-shell-harness-parity.py
+
       # Gate 133 — specs/090-stage-write-boundary: the implement stage's
       # write boundary (no-write-paths) is stated in the prompt before the
       # agent's first tool call, classified consistently by one shared

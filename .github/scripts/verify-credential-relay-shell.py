@@ -70,7 +70,8 @@ import sys
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from wc_shell_harness import find_step, resolve_bash, run_step, use_utf8_stdout  # noqa: E402
+from wc_shell_harness import (find_step, resolve_bash, run_step,  # noqa: E402
+                              step_shell, use_utf8_stdout)
 
 COMPOSITE = ".github/actions/wing-commander-context/action.yml"
 RELAY_STEP = "Relay bot token to the job environment"
@@ -106,7 +107,9 @@ def check_relay_env_precedence(root, script=None):
     for token in ("first-token", "second-token"):
         rc, out, _, _ = run_step(
             BASH, script, workdir,
-            {"TOKEN": token, "GITHUB_ENV": env_file}, runner_temp)
+            {"TOKEN": token, "GITHUB_ENV": env_file}, runner_temp,
+            # the self-test's drifted copies are too short to trace back
+            shell=step_shell(COMPOSITE, RELAY_STEP))
         if rc != 0:
             failures.append(
                 f"the relay step exited {rc} minting {token!r}:\n{out}")
@@ -161,7 +164,8 @@ def check_remote_refresh_clears_stale_extraheader(root, script=None):
     # `inputs.token`, relayed to this step's env as TOKEN (action.yml), not
     # as the job-scoped env var the workflow-level call site reads from.
     rc, out, _, _ = run_step(
-        BASH, script, repo, {"TOKEN": "fresh-token"}, runner_temp)
+        BASH, script, repo, {"TOKEN": "fresh-token"}, runner_temp,
+        shell=step_shell(REFRESH_COMPOSITE, REFRESH_STEP))
 
     failures = []
     if rc != 0:

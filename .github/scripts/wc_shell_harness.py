@@ -21,7 +21,9 @@ looks like a defect in the workflow and is not:
      GITHUB_OUTPUT and GITHUB_STEP_SUMMARY arrives empty and every scenario
      fails on a missing file.
   2. The script must be handed over as a FILE, not as `bash -c <string>`.
-     That is what Actions itself does (`bash -e {0}`), and it is the only
+     That is what Actions itself does (`bash -e {0}`, or `bash --noprofile
+     --norc -eo pipefail {0}` for `shell: bash` -- NAMED_SHELLS below
+     derives which for the step under test), and it is the only
      thing that survives Windows argv quoting: an MSYS bash re-parses the
      Windows command line and treats backslashes as escapes, so a jq program
      containing gsub("\\\\|"; "\\\\|") arrives as gsub("\\|"; "\\|") and jq
@@ -247,7 +249,273 @@ def parse_github_output(path):
     return outputs
 
 
-def run_step(bash, script, workdir, env_extra, runner_temp, path_prepend=None):
+# How the Actions runner turns a step's effective `shell:` into a command
+# line (GitHub docs, "jobs.<job_id>.steps[*].shell"). NAMED_SHELLS and
+# production_shell() are the ONE HOME of that mapping for every harness in
+# this directory: run_step() derives the invocation from them for the step
+# under test, and no gate passes shell flags of its own.
+#
+#   * `shell: bash` is NOT `bash -e`. The runner runs it as
+#     `bash --noprofile --norc -eo pipefail {0}`, so a pipeline whose early
+#     stage fails fails the step even when its last stage succeeds. Every
+#     composite action's run: step here declares `shell: bash` (the runner
+#     refuses a composite run: step without one), as do many workflow steps.
+#   * A workflow step with no `shell:`, after job and then workflow
+#     `defaults.run.shell`, runs as `bash -e {0}` on a hosted Linux runner
+#     (errexit, no pipefail) and as `sh -e {0}` inside a job `container:`
+#     (the runner execs sh there whatever the image ships -- see the
+#     container-shell-safety skill).
+#   * Any other value is a custom shell, run exactly as written with {0}
+#     the script file -- substituted wherever it appears, inside an
+#     argument too (`bash -c ". '{0}'"`), as the runner does; the runner
+#     appends {0} when the template omits it. The `defaults.run.shell:
+#     bash -e {0}` several workflows set is one of these, which is why a
+#     step there that ALSO says `shell: bash` gets pipefail and its
+#     neighbours do not.
+#   * pwsh, powershell, cmd and python are named shells too, mapped here
+#     so a step using one resolves to what the runner really runs. run_step
+#     refuses every template whose program is not bash or sh (RUNNABLE_
+#     SHELL_PROGRAMS): it writes the block, after a bash PATH preamble, to
+#     a .sh file, which reproduces nothing else -- a pwsh step would fail
+#     to exec here, and a python one would run the preamble as python.
+NAMED_SHELLS = {
+    "bash": ("bash", "--noprofile", "--norc", "-eo", "pipefail", "{0}"),
+    "sh": ("sh", "-e", "{0}"),
+    "pwsh": ("pwsh", "-command", ". '{0}'"),
+    "powershell": ("powershell", "-command", ". '{0}'"),
+    "cmd": ("%ComSpec%", "/D", "/E:ON", "/V:OFF", "/S", "/C", 'CALL "{0}"'),
+    "python": ("python", "{0}"),
+}
+RUNNABLE_SHELL_PROGRAMS = ("bash", "sh")
+UNSPECIFIED_SHELL_HOSTED = ("bash", "-e", "{0}")
+UNSPECIFIED_SHELL_CONTAINER = ("sh", "-e", "{0}")
+
+
+def _defaults_shell(doc):
+    return (((doc or {}).get("defaults") or {}).get("run") or {}).get("shell")
+
+
+def production_shell(step, job=None, workflow=None):
+    """The argv template ({0} = the script file) the runner uses for `step`.
+
+    For a workflow step pass its enclosing `job` and `workflow` dicts; for a
+    composite action's step pass neither. Resolution order is the runner's:
+    the step's `shell:`, the job's `defaults.run.shell`, the workflow's
+    `defaults.run.shell`, then the platform default (container-aware).
+    """
+    import shlex
+    shell = (step or {}).get("shell")
+    if shell is None and job is not None:
+        shell = _defaults_shell(job)
+    if shell is None and workflow is not None:
+        shell = _defaults_shell(workflow)
+    if shell is None:
+        if job is None and workflow is None:
+            raise ValueError(
+                "production_shell: a composite action's run: step has no "
+                "shell: -- the runner refuses that step, so there is no "
+                "production shell to reproduce")
+        if (job or {}).get("container") is not None:
+            return UNSPECIFIED_SHELL_CONTAINER
+        return UNSPECIFIED_SHELL_HOSTED
+    shell = str(shell).strip()
+    if shell in NAMED_SHELLS:
+        return NAMED_SHELLS[shell]
+    argv = tuple(shlex.split(shell))
+    return argv if any("{0}" in a for a in argv) else argv + ("{0}",)
+
+
+def _shell_program(template):
+    """The program a shell template execs, as a bare lowercase name
+    (`/usr/bin/bash` and `C:\\...\\bash.exe` are both `bash`)."""
+    prog = str(template[0]) if template else ""
+    prog = prog.replace("\\", "/").rsplit("/", 1)[-1].lower()
+    return prog[:-4] if prog.endswith(".exe") else prog
+
+
+def _iter_steps(path):
+    """Yield (step, job, workflow) for every step in workflow OR composite
+    action `path`; job/workflow are None for a composite's steps, which is
+    exactly the context production_shell() needs to tell the two apart."""
+    import yaml
+    doc = yaml.safe_load(open(path, encoding="utf-8")) or {}
+    for job in (doc.get("jobs") or {}).values():
+        for step in (job or {}).get("steps") or []:
+            yield step or {}, job or {}, doc
+    for step in (doc.get("runs") or {}).get("steps") or []:
+        yield step or {}, None, None
+
+
+def step_shell(path, name):
+    """production_shell() of the step named `name` in `path` -- for a caller
+    whose script is a synthetic stand-in for that step (a self-test's
+    drifted copy) and so cannot be matched back to it by run_step."""
+    for step, job, wf in _iter_steps(path):
+        if step.get("name") == name:
+            return production_shell(step, job, wf)
+    sys.exit(f"::error file={path}::no step named {name!r}. If it was "
+             f"renamed, update the workflow and its harness together.")
+
+
+def _shipped_runs(root, paths):
+    """[(run_text, argv, where)] for every `run:` step in `paths`."""
+    out = []
+    for path in paths:
+        rel = os.path.relpath(path, root).replace(os.sep, "/")
+        for step, job, wf in _iter_steps(path):
+            run = step.get("run")
+            if not isinstance(run, str):
+                continue
+            try:
+                argv = production_shell(step, job, wf)
+            except ValueError:
+                continue    # a composite step the runner itself would refuse
+            out.append((run, list(argv),
+                        f"{rel}: {step.get('name') or '<unnamed>'}"))
+    return out
+
+
+@functools.lru_cache(maxsize=1)
+def shipped_step_shells():
+    """[(run_text, argv, where, template_regex_or_None, significant_lines)]
+    for every `run:` step in .github/workflows/ and .github/actions/
+    (composites at any depth)."""
+    import glob
+    import hashlib
+    import json
+    import re
+    root = os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))))
+    paths = sorted(
+        glob.glob(os.path.join(root, ".github", "workflows", "*.y*ml"))
+        # Any depth: the composites under .github/actions/_shared/ are
+        # shipped steps too.
+        + glob.glob(os.path.join(root, ".github", "actions", "**",
+                                 "action.y*ml"), recursive=True))
+    # Parsing every workflow costs ~3s, paid by each gate process that
+    # traces a script -- dozens per suite run. The parse is cached on disk
+    # under a key over this module and every file read, so any edit to
+    # either misses the cache. JSON, not pickle: the temp dir is shared.
+    # JSON alone is not enough there: the cached argv is what run_step
+    # execs, and the key is computable from public files, so a cache file
+    # this user did not write (or one anyone else can write) is ignored.
+    # O_NONBLOCK and the S_ISREG check: a FIFO planted at the name would
+    # otherwise block the open forever.
+    key = hashlib.sha256()
+    for path in [os.path.abspath(__file__)] + paths:
+        key.update(path.encode("utf-8") + b"\0")
+        with open(path, "rb") as fh:
+            key.update(fh.read() + b"\0")
+    cache = os.path.join(tempfile.gettempdir(),
+                         f"wc-shipped-step-shells-{key.hexdigest()[:24]}.json")
+    try:
+        fd = os.open(cache, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                     | getattr(os, "O_NONBLOCK", 0))
+        with os.fdopen(fd, encoding="utf-8") as fh:
+            st = os.fstat(fh.fileno())
+            if not stat.S_ISREG(st.st_mode):
+                raise OSError("cache is not a regular file")
+            if hasattr(os, "geteuid") and (st.st_uid != os.geteuid()
+                                           or st.st_mode & 0o022):
+                raise OSError("cache not written by this user")
+            runs = json.load(fh)
+    except (OSError, ValueError):
+        runs = _shipped_runs(root, paths)
+        tmp = None
+        try:
+            fd, tmp = tempfile.mkstemp(dir=os.path.dirname(cache),
+                                       suffix=".tmp")
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                json.dump(runs, fh)
+            os.replace(tmp, cache)
+        except OSError:
+            # an unwritable temp dir (or another user's file at `cache`)
+            # only costs the next process a parse
+            if tmp is not None and os.path.exists(tmp):
+                os.remove(tmp)
+    out = []
+    for run, argv, where in runs:
+        # A harness substitutes the `${{ }}` expressions the runner would
+        # have expanded before handing the block over, so the shipped
+        # text is a template for what arrives: each one is a wildcard.
+        rx = None
+        if "${{" in run:
+            parts = re.split(r"\$\{\{.*?\}\}", run, flags=re.S)
+            rx = re.compile("(?s)" + ".*?".join(map(re.escape, parts)))
+        out.append((run, tuple(argv), where, rx, _significant_lines(run)))
+    return out
+
+
+def _significant_lines(text):
+    return frozenset(ln.strip() for ln in text.splitlines()
+                     if len(ln.strip()) >= 8 and not ln.strip().startswith("#"))
+
+
+# A script that matches no shipped step verbatim is a harness's MUTATED copy
+# of one (a self-test's drifted line, an injected stub call) far more often
+# than anything else, and it must run under the shell of the step it was
+# cut from. Every shipped step holding at least this share of its
+# significant lines is a plausible origin; below it the match means nothing
+# and run_step refuses rather than guess.
+#
+# The plausible origins must ALL run under one shell -- it is not enough
+# that the single nearest one does. Near-copies of a step live in several
+# workflows under different shells (implement.yml's and cleanup.yml's "Mark
+# lifecycle record stalled" share 7 of 9 lines; one is `bash -e`, the other
+# `shell: bash`), so "nearest wins" let a one-line mutation, or an unrelated
+# edit to the other copy, silently move a script to the other shell and
+# change a gate's verdict. Disagreement refuses instead; the caller names
+# its step with shell=step_shell(path, name).
+NEAREST_STEP_MIN_SHARE = 0.5
+
+
+def match_shell(script, entries):
+    """(argv, where) for the step in `entries` (shipped_step_shells() rows)
+    that `script` is, or was cut from, else (None, why). The pure core of
+    shell_for_script, so the rule can be tested on entries of one's own."""
+    texts = {script, script if script.endswith("\n") else script + "\n"}
+    hits = {(e[1], e[2]) for e in entries if e[0] in texts}
+    if not hits:
+        hits = {(e[1], e[2]) for e in entries if e[3] is not None
+                and any(e[3].fullmatch(t) for t in texts)}
+    if not hits:
+        lines = _significant_lines(script)
+        scored = [(len(lines & e[4]) / len(lines), e[1], e[2])
+                  for e in entries] if lines else []
+        best = max((sc for sc, _a, _w in scored), default=0.0)
+        if best < NEAREST_STEP_MIN_SHARE:
+            return None, (f"no shipped run: step shares as much as "
+                          f"{NEAREST_STEP_MIN_SHARE:.0%} of its lines "
+                          f"(best {best:.0%})")
+        plausible = sorted(((sc, argv, where) for sc, argv, where in scored
+                            if sc >= NEAREST_STEP_MIN_SHARE),
+                           key=lambda t: (-t[0], t[2]))
+        if len({argv for _sc, argv, _w in plausible}) > 1:
+            return None, (
+                "it shares at least "
+                f"{NEAREST_STEP_MIN_SHARE:.0%} of its lines with shipped "
+                "steps that run under different shells: " + "; ".join(
+                    f"{where} ({sc:.0%}, {' '.join(argv)})"
+                    for sc, argv, where in plausible[:4]))
+        hits = {(argv, where) for sc, argv, where in scored if sc == best}
+    argvs = {argv for argv, _w in hits}
+    wheres = sorted(where for _a, where in hits)
+    if len(argvs) > 1:
+        return None, ("it matches shipped steps that run under different "
+                      "shells: " + "; ".join(wheres[:4]))
+    return argvs.pop(), wheres[0]
+
+
+@functools.lru_cache(maxsize=512)
+def shell_for_script(script):
+    """(argv, where) for the shipped step `script` came from, else
+    (None, why). Exact text first, then `${{ }}`-substituted text, then the
+    shipped steps sharing its lines (see NEAREST_STEP_MIN_SHARE)."""
+    return match_shell(script, shipped_step_shells())
+
+
+def run_step(bash, script, workdir, env_extra, runner_temp, path_prepend=None,
+             shell=None):
     """Run one extracted `run:` block; return (rc, output, outputs, summary).
 
     `outputs` is the parsed $GITHUB_OUTPUT, `summary` the raw
@@ -276,7 +544,32 @@ def run_step(bash, script, workdir, env_extra, runner_temp, path_prepend=None):
     the step with no preamble: a stub bindir that loses quietly to
     /mingw64/bin would pass green while proving nothing, the exact shape
     the module docstring's point 4 warns about.
+
+    `shell` is the production argv template (production_shell() /
+    step_shell()) to run the block under. Omitted, it is derived from the
+    shipped step `script` is, or was cut from (shell_for_script): a
+    composite's `shell: bash` step runs with pipefail exactly as on the
+    runner, a workflow step with no `shell:` without it. A script that
+    cannot be traced to one shipped step raises RuntimeError rather than
+    guess -- pass shell=step_shell(path, name) for the step it stands in for.
     """
+    if shell is None:
+        shell_template, where = shell_for_script(script)
+        if shell_template is None:
+            raise RuntimeError(
+                "run_step: cannot tell which production shell this script "
+                f"runs under: {where}. Pass shell=step_shell(path, name) "
+                "for the shipped step it stands in for.\n"
+                f"  script begins: {script[:200]!r}")
+    else:
+        shell_template = tuple(shell)
+    if _shell_program(shell_template) not in RUNNABLE_SHELL_PROGRAMS:
+        raise RuntimeError(
+            f"run_step: cannot reproduce `{' '.join(shell_template)}`: the "
+            "harness runs a step as a bash or sh script file and nothing "
+            "else (see NAMED_SHELLS). Test this step with a harness that "
+            "runs its real interpreter.\n"
+            f"  script begins: {script[:200]!r}")
     out_file = os.path.join(workdir, "gh_output")
     sum_file = os.path.join(workdir, "gh_summary")
     open(out_file, "w").close()
@@ -342,15 +635,19 @@ def run_step(bash, script, workdir, env_extra, runner_temp, path_prepend=None):
             '  export PATH\n'
             'fi\n')
 
-    # GitHub's default shell for a `run:` step with no `shell:` key on Linux
-    # is `bash -e {0}` — errexit, and NOT pipefail. Adding -o pipefail would
-    # make these harnesses stricter than production. {0} is a file; see this
+    # The step runs under the shell production gives IT -- see NAMED_SHELLS
+    # for why that is `bash -eo pipefail` for a `shell: bash` step and
+    # `bash -e` for one that names no shell. {0} is a file; see this
     # module's docstring for why passing the script any other way breaks.
     script_file = os.path.join(workdir, "step.sh")
     with open(script_file, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(preamble)
         fh.write(script)
-    proc = subprocess.run([bash, "-e", script_file.replace("\\", "/")],
+    argv = [{"bash": bash, "sh": shutil.which("sh") or "sh"}.get(arg, arg)
+            for arg in shell_template]
+    argv = [arg.replace("{0}", script_file.replace("\\", "/"))
+            for arg in argv]
+    proc = subprocess.run(argv,
                           cwd=workdir, env=env, capture_output=True,
                           text=True, encoding="utf-8", errors="replace")
 
@@ -422,14 +719,8 @@ def find_step(path, name):
     this checks both rather than making every composite-testing harness
     carry its own duplicate of this function.
     """
-    import yaml
-    doc = yaml.safe_load(open(path, encoding="utf-8")) or {}
-    for job in (doc.get("jobs") or {}).values():
-        for step in (job or {}).get("steps") or []:
-            if (step or {}).get("name") == name:
-                return step
-    for step in (doc.get("runs") or {}).get("steps") or []:
-        if (step or {}).get("name") == name:
+    for step, _job, _wf in _iter_steps(path):
+        if step.get("name") == name:
             return step
     sys.exit(f"::error file={path}::no step named {name!r}. If it was renamed, "
              f"update the workflow and its harness together — do not drop the "

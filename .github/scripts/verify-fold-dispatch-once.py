@@ -66,7 +66,7 @@ import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wc_shell_harness import (ensure_jq, find_job, find_step, resolve_bash,
-                              run_step, use_utf8_stdout)
+                              run_step, step_shell, use_utf8_stdout)
 
 STAGE = ".github/workflows/pr-conversation.yml"
 
@@ -240,7 +240,10 @@ def compute_folded_json(steps, repo, base_sha, tip_sha, run_id, runner_temp,
         BASH, steps[COMPOSITE_STEP], repo,
         {"WORKING_DIRECTORY": ".", "BASE_SHA": base_sha, "TIP_SHA": tip_sha,
          "RUN_ID": run_id, "GITHUB_REPOSITORY": REPO, "PATH": path},
-        runner_temp)
+        runner_temp,
+        # steps[] may be a mutated copy too far from the shipped text for
+        # run_step to trace back on its own (the D2 revert rewrites most of it)
+        shell=step_shell(COMPOSITE_ACTION, COMPOSITE_STEP))
     if rc != 0:
         sys.exit(f"::error::{COMPOSITE_STEP!r} exited {rc}: {out.strip()}")
     return outputs.get("folded-json", "[]")
@@ -1082,7 +1085,7 @@ def run_mutation(label, apply_mutation, steps, root):
                       "IMPLEMENT_WORKFLOW": IMPLEMENT_WORKFLOW,
                       "GITHUB_REPOSITORY": REPO, "GH_CALLS": calls,
                       "GH_LAST_COMMENT": last_comment, "PATH": path},
-                     runner_temp)
+                     runner_temp, shell=step_shell(STAGE, REPLY_STEP))
         run_dispatch_once(mutated, repo, base_sha, folded_json, calls,
                           last_comment, path, runner_temp)
         return gh_call_count(calls, "workflow run") > 1
