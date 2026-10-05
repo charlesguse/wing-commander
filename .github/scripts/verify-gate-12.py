@@ -1547,6 +1547,24 @@ CASES = [
              '"repos/${GITHUB_REPOSITORY}/issues/1/comments" '
              "-f body=`cat body.md` -X POST"]),
      True, ("issues", "write")),
+
+    ("a backtick substitution ends at its first unescaped backtick, quote "
+     "or no quote: in `echo \"`echo '`\"` the apostrophe is the "
+     "substitution's own (bash runs it as `echo '` and reports a syntax "
+     "error), not a quote hiding the write on the next line, which runs "
+     "under `bash -e` and fails under issues:read",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ["echo \"`echo '`\"",
+             'gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" -f body=x',
+             "echo \"'\""]),
+     True, ("issues", "write")),
+
+    ("... outside quotes too",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ["echo `echo '`",
+             'gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" -f body=x',
+             "echo '`'"]),
+     True, ("issues", "write")),
 ]
 
 

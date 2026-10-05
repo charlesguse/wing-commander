@@ -1372,9 +1372,28 @@ jobs:
               n = len(text)
               flags = [True] * n
               stack = []
+              # Where each open backtick substitution ends, innermost last.
+              # bash ends one at its first unescaped backtick, whatever
+              # quote, `$(` or `${` its text opened before it (`echo
+              # "`echo '`"` runs `echo '`, a syntax error, and goes on), so
+              # every frame opened inside it closes there too. Left to the
+              # frames, that apostrophe opened a quote that hid the write on
+              # the next line (code review of #969).
+              bt_ends = []
               i = 0
               while i < n:
                   c = text[i]
+                  if bt_ends and i >= bt_ends[-1]:
+                      here = False
+                      while bt_ends and i >= bt_ends[-1]:
+                          end = bt_ends.pop()
+                          here = here or end == i
+                          while stack.pop() != "bt":
+                              pass
+                      if here:
+                          flags[i] = True
+                          i += 1
+                          continue
                   top = stack[-1] if stack else None
                   cur_exec = top not in ("sq", "dq")
                   flags[i] = cur_exec
@@ -1393,12 +1412,20 @@ jobs:
                   # all (code review of #956). Its opening backtick is
                   # executable, so cmdline_of() sees the call sit inside it.
                   # One outside quotes is a frame too, so a comment inside
-                  # it ends where it does (code review of #969).
-                  if c == "`" and top != "bt":
+                  # it ends where it does (code review of #969). Its end is
+                  # the first backtick after it that no backslash escapes
+                  # and no Actions expression holds -- GitHub replaces one
+                  # before bash scans for it.
+                  if c == "`":
+                      k = i + 1
+                      while k < n and text[k] != "`":
+                          em = (EXPR_RE.match(text, k)
+                                if text.startswith(EXPR_OPEN, k) else None)
+                          k = em.end() if em else k + (2 if text[k] == "\\" else 1)
                       flags[i] = True
-                      stack.append("bt"); i += 1; continue
-                  if c == "`" and top == "bt":
-                      stack.pop(); i += 1; continue
+                      stack.append("bt")
+                      bt_ends.append(min([k, n] + bt_ends[-1:]))
+                      i += 1; continue
                   # An Actions expression is replaced before the shell ever
                   # runs: its braces, `||`, quotes and backticks are no
                   # shell syntax, inside double quotes too, and nothing in
@@ -1446,11 +1473,8 @@ jobs:
                       # as its script: run on to the line's end, it hid the
                       # call after `echo "`date #x`";` (code review of
                       # #969).
-                      if top == "bt":
-                          k = i
-                          while k < j and text[k] != "`":
-                              k += 2 if text[k] == "\\" else 1
-                          j = min(k, j)
+                      if bt_ends:
+                          j = min(bt_ends[-1], j)
                       for k in range(i, j):
                           flags[k] = False
                           if comments is not None:
