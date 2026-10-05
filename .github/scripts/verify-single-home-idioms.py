@@ -1323,10 +1323,14 @@ def _scan_substitution(text, start):
     `$(`). Returns (end, ops): `end` is the index of the closing `)` (or
     None if unbalanced), `ops` the (kind, index) of each `&&`/`||`/`|`/
     `;`/newline at the body's own top level -- outside quotes and nested
-    substitutions/subshells. Heredoc bodies are not modelled; a run block
-    that needs one inside a substitution is rare enough to waive."""
+    substitutions/subshells. A newline is recorded only where it separates
+    commands: not at the body's start, after `&&`/`||`/`|`/`|&`/`;` (bash
+    continues the list across any blank or comment lines there) or after
+    another newline. Heredoc bodies are not modelled; a run block that
+    needs one inside a substitution is rare enough to waive."""
     stack = ["sub"]
     ops = []
+    cont = True  # no command since the body's start or the last operator
     i, n = start, len(text)
     while i < n:
         c = text[i]
@@ -1344,6 +1348,10 @@ def _scan_substitution(text, start):
             i += 1
             continue
         # top is "sub" (a `$(` or a bare `(` subshell)
+        comment = c == "#" and (i == start or text[i - 1] in " \t\n;")
+        if (len(stack) == 1 and c not in " \t\n" and not comment
+                and text[i:i + 2] != "\\\n"):
+            cont = False
         if c == "\\":
             i += 2
             continue
@@ -1355,7 +1363,7 @@ def _scan_substitution(text, start):
             stack.append("dq")
             i += 1
             continue
-        if c == "#" and (i == start or text[i - 1] in " \t\n;"):
+        if comment:
             nl = text.find("\n", i)
             i = n if nl < 0 else nl
             continue
@@ -1371,14 +1379,17 @@ def _scan_substitution(text, start):
             continue
         if len(stack) == 1:
             two = text[i:i + 2]
-            if two in ("&&", "||"):
-                ops.append((two, i))
+            if two in ("&&", "||", "|&"):
+                ops.append((two if two != "|&" else "|", i))
+                cont = True
                 i += 2
                 continue
             if c == "|" or c == ";":
                 ops.append((c, i))
-            elif c == "\n" and text[i - 1] != "\\":
+                cont = True
+            elif c == "\n" and not cont:
                 ops.append(("\n", i))
+                cont = True
         i += 1
     return None, ops
 
@@ -1401,16 +1412,19 @@ def substitution_fallbacks(text):
         if any(i > last_or and (kind != "\n" or text[i:end].strip())
                for kind, i in ops):
             continue
-        if not _SF_FALLBACK_RE.match(text[last_or + 2:end].lstrip()):
+        # Past any comment lines bash skips after a line-ending `||`.
+        tail = re.sub(r"^(?:\s*#[^\n]*\n)*\s*", "", text[last_or + 2:end])
+        if not _SF_FALLBACK_RE.match(tail):
             continue
-        # The test ternary: `[ ... ] && [ ... ] && echo a || echo b`.
+        # The test ternary: `[ ... ] && [ ... ] && echo a || echo b` --
+        # every command before the final `||` joined by `&&` alone (no
+        # earlier `||`, `|`, `;` or newline), each a test but the last.
         cuts = [start] + [i + 2 for kind, i in ops
                           if kind == "&&" and i < last_or] + [last_or]
         segs = [text[a:b].strip() for a, b in zip(cuts, cuts[1:])]
         if (len(segs) >= 2 and _SF_FALLBACK_RE.match(segs[-1])
                 and all(_SF_TEST_RE.match(s) for s in segs[:-1])
-                and not any(kind in ("|", ";") for kind, i in ops
-                            if i < last_or)):
+                and all(kind == "&&" for kind, i in ops if i < last_or)):
             continue
         yield m.start(), " ".join(text[start:end].replace("\\\n", " ").split())
 
@@ -2434,7 +2448,8 @@ SUBST_FALLBACK_WF = ("on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n"
 
 def selftest_substitution_fallback_safe_shapes_pass():
     case = ("substitution-fallback: the assignment-level fallback, the test "
-            "ternary, `|| true` and a loop body's `||` pass")
+            "ternary (also opened on its own line, or continued past a "
+            "blank line), `|| true` and a loop body's `||` pass")
     tmp = tempfile.mkdtemp(prefix="wc-single-home-")
     try:
         _clean_tree(tmp)
@@ -2445,7 +2460,11 @@ def selftest_substitution_fallback_safe_shapes_pass():
                "          d=\"$(jq -r '.n' \"$f\" 2>/dev/null || true)\"\n"
                "          e=\"$(jq -r '.[]' \"$f\" | while read -r n; do\n"
                "            [ -d \"$n\" ] || printf '%s\\n' \"$n\"\n"
-               "          done)\"\n")
+               "          done)\"\n"
+               "          g=\"$(\n"
+               "            [ -f \"$f\" ] &&\n\n"
+               "            echo y || echo n\n"
+               "          )\"\n")
         _write(tmp, ".github/actions/_shared/safe-subst.sh",
                "#!/usr/bin/env bash\n"
                "n=\"$(git rev-list --count \"$a..HEAD\" 2>/dev/null)\" || n=0\n")
@@ -2862,6 +2881,23 @@ def run_selftest():
     selftest_third_paste_fails(
         "substitution-fallback", ".github/actions/_shared/third-subst.sh",
         "#!/usr/bin/env bash\nx=\"$(gh api \"$u\" --jq .n || echo 0)\"\n")
+    # A bare `||` ending a line continues the list: the fallback on the
+    # next line is still inside the substitution.
+    selftest_third_paste_fails(
+        "substitution-fallback", ".github/workflows/third-subst-or-newline.yml",
+        SUBST_FALLBACK_WF + "          n=\"$(jq length \"$f\" 2>/dev/null ||\n"
+        "            echo 0)\"\n")
+    selftest_third_paste_fails(
+        "substitution-fallback",
+        ".github/workflows/third-subst-or-comment.yml",
+        SUBST_FALLBACK_WF + "          n=\"$(jq length \"$f\" 2>/dev/null || # none\n"
+        "\n            echo 0)\"\n")
+    # Not a test ternary: a non-test command (`jq`) runs before the last
+    # `||`, so its output and the fallback's can both land.
+    selftest_third_paste_fails(
+        "substitution-fallback", ".github/workflows/third-subst-fake-ternary.yml",
+        SUBST_FALLBACK_WF + "          v=\"$([ -f a ] || jq . f && echo y "
+        "|| echo n)\"\n")
     selftest_substitution_fallback_safe_shapes_pass()
     selftest_substitution_fallback_waivable()
     selftest_substitution_fallback_line()
