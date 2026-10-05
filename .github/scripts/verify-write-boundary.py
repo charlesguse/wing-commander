@@ -48,6 +48,7 @@ import tempfile
 import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from wc_gha_expr import evaluate_if as gha_evaluate_if
 from wc_shell_harness import (ensure_jq, find_step, resolve_bash, run_step,
                               parse_github_output, use_utf8_stdout)
 
@@ -970,33 +971,13 @@ def check_route_fires_at_iteration_cap(steps, root, stage_text=None):
 # ---------------------------------------------------------------------------
 
 def eval_if_expr(expr, context):
-    """A tiny, deliberately narrow evaluator for this repository's own
-    `if:` expressions -- substitutes each `steps.X.outputs.Y`/`inputs.X`
-    token with its modelled string value, maps `fromJSON(...)` to an
-    int-or-JSON parse, translates &&/|| to and/or, then evaluates the
-    result as a Python boolean expression. Sufficient for the fixed shape
-    this gate's own targets use; not a general GitHub Actions expression
-    engine."""
-    e = expr.strip()
-    if e.startswith("${{") and e.endswith("}}"):
-        e = e[3:-2].strip()
-    e = e.replace("!cancelled()", "True")
-    e = e.replace("&&", " and ").replace("||", " or ")
-    e = e.replace("fromJSON(", "_from_json(")
-
-    def repl(m):
-        return repr(context.get(m.group(0), ""))
-
-    e = re.sub(r"steps\.[\w.\-]+\.outputs\.[\w\-]+|steps\.[\w\-]+\.outcome|inputs\.[\w\-]+",
-               repl, e)
-
-    def _from_json(value):
-        try:
-            return int(value)
-        except (TypeError, ValueError):
-            return json.loads(value)
-
-    return bool(eval(e, {"__builtins__": {}}, {"_from_json": _from_json}))
+    """Whether a shipped `if:` fires against modelled step outputs and
+    inputs, by wc_gha_expr (the one evaluator: GitHub's case-insensitive
+    `==`, `fromJSON`, `>=`). `!cancelled()` holds: no scenario here models
+    a cancelled run. A context reference other than `steps.`/`inputs.` is
+    a hard error rather than a guess."""
+    return gha_evaluate_if(expr, dict({"cancelled()": False}, **context),
+                           known=("steps.", "inputs."))
 
 
 def _find_route_if_expr(stage_text=None):

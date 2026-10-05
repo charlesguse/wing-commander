@@ -128,6 +128,18 @@ SIX CHECKS, per contracts/single-home-gate.md (plus a spec 052 addition)
    from implement.yml's former inline step so implement, plan, and tasks
    share one copy (FR-011/FR-012).
 
+8. gha-expr-evaluator (code review of #940): a gate script that
+   evaluates a shipped `if:` itself instead of through
+   `.github/scripts/wc_gha_expr.py`. Five gate scripts and a shared
+   module each carried one (a Python `eval` of a transpiled expression,
+   or a regex `==`/`!=` term parser split on `&&`), and none read `==`
+   with GitHub's case-insensitive rule. Scans every `.github/scripts/**/*.py`, not the
+   workflows: these copies live in gates, not in steps. Matched by any of
+   three signs: `&&` replaced with Python's `and`; `eval(` sandboxed with
+   `__builtins__`; or `.split("&&")` in a file that also compiles an
+   `(==|!=)` alternation. A pattern-matching gate that only reads
+   comparisons (verify-gate-24.py) splits on nothing and is not matched.
+
 Plus a promotion-prevention pass (FR-025): every `workflow_call`-only
 stage workflow and every non-underscore-prefixed composite action scanned
 for any reference resolving into a `_shared/` path.
@@ -274,6 +286,9 @@ DECLARED_HOMES = {
     # REVIEW_FINDING_FINGERPRINT_RE keys on the `issue_number` argument name
     # that formula never uses, so the two checks do not collide.
     "review-finding-fingerprint": ".github/scripts/wc_review_finding_fingerprint.py",
+    # Code review of #940: the GitHub-expression evaluator every gate that
+    # evaluates a shipped `if:` uses -- see check_gha_expr_evaluator.
+    "gha-expr-evaluator": ".github/scripts/wc_gha_expr.py",
     # specs/062-lifecycle-review-gate T031/T042: the append-tasks.md-
     # section/flip-stage/union-actor/commit+push fold sequence.
     # pr-conversation.yml's `act` job (T033) and lifecycle-review-gate.yml's
@@ -686,6 +701,51 @@ def check_review_finding_fingerprint(root="."):
                         path, "review-finding-fingerprint",
                         step_run_line(step),
                         'hashlib.sha256("{0}|{1}|{2}".format(issue_number, ...))'))
+    return findings
+
+
+# --------------------------------------------------------------------------
+# Check: gha-expr-evaluator (file-wide, over .github/scripts -- code review
+# of #940)
+# --------------------------------------------------------------------------
+THIS_GATE = ".github/scripts/verify-single-home-idioms.py"
+GHA_EXPR_TRANSPILE_RE = re.compile(
+    r"""\.replace\(\s*["']&&["']\s*,\s*["']\s*and\b""")
+GHA_EXPR_EVAL_RE = re.compile(r"\beval\s*\(")
+GHA_EXPR_SPLIT_RE = re.compile(r"""\.split\(\s*["']&&["']\s*\)""")
+GHA_EXPR_TERM_RE = re.compile(
+    r"\((?:\?P<\w+>|\?:)?(?:==\\?\|!=|!=\\?\|==)\)")
+
+
+def script_files(root="."):
+    """Every *.py under .github/scripts/**, repo-relative."""
+    base = os.path.join(root, ".github", "scripts")
+    found = []
+    for dirpath, _dirs, names in os.walk(base):
+        for name in names:
+            if name.endswith(".py"):
+                path = os.path.join(dirpath, name)
+                found.append(os.path.relpath(path, root).replace(os.sep, "/"))
+    return sorted(found)
+
+
+def check_gha_expr_evaluator(root="."):
+    home = DECLARED_HOMES["gha-expr-evaluator"]
+    findings = []
+    for path in script_files(root):
+        # This gate names the three signs itself, in its docstring and its
+        # self-test pastes.
+        if path in (home, THIS_GATE):
+            continue
+        text = read(root, path)
+        m = GHA_EXPR_TRANSPILE_RE.search(text)
+        if m is None and "__builtins__" in text:
+            m = GHA_EXPR_EVAL_RE.search(text)
+        if m is None and GHA_EXPR_TERM_RE.search(text):
+            m = GHA_EXPR_SPLIT_RE.search(text)
+        if m is not None:
+            findings.append(Finding(path, "gha-expr-evaluator",
+                                    line_of(text, m.start()), m.group(0)))
     return findings
 
 
@@ -1170,6 +1230,7 @@ ALL_CHECKS = {
     "dispatch-and-wait": check_dispatch_and_wait,
     "board-stop-check": check_board_stop_check,
     "transcript-normalise": check_transcript_normalise,
+    "gha-expr-evaluator": check_gha_expr_evaluator,
     "verdict-shape": check_verdict_shape,
     "token-mint": check_token_mint,
     "mode-tag-shape": check_mode_tag_shape,
@@ -1525,6 +1586,8 @@ def _clean_tree(root):
           "<<<\"$stop_decision_json\")\"\n"
           "        GH_TOKEN=\"$CANCEL_TOKEN\" gh run cancel "
           "\"$cancel_run_id\" -R \"$GITHUB_REPOSITORY\" 2>/dev/null || true\n")
+    _write(root, DECLARED_HOMES["gha-expr-evaluator"],
+          "def evaluate(expr, ctx):\n    return Parser(expr, ctx).parse()\n")
     _write(root, DECLARED_HOMES["transcript-normalise"],
           "#!/usr/bin/env bash\n"
           "jq -cs 'map(if type==\"array\" then .[] else . end) "
@@ -2194,6 +2257,21 @@ def run_selftest():
             "    steps:\n      - shell: bash\n        run: |\n"
             f"          jq -cs '{program}' \"$T\"\n")
     selftest_per_document_wrap_passes()
+    # Code review of #940: each shape the five gate scripts and
+    # wc_chain_stop_conditions.py carried before moving onto wc_gha_expr.
+    for slug, body in (
+        ("transpile", "e = expr.replace(\"&&\", \" and \")\n"),
+        ("eval", "ok = eval(src, {\"__builtins__\": {}}, ctx)\n"),
+        ("term-split",
+         "TERM = re.compile(r\"(\\w+)\\s*(==|!=)\\s*'([^']*)'\")\n"
+         "terms = expr.split(\"&&\")\n"),
+        ("named-term-split",
+         "TERM = re.compile(r\"(?P<lhs>\\w+)\\s*(?P<op>==|!=)\")\n"
+         "for term in expr.split(\"&&\"):\n    pass\n"),
+    ):
+        selftest_third_paste_fails(
+            "gha-expr-evaluator", f".github/scripts/verify-third-{slug}.py",
+            "import re\n" + body)
     selftest_third_paste_fails(
         "verdict-shape", ".github/workflows/third-verdict.yml",
         "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"

@@ -67,20 +67,26 @@ GH_API_RE = re.compile(r"(?<![\w./-])gh\s+api(?=\s|$)")
 # than one blob so that removing any single alternative is a one-line
 # mutation the self-test can perform - and must kill (see MUTATIONS).
 #
-#   -f/-F         cobra shorthands, value attached (`-fref=main`) or not
+#   -f/-F         cobra shorthands, value attached (`-fref=main`) or not,
+#                 alone or ending a cluster of gh api's one boolean
+#                 shorthand (`-if body=x`)
 #   --field       typed field
 #   --raw-field   string field
 #   --input       request body from a file or stdin
 FIELD_FLAG_ALTERNATIVES = (
-    r"-[fF](?:=?\S*)?",
+    r"-i*[fF](?:=?\S*)?",
     r"--field(?:=.*)?",
     r"--raw-field(?:=.*)?",
     r"--input(?:=.*)?",
 )
 
-# `-X`/`-XGET`/`--method GET`/`--method=GET`.
+# `-X`/`-XGET`/`--method GET`/`--method=GET`, and `-X` ending a cluster of
+# gh api's one boolean shorthand (`-iX POST`, `-iXPOST`): reading only a
+# leading `-X` reported `gh api -iX POST ... -f body=x` as having no
+# method (code review of #944). Gate 12's _GH_API_VALUE_FLAG reads the
+# same clusters.
 METHOD_FLAG_ALTERNATIVES = (
-    r"-X\S*",
+    r"-i*X\S*",
     r"--method(?:=.*)?",
 )
 
@@ -345,6 +351,18 @@ CASES = [
     ("a method with its value attached: -XGET",
      'gh api -XGET "repos/$R/contents/x" -f ref=main',
      False, ()),
+
+    ("a method ending a short-flag cluster: -iX POST",
+     'gh api -iX POST "repos/$R/issues/1/comments" -f body=x',
+     False, ()),
+
+    ("... and with its value attached: -iXGET",
+     'gh api -iXGET "repos/$R/contents/x" -f ref=main',
+     False, ()),
+
+    ("a field ending a short-flag cluster with no method",  # wc-gh-method-exempt: self-test fixture text
+     'gh api "repos/$R/issues/1/comments" -if body=x',
+     True, ("-if",)),
 
     ("a long method flag with =: --method=GET",
      'gh api --method=GET "repos/$R/contents/x" --field ref=main',
