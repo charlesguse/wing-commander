@@ -1266,8 +1266,10 @@ def check_shared_path_workdir(root="."):
                     continue
                 wd = str(step.get("working-directory") or job_wd).strip()
                 # A trailing slash names the same directory
-                # (`${{ github.workspace }}/` is the root; #960 second review).
-                if wd.rstrip("/") in ROOT_WORKDIRS:
+                # (`${{ github.workspace }}/` is the root; #960 second review),
+                # but `/` itself is the filesystem root, not "" (#960 third
+                # review).
+                if wd != "/" and wd.rstrip("/") in ROOT_WORKDIRS:
                     continue
                 m = BARE_SHARED_REF_RE.search(str(run))
                 if m:
@@ -2535,6 +2537,13 @@ def run_selftest():
         "jobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
         "      - shell: bash\n        run: |\n"
         "          source .github/actions/_shared/helper.sh\n")
+    # #960 third review: the filesystem root `/` is not the workspace
+    # root, even though stripping its trailing slash leaves "".
+    selftest_third_paste_fails(
+        "shared-path-workdir", ".github/workflows/third-shared-path-fs-root.yml",
+        "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - shell: bash\n        working-directory: /\n        run: |\n"
+        "          bash .github/actions/_shared/auto-release-verdict.sh a b\n")
     selftest_shared_path_workdir_anchored_passes()
     selftest_shared_path_workdir_waivable()
     selftest_composite_checkout_order_line_attribution()
