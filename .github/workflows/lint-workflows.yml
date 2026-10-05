@@ -1165,7 +1165,12 @@ jobs:
                       + (r'|\(' + inner + r'\)' if inner else '') + r')*')
 
 
-          _EXPR = r'\$\{\{(?:[^}]|\}(?!\}))*\}\}'
+          # An Actions expression ends at the first `}}` outside its own
+          # single-quoted string literals, as GitHub reads it: ended at a
+          # `}}` inside one (`contains(x, '}}')`), the literal's closing `'`
+          # opened a quote that hid every call after it (code review of
+          # #969).
+          _EXPR = r"\$\{\{(?:[^}']|'[^']*'|\}(?!\}))*\}\}"
 
 
           def _brace_body(depth):
@@ -1387,7 +1392,9 @@ jobs:
                   # POST` in `echo "id `gh api ...`"` was never scanned at
                   # all (code review of #956). Its opening backtick is
                   # executable, so cmdline_of() sees the call sit inside it.
-                  if c == "`" and top == "dq":
+                  # One outside quotes is a frame too, so a comment inside
+                  # it ends where it does (code review of #969).
+                  if c == "`" and top != "bt":
                       flags[i] = True
                       stack.append("bt"); i += 1; continue
                   if c == "`" and top == "bt":
@@ -1396,12 +1403,21 @@ jobs:
                   # runs: its braces, `||` and quotes are no shell syntax.
                   if (top != "dq" and c == "$"
                           and text.startswith(EXPR_OPEN, i)):
-                      j = text.find("}}", i + 3)
-                      if j >= 0:
-                          for k in range(i, j + 2):
+                      em = EXPR_RE.match(text, i)
+                      if em:
+                          for k in range(i, em.end()):
                               flags[k] = cur_exec
-                          i = j + 2
+                          i = em.end()
                           continue
+                  # `$$` is the shell's PID, not a `$` opening the `${`
+                  # after it: read as one, `$${ #it's` opened a brace frame
+                  # in which that `#` began no comment, and its apostrophe
+                  # hid the calls after it (code review of #969).
+                  if (c == "$" and text.startswith("$$", i)
+                          and not text.startswith(EXPR_OPEN, i + 1)):
+                      flags[i + 1] = cur_exec
+                      i += 2
+                      continue
                   # T068: a `#` starting a word outside quotes opens a shell
                   # comment running to end of line. strip_comments() only drops
                   # WHOLE-line comments, so a TRAILING one reached this scanner
@@ -1418,6 +1434,16 @@ jobs:
                           and (i == 0 or text[i - 1] in " \t\n")):
                       j = text.find("\n", i)
                       j = n if j < 0 else j
+                      # One inside a backtick substitution ends at the
+                      # backtick closing it, the end of the text bash parses
+                      # as its script: run on to the line's end, it hid the
+                      # call after `echo "`date #x`";` (code review of
+                      # #969).
+                      if top == "bt":
+                          k = i
+                          while k < j and text[k] != "`":
+                              k += 2 if text[k] == "\\" else 1
+                          j = min(k, j)
                       for k in range(i, j):
                           flags[k] = False
                           if comments is not None:

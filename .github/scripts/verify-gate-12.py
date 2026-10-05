@@ -1492,6 +1492,44 @@ CASES = [
             ['gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" -f a=$(']
             * 2000),
      True, ("cannot read this call's method",)),
+
+    # --- the code review of #969's Gate 12 lines --------------------------
+    ("a comment inside a backtick substitution ends at its closing "
+     "backtick: the write after `echo \"`date #x`\";` is scanned and fails "
+     "under issues:read",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['echo "`date #x`"; gh api -X POST '
+             '"repos/${GITHUB_REPOSITORY}/issues/1/comments" -f body=x']),
+     True, ("issues", "write")),
+
+    ("... as it does in one outside quotes",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['echo `date #x`; gh api -X POST '
+             '"repos/${GITHUB_REPOSITORY}/issues/1/comments" -f body=x']),
+     True, ("issues", "write")),
+
+    ("... and a backtick after an escaped backslash (`\\\\`) is that "
+     "closing backtick",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['echo "`date #x\\\\`"; gh api -X POST '
+             '"repos/${GITHUB_REPOSITORY}/issues/1/comments" -f body=x']),
+     True, ("issues", "write")),
+
+    ("an Actions expression ends at the `}}` outside its string literals: "
+     "the `'` closing `'}}'` opens no quote, so the write on the next line "
+     "is scanned and fails under issues:read",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ["x=${{ contains(inputs.a, '}}') }}",
+             'gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" -f body=x']),
+     True, ("issues", "write")),
+
+    ("`$$` is the PID, not a `$` opening the `${` after it: the ` #` after "
+     "`$${` starts a comment, its apostrophe opens no quote, and the write "
+     "on the next line fails under issues:read",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ["echo $${ #it's",
+             'gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" -f body=x']),
+     True, ("issues", "write")),
 ]
 
 
