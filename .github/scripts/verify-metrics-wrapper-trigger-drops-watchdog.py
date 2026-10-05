@@ -250,7 +250,8 @@ def record_owners(root=".", follow_composites=True, follow_callers=True):
 # stale once already: "the unchanged nine-stage path" outlived board-loop's
 # addition (#889). A spelled-out count before "completion-trigger
 # workflows" or "-stage path" in these live files must equal the shipped
-# trigger list's length; prose that names no number is not checked.
+# trigger list's length; prose that names no number is not checked. The
+# count may be spelled out (up to "twenty") or written in digits.
 COUNT_CLAIM_FILES = [WRAPPER, CONTRACT, WRAPPER_CONTRACT,
                      os.path.join(WORKFLOWS, "metrics-persist.yml"),
                      os.path.join("docs", "adoption.md")]
@@ -258,8 +259,9 @@ _NUMWORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven",
              "eight", "nine", "ten", "eleven", "twelve", "thirteen",
              "fourteen", "fifteen", "sixteen", "seventeen", "eighteen",
              "nineteen", "twenty"]
+_COUNT = r"(\d+|" + "|".join(_NUMWORDS) + r")"
 _COUNT_CLAIM = re.compile(
-    r"\b(" + "|".join(_NUMWORDS) + r")"
+    r"\b" + _COUNT +
     r"(?:-stage(?:[\s#]+)path|(?:[\s#]+)completion-trigger(?:[\s#]+)workflows)\b",
     re.IGNORECASE)
 
@@ -272,7 +274,70 @@ def count_claims():
             text = fh.read()
         for m in _COUNT_CLAIM.finditer(text):
             out.append((path, text.count("\n", 0, m.start()) + 1,
-                        _NUMWORDS.index(m.group(1).lower())))
+                        parse_count(m.group(1))))
+    return out
+
+
+def parse_count(token):
+    """A count written as digits or as a word in _NUMWORDS."""
+    token = token.lower()
+    return int(token) if token.isdigit() else _NUMWORDS.index(token)
+
+
+# This gate's own docstring states its mutation counts; see main().
+_MUTATION_CLAIM = re.compile(
+    r"\b(\S+) subject mutations and (\S+) discovery mutations\b")
+
+
+def mutation_claim_failures(doc, subject_n, discovery_n):
+    """Why `doc` misstates the mutation counts, or [] when it states them.
+
+    Either count may be a digit string or a word in _NUMWORDS; a count past
+    the table's end needs the digit form, and a word the table lacks is
+    reported, never raised."""
+    m = _MUTATION_CLAIM.search(" ".join((doc or "").split()))
+    if not m:
+        return [f"this gate's docstring does not say \"N subject mutations "
+                f"and M discovery mutations\" (expected {subject_n} and "
+                f"{discovery_n})"]
+    out = []
+    for kind, token, want in (("subject", m.group(1), subject_n),
+                              ("discovery", m.group(2), discovery_n)):
+        if not re.fullmatch(_COUNT, token, re.IGNORECASE):
+            out.append(f"this gate's docstring states {token!r} {kind} "
+                       f"mutations, which is not a count it can read -- "
+                       f"write {want} in digits")
+        elif parse_count(token) != want:
+            out.append(f"this gate's docstring says {token!r} {kind} "
+                       f"mutations but there are {want} -- its mutation "
+                       f"count is stale")
+    return out
+
+
+# (docstring, subject count, discovery count, must pass) -- pins
+# mutation_claim_failures() past the end of _NUMWORDS.
+MUTATION_CLAIM_SELF_CHECKS = [
+    ("Seventeen subject mutations and two discovery mutations", 17, 2, True),
+    ("17 subject mutations and 2 discovery mutations", 17, 2, True),
+    ("21 subject mutations and two discovery mutations", 21, 2, True),
+    ("Twenty-one subject mutations and two discovery mutations", 21, 2, False),
+    ("Twenty subject mutations and two discovery mutations", 21, 2, False),
+    ("Seventeen subject mutations and three discovery mutations", 17, 2, False),
+    ("no claim at all", 17, 2, False),
+]
+
+
+def mutation_claim_self_check_failures():
+    out = []
+    for doc, n, d, ok in MUTATION_CLAIM_SELF_CHECKS:
+        got = mutation_claim_failures(doc, n, d)
+        if (not got) != ok:
+            out.append(f"self-check: mutation_claim_failures({doc!r}, {n}, "
+                       f"{d}) {'failed' if got else 'passed'}, expected to "
+                       f"{'pass' if ok else 'fail'}")
+    m = _COUNT_CLAIM.search("its 21 completion-trigger workflows")
+    if not m or parse_count(m.group(1)) != 21:
+        out.append("self-check: a digit-form count claim is not read")
     return out
 
 
@@ -676,11 +741,9 @@ def main():
     use_utf8_stdout()
     subject = load_subject()
     failures = suite(subject) + discovery_failures()
-    claim = (f"{_NUMWORDS[len(MUTATIONS)].capitalize()} subject mutations "
-             f"and {_NUMWORDS[len(DISCOVERY_MUTATIONS)]} discovery mutations")
-    if claim not in " ".join((__doc__ or "").split()):
-        failures.append(f"this gate's docstring does not say {claim!r} -- "
-                        f"its mutation count is stale")
+    failures += mutation_claim_failures(__doc__, len(MUTATIONS),
+                                        len(DISCOVERY_MUTATIONS))
+    failures += mutation_claim_self_check_failures()
     for f in failures:
         print(f"::error::{f}")
     mutation_failures = 0

@@ -653,7 +653,7 @@ every completion;
 
 (c) **pass the workflow-list input** the sweep needs to restrict its own
 discovery (`sweep-workflow-paths` — MF-02): the reference wrapper's copy
-lists its nine completion-trigger stage wrappers plus
+lists its nine completion-trigger workflows plus
 `wing-commander-8-watchdog.yml` (and this repository's own
 `board-loop.yml`, which you do not have); substitute your own
 repository's wrapper filenames.
