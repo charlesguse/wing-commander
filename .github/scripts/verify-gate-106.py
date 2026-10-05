@@ -27,9 +27,11 @@ FR-015 requires:
               and this repository's marker-extraction idiom, wc_shell_
               harness.extract_quoted_var), under stubbed `gh`/`date`,
               against one fixture per FR-005 branch (SC-006): not
-              configured, empty value, drift, unreadable, rate-limited
-              (config half); unreadable, rate-limited, not containerized,
-              and the passing case (execution half).
+              configured, empty value, drift, unreadable, rate-limited,
+              and this repository's own pin empty (config half);
+              unreadable, rate-limited, a completed stage run with no
+              jobs read (a still-queued one is skipped), not
+              containerized, and the passing case (execution half).
 
 It ends with a --self-test mode that puts each defect back and asserts the
 suite then fails. A test that cannot fail is not a test (Constitution VIII).
@@ -240,6 +242,7 @@ CONFIG_BASE_ENV = dict(
     E2E_REPO="owner/e2e-target", HEAD_SHA=HEAD, MODE="container",
     WC_SOURCE_CONTAINER_IMAGE="ghcr.io/example/image:1.2.3",
     GH_STUB_VARS_JSON="[]", GH_STUB_VAR_FAIL="", GH_STUB_VAR_ERR="",
+    GITHUB_REPOSITORY="owner/source-repo",
 )
 
 CONFIG_SCENARIOS = [
@@ -253,6 +256,7 @@ CONFIG_SCENARIOS = [
         env=dict(GH_STUB_VARS_JSON=variables(OTHER_VARIABLE="ghcr.io/example/image:1.2.3")),
         ok="false",
         failing_check="container image not configured on the test repository",
+        evidence_url="owner/e2e-target",
     ),
     dict(
         name="FR-005(i) not configured: variable present but empty (Edge Case)",
@@ -277,6 +281,27 @@ CONFIG_SCENARIOS = [
         env=dict(GH_STUB_VAR_FAIL="true", GH_STUB_VAR_ERR="API rate limit exceeded for installation"),
         ok="false",
         failing_check="container-mode evidence rate-limited",
+    ),
+    # #889: an empty pin on THIS repository used to fall through to the
+    # test-repository checks -- "not configured on the test repository"
+    # with an empty expected, or "does not match this repository's pin" --
+    # blaming the wrong repository and never naming the variable to set.
+    dict(
+        name="#889 this repository's own pin empty, test repository set: names this repository's variable",
+        env=dict(WC_SOURCE_CONTAINER_IMAGE="",
+                 GH_STUB_VARS_JSON=variables(**{IMAGE_VAR: "ghcr.io/example/image:1.2.3"})),
+        ok="false",
+        failing_check="container image not configured on this repository",
+        expected_contains="this repository's WING_COMMANDER_CONTAINER_IMAGE",
+        evidence_url="owner/source-repo",
+    ),
+    dict(
+        name="#889 this repository's own pin empty, test repository empty too: still names this repository's variable",
+        env=dict(WC_SOURCE_CONTAINER_IMAGE="", GH_STUB_VARS_JSON="[]"),
+        ok="false",
+        failing_check="container image not configured on this repository",
+        expected_contains="this repository's WING_COMMANDER_CONTAINER_IMAGE",
+        evidence_url="owner/source-repo",
     ),
     dict(
         name="FR-005(vi) configured and matching: proceeds",
@@ -344,6 +369,14 @@ def suite_config(script, env, tmproot, source_root=REPO_ROOT):
             elif verdict.get("outcome") != "fail-infra":
                 failures.append(f"{tag} expected outcome=fail-infra, got "
                                 f"{verdict.get('outcome')!r}")
+            elif sc.get("expected_contains") and sc["expected_contains"] not in str(verdict.get("expected") or ""):
+                failures.append(f"{tag} expected the verdict's expected to "
+                                f"contain {sc['expected_contains']!r}, got "
+                                f"{verdict.get('expected')!r}")
+            elif "evidence_url" in sc and verdict.get("evidence_url") != sc["evidence_url"]:
+                failures.append(f"{tag} expected evidence_url="
+                                f"{sc['evidence_url']!r} (where the value was "
+                                f"read), got {verdict.get('evidence_url')!r}")
         if sc.get("verdict") is None and want_fc is None and verdict is not None:
             failures.append(f"{tag} expected no verdict output, got {verdict!r}")
         if "expected_image" in sc and outputs.get("expected-image") != sc["expected_image"]:
@@ -399,9 +432,16 @@ exit 1
 
 
 def runs_page(*runs):
-    """A REST `GET .../actions/runs` page for (id, path) pairs."""
-    return json.dumps({"total_count": len(runs),
-                       "workflow_runs": [{"id": i, "path": p} for i, p in runs]})
+    """A REST `GET .../actions/runs` page for (id, path[, status]) tuples.
+    `status` defaults to "completed"; None leaves the key out entirely."""
+    page = []
+    for r in runs:
+        run = {"id": r[0], "path": r[1]}
+        status = r[2] if len(r) > 2 else "completed"
+        if status is not None:
+            run["status"] = status
+        page.append(run)
+    return json.dumps({"total_count": len(runs), "workflow_runs": page})
 
 
 def jobs_page(*jobs):
@@ -620,6 +660,52 @@ EXECUTION_SCENARIOS = [
         reached_pass=False,
         failing_check="container-mode evidence unreadable",
     ),
+    # #889: a stage run whose Jobs API read returns no jobs at all carries
+    # no evidence either way. Before the fix it added nothing to either
+    # tally, so another run's containerized jobs carried the pass for it.
+    dict(
+        name="#889 a stage run's jobs read returns zero jobs beside a containerized run: unreadable, not pass",
+        env=dict(GH_STUB_RUNS_REST=runs_page((111, WRAPPER_PATH), (555, WRAPPER_PATH)),
+                 GH_STUB_JOBS_555=jobs_page()),
+        reached_pass=False,
+        failing_check="container-mode evidence unreadable",
+    ),
+    dict(
+        name="#889 the only stage run's jobs read returns zero jobs: unreadable",
+        env=dict(GH_STUB_JOBS_111=jobs_page()),
+        reached_pass=False,
+        failing_check="container-mode evidence unreadable",
+    ),
+    # #960 review: a wrapper run the stage:done label or the final merge
+    # fired seconds before this read can still be queued with no job
+    # scheduled yet -- it ran nothing anywhere, so it is skipped, not judged
+    # unreadable (which would fail an otherwise-passing release).
+    dict(
+        name="#960 a queued stage run with no jobs yet beside a containerized run: skipped, reaches pass",
+        env=dict(GH_STUB_RUNS_REST=runs_page((111, WRAPPER_PATH), (555, WRAPPER_PATH, "queued")),
+                 GH_STUB_JOBS_555=jobs_page()),
+        reached_pass=True,
+    ),
+    dict(
+        name="#960 an in-progress stage run with no jobs yet beside a containerized run: skipped, reaches pass",
+        env=dict(GH_STUB_RUNS_REST=runs_page((111, WRAPPER_PATH), (555, WRAPPER_PATH, "in_progress")),
+                 GH_STUB_JOBS_555=jobs_page()),
+        reached_pass=True,
+    ),
+    dict(
+        name="#960 a stage run with no jobs and no status at all: fails closed, unreadable",
+        env=dict(GH_STUB_RUNS_REST=runs_page((111, WRAPPER_PATH), (555, WRAPPER_PATH, None)),
+                 GH_STUB_JOBS_555=jobs_page()),
+        reached_pass=False,
+        failing_check="container-mode evidence unreadable",
+    ),
+    dict(
+        name="#960 the only stage run is queued with no jobs: no positive evidence, not a pass",
+        env=dict(GH_STUB_RUNS_REST=runs_page((111, WRAPPER_PATH, "queued")),
+                 GH_STUB_JOBS_111=jobs_page()),
+        reached_pass=False,
+        failing_check="container image configured but stage jobs did not execute inside a container",
+    ),
     dict(
         name="#766 the REST run list does not parse: gh --jq fails, unreadable",
         env=dict(GH_STUB_RUNS_REST="{not json"),
@@ -745,7 +831,44 @@ def mut_jobs_jq_wrong_key(text):
     return _mut_fragment_text(text, "--jq '.jobs[]'", "--jq '.job[]'")
 
 
+def mut_empty_jobs_guard_removed(text):
+    """#889: a stage run with zero jobs read counts as evidence again."""
+    return _mut_fragment_text(
+        text,
+        'if [ "$(printf \'%s\' "$jobs_json" | jq \'length\')" -eq 0 ]; then',
+        'if false; then')
+
+
+def mut_config_evidence_this_repo_removed(text):
+    """#960 review: an empty pin on this repository cites the test
+    repository as where it was read."""
+    old = 'evidence="${GITHUB_REPOSITORY:-this repository}"'
+    if text.count(old) != 1:
+        fail(f"verify-gate-106: expected exactly one {old!r} in {WORKFLOW} "
+             f"to mutate, found {text.count(old)}.")
+    return text.replace(old, 'evidence="$E2E_REPO"', 1)
+
+
+def mut_not_started_skip_removed(text):
+    """#960 review: a queued run with no jobs yet is judged unreadable."""
+    return _mut_fragment_text(
+        text,
+        "queued|requested|waiting|pending|in_progress) continue ;;",
+        "__never__) continue ;;")
+
+
 WORKFLOW_MUTATIONS = [
+    ("the config step's this-repository evidence removed (an empty pin on "
+     "this repository would cite the test repository as where it was "
+     "read, #960 review)",
+     mut_config_evidence_this_repo_removed),
+    ("the not-yet-started skip removed from the empty-jobs guard (a run "
+     "still queued when the evidence is read would fail a passing release "
+     "as unreadable, #960 review)",
+     mut_not_started_skip_removed),
+    ("the empty-jobs-list guard removed (a stage run with no jobs read "
+     "would ride on another run's containerized jobs to pass, #889)",
+     mut_empty_jobs_guard_removed),
     ("the run-list --jq reads .runs[] instead of .workflow_runs[] (#766)",
      mut_runs_jq_wrong_key),
     ("the jobs --jq reads .job[] instead of .jobs[] (#766)",
@@ -797,7 +920,19 @@ CHECKS_MUTATIONS = [
      mut_config_jq_substring_match),
 ]
 
+def mut_config_source_pin_check_removed(text):
+    """#889: an empty pin on this repository blames the test repository."""
+    old = 'if [ -z "$expected" ]; then'
+    if text.count(old) != 1:
+        fail(f"verify-gate-106: expected exactly one {old!r} to mutate in "
+             f"the decision script, found {text.count(old)}.")
+    return text.replace(old, 'if false; then', 1)
+
+
 DECISION_MUTATIONS = [
+    ("the config decision's empty-source-pin check removed (an empty pin "
+     "on this repository would blame the test repository, #889)",
+     mut_config_source_pin_check_removed),
     ("the config decision's drift comparison disabled (a differing "
      "image would read as configured)",
      mut_config_drift_ignored),

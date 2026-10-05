@@ -23,7 +23,11 @@
 # auto-release.yml runs from a plain repository checkout with no
 # GITHUB_ACTION_PATH of its own (that variable only exists inside a
 # running action), so callers resolve this path as a plain repo-relative
-# one, not through $GITHUB_ACTION_PATH.
+# one from the workspace root, not through $GITHUB_ACTION_PATH -- or, from
+# a step whose working-directory is elsewhere (the scaffold step runs in
+# the test repository's clone), anchored as
+# "$GITHUB_WORKSPACE/.github/actions/_shared/auto-release-verdict.sh"
+# (Gate 60's shared-path-workdir check, #889).
 #
 # MODE, when non-empty, is threaded through as the verdict's `mode` field.
 # CONTAINER_IMAGE_CONFIGURED is only ever consulted when MODE is

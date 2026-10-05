@@ -50,7 +50,8 @@ NOT proceed further (config call) or MUST NOT reach the `pass` write
 |---|---|---|---|
 | `config` | `unreadable` | — | `container-mode evidence unreadable` |
 | `config` | `rate-limited` | — | `container-mode evidence rate-limited` |
-| `config` | `ok` | `observed` empty/absent | `container image not configured on the test repository` |
+| `config` | `ok` | `expected` empty (this repository's own pin unset or empty; checked first, rewrites `expected`/`observed` to name this repository's `WING_COMMANDER_CONTAINER_IMAGE`, #889) | `container image not configured on this repository` |
+| `config` | `ok` | `expected` non-empty, `observed` empty/absent | `container image not configured on the test repository` |
 | `config` | `ok` | `observed` non-empty, `!= expected` | `container image configured but does not match this repository's pin` |
 | `config` | `ok` | `observed == expected`, non-empty | *(empty — proceed)* |
 | `execution` | `unreadable` | — | `container-mode evidence unreadable` |
