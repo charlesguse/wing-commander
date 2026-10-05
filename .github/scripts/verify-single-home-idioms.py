@@ -324,7 +324,8 @@ DECLARED_HOMES = {
     # new site is what this check catches.
     "pr-branch": ".github/actions/_shared/resolve-pr-branch/action.yml",
 }
-CHECK_NAMES = tuple(DECLARED_HOMES) + ("promotion", "composite-checkout-order")
+CHECK_NAMES = tuple(DECLARED_HOMES) + ("promotion", "composite-checkout-order",
+                                        "shared-path-workdir")
 
 ORPHAN_FRAGMENTS = (
     "checkout --quiet --orphan",
@@ -1237,7 +1238,8 @@ def check_promotion(root="."):
 # --------------------------------------------------------------------------
 ROOT_WORKDIRS = ("", ".", "./", "${{ github.workspace }}", "$GITHUB_WORKSPACE",
                  "${GITHUB_WORKSPACE}")
-BARE_SHARED_REF_RE = re.compile(r"(?<![\w}/.$-])\.github/actions/_shared/[A-Za-z0-9_.\-/]+")
+# An optional leading `./` is the same bare repo-relative path (#960 review).
+BARE_SHARED_REF_RE = re.compile(r"(?<![\w}/.$-])(?:\./)?\.github/actions/_shared/[A-Za-z0-9_.\-/]+")
 SHARED_PATH_WORKDIR_HINT = ("\"$GITHUB_WORKSPACE/.github/actions/_shared/...\" "
                             "(a bare repo-relative path resolves inside the "
                             "step's working-directory)")
@@ -1249,10 +1251,14 @@ def check_shared_path_workdir(root="."):
         doc = load_yaml(root, path)
         if not isinstance(doc, dict):
             continue
+        # A workflow-level `defaults.run` applies too, under any job's own
+        # (#960 review).
+        wf_wd = str(((doc.get("defaults") or {}).get("run") or {})
+                    .get("working-directory") or "")
         for job_id, job in (doc.get("jobs") or {}).items():
             job = job or {}
             job_wd = str(((job.get("defaults") or {}).get("run") or {})
-                         .get("working-directory") or "")
+                         .get("working-directory") or wf_wd)
             for step in job.get("steps") or []:
                 step = step or {}
                 run = step.get("run")
@@ -2217,6 +2223,32 @@ def selftest_shared_path_workdir_anchored_passes():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def selftest_shared_path_workdir_waivable():
+    case = "shared-path-workdir: a waiver naming the check is accepted and suppresses it"
+    tmp = tempfile.mkdtemp(prefix="wc-single-home-")
+    try:
+        _clean_tree(tmp)
+        path = ".github/workflows/waived-shared-path.yml"
+        _write(tmp, path,
+               "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
+               "      - shell: bash\n        working-directory: sub\n        run: |\n"
+               "          bash .github/actions/_shared/auto-release-verdict.sh a\n")
+        _write(tmp, WAIVERS_PATH, json.dumps({"waivers": [{
+            "file": path, "check": "shared-path-workdir",
+            "pattern": "auto-release-verdict", "count": 1, "issue": "#1",
+            "reason": "self-test"}]}))
+        findings, hard = evaluate(tmp)
+        hits = [f for f in findings if f.check == "shared-path-workdir"]
+        if hard:
+            fail(f"[{case}] unexpected hard failure(s): {hard}")
+        elif hits:
+            fail(f"[{case}] waived finding(s) still reported: {hits}")
+        else:
+            note(f"[{case}] passed")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def run_selftest():
     use_utf8_stdout()
     selftest_clean_tree_passes()
@@ -2482,7 +2514,21 @@ def run_selftest():
         "    defaults:\n      run:\n        working-directory: sub\n    steps:\n"
         "      - shell: bash\n        run: |\n"
         "          source .github/actions/_shared/helper.sh\n")
+    # #960 review: a `./`-prefixed bare path, and a workflow-level
+    # defaults.run working-directory, are the same defect.
+    selftest_third_paste_fails(
+        "shared-path-workdir", ".github/workflows/third-shared-path-dot-slash.yml",
+        "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - shell: bash\n        working-directory: sub\n        run: |\n"
+        "          bash ./.github/actions/_shared/auto-release-verdict.sh a b\n")
+    selftest_third_paste_fails(
+        "shared-path-workdir", ".github/workflows/third-shared-path-workflow-default.yml",
+        "on: push\ndefaults:\n  run:\n    working-directory: sub\n"
+        "jobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - shell: bash\n        run: |\n"
+        "          source .github/actions/_shared/helper.sh\n")
     selftest_shared_path_workdir_anchored_passes()
+    selftest_shared_path_workdir_waivable()
     selftest_composite_checkout_order_line_attribution()
     selftest_token_mint_line_attribution()
     selftest_board_stop_check_line_attribution()

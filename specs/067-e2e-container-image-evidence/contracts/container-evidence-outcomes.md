@@ -49,9 +49,11 @@ under each of these conditions (FR-004, US2):
 - The read is refused by a transient condition (rate limit, transient API
   error) — distinct `failing_check` from a hard read failure, never
   reported as "not configured."
-- A stage run's Jobs API read returns no jobs at all -- `container-mode
-  evidence unreadable`, never evidence that the run's jobs were
-  containerized (#889).
+- A stage run GitHub reports `completed` whose Jobs API read returns no
+  jobs at all -- `container-mode evidence unreadable`, never evidence that
+  the run's jobs were containerized (#889). A run still queued or in
+  progress with no job scheduled yet ran nothing anywhere and is skipped,
+  like a queued job; a missing status fails closed.
 - This repository's own pin is unreadable at comparison time — fails
   closed, never compared as if empty (FR-007's last sentence).
 
@@ -62,8 +64,9 @@ without opening the test repository, using exactly the fields the existing
 verdict already carries: `failing_check` names which check failed,
 `expected`/`observed` state what was expected and what was seen, and
 `evidence_url` names where it was read (the test repository's variable
-page for the configuration cases, the run's Jobs API / Actions UI for the
-execution case).
+page for the configuration cases -- this repository, for `container image
+not configured on this repository` -- the run's Jobs API / Actions UI for
+the execution case).
 
 ## 5. Cross-reference to `specs/054`
 

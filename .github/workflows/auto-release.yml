@@ -734,11 +734,11 @@ jobs:
           # shellcheck source=.github/scripts/e2e-provisioning/checks.sh
           source .github/scripts/e2e-provisioning/checks.sh
 
-          write_config_fail() { # failing_check expected observed
+          write_config_fail() { # failing_check expected observed [evidence, default the test repository]
             echo "ok=false" >> "$GITHUB_OUTPUT"
             {
               echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
-              bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "$1" "$2" "$3" "$E2E_REPO" "$MODE" "false"
+              bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "$1" "$2" "$3" "${4:-$E2E_REPO}" "$MODE" "false"
               echo 'AUTO_RELEASE_VERDICT_EOF'
             } >> "$GITHUB_OUTPUT"
             echo "::error::wing-commander auto-release verify-e2e: $1."
@@ -763,10 +763,16 @@ jobs:
           if [ -n "$failing_check" ]; then
             # The decision's own expected/observed: an empty pin on this
             # repository rewrites both to name this repository's variable
-            # rather than the test repository's (#889).
+            # rather than the test repository's (#889), and the evidence
+            # then names this repository, where that empty value was read
+            # (contracts/container-evidence-outcomes.md section 4).
             expected="$(printf '%s\n' "$decision" | sed -n 's/^expected=//p')"
             observed="$(printf '%s\n' "$decision" | sed -n 's/^observed=//p')"
-            write_config_fail "$failing_check" "$expected" "${observed:-(unset or empty)}"
+            evidence="$E2E_REPO"
+            if [ "$failing_check" = "container image not configured on this repository" ]; then
+              evidence="${GITHUB_REPOSITORY:-this repository}"
+            fi
+            write_config_fail "$failing_check" "$expected" "${observed:-(unset or empty)}" "$evidence"
             exit 0
           fi
 
@@ -1943,7 +1949,7 @@ jobs:
             # `gh api` instead, matching metrics-persist.yml's own
             # `actions/runs?...&created=...` idiom.
             if ! runs_raw="$(GH_TOKEN="$HARNESS_TOKEN" gh api "repos/${E2E_REPO}/actions/runs?per_page=100&created=%3E%3D${KICKOFF_TIME}" \
-              --paginate --jq '.workflow_runs[] | {databaseId: .id, path: (.path // "")}' 2>"$RUNNER_TEMP/auto-release-cee-runs-err.txt")"; then
+              --paginate --jq '.workflow_runs[] | {databaseId: .id, path: (.path // ""), status: (.status // "")}' 2>"$RUNNER_TEMP/auto-release-cee-runs-err.txt")"; then
               errtext="$(tail -c 300 "$RUNNER_TEMP/auto-release-cee-runs-err.txt")"
               write_execution_fail "$(classify_read_status 1 "$errtext")" "$errtext"
             fi
@@ -1958,10 +1964,10 @@ jobs:
             stage_run_ids="$(printf '%s' "$runs_json" | jq -r '
               .[]
               | select(.path | test("^\\.github/workflows/wing-commander-"))
-              | .databaseId')"
+              | "\(.databaseId) \(.status)"')"
             noncontainerized=""
             containerized_count=0
-            while IFS= read -r run_id; do
+            while IFS=' ' read -r run_id run_status; do
               [ -n "$run_id" ] || continue
               if ! jobs_raw="$(GH_TOKEN="$HARNESS_TOKEN" gh api "repos/${E2E_REPO}/actions/runs/${run_id}/jobs" --paginate --jq '.jobs[]' 2>"$RUNNER_TEMP/auto-release-cee-jobs-err.txt")"; then
                 errtext="$(tail -c 300 "$RUNNER_TEMP/auto-release-cee-jobs-err.txt")"
@@ -1976,9 +1982,17 @@ jobs:
               # tally, so another run's containerized jobs carried the pass
               # for it (#889). A run with jobs that are all excluded below
               # (wing-commander-rebase.yml's lone `redispatch`) still listed
-              # them, and is not this case.
+              # them, and is not this case. Only a run GitHub reports
+              # `completed` is judged: one still queued or starting -- the
+              # wrappers the stage:done label and the final merge fire
+              # seconds before this read -- has had no job scheduled yet,
+              # ran nothing anywhere, and is skipped like a queued job
+              # below. Any other or missing status fails closed.
               if [ "$(printf '%s' "$jobs_json" | jq 'length')" -eq 0 ]; then
-                write_execution_fail "unreadable" "the Jobs API returned no jobs for stage run $run_id, so nothing shows where its jobs executed"
+                case "$run_status" in
+                  queued|requested|waiting|pending|in_progress) continue ;;
+                esac
+                write_execution_fail "unreadable" "the Jobs API returned no jobs for stage run $run_id (status ${run_status:-unknown}), so nothing shows where its jobs executed"
               fi
               # A skipped job (e.g. the conditional `stalled` job), a queued
               # job that never started, and a job cancelled by a
