@@ -52,7 +52,13 @@ def route_final_diff(route_decision: RouteDecision, final_diff: dict) -> RouteDe
   block (`on: workflow_call:`, or a composite's `inputs:`/`outputs:`)
   changes, or a `wing-commander-*` composite added or deleted. The old
   `touches_protected_file()` proxy, which flagged any touched workflow or
-  composite, is gone.
+  composite, is gone. A drafted diff it cannot apply to main is an
+  unknown, not a widening: it is flagged only when its own added or
+  removed lines carry a contract signal (a workflow's `workflow_call`
+  trigger, or a composite's column-0 `inputs:`/`outputs:` key). Any other
+  unappliable diff is left to `route_final_diff()`'s check of the pushed
+  diff; one the loop cannot push is held under `workflow_scope` with its
+  contract effect named as unchecked (#936, #955).
 - The final-diff check (`route_final_diff()`) also compares against the
   base side (`read_base_contents()`), so a contract removed is a breach,
   not only one added.
@@ -60,7 +66,7 @@ def route_final_diff(route_decision: RouteDecision, final_diff: dict) -> RouteDe
 
 | agent_proposal | backstop verdict | `reason` | Outcome |
 |---|---|---|---|
-| fix | under threshold, no contract change, drafted diff edits a file under `.github/workflows/`, `WING_COMMANDER_BOARD_CAN_PUSH_WORKFLOWS` off | `workflow_scope` | held: `board:stalled` and a comment naming the files, for a maintainer whose token has the `workflow` scope. Never filed as a spec. The fix job's pre-push check holds the same way when the fixer's real diff edits one |
+| fix | under threshold, no contract change, drafted diff edits a file under `.github/workflows/`, `WING_COMMANDER_BOARD_CAN_PUSH_WORKFLOWS` off | `workflow_scope` | held: `board:stalled` and a comment naming the files, for a maintainer whose token has the `workflow` scope; a held path whose drafted diff could not be applied to main is named in that comment as contract-unchecked. Never filed as a spec. The fix job's pre-push check holds the same way when the fixer's real diff edits one |
 
 ## Decision table
 
