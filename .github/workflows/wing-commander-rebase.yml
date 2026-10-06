@@ -49,7 +49,7 @@ jobs:
       id-token: write
     uses: ./.github/workflows/rebase.yml
     with:
-      model: ${{ vars.WING_COMMANDER_PLAN_MODEL || 'claude-sonnet-5' }}
+      model: ${{ vars.WING_COMMANDER_PLAN_MODEL || 'claude-sonnet-5-5' }}
       spec-prefix: ${{ vars.WING_COMMANDER_SPEC_PREFIX || 'spec/' }}
       runner: ${{ vars.WING_COMMANDER_RUNNER || 'ubuntu-latest' }}
       container-image: ${{ vars.WING_COMMANDER_CONTAINER_IMAGE || '' }}

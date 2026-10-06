@@ -32,7 +32,7 @@ inputs:
   model:
     description: >
       The literal model name the caller's own claude-code-action step used
-      (e.g. claude-sonnet-5). Never read from the transcript.
+      (e.g. claude-sonnet-5-5). Never read from the transcript.
     required: true
   max-turns:
     description: >

@@ -81,7 +81,7 @@ on:
         description: "Model for the classify and act agent steps (constitution II — sonnet default, opus opt-in, research.md D2)"
         type: string
         required: false
-        default: claude-sonnet-5
+        default: claude-sonnet-5-5
       max-turns:
         description: "Turn budget for the classify and act agent steps"
         type: number

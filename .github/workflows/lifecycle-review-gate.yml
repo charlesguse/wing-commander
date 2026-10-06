@@ -556,7 +556,7 @@ jobs:
           MODEL_VAR: ${{ vars.WING_COMMANDER_LIFECYCLE_REVIEW_GATE_MODEL }}
         run: |
           set -uo pipefail
-          echo "model=${MODEL_VAR:-claude-sonnet-5}" >> "$GITHUB_OUTPUT"
+          echo "model=${MODEL_VAR:-claude-sonnet-5-5}" >> "$GITHUB_OUTPUT"
 
       # T019/FR-008: a separate job, separate agent invocation -- no shared
       # transcript/memory with whatever implemented or finalized this PR,
