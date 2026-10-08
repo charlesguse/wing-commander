@@ -1196,7 +1196,7 @@ Common to every stage below:
 
 | | |
 |---|---|
-| Inputs | `issue-number` (number, required); `model` (string, `claude-opus-5`); `max-turns` (number, `50`) |
+| Inputs | `issue-number` (number, required); `model` (string, `claude-opus-5-5`); `max-turns` (number, `50`) |
 | Secrets | credentials + App (all stages; omitted below) |
 | Preconditions | spec-kit present in your checkout |
 | Side effects | `spec-draft/NNN-slug` branch (prefix configurable via `WING_COMMANDER_SPEC_DRAFT_PREFIX`, default `spec-draft/`) + draft spec PR to your default branch; `specs/NNN-slug/` with `spec.md`, `spec-meta.json`; `spec:NNN-slug` + `stage:spec` labels; clarification-questions or ready-for-review comment, flipped to `stage:clarify` while clarification questions are open |
@@ -1235,7 +1235,7 @@ jobs:
 
 | | |
 |---|---|
-| Inputs | `issue-number` (number, required); `comment-id` (number, required); `model` (string, `claude-opus-5`); `max-turns` (number, `65`) |
+| Inputs | `issue-number` (number, required); `comment-id` (number, required); `model` (string, `claude-opus-5-5`); `max-turns` (number, `65`) |
 | Preconditions | spec-kit present; issue carries a `spec:NNN-slug` label; open `spec-draft/NNN-slug` branch (prefix configurable via `WING_COMMANDER_SPEC_DRAFT_PREFIX`, default `spec-draft/`) |
 | Side effects | commits to the draft branch (PR updates automatically); 👀 reaction on the comment; updated PR body; status comment on the issue; `stage:clarify` applied on a follow-up question, or flipped back to `stage:spec` when the spec is ready for review |
 | Outputs | none |
@@ -1252,7 +1252,7 @@ The wrapper owns the commenter-authorization gate — see wrapper 2 above.
 
 | | |
 |---|---|
-| Inputs | `head-ref` (string) **or** `slug` (string) — one required; `merged` (boolean, `true`; `false` no-ops); `pr-number` (string, `""` — refusal comments only); `model` (string, `claude-sonnet-5`); `max-turns` (number, `110`) |
+| Inputs | `head-ref` (string) **or** `slug` (string) — one required; `merged` (boolean, `true`; `false` no-ops); `pr-number` (string, `""` — refusal comments only); `model` (string, `claude-sonnet-5-5`); `max-turns` (number, `110`) |
 | Preconditions | `specs/NNN-slug/spec.md` + `spec-meta.json` on your default branch; no existing `plan/NNN-slug` branch (prefix configurable via `WING_COMMANDER_PLAN_PREFIX`, default `plan/`) (duplicate guard) |
 | Side effects | `spec/NNN-slug` persistent branch (prefix configurable via `WING_COMMANDER_SPEC_PREFIX`, default `spec/`), created if absent; `plan/NNN-slug` branch (prefix configurable via `WING_COMMANDER_PLAN_PREFIX`, default `plan/`) + plan PR into the spec branch; lifecycle issue created for hand-submitted specs; `spec-meta.json` → `plan`; label flip |
 | Outputs | `spec-branch`, `spec-dir` |
@@ -1289,7 +1289,7 @@ jobs:
 
 | | |
 |---|---|
-| Inputs | `mode` (string `generate`\|`approved`, default `generate`); `head-ref` or `slug` (one required — `plan/…` for generate, `tasks/…` for approved); `restart` (boolean, `false` — admits a `stalled` spec on deliberate manual restart); `tasks-review` (string `auto`\|`pr`, default `auto`); `model` (string, `claude-sonnet-5`); `max-turns` (number, `60`); `next-workflow` (string, `""` = no dispatch) |
+| Inputs | `mode` (string `generate`\|`approved`, default `generate`); `head-ref` or `slug` (one required — `plan/…` for generate, `tasks/…` for approved); `restart` (boolean, `false` — admits a `stalled` spec on deliberate manual restart); `tasks-review` (string `auto`\|`pr`, default `auto`); `model` (string, `claude-sonnet-5-5`); `max-turns` (number, `60`); `next-workflow` (string, `""` = no dispatch) |
 | Preconditions | `generate`: `plan.md` on the spec branch; `spec-meta.json.stage == "plan"` (or `stalled` with `restart: true`). `approved`: `spec-meta.json.stage == "tasks"` |
 | Side effects | `auto`: `tasks.md` + stage flip committed to the spec branch, implement dispatched if configured. `pr`: `tasks/NNN-slug` branch (prefix configurable via `WING_COMMANDER_TASKS_PREFIX`, default `tasks/`) + review PR, no dispatch. `approved`: dispatch only |
 | Outputs | `spec-dir` |
@@ -1309,9 +1309,9 @@ itself.
 
 | | |
 |---|---|
-| Inputs | `spec-dir` (string, required); `issue-number` (number, required); `iteration` (number, required); `model` (string, `claude-sonnet-5`); `max-turns` (number, `180`); `max-iterations` (number, `5`); `self-workflow` (string, `""`); `next-workflow` (string, `""`) |
+| Inputs | `spec-dir` (string, required); `issue-number` (number, required); `iteration` (number, required); `model` (string, `claude-sonnet-5-5`); `max-turns` (number, `180`); `max-iterations` (number, `5`); `self-workflow` (string, `""`); `next-workflow` (string, `""`) |
 | Preconditions | `spec.md`/`plan.md`/`tasks.md`/`spec-meta.json` on the `spec/NNN-slug` branch; spec-meta agrees with the inputs; `(stage, iteration)` is the next expected step |
-| Side effects | ONE implement ⟲ converge cycle committed to the spec branch; per-cycle progress comment; tier-up retry on failure (→ `claude-opus-5`); stall marking + runbook comment on exhausted retry; dispatches `self-workflow` (next iteration) or `next-workflow` (finalize) when configured, otherwise reports to the issue and stops |
+| Side effects | ONE implement ⟲ converge cycle committed to the spec branch; per-cycle progress comment; tier-up retry on failure (→ `claude-opus-5-5`); stall marking + runbook comment on exhausted retry; dispatches `self-workflow` (next iteration) or `next-workflow` (finalize) when configured, otherwise reports to the issue and stops |
 | Outputs | `converged` (boolean; empty on failure/skip) |
 
 Findings filing: `findings-filing-enabled` (boolean, default `true`;
@@ -1402,7 +1402,7 @@ conventions your wrapper owns.
 
 | | |
 |---|---|
-| Inputs | `model` (string, `claude-sonnet-5`); `max-turns` (number, `50`) |
+| Inputs | `model` (string, `claude-sonnet-5-5`); `max-turns` (number, `50`) |
 | Preconditions | none — discovers in-flight `spec/*` branches itself; empty discovery is a clean no-op |
 | Side effects | per-branch rebase onto your default branch: clean → force-push with lease; conflicting → agent resolution with a deterministic scope check; unresolvable → abandoned untouched + `rebase:blocked` escalation comment (deduped by SHA marker) |
 | Outputs | none |
@@ -1418,7 +1418,7 @@ for the full routing design.
 
 | | |
 |---|---|
-| Inputs | `pr-number` (number, required); `event-kind` (string `review`\|`review-comment`\|`issue-comment`, required); `body` (string, required, untrusted); `actor-login`/`actor-association` (string, required); `comment-id`/`review-id` (number, `0`); `thread-path`/`thread-diff-hunk` (string, `""`); `confirm-categories` (string, `""` = act-then-report for every category); `confirm-environment` (string, `pr-conversation-confirm`); `confirm-timeout-minutes` (number, `1440` — how long a confirm-gated leg may wait on that environment's approval before GitHub cancels it outright); `model` (string, `claude-sonnet-5`); `max-turns` (number, `40`); `implement-workflow` (string, `""`) |
+| Inputs | `pr-number` (number, required); `event-kind` (string `review`\|`review-comment`\|`issue-comment`, required); `body` (string, required, untrusted); `actor-login`/`actor-association` (string, required); `comment-id`/`review-id` (number, `0`); `thread-path`/`thread-diff-hunk` (string, `""`); `confirm-categories` (string, `""` = act-then-report for every category); `confirm-environment` (string, `pr-conversation-confirm`); `confirm-timeout-minutes` (number, `1440` — how long a confirm-gated leg may wait on that environment's approval before GitHub cancels it outright); `model` (string, `claude-sonnet-5-5`); `max-turns` (number, `40`); `implement-workflow` (string, `""`) |
 | Preconditions | the PR's base is your default branch and its head starts with `spec-prefix` (not `spec-draft-prefix`/`plan-prefix`/`tasks-prefix`) — anything else short-circuits with no reply at all; the lifecycle issue is open |
 | Side effects | posts one `IntentAnnouncement` per classification before any mutation; routes per category — see the architecture doc for the full list |
 | Outputs | none — side effects only. (`classify-and-announce` has *job*-level outputs, which a caller cannot read; `needs.pr-conversation.outputs.qualifies` in your own wrapper resolves to an empty string.) |

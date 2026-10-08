@@ -270,10 +270,10 @@ with a ticketed one) and re-dispatches it automatically, at most once.
 | Work | Model |
 |---|---|
 | Triage, diff summaries, labels | `claude-haiku-4-5` |
-| Watchdog diagnosis | `claude-opus-5` (evidence adjudication under a strict schema — not the triage tier; see issue #124) |
-| specify / clarify | `claude-opus-5` (constitution v1.1.0: spec quality is bought up front) |
-| plan / tasks | `claude-sonnet-5` |
-| implement / converge | stage `model` input (default `claude-sonnet-5`); this repo's wrapper wires `vars.WING_COMMANDER_IMPLEMENT_MODEL` and the `model:opus` label opt-in into it |
+| Watchdog diagnosis | `claude-opus-5-5` (evidence adjudication under a strict schema — not the triage tier; see issue #124) |
+| specify / clarify | `claude-opus-5-5` (constitution v1.1.0: spec quality is bought up front) |
+| plan / tasks | `claude-sonnet-5-5` |
+| implement / converge | stage `model` input (default `claude-sonnet-5-5`); this repo's wrapper wires `vars.WING_COMMANDER_IMPLEMENT_MODEL` and the `model:opus` label opt-in into it |
 
 Every agent step declares `--model` and `--max-turns`. Each is followed by a
 deterministic `.github/actions/wing-commander-metrics-summary` step that reads the
@@ -543,7 +543,7 @@ idiom as the plan stage).
 FR-012); idempotency-guard on `spec-meta.json` `stage == "plan"` (duplicate
 notifications no-op, FR-011; a manual dispatch may also proceed from
 `"stalled"` — that is the restart path). Then run `/speckit-tasks`
-(`claude-sonnet-5`, `SPECIFY_FEATURE_DIRECTORY` set), gated by
+(`claude-sonnet-5-5`, `SPECIFY_FEATURE_DIRECTORY` set), gated by
 `vars.WING_COMMANDER_TASKS_REVIEW`:
 - `auto` (default, any other value falls open to it): commit `tasks.md` +
   `spec-meta.json` (`stage: "tasks"`) directly to `spec/NNN-slug`; post a task
@@ -601,8 +601,8 @@ vars.WING_COMMANDER_MAX_ITERATIONS`).
 5. **Failure ≠ non-convergence** (FR-013): an outright pass failure (step
    fails, or `spec-meta.json` didn't advance as instructed — read through the
    `wing-commander-spec-meta` composite, #340) auto-retries the
-   same iteration once, one model tier up (`claude-sonnet-5` →
-   `claude-opus-5`). A failed retry — or a failure already on the top
+   same iteration once, one model tier up (`claude-sonnet-5-5` →
+   `claude-opus-5-5`). A failed retry — or a failure already on the top
    tier — marks the spec `stalled` (label, `spec-meta.json`, issue comment);
    restart is manual: re-dispatch the workflow with the same iteration.
 
@@ -679,7 +679,7 @@ unidentifiable ones, a branch whose PR has merged, and one whose lifecycle
 issue is closed with no open PR from the branch), then fans out one isolated `rebase` matrix job per
 branch. Each runs `git rebase origin/main`; clean ⇒ `push --force-with-lease`
 (a rejected lease means the branch moved meanwhile — skip silently, retry next
-run); conflicts ⇒ claude-code-action (`--model claude-sonnet-5`, prompt scoped
+run); conflicts ⇒ claude-code-action (`--model claude-sonnet-5-5`, prompt scoped
 to resolving the in-progress rebase without unrelated edits, verified by a
 deterministic per-commit file-scope check before publish); still stuck ⇒ abort
 the rebase (branch left byte-for-byte untouched) and comment on the lifecycle
@@ -966,7 +966,7 @@ billed jobs, `collect` and the always-on `report-unhandled-failure`.
   `metrics-record*` artifact, and Gate 74 holds that the cumulative rollup
   does not list it at all — never as a record that existed and could not be
   retrieved.
-- `diagnose` — one `claude-opus-5`, read-only, structured-output step
+- `diagnose` — one `claude-opus-5-5`, read-only, structured-output step
   (no write tools, no `git`/`gh` write access) turning signals into zero or
   more Findings. `signals.json` and anything read is framed as untrusted
   data, never instructions (FR-023). Zero Findings ⇒ "passed inspection"
@@ -1197,7 +1197,7 @@ standing with this stage. A
   PR is an implementation PR this stage acts on (`spec/NNN-slug → default
   branch`, never a draft-spec/plan/tasks branch); re-checks the stage-level
   authorized-actor gate; stages the request body as untrusted data, never
-  interpolated into a prompt; a `claude-sonnet-5`/`claude-opus-5` step
+  interpolated into a prompt; a `claude-sonnet-5-5`/`claude-opus-5-5` step
   (strictly read-only tools) classifies each distinguishable request in the
   comment into one of nine categories — `in-scope-change`, `question`,
   `needs-info`, `push-back`, `new-functionality`, `small-unrelated-change`,
@@ -1300,7 +1300,7 @@ one active upgrade cycle at a time):
   decision). The tracking issue's settle marker gains two sub-fields:
   `guard-pr` (the narrated PR, written once per blocking PR) and
   `guard-checked` (a liveness timestamp refreshed every guarded run).
-  The one agent step (`claude-sonnet-5`, read-only, structured output) that
+  The one agent step (`claude-sonnet-5-5`, read-only, structured output) that
   follows decides `clean-bump` (⇒ `prepare`), `needs-migration` (⇒ routed to
   a maintainer, no diff), or `ambiguous-options` (⇒ a `kind: action` question
   posted, the marker flagged `awaiting-decision=true`, the cycle paused).

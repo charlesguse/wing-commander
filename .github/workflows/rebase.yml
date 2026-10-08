@@ -23,7 +23,7 @@ on:
         description: "Model for the conflict-resolution agent (constitution II tiering default)"
         type: string
         required: false
-        default: claude-sonnet-5
+        default: claude-sonnet-5-5
       max-turns:
         description: "Turn budget for the conflict-resolution agent"
         type: number

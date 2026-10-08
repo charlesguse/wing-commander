@@ -1461,8 +1461,8 @@ jobs:
           retention-days: 90
 
   # research.md D18: model tier resolution for the item this run selected --
-  # default vars.WING_COMMANDER_BOARD_LOOP_MODEL (fallback claude-sonnet-5),
-  # escalated to claude-opus-5 when the selected issue carries model:opus.
+  # default vars.WING_COMMANDER_BOARD_LOOP_MODEL (fallback claude-sonnet-5-5),
+  # escalated to claude-opus-5-5 when the selected issue carries model:opus.
   # The fix/review jobs a later phase adds re-check the PR's own labels
   # instead, per research.md D18's issue-for-triage/route,
   # PR-for-fix/review split.
@@ -1485,9 +1485,9 @@ jobs:
           ISSUE_NUMBER: ${{ needs.select.outputs.issue-number || inputs.directed-issue }}
         run: |
           set -uo pipefail
-          tier="${MODEL_VAR:-claude-sonnet-5}"
+          tier="${MODEL_VAR:-claude-sonnet-5-5}"
           if gh issue view "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --json labels --jq '.labels[].name' | grep -qx 'model:opus'; then
-            tier="claude-opus-5"
+            tier="claude-opus-5-5"
           fi
           echo "tier=$tier" >> "$GITHUB_OUTPUT"
           echo "Board loop model for this run: $tier" >> "$GITHUB_STEP_SUMMARY"

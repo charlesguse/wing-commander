@@ -6,6 +6,16 @@ A new amendment adds its report to the top of this list (below this
 header), not to `constitution.md` -- see CLAUDE.md.
 
 <!--
+Sync Impact Report — 2026-10-05
+Version change: 2.3.0 → 2.3.1 (PATCH: clarification — the Opus tier's model identifier moves from claude-opus-5 to claude-opus-5-5 and the Sonnet tier's from claude-sonnet-5 to claude-sonnet-5-5; the tiering itself is unchanged, only which models the tiers name. claude-haiku-4-5 is still the current Haiku and stays)
+Modified principles: II. Cost-Conscious Model Tiering (identifiers only — the watchdog diagnose carve-out, the spec/clarify tier, the plan/tasks tier, and the implementation default and opt-in tiers)
+Modified sections: none
+Added sections: none
+Removed sections: none
+Templates requiring updates: none (plan-template's Constitution Check is generic); docs/setup.md, docs/adoption.md and docs/architecture.md updated in same PR
+Notes: defaults changed in the same PR: the workflow_call defaults in intake.yml, clarify.yml, plan.yml, tasks.yml, rebase.yml, implement.yml (model, escalation-model), pr-conversation.yml, watchdog.yml (diagnose-model) and auto-update-spec-kit.yml (both model inputs); the in-step fallbacks in lifecycle-review-gate.yml and board-loop.yml (including board-loop's model:opus tier); and the wrapper fallbacks in wing-commander-1/2/3/4/5/9, -auto-update-spec-kit and -rebase (including the model:opus label tiers). These are workflow_call defaults, so adopters pinning a tag are unaffected until they move the pin, and anyone who has set a WING_COMMANDER_*_MODEL repository variable keeps their own value; this repository's own WING_COMMANDER_IMPLEMENT_MODEL (claude-sonnet-5, equal to the old default) was deleted so implement follows the default. Left on the old identifiers on purpose: watchdog.yml's deprecated propose-fix-model default (no step reads it; the input is slated for removal at the next major version), and the historical-tense mentions in wing-commander-8-watchdog.yml's pause comment and docs/architecture.md's pre-spec-024 ladder and fingerprint-drift account, which name the model that actually ran. Opus 5.5 is priced below Opus 5 ($4/$20 vs $5/$25 per MTok) and Sonnet 5.5 matches Sonnet 5 ($2/$10), so the amendment does not raise cost.
+-->
+<!--
 Sync Impact Report — 2026-10-01
 Version change: 2.2.0 → 2.3.0 (MINOR: Principle V gains one sentence stating that an automated stage's agent MUST NOT write under `.claude/` with `Edit`/`Write`, for any of its three parts — the vendored `.claude/skills/speckit-*` artifacts under the Spec Kit pin, this repository's own skills, and the control surface (`.claude/settings.json`, `.claude/hooks/`) — denying an agent the ability to rewrite its own permission settings and hooks mid-run, while the deterministic, non-agent writes `auto-update-spec-kit.yml` already performs under `.claude/skills/speckit-*` remain permitted. This is a materially expanded statement of the existing "least-privilege tool allowlist" sentence, not a new principle, so MINOR rather than MAJOR)
 Modified principles: V. Security — Untrusted Content Is Never Instructions (one sentence added mid-paragraph, immediately after the existing least-privilege/web-tools sentence; the entry-authorization, actor-check, tool-allowlist, trusted-ref and App-not-PAT rules are otherwise unchanged)

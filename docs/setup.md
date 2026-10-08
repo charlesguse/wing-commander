@@ -101,12 +101,12 @@ create them now so the stubs' documentation stays true):
 |---|---|---|
 | `WING_COMMANDER_PLAN_REVIEW` | `pr` | `pr` = open a plan PR and wait for a human merge; `auto` = commit the plan directly and dispatch the tasks stage |
 | `WING_COMMANDER_TASKS_REVIEW` | `auto` | `auto` = commit tasks.md straight to the spec branch; `pr` = open a tasks PR |
-| `WING_COMMANDER_IMPLEMENT_MODEL` | `claude-sonnet-5` | Model for implement/converge; set `claude-opus-5` for hard specs |
-| `WING_COMMANDER_SPEC_MODEL` | `claude-opus-5` | Model for the spec/clarify tier (intake and clarify stages) |
-| `WING_COMMANDER_PLAN_MODEL` | `claude-sonnet-5` | Model for the plan/tasks tier (plan, tasks, and rebase stages) |
+| `WING_COMMANDER_IMPLEMENT_MODEL` | `claude-sonnet-5-5` | Model for implement/converge; set `claude-opus-5-5` for hard specs |
+| `WING_COMMANDER_SPEC_MODEL` | `claude-opus-5-5` | Model for the spec/clarify tier (intake and clarify stages) |
+| `WING_COMMANDER_PLAN_MODEL` | `claude-sonnet-5-5` | Model for the plan/tasks tier (plan, tasks, and rebase stages) |
 | `WING_COMMANDER_SUMMARY_MODEL` | `claude-haiku-4-5` | Model for the triage/summary tier (finalize, cleanup, and implement's progress comments) |
-| `WING_COMMANDER_DIAGNOSE_MODEL` | `claude-opus-5` | Model for the watchdog's diagnose step. Its own knob, not the summary tier's — diagnose adjudicates multi-signal evidence against a strict schema and needs the headroom |
-| `WING_COMMANDER_IMPLEMENT_ESCALATION_MODEL` | `claude-opus-5` | Model for implement's one-tier-up retry after a failed attempt |
+| `WING_COMMANDER_DIAGNOSE_MODEL` | `claude-opus-5-5` | Model for the watchdog's diagnose step. Its own knob, not the summary tier's — diagnose adjudicates multi-signal evidence against a strict schema and needs the headroom |
+| `WING_COMMANDER_IMPLEMENT_ESCALATION_MODEL` | `claude-opus-5-5` | Model for implement's one-tier-up retry after a failed attempt |
 | `WING_COMMANDER_SPEC_DRAFT_PREFIX` | `spec-draft/` | Branch prefix for the draft spec branch (default `spec-draft/`) |
 | `WING_COMMANDER_SPEC_PREFIX` | `spec/` | Branch prefix for the persistent spec branch (default `spec/`) |
 | `WING_COMMANDER_PLAN_PREFIX` | `plan/` | Branch prefix for the plan branch (default `plan/`) |
@@ -120,11 +120,11 @@ create them now so the stubs' documentation stays true):
 | `WING_COMMANDER_TURN_BUDGET_CLIMB_FRACTION` | `0.6` | Max-consumed-ceiling-fraction within that window required to trigger the `elevated`/`critical` band |
 | `WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_PAUSED` | unset (not paused) | `true` = kill switch for the Spec Kit auto-updater. Read wrapper-side (`wing-commander-auto-update-spec-kit.yml`'s job-level `if:`) so no job starts at all — nothing detected, no agent invoked, nothing written |
 | `WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_STABILIZATION_CHECKS` | `1` | Consecutive daily checks a newly detected upstream version must be observed unchanged before an upgrade is prepared (a settle window, not a fixed calendar delay). Raise it to let a fast-moving patch stream settle longer |
-| `WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_MODEL` | `claude-sonnet-5` | Model for the auto-updater's `evaluate-path` judgment step (clean-bump / needs-migration / ambiguous-options) |
-| `WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_E2E_STAGE_MODEL` | `claude-sonnet-5` | Model for the `e2e-stage` disposable smoke-test agent step (minor/major candidates only) — a cheaper tier than a foundational spec, since its output is asserted only for existence/shape and never read by a human |
+| `WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_MODEL` | `claude-sonnet-5-5` | Model for the auto-updater's `evaluate-path` judgment step (clean-bump / needs-migration / ambiguous-options) |
+| `WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_E2E_STAGE_MODEL` | `claude-sonnet-5-5` | Model for the `e2e-stage` disposable smoke-test agent step (minor/major candidates only) — a cheaper tier than a foundational spec, since its output is asserted only for existence/shape and never read by a human |
 | `WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_E2E_STAGE_MAX_TURNS` | `20` | Max turns for the `e2e-stage` agent step |
 | `WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_E2E_SCRATCH_REPO` | unset | `OWNER/NAME` of a **pre-created**, disposable repository the `e2e-stage` scaffolds each candidate into, on a branch it force-resets per run. Stand one up with `.github/scripts/provision-e2e-target.sh --repo OWNER/NAME --profile spec-kit-scratch` (run locally, under your own `gh` authentication — never in Actions), then install the wing-commander App on it (Contents: read and write is all it needs) — the App installation is what the job needs, because `e2e-stage` mints a second installation token scoped to that repository alone; if it lives under a different owner than this repository, the App needs its own installation there. The pipeline never creates or deletes repositories — no App installation token gains any new permission by this script's existence, an App installation token cannot create one on a user account, and the `Administration: write` needed to delete one would also let every stage delete *this* repository; retiring a provisioned target is a manual maintainer action in the GitHub UI, and no entry point in this repository offers to delete or archive one. Unset, minor/major candidates fail verification and are not adopted; patch candidates are unaffected |
-| `WING_COMMANDER_PR_CONVERSATION_MODEL` | `claude-sonnet-5` | Model for the PR conversation stage's classify and act steps; a PR's `model:opus` label escalates to `claude-opus-5` regardless |
+| `WING_COMMANDER_PR_CONVERSATION_MODEL` | `claude-sonnet-5-5` | Model for the PR conversation stage's classify and act steps; a PR's `model:opus` label escalates to `claude-opus-5-5` regardless |
 | `WING_COMMANDER_PR_CONVERSATION_CONFIRM_CATEGORIES` | unset (act-then-report for every category) | Comma-separated `RequestClassification.category` values requiring propose-and-confirm before `act` mutates anything, or the literal `all`. Spaces around the commas and a trailing comma are tolerated; an unrecognised category name is silently ignored, so check spelling against `contracts/classification-schema.md` |
 | `WING_COMMANDER_PR_CONVERSATION_CONFIRM_ENVIRONMENT` | `pr-conversation-confirm` | Deployment environment name the `act` job binds to for a classification requiring confirmation |
 | `WING_COMMANDER_RUNNER` | `ubuntu-latest` | Runner label every stage job runs on — a single label, or a JSON array (e.g. `["self-hosted","linux","x64"]`) applied as a conjunction — see [docs/adoption.md](adoption.md#runners-and-container-images) |
@@ -138,7 +138,7 @@ create them now so the stubs' documentation stays true):
 | `WING_COMMANDER_LIFECYCLE_REVIEW_GATE_PAUSED` | unset (not paused) | `true` = kill switch for `lifecycle-review-gate.yml` (specs/062-lifecycle-review-gate). Stops both the review round and the merge step: set before a run starts, no PR is selected, no round is spent, and nothing merges. Set while a run is already in flight, it is not guaranteed to be seen by that run — the per-step re-checks read `vars` as the runner received it when their job started, so they are defence in depth, not a mid-run kill — and the pause takes effect on the next run; the bound that always holds is the `kill-switch` job plus the job-level `if:` on every job below it (see the canonical comment on `readiness`'s `KILL_SWITCH_PAUSED` in the workflow). A stand-down a run does see is recorded on the lifecycle issue |
 | `WING_COMMANDER_LIFECYCLE_AUTO_MERGE` | unset (off) | Only the exact value `true` lets `lifecycle-review-gate.yml`'s `merge` job run at all, and only when the round's own eight preconditions (readiness plus round-clean, zero open findings, no unresolved human changes-requested review) all hold — see `lifecycle_merge_preconditions.py`. Off (the shipped default), the gate still reviews and reports on every eligible pull request; a human merges (constitution X, 2.1.0). A pull request touching `.github/workflows/` is refused for lack of the Workflows permission and handed to a maintainer rather than retried or routed around |
 | `WING_COMMANDER_BOARD_CAN_PUSH_WORKFLOWS` | unset (off) | Only the exact value `true` lets the board loop (`board-loop.yml`) fix an issue whose change edits a file under `.github/workflows/`. Set it **only after** granting the App **Workflows: Read and write** — an extra permission beyond §1's three, which GitHub requires for any push that changes a workflow file. Off, such a fix is held: the issue gets `board:stalled` and a comment naming the workflow files, for a maintainer whose own token has the `workflow` scope. It is never routed into a spec. Granting the permission also lets an agent-written workflow change reach a pull request, though never `main` without the usual merge |
-| `WING_COMMANDER_LIFECYCLE_REVIEW_GATE_MODEL` | `claude-sonnet-5` | Model for `lifecycle-review-gate.yml`'s independent reviewer step |
+| `WING_COMMANDER_LIFECYCLE_REVIEW_GATE_MODEL` | `claude-sonnet-5-5` | Model for `lifecycle-review-gate.yml`'s independent reviewer step |
 
 The watchdog reads no consuming-repo config file. It is a pure reporter: it
 files, comments on, or reopens one `pipeline-defect` issue per finding and
@@ -178,7 +178,7 @@ Create these labels (Issues → Labels):
 | `stage:implement` | Implement ⟲ converge loop running |
 | `stage:review` | Final PR awaiting human review |
 | `stage:done` | Lifecycle complete |
-| `model:opus` | Opt this spec's implementation into `claude-opus-5` |
+| `model:opus` | Opt this spec's implementation into `claude-opus-5-5` |
 | `disposition:confirmed` | **Watchdog precision.** A maintainer applying this to a `pipeline-defect` issue records that the finding was genuine |
 | `disposition:false-positive` | The counterpart: the watchdog's finding was not a real defect |
 | `disposition:duplicate` | Applied by the board loop (`board-loop.yml`) when it files a spec proposal, to the originating issue it closes as a duplicate of that proposal — re-admitted only by a maintainer reopening it once the linked proposal has closed (FR-006), never by label removal alone |
@@ -208,7 +208,7 @@ gh label create stage:tasks     --color 1D76DB --description "Tasks being genera
 gh label create stage:implement --color 1D76DB --description "Implement/converge loop running"
 gh label create stage:review    --color FBCA04 --description "Final PR awaiting review"
 gh label create stage:done      --color 5319E7 --description "Lifecycle complete"
-gh label create model:opus      --color D93F0B --description "Use claude-opus-5 for implementation"
+gh label create model:opus      --color D93F0B --description "Use claude-opus-5-5 for implementation"
 gh label create disposition:confirmed      --color 0E8A16 --description "Watchdog finding confirmed genuine by a maintainer"
 gh label create disposition:false-positive --color B60205 --description "Watchdog finding judged a false positive by a maintainer"
 gh label create disposition:duplicate      --color B60205 --description "Board loop: this issue was closed as a duplicate of the spec-request routed for it"
@@ -239,7 +239,7 @@ gh label create board:owned                 --color 0E8A16 --description "Board 
   version, move both pins, and re-verify `.specify/scripts` behavior before merging.
 - Model usage draws on your Claude subscription limits. Model tiers are set
   by the `WING_COMMANDER_*_MODEL` variables above (spec/clarify default to
-  `claude-opus-5`, plan/tasks and implement to `claude-sonnet-5`, summaries
+  `claude-opus-5-5`, plan/tasks and implement to `claude-sonnet-5-5`, summaries
   to `claude-haiku-4-5`), all with bounded `--max-turns`; the implement
   tier's `model:opus` opt-in is where the cost swing is largest.
 - `auto-release.yml`'s own end-to-end run (this repository's, not an
