@@ -152,17 +152,25 @@ def classify(snap):
                 ref = "#{0} spec {1}".format(issue["number"], spec.split(":", 1)[1].split("-", 1)[0])
             who, what = lifecycle_wait(issue, prs, switches)
             (owner if who == "owner" else pipeline).append((ref, what, age))
-        elif "spec-proposal" in labels:
-            owner.append((ref, "promote it with `spec-request`, or close it", age))
-        elif "board:stalled" in labels:
-            owner.append((ref, "held for a maintainer (`board:stalled`)", age))
         elif AUTO_RELEASE_FAILED_LABEL in labels:
             # The board loop never acts on it (board_eligibility.
             # SELF_MANAGED_LABELS; verify-board-status.py holds the label
             # there), so nothing but the owner fixes its cause. auto-release
             # closes it only once every mode its record names has passed
-            # (_shared/auto-release-outstanding-modes.sh).
-            owner.append((ref, "fix the release failure; auto-release closes this once every mode it records has passed", age))
+            # (_shared/auto-release-outstanding-modes.sh). Checked before
+            # spec-proposal and board:stalled: "close it" would erase the
+            # open failure, and releasing a board:stalled hold changes
+            # nothing while the loop excludes the label anyway. While
+            # WING_COMMANDER_AUTO_RELEASE_PAUSED is on auto-release.yml's
+            # detect job never runs, so nothing closes it until unpaused.
+            what = "fix the release failure; auto-release closes this once every mode it records has passed"
+            if _switch_on(switches.get("auto_release_paused")):
+                what += " -- but auto-release is paused, so it cannot close this until the pause is lifted"
+            owner.append((ref, what, age))
+        elif "spec-proposal" in labels:
+            owner.append((ref, "promote it with `spec-request`, or close it", age))
+        elif "board:stalled" in labels:
+            owner.append((ref, "held for a maintainer (`board:stalled`)", age))
         else:
             names = sorted(labels)
             family = "unlabelled"

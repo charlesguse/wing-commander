@@ -123,6 +123,22 @@ def render_half():
           bs.AUTO_RELEASE_FAILED_LABEL in be.SELF_MANAGED_LABELS
           and be.is_excluded({"state": "open", "labels": [{"name": bs.AUTO_RELEASE_FAILED_LABEL}]})[0],
           be.SELF_MANAGED_LABELS)
+    # auto-release.yml's detect job is skipped while the pause switch is on
+    # (SNAP has it on), so the row must not promise a self-close then.
+    check("a paused auto-release is named on the auto-release wait",
+          "auto-release is paused" in owner[979][1], owner[979][1])
+    running = rows_by_number(bs.classify(dict(SNAP, switches=dict(SNAP["switches"], auto_release_paused="")))["owner"])
+    check("an unpaused auto-release wait does not mention a pause",
+          "paused" not in running[979][1], running[979][1])
+    # The auto-release row outranks spec-proposal ("close it" would erase
+    # the open failure) and board:stalled (the loop excludes it either way).
+    mixed = rows_by_number(bs.classify(dict(SNAP, issues=[
+        issue(985, ["auto-release:failed", "spec-proposal"]),
+        issue(986, ["auto-release:failed", "board:stalled"]),
+    ]))["owner"])
+    for n in (985, 986):
+        check("an auto-release failure with another owner label gets the auto-release wait (#{0})".format(n),
+              n in mixed and mixed[n][1].startswith("fix the release failure"), mixed.get(n))
     check("a lifecycle row names its spec number", owner[675][0] == "#675 spec 090", owner[675][0])
     sig = rows["signals"]
     check("found-by:* issues group together", sig.get("found-by:*") == [902, 911], sig)
