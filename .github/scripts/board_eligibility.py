@@ -69,8 +69,9 @@ LIFECYCLE_LABELS = ("spec-proposal", "spec-request")
 # upgrades that stage files under other auto-update:* labels stay eligible.
 # auto-release:failed is the same shape: auto-release.yml files it, appends
 # later failures to it, finds it as the one open issue with that label, and
-# alone closes it -- only after a pass in the mode that failed, re-verifying
-# that mode on a quiet day while it stays open (#977). Routing it to a spec
+# alone closes it -- only once every mode its record names has passed,
+# re-verifying an outstanding mode on a quiet day while it stays open (#966,
+# #977; _shared/auto-release-outstanding-modes.sh). Routing it to a spec
 # proposal closed it as a duplicate and erased the open failure (#949 ->
 # #950, #979 -> #980). It stays in PIPELINE_LABEL_EXACT (FR-006 is about who
 # filed it); exclusion wins over eligibility, so the loop never triages,

@@ -57,9 +57,10 @@ first run); `spec-proposal` or `spec-request` (`LIFECYCLE_LABELS`, board
 reset of 2026-10-01); a stage's own self-managed tracker
 (`SELF_MANAGED_LABELS`): `auto-update:tracking`, whose open issue the
 auto-update stage reads its settle state from, and `auto-release:failed`,
-which auto-release.yml alone files, appends to and closes after a pass in
-the failed mode (#977). Both stay pipeline-labeled above; exclusion wins,
-so the loop never triages, routes or closes them (closing
+which auto-release.yml alone files, appends to and closes once every mode
+its record names has passed (#966, #977). Both stay pipeline-labeled
+above; exclusion wins, so the loop never triages, routes or closes them
+(closing
 `auto-release:failed` as a spec proposal's duplicate erased the open
 failure, #979 -> #980). Board status lists an open `auto-release:failed`
 issue under "Waiting on you".

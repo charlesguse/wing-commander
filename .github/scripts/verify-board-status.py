@@ -23,6 +23,7 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import wc_board_status as bs  # noqa: E402
+import board_eligibility as be  # noqa: E402
 
 failures = []
 
@@ -112,6 +113,16 @@ def render_half():
     check("a board:stalled hold waits on the owner", 780 in owner, owner.get(780))
     check("an auto-release failure waits on the owner (the board loop never acts on it)",
           979 in owner and "auto-release:failed" not in rows["signals"], owner.get(979))
+    # #977: report closes the issue only when nothing stays outstanding --
+    # a pass in one mode leaves a later-appended other-mode failure open.
+    check("the auto-release wait says every recorded mode must pass, not just one",
+          979 in owner and "every mode" in owner[979][1] and "that mode" not in owner[979][1], owner.get(979))
+    # "the board loop never acts on it" holds only while the label is in
+    # board_eligibility.SELF_MANAGED_LABELS, the loop's one exclusion home.
+    check("the owner-only auto-release label is one the board loop excludes",
+          bs.AUTO_RELEASE_FAILED_LABEL in be.SELF_MANAGED_LABELS
+          and be.is_excluded({"state": "open", "labels": [{"name": bs.AUTO_RELEASE_FAILED_LABEL}]})[0],
+          be.SELF_MANAGED_LABELS)
     check("a lifecycle row names its spec number", owner[675][0] == "#675 spec 090", owner[675][0])
     sig = rows["signals"]
     check("found-by:* issues group together", sig.get("found-by:*") == [902, 911], sig)

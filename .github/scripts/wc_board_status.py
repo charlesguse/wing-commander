@@ -30,6 +30,7 @@ import tempfile
 MARKER = "<!-- wing-commander-board-status -->"
 TITLE = "Board status"
 TRACKING_LABEL = "disposition:tracking"
+AUTO_RELEASE_FAILED_LABEL = "auto-release:failed"
 LINT_WORKFLOW = "lint-workflows.yml"
 TITLE_LIMIT = 80
 
@@ -155,10 +156,13 @@ def classify(snap):
             owner.append((ref, "promote it with `spec-request`, or close it", age))
         elif "board:stalled" in labels:
             owner.append((ref, "held for a maintainer (`board:stalled`)", age))
-        elif "auto-release:failed" in labels:
+        elif AUTO_RELEASE_FAILED_LABEL in labels:
             # The board loop never acts on it (board_eligibility.
-            # SELF_MANAGED_LABELS), so nothing but the owner fixes its cause.
-            owner.append((ref, "fix the release failure; auto-release closes this after a pass in that mode", age))
+            # SELF_MANAGED_LABELS; verify-board-status.py holds the label
+            # there), so nothing but the owner fixes its cause. auto-release
+            # closes it only once every mode its record names has passed
+            # (_shared/auto-release-outstanding-modes.sh).
+            owner.append((ref, "fix the release failure; auto-release closes this once every mode it records has passed", age))
         else:
             names = sorted(labels)
             family = "unlabelled"
