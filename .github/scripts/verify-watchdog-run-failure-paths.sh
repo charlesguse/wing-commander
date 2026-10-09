@@ -79,7 +79,7 @@ case "$1" in
     exit 1;;
   issue)
     case "$2" in
-      list)    cat "$WD_FIXTURES/issue-search.txt" 2>/dev/null || echo -n "";;
+      list)    cat "$WD_FIXTURES/issue-search.json" 2>/dev/null || echo '[]';;
       comment) exit 0;;
       create)  exit 0;;
       *) echo "gh-stub: unmodelled issue subcommand $2" >&2; exit 1;;
@@ -94,7 +94,8 @@ mkdir -p "$work/fixtures"
 cat > "$work/fixtures/run.json" <<'JSON'
 {"id": 9001, "conclusion": "success", "workflow_id": 777,
  "run_started_at": "2026-08-25T01:00:00Z", "updated_at": "2026-08-25T01:02:00Z",
- "html_url": "https://example.invalid/runs/9001"}
+ "display_title": "inspect Wing Commander · 1 intake run 8999 (failure)",
+ "html_url": "https://example.invalid/o/r/actions/runs/9001"}
 JSON
 # Steps carry the exact display names the verifier keys on; conclusions are
 # the healthy set (reporters skipped, read-back and the safety-net gate
@@ -107,8 +108,13 @@ cat > "$work/fixtures/jobs.json" <<'JSON'
      {"name": "Report \"could not inspect\" to lifecycle issue", "conclusion": "skipped"}
    ]},
   {"id": 2, "name": "watchdog / diagnose", "conclusion": "success",
+   "html_url": "https://example.invalid/o/r/actions/runs/9001/job/2",
    "started_at": "2026-08-25T01:00:40Z", "completed_at": "2026-08-25T01:01:40Z",
    "steps": [
+     {"number": 15, "name": "Diagnose", "conclusion": "success",
+      "started_at": "2026-08-25T01:00:50Z", "completed_at": "2026-08-25T01:01:10Z"},
+     {"number": 16, "name": "Compute agent run verdict", "conclusion": "success",
+      "started_at": "2026-08-25T01:01:10Z", "completed_at": "2026-08-25T01:01:11Z"},
      {"name": "Report \"diagnose failed\" to lifecycle issue", "conclusion": "skipped"},
      {"name": "Read back diagnose outcome", "conclusion": "success"}
    ]},
@@ -134,7 +140,7 @@ cat > "$work/fixtures/artifact.json" <<'JSON'
   "result": "no findings"}]
 JSON
 printf 'clean diagnose log with no crash signatures\n' > "$work/fixtures/diagnose.log"
-printf '' > "$work/fixtures/issue-search.txt"
+printf '[]\n' > "$work/fixtures/issue-search.json"
 
 # ── Scenario driver ─────────────────────────────────────────────────────────
 # run_scenario <script> <stub-fail-regexes> <CREATE_ISSUE> -> populates
@@ -208,19 +214,83 @@ scenarios() {
     fail "$tag s5: expected exit 1, zero 'issue create' calls and a 'not filing' notice; got rc=$rc create-calls=$created"
   fi
 
-  # s6: same failing run, search WORKS and finds an existing issue -> the
-  # comment arm runs and create still does not (proves the stub returns the
-  # real shape and the dedup arm consumes it).
-  printf '42\n' > "$work/fixtures/issue-search.txt"
+  # s6: same failing run, search WORKS. With nothing found, a new issue is
+  # created whose title and body carry this failure's fingerprint; with an
+  # open, board-eligible issue carrying that same fingerprint marker, the
+  # comment arm runs and create does not (proves the stub returns the real
+  # shape and the dedup arm consumes it).
+  run_scenario "$script" '' true
+  fp="$(grep -oE 'watchdog-verify-fingerprint: [0-9a-f]{12}' "$work/calls.log" | head -1 | grep -oE '[0-9a-f]{12}$')"
+  created="$(grep -c '^issue create' "$work/calls.log" || true)"
+  if [ "$rc" = "1" ] && [ "$created" = "1" ] && [ -n "$fp" ] \
+     && grep -qF "verification [$fp] --label" "$work/calls.log"; then
+    ok "$tag s6: nothing found -> one new issue, fingerprint $fp in its title and body"
+  else
+    fail "$tag s6: expected one 'issue create' carrying a fingerprint in title and body; got create=$created fp='$fp' rc=$rc"
+  fi
+  # issue_fixture <labels-json> <fingerprint> -> the search finds one open
+  # issue, #42, under the title base with that fingerprint's marker.
+  issue_fixture() {
+    jq -n --argjson labels "$1" --arg fp "$2" \
+      '[{number: 42, state: "OPEN", labels: $labels,
+         title: ("watchdog-verify: stage 8 run failed deterministic verification [" + $fp + "]"),
+         body: ("earlier failure\n<!-- watchdog-verify-fingerprint: " + $fp + " -->")}]' \
+      > "$work/fixtures/issue-search.json"
+  }
+  issue_fixture '[{"name": "pipeline-defect"}]' "$fp"
   run_scenario "$script" '' true
   commented="$(grep -c '^issue comment 42' "$work/calls.log" || true)"
   created="$(grep -c '^issue create' "$work/calls.log" || true)"
   if [ "$rc" = "1" ] && [ "$commented" = "1" ] && [ "$created" = "0" ]; then
-    ok "$tag s6: a found issue gets a comment, not a duplicate"
+    ok "$tag s6: a found issue with the same fingerprint gets a comment, not a duplicate"
   else
     fail "$tag s6: expected one 'issue comment 42' and zero creates; got comment=$commented create=$created rc=$rc"
   fi
-  printf '' > "$work/fixtures/issue-search.txt"
+
+  # s16 (#962): the same-fingerprint issue carries board:stalled, which the
+  # board loop never re-reads -> a comment there is invisible, so a new
+  # issue is filed instead.
+  issue_fixture '[{"name": "pipeline-defect"}, {"name": "board:stalled"}]' "$fp"
+  run_scenario "$script" '' true
+  commented="$(grep -c '^issue comment' "$work/calls.log" || true)"
+  created="$(grep -c '^issue create' "$work/calls.log" || true)"
+  if [ "$rc" = "1" ] && [ "$commented" = "0" ] && [ "$created" = "1" ]; then
+    ok "$tag s16: a board:stalled match is not appended to -- a new issue is filed"
+  else
+    fail "$tag s16: expected zero comments and one create; got comment=$commented create=$created rc=$rc"
+  fi
+
+  # s17 (#962): an open, eligible issue under the same title base but with
+  # a different fingerprint is a different failure -> a new issue.
+  issue_fixture '[{"name": "pipeline-defect"}]' "000000000000"
+  run_scenario "$script" '' true
+  commented="$(grep -c '^issue comment' "$work/calls.log" || true)"
+  created="$(grep -c '^issue create' "$work/calls.log" || true)"
+  if [ "$rc" = "1" ] && [ "$commented" = "0" ] && [ "$created" = "1" ]; then
+    ok "$tag s17: a different-fingerprint issue is not appended to -- a new issue is filed"
+  else
+    fail "$tag s17: expected zero comments and one create; got comment=$commented create=$created rc=$rc"
+  fi
+  printf '[]\n' > "$work/fixtures/issue-search.json"
+
+  # s18: the filed body points at the inspected run (from the run title)
+  # and at the diagnose step the log's first ##[error] line fell in. Every
+  # step reads success in the jobs API (continue-on-error), as on
+  # 2026-10-09, so the step comes from the log line's timestamp; at
+  # 01:01:10 the Diagnose step (ending 01:01:10) wins over the verdict
+  # step starting that same second.
+  cp "$work/fixtures/diagnose.log" "$work/diagnose.log.bak"
+  printf '2026-08-25T01:01:00.1000000Z starting\n2026-08-25T01:01:10.5000000Z ##[error]unzip is required to install Bun\n' > "$work/fixtures/diagnose.log"
+  run_scenario "$script" '' true
+  if [ "$rc" = "1" ] \
+     && grep -qF 'Inspected run: [8999](https://example.invalid/o/r/actions/runs/8999)' "$work/calls.log" \
+     && grep -qF 'first failed step: [Diagnose](https://example.invalid/o/r/actions/runs/9001/job/2#step:15:1)' "$work/calls.log" \
+     && grep -qF 'First error in the diagnose job log: `unzip is required to install Bun`' "$work/calls.log"; then
+    ok "$tag s18: the filed body names the inspected run, the failed diagnose step and its first error"
+  else
+    fail "$tag s18: expected inspected-run, failed-step and first-error pointers in the filed body; got rc=$rc: $(grep -E 'Inspected run|Diagnose job|First error' "$work/calls.log" | tr '\n' ' ')"
+  fi
+  mv "$work/diagnose.log.bak" "$work/fixtures/diagnose.log"
   sed -i 's/"conclusion": "failure"/"conclusion": "success"/' "$work/fixtures/run.json"
 
   # ── specs/047-rate-limited-verdict: the verifier's rate-limited suppression ──
@@ -522,11 +592,8 @@ sed 's/{ echo "::error::cannot fetch run $RUN_ID"; exit 2; }/{ echo "::error::ca
 run_mutation "$mut" "m1" "s1" "degrading the run-fetch guard to exit 0 is caught"
 
 # m2: the search-failure guard reverts to read-failure-as-empty (the #167
-# shape) -> s5 must catch the duplicate filing. The brackets in the jq
-# fragment are escaped: unescaped, sed reads `[0]` as a bracket expression,
-# the second expression never matches, and the mutant is the half-applied
-# syntax error the strictness above exists to reject.
-sed 's/if existing="$(gh issue list/existing="$(gh issue list/; s/--jq '"'"'.\[0\].number \/\/ empty'"'"')"; then/--jq '"'"'.[0].number \/\/ empty'"'"')" || true; if true; then/' \
+# shape) -> s5 must catch the duplicate filing.
+sed 's/--json number,title,state,labels,body)" \\$/--json number,title,state,labels,body || echo "[]")" \\/' \
   "$SCRIPT" > "$mut"
 run_mutation "$mut" "m2" "s5" "reverting the search-failure guard files a duplicate again"
 
@@ -548,5 +615,25 @@ sed 's/reason "diagnose was skipped but neither of collect'"'"'s reporters ran �
   "$SCRIPT" > "$mut"
 run_mutation "$mut" "m4" "s13" "a skipped agent that recorded nothing must not read as healthy"
 
-echo "Gate 36: 15 scenario(s) x 5 runs + 3 mutation(s); $bad failure(s)."
+# m5 (#962): the dedup arm stops asking board_eligibility.is_excluded(),
+# so a same-fingerprint board:stalled issue is appended to again, where
+# nothing reads it. s16 must catch it.
+sed 's/       and not is_excluded(issue)\[0\]:$/       and True:/' \
+  "$SCRIPT" > "$mut"
+run_mutation "$mut" "m5" "s16" "appending to a board:stalled issue is caught"
+
+# m6 (#962): the dedup arm stops requiring the fingerprint marker, so any
+# open issue under the title base absorbs every later failure. s17 must
+# catch it.
+sed 's/startswith(title_base) and marker in (issue.get("body") or "") \\$/startswith(title_base) \\/' \
+  "$SCRIPT" > "$mut"
+run_mutation "$mut" "m6" "s17" "deduping on title alone is caught"
+
+# m7: the step-locating log fallback never finds the first ##[error] line.
+# s18 must catch it.
+sed 's/grep -a -m1 '"'"'##\\\[error\\\]'"'"'/grep -a -m1 '"'"'NO-SUCH-LINE'"'"'/' \
+  "$SCRIPT" > "$mut"
+run_mutation "$mut" "m7" "s18" "losing the first-error pointer is caught"
+
+echo "Gate 36: 18 scenario(s) x 7 runs + 6 mutation(s); $bad failure(s)."
 exit $([ "$bad" -eq 0 ] && echo 0 || echo 1)

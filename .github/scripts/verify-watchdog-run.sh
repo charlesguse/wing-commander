@@ -25,7 +25,8 @@
 #   GH_TOKEN      (required) token with actions:read (+ issues:write if
 #                 CREATE_ISSUE=true)
 #   REPO          (required) owner/name
-#   CREATE_ISSUE  "true" to file/append a pipeline-defect issue on failure
+#   CREATE_ISSUE  "true" to file/append a pipeline-defect issue on failure,
+#                 one per distinct failure fingerprint (see the filing arm)
 #                 (default "false" — report-only, for tests)
 #   GITHUB_STEP_SUMMARY  honored when set
 #
@@ -285,24 +286,95 @@ summary "❌ **watchdog run [$RUN_ID]($run_url) FAILED deterministic verificatio
 for r in "${fail_reasons[@]}"; do summary "- $r"; done
 
 if [ "${CREATE_ISSUE:-false}" = "true" ]; then
-  title="watchdog-verify: stage 8 run failed deterministic verification"
+  # One issue per distinct failure, never one issue per title (#962): a
+  # fixed title deduped every later failure, whatever its cause, onto the
+  # oldest open one - and once the board loop had stalled that issue
+  # (board:stalled, which it never re-reads), a new failure appended there
+  # was invisible to everything. The fingerprint is the fail reasons with
+  # every digit run collapsed (so a duration, a median or a run id never
+  # splits one failure into two), sorted, hashed; it rides in the body as a
+  # hidden marker and in the title as a suffix.
+  fingerprint="$(printf '%s\n' "${fail_reasons[@]}" | sed -E 's/[0-9]+/N/g' | LC_ALL=C sort -u | sha256sum | cut -c1-12)"
+  fp_marker="<!-- watchdog-verify-fingerprint: $fingerprint -->"
+  title_base="watchdog-verify: stage 8 run failed deterministic verification"
+  title="$title_base [$fingerprint]"
+
+  # Deterministic pointers a triager needs, from data already fetched above:
+  # the run this watchdog run was inspecting (stage 8's run-name carries its
+  # id: "inspect <workflow> run <id> (...)" / "re-inspect run <id>"), and
+  # where the diagnose job broke. continue-on-error reports the agent's
+  # failed steps as success in the jobs API, so a step whose conclusion is
+  # failure is used when there is one, and otherwise the step whose time
+  # window holds the job log's first ##[error] line.
+  inspected_id="$(jq -r '.display_title // ""' <<<"$run_json" | grep -oE 'run [0-9]+' | head -1 | grep -oE '[0-9]+')"
+  diag='def diag: .jobs[] | select(.name == "diagnose" or (.name | endswith("/ diagnose")));'
+  diagnose_job_url="$(jq -r "$diag"' [diag | .html_url // empty] | first // empty' <<<"$jobs_json")"
+  first_error="$(printf '%s\n' "${dlog:-}" | grep -a -m1 '##\[error\]')"
+  # "<number>|<name>" of the step, or empty.
+  failed_step="$(jq -r "$diag"' [diag | .steps[]? | select(.conclusion == "failure")
+    | "\(.number)|\(.name)"] | first // empty' <<<"$jobs_json")"
+  step_how="its jobs-API conclusion is failure"
+  if [ -z "$failed_step" ] && [ -n "$first_error" ]; then
+    failed_step="$(jq -r --arg ts "${first_error%% *}" "$diag"'
+      ($ts | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601) as $t
+      | [diag | .steps[]? | select(.started_at != null and .completed_at != null)
+         | select((.started_at | fromdateiso8601) <= $t and (.completed_at | fromdateiso8601) >= $t)
+         | "\(.number)|\(.name)"] | first // empty' <<<"$jobs_json" 2>/dev/null)"
+    step_how="it was running when the job log's first ##[error] line was written"
+  fi
+
   body="🐕‍🦺 **Watchdog verifier** — run [$RUN_ID]($run_url) failed verification:"$'\n'
   for r in "${fail_reasons[@]}"; do body+="- $r"$'\n'; done
-  body+=$'\n'"_Filed automatically by the deterministic stage-8b verifier._"
+  body+=$'\n'"**Pointers**"$'\n'
+  if [ -n "$inspected_id" ]; then
+    body+="- Inspected run: [$inspected_id](${run_url%/actions/runs/*}/actions/runs/$inspected_id)"$'\n'
+  else
+    body+="- Inspected run: not recoverable from this run's title"$'\n'
+  fi
+  if [ -n "$diagnose_job_url" ]; then
+    if [ -n "$failed_step" ]; then
+      body+="- Diagnose job: [job]($diagnose_job_url); first failed step: [${failed_step#*|}]($diagnose_job_url#step:${failed_step%%|*}:1) ($step_how)"$'\n'
+    else
+      body+="- Diagnose job: [job]($diagnose_job_url); no failed step is determinable from the jobs API or the job log"$'\n'
+    fi
+  else
+    body+="- Diagnose job: absent from this run"$'\n'
+  fi
+  if [ -n "$first_error" ]; then
+    body+="- First error in the diagnose job log: \`$(cut -c1-300 <<<"${first_error#*##\[error\]}" | tr -d '`')\`"$'\n'
+  fi
+  body+=$'\n'"_Filed automatically by the deterministic stage-8b verifier._"$'\n'"$fp_marker"
+
   # The dedup search's failure is its own outcome, never "no issue exists":
   # reading a failed search as an empty result is exactly what made settle
   # file a duplicate issue every day (#167), and this arm shipped with the
   # same shape (#169). On search failure, skip filing - the verification
   # failure above still turns the caller red, and a skipped filing is
   # recoverable while a duplicate issue is noise someone must triage.
-  if existing="$(gh issue list -R "$REPO" --state open --label pipeline-defect \
-    --search "\"$title\" in:title" --json number --jq '.[0].number // empty')"; then
+  # A found issue is only a duplicate when it carries this failure's
+  # marker AND the board loop will still read it: board_eligibility.
+  # is_excluded() is the one home for "the board loop will not act on this
+  # issue" (board:stalled, disposition:*, lifecycle labels), so a comment
+  # never lands where nothing reads it.
+  if candidates="$(gh issue list -R "$REPO" --state open --label pipeline-defect --limit 100 \
+       --search "\"$title_base\" in:title" --json number,title,state,labels,body)" \
+     && existing="$(python3 -I -c '
+import json, sys
+sys.path.insert(0, ".github/scripts")
+from board_eligibility import is_excluded
+title_base, marker = sys.argv[1], sys.argv[2]
+for issue in sorted(json.loads(sys.stdin.read().strip() or "[]"), key=lambda i: i["number"]):
+    if (issue.get("title") or "").startswith(title_base) and marker in (issue.get("body") or "") \
+       and not is_excluded(issue)[0]:
+        print(issue["number"])
+        break
+' "$title_base" "$fp_marker" <<<"$candidates")"; then
     if [ -n "$existing" ]; then
       gh issue comment "$existing" -R "$REPO" --body "$body" \
-        && note "appended to existing issue #$existing"
+        && note "appended to existing issue #$existing (same fingerprint $fingerprint)"
     else
       gh issue create -R "$REPO" --title "$title" --label pipeline-defect --body "$body" \
-        && note "created pipeline-defect issue"
+        && note "created pipeline-defect issue (fingerprint $fingerprint)"
     fi
   else
     echo "::error::verify-watchdog: the pipeline-defect issue search FAILED - not filing, to avoid creating a duplicate of an issue the search could not see (#167). The verification failure above still stands."

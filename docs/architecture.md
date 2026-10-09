@@ -810,7 +810,11 @@ could-not-inspect / internal-failure truths all read `skipped` (the agent
 step itself always looks green in the API — `continue-on-error` reports the
 post-rescue conclusion); and the diagnose execution log parses without
 `is_error` or known fabrication markers. On any failure 8b turns red and
-files (or appends to) a deduplicated `pipeline-defect` issue. The chain can
+files (or appends to) a deduplicated `pipeline-defect` issue: one issue per
+failure fingerprint (a hash of the digit-normalized fail reasons, carried as
+a hidden body marker), never appended to an issue the board loop has
+excluded (`board_eligibility.is_excluded()`, e.g. `board:stalled`), and
+naming the inspected run and the diagnose job's first failed step. The chain can
 be exercised on demand — including its red path — via the manual
 `wing-commander-watchdog-test.yml` (`inject-failure: true` dispatches stage 8
 at an unresolvable run-id and asserts red propagates).
