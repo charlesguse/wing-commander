@@ -156,9 +156,8 @@ jobs:
       # every comment the auto-release bot added (a later failure lands
       # there as a comment, never as a second issue, and may be in the
       # other mode). _shared/auto-release-outstanding-modes.sh is the one
-      # reader of that record and documents the rule: a mode's failure is
-      # outstanding until a later pass in that mode, a failure no single
-      # mode owns until any later success. When THIS run's mode is
+      # reader of that record and the one statement of which failures a
+      # pass clears -- see there. When THIS run's mode is
       # outstanding, verify the current head even with nothing unreleased;
       # decide-version still runs only on has-new-work, so the release
       # decision is unchanged. The alternation itself is untouched
@@ -2404,6 +2403,10 @@ jobs:
           # Derived in detect; read from there, not through verify-e2e's
           # copy, which is empty whenever verify-e2e did not run.
           PAUSED: ${{ needs.detect.outputs.paused }}
+          # The mode verify-e2e ran in, for the verdict this step builds
+          # when verify-e2e handed over none: a container-day crash or
+          # timeout is that mode's failure, never one any pass clears.
+          RUN_MODE: ${{ needs.detect.outputs.mode }}
           # specs/055-unattended-e2e-gates FR-019/FR-025: gate evidence for
           # a pass verdict's summary, read only on the pass path below.
           SPEC_DRAFT_PR: ${{ needs.verify-e2e.outputs.spec-draft-pr }}
@@ -2463,30 +2466,27 @@ jobs:
           # hands this step the open issue's outstanding modes
           # (FAILURE_ISSUE_MODES, read off the body AND every failure the
           # bot appended as a comment -- _shared/auto-release-outstanding-
-          # modes.sh documents the rule); the second argument here is the
-          # mode this run verified (empty when it verified nothing). This
-          # success clears `unrecorded` (a failure no single mode owns) and
-          # its own mode; a default-runner pass says nothing about a
-          # container image. Nothing left -> close. Something cleared but
-          # something left -> a pass note on the issue, so the next run's
-          # detect knows this mode is done. Nothing cleared -> left open,
-          # said in the summary. No issue open when detect looked -> close
-          # nothing (never one filed mid-run that detect never read), and
-          # one whose record detect could not read (unreadable) is never
-          # closed blind.
+          # modes.sh documents the rule, and its --after-pass applies this
+          # success to that set); the second argument here is the mode this
+          # run verified (empty when it verified nothing). Nothing left ->
+          # close. Something cleared but something left -> a pass note on
+          # the issue, so the next run's detect knows this mode is done.
+          # Nothing cleared -> left open, said in the summary. No issue
+          # open when detect looked -> close nothing (never one filed
+          # mid-run that detect never read), and one whose record detect
+          # could not read (unreadable) is never closed blind.
           close_failure_on_success() {
             local resolved_note="${1:-${NEXT_VERSION} released.}" passed_mode="${2:-}"
-            local m remaining="" waits
+            local remaining waits
             if [ "$FAILURE_ISSUE_MODES" = "unreadable" ]; then
               echo "any open failure issue left open: detect could not read its record" >> "$GITHUB_STEP_SUMMARY"
               return 0
             fi
             [ -n "$FAILURE_ISSUE" ] || return 0
-            for m in $FAILURE_ISSUE_MODES; do
-              if [ "$m" != "unrecorded" ] && [ "$m" != "$passed_mode" ]; then
-                remaining="${remaining:+$remaining }$m"
-              fi
-            done
+            if ! remaining="$(printf '%s' "$FAILURE_ISSUE_MODES" | bash .github/actions/_shared/auto-release-outstanding-modes.sh --after-pass "${passed_mode:-none}")"; then
+              echo "failure issue #${FAILURE_ISSUE} left open: its outstanding modes (${FAILURE_ISSUE_MODES}) could not be applied to this pass" >> "$GITHUB_STEP_SUMMARY"
+              return 0
+            fi
             if [ -z "$remaining" ]; then
               {
                 echo "action=close"
@@ -2622,7 +2622,7 @@ jobs:
             else
               no_verdict_observed="the job stopped before any step wrote one (job result: ${VERIFY_RESULT:-unknown})"
             fi
-            VERDICT_JSON="$(bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "verify-e2e produced no verdict" "a JSON verdict from verify-e2e on every path" "$no_verdict_observed" "$RUN_URL")"
+            VERDICT_JSON="$(bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "verify-e2e produced no verdict" "a JSON verdict from verify-e2e on every path" "$no_verdict_observed" "$RUN_URL" "$RUN_MODE")"
           fi
           outcome="$(printf '%s' "$VERDICT_JSON" | jq -r '.outcome // empty' 2>/dev/null || true)"
           mode="$(printf '%s' "$VERDICT_JSON" | jq -r '.mode // "unknown"' 2>/dev/null)" || mode=unknown

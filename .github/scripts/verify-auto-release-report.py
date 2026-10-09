@@ -172,7 +172,7 @@ BASE = dict(DETECT_RESULT="skipped", PIN_RESULT="skipped", VERIFY_RESULT="skippe
             VERDICT_JSON="", NEXT_VERSION="", COLLISION="",
             TAG_MATCHES="", CORRELATION="", CORRELATED_RUN_ID="",
             CORRELATED_RUN_URL="", REQUEST_TIME=REQUEST_TIME,
-            DISPATCH_REJECTED="false", PAUSED="false",
+            DISPATCH_REJECTED="false", PAUSED="false", RUN_MODE="",
             # #966: an open failure issue no single mode owns unless a
             # scenario says otherwise -- the pre-#966 "any success closes
             # it" situation every older scenario was written against.
@@ -760,6 +760,17 @@ SCENARIOS = [
         record_modes="container",
     ),
     dict(
+        name="#966 review 2: verify-e2e crashed or timed out on a container "
+             "turn with no verdict -- the substitute verdict is that mode's "
+             "failure, never one any later success (a quiet day) clears",
+        env=dict(DETECT_RESULT="success", HAS_NEW_WORK="true", TAG_EXISTS="true",
+                 LATEST_TAG="v2.7.2", HEAD_SHA=HEAD, VERIFY_RESULT="failure",
+                 RUN_MODE="container"),
+        action="report",
+        body_contains=["verify-e2e produced no verdict", "**Mode**: container"],
+        record_modes="container",
+    ),
+    dict(
         name="#966: a failure on a paused container turn is recorded under the "
              "default-runner mode that actually ran",
         env=dict(DETECT_RESULT="success", HAS_NEW_WORK="true", TAG_EXISTS="true",
@@ -789,19 +800,24 @@ def render_step(step):
 
 
 VERDICT_SCRIPT_REL = os.path.join(".github", "actions", "_shared", "auto-release-verdict.sh")
+OUTSTANDING_SCRIPT_REL = os.path.join(".github", "actions", "_shared",
+                                      "auto-release-outstanding-modes.sh")
 
 
 def _stage_verdict_script(workdir):
-    """Copy the real verdict helper into workdir at its shipped relative
-    path. The step under test resolves it as `.github/actions/_shared/
-    auto-release-verdict.sh` -- correct when the real workflow runs from a
-    repository checkout, but this harness's workdir is a bare tempdir, so
-    the same relative path has to be staged there for each scenario."""
-    src = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..",
-                       "actions", "_shared", "auto-release-verdict.sh")
-    dst = os.path.join(workdir, VERDICT_SCRIPT_REL)
-    os.makedirs(os.path.dirname(dst), exist_ok=True)
-    shutil.copyfile(src, dst)
+    """Copy the real verdict helper -- and the outstanding-modes reader,
+    whose --after-pass the close decision calls (#966) -- into workdir at
+    their shipped relative paths. The step under test resolves them as
+    `.github/actions/_shared/...` -- correct when the real workflow runs
+    from a repository checkout, but this harness's workdir is a bare
+    tempdir, so the same relative paths have to be staged there for each
+    scenario."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    for rel in (VERDICT_SCRIPT_REL, OUTSTANDING_SCRIPT_REL):
+        src = os.path.join(here, "..", "..", rel)
+        dst = os.path.join(workdir, rel)
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        shutil.copyfile(src, dst)
 
 
 def run_scenario(script, env, sc, tmproot):
@@ -1032,11 +1048,30 @@ def _swap(script, old, new, what):
     return script.replace(old, new, 1)
 
 
+AFTER_PASS = ('remaining="$(printf \'%s\' "$FAILURE_ISSUE_MODES" | bash '
+              '.github/actions/_shared/auto-release-outstanding-modes.sh '
+              '--after-pass "${passed_mode:-none}")"')
+
+
 def mut_mode_blind_close(script):
     """#966: any pass closes the open failure, whatever mode it records."""
-    return _swap(script,
-                 'if [ "$m" != "unrecorded" ] && [ "$m" != "$passed_mode" ]; then',
-                 "if false; then", "the same-mode close check")
+    return _swap(script, AFTER_PASS, 'remaining=""', "the same-mode close check")
+
+
+def mut_pass_mode_dropped(script):
+    """#966 review 2: the close decision applies a mode-less pass, so even a
+    same-mode pass clears only unrecorded failures and never closes."""
+    return _swap(script, '--after-pass "${passed_mode:-none}"', "--after-pass none",
+                 "the passed mode handed to the shared clearing rule")
+
+
+def mut_no_verdict_mode_less(script):
+    """#966 review 2: verify-e2e's substitute verdict carries no mode, so a
+    container-turn crash or timeout is filed unrecorded and the next quiet
+    day closes it."""
+    return _swap(script, '"$no_verdict_observed" "$RUN_URL" "$RUN_MODE")',
+                 '"$no_verdict_observed" "$RUN_URL")',
+                 "the substitute verdict's mode argument")
 
 
 def mut_no_pass_note(script):
@@ -1105,6 +1140,10 @@ def mut_reverification_pass_falls_through(script):
 MUTATIONS = [
     ("#966: a pass closes a failure filed in the other mode", mut_mode_blind_close),
     ("#966: a partial pass leaves no pass note", mut_no_pass_note),
+    ("#966 review 2: the close decision ignores the mode this run passed in",
+     mut_pass_mode_dropped),
+    ("#966 review 2: a verify-e2e crash with no verdict filed mode-less",
+     mut_no_verdict_mode_less),
     ("#966: a success closes an issue detect never read", mut_close_without_detect_issue),
     ("#966: a paused container leg still promised a re-check",
      mut_pause_ignored_in_left_open),

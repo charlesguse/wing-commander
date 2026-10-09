@@ -41,9 +41,36 @@
 # Invoke as `bash .github/actions/_shared/auto-release-outstanding-modes.sh
 # < entries.json`, from the workspace root (see auto-release-verdict.sh for
 # why auto-release.yml resolves _shared paths repo-relative).
+#
+# `--after-pass MODE` applies that last step instead: stdin is an
+# outstanding set (this script's own output, as detect hands it to report)
+# and MODE is what this run's success verified (`none` when it verified
+# nothing); stdout is what is still outstanding after it. It is the same
+# clear_on_pass a pass note gets below, so report's close decision and
+# detect's next read of the note report posts cannot disagree. Exits
+# non-zero on a word that is not a mode.
 set -euo pipefail
 
-jq -er '
+# The clearing rule above, in one place for both entry points.
+clear_on_pass='
+  def clear_on_pass($p):
+    del(.unrecorded)
+    | if $p == "container" or $p == "default-runner" then del(.[$p]) else . end;
+'
+
+if [ "${1:-}" = "--after-pass" ]; then
+  jq -Rsr --arg passed "${2:-none}" "$clear_on_pass"'
+    [splits("[ \n]+") | select(. != "")]
+    | if all(. == "container" or . == "default-runner" or . == "unrecorded") | not
+      then error("not an outstanding set") else . end
+    | (map({(.): true}) | add // {})
+    | clear_on_pass($passed)
+    | keys | join(" ")
+  '
+  exit
+fi
+
+jq -er "$clear_on_pass"'
   def lines: gsub("\r"; "") | split("\n");
   def first_word($prefix):
     [lines[] | select(startswith($prefix)) | ltrimstr($prefix) | split(" ")[0]] | first;
@@ -57,8 +84,7 @@ jq -er '
   | reduce .[] as $e ({};
       ($e.value | first_word("**Passed mode**: ")) as $passed
       | if $e.key > 0 and $passed != null then
-          del(.unrecorded)
-          | if $passed == "container" or $passed == "default-runner" then del(.[$passed]) else . end
+          clear_on_pass($passed)
         elif $e.key == 0 or ($e.value | is_failure_report) then
           .[$e.value | failure_mode] = true
         else . end)
