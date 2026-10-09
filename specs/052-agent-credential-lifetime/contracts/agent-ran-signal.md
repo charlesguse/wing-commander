@@ -50,6 +50,29 @@ three enum values GitHub Actions itself assigns
 (`success`/`failure`/`cancelled`) — never free text, never copied from the
 agent's own output.
 
+The composite also publishes `started` (#889/#972): `'false'` only when
+the agent step's outcome is `failure` AND its execution transcript
+(`transcript-path`, defaulting to the same
+`${{ runner.temp }}/claude-execution-output.json` that
+`wing-commander-agent-verdict` and `wing-commander-metrics-summary` read) is
+absent or empty — the agent action failed in its own setup (run
+37866026318: its runtime install failed on an image without `unzip`)
+before the agent started. Any other outcome, or a non-empty transcript,
+reads `'true'`; only the file's presence is checked, never its content, so
+`started` is a boolean, not prose. A stale transcript left by an earlier
+agent step in the same job reads `'true'`, which only keeps the pre-existing
+agent-ran wording. The six consuming stages publish it as a job output
+alongside the other two, with the same most-recent-wins `||` chain where a
+job has more than one agent step -- except implement's progress composer,
+which runs only after a cycle or retry succeeded and never pushes, so its
+own setup failure must not erase that cycle's work (FR-015); implement's
+`agent-started` reads the retry and cycle signals only:
+
+```yaml
+agent-started:
+  value: ${{ steps.agent-ran.outputs.started }}
+```
+
 ## Consumption (the six stages with an existing survivor job)
 
 Inside each survivor job's existing "Determine which dependency did not
@@ -62,7 +85,21 @@ maintainer review of PR #407: the original precedence had the credential
 branch wrongly outrank a real, later, named failure and discard the named
 step when both were known):
 
+An agent action that failed before its agent started outranks all of
+them (#889/#972): every post-agent step that fails after it is a
+consequence, so a named one is kept only as trailing context:
+
 ```text
+when needs.<entry-job>.outputs.agent-ran == 'true'
+ and needs.<entry-job>.outputs.agent-started == 'false':
+    reason = "the agent step's action failed in its own setup before the
+              agent started (concluded: <agent-conclusion>; no execution
+              transcript was written) -- the runner environment (the job's
+              container image or the action's setup), not the agent, is
+              the cause; the agent step's log names the setup step that
+              failed[, and the '<failed-post-agent-step>' step after it did
+              not complete either][; the post-agent credential could not
+              be re-established either]"
 when needs.<entry-job>.outputs.agent-ran == 'true'
  and needs.<entry-job>.outputs.failed-post-agent-step is non-empty
  and needs.<entry-job>.outputs.credential-refresh-ok == 'false':
@@ -140,6 +177,17 @@ renders "...concluded: cancelled" rather than mis-describing the stage as
 sentence instead of its current restart-from-zero phrasing when
 `agent-ran == 'true'`: the caller (each stage workflow, not the composite)
 chooses the string; the composite's own contract is unchanged.
+
+When `agent-started == 'false'` (#889/#972) the caller passes the plain
+re-dispatch line instead of "failed after running; its pushed commits are
+on the branch", and passes `agent-started` to the notice composite, whose
+body then reads "the agent never started ... pushed no commits" and says
+that when the runner environment (the job's container image or the agent
+action's own setup) is the cause a re-dispatch fails the same way until it
+is fixed, while a transient download or network error clears on one.
+`verify-post-agent-credential-refresh.py` (check 6) requires the wiring
+in all six stages; `verify-implement-stall-notice-unchanged.py` and
+`verify-chain-stop-notice-body.py` execute the shipped branches.
 
 ## Not in scope for consumption
 
