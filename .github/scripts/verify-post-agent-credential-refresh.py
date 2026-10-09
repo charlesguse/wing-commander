@@ -908,12 +908,35 @@ def check_agent_started_wiring(path, job, wf):
     entry = m.group(1)
     want = "${{ needs.%s.outputs.agent-started }}" % entry
     entry_job = ((wf or {}).get("jobs") or {}).get(entry) or {}
-    published = str((entry_job.get("outputs") or {}).get("agent-started", ""))
-    if "outputs.started" not in published:
+    outputs = entry_job.get("outputs") or {}
+    published = str(outputs.get("agent-started", ""))
+    # Pass-2 review of PR #978: a bare "outputs.started" substring let a
+    # mistyped step id, an unrelated step, or a dropped `||` arm through.
+    # agent-started must read exactly agent-ran's own signal steps, in the
+    # same most-recent-wins order, minus the excluded ones -- and each of
+    # those ids must be a wing-commander-agent-ran-signal step of the entry
+    # job.
+    signal_ids = {str((s or {}).get("id", "")) for s in
+                  entry_job.get("steps") or []
+                  if "wing-commander-agent-ran-signal" in
+                  str((s or {}).get("uses", ""))}
+    excluded = AGENT_STARTED_EXCLUDED_SIGNALS.get(path, set())
+    ran_ids = re.findall(r"steps\.([A-Za-z0-9_-]+)\.outputs\.ran",
+                         str(outputs.get("agent-ran", "")))
+    want_ids = [i for i in ran_ids if i not in excluded]
+    got_ids = re.findall(r"steps\.([A-Za-z0-9_-]+)\.outputs\.started",
+                         published)
+    want_expr = "${{ %s }}" % " || ".join(
+        "steps.%s.outputs.started" % i for i in want_ids)
+    if (not want_ids or got_ids != want_ids
+            or published.strip() != want_expr
+            or any(i not in signal_ids for i in got_ids)):
         failures.append(
-            f"{path} [{entry}]: no agent-started job output read from "
-            f"wing-commander-agent-ran-signal's `started` (got "
-            f"{published!r}) -- the stall path cannot tell an agent that "
+            f"{path} [{entry}]: agent-started must read "
+            f"wing-commander-agent-ran-signal's `started` from exactly the "
+            f"signal steps agent-ran reads, in the same order ({want_expr!r}"
+            f"), got {published!r} -- a missing, mistyped or foreign step "
+            f"id reads empty and the stall path cannot tell an agent that "
             f"never started from one that ran (#889)")
     for sid in sorted(AGENT_STARTED_EXCLUDED_SIGNALS.get(path, ())):
         if f"steps.{sid}.outputs.started" in published:
@@ -1445,6 +1468,29 @@ def mut_entry_job_drops_agent_started_output(loaded):
     del job["outputs"]["agent-started"]
 
 
+def mut_tasks_agent_started_drops_pr_arm(loaded):
+    """Pass-2 review of PR #978: tasks' agent-started reads only the auto
+    path's signal, so a pr-path setup failure reads empty and is reported
+    as an agent that ran and pushed commits."""
+    job = loaded[".github/workflows/tasks.yml"]["jobs"]["tasks"]
+    arm = " || steps.agent-ran-pr.outputs.started"
+    out = job["outputs"]["agent-started"]
+    assert arm in out, "fixture assumption broken: pr arm absent"
+    job["outputs"]["agent-started"] = out.replace(arm, "")
+
+
+def mut_clarify_agent_started_foreign_step(loaded):
+    """Pass-2 review of PR #978: clarify's agent-started names a step that
+    is not its agent-ran signal (here the credential-status step), so it
+    always reads empty."""
+    job = loaded[".github/workflows/clarify.yml"]["jobs"]["clarify"]
+    out = job["outputs"]["agent-started"]
+    assert "steps.agent-ran.outputs.started" in out, \
+        "fixture assumption broken: signal step id changed"
+    job["outputs"]["agent-started"] = out.replace(
+        "steps.agent-ran.", "steps.credential-status.")
+
+
 def mut_refresh_remote_step_deleted(loaded):
     """Hole (a): deleting the refresh-remote step entirely (not merely
     reverting its `uses:`) must fail -- check 5 alone only inspects a step
@@ -1793,6 +1839,11 @@ SIMPLE_MUTATIONS = [
     ("implement's agent-started reads the progress composer's signal "
      "(code review of PR #978)",
      mut_implement_agent_started_reads_progress),
+    ("tasks' agent-started drops the pr path's signal (pass-2 review of "
+     "PR #978)", mut_tasks_agent_started_drops_pr_arm),
+    ("clarify's agent-started reads a step that is not its agent-ran "
+     "signal (pass-2 review of PR #978)",
+     mut_clarify_agent_started_foreign_step),
     ("the refresh-remote step deleted entirely, not merely reverted",
      mut_refresh_remote_step_deleted),
     ("the credential-status step renamed away from its recognized name "
