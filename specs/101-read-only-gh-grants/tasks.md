@@ -18,7 +18,7 @@ Workflow comments are load-bearing (gates byte-compare them): after any edit und
 **Purpose**: Establish the baseline before editing.
 
 - [ ] T001 Run `python .github/scripts/run-local-gates.py` on the branch and record the baseline result, so later failures are attributable to this feature.
-- [ ] T002 [P] Read the current `collect-step-summary` step in `.github/workflows/watchdog.yml` (job-log fetch near lines 1262-1309), the `diagnose` job's tool-args site (`Bash(gh:*)` near line 2585) and prompt, and the "Decide upgrade path" step in `.github/workflows/auto-update-spec-kit.yml` (lines ~1092-1131), so every later edit is made against the current text.
+- [X] T002 [P] Read the current `collect-step-summary` step in `.github/workflows/watchdog.yml` (job-log fetch near lines 1262-1309), the `diagnose` job's tool-args site (`Bash(gh:*)` near line 2585) and prompt, and the "Decide upgrade path" step in `.github/workflows/auto-update-spec-kit.yml` (lines ~1092-1131), so every later edit is made against the current text.
 
 ---
 
@@ -28,8 +28,8 @@ Workflow comments are load-bearing (gates byte-compare them): after any edit und
 
 **⚠️ CRITICAL**: US1 depends on this.
 
-- [ ] T003 Create `.github/actions/_shared/fetch-job-logs.sh` per `contracts/diagnose-staged-logs.md`. Inputs are env `GH_TOKEN`, `GITHUB_REPOSITORY`, `RUN_ID` and an output-directory argument. List jobs with `--paginate`, capture through a direct pipeline with `|| rc=` (never a bare command substitution), and skip `skipped`/`cancelled` jobs. Do one bounded retry after `sleep 10` per failed read. Never write an error message or an empty body as log content. Write `jobs.json` and per-job log files. Print `ok` or `failed` on the final line and always return 0.
-- [ ] T004 Rewrite `collect-step-summary` in `.github/workflows/watchdog.yml` (~1262-1309) to call `.github/actions/_shared/fetch-job-logs.sh` instead of its inline per-job fetch. Keep the sentinel-scanning logic inline and keep `ACTIONS_TOKEN: ${{ github.token }}`. Verify its behaviour is unchanged on the success and failure paths.
+- [X] T003 Create `.github/actions/_shared/fetch-job-logs.sh` per `contracts/diagnose-staged-logs.md`. Inputs are env `GH_TOKEN`, `GITHUB_REPOSITORY`, `RUN_ID` and an output-directory argument. List jobs with `--paginate`, capture through a direct pipeline with `|| rc=` (never a bare command substitution), and skip `skipped`/`cancelled` jobs. Do one bounded retry after `sleep 10` per failed read. Never write an error message or an empty body as log content. Write `jobs.json` and per-job log files. Print `ok` or `failed` on the final line and always return 0.
+- [X] T004 Rewrite `collect-step-summary` in `.github/workflows/watchdog.yml` (~1262-1309) to call `.github/actions/_shared/fetch-job-logs.sh` instead of its inline per-job fetch. Keep the sentinel-scanning logic inline and keep `ACTIONS_TOKEN: ${{ github.token }}`. Verify its behaviour is unchanged on the success and failure paths.
 
 **Checkpoint**: One fetch helper exists and is used by the collector.
 
@@ -41,9 +41,9 @@ Workflow comments are load-bearing (gates byte-compare them): after any edit und
 
 **Independent Test**: The composed allowed list for `watchdog.diagnose` has no `gh`. After the staging step, logs sit at the literal paths the prompt names. A failed fetch produces `outcome:"failed"` and a verdict stating that job logs could not be gathered.
 
-- [ ] T005 [US1] Add a `Stage failed-job logs` step to the `diagnose` job in `.github/workflows/watchdog.yml`, before the agent step, with `continue-on-error: true` and `ACTIONS_TOKEN: ${{ github.token }}` (the workflow already grants `actions: read`). Call `.github/actions/_shared/fetch-job-logs.sh`, keep jobs whose conclusion is `failure`, and write `${{ steps.ctx.outputs.runner-temp }}/watchdog-job-logs/<job_id>.log` and `watchdog-job-logs-status.json` with the shape in `data-model.md`. Write the status file on every path. On a listing failure, a log read failure or an empty body, set `outcome:"failed"`, write no log file for that job (`file: null`), and append `"job-logs"` to `watchdog-untrusted-collectors.json`. Add the `container-shell-safety` and `review-step-gating` checks to the PR review notes.
-- [ ] T006 [US1] Remove `Bash(gh:*)` from the `watchdog.diagnose` tool-args `default-allowed-tools` in `.github/workflows/watchdog.yml` (~line 2585). Keep `Read,Grep` and the `python3 -I …/git_read.py` wrapper grant.
-- [ ] T007 [US1] Rewrite the diagnose prompt in `.github/workflows/watchdog.yml`. Name the log directory and status file by literal path. Frame the logs as untrusted DATA like the signals file. Remove every sentence that names `gh` or a fetch the agent would perform. State that when the status is `failed`, the status file is missing, or `job-logs` is in the untrusted collectors file, the verdict says job logs could not be gathered and no signal is dropped silently.
+- [X] T005 [US1] Add a `Stage failed-job logs` step to the `diagnose` job in `.github/workflows/watchdog.yml`, before the agent step, with `continue-on-error: true` and `ACTIONS_TOKEN: ${{ github.token }}` (the workflow already grants `actions: read`). Call `.github/actions/_shared/fetch-job-logs.sh`, keep jobs whose conclusion is `failure`, and write `${{ steps.ctx.outputs.runner-temp }}/watchdog-job-logs/<job_id>.log` and `watchdog-job-logs-status.json` with the shape in `data-model.md`. Write the status file on every path. On a listing failure, a log read failure or an empty body, set `outcome:"failed"`, write no log file for that job (`file: null`), and append `"job-logs"` to `watchdog-untrusted-collectors.json`. Add the `container-shell-safety` and `review-step-gating` checks to the PR review notes.
+- [X] T006 [US1] Remove `Bash(gh:*)` from the `watchdog.diagnose` tool-args `default-allowed-tools` in `.github/workflows/watchdog.yml` (~line 2585). Keep `Read,Grep` and the `python3 -I …/git_read.py` wrapper grant.
+- [X] T007 [US1] Rewrite the diagnose prompt in `.github/workflows/watchdog.yml`. Name the log directory and status file by literal path. Frame the logs as untrusted DATA like the signals file. Remove every sentence that names `gh` or a fetch the agent would perform. State that when the status is `failed`, the status file is missing, or `job-logs` is in the untrusted collectors file, the verdict says job logs could not be gathered and no signal is dropped silently.
 - [ ] T008 [US1] Run `python .github/scripts/run-local-gates.py` and fix any workflow-comment or gate fallout from T004-T007.
 
 **Checkpoint**: US1 is complete and is the MVP.
@@ -56,7 +56,7 @@ Workflow comments are load-bearing (gates byte-compare them): after any edit und
 
 **Independent Test**: The inline `--allowedTools` has no `gh`, and the prompt names only the staged `release-notes.json`.
 
-- [ ] T009 [P] [US2] In `.github/workflows/auto-update-spec-kit.yml`, remove `Bash(gh api:*)` from the "Decide upgrade path" inline `--allowedTools` (~line 1131).
+- [X] T009 [P] [US2] In `.github/workflows/auto-update-spec-kit.yml`, remove `Bash(gh api:*)` from the "Decide upgrade path" inline `--allowedTools` (~line 1131).
 - [ ] T010 [US2] In the same step's prompt (~lines 1092-1094), rewrite the sentence that describes `gh api` as an evidence tool. It should say Bash is restricted to the git wrapper and that the only evidence is the staged `release-notes.json`. Then run `python .github/scripts/run-local-gates.py`.
 
 **Checkpoint**: Both named agents are at zero `gh` grants.
