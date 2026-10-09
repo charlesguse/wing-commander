@@ -1271,12 +1271,24 @@ jobs:
       # correcting research.md D13's original, incorrect "align the two
       # clocks" reasoning). The 900s (15 minute) reserve is sized for that
       # pre-loop and post-loop work, not for the loop itself.
+      #
+      # Every read in this step runs under the same maintainer credential
+      # as the gate-driving acts, never under steps.token: an App
+      # installation token expires 60 minutes after it is minted, and
+      # POLL_BUDGET_SECONDS outlives it, so a container-mode run that
+      # crossed the hour had every issue/comments read rejected with HTTP
+      # 401 and ended fail-infra (#979). That credential already holds
+      # Issues and Contents (read and write) on the test repository alone
+      # and carries its own expiry check (-- see docs/setup.md), so this
+      # adds no grant and widens no reach. It also makes it the one GitHub
+      # credential in this step, so write_repeated_failure_verdict's
+      # credential arm can name it outright.
       - name: Poll the test repository to a verdict
         id: poll
         if: steps.kickoff.outputs.ok == 'true'
         shell: bash
         env:
-          GH_TOKEN: ${{ steps.token.outputs.token }}
+          GH_TOKEN: ${{ secrets.WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN }}
           HARNESS_TOKEN: ${{ secrets.WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN }}
           # Read directly from the secret, not from an earlier step's
           # output -- GitHub drops a step output whose value is masked
@@ -1340,6 +1352,10 @@ jobs:
           # the phrase list wing-commander-lifecycle-gate's own credential
           # check already matches (.github/actions/wing-commander-
           # lifecycle-gate/action.yml) rather than inventing a second one.
+          # The verdict names the secret because it is the only credential
+          # this step's gh calls can run under (see the comment above this
+          # step); #979 blamed it for a 401 that was really the App token's,
+          # back when the reads ran under steps.token.
           write_repeated_failure_verdict() { # gate expected observed
             if printf '%s' "$3" | grep -qi 'rate limit'; then
               write_verdict "fail-infra" "polling the test repository for a terminal state" \
@@ -1347,8 +1363,8 @@ jobs:
                 "GitHub API rate limit encountered while driving the $1 gate: $3"
             elif printf '%s' "$3" | grep -qiE 'HTTP 401|Bad credentials|Resource not accessible by integration|Resource not accessible by personal access token|requires authentication|insufficient .*scope|missing .*scope'; then
               write_verdict "fail-infra" "$1" \
-                "the harness credential authenticates and authorizes every gate-driving act" \
-                "the harness credential was rejected while driving the $1 gate: $3"
+                "the harness credential (WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN) authenticates and authorizes every read and gate-driving act" \
+                "the harness credential (WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN) was rejected while driving the $1 gate: $3"
             else
               write_verdict "fail-gate-stall" "$1" "$2" "$3"
             fi
