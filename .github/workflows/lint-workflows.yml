@@ -3241,6 +3241,9 @@ jobs:
           # what let a hard `timeout` dependency reach eleven stages
           # unregistered — the tool was invoked, the drift scan subtracted
           # it as always-available, and nothing asked the image for it.
+          # `unzip` moved out of here for the same reason: it is canonical
+          # now, an indirect dependency of claude-code-action's Bun setup
+          # (required-tools.txt's header has the evidence).
           ALWAYS_AVAILABLE = {
               "alias", "awk", "base64", "basename", "bg", "break", "case",
               "cat", "cd", "chmod", "chown", "cmp", "comm", "command",
@@ -3257,7 +3260,7 @@ jobs:
               "split", "tac", "tail", "tar", "tee", "test", "then", "time",
               "touch", "tr", "trap", "true", "type", "uname",
               "unalias", "uniq", "unset", "until", "wait", "wc", "while",
-              "xargs", "xxd", "yes", "gzip", "gunzip", "zip", "unzip",
+              "xargs", "xxd", "yes", "gzip", "gunzip", "zip",
               "mapfile", "readarray", "popd", "pushd", "dirs", "hash",
               "ulimit", "umask", "compgen", "complete",
           }

@@ -665,12 +665,13 @@ DRIFT_CASES = [
      True, ("somefancytool",)),
 
     ("no false positive: canonical tools (git, gh, jq, curl, python3, bash, "
-     "node, timeout)",
+     "node, timeout, unzip)",
      {"stage.yml": stage(job("entry", needs="verify-image-prerequisites",
                              if_expr=f"!cancelled() && {RESULT_GUARD}",
                              run="git status && gh pr list && jq '.' f.json && "
                                  "curl -s url && python3 x.py && bash y.sh && "
-                                 "node z.js && timeout 4 gh issue view 1"))},
+                                 "node z.js && timeout 4 gh issue view 1 && "
+                                 "unzip -oq a.zip"))},
      False, ()),
 
     ("no false positive: POSIX/coreutils/bash-builtin commands",
@@ -732,7 +733,7 @@ DRIFT_CASES = [
                              run="git status"))},
      True, ("cat", "ALWAYS_AVAILABLE"),
      chr(10).join(("git", "gh", "jq", "curl", "python3", "bash",
-                   "node", "timeout", "cat")) + chr(10)),
+                   "node", "timeout", "unzip", "cat")) + chr(10)),
 
     # The other half of the same loop. Only ALWAYS_AVAILABLE had a fixture,
     # and the two halves are separate iterations over separate sets: delete
@@ -746,7 +747,7 @@ DRIFT_CASES = [
                              run="git status"))},
      True, ("yamllint", "MAINTENANCE_ONLY"),
      chr(10).join(("git", "gh", "jq", "curl", "python3", "bash",
-                   "node", "timeout", "yamllint")) + chr(10)),
+                   "node", "timeout", "unzip", "yamllint")) + chr(10)),
 
     # FR-011a's third reader (#234 review). required-tools.txt's header
     # names contracts/runner-container-passthrough.md as the document it
@@ -760,14 +761,14 @@ DRIFT_CASES = [
      "declares - the adopter under-provisions and finds out at run time",
      {"stage.yml": stage(HEALTHY_ENTRY)},
      True, ("node", "under-provisions"),
-     None, ["git", "gh", "jq", "curl", "python3", "bash", "timeout"]),
+     None, ["git", "gh", "jq", "curl", "python3", "bash", "timeout", "unzip"]),
 
     ("the published contract's table names a tool the canonical list does "
      "not - the contract demands what nothing checks",
      {"stage.yml": stage(HEALTHY_ENTRY)},
      True, ("yq", "demands something nothing checks"),
      None, ["git", "gh", "jq", "curl", "python3", "bash", "node", "timeout",
-            "yq"]),
+            "unzip", "yq"]),
 
     ("a contract document with no tool table at all fails, rather than "
      "comparing against an empty set and agreeing with nothing",
@@ -780,7 +781,7 @@ DRIFT_CASES = [
      {"stage.yml": stage(HEALTHY_ENTRY)},
      True, ("lists a tool twice",),
      None, ["git", "gh", "jq", "curl", "python3", "bash", "node", "timeout",
-            "node"]),
+            "unzip", "node"]),
 
     ("a stage that embeds no REQUIRED_TOOLS list at all",
      {"stage.yml": stage(HEALTHY_ENTRY, vip=vip_job(tools=None))},
