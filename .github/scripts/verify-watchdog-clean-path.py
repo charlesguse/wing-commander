@@ -341,7 +341,7 @@ def mut_pass_ignores_evidence_available(subject):
 def mut_full_pass_reworded(subject):
     s = dict(subject)
     s["pass:run"] = subject["pass:run"].replace(
-        "run passed inspection. No problems detected.",
+        "run passed inspection. No problems detected${suffix}.",
         "run inspected on 0 of 9 evidence collectors; nothing errored.")
     return s
 
@@ -352,7 +352,7 @@ def mut_pass_fallback_drifts(subject):
     # the comparison covers the whole idiom, not just the wording.
     s = dict(subject)
     s["pass:run"] = subject["pass:run"].replace(
-        'total="${COLLECTORS_TOTAL:-9}"', 'total="${COLLECTORS_TOTAL:-10}"')
+        'total="${COLLECTORS_TOTAL:-10}"', 'total="${COLLECTORS_TOTAL:-11}"')
     return s
 
 

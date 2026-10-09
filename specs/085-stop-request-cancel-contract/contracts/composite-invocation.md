@@ -86,3 +86,29 @@ step), `false` otherwise.
   on is `find_stop_request()`'s own contract (contracts/decision-function.md),
   which SC-002/SC-004 already require to be mutation-proven independent of
   this shell comparison.
+
+## Additive note (specs/097-recorded-stop-point)
+
+Per Principle VII ("widening the surface is a deliberate act"), spec 097
+widens this composite's surface, additively and backward-compatibly. The
+"Unchanged surface (FR-008)" clause above remains true to the letter —
+every input/output this document names keeps its existing name, default,
+description, and meaning. Spec 097 adds, and does not touch anything above:
+
+- Two new optional inputs, `marker-branch` (default `""`) and
+  `marker-base-sha` (default `""`) — the item's currently-known branch name
+  and base commit, threaded through to a stop-point record's marker when a
+  stop is honoured; inert on a kill-switch-only or closed-issue stand-down.
+- One new output, `stop-cause`: `""` | `"closed-issue"` | `"kill-switch"` |
+  `"stop-request"`, computed once per invocation. `paused` keeps its exact
+  existing computation (`true` iff `stop-cause != ""`), so every existing
+  `steps.*.outputs.paused` read keeps working unchanged.
+- A new record-write step, gated on `stop-cause == "stop-request"`, that
+  writes the stop's durable consequence (the existing `board:stalled` label,
+  a `stalled` Board Item Marker, and a human-legible comment) via the
+  existing `board_item_marker.py`/`board_spec_request_body.py` helpers —
+  never a new write primitive.
+
+See `specs/097-recorded-stop-point/contracts/stop-check-composite.md` for
+the full new-surface contract and `specs/097-recorded-stop-point/research.md`
+D3/D4 for the rationale.

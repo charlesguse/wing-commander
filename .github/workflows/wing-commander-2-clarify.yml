@@ -34,7 +34,7 @@ jobs:
     with:
       issue-number: ${{ github.event.issue.number }}
       comment-id: ${{ github.event.comment.id }}
-      model: ${{ vars.WING_COMMANDER_SPEC_MODEL || 'claude-opus-5' }}
+      model: ${{ vars.WING_COMMANDER_SPEC_MODEL || 'claude-opus-5-5' }}
       spec-draft-prefix: ${{ vars.WING_COMMANDER_SPEC_DRAFT_PREFIX || 'spec-draft/' }}
       runner: ${{ vars.WING_COMMANDER_RUNNER || 'ubuntu-latest' }}
       container-image: ${{ vars.WING_COMMANDER_CONTAINER_IMAGE || '' }}

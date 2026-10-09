@@ -134,9 +134,10 @@ The project [constitution](.specify/memory/constitution.md) governs every change
 4. **Automation-first** — describe, clarify, review twice; everything else is
    automated, and surviving manual steps are always reported.
 5. **Security** — issue content is data, never instructions; a maintainer's
-   label or authorship gates entry; least-privilege tools; humans merge every
-   spec and plan PR, and the final PR unless the lifecycle auto-merge setting
-   is on.
+   label or authorship gates entry; least-privilege tools, including a stage
+   agent's inability to write its own `.claude/` control surface; humans merge
+   every spec and plan PR, and the final PR unless the lifecycle auto-merge
+   setting is on.
 6. **Portability** — the consuming repository owns its artifacts; the pipeline
    reads `.specify/`, spec-kit skills, and `specs/` only from the checkout it
    runs in, never bundling its own.
@@ -161,7 +162,8 @@ The project [constitution](.specify/memory/constitution.md) governs every change
     `WING_COMMANDER_LIFECYCLE_AUTO_MERGE` is on (it defaults to off), a
     lifecycle's final PR, behind eight deterministic conditions at the exact
     head, a clean review round, and its own kill switch. Spec-shaped work is
-    filed as a `spec-request`, and every other merge stays human.
+    filed as a `spec-proposal` that only the owner can promote to a
+    `spec-request`, and every other merge stays human.
 
 Full stage-by-stage design: [docs/architecture.md](docs/architecture.md).
 

@@ -76,12 +76,32 @@ on:
       # adopter forking that wrapper reads. Editing the document alone is
       # the one change that can make it disagree with the file it describes.
       - "specs/058-per-job-minute-floor/contracts/metrics-persist-sweep-delta.md"
+      # Gate 79 also compares the 043 wrapper contract's published trigger
+      # list against the shipped wrapper's (#889).
+      - "specs/043-durable-metrics-record/contracts/wrapper-contract.md"
       # Gate 113's subject: the constitution names the classes of merge the
       # bot may perform, and the gate fails when the pipeline can perform
       # one the document does not name. An amendment PR editing only this
       # file is exactly the change that flips that gate from failing to
       # passing, so it has to run it.
       - ".specify/memory/constitution.md"
+      # Gate 135's registry self-test reads this contract's check table:
+      # CHECKS must name exactly its rows, so a PR removing a check edits
+      # the table too, and an edit to the table alone has to run the gate.
+      - "specs/097-recorded-stop-point/contracts/gate-135-stop-point-recording.md"
+      # Gates 100, 101, 114, 120 and 129 read these documents through an
+      # os.path.join, which verify-gate-wiring.py did not fold until the
+      # code reviews of #940; each gate compares its document with code,
+      # so an edit to the document alone has to run the gate. Gate 84
+      # reads labels-and-cross-links.md's board:stalled sources (#889).
+      - "docs/adoption.md"
+      - "specs/057-autonomous-board-loop/contracts/board-loop-workflow.md"
+      - "specs/057-autonomous-board-loop/contracts/labels-and-cross-links.md"
+      - "specs/060-self-redrive-concurrency/contracts/concurrency-groups.md"
+      - "specs/055-unattended-e2e-gates/research.md"
+      - "specs/055-unattended-e2e-gates/spec.md"
+      - "specs/056-stage-found-defect-filing/data-model.md"
+      - ".claude/skills/spec-cross-reference/SKILL.md"
   # Gate 1 only — it reads how GitHub actually registered the workflows on
   # the default branch, which a PR's files cannot tell us.
   push:
@@ -227,13 +247,53 @@ jobs:
       # the run with zero jobs and no annotations when the called workflow
       # asks for a permission the caller did not grant. (Same failure shape
       # cost us a v1.0.0 release-day startup_failure on tasks-approved.)
+      # #880: the check is per called JOB and per LEVEL, not per workflow and
+      # per key name. PR #821 passed the old form with a caller granting
+      # `actions: read` to a called workflow whose top level was
+      # `permissions: {}` and whose `guard` job asked for `actions: write`.
+      # A calling job with no permissions: of its own is held to its
+      # workflow's top-level block; with neither, it inherits the repository
+      # default, which this check cannot resolve. Self-tested by
+      # verify-gate-3.py.
       - name: Gate 3 — callers grant every permission their reusable workflow requests
         run: |
           python3 - <<'PYEOF'
           import glob, os, sys, yaml
 
+          LEVEL = {"none": 0, "read": 1, "write": 2}
+          # Every scope `read-all` / `write-all` expands to. A scope with no
+          # read level (id-token) or no write level (models) is capped at
+          # the level it has, so `write-all` never "needs" a level GitHub
+          # cannot grant.
+          SCOPES = {"actions": 2, "attestations": 2, "checks": 2, "contents": 2,
+                    "deployments": 2, "discussions": 2, "id-token": 2,
+                    "issues": 2, "models": 1, "packages": 2, "pages": 2,
+                    "pull-requests": 2, "repository-projects": 2,
+                    "security-events": 2, "statuses": 2}
+          NAME = {v: k for k, v in LEVEL.items()}
+
+          def levels(perms):
+              """A permissions: value as {scope: 0|1|2}; None if absent/unresolvable."""
+              if perms is None:
+                  return None
+              if isinstance(perms, str):
+                  want = {"read-all": 1, "write-all": 2}.get(perms.strip())
+                  if want is None:
+                      return None
+                  return {k: min(want, cap) for k, cap in SCOPES.items()
+                          if not (want == 1 and k == "id-token")}
+              if isinstance(perms, dict):
+                  out = {}
+                  for k, v in perms.items():
+                      lv = LEVEL.get(str(v).strip()) if isinstance(v, str) else None
+                      if lv is not None:
+                          out[str(k)] = lv
+                  return out
+              return None
+
           docs = {}
-          for f in sorted(glob.glob(".github/workflows/*.yml")):
+          for f in sorted(glob.glob(".github/workflows/*.yml")
+                          + glob.glob(".github/workflows/*.yaml")):
               docs[os.path.basename(f)] = yaml.safe_load(open(f, encoding="utf-8")) or {}
 
           failures = 0
@@ -248,21 +308,47 @@ jobs:
                             f"{uses}, which does not exist")
                       failures += 1
                       continue
-                  needed = called.get("permissions") or {}
-                  granted = job.get("permissions")
-                  # No explicit grant means the job inherits the workflow (or
-                  # repository) default, which this check cannot resolve.
-                  if granted is None or not isinstance(needed, dict):
+                  if "permissions" in job:
+                      granted, source = levels(job.get("permissions")), f"job {jname!r}"
+                  elif "permissions" in wf:
+                      granted, source = levels(wf.get("permissions")), "this workflow's top-level permissions:"
+                  else:
+                      granted = None
+                  # No explicit grant anywhere means the job inherits the
+                  # repository default, which this check cannot resolve.
+                  if granted is None:
                       continue
-                  missing = {k: v for k, v in needed.items() if k not in granted}
-                  if missing:
-                      print(f"::error file=.github/workflows/{fname}::job {jname!r} calls "
-                            f"{uses} but does not grant {missing} — the run will die at "
-                            f"startup with zero jobs. Add it to this job's permissions:.")
-                      failures += 1
-          print(f"Gate 3: checked every local reusable-workflow call; {failures} failure(s).")
+                  # Requesters: the called workflow's top level, and every
+                  # job's EFFECTIVE block (its own, else the top level).
+                  top = called.get("permissions")
+                  requests = [("its top-level permissions:", levels(top))]
+                  for cj, cjob in (called.get("jobs") or {}).items():
+                      cjob = cjob or {}
+                      own = cjob["permissions"] if "permissions" in cjob else top
+                      requests.append((f"its job {cj!r}", levels(own)))
+                  for who, needed in requests:
+                      if not needed:
+                          continue
+                      short = {k: f"{NAME[v]} (granted {NAME[granted.get(k, 0)]})"
+                               for k, v in sorted(needed.items())
+                               if granted.get(k, 0) < v}
+                      if short:
+                          print(f"::error file=.github/workflows/{fname}::job {jname!r} calls "
+                                f"{uses}, and {who} asks for {short}, which {source} "
+                                f"does not grant — the run will die at startup with "
+                                f"zero jobs. Raise the grant in this job's permissions:.")
+                          failures += 1
+          print(f"Gate 3: checked every local reusable-workflow call, job by job; {failures} failure(s).")
           sys.exit(1 if failures else 0)
           PYEOF
+
+      # Same reasoning as Gate 6's self-test: the fleet should stay healthy,
+      # so Gate 3 prints "0 failure(s)" whether its logic works or not —
+      # and #880 is the time it did not. This runs the SHIPPED gate against
+      # synthetic caller/callee pairs, including a caller grant downgraded
+      # from write to read and a called job asking for an ungranted key.
+      - name: Gate 3 self-test — the detector actually detects
+        run: python3 .github/scripts/verify-gate-3.py
 
       # Gate 5 — the denied-tool collector is the one piece of watchdog
       # evidence-gathering with its own executable fixture check. That check
@@ -827,16 +913,20 @@ jobs:
           # App installation token for the repository the stage runs in,
           # minted inside the composite, so the workflow only ever sees the
           # composite's output and nothing structural in the workflow file
-          # says it is an App token. It is the one App-token expression that
-          # has to be named here.
+          # says it is an App token. It and APP_TOKEN_ENV_EXPR below (the same
+          # token, exported to $GITHUB_ENV) are the App-token expressions
+          # that have to be named here.
           #
           # Every OTHER App token this repository mints is a workflow step
-          # that `uses: actions/create-github-app-token` directly — e2e-stage's
-          # `scratch-token` for the pre-created scratch repository, and
-          # auto-release.yml's `token` for the pre-onboarded end-to-end test
-          # repository (each a scope the context token cannot cover, since
-          # one installation token cannot span two owners). Those are
-          # recognised STRUCTURALLY, per job, by app_token_exprs_for() below:
+          # that `uses: actions/create-github-app-token` directly (e2e-stage's
+          # `scratch-token` for the pre-created scratch repository) or through
+          # the `_shared/scoped-app-token` composite, which wraps that action
+          # and re-exports its token (auto-release.yml's `token` for the
+          # pre-onboarded end-to-end test repository, auto-update-spec-kit's
+          # scratch-repository mints). Each is a scope the context token
+          # cannot cover, since one installation token cannot span two
+          # owners. Those are recognised STRUCTURALLY, per job, by
+          # app_token_exprs_for() below:
           # a step id is only an App token in the job that mints it, so a
           # generic id like `token` in some other job never inherits the
           # classification by name. Same App, same grant, so the same
@@ -845,20 +935,38 @@ jobs:
           # and its own classification — do not fold it into this one.
           APP_TOKEN_EXPRS = {"steps.ctx.outputs.token"}
           APP_TOKEN_MINTER = "actions/create-github-app-token"
+          # A step using this composite (by any COMPOSITE_USES_RE path) mints
+          # through APP_TOKEN_MINTER and outputs that token as `token`.
+          APP_TOKEN_MINTER_COMPOSITE = "_shared/scoped-app-token"
           DEFAULT_TOKEN_EXPRS = {"github.token", "secrets.GITHUB_TOKEN"}
+
+
+          # wing-commander-context also exports its App token to $GITHUB_ENV
+          # as WC_BOT_TOKEN, so in a job that runs it `env.WC_BOT_TOKEN` is
+          # the same App token. Left as "other", every call made under it
+          # went unchecked: board-loop triage's run-evidence fetch called
+          # the Actions API with it, which 403s under the documented grant.
+          APP_TOKEN_ENV_EXPR = "env.WC_BOT_TOKEN"
+          APP_TOKEN_ENV_EXPORTER = "/actions/wing-commander-context"
 
 
           def app_token_exprs_for(job):
               """APP_TOKEN_EXPRS plus `steps.<id>.outputs.token` for every step
               in THIS job that mints an installation token with
-              actions/create-github-app-token."""
+              actions/create-github-app-token, directly or through the
+              scoped-app-token composite, plus APP_TOKEN_ENV_EXPR when
+              THIS job runs wing-commander-context."""
               out = set(APP_TOKEN_EXPRS)
               for st in job.get("steps") or []:
                   st = st or {}
                   sid = st.get("id")
                   uses = str(st.get("uses") or "")
-                  if sid and uses.split("@")[0] == APP_TOKEN_MINTER:
+                  cm = COMPOSITE_USES_RE.match(uses.replace("\\", "/"))
+                  if sid and (uses.split("@")[0] == APP_TOKEN_MINTER
+                              or (cm and cm.group(1) == APP_TOKEN_MINTER_COMPOSITE)):
                       out.add(f"steps.{sid}.outputs.token")
+                  if uses.split("@")[0].endswith(APP_TOKEN_ENV_EXPORTER):
+                      out.add(APP_TOKEN_ENV_EXPR)
               return out
 
           SUBCOMMAND_PERMS = {
@@ -916,7 +1024,25 @@ jobs:
               ("search", "prs"):     frozenset({("pull-requests", "read")}),
               ("release", "create"): frozenset({("contents", "write")}),
               ("repo", "view"):      frozenset(),
+              # auto-release-switch.yml sets, deletes and reads back
+              # WING_COMMANDER_AUTO_RELEASE_PAUSED. The REST reference for
+              # Actions variables lists the "Variables" repository permission
+              # (read for get, write for set/delete) as the fine-grained
+              # requirement. A `permissions:` block cannot grant it to
+              # GITHUB_TOKEN and docs/setup.md does not grant it to the App,
+              # so only a dedicated token can satisfy these.
+              ("variable", "get"):    frozenset({("variables", "read")}),
+              ("variable", "set"):    frozenset({("variables", "write")}),
+              ("variable", "delete"): frozenset({("variables", "write")}),
           }
+
+          # Permissions no `permissions:` block can grant GITHUB_TOKEN (the
+          # variables entries above, and the Secrets and Administration
+          # surfaces API_CATEGORY_PERM maps actions/ sub-paths to): a call
+          # needing one 403s under github.token in every job, so check_call
+          # fails it even where the job declares no permissions: block to
+          # compare against.
+          DEFAULT_TOKEN_NEVER_GRANTED = frozenset({"variables", "secrets", "administration"})
 
           # `gh api PATH` — PATH's first segment under repos/{owner}/{repo}/ decides
           # the permission, the same way SUBCOMMAND_PERMS does for named subcommands.
@@ -941,6 +1067,27 @@ jobs:
               # "Contents" repository permission as .../commits/... and
               # .../contents/... above.
               "compare": "contents",
+              # auto-release.yml's e2e-pin creates, reads back and deletes a
+              # run-scoped annotated tag (POST .../git/tags, .../git/refs,
+              # GET .../git/ref/tags/..., DELETE .../git/refs/tags/...): the
+              # Git database endpoints are under "Contents" in the
+              # fine-grained permission reference.
+              "git": "contents",
+              # .../actions/<sub>/... sub-paths that path_category splits out
+              # of "actions" (ACTIONS_SUBPATHS below) because GitHub's
+              # fine-grained permission reference files them under their own
+              # repository permission, not "Actions":
+              # - variables, organization-variables: "Variables", as the
+              #   `gh variable` entries in SUBCOMMAND_PERMS say;
+              # - secrets, organization-secrets: "Secrets";
+              # - permissions, runners: "Administration" (auto-release.yml's
+              #   maintainer-token probe reads .../actions/permissions).
+              "actions/variables": "variables",
+              "actions/organization-variables": "variables",
+              "actions/secrets": "secrets",
+              "actions/organization-secrets": "secrets",
+              "actions/permissions": "administration",
+              "actions/runners": "administration",
               # specs/062-lifecycle-review-gate T024: POST .../statuses/{sha}
               # (Create a commit status) -- the REST reference lists
               # "Commit statuses" as its own fine-grained repository
@@ -949,10 +1096,123 @@ jobs:
               "statuses": "statuses",
           }
 
+          # The sub-paths path_category splits out of "actions", read from the
+          # table itself so a new sub-path entry needs no second edit.
+          ACTIONS_SUBPATHS = frozenset(k.split("/", 1)[1] for k in API_CATEGORY_PERM
+                                       if k.startswith("actions/"))
+
+          # `gh api`'s own flags may precede the path in any order (`gh api -i
+          # -X POST PATH`); the parser before the code review of #939 allowed
+          # only -X/--method there and read `-i` as the PATH, hiding six
+          # auto-release.yml calls. A flag gh documents as taking a value
+          # consumes the next word, and so does a cluster of gh's one
+          # boolean short flag ending in one (`-iX POST`, as in `curl -iX
+          # POST`); any other word starting `-` (`-i`, `--method=POST`,
+          # `-H'Accept: x'`, `--`) is a switch. A valued flag
+          # standing alone is never a switch: the regex would otherwise
+          # backtrack it into one and take its value (`-X POST`'s `POST`) as
+          # the PATH, a non-repos/ path skipped as out of scope where a call
+          # with no PATH must fail loudly as unrecognised. A word is read the
+          # way the shell splits it, so a partly quoted value (`-f body="a
+          # b"`) is one word, not `body="a` plus a PATH `b"`, and so is a value
+          # holding a command substitution or an Actions expression with
+          # blanks in it (`-f sha=$(git rev-parse HEAD)`), which would
+          # otherwise free `rev-parse` as the PATH, including a substitution
+          # inside double quotes whose own quoted words hold blanks (`-f
+          # body="$(printf "%s %s" "$A" "$B")"`), and a value with a
+          # backslash-escaped quote (`-f body='it'\''s'`); an unclosed one is no
+          # word at all, so backtracking never splits it either. A backslash
+          # outside quotes is read only as an escape, never as a plain
+          # character too: a word with both readings has 2^n splittings, so a
+          # call with no PATH and a few dozen escapes (`--jq .a\.b\.c...`)
+          # would hang the gate instead of failing it. Words are
+          # separated the way the shell separates them on one command: blanks
+          # or a `\`-newline continuation, never a bare newline -- a call
+          # whose PATH sits on its continuation line is still resolved (not
+          # read as a PATH `\` and skipped as out of scope), and a call with
+          # no PATH never takes the next command's first word as one.
+          #
+          # A command substitution nests up to SUB_DEPTH parenthesis levels
+          # (`$(a "$(b "$(c)")")`, a subshell or `$((...))` counting as one),
+          # and a quoted `)` inside one (`$(printf ')')`, `$(echo ")")`) does
+          # not close it; one nested deeper is no word, so its call fails
+          # loudly as having no PATH (code review of #944). An unquoted
+          # parameter expansion (`${X:-a b}`, one inner `{...}` level) and a
+          # backtick substitution (`` `git rev-parse HEAD` ``) are one word
+          # part each, not split at their blanks. Every alternative inside a
+          # word, and inside each of these parts, starts on a character no
+          # other alternative there can start on, so a word has exactly one
+          # parse and a failed match backs out in linear time: this parser
+          # once hung the gate on catastrophic backtracking, and the
+          # self-test times adversarial inputs to keep it from doing so
+          # again.
+          GH_API_SEP = r'(?:[ \t]|\\\n)+'
+          SUB_DEPTH = 3
+
+
+          def _sub_body(depth):
+              """The inside of a `(...)` nesting at most `depth` levels."""
+              inner = _sub_body(depth - 1) if depth > 1 else None
+              dq = (r'"(?:[^"\\$]|\\.|\$(?!\()'
+                    + (r'|\$\(' + inner + r'\)' if inner else '') + r')*"')
+              return (r"(?:[^()'" + '"' + r"\\]|\\.|'[^']*'|" + dq
+                      + (r'|\(' + inner + r'\)' if inner else '') + r')*')
+
+
+          def _brace_body(depth):
+              """The inside of a `{...}` nesting at most `depth` levels."""
+              inner = _brace_body(depth - 1) if depth > 1 else None
+              return (r'(?:[^{}]' + (r'|\{' + inner + r'\}' if inner else '')
+                      + r')*')
+
+
+          _CMD_SUB = r'\$\(' + _sub_body(SUB_DEPTH) + r'\)'
+          # A process substitution (`-F body=@<(jq -n ...)`) is one word part
+          # like `$(...)`: read as plain characters, it split at its blanks
+          # and a `--method GET` inside it read as the call's last method
+          # (code review of #944).
+          _PROC_SUB = r'[<>]\(' + _sub_body(SUB_DEPTH) + r'\)'
+          # A `${...}` value nests SUB_DEPTH levels of braces too
+          # (`${A:-${B:-${C}}}`): capped at two, the third level's `-X GET`
+          # started a word of its own after the PATH and read as the call's
+          # last method (code review of #944).
+          _PARAM_EXP = r'\$\{(?!\{)' + _brace_body(SUB_DEPTH) + r'\}'
+          _BACKTICK = r'`(?:[^`\\]|\\.)*`'
+          _EXPR = r'\$\{\{(?:[^}]|\}(?!\}))*\}\}'
+
+
+          def _dq_brace_body(depth):
+              """The inside of a `${...}` within double quotes, nesting at
+              most `depth` levels of braces. A quoted string inside it
+              (`"${X:-"a b"}"`) is part of the expansion, as bash reads it:
+              closing the outer quote at its first inner `"` left the text
+              between the inner quotes unquoted, so `"${X:-" -X GET "}"`
+              read as two words and its `-X GET` as the call's last method
+              (code review of #944)."""
+              inner = _dq_brace_body(depth - 1) if depth > 1 else None
+              return (r'(?:[^{}"\\]|\\.|"(?:[^"\\]|\\.)*"'
+                      + (r'|\{' + inner + r'\}' if inner else '') + r')*')
+
+
+          _DQ_PARAM = r'\$\{(?!\{)' + _dq_brace_body(SUB_DEPTH) + r'\}'
+          SHELL_WORD = (r'(?:"(?:[^"\\$]|\\.|' + _CMD_SUB + r'|' + _EXPR
+                        + r'|' + _DQ_PARAM + r'|\$(?![({]))*"|\'[^\']*\''
+                        r'|' + _CMD_SUB + r'|' + _PROC_SUB + r'|' + _EXPR
+                        + r'|' + _PARAM_EXP + r'|' + _BACKTICK +
+                        r'|\\.|(?!\$\(|\$\{|[<>]\()[^\s"\'\\`])+')
+          GH_API_VALUE_FLAGS = ("-X", "--method", "-H", "--header", "-f", "--raw-field",
+                                "-F", "--field", "-q", "--jq", "-t", "--template",
+                                "-p", "--preview", "--hostname", "--input", "--cache")
+          _GH_API_VALUE_FLAG = ("(?:" + "|".join(re.escape(f) for f in GH_API_VALUE_FLAGS)
+                                + r"|-i+[XHfFqtp])")
+          GH_API_FLAGS = (
+              r'(?:' + _GH_API_VALUE_FLAG + GH_API_SEP + SHELL_WORD + GH_API_SEP +
+              r'|(?!' + _GH_API_VALUE_FLAG + r'(?:\s|\\\n|$))-' + SHELL_WORD + GH_API_SEP + r')*')
+
           GH_INVOKE_RE = re.compile(
               r'(?:GH_TOKEN=(?P<tokexpr>"(?:[^"\\]|\\.)*"|\$\{\{[^}]*\}\}|\$\w+)\s+)?'
               r'\bgh\s+(?:'
-              r'api\s+(?:(?:-X|--method)\s+\S+\s+)?(?P<apipath>"(?:[^"\\]|\\.)*"|\S+)'
+              r'api' + GH_API_SEP + GH_API_FLAGS + r'(?P<apipath>"(?:[^"\\]|\\.)*"|(?!\\\n)[^\s-]\S*)'
               r'|(?P<verb1>[a-zA-Z][\w-]*)(?:\s+(?P<verb2>[a-zA-Z][\w-]*))?'
               r')'
           )
@@ -976,8 +1236,29 @@ jobs:
           # implicit POST never reaches this table. Both spellings, because
           # wing-commander-metrics-persist writes `--method PATCH` — which the
           # -X-only parser before #339 read as a PATH named `--method` and
-          # dropped as out of scope.
-          API_WRITE_METHOD_RE = re.compile(r'(?:^|\s)(?:-X|--method)\s+(?:POST|PATCH|PUT|DELETE)\b')
+          # dropped as out of scope. Every spelling gh accepts: `-X POST`,
+          # `-XPOST`, `-iX POST`, `--method POST`, `--method=POST`, quoted or not -- the
+          # flag parser above skips the attached forms as switches, so a
+          # space-only match here would read those writes as reads. The flag
+          # is found on the blanked call line (so one inside another flag's
+          # quoted value is not this call's), its method word on the raw one
+          # (blanking would erase a quoted `'POST'`) -- see api_level().
+          # When the call names its method more than once, gh (pflag) keeps
+          # the LAST value, so `-X POST ... -X GET` is a read and `-X GET
+          # ... -X POST` a write. A method held in a variable (`-X
+          # "$METHOD"`) is resolved through the step's assignments the way
+          # a PATH is; one that resolves to no literal (a `$(...)`, an
+          # Actions expression, an unassigned variable) fails the gate
+          # rather than being read as a read, by the same rule as an
+          # unresolvable PATH (code review of #944). Only a flag starting
+          # one of the call's own words counts: a `-X GET` inside another
+          # flag's `$(...)`, backtick or `${...}` value (all executable, so
+          # not blanked) belongs to that value, and reading it as the last
+          # method would turn a `-X POST` call whose `-f` value runs a
+          # nested `-X GET` command into a read.
+          API_METHOD_FLAG_RE = re.compile(r'(?:^|\s)(?P<flag>-i*X|--method(?![\w-]))')
+          SHELL_WORD_RE = re.compile(SHELL_WORD)
+          API_WRITE_METHOD_RE = re.compile(r'(?:POST|PATCH|PUT|DELETE)\b')
 
 
           def norm_expr(raw):
@@ -993,18 +1274,44 @@ jobs:
           def strip_heredocs(text):
               """Heredoc bodies are data for another interpreter (python, jq), never
               bash commands — a `gh ...` mentioned inside one (an error message a gate
-              prints, e.g.) never actually runs. Strip them before scanning."""
+              prints, e.g.) never actually runs. Strip them before scanning.
+              A `<<WORD` the shell never executes is not an opener: auto-release's
+              `echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'` writes a $GITHUB_OUTPUT
+              delimiter, and reading it as a heredoc hid the rest of that step,
+              six maintainer-token `gh api` calls among it (code review of #939).
+              An opener need not end its line: `cat <<EOF | jq ...` and
+              `python3 - <<'PY' > out` open one too, and the rest of that line
+              is still shell. Several openers on one line take their bodies in
+              order, one after another, as bash does. A `<<` inside `$((...))`
+              is a shift and a `<<<` a here-string, neither an opener; an
+              unquoted delimiter must start like a name (`x << 2` is no
+              opener) and is its whole word: `<<EOF-1`'s delimiter is
+              `EOF-1`, as bash reads it -- cut at `EOF`, the body would hide
+              the rest of the step, and read as no opener, the body's text
+              would be scanned as shell (code review of #944). A quoted
+              delimiter is everything between its quotes (`<<'END-X'`)."""
               out = []
               lines = text.splitlines()
-              heredoc_re = re.compile(r"<<-?\s*'?(\w+)'?\s*$")
+              heredoc_re = re.compile(
+                  r"(?<!<)<<(?!<)-?[ \t]*(?:'([^'\n]+)'|" + '"' + r'([^"\n]+)' + '"'
+                  + r"|\\?([A-Za-z_][^\s;|&<>()'" + '"' + r"`\\]*)(?=[\s;|&<>()]|$))")
               i = 0
               while i < len(lines):
                   line = lines[i]
-                  m = heredoc_re.search(line)
+                  delims = []
+                  found = list(heredoc_re.finditer(line))
+                  if found:
+                      base = len("\n".join(out)) + (1 if out else 0)
+                      flags = executable_flags("\n".join(out + [line]))
+                      for m in found:
+                          if not flags[base + m.start()]:
+                              continue
+                          if re.search(r"\(\((?:(?!\)\)).)*$", line[:m.start()]):
+                              continue
+                          delims.append(m.group(1) or m.group(2) or m.group(3))
                   out.append(line)
                   i += 1
-                  if m:
-                      delim = m.group(1)
+                  for delim in delims:
                       while i < len(lines) and lines[i].strip() != delim:
                           i += 1
                       if i < len(lines):
@@ -1071,6 +1378,29 @@ jobs:
                       i += 1; continue
                   if c == "$" and i + 1 < n and text[i + 1] == "(":
                       stack.append("sub"); i += 2; continue
+                  # A `(` or `)` inside a `${...}` pattern
+                  # (`"$(echo ${subject##*(#})"`) is a literal character,
+                  # not a level: pushed as one, the substitution's own `)`
+                  # closed it instead, the closing `"` opened a new
+                  # double-quoted frame, and every call after it in the
+                  # step read as quoted text (code review of f703d73).
+                  if top in ("sub", "brace") and c == "$" and i + 1 < n and text[i + 1] == "{":
+                      stack.append("brace"); i += 2; continue
+                  if top == "brace":
+                      if c == "{":
+                          stack.append("brace")
+                      elif c == "}":
+                          stack.pop()
+                      i += 1
+                      continue
+                  # A bare `(` inside a substitution (`$((p+1))`'s second
+                  # one, a `$( (a) )` subshell) opens a level its own `)`
+                  # closes; unpaired, the first `)` closed the substitution
+                  # and the last one read as quoted text, so cmdline_of's
+                  # depth count never got back to 0 and the call ran on
+                  # through the next command's flags (code review of #944).
+                  if top == "sub" and c == "(":
+                      stack.append("sub"); i += 1; continue
                   if top == "sub" and c == ")":
                       stack.pop(); i += 1; continue
                   i += 1
@@ -1113,7 +1443,11 @@ jobs:
 
           def path_category(path_text):
               """-> ('SELF'|'CROSS', category) for a repos/OWNER/REPO/... path, or
-              ('OTHER', None) for anything else (org/user endpoints, GraphQL, etc.)."""
+              ('OTHER', None) for anything else (org/user endpoints, GraphQL, etc.).
+              A query string is not a path segment: `actions/variables?per_page=30`
+              is the Variables surface all the same. Only a `?` outside `${...}`
+              starts one; `${GITHUB_REPOSITORY:?}` is a parameter expansion."""
+              path_text = re.split(r"\?(?![^{}]*\})", path_text, maxsplit=1)[0]
               segs = [s for s in path_text.strip("/").split("/") if s]
               if not segs or segs[0] != "repos":
                   return "OTHER", None
@@ -1123,9 +1457,18 @@ jobs:
               if rest[0].startswith("$"):
                   rest = rest[1:]           # one token already carries owner/repo
                   scope = "SELF"
+              elif rest[:2] == ["{owner}", "{repo}"]:
+                  rest = rest[2:]           # gh fills these from the current repository
+                  scope = "SELF"
               else:
                   rest = rest[2:] if len(rest) >= 2 else []
                   scope = "CROSS"           # a literal, different owner/repo pair
+              if rest[:1] == ["actions"] and len(rest) >= 2 and rest[1] in ACTIONS_SUBPATHS:
+                  # Under actions/ by path, but another permission's surface,
+                  # not "Actions" (fine-grained reference; code reviews of
+                  # #924 and #939) -- the same split SUBCOMMAND_PERMS makes
+                  # for `gh variable`.
+                  return scope, f"actions/{rest[1]}"
               return (scope, rest[0]) if rest else (scope, None)
 
 
@@ -1239,6 +1582,14 @@ jobs:
               if tok_kind == "default":
                   if not required:
                       return
+                  never = sorted({cat for cat, _ in required} & DEFAULT_TOKEN_NEVER_GRANTED)
+                  if never:
+                      failures.append(
+                          f"{where}: {label} runs under github.token, which needs "
+                          f"{sorted(required)}, but GitHub never grants github.token "
+                          f"{never}: no permissions: block can add it. This 403s at "
+                          f"runtime; run the call under a dedicated token that holds it.")
+                      return
                   if job_perms is None:
                       notes.append(f"{where}: {label} runs under github.token needing "
                                    f"{sorted(required)}; this job declares no "
@@ -1267,29 +1618,169 @@ jobs:
           def cmdline_of(text, flags, m):
               """This invocation's own arguments: from the match to the end of
               its logical line (following `\\` continuations) or the next
-              command separator (`;`, `&&`, `||`, `|`), with every
-              non-executable character blanked — so a `--method POST` inside
-              a quoted value, in a trailing comment, or in the NEXT command on
-              the same line never reads as this call's method."""
-              out = []
+              command separator (`;`, `&&`, `||`, `|`) at this call's own
+              nesting level, with every non-executable character blanked — so
+              a `--method POST` inside a quoted value, in a trailing comment,
+              or in the NEXT command on the same line never reads as this
+              call's method. A separator inside one of the call's own `$(...)`
+              or backtick values does not end it, a newline there included
+              (a multi-line `-f body="$(` ... `)"`), and a `)` closing a
+              substitution the call itself sits in does: cut inside the
+              value, the call's words would end in an unclosed `$(`, and a
+              `-X GET | ...` in it would read as the call's last method
+              (code review of 4b06261). -> (blanked, raw): the same span
+              unblanked, character-aligned with it, for reading a quoted flag
+              value."""
+              out, raw = [], []
               i, n = m.start(), len(text)
+              depth, in_bt = 0, False
+              # Open `${...}` braces, innermost last, each with the paren
+              # depth it opened at: a `(` or `)` directly inside one
+              # (`${subject##*(#}`) is a pattern character, not a level.
+              # Counted as one, the `(` never closed, and the call ran past
+              # its own newline through the next command's `-X GET`
+              # (code review of f703d73).
+              braces = []
+              # A call inside a backtick substitution ends at the backtick
+              # closing it, as one inside `$(...)` ends at its `)`; read as
+              # opening a nested value, it would carry the call on through
+              # the next command's flags. Counted on the call's own line.
+              outer_bt = sum(1 for j in range(text.rfind("\n", 0, m.start()) + 1,
+                                              m.start())
+                             if flags[j] and text[j] == "`"
+                             and not (j > 0 and text[j - 1] == "\\")) % 2 == 1
               while i < n:
                   c = text[i]
                   if flags[i] and c == "\\" and i + 1 < n and text[i + 1] == "\n":
-                      out.append(" "); i += 2; continue
-                  if flags[i] and c == "\n":
+                      out.append(" "); raw.append(" "); i += 2; continue
+                  if flags[i] and c == "\\" and i + 1 < n:
+                      out.append(c + (text[i + 1] if flags[i + 1] else " "))
+                      raw.append(c + text[i + 1])
+                      i += 2
+                      continue
+                  if flags[i] and c == "`":
+                      if outer_bt:
+                          break
+                      in_bt = not in_bt
+                  elif (flags[i] and c == "$" and i + 1 < n
+                          and text[i + 1] in "{("):
+                      if text[i + 1] == "{":
+                          braces.append(depth)
+                      else:
+                          depth += 1
+                      out.append(c + text[i + 1]); raw.append(c + text[i + 1])
+                      i += 2
+                      continue
+                  elif flags[i] and braces and braces[-1] == depth and c in "{}()":
+                      if c == "{":
+                          braces.append(depth)
+                      elif c == "}":
+                          braces.pop()
+                  elif flags[i] and c == "(":
+                      depth += 1
+                  elif flags[i] and c == ")":
+                      depth -= 1
+                      if depth < 0:
+                          break
+                  nested = depth > 0 or in_bt
+                  if flags[i] and c == "\n" and not nested:
                       break
-                  if flags[i] and c in ";|":
+                  if flags[i] and c in ";|" and not nested:
                       break
-                  if flags[i] and c == "&" and not (i > 0 and text[i - 1] == ">"):
+                  if (flags[i] and c == "&" and not nested
+                          and not (i > 0 and text[i - 1] == ">")):
                       break
                   out.append(c if flags[i] else " ")
+                  raw.append(c)
                   i += 1
-              return "".join(out)
+              return "".join(out), "".join(raw)
 
 
-          def api_level(cmdline):
-              return "write" if API_WRITE_METHOD_RE.search(cmdline) else "read"
+          def resolve_methods(word, assigns, depth=0):
+              """A method flag's word -> the literal methods it can hold, or
+              None when any of them is not a literal. Walks the assignments
+              itself rather than through resolve_paths(), whose norm_expr()
+              strips an Actions expression assigned unquoted and unspaced
+              (`METHOD=` then the expression) down to its bare text,
+              `inputs.m` -- a literal no write method matches, so a method
+              the caller supplies read as a read (code review of #944)."""
+              word = re.sub(r'["\']', "", word)
+              if (depth > 5 or EXPR_OPEN in word or "`" in word
+                      or "$(" in word):
+                  return None
+              if "$" not in word:
+                  return [word]
+              vm = re.fullmatch(r'\$(?:(\w+)|\{(\w+)\})', word)
+              varname = vm and (vm.group(1) or vm.group(2))
+              if not varname or varname not in assigns:
+                  return None
+              out = []
+              for v in assigns[varname]:
+                  sub = resolve_methods(v, assigns, depth + 1)
+                  if sub is None:
+                      return None
+                  out.extend(sub)
+              return out
+
+
+          def api_level(cmdline, assigns):
+              """-> (level, why): "write" when the LAST method flag can name
+              a write, "read" when it names none or there is no method flag;
+              level None, with `why` naming the word, when Gate 12 cannot
+              read the call's method.
+
+              Every word of the call must parse as one whole SHELL_WORD.
+              One that does not -- a value nesting deeper than SUB_DEPTH, an
+              opener it never closes -- fails the call closed, as an
+              unresolvable method does in resolve_methods(): split at its
+              blanks instead, a `-X GET` inside it started a word of its own
+              and read as the call's last method, so every new depth limit
+              was one more level for a write to hide behind (code review of
+              #944). With no fallback split, the depth limits are safe by
+              construction. A word starting where nothing executes is the
+              call's trailing comment, and ends the walk."""
+              blanked, raw = cmdline
+              starts = set()
+              i, n = 0, len(raw)
+              while i < n:
+                  if raw[i].isspace():
+                      i += 1
+                      continue
+                  if blanked[i] == " ":
+                      break
+                  starts.add(i)
+                  wm = SHELL_WORD_RE.match(raw, i)
+                  if not wm or (wm.end() < n and not raw[wm.end()].isspace()):
+                      return None, (
+                          f"`gh api ... {raw[i:i + 40]}` - Gate 12 cannot read "
+                          f"this call's method: this word does not parse as "
+                          f"one shell word. It nests deeper than {SUB_DEPTH} "
+                          f"levels of " + "`$(...)` or `${...}`, or opens a "
+                          "quote, substitution or expression the call's line "
+                          "ends inside (an unquoted `||` or `&&` ends it), and "
+                          "split at its blanks, a method flag inside it would "
+                          "read as the call's own. Move the value into a "
+                          "variable assigned before the call.")
+                  i = wm.end()
+              word = None
+              for fm in API_METHOD_FLAG_RE.finditer(blanked):
+                  if fm.start("flag") not in starts:
+                      continue
+                  wm = re.match(r'(?:=|\s*)(' + SHELL_WORD + ')', raw[fm.end():])
+                  if wm:
+                      word = wm.group(1)
+              if word is None:
+                  return "read", None
+              methods = resolve_methods(word, assigns)
+              if methods is None:
+                  return None, (
+                      f"`gh api ... {word}` - Gate 12 cannot resolve this "
+                      f"call's method to a literal value (it traces to a "
+                      f"`$(...)` computed value, an Actions expression or an "
+                      f"unset variable), so it cannot tell a read from a "
+                      f"write. Assign the method a literal in this step.")
+              return ("write" if any(API_WRITE_METHOD_RE.match(x) for x in methods)
+                      else "read"), None
 
 
           def check_gh_invocation(where, m, cmdline, assigns, tok_kind, tok_detail,
@@ -1310,6 +1801,7 @@ jobs:
                           f"a reviewed exception.")
                       return
                   cats = {path_category(p) for p in resolved}
+                  level = None
                   for scope, cat in cats:
                       if scope != "SELF" or cat is None:
                           continue  # cross-repo / non-repos path: a different repo's permission model, out of scope
@@ -1323,8 +1815,13 @@ jobs:
                               f"rather than let an unrecognised call "
                               f"pass unchecked.")
                           continue
+                      if level is None:
+                          level, why = api_level(cmdline, assigns)
+                          if level is None:
+                              failures.append(f"{where}: {why}")
+                              return
                       check_call(where, f"gh api (.../{cat}/...)",
-                                 frozenset({(perm_cat, api_level(cmdline))}),
+                                 frozenset({(perm_cat, level)}),
                                  tok_kind, tok_detail, app_perms, job_perms,
                                  failures, notes)
                   return
@@ -2143,6 +2640,17 @@ jobs:
               "toJSON(secrets.container-registry-password))) "
               "|| fromJSON('{}') " + DOLLAR_CLOSE
           )
+          # The git safe.directory provision (2026-10-05 regression: every
+          # git call in a container job died "dubious ownership" / "not in
+          # a git directory" the first time this repository ran its stages
+          # in an image). Required on every container: block, not only on
+          # jobs whose run: text says `git`: composites and actions
+          # (checkout's post step, the agent action) run git where no
+          # grep of the job would see it. Why the container image needs
+          # this safe.directory provision, and why "*" -- see clarify.yml.
+          EXPECTED_CONTAINER_ENV = {"GIT_CONFIG_COUNT": "1",
+                                    "GIT_CONFIG_KEY_0": "safe.directory",
+                                    "GIT_CONFIG_VALUE_0": "*"}
 
           # (workflow filename, job name) -> reason. Constitution VII: a job
           # that must deviate carries a registered, machine-checked
@@ -2335,6 +2843,17 @@ jobs:
                                 f"{EXPECTED_CREDENTIALS!r} verbatim on every job that "
                                 f"carries container.image (specs/044 D5) — either this "
                                 f"job never got the binding, or it drifted from it.")
+                          failures += 1
+                          ok = False
+                      cenv = container.get("env") or {}
+                      if not isinstance(cenv, dict) or any(
+                              str(cenv.get(k)) != v for k, v in EXPECTED_CONTAINER_ENV.items()):
+                          print(f"::error file={f}::job {jname!r} container.env is "
+                                f"{container.get('env')!r}; every container: block must "
+                                f"carry {EXPECTED_CONTAINER_ENV!r} so git trusts the "
+                                f"host-owned workspace inside a caller's image. Without "
+                                f"it every git call in the job fails 'detected dubious "
+                                f"ownership' / 'not in a git directory' (exit 128).")
                           failures += 1
                           ok = False
                   bound += ok
@@ -2722,6 +3241,9 @@ jobs:
           # what let a hard `timeout` dependency reach eleven stages
           # unregistered — the tool was invoked, the drift scan subtracted
           # it as always-available, and nothing asked the image for it.
+          # `unzip` moved out of here for the same reason: it is canonical
+          # now, an indirect dependency of claude-code-action's Bun setup
+          # (required-tools.txt's header has the evidence).
           ALWAYS_AVAILABLE = {
               "alias", "awk", "base64", "basename", "bg", "break", "case",
               "cat", "cd", "chmod", "chown", "cmp", "comm", "command",
@@ -2738,7 +3260,7 @@ jobs:
               "split", "tac", "tail", "tar", "tee", "test", "then", "time",
               "touch", "tr", "trap", "true", "type", "uname",
               "unalias", "uniq", "unset", "until", "wait", "wc", "while",
-              "xargs", "xxd", "yes", "gzip", "gunzip", "zip", "unzip",
+              "xargs", "xxd", "yes", "gzip", "gunzip", "zip",
               "mapfile", "readarray", "popd", "pushd", "dirs", "hash",
               "ulimit", "umask", "compgen", "complete",
           }
@@ -3275,10 +3797,12 @@ jobs:
       # Gate 36 — #169: the stage-8b watchdog verifier's own failure
       # branches (the two exit-2 fetch guards, the startup_failure shape,
       # the history fallback, and the CREATE_ISSUE dedup arm that carried
-      # the #167 read-a-failed-search-as-empty defect) each have a fixture
-      # that reaches them, driven through a gh stub that can fail any call
-      # (the GH_STUB_FAIL shape from PR #168), with two mutations proving
-      # the guards load-bearing.
+      # the #167 read-a-failed-search-as-empty defect, and since #962 its
+      # fingerprint dedup, board-exclusion check and body pointers) each
+      # have a fixture that reaches them, driven through a gh stub that can
+      # fail any call (the GH_STUB_FAIL shape from PR #168), with one
+      # mutation per guard (listed at the harness's foot) proving each
+      # load-bearing.
       - name: Gate 36 — the watchdog verifier's failure branches actually execute
         run: bash .github/scripts/verify-watchdog-run-failure-paths.sh
 
@@ -3412,9 +3936,12 @@ jobs:
       # Gate 47 — what makes CLAUDE.md's "Shared logic has exactly one
       # home" claim true: every `-- see FILE` pointer must name a file
       # that exists, its topic prose must share vocabulary with that
-      # file's own text (resolving is not enough), and every
+      # file's own text (resolving is not enough), every
       # `(canonical copy` marker must have at least one such pointer
-      # aimed at it from elsewhere.
+      # aimed at it from elsewhere, and every canonical block is named
+      # and listed in canonical-comment-blocks.json, so deleting one
+      # fails here instead of leaving its pointers resolving to some
+      # other comment (#747).
       - name: Gate 47 — comment pointers and canonical-copy markers are real
         if: "!cancelled()"
         run: python3 .github/scripts/verify-comment-canonical-pointers.py
@@ -3498,7 +4025,11 @@ jobs:
       # gh-issue-report/-close mechanics this step used to perform inline
       # into the shared durable-failure-issue composite, which the two
       # `uses:` steps immediately after this one call based on that
-      # decision -- and mutates each #325 defect back.
+      # decision -- and mutates each #325 defect back. #966 added the
+      # mode-aware close: a success closes the issue only when no mode
+      # recorded on it (body or appended failure comment) is still
+      # outstanding, and runs every failure body and pass note it writes
+      # through detect's reader so the two cannot drift.
       - name: Gate 52 — auto-release's report job attributes a crashed job to infrastructure, not to a quiet day or a phantom release run
         if: "!cancelled()"
         run: python3 .github/scripts/verify-auto-release-report.py
@@ -3641,7 +4172,10 @@ jobs:
       # non-leap year's Dec-31/Jan-1 boundary (day 365 and day 1 are both
       # odd) instead of alternating. Executes the shipped mode step against a
       # stubbed `date` for a real year-boundary pair and mutates the fix back
-      # to prove the regression is caught.
+      # to prove the regression is caught. #966 extended it to detect's
+      # next step, which re-verifies an already-released head when the
+      # open auto-release:failed issue records this run's mode, and to the
+      # job conditions that consume that decision.
       - name: Gate 64 — auto-release's mode derivation never repeats a mode across a year boundary
         if: "!cancelled()"
         run: python3 .github/scripts/verify-auto-release-mode.py
@@ -3704,11 +4238,10 @@ jobs:
       # every job in every .github/workflows/*.yml file with an agent step
       # -- rather than a fixed count of stages, checked against a checked-in
       # floor (so a disappearing subject fails loudly) and an exemption
-      # record (a wall-clock bound, or adoption of the post-agent
-      # composites) for the jobs that do not carry the full mechanism. Every
-      # full_subject job relays its mint into env.WC_BOT_TOKEN /
-      # env.WC_SCRATCH_TOKEN and re-mints it immediately after each agent
-      # step; this asserts no post-agent step reads the stale
+      # record (a wall-clock bound) for the jobs that do not carry the full
+      # mechanism. Every full_subject job relays its mint into
+      # env.WC_BOT_TOKEN / env.WC_SCRATCH_TOKEN and re-mints it immediately
+      # after each agent step; this asserts no post-agent step reads the stale
       # steps.<id>.outputs.token form (nor a pre-agent step's $GITHUB_ENV
       # relay of one under a different name), no agent step in a job runs
       # unrefreshed, every "Report over-budget agent run" copy carries
@@ -3718,7 +4251,7 @@ jobs:
       # never simply absent), each agent step's own composite calls are
       # checked by position, not merely by a job-wide total, and every
       # exempt entry's own condition still holds -- see
-      # verify-post-agent-credential-refresh.py's own docstring (checks 1-9)
+      # verify-post-agent-credential-refresh.py's own docstring (checks 1-11)
       # for the current, authoritative list.
       - name: Gate 68 — every post-agent step holds a fresh credential and every observability callout is tolerated
         if: "!cancelled()"
@@ -3960,7 +4493,11 @@ jobs:
       # one job this feature deliberately added. Also evaluates both job
       # guards against all four trigger shapes, so a schedule cannot reach
       # the single-run job (it would persist run-id '') and a completion
-      # cannot reach the sweep.
+      # cannot reach the sweep. And (#889) every workflow that uploads a
+      # metrics-record artifact, directly, through a composite, or through
+      # a reusable workflow it calls, is in the sweep's workflow paths and,
+      # unless sweep-only (watchdog, board-loop), the completion trigger --
+      # board-loop.yml was in neither, so its records expired unpersisted.
       - name: Gate 79 — the metrics wrapper drops the watchdog trigger and its sweep cron stands alone
         if: "!cancelled()"
         run: python3 .github/scripts/verify-metrics-wrapper-trigger-drops-watchdog.py
@@ -3992,6 +4529,81 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-eligibility.py
 
+      # The daily board status (board-status.yml, board reset of
+      # 2026-10-01) renders what it read and publishes to one issue. Not
+      # numbered: gate numbers are allocated by hand and collide (#773).
+      - name: Board status renders the board it read and edits only its own issue
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-board-status.py
+
+      # auto-release-switch.yml sets or clears WING_COMMANDER_AUTO_RELEASE_PAUSED
+      # and reads it back; anyone may pause, only the repository owner may
+      # resume (specs/055-unattended-e2e-gates FR-028). Not numbered, as above.
+      - name: Auto-release switch sets or clears the kill switch, reads it back, and lets only the owner resume
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-auto-release-switch.py
+
+      # auto-release.yml's poll merges the plan and finalize PRs only once
+      # their stage has written stage:plan or stage:review, and reports a
+      # stage that never does as a pipeline defect (#930). Not numbered, as
+      # above.
+      - name: Auto-release poll merges a stage's PR only after the stage reports it
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-auto-release-gate-waits-for-stage.py
+
+      # auto-release.yml's verify-e2e calls the stages through a run-scoped
+      # annotated tag on the verified head, the shape of an adopter's `@v2`
+      # pin (#928): e2e-pin sweeps the previous run's and creates this run's,
+      # and verify-e2e reads it back. Not numbered, as above.
+      - name: Auto-release end-to-end run pins the stages through an annotated tag on the verified head
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-auto-release-e2e-pin.py
+
+      # board-loop.yml's two duplicate-marker scans each have one home in
+      # board_eligibility, and the closed-without-landing map reads every
+      # duplicate marker, not only an issue's newest (#874, #888). Not
+      # numbered, as above.
+      - name: Board loop reads duplicate markers only through their single homes
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-board-duplicate-marker-scans.py
+
+      # rebase.yml's publish step fails, naming the credential, on a push
+      # refused after a failed post-agent re-establishment, and keeps the
+      # branch-moved warning otherwise (#661). Not numbered, as above.
+      - name: Rebase publish tells a credential refusal from a branch race
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-rebase-publish-credential-refusal.py
+
+      # implement.yml's gate-suite preflight checks for run-local-gates.py
+      # ahead of the tools, so an adopter repository with no suite skips
+      # it, the agent prompt says so, and the cycle-outcome artifact
+      # records skipped rather than fail (#935, #936). Not numbered, as
+      # above.
+      - name: Implement gate-suite preflight skips a repository with no local gate suite
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-implement-gate-suite-preflight.py
+
+      # rebase.yml's discover step (#916, #831) runs against a real local
+      # origin and a gh stub that applies its own --jq programs. Not
+      # numbered, for the same reason as the board status step above.
+      - name: Rebase discover skips closed-issue branches and reads only the App's dedup marker
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-rebase-discover-selection.py
+
+      # watchdog.yml's own failure accounting (#811, #889): a handled rate
+      # limit is not an unhandled failure, and an unreadable self-dispatch
+      # chain counts as capped. Not numbered, as for the board status step.
+      - name: Watchdog counts a handled rate limit as handled and an unreadable self-dispatch chain as capped
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-watchdog-failure-accounting.py
+
+      # board-loop.yml's review-fixup push (found by the code review of
+      # #901): a workflow-file follow-up is held under board:stalled, and a
+      # refused push never advances the round. Not numbered, as above.
+      - name: Board loop review-fixup holds a workflow-file follow-up and never advances on a refused push
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-board-review-fixup-push.py
+
       # Gate 82 — specs/057-autonomous-board-loop (FR-012/FR-064 bullet 1):
       # triage may close an issue on exactly two code-derived grounds, and
       # an agent's "already fixed on main" proposal must NEVER be one of
@@ -4018,7 +4630,10 @@ jobs:
       # Gate 84 — specs/057-autonomous-board-loop (FR-017/FR-019/FR-021,
       # FR-064 bullet 3): the route backstop can only narrow the
       # route-propose agent's fix/spec proposal, never widen it, and a
-      # contract-widening diff re-routes regardless of size.
+      # contract-widening diff re-routes regardless of size. It also holds
+      # the workflow-scope check and hold to their one home,
+      # board_workflow_scope_hold.py, at all three of board-loop.yml's
+      # sites (found by the code review of #921).
       - name: Gate 84 — board loop route backstop resolves every FR-064 bullet-3 branch
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-route-backstop.py
@@ -4224,8 +4839,9 @@ jobs:
       # to the working tree's .github/scripts (the gate-suite call
       # excepted). The snapshot step is also run against a scratch
       # repository whose working tree differs from its commit. The
-      # composite half of this same provenance rule is Gate 104,
-      # two gates below.
+      # composite half of this same provenance rule is Gate 104 (every
+      # uses: ./.github/actions/ reference in board-loop.yml resolves from
+      # the trusted copy), later in this file.
       - name: "Gate 98 — board-loop's fix, review and readiness run helpers from a pristine snapshot, never the working tree"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-loop-helper-provenance.py
@@ -4357,10 +4973,15 @@ jobs:
       # has to undo, so its decision is fixtured, not trusted. Numbered
       # 112, not the 104 tasks.md's T050 originally reserved — see Gate
       # 107's comment above for the Maintainer Feedback renumbering.
+      # #826: it also pins how every review_gate marker reader gets its
+      # comments — REST (`gh api .../issues/$N/comments --paginate`, pages
+      # merged), never `gh issue|pr view --json comments`, whose
+      # author{login} shape has no user.type for is_loop_marker_author() —
+      # and runs disposition's and merge's read steps against a stub gh.
       - name: "Gate 112 — Lifecycle merge preconditions"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-lifecycle-merge-preconditions.py
-      - name: "Gate 112 self-test — the bot's own review never blocks its merge, a plain comment never clears a standing CHANGES_REQUESTED, and unmet_reason names only the first failing condition"
+      - name: "Gate 112 self-test — the bot's own review never blocks its merge, a plain comment never clears a standing CHANGES_REQUESTED, unmet_reason names only the first failing condition, and a --json comments, first-page-only, unmerged or unguarded marker read is caught"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-lifecycle-merge-preconditions.py --self-test
 
@@ -4449,7 +5070,7 @@ jobs:
       # unrestricted Write/Edit on the workspace and could otherwise rewrite
       # the sidecar before it runs with the App private key. Numbered 104,
       # not the 99 this branch's own commit first picked (#450/#463's Gate 99,
-      # converged-means-tasks-done, immediately above, claimed 99 first on the
+      # converged-means-tasks-done, claimed 99 first on the
       # default branch before this branch's rebase landed) nor the 100 this
       # gate held next (main's own Gate 100, spec 079, claimed 100 first on
       # the default branch before this branch's second rebase landed).
@@ -4619,6 +5240,264 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-lifecycle-review-gate-composite-provenance.py --self-test
 
+      # Gate 126 — specs/091-gh-api-error-capture: on an HTTP error, `gh api
+      # ... --jq '<filter>'` still prints the raw JSON error body to stdout
+      # while the human-readable line goes to stderr and the filter is
+      # never applied, so a bare command-substitution capture of that read
+      # keeps holding the error body on failure, not empty (#497). This
+      # gate classifies every covered `gh api` command-substitution
+      # capture's failure path and fails on any that does not exit the
+      # step, reassign the captured variable, leave the loop iteration, or
+      # carry a stated-reason `# wc-gh-api-error-exempt: <reason>` marker.
+      - name: "Gate 126 — no gh api capture carries an unhandled error body downstream"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-gh-api-error-capture.py
+      - name: "Gate 126 self-test — every classification branch, including the #497 shape, fails where it should"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-gh-api-error-capture.py --self-test
+
+      # Gate 127 — specs/091-gh-api-error-capture: every harness-driven gate
+      # whose own shipped subject block contains a covered `gh api` capture
+      # must simulate a `gh` failure via the one shared
+      # wc_shell_harness.gh_error_stub_arm helper, never a hand-rolled
+      # literal, and that canonical literal shape must not appear a second
+      # time anywhere else under .github/scripts/ (FR-009-FR-012/FR-015).
+      # A stub builder quotes values with shlex.quote, never a hand-rolled
+      # helper (#889).
+      - name: "Gate 127 — every gh-error-simulating stub in a covered-capture harness uses the one shared home"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-gh-error-stub-conformance.py
+      - name: "Gate 127 self-test — retrofit-set derivation, non-conforming stubs, and duplicate literals are each caught"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-gh-error-stub-conformance.py --self-test
+
+      # Gate 129 -- specs/089-skill-example-drift: spec-cross-reference/
+      # SKILL.md's Over-rated example quotes a structural claim about
+      # board-loop.yml's concurrency configuration (the job range that joins
+      # wing-commander-board-loop, and the directed-proof group). Nothing
+      # failed when spec 060 changed that shape (#490) until this gate
+      # existed (issue #658). This is the mechanical owner FR-002 requires
+      # for that one quote, not a registry (FR-011) -- a
+      # skill-example-drift-waivers.json entry, stale-checked in both
+      # directions the same as Gate 124's own registers, covers a PR that
+      # cannot also edit .claude/ (FR-013). Numbered 129, not the 125 or 126
+      # this branch's own commits picked in turn: specs/062-lifecycle-review-gate
+      # claimed 125 on main before this branch's rebase landed (#660 tracked
+      # that allocation problem), and a later coordinated cross-spec
+      # renumbering (PR #813 review, issue #812) reserved 126/127 for spec
+      # 091, 128 for spec 074, 130/131 for spec 108, and 132 for spec 109,
+      # moving this feature to 129.
+      - name: "Gate 129 — spec-cross-reference's Over-rated example matches board-loop.yml's actual concurrency shape"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-skill-board-loop-concurrency-claim.py
+      - name: "Gate 129 self-test — each structural mismatch fails its own mutation, and a stale waiver fails too"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-skill-board-loop-concurrency-claim.py --self-test
+
+      # Gate 130 — specs/108-routed-original-disposition (contracts/
+      # duplicate-disposition.md, FR-009/FR-010/FR-011): dispose_as_
+      # duplicate()'s own idempotency pre-check and failure-semantics table,
+      # proven against a stubbed gh rather than a real repository. A
+      # different subject from Gate 93 check 3 (FR-012), which only checks
+      # that board-loop.yml's three spec-request sites CALL this module —
+      # this gate checks the module's own internal behaviour, mirroring the
+      # one-gate-per-board_*.py convention (board_readiness.py -> Gate,
+      # board_triage.py -> Gate, etc). Numbered 130, not the 125 this
+      # branch's own tasks.md originally claimed: Gate 125 was taken by
+      # specs/062-lifecycle-review-gate's own gate before this branch's
+      # rebase landed, and this branch's own two gates collided with each
+      # other at 126 too (maintainer review, fold leg-4) -- the maintainer
+      # directed 130/131 here, leaving 126/127 to spec 091, 128 to spec
+      # 074, 129 to spec 089, and 132 to spec 109.
+      - name: "Gate 130 — dispose_as_duplicate's idempotency and failure semantics (FR-009/FR-010/FR-011)"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-board-duplicate-disposition.py
+      - name: "Gate 130 self-test — the baseline end-to-end drill, and dropping the own-comment presence check must make the idempotency drill re-post a comment"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-board-duplicate-disposition.py --self-test
+
+      # Gate 131 — specs/108-routed-original-disposition (contracts/
+      # closed-without-landing-notice.md, FR-017): a spec-request this loop
+      # filed that closes without its spec-meta.json ever reaching the
+      # finalize stage's terminal value gets one idempotent notice on both
+      # the spec-request and the originating issue it disposed of. Numbered
+      # 131, not the 126 this branch's own tasks.md originally claimed
+      # (maintainer review, fold leg-4: 126 collided with Gate 130's own
+      # module above).
+      - name: "Gate 131 — closed-without-landing notices are posted once and only when the work never landed (FR-017)"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-board-closed-without-landing.py
+      - name: "Gate 131 self-test — dropping the notice-presence check must make the idempotent-repeat case re-post"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-board-closed-without-landing.py --self-test
+
+      # Gate 132 — specs/109-watchdog-finding-fanout: the dedup search's
+      # overlap-matching rule (any shared signal id on an open issue is a
+      # match, capped at the 30 most-recently-added distinct ids) and the
+      # FR-009 gate-suite filing condition, both proven by executing the
+      # real `triage` steps against stubbed input, plus the pre-existing
+      # #266 `{stage, tool}` denial separation proven against ids the real
+      # `collect`-job steps actually stamp. Numbered 132, not the 125 this
+      # branch's own tasks.md originally claimed nor the 128 this branch's
+      # own commit last picked: Gates 126-127 claimed those numbers on main
+      # first, for specs/091-gh-api-error-capture, and
+      # specs/108-routed-original-disposition's own merge (maintainer
+      # review, fold leg-4) directed 130/131 to itself, leaving 128 to spec
+      # 074, 129 to spec 089, and 132 here (#660 tracks the cross-branch
+      # allocation problem both gates' own numbering comments already
+      # note).
+      - name: "Gate 132 — dedup search's overlap matching, the FR-009 converging-cycle filing suppression, and the #266 stage/tool separation surviving both"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-watchdog-overlap-fanout.py
+      - name: "Gate 132 self-test — reverting overlap matching to exact-set equality, reverting FR-009 to \"always file\", or reverting the tool-denial key to drop stage each fail"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-watchdog-overlap-fanout.py --self-test
+
+      # Gate 134 — specs/100-stalled-item-re-admission FR-006/FR-006b: every
+      # stall site posts a marker with no pr (#604), so a maintainer who
+      # removes board:stalled always reaches resume's board:owned fallback
+      # (clause 2), which used to resolve unconditionally to review (#530's
+      # breach carve-out aside). head_moved_since_last_review()
+      # (board_item_marker.py) now decides review vs. readiness by whether
+      # the PR's head SHA differs from the SHA its loop's own last
+      # *converged* review verdict recorded (never a budget-spent or
+      # inconclusive one); this gate pins the function's own fixture-driven
+      # decision branches, that clause 2 still calls it (reverting to the
+      # old unconditional form fails by name), that a breach marker is
+      # never affected (#530), that a re-admitted item starts review at
+      # round 0 (FR-009), that none of the stall sites carries
+      # continue-on-error (FR-010), and that each records a
+      # GITHUB_STEP_SUMMARY line (FR-011). Numbered 134, not the 128 this
+      # branch's own commit last picked: spec 074 (#821) already holds
+      # Gate 128 on `main` (maintainer review of #885; #660 tracks the
+      # cross-branch allocation problem).
+      - name: "Gate 134 — resume's board:owned fallback resolves review vs. readiness from whether the PR's head moved since the last converged review, never unconditionally"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-board-loop-readmission.py
+      - name: "Gate 134 self-test — clause 2 reverted to unconditional review, the breach carve-out deleted or bypassed, a dropped stall summary, a continue-on-error stall site, a broken head-moved decision, and a loosened round budget are each detected"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-board-loop-readmission.py --self-test
+
+      # Gate 135 — specs/097-recorded-stop-point: an honoured stop request
+      # must leave a durable record (board:stalled + a stalled marker + a
+      # human-legible comment) so the board keeps moving past a stopped
+      # item, while a kill-switch-only or closed-issue stand-down keeps
+      # writing nothing. See contracts/gate-135-stop-point-recording.md.
+      # Numbered 135, not the 128 this branch's own tasks.md originally
+      # claimed (maintainer review fold leg-3): 128 is spec 074's own gate
+      # (PR #821, confirmed open), and 129-131 above are spec 089/108's;
+      # 132-134 are taken or allocated elsewhere (spec 109 and others, not
+      # yet landed on this branch), so this feature moves to 135.
+      - name: "Gate 135 — an honoured stop records its stop point, and the kill switch keeps writing nothing"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-stop-point-recording.py
+      - name: "Gate 135 self-test — each check is shown failing its own pre-fix shape"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-stop-point-recording.py --self-test
+
+      # Gate 136 — specs/096-durable-prove-entry research.md D4/D5: a board
+      # item marker whose `step` is "prove" and whose `outcome_reason` is
+      # exactly board_prove_displacement.RECORDED_REASON or the literal
+      # "uncorrelated" -- and which has not already been recovered once -- is
+      # a candidate for the `select` job's own directed re-dispatch
+      # (FR-011/FR-011a/FR-011b/FR-011c). This gate exercises
+      # board_prove_recovery.is_recoverable()/find_recoverable_items() over
+      # every marker shape data-model.md's "Board Item Marker" table lists,
+      # and board_item_marker.py's two new fields round-trip, including a
+      # marker written before this feature (five keys only). Numbered 136,
+      # not 128, to avoid colliding with another spec's own Gate 128
+      # (maintainer review).
+      - name: "Gate 136 — a board item marker recoverable only when displaced/uncorrelated and not already spent"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-board-prove-recovery.py
+
+      # Gate 137 — specs/096-durable-prove-entry FR-018, research.md D8: the
+      # concurrency arrangement T007/T008 give prove-gate/prove is what this
+      # gate reads, not only what a comment describes (spec.md "A rule with
+      # no gate behind it"). Asserts, against the real board-loop.yml, that
+      # prove-gate/prove's own pull_request-branch group text is not the
+      # shared wing-commander-board-loop literal, contains the per-merge
+      # github.event.pull_request.number key, resolves to a distinct group
+      # for two distinct PR numbers, and the two jobs never desync. Numbered
+      # 137, not 129, to avoid colliding with Gate 129
+      # (verify-skill-board-loop-concurrency-claim.py, specs/089, already
+      # wired above -- maintainer review).
+      - name: "Gate 137 — prove-gate/prove's own pull_request-branch concurrency group is per-merge and never desyncs"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-prove-path-concurrency.py
+      - name: "Gate 137 self-test — a shared-key regression, an event-name swap, a shadowed or dead per-merge arm, an unguarded directed arm, an unmodelled context name, and a prove-gate/prove desync each fail"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-prove-path-concurrency.py --self-test
+
+      # Gate 138 — specs/099-name-free-stage-identity T032/T033 (FR-012):
+      # no FR-002 site in watchdog.yml or wing-commander-inspected-run-
+      # identity/action.yml gates behavior on a reference display-name
+      # literal outside the one permitted id: name-fallback step, and
+      # every wing-commander-metrics-summary call site declares its spec
+      # identity explicitly (SC-008). Numbered 138, not the 126 this
+      # branch's own tasks.md originally claimed, nor 133: specs 091 and
+      # 108 landed gates 126, 127, 130 and 131 on main before this
+      # branch's rebase; 128/129/132 are reserved for specs 074/089/109;
+      # 133 and 134 are independently claimed by sibling in-flight
+      # branches spec 090 and (on main) spec 100 (maintainer review, fold
+      # leg-0); #660 tracks the cross-branch allocation problem these
+      # gates' own numbering comments keep hitting.
+      - name: "Gate 138 — no FR-002 site gates on a reference display name, and every metrics-summary call site declares spec-identity-is-own"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-no-reference-name-stage-match.py
+      - name: "Gate 138 self-test — a clean pass, a reintroduced reference-name case arm, a match inside name-fallback, a missing spec-identity-is-own: key, and a renamed/removed name-fallback step each behave as specified"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-no-reference-name-stage-match.py --self-test
+
+      # Gate 139 — specs/099-name-free-stage-identity T031: the shipped
+      # bash behind watchdog.yml's seven converted FR-002 sites and the
+      # composite's own record/name precedence, EXECUTED against fixtures
+      # covering research.md R7's rows, SC-001 (a renamed and a reference-
+      # named wrapper resolve identically for the same record), and
+      # contracts/resolved-stage-identity.md Rule 2's three-state
+      # consumption, including the new "unresolved" collector-outcomes
+      # entry. tasks.md's T032/T033 claimed 126/127 for these two gates;
+      # specs 091 and 108 landed on main first during this branch's
+      # rebase and took 126, 127, 130 and 131; 128/129/132 are reserved
+      # for specs 074/089/109; 133 and 134 are independently claimed by
+      # sibling in-flight branch spec 090 and (on main) spec 100
+      # (maintainer review, fold leg-0), so this gate claims 139 and its
+      # sibling above claims 138; #660 tracks the allocation problem.
+      - name: "Gate 139 — resolved-stage FR-002 consumers, executed against the shipped scripts"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-watchdog-resolved-stage-consumers.py
+      - name: "Gate 139 self-test — GITHUB_REPOSITORY is passed explicitly to the composite's stage step, not inherited from the ambient environment"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-watchdog-resolved-stage-consumers.py --self-test
+
+      # Gate 140 — the step harness (wc_shell_harness.run_step) runs each
+      # step under the shell production gives that step: a `shell: bash`
+      # step (every composite one) as `bash --noprofile --norc -eo pipefail`,
+      # a workflow step that names no shell as `bash -e`. It used to run
+      # everything as `bash -e`, so a pipeline whose early stage fails passed
+      # under the gates and failed in CI (#889). Probes a real shipped step
+      # of each shape and pins the resolution table and its single home.
+      - name: "Gate 140 — the step harness runs each step under its production shell, pipefail where the runner applies it"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-shell-harness-parity.py
+
+      # Gate 133 — specs/090-stage-write-boundary: the implement stage's
+      # write boundary (no-write-paths) is stated in the prompt before the
+      # agent's first tool call, classified consistently by one shared
+      # composite, and routed as a tracked, non-authorizing item rather than
+      # re-surfacing every cycle (contracts/write-boundary-gate.md). Numbered
+      # 133, not this branch's original 126 reservation: Gate 126 and Gate
+      # 127 (both specs/091-gh-api-error-capture) claimed 126-127, and Gate
+      # 128 was independently claimed by spec 074/#821, before this branch's
+      # rebase landed (#660 tracks the allocation problem) — 133 is the next
+      # free number as of this cycle.
+      - name: "Gate 133 — the implement stage's write boundary is stated, classified, and routed consistently"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-write-boundary.py
+      - name: "Gate 133 self-test — write boundary"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-write-boundary.py --self-test
+
       # Gate 114 — specs/066-fine-grained-maintainer-token FR-017/FR-018: "a
       # classic PAT, not fine-grained" was asserted in at least four places
       # (docs/setup.md, auto-release.yml's credential-step comment, Gate
@@ -4654,9 +5533,58 @@ jobs:
       # signature, a plain repeated failure still gate-stalls, and the
       # pre-existing rate-limit branch still takes precedence over it; a
       # mutation dropping the new branch must fail the first assertion.
+      # #979: it also runs the step under the credentials its own `env:`
+      # binds, against stubs that 401 the App token, or revoke the
+      # maintainer secret, after a few calls, and asserts the poll outlives
+      # the App token and that a 401 it does end on is the maintainer
+      # secret's it names; a mutation binding the step's GH_TOKEN back to
+      # the App token must fail both, each one checked by name.
       - name: "Gate 115 — a repeated gate-driving failure caused by the harness credential ends fail-infra, naming the credential"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-auto-release-poll-credential-failure.py
+
+      # Gate 128 — specs/074-serialized-fold-dispatch (FR-021/FR-022): the
+      # fold-queue admission wiring actually serializes every stage-9
+      # concurrency contender through a ticket, and fold-cycle-guard.yml's
+      # automatic re-dispatch is bounded to exactly one attempt. Loads the
+      # real if:/needs:/concurrency.group text of every job the feature
+      # gated and runs the real fold-cycle-guard.yml decide step and
+      # fold-queue-ledger.sh claim-dispatch transform directly — see
+      # verify-fold-queue-admission.py. Renumbered from Gate 126 (T051,
+      # maintainer review of #821): five open Finalize PRs all claimed
+      # Gate 126 at tasks time; the maintainer's allocation gives this
+      # feature 128.
+      - name: Gate 128 — fold-queue admission wiring serializes every contender and bounds the automatic re-dispatch
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-fold-queue-admission.py
+
+      # Gate 128 fixtures — specs/074-serialized-fold-dispatch quickstart.md
+      # Drill 2: the fold-queue composites' own bash fixture suites,
+      # extracted from each composite's action.yml (or, for
+      # wing-commander-fold-queue-ledger, from fold-queue-ledger.sh's
+      # claim-redispatch transform directly) and run against a throwaway
+      # local bare git repo (no live network). Gate 128 above exercises the
+      # claim-dispatch transform and fold-cycle-guard.yml's decide step
+      # directly; these four cover the admit/release/claim-dispatch/
+      # claim-redispatch composites' own shipped shell, which nothing else
+      # runs — see each suite's own header comment for scenario coverage.
+      # T052 (maintainer review of #821, #719/#825): relocated from
+      # .github/actions/<composite>/tests/run.sh (a location Gate 119
+      # forbids) to .github/scripts/<composite>-tests/run-tests.sh, so
+      # `python .github/scripts/run-local-gates.py` now runs these four
+      # too, not only CI.
+      - name: Gate 128 fixtures — wing-commander-fold-queue-admit composite (quickstart.md Drill 2)
+        if: "!cancelled()"
+        run: bash .github/scripts/wing-commander-fold-queue-admit-tests/run-tests.sh
+      - name: Gate 128 fixtures — wing-commander-fold-queue-release composite (quickstart.md Drill 2)
+        if: "!cancelled()"
+        run: bash .github/scripts/wing-commander-fold-queue-release-tests/run-tests.sh
+      - name: Gate 128 fixtures — wing-commander-fold-queue-claim-dispatch composite (quickstart.md Drill 2)
+        if: "!cancelled()"
+        run: bash .github/scripts/wing-commander-fold-queue-claim-dispatch-tests/run-tests.sh
+      - name: Gate 128 fixtures — wing-commander-fold-queue-ledger composite's claim-redispatch transform (T038)
+        if: "!cancelled()"
+        run: bash .github/scripts/wing-commander-fold-queue-ledger-tests/run-tests.sh
 
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and
@@ -4682,8 +5610,9 @@ jobs:
       # Gate 119 — gate_scripts() discovers .github/scripts/ only (FR-001), so
       # a test harness or standalone gate script placed under
       # .github/actions/ instead is invisible to Gate 10 and to
-      # run-local-gates.py alike: it belongs at
-      # .github/scripts/<composite>-tests/ instead, for the two reasons
+      # run-local-gates.py alike: a harness belongs at
+      # .github/scripts/<composite>-tests/ and a standalone verify-* at
+      # .github/scripts/ instead, for the two reasons
       # verify-actions-no-gate-scripts.py's own docstring gives. The
       # .github/actions/_shared/ carve-out is structural, not a waiver.
       - name: "Gate 119 — no test harness or standalone gate script lives under .github/actions/"
@@ -4776,7 +5705,9 @@ jobs:
           # List what actually exists on the default branch so those can be
           # told apart. Fails CLOSED: if the listing cannot be read, every
           # mismatch is reported exactly as before rather than suppressed.
-          DEFAULT_BRANCH="$(gh api "repos/$GITHUB_REPOSITORY" --jq '.default_branch' 2>/dev/null || true)"
+          if ! DEFAULT_BRANCH="$(gh api "repos/$GITHUB_REPOSITORY" --jq '.default_branch' 2>/dev/null)"; then
+            DEFAULT_BRANCH=""
+          fi
           export DEFAULT_BRANCH
           : > on-default.txt
           DEFAULT_LISTING_OK=false

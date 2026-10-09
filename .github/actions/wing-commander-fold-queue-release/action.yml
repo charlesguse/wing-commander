@@ -1,0 +1,103 @@
+name: wing-commander-fold-queue-release
+description: >
+  Releases a granted ticket (removing it from the ledger's queue head) and,
+  for an act-kind ticket, records this run's own fold outcome directly --
+  replacing the base..tip git-log range scan report-fold-outcomes and
+  dispatch-once used before this feature (research.md D3) -- see
+  fold-queue-ledger.sh.
+
+inputs:
+  spec-dir:
+    required: true
+  token:
+    description: "The token wing-commander-fold-queue-admit returned."
+    required: true
+  round:
+    description: >
+      The round the ticket was filed under (accepted for interface parity
+      with wing-commander-fold-queue-admit's output; the release transform
+      itself derives the round from the ledger's own current round for
+      this spec-dir, since a still-queued ticket's round cannot have
+      changed underneath it).
+    required: true
+  run-id:
+    description: >
+      Overridable only for fixture/test use. A run's whole act matrix
+      shares ONE ticket (research.md D1) but this composite is invoked
+      once per leg job instance, so run-id (not the ticket, which may
+      already be dequeued by an earlier leg) is what each call's
+      completion record is filed under.
+    required: false
+    default: ${{ github.run_id }}
+  leg-id:
+    description: >
+      Required (non-empty) when the ticket's kind was act and this call
+      reports one leg's outcome -- the calling job invokes this composite
+      once per leg it ran.
+    required: false
+    default: ""
+  outcome:
+    description: "folded | not-folded | error."
+    required: true
+  commit-sha:
+    description: "The fold(<id>): commit SHA this leg produced, when outcome: folded."
+    required: false
+    default: ""
+  summary:
+    description: >
+      Free-text summary for the eventual "Folded in this review" reply;
+      framed as data, never as instructions to any later reader
+      (Principle V).
+    required: false
+    default: ""
+  best-effort:
+    description: >
+      specs/074-serialized-fold-dispatch T064 (maintainer review of #821,
+      B6): "true" routes through the ledger's `abandon` transform instead
+      of `release` -- used only by a fold-turn-* job's own
+      failure()/cancelled() cleanup step for its OWN deterministic token,
+      which (unlike every other caller of this composite) cannot prove the
+      ticket ever reached the queue head. `outcome`/`commit-sha`/`leg-id`/
+      `summary` are ignored in this mode; no completion record is filed.
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    # Step placement contract (contracts/wing-commander-fold-queue-release.md):
+    # MUST be invoked with if: always() as the last step of the job holding
+    # the ticket -- callers are responsible for that placement; this
+    # composite itself has no way to enforce a caller's if: condition, so
+    # Gate 128 checks it against the shipped workflow instead.
+    - name: Release ticket and record outcome
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+        SPEC_DIR: ${{ inputs.spec-dir }}
+        TOKEN: ${{ inputs.token }}
+        RUN_ID: ${{ inputs.run-id }}
+        OUTCOME: ${{ inputs.outcome }}
+        COMMIT_SHA: ${{ inputs.commit-sha }}
+        LEG_ID: ${{ inputs.leg-id }}
+        SUMMARY: ${{ inputs.summary }}
+        BEST_EFFORT: ${{ inputs.best-effort }}
+      run: |
+        set -euo pipefail
+        LEDGER="$GITHUB_ACTION_PATH/../_shared/fold-queue-ledger.sh"
+        BEST_EFFORT="${BEST_EFFORT:-false}"
+
+        if [ -z "$TOKEN" ]; then
+          echo "wing-commander-fold-queue-release: no token supplied (this run never held a ticket for $SPEC_DIR) -- nothing to release." >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+        fi
+
+        if [ "$BEST_EFFORT" = "true" ]; then
+          bash "$LEDGER" abandon >/dev/null
+          echo "wing-commander-fold-queue-release: abandoned $TOKEN (best-effort, no completion record)." >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+        fi
+
+        bash "$LEDGER" release >/dev/null
+        echo "wing-commander-fold-queue-release: released $TOKEN (outcome: $OUTCOME)." >> "$GITHUB_STEP_SUMMARY"

@@ -24,11 +24,18 @@
 # docs/setup.md's own bootstrap line for spec-request exactly, so a repo
 # that follows docs/setup.md by hand and one whose label board-loop.yml
 # creates on first use end up with the identical label.
+#
+# Board reset of 2026-10-01: the loop now files spec-shaped work as
+# spec-proposal, and only the owner applies spec-request (which starts
+# intake), so spec-proposal replaced spec-request here. spec-request
+# itself is still created by docs/setup.md's bootstrap, which the owner
+# needs anyway.
 name: wing-commander-board-labels
 description: >
   Idempotently creates board-loop.yml's own board:stalled, board:owned,
-  and spec-request labels so its --add-label / --label call sites never
-  depend on any of them already existing in the target repo.
+  spec-proposal, and disposition:duplicate labels so its --add-label /
+  --label call sites never depend on any of them already existing in the
+  target repo.
 
 inputs:
   token:
@@ -38,17 +45,17 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Ensure board:stalled, board:owned, and spec-request labels exist
+    - name: Ensure board:stalled, board:owned, spec-proposal, and disposition:duplicate labels exist
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.token }}
       run: |
         set -uo pipefail
-        # All three creates always run -- a failed board:stalled create must
-        # never skip the board:owned or spec-request creates (or vice
-        # versa). The caller step is continue-on-error: true
-        # (board-loop.yml), so exiting non-zero here is safe and is what
-        # makes a failed create visible in the log instead of silently
+        # All four creates always run -- a failed board:stalled create must
+        # never skip the board:owned, spec-proposal, or disposition:duplicate
+        # creates (or vice versa). The caller step is continue-on-error:
+        # true (board-loop.yml), so exiting non-zero here is safe and is
+        # what makes a failed create visible in the log instead of silently
         # vanishing into the same bug #488 already was
         # (wing-commander-durable-failure-issue/action.yml's own
         # ::warning:: pattern, action.yml:228-229).
@@ -61,8 +68,12 @@ runs:
           echo "::warning::wing-commander-board-labels: gh label create failed for board:owned -- board-loop.yml's --label board:owned call sites may fail until this label exists."
           status=1
         fi
-        if ! gh label create "spec-request" -R "$GITHUB_REPOSITORY" --color 0E8A16 --description "Maintainer approval: run spec intake on this issue" --force; then
-          echo "::warning::wing-commander-board-labels: gh label create failed for spec-request -- board-loop.yml's --label spec-request call sites may fail until this label exists."
+        if ! gh label create "spec-proposal" -R "$GITHUB_REPOSITORY" --color C5DEF5 --description "Board loop: spec-shaped work awaiting the owner; add spec-request to start intake" --force; then
+          echo "::warning::wing-commander-board-labels: gh label create failed for spec-proposal -- board-loop.yml's --label spec-proposal call sites may fail until this label exists."
+          status=1
+        fi
+        if ! gh label create "disposition:duplicate" -R "$GITHUB_REPOSITORY" --color B60205 --description "Board loop: this issue was closed as a duplicate of the spec proposal routed for it" --force; then
+          echo "::warning::wing-commander-board-labels: gh label create failed for disposition:duplicate -- board-loop.yml's --add-label \"disposition:duplicate\" call sites may fail until this label exists."
           status=1
         fi
         exit "$status"

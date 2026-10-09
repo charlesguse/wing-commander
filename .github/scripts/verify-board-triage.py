@@ -21,6 +21,14 @@ quote the transcript's own fields. Each guard has a fixture of its own
 run), closed cases pin the quoted evidence exactly, and a mutation per
 guard -- plus one hard-coding the evidence -- must be caught.
 
+#544: an informational event ("allowed", "allowed_warning") is no
+rate-limit evidence at all; only one that refused the call counts (status
+"rejected", case-insensitive, nested or top-level, or no status), the rule
+wing-commander-agent-verdict applies. Fixtures pin an informational-only
+529 (nested and top-level), a statusless event, an upper-case "REJECTED",
+a 429 beside an informational event, and the last of two qualifying
+events being quoted; a mutation per part of the rule must be caught.
+
 #578: an "already fixed" proposal was handed over only after the cited-run
 and evidence checks, so on an issue citing no run (most human-filed ones)
 it fell into the disagreement path and route filed an empty spec-request.
@@ -175,10 +183,39 @@ RATE_LIMIT_GUARD_CASES = {
     # cost guard alone (one turn).
     "429-one-turn-nonzero-cost": {"outcome": "proceed", "ground": None},
     "429-cost-missing": {"outcome": "proceed", "ground": None},
-    # failed-run guard alone: one turn, $0, but the run succeeded.
+    # failed-run guard alone: one turn, $0, a qualifying (rejected) event,
+    # but the run succeeded.
     "rate-limit-event-success": {"outcome": "proceed", "ground": None},
 }
 TRIAGE_CASES.update(RATE_LIMIT_GUARD_CASES)
+# #544: only an event that refused the call is rate-limit evidence. An
+# informational one ("allowed", "allowed_warning") on a run that failed for
+# another reason (a 529) never closes it; a statusless one still counts; and
+# a terminal 429 still closes beside an informational event, quoting no
+# qualifying event.
+TRIAGE_CASES["rate-limit-event-informational-529"] = {"outcome": "proceed", "ground": None}
+TRIAGE_CASES["rate-limit-event-statusless"] = {
+    "outcome": "closed", "ground": "rate_limit", "evidence": {
+        "rate_limit_event": True, "rate_limit_status": None,
+        "terminal_reason": "rate_limited", "api_error_status": None,
+        "num_turns": 1, "cost_usd": 0}}
+TRIAGE_CASES["rate-limit-event-uppercase-rejected"] = {
+    "outcome": "closed", "ground": "rate_limit", "evidence": {
+        "rate_limit_event": True, "rate_limit_status": "REJECTED",
+        "terminal_reason": "rate_limited", "api_error_status": None,
+        "num_turns": 1, "cost_usd": 0}}
+TRIAGE_CASES["rate-limit-event-toplevel-allowed-529"] = {"outcome": "proceed", "ground": None}
+# Two qualifying events: the last one is quoted (its status, None here).
+TRIAGE_CASES["rate-limit-event-last-qualifying"] = {
+    "outcome": "closed", "ground": "rate_limit", "evidence": {
+        "rate_limit_event": True, "rate_limit_status": None,
+        "terminal_reason": "rate_limited", "api_error_status": None,
+        "num_turns": 1, "cost_usd": 0}}
+TRIAGE_CASES["429-with-informational-event"] = {
+    "outcome": "closed", "ground": "rate_limit", "evidence": {
+        "rate_limit_event": False, "rate_limit_status": None,
+        "terminal_reason": "api_error", "api_error_status": "429",
+        "num_turns": 1, "cost_usd": 0}}
 # Evidence from a rate_limit_event alone (no api_error_status): hard-coded
 # "429"/True evidence would misquote this run.
 TRIAGE_CASES["rate-limit-event-only"] = {
@@ -222,6 +259,10 @@ PIN_CASES = {
     # evidence; only losing a ref the run actually relied on is.
     "pins-main-adds-pin": "none",
     "pins-main-replaces-pin": "divergent",
+    # #800: main deleting one of two steps that pin an action loses a ref
+    # with nothing bumped in its place; replacing one of them is a bump.
+    "pins-main-deletes-one-step": "none",
+    "pins-main-replaces-one-of-two": "divergent",
 }
 EXPECTED = dict.fromkeys(list(TRIAGE_CASES) + list(PIN_CASES))
 
@@ -331,6 +372,21 @@ RATE_LIMIT_MUTATIONS = (
     ("failed-run guard removed", "_failed", lambda orig: lambda result: True),
     ("evidence hard-coded instead of quoted", "check_rate_limit",
      _hardcoded_evidence),
+    ("any rate_limit_event counts again (pre-#544)", "_qualifying_rate_limit_event",
+     lambda orig: lambda records: board_triage._last_of_type(records, "rate_limit_event")),
+    ("status compared case-sensitively", "_qualifying_rate_limit_event",
+     lambda orig: lambda records: next(
+         (r for r in reversed(records) if isinstance(r, dict) and r.get("type") == "rate_limit_event"
+          and board_triage._rate_limit_status(r) in (None, "rejected")), None)),
+    ("top-level status fallback dropped", "_rate_limit_status",
+     lambda orig: lambda record: (record.get("rate_limit_info") or {}).get("status")
+     if isinstance(record.get("rate_limit_info"), dict) else None),
+    ("first qualifying event quoted instead of the last", "_qualifying_rate_limit_event",
+     lambda orig: lambda records: next((r for r in records if orig([r]) is r), None)),
+    ("a statusless event no longer counts", "_qualifying_rate_limit_event",
+     lambda orig: lambda records: next(
+         (r for r in reversed(records) if isinstance(r, dict) and r.get("type") == "rate_limit_event"
+          and str(board_triage._rate_limit_status(r) or "").lower() == "rejected"), None)),
 )
 
 
@@ -729,6 +785,10 @@ _SHAPES_TREE = {
     # #678: main adds a second step pinning the same action at a new ref.
     WF + "main-adds-pin.yml": "jobs:\n  a:\n    steps:\n"
                               "      - uses: owner/grow@1111111 # v1\n",
+    # #800: main deletes the second of two steps pinning the same action.
+    WF + "main-drops-step.yml": "jobs:\n  a:\n    steps:\n"
+                                "      - uses: owner/shrink@1111111 # v1\n"
+                                "      - uses: owner/shrink@2222222 # v2\n",
 }
 _OLD_TREE.update(_SHAPES_TREE)
 _BUMPS.update({
@@ -751,6 +811,9 @@ _BUMPS.update({
     WF + "main-adds-pin.yml": (
         "owner/grow@1111111 # v1",
         "owner/grow@1111111 # v1\n      - uses: owner/grow@2222222 # v2"),
+    # The run's second step is gone on main, nothing bumped: no bump.
+    WF + "main-drops-step.yml": (
+        "\n      - uses: owner/shrink@2222222 # v2", ""),
 })
 
 ALL_WORKFLOWS = sorted(_OLD_TREE)
@@ -792,6 +855,9 @@ SCOPING_CASES = (
     # #678
     ("main adding a second pin for an action the run pinned once does not count",
      WF + "main-adds-pin.yml", False, None),
+    # #800
+    ("main deleting one of two steps that pin an action does not count",
+     WF + "main-drops-step.yml", False, None),
 )
 
 
@@ -925,6 +991,26 @@ def _set_inequality_divergent_pin(workflow_file, run_pins, main_pins):
     return None
 
 
+def _lost_ref_divergent_pin(workflow_file, run_pins, main_pins):
+    """The pre-#800 comparison: any ref the run used that main lacks reads
+    as a bump, so main deleting one of two steps pinning an action flags
+    it with nothing bumped. Used only as a mutation."""
+    for action_ref, run_value in sorted(run_pins.items()):
+        main_value = main_pins.get(action_ref)
+        if main_value is None:
+            continue
+        run_refs = board_triage._ref_set(run_value)
+        main_refs = board_triage._ref_set(main_value)
+        if run_refs - main_refs:
+            return {
+                "workflow_file": workflow_file,
+                "action_ref": action_ref,
+                "run_pin": ", ".join(sorted(run_refs)),
+                "main_pin": ", ".join(sorted(main_refs)),
+            }
+    return None
+
+
 def _scope_filtered(keep):
     """A _scoped_workflow_files() mutation keeping only paths `keep`
     accepts -- the pre-#521 scope, which never reached composites or
@@ -946,6 +1032,9 @@ SCOPING_MUTATIONS = (
     ("pre-#678 set inequality: a pin main added reads as a bump",
      "_first_divergent_pin",
      lambda original: _set_inequality_divergent_pin),
+    ("pre-#800 lost ref: a step main deleted reads as a bump",
+     "_first_divergent_pin",
+     lambda original: _lost_ref_divergent_pin),
     ("composites dropped from the scope", "_scoped_workflow_files",
      _scope_filtered(lambda p: not p.startswith(AC))),
     (".yaml workflows dropped from the scope", "_scoped_workflow_files",
@@ -1285,12 +1374,83 @@ CITE_MUTATIONS = (
     ("decide spells its own pre-#521 ls-files again",
      "          python3 - <<'PYEOF'\n          import json\n          import os\n"
      "          import sys\n\n          sys.path.insert(0, \".github/scripts\")\n"
-     "          from board_triage import tracked_pin_files, triage\n",
+     "          from board_triage import defer_on_rate_limit, tracked_pin_files, triage\n",
      "          git ls-files '.github/workflows/*.yml' > \"$RUNNER_TEMP/wf.txt\"\n"
      "          python3 - <<'PYEOF'\n          import json\n          import os\n"
      "          import sys\n\n          sys.path.insert(0, \".github/scripts\")\n"
-     "          from board_triage import tracked_pin_files, triage\n"),
+     "          from board_triage import defer_on_rate_limit, tracked_pin_files, triage\n"),
 )
+
+
+def run_defer_cases():
+    """board_triage.defer_on_rate_limit(): only a rate-limited agent's
+    proceed becomes defer; code-derived closes and handovers stand."""
+    problems = []
+    proceed = {"outcome": "proceed", "ground": None, "evidence": {}, "agent_proposal": None}
+    closed = {"outcome": "closed", "ground": "rate_limit", "evidence": {"x": 1}, "agent_proposal": None}
+    handover = {"outcome": "handover", "ground": "already_fixed_proposal", "evidence": {}, "agent_proposal": "r"}
+    for name, verdict, agent_verdict, want in (
+            ("rate-limited proceed defers", proceed, "rate-limited", "defer"),
+            ("healthy proceed proceeds", proceed, "healthy", "proceed"),
+            ("exhausted proceed proceeds", proceed, "exhausted", "proceed"),
+            ("no agent verdict (skipped agent) proceeds", proceed, "", "proceed"),
+            ("a code-derived close stands under a rate limit", closed, "rate-limited", "closed"),
+            ("a handover stands under a rate limit", handover, "rate-limited", "handover")):
+        got = board_triage.defer_on_rate_limit(dict(verdict), agent_verdict)["outcome"]
+        if got != want:
+            problems.append("defer_on_rate_limit: {0}: expected {1!r}, got {2!r}".format(name, want, got))
+        else:
+            print("[ok] defer_on_rate_limit: {0}".format(name))
+    return problems
+
+
+DEFER_DECIDE_NEEDLES = (
+    ("TRIAGE_AGENT_VERDICT: ${{ steps.triage-verdict.outputs.verdict }}",
+     "the decide step reads the triage agent's own verdict"),
+    ("verdict = defer_on_rate_limit(triage(issue, run_url),\n"
+     "                                        os.environ.get(\"TRIAGE_AGENT_VERDICT\", \"\"))",
+     "the decide step passes triage()'s verdict through defer_on_rate_limit()"),
+)
+DEFER_ACT_GUARD = ('          if [ "$outcome" = "defer" ]; then\n'
+                   '            echo "board-loop: the triage agent was rate-limited')
+
+
+def check_defer_wiring(text):
+    """The decide step defers a rate-limited agent's proceed, and the act
+    step exits on defer before it renders a marker or posts anything."""
+    problems = []
+    for needle, why in DEFER_DECIDE_NEEDLES:
+        if needle not in text:
+            problems.append("board-loop.yml triage: {0} -- not found".format(why))
+    guard = text.find(DEFER_ACT_GUARD)
+    render = text.find('marker="$(python3 .github/scripts/board_item_marker.py --step "$marker_step"')
+    if guard < 0:
+        problems.append("board-loop.yml triage act step: no `defer` exit -- a rate-limited "
+                        "triage would post \"proceeding to route\" every run")
+    elif render < 0 or guard > render:
+        problems.append("board-loop.yml triage act step: the `defer` exit comes after the "
+                        "marker render -- it must leave before anything is posted")
+    return problems
+
+
+def _mutation_check_defer_wiring(text):
+    problems = []
+    for label, old, new in (
+            ("decide reads the route agent's verdict",
+             "TRIAGE_AGENT_VERDICT: ${{ steps.triage-verdict.outputs.verdict }}",
+             "TRIAGE_AGENT_VERDICT: ${{ steps.route-verdict.outputs.verdict }}"),
+            ("decide skips defer_on_rate_limit",
+             "verdict = defer_on_rate_limit(triage(issue, run_url),",
+             "verdict = (triage(issue, run_url),"),
+            ("act step loses its defer exit", DEFER_ACT_GUARD, "          if false; then\n            echo \"x")):
+        if old not in text:
+            problems.append("defer mutation {0!r} no longer applies -- update it".format(label))
+            continue
+        if not check_defer_wiring(text.replace(old, new, 1)):
+            problems.append("defer mutation {0!r} was NOT caught".format(label))
+        else:
+            print("[ok] defer mutation caught ({0})".format(label))
+    return problems
 
 
 def _mutation_check_cite(reassignment_res):
@@ -1810,6 +1970,13 @@ def run():
               "from the trust-filtered context-file".format(BOARD_LOOP))
     problems.extend(cite_problems)
     problems.extend(_mutation_check_cite(reassignment_res))
+
+    problems.extend(run_defer_cases())
+    defer_problems = check_defer_wiring(board_loop_text)
+    if not defer_problems:
+        print("[ok] defer wiring: a rate-limited triage agent's proceed posts nothing and skips route")
+    problems.extend(defer_problems)
+    problems.extend(_mutation_check_defer_wiring(board_loop_text))
 
     for problem in problems:
         print("::error::verify-board-triage: {0}".format(problem))

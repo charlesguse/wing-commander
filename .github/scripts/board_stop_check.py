@@ -192,7 +192,27 @@ def find_stop_request(comments, current_run_id, bot_login):
     may a `**Run:**` line any other commenter types, maintainer or not.
     The stop request itself is still honoured only from
     MAINTAINER_ASSOCIATIONS -- a different author rule for a different
-    comment."""
+    comment.
+
+    specs/097-recorded-stop-point (FR-006/FR-008, maintainer review fold
+    leg-1): a marker carrying THIS run's own id never advances the
+    baseline, however many of them exist or in what order -- only a marker
+    from a DIFFERENT run can. This run's own stop-point record is exactly
+    such a same-run marker (write_marker()'s `**Run:**` line, posted by the
+    same bot, after honouring a stop within this very run); if it were
+    allowed to set the baseline the way an other-run marker does, it would
+    move the baseline past the very stop comment it just recorded, and a
+    later job checking again in this same run would wrongly see
+    stand_down=False -- undoing the stand-down the record exists to make
+    durable. Excluding every same-run marker from baseline-setting is also
+    the semantically right rule on its own terms, not just a workaround:
+    within one continuous run, a stop posted partway through must stay
+    honoured for the rest of that run regardless of what other same-run
+    progress markers accumulate after it (FR-006). A marker from a
+    DIFFERENT (earlier) run is unaffected and still sets the baseline
+    exactly as before -- that is the separate FR-009/FR-016 case, where a
+    PAST run's own stop-point record correctly suppresses its own old stop
+    comment from re-triggering the NEXT run."""
     ordered = sorted(comments or [], key=lambda c: c.get("created_at") or "")
     current_run_id = str(current_run_id)
 
@@ -204,10 +224,11 @@ def find_stop_request(comments, current_run_id, bot_login):
         match = last_run_match(comment.get("body"))
         if not match:
             continue
-        baseline = comment.get("created_at") or baseline
         run_id = match.group(2)
-        if run_id != current_run_id:
-            last_other_run_id = run_id
+        if run_id == current_run_id:
+            continue
+        baseline = comment.get("created_at") or baseline
+        last_other_run_id = run_id
 
     stop_seen = False
     for comment in ordered:
@@ -223,13 +244,116 @@ def find_stop_request(comments, current_run_id, bot_login):
     return StopDecision(True, last_other_run_id)
 
 
+def find_stop_command_comment(comments, current_run_id, bot_login):
+    """As find_stop_request()'s own stop-detection loop, but returns the
+    WINNING comment itself rather than a bare boolean (specs/097-recorded-
+    stop-point, research.md D2). Recomputes the same baseline
+    find_stop_request() computes -- including the same-run-id handling
+    FR-006/FR-008 require (no current-run-id marker, including this run's
+    own stop-point record, ever advances the baseline; see
+    find_stop_request()'s docstring) -- then returns the LAST comment at or
+    after that baseline where `author_association in
+    MAINTAINER_ASSOCIATIONS and is_stop_command(body)`, or None when none
+    exists.
+
+    Invariant (Gate 135 checks this over Gate 87's own fixture corpus):
+    `find_stop_request(comments, run_id, bot_login).stand_down ==
+    (find_stop_command_comment(comments, run_id, bot_login) is not None)`
+    for every input -- the two functions must never disagree on whether a
+    comment won. This function does not itself decide the baseline
+    differently; it is a deliberate, independently-testable duplicate of
+    the same ~15 lines (research.md D1), not a refactor of
+    find_stop_request() into a shared helper -- that function's own
+    StopDecision contract and Gate 87's mutation coverage of it stay
+    untouched.
+
+    Note (maintainer review): GitHub's "re-run failed jobs" keeps the SAME
+    run id as the original attempt. If a maintainer removes board:stalled
+    and re-runs the failed jobs that way -- rather than waiting for the
+    next scheduled run -- this run's own already-posted stop-point record
+    still carries that same id, so it still does not move the baseline
+    (same-run-id exclusion, above): the original stop comment remains at or
+    after the baseline and is honoured again on the re-run. Only a
+    genuinely later run (a DIFFERENT run id, the FR-009/FR-016 case) moves
+    the baseline past an already-recorded stop. A release is reliably
+    effective from the next scheduled run; re-running the same failed run
+    id after a release is not a supported release path."""
+    ordered = sorted(comments or [], key=lambda c: c.get("created_at") or "")
+    current_run_id = str(current_run_id)
+
+    baseline = ""
+    for comment in ordered:
+        if not is_loop_marker_author(comment, bot_login):
+            continue
+        match = last_run_match(comment.get("body"))
+        if not match:
+            continue
+        run_id = match.group(2)
+        if run_id == current_run_id:
+            continue
+        baseline = comment.get("created_at") or baseline
+
+    winner = None
+    for comment in ordered:
+        if (comment.get("created_at") or "") < baseline:
+            continue
+        if (comment.get("author_association") in MAINTAINER_ASSOCIATIONS
+                and is_stop_command(comment.get("body"))):
+            winner = comment
+
+    return winner
+
+
+def stop_command_reason(body):
+    """The free text the maintainer wrote after the stop command token on
+    its own line -- "" when the stop command carried no reason (e.g. a bare
+    `stop.`), reusing the same `_command_line()`/STOP_COMMAND_RE is_stop_
+    command() itself matches against (research.md D2)."""
+    line = _command_line(body)
+    if not line:
+        return ""
+    match = STOP_COMMAND_RE.match(line)
+    if not match:
+        return ""
+    return line[match.end():].strip()
+
+
 def main():
     """Reads {"comments": [...], "current_run_id": "...", "bot_login": "..."}
     from stdin, prints exactly one line of JSON on success --
     {"stand_down": <bool>, "cancel_run_id": <string> | null} -- the
     StopDecision two-fact contract find_stop_request() documents. A
     malformed payload raises inside json.load/dict access, writing a
-    traceback to stderr and exiting non-zero with nothing on stdout."""
+    traceback to stderr and exiting non-zero with nothing on stdout.
+
+    `--stop-comment` (specs/097-recorded-stop-point, FR-018): reads
+    {"comments": [...], "current_run_id": "...", "bot_login": "..."}
+    instead, and prints the winning stop-command comment's identity --
+    {"html_url", "login", "created_at", "reason"} -- or {} when
+    find_stop_command_comment() finds none. `current_run_id` is required
+    here too (maintainer review fold leg-1, FR-006/FR-008): without it,
+    this run's own stop-point record -- posted moments earlier by the
+    `check` step's own stand_down=true path, carrying a `**Run:**` line
+    with this same run's id -- would be indistinguishable from a marker
+    from a genuinely different run, and would wrongly suppress the very
+    stop comment this call is looking up. The one home for this read so
+    the composite's own `run:` shell never re-derives the match/
+    authorization rule itself."""
+    if len(sys.argv) > 1 and sys.argv[1] == "--stop-comment":
+        payload = json.load(sys.stdin)
+        comment = find_stop_command_comment(
+            payload.get("comments") or [], payload.get("current_run_id"), payload.get("bot_login"))
+        if comment is None:
+            print(json.dumps({}))
+            return
+        print(json.dumps({
+            "html_url": comment.get("html_url"),
+            "login": (comment.get("user") or {}).get("login"),
+            "created_at": comment.get("created_at"),
+            "reason": stop_command_reason(comment.get("body")),
+        }))
+        return
+
     payload = json.load(sys.stdin)
     decision = find_stop_request(payload.get("comments") or [], payload.get("current_run_id"),
                                   payload.get("bot_login"))

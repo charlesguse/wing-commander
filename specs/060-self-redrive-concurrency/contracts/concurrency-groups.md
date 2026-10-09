@@ -8,29 +8,32 @@ During implementation that section is edited to restate the sentence below
 (SC-006) diffs both `board-loop-workflow.md` and `board-loop.yml`'s own
 comments against.
 
-## The guarantee (FR-016)
+## The guarantee (FR-016, as amended by specs/096-durable-prove-entry FR-005)
 
-> One board item is in flight repository-wide. A directed proof run, which
-> selects no board item and opens no fix PR, is the only run permitted to
-> overlap an ordinary board-loop run. Every other pair of `board-loop.yml`
-> runs queues rather than races or cancels.
+> One board item is in flight repository-wide. A directed proof run and a
+> merged item's own prove run — neither of which selects a board item or
+> opens a fix PR — are the only runs permitted to overlap an ordinary
+> board-loop run, or each other when they prove distinct merged items.
+> Every other pair of `board-loop.yml` runs queues rather than races or
+> cancels.
 
 This sentence must appear, verbatim or gate-verified-equivalent, in:
 
-1. `board-loop.yml`'s per-job `concurrency:` block comments (both the
-   `wing-commander-board-loop` blocks and the `wing-commander-board-loop-directed-proof`
-   block).
+1. `board-loop.yml`'s per-job `concurrency:` block comments (the
+   `wing-commander-board-loop` blocks, the per-merge
+   `wing-commander-board-loop-prove-{N}` blocks, and the
+   `wing-commander-board-loop-directed-proof` block).
 2. `specs/057-autonomous-board-loop/contracts/board-loop-workflow.md`'s
    "Concurrency" section.
 3. This file.
 
 ## Groups, per job
 
-| Job | Group (ordinary trigger) | Group (`directed-stage != ''`) | `cancel-in-progress` |
-|---|---|---|---|
-| `select` | `wing-commander-board-loop` | n/a — job is skipped for a directed dispatch | `false` |
-| `triage`, `route`, `fix`, `review`, `readiness` | `wing-commander-board-loop` | `wing-commander-board-loop` when directed-reachable (`triage`/`review`/`readiness` only, contracts/directed-proof-run.md) | `false` |
-| `prove-gate`, `prove` | `wing-commander-board-loop` (`pull_request: closed`) | `wing-commander-board-loop-directed-proof` | `false` |
+| Job | Group (ordinary trigger) | Group (`pull_request: closed`) | Group (`directed-stage != ''`) | `cancel-in-progress` |
+|---|---|---|---|---|
+| `select` | `wing-commander-board-loop` | n/a | n/a — job is skipped for a directed dispatch | `false` |
+| `triage`, `route`, `fix`, `review`, `readiness` | `wing-commander-board-loop` | n/a | `wing-commander-board-loop` when directed-reachable (`triage`/`review`/`readiness` only, contracts/directed-proof-run.md) | `false` |
+| `prove-gate`, `prove` | `wing-commander-board-loop` | `wing-commander-board-loop-prove-` (suffixed with the merged PR's own number; specs/096-durable-prove-entry replaced the old unconditional `wing-commander-board-loop` membership on this trigger) | `wing-commander-board-loop-directed-proof` | `false` |
 
 The directed group is shared across every directed dispatch (not
 per-attempt-token), so two merges proven close together contend for it
@@ -60,14 +63,12 @@ busy-check meaningful (research.md D3's "Alternatives considered").
 ## What does not change
 
 - The `wing-commander-board-loop` group's membership and semantics for
-  every job that already joins it today (`select` through `readiness`, and
-  `prove-gate`/`prove` on the `pull_request: closed` path) — including the
-  "Related surface" behaviours spec.md documents and leaves unchanged: a
-  non-board PR's close event still creates a run that queues in this
-  group, and the hourly schedule tick can still displace a queued
-  `pull_request: closed` run's pending slot (FR-010b covers detecting
-  that case after the fact; this feature does not change whether it can
-  happen).
+  every job that already joins it today (`select` through `readiness`) —
+  including the "Related surface" behaviour spec.md documents and leaves
+  unchanged: a non-board PR's close event still creates a run that queues
+  in this group. `prove-gate`/`prove` on the `pull_request: closed` path no
+  longer join this group at all (specs/096-durable-prove-entry FR-004/
+  FR-005) — see that feature's own contracts/prove-path-concurrency.md.
 - A future external dispatchable target's own concurrency group (FR-004):
   untouched by this feature, continues to be dispatched and waited on
   exactly as today, since it was never a member of either

@@ -48,6 +48,15 @@ directed-proof-in-flight to pin that select() returns None rather than any
 issue at all when the only open issue is mid-proof (FR-017,
 specs/060-self-redrive-concurrency).
 
+specs/096-durable-prove-entry maintainer review: awaiting-merge-pr-merged
+and fix-or-later-pr-merged also each carry a select_issue_number pinning
+_merged_fix_holds() -- a fix-or-later marker (including awaiting-merge)
+whose PR has since MERGED is held, same as a stuck `prove` marker, rather
+than admitted and resolved to a dead-end in-memory `step = "prove"` with
+no durable write and no consumer; awaiting-merge-pr-merged's two-issue
+shape additionally pins that the hold is scoped to its own issue, moving
+on to the next-oldest eligible one rather than returning None entirely.
+
 Marker authorship (#555): markers are read only from the loop's own App
 comments (board_item_marker.is_loop_marker_author(); every fixture marker
 comment carries `user`, BOT_LOGIN below is the loop's login). The
@@ -126,6 +135,27 @@ IN_FLIGHT_CASES = {
     "breach-pr-open",
     "breach-pr-closed",
     "directed-proof-in-flight",
+    "duplicate-readmitted-spec-closed",
+    "duplicate-not-readmitted-spec-open",
+    "duplicate-closed-issue-not-admitted",
+    "duplicate-readmitted-then-reworked",
+    # Board reset of 2026-10-01: a spec-proposal (bot-filed, awaiting the
+    # owner) or a spec-request (the owner's, before intake has applied a
+    # stage label) is lifecycle work, never a board item -- even after a
+    # maintainer labels it. The three older such issues are passed over
+    # and the newest ordinary issue is selected.
+    "spec-labelled-issues-not-selected",
+    # The auto-update stage's settle tracker (auto-update:tracking) is that
+    # stage's own state, never a board item, though auto-update:* is a
+    # pipeline label; an upgrade it files under another auto-update:*
+    # label is still selected.
+    "auto-update-tracker-not-selected",
+    # auto-release:failed is auto-release.yml's own record of an open
+    # failure: only a same-mode pass closes it (#977). Routing it closed
+    # it as a duplicate twice (#949 -> #950, #979 -> #980) and erased the
+    # failure. Not selected even with a pre-fix marker on it; the newer
+    # pipeline-defect is.
+    "auto-release-failure-not-selected",
     "not-ready-durable-unmoved-held",
     "not-ready-durable-moved-admitted",
     "not-ready-self-clearing-not-held",
@@ -203,10 +233,19 @@ def run_in_flight_cases():
             int(number): head_sha
             for number, head_sha in (_load(pr_head_sha_path) if os.path.isfile(pr_head_sha_path) else {}).items()
         }
+        # spec 108 (contracts/eligibility-and-readmission-delta.md): optional
+        # per case, like main()'s own tolerant-default stdin key -- most
+        # cases carry no disposition:duplicate issue at all and need none.
+        spec_request_state_path = os.path.join(case_dir, "spec_request_state_by_number.json")
+        spec_request_state_by_number = (
+            {int(number): state for number, state in _load(spec_request_state_path).items()}
+            if os.path.isfile(spec_request_state_path) else {}
+        )
         expected = _load(expected_path)
 
         issue_number, multiple_found = in_flight_candidate(
-            open_issues, comments_by_issue, pr_state_by_number, pr_head_sha_by_number, BOT_LOGIN)
+            open_issues, comments_by_issue, pr_state_by_number, BOT_LOGIN,
+            spec_request_state_by_number, pr_head_sha_by_number)
         got = {"issue_number": issue_number, "multiple_found": multiple_found}
         expected_in_flight = {
             "issue_number": expected.get("issue_number"),
@@ -232,8 +271,8 @@ def run_in_flight_cases():
                 for number, events in _load(labeled_events_path).items()
             }
             selected = select(open_issues, labeled_events_by_issue,
-                               comments_by_issue, pr_state_by_number,
-                               pr_head_sha_by_number, BOT_LOGIN)
+                               comments_by_issue, pr_state_by_number, BOT_LOGIN,
+                               spec_request_state_by_number, pr_head_sha_by_number)
             expected_selected = expected["select_issue_number"]
             if selected != expected_selected:
                 failures += 1

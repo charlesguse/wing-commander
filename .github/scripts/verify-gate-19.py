@@ -51,6 +51,7 @@ import copy
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -123,13 +124,9 @@ done
 '''
 
 
-def shell_quote(s):
-    return "'" + s.replace("'", "'\\''") + "'"
-
-
 def stub_gh(bindir, fixture_dir):
     path = os.path.join(bindir, "gh")
-    content = STUB_GH_TEMPLATE.replace("__FIXTURE_DIR__", shell_quote(fixture_dir))
+    content = STUB_GH_TEMPLATE.replace("__FIXTURE_DIR__", shlex.quote(fixture_dir))
     with open(path, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(content)
     os.chmod(path, 0o755)
@@ -193,7 +190,7 @@ def stub_jq(bindir):
         sys.exit("::error::verify-gate-19: jq not found on PATH")
     path = os.path.join(bindir, "jq")
     content = STUB_JQ_TEMPLATE.replace(
-        "__REAL_JQ__", shell_quote(real.replace(os.sep, "/")))
+        "__REAL_JQ__", shlex.quote(real.replace(os.sep, "/")))
     with open(path, "w", encoding="utf-8", newline=chr(10)) as fh:
         fh.write(content)
     os.chmod(path, 0o755)
@@ -555,6 +552,21 @@ if [ "$1" = "run" ] && [ "$2" = "download" ]; then
     printf '%s\n' __MSG__ >&2
     exit 1
   fi
+  # #750/FR-014/R6: lays a real artifact file in the -D dest when a
+  # scenario supplies one, so claude-execution-output-found's TRUE branch
+  # has a fixture too, not just its false ones (SC-006).
+  if [ -n "${GH_STUB_ARTIFACT_JSON:-}" ]; then
+    dest=""
+    prev=""
+    for arg in "$@"; do
+      if [ "$prev" = "-D" ]; then dest="$arg"; fi
+      prev="$arg"
+    done
+    if [ -n "$dest" ]; then
+      mkdir -p "$dest/claude-execution-output"
+      printf '%s\n' "$GH_STUB_ARTIFACT_JSON" > "$dest/claude-execution-output/claude-execution-output.json"
+    fi
+  fi
   exit 0
 fi
 echo "unexpected gh invocation: $*" >&2
@@ -613,10 +625,56 @@ exit 1
 
 def stub_bin(bindir, name, template, msg):
     path = os.path.join(bindir, name)
-    content = template.replace("__MSG__", shell_quote(msg))
+    content = template.replace("__MSG__", shlex.quote(msg))
     with open(path, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(content)
     os.chmod(path, 0o755)
+
+
+# #750/FR-002: every FR-002 collector/guard this harness drives now reads
+# RESOLVED_STAGE/RESOLVED_STAGE_SOURCE (the wing-commander-inspected-run-
+# identity composite's own outputs) instead of RUN_NAME directly. These
+# scenarios still parametrize by `run_name` for readability (the name each
+# one models), so this maps that name through the SAME nine-entry table
+# data-model.md's "Name-derived stage map" defines, with source "name" --
+# exactly what the composite would have produced for a run with no
+# metrics record (the shape every pre-existing scenario here models).
+# `run_name` values this map does not recognise (there are none among the
+# ten reference names) would resolve to an empty/empty pair; every
+# scenario below supplies one of the ten.
+NAME_TO_RESOLVED_STAGE = {
+    "Wing Commander · 1 intake": "intake",
+    "Wing Commander · 2 clarify": "clarify",
+    "Wing Commander · 3 plan": "plan",
+    "Wing Commander · 4 tasks": "tasks",
+    "Wing Commander · 5 implement": "implement",
+    "Wing Commander · 6 finalize": "finalize",
+    "Wing Commander · 7 cleanup": "cleanup",
+    "Wing Commander · 9 pr conversation": "pr-conversation",
+    "Wing Commander · rebase": "rebase",
+    # Deliberately absent, matching the composite's own name-fallback step:
+    # the watchdog's own runs always carry stage: watchdog in their own
+    # record, so this name is never consulted for them in production.
+    "Wing Commander · 8 watchdog": "",
+}
+
+
+def resolved_stage_env(sc, default_run_name="Wing Commander · 5 implement"):
+    """RESOLVED_STAGE/RESOLVED_STAGE_SOURCE for a scenario dict, from its
+    `run_name` (or explicit `resolved_stage`/`resolved_stage_source`
+    overrides, for a scenario modelling the stage-unresolved third state
+    directly rather than via a recognised display name)."""
+    if "resolved_stage" in sc or "resolved_stage_source" in sc:
+        return {
+            "RESOLVED_STAGE": sc.get("resolved_stage", ""),
+            "RESOLVED_STAGE_SOURCE": sc.get("resolved_stage_source", ""),
+        }
+    name = sc.get("run_name", default_run_name)
+    stage = NAME_TO_RESOLVED_STAGE.get(name, "")
+    return {
+        "RESOLVED_STAGE": stage,
+        "RESOLVED_STAGE_SOURCE": "name" if stage else "",
+    }
 
 
 EXEC_SCENARIOS = [
@@ -625,6 +683,7 @@ EXEC_SCENARIOS = [
         fail=True,
         msg="gh: no artifact matches any of the names or patterns provided",
         expect_outcome="ok",
+        expect_found=False,
     ),
     dict(
         name="gh's 'no valid artifacts found to download' phrasing "
@@ -633,12 +692,14 @@ EXEC_SCENARIOS = [
         fail=True,
         msg="gh: no valid artifacts found to download",
         expect_outcome="ok",
+        expect_found=False,
     ),
     dict(
         name="a permission/network-flavored download failure is failed",
         fail=True,
         msg="gh: HTTP 403: Resource not accessible by integration",
         expect_outcome="failed",
+        expect_found=False,
     ),
     # Attribution invariant (spec 024 FR-026): a run that skipped or was
     # cancelled executed nothing, so no denial artifact is attributable to
@@ -651,6 +712,7 @@ EXEC_SCENARIOS = [
         msg="",
         run_conclusion="skipped",
         expect_outcome=None,
+        expect_found=False,
     ),
     dict(
         name="run conclusion cancelled: nothing executed, no download attempted (FR-026)",
@@ -658,6 +720,17 @@ EXEC_SCENARIOS = [
         msg="",
         run_conclusion="cancelled",
         expect_outcome=None,
+        expect_found=False,
+    ),
+    # #750/FR-014/R6: the TRUE branch of claude-execution-output-found —
+    # the download succeeds AND lays down a real artifact file.
+    dict(
+        name="download succeeds with a real artifact: claude-execution-output-found is true",
+        fail=False,
+        msg="",
+        artifact_json='[{"type": "result", "subtype": "success"}]',
+        expect_outcome="ok",
+        expect_found=True,
     ),
 ]
 
@@ -923,20 +996,22 @@ def run_exec_one(script, env, sc, tmproot):
     run_env["RUN_CONCLUSION"] = sc.get("run_conclusion", "success")
     if sc["fail"]:
         run_env["GH_STUB_DOWNLOAD_FAIL"] = "1"
+    if sc.get("artifact_json"):
+        run_env["GH_STUB_ARTIFACT_JSON"] = sc["artifact_json"]
 
-    rc, out, _, _ = run_step(BASH, script, workdir, run_env, runner_temp)
+    rc, out, outputs, _ = run_step(BASH, script, workdir, run_env, runner_temp)
     with open(os.path.join(runner_temp, "collector-outcomes.json"), encoding="utf-8") as fh:
         outcomes = json.load(fh)
     for d in (workdir, runner_temp, bindir):
         shutil.rmtree(d, ignore_errors=True)
-    return rc, out, outcomes
+    return rc, out, outcomes, outputs
 
 
 def suite_exec(script, env, tmproot):
     failures = []
     for sc in EXEC_SCENARIOS:
         tag = f"[execution-output: {sc['name']}]"
-        rc, out, outcomes = run_exec_one(script, env, sc, tmproot)
+        rc, out, outcomes, outputs = run_exec_one(script, env, sc, tmproot)
         if rc != 0:
             failures.append(f"{tag} the collector exited {rc}:\n{out}")
             continue
@@ -946,6 +1021,12 @@ def suite_exec(script, env, tmproot):
                 f"{tag} collector-outcomes.json for collect-execution-output "
                 f"reads {got!r}, expected {sc['expect_outcome']!r} (FR-010). "
                 f"outcomes: {outcomes}")
+        want_found = "true" if sc["expect_found"] else "false"
+        if outputs.get("claude-execution-output-found") != want_found:
+            failures.append(
+                f"{tag} claude-execution-output-found reads "
+                f"{outputs.get('claude-execution-output-found')!r}, "
+                f"expected {want_found!r} (#750/FR-014/R6)")
     return failures
 
 
@@ -971,7 +1052,7 @@ def run_bd_one(script, env, sc, tmproot):
     run_env = with_actions_defaults(env)
     run_env["PATH"] = bindir + os.pathsep + os.environ["PATH"]
     run_env["GH_STUB_RECORDS"] = sc.get("gh_records", "")
-    run_env["RUN_NAME"] = sc.get("run_name", "Wing Commander · 5 implement")
+    run_env.update(resolved_stage_env(sc))
     run_env["RUN_CONCLUSION"] = sc.get("run_conclusion", "success")
     # The head IS the branch the stage pushes to unless a scenario says
     # otherwise: before #318 the harness ran with SLUG empty, a shape the
@@ -1130,12 +1211,25 @@ exit 1
 
 SPEC_META_FIXTURE = json.dumps({"spec_dir": "specs/045-auto-release-verified-head",
                                 "issue": 296, "stage": "implement"})
+# #750/FR-008: the fallback now trusts a record's spec_dir only when that
+# same record declares identity_is_own: true (the six single-spec stages'
+# own call sites). RECORD_045 models one of those "own advance" records.
 RECORD_045 = json.dumps({"schema_version": 1, "stage": "implement",
                          "spec": {"spec_dir": "specs/045-auto-release-verified-head",
-                                  "issue": 296, "identity_available": True}})
+                                  "issue": 296, "identity_available": True,
+                                  "identity_is_own": True}})
 RECORD_046 = json.dumps({"schema_version": 1, "stage": "rebase",
                          "spec": {"spec_dir": "specs/046-watchdog-supervision-collectors",
-                                  "issue": 274, "identity_available": True}})
+                                  "issue": 274, "identity_available": True,
+                                  "identity_is_own": False}})
+# A record whose spec.* was merely borrowed from the run it was reporting
+# on (watchdog's own diagnose record, or a rebase matrix leg) — spec_dir
+# is populated but identity_is_own is false, so the fallback must never
+# resolve a slug from it (#750/FR-008).
+RECORD_045_BORROWED = json.dumps({"schema_version": 1, "stage": "watchdog",
+                                  "spec": {"spec_dir": "specs/045-auto-release-verified-head",
+                                           "issue": 296, "identity_available": True,
+                                           "identity_is_own": False}})
 SPEC_META_DRAFT_FIXTURE = json.dumps({"spec_dir": "specs/045-auto-release-verified-head",
                                       "issue": 296, "stage": "spec"})
 SPEC_META_OTHER_DIR_FIXTURE = json.dumps({"spec_dir": "specs/001-some-other-spec",
@@ -1197,30 +1291,35 @@ SPEC_SLUG_SCENARIOS = [
         expect=dict(slug="", **{"slug-source": "", "lifecycle-issue": ""}),
         expect_download=True,
     ),
-    # Only the six single-spec stages get the fallback. The watchdog's own
-    # diagnose record borrows the INSPECTED run's spec identity, and a
-    # rebase run writes one record per matrix slug — "first record wins"
-    # would tie either to an arbitrary spec. No download, no slug.
+    # #750/FR-008: the fallback no longer gates on the run's display name
+    # at all — it is gated entirely on whether a downloaded record
+    # declares identity_is_own: true. The watchdog's own diagnose record
+    # borrows the INSPECTED run's spec identity (identity_is_own: false),
+    # and a rebase run's matrix-leg records likewise declare false —
+    # "first record wins" would otherwise tie either to an arbitrary spec.
+    # The download IS attempted (no run-name short-circuit); it just finds
+    # nothing trustworthy to read a slug from.
     dict(
         name="a watchdog run with the default-branch head: its record names "
-             "the spec it inspected, not one it advanced — no artifact read, "
-             "no slug",
+             "the spec it inspected, not one it advanced — artifact IS "
+             "read, but identity_is_own: false leaves no slug",
         run_name="Wing Commander · 8 watchdog",
         head_branch="main",
-        records=[RECORD_045],
+        records=[RECORD_045_BORROWED],
         show_json=SPEC_META_FIXTURE,
         expect=dict(slug="", **{"slug-source": "", "lifecycle-issue": ""}),
-        expect_download=False,
+        expect_download=True,
     ),
     dict(
         name="a rebase run with the default-branch head: one record per "
-             "rebased spec, none of them 'the' spec — no artifact read, no slug",
+             "rebased spec, none declaring identity_is_own: true — "
+             "artifact IS read, but no slug resolves",
         run_name="Wing Commander · rebase",
         head_branch="main",
-        records=[RECORD_045, RECORD_046],
+        records=[RECORD_045_BORROWED, RECORD_046],
         show_json=SPEC_META_FIXTURE,
         expect=dict(slug="", **{"slug-source": "", "lifecycle-issue": ""}),
-        expect_download=False,
+        expect_download=True,
     ),
     dict(
         name="a dispatched tasks run: single-spec stage, slug read from the "
@@ -1316,15 +1415,16 @@ SPEC_SLUG_SCENARIOS = [
         expect_run_view=True,
     ),
     dict(
-        name="no head branch handed in, gh run view fails and the stage is not "
-             "a single-spec one: nothing resolves, step still succeeds",
+        name="no head branch handed in, gh run view fails and the record "
+             "found declares identity_is_own: false: nothing resolves, "
+             "step still succeeds",
         head_branch="",
         run_name="Wing Commander · 8 watchdog",
         run_view_fail="gh: HTTP 403: Resource not accessible by integration",
-        records=[RECORD_045],
+        records=[RECORD_045_BORROWED],
         show_json=SPEC_META_FIXTURE,
         expect=dict(slug="", **{"slug-source": "", "lifecycle-issue": ""}),
-        expect_download=False,
+        expect_download=True,
         expect_run_view=True,
     ),
 ]
@@ -1502,7 +1602,7 @@ def remove_record_fallback(script):
     """Mutation: the pre-#322 step, which derived the slug from the head
     branch and nothing else. Disabling the fallback's entry condition must
     break every scenario that expects a slug from the record."""
-    fixed = 'if [ -z "$slug" ] && [ -n "$RUN_ID" ] && [ "$record_fallback" = "true" ]; then'
+    fixed = 'if [ -z "$slug" ] && [ -n "$RUN_ID" ]; then'
     if script.count(fixed) != 1:
         sys.exit("::error::verify-gate-19: could not locate spec-slug's "
                  "metrics-record fallback (#322) to mutate — the step text "
@@ -1941,7 +2041,7 @@ def run_spec_meta_one(script, env, sc, tmproot):
         fh.write("[]")
 
     run_env = dict(env)
-    run_env["RUN_NAME"] = sc["run_name"]
+    run_env.update(resolved_stage_env(sc))
     run_env["RUN_CONCLUSION"] = sc["run_conclusion"]
     run_env["META_STAGE"] = sc["meta_stage"]
     run_env["SLUG"] = sc["slug"]
@@ -2007,7 +2107,7 @@ esac
 
 def stub_stepsum_gh(bindir, fixture_dir):
     path = os.path.join(bindir, "gh")
-    content = STUB_GH_STEPSUM_TEMPLATE.replace("__FIXTURE_DIR__", shell_quote(fixture_dir))
+    content = STUB_GH_STEPSUM_TEMPLATE.replace("__FIXTURE_DIR__", shlex.quote(fixture_dir))
     with open(path, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(content)
     os.chmod(path, 0o755)
@@ -2113,7 +2213,8 @@ def suite_stepsum(script, env, tmproot):
 # evidence-available's existing behavior (contracts/watchdog-read-outcome.md).
 # --------------------------------------------------------------------------
 AGGREGATE_STEP = "Aggregate signals"
-COLLECTOR_IDS = ["collect-execution-output", "collect-branch-drift",
+COLLECTOR_IDS = ["collect-execution-output", "collect-cycle-outcome",
+                 "collect-branch-drift",
                  "collect-spec-meta", "collect-step-summary",
                  "collect-annotations", "collect-turn-budget",
                  "collect-cost-report", "collect-final-pr-claims",
@@ -2147,7 +2248,7 @@ AGGREGATE_CASES = [
         expect_signals=SIGNALS_FIXTURE,
     ),
     dict(
-        name="one collector's read failed, the other eight succeeded",
+        name="one collector's read failed, the other nine succeeded",
         why="Acceptance Scenario 3 — untrusted-collectors names exactly the "
             "failed collector, evidence-available stays true (a partial "
             "failure still reaches a verdict), and this is true even though "
@@ -2164,7 +2265,7 @@ AGGREGATE_CASES = [
         expect_signals=SIGNALS_FIXTURE,
     ),
     dict(
-        name="all nine collector STEPS outright error: evidence-available "
+        name="all ten collector STEPS outright error: evidence-available "
              "flips to false",
         why="specs/046-watchdog-supervision-collectors leg-1 — the "
             "collectors-failed >= collectors-total comparison must track "

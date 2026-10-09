@@ -54,7 +54,13 @@ A step is prose-tainted when any of these hold:
       (schema-check writes classifications-raw.json, confirm reads it);
   (e) it is an `actions/download-artifact` step whose `with.name` matches an
       artifact an `actions/upload-artifact` step in a prose-tainted step of
-      the same file uploaded.
+      the same file uploaded, in any job of the file. A `${{ ... }}` in
+      either name is a wildcard, as is a `pattern:` glob (a whole `[...]`,
+      `{...}` or extglob group is one wildcard, a glob with any `(` or `\`
+      is a wildcard as a whole; a leading `!` negation
+      matches any tainted upload); a download with
+      no `name:` (every artifact) or with `artifact-ids:` matches any
+      tainted upload.
 
 Taint is propagated forward through a job's steps in order, so the shape
 that bit — agent step -> transcript -> raw JSON file -> confirm step ->
@@ -145,23 +151,28 @@ from wc_published_stages import published_stages  # noqa: E402
 PROSE_FREE_KEYS = {"id", "confirm-environment", "index"}
 
 # (file, job, output) -> why it is tolerated. See REGISTERED EXCEPTIONS.
-# Two groups, both pre-dating this gate. PROSE: the value really can carry
-# model-authored text, so these are #287's defect class waiting to recur —
-# each needs the artifact treatment in its own change (#309 gave it to
-# watchdog's findings and implement's final-reason/agent-final-message).
-# ENUM: the value is a fixed token or boolean the step chose, computed from
+# Every output named here pre-dates this gate (verify's two were first
+# flagged when #736's artifact carried e2e-stage's taint into that job
+# under rule (e)). There used to be two groups. PROSE: the
+# value really could carry model-authored text, #287's defect class
+# waiting to recur. Each got the artifact treatment in its own change
+# (#309 for watchdog's findings and implement's
+# final-reason/agent-final-message, #736 for auto-update-spec-kit's
+# e2e-stage failure-detail), so none remain; a new one gets that
+# treatment, not an entry here. ENUM: the value is a fixed token or boolean the step chose, computed from
 # a tainted read; a masked substring there is implausible, but the rule
 # cannot tell an enum write from a prose write without shell dataflow, and
 # a declaration shape for "one of these literals" does not exist yet.
 EXCEPTIONS = {
-    # PROSE (tracked on #736)
-    (".github/workflows/auto-update-spec-kit.yml", "e2e-stage", "failure-detail"):
-        "PROSE: the e2e read-back's diagnostic, built from the agent "
-        "verdict's free-text reason.",
     # ENUM
     (".github/workflows/auto-update-spec-kit.yml", "e2e-stage", "passed"):
         "ENUM: true/false chosen by the read-back step, which consumes the "
         "agent verdict's free-text reason.",
+    (".github/workflows/auto-update-spec-kit.yml", "verify", "passed"):
+        "ENUM: true/false chosen by the combine step, which also folds in "
+        "the e2e-stage-diagnostics artifact's detail.",
+    (".github/workflows/auto-update-spec-kit.yml", "verify", "tier"):
+        "ENUM: lightweight / lightweight+end-to-end, from the release type.",
     (".github/workflows/implement.yml", "implement", "final-ok"):
         "ENUM: true/false chosen by the consolidate step.",
     (".github/workflows/implement.yml", "implement", "final-tier"):
@@ -244,10 +255,101 @@ def composite_declares_prose(uses, root="."):
     return False
 
 
+# Rule (e) on a name that is not one literal string. `${{ ... }}` (a matrix
+# index, strategy.job-index) is unknown until the run, so it reads as a
+# wildcard that can stand for any text; so does a download `pattern:` glob
+# metacharacter. A whole `[...]` class, `{...}` brace set or `?(...)`-style
+# extglob group is one wildcard, not letters that must appear literally, and
+# a leading `!` negates the pattern, so it reads every artifact (code review
+# of #951). Extglob groups nest and `\` escapes the next character, which a
+# flat regex cannot follow, so a glob carrying either `(` or `\` is one
+# wildcard as a whole (code review of #951). A tainted upload and a
+# download whose names can denote the same string share taint. This
+# over-taints rather than letting an expression name carry prose past the
+# gate unseen (code review of #943).
+EXPR = re.compile(r"\$\{\{.*?\}\}", re.DOTALL)
+GLOB_META = re.compile(r"[?*+@!]?\([^)]*\)?|\[[^\]]*\]?|\{[^}]*\}?|[*?\]}]")
+# actions/upload-artifact's own default when `with.name` is absent.
+DEFAULT_ARTIFACT_NAME = "artifact"
+
+
+def _name_template(name, glob=False):
+    """-> the name as a tuple of literal characters and None wildcards."""
+    out = []
+    for i, part in enumerate(EXPR.split(name)):
+        if i:
+            out.append(None)
+        if glob and ("(" in part or "\\" in part):
+            out.append(None)
+        elif glob:
+            for chunk_i, chunk in enumerate(GLOB_META.split(part)):
+                if chunk_i:
+                    out.append(None)
+                out.extend(chunk)
+        else:
+            out.extend(part)
+    return tuple(out)
+
+
+def _templates_overlap(a, b):
+    """Can wildcard templates a and b (None matches any run of characters,
+    empty included) denote the same string?"""
+    memo = {}
+
+    def go(i, j):
+        if (i, j) in memo:
+            return memo[(i, j)]
+        if i == len(a) and j == len(b):
+            res = True
+        elif i < len(a) and a[i] is None:
+            res = go(i + 1, j) or (j < len(b) and go(i, j + 1))
+        elif j < len(b) and b[j] is None:
+            res = go(i, j + 1) or (i < len(a) and go(i + 1, j))
+        elif i < len(a) and j < len(b):
+            res = a[i] == b[j] and go(i + 1, j + 1)
+        else:
+            res = False
+        memo[(i, j)] = res
+        return res
+    return go(0, 0)
+
+
+def _download_reads_tainted(step, tainted_artifacts):
+    """Rule (e): does this download step fetch any tainted artifact? With no
+    `name:` the action downloads every artifact of the run (or those a
+    `pattern:` glob selects), and `artifact-ids:` cannot be matched to an
+    upload statically, so both read any tainted artifact."""
+    if not tainted_artifacts:
+        return False
+    w = step.get("with") or {}
+    name = str(w.get("name") or "")
+    if name:
+        want = _name_template(name)
+    elif w.get("artifact-ids"):
+        return True
+    elif w.get("pattern"):
+        if str(w["pattern"]).lstrip().startswith("!"):
+            return True  # a negated glob selects everything it does not exclude.
+        want = _name_template(str(w["pattern"]), glob=True)
+    else:
+        return True
+    return any(_templates_overlap(want, t) for t in tainted_artifacts)
+
+
 def taint_jobs(wf, root="."):
-    """-> {job_id: {step_id_or_index: bool tainted}} plus the tainted
-    artifact-name set, following the docstring's rules (a)-(e)."""
+    """-> {job_id: {step_id_or_index: bool tainted}}, following the
+    docstring's rules (a)-(e). A download can sit in a job listed before
+    its upload's, so the jobs are re-walked until the tainted-artifact set
+    stops growing."""
     tainted_artifacts = set()
+    while True:
+        before = set(tainted_artifacts)
+        result = _taint_pass(wf, root, tainted_artifacts)
+        if tainted_artifacts == before:
+            return result
+
+
+def _taint_pass(wf, root, tainted_artifacts):
     result = {}
     for job_id, job in (wf.get("jobs") or {}).items():
         tainted_ids = set()
@@ -270,15 +372,15 @@ def taint_jobs(wf, root="."):
             if files & tainted_files:
                 tainted = True
             if uses.startswith("actions/download-artifact"):
-                name = str((step.get("with") or {}).get("name") or "")
-                if name in tainted_artifacts:
+                if _download_reads_tainted(step, tainted_artifacts):
                     tainted = True
             if tainted:
                 tainted_ids.add(sid)
                 tainted_files |= files
                 if uses.startswith("actions/upload-artifact"):
-                    tainted_artifacts.add(
-                        str((step.get("with") or {}).get("name") or ""))
+                    tainted_artifacts.add(_name_template(
+                        str((step.get("with") or {}).get("name")
+                            or DEFAULT_ARTIFACT_NAME)))
             per_step[sid] = tainted
         result[job_id] = per_step
     return result
@@ -624,6 +726,68 @@ runs:
 }
 
 
+# Rule (e): an agent job uploads its transcript; a second job downloads it
+# and lifts a value into a job output. `up_with`/`down_with` name the
+# artifact, so each fixture varies only how it is named.
+def _artifact_fixture(up_with, down_with, download_first=False):
+    upload = f"""\
+  produce:
+    runs-on: ubuntu-latest
+    steps:
+      - id: agent
+        uses: anthropics/claude-code-action@v1
+      - id: keep
+        uses: actions/upload-artifact@v6
+        with:
+{up_with}          path: ${{{{ runner.temp }}}}/claude-execution-output.json
+"""
+    download = f"""\
+  consume:
+    runs-on: ubuntu-latest
+    outputs:
+      summary: ${{{{ steps.read.outputs.summary }}}}
+    steps:
+      - id: fetch
+        uses: actions/download-artifact@v7
+        with:
+{down_with}          path: ${{{{ runner.temp }}}}/out
+      - id: read
+        run: echo "summary=$(cat "$RUNNER_TEMP/out/summary.txt")" >> "$GITHUB_OUTPUT"
+"""
+    return STAGE_HEAD + (download + upload if download_first
+                         else upload + download)
+
+
+_UP_MATRIX = "          name: findings-${{ matrix.index }}\n"
+FIXTURE_ARTIFACT_LITERAL = _artifact_fixture(
+    "          name: findings\n", "          name: findings\n")
+FIXTURE_ARTIFACT_EXPR_BOTH = _artifact_fixture(
+    _UP_MATRIX, "          name: findings-${{ matrix.index }}\n")
+FIXTURE_ARTIFACT_EXPR_DOWNLOAD = _artifact_fixture(
+    "          name: findings-3\n",
+    "          name: findings-${{ matrix.index }}\n")
+FIXTURE_ARTIFACT_EXPR_DISJOINT = _artifact_fixture(
+    _UP_MATRIX, "          name: decisions-${{ matrix.index }}\n")
+FIXTURE_ARTIFACT_PATTERN = _artifact_fixture(
+    _UP_MATRIX, "          pattern: findings-*\n")
+# A class, brace set or negation is one wildcard, not literal letters
+# (code review of #951); each of these fetches the upload `findings-3`.
+FIXTURE_ARTIFACT_GLOBS = [
+    _artifact_fixture("          name: findings-3\n",
+                      f"          pattern: {pat!r}\n")
+    for pat in ("findings-[0-9]", "findings-{3,4}",
+                "{findings,decisions}-*", "!decisions",
+                "findings-@(3|+(4))", "findings-\\3")]
+FIXTURE_ARTIFACT_GLOB_DISJOINT = _artifact_fixture(
+    "          name: findings-3\n", "          pattern: 'decisions-[0-9]'\n")
+FIXTURE_ARTIFACT_ALL = _artifact_fixture(_UP_MATRIX, "")
+FIXTURE_ARTIFACT_IDS = _artifact_fixture(
+    _UP_MATRIX, "          artifact-ids: ${{ inputs.ids }}\n")
+FIXTURE_ARTIFACT_DOWNLOAD_FIRST = _artifact_fixture(
+    "          name: findings\n", "          name: findings\n",
+    download_first=True)
+
+
 def _run_fixture(text, name="fixture.yml", extra_files=None):
     root = tempfile.mkdtemp()
     try:
@@ -707,6 +871,29 @@ def self_test():
            extra_files=COMPOSITE_FILES)
     expect("local composite with no free-text output (opaque)",
            FIXTURE_COMPOSITE_OPAQUE, False, extra_files=COMPOSITE_FILES)
+    # Rule (e) (code review of #943): an expression-named artifact must
+    # not escape taint propagation.
+    expect("tainted artifact downloaded by its literal name",
+           FIXTURE_ARTIFACT_LITERAL, True, "prose-tainted")
+    expect("tainted artifact named by an expression on both sides",
+           FIXTURE_ARTIFACT_EXPR_BOTH, True, "prose-tainted")
+    expect("expression download name over a literal tainted upload",
+           FIXTURE_ARTIFACT_EXPR_DOWNLOAD, True, "prose-tainted")
+    expect("expression names whose literal parts cannot meet",
+           FIXTURE_ARTIFACT_EXPR_DISJOINT, False)
+    expect("download by a pattern: glob over a tainted upload",
+           FIXTURE_ARTIFACT_PATTERN, True, "prose-tainted")
+    for fixture in FIXTURE_ARTIFACT_GLOBS:
+        expect("download by a class/brace/negated pattern: glob",
+               fixture, True, "prose-tainted")
+    expect("pattern: glob whose literal parts cannot meet the upload",
+           FIXTURE_ARTIFACT_GLOB_DISJOINT, False)
+    expect("download with no name (every artifact of the run)",
+           FIXTURE_ARTIFACT_ALL, True, "prose-tainted")
+    expect("download by artifact-ids",
+           FIXTURE_ARTIFACT_IDS, True, "prose-tainted")
+    expect("download in a job listed before its upload's",
+           FIXTURE_ARTIFACT_DOWNLOAD_FIRST, True, "prose-tainted")
 
     # The gate must be able to fail its own subject.
     original, mutations = _subject_mutations()
@@ -773,7 +960,7 @@ def self_test():
 
     for f in failures:
         print(f"::error::self-test: {f}")
-    print(f"Gate 49 self-test: 11 fixture(s), {len(mutations)} subject "
+    print(f"Gate 49 self-test: 26 fixture(s), {len(mutations)} subject "
           f"mutation(s), 1 twin-step subject; {len(failures)} failure(s).")
     return 1 if failures else 0
 

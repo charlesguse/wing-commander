@@ -1,0 +1,5 @@
+[
+  {"type": "rate_limit_event", "rate_limit_info": {"status": "allowed", "rateLimitType": "five_hour"}},
+  {"type": "rate_limit_event", "rate_limit_info": {"status": "allowed_warning", "rateLimitType": "five_hour"}},
+  {"type": "result", "subtype": "error_during_execution", "is_error": true, "terminal_reason": "api_error", "api_error_status": 529, "num_turns": 1, "total_cost_usd": 0}
+]

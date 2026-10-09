@@ -90,13 +90,14 @@ GUARD_SCRIPT = ".github/scripts/pipeline-checkout-guard.sh"
 # the branch - and read the branch's own guard. So: the path must not be a
 # symlink, must hold a real (non-symlink) .git directory, must be its own
 # repository's top level, and, when the job's pipeline ref is a full SHA,
-# must sit at that commit. Otherwise it is removed (so a later always()-
+# must sit at that commit, the SHA peeled first so an annotated tag's object
+# SHA names the commit it tags (#928). Otherwise it is removed (so a later always()-
 # gated `uses: ./.wing-commander-pipeline/...` fails to resolve rather than
 # load branch code) and the step fails. Line 3 then runs the tracked-path
 # check from the verified repository's object store.
 GUARD_RUN = "\n".join([
     'p=.wing-commander-pipeline; want="$(cd "$GITHUB_WORKSPACE" && pwd -P)/$p"',
-    'if [ -L "$p" ] || [ ! -d "$p" ] || [ -L "$p/.git" ] || [ ! -d "$p/.git" ] || [ "$(git -C "$p" rev-parse --show-toplevel 2>/dev/null)" != "$want" ] || { [[ "${WC_PIPELINE_REF:-}" =~ ^[0-9a-f]{40}$ ]] && [ "$(git -C "$p" rev-parse HEAD 2>/dev/null)" != "$WC_PIPELINE_REF" ]; }; then rm -rf -- "$p"; echo "::error::wing-commander: $p is no longer the trusted pipeline checkout (a symlink, a missing or replaced .git, or another commit): the branch just checked out replaced it. Removed it so no later step loads branch code from there (#611)."; exit 1; fi',
+    'if [ -L "$p" ] || [ ! -d "$p" ] || [ -L "$p/.git" ] || [ ! -d "$p/.git" ] || [ "$(git -C "$p" rev-parse --show-toplevel 2>/dev/null)" != "$want" ] || { [[ "${WC_PIPELINE_REF:-}" =~ ^[0-9a-f]{40}$ ]] && [ "$(git -C "$p" rev-parse HEAD 2>/dev/null)" != "$(git -C "$p" rev-parse --verify -q "${WC_PIPELINE_REF}^{commit}" 2>/dev/null)" ]; }; then rm -rf -- "$p"; echo "::error::wing-commander: $p is no longer the trusted pipeline checkout (a symlink, a missing or replaced .git, or another commit): the branch just checked out replaced it. Removed it so no later step loads branch code from there (#611)."; exit 1; fi',
     'git -C "$p" cat-file blob HEAD:.github/scripts/pipeline-checkout-guard.sh | bash -s',
 ])
 # The verification clauses the self-test drops one at a time.
@@ -436,6 +437,61 @@ def behavioural(repo_root):
             bad.append("pipeline at another commit than {0}: expected a refusal that removes "
                        "the directory, got rc={1}: {2}".format(PIPELINE_REF_ENV, r.returncode, r.stdout))
 
+        # #928: a stage called through an annotated tag (the floating `@v2`
+        # release.yml recreates with `git tag -fa`) resolves its pipeline ref
+        # to the TAG OBJECT's SHA, while the checkout sits at the commit it
+        # tags. The pipeline is checked out the way actions/checkout does it
+        # for a SHA ref: a shallow fetch of that one object, then a forced
+        # checkout of it, which leaves HEAD on the peeled commit.
+        _git(src, "tag", "-a", "v2", "-m", "floating v2")
+        tag_sha = _git(src, "rev-parse", "v2").stdout.strip()
+        _git(src, "config", "uploadpack.allowAnySHA1InWant", "true")
+        # A tag on another commit, kept off main so every later workspace
+        # still clones the pipeline at pipe_sha.
+        _git(src, "checkout", "-q", "-b", "elsewhere")
+        _git(src, "commit", "-q", "--allow-empty", "-m", "elsewhere")
+        _git(src, "tag", "-a", "v9", "-m", "a tag on another commit")
+        other_tag_sha = _git(src, "rev-parse", "v9").stdout.strip()
+        _git(src, "checkout", "-q", "main")
+        def tag_workspace(name):
+            ws_t = os.path.join(tmp, name)
+            pipe_dir = os.path.join(ws_t, PIPE)
+            os.makedirs(pipe_dir)
+            _git(ws_t, "init", "-q")
+            _git(pipe_dir, "init", "-q")
+            _git(pipe_dir, "remote", "add", "origin", "file://" + src)
+            _git(pipe_dir, "-c", "protocol.version=2", "fetch", "-q", "--no-tags", "--depth=1",
+                 "origin", tag_sha)
+            _git(pipe_dir, "checkout", "-q", "--force", tag_sha)
+            return ws_t, pipe_dir
+
+        ws_tag, pipe_dir = tag_workspace("ws-annotated-pre")
+        if _git(pipe_dir, "rev-parse", "HEAD").stdout.strip() != pipe_sha:
+            bad.append("annotated tag: the checkout by tag object did not land on the tagged "
+                       "commit, so this scenario does not reproduce #928")
+        peel = '"$(git -C "$p" rev-parse --verify -q "${WC_PIPELINE_REF}^{commit}" 2>/dev/null)"'
+        if GUARD_RUN.count(peel) != 1:
+            bad.append("annotated tag: GUARD_RUN no longer carries the #928 peel text exactly "
+                       "once, so the pre-#928 control below cannot be built from it. Update "
+                       "this scenario with the guard")
+        r = _run_guard(ws_tag, script=GUARD_RUN.replace(peel, '"$WC_PIPELINE_REF"'),
+                       pipeline_ref=tag_sha)
+        if r.returncode == 0:
+            bad.append("annotated tag: the pre-#928 guard (raw ref against HEAD) was expected "
+                       "to refuse it, got a pass, so this scenario does not reproduce #928")
+        ws_tag, _ = tag_workspace("ws-annotated")
+        r = _run_guard(ws_tag, pipeline_ref=tag_sha)
+        if r.returncode != 0:
+            bad.append("annotated tag: a pipeline ref that is an annotated tag's object SHA, "
+                       "checked out at the commit it tags, was expected to pass (#928), got "
+                       "rc={0}: {1}{2}".format(r.returncode, r.stdout, r.stderr))
+        ws_other = workspace("ws-other-tag", "main")
+        _git(os.path.join(ws_other, PIPE), "fetch", "-q", "origin", "+refs/tags/*:refs/tags/*")
+        r = _run_guard(ws_other, pipeline_ref=other_tag_sha)
+        if r.returncode == 0 or os.path.lexists(os.path.join(ws_other, PIPE)):
+            bad.append("annotated tag on another commit: expected a refusal that removes the "
+                       "directory, got rc={0}: {1}".format(r.returncode, r.stdout))
+
         for branch, target in (("symlink-dot", "."), ("symlink-other", "evil")):
             # The pre-fix one-liner is fooled: proves the scenario is real.
             ws = workspace("ws-pre-" + branch, branch)
@@ -524,7 +580,9 @@ def self_test():
         print("[FAIL] guard script: " + b)
     if not bad:
         print("[ok] guard: passes a clean branch and a missing root repo; refuses a pipeline at "
-              "another commit; refuses and restores on a branch tracking files under the "
+              "another commit; passes a pipeline ref that is an annotated tag's object SHA "
+              "and refuses one tagging another commit (#928); refuses and restores on a "
+              "branch tracking files under the "
               "directory; refuses a branch tracking the path as a symlink (to . and to its own "
               "directory) that fools the pre-fix one-liner, and leaves nothing at the path")
     print("Gate 116 self-test: {0}".format("passed" if not bad else "{0} failure(s)".format(bad)))

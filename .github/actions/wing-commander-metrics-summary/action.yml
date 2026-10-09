@@ -32,7 +32,7 @@ inputs:
   model:
     description: >
       The literal model name the caller's own claude-code-action step used
-      (e.g. claude-sonnet-5). Never read from the transcript.
+      (e.g. claude-sonnet-5-5). Never read from the transcript.
     required: true
   max-turns:
     description: >
@@ -111,6 +111,15 @@ inputs:
       `spec.identity_available: false`.
     required: false
     default: ''
+  spec-identity-is-own:
+    description: >
+      'true' when THIS call site's spec-dir/spec-issue describe the
+      calling run's own advance, rather than a spec the run merely
+      reported on (e.g. watchdog borrowing the inspected run's spec).
+      Required, no default (specs/099-name-free-stage-identity,
+      SC-008) — every call site must declare it explicitly. Written
+      verbatim into `spec.identity_is_own`.
+    required: true
   step-index:
     description: >
       Distinguishing component of the record key for this invocation
@@ -211,6 +220,7 @@ runs:
         STAGE: ${{ inputs.stage }}
         SPEC_DIR: ${{ inputs.spec-dir }}
         SPEC_ISSUE: ${{ inputs.spec-issue }}
+        SPEC_IDENTITY_IS_OWN: ${{ inputs.spec-identity-is-own }}
         STEP_INDEX: ${{ inputs.step-index }}
         RUN_ID: ${{ github.run_id }}
         JOB_KEY: ${{ github.job }}
@@ -239,6 +249,7 @@ runs:
         STAGE="${STAGE:-}"
         SPEC_DIR="${SPEC_DIR:-}"
         SPEC_ISSUE="${SPEC_ISSUE:-}"
+        SPEC_IDENTITY_IS_OWN="${SPEC_IDENTITY_IS_OWN:-false}"
         STEP_INDEX="${STEP_INDEX:-0}"
         RUN_ID="${RUN_ID:-}"
         JOB_KEY="${JOB_KEY:-}"
@@ -287,6 +298,7 @@ runs:
             --arg spec_dir "$SPEC_DIR" \
             --arg spec_issue "$SPEC_ISSUE" \
             --argjson spec_identity_available "$spec_identity_available" \
+            --argjson spec_identity_is_own "$([ "$SPEC_IDENTITY_IS_OWN" = "true" ] && echo true || echo false)" \
             --arg model "$MODEL_IN" \
             --argjson model_available "$model_available" \
             --arg turns_counted "${main_turns:-}" \
@@ -334,7 +346,8 @@ runs:
               spec: {
                 spec_dir: strOrNull($spec_dir),
                 issue: numOrNull($spec_issue),
-                identity_available: $spec_identity_available
+                identity_available: $spec_identity_available,
+                identity_is_own: $spec_identity_is_own
               },
               model: strOrNull($model),
               model_available: $model_available,
@@ -389,10 +402,11 @@ runs:
             def modelpart: if .model_available then .model else "model unavailable" end;
             "**Cost**: " + costpart + " · " + turnspart + " · " + modelpart
           ' "$RECORD_PATH" 2>/dev/null || true)"
+          record_json="$(jq -c . "$RECORD_PATH" 2>/dev/null)" || record_json='{}'
 
           {
             echo "record-key=$RECORD_KEY"
-            echo "record-json=$(jq -c . "$RECORD_PATH" 2>/dev/null || printf '{}')"
+            echo "record-json=$record_json"
             # cost-line is heredoc-delimited, not echoed: its modelpart can
             # carry a newline from a multiline model input, unlike the
             # controlled record-key and the always-one-line jq -c

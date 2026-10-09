@@ -388,7 +388,12 @@ prediction matches the shipped behaviour.
   class label. Overlap matching stays inside that filter, so the fetch does
   not widen — but it now has to *read* each candidate's recorded ids rather
   than grep for one hash, and a truncated candidate list must behave as
-  `unknown`, never as "nothing matched" (FR-016).
+  `unknown`, never as "nothing matched" (FR-016). The same bound applies one
+  level deeper: a candidate's own `comments` array comes back from the same
+  bulk call, as a single un-paginated page, so a candidate at or past that
+  nested read's own ceiling is truncated too and must behave as `unknown`
+  for the same reason, not as a `none`/`overlap` computed against an
+  incomplete matchable set (FR-016, Review Gate Round 3).
 - **A finding citing exactly one id that is also the only id of an
   unrelated open issue.** Overlap and equality coincide; behaviour must be
   identical to today.

@@ -23,7 +23,7 @@ on:
         description: "Model for the conflict-resolution agent (constitution II tiering default)"
         type: string
         required: false
-        default: claude-sonnet-5
+        default: claude-sonnet-5-5
       max-turns:
         description: "Turn budget for the conflict-resolution agent"
         type: number
@@ -182,6 +182,12 @@ on:
 
 permissions: {}
 
+# Pins bash for every run: step without its own shell:, a caller-supplied
+# container included -- see pr-conversation.yml.
+defaults:
+  run:
+    shell: bash -e {0}
+
 jobs:
   verify-image-prerequisites:
     # This job now carries `if: inputs.container-image != ''` and reports
@@ -202,7 +208,7 @@ jobs:
         run: |
           # Canonical required-tool list: .github/scripts/required-tools.txt
           # (kept in agreement by Gate 23, specs/038 FR-011a).
-          REQUIRED_TOOLS="git gh jq curl python3 bash node timeout"
+          REQUIRED_TOOLS="git gh jq curl python3 bash node timeout unzip"
 
           if [ -n "$REGISTRY_USERNAME" ] && [ -n "$REGISTRY_PASSWORD" ]; then
             # A bare/namespaced Docker Hub reference (no "." or ":" or
@@ -279,6 +285,11 @@ jobs:
             && fromJSON(format('{{"username":{0},"password":{1}}}', toJSON(secrets.container-registry-username), toJSON(secrets.container-registry-password)))
             || fromJSON('{}')
         }}
+      # Git safe.directory for the caller's container image -- see clarify.yml.
+      env:
+        GIT_CONFIG_COUNT: "1"
+        GIT_CONFIG_KEY_0: safe.directory
+        GIT_CONFIG_VALUE_0: "*"
     # environment-binding empirical basis (FR-013) -- see
     # specs/031-stage-environment-binding/contracts/environment-binding.md.
     environment:
@@ -368,12 +379,21 @@ jobs:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           DB: ${{ steps.defbranch.outputs.name }}
           SPEC_PREFIX: ${{ inputs.spec-prefix }}
+          BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}[bot]
         run: |
           set -uo pipefail
 
           warn() {
             echo "::warning::wing-commander rebase discover: ${SPEC_PREFIX}$1 excluded — $2"
             echo "⚠️ \`${SPEC_PREFIX}$1\` excluded from auto-rebase: $2" >> "$GITHUB_STEP_SUMMARY"
+          }
+
+          # A read this step could not make (#831). The branch stays
+          # selected, as it would have been with no read at all: one extra
+          # rebase attempt is the safe direction. Unlike a quiet default,
+          # the annotation leaves a trace of why.
+          read_failed() {
+            echo "::warning::wing-commander rebase discover: ${SPEC_PREFIX}$1 kept — could not read $2: $(printf '%s' "$3" | tr '\n' ' ' | cut -c1-300)"
           }
 
           # A routine, expected exclusion. Deliberately not a ::warning:: —
@@ -395,6 +415,7 @@ jobs:
 
           main_sha="$(git rev-parse "refs/remotes/origin/$DB" 2>/dev/null || git rev-parse HEAD)"
 
+          err_file="$RUNNER_TEMP/rebase-discover-gh-err.txt"
           selected='[]'
           while read -r _sha ref; do
             [ -n "${ref:-}" ] || continue
@@ -448,23 +469,74 @@ jobs:
 
             issue="$(printf '%s' "$meta" | jq -r '.issue // empty')"
 
+            issue_state=""
+            blocked=false
+            if [ -n "$issue" ]; then
+              # Each failed read clears its variable (Gate 126): gh prints
+              # the error body to stdout.
+              if ! issue_read="$(gh api "repos/$GITHUB_REPOSITORY/issues/$issue" \
+                  --jq '"\(.state | ascii_downcase) \([.labels[].name] | index("rebase:blocked") != null)"' 2>"$err_file")"; then
+                issue_read=""
+                read_failed "$slug" "lifecycle issue #$issue" "$(cat "$err_file")"
+              fi
+              if [ -n "$issue_read" ]; then
+                read -r issue_state blocked <<< "$issue_read"
+              fi
+            fi
+
+            # #916: a spec whose lifecycle issue is closed (parked, not
+            # planned, or abandoned) and that has no open pull request is
+            # no one's work in flight, and rebasing it on every run spends
+            # agent turns on a branch nobody will merge. Reopening the
+            # issue, or opening a pull request from the branch, brings it
+            # back. `--head` matches the branch name in any repository, so
+            # a fork's same-named branch does not count.
+            if [ "$issue_state" = "closed" ]; then
+              if open_pr="$(gh pr list --repo "$GITHUB_REPOSITORY" \
+                  --head "${SPEC_PREFIX}$slug" --state open --limit 20 \
+                  --json number,isCrossRepository \
+                  --jq '[.[] | select(.isCrossRepository | not)] | .[0].number // empty' 2>"$err_file")"; then
+                if [ -z "$open_pr" ]; then
+                  note "$slug" "its lifecycle issue (#$issue) is closed and no pull request from it is open"
+                  continue
+                fi
+              else
+                read_failed "$slug" "its open pull requests" "$(cat "$err_file")"
+              fi
+            fi
+
             # Skip a branch already reported blocked if nothing has changed
             # since — same branch tip AND same default-branch tip as the most
-            # recent escalation marker (dedup).
-            if [ -n "$issue" ]; then
-              blocked="$(gh issue view "$issue" --json labels \
-                --jq '[.labels[].name] | index("rebase:blocked") != null' 2>/dev/null || echo false)"
-              if [ "$blocked" = "true" ]; then
-                marker="$(gh issue view "$issue" --json comments \
-                  --jq '[.comments[].body] | map(select(test("<!-- wing-commander-rebase: blocked"))) | last // empty' 2>/dev/null || echo '')"
-                if [ -n "$marker" ]; then
-                  m_branch="$(printf '%s' "$marker" | sed -n 's/.*branch-sha=\([0-9a-f]\{1,\}\).*/\1/p')"
-                  m_main="$(printf '%s' "$marker" | sed -n 's/.*main-sha=\([0-9a-f]\{1,\}\).*/\1/p')"
-                  branch_tip="$(git ls-remote origin "refs/heads/${SPEC_PREFIX}$slug" | awk '{print $1}')"
-                  if [ -n "$m_branch" ] && [ "$m_branch" = "$branch_tip" ] && [ "$m_main" = "$main_sha" ]; then
-                    echo "⏭️ \`${SPEC_PREFIX}$slug\` unchanged since it was reported blocked (branch=\`$branch_tip\`, $DB=\`$main_sha\`) — skipping (dedup)." >> "$GITHUB_STEP_SUMMARY"
-                    continue
-                  fi
+            # recent escalation marker (dedup). Only the App's own comments
+            # carry a marker (#831): anyone can comment on a public issue,
+            # and a quoted marker with the current SHAs would otherwise
+            # silence the re-escalation. The author test is the jq spelling
+            # of board_item_marker.is_loop_marker_author(), and the comments
+            # come from REST, all pages merged: `--json comments` has no
+            # user.type to test.
+            if [ "$blocked" = "true" ]; then
+              marker=""
+              if ! comments="$(gh api "repos/$GITHUB_REPOSITORY/issues/$issue/comments?per_page=100" \
+                  --paginate --jq '.[]' 2>"$err_file")"; then
+                comments=""
+                read_failed "$slug" "lifecycle issue #$issue's comments" "$(cat "$err_file")"
+              fi
+              # `shell: bash` is errexit: a jq failure here must keep the
+              # branch, never stop discovery for every branch.
+              if [ -n "$comments" ]; then
+                marker="$(printf '%s\n' "$comments" | jq -rs --arg bot "$BOT_LOGIN" '
+                  [.[] | select(.user.type == "Bot" and .user.login == $bot)
+                   | [(.body // "") | scan("<!-- wing-commander-rebase: blocked [^>]*-->")] | last // empty]
+                  | last // empty')" \
+                  || { marker=""; read_failed "$slug" "lifecycle issue #$issue's comments" "jq could not parse them"; }
+              fi
+              if [ -n "$marker" ]; then
+                m_branch="$(printf '%s' "$marker" | sed -n 's/.*branch-sha=\([0-9a-f]\{1,\}\).*/\1/p')"
+                m_main="$(printf '%s' "$marker" | sed -n 's/.*main-sha=\([0-9a-f]\{1,\}\).*/\1/p')"
+                branch_tip="$(git ls-remote origin "refs/heads/${SPEC_PREFIX}$slug" | awk '{print $1}')"
+                if [ -n "$m_branch" ] && [ "$m_branch" = "$branch_tip" ] && [ "$m_main" = "$main_sha" ]; then
+                  echo "⏭️ \`${SPEC_PREFIX}$slug\` unchanged since it was reported blocked (branch=\`$branch_tip\`, $DB=\`$main_sha\`) — skipping (dedup)." >> "$GITHUB_STEP_SUMMARY"
+                  continue
                 fi
               fi
             fi
@@ -511,6 +583,11 @@ jobs:
             && fromJSON(format('{{"username":{0},"password":{1}}}', toJSON(secrets.container-registry-username), toJSON(secrets.container-registry-password)))
             || fromJSON('{}')
         }}
+      # Git safe.directory for the caller's container image -- see clarify.yml.
+      env:
+        GIT_CONFIG_COUNT: "1"
+        GIT_CONFIG_KEY_0: safe.directory
+        GIT_CONFIG_VALUE_0: "*"
     # environment-binding empirical basis (FR-013); matrix is an available context for this key and
     # every leg gates independently -- N legs mean N approvals/deployment records -- see
     # specs/031-stage-environment-binding/contracts/environment-binding.md.
@@ -601,7 +678,7 @@ jobs:
           WC_PIPELINE_REF: ${{ steps.pipeline-ref.outputs.ref }}
         run: |
           p=.wing-commander-pipeline; want="$(cd "$GITHUB_WORKSPACE" && pwd -P)/$p"
-          if [ -L "$p" ] || [ ! -d "$p" ] || [ -L "$p/.git" ] || [ ! -d "$p/.git" ] || [ "$(git -C "$p" rev-parse --show-toplevel 2>/dev/null)" != "$want" ] || { [[ "${WC_PIPELINE_REF:-}" =~ ^[0-9a-f]{40}$ ]] && [ "$(git -C "$p" rev-parse HEAD 2>/dev/null)" != "$WC_PIPELINE_REF" ]; }; then rm -rf -- "$p"; echo "::error::wing-commander: $p is no longer the trusted pipeline checkout (a symlink, a missing or replaced .git, or another commit): the branch just checked out replaced it. Removed it so no later step loads branch code from there (#611)."; exit 1; fi
+          if [ -L "$p" ] || [ ! -d "$p" ] || [ -L "$p/.git" ] || [ ! -d "$p/.git" ] || [ "$(git -C "$p" rev-parse --show-toplevel 2>/dev/null)" != "$want" ] || { [[ "${WC_PIPELINE_REF:-}" =~ ^[0-9a-f]{40}$ ]] && [ "$(git -C "$p" rev-parse HEAD 2>/dev/null)" != "$(git -C "$p" rev-parse --verify -q "${WC_PIPELINE_REF}^{commit}" 2>/dev/null)" ]; }; then rm -rf -- "$p"; echo "::error::wing-commander: $p is no longer the trusted pipeline checkout (a symlink, a missing or replaced .git, or another commit): the branch just checked out replaced it. Removed it so no later step loads branch code from there (#611)."; exit 1; fi
           git -C "$p" cat-file blob HEAD:.github/scripts/pipeline-checkout-guard.sh | bash -s
 
       # Fetch ONLY the default branch (never a bare `git fetch origin`, which
@@ -734,7 +811,7 @@ jobs:
             2. Run `git diff --name-only --diff-filter=U` to list the
                conflicted files for this stop. BEFORE resolving them, append
                each of those file paths (one per line) to the manifest file
-               ${{ runner.temp }}/conflict-manifest.txt using the Edit tool.
+               ${{ steps.ctx.outputs.runner-temp }}/conflict-manifest.txt using the Edit tool.
             3. Edit ONLY the conflict-marked files, removing the conflict
                markers so the result reconciles this branch's change with the
                default branch's. Do not touch any file that is not
@@ -826,6 +903,7 @@ jobs:
           stage: rebase
           spec-dir: ${{ matrix.spec_dir }}
           spec-issue: ${{ matrix.issue }}
+          spec-identity-is-own: 'false'
           # github.job (JOB_KEY) is identical across every leg of this
           # matrix, so step-index must carry the per-leg distinction or
           # every leg's record_key collides on the same
@@ -971,11 +1049,28 @@ jobs:
           echo "::error::wing-commander rebase stage: agent step rejected — verdict=$VERDICT: $REASON"
           exit 1
 
+      # Reads the mint/refresh outcomes of the two post-agent composites
+      # above (both have run by here). It sits ahead of "Publish rebased
+      # branch" so a refused push can be told apart: a refusal after a
+      # failed re-establishment is a credential failure, not a branch race
+      # (#661, spec 073 FR-003/FR-004). rebase.yml has no separate stalled
+      # job (spec.md Edge Cases), so the publish step and "Abandon and
+      # escalate" below read this step's `ok` output directly rather than
+      # through a job output relay.
+      - name: Determine post-agent credential status
+        id: credential-status
+        if: "!cancelled() && steps.agent.outcome != 'skipped'"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-post-agent-credential-status
+        with:
+          mint-outcome: ${{ steps.reestablish.outcome }}
+          refresh-outcome: ${{ steps.refresh-remote.outcome }}
+
       # The single shared publish path for a clean rebase and a scope-verified
       # AI resolution. The lease compares against the branch tip recorded at
       # checkout, so a push rejected because the branch moved meanwhile is
-      # skipped silently, with no lifecycle comment. On success, drop any
-      # stale rebase:blocked label (auto-recovery).
+      # skipped silently, with no lifecycle comment. Any other refusal after
+      # a failed post-agent credential fails the step instead (#661). On
+      # success, drop any stale rebase:blocked label (auto-recovery).
       #
       # `!cancelled()` rather than `always()`: the status function is here to
       # stop a scope-verified result being dropped by an unrelated earlier
@@ -994,18 +1089,36 @@ jobs:
           ISSUE: ${{ matrix.issue }}
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           SPEC_PREFIX: ${{ inputs.spec-prefix }}
+          # `false` only when the agent ran and the post-agent credential was
+          # not re-established; empty when the agent never ran (a clean
+          # rebase pushes with the credential checkout already proved).
+          CREDENTIAL_OK: ${{ steps.credential-status.outputs.ok }}
         run: |
           set -uo pipefail
-          if git push --force-with-lease origin "HEAD:refs/heads/${SPEC_PREFIX}$SLUG" 2>"$RUNNER_TEMP/push-err.txt"; then
+          # LC_ALL=C: the credential arm below reads git's "(stale info)"
+          # lease rejection, which a translated locale would reword.
+          if LC_ALL=C git push --force-with-lease origin "HEAD:refs/heads/${SPEC_PREFIX}$SLUG" 2>"$RUNNER_TEMP/push-err.txt"; then
             echo "${SPEC_PREFIX}$SLUG: pushed rebased result (force-with-lease)." >> "$GITHUB_STEP_SUMMARY"
             if [ -n "$ISSUE" ]; then
               has_label="$(gh issue view "$ISSUE" --json labels \
-                --jq '[.labels[].name] | index("rebase:blocked") != null' 2>/dev/null || echo false)"
+                --jq '[.labels[].name] | index("rebase:blocked") != null' 2>/dev/null)" || has_label=false
               if [ "$has_label" = "true" ]; then
                 gh issue edit "$ISSUE" --remove-label "rebase:blocked" || true
                 echo "${SPEC_PREFIX}$SLUG: removed rebase:blocked from #$ISSUE (auto-recovery)." >> "$GITHUB_STEP_SUMMARY"
               fi
             fi
+          elif [ "$CREDENTIAL_OK" = "false" ] && ! grep -q '(stale info)' "$RUNNER_TEMP/push-err.txt"; then
+            # The lease did not refuse it ("stale info" is git's own lease
+            # rejection, which stays the branch race below whatever the
+            # credential), and the wing-commander-bot credential was not
+            # re-established after the agent ran, so the refusal is most
+            # likely authentication (#661). Fail loudly, naming it.
+            echo "::error::${SPEC_PREFIX}$SLUG: push refused after the post-agent wing-commander-bot credential could not be re-established. This is most likely a credential failure, not a branch race (the lease did not refuse it); the rebased result was not published."
+            {
+              echo "${SPEC_PREFIX}$SLUG: push refused with a failed post-agent credential; not treated as a branch race."
+              sed 's/^/    /' "$RUNNER_TEMP/push-err.txt"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
           else
             echo "::warning::${SPEC_PREFIX}$SLUG: force-with-lease push rejected (branch moved since checkout) — skipping this run, no comment."
             {
@@ -1013,20 +1126,6 @@ jobs:
               sed 's/^/    /' "$RUNNER_TEMP/push-err.txt"
             } >> "$GITHUB_STEP_SUMMARY"
           fi
-
-      # Deferred to the job's last bot-acting step before the failure arm
-      # (review-step-gating skill, spec 052 self-review): reads the mint/
-      # refresh outcomes from the composites added above the agent step's
-      # own window. rebase.yml has no separate stalled job (spec.md Edge
-      # Cases), so "Abandon and escalate" below reads this step's `ok`
-      # output directly rather than through a job output relay.
-      - name: Determine post-agent credential status
-        id: credential-status
-        if: "!cancelled() && steps.agent.outcome != 'skipped'"
-        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-post-agent-credential-status
-        with:
-          mint-outcome: ${{ steps.reestablish.outcome }}
-          refresh-outcome: ${{ steps.refresh-remote.outcome }}
 
       # FR-004: names the specific post-agent step that failed, for
       # "Abandon and escalate" below to read directly -- rebase.yml has no

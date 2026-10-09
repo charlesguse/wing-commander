@@ -38,6 +38,15 @@ WHAT THIS CHECKS
    `if mutated == original` guard `verify-stall-restart-runbook.py`
    establishes, so a mutation that silently failed to apply cannot produce
    a false pass.
+4. Rejects a dead `needs.<job>.result == 'failure'` arm nested under a
+   top-level `needs.<job>.result != 'failure'` guard on the same job, in
+   every survivor job (the seven above plus pr-conversation's
+   `stalled-mark`). The guard makes such an arm unreachable, so step 2's
+   evaluation cannot see it; it only reads like a live admission path, and
+   the image-prerequisite copy of it is what produced #728's
+   false-contradiction report (spec 041 D11 excludes that case). A
+   mutation re-adds the image arm to each job and asserts this check
+   flags every one.
 
 The extraction/evaluator/fixture-table machinery is shared with the
 refusal-exclusion check (User Story 3) via `wc_chain_stop_conditions.py`,
@@ -52,7 +61,9 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wc_shell_harness import use_utf8_stdout
-from wc_chain_stop_conditions import CALL_SITES, extract_condition, run_suite
+from wc_chain_stop_conditions import (CALL_SITES, dead_failure_arms,
+                                      extract_condition, run_suite)
+from wc_shell_harness import find_job
 
 
 def _mut_remove_status_guard(cond):
@@ -121,6 +132,70 @@ MUTATIONS = [
 ]
 
 
+# Every survivor job whose `if:` step 4 scans: the evaluated call sites plus
+# pr-conversation's `stalled-mark`, whose `if:` is kept in lockstep with
+# `stalled` (specs/077-stalled-per-spec-group data-model.md).
+DEAD_ARM_SITES = [(site["file"], site["job_id"]) for site in CALL_SITES] + [
+    (".github/workflows/pr-conversation.yml", "stalled-mark"),
+]
+
+_GROUP_OPEN_RE = re.compile(r"\(\s*needs\.")
+
+
+def _mut_reintroduce_dead_image_arm(cond):
+    """Re-add #728's dead arm as the first arm of the parenthesized group."""
+    return _GROUP_OPEN_RE.sub(
+        "( needs.verify-image-prerequisites.result == 'failure' ||\n  needs.",
+        cond, count=1)
+
+
+def check_dead_arms():
+    failures = []
+    mutation_misses = []
+    for path, job_id in DEAD_ARM_SITES:
+        cond = find_job(path, job_id).get("if")
+        if not isinstance(cond, str):
+            failures.append(f"{path}:{job_id}: no string `if:` to scan")
+            continue
+        for job in dead_failure_arms(cond):
+            failures.append(
+                f"{path}:{job_id}: `needs.{job}.result == 'failure'` arm sits "
+                f"under a top-level `needs.{job}.result != 'failure'` guard "
+                f"and can never admit the job — remove it (#728, spec 041 "
+                f"D11).")
+        mutated = _mut_reintroduce_dead_image_arm(cond)
+        if mutated == cond or "verify-image-prerequisites" not in \
+                dead_failure_arms(mutated):
+            mutation_misses.append(f"{path}:{job_id}")
+    # Parser cases: a quoted `)` or `||` must not hide an arm, a guard in
+    # its own parentheses still counts, and a top-level `||` is skipped.
+    for expr, want in [
+        ("inputs.m == ')' && needs.a.result != 'failure' && "
+         "( needs.a.result == 'failure' || x )", ["a"]),
+        ("needs.a.result != 'failure' && inputs.m == 'a||b' && "
+         "( needs.a.result == 'failure' || x )", ["a"]),
+        ("inputs.m == 'it''s )' && needs.a.result != 'failure' && "
+         "( needs.a.result == 'failure' )", ["a"]),
+        ("(needs.a.result != 'failure') && "
+         "( needs.a.result == 'failure' || x )", ["a"]),
+        ("(needs.a.result != 'failure') || needs.a.result == 'failure'", []),
+    ]:
+        got = dead_failure_arms(expr)
+        if got != want:
+            failures.append(f"dead_failure_arms({expr!r}) returned {got!r}, "
+                            f"expected {want!r}")
+    if mutation_misses:
+        print("::error::MUTATION SURVIVED — reintroduce the dead "
+              "verify-image-prerequisites failure arm: not flagged in "
+              + ", ".join(mutation_misses))
+        failures.append("mutation survived: reintroduce the dead image arm")
+    else:
+        print(f"Mutation OK — reintroduce the dead verify-image-prerequisites "
+              f"failure arm: caught in all {len(DEAD_ARM_SITES)} survivor "
+              f"jobs.")
+    return failures
+
+
 def main():
     use_utf8_stdout()
     if not os.path.isdir(".github/workflows"):
@@ -155,8 +230,15 @@ def main():
             mutation_failures.append(label)
     failures += [f"mutation survived: {m}" for m in mutation_failures]
 
+    dead_arm_failures = check_dead_arms()
+    for f in dead_arm_failures:
+        if not f.startswith("mutation survived"):
+            print(f"::error::{f}")
+    failures += dead_arm_failures
+
     print(f"Gate 33: {len(CALL_SITES)} survivor-job condition(s), "
-          f"{len(MUTATIONS)} mutation(s); {len(failures)} failure(s).")
+          f"{len(MUTATIONS) + 1} mutation(s), {len(DEAD_ARM_SITES)} job(s) "
+          f"scanned for dead guarded arms; {len(failures)} failure(s).")
     sys.exit(1 if failures else 0)
 
 

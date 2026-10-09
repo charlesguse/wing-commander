@@ -66,7 +66,7 @@ import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wc_shell_harness import (ensure_jq, find_job, find_step, resolve_bash,
-                              run_step, use_utf8_stdout)
+                              run_step, step_shell, use_utf8_stdout)
 
 STAGE = ".github/workflows/pr-conversation.yml"
 
@@ -240,7 +240,10 @@ def compute_folded_json(steps, repo, base_sha, tip_sha, run_id, runner_temp,
         BASH, steps[COMPOSITE_STEP], repo,
         {"WORKING_DIRECTORY": ".", "BASE_SHA": base_sha, "TIP_SHA": tip_sha,
          "RUN_ID": run_id, "GITHUB_REPOSITORY": REPO, "PATH": path},
-        runner_temp)
+        runner_temp,
+        # steps[] may be a mutated copy too far from the shipped text for
+        # run_step to trace back on its own (the D2 revert rewrites most of it)
+        shell=step_shell(COMPOSITE_ACTION, COMPOSITE_STEP))
     if rc != 0:
         sys.exit(f"::error::{COMPOSITE_STEP!r} exited {rc}: {out.strip()}")
     return outputs.get("folded-json", "[]")
@@ -791,6 +794,26 @@ def test_structural():
     doc = yaml.safe_load(open(STAGE, encoding="utf-8")) or {}
     jobs = doc.get("jobs") or {}
 
+    # specs/074-serialized-fold-dispatch T016/T011: each job also depends
+    # on its own fold-queue admission-ticket prerequisite job now (needed
+    # before this job may even be scheduled, research.md D1) -- see
+    # fold-queue-ledger.sh.
+    EXTRA_NEEDS = {"dispatch-once": "fold-turn-dispatch",
+                   "report-fold-outcomes": "fold-turn-act"}
+
+    # specs/074-serialized-fold-dispatch T045 (maintainer review of #821):
+    # dispatch-once's own copy of the post-fold tip read / fold-evidence
+    # computation / own-folds count / dispatch claim moved into
+    # fold-turn-dispatch, which carries no concurrency group -- computing
+    # and awaiting the claim inside dispatch-once (which holds
+    # wing-commander-<spec-dir>) deadlocked whenever the claim's own
+    # requeue-reawait loop needed another run's `act` job to start, since
+    # that job cannot join the very group dispatch-once was occupying.
+    # report-fold-outcomes was not touched by T045 and still computes its
+    # own copy directly.
+    FOLD_EVIDENCE_JOB = {"dispatch-once": "fold-turn-dispatch",
+                         "report-fold-outcomes": "report-fold-outcomes"}
+
     for job_id in ("dispatch-once", "report-fold-outcomes"):
         job = jobs.get(job_id)
         if job is None:
@@ -802,11 +825,13 @@ def test_structural():
                             f"review, not once per leg (research.md D1).")
         needs = job.get("needs")
         needs_set = set(needs) if isinstance(needs, list) else {needs}
-        expected_needs = {"verify-image-prerequisites", "classify-and-announce", "act"}
+        expected_needs = {"verify-image-prerequisites", "classify-and-announce",
+                          "act", EXTRA_NEEDS[job_id]}
         if needs_set != expected_needs:
             failures.append(f"structural: {job_id!r}.needs is {needs!r}, "
                             f"expected exactly [verify-image-prerequisites, "
-                            f"classify-and-announce, act] (Gate 23 requires "
+                            f"classify-and-announce, act, "
+                            f"{EXTRA_NEEDS[job_id]}] (Gate 23 requires "
                             f"every always()-guarded job to depend on "
                             f"verify-image-prerequisites directly — PR #253 "
                             f"review).")
@@ -825,18 +850,21 @@ def test_structural():
                             f"or a legitimate skip (spec 058) would be "
                             f"treated as a failure.")
 
+        fold_evidence_job_id = FOLD_EVIDENCE_JOB[job_id]
+        fold_evidence_job = jobs.get(fold_evidence_job_id) or {}
         fold_evidence_step = next(
-            (s for s in (job.get("steps") or [])
+            (s for s in (fold_evidence_job.get("steps") or [])
              if (s or {}).get("name") == FOLD_EVIDENCE_STEP), None)
         if fold_evidence_step is None:
-            failures.append(f"structural: {job_id!r} has no step named "
+            failures.append(f"structural: {fold_evidence_job_id!r} (feeding "
+                            f"{job_id!r}) has no step named "
                             f"{FOLD_EVIDENCE_STEP!r} — research.md D2's "
                             f"composite call is missing, so this job would "
                             f"still be reading unscoped fold evidence.")
         elif "wing-commander-fold-evidence" not in (fold_evidence_step.get("uses") or ""):
-            failures.append(f"structural: {job_id!r}'s {FOLD_EVIDENCE_STEP!r} "
-                            f"step does not `uses:` the "
-                            f"wing-commander-fold-evidence composite "
+            failures.append(f"structural: {fold_evidence_job_id!r}'s "
+                            f"{FOLD_EVIDENCE_STEP!r} step does not `uses:` "
+                            f"the wing-commander-fold-evidence composite "
                             f"(research.md D2, FR-009's single home) — got "
                             f"{fold_evidence_step.get('uses')!r}.")
 
@@ -894,11 +922,13 @@ def test_structural():
             failures.append(f"structural: {DISPATCH_STEP!r}'s wing-"
                             f"commander-fold-dispatch call has no {key!r} "
                             f"input.")
-    if "steps.fold-evidence.outputs.folded-json" not in str(dispatch_with.get("folded-json", "")):
+    if "needs.fold-turn-dispatch.outputs.folded-json" not in str(dispatch_with.get("folded-json", "")):
         failures.append(f"structural: {DISPATCH_STEP!r}'s folded-json input "
-                        f"is not steps.fold-evidence.outputs.folded-json — "
-                        f"the dispatch decision would no longer narrow to "
-                        f"this run's own fold evidence (specs/075 FR-014).")
+                        f"is not needs.fold-turn-dispatch.outputs.folded-json "
+                        f"(T045 moved the fold-evidence read into "
+                        f"fold-turn-dispatch) — the dispatch decision would "
+                        f"no longer narrow to this run's own fold evidence "
+                        f"(specs/075 FR-014).")
 
     reply_to_fold_step = find_step(STAGE, REPLY_TO_FOLD_STEP)
     reply_if = str(reply_to_fold_step.get("if") or "")
@@ -1003,8 +1033,9 @@ def _mut_dispatch_on_tip_moved(steps):
     dispatch -- FR-014's defect.
     """
     steps[FOLD_DISPATCH_STEP] = steps[FOLD_DISPATCH_STEP].replace(
-        'if [ -z "$tip" ] || [ "$(printf \'%s\' "$folded_json" | jq \'length\')" = "0" ]; then',
-        'if [ -z "$tip" ] || [ "$tip" = "$BASE_SHA" ]; then')
+        'if [ "$using_round_list" != "true" ] && { [ -z "$tip" ] || '
+        '[ "$(printf \'%s\' "$folded_json" | jq \'length\')" = "0" ]; }; then',
+        'if [ "$using_round_list" != "true" ] && [ "$tip" = "$BASE_SHA" ]; then')
 
 
 MUTATIONS = [
@@ -1054,7 +1085,7 @@ def run_mutation(label, apply_mutation, steps, root):
                       "IMPLEMENT_WORKFLOW": IMPLEMENT_WORKFLOW,
                       "GITHUB_REPOSITORY": REPO, "GH_CALLS": calls,
                       "GH_LAST_COMMENT": last_comment, "PATH": path},
-                     runner_temp)
+                     runner_temp, shell=step_shell(STAGE, REPLY_STEP))
         run_dispatch_once(mutated, repo, base_sha, folded_json, calls,
                           last_comment, path, runner_temp)
         return gh_call_count(calls, "workflow run") > 1

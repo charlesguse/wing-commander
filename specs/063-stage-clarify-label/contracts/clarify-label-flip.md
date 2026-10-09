@@ -56,7 +56,7 @@ case "$OUTCOME" in
     ;;
   ready)
     if [ "$BLOCKED" != "true" ]; then
-      gh label create "stage:spec" --color 1D76DB --description "Spec drafted / awaiting review" --force
+      gh label create "stage:spec" --color 1D76DB --description "Spec drafted / awaiting review" --force || echo "::warning::wing-commander clarify: could not create the stage:spec label (the spec PR is still announced ready)." >> "$GITHUB_STEP_SUMMARY"
       if ! gh issue edit "$ISSUE" --add-label "stage:spec"; then
         echo "::warning::wing-commander clarify: could not add stage:spec to issue #$ISSUE (the spec PR was still announced ready)." >> "$GITHUB_STEP_SUMMARY"
       fi
@@ -75,9 +75,10 @@ steps.clarification.outputs.blocked`, `ISSUE = inputs.issue-number`.
 ## Guarantees
 
 - **Never fails the job.** Every `--add-label` failure path is caught
-  explicitly (`if ! gh ...; then warn; fi`); the `stage:clarify`-creating
-  `gh label create` call is guarded with `|| echo "::warning::..." >>
-  "$GITHUB_STEP_SUMMARY"` so a create failure cannot abort the step under
+  explicitly (`if ! gh ...; then warn; fi`); both `gh label create` calls
+  (`stage:clarify` and, since #803, `stage:spec`) are guarded with
+  `|| echo "::warning::..." >> "$GITHUB_STEP_SUMMARY"` so a create failure
+  cannot abort the step under
   the step's default `bash -eo pipefail` before the questionnaire is
   rendered or announced (maintainer feedback on PR #651: this step runs
   before `Render clarification questionnaire`/`Announce remaining

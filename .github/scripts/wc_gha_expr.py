@@ -15,28 +15,40 @@ It grew up inside verify-watchdog-self-skip-guard.py (Gate 70). It lives here
 because verify-watchdog-clean-path.py (Gate 73) needs the identical semantics
 for watchdog.yml's `diagnose` guard and its new collect-side step guards, and
 a pasted second copy is invisible until the first divergent fix (CLAUDE.md,
-"Shared logic has exactly one home").
+"Shared logic has exactly one home"). verify-write-boundary.py,
+verify-act-dedup-guard.py, verify-clarification-gating.py,
+verify-plan-tasks-cost-line.py, auto-update-spec-kit-tests/t7_gating.py and
+wc_chain_stop_conditions.py each carried such a copy (Python `eval`s and
+regex term parsers, all with case-sensitive `==`) until the code review of
+#940; verify-single-home-idioms.py (Gate 60) now fails a script that
+defines its own evaluator again.
 
 WHAT IT COVERS
 --------------
-Literals, context references, `!`, `==`, `!=`, `&&`, `||` with GitHub's
-precedence and loose-equality rules, parentheses, and the four string
-functions these guards can plausibly grow into (format/startsWith/endsWith/
-contains). Status functions (`success()`, `cancelled()`, ...) are resolved
+Literals, context references, `!`, `<`, `<=`, `>`, `>=`, `==`, `!=`, `&&`,
+`||` with GitHub's precedence and loose-comparison rules, parentheses,
+`fromJSON`, and the four string functions these guards can plausibly grow
+into (format/startsWith/endsWith/contains). Status functions (`success()`, `cancelled()`, ...) are resolved
 from the caller's context under the key `"<name>()"`, so a caller that models
 them must say so explicitly.
 
 Anything else is a hard ValueError. A guessed evaluation is precisely the
 failure mode the gates built on this exist for, so an unmodelled construct
-must stop the gate rather than quietly resolve to something plausible.
+must stop the gate rather than quietly resolve to something plausible. A
+caller that models only some contexts passes `known`, the reference
+prefixes it models (`("steps.", "inputs.")`): a reference outside them is a
+ValueError too, and one inside them that the context lacks is null, as an
+unset step output is.
 """
+import inspect
+import json
 import math
 import re
 
 TOKEN = re.compile(r"""\s*(?:
     (?P<str>'(?:[^']|'')*')
   | (?P<num>-?\d+(?:\.\d+)?)
-  | (?P<op>&&|\|\||==|!=|!|\(|\)|,)
+  | (?P<op>&&|\|\||==|!=|<=|>=|<|>|!|\(|\)|,)
   | (?P<name>[A-Za-z_][A-Za-z0-9_\-]*(?:\.(?:[A-Za-z_][A-Za-z0-9_\-]*|\*))*)
 )""", re.X)
 
@@ -72,6 +84,8 @@ def to_num(v):
         return 1.0 if v else 0.0
     if isinstance(v, (int, float)):
         return float(v)
+    if not isinstance(v, str):
+        return math.nan  # a fromJSON array or object is NaN, as on GitHub
     s = v.strip()
     if s == "":
         return 0.0
@@ -92,10 +106,36 @@ def truthy(v):
 def loose_eq(a, b):
     if isinstance(a, str) and isinstance(b, str):
         return a.lower() == b.lower()
+    if isinstance(a, (list, dict)) or isinstance(b, (list, dict)):
+        # Arrays and objects are equal only as the same instance.
+        return a is b
     if type(a) is type(b):
         return a == b
     x, y = to_num(a), to_num(b)
     return not (math.isnan(x) or math.isnan(y)) and x == y
+
+
+def loose_order(a, b, op):
+    """`<`/`<=`/`>`/`>=`: two strings compare case-insensitively, any
+    other pair as numbers, and a NaN on either side is false."""
+    if isinstance(a, str) and isinstance(b, str):
+        x, y = a.lower(), b.lower()
+    else:
+        x, y = to_num(a), to_num(b)
+        if math.isnan(x) or math.isnan(y):
+            return False
+    return {"<": x < y, "<=": x <= y, ">": x > y, ">=": x >= y}[op]
+
+
+def fn_from_json(value):
+    """fromJSON: a JSON number is a float, as every number here is."""
+    try:
+        out = json.loads(to_str(value))
+    except ValueError as exc:
+        raise ValueError(f"fromJSON({to_str(value)!r}): {exc}") from None
+    if isinstance(out, int) and not isinstance(out, bool):
+        return float(out)
+    return out
 
 
 def fn_format(fmt, *args):
@@ -112,13 +152,22 @@ FUNCS = {
     "format": fn_format,
     "endswith": lambda s, x: to_str(s).lower().endswith(to_str(x).lower()),
     "startswith": lambda s, x: to_str(s).lower().startswith(to_str(x).lower()),
-    "contains": lambda s, x: to_str(x).lower() in to_str(s).lower(),
+    "contains": lambda s, x: (any(loose_eq(e, x) for e in s)
+                              if isinstance(s, list)
+                              else to_str(x).lower() in to_str(s).lower()),
+    "fromjson": fn_from_json,
 }
 
 
 class Parser:
-    def __init__(self, src, ctx):
+    def __init__(self, src, ctx, known=None):
         self.toks, self.i, self.ctx = tokenize(src), 0, ctx
+        self.known = known
+        # >0 while reading an `&&`/`||` right-hand side GitHub never
+        # evaluates: a guarded `fromJSON('')` must not fail the expression
+        # (code review of #954). Unmodelled names still raise -- a gate
+        # must not pass on a construct it cannot read in any scenario.
+        self.skip = 0
 
     def peek(self):
         return self.toks[self.i] if self.i < len(self.toks) else (None, None)
@@ -136,11 +185,19 @@ class Parser:
             raise ValueError(f"trailing tokens from {self.peek()[1]!r}")
         return v
 
+    def _rhs(self, read, skipped):
+        """Read one `&&`/`||` operand, unevaluated when `skipped`."""
+        self.skip += skipped
+        try:
+            return read()
+        finally:
+            self.skip -= skipped
+
     def or_(self):
         v = self.and_()
         while self.peek() == ("op", "||"):
             self.take()
-            rhs = self.and_()
+            rhs = self._rhs(self.and_, truthy(v))
             v = v if truthy(v) else rhs
         return v
 
@@ -148,7 +205,7 @@ class Parser:
         v = self.cmp()
         while self.peek() == ("op", "&&"):
             self.take()
-            rhs = self.cmp()
+            rhs = self._rhs(self.cmp, not truthy(v))
             v = rhs if truthy(v) else v
         return v
 
@@ -157,11 +214,20 @@ class Parser:
         # is `(!a) == b`, not `!(a == b)` -- so unary() must be resolved
         # before an equality operator is looked for, not the other way
         # around (MF-08).
-        v = self.unary()
+        v = self.order()
         if self.peek() in (("op", "=="), ("op", "!=")):
             op = self.take()[1]
-            eq = loose_eq(v, self.unary())
+            eq = loose_eq(v, self.order())
             return eq if op == "==" else not eq
+        return v
+
+    def order(self):
+        # `<`/`<=`/`>`/`>=` bind tighter than `==`/`!=`, and looser than `!`.
+        v = self.unary()
+        if self.peek() in (("op", "<"), ("op", "<="), ("op", ">"),
+                           ("op", ">=")):
+            op = self.take()[1]
+            return loose_order(v, self.unary(), op)
         return v
 
     def unary(self):
@@ -183,6 +249,16 @@ class Parser:
         self.take(")")
         fn = FUNCS.get(name.lower())
         if fn is not None:
+            # Arity before the short-circuit skip: GitHub rejects a
+            # bad-arity call when it parses the expression, on a side it
+            # never evaluates too (code review of #954, round 14).
+            try:
+                inspect.signature(fn).bind(*args)
+            except TypeError:
+                raise ValueError(f"{name}() called with {len(args)} "
+                                 f"argument(s)") from None
+            if self.skip:
+                return None
             return fn(*args)
         key = f"{name.lower()}()"
         if key in self.ctx:
@@ -207,15 +283,23 @@ class Parser:
                 return val == "true"
             if val == "null":
                 return None
+            if (self.known is not None and val not in self.ctx
+                    and not val.startswith(tuple(self.known))):
+                raise ValueError(f"unmodelled context reference {val!r}")
             return self.ctx.get(val)
         raise ValueError(f"unexpected token {val!r}")
 
 
-def evaluate(expr, ctx):
+def evaluate(expr, ctx, known=None):
     """An `if:` value (bare or ${{ }}-wrapped) -> its GitHub result."""
     s = expr.strip()
     m = re.fullmatch(r"\$\{\{(.*)\}\}", s, re.S)
-    return Parser(m.group(1) if m else s, ctx).parse()
+    return Parser(m.group(1) if m else s, ctx, known).parse()
+
+
+def evaluate_if(expr, ctx, known=None):
+    """An `if:` -> whether the step runs (its result's truthiness)."""
+    return truthy(evaluate(expr, ctx, known))
 
 
 def interpolate(template, ctx):
@@ -228,4 +312,39 @@ if __name__ == "__main__":
     # MF-08: `!` binds tighter than `==` -- `!a == b` is `(!a) == b`, never
     # `!(a == b)`. `!a` is `False`; `False == 'failure'` is `False`.
     assert evaluate("!a == b", {"a": "skipped", "b": "failure"}) is False
+    # Code review of #940: fromJSON and the ordering operators, which bind
+    # tighter than `==`; `==` on strings ignores case.
+    assert evaluate("fromJSON(a) >= fromJSON(b)", {"a": "5", "b": "5"}) is True
+    assert evaluate("fromJSON(a) < fromJSON(b)", {"a": "10", "b": "9"}) is False
+    assert evaluate("a < b == true", {"a": "1", "b": "2"}) is True
+    assert evaluate("fromJSON('[1]')", {}) == [1.0]
+    assert evaluate("a == 'TRUE'", {"a": "true"}) is True
+    # contains() on an array is element equality, not a substring of it.
+    assert evaluate("contains(fromJSON('[\"ab\"]'), 'a')", {}) is False
+    assert evaluate("contains(fromJSON('[\"ab\"]'), 'AB')", {}) is True
+    # Code review of #954: `&&`/`||` stop as GitHub's do, so a guarded
+    # fromJSON of an unset output does not fail the evaluation.
+    assert evaluate("a == 'true' || fromJSON(b) >= 1", {"a": "true"}) is True
+    assert evaluate("a == 'x' && fromJSON(b)", {"a": "y"}) is False
+    assert evaluate("startsWith(a, '[') && fromJSON(a) || a",
+                    {"a": "ubuntu-latest"}) == "ubuntu-latest"
+    for bad, known in (("env.X == 'y'", ("steps.",)), ("fromJSON('[')", None),
+                       ("true || env.X", ("steps.",)),
+                       ("false && nope()", None),
+                       # A bad-arity call is a ValueError, never a TypeError.
+                       ("startsWith(a)", None), ("fromJSON()", None),
+                       ("false && startsWith(a)", None),
+                       ("true || fromJSON()", None)):
+        try:
+            evaluate(bad, {}, known)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"{bad!r} must be a ValueError")
+    # A fromJSON array or object compares as NaN -- false, never a crash.
+    assert evaluate("fromJSON(a) == 1", {"a": '[{"k":1}]'}) is False
+    assert evaluate("fromJSON(a) < 1", {"a": '{"k":1}'}) is False
+    assert evaluate("contains(fromJSON(a), 1)", {"a": '[{"k":1}]'}) is False
+    # Arrays and objects are equal only as the same instance.
+    assert evaluate("fromJSON('[1]') == fromJSON('[1]')", {}) is False
     print("wc_gha_expr self-test: ok")

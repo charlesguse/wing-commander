@@ -1,6 +1,6 @@
 ---
 name: "container-shell-safety"
-description: "Review a GitHub Actions change for container-shell-resolution defects: a run: step inside a caller-supplied-container job with no effective shell: bash, exposed to a non-bash default shell on an adopter's image. Use when reviewing or writing any workflow change that adds a container: block to a job, or adds/edits a run: step inside a job that already has one."
+description: "Review a GitHub Actions change for container-shell-resolution defects: a run: step inside a caller-supplied-container job with no effective shell: bash, which the runner execs as sh on any image, bash installed or not. Use when reviewing or writing any workflow change that adds a container: block to a job, or adds/edits a run: step inside a job that already has one."
 compatibility: "Reads .github/workflows/*.yml; needs python3 with PyYAML"
 user-invocable: true
 disable-model-invocation: false
@@ -13,12 +13,19 @@ disable-model-invocation: false
 A job's `container: image: ${{ inputs.container-image }}` is a caller's
 own image, never one this repo controls. A `run:` step inside that job
 with no effective `shell:` — its own, or a job- or workflow-level
-`defaults: run: shell:` — has its shell resolved by Actions from whatever
-that image offers. On an image without bash reachable the way Actions
-expects, that resolves to `sh`, and a step whose body uses a bash-only
-construct fails outright: `set -o pipefail` → `Illegal option -o pipefail`,
-an array assignment → a syntax error, `[[ ... ]]` → the same. Not on some
-runs against that image — on every one.
+`defaults: run: shell:` — runs as `sh -e {0}` inside that container,
+whether or not the image has bash installed. The runner's "use bash if it
+is on the PATH, else sh" probe (`Which("bash")`) runs only for a step on
+the host; for a step inside a `container:` job the default is `sh`
+unconditionally. What that step then gets is whatever the image's
+`/bin/sh` is: on an image whose `sh` is dash or busybox ash (Debian,
+Ubuntu, Alpine), a step whose body uses a bash-only construct fails
+outright — `set -o pipefail` → `Illegal option -o pipefail`, an array
+assignment → a syntax error, `[[ ... ]]` → the same. Not on some runs
+against that image — on every one. An image whose `/bin/sh` happens to be
+bash (Fedora, UBI) masks the defect, which is why a step can pass on one
+adopter's image and fail on the next; installing bash in the image does
+not fix it.
 
 PR #293 shipped the fix for the one construct its own gate could prove:
 `set ... pipefail`. It took two review passes to find all 38 sites (the

@@ -42,6 +42,7 @@ import tempfile
 import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from wc_gha_expr import evaluate_if as gha_evaluate_if
 from wc_shell_harness import ensure_jq, resolve_bash, run_step, use_utf8_stdout
 
 WATCHDOG = ".github/workflows/watchdog.yml"
@@ -104,29 +105,21 @@ def run_decision(script, artifact, tmproot):
     return rc, out, outputs
 
 
-IF_CLAUSE_RE = re.compile(
-    r"^steps\.([\w-]+)\.outputs\.([\w-]+)\s*(!=|==)\s*'([^']*)'$")
-
-
 def eval_if_expr(if_expr, outputs):
-    """Evaluate this repository's `steps.X.outputs.Y (!=|==) 'literal' &&
-    ...` if: expressions against concrete step outputs. Only the shape
-    this workflow actually uses is supported — anything else is a hard
-    error so this gate cannot silently mis-evaluate a future guard shape
-    it was never updated for."""
-    for clause in (c.strip() for c in if_expr.split("&&")):
-        m = IF_CLAUSE_RE.match(clause)
-        if not m:
-            sys.exit(f"::error file={WATCHDOG}::verify-act-dedup-guard: "
-                     f"unsupported if: clause {clause!r} in "
-                     f"{ENSURE_STEP!r} — update this gate alongside the "
-                     f"guard.")
-        step_id, output_name, op, literal = m.groups()
-        actual = outputs.get((step_id, output_name), "")
-        matched = actual == literal
-        if not (matched if op == "==" else not matched):
-            return False
-    return True
+    """Whether the guard fires against concrete step outputs, keyed
+    (step id, output name), by wc_gha_expr -- the one evaluator, so this
+    gate reads `!=` with GitHub's case-insensitive rule like every other.
+    A reference to anything but a step output, or a construct the
+    evaluator does not model, is a hard error so this gate cannot silently
+    mis-evaluate a future guard shape it was never updated for."""
+    ctx = {f"steps.{step_id}.outputs.{name}": value
+           for (step_id, name), value in outputs.items()}
+    try:
+        return gha_evaluate_if(if_expr, ctx, known=("steps.",))
+    except ValueError as exc:
+        sys.exit(f"::error file={WATCHDOG}::verify-act-dedup-guard: "
+                 f"cannot evaluate {ENSURE_STEP!r}'s if: ({exc}) -- update "
+                 f"this gate alongside the guard.")
 
 
 GH_STUB = r'''#!/usr/bin/env bash
@@ -165,6 +158,13 @@ def run_ensure_issue(step, decision_outputs, tmproot):
         "DEDUP_ISSUE": decision_outputs.get("dedup-issue", ""),
         "FINGERPRINT": decision_outputs.get("fingerprint", ""),
         "CANONICAL_FACTS": decision_outputs.get("canonical-facts", ""),
+        # spec 109: "Ensure pipeline-defect issue" now also reads these
+        # under `set -uo pipefail` on every branch, so a fixture that omits
+        # them fails on an unrelated unbound-variable error rather than
+        # proving anything about the dedup guard this harness exists for.
+        "CITED_IDS": decision_outputs.get("cited-ids", ""),
+        "DEDUP_MATCHED_ON": decision_outputs.get("matched-on", ""),
+        "DEDUP_OTHER_MATCHES": decision_outputs.get("other-matches", ""),
         "FINDING_CLASS": "denied-tool",
         "FINDING_DESCRIPTION": "test finding",
         "FINDING_EVIDENCE": json.dumps(
@@ -200,7 +200,13 @@ WRITE_SUPPRESSION_OUTPUTS = {("write-suppression", "suppressed"): "false"}
 FIXTURE_NONE = {"suppressed": False, "evidence-valid": True,
                 "evidence-reason": "", "fingerprint": "abc123",
                 "short-fingerprint": "abc123", "canonical-facts": "x",
-                "dedup": "none", "dedup-issue": ""}
+                "dedup": "none", "dedup-issue": "",
+                "cited-ids": "aaaaaaaaaaaaaaaa,bbbbbbbbbbbbbbbb",
+                "matched-on": "aaaaaaaaaaaaaaaa", "other-matches": "41,42"}
+# Consumed by "Ensure pipeline-defect issue" and "Report finding to lifecycle
+# issue" (review-gate round 2 of #806): Load triage decision must write each
+# of these in both branches, carried through from the artifact when present.
+FORWARDED_KEYS = ("cited-ids", "matched-on", "other-matches")
 FIXTURE_UNKNOWN = {"suppressed": False, "evidence-valid": True,
                    "evidence-reason": "", "fingerprint": "abc123",
                    "short-fingerprint": "abc123", "canonical-facts": "x",
@@ -221,6 +227,11 @@ def scenarios(decision_script, ensure_step, if_expr, tmproot):
         note(f"dedup=none, artifact present: Load triage decision exited "
              f"{rc}: {out.strip()}")
     else:
+        for key in FORWARDED_KEYS:
+            if outputs.get(key) != FIXTURE_NONE[key]:
+                note(f"dedup=none, artifact present: Load triage decision "
+                     f"wrote {key}={outputs.get(key)!r}, expected "
+                     f"{FIXTURE_NONE[key]!r} from the artifact.")
         step_outputs = dict(WRITE_SUPPRESSION_OUTPUTS)
         step_outputs.update({("decision", k): v for k, v in outputs.items()})
         fires = eval_if_expr(if_expr, step_outputs)
@@ -261,6 +272,11 @@ def scenarios(decision_script, ensure_step, if_expr, tmproot):
         note(f"missing triage-decision artifact: Load triage decision "
              f"exited {rc}: {out.strip()}")
     else:
+        missing_keys = [k for k in FORWARDED_KEYS if k not in outputs]
+        if missing_keys:
+            note(f"missing triage-decision artifact: Load triage decision "
+                 f"never wrote {missing_keys} -- the fallback must still "
+                 f"bind every output its consumers read.")
         if outputs.get("dedup") != "unknown":
             note(f"missing triage-decision artifact: dedup output is "
                  f"{outputs.get('dedup')!r}, expected 'unknown' — the "

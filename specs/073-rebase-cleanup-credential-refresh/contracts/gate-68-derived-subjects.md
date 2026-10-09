@@ -88,9 +88,19 @@ EXEMPT_JOBS: dict[tuple[str, str], ExemptionEntry]
 
 class ExemptionEntry:
     reason: str            # prose; informational, not itself checked
-    issue: tuple[int, ...] # the deciding issue(s), e.g. (558,) or (558, 410)
+    issue: tuple[int, ...] # the OPEN tracker for retiring the entry, or ()
     condition: Callable[[dict], bool]  # takes the job's parsed YAML
+    permanent: bool        # True when the entry is the design, not debt
+    permanent_reason: str | None  # one line; required when permanent
+    decided_by: tuple[int, ...]   # provenance: the deciding issue(s), e.g. (558,)
 ```
+
+`issue` and `decided_by` are different fields. `decided_by` records the
+issue(s) that decided the exemption and is kept after they close. `issue`
+names the open issue tracking the exemption's retirement; an entry with
+nothing to retire carries `issue=()` with `permanent=True` and a
+`permanent_reason`. Gate 124 (`verify-waiver-citations.py`) holds every
+entry to exactly one of the two and checks only `issue` for openness.
 
 - Every `(workflow_path, job_name)` in `derived_subjects` MUST resolve to
   exactly one of: **full subject** (every post-agent composite check
@@ -104,9 +114,8 @@ class ExemptionEntry:
   mode (spec 072 FR-013).
 - `condition` MUST be evaluated on every run for every exempt entry. A
   `condition` that returns `False` fails the gate, naming the entry and
-  its `reason`/`issue`, so an exemption cannot silently stop holding —
-  raising `cleanup.yml`'s bound past 10 minutes, or deleting
-  `board-loop.yml`'s adopted composite call, is caught the same run it
+  its `reason`/`decided_by`, so an exemption cannot silently stop holding —
+  raising `cleanup.yml`'s bound past 10 minutes is caught the same run it
   happens.
 - An exemption with no `condition` (or a condition that is always `True`)
   is not a valid entry — Constitution IX (judgment gating a durable
@@ -116,16 +125,16 @@ class ExemptionEntry:
 
 ### Entries this feature adds
 
-| `(workflow_path, job_name)` | `condition` shape | `issue` |
+Every entry is permanent (`issue=()`, `permanent=True`): an agent step
+bounded by its own 10-minute timeout is the design for a short job, not
+debt awaiting a fix.
+
+| `(workflow_path, job_name)` | `condition` shape | `decided_by` |
 |---|---|---|
 | `(".github/workflows/cleanup.yml", "teardown-done")` | wall-clock bound, `<= 10` min | `(558,)` |
 | `(".github/workflows/watchdog.yml", "diagnose")` | wall-clock bound, `<= 10` min | `(558,)` |
-| `(".github/workflows/board-loop.yml", "triage")` | composite adoption (context + credential-status) | `(558, 410)` |
-| `(".github/workflows/board-loop.yml", "route")` | composite adoption | `(558, 410)` |
-| `(".github/workflows/board-loop.yml", "fix")` | composite adoption | `(558, 410)` |
-| `(".github/workflows/board-loop.yml", "review")` | composite adoption, both agent steps | `(558, 410)` |
-| `(".github/workflows/auto-update-spec-kit.yml", "evaluate-path")` | wall-clock bound, `<= 10` min | mechanizes spec 052's existing prose exclusion |
-| `(".github/workflows/auto-update-spec-kit.yml", "comment-reply")` | wall-clock bound, `<= 10` min | mechanizes spec 052's existing prose exclusion |
+| `(".github/workflows/auto-update-spec-kit.yml", "evaluate-path")` | wall-clock bound, `<= 10` min | `(558,)`; mechanizes spec 052's existing prose exclusion |
+| `(".github/workflows/auto-update-spec-kit.yml", "comment-reply")` | wall-clock bound, `<= 10` min | `(558,)`; mechanizes spec 052's existing prose exclusion |
 
 The last two rows are not new *dispositions* (both jobs were already
 excluded from `SUBJECTS` by spec 052) — they are new *mechanically checked*
@@ -133,6 +142,14 @@ records replacing a prose-only exclusion, which SC-004/FR-007 of this
 feature require once any wall-clock-bound condition function exists in the
 gate at all (leaving these two as the sole remaining unchecked exclusions
 would be the same defect this feature exists to close, one entry later).
+
+`board-loop.yml`'s `triage`, `route`, `fix` and `review` were
+composite-adoption exemptions here, provisionally (research.md D7). They
+are full subjects now (#733/#848): each agent step records its agent-ran
+signal, and `fix` and `review` refresh their remote after every agent
+step. `triage` and `route` never push and no step after their agent uses
+the git remote, so they are `NO_REMOTE_REFRESH_JOBS` members like the
+lifecycle review job. The composite-adoption condition went with them.
 
 ## Self-test coverage this contract requires
 
@@ -146,8 +163,13 @@ assert, at minimum, one failing mutation for:
 - a derived subject in neither full/agentless/exempt state (§3 "neither"
   regression),
 - each exemption's `condition` broken in the direction that should fail it
-  (bound removed, bound raised past threshold, adopted composite call
-  deleted) — one mutation per `EXEMPT_JOBS` entry this feature adds.
+  (bound removed, bound raised past threshold) — both for every
+  `EXEMPT_JOBS` entry, as FR-012 asks of each bounded job — and, since
+  `board-loop.yml`'s four jobs were promoted to full subjects (#733/#848),
+  three mutations that fail as a full subject would: triage's post-agent
+  context call deleted, the Reviewer's agent-ran signal deleted, and the
+  Reviewer's own credential-status call deleted (its mint id is a prefix
+  of review-fixup's, so the mint cross-reference must match whole ids).
 
 See `data-model.md`'s Derived Subject / Subject Floor / Exempt Job
 sections for the field-level shape these mutations operate on, and

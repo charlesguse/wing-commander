@@ -60,7 +60,15 @@ if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
     ok)
       case "$check" in
         config)
-          if [ -z "$observed" ]; then
+          # An empty pin on THIS repository is checked first: compared as
+          # the expected value it blamed the test repository ("not
+          # configured on the test repository", expected rendered as
+          # unknown) and never named the variable to set (#889).
+          if [ -z "$expected" ]; then
+            failing_check="container image not configured on this repository"
+            expected="this repository's WING_COMMANDER_CONTAINER_IMAGE variable set to the image the test repository must run (the test repository's own variable must then match it)"
+            observed="(unset or empty)"
+          elif [ -z "$observed" ]; then
             failing_check="container image not configured on the test repository"
           elif [ "$observed" != "$expected" ]; then
             failing_check="container image configured but does not match this repository's pin"

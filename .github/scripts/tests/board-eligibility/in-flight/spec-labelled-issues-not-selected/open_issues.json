@@ -1,0 +1,34 @@
+[
+  {
+    "number": 6001,
+    "author": {"login": "wing-commander-bot[bot]"},
+    "authorAssociation": "NONE",
+    "labels": [{"name": "spec-proposal"}, {"name": "enhancement"}],
+    "state": "OPEN",
+    "createdAt": "2026-01-01T00:00:00Z"
+  },
+  {
+    "number": 6002,
+    "author": {"login": "wing-commander-bot[bot]"},
+    "authorAssociation": "NONE",
+    "labels": [{"name": "spec-proposal"}, {"name": "spec-request"}],
+    "state": "OPEN",
+    "createdAt": "2026-01-02T00:00:00Z"
+  },
+  {
+    "number": 6003,
+    "author": {"login": "someone"},
+    "authorAssociation": "OWNER",
+    "labels": [{"name": "spec-request"}],
+    "state": "OPEN",
+    "createdAt": "2026-01-03T00:00:00Z"
+  },
+  {
+    "number": 6004,
+    "author": {"login": "someone"},
+    "authorAssociation": "OWNER",
+    "labels": [],
+    "state": "OPEN",
+    "createdAt": "2026-01-04T00:00:00Z"
+  }
+]

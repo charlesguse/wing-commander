@@ -30,7 +30,12 @@ the local runner try to execute a file this function exists to reject
   script, matching FR-012's "standalone `verify-*.py` or `verify-*.sh`" —
   a `verify-*.py` imported as a helper by a sibling `run-tests.sh` in the
   same directory is part of that harness, not a second, independent
-  violation).
+  violation); and (#877, a harness need not be named `run-tests.sh` to be
+  one) any `.sh`/`.bash`/`.py` file inside a `tests/` or `test/` directory
+  below the composite, its `run.sh` entrypoint included, with the same
+  sibling-`run-tests.sh` exception. A composite's runtime scripts outside
+  such a directory, a top-level `run.sh` among them
+  (`${{ github.action_path }}/run.sh`), are not in scope.
 - Excludes anything whose repo-relative path has `.github/actions/_shared/`
   as a prefix (FR-014: the carve-out is structural, not a manifest entry).
 - Returns repo-relative, forward-slash paths (same normalisation as

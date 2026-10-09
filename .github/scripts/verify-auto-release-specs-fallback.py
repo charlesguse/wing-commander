@@ -54,7 +54,8 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wc_shell_harness import (  # noqa: E402
-    ensure_jq, find_step, resolve_bash, run_step, use_utf8_stdout)
+    ensure_jq, find_step, gh_error_stub_arm, resolve_bash, run_step,
+    use_utf8_stdout)
 
 WORKFLOW = os.path.join(".github", "workflows", "auto-release.yml")
 STEP = "Poll the test repository to a verdict"
@@ -80,9 +81,7 @@ BASE = {
     # Consumed by the stub gh below, not by the step itself.
     "STUB_SLUG_MODE": "ok",
     "STUB_SLUG_VALUE": REAL_SLUG,
-    "STUB_SLUG_ERROR": "gh: Internal Server Error (HTTP 500)",
     "STUB_FILE_MODE": "ok",
-    "STUB_FILE_ERROR": "gh: Internal Server Error (HTTP 500)",
 }
 
 STAGE_LABELS = ["stage:spec", "stage:plan", "stage:tasks", "stage:implement", "stage:review"]
@@ -95,7 +94,7 @@ STAGE_LABELS = ["stage:spec", "stage:plan", "stage:tasks", "stage:implement", "s
 # stub does not recognise fails loudly instead of no-op'ing, so an
 # unstubbed read this harness has not accounted for is a hard error here,
 # not a silently-green pass.
-STUB_GH = r'''#!/usr/bin/env bash
+_STUB_GH_HEAD = r'''#!/usr/bin/env bash
 case "$*" in
   "api repos/"*"/issues/"*" --jq .user.id")
     printf '1\n'
@@ -123,18 +122,18 @@ case "$*" in
     # (B2): a stub that leaves stdout empty on error lets a slug capture
     # bug (B1: `slug="$(gh ... )"` picking up that stdout body on a 404
     # instead of staying empty) pass vacuously, so this mirrors both
-    # channels the way real `gh` does.
+    # channels the way real `gh` does. The 404/error arms below come from
+    # wc_shell_harness.gh_error_stub_arm (specs/091-gh-api-error-capture),
+    # the one shared home for this two-channel shape.
     case "$STUB_SLUG_MODE" in
       404)
-        printf '%s\n' '{"message":"Not Found","documentation_url":"https://docs.github.com/rest","status":"404"}'
-        echo "gh: Not Found (HTTP 404)" >&2
-        exit 1
-        ;;
+'''
+
+_STUB_GH_MID1 = r'''        ;;
       error)
-        printf '%s\n' '{"message":"Internal Server Error","documentation_url":"https://docs.github.com/rest","status":"500"}'
-        printf '%s\n' "$STUB_SLUG_ERROR" >&2
-        exit 1
-        ;;
+'''
+
+_STUB_GH_MID2 = r'''        ;;
       *)
         printf '%s\n' "$STUB_SLUG_VALUE"
         exit 0
@@ -148,15 +147,13 @@ case "$*" in
     # error produces).
     case "$STUB_FILE_MODE" in
       404)
-        printf '%s\n' '{"message":"Not Found","documentation_url":"https://docs.github.com/rest","status":"404"}'
-        echo "gh: Not Found (HTTP 404)" >&2
-        exit 1
-        ;;
+'''
+
+_STUB_GH_MID3 = r'''        ;;
       error)
-        printf '%s\n' '{"message":"Internal Server Error","documentation_url":"https://docs.github.com/rest","status":"500"}'
-        printf '%s\n' "$STUB_FILE_ERROR" >&2
-        exit 1
-        ;;
+'''
+
+_STUB_GH_TAIL = r'''        ;;
       *) exit 0 ;;
     esac
     ;;
@@ -165,7 +162,21 @@ case "$*" in
     exit 1
     ;;
 esac
-'''.replace("STAGE_LABELS_PLACEHOLDER", " ".join(STAGE_LABELS))
+'''
+
+STUB_GH = (
+    _STUB_GH_HEAD
+    + gh_error_stub_arm("api repos/*/contents/specs --jq*", "404", "Not Found")
+    + _STUB_GH_MID1
+    + gh_error_stub_arm("api repos/*/contents/specs --jq*", "500",
+                        "Internal Server Error")
+    + _STUB_GH_MID2
+    + gh_error_stub_arm("api repos/*/contents/specs/*", "404", "Not Found")
+    + _STUB_GH_MID3
+    + gh_error_stub_arm("api repos/*/contents/specs/*", "500",
+                        "Internal Server Error")
+    + _STUB_GH_TAIL
+).replace("STAGE_LABELS_PLACEHOLDER", " ".join(STAGE_LABELS))
 
 SHARED_SCRIPTS = [
     "auto-release-verdict.sh",
@@ -199,8 +210,7 @@ SCENARIOS = [
      ["specs/<slug>/ present in the default branch"], ["fail-infra"]),
     ("slug fallback fails for another reason (rate limit/5xx): fail-infra, "
      "never read as a missing spec",
-     {"STUB_SLUG_MODE": "error",
-      "STUB_SLUG_ERROR": "gh: Internal Server Error (HTTP 500)"},
+     {"STUB_SLUG_MODE": "error"},
      "fail-infra",
      ["reading the E2E repository's specs/ directory to resolve the "
       "pass-path slug", "HTTP 500"], ["fail-wrong-output"]),
@@ -210,8 +220,7 @@ SCENARIOS = [
      ["fail-infra"]),
     ("per-file probe fails for another reason after a resolved slug: "
      "unchanged fail-infra path",
-     {"STUB_SLUG_MODE": "ok", "STUB_FILE_MODE": "error",
-      "STUB_FILE_ERROR": "gh: Internal Server Error (HTTP 500)"},
+     {"STUB_SLUG_MODE": "ok", "STUB_FILE_MODE": "error"},
      "fail-infra",
      [f"reading specs/{REAL_SLUG}/spec.md to confirm it exists after "
       "stage:done", "HTTP 500"], ["fail-wrong-output"]),

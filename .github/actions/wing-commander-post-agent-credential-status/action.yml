@@ -11,7 +11,8 @@ description: >
   either did not succeed (FR-004), and publishes an `ok` output the job can
   pass on to its own outputs for the stall path to read (FR-011). Does NOT
   fail the job itself (second maintainer review of PR #407): a transient
-  re-mint failure at this, the job's last step, with every earlier step
+  re-mint failure at this, the job's last step (in rebase.yml, the step
+  just before the publish that reads it, #661), with every earlier step
   healthy is not a stalled stage, and hard-failing here would report a
   false "stalled" outcome for a run that already did its work. The `ok`
   output is what the stall path's existing ok-first check

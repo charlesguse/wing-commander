@@ -50,6 +50,29 @@ three enum values GitHub Actions itself assigns
 (`success`/`failure`/`cancelled`) — never free text, never copied from the
 agent's own output.
 
+The composite also publishes `started` (#889/#972): `'false'` only when
+the agent step's outcome is `failure` AND its execution transcript
+(`transcript-path`, defaulting to the same
+`${{ runner.temp }}/claude-execution-output.json` that
+`wing-commander-agent-verdict` and `wing-commander-metrics-summary` read) is
+absent or empty — the agent action failed in its own setup (run
+37866026318: its runtime install failed on an image without `unzip`)
+before the agent started. Any other outcome, or a non-empty transcript,
+reads `'true'`; only the file's presence is checked, never its content, so
+`started` is a boolean, not prose. A stale transcript left by an earlier
+agent step in the same job reads `'true'`, which only keeps the pre-existing
+agent-ran wording. The six consuming stages publish it as a job output
+alongside the other two, with the same most-recent-wins `||` chain where a
+job has more than one agent step -- except implement's progress composer,
+which runs only after a cycle or retry succeeded and never pushes, so its
+own setup failure must not erase that cycle's work (FR-015); implement's
+`agent-started` reads the retry and cycle signals only:
+
+```yaml
+agent-started:
+  value: ${{ steps.agent-ran.outputs.started }}
+```
+
 ## Consumption (the six stages with an existing survivor job)
 
 Inside each survivor job's existing "Determine which dependency did not
@@ -62,7 +85,21 @@ maintainer review of PR #407: the original precedence had the credential
 branch wrongly outrank a real, later, named failure and discard the named
 step when both were known):
 
+An agent action that failed before its agent started outranks all of
+them (#889/#972): every post-agent step that fails after it is a
+consequence, so a named one is kept only as trailing context:
+
 ```text
+when needs.<entry-job>.outputs.agent-ran == 'true'
+ and needs.<entry-job>.outputs.agent-started == 'false':
+    reason = "the agent step's action failed in its own setup before the
+              agent started (concluded: <agent-conclusion>; no execution
+              transcript was written) -- the runner environment (the job's
+              container image or the action's setup), not the agent, is
+              the cause; the agent step's log names the setup step that
+              failed[, and the '<failed-post-agent-step>' step after it did
+              not complete either][; the post-agent credential could not
+              be re-established either]"
 when needs.<entry-job>.outputs.agent-ran == 'true'
  and needs.<entry-job>.outputs.failed-post-agent-step is non-empty
  and needs.<entry-job>.outputs.credential-refresh-ok == 'false':
@@ -89,7 +126,9 @@ else:
 
 `credential-refresh-ok` is published by `wing-commander-post-agent-
 credential-status` (a new step deferred to each job's own last steps, after
-every business-logic/report step). That composite never fails the job
+every business-logic/report step; in rebase.yml it runs instead just before
+"Publish rebased branch", which reads it to tell a credential refusal from a
+branch race, #661). That composite never fails the job
 itself (second maintainer review of PR #407) — it warns and publishes
 `ok=false` when the re-mint or refresh did not succeed, since a transient
 failure at this, the job's own last step, with every earlier step healthy,
@@ -119,16 +158,17 @@ unchanged").
 
 ### Cancellation (FR-013)
 
-When the job was cancelled after the agent ran, `agent-conclusion` reads
-`cancelled` (GitHub Actions sets this on the agent step itself, which the
-`Record agent-ran signal` step — itself `if: always()` — reads before the
-job's own teardown). The reason string renders "...concluded: cancelled",
-which the survivor job's existing `!cancelled()` guard (spec 041 D4) — on
-the *job* condition, not this step's `if:` — already prevents from
-reaching the notice at all for a run cancelled cleanly; the enum value
-exists so a partially-completed cancellation (agent step cancelled, but the
-job's later steps still ran long enough to hit a genuine failure before the
-run-level cancel propagated) does not get mis-described as "never started."
+The `Record agent-ran signal` step is gated
+`!cancelled() && steps.<agent-id>.outcome != 'skipped'` (Publication,
+above), not `if: always()`: once the run itself is cancelled it does not
+run, so it never performs work in the cancel window, and `agent-ran` stays
+unset. The survivor job's existing `!cancelled()` guard (spec 041 D4) — on
+the *job* condition — keeps a cleanly cancelled run from reaching the
+notice at all, so the unset signal is never read there. `agent-conclusion`
+reads `cancelled` only when the agent step itself concluded `cancelled`
+while the run was not: the step still runs then, and the reason string
+renders "...concluded: cancelled" rather than mis-describing the stage as
+"never started."
 
 ## Lifecycle-record resume wording (FR-015)
 
@@ -137,6 +177,17 @@ run-level cancel propagated) does not get mis-described as "never started."
 sentence instead of its current restart-from-zero phrasing when
 `agent-ran == 'true'`: the caller (each stage workflow, not the composite)
 chooses the string; the composite's own contract is unchanged.
+
+When `agent-started == 'false'` (#889/#972) the caller passes the plain
+re-dispatch line instead of "failed after running; its pushed commits are
+on the branch", and passes `agent-started` to the notice composite, whose
+body then reads "the agent never started ... pushed no commits" and says
+that when the runner environment (the job's container image or the agent
+action's own setup) is the cause a re-dispatch fails the same way until it
+is fixed, while a transient download or network error clears on one.
+`verify-post-agent-credential-refresh.py` (check 6) requires the wiring
+in all six stages; `verify-implement-stall-notice-unchanged.py` and
+`verify-chain-stop-notice-body.py` execute the shipped branches.
 
 ## Not in scope for consumption
 
@@ -158,3 +209,10 @@ post-agent step failure — it does so directly, job-locally, by reading
 `wing-commander-failed-post-agent-step`'s `outputs.step` from its own
 "Abandon and escalate" step, never through a job output a second job relays
 (contracts/wing-commander-context-relay.md's `rebase.yml` section).
+
+`board-loop.yml`'s five agent steps (triage's and route's proposals, the
+Fixer, the Reviewer and Review-fixup) publish this signal with no reader
+too, since their jobs became full Gate 68 subjects (#733/#848). The board
+loop routes a failed agent through its own verdict steps, not through a
+survivor job. `lifecycle-review-gate.yml`'s Reviewer (spec 062) is the
+same: it publishes the signal and nothing reads it.

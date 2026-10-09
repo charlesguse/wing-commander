@@ -34,15 +34,31 @@ COMPOSITE_REF_RE = re.compile(r"\.github/actions/[A-Za-z0-9._-]+")
 # `sys.path.insert(0, os.path.join(os.environ["RUNNER_TEMP"], "wc-pristine",
 # "scripts"))` -- so that idiom counts too, or every board_*.py helper those
 # three jobs import (e.g. board_readiness.py) would resolve to no job at all.
+# A composite action's own `run:` step may instead resolve scripts relative
+# to its own trusted directory -- `sys.path.insert(0, os.path.join(
+# os.environ["GITHUB_ACTION_PATH"], "..", "..", "scripts"))`
+# (specs/097-recorded-stop-point, maintainer review fold leg-0) -- so that
+# idiom counts too, or wing-commander-board-stop-check's own
+# board_spec_request_body import would resolve to no job at all.
 SYS_PATH_SCRIPTS_RE = re.compile(
     r"""sys\.path\.insert\(\s*0\s*,\s*['"]\.github/scripts['"]\s*\)"""
     r"""|sys\.path\.insert\(\s*0\s*,\s*os\.path\.join\(\s*os\.environ\[['"]RUNNER_TEMP['"]\]\s*,"""
-    r"""\s*['"]wc-pristine['"]\s*,\s*['"]scripts['"]\s*\)\s*\)""")
+    r"""\s*['"]wc-pristine['"]\s*,\s*['"]scripts['"]\s*\)\s*\)"""
+    r"""|sys\.path\.insert\(\s*0\s*,\s*os\.path\.join\(\s*os\.environ\[['"]GITHUB_ACTION_PATH['"]\]\s*,"""
+    r"""\s*['"]\.\.['"]\s*,\s*['"]\.\.['"]\s*,\s*['"]scripts['"]\s*\)\s*\)""")
 SCRIPT_IMPORT_RE = re.compile(r"^\s*(?:from (\w+) import|import (\w+))\b", re.MULTILINE)
 # A bare script path (e.g. `python3 .github/scripts/board_stand_down.py`) --
 # unambiguous regardless of import style, so it needs no sys.path.insert
-# guard.
-SCRIPT_PATH_RE = re.compile(r"\.github/scripts/(\w+)\.py")
+# guard. specs/097-recorded-stop-point T007/D8: a composite's own `run:`
+# step may instead invoke the script straight from the pristine snapshot
+# (`python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_stop_check.py"`), or
+# (maintainer review fold leg-0) relative to its own trusted directory
+# (`python3 -I "$GITHUB_ACTION_PATH/../../scripts/board_stop_check.py"`),
+# equally unambiguous and equally needing no sys.path.insert guard -- each
+# alternative matches that path shape regardless of quoting.
+SCRIPT_PATH_RE = re.compile(
+    r"\.github/scripts/(\w+)\.py|wc-pristine/scripts/(\w+)\.py"
+    r"|GITHUB_ACTION_PATH/\.\./\.\./scripts/(\w+)\.py")
 DIRECTED_GROUP = "wing-commander-board-loop-directed-proof"
 ORDINARY_GROUP = "wing-commander-board-loop"
 
@@ -124,9 +140,15 @@ def _resolve_script_imports(text):
     otherwise invisible to this scan."""
     resolved = set()
     # A bare script path (`python3 .github/scripts/X.py`) -- unambiguous
-    # regardless of import style, e.g. board_stand_down.py's own call site.
+    # regardless of import style, e.g. board_stand_down.py's own call site --
+    # or the pristine-snapshot equivalent (`$RUNNER_TEMP/wc-pristine/
+    # scripts/X.py`, specs/097-recorded-stop-point T007/D8), or a
+    # composite's own trusted-directory-relative equivalent
+    # (`$GITHUB_ACTION_PATH/../../scripts/X.py`, maintainer review fold
+    # leg-0).
     for match in SCRIPT_PATH_RE.finditer(text):
-        candidate = "{0}/{1}.py".format(SCRIPTS_DIR, match.group(1))
+        name = match.group(1) or match.group(2) or match.group(3)
+        candidate = "{0}/{1}.py".format(SCRIPTS_DIR, name)
         if os.path.isfile(candidate):
             resolved.add(candidate)
     # The sys.path.insert(0, ".github/scripts") + `from X import Y`/
@@ -404,6 +426,21 @@ def joins_directed_group(target_workflow_path, target_job, aimable_jobs):
         doc = yaml.safe_load(fh.read()) or {}
     group = (doc.get("concurrency") or {}).get("group") or ""
     return group not in (ORDINARY_GROUP, DIRECTED_GROUP)
+
+
+def read_job_concurrency_group(workflow_path, job_name):
+    """specs/096-durable-prove-entry research.md D8: `job_name`'s own raw
+    (unevaluated) `concurrency.group:` text in `workflow_path`, read off the
+    checked-out tree -- `""` when the job has no `concurrency:` block, or
+    does not exist at all. A small extraction from
+    `joins_directed_group()`'s own inline "read a job's own concurrency.group
+    text off the tree" step; that function's own workflow-level read (a
+    different shape -- a *workflow*-level `concurrency:` block, for a future
+    external dispatchable target) is unchanged by this addition."""
+    with open(workflow_path, encoding="utf-8") as fh:
+        doc = yaml.safe_load(fh.read()) or {}
+    job = (doc.get("jobs") or {}).get(job_name) or {}
+    return (job.get("concurrency") or {}).get("group") or ""
 
 
 def directed_proof_group_busy(run_list_json, own_run_id=None):

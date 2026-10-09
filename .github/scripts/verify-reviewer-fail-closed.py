@@ -995,7 +995,13 @@ def _file_in_order(file_script, tmproot, filings):
                    "OPERATION": "report", "LABEL": "found-by:board-review",
                    "LABEL_COLOR": "5319E7", "LABEL_DESCRIPTION": "d", "TITLE": title,
                    "BODY_FILE": body_file, "COMMENT_BODY_FILE": "", "MARKER": marker,
-                   "STATE_SCOPE": "all", "CLOSE_COMMENT": "", "FAIL_ON_API_ERROR": "false"}
+                   "STATE_SCOPE": "all", "CLOSE_COMMENT": "", "FAIL_ON_API_ERROR": "false",
+                   # review-gate-round-1 items 3/6: the marker-match jq
+                   # filter is resolved via $GITHUB_ACTION_PATH/../_shared/
+                   # match-issue-by-marker.sh -- without this, the lookup
+                   # silently finds nothing and every filing reads as a
+                   # fresh create (no dedup).
+                   "GITHUB_ACTION_PATH": os.path.abspath(os.path.dirname(DURABLE_ISSUE_ACTION))}
             rc, out, _o, _ = run_step(BASH, file_script, workdir, env, runner_temp)
             if rc != 0:
                 return [], "filing {0} exited {1}: {2}".format(n, rc, out)
@@ -1475,6 +1481,7 @@ def _lifecycle_announce_env(body_file, **overrides):
     env = {"ISSUE": LIFECYCLE_ISSUE, "PR_NUMBER": LIFECYCLE_PR, "ROUND": "3",
           "HEAD_SHA": LIFECYCLE_HEAD_SHA, "MAY_MERGE": "", "UNMET_REASON": "",
           "MERGED": "", "FAILURE_KIND": "", "FAILURE_DETAIL": "",
+          "REVIEW_GATE_OUTCOME": "success",
           "GH_TOKEN": "x", "GITHUB_REPOSITORY": "example/example",
           "STUB_BODY_FILE": body_file}
     env.update(overrides)
@@ -1528,8 +1535,13 @@ LIFECYCLE_ANNOUNCE_SCENARIOS = [
      dict(MERGED="", MAY_MERGE="false", UNMET_REASON="checks_green"),
      ["checks_green", "does not hold"]),
     ("preconditions never evaluated",
-     dict(MERGED="", MAY_MERGE="", UNMET_REASON=""),
-     ["were never evaluated"]),
+     dict(MERGED="", MAY_MERGE="", UNMET_REASON="", REVIEW_GATE_OUTCOME="skipped"),
+     ["were never evaluated", "closed mid-round"]),
+    # #826: the marker read failed, so the preconditions step was skipped --
+    # the body names that, never "closed mid-round".
+    ("review_gate marker read failed",
+     dict(MERGED="", MAY_MERGE="", UNMET_REASON="", REVIEW_GATE_OUTCOME="failure"),
+     ["review_gate marker could not be read"]),
 ]
 
 
@@ -1576,6 +1588,29 @@ def check_lifecycle_announce_mutation(announce_script, tmproot):
         return []
     return ["mutation 'lifecycle announce workflow-scope branch unreachable' "
             "was NOT caught (rc={0}, body={1!r})".format(rc, body)]
+
+
+LIFECYCLE_ANNOUNCE_MARKER_TEST = 'elif [ "$REVIEW_GATE_OUTCOME" = "failure" ]; then'
+
+
+def check_lifecycle_announce_marker_mutation(announce_script, tmproot):
+    """#826: the marker-read-failed branch made unreachable -- a failed
+    marker read must then be misreported as a mid-round close."""
+    if announce_script.count(LIFECYCLE_ANNOUNCE_MARKER_TEST) != 1:
+        return ["lifecycle announce #826 mutation: expected one {0!r} in the "
+                "announce step; update this harness.".format(
+                    LIFECYCLE_ANNOUNCE_MARKER_TEST)]
+    mutated = announce_script.replace(
+        LIFECYCLE_ANNOUNCE_MARKER_TEST,
+        'elif [ "$REVIEW_GATE_OUTCOME" = "zzz-never-matches" ]; then', 1)
+    rc, body, out = run_lifecycle_announce(
+        mutated, tmproot, REVIEW_GATE_OUTCOME="failure")
+    if rc == 0 and "review_gate marker could not be read" not in body:
+        print("note: mutation 'lifecycle announce marker-read-failed branch "
+              "unreachable' confirmed caught.")
+        return []
+    return ["mutation 'lifecycle announce marker-read-failed branch "
+            "unreachable' was NOT caught (rc={0}, body={1!r})".format(rc, body)]
 
 
 def _mut_once(script, old, new, what):
@@ -1674,15 +1709,24 @@ if [ "$1 $2" = "pr list" ]; then
 JSON
   exit 0
 fi
-if [ "$1 $2" = "issue view" ]; then
-  echo '[]'
-  exit 0
-fi
+# #826: the review_gate marker is read through REST. STUB_COMMENTS picks
+# the answer: ok (an empty comment list under `--paginate --jq '.[]'`
+# prints nothing), gone (the issue was deleted: HTTP 404 on stderr) or down
+# (HTTP 500: gh prints the error body on stdout and the status on stderr).
+case "$1 $2" in
+  "api repos/example/example/issues/{issue}/comments")
+    case "${{STUB_COMMENTS:-ok}}" in
+      ok) exit 0 ;;
+      gone) echo 'gh: Not Found (HTTP 404)' >&2; exit 1 ;;
+      down) echo '{{"message":"Server Error","status":"500"}}'
+            echo 'gh: Server Error (HTTP 500)' >&2; exit 1 ;;
+    esac ;;
+esac
 exit 1
-""".format(slug=SELECT_SPEC_SLUG)
+""".format(slug=SELECT_SPEC_SLUG, issue=SELECT_ISSUE)
 
 
-def _make_select_repo(root):
+def _make_select_repo(root, issue=SELECT_ISSUE):
     """A real git repo (bare remote + clone) with a spec/999-select-harness
     branch carrying spec-meta.json at stage: review, issue: SELECT_ISSUE --
     the one candidate branch every PR fixture in SELECT_GH_STUB names."""
@@ -1690,7 +1734,10 @@ def _make_select_repo(root):
     remote = os.path.join(work, "remote.git")
     repo = os.path.join(work, "repo")
     spec_dir = "specs/{0}".format(SELECT_SPEC_SLUG)
-    meta = json.dumps({"spec_dir": spec_dir, "issue": int(SELECT_ISSUE), "stage": "review"})
+    meta = {"spec_dir": spec_dir, "stage": "review"}
+    if issue is not None:
+        meta["issue"] = int(issue)
+    meta = json.dumps(meta)
     setup = """
 git init --bare -q -b main '{remote}'
 git clone -q '{remote}' '{repo}'
@@ -1737,8 +1784,8 @@ def _stage_select_trusted_copy(repo):
                         os.path.join(scripts_dir, name))
 
 
-def run_lifecycle_select(select_script, tmproot):
-    repo = _make_select_repo(tmproot)
+def run_lifecycle_select(select_script, tmproot, comments="ok", issue=SELECT_ISSUE):
+    repo = _make_select_repo(tmproot, issue=issue)
     _stage_select_trusted_copy(repo)
     bindir = os.path.join(tmproot, "select-bin")
     os.makedirs(bindir, exist_ok=True)
@@ -1747,10 +1794,76 @@ def run_lifecycle_select(select_script, tmproot):
     os.chmod(os.path.join(bindir, "gh"), 0o755)
     runner_temp = tempfile.mkdtemp(dir=tmproot)
     env = {"GH_TOKEN": "x", "BOT_LOGIN": "wing-commander-bot[bot]",
-          "GITHUB_REPOSITORY": "example/example",
+          "GITHUB_REPOSITORY": "example/example", "STUB_COMMENTS": comments,
           "PATH": bindir + os.pathsep + os.environ.get("PATH", "")}
     rc, out, outputs, _summary = run_step(BASH, select_script, repo, env, runner_temp)
     return rc, out, outputs
+
+
+# #826: select's review_gate marker read. A candidate with no lifecycle
+# issue number, or whose issue is gone (404/410), is skipped; any other
+# failed read stops select with ::error:: and no decision output. PR #3 is
+# the only candidate the fork/base guards leave, so "skipped" reads as an
+# empty pr-number on a successful step.
+SELECT_READ_CASES = (
+    # (title, comments mode, spec-meta issue, expect success, text in output)
+    ("no lifecycle issue number is skipped", "ok", None, True, None),
+    ("a vanished lifecycle issue (404) is skipped", "gone", SELECT_ISSUE, True, "::warning::"),
+    ("a 5xx on the comments read fails select", "down", SELECT_ISSUE, False, "::error::"),
+)
+
+
+def select_read_failures(select_script, tmproot, cases=SELECT_READ_CASES):
+    failures = []
+    for title, comments, issue, ok, text in cases:
+        rc, out, outputs = run_lifecycle_select(select_script, tmproot,
+                                                comments=comments, issue=issue)
+        if ok:
+            good = rc == 0 and outputs.get("pr-number") == ""
+        else:
+            good = rc != 0 and "pr-number" not in outputs
+        if text is not None and text not in out:
+            good = False
+        if not good:
+            failures.append("lifecycle select #826 `{0}`: rc={1} pr-number={2!r}: "
+                            "{3}".format(title, rc, outputs.get("pr-number"),
+                                         out.strip()[-400:]))
+    return failures
+
+
+def check_lifecycle_select_marker_read(select_script, tmproot):
+    failures = select_read_failures(select_script, tmproot)
+    if not failures:
+        print("[ok] #826 lifecycle select: no issue number and a 404 skip the "
+              "candidate; a 500 fails select with ::error:: and no output")
+    return failures
+
+
+SELECT_READ_MUTATIONS = (
+    # (title, old, new, the case that must then fail)
+    ("empty-issue guard removed", "    ''|*[!0-9]*) continue ;;\n", "",
+     SELECT_READ_CASES[0]),
+    ("404/410 no longer recognised", "grep -qE 'HTTP (404|410)'", "grep -qE 'HTTP (403)'",
+     SELECT_READ_CASES[1]),
+    ("every failure treated as gone", "grep -qE 'HTTP (404|410)'", "grep -qE 'HTTP'",
+     SELECT_READ_CASES[2]),
+)
+
+
+def check_lifecycle_select_marker_read_mutations(select_script, tmproot):
+    failures = []
+    for title, old, new, case in SELECT_READ_MUTATIONS:
+        if select_script.count(old) != 1:
+            failures.append("lifecycle select #826 mutation {0!r}: expected one "
+                            "{1!r} in the select step; update this harness.".format(title, old))
+            continue
+        got = select_read_failures(select_script.replace(old, new, 1), tmproot,
+                                   cases=(case,))
+        if not got:
+            failures.append("mutation 'lifecycle select #826: {0}' was NOT caught".format(title))
+        else:
+            print("note: mutation 'lifecycle select #826: {0}' confirmed caught.".format(title))
+    return failures
 
 
 def check_lifecycle_select_excludes_forks(select_script, tmproot):
@@ -2061,8 +2174,11 @@ def main():
         failures += check_lifecycle_merge_classification_mutation(lifecycle_merge_script, tmproot)
         failures += check_lifecycle_announce(lifecycle_announce_script, tmproot)
         failures += check_lifecycle_announce_mutation(lifecycle_announce_script, tmproot)
+        failures += check_lifecycle_announce_marker_mutation(lifecycle_announce_script, tmproot)
         failures += check_lifecycle_select_excludes_forks(lifecycle_select_script, tmproot)
         failures += check_lifecycle_select_excludes_forks_mutation(lifecycle_select_script, tmproot)
+        failures += check_lifecycle_select_marker_read(lifecycle_select_script, tmproot)
+        failures += check_lifecycle_select_marker_read_mutations(lifecycle_select_script, tmproot)
         failures += check_lifecycle_disposition_failed_reports_error(
             lifecycle_outcome_script, tmproot, lifecycle_status_script)
         failures += check_lifecycle_disposition_failed_status_mutation(

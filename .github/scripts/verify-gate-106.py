@@ -27,9 +27,11 @@ FR-015 requires:
               and this repository's marker-extraction idiom, wc_shell_
               harness.extract_quoted_var), under stubbed `gh`/`date`,
               against one fixture per FR-005 branch (SC-006): not
-              configured, empty value, drift, unreadable, rate-limited
-              (config half); unreadable, rate-limited, not containerized,
-              and the passing case (execution half).
+              configured, empty value, drift, unreadable, rate-limited,
+              and this repository's own pin empty (config half);
+              unreadable, rate-limited, a completed stage run with no
+              jobs read (a still-queued one is skipped), not
+              containerized, and the passing case (execution half).
 
 It ends with a --self-test mode that puts each defect back and asserts the
 suite then fails. A test that cannot fail is not a test (Constitution VIII).
@@ -163,18 +165,47 @@ def check_structural(text):
 # --------------------------------------------------------------------------
 # Executed-step half: container-evidence-config (T012)
 # --------------------------------------------------------------------------
-STUB_GH_CONFIG = r'''#!/usr/bin/env bash
+# Both stubs below hold what GitHub returns and reduce it with the caller's
+# own `--jq`/`-q` program through real jq, as gh does (#766). Pre-filtered
+# output never ran that program, so a wrong key in it passed. `emit BODY
+# [RAW]` prints RAW verbatim when set (gh output the shipped code must
+# itself refuse to parse), else BODY through the caller's program.
+STUB_GH_JQ_PRELUDE = r'''#!/usr/bin/env bash
+jq_prog=""
+prev=""
+for arg in "$@"; do
+  case "$prev" in --jq|-q) jq_prog="$arg" ;; esac
+  prev="$arg"
+done
+emit() {
+  if [ -n "${2:-}" ]; then printf '%s\n' "$2"; return 0; fi
+  if [ -n "$jq_prog" ]; then printf '%s' "$1" | jq -rc "$jq_prog"; else printf '%s' "$1"; fi
+}
+'''
+
+# `gh variable list --json name,value` prints the repository's variables
+# as a JSON array of {name, value}; checks.sh's read_repo_container_image_
+# variable selects WING_COMMANDER_CONTAINER_IMAGE from it with `-q`.
+STUB_GH_CONFIG = STUB_GH_JQ_PRELUDE + r'''
 if [ "$1 $2" = "variable list" ]; then
   if [ "${GH_STUB_VAR_FAIL:-}" = "true" ]; then
     echo "${GH_STUB_VAR_ERR:-unexpected error}" >&2
     exit 1
   fi
-  printf '%s' "${GH_STUB_VAR_VALUE-}"
-  exit 0
+  emit "${GH_STUB_VARS_JSON:-[]}"
+  exit $?
 fi
 echo "unexpected gh invocation: $*" >&2
 exit 1
 '''
+
+
+def variables(**pairs):
+    """`gh variable list --json name,value` output for NAME=value pairs."""
+    return json.dumps([{"name": k, "value": v} for k, v in pairs.items()])
+
+
+IMAGE_VAR = "WING_COMMANDER_CONTAINER_IMAGE"
 
 
 REPO_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")
@@ -210,7 +241,8 @@ def render_step(step):
 CONFIG_BASE_ENV = dict(
     E2E_REPO="owner/e2e-target", HEAD_SHA=HEAD, MODE="container",
     WC_SOURCE_CONTAINER_IMAGE="ghcr.io/example/image:1.2.3",
-    GH_STUB_VAR_VALUE="", GH_STUB_VAR_FAIL="", GH_STUB_VAR_ERR="",
+    GH_STUB_VARS_JSON="[]", GH_STUB_VAR_FAIL="", GH_STUB_VAR_ERR="",
+    GITHUB_REPOSITORY="owner/source-repo",
 )
 
 CONFIG_SCENARIOS = [
@@ -221,19 +253,20 @@ CONFIG_SCENARIOS = [
     ),
     dict(
         name="FR-005(i) not configured: variable absent on the test repository",
-        env=dict(GH_STUB_VAR_VALUE=""),
+        env=dict(GH_STUB_VARS_JSON=variables(OTHER_VARIABLE="ghcr.io/example/image:1.2.3")),
         ok="false",
         failing_check="container image not configured on the test repository",
+        evidence_url="owner/e2e-target",
     ),
     dict(
         name="FR-005(i) not configured: variable present but empty (Edge Case)",
-        env=dict(GH_STUB_VAR_VALUE=""),
+        env=dict(GH_STUB_VARS_JSON=variables(**{IMAGE_VAR: ""})),
         ok="false",
         failing_check="container image not configured on the test repository",
     ),
     dict(
         name="FR-005(ii) drift: variable set to a different image",
-        env=dict(GH_STUB_VAR_VALUE="ghcr.io/example/image:9.9.9"),
+        env=dict(GH_STUB_VARS_JSON=variables(**{IMAGE_VAR: "ghcr.io/example/image:9.9.9"})),
         ok="false",
         failing_check="container image configured but does not match this repository's pin",
     ),
@@ -249,9 +282,35 @@ CONFIG_SCENARIOS = [
         ok="false",
         failing_check="container-mode evidence rate-limited",
     ),
+    # #889: an empty pin on THIS repository used to fall through to the
+    # test-repository checks -- "not configured on the test repository"
+    # with an empty expected, or "does not match this repository's pin" --
+    # blaming the wrong repository and never naming the variable to set.
+    dict(
+        name="#889 this repository's own pin empty, test repository set: names this repository's variable",
+        env=dict(WC_SOURCE_CONTAINER_IMAGE="",
+                 GH_STUB_VARS_JSON=variables(**{IMAGE_VAR: "ghcr.io/example/image:1.2.3"})),
+        ok="false",
+        failing_check="container image not configured on this repository",
+        expected_contains="this repository's WING_COMMANDER_CONTAINER_IMAGE",
+        evidence_url="owner/source-repo",
+    ),
+    dict(
+        name="#889 this repository's own pin empty, test repository empty too: still names this repository's variable",
+        env=dict(WC_SOURCE_CONTAINER_IMAGE="", GH_STUB_VARS_JSON="[]"),
+        ok="false",
+        failing_check="container image not configured on this repository",
+        expected_contains="this repository's WING_COMMANDER_CONTAINER_IMAGE",
+        evidence_url="owner/source-repo",
+    ),
     dict(
         name="FR-005(vi) configured and matching: proceeds",
-        env=dict(GH_STUB_VAR_VALUE="ghcr.io/example/image:1.2.3"),
+        # Variables whose names contain the image variable's, either side
+        # of it: only an exact-name select picks the right value.
+        env=dict(GH_STUB_VARS_JSON=variables(**{
+            IMAGE_VAR + "_PREVIOUS": "ghcr.io/example/image:0.0.1",
+            IMAGE_VAR: "ghcr.io/example/image:1.2.3",
+            "OLD_" + IMAGE_VAR: "ghcr.io/example/image:0.0.2"})),
         ok="true", verdict=None,
         expected_image="ghcr.io/example/image:1.2.3",
         observed_image="ghcr.io/example/image:1.2.3",
@@ -310,6 +369,14 @@ def suite_config(script, env, tmproot, source_root=REPO_ROOT):
             elif verdict.get("outcome") != "fail-infra":
                 failures.append(f"{tag} expected outcome=fail-infra, got "
                                 f"{verdict.get('outcome')!r}")
+            elif sc.get("expected_contains") and sc["expected_contains"] not in str(verdict.get("expected") or ""):
+                failures.append(f"{tag} expected the verdict's expected to "
+                                f"contain {sc['expected_contains']!r}, got "
+                                f"{verdict.get('expected')!r}")
+            elif "evidence_url" in sc and verdict.get("evidence_url") != sc["evidence_url"]:
+                failures.append(f"{tag} expected evidence_url="
+                                f"{sc['evidence_url']!r} (where the value was "
+                                f"read), got {verdict.get('evidence_url')!r}")
         if sc.get("verdict") is None and want_fc is None and verdict is not None:
             failures.append(f"{tag} expected no verdict output, got {verdict!r}")
         if "expected_image" in sc and outputs.get("expected-image") != sc["expected_image"]:
@@ -324,7 +391,12 @@ def suite_config(script, env, tmproot, source_root=REPO_ROOT):
 # --------------------------------------------------------------------------
 # Executed-step half: poll step's execution-evidence fragment (T012)
 # --------------------------------------------------------------------------
-STUB_GH_EXECUTION = r'''#!/usr/bin/env bash
+# The stub holds REST-shaped responses -- `{"workflow_runs": [...]}`,
+# `{"jobs": [...]}` -- through STUB_GH_JQ_PRELUDE's `emit`, so a wrong key
+# in the shipped `--jq` (`.runs[]` for `.workflow_runs[]`) fails. A `*_RAW`
+# variable is emit's RAW. A jobs read for a run id with no fixture fails
+# the way GitHub's 404 does.
+STUB_GH_EXECUTION = STUB_GH_JQ_PRELUDE + r'''
 if [ "$1" = "api" ]; then
   case "$2" in
     repos/*/actions/runs\?*)
@@ -332,32 +404,24 @@ if [ "$1" = "api" ]; then
         echo "${GH_STUB_RUNS_ERR:-unexpected error}" >&2
         exit 1
       fi
-      printf '%s' "${GH_STUB_RUNS_JSON:-}"
-      exit 0
+      emit "${GH_STUB_RUNS_REST:-}" "${GH_STUB_RUNS_RAW:-}"
+      exit $?
       ;;
-    repos/*/actions/runs/111/jobs)
+    repos/*/actions/runs/*/jobs)
       if [ "${GH_STUB_JOBS_FAIL:-}" = "true" ]; then
         echo "${GH_STUB_JOBS_ERR:-unexpected error}" >&2
         exit 1
       fi
-      printf '%s\n' "${GH_STUB_JOBS_111:-}"
-      exit 0
-      ;;
-    repos/*/actions/runs/222/jobs)
-      if [ "${GH_STUB_JOBS_FAIL:-}" = "true" ]; then
-        echo "${GH_STUB_JOBS_ERR:-unexpected error}" >&2
+      id="${2#repos/*/actions/runs/}"
+      id="${id%/jobs}"
+      body_var="GH_STUB_JOBS_$id"
+      raw_var="GH_STUB_JOBS_RAW_$id"
+      if [ -z "${!body_var+x}" ] && [ -z "${!raw_var:-}" ]; then
+        echo "HTTP 404: no fixture for run $id" >&2
         exit 1
       fi
-      printf '%s\n' "${GH_STUB_JOBS_222:-}"
-      exit 0
-      ;;
-    repos/*/actions/runs/333/jobs)
-      if [ "${GH_STUB_JOBS_FAIL:-}" = "true" ]; then
-        echo "${GH_STUB_JOBS_ERR:-unexpected error}" >&2
-        exit 1
-      fi
-      printf '%s\n' "${GH_STUB_JOBS_333:-}"
-      exit 0
+      emit "${!body_var:-}" "${!raw_var:-}"
+      exit $?
       ;;
     *) echo "unexpected gh api invocation: $*" >&2; exit 1 ;;
   esac
@@ -365,6 +429,25 @@ fi
 echo "unexpected gh invocation: $*" >&2
 exit 1
 '''
+
+
+def runs_page(*runs):
+    """A REST `GET .../actions/runs` page for (id, path[, status]) tuples.
+    `status` defaults to "completed"; None leaves the key out entirely."""
+    page = []
+    for r in runs:
+        run = {"id": r[0], "path": r[1]}
+        status = r[2] if len(r) > 2 else "completed"
+        if status is not None:
+            run["status"] = status
+        page.append(run)
+    return json.dumps({"total_count": len(runs), "workflow_runs": page})
+
+
+def jobs_page(*jobs):
+    """A REST `GET .../actions/runs/{id}/jobs` page for JOB_* fixtures."""
+    return json.dumps({"total_count": len(jobs), "jobs": [json.loads(j) for j in jobs]})
+
 
 WRAPPER_PATH = ".github/workflows/wing-commander-5-implement.yml"
 
@@ -430,13 +513,12 @@ EXECUTION_BASE_ENV = dict(
     HARNESS_TOKEN="dummy-token", HARNESS_LOGIN="dummy-login",
     ISSUE="1", ISSUE_URL="https://example.invalid/issues/1",
     KICKOFF_TIME="2026-01-01T00:00:00Z",
-    # Newline-joined individual JSON objects, matching what `gh api
-    # --paginate --jq '.workflow_runs[] | {...}'` actually streams (one
-    # value per matched item, not one aggregate array) -- see JOB_*'s own
-    # multi-job fixtures below for the same shape.
-    GH_STUB_RUNS_JSON=json.dumps({"databaseId": 111, "path": WRAPPER_PATH}),
-    GH_STUB_JOBS_111=JOB_CONTAINERIZED, GH_STUB_JOBS_222="",
-    GH_STUB_JOBS_333="",
+    # REST pages; the stub streams what the shipped `--jq` program makes
+    # of them -- one value per matched item, as a paginated read through
+    # `--jq '.workflow_runs[] | {...}'` does.
+    GH_STUB_RUNS_REST=runs_page((111, WRAPPER_PATH)), GH_STUB_RUNS_RAW="",
+    GH_STUB_JOBS_111=jobs_page(JOB_CONTAINERIZED),
+    GH_STUB_JOBS_RAW_111="",
     GH_STUB_RUNS_FAIL="", GH_STUB_RUNS_ERR="",
     GH_STUB_JOBS_FAIL="", GH_STUB_JOBS_ERR="",
 )
@@ -449,7 +531,7 @@ EXECUTION_SCENARIOS = [
     ),
     dict(
         name="FR-005(iv) a stage job did not execute inside a container",
-        env=dict(GH_STUB_JOBS_111=JOB_NOT_CONTAINERIZED),
+        env=dict(GH_STUB_JOBS_111=jobs_page(JOB_NOT_CONTAINERIZED)),
         reached_pass=False,
         failing_check="container image configured but stage jobs did not execute inside a container",
     ),
@@ -488,21 +570,20 @@ EXECUTION_SCENARIOS = [
     # it pollute the enumeration.
     dict(
         name="MF(PR#628) a skipped conditional job (e.g. stalled) present: still reaches pass",
-        env=dict(GH_STUB_JOBS_111="\n".join([JOB_CONTAINERIZED, JOB_SKIPPED])),
+        env=dict(GH_STUB_JOBS_111=jobs_page(JOB_CONTAINERIZED, JOB_SKIPPED)),
         reached_pass=True,
     ),
     dict(
         name="MF(PR#628) the host-side verify-image-prerequisites job present: still reaches pass",
-        env=dict(GH_STUB_JOBS_111="\n".join(
-            [JOB_CONTAINERIZED, JOB_VERIFY_IMAGE_PREREQUISITES])),
+        env=dict(GH_STUB_JOBS_111=jobs_page(
+            JOB_CONTAINERIZED, JOB_VERIFY_IMAGE_PREREQUISITES)),
         reached_pass=True,
     ),
     dict(
         name="MF(PR#628) an unrelated workflow run created after kickoff_time: excluded, still reaches pass",
-        env=dict(GH_STUB_RUNS_JSON="\n".join([
-            json.dumps({"databaseId": 111, "path": WRAPPER_PATH}),
-            json.dumps({"databaseId": 333, "path": ".github/workflows/unrelated.yml"}),
-        ]), GH_STUB_JOBS_333=JOB_NOT_CONTAINERIZED),
+        env=dict(GH_STUB_RUNS_REST=runs_page(
+            (111, WRAPPER_PATH), (333, ".github/workflows/unrelated.yml")),
+            GH_STUB_JOBS_333=jobs_page(JOB_NOT_CONTAINERIZED)),
         reached_pass=True,
     ),
     # Maintainer review of #509: the job-name exclusion used exact matching,
@@ -515,33 +596,33 @@ EXECUTION_SCENARIOS = [
     # exclusion list are in place.
     dict(
         name="MR(#509) the reusable-workflow-shaped verify-image-prerequisites job ('implement / verify-image-prerequisites') present: still reaches pass",
-        env=dict(GH_STUB_JOBS_111="\n".join(
-            [JOB_CONTAINERIZED, JOB_VERIFY_IMAGE_PREREQUISITES])),
+        env=dict(GH_STUB_JOBS_111=jobs_page(
+            JOB_CONTAINERIZED, JOB_VERIFY_IMAGE_PREREQUISITES)),
         reached_pass=True,
     ),
     dict(
         name="MR(#509) the resolve-model wrapper job present: still reaches pass",
-        env=dict(GH_STUB_JOBS_111="\n".join([JOB_CONTAINERIZED, JOB_RESOLVE_MODEL])),
+        env=dict(GH_STUB_JOBS_111=jobs_page(JOB_CONTAINERIZED, JOB_RESOLVE_MODEL)),
         reached_pass=True,
     ),
     dict(
         name="MR(#509) the sweep wrapper job present: still reaches pass",
-        env=dict(GH_STUB_JOBS_111="\n".join([JOB_CONTAINERIZED, JOB_SWEEP])),
+        env=dict(GH_STUB_JOBS_111=jobs_page(JOB_CONTAINERIZED, JOB_SWEEP)),
         reached_pass=True,
     ),
     dict(
         name="MR(#509) the redispatch wrapper job present: still reaches pass",
-        env=dict(GH_STUB_JOBS_111="\n".join([JOB_CONTAINERIZED, JOB_REDISPATCH])),
+        env=dict(GH_STUB_JOBS_111=jobs_page(JOB_CONTAINERIZED, JOB_REDISPATCH)),
         reached_pass=True,
     ),
     dict(
         name="MR(#509) a queued job (steps: [], conclusion: null) present: still reaches pass",
-        env=dict(GH_STUB_JOBS_111="\n".join([JOB_CONTAINERIZED, JOB_QUEUED])),
+        env=dict(GH_STUB_JOBS_111=jobs_page(JOB_CONTAINERIZED, JOB_QUEUED)),
         reached_pass=True,
     ),
     dict(
         name="MR(#509) a job cancelled by a concurrency group present: still reaches pass",
-        env=dict(GH_STUB_JOBS_111="\n".join([JOB_CONTAINERIZED, JOB_CANCELLED])),
+        env=dict(GH_STUB_JOBS_111=jobs_page(JOB_CONTAINERIZED, JOB_CANCELLED)),
         reached_pass=True,
     ),
     # Maintainer review of #509's fail-open finding: zero containerized jobs
@@ -550,26 +631,84 @@ EXECUTION_SCENARIOS = [
     # carry NO positive evidence that anything ran in a container.
     dict(
         name="MR(#509) an empty run list observed: fails rather than passing on no evidence",
-        env=dict(GH_STUB_RUNS_JSON=""),
+        env=dict(GH_STUB_RUNS_REST=runs_page()),
         reached_pass=False,
         failing_check="container image configured but stage jobs did not execute inside a container",
     ),
     dict(
         name="MR(#509) every job in the run is excluded: fails rather than passing on no evidence",
-        env=dict(GH_STUB_JOBS_111="\n".join(
-            [JOB_VERIFY_IMAGE_PREREQUISITES, JOB_RESOLVE_MODEL, JOB_SWEEP, JOB_REDISPATCH])),
+        env=dict(GH_STUB_JOBS_111=jobs_page(
+            JOB_VERIFY_IMAGE_PREREQUISITES, JOB_RESOLVE_MODEL, JOB_SWEEP, JOB_REDISPATCH)),
         reached_pass=False,
         failing_check="container image configured but stage jobs did not execute inside a container",
     ),
     dict(
         name="MR(#509) the run list does not parse: unreadable, not an empty run list",
-        env=dict(GH_STUB_RUNS_JSON="{not json"),
+        env=dict(GH_STUB_RUNS_RAW="{not json"),
         reached_pass=False,
         failing_check="container-mode evidence unreadable",
     ),
     dict(
         name="MR(#509) a run's job data does not parse: unreadable, not an empty job list",
-        env=dict(GH_STUB_JOBS_111="{garbled"),
+        env=dict(GH_STUB_JOBS_RAW_111="{garbled"),
+        reached_pass=False,
+        failing_check="container-mode evidence unreadable",
+    ),
+    dict(
+        name="#766 a stage run's jobs read 404s: unreadable, not 'not containerized'",
+        env=dict(GH_STUB_RUNS_REST=runs_page((111, WRAPPER_PATH), (444, WRAPPER_PATH))),
+        reached_pass=False,
+        failing_check="container-mode evidence unreadable",
+    ),
+    # #889: a stage run whose Jobs API read returns no jobs at all carries
+    # no evidence either way. Before the fix it added nothing to either
+    # tally, so another run's containerized jobs carried the pass for it.
+    dict(
+        name="#889 a stage run's jobs read returns zero jobs beside a containerized run: unreadable, not pass",
+        env=dict(GH_STUB_RUNS_REST=runs_page((111, WRAPPER_PATH), (555, WRAPPER_PATH)),
+                 GH_STUB_JOBS_555=jobs_page()),
+        reached_pass=False,
+        failing_check="container-mode evidence unreadable",
+    ),
+    dict(
+        name="#889 the only stage run's jobs read returns zero jobs: unreadable",
+        env=dict(GH_STUB_JOBS_111=jobs_page()),
+        reached_pass=False,
+        failing_check="container-mode evidence unreadable",
+    ),
+    # #960 review: a wrapper run the stage:done label or the final merge
+    # fired seconds before this read can still be queued with no job
+    # scheduled yet -- it ran nothing anywhere, so it is skipped, not judged
+    # unreadable (which would fail an otherwise-passing release).
+    dict(
+        name="#960 a queued stage run with no jobs yet beside a containerized run: skipped, reaches pass",
+        env=dict(GH_STUB_RUNS_REST=runs_page((111, WRAPPER_PATH), (555, WRAPPER_PATH, "queued")),
+                 GH_STUB_JOBS_555=jobs_page()),
+        reached_pass=True,
+    ),
+    dict(
+        name="#960 an in-progress stage run with no jobs yet beside a containerized run: skipped, reaches pass",
+        env=dict(GH_STUB_RUNS_REST=runs_page((111, WRAPPER_PATH), (555, WRAPPER_PATH, "in_progress")),
+                 GH_STUB_JOBS_555=jobs_page()),
+        reached_pass=True,
+    ),
+    dict(
+        name="#960 a stage run with no jobs and no status at all: fails closed, unreadable",
+        env=dict(GH_STUB_RUNS_REST=runs_page((111, WRAPPER_PATH), (555, WRAPPER_PATH, None)),
+                 GH_STUB_JOBS_555=jobs_page()),
+        reached_pass=False,
+        failing_check="container-mode evidence unreadable",
+    ),
+    dict(
+        name="#960 the only stage run is queued with no jobs: no positive evidence, not a pass",
+        env=dict(GH_STUB_RUNS_REST=runs_page((111, WRAPPER_PATH, "queued")),
+                 GH_STUB_JOBS_111=jobs_page()),
+        reached_pass=False,
+        failing_check="container image configured but stage jobs did not execute inside a container",
+    ),
+    dict(
+        name="#766 the REST run list does not parse: gh --jq fails, unreadable",
+        env=dict(GH_STUB_RUNS_REST="{not json"),
         reached_pass=False,
         failing_check="container-mode evidence unreadable",
     ),
@@ -646,19 +785,10 @@ def mut_config_drift_ignored(text):
 
 
 def mut_execution_gate_removed_in_workflow(text):
-    old = FRAGMENT_START_MARKER
-    if text.count(old) != 1:
-        fail(f"verify-gate-106: expected exactly one {old!r} marker in "
-             f"{WORKFLOW}, found {text.count(old)}.")
-    start = text.index(old)
-    end = text.index(FRAGMENT_END_MARKER, start)
-    fragment = text[start:end]
-    needle = 'if [ -n "$failing_check" ]; then'
-    if fragment.count(needle) != 1:
-        fail("verify-gate-106: could not locate the execution fragment's "
-             "failing_check branch to mutate -- update this gate alongside it.")
-    mutated_fragment = fragment.replace(needle, 'if false; then', 1)
-    return text[:start] + mutated_fragment + text[end:]
+    if text.count(FRAGMENT_START_MARKER) != 1:
+        fail(f"verify-gate-106: expected exactly one {FRAGMENT_START_MARKER!r} "
+             f"marker in {WORKFLOW}, found {text.count(FRAGMENT_START_MARKER)}.")
+    return _mut_fragment_text(text, 'if [ -n "$failing_check" ]; then', 'if false; then')
 
 
 def mut_cleanup_guard_loosened(text):
@@ -680,7 +810,69 @@ def mut_cleanup_guard_loosened(text):
         1)
 
 
+def _mut_fragment_text(text, old, new):
+    start = text.index(FRAGMENT_START_MARKER)
+    end = text.index(FRAGMENT_END_MARKER, start)
+    fragment = text[start:end]
+    if fragment.count(old) != 1:
+        fail(f"verify-gate-106: expected exactly one {old!r} in the execution "
+             f"fragment to mutate, found {fragment.count(old)} -- update this "
+             f"gate alongside it.")
+    return text[:start] + fragment.replace(old, new, 1) + text[end:]
+
+
+def mut_runs_jq_wrong_key(text):
+    """#766: a wrong top-level key in the run-list --jq program."""
+    return _mut_fragment_text(text, "--jq '.workflow_runs[] |", "--jq '.runs[] |")
+
+
+def mut_jobs_jq_wrong_key(text):
+    """#766: a wrong top-level key in the jobs --jq program."""
+    return _mut_fragment_text(text, "--jq '.jobs[]'", "--jq '.job[]'")
+
+
+def mut_empty_jobs_guard_removed(text):
+    """#889: a stage run with zero jobs read counts as evidence again."""
+    return _mut_fragment_text(
+        text,
+        'if [ "$(printf \'%s\' "$jobs_json" | jq \'length\')" -eq 0 ]; then',
+        'if false; then')
+
+
+def mut_config_evidence_this_repo_removed(text):
+    """#960 review: an empty pin on this repository cites the test
+    repository as where it was read."""
+    old = 'evidence="${GITHUB_REPOSITORY:-this repository}"'
+    if text.count(old) != 1:
+        fail(f"verify-gate-106: expected exactly one {old!r} in {WORKFLOW} "
+             f"to mutate, found {text.count(old)}.")
+    return text.replace(old, 'evidence="$E2E_REPO"', 1)
+
+
+def mut_not_started_skip_removed(text):
+    """#960 review: a queued run with no jobs yet is judged unreadable."""
+    return _mut_fragment_text(
+        text,
+        "queued|requested|waiting|pending|in_progress) continue ;;",
+        "__never__) continue ;;")
+
+
 WORKFLOW_MUTATIONS = [
+    ("the config step's this-repository evidence removed (an empty pin on "
+     "this repository would cite the test repository as where it was "
+     "read, #960 review)",
+     mut_config_evidence_this_repo_removed),
+    ("the not-yet-started skip removed from the empty-jobs guard (a run "
+     "still queued when the evidence is read would fail a passing release "
+     "as unreadable, #960 review)",
+     mut_not_started_skip_removed),
+    ("the empty-jobs-list guard removed (a stage run with no jobs read "
+     "would ride on another run's containerized jobs to pass, #889)",
+     mut_empty_jobs_guard_removed),
+    ("the run-list --jq reads .runs[] instead of .workflow_runs[] (#766)",
+     mut_runs_jq_wrong_key),
+    ("the jobs --jq reads .job[] instead of .jobs[] (#766)",
+     mut_jobs_jq_wrong_key),
     ("the execution-evidence fragment's failing_check branch removed "
      "(a non-containerized stage job would reach pass)",
      mut_execution_gate_removed_in_workflow),
@@ -690,15 +882,65 @@ WORKFLOW_MUTATIONS = [
      mut_cleanup_guard_loosened),
 ]
 
+def _mut_checks_text(text, old, new):
+    if text.count(old) != 1:
+        fail(f"verify-gate-106: expected exactly one {old!r} in "
+             f"{CHECKS_SCRIPT_REL} to mutate, found {text.count(old)} -- "
+             f"update this gate alongside it.")
+    return text.replace(old, new, 1)
+
+
+def mut_config_jq_wrong_key(text):
+    """A wrong key in read_repo_container_image_variable's `-q` select."""
+    return _mut_checks_text(
+        text, 'select(.name=="WING_COMMANDER_CONTAINER_IMAGE")',
+        'select(.key=="WING_COMMANDER_CONTAINER_IMAGE")')
+
+
+def mut_config_jq_wrong_field(text):
+    """A wrong value field in read_repo_container_image_variable's `-q`."""
+    return _mut_checks_text(
+        text, 'select(.name=="WING_COMMANDER_CONTAINER_IMAGE") | .value',
+        'select(.name=="WING_COMMANDER_CONTAINER_IMAGE") | .val')
+
+
+def mut_config_jq_substring_match(text):
+    """The exact-name select loosened to a substring match."""
+    return _mut_checks_text(
+        text, 'select(.name=="WING_COMMANDER_CONTAINER_IMAGE")',
+        'select(.name | contains("WING_COMMANDER_CONTAINER_IMAGE"))')
+
+
+CHECKS_MUTATIONS = [
+    ("the variable-list -q selects .key instead of .name",
+     mut_config_jq_wrong_key),
+    ("the variable-list -q prints .val instead of .value",
+     mut_config_jq_wrong_field),
+    ("the variable-list -q matches any name containing the variable's",
+     mut_config_jq_substring_match),
+]
+
+def mut_config_source_pin_check_removed(text):
+    """#889: an empty pin on this repository blames the test repository."""
+    old = 'if [ -z "$expected" ]; then'
+    if text.count(old) != 1:
+        fail(f"verify-gate-106: expected exactly one {old!r} to mutate in "
+             f"the decision script, found {text.count(old)}.")
+    return text.replace(old, 'if false; then', 1)
+
+
 DECISION_MUTATIONS = [
+    ("the config decision's empty-source-pin check removed (an empty pin "
+     "on this repository would blame the test repository, #889)",
+     mut_config_source_pin_check_removed),
     ("the config decision's drift comparison disabled (a differing "
      "image would read as configured)",
      mut_config_drift_ignored),
 ]
 
 
-def run_full_suite(workflow_text, decision_text, tmproot):
-    """Stage a (possibly mutated) copy of the two subject files into a
+def run_full_suite(workflow_text, decision_text, tmproot, checks_text=None):
+    """Stage a (possibly mutated) copy of the subject files into a
     scratch root and run every scenario against it. Returns the combined
     failures list; empty means everything passed. `root` (not the real
     repository) is used as every scenario's source_root, so a mutated
@@ -718,6 +960,10 @@ def run_full_suite(workflow_text, decision_text, tmproot):
         dst = os.path.join(root, rel)
         os.makedirs(os.path.dirname(dst), exist_ok=True)
         shutil.copyfile(src, dst)
+    if checks_text is not None:
+        with open(os.path.join(root, CHECKS_SCRIPT_REL), "w",
+                  encoding="utf-8", newline="\n") as fh:
+            fh.write(checks_text)
 
     failures = list(check_structural(workflow_text))
 
@@ -743,7 +989,7 @@ def run_full_suite(workflow_text, decision_text, tmproot):
 BASH = None
 
 
-def run_selftest(workflow_text, decision_text):
+def run_selftest(workflow_text, decision_text, checks_text):
     tmproot = tempfile.mkdtemp()
     failures = []
     try:
@@ -771,6 +1017,19 @@ def run_selftest(workflow_text, decision_text):
             else:
                 print(f"::error::MUTATION SURVIVED - {label}.")
                 failures.append(f"mutation survived: {label}")
+        for label, mutate in CHECKS_MUTATIONS:
+            mutated = mutate(checks_text)
+            if mutated == checks_text:
+                print(f"::error::mutation {label!r} changed nothing.")
+                failures.append(f"mutation inapplicable: {label}")
+                continue
+            broke = run_full_suite(workflow_text, decision_text, tmproot,
+                                   checks_text=mutated)
+            if broke:
+                print(f"Mutation OK - {label}: {len(broke)} assertion(s) fail.")
+            else:
+                print(f"::error::MUTATION SURVIVED - {label}.")
+                failures.append(f"mutation survived: {label}")
     finally:
         shutil.rmtree(tmproot, ignore_errors=True)
     return failures
@@ -786,6 +1045,7 @@ def main():
 
     workflow_text = read(WORKFLOW)
     decision_text = read(DECISION_SCRIPT_REL)
+    checks_text = read(CHECKS_SCRIPT_REL)
 
     self_test = "--self-test" in sys.argv[1:]
 
@@ -796,7 +1056,7 @@ def main():
             print(f"::error::{f}")
 
         if self_test:
-            failures += run_selftest(workflow_text, decision_text)
+            failures += run_selftest(workflow_text, decision_text, checks_text)
     finally:
         shutil.rmtree(tmproot, ignore_errors=True)
 

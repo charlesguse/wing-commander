@@ -1,0 +1,18 @@
+{
+  "_comment": "The named canonical comment blocks Gate 47 holds the workflows to -- see verify-comment-canonical-pointers.py, part (d), for what it checks and why. Retiring a block removes its row here together with every pointer that relied on it.",
+  "blocks": [
+    {"file": "clarify.yml", "name": "image-prerequisites-skip"},
+    {"file": "clarify.yml", "name": "credential-reestablishment"},
+    {"file": "clarify.yml", "name": "push-credential-retry"},
+    {"file": "clarify.yml", "name": "synchronous-subagents"},
+    {"file": "clarify.yml", "name": "allowed-bots"},
+    {"file": "clarify.yml", "name": "inspection-guidance"},
+    {"file": "clarify.yml", "name": "anchor-rule"},
+    {"file": "clarify.yml", "name": "push-rescue"},
+    {"file": "clarify.yml", "name": "cost-report-tolerance"},
+    {"file": "clarify.yml", "name": "budget-observability"},
+    {"file": "clarify.yml", "name": "failed-step-naming"},
+    {"file": "finalize.yml", "name": "handoff-validation"},
+    {"file": "intake.yml", "name": "metrics-summary"}
+  ]
+}

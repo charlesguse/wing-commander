@@ -22,6 +22,31 @@ directly or transitively, and require its success in its own `if:`. A
 fixture that asserts "clean round at this head merges" means nothing if
 `merge` can read the marker before this round's value lands.
 
+And it pins how every marker reader gets its comments (#826). The
+reader's author predicate (board_item_marker.is_loop_marker_author())
+needs REST's `user: {login, type}`; `gh issue view --json comments`
+returns `author: {login}` only, so a reader fed from it sees no marker,
+ever, and every round looks like the first -- the round budget and the
+unmoved-head skip never engage. Three checks:
+  - reader-shape (lifecycle-review-gate.yml): every step that runs
+    `wc_lifecycle_review_marker.py read` gets its comments from `gh api
+    "repos/$GITHUB_REPOSITORY/issues/$N/comments" --paginate --jq '.[]' |
+    jq -s '.'` (the pages merged into one array), as the condition of an
+    `if ! var="$(...)"; then` whose branch emits ::error:: and exits 1 --
+    a failed read is not "no round yet" -- under a `set` line carrying
+    pipefail (without it the guard tests only the reader's status). select,
+    review, disposition and merge must each carry one. select's 404/410 and
+    empty-issue skips are run by Gate 95.
+  - json-comments-feeds-author-predicate (every workflow and composite):
+    no step both reads `gh issue|pr view ... --json ...comments` and runs
+    a reader built on is_loop_marker_author().
+  - executed: disposition's and merge's "Read the current review_gate
+    marker" steps run against a stub gh that serves REST pages (two, the
+    newest marker on the second) and, for `gh issue view --json
+    comments`, the GraphQL shape. The step must output the newest bot
+    marker, ignore a forged one, and fail with ::error:: and no output
+    when the fetch fails.
+
 Fixtures, each a checked-in snapshot under
 .github/scripts/tests/lifecycle-merge-preconditions/<case>/case.json.
 Fails loudly, not vacuously, if any fixture file is missing.
@@ -34,13 +59,16 @@ import glob
 import json
 import os
 import re
+import shutil
 import sys
+import tempfile
 
 import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from lifecycle_merge_preconditions import (  # noqa: E402
     CONDITIONS, evaluate_from_snapshot)
+from wc_shell_harness import ensure_jq, resolve_bash, run_step  # noqa: E402
 
 FIXTURES_DIR = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "tests",
@@ -117,6 +145,279 @@ def run_ordering():
     return len(problems)
 
 
+# --- #826: how every review_gate marker reader gets its comments ---------
+
+# `wc_lifecycle_review_marker.py read`, with or without a closing quote
+# between (review's snapshot path is quoted).
+MARKER_READ_RE = re.compile(re.escape(MARKER_SCRIPT) + r'"?\s+read\b')
+REST_READ_RE = re.compile(
+    r'if ! [A-Za-z_][A-Za-z0-9_]*="\$\(gh api '
+    r'"repos/\$GITHUB_REPOSITORY/issues/\$[A-Za-z_][A-Za-z0-9_]*/comments" '
+    r"--paginate --jq '\.\[\]' \\\n(?:\s*2> \"[^\"\n]*\" \\\n)?\s*\| jq -s '\.' \\\n")
+# The step's own `set` line must carry pipefail: without it the pipeline's
+# status is the reader's, so a failed gh api reads as an empty comment list
+# and the `if !` guard never fires.
+SET_LINE_RE = re.compile(r"^\s*set\s+(-[^\n#]*)", re.M)
+# `gh issue view` / `gh pr view` whose --json field list names comments,
+# across `\`-continued lines.
+GH_VIEW_COMMENTS_RE = re.compile(
+    r"gh (?:issue|pr) view\b(?:[^\n]|\\\n)*?--json[ =]\S*\bcomments\b")
+# A reader whose author check is board_item_marker.is_loop_marker_author().
+AUTHOR_READER_RE = re.compile(
+    MARKER_READ_RE.pattern + r"|\bboard_item_marker\b|\bboard_stop_check\b"
+    r"|\bfind_latest_marker\b|\bis_loop_marker_author\b|\bread_marker\b")
+READER_JOBS = ("select", "review", "disposition", "merge")
+READ_STEP = "Read the current review_gate marker"
+READ_STEP_JOBS = ("disposition", "merge")
+
+
+def _steps(doc):
+    for job_id, job in ((doc or {}).get("jobs") or {}).items():
+        for step in (job or {}).get("steps") or []:
+            if isinstance(step, dict):
+                yield job_id, step
+
+
+def _code(run):
+    """`run` with its whole-line shell comments dropped -- a comment that
+    names `--json comments` (to say never use it) is not a read."""
+    return "\n".join(line for line in str(run or "").split("\n")
+                     if not line.lstrip().startswith("#"))
+
+
+def reader_shape_problems(doc):
+    problems, reader_jobs = [], set()
+    for job_id, step in _steps(doc):
+        run = _code(step.get("run"))
+        reads = len(MARKER_READ_RE.findall(run))
+        if not reads:
+            continue
+        reader_jobs.add(job_id)
+        where = "{0}/{1!r}".format(job_id, step.get("name") or step.get("id"))
+        if GH_VIEW_COMMENTS_RE.search(run):
+            problems.append("{0} reads the lifecycle issue's comments with "
+                            "`gh ... view --json comments`, which has no "
+                            "user.type -- the marker always reads as {{}} "
+                            "(#826)".format(where))
+        first_read = MARKER_READ_RE.search(run).start()
+        set_lines = [m.group(1) for m in SET_LINE_RE.finditer(run[:first_read])]
+        if not any("pipefail" in flags for flags in set_lines) or re.search(
+                r"set\s+\+o\s+pipefail", run[:first_read]):
+            problems.append("{0}: the marker read runs without `set -o "
+                            "pipefail`, so a failed gh api reads as an empty "
+                            "comment list (#826)".format(where))
+        fetches = list(REST_READ_RE.finditer(run))
+        if len(fetches) != reads:
+            problems.append("{0} runs the marker reader {1} time(s) but has {2} "
+                            "`if ! var=\"$(gh api \"repos/$GITHUB_REPOSITORY/"
+                            "issues/$N/comments\" --paginate --jq '.[]' | jq -s "
+                            "'.' | ...` read(s) (#826)".format(
+                                where, reads, len(fetches)))
+        for m in fetches:
+            line_start = run.rfind("\n", 0, m.start()) + 1
+            indent = run[line_start:m.start()]
+            then_at = run.find('"; then\n', m.end())
+            fi = (re.compile(r"\n" + re.escape(indent) + r"fi\b").search(run, then_at)
+                  if then_at >= 0 else None)
+            body = run[then_at:fi.start()] if fi else ""
+            if "::error::" not in body or "exit 1" not in body:
+                problems.append("{0}: a failed comments read must emit "
+                                "::error:: and exit 1, never read as no round "
+                                "yet (#826)".format(where))
+    missing = [j for j in READER_JOBS if j not in reader_jobs]
+    if missing:
+        problems.append("no marker read found in job(s) {0!r} -- this check "
+                        "has lost its subject".format(missing))
+    return problems
+
+
+def _subject_files(root="."):
+    files = sorted(glob.glob(os.path.join(root, ".github", "workflows", "*.yml")))
+    files += sorted(glob.glob(os.path.join(root, ".github", "workflows", "*.yaml")))
+    files += sorted(glob.glob(os.path.join(root, ".github", "actions", "*", "action.yml")))
+    return files
+
+
+def json_comments_reader_problems(docs):
+    """docs: {path: parsed yaml}. A step that reads comments through `gh
+    ... view --json comments` must not feed an is_loop_marker_author()
+    reader (#826)."""
+    problems = []
+    for path, doc in sorted(docs.items()):
+        steps = list(_steps(doc))
+        steps += [("(composite)", s) for s in
+                  (((doc or {}).get("runs") or {}).get("steps") or [])
+                  if isinstance(s, dict)]
+        for job_id, step in steps:
+            run = _code(step.get("run"))
+            if GH_VIEW_COMMENTS_RE.search(run) and AUTHOR_READER_RE.search(run):
+                problems.append(
+                    "{0}: {1}/{2!r} feeds `gh ... view --json comments` to a "
+                    "marker reader built on is_loop_marker_author(), which "
+                    "needs REST's user.type -- read through `gh api "
+                    "\"repos/$GITHUB_REPOSITORY/issues/$N/comments\" "
+                    "--paginate` instead (#826)".format(
+                        path, job_id, step.get("name") or step.get("id")))
+    return problems
+
+
+def _load_subject_docs(root="."):
+    docs = {}
+    for path in _subject_files(root):
+        with open(path, encoding="utf-8") as fh:
+            docs[os.path.relpath(path, root)] = yaml.safe_load(fh)
+    return docs
+
+
+BOT = "wing-commander-bot[bot]"
+
+
+def _marker_comment(round_, created, login=BOT, kind="Bot"):
+    from wc_lifecycle_review_marker import write_marker
+    body = "round {0}\n\n{1}".format(round_, write_marker(
+        round_, "sha{0}".format(round_), "findings", 1, [], [], created))
+    return {"id": round_, "created_at": created, "body": body,
+            "user": {"login": login, "type": kind}}
+
+
+# Two REST pages: the newest bot marker is on the second, and a forged
+# marker from a human sits on the first with a later timestamp than
+# anything else.
+REST_PAGES = [
+    [_marker_comment(1, "2026-01-01T00:00:00Z"),
+     _marker_comment(99, "2026-01-09T00:00:00Z", login="an-outsider", kind="User")],
+    [_marker_comment(2, "2026-01-02T00:00:00Z")],
+]
+EXPECTED_ROUND = 2
+
+STUB_GH = r"""#!/usr/bin/env bash
+# REST: `gh api <path> [--paginate] [--jq <expr>]` -- one JSON document per
+# page, --jq applied per page, the way gh itself does.
+if [ "$1" = "api" ]; then
+  if [ -n "${STUB_FAIL:-}" ]; then
+    echo '{"message":"Server Error","status":"500"}'
+    exit 1
+  fi
+  path="$2"; shift 2; jqexpr=""; paginate=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --jq) jqexpr="$2"; shift 2 ;;
+      --paginate) paginate=1; shift ;;
+      *) shift ;;
+    esac
+  done
+  [ "$path" = "repos/example/example/issues/77/comments" ] || exit 1
+  for page in "$STUB_DIR"/rest-page-*.json; do
+    if [ -n "$jqexpr" ]; then jq -c "$jqexpr" "$page"; else cat "$page"; fi
+    [ "$paginate" = 1 ] || break
+  done
+  exit 0
+fi
+# GraphQL-backed `gh issue view --json comments`: author{login}, no user.
+if [ "$1 $2" = "issue view" ]; then
+  jqexpr="."
+  while [ $# -gt 0 ]; do
+    case "$1" in --jq) jqexpr="$2"; shift 2 ;; *) shift ;; esac
+  done
+  jq -c "$jqexpr" "$STUB_DIR/graphql.json"
+  exit 0
+fi
+exit 1
+"""
+
+
+def _graphql_view():
+    comments = []
+    for page in REST_PAGES:
+        for c in page:
+            comments.append({"body": c["body"], "createdAt": c["created_at"],
+                             "author": {"login": c["user"]["login"].replace("[bot]", "")}})
+    return {"comments": comments}
+
+
+def run_read_step(script, fail=False):
+    """Runs one "Read the current review_gate marker" `run:` against
+    STUB_GH; returns (rc, output, outputs)."""
+    ensure_jq()
+    here = os.path.dirname(os.path.abspath(__file__))
+    tmp = tempfile.mkdtemp(prefix="wc-826-")
+    try:
+        stub_dir = os.path.join(tmp, "stub")
+        bindir = os.path.join(tmp, "bin")
+        scripts = os.path.join(tmp, "work", ".wc-pristine-repo", ".github", "scripts")
+        runner_temp = os.path.join(tmp, "runner-temp")
+        for d in (stub_dir, bindir, scripts, runner_temp):
+            os.makedirs(d)
+        for name in (MARKER_SCRIPT, "board_item_marker.py"):
+            shutil.copyfile(os.path.join(here, name), os.path.join(scripts, name))
+        for i, page in enumerate(REST_PAGES, 1):
+            with open(os.path.join(stub_dir, "rest-page-{0}.json".format(i)), "w",
+                      encoding="utf-8") as fh:
+                json.dump(page, fh)
+        with open(os.path.join(stub_dir, "graphql.json"), "w", encoding="utf-8") as fh:
+            json.dump(_graphql_view(), fh)
+        gh = os.path.join(bindir, "gh")
+        with open(gh, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(STUB_GH)
+        os.chmod(gh, 0o755)
+        env = {"GH_TOKEN": "x", "ISSUE": "77", "BOT_LOGIN": BOT,
+               "GITHUB_REPOSITORY": "example/example", "STUB_DIR": stub_dir,
+               "PATH": bindir + os.pathsep + os.environ["PATH"]}
+        if fail:
+            env["STUB_FAIL"] = "1"
+        rc, out, outputs, _ = run_step(resolve_bash(), script,
+                                       os.path.join(tmp, "work"), env, runner_temp)
+        return rc, out, outputs
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _read_step_script(doc, job_id):
+    for step in ((doc.get("jobs") or {}).get(job_id) or {}).get("steps") or []:
+        if isinstance(step, dict) and step.get("name") == READ_STEP:
+            return str(step.get("run") or "")
+    return None
+
+
+def executed_read_problems(doc):
+    problems = []
+    for job_id in READ_STEP_JOBS:
+        script = _read_step_script(doc, job_id)
+        if script is None:
+            problems.append("{0}: step {1!r} not found".format(job_id, READ_STEP))
+            continue
+        rc, out, outputs = run_read_step(script)
+        try:
+            got = json.loads(outputs.get("json") or "null")
+        except ValueError:
+            got = outputs.get("json")
+        if rc != 0 or not isinstance(got, dict) or got.get("round") != EXPECTED_ROUND:
+            problems.append("{0}/{1!r}: expected the newest bot marker (round "
+                            "{2}) across both REST pages, got rc={3} json={4!r} "
+                            "{5}".format(job_id, READ_STEP, EXPECTED_ROUND, rc,
+                                         got, out.strip()[-400:]))
+        rc, out, outputs = run_read_step(script, fail=True)
+        if rc == 0 or "json" in outputs or "::error::" not in out:
+            problems.append("{0}/{1!r}: a failed comments fetch must fail the "
+                            "step with ::error:: and no json output, got rc={2} "
+                            "outputs={3!r}".format(job_id, READ_STEP, rc, outputs))
+    return problems
+
+
+def run_marker_reads():
+    with open(WORKFLOW, encoding="utf-8") as fh:
+        doc = yaml.safe_load(fh)
+    problems = (reader_shape_problems(doc)
+                + json_comments_reader_problems(_load_subject_docs())
+                + executed_read_problems(doc))
+    for problem in problems:
+        print("::error::verify-lifecycle-merge-preconditions: {0}".format(problem))
+    if not problems:
+        print("[ok] marker-reads: every review_gate marker reader reads REST "
+              "comments, all pages, and fails loudly on a failed read (#826)")
+    return len(problems)
+
+
 EXPECTED_CASES = {
     "round-not-clean", "unresolved-human-review",
     "head-sha-moved-since-round", "all-clear",
@@ -130,7 +431,7 @@ def _load(path):
 
 
 def run():
-    failures = run_ordering()
+    failures = run_ordering() + run_marker_reads()
 
     if not os.path.isdir(FIXTURES_DIR):
         print("::error::verify-lifecycle-merge-preconditions: fixtures "
@@ -310,6 +611,102 @@ def self_test():
     got = ordering_problems(dropped_if)
     check("marker-ordering-dropped-success-check-caught",
           any("does not require needs.report.result" in p for p in got),
+          "got {0!r}".format(got))
+
+    # #826: the shipped marker reads are clean, and each way of breaking
+    # them is caught.
+    check("marker-reads-shipped-clean", reader_shape_problems(shipped) == [],
+          "got {0!r}".format(reader_shape_problems(shipped)))
+    docs = _load_subject_docs()
+    check("json-comments-reader-shipped-clean",
+          json_comments_reader_problems(docs) == [],
+          "got {0!r}".format(json_comments_reader_problems(docs)))
+    check("executed-read-shipped-clean", executed_read_problems(shipped) == [],
+          "got {0!r}".format(executed_read_problems(shipped)))
+
+    rest_read = ("gh api \"repos/$GITHUB_REPOSITORY/issues/$ISSUE/comments\" "
+                 "--paginate --jq '.[]' \\\n  | jq -s '.' \\\n")
+    merge_script = _read_step_script(shipped, "merge")
+    check("mutation-harness-finds-merge-read", merge_script is not None
+          and merge_script.count(rest_read) == 1,
+          "update the #826 mutations to the shipped text")
+
+    def mutate_merge(old, new):
+        doc = copy.deepcopy(shipped)
+        for step in doc["jobs"]["merge"]["steps"]:
+            if isinstance(step, dict) and step.get("name") == READ_STEP:
+                step["run"] = str(step["run"]).replace(old, new, 1)
+        return doc
+
+    # The pre-#826 read, restored.
+    reverted = mutate_merge(
+        rest_read,
+        "gh issue view \"$ISSUE\" -R \"$GITHUB_REPOSITORY\" --json comments "
+        "--jq '.comments' \\\n")
+    got = reader_shape_problems(reverted)
+    check("mutation-json-comments-read-caught-static",
+          any("--json comments" in p for p in got), "got {0!r}".format(got))
+    got = executed_read_problems(reverted)
+    check("mutation-json-comments-read-caught-executed",
+          any("expected the newest bot marker" in p for p in got),
+          "got {0!r}".format(got))
+
+    # Only the first page read, or the pages not merged into one array.
+    no_paginate = mutate_merge("--paginate ", "")
+    got = reader_shape_problems(no_paginate) + executed_read_problems(no_paginate)
+    check("mutation-first-page-only-caught",
+          any("expected the newest bot marker" in p for p in got)
+          and any("time(s) but has 0" in p for p in got), "got {0!r}".format(got))
+    unmerged = mutate_merge(" --jq '.[]' \\\n  | jq -s '.' \\\n", " \\\n")
+    got = executed_read_problems(unmerged)
+    check("mutation-pages-not-merged-caught",
+          any("expected the newest bot marker" in p for p in got),
+          "got {0!r}".format(got))
+
+    # A bare capture: no `if !`, no ::error::.
+    bare = copy.deepcopy(shipped)
+    for step in bare["jobs"]["merge"]["steps"]:
+        if isinstance(step, dict) and step.get("name") == READ_STEP:
+            run = str(step["run"])
+            run = run.replace("if ! review_gate_json=", "review_gate_json=", 1)
+            run = re.sub(r'"; then\n.*?\nfi\n', '"\n', run, count=1,
+                         flags=re.S)
+            step["run"] = run
+    got = reader_shape_problems(bare)
+    check("mutation-bare-capture-caught", any("time(s) but has 0" in p for p in got),
+          "got {0!r}".format(got))
+
+    # pipefail dropped from select's and review's reader steps.
+    for job_id, step_name in (
+            ("select", "Fetch open PRs and select the next lifecycle review candidate"),
+            ("review", "Gather review inputs (diff, commit messages, PR title/body)")):
+        doc = copy.deepcopy(shipped)
+        hit = 0
+        for step in doc["jobs"][job_id]["steps"]:
+            if isinstance(step, dict) and step.get("name") == step_name:
+                run = str(step["run"])
+                hit = len(re.findall(r"^set -(\w*)o pipefail$", run, flags=re.M))
+                step["run"] = re.sub(r"^set -(\w*)o pipefail$", r"set -\1", run,
+                                     count=1, flags=re.M)
+        got = reader_shape_problems(doc)
+        check("mutation-pipefail-dropped-caught[{0}]".format(job_id),
+              hit == 1 and any("without `set -o pipefail`" in p for p in got),
+              "hit={0} got {1!r}".format(hit, got))
+
+    # Anywhere in the repository: a --json comments read feeding a reader.
+    synthetic = {".github/workflows/synthetic.yml": {"jobs": {"j": {"steps": [
+        {"name": "board", "run": "gh issue view \"$N\" \\\n  --json comments,labels "
+         "--jq '.comments' > c.json\npython3 -c 'from board_item_marker import "
+         "read_marker'\n"}]}}},
+        ".github/actions/synthetic/action.yml": {"runs": {"steps": [
+            {"name": "stop", "run": "gh pr view 1 --json comments | python3 "
+             "board_stop_check.py\n"}]}},
+        ".github/workflows/unrelated.yml": {"jobs": {"j": {"steps": [
+            {"name": "body-only", "run": "gh issue view 1 --json comments "
+             "--jq '.comments[].body'\n"}]}}}}
+    got = json_comments_reader_problems(synthetic)
+    check("mutation-json-comments-anywhere-caught",
+          len(got) == 2 and not any("unrelated" in p for p in got),
           "got {0!r}".format(got))
 
     print("{0} failure(s).".format(failures))

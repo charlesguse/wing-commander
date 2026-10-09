@@ -245,6 +245,7 @@ The list `verify-image-prerequisites` checks against a named image:
 | `bash` | Every `run:` step across every stage and composite assumes it. |
 | `node` (Node.js runtime) | *Inferred*, not directly observed in this repository's own source — `anthropics/claude-code-action@v1` (used by every agent-bearing job across all eleven stages) is a JavaScript action, which implies a Node.js runtime requirement this repository's own grep cannot confirm or deny (research D6). Implementation must decide how to treat this entry and record the decision. |
 | `timeout` | Direct invocation, required since **v2.5.1** (`1d1452c`): `wing-commander-lifecycle-gate` wraps its `gh issue view` read in `timeout "$read_timeout" ...` so a hung read becomes a retryable 124 rather than a stalled stage (specs/039-lifecycle-gate-retry). That composite runs inside the adopter's container at the entry of six stages. Previously assumed present under Gate 23's `ALWAYS_AVAILABLE` coreutils set, which is how a hard dependency reached eleven stages undeclared. |
+| `unzip` | *Indirect*, through `anthropics/claude-code-action@v1`: its first step, "Install Bun" (`oven-sh/setup-bun`), downloads `bun-linux-x64.zip` and extracts it with `unzip`, so an image without it fails every agent-bearing job before Claude Code starts. Observed on wing-commander's own e2e reference image (intake run 37866026318: "Unable to locate executable file: unzip.") after this check had passed it. Previously assumed present under Gate 23's `ALWAYS_AVAILABLE` set, as `timeout` was. |
 
 Kept in agreement with reality by Gate 23 (below), not by convention alone
 (FR-011a): Gate 23 parses this table and fails on any set difference against
@@ -293,6 +294,22 @@ carry the wide grants their other jobs need, and this job inherited all of
 them until review of PR #222. Declaring the grant on the job makes it a
 property of the job rather than of whichever file it sits in, so a later
 change to a file's top-level `permissions:` cannot widen it by accident.
+
+Amended 2026-10-05: every `container:` mapping also carries
+`env: {GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: safe.directory,
+GIT_CONFIG_VALUE_0: "*"}`, and Gate 22 requires it. The workspace is
+bind-mounted from the host and owned by the runner's uid, while steps in
+the image run as the image's user, so without it git refuses every
+repository in the job as "dubious ownership" (`git config` reports "not in
+a git directory", exit 128). The pipeline supplies this rather than the
+adopter's image. git honors command-scope `safe.directory` only from 2.38
+(earlier releases, including distro builds that backported the 2.35.2
+ownership check, read it from system or global config alone), so an image
+with an older git still fails, and the image prerequisite check, which
+tests presence only, does not catch it. `git_read.py` drops every
+`GIT_CONFIG*` variable and passes `safe.directory` back as `-c`. The values are non-empty literals, the same class as the
+"placeholder values" row of the table above, so `image: ''` is expected to
+still run with no container; the e2e default-runner leg is what proves it.
 
 **Gate 23**: every stage file declares `verify-image-prerequisites` with
 no job-level `if:` and its condition on the step, every entry job depends on
@@ -359,6 +376,31 @@ synthetic stage fixtures each carrying one known defect, mirroring Gate
 7/12/15/16/18's self-test discipline — writing those scripts is
 implementation-stage work; this contract fixes their scope so `tasks.md` can
 enumerate concretely.
+
+## Paths inside a container job
+
+When `container-image` is set, the expressions `${{ runner.temp }}`,
+`${{ runner.workspace }}`, `${{ runner.tool_cache }}`, `${{ github.workspace }}`
+and `${{ github.action_path }}` evaluate to the host path
+(`/home/runner/work/...`), which the container mounts elsewhere (`/__w/...`).
+The runner rewrites such a path only where it leads a whole, one-line
+environment value: a step's `env:` value, or a `with:` input that a
+JavaScript action receives as `INPUT_*`. It never rewrites a `run:` body or a
+path in the middle of a value, such as an agent prompt. So every stage job
+follows one rule, identical in container and host jobs:
+
+- a `run:` body reads `$RUNNER_TEMP` / `$GITHUB_WORKSPACE`;
+- free text reads `wing-commander-context`'s `runner-temp` / `workspace`
+  outputs, which that composite computes inside the job;
+- an `env:` or `with:` value may carry the expression only as its whole
+  value's leading part, on one line.
+
+Gate 43's `case_container_jobs_use_in_job_paths`
+(`verify-metrics-summary-record-emission.py`) enforces this on every
+caller-supplied-container job and every composite action. The canonical
+explanation is the "Container-side paths" comment in
+`.github/actions/wing-commander-context/action.yml`. Nothing changes for an
+adopter: this is how the stages are written, not an input.
 
 ## Non-goals (unchanged from the spec's Assumptions/Edge Cases, restated for
 this contract's boundary)

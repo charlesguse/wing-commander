@@ -1,1 +1,9 @@
-{"issue": 689, "spec_dir": "specs/091-gh-api-error-capture", "feature_num": "091", "stage": "spec", "iteration": 0, "spec_branch": null}
+{
+  "issue": 689,
+  "spec_dir": "specs/091-gh-api-error-capture",
+  "feature_num": "091",
+  "stage": "review",
+  "iteration": 2,
+  "spec_branch": "spec/091-gh-api-error-capture",
+  "pending_re_review_from": []
+}

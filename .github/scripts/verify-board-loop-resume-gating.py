@@ -690,6 +690,13 @@ SCENARIOS = [
      {"outputs": {"select": _item("triage"), "triage": {"outcome": "proceed"},
                   "route": {"decision": "spec"}}},
      ("select", "resolve-model", "triage", "route")),
+    ("fresh: route=defer (rate-limited route agent) runs nothing after route",
+     {"outputs": {"select": _item("triage"), "triage": {"outcome": "proceed"},
+                  "route": {"decision": "defer"}}},
+     ("select", "resolve-model", "triage", "route")),
+    ("fresh: triage=defer (rate-limited triage agent) skips route",
+     {"outputs": {"select": _item("triage"), "triage": {"outcome": "defer"}}},
+     ("select", "resolve-model", "triage")),
     ("fresh: triage closes",
      {"outputs": {"select": _item("triage"), "triage": {"outcome": "close"}}},
      ("select", "resolve-model", "triage")),
@@ -865,6 +872,14 @@ def _resume_env(step, marker_pr, pr_from_marker, pr_state, pr_number,
         "PR_STATE": pr_state, "PR_NUMBER": pr_number, "PR_HEAD_SHA": pr_head_sha,
         "MARKER_ROUND": round_, "MARKER_BASE_SHA": base_sha,
         "PR_OWNED": "true" if pr_owned else "false", "ISSUE_NUMBER": "396",
+        # spec 100 FR-006b: clause 2b reads COMMENTS_PATH unconditionally
+        # once pr_from_fallback fires (board_item_marker.
+        # head_moved_since_last_review()'s own comments argument) -- an
+        # empty array here is fine, since none of these cases assert on
+        # review-vs-readiness, only on the three-way step split itself
+        # (that split's own fixtures live under verify-board-loop-
+        # readmission.py's Gate 134).
+        "COMMENTS_PATH": ".github/scripts/tests/board-loop-readmission/no-open-pr-falls-to-triage/comments.json",
     }
 
 
@@ -886,9 +901,10 @@ RESUME_CASES = [
     ("awaiting-merge, PR CLOSED -> triage, FR-022 cleared",
      _resume_env("awaiting-merge", "42", True, "CLOSED", "42"),
      dict(_CLEARED, step="triage")),
-    ("awaiting-merge, PR MERGED (issue still open) -> triage, FR-022 cleared",
+    ("awaiting-merge, PR MERGED (issue still open) -> prove, FR-022 cleared "
+     "(specs/096-durable-prove-entry FR-007/FR-008/FR-009)",
      _resume_env("awaiting-merge", "42", True, "MERGED", "42"),
-     dict(_CLEARED, step="triage")),
+     dict(_CLEARED, step="prove")),
     ("regression: readiness, PR OPEN -> readiness",
      _resume_env("readiness", "42", True, "OPEN", "42"),
      {"step": "readiness", "pr_number": "42"}),
@@ -1223,13 +1239,21 @@ def _run_readiness_backstop(code, resume_step, scripts_root):
         os.makedirs(pristine)
         os.symlink(os.path.join(os.path.abspath(scripts_root), ".github", "scripts"),
                    os.path.join(pristine, "scripts"))
-        for name in ("board-readiness-final-diff.patch", "board-readiness-final-diff-paths.txt"):
-            open(os.path.join(tmp, name), "w").close()
+        open(os.path.join(tmp, "board-readiness-final-diff.patch"), "w").close()
+        # The step lists its paths with diff_name_list(BASE_SHA): an empty
+        # repository diffed against its own HEAD.
+        work = os.path.join(tmp, "work")
+        os.makedirs(work)
+        git = ["git", "-C", work, "-c", "user.name=t", "-c", "user.email=t@t"]
+        subprocess.run(git[:3] + ["init", "-q"], check=True)
+        subprocess.run(git + ["commit", "-q", "--allow-empty", "-m", "base"], check=True)
+        base_sha = subprocess.run(git[:3] + ["rev-parse", "HEAD"], check=True,
+                                  capture_output=True, text=True).stdout.strip()
         out_path = os.path.join(tmp, "github_output")
-        env = dict(os.environ, RUNNER_TEMP=tmp, GITHUB_OUTPUT=out_path,
+        env = dict(os.environ, RUNNER_TEMP=tmp, GITHUB_OUTPUT=out_path, BASE_SHA=base_sha,
                    BOARD_MAX_FILES="6", BOARD_MAX_LINES="120", RESUME_STEP=resume_step)
         proc = subprocess.run([sys.executable, "-"], input=code, text=True,
-                              capture_output=True, env=env, cwd=tmp)
+                              capture_output=True, env=env, cwd=work)
         outputs = {}
         if os.path.exists(out_path):
             with open(out_path, encoding="utf-8") as fh:
@@ -1418,28 +1442,38 @@ def stall_label_findings(doc, scripts_root=ROOT):
             if not m:
                 continue
             arg = m.group(1).strip('"')
+            is_stall = False
             if arg.startswith("$"):
                 var = arg[1:]
                 can_stall = re.search(r"\b{0}=\"?stalled\"?(?:\s|;|$)".format(re.escape(var)), run, re.M)
-                if not can_stall:
-                    continue
-                stall_sites += 1
-                if not (_STALL_FLAGS.search(run) and "${stall_args[@]}" in line):
-                    findings.append(
-                        "{0}: --step \"${1}\" can be stalled but the invocation does not pass "
-                        "--issue \"$ISSUE_NUMBER\" --add-label \"board:stalled\" for it (#604)".format(where, var))
+                if can_stall:
+                    is_stall = True
+                    stall_sites += 1
+                    if not (_STALL_FLAGS.search(run) and "${stall_args[@]}" in line):
+                        findings.append(
+                            "{0}: --step \"${1}\" can be stalled but the invocation does not pass "
+                            "--issue \"$ISSUE_NUMBER\" --add-label \"board:stalled\" for it (#604)".format(where, var))
             elif arg == "stalled":
+                is_stall = True
                 stall_sites += 1
                 if not _STALL_FLAGS.search(line):
                     findings.append(
                         "{0}: renders a stalled marker without --issue \"$ISSUE_NUMBER\" --add-label "
                         "\"board:stalled\" -- the label must go on before the marker (#604)".format(where))
-            else:
+            if _FAIL_LOUD.search(line):
                 continue
-            if not _FAIL_LOUD.search(line):
+            if is_stall:
                 findings.append(
                     "{0}: a stalled-marker render is not followed by `|| {{ echo \"::error::...\"; exit 1; }}` "
                     "-- a failed board:stalled add would post a marker-less comment and carry on (#604)".format(where))
+            else:
+                # #786: errexit already stops a step on a failed render; the
+                # guard is what names why, and what keeps the render
+                # fail-closed if a step ever runs without errexit.
+                findings.append(
+                    "{0}: a `--step {1}` marker render is not followed by `|| {{ echo \"::error::...\"; "
+                    "exit 1; }}` -- a failed render must stop the step and say why, never leave a "
+                    "comment the next run cannot read as this step's (#786)".format(where, arg))
     if stall_sites == 0:
         findings.append("no stalled-marker site found in board-loop.yml -- the #604 check is vacuous")
     for title, args, gh_rc, want_marker, want_calls in STALL_CLI_CASES:
@@ -2050,6 +2084,13 @@ def _mutations(text):
     sub("resume clause 0 (awaiting-merge hold) disabled",
         "elif marker_step == AWAITING_MERGE_STEP and (not pr_from_marker or pr_state == \"OPEN\"):",
         "elif False:")
+    # specs/096-durable-prove-entry FR-007/FR-008/FR-009 (research.md D7):
+    # a resolved-by-number, MERGED, issue-still-open marker must resolve to
+    # prove, not fall through to the sibling triage clause.
+    sub("resume merged-fix-awaiting-proof clause reverted to triage "
+        "(specs/096-durable-prove-entry)",
+        "elif pr_from_marker and marker_step in FIX_OR_LATER_STEPS and pr_state == \"MERGED\":",
+        "elif False:")
     # #555: the resume step's branch and PR guards, and the marker readers'
     # author plumbing.
     sub("resume branch-name guard dropped",
@@ -2148,7 +2189,7 @@ def _mutations(text):
         'board_item_marker.py" --step BREACH_STEP --pr "$PR_NUMBER" --branch "$BRANCH" --base-sha "$BASE_SHA")"',
         'board_item_marker.py" --step review --pr "$PR_NUMBER" --branch "$BRANCH" --base-sha "$BASE_SHA")"')
     sub("resume fallback sends a breach marker to review",
-        'step = BREACH_STEP if marker_step == BREACH_STEP else "review"', 'step = "review"')
+        "              if marker_step == BREACH_STEP:", "              if False:")
     sub("readiness without the step=breach resume branch",
         "        || (needs.select.outputs.step == 'breach' && needs.select.outputs.pr != '')\n", "",
         after="\n  readiness:\n")
@@ -2169,8 +2210,18 @@ def _mutations(text):
     # a bare label add) at route, and triage's handover without stall_args.
     stall_flags = ' --issue "$ISSUE_NUMBER" --add-label "board:stalled")"'
     render_at = [m.start() for m in re.finditer(r"--step stalled[^\n]*" + re.escape(stall_flags), text)]
-    if len(render_at) != 7:
-        raise AssertionError("self-test: expected 7 literal stalled renders, found {0}".format(len(render_at)))
+    # spec 108: route's spec-verdict, fix's post-push-breach and
+    # readiness's backstop-breach sites no longer render a stalled marker
+    # at all -- they dispose of the originating issue as a duplicate
+    # instead (contracts/duplicate-disposition.md) -- so the count drops
+    # from 7 to 4 (triage's hand-over, fix's gate-red, review's three
+    # stalls). The three workflow-scope holds (route's, fix's pre-push and
+    # review-fixup's) render theirs inside board_workflow_scope_hold.py,
+    # their one home, which verify-board-route-backstop.py gates.
+    # specs/093-not-ready-board-release adds a fifth: readiness's
+    # not-ready handover.
+    if len(render_at) != 5:
+        raise AssertionError("self-test: expected 5 literal stalled renders, found {0}".format(len(render_at)))
     for n, at in enumerate(render_at):
         flags_at = text.index(stall_flags, at)
         muts.append(("stalled render #{0}: no --issue/--add-label".format(n + 1),
@@ -2179,10 +2230,28 @@ def _mutations(text):
         guard_end = text.index("\n", text.index("exit 1; }", guard_start)) + 1
         muts.append(("stalled render #{0}: failure not checked".format(n + 1),
                      text[:guard_start] + "\n" + text[guard_end:]))
-    sub("route: stalled marker, then a bare board:stalled add (pre-#604)",
-        '"$route_verb" "$route_detail" "$marker" "$rationale_comment")"\n',
-        '"$route_verb" "$route_detail" "$marker" "$rationale_comment")"\n'
-        '          gh issue edit "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --add-label "board:stalled"\n')
+    # #786: every other render's fail-loud check, one mutation each. The
+    # guard is the last continuation line before the render's end, so a
+    # multi-line render (select's prove markers) loses only its guard.
+    other_at = [m.start() for m in re.finditer(r'board_item_marker\.py"? --step (?!stalled\b)', text)]
+    # select's two prove markers, fix's review hand-off and breach, review's
+    # readiness and round, readiness's awaiting-merge, triage's hand-over
+    # ("$marker_step"), prove's three (close-on-merge, proven, prove), and
+    # readiness's not-ready record (specs/093-not-ready-board-release).
+    if len(other_at) != 12:
+        raise AssertionError("self-test: expected 12 non-stalled marker renders, found {0}".format(len(other_at)))
+    for n, at in enumerate(other_at):
+        guard_at = text.index('|| { echo "::error::', at)
+        guard_start = text.rindex(" \\\n", at, guard_at)
+        guard_end = text.index("\n", text.index("exit 1; }", guard_at)) + 1
+        muts.append(("marker render #{0} ({1}): failure not checked".format(
+                         n + 1, text[at:text.index(" ", text.index("--step", at) + 7)].split("--step ")[-1]),
+                     text[:guard_start] + "\n" + text[guard_end:]))
+    # spec 108: route's spec-verdict site no longer posts a stalled marker
+    # at all (contracts/duplicate-disposition.md) -- the pre-#604
+    # marker-then-bare-label-add anti-pattern this mutation guarded is no
+    # longer physically expressible there, so it is retired rather than
+    # kept as dead fixture text.
     sub("triage handover renders without stall_args",
         '--step "$marker_step" "${stall_args[@]}")"', '--step "$marker_step")"')
     sub("an inline write_marker( stalled marker",

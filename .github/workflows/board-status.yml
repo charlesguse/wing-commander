@@ -1,0 +1,51 @@
+name: "board-status"
+
+# Daily board status (board reset of 2026-10-01). Rewrites ONE issue, titled
+# "Board status": what waits on the owner, what the pipeline is working on,
+# the maintenance backlog's size, other open issues, main's CI and the last
+# release. The rendering and the API reads live in
+# .github/scripts/wc_board_status.py; verify-board-status.py drives both.
+#
+# No agent and no App token. GITHUB_TOKEN edits the issue, and GitHub starts
+# no workflow for an event GITHUB_TOKEN causes, so this job never wakes a
+# stage. The issue carries `disposition:tracking`, which the board loop
+# never selects.
+on:
+  schedule:
+    - cron: "17 7 * * *"
+  workflow_dispatch: {}
+
+permissions: {}
+
+concurrency:
+  group: wing-commander-board-status
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: vars.WING_COMMANDER_BOARD_STATUS_PAUSED != 'true'
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+      # Without it GitHub filters pull requests out of /issues for an app
+      # token, and every lifecycle would read as having no PR.
+      pull-requests: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Render and publish the board status
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AUTO_RELEASE_PAUSED: ${{ vars.WING_COMMANDER_AUTO_RELEASE_PAUSED }}
+          BOARD_LOOP_PAUSED: ${{ vars.WING_COMMANDER_BOARD_LOOP_PAUSED }}
+          LIFECYCLE_AUTO_MERGE: ${{ vars.WING_COMMANDER_LIFECYCLE_AUTO_MERGE }}
+          LIFECYCLE_REVIEW_GATE_PAUSED: ${{ vars.WING_COMMANDER_LIFECYCLE_REVIEW_GATE_PAUSED }}
+          TASKS_REVIEW: ${{ vars.WING_COMMANDER_TASKS_REVIEW }}
+        run: python3 .github/scripts/wc_board_status.py publish

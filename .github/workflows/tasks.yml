@@ -48,7 +48,7 @@ on:
         description: "Model for the task-generation agent (constitution II tiering default)"
         type: string
         required: false
-        default: claude-sonnet-5
+        default: claude-sonnet-5-5
       max-turns:
         description: "Turn budget for the task-generation agent"
         type: number
@@ -272,6 +272,12 @@ on:
 
 permissions: {}
 
+# Pins bash for every run: step without its own shell:, a caller-supplied
+# container included -- see pr-conversation.yml.
+defaults:
+  run:
+    shell: bash -e {0}
+
 jobs:
   verify-image-prerequisites:
     # This job now carries `if: inputs.container-image != ''` and reports
@@ -292,7 +298,7 @@ jobs:
         run: |
           # Canonical required-tool list: .github/scripts/required-tools.txt
           # (kept in agreement by Gate 23, specs/038 FR-011a).
-          REQUIRED_TOOLS="git gh jq curl python3 bash node timeout"
+          REQUIRED_TOOLS="git gh jq curl python3 bash node timeout unzip"
 
           if [ -n "$REGISTRY_USERNAME" ] && [ -n "$REGISTRY_PASSWORD" ]; then
             # A bare/namespaced Docker Hub reference (no "." or ":" or
@@ -373,6 +379,11 @@ jobs:
             && fromJSON(format('{{"username":{0},"password":{1}}}', toJSON(secrets.container-registry-username), toJSON(secrets.container-registry-password)))
             || fromJSON('{}')
         }}
+      # Git safe.directory for the caller's container image -- see clarify.yml.
+      env:
+        GIT_CONFIG_COUNT: "1"
+        GIT_CONFIG_KEY_0: safe.directory
+        GIT_CONFIG_VALUE_0: "*"
     # environment-binding empirical basis (FR-013) -- see
     # specs/031-stage-environment-binding/contracts/environment-binding.md.
     environment:
@@ -444,6 +455,11 @@ jobs:
             && fromJSON(format('{{"username":{0},"password":{1}}}', toJSON(secrets.container-registry-username), toJSON(secrets.container-registry-password)))
             || fromJSON('{}')
         }}
+      # Git safe.directory for the caller's container image -- see clarify.yml.
+      env:
+        GIT_CONFIG_COUNT: "1"
+        GIT_CONFIG_KEY_0: safe.directory
+        GIT_CONFIG_VALUE_0: "*"
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
@@ -475,6 +491,7 @@ jobs:
       # the primary output still uses the same most-recent-wins `||` as
       # agent-ran above, for the same reason implement.yml does.
       agent-conclusion: ${{ steps.agent-ran-auto.outputs.conclusion || steps.agent-ran-pr.outputs.conclusion }}
+      agent-started: ${{ steps.agent-ran-auto.outputs.started || steps.agent-ran-pr.outputs.started }}
       credential-refresh-ok: ${{ steps.credential-status-auto.outputs.ok || steps.credential-status-pr.outputs.ok }}
       commits-published: ${{ steps.publish-stranded-auto.outputs.commits-published || steps.publish-stranded-pr.outputs.commits-published }}
       push-ok: ${{ steps.publish-stranded-auto.outputs.push-ok || steps.publish-stranded-pr.outputs.push-ok }}
@@ -534,7 +551,9 @@ jobs:
           SPEC_DIR: ${{ needs.resolve-spec.outputs.spec-dir }}
           SPEC_BRANCH: ${{ inputs.spec-prefix }}${{ needs.resolve-spec.outputs.slug }}
         run: |
-          issue=$(gh api -X GET "repos/$GITHUB_REPOSITORY/contents/$SPEC_DIR/spec-meta.json" -f ref="$SPEC_BRANCH" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null | jq -r '.issue // empty' 2>/dev/null)
+          if ! issue=$(gh api -X GET "repos/$GITHUB_REPOSITORY/contents/$SPEC_DIR/spec-meta.json" -f ref="$SPEC_BRANCH" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null | jq -r '.issue // empty' 2>/dev/null); then
+            issue=''
+          fi
           echo "issue=${issue:-}" >> "$GITHUB_OUTPUT"
 
       # Deterministic fail-fast before any billable work (FR-004, FR-009).
@@ -600,7 +619,7 @@ jobs:
           WC_PIPELINE_REF: ${{ steps.pipeline-ref.outputs.ref }}
         run: |
           p=.wing-commander-pipeline; want="$(cd "$GITHUB_WORKSPACE" && pwd -P)/$p"
-          if [ -L "$p" ] || [ ! -d "$p" ] || [ -L "$p/.git" ] || [ ! -d "$p/.git" ] || [ "$(git -C "$p" rev-parse --show-toplevel 2>/dev/null)" != "$want" ] || { [[ "${WC_PIPELINE_REF:-}" =~ ^[0-9a-f]{40}$ ]] && [ "$(git -C "$p" rev-parse HEAD 2>/dev/null)" != "$WC_PIPELINE_REF" ]; }; then rm -rf -- "$p"; echo "::error::wing-commander: $p is no longer the trusted pipeline checkout (a symlink, a missing or replaced .git, or another commit): the branch just checked out replaced it. Removed it so no later step loads branch code from there (#611)."; exit 1; fi
+          if [ -L "$p" ] || [ ! -d "$p" ] || [ -L "$p/.git" ] || [ ! -d "$p/.git" ] || [ "$(git -C "$p" rev-parse --show-toplevel 2>/dev/null)" != "$want" ] || { [[ "${WC_PIPELINE_REF:-}" =~ ^[0-9a-f]{40}$ ]] && [ "$(git -C "$p" rev-parse HEAD 2>/dev/null)" != "$(git -C "$p" rev-parse --verify -q "${WC_PIPELINE_REF}^{commit}" 2>/dev/null)" ]; }; then rm -rf -- "$p"; echo "::error::wing-commander: $p is no longer the trusted pipeline checkout (a symlink, a missing or replaced .git, or another commit): the branch just checked out replaced it. Removed it so no later step loads branch code from there (#611)."; exit 1; fi
           git -C "$p" cat-file blob HEAD:.github/scripts/pipeline-checkout-guard.sh | bash -s
 
       # Recorded before whichever agent step actually runs, so a later
@@ -1218,6 +1237,7 @@ jobs:
           stage: tasks
           spec-dir: ${{ needs.resolve-spec.outputs.spec-dir }}
           spec-issue: ${{ steps.meta.outputs.issue }}
+          spec-identity-is-own: 'true'
           run-label: branch advance
           step-index: '1'
           record-path: ${{ runner.temp }}/wing-commander-metrics-record-branch-advance.json
@@ -1266,6 +1286,7 @@ jobs:
           stage: tasks
           spec-dir: ${{ needs.resolve-spec.outputs.spec-dir }}
           spec-issue: ${{ steps.meta.outputs.issue }}
+          spec-identity-is-own: 'true'
 
       # Durable record (specs/043-durable-metrics-record) — the artifact this
       # feature persists past the transcript's own retention window.
@@ -1568,6 +1589,11 @@ jobs:
             && fromJSON(format('{{"username":{0},"password":{1}}}', toJSON(secrets.container-registry-username), toJSON(secrets.container-registry-password)))
             || fromJSON('{}')
         }}
+      # Git safe.directory for the caller's container image -- see clarify.yml.
+      env:
+        GIT_CONFIG_COUNT: "1"
+        GIT_CONFIG_KEY_0: safe.directory
+        GIT_CONFIG_VALUE_0: "*"
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
@@ -1629,7 +1655,9 @@ jobs:
           SPEC_DIR: ${{ needs.resolve-spec.outputs.spec-dir }}
           SPEC_BRANCH: ${{ inputs.spec-prefix }}${{ needs.resolve-spec.outputs.slug }}
         run: |
-          issue=$(gh api -X GET "repos/$GITHUB_REPOSITORY/contents/$SPEC_DIR/spec-meta.json" -f ref="$SPEC_BRANCH" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null | jq -r '.issue // empty' 2>/dev/null)
+          if ! issue=$(gh api -X GET "repos/$GITHUB_REPOSITORY/contents/$SPEC_DIR/spec-meta.json" -f ref="$SPEC_BRANCH" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null | jq -r '.issue // empty' 2>/dev/null); then
+            issue=''
+          fi
           echo "issue=${issue:-}" >> "$GITHUB_OUTPUT"
 
       # No agent step runs on this path, so no credential is required —
@@ -1678,7 +1706,7 @@ jobs:
           WC_PIPELINE_REF: ${{ steps.pipeline-ref.outputs.ref }}
         run: |
           p=.wing-commander-pipeline; want="$(cd "$GITHUB_WORKSPACE" && pwd -P)/$p"
-          if [ -L "$p" ] || [ ! -d "$p" ] || [ -L "$p/.git" ] || [ ! -d "$p/.git" ] || [ "$(git -C "$p" rev-parse --show-toplevel 2>/dev/null)" != "$want" ] || { [[ "${WC_PIPELINE_REF:-}" =~ ^[0-9a-f]{40}$ ]] && [ "$(git -C "$p" rev-parse HEAD 2>/dev/null)" != "$WC_PIPELINE_REF" ]; }; then rm -rf -- "$p"; echo "::error::wing-commander: $p is no longer the trusted pipeline checkout (a symlink, a missing or replaced .git, or another commit): the branch just checked out replaced it. Removed it so no later step loads branch code from there (#611)."; exit 1; fi
+          if [ -L "$p" ] || [ ! -d "$p" ] || [ -L "$p/.git" ] || [ ! -d "$p/.git" ] || [ "$(git -C "$p" rev-parse --show-toplevel 2>/dev/null)" != "$want" ] || { [[ "${WC_PIPELINE_REF:-}" =~ ^[0-9a-f]{40}$ ]] && [ "$(git -C "$p" rev-parse HEAD 2>/dev/null)" != "$(git -C "$p" rev-parse --verify -q "${WC_PIPELINE_REF}^{commit}" 2>/dev/null)" ]; }; then rm -rf -- "$p"; echo "::error::wing-commander: $p is no longer the trusted pipeline checkout (a symlink, a missing or replaced .git, or another commit): the branch just checked out replaced it. Removed it so no later step loads branch code from there (#611)."; exit 1; fi
           git -C "$p" cat-file blob HEAD:.github/scripts/pipeline-checkout-guard.sh | bash -s
 
       # The gate cannot run any earlier: issue-number is not a workflow_call
@@ -1767,8 +1795,7 @@ jobs:
       needs.verify-image-prerequisites.result != 'failure' &&
       inputs.mode == 'generate' &&
       !cancelled() &&
-      ( needs.verify-image-prerequisites.result == 'failure' ||
-        needs.resolve-spec.result == 'failure' ||
+      ( needs.resolve-spec.result == 'failure' ||
         needs.tasks.result == 'failure' ||
         needs.tasks.result == 'skipped' ) &&
       needs.resolve-spec.outputs.refusal-reason == '' &&
@@ -1782,6 +1809,11 @@ jobs:
             && fromJSON(format('{{"username":{0},"password":{1}}}', toJSON(secrets.container-registry-username), toJSON(secrets.container-registry-password)))
             || fromJSON('{}')
         }}
+      # Git safe.directory for the caller's container image -- see clarify.yml.
+      env:
+        GIT_CONFIG_COUNT: "1"
+        GIT_CONFIG_KEY_0: safe.directory
+        GIT_CONFIG_VALUE_0: "*"
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
@@ -1858,7 +1890,9 @@ jobs:
           SPEC_DIR: ${{ steps.identity.outputs.spec-dir }}
           SPEC_BRANCH: ${{ inputs.spec-prefix }}${{ steps.identity.outputs.slug }}
         run: |
-          issue=$(gh api -X GET "repos/$GITHUB_REPOSITORY/contents/$SPEC_DIR/spec-meta.json" -f ref="$SPEC_BRANCH" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null | jq -r '.issue // empty' 2>/dev/null)
+          if ! issue=$(gh api -X GET "repos/$GITHUB_REPOSITORY/contents/$SPEC_DIR/spec-meta.json" -f ref="$SPEC_BRANCH" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null | jq -r '.issue // empty' 2>/dev/null); then
+            issue=''
+          fi
           echo "issue=${issue:-}" >> "$GITHUB_OUTPUT"
 
       # FR-004/FR-011: a credential re-establishment failure is named as
@@ -1878,6 +1912,7 @@ jobs:
           entry-result: ${{ needs.tasks.result }}
           agent-ran: ${{ needs.tasks.outputs.agent-ran }}
           agent-conclusion: ${{ needs.tasks.outputs.agent-conclusion }}
+          agent-started: ${{ needs.tasks.outputs.agent-started }}
           credential-refresh-ok: ${{ needs.tasks.outputs.credential-refresh-ok }}
           failed-post-agent-step: ${{ needs.tasks.outputs.failed-post-agent-step }}
 
@@ -1894,10 +1929,11 @@ jobs:
           reason: ${{ steps.reason.outputs.reason }}
           # FR-015: resume-oriented wording when the agent ran and a step
           # after it is what stalled the job -- not a from-scratch restart.
-          # Worded from agent-conclusion -- see clarify.yml.
-          restart-command: ${{ needs.tasks.outputs.agent-ran == 'true' && needs.tasks.outputs.agent-conclusion == 'success' && 'The tasks agent step completed its work; a step after it did not. Re-dispatch the tasks stage for this specification once the cause above is resolved.' || needs.tasks.outputs.agent-ran == 'true' && 'The tasks agent step failed after running; its pushed commits are on the branch. Re-dispatch the tasks stage for this specification once the cause above is resolved.' || 'Re-dispatch the tasks stage for this specification once the cause above is resolved.' }}
+          # Worded from agent-conclusion and agent-started -- see clarify.yml.
+          restart-command: ${{ needs.tasks.outputs.agent-ran == 'true' && needs.tasks.outputs.agent-conclusion == 'success' && 'The tasks agent step completed its work; a step after it did not. Re-dispatch the tasks stage for this specification once the cause above is resolved.' || needs.tasks.outputs.agent-ran == 'true' && needs.tasks.outputs.agent-started != 'false' && 'The tasks agent step failed after running; its pushed commits are on the branch. Re-dispatch the tasks stage for this specification once the cause above is resolved.' || 'Re-dispatch the tasks stage for this specification once the cause above is resolved.' }}
           agent-ran: ${{ needs.tasks.outputs.agent-ran }}
           agent-conclusion: ${{ needs.tasks.outputs.agent-conclusion }}
+          agent-started: ${{ needs.tasks.outputs.agent-started }}
           commits-published: ${{ needs.tasks.outputs.commits-published }}
           push-ok: ${{ needs.tasks.outputs.push-ok }}
 
@@ -1914,8 +1950,7 @@ jobs:
       needs.verify-image-prerequisites.result != 'failure' &&
       inputs.mode == 'approved' &&
       !cancelled() &&
-      ( needs.verify-image-prerequisites.result == 'failure' ||
-        needs.resolve-spec.result == 'failure' ||
+      ( needs.resolve-spec.result == 'failure' ||
         needs.tasks-approved.result == 'failure' ||
         needs.tasks-approved.result == 'skipped' ) &&
       needs.resolve-spec.outputs.refusal-reason == '' &&
@@ -1929,6 +1964,11 @@ jobs:
             && fromJSON(format('{{"username":{0},"password":{1}}}', toJSON(secrets.container-registry-username), toJSON(secrets.container-registry-password)))
             || fromJSON('{}')
         }}
+      # Git safe.directory for the caller's container image -- see clarify.yml.
+      env:
+        GIT_CONFIG_COUNT: "1"
+        GIT_CONFIG_KEY_0: safe.directory
+        GIT_CONFIG_VALUE_0: "*"
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
@@ -2001,7 +2041,9 @@ jobs:
           SPEC_DIR: ${{ steps.identity.outputs.spec-dir }}
           SPEC_BRANCH: ${{ inputs.spec-prefix }}${{ steps.identity.outputs.slug }}
         run: |
-          issue=$(gh api -X GET "repos/$GITHUB_REPOSITORY/contents/$SPEC_DIR/spec-meta.json" -f ref="$SPEC_BRANCH" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null | jq -r '.issue // empty' 2>/dev/null)
+          if ! issue=$(gh api -X GET "repos/$GITHUB_REPOSITORY/contents/$SPEC_DIR/spec-meta.json" -f ref="$SPEC_BRANCH" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null | jq -r '.issue // empty' 2>/dev/null); then
+            issue=''
+          fi
           echo "issue=${issue:-}" >> "$GITHUB_OUTPUT"
 
       - name: Determine which dependency did not start

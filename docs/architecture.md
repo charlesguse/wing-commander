@@ -204,6 +204,11 @@ attribute a later, real failure to the credential rather than to whichever
 unrelated step happens to run next — but a named post-agent step failure
 always outranks the credential-only diagnosis, mentioning the credential
 only as context when both are known (third maintainer review of PR #407).
+Ahead of both, the agent-ran signal's `started` output (`false` when the
+agent step failed and left no execution transcript) lets the stall reason
+and notice say the agent action failed in its own setup before the agent
+started -- no agent work, no pushed commits, fix the runner environment
+before re-dispatching -- instead of "the agent step ran" (#889/#972).
 
 The credential an agent step itself pushes with while it is still running —
 the gap the remedy above does not cover, tracked as
@@ -253,14 +258,27 @@ Each stage job uses `concurrency: wing-commander-<spec key>` — one spec's stag
 serialize, different specs run in parallel. Intake serializes globally
 (`wing-commander-intake`) so feature numbers can't collide.
 
+GitHub's own concurrency group holds only one pending job at a time, so two
+overlapping stage-9 (`pr-conversation.yml`) runs joining it directly could
+evict each other's queued `act`/`dispatch-once`/`implement` before either
+ran a step. `specs/074-serialized-fold-dispatch` adds a ticket-admission
+layer ahead of that group: `fold-turn-act`/`fold-turn-dispatch`/
+`fold-turn-implement` each enqueue one ticket in a shared branch-backed
+ledger (`.github/actions/_shared/fold-queue-ledger.sh`) and block until it
+is granted before the gated job is even scheduled, so at most one job
+across every in-flight run for a spec ever attempts to enter the group.
+`fold-cycle-guard.yml` watches for an implement run cancelled while still
+pending (the one residual case: an un-ticketed manual dispatch colliding
+with a ticketed one) and re-dispatches it automatically, at most once.
+
 ### Model tiering (constitution II)
 | Work | Model |
 |---|---|
 | Triage, diff summaries, labels | `claude-haiku-4-5` |
-| Watchdog diagnosis | `claude-opus-5` (evidence adjudication under a strict schema — not the triage tier; see issue #124) |
-| specify / clarify | `claude-opus-5` (constitution v1.1.0: spec quality is bought up front) |
-| plan / tasks | `claude-sonnet-5` |
-| implement / converge | stage `model` input (default `claude-sonnet-5`); this repo's wrapper wires `vars.WING_COMMANDER_IMPLEMENT_MODEL` and the `model:opus` label opt-in into it |
+| Watchdog diagnosis | `claude-opus-5-5` (evidence adjudication under a strict schema — not the triage tier; see issue #124) |
+| specify / clarify | `claude-opus-5-5` (constitution v1.1.0: spec quality is bought up front) |
+| plan / tasks | `claude-sonnet-5-5` |
+| implement / converge | stage `model` input (default `claude-sonnet-5-5`); this repo's wrapper wires `vars.WING_COMMANDER_IMPLEMENT_MODEL` and the `model:opus` label opt-in into it |
 
 Every agent step declares `--model` and `--max-turns`. Each is followed by a
 deterministic `.github/actions/wing-commander-metrics-summary` step that reads the
@@ -363,7 +381,12 @@ change to the tiering above.
 - Pipeline entry = maintainer-applied `spec-request` label for the feature
   lifecycle. The board loop (constitution X) acts on an issue a maintainer
   authored or labeled, or one the pipeline filed under a label only it
-  applies; anything else gets a read-only triage proposal.
+  applies; anything else gets a read-only triage proposal. Spec-shaped
+  work the loop finds is filed as a `spec-proposal`, which never starts
+  intake: only the owner's own `spec-request` does. A fix-shaped change
+  the loop cannot push (a workflow file, while the App holds no Workflows
+  permission) is held under `board:stalled` for a maintainer, never filed
+  as a spec.
 - Comment triggers: commenter must be OWNER/MEMBER/COLLABORATOR **or** the
   original issue author; `Bot`-type users never trigger. Stage 10
   (`pr-conversation`) is the one exception to the author carve-out —
@@ -525,7 +548,7 @@ idiom as the plan stage).
 FR-012); idempotency-guard on `spec-meta.json` `stage == "plan"` (duplicate
 notifications no-op, FR-011; a manual dispatch may also proceed from
 `"stalled"` — that is the restart path). Then run `/speckit-tasks`
-(`claude-sonnet-5`, `SPECIFY_FEATURE_DIRECTORY` set), gated by
+(`claude-sonnet-5-5`, `SPECIFY_FEATURE_DIRECTORY` set), gated by
 `vars.WING_COMMANDER_TASKS_REVIEW`:
 - `auto` (default, any other value falls open to it): commit `tasks.md` +
   `spec-meta.json` (`stage: "tasks"`) directly to `spec/NNN-slug`; post a task
@@ -583,8 +606,8 @@ vars.WING_COMMANDER_MAX_ITERATIONS`).
 5. **Failure ≠ non-convergence** (FR-013): an outright pass failure (step
    fails, or `spec-meta.json` didn't advance as instructed — read through the
    `wing-commander-spec-meta` composite, #340) auto-retries the
-   same iteration once, one model tier up (`claude-sonnet-5` →
-   `claude-opus-5`). A failed retry — or a failure already on the top
+   same iteration once, one model tier up (`claude-sonnet-5-5` →
+   `claude-opus-5-5`). A failed retry — or a failure already on the top
    tier — marks the spec `stalled` (label, `spec-meta.json`, issue comment);
    restart is manual: re-dispatch the workflow with the same iteration.
 
@@ -657,16 +680,18 @@ defects and asserts both the verdict and the error text.
 
 **Design**: a `discover` job selects every in-flight `spec/NNN-slug` branch
 (reading each branch's *own* `spec-meta.json` tip, skipping `stalled` and
-unidentifiable ones), then fans out one isolated `rebase` matrix job per
+unidentifiable ones, a branch whose PR has merged, and one whose lifecycle
+issue is closed with no open PR from the branch), then fans out one isolated `rebase` matrix job per
 branch. Each runs `git rebase origin/main`; clean ⇒ `push --force-with-lease`
 (a rejected lease means the branch moved meanwhile — skip silently, retry next
-run); conflicts ⇒ claude-code-action (`--model claude-sonnet-5`, prompt scoped
+run); conflicts ⇒ claude-code-action (`--model claude-sonnet-5-5`, prompt scoped
 to resolving the in-progress rebase without unrelated edits, verified by a
 deterministic per-commit file-scope check before publish); still stuck ⇒ abort
 the rebase (branch left byte-for-byte untouched) and comment on the lifecycle
 issue for human help. The escalation comment carries a
 `<!-- wing-commander-rebase: blocked branch-sha=… main-sha=… -->` marker plus a
-`rebase:blocked` label; `discover` reads that marker to skip a branch whose
+`rebase:blocked` label; `discover` reads that marker, from the App's own
+comments only, to skip a branch whose
 `(branch, main)` pair hasn't changed since it was reported blocked, so a stall
 is only escalated once until either side moves (a subsequent success removes
 the label).
@@ -790,7 +815,12 @@ could-not-inspect / internal-failure truths all read `skipped` (the agent
 step itself always looks green in the API — `continue-on-error` reports the
 post-rescue conclusion); and the diagnose execution log parses without
 `is_error` or known fabrication markers. On any failure 8b turns red and
-files (or appends to) a deduplicated `pipeline-defect` issue. The chain can
+files (or appends to) a deduplicated `pipeline-defect` issue: one issue per
+failure fingerprint (a hash of the digit-normalized fail reasons, leaving out
+the history-dependent run-duration band reasons when any other reason
+remains, carried as a hidden body marker), never appended to an issue the board loop has
+excluded (`board_eligibility.is_excluded()`, e.g. `board:stalled`), and
+naming the inspected run and the diagnose job's first failed step. The chain can
 be exercised on demand — including its red path — via the manual
 `wing-commander-watchdog-test.yml` (`inject-failure: true` dispatches stage 8
 at an unresolvable run-id and asserts red propagates).
@@ -946,7 +976,7 @@ billed jobs, `collect` and the always-on `report-unhandled-failure`.
   `metrics-record*` artifact, and Gate 74 holds that the cumulative rollup
   does not list it at all — never as a record that existed and could not be
   retrieved.
-- `diagnose` — one `claude-opus-5`, read-only, structured-output step
+- `diagnose` — one `claude-opus-5-5`, read-only, structured-output step
   (no write tools, no `git`/`gh` write access) turning signals into zero or
   more Findings. `signals.json` and anything read is framed as untrusted
   data, never instructions (FR-023). Zero Findings ⇒ "passed inspection"
@@ -1177,7 +1207,7 @@ standing with this stage. A
   PR is an implementation PR this stage acts on (`spec/NNN-slug → default
   branch`, never a draft-spec/plan/tasks branch); re-checks the stage-level
   authorized-actor gate; stages the request body as untrusted data, never
-  interpolated into a prompt; a `claude-sonnet-5`/`claude-opus-5` step
+  interpolated into a prompt; a `claude-sonnet-5-5`/`claude-opus-5-5` step
   (strictly read-only tools) classifies each distinguishable request in the
   comment into one of nine categories — `in-scope-change`, `question`,
   `needs-info`, `push-back`, `new-functionality`, `small-unrelated-change`,
@@ -1280,7 +1310,7 @@ one active upgrade cycle at a time):
   decision). The tracking issue's settle marker gains two sub-fields:
   `guard-pr` (the narrated PR, written once per blocking PR) and
   `guard-checked` (a liveness timestamp refreshed every guarded run).
-  The one agent step (`claude-sonnet-5`, read-only, structured output) that
+  The one agent step (`claude-sonnet-5-5`, read-only, structured output) that
   follows decides `clean-bump` (⇒ `prepare`), `needs-migration` (⇒ routed to
   a maintainer, no diff), or `ambiguous-options` (⇒ a `kind: action` question
   posted, the marker flagged `awaiting-decision=true`, the cycle paused).

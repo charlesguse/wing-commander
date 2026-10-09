@@ -1,0 +1,10 @@
+[
+  {
+    "number": 5103,
+    "author": {"login": "someone"},
+    "authorAssociation": "OWNER",
+    "labels": [{"name": "disposition:duplicate"}],
+    "state": "CLOSED",
+    "createdAt": "2026-01-01T00:00:00Z"
+  }
+]

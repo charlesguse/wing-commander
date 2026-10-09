@@ -41,12 +41,13 @@ plus `rebase.yml`'s `rebase`, `cleanup.yml`'s `teardown-done`,
 Every derived subject resolves to exactly one disposition:
 
 - **`full_subject`** (the default): the full post-agent mechanism below
-  applies. Covers the nine original stages plus `rebase.yml`'s `rebase`.
+  applies. Covers the nine original stages plus `rebase.yml`'s `rebase`,
+  `board-loop.yml`'s four jobs (full subjects since #733/#848) and
+  `lifecycle-review-gate.yml`'s `review` (spec 062).
 - **`exempt`**: a checked-in `EXEMPT_JOBS` entry names a mechanically
   asserted condition instead — a wall-clock bound (`cleanup.yml`'s
   `teardown-done`, `watchdog.yml`'s `diagnose`, `auto-update-spec-kit.yml`'s
-  `evaluate-path`/`comment-reply`) or adoption of the post-agent composites
-  (`board-loop.yml`'s four jobs, provisional). The gate fails, naming the
+  `evaluate-path`/`comment-reply`). The gate fails, naming the
   entry, its reason and its deciding issue, the run the condition stops
   holding.
 - **`agentless_in_scope`**: the pre-existing `AGENTLESS_JOBS` set

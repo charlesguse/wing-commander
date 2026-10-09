@@ -59,6 +59,22 @@ success/failure-or-timeout/uncorrelated shape this section stated before
 specs/060-self-redrive-concurrency shipped. Every non-`success` reason
 leaves the issue open, carrying which of the eight conditions applied.
 
+## Re-drive, recovered (specs/096-durable-prove-entry)
+
+A `prove-gate`/`prove` run whose own `pull_request: closed` queue slot was
+displaced before it ever started, or whose directed dispatch could not be
+correlated (`outcome_reason` `"prove run displaced"`/`"uncorrelated"`), is
+not retried automatically from that run — it is picked up by a later
+`select` job's own "Recover a stranded prove" step, which dispatches the
+*same* directed-proof-run mechanism below (`directed-stage=prove`) with
+`directed-recovery=true`, at most once per stranding. The dispatched run
+performs the identical actions-only/re-drive/wait/close logic as any other
+`prove` entry, additionally stating the recovery in its comment and
+labelling its metrics record `"proof (recovered): <outcome_reason>"`. See
+`specs/096-durable-prove-entry/contracts/recovery-and-resume.md` for the
+full mechanism (candidate selection, the pre-dispatch busy check, and the
+marker's `outcome_reason`/`recovery_attempted` fields).
+
 ## Directed proof run (specs/060-self-redrive-concurrency)
 
 When the workflow this feature would re-drive is `board-loop.yml` itself

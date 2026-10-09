@@ -180,7 +180,8 @@ mkopts 0.15.1; git add -A; git commit -qm "chore: bump Spec Kit to v0.15.1"
 git checkout -q main
 printf '{"issues":{"42":{"number":42,"state":"open","body":"watching","labels":[],"comments":[]}},"prs":{},"labels":[],"next_issue":50,"next_pr":70,"default_branch":"main"}' > "$GH_STATE"
 GHA_SUBST=("steps.ctx.outputs.token=stub")
-# DETAIL is verify's failure-detail output, which on the PASS path carries
+# DETAIL is verify's failure detail (#736: loaded from the verify-diagnostics
+# artifact, not a job output), which on the PASS path carries
 # the SC-012 scratch-repository pointer the combine step appends for every
 # lightweight+end-to-end run — so the PR body is where a maintainer actually
 # reads it.
@@ -330,5 +331,40 @@ check "S13p an unreadable remote blocks, it does not fall through" "$(out blocke
 check_contains "S13p reason says the lookup failed, not that a branch exists" "$(out reason)" "could not read"
 check_contains "S13p reason names the branch it declined to risk" "$(out reason)" "auto-update-spec-kit/v0.15.1"
 cd - >/dev/null
+
+echo
+echo "=== #736: act loads verify's detail from the verify-diagnostics artifact ==="
+load_verify() { # load_verify <verify-passed> [detail [file-attempt]] -- no detail: the artifact is missing
+  new_step_env
+  GHA_SUBST=()
+  export VERIFY_PASSED="$1" WANT_ATTEMPT=2 RUN_URL="https://github.com/charlesguse/wing-commander/actions/runs/424242"
+  if [ "$#" -gt 1 ]; then
+    mkdir -p "$RUNNER_TEMP/verify-diagnostics"
+    jq -n --arg d "$2" --arg a "${3:-2}" '{"failure-detail": $d, attempt: $a}' > "$RUNNER_TEMP/verify-diagnostics/verify-diagnostics.json"
+  fi
+  run_step 'auto-update-spec-kit__act__*load-verify-diagnostics*.sh' >"$WORK/load-verify.log" 2>&1
+  LV_RC=$?
+}
+load_verify false "$(printf 'e2e: spec.md never landed\nsecond line')"
+check "act load: step exits 0" "$LV_RC" "0"
+check_contains "act load: failure detail is carried" "$(out failure-detail)" "spec.md never landed"
+check_contains "act load: multi-line detail survives" "$(out failure-detail)" "second line"
+load_verify true "The e2e-stage ran in charlesguse/wing-commander-e2e-42"
+check_contains "act load: the pass path keeps the scratch pointer" "$(out failure-detail)" "wing-commander-e2e-42"
+load_verify false
+check "act load: missing artifact still exits 0" "$LV_RC" "0"
+check_contains "act load: missing artifact on a failure is never a bodyless callout" "$(out failure-detail)" "could not be loaded"
+check_contains "act load: and points at the run" "$(out failure-detail)" "/actions/runs/424242"
+check_contains "act load: missing artifact warns" "$(cat "$WORK/load-verify.log")" "no verify-diagnostics artifact"
+load_verify true
+check "act load: missing artifact on a pass -> empty detail" "$(out failure-detail)" ""
+# Re-run all jobs: attempt 1 passed and uploaded the pass-path pointer,
+# attempt 2 failed and its upload failed too. The stale pass text must not
+# become the failure callout's body.
+load_verify false "The e2e-stage ran in charlesguse/wing-commander-e2e-42 (attempt 1's pass)" 1
+check "act load: a stale attempt's artifact still exits 0" "$LV_RC" "0"
+check_not_contains "act load: a stale attempt's pass text is not the failure body" "$(out failure-detail)" "attempt 1's pass"
+check_contains "act load: a stale attempt's artifact gets the synthesized body" "$(out failure-detail)" "could not be loaded"
+check_contains "act load: a stale attempt's artifact warns" "$(cat "$WORK/load-verify.log")" "run attempt '1', not '2'"
 
 report "T5 act"

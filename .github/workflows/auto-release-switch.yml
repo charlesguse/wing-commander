@@ -1,0 +1,105 @@
+name: "auto-release-switch"
+
+# One dispatch pauses or resumes auto-release: sets, or deletes,
+# WING_COMMANDER_AUTO_RELEASE_PAUSED, then reads it back and reports what
+# it now is. It exists for a maintainer's session that can dispatch a
+# workflow but cannot write repository variables, so that a failed
+# auto-release run can be paused again from there.
+#
+# The only credential is WC_AUTO_RELEASE_SWITCH_TOKEN: a fine-grained token
+# holding Variables: Read and write on this repository and nothing else
+# (docs/setup.md). GITHUB_TOKEN cannot write variables, and the App is
+# deliberately not granted it: its token reaches agent steps, which must
+# never be able to clear a kill switch.
+#
+# Resuming follows specs/055-unattended-e2e-gates FR-028/FR-029 (the
+# variable's row in docs/setup.md): never a runtime action the pipeline
+# takes on itself. Anyone who can dispatch this, a bot included, may
+# pause; only the repository owner may resume. github.triggering_actor,
+# not github.actor: a bot re-running an owner's resume run is the bot.
+on:
+  workflow_dispatch:
+    inputs:
+      paused:
+        description: "true pauses auto-release; false resumes it (deletes the variable)"
+        type: choice
+        options:
+          - "true"
+          - "false"
+        required: true
+
+permissions: {}
+
+concurrency:
+  group: wing-commander-auto-release-switch
+  cancel-in-progress: false
+
+jobs:
+  switch:
+    permissions: {}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Set the auto-release kill switch
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.WC_AUTO_RELEASE_SWITCH_TOKEN }}
+          PAUSED: ${{ inputs.paused }}
+          ACTOR: ${{ github.triggering_actor }}
+          OWNER: ${{ github.repository_owner }}
+          SWITCH_VAR: WING_COMMANDER_AUTO_RELEASE_PAUSED
+        run: |
+          set -euo pipefail
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error::auto-release-switch: the WC_AUTO_RELEASE_SWITCH_TOKEN secret is not set, so nothing changed. See docs/setup.md."
+            exit 1
+          fi
+          case "$PAUSED" in
+            true)
+              gh variable set "$SWITCH_VAR" --body true -R "$GITHUB_REPOSITORY"
+              want="true"
+              ;;
+            false)
+              if [ "${ACTOR,,}" != "${OWNER,,}" ]; then
+                echo "::error::auto-release-switch: only the repository owner (@$OWNER) may resume auto-release, and @$ACTOR dispatched this. Resuming is never a runtime action the pipeline takes on itself (specs/055-unattended-e2e-gates FR-028). Nothing changed."
+                exit 1
+              fi
+              # Deleted rather than set to "false": unset is the variable's
+              # documented resting state. An already-unset variable is fine.
+              if ! out="$(gh variable delete "$SWITCH_VAR" -R "$GITHUB_REPOSITORY" 2>&1)"; then
+                case "$out" in
+                  *"HTTP 404"*) ;;
+                  *)
+                    echo "::error::auto-release-switch: could not delete $SWITCH_VAR: $(printf '%s' "$out" | tr '\n' ' ' | cut -c1-300)"
+                    exit 1
+                    ;;
+                esac
+              fi
+              want=""
+              ;;
+            *)
+              echo "::error::auto-release-switch: paused must be true or false, got '$PAUSED'. Nothing changed."
+              exit 1
+              ;;
+          esac
+
+          # Read it back: the summary reports what the variable is, not what
+          # this run asked for.
+          if now="$(gh variable get "$SWITCH_VAR" -R "$GITHUB_REPOSITORY" 2>"$RUNNER_TEMP/switch-get.err")"; then
+            :
+          elif grep -q "HTTP 404\|not found" "$RUNNER_TEMP/switch-get.err"; then
+            now=""
+          else
+            echo "::error::auto-release-switch: could not read $SWITCH_VAR back: $(tr '\n' ' ' < "$RUNNER_TEMP/switch-get.err" | cut -c1-300)"
+            exit 1
+          fi
+          if [ "$now" != "$want" ]; then
+            echo "::error::auto-release-switch: $SWITCH_VAR reads '${now:-(unset)}' after this run, not '${want:-(unset)}'."
+            exit 1
+          fi
+          if [ "$now" = "true" ]; then
+            state="paused"
+          else
+            state="resumed"
+          fi
+          echo "auto-release is $state: $SWITCH_VAR is ${now:-unset} (dispatched by @$ACTOR)." | tee -a "$GITHUB_STEP_SUMMARY"

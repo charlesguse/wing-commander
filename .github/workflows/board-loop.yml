@@ -67,6 +67,11 @@ on:
         required: false
         default: ""
         type: string
+      directed-recovery:
+        description: "Directed proof run: this dispatch is recovering a previously displaced or uncorrelated proof (internal use, leave blank otherwise)"
+        required: false
+        default: ""
+        type: string
   pull_request:
     types: [closed]         # resume path (FR-041) -- the `prove` step, added in a later phase of this feature
 
@@ -77,12 +82,18 @@ permissions: {}
 # research.md D3/contracts/concurrency-groups.md: concurrency moved from
 # one workflow-level block to per-job blocks (below, on each job) so a
 # directed proof run's prove-gate/prove job instances never enter this
-# workflow's own ordinary group at all. The FR-016 guarantee sentence:
+# workflow's own ordinary group at all; specs/096-durable-prove-entry
+# further keys prove-gate/prove's own ordinary-trigger group by merged PR
+# (contracts/prove-path-concurrency.md), so two merges' own prove runs
+# never enter each other's group either. The FR-016 guarantee sentence, as
+# amended by specs/096-durable-prove-entry FR-005:
 #
-#   One board item is in flight repository-wide. A directed proof run,
-#   which selects no board item and opens no fix PR, is the only run
-#   permitted to overlap an ordinary board-loop run. Every other pair of
-#   board-loop.yml runs queues rather than races or cancels.
+#   One board item is in flight repository-wide. A directed proof run
+#   and a merged item's own prove run — neither of which selects a
+#   board item or opens a fix PR — are the only runs permitted to
+#   overlap an ordinary board-loop run, or each other when they prove
+#   distinct merged items. Every other pair of board-loop.yml runs
+#   queues rather than races or cancels.
 #
 # -- see specs/060-self-redrive-concurrency/contracts/concurrency-groups.md
 
@@ -132,10 +143,20 @@ jobs:
     permissions:
       contents: read
       issues: read
-    # One board item is in flight repository-wide. A directed proof run,
-    # which selects no board item and opens no fix PR, is the only run
-    # permitted to overlap an ordinary board-loop run. Every other pair of
-    # board-loop.yml runs queues rather than races or cancels.
+      # specs/096-durable-prove-entry FR-011: the new recovery step below
+      # calls `gh run list`/`gh workflow run` against this same workflow,
+      # which github.token needs actions:write for (mirroring the prove
+      # job's own busy-check step). WC_BOT_TOKEN never gets this
+      # permission (docs/setup.md "Repository permissions" -- exactly
+      # Contents/Issues/Pull requests), so every issue-write in that step
+      # still goes through WC_BOT_TOKEN, not github.token.
+      actions: write
+    # One board item is in flight repository-wide. A directed proof run
+    # and a merged item's own prove run — neither of which selects a
+    # board item or opens a fix PR — are the only runs permitted to
+    # overlap an ordinary board-loop run, or each other when they prove
+    # distinct merged items. Every other pair of board-loop.yml runs
+    # queues rather than races or cancels.
     concurrency:
       group: wing-commander-board-loop
       cancel-in-progress: false
@@ -217,13 +238,37 @@ jobs:
       - name: Detect a merge whose proof run never started (FR-010b)
         id: displacement
         if: steps.killswitch.outputs.status != 'paused' && steps.stand-down.outputs.status != 'in-flight'
+        # A failure here only skips this tick's detection; select and the
+        # steps after it never depend on it (review of #893).
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
+          # The App holds no Actions permission, so `gh run list` reads with
+          # the job's own token (select grants actions: write).
+          ACTIONS_TOKEN: ${{ github.token }}
           BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}[bot]
         run: |
           set -uo pipefail
-          gh pr list -R "$GITHUB_REPOSITORY" --state merged --label board:owned \
-            --json number,body,mergedAt -L 20 > "$RUNNER_TEMP/board-recent-merges.json"
+          if ! gh pr list -R "$GITHUB_REPOSITORY" --state merged --label board:owned \
+            --json number,body,mergedAt,headRefName -L 20 > "$RUNNER_TEMP/board-recent-merges.json"; then
+            echo "::error::board-loop: could not list recent board:owned merges -- displacement detection skipped this tick (FR-010b)."
+            exit 1
+          fi
+
+          # maintainer review: a merge's own `pull_request: closed` run can
+          # still be mid-wait in its own new per-PR concurrency group
+          # (specs/096-durable-prove-entry FR-005) when this step runs --
+          # that run has not been displaced at all, only still running or
+          # queued in its own per-PR group. Matched by headBranch
+          # against each merge's own headRefName, never by PR number alone
+          # (a run list row carries no PR number for a `pull_request` event).
+          # A failed read must not become "no live runs": that would mark a
+          # running proof as displaced.
+          if ! GH_TOKEN="$ACTIONS_TOKEN" gh run list --workflow=board-loop.yml -R "$GITHUB_REPOSITORY" --event pull_request \
+            --json headBranch,status -L 50 > "$RUNNER_TEMP/board-displacement-runs.json"; then
+            echo "::error::board-loop: could not list board-loop's pull_request runs -- displacement detection skipped this tick (FR-010b)."
+            exit 1
+          fi
 
           # One row per issue's own MOST RECENT merge -- the same `Fixes #N`
           # convention prove-gate's own "Resolve the originating issue" step
@@ -245,13 +290,17 @@ jobs:
               merged_at = pr.get("mergedAt") or ""
               existing = latest_by_issue.get(issue)
               if existing is None or merged_at > existing["merged_at"]:
-                  latest_by_issue[issue] = {"issue": issue, "pr": pr["number"], "merged_at": merged_at}
+                  latest_by_issue[issue] = {
+                      "issue": issue, "pr": pr["number"], "merged_at": merged_at,
+                      "head_ref": pr.get("headRefName") or "",
+                  }
 
           with open(os.path.join(os.environ["RUNNER_TEMP"], "board-recent-merges-by-issue.json"), "w", encoding="utf-8") as fh:
               json.dump(list(latest_by_issue.values()), fh)
           PYEOF
 
           echo '{}' > "$RUNNER_TEMP/board-displacement-comments-by-issue.json"
+          : > "$RUNNER_TEMP/board-displacement-stalled.txt"
           mapfile -t displacement_issues < <(jq -r '.[].issue' "$RUNNER_TEMP/board-recent-merges-by-issue.json")
           for number in "${displacement_issues[@]}"; do
             # Issue #557: fails the step on error -- see the select step's
@@ -264,6 +313,13 @@ jobs:
               echo "::error::board-loop: could not fetch the comments of issue #$number -- its board item marker cannot be read, so the proof-run-displacement check is not decided (#557)."
               exit 1
             fi
+            # A board:stalled issue is held and must not be re-marked (spec
+            # 097 FR-008); a failed read is fatal, never "not stalled".
+            if ! labels="$(gh api "repos/$GITHUB_REPOSITORY/issues/$number" --jq '[.labels[].name] | join(",")')"; then
+              echo "::error::board-loop: could not read issue #$number's labels -- the proof-run-displacement check is not decided."
+              exit 1
+            fi
+            case ",$labels," in *,board:stalled,*) echo "$number" >> "$RUNNER_TEMP/board-displacement-stalled.txt" ;; esac
             jq --arg number "$number" --slurpfile comments "$RUNNER_TEMP/board-displacement-comments-$number.json" \
               '. + {($number): $comments[0]}' "$RUNNER_TEMP/board-displacement-comments-by-issue.json" \
               > "$RUNNER_TEMP/board-displacement-comments-by-issue.tmp"
@@ -272,6 +328,8 @@ jobs:
 
           MERGED_PRS_PATH="$RUNNER_TEMP/board-recent-merges-by-issue.json" \
             COMMENTS_BY_ISSUE_PATH="$RUNNER_TEMP/board-displacement-comments-by-issue.json" \
+            RUNS_PATH="$RUNNER_TEMP/board-displacement-runs.json" \
+            STALLED_PATH="$RUNNER_TEMP/board-displacement-stalled.txt" \
             BOT_LOGIN="$BOT_LOGIN" \
             python3 - <<'PYEOF'
           import json
@@ -286,8 +344,17 @@ jobs:
           with open(os.environ["COMMENTS_BY_ISSUE_PATH"], encoding="utf-8") as fh:
               raw = json.load(fh)
           issues_by_number = {int(k): v for k, v in raw.items()}
+          with open(os.environ["RUNS_PATH"], encoding="utf-8") as fh:
+              runs = json.load(fh)
+          in_progress_head_refs = {
+              run.get("headBranch") or "" for run in runs if run.get("status") != "completed"}
 
-          undetected = find_undetected_merges(merged_prs, issues_by_number, os.environ["BOT_LOGIN"])
+          with open(os.environ["STALLED_PATH"], encoding="utf-8") as fh:
+              stalled = {int(line) for line in fh if line.strip()}
+
+          undetected = find_undetected_merges(
+              merged_prs, issues_by_number, os.environ["BOT_LOGIN"], in_progress_head_refs,
+              stalled_issue_numbers=stalled)
 
           with open(os.path.join(os.environ["RUNNER_TEMP"], "board-undetected-merges.json"), "w", encoding="utf-8") as fh:
               json.dump(undetected, fh)
@@ -296,10 +363,199 @@ jobs:
           jq -c '.[]' "$RUNNER_TEMP/board-undetected-merges.json" | while read -r row; do
             issue_number="$(printf '%s' "$row" | jq -r '.issue')"
             merged_pr="$(printf '%s' "$row" | jq -r '.merged_pr')"
-            marker="$(python3 .github/scripts/board_item_marker.py --step prove)"
+            marker="$(python3 .github/scripts/board_item_marker.py --step prove \
+              --outcome-reason "$(printf '%s' "$row" | jq -r '.recorded_reason')")" \
+              || { echo "::error::board-loop select: issue #$issue_number's prove marker could not be rendered -- nothing is posted (#786)."; exit 1; }
             gh issue comment "$issue_number" -R "$GITHUB_REPOSITORY" \
               --body "$(printf 'PR #%s merged, but its proof run never started -- the pull_request: closed run that would have entered prove-gate/prove was itself displaced from the queue before it began. This issue stays open.\n\n%s' "$merged_pr" "$marker")"
           done
+
+      # spec 108 (contracts/closed-without-landing-notice.md, FR-017): a
+      # spec-request this loop filed that closed without its linked
+      # specification ever reaching the finalize stage's final PR leaves
+      # an idempotent notice on both it and the originating issue it
+      # disposed of, naming reopening as the path back onto the board.
+      - name: Detect a spec-request that closed without landing (FR-017)
+        id: closed-without-landing
+        if: steps.killswitch.outputs.status != 'paused' && steps.stand-down.outputs.status != 'in-flight'
+        # maintainer review, fold leg-3: this step's own if: has no status
+        # function, so it implicitly reads success() -- a lasting failure
+        # here (a locked issue, a 403) would fail success() for every step
+        # after it in this job, including the `select` step below, and
+        # skip selecting a new board item on every scheduled run.
+        # continue-on-error absorbs that: the ::error:: annotations below
+        # still report the failure, but the job's success() stays true for
+        # select.
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
+          BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}[bot]
+        run: |
+          set -uo pipefail
+          # maintainer review, fold leg-2: `set -uo pipefail` has no `-e`,
+          # so this `gh issue list` call's own exit code is never checked
+          # on its own -- an explicit `if` around it is required, matching
+          # the per-issue comment fetches below.
+          #
+          # Only spec-request is read: a bot-filed spec-proposal reaches
+          # the lifecycle only when the owner promotes it by adding
+          # spec-request, and a proposal the owner closes unpromoted was
+          # declined, not lost -- it gets no "closed without landing"
+          # notice inviting a reopen (board reset of 2026-10-01).
+          if ! gh issue list -R "$GITHUB_REPOSITORY" --state closed --label spec-request \
+            --author "$BOT_LOGIN" --json number -L 100 \
+            > "$RUNNER_TEMP/board-closed-spec-requests.json"; then
+            echo "::error::board-loop: could not list closed spec-request issues -- the closed-without-landing scan cannot run this time (FR-017)."
+            exit 1
+          fi
+
+          mapfile -t closed_spec_requests < <(jq -r '.[].number' "$RUNNER_TEMP/board-closed-spec-requests.json")
+          echo '{}' > "$RUNNER_TEMP/board-closed-without-landing-comments.json"
+          echo '{}' > "$RUNNER_TEMP/board-disposed-comments.json"
+          # maintainer review, fold leg-3: a single failed comment fetch
+          # below no longer exits the step outright -- it is counted and
+          # skipped, so every other spec-request/disposed issue this run
+          # still gets evaluated; the count fails the step at the very end
+          # (after the notices for everything that DID resolve are
+          # posted), so the failure stays visible without hiding the rest.
+          fetch_errors=0
+          scan_failed=0
+
+          if [ "${#closed_spec_requests[@]}" -gt 0 ]; then
+            for number in "${closed_spec_requests[@]}"; do
+              # #557 -- see the select step's per-issue comments fetch above.
+              if ! gh api "repos/$GITHUB_REPOSITORY/issues/$number/comments" --paginate \
+                --jq '.[] | {created_at, body, user}' | jq -s '.' \
+                > "$RUNNER_TEMP/board-closed-without-landing-comments-$number.json"; then
+                echo "::error::board-loop: could not fetch the comments of spec-request #$number -- the closed-without-landing scan is not decided for it (FR-017)."
+                fetch_errors=$((fetch_errors + 1))
+                continue
+              fi
+              jq --arg number "$number" --slurpfile comments "$RUNNER_TEMP/board-closed-without-landing-comments-$number.json" \
+                '. + {($number): $comments[0]}' "$RUNNER_TEMP/board-closed-without-landing-comments.json" \
+                > "$RUNNER_TEMP/board-closed-without-landing-comments.tmp"
+              mv "$RUNNER_TEMP/board-closed-without-landing-comments.tmp" "$RUNNER_TEMP/board-closed-without-landing-comments.json"
+            done
+
+            # Reverse lookup: every disposition:duplicate issue (any state --
+            # the originating issue is itself closed once disposed), so each
+            # of its duplicate markers' spec_request field can be matched back
+            # to a closed spec-request above (data-model.md's Board Item
+            # Marker -- the spec-request itself carries no marker naming it
+            # back, only the reciprocal cross-link comment).
+            # maintainer review, fold leg-2: same unchecked-call problem as
+            # the closed-spec-request list above -- checked explicitly.
+            if ! gh issue list -R "$GITHUB_REPOSITORY" --state all --label disposition:duplicate \
+              --json number -L 200 > "$RUNNER_TEMP/board-disposed-issues.json"; then
+              echo "::error::board-loop: could not list disposition:duplicate issues -- the closed-without-landing scan cannot resolve originating issues this time (FR-017)."
+              exit 1
+            fi
+            mapfile -t disposed_issues < <(jq -r '.[].number' "$RUNNER_TEMP/board-disposed-issues.json")
+            for number in "${disposed_issues[@]}"; do
+              if ! gh api "repos/$GITHUB_REPOSITORY/issues/$number/comments" --paginate \
+                --jq '.[] | {created_at, body, user}' | jq -s '.' \
+                > "$RUNNER_TEMP/board-disposed-comments-$number.json"; then
+                echo "::error::board-loop: could not fetch the comments of issue #$number (disposition:duplicate) -- the closed-without-landing scan cannot resolve its originating issue (FR-017)."
+                fetch_errors=$((fetch_errors + 1))
+                continue
+              fi
+              jq --arg number "$number" --slurpfile comments "$RUNNER_TEMP/board-disposed-comments-$number.json" \
+                '. + {($number): $comments[0]}' "$RUNNER_TEMP/board-disposed-comments.json" \
+                > "$RUNNER_TEMP/board-disposed-comments.tmp"
+              mv "$RUNNER_TEMP/board-disposed-comments.tmp" "$RUNNER_TEMP/board-disposed-comments.json"
+            done
+          fi
+
+          CLOSED_SPEC_REQUESTS_PATH="$RUNNER_TEMP/board-closed-spec-requests.json" \
+            SPEC_REQUEST_COMMENTS_PATH="$RUNNER_TEMP/board-closed-without-landing-comments.json" \
+            DISPOSED_COMMENTS_PATH="$RUNNER_TEMP/board-disposed-comments.json" \
+            BOT_LOGIN="$BOT_LOGIN" \
+            python3 - <<'PYEOF' || scan_failed=1
+          import glob
+          import json
+          import os
+          import sys
+
+          sys.path.insert(0, ".github/scripts")
+          from board_eligibility import originating_issues_by_spec_request
+
+          with open(os.environ["CLOSED_SPEC_REQUESTS_PATH"], encoding="utf-8") as fh:
+              closed_spec_requests = [row["number"] for row in json.load(fh)]
+          with open(os.environ["SPEC_REQUEST_COMMENTS_PATH"], encoding="utf-8") as fh:
+              spec_request_comments = json.load(fh)
+          with open(os.environ["DISPOSED_COMMENTS_PATH"], encoding="utf-8") as fh:
+              disposed_comments = json.load(fh)
+
+          # Every duplicate marker on each disposed issue, never only its
+          # overall-newest marker: one reopened and re-routed names two
+          # spec-requests (#874). Only the one its newest duplicate marker
+          # names is current: that is the only spec-request whose notice may
+          # tell the originating issue that reopening returns the request
+          # to the board (FR-006, FR-017). board_eligibility is the single
+          # home.
+          originating_by_spec_request = originating_issues_by_spec_request(
+              disposed_comments, os.environ["BOT_LOGIN"])
+
+          def spec_meta_for_issue(issue_number):
+              for path in glob.glob("specs/*/spec-meta.json"):
+                  try:
+                      with open(path, encoding="utf-8") as fh:
+                          meta = json.load(fh)
+                  except (OSError, ValueError):
+                      continue
+                  if meta.get("issue") == issue_number:
+                      return meta
+              return None
+
+          # spec 108 (maintainer review, fold leg-2; FR-016/FR-017): only a
+          # spec-request THIS feature's own disposition filed -- named by a
+          # disposition:duplicate issue's own step=="duplicate" marker, via
+          # originating_by_spec_request above -- is in scope. Every other
+          # closed, bot-authored spec-request (including one that predates
+          # this feature and was reconciled by hand, FR-016) is out of
+          # scope; scanning `closed_spec_requests` unfiltered posted false
+          # notices on pre-existing closed spec-requests.
+          spec_requests = []
+          for number in closed_spec_requests:
+              named = originating_by_spec_request.get(number)
+              if named is None:
+                  continue
+              current = named["current"]
+              spec_requests.append({
+                  "number": number,
+                  "spec_meta": spec_meta_for_issue(number),
+                  "comments": spec_request_comments.get(str(number)) or [],
+                  "originating_issue": named["issue"] if current else None,
+                  "originating_comments": (
+                      disposed_comments.get(str(named["issue"])) if current else None),
+                  "superseded_on": None if current else named["issue"],
+              })
+
+          with open(os.path.join(os.environ["RUNNER_TEMP"], "board-closed-without-landing-input.json"),
+                     "w", encoding="utf-8") as fh:
+              json.dump({"spec_requests": spec_requests}, fh)
+          PYEOF
+
+          # No -e here: each failure is recorded and the step fails at the end,
+          # so a failed fetch, input build or notice post never reads green.
+          notice_failed=0
+          if [ "$scan_failed" = "1" ]; then
+            echo "::error::board-loop: building the closed-without-landing input failed -- no notices were posted this run (FR-017)."
+          elif ! python3 .github/scripts/board_closed_without_landing.py \
+                < "$RUNNER_TEMP/board-closed-without-landing-input.json"; then
+            notice_failed=1
+          fi
+
+          # maintainer review, fold leg-3: notices above are posted for
+          # everything the fetches above DID resolve; now make any skipped
+          # fetch visible by failing the step (continue-on-error keeps
+          # select() unaffected).
+          if [ "$fetch_errors" -gt 0 ]; then
+            echo "::error::board-loop: $fetch_errors comment fetch(es) failed during the closed-without-landing scan -- some spec-requests/disposed issues were skipped this run (FR-017)."
+          fi
+          if [ "$fetch_errors" -gt 0 ] || [ "$scan_failed" = "1" ] || [ "$notice_failed" = "1" ]; then
+            exit 1
+          fi
 
       # FR-006/FR-008/FR-009/FR-010, contracts/eligibility-and-selection.md.
       # A maintainer-applied label is decided from the `labeled` timeline
@@ -529,15 +785,64 @@ jobs:
             done <<< "$pr_numbers_to_check"
           fi
 
+          # spec 108 (contracts/eligibility-and-readmission-delta.md,
+          # FR-006): board_eligibility.is_excluded()'s re-admission
+          # carve-out never trusts a cached spec-request state -- resolve
+          # the live state of every spec-request a disposition:duplicate,
+          # OPEN issue's own duplicate-step marker names, via
+          # board_eligibility.spec_request_numbers_to_resolve() -- the
+          # single home for that scan (CLAUDE.md; never a second, inline
+          # copy of it here, maintainer review of #791, fold leg-1).
+          spec_request_numbers_to_check="$(OPEN_ISSUES_PATH="$RUNNER_TEMP/board-open-issues.json" COMMENTS_BY_ISSUE_PATH="$RUNNER_TEMP/board-comments-by-issue.json" python3 - <<'PYEOF'
+          import json
+          import os
+          import sys
+
+          sys.path.insert(0, ".github/scripts")
+          from board_eligibility import spec_request_numbers_to_resolve
+
+          with open(os.environ["OPEN_ISSUES_PATH"], encoding="utf-8") as fh:
+              open_issues = json.load(fh)
+          with open(os.environ["COMMENTS_BY_ISSUE_PATH"], encoding="utf-8") as fh:
+              comments_by_issue = json.load(fh)
+
+          for number in spec_request_numbers_to_resolve(
+                  open_issues, comments_by_issue, os.environ["BOT_LOGIN"]):
+              print(number)
+          PYEOF
+          )"
+
+          echo '{}' > "$RUNNER_TEMP/board-spec-request-state-by-number.json"
+          if [ -n "$spec_request_numbers_to_check" ]; then
+            while IFS= read -r spec_request_number; do
+              [ -z "$spec_request_number" ] && continue
+              # 404 tolerance -- see the PR-state lookup above (#564).
+              if ! state="$(gh issue view "$spec_request_number" -R "$GITHUB_REPOSITORY" --json state --jq .state 2> "$RUNNER_TEMP/board-lookup-spec-request.err")"; then
+                if grep -qE 'HTTP 404' "$RUNNER_TEMP/board-lookup-spec-request.err"; then
+                  continue
+                fi
+                cat "$RUNNER_TEMP/board-lookup-spec-request.err" >&2
+                echo "::error::board-loop: could not look up spec-request #$spec_request_number, named by a disposition:duplicate issue's own marker -- its state cannot be read, so no item is selected this run."
+                exit 1
+              fi
+              [ -z "$state" ] && continue
+              jq --arg n "$spec_request_number" --arg s "$state" '. + {($n): $s}' \
+                "$RUNNER_TEMP/board-spec-request-state-by-number.json" > "$RUNNER_TEMP/board-spec-request-state-by-number.tmp"
+              mv "$RUNNER_TEMP/board-spec-request-state-by-number.tmp" "$RUNNER_TEMP/board-spec-request-state-by-number.json"
+            done <<< "$spec_request_numbers_to_check"
+          fi
+
           jq -n --slurpfile issues "$RUNNER_TEMP/board-open-issues.json" \
             --slurpfile events "$RUNNER_TEMP/board-labeled-events.json" \
             --slurpfile comments "$RUNNER_TEMP/board-comments-by-issue.json" \
             --slurpfile pr_states "$RUNNER_TEMP/board-pr-state-by-number.json" \
             --slurpfile pr_head_shas "$RUNNER_TEMP/board-pr-head-sha-by-number.json" \
+            --slurpfile spec_request_states "$RUNNER_TEMP/board-spec-request-state-by-number.json" \
             --arg bot_login "$BOT_LOGIN" \
             '{open_issues: $issues[0], labeled_events_by_issue: $events[0],
               comments_by_issue: $comments[0], pr_state_by_number: $pr_states[0],
               pr_head_sha_by_number: $pr_head_shas[0],
+              spec_request_state_by_number: $spec_request_states[0],
               bot_login: $bot_login}' \
             > "$RUNNER_TEMP/board-eligibility-input.json"
 
@@ -575,6 +880,192 @@ jobs:
           if [ "$multiple_found" = "true" ]; then
             echo "board-loop: more than one issue qualified as in-flight -- selected the one with the newest marker (FR-005)." >> "$GITHUB_STEP_SUMMARY"
           fi
+
+      # specs/096-durable-prove-entry research.md D3/D5/D6, FR-011: an item
+      # already stranded by a past displacement -- or Q3's uncorrelated
+      # case, which the prevention half of this feature does not address --
+      # is driven to prove through spec 060's existing directed dispatch, at
+      # most once, without this step ever waiting synchronously for that
+      # dispatch's own outcome. Placed here, immediately after the "Fetch
+      # open issues and select the next board item" step above, rather than
+      # immediately after the displacement step further up: this step's own
+      # "is the issue still open" check needs board-open-issues.json, which
+      # only the select-id step above (not the displacement step) writes.
+      # The displacement step's own two files
+      # (board-recent-merges-by-issue.json,
+      # board-displacement-comments-by-issue.json) are still on disk here,
+      # in the same job.
+      # maintainer review (FR-012): split from a single step into three, so
+      # the kill-switch/stop-request recheck below runs as close to the
+      # actual dispatch as this job's own structure allows -- scoped to the
+      # specific issue being recovered, not the job-level `killswitch`
+      # entry gate read at the very top of this job, which can be minutes
+      # stale by the time all of displacement's own gh calls and this
+      # step's own candidate search have run.
+      - name: Pick a stranded prove to recover (FR-011)
+        id: recovery-candidate
+        if: steps.killswitch.outputs.status != 'paused' && steps.stand-down.outputs.status != 'in-flight'
+        # maintainer review: this step's own if: has no status function, so
+        # it implicitly reads success() -- a lasting failure here (a gh
+        # outage, a locked issue) would fail success() for every step after
+        # it in this job, including "Resume" below, stalling the whole
+        # board every tick. continue-on-error absorbs that, matching the
+        # "Detect a spec-request that closed without landing" precedent
+        # above: the ::error:: annotations below still report the failure,
+        # but the job's success() stays true for Resume and beyond.
+        continue-on-error: true
+        env:
+          BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}[bot]
+        run: |
+          set -uo pipefail
+
+          candidate_json="$(OPEN_ISSUES_PATH="$RUNNER_TEMP/board-open-issues.json" \
+            MERGED_PRS_PATH="$RUNNER_TEMP/board-recent-merges-by-issue.json" \
+            COMMENTS_BY_ISSUE_PATH="$RUNNER_TEMP/board-displacement-comments-by-issue.json" \
+            BOT_LOGIN="$BOT_LOGIN" \
+            python3 - <<'PYEOF'
+          import json
+          import os
+          import sys
+
+          sys.path.insert(0, ".github/scripts")
+          from board_prove_recovery import find_recoverable_items
+
+          with open(os.environ["OPEN_ISSUES_PATH"], encoding="utf-8") as fh:
+              open_issues = json.load(fh)
+          open_issue_numbers = {row["number"] for row in open_issues}
+          stalled = {row["number"] for row in open_issues
+                     if any(label.get("name") == "board:stalled" for label in row.get("labels") or [])}
+          with open(os.environ["MERGED_PRS_PATH"], encoding="utf-8") as fh:
+              merged_prs_by_issue = json.load(fh)
+          with open(os.environ["COMMENTS_BY_ISSUE_PATH"], encoding="utf-8") as fh:
+              comments_by_issue = json.load(fh)
+
+          candidates = find_recoverable_items(
+              merged_prs_by_issue, comments_by_issue, open_issue_numbers, os.environ["BOT_LOGIN"],
+              stalled_issue_numbers=stalled)
+          print(json.dumps(candidates[0] if candidates else None))
+          PYEOF
+          )"
+
+          if [ "$candidate_json" = "null" ]; then
+            echo "board-loop: no stranded prove to recover this tick (FR-011)." >> "$GITHUB_STEP_SUMMARY"
+            {
+              echo "issue-number="
+              echo "merged-pr="
+              echo "outcome-reason="
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          {
+            echo "issue-number=$(printf '%s' "$candidate_json" | jq -r '.issue')"
+            echo "merged-pr=$(printf '%s' "$candidate_json" | jq -r '.merged_pr')"
+            echo "outcome-reason=$(printf '%s' "$candidate_json" | jq -r '.outcome_reason')"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Re-check kill switch and stop requests before recovering it
+        id: recovery-killswitch-recheck
+        if: >-
+          steps.killswitch.outputs.status != 'paused' && steps.stand-down.outputs.status != 'in-flight'
+          && steps.recovery-candidate.outputs.issue-number != ''
+        continue-on-error: true
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-board-stop-check
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
+          cancel-token: ${{ github.token }}
+          bot-login: ${{ steps.ctx.outputs.bot-slug }}[bot]
+          issue-number: ${{ steps.recovery-candidate.outputs.issue-number }}
+          initial-paused: ${{ vars.WING_COMMANDER_BOARD_LOOP_PAUSED == 'true' }}
+          # A recovery candidate is a merged item: no live branch or base to
+          # preserve on a stop-point record (spec 097 FR-010).
+          marker-branch: ''
+          marker-base-sha: ''
+
+      # research.md D4/FR-001a, CLAUDE.md "Shared logic has exactly one
+      # home": the same composite the prove job's own "Check whether the
+      # directed proof group is busy" step uses -- see that composite's own
+      # header for why this was two pasted copies before (maintainer
+      # review).
+      - name: Check whether the directed proof group is busy
+        id: recovery-busy-check
+        if: >-
+          steps.killswitch.outputs.status != 'paused' && steps.stand-down.outputs.status != 'in-flight'
+          && steps.recovery-candidate.outputs.issue-number != ''
+          && steps.recovery-killswitch-recheck.outcome == 'success'
+          && steps.recovery-killswitch-recheck.outputs.paused != 'true'
+        continue-on-error: true
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-directed-proof-busy-check
+        with:
+          token: ${{ github.token }}
+
+      - name: Record that the stranded prove stays recoverable (busy)
+        if: >-
+          steps.recovery-candidate.outputs.issue-number != ''
+          && steps.recovery-killswitch-recheck.outcome == 'success'
+          && steps.recovery-killswitch-recheck.outputs.paused != 'true'
+          && steps.recovery-busy-check.outcome == 'success'
+          && steps.recovery-busy-check.outputs.busy == 'true'
+        run: |
+          echo "board-loop: issue #${{ steps.recovery-candidate.outputs.issue-number }}'s stranded prove (${{ steps.recovery-candidate.outputs.outcome-reason }}) stays recoverable -- the directed-proof group is busy this tick (FR-011a)." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Dispatch the recovered prove (FR-011)
+        id: recovery-dispatch
+        # steps.recovery-killswitch-recheck.outcome == 'success' (not just a
+        # paused != 'true' check on its output): a FAILED or skipped recheck
+        # reads its own outputs as "", which `!= 'true'` would otherwise let
+        # straight through -- the fail-safe here is to not dispatch at all
+        # when the recheck itself could not be completed. Same reasoning
+        # applies to recovery-busy-check's own outcome.
+        if: >-
+          steps.killswitch.outputs.status != 'paused' && steps.stand-down.outputs.status != 'in-flight'
+          && steps.recovery-candidate.outputs.issue-number != ''
+          && steps.recovery-killswitch-recheck.outcome == 'success'
+          && steps.recovery-killswitch-recheck.outputs.paused != 'true'
+          && steps.recovery-busy-check.outcome == 'success'
+          && steps.recovery-busy-check.outputs.busy != 'true'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BOT_TOKEN: ${{ env.WC_BOT_TOKEN }}
+          ISSUE_NUMBER: ${{ steps.recovery-candidate.outputs.issue-number }}
+          MERGED_PR: ${{ steps.recovery-candidate.outputs.merged-pr }}
+          OUTCOME_REASON: ${{ steps.recovery-candidate.outputs.outcome-reason }}
+        run: |
+          set -uo pipefail
+          issue_number="$ISSUE_NUMBER"
+          merged_pr="$MERGED_PR"
+          outcome_reason="$OUTCOME_REASON"
+
+          # maintainer review (SC-008 "retried at most once"): the marker
+          # is written, spending this item's one recovery attempt, BEFORE
+          # the dispatch call is even made -- not after, as research.md
+          # D3's own "on the dispatch call's own success" text originally
+          # read. A dispatch that succeeds but whose comment then fails
+          # would otherwise leave no durable record, and the next tick
+          # would see the same candidate as still-recoverable and dispatch
+          # it again. Spending the attempt first means the rare inverse
+          # failure (the comment posts, the dispatch itself then fails) is
+          # a stranded item a human must re-drive manually, never a
+          # duplicate dispatch.
+          marker="$(python3 .github/scripts/board_item_marker.py --step prove \
+            --outcome-reason "$outcome_reason" --recovery-attempted)" \
+            || { echo "::error::board-loop: issue #$issue_number's recovery marker could not be rendered -- not dispatching, so this attempt is not spent with no durable record of it (#786)."; exit 1; }
+          if ! GH_TOKEN="$BOT_TOKEN" gh issue comment "$issue_number" -R "$GITHUB_REPOSITORY" \
+            --body "$(printf 'Recovering this issue'\''s stranded proof (%s) -- dispatching a directed prove run for PR #%s now, which will record its own outcome here.\n\n%s' "$outcome_reason" "$merged_pr" "$marker")"; then
+            echo "::error::board-loop: could not post issue #$issue_number's recovery marker -- not dispatching, so this attempt is not spent with no durable record of it (FR-011a/SC-008)."
+            exit 1
+          fi
+
+          # FR-011: this step never waits for the dispatched run's own
+          # outcome (research.md D3).
+          if ! gh workflow run board-loop.yml -R "$GITHUB_REPOSITORY" \
+            -f directed-stage=prove -f directed-issue="$issue_number" -f directed-pr="$merged_pr" \
+            -f directed-recovery=true; then
+            echo "::error::board-loop: issue #$issue_number's recovery marker is posted (SC-008: this attempt is now spent) but the directed dispatch itself failed -- a human must re-drive it manually."
+            exit 1
+          fi
+          echo "board-loop: dispatched a directed recovery prove run for issue #$issue_number, PR #$merged_pr ($outcome_reason)." >> "$GITHUB_STEP_SUMMARY"
 
       # Board Item Marker (contracts/board-item-marker.md, research.md D21):
       # a fast path only. Every field is re-derived from live GitHub state
@@ -708,7 +1199,8 @@ jobs:
           # is never left empty. Reuses board_eligibility.py's own
           # PRE_FIX_STEPS/FIX_OR_LATER_STEPS rather than a second,
           # parallel step-vocabulary list.
-          step_resolution_json="$(MARKER_STEP="$marker_step" MARKER_JSON="$marker_json" BRANCH="$branch" \
+          step_resolution_json="$(COMMENTS_PATH="$RUNNER_TEMP/board-issue-comments.json" \
+              MARKER_STEP="$marker_step" MARKER_JSON="$marker_json" BRANCH="$branch" \
               MARKER_PR="$marker_pr" PR_FROM_MARKER="$pr_from_marker" PR_FROM_FALLBACK="$pr_from_fallback" PR_OWNED="$pr_owned" \
               PR_STATE="$pr_state" PR_NUMBER="$pr_number" PR_HEAD_SHA="$pr_head_sha" MARKER_ROUND="$marker_round" \
               MARKER_BASE_SHA="$marker_base_sha" MARKER_NR_COUNT="$marker_nr_count" python3 - <<'PYEOF'
@@ -719,7 +1211,7 @@ jobs:
           sys.path.insert(0, ".github/scripts")
           from board_eligibility import (
               PRE_FIX_STEPS, FIX_OR_LATER_STEPS, AWAITING_MERGE_STEP, BREACH_STEP, not_ready_record)
-          from board_item_marker import is_loop_branch
+          from board_item_marker import STALLED_STEP, head_moved_since_last_review, is_loop_branch
 
           marker_step = os.environ.get("MARKER_STEP") or None
           branch = os.environ.get("BRANCH") or ""
@@ -856,14 +1348,34 @@ jobs:
               or (marker_step in FIX_OR_LATER_STEPS and pr_state == "OPEN")
           ):
               step = marker_step
+          elif pr_from_marker and marker_step in FIX_OR_LATER_STEPS and pr_state == "MERGED":
+              # specs/096-durable-prove-entry research.md D7/FR-007/FR-008/
+              # FR-009: resolved by number, MERGED, and the issue is still
+              # open -- the loop's own fix landed but nothing proved it yet
+              # (board_prove_displacement's displacement case, or a run that
+              # simply has not reached prove-gate/prove this tick). This is
+              # never re-triaged as if the fix did not exist (FR-007): the
+              # issue goes straight to prove, with none of the abandoned
+              # attempt's PR number/state, branch, round or base-sha leaking
+              # forward (same FR-022 clearing the sibling clause below
+              # already does). `step = "prove"` is already a
+              # FIX_OR_LATER_STEPS member (board_eligibility.py) -- no new
+              # step name.
+              step = "prove"
+              reason = "merged fix -- awaiting proof"
+              pr_number = ""
+              pr_state = ""
+              branch = ""
+              round_ = "0"
+              base_sha = ""
+              nr_count_ = "0"
           elif pr_from_marker and marker_step in FIX_OR_LATER_STEPS:
-              # Resolved by number but not OPEN -- disqualified (for an
-              # awaiting-merge marker: the handed-over PR was closed
-              # unmerged, or merged while the issue stayed open). Falls to
-              # the triage clause below, never the fallback clause: the
-              # marker named a real PR, so a different loop-owned PR must
-              # not be adopted in its place (SC-007). None of this
-              # abandoned attempt's state -- PR number/state, branch,
+              # Resolved by number but not OPEN and not MERGED -- disqualified
+              # (for an awaiting-merge marker: the handed-over PR was closed
+              # unmerged). Falls to the triage clause below, never the
+              # fallback clause: the marker named a real PR, so a different
+              # loop-owned PR must not be adopted in its place (SC-007). None
+              # of this abandoned attempt's state -- PR number/state, branch,
               # round, base-sha -- must leak into this triage output
               # (FR-022): a fresh triage->route->fix must cut a new branch
               # off current main and a fresh review must start at round 0.
@@ -877,9 +1389,29 @@ jobs:
               base_sha = ""
               nr_count_ = "0"
           elif pr_from_fallback:
-              # #530: a breach marker whose own PR did not resolve still
-              # never reviews the PR the fallback finds.
-              step = BREACH_STEP if marker_step == BREACH_STEP else "review"
+              if marker_step == BREACH_STEP:
+                  # #530: a breach marker whose own PR did not resolve
+                  # still never reviews the PR the fallback finds.
+                  step = BREACH_STEP
+              else:
+                  # FR-006/FR-006b (contracts/resume-recovery-readmission.md
+                  # "Amended clause 2", folded into specs/061's
+                  # resume-recovery.md clause 2): a label-removed stalled
+                  # item recovered via the board:owned fallback resumes at
+                  # review when the PR's head has moved since the loop's
+                  # own last *converged* review verdict (or none is
+                  # resolvable -- a budget-spent verdict never counts,
+                  # maintainer review of #885), at readiness when it has
+                  # not.
+                  with open(os.environ["COMMENTS_PATH"], encoding="utf-8") as fh:
+                      comments = json.load(fh)
+                  moved = head_moved_since_last_review(pr_number, comments, os.environ.get("BOT_LOGIN") or "")
+                  step = "review" if moved else "readiness"
+                  readmission = "re-admitted from a stall -- " if marker_step == STALLED_STEP else ""
+                  note = "{0}recovered pr {1} resolved to {2} -- {3} (FR-006b)".format(
+                      readmission, pr_number, step,
+                      "the head moved since the last converged review (or no converged review was resolvable)"
+                      if moved else "the head had not moved since the last converged review")
           elif branch:
               step = "fix"
           else:
@@ -891,7 +1423,15 @@ jobs:
                   # leak into a fresh triage (branch is already empty here
                   # -- the `elif branch:` clause above would have matched
                   # otherwise -- but round/base-sha are cleared explicitly).
-                  reason = "stale marker -- recorded branch/pr could not be re-derived live"
+                  if marker_step == STALLED_STEP:
+                      # Every stall site's marker is pr=None (research.md
+                      # D1), so a stalled item with no open board:owned PR
+                      # to recover reaches here by design, not by decay --
+                      # never describe this as a "stale marker" (maintainer
+                      # review of #885).
+                      reason = "re-admitted from a stall -- no open board:owned pull request citing this issue; starting a fresh triage"
+                  else:
+                      reason = "stale marker -- recorded branch/pr could not be re-derived live"
                   round_ = "0"
                   base_sha = ""
                   nr_count_ = "0"
@@ -981,6 +1521,7 @@ jobs:
           stage: board-loop
           run-label: ${{ steps.outcome.outputs.label }}
           record-path: ${{ runner.temp }}/wing-commander-metrics-record-select.json
+          spec-identity-is-own: 'false'
 
       - name: Upload metrics record (select)
         if: always()
@@ -993,8 +1534,8 @@ jobs:
           retention-days: 90
 
   # research.md D18: model tier resolution for the item this run selected --
-  # default vars.WING_COMMANDER_BOARD_LOOP_MODEL (fallback claude-sonnet-5),
-  # escalated to claude-opus-5 when the selected issue carries model:opus.
+  # default vars.WING_COMMANDER_BOARD_LOOP_MODEL (fallback claude-sonnet-5-5),
+  # escalated to claude-opus-5-5 when the selected issue carries model:opus.
   # The fix/review jobs a later phase adds re-check the PR's own labels
   # instead, per research.md D18's issue-for-triage/route,
   # PR-for-fix/review split.
@@ -1017,9 +1558,9 @@ jobs:
           ISSUE_NUMBER: ${{ needs.select.outputs.issue-number || inputs.directed-issue }}
         run: |
           set -uo pipefail
-          tier="${MODEL_VAR:-claude-sonnet-5}"
+          tier="${MODEL_VAR:-claude-sonnet-5-5}"
           if gh issue view "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --json labels --jq '.labels[].name' | grep -qx 'model:opus'; then
-            tier="claude-opus-5"
+            tier="claude-opus-5-5"
           fi
           echo "tier=$tier" >> "$GITHUB_OUTPUT"
           echo "Board loop model for this run: $tier" >> "$GITHUB_STEP_SUMMARY"
@@ -1056,10 +1597,14 @@ jobs:
 # comment body ending in the board_item_marker.py write_marker() HTML
 # comment (contracts/board-item-marker.md); the marker is never the comment's
 # only content. Every durable action (a close, a label, a push, a PR) is
-# preceded by a fresh re-check of the kill switch (research.md D2, FR-051),
-# not only at job start -- Phase 8/T052 additionally layers the stop-comment
-# and issue-state re-check (research.md D17) onto this same re-check point in
-# every job this pattern already touches.
+# preceded by a re-check through wing-commander-board-stop-check (research.md
+# D2, FR-051), not only at job start -- Phase 8/T052 layered the stop-comment
+# and issue-state re-check (research.md D17) onto that same point. Only those
+# two reads are live. The kill-switch half reads `vars`, which the runner
+# fixes when the job starts (#794), so a pause set after a job started is not
+# seen by any of its re-checks and takes effect on the next run: defence in
+# depth, not a mid-run kill -- see lifecycle-review-gate.yml's
+# KILL_SWITCH_PAUSED for the runner evidence.
 # =============================================================================
 
   # Phase 3 (User Story 1, contracts/triage.md): triage reads the cited run's
@@ -1079,15 +1624,21 @@ jobs:
       contents: read
       issues: write
       actions: write
-    # One board item is in flight repository-wide. A directed proof run,
-    # which selects no board item and opens no fix PR, is the only run
-    # permitted to overlap an ordinary board-loop run. Every other pair of
-    # board-loop.yml runs queues rather than races or cancels.
+    # One board item is in flight repository-wide. A directed proof run
+    # and a merged item's own prove run — neither of which selects a
+    # board item or opens a fix PR — are the only runs permitted to
+    # overlap an ordinary board-loop run, or each other when they prove
+    # distinct merged items. Every other pair of board-loop.yml runs
+    # queues rather than races or cancels.
     concurrency:
       group: wing-commander-board-loop
       cancel-in-progress: false
     outputs:
-      outcome: ${{ steps.decide.outputs.outcome }}
+      # Maintainer feedback (spec 097): a stand-down must not read
+      # downstream as 'proceed' -- route's own if: already excludes it
+      # (needs.triage.outputs.outcome == 'proceed'), and this job's own
+      # continuation output stops lying about it too.
+      outcome: ${{ steps.killswitch-recheck.outputs.paused == 'true' && 'stood-down' || steps.decide.outputs.outcome }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -1182,25 +1733,35 @@ jobs:
       # Best-effort: an expired/missing artifact or an inaccessible run is
       # NOT a hard failure here -- board_triage.py's own evidence_unavailable
       # ground (FR-014) is exactly what a missing transcript path decides.
+      # Gate 12: the run, its artifacts and the artifact zip are Actions
+      # reads, which the documented App grant does not cover (docs/setup.md).
+      # On that grant every fetch 403s, quietly, and triage never sees a
+      # transcript. (This repository's own App reads them anyway, e.g. run
+      # 36087278355, so it holds more than the documented grant.) This
+      # job's github.token holds actions: write.
       - name: Fetch the cited run's own evidence, if reachable
         id: fetch
         if: steps.cite.outputs.run-id != ''
         continue-on-error: true
         env:
-          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
           RUN_ID: ${{ steps.cite.outputs.run-id }}
         run: |
           set -uo pipefail
           # #505: the run's own workflow `path` scopes board_triage.py's
           # action-bump comparison to the workflow this run actually ran.
-          run_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" 2>/dev/null || true)"
+          if ! run_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" 2>/dev/null)"; then
+            run_json=""
+          fi
           commit_sha="$(printf '%s' "$run_json" | jq -r '.head_sha // empty' 2>/dev/null || true)"
           workflow_path="$(printf '%s' "$run_json" | jq -r '.path // empty' 2>/dev/null || true)"
           echo "commit-sha=$commit_sha" >> "$GITHUB_OUTPUT"
           # #583: API text and artifact file names -- control characters removed.
           python3 .github/scripts/wc_step_output.py workflow-path "$workflow_path" >> "$GITHUB_OUTPUT"
 
-          artifact_id="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/artifacts" --jq '.artifacts[] | select(.name | startswith("claude-execution-output")) | .id' 2>/dev/null | head -1 || true)"
+          if ! artifact_id="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/artifacts" --jq '.artifacts[] | select(.name | startswith("claude-execution-output")) | .id' 2>/dev/null | head -1)"; then
+            artifact_id=""
+          fi
           if [ -z "$artifact_id" ]; then
             echo "transcript-path=" >> "$GITHUB_OUTPUT"
             exit 0
@@ -1305,6 +1866,13 @@ jobs:
             --allowedTools "${{ steps.tool-args-triage.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-triage.outputs.disallowed-tools }}"
 
+      - name: Record agent-ran signal (triage-propose)
+        id: agent-ran-triage
+        if: "!cancelled() && steps.propose.outcome != 'skipped'"
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-agent-ran-signal
+        with:
+          agent-outcome: ${{ steps.propose.outcome }}
+
       - name: Re-establish Wing Commander context (post-agent, triage-propose)
         id: reestablish-triage
         if: "!cancelled() && steps.propose.outcome != 'skipped'"
@@ -1341,6 +1909,7 @@ jobs:
           verdict: ${{ steps.triage-verdict.outputs.verdict }}
           verdict-reason: ${{ steps.triage-verdict.outputs.reason }}
           stage: board-loop
+          spec-identity-is-own: 'false'
 
       # #499/Gate 23: continue-on-error: true (review-step-gating resolution
       # 4), not a hard exit -- the deterministic extract/decide/act steps
@@ -1409,11 +1978,16 @@ jobs:
           bot-login: ${{ steps.ctx.outputs.bot-slug }}[bot]
           issue-number: ${{ needs.select.outputs.issue-number || inputs.directed-issue }}
           initial-paused: ${{ vars.WING_COMMANDER_BOARD_LOOP_PAUSED == 'true' }}
+          marker-branch: ${{ needs.select.outputs.branch }}
+          marker-base-sha: ${{ needs.select.outputs.base-sha }}
 
       - name: Decide the triage verdict
         id: decide
         env:
           RUN_URL: ${{ steps.cite.outputs.run-url }}
+          # board_triage.defer_on_rate_limit(): a rate-limited agent's
+          # proceed is defer -- nothing posted, route skipped.
+          TRIAGE_AGENT_VERDICT: ${{ steps.triage-verdict.outputs.verdict }}
           COMMIT_SHA: ${{ steps.fetch.outputs.commit-sha }}
           WORKFLOW_PATH: ${{ steps.fetch.outputs.workflow-path }}
           TRANSCRIPT_PATH: ${{ steps.fetch.outputs.transcript-path }}
@@ -1425,7 +1999,7 @@ jobs:
           import sys
 
           sys.path.insert(0, ".github/scripts")
-          from board_triage import tracked_pin_files, triage
+          from board_triage import defer_on_rate_limit, tracked_pin_files, triage
 
           runner_temp = os.environ["RUNNER_TEMP"]
           with open(os.path.join(runner_temp, "board-triage-proposal.json"), encoding="utf-8") as fh:
@@ -1440,7 +2014,8 @@ jobs:
               "workflow_files": workflow_files,
               "agent_proposal": proposal,
           }
-          verdict = triage(issue, run_url)
+          verdict = defer_on_rate_limit(triage(issue, run_url),
+                                        os.environ.get("TRIAGE_AGENT_VERDICT", ""))
 
           with open(os.path.join(runner_temp, "board-triage-verdict.json"), "w", encoding="utf-8") as fh:
               json.dump(verdict, fh)
@@ -1463,10 +2038,12 @@ jobs:
       # dispatch's comment never mistakes it for an ordinary lifecycle
       # comment.
       - name: Act on the verdict and post the outcome
+        id: act
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           ISSUE_NUMBER: ${{ needs.select.outputs.issue-number || inputs.directed-issue }}
           PAUSED: ${{ steps.killswitch-recheck.outputs.paused }}
+          STOP_CAUSE_PHRASE: ${{ steps.killswitch-recheck.outputs.stop-cause-phrase }}
           DIRECTED_ATTRIBUTION: >-
             ${{ inputs.directed-stage != '' && format('_Directed proof run
             (stage: `{0}`), dispatched to prove PR #{1} -- selects no board
@@ -1475,9 +2052,19 @@ jobs:
           set -uo pipefail
           outcome="$(jq -r '.outcome' "$RUNNER_TEMP/board-triage-verdict.json")"
           ground="$(jq -r '.ground // empty' "$RUNNER_TEMP/board-triage-verdict.json")"
+          echo "outcome=$outcome" >> "$GITHUB_OUTPUT"
 
           if [ "$PAUSED" = "true" ]; then
-            echo "board-loop: kill switch set immediately before triage's durable action -- standing down without acting." >> "$GITHUB_STEP_SUMMARY"
+            # specs/097-recorded-stop-point FR-014: name the cause actually
+            # observed, never "kill switch" unconditionally -- read from the
+            # wing-commander-board-stop-check composite's own
+            # `stop-cause-phrase` output, the one home for this prose
+            # (maintainer review fold leg-2).
+            echo "board-loop: $STOP_CAUSE_PHRASE set immediately before triage's durable action -- standing down without acting." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if [ "$outcome" = "defer" ]; then
+            echo "board-loop: the triage agent was rate-limited and judged nothing -- nothing is posted and route does not run; a later run triages this issue again." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
 
@@ -1499,6 +2086,16 @@ jobs:
           [ "$marker_step" = "stalled" ] && stall_args=(--issue "$ISSUE_NUMBER" --add-label "board:stalled")
           marker="$(python3 .github/scripts/board_item_marker.py --step "$marker_step" "${stall_args[@]}")" \
             || { echo "::error::board-loop triage ($outcome): could not render the step=$marker_step marker for issue #$ISSUE_NUMBER -- nothing is posted, so a later run re-triages it (#604)."; exit 1; }
+          # FR-011: every successful stall records what stalled and from
+          # where, whether this attempt is a first try or an FR-002 retry
+          # of a prior failed label-add (the loop carries no separate state
+          # to distinguish those two cases). The one canonical run-summary
+          # line (CLAUDE.md single-home rule) lives in
+          # board_item_marker.record_stall_summary(), called via
+          # `--record-stall-summary --issue N --from-step <name>` by every
+          # stall site below right after its own stalled-marker comment
+          # actually posts -- never before, so a failed post never leaves
+          # a false claim already written to the summary.
 
           case "$outcome" in
             closed)
@@ -1517,7 +2114,9 @@ jobs:
               body="$(printf 'Triage read a proposal that this issue is already fixed on main, and is handing it to a maintainer rather than closing it itself (FR-012):\n\n%s\n\n%s' \
                 "$evidence" "$marker")"
               [ -n "$DIRECTED_ATTRIBUTION" ] && body="$(printf '%s\n\n%s' "$DIRECTED_ATTRIBUTION" "$body")"
-              gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$body"
+              gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$body" \
+                || { echo "::error::board-loop triage (handover): board:stalled was applied to issue #$ISSUE_NUMBER but the stalled-marker comment could not be posted."; exit 1; }
+              python3 .github/scripts/board_item_marker.py --record-stall-summary --issue "$ISSUE_NUMBER" --from-step "triage (handover)"
               ;;
             proceed)
               # An unsupported close proposal is the agent's own reasoning
@@ -1531,6 +2130,39 @@ jobs:
               gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$body"
               ;;
           esac
+
+      # specs/097-recorded-stop-point FR-015/SC-008
+      # (contracts/metrics-classification.md): a second, separate record
+      # from triage-propose's own per-agent metrics call above -- this one
+      # reports what the JOB as a whole did (stood down, or acted on
+      # $outcome), distinguishable from a quiet run by this field alone.
+      - name: Record run outcome (triage)
+        if: always()
+        continue-on-error: true
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-metrics-summary
+        with:
+          transcript-path: ${{ runner.temp }}/wing-commander-no-transcript.json
+          model: ''
+          stage: board-loop
+          # maintainer review fold leg-2: the stop-cause branch reads the
+          # composite's own `stop-cause-run-label` output (one home) rather
+          # than re-deriving "stopped (stop-request)"/"stood down
+          # (kill-switch)" per job.
+          run-label: >-
+            ${{ steps.killswitch-recheck.outputs.stop-cause != '' && format('triage: {0}', steps.killswitch-recheck.outputs.stop-cause-run-label) ||
+                format('triage: {0}', steps.act.outputs.outcome) }}
+          record-path: ${{ runner.temp }}/wing-commander-metrics-record-triage-outcome.json
+          spec-identity-is-own: 'false'
+
+      - name: Upload metrics record (triage outcome)
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v6
+        with:
+          name: metrics-record-triage-outcome
+          path: ${{ runner.temp }}/wing-commander-metrics-record-triage-outcome.json
+          if-no-files-found: ignore
+          retention-days: 90
 
   # Phase 4 (User Story 2, contracts/route-backstop.md): the route-propose
   # agent's fix/spec proposal is only ever narrowed by code, never widened
@@ -1555,10 +2187,12 @@ jobs:
       contents: read
       issues: write
       actions: write
-    # One board item is in flight repository-wide. A directed proof run,
-    # which selects no board item and opens no fix PR, is the only run
-    # permitted to overlap an ordinary board-loop run. Every other pair of
-    # board-loop.yml runs queues rather than races or cancels.
+    # One board item is in flight repository-wide. A directed proof run
+    # and a merged item's own prove run — neither of which selects a
+    # board item or opens a fix PR — are the only runs permitted to
+    # overlap an ordinary board-loop run, or each other when they prove
+    # distinct merged items. Every other pair of board-loop.yml runs
+    # queues rather than races or cancels.
     concurrency:
       group: wing-commander-board-loop
       cancel-in-progress: false
@@ -1682,6 +2316,13 @@ jobs:
             --allowedTools "${{ steps.tool-args-route.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-route.outputs.disallowed-tools }}"
 
+      - name: Record agent-ran signal (route-propose)
+        id: agent-ran-route
+        if: "!cancelled() && steps.propose.outcome != 'skipped'"
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-agent-ran-signal
+        with:
+          agent-outcome: ${{ steps.propose.outcome }}
+
       - name: Re-establish Wing Commander context (post-agent, route-propose)
         id: reestablish-route
         if: "!cancelled() && steps.propose.outcome != 'skipped'"
@@ -1718,6 +2359,7 @@ jobs:
           verdict: ${{ steps.route-verdict.outputs.verdict }}
           verdict-reason: ${{ steps.route-verdict.outputs.reason }}
           stage: board-loop
+          spec-identity-is-own: 'false'
 
       # #499/Gate 23: continue-on-error: true (review-step-gating resolution
       # 4), not a hard exit -- the deterministic extract/decide/act steps
@@ -1823,6 +2465,8 @@ jobs:
           bot-login: ${{ steps.ctx.outputs.bot-slug }}[bot]
           issue-number: ${{ needs.select.outputs.issue-number }}
           initial-paused: ${{ vars.WING_COMMANDER_BOARD_LOOP_PAUSED == 'true' }}
+          marker-branch: ${{ needs.select.outputs.branch }}
+          marker-base-sha: ${{ needs.select.outputs.base-sha }}
 
       - name: Decide the route
         id: decide
@@ -1833,6 +2477,12 @@ jobs:
           MEASURED_LINES: ${{ steps.backstop.outputs.measured-lines }}
           BOARD_MAX_FILES: ${{ env.BOARD_MAX_FILES }}
           BOARD_MAX_LINES: ${{ env.BOARD_MAX_LINES }}
+          # docs/setup.md: set only once the App has been granted Workflows
+          # (read and write); until then a workflow-file fix is held.
+          CAN_PUSH_WORKFLOWS: ${{ vars.WING_COMMANDER_BOARD_CAN_PUSH_WORKFLOWS == 'true' }}
+          # route() defers, rather than defaulting to spec, when a
+          # rate-limited agent gave no usable proposal.
+          ROUTE_AGENT_VERDICT: ${{ steps.route-verdict.outputs.verdict }}
         run: |
           set -uo pipefail
           python3 - <<'PYEOF'
@@ -1841,7 +2491,8 @@ jobs:
           import sys
 
           sys.path.insert(0, ".github/scripts")
-          from board_route_backstop import one_line_rationale, route, touches_protected_file
+          from board_route_backstop import (drafted_contract_widened, normalize_repo_path,
+                                            one_line_rationale, route, workflow_push_blocked_paths)
 
           runner_temp = os.environ["RUNNER_TEMP"]
           with open(os.path.join(runner_temp, "board-route-proposal.json"), encoding="utf-8") as fh:
@@ -1856,15 +2507,34 @@ jobs:
           def measure_backstop(_fc, _mf, _ml):
               return over_threshold, measured_files, measured_lines
 
-          diff_paths = [fc.get("path") for fc in file_changes if fc.get("path")]
-          widened = touches_protected_file(diff_paths)
+          diff_paths = [normalize_repo_path(fc.get("path")) for fc in file_changes
+                        if isinstance(fc, dict) and fc.get("path")]
+          blocked = workflow_push_blocked_paths(
+              diff_paths, os.environ.get("CAN_PUSH_WORKFLOWS") == "true")
+
+          # This job checks out main, so main's own file content is what the
+          # drafted hunks are located against (drafted_contract_widened);
+          # the pushed diff is checked again by "Re-apply the route
+          # backstop to the final diff".
+          def read_text(path):
+              try:
+                  with open(path, encoding="utf-8") as fh:
+                      return fh.read()
+              except (OSError, UnicodeDecodeError):
+                  return None
+
+          contract_unknown = []
+          widened = drafted_contract_widened(file_changes, read_text, unknown=contract_unknown)
 
           proposal_extracted = os.environ.get("PROPOSAL_EXTRACTED") == "true"
           decision = route(
               proposal.get("category"), file_changes,
               int(os.environ["BOARD_MAX_FILES"]), int(os.environ["BOARD_MAX_LINES"]),
               measure_backstop, widened_paths_override=widened,
-              proposal_extracted=proposal_extracted)
+              proposal_extracted=proposal_extracted,
+              workflow_push_blocked=blocked,
+              agent_rate_limited=os.environ.get("ROUTE_AGENT_VERDICT") == "rate-limited",
+              contract_unknown_paths=contract_unknown)
 
           runner_temp = os.environ["RUNNER_TEMP"]
           with open(os.path.join(runner_temp, "board-route-decision.json"), "w", encoding="utf-8") as fh:
@@ -1876,6 +2546,17 @@ jobs:
               fh.write("verdict={0}\n".format(decision["backstop_verdict"]))
               fh.write("reason={0}\n".format(decision["reason"]))
           PYEOF
+
+      # specs/097-recorded-stop-point FR-014: name the cause actually
+      # observed before route's own durable action (filing a spec-request)
+      # is skipped.
+      - name: Record the stand-down (route)
+        if: steps.killswitch-recheck.outputs.paused == 'true'
+        env:
+          STOP_CAUSE_PHRASE: ${{ steps.killswitch-recheck.outputs.stop-cause-phrase }}
+        run: |
+          set -uo pipefail
+          echo "board-loop: $STOP_CAUSE_PHRASE found immediately before route's durable action -- standing down without acting." >> "$GITHUB_STEP_SUMMARY"
 
       # Board Item Marker (T014). A `spec` verdict ends the run for this
       # item with no branch cut (FR-021); a `fix` verdict proceeds to the
@@ -1891,6 +2572,7 @@ jobs:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           ISSUE_NUMBER: ${{ needs.select.outputs.issue-number }}
           ISSUE_CONTEXT_FILE: ${{ steps.issue-context-route.outputs.context-file }}
+          BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}[bot]
         run: |
           set -uo pipefail
           verdict="$(jq -r '.decision.backstop_verdict' "$RUNNER_TEMP/board-route-decision.json")"
@@ -1898,7 +2580,13 @@ jobs:
           echo "reason=$reason" >> "$GITHUB_OUTPUT"
 
           if [ "$verdict" != "spec" ]; then
-            echo "board-loop: route verdict is fix (reason: $reason) -- proceeding to the fix step." >> "$GITHUB_STEP_SUMMARY"
+            if [ "$verdict" = "hold" ]; then
+              echo "board-loop: route verdict is hold (reason: $reason) -- no spec proposal is filed; the next step holds the issue for a maintainer." >> "$GITHUB_STEP_SUMMARY"
+            elif [ "$verdict" = "defer" ]; then
+              echo "board-loop: route verdict is defer (reason: $reason) -- the route agent was rate-limited and judged nothing, so nothing is filed or closed; the issue's route marker keeps it in flight, and the next run triages and routes it again." >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "board-loop: route verdict is fix (reason: $reason) -- proceeding to the fix step." >> "$GITHUB_STEP_SUMMARY"
+            fi
             echo "spec-url=" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -1921,35 +2609,25 @@ jobs:
           # the marker so it can never precede a line code rendered.
           rationale="$(jq -r '.rationale // empty' "$RUNNER_TEMP/board-route-decision.json")"
           rationale_footer=""
-          rationale_comment=""
           if [ -n "$rationale" ]; then
             rationale_line="$(printf 'Route agent'"'"'s rationale: `%s`' "$rationale")"
             rationale_footer="$rationale_line"$'\n'
-            rationale_comment=$'\n\n'"$rationale_line"
           fi
           agent_proposal="$(jq -r '.decision.agent_proposal' "$RUNNER_TEMP/board-route-decision.json")"
           proposal_extracted="$(jq -r '.proposal_extracted' "$RUNNER_TEMP/board-route-decision.json")"
           agent_judged="the route agent judged this spec-shaped"
           no_proposal="route-propose returned no usable proposal, so the route defaulted to spec"
           if [ "$reason" = "agent_proposed_spec" ]; then
-            route_verb="sent"
-            route_detail="$agent_judged; reason: $reason"
             footer_detail="reason=$reason ($agent_judged)"
           elif [ "$reason" = "no_usable_proposal" ]; then
-            route_verb="sent"
-            route_detail="$no_proposal; reason: $reason"
             footer_detail="reason=$reason ($no_proposal)"
           elif [ "$agent_proposal" = "spec" ]; then
             # Spec was never narrowed from fix here, so not "re-routed";
             # the backstop condition that also fired is named alongside.
             origin="$agent_judged"
             [ "$proposal_extracted" = "true" ] || origin="$no_proposal"
-            route_verb="sent"
-            route_detail="$origin; the backstop also flagged: $reason, measured=$measured"
             footer_detail="reason=$reason, measured=$measured ($origin; the backstop also flagged it)"
           else
-            route_verb="re-routed"
-            route_detail="reason: $reason, measured=$measured"
             footer_detail="reason=$reason, measured=$measured"
           fi
           footer="$(printf 'Routed from board-loop.yml (issue #%s): %s.\n%sOriginating issue: %s/%s/issues/%s' \
@@ -1959,7 +2637,7 @@ jobs:
             --drafted-body-file "$RUNNER_TEMP/board-spec-request-drafted.md" --footer "$footer" --out "$spec_body_file" \
             || printf 'No drafted body.\n\n---\n%s\n' "$footer" > "$spec_body_file"
 
-          spec_url="$(gh issue create -R "$GITHUB_REPOSITORY" --title "$spec_title" --body-file "$spec_body_file" --label spec-request)"
+          spec_url="$(gh issue create -R "$GITHUB_REPOSITORY" --title "$spec_title" --body-file "$spec_body_file" --label spec-proposal)"
           # #514: this step runs without -e, so a failed create would
           # otherwise still post the re-route comment, add board:stalled
           # and cross-link an empty URL, dropping the issue from
@@ -1974,14 +2652,46 @@ jobs:
           [[ "$spec_url" =~ ^https?://[^[:space:]]+/issues/[0-9]+$ ]] || { echo "::error::board-loop route (spec verdict): creating the spec-request returned no issue URL (got '$spec_url') -- no spec-request was filed; the issue is left without board:stalled so a later run retries it."; exit 1; }
           echo "spec-url=$spec_url" >> "$GITHUB_OUTPUT"
 
-          # #604: board:stalled before the stalled marker -- see board_item_marker.py.
-          marker="$(python3 .github/scripts/board_item_marker.py --step stalled --issue "$ISSUE_NUMBER" --add-label "board:stalled")" \
-            || { echo "::error::board-loop route (spec verdict): spec-request $spec_url was filed but board:stalled could not be added to issue #$ISSUE_NUMBER -- no stalled marker is posted; a later run re-routes it and may file a second spec-request (#527, #604)."; exit 1; }
-          gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Route %s this issue to a spec request (%s) -- a fix-shaped PR was never opened.\n\n%s%s' "$route_verb" "$route_detail" "$marker" "$rationale_comment")"
+          # spec 108 (contracts/duplicate-disposition.md): dispose of the
+          # originating issue as a duplicate of the spec-request just filed
+          # -- one open issue per routed request, instead of leaving this
+          # issue open under board:stalled (#527, #604's own stall rule
+          # does not apply at this site any longer; see research.md D1).
+          spec_request_number="${spec_url##*/issues/}"
+          echo "spec-request-number=$spec_request_number" >> "$GITHUB_OUTPUT"
+          python3 .github/scripts/board_duplicate_disposition.py --originating "$ISSUE_NUMBER" \
+            --spec-request-issue "$spec_request_number" --spec-request-url "$spec_url" \
+            --reason "Routed to $spec_url" \
+            || { echo "::error::board-loop route (spec verdict): spec-request $spec_url was filed but disposing of issue #$ISSUE_NUMBER as a duplicate failed. Whether a later run finishes it depends on this site and on the step that failed (specs/108-routed-original-disposition/contracts/duplicate-disposition.md, failure semantics)."; exit 1; }
+
+      # A fix-shaped item whose drafted diff edits a workflow file, while
+      # the App holds no Workflows permission (docs/setup.md): this loop
+      # cannot push it, so it is held for a maintainer as the one issue it
+      # already is. It is never filed as a spec -- the spec lifecycle is
+      # for design trade-offs, and sending push-permission cases there
+      # turned one-line comment fixes into specs with owner questions (the
+      # 2026-10-01 board reset). board_workflow_scope_hold.py is the one
+      # home of the check and the hold, for this site, fix's pre-push check
+      # and review-fixup's.
+      - name: Hold a workflow-file fix for a maintainer
+        id: hold
+        if: steps.killswitch-recheck.outputs.paused != 'true' && steps.decide.outputs.verdict == 'hold'
+        env:
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
+          ISSUE_NUMBER: ${{ needs.select.outputs.issue-number }}
+          CAN_PUSH_WORKFLOWS: ${{ vars.WING_COMMANDER_BOARD_CAN_PUSH_WORKFLOWS == 'true' }}
+        run: |
+          set -uo pipefail
+          held="$(python3 .github/scripts/board_workflow_scope_hold.py --site route --issue "$ISSUE_NUMBER" --add-label "board:stalled" --can-push-workflows "$CAN_PUSH_WORKFLOWS" --route-decision "$RUNNER_TEMP/board-route-decision.json")" \
+            || exit 1
+          if [ "$held" != "held" ]; then
+            echo "::error::board-loop route (workflow-scope hold): route's verdict is hold, but no path in its decision is one this loop cannot push -- issue #$ISSUE_NUMBER was not held."
+            exit 1
+          fi
 
       # research.md D9: every artifact this loop spins off outside the
       # originating issue is cross-linked through this one composite
-      # (contracts/labels-and-cross-links.md's "Routed to spec-request"
+      # (contracts/labels-and-cross-links.md's "Routed to a spec proposal"
       # phrase) -- never a second, hand-written link format.
       - name: Cross-link the spec-request onto the originating issue
         if: steps.spec_request.outputs.spec-url != ''
@@ -1989,9 +2699,54 @@ jobs:
         with:
           token: ${{ env.WC_BOT_TOKEN }}
           issue-number: ${{ needs.select.outputs.issue-number }}
-          phrase: "Routed to spec-request"
+          phrase: "Routed to a spec proposal (the owner promotes it with spec-request)"
           artifact-url: ${{ steps.spec_request.outputs.spec-url }}
           context: "(reason: ${{ steps.spec_request.outputs.reason }})"
+
+      # research.md D5: the reciprocal half of the same cross-link, on the
+      # spec-request itself (contracts/duplicate-disposition.md step 6) --
+      # gated on board_duplicate_disposition.py's own pre-check finding so
+      # a later run does not re-post it once it exists.
+      - name: Cross-link the originating issue onto the spec-request
+        if: steps.spec_request.outputs.needs-reciprocal-link == 'true'
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-outstanding-task-item
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
+          issue-number: ${{ steps.spec_request.outputs.spec-request-number }}
+          phrase: "Filed for the routed original"
+          artifact-url: ${{ github.server_url }}/${{ github.repository }}/issues/${{ needs.select.outputs.issue-number }}
+
+      # specs/097-recorded-stop-point FR-015/SC-008
+      # (contracts/metrics-classification.md): a second, separate record
+      # from route-propose's own per-agent metrics call above -- this one
+      # reports what the JOB as a whole did (stood down, or its own route
+      # verdict), distinguishable from a quiet run by this field alone.
+      - name: Record run outcome (route)
+        if: always()
+        continue-on-error: true
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-metrics-summary
+        with:
+          transcript-path: ${{ runner.temp }}/wing-commander-no-transcript.json
+          model: ''
+          stage: board-loop
+          # maintainer review fold leg-2: see triage's own run-label comment
+          # above -- same one-home `stop-cause-run-label` read, not a
+          # per-job re-derivation.
+          run-label: >-
+            ${{ steps.killswitch-recheck.outputs.stop-cause != '' && format('route: {0}', steps.killswitch-recheck.outputs.stop-cause-run-label) ||
+                format('route: {0}', steps.decide.outputs.verdict) }}
+          record-path: ${{ runner.temp }}/wing-commander-metrics-record-route-outcome.json
+          spec-identity-is-own: 'false'
+
+      - name: Upload metrics record (route outcome)
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v6
+        with:
+          name: metrics-record-route-outcome
+          path: ${{ runner.temp }}/wing-commander-metrics-record-route-outcome.json
+          if-no-files-found: ignore
+          retention-days: 90
 
   # Phase 5 (User Story 3, contracts/fix-step.md): the fixer works from a
   # `main` fetched in this same run, the full local gate suite must be
@@ -2029,10 +2784,12 @@ jobs:
       issues: write
       pull-requests: write
       actions: write
-    # One board item is in flight repository-wide. A directed proof run,
-    # which selects no board item and opens no fix PR, is the only run
-    # permitted to overlap an ordinary board-loop run. Every other pair of
-    # board-loop.yml runs queues rather than races or cancels.
+    # One board item is in flight repository-wide. A directed proof run
+    # and a merged item's own prove run — neither of which selects a
+    # board item or opens a fix PR — are the only runs permitted to
+    # overlap an ordinary board-loop run, or each other when they prove
+    # distinct merged items. Every other pair of board-loop.yml runs
+    # queues rather than races or cancels.
     concurrency:
       group: wing-commander-board-loop
       cancel-in-progress: false
@@ -2240,6 +2997,13 @@ jobs:
             --allowedTools "${{ steps.tool-args-fix.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-fix.outputs.disallowed-tools }}"
 
+      - name: Record agent-ran signal (fixer)
+        id: agent-ran-fix
+        if: "!cancelled() && steps.fixer.outcome != 'skipped'"
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-agent-ran-signal
+        with:
+          agent-outcome: ${{ steps.fixer.outcome }}
+
       - name: Re-establish Wing Commander context (post-agent, fixer)
         id: reestablish-fix
         if: "!cancelled() && steps.fixer.outcome != 'skipped'"
@@ -2285,6 +3049,7 @@ jobs:
           verdict: ${{ steps.fix-verdict.outputs.verdict }}
           verdict-reason: ${{ steps.fix-verdict.outputs.reason }}
           stage: board-loop
+          spec-identity-is-own: 'false'
 
       # #499/Gate 23: continue-on-error: true (review-step-gating resolution
       # 4), not a hard exit -- the gate-suite/push/PR steps below are this
@@ -2334,12 +3099,15 @@ jobs:
           # #604: board:stalled before the stalled marker -- see board_item_marker.py.
           marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step stalled --branch "$FIX_BRANCH" --base-sha "$BASE_SHA" --issue "$ISSUE_NUMBER" --add-label "board:stalled")" \
             || { echo "::error::board-loop fix (gate suite red): board:stalled could not be added to issue #$ISSUE_NUMBER -- no stalled marker is posted (#604)."; exit 1; }
+          # FR-011 -- see triage's own comment on this idiom above.
           # #580: the failing line comes from the gate suite on the fixer
           # agent's own branch, so it is posted inside a fence
           # (fenced_section(), #562's one fencing helper).
           failure="$(python3 -I -c "import os, sys; sys.path.insert(0, os.path.join(os.environ['RUNNER_TEMP'], 'wc-pristine', 'scripts')); from board_spec_request_body import fenced_section; print(fenced_section('First failing gate (gate suite output, shown as text):', os.environ['FIRST_FAILURE'], 4000))")" \
             || failure="(the failing gate could not be rendered)"
-          gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'The fixer'"'"'s branch failed the local gate suite before any push -- nothing was pushed, no PR was opened:\n\n%s\n\n%s' "$failure" "$marker")"
+          gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'The fixer'"'"'s branch failed the local gate suite before any push -- nothing was pushed, no PR was opened:\n\n%s\n\n%s' "$failure" "$marker")" \
+            || { echo "::error::board-loop fix (gate suite red): board:stalled was applied to issue #$ISSUE_NUMBER but the stalled-marker comment could not be posted."; exit 1; }
+          python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --record-stall-summary --issue "$ISSUE_NUMBER" --from-step "fix (gate suite red)"
 
       - name: Re-check kill switch and stop requests before any durable action
         id: killswitch-recheck
@@ -2351,6 +3119,19 @@ jobs:
           bot-login: ${{ steps.ctx.outputs.bot-slug }}[bot]
           issue-number: ${{ needs.select.outputs.issue-number }}
           initial-paused: ${{ vars.WING_COMMANDER_BOARD_LOOP_PAUSED == 'true' }}
+          marker-branch: ${{ needs.select.outputs.branch }}
+          marker-base-sha: ${{ needs.select.outputs.base-sha }}
+
+      # specs/097-recorded-stop-point FR-014: name the cause actually
+      # observed before fix's own durable action (pushing and opening the
+      # PR) is skipped.
+      - name: Record the stand-down (fix)
+        if: steps.gate-suite.outputs.outcome == 'pass' && steps.killswitch-recheck.outputs.paused == 'true'
+        env:
+          STOP_CAUSE_PHRASE: ${{ steps.killswitch-recheck.outputs.stop-cause-phrase }}
+        run: |
+          set -uo pipefail
+          echo "board-loop: $STOP_CAUSE_PHRASE found immediately before fix's durable action -- standing down without acting." >> "$GITHUB_STEP_SUMMARY"
 
       # FR-026/research.md D9: push only on green, then cross-link.
       - name: Push and open the PR
@@ -2361,8 +3142,23 @@ jobs:
           ISSUE_NUMBER: ${{ needs.select.outputs.issue-number }}
           BRANCH: ${{ steps.base.outputs.branch }}
           BASE_SHA: ${{ steps.base.outputs.base-sha }}
+          CAN_PUSH_WORKFLOWS: ${{ vars.WING_COMMANDER_BOARD_CAN_PUSH_WORKFLOWS == 'true' }}
         run: |
           set -euo pipefail
+          # Route's hold covers only the paths the drafted diff named; the
+          # fixer's real change is checked here, before the push GitHub
+          # would refuse (the App holds no Workflows permission) -- held the
+          # same way, never left to fail and be resumed into the same
+          # refusal on every later run.
+          # The check and the hold: board_workflow_scope_hold.py (route's
+          # "Hold a workflow-file fix for a maintainer"). It lists the
+          # paths changed since --diff-base itself (diff_name_list(): never
+          # C-quoted, a rename as both paths), whatever route drafted, and
+          # names the real diff's contract effect in the hold comment.
+          held="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_workflow_scope_hold.py" --site fix --issue "$ISSUE_NUMBER" --add-label "board:stalled" --can-push-workflows "$CAN_PUSH_WORKFLOWS" --diff-base "$BASE_SHA" --branch "$BRANCH" --base-sha "$BASE_SHA")"
+          if [ "$held" = "held" ]; then
+            exit 0
+          fi
           git push origin "HEAD:refs/heads/$BRANCH"
 
           # One-line fallback (CLAUDE.md "shared logic has exactly one
@@ -2379,15 +3175,16 @@ jobs:
           echo "pr-number=$pr_number" >> "$GITHUB_OUTPUT"
           echo "pr-url=$pr_url" >> "$GITHUB_OUTPUT"
 
-          marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step review --pr "$pr_number" --branch "$BRANCH" --base-sha "$BASE_SHA")"
+          marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step review --pr "$pr_number" --branch "$BRANCH" --base-sha "$BASE_SHA")" \
+            || { echo "::error::board-loop fix: PR #$pr_number is open but its review marker could not be rendered -- nothing is posted on issue #$ISSUE_NUMBER (#786)."; exit 1; }
           echo "$marker" > "$RUNNER_TEMP/board-fix-marker.txt"
 
       # T029/FR-021/FR-018: route_final_diff() re-applies the SAME backstop
       # to the pushed branch's real diff and real file content -- the
-      # precise contract_widened() check, unlike route's own pre-push
-      # touches_protected_file() proxy, because the new side's actual file
-      # content now exists on disk to locate the workflow_call:/inputs:/
-      # outputs: block precisely.
+      # precise contract_widened() check, unlike route's pre-push
+      # drafted_contract_widened(), which can only locate the agent's
+      # drafted hunks against main, because only now does the new side's
+      # actual file content exist on disk.
       - name: Re-apply the route backstop to the final diff
         id: final-diff-backstop
         if: steps.push-pr.outputs.pr-url != ''
@@ -2399,8 +3196,10 @@ jobs:
           BOARD_MAX_LINES: ${{ env.BOARD_MAX_LINES }}
         run: |
           set -uo pipefail
-          git diff "$BASE_SHA" HEAD > "$RUNNER_TEMP/board-fix-final-diff.patch"
-          git diff --name-only "$BASE_SHA" HEAD > "$RUNNER_TEMP/board-fix-final-diff-paths.txt"
+          # --no-renames, here and in diff_name_list(): a rename is its
+          # deleted path and its added one, so a contract moved away is
+          # still compared against the base.
+          git -c core.quotePath=false diff --no-renames "$BASE_SHA" HEAD > "$RUNNER_TEMP/board-fix-final-diff.patch"
 
           python3 -I - <<'PYEOF'
           import json
@@ -2408,19 +3207,14 @@ jobs:
           import sys
 
           sys.path.insert(0, os.path.join(os.environ["RUNNER_TEMP"], "wc-pristine", "scripts"))
-          from board_route_backstop import route_final_diff
+          from board_route_backstop import (diff_name_list, read_base_contents,
+                                            read_worktree_contents, route_final_diff)
 
           runner_temp = os.environ["RUNNER_TEMP"]
           with open(os.path.join(runner_temp, "board-fix-final-diff.patch"), encoding="utf-8") as fh:
               diff_text = fh.read()
-          with open(os.path.join(runner_temp, "board-fix-final-diff-paths.txt"), encoding="utf-8") as fh:
-              diff_paths = [line.strip() for line in fh if line.strip()]
-
-          file_contents = {}
-          for path in diff_paths:
-              if os.path.isfile(path):
-                  with open(path, encoding="utf-8") as fh:
-                      file_contents[path] = fh.read()
+          diff_paths = diff_name_list(os.environ["BASE_SHA"])
+          file_contents = read_worktree_contents(diff_paths)
 
           files = len(diff_paths)
           lines = sum(1 for line in diff_text.splitlines()
@@ -2433,10 +3227,13 @@ jobs:
 
           route_decision = {"agent_proposal": "fix", "backstop_verdict": os.environ["ROUTE_VERDICT"],
                              "reason": os.environ["ROUTE_REASON"]}
+          # The base side too, so a contract REMOVED is a breach, not only
+          # one added (contract_widened()'s base_contents).
           result = route_final_diff(
               route_decision, final_diff=None, board_max_files=board_max_files,
               board_max_lines=board_max_lines, measure_backstop=measure_backstop,
-              diff_paths=diff_paths, diff_text=diff_text, file_contents=file_contents)
+              diff_paths=diff_paths, diff_text=diff_text, file_contents=file_contents,
+              base_contents=read_base_contents(os.environ.get("BASE_SHA", ""), diff_paths))
 
           with open(os.path.join(runner_temp, "board-fix-final-diff-decision.json"), "w", encoding="utf-8") as fh:
               json.dump(result, fh)
@@ -2505,6 +3302,7 @@ jobs:
           BRANCH: ${{ steps.base.outputs.branch }}
           BASE_SHA: ${{ steps.base.outputs.base-sha }}
           ISSUE_CONTEXT_FILE: ${{ steps.issue-context-breach.outputs.context-file }}
+          BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}[bot]
         run: |
           set -uo pipefail
           measured="$(jq -c '.measured' "$RUNNER_TEMP/board-fix-final-diff-decision.json")"
@@ -2515,7 +3313,7 @@ jobs:
             || { echo "::error::board-loop fix (post-push breach): board_item_marker.py failed to render the step=breach marker -- not posting a marker-less comment (#530)."; exit 1; }
           [ -n "$breach_marker" ] \
             || { echo "::error::board-loop fix (post-push breach): board_item_marker.py rendered an empty step=breach marker -- not posting a marker-less comment (#530)."; exit 1; }
-          gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Post-push backstop breach on %s (measured=%s) -- the PR will not be reviewed; filing a spec-request to cover finishing this at the right size.\n\n%s' "$PR_URL" "$measured" "$breach_marker")" \
+          gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Post-push backstop breach on %s (measured=%s) -- the PR will not be reviewed; filing a spec proposal to cover finishing this at the right size.\n\n%s' "$PR_URL" "$measured" "$breach_marker")" \
             || echo "::warning::board-loop fix (post-push breach): could not post the step=breach marker on issue #$ISSUE_NUMBER -- if the spec-request create below fails too, a later run may resume this PR at review (#530)."
           issue_title="$(gh issue view "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --json title --jq .title)"
           notice="$(printf 'The fix at %s grew past the board'"'"'s size-and-path backstop on its final diff (measured=%s). The branch/PR are left open, unmerged, under a notice -- this spec request covers finishing the work at the size a human plan should decide.' "$PR_URL" "$measured")"
@@ -2527,18 +3325,22 @@ jobs:
           spec_url="$(gh issue create -R "$GITHUB_REPOSITORY" \
             --title "$issue_title" \
             --body-file "$spec_body_file" \
-            --label spec-request)"
+            --label spec-proposal)"
           # #514 -- see route's spec-request site.
           [[ "$spec_url" =~ ^https?://[^[:space:]]+/issues/[0-9]+$ ]] || { echo "::error::board-loop fix (post-push breach): creating the spec-request returned no issue URL (got '$spec_url') -- no spec-request was filed; the issue is left without board:stalled so a later run retries it."; exit 1; }
           echo "spec-url=$spec_url" >> "$GITHUB_OUTPUT"
           echo "measured=$measured" >> "$GITHUB_OUTPUT"
+          spec_request_number="${spec_url##*/issues/}"
+          echo "spec-request-number=$spec_request_number" >> "$GITHUB_OUTPUT"
 
-          # #530/#604: board:stalled before the stalled marker -- see
-          # board_item_marker.py. A failed add leaves the breach marker
-          # newest, and readiness retries (reusing the spec-request just filed).
-          marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step stalled --issue "$ISSUE_NUMBER" --add-label "board:stalled")" \
-            || { echo "::error::board-loop fix (post-push breach): spec-request $spec_url was filed but board:stalled could not be added to issue #$ISSUE_NUMBER -- the breach marker stays newest, so a later run retries through readiness (#530)."; exit 1; }
-          gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Post-push backstop breach on %s (measured=%s) -- the branch/PR are left open, unmerged; a spec-request now covers finishing this at the right size.\n\n%s' "$PR_URL" "$measured" "$marker")"
+          # spec 108 (contracts/duplicate-disposition.md): dispose of the
+          # originating issue as a duplicate of the spec-request just filed
+          # -- one open issue per routed request, instead of leaving this
+          # issue open under board:stalled (research.md D1).
+          python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_duplicate_disposition.py" --originating "$ISSUE_NUMBER" \
+            --spec-request-issue "$spec_request_number" --spec-request-url "$spec_url" \
+            --reason "Post-push backstop breach on $PR_URL (measured=$measured)" \
+            || { echo "::error::board-loop fix (post-push breach): spec-request $spec_url was filed but disposing of issue #$ISSUE_NUMBER as a duplicate failed. Whether a later run finishes it depends on this site and on the step that failed (specs/108-routed-original-disposition/contracts/duplicate-disposition.md, failure semantics)."; exit 1; }
 
       - name: Cross-link the post-push-breach spec-request onto the originating issue
         if: steps.post-push-breach.outputs.spec-url != ''
@@ -2546,9 +3348,52 @@ jobs:
         with:
           token: ${{ env.WC_BOT_TOKEN }}
           issue-number: ${{ needs.select.outputs.issue-number }}
-          phrase: "Routed to spec-request"
+          phrase: "Routed to a spec proposal (the owner promotes it with spec-request)"
           artifact-url: ${{ steps.post-push-breach.outputs.spec-url }}
           context: "(post-push backstop breach, measured=${{ steps.post-push-breach.outputs.measured }})"
+
+      - name: Cross-link the originating issue onto the post-push-breach spec-request
+        if: steps.post-push-breach.outputs.needs-reciprocal-link == 'true'
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-outstanding-task-item
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
+          issue-number: ${{ steps.post-push-breach.outputs.spec-request-number }}
+          phrase: "Filed for the routed original"
+          artifact-url: ${{ github.server_url }}/${{ github.repository }}/issues/${{ needs.select.outputs.issue-number }}
+          context: "(post-push backstop breach, measured=${{ steps.post-push-breach.outputs.measured }})"
+
+      # specs/097-recorded-stop-point FR-015/SC-008
+      # (contracts/metrics-classification.md): a second, separate record
+      # from the fixer's own per-agent metrics call above -- this one
+      # reports what the JOB as a whole did (stood down, or its own
+      # gate-suite outcome), distinguishable from a quiet run by this field
+      # alone.
+      - name: Record run outcome (fix)
+        if: always()
+        continue-on-error: true
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-metrics-summary
+        with:
+          transcript-path: ${{ runner.temp }}/wing-commander-no-transcript.json
+          model: ''
+          stage: board-loop
+          # maintainer review fold leg-2: see triage's own run-label comment
+          # above -- same one-home `stop-cause-run-label` read, not a
+          # per-job re-derivation.
+          run-label: >-
+            ${{ steps.killswitch-recheck.outputs.stop-cause != '' && format('fix: {0}', steps.killswitch-recheck.outputs.stop-cause-run-label) ||
+                format('fix: gate-suite {0}', steps.gate-suite.outputs.outcome) }}
+          record-path: ${{ runner.temp }}/wing-commander-metrics-record-fix-outcome.json
+          spec-identity-is-own: 'false'
+
+      - name: Upload metrics record (fix outcome)
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v6
+        with:
+          name: metrics-record-fix-outcome
+          path: ${{ runner.temp }}/wing-commander-metrics-record-fix-outcome.json
+          if-no-files-found: ignore
+          retention-days: 90
 
   # Phase 6 (User Story 4, contracts/review-and-findings.md): a
   # context-isolated reviewer (a separate job -- no shared transcript,
@@ -2578,16 +3423,22 @@ jobs:
       issues: write
       pull-requests: write
       actions: write
-    # One board item is in flight repository-wide. A directed proof run,
-    # which selects no board item and opens no fix PR, is the only run
-    # permitted to overlap an ordinary board-loop run. Every other pair of
-    # board-loop.yml runs queues rather than races or cancels.
+    # One board item is in flight repository-wide. A directed proof run
+    # and a merged item's own prove run — neither of which selects a
+    # board item or opens a fix PR — are the only runs permitted to
+    # overlap an ordinary board-loop run, or each other when they prove
+    # distinct merged items. Every other pair of board-loop.yml runs
+    # queues rather than races or cancels.
     concurrency:
       group: wing-commander-board-loop
       cancel-in-progress: false
     outputs:
       pr-number: ${{ steps.pr.outputs.pr-number }}
-      outcome: ${{ steps.round.outputs.outcome }}
+      # Maintainer feedback (spec 097): a stand-down must not read
+      # downstream (readiness's needs.review.outputs.outcome == 'converged'
+      # check) as 'converged' -- readiness's own if: already excludes it,
+      # and this job's own continuation output stops lying about it too.
+      outcome: ${{ steps.killswitch-recheck.outputs.paused == 'true' && 'stood-down' || steps.round.outputs.outcome }}
       nr-count: ${{ steps.pr.outputs.nr-count }}
       # specs/093-not-ready-board-release research.md D6: so a same-run
       # review-to-readiness handoff's not-ready marker write can carry the
@@ -2691,12 +3542,26 @@ jobs:
       # onto the PR's own branch here is a plain git fetch/checkout instead
       # of a second checkout action.
       - name: Checkout the PR branch
+        id: checkout-pr
         env:
           BRANCH: ${{ steps.pr.outputs.branch }}
         run: |
           set -uo pipefail
           git fetch --no-tags --quiet origin "$BRANCH"
           git checkout --quiet -B "$BRANCH" FETCH_HEAD
+          # FR-006b (contracts/resume-recovery.md clause 2b): the exact
+          # commit this round reviews, recorded on a converged verdict
+          # comment so a later resume can compare SHAs directly rather
+          # than trusting a commit timestamp (maintainer review of #885).
+          echo "head-sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          # specs/097-recorded-stop-point (maintainer review fold leg-3):
+          # needs.select.outputs.base-sha is select's own one-time read, not
+          # refreshed on a same-run fix->review handoff -- compute it fresh
+          # here instead, for the stop-point record's marker.
+          # Best-effort: a failed fetch leaves base-sha empty on the record
+          # rather than failing the review round.
+          git fetch --no-tags --quiet origin main || echo "::warning::board-loop review: could not refresh origin/main; the stop-point record's base-sha may be empty."
+          echo "base-sha=$(git merge-base origin/main HEAD 2>/dev/null || true)" >> "$GITHUB_OUTPUT"
 
       # #488: see wing-commander-board-labels; continue-on-error so a
       # missed create cannot block the review round's own outcome step.
@@ -2853,6 +3718,13 @@ jobs:
             --allowedTools "${{ steps.tool-args-review.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-review.outputs.disallowed-tools }}"
 
+      - name: Record agent-ran signal (reviewer)
+        id: agent-ran-review
+        if: "!cancelled() && steps.reviewer.outcome != 'skipped'"
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-agent-ran-signal
+        with:
+          agent-outcome: ${{ steps.reviewer.outcome }}
+
       - name: Re-establish Wing Commander context (post-agent, reviewer)
         id: reestablish-review
         if: "!cancelled() && steps.reviewer.outcome != 'skipped'"
@@ -2862,12 +3734,21 @@ jobs:
           app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
           private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
 
+      - name: Refresh authenticated remote (post-agent, reviewer)
+        id: refresh-remote-review
+        if: "!cancelled() && steps.reviewer.outcome != 'skipped'"
+        continue-on-error: true
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-refresh-remote
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
+
       - name: Determine post-agent credential status (reviewer)
         id: credential-status-review
         if: "!cancelled() && steps.reviewer.outcome != 'skipped'"
         uses: ./.wc-pristine-repo/.github/actions/wing-commander-post-agent-credential-status
         with:
           mint-outcome: ${{ steps.reestablish-review.outcome }}
+          refresh-outcome: ${{ steps.refresh-remote-review.outcome }}
 
       - name: Compute agent run verdict (reviewer)
         id: review-verdict
@@ -2889,6 +3770,7 @@ jobs:
           verdict: ${{ steps.review-verdict.outputs.verdict }}
           verdict-reason: ${{ steps.review-verdict.outputs.reason }}
           stage: board-loop
+          spec-identity-is-own: 'false'
 
       # #499/Gate 23: continue-on-error: true (review-step-gating resolution
       # 4), not a hard exit -- the extract/post-review steps below are this
@@ -3303,6 +4185,24 @@ jobs:
           bot-login: ${{ steps.ctx.outputs.bot-slug }}[bot]
           issue-number: ${{ needs.select.outputs.issue-number || inputs.directed-issue }}
           initial-paused: ${{ vars.WING_COMMANDER_BOARD_LOOP_PAUSED == 'true' }}
+          # specs/097-recorded-stop-point (maintainer review fold leg-3):
+          # needs.select.outputs.branch/base-sha is select's own one-time
+          # read -- empty on a same-run fix->review handoff, which would
+          # record branch: null. steps.pr/steps.checkout-pr are this job's
+          # own fresh reads of the PR actually under review.
+          marker-branch: ${{ steps.pr.outputs.branch }}
+          marker-base-sha: ${{ steps.checkout-pr.outputs.base-sha }}
+
+      # specs/097-recorded-stop-point FR-014: name the cause actually
+      # observed before review's own durable actions (posting the round
+      # outcome, pushing a fixup) are skipped.
+      - name: Record the stand-down (review)
+        if: steps.killswitch-recheck.outputs.paused == 'true'
+        env:
+          STOP_CAUSE_PHRASE: ${{ steps.killswitch-recheck.outputs.stop-cause-phrase }}
+        run: |
+          set -uo pipefail
+          echo "board-loop: $STOP_CAUSE_PHRASE found immediately before review's durable action -- standing down without acting." >> "$GITHUB_STEP_SUMMARY"
 
       # T042/T044/FR-030/FR-031: zero open in-scope findings advances to
       # readiness; findings remain and the round budget (research.md D18,
@@ -3374,16 +4274,22 @@ jobs:
           OUTCOME: ${{ steps.round.outputs.outcome }}
           STALL_REASON: ${{ steps.round.outputs.stall-reason }}
           DROPPED_COUNT: ${{ steps.extract.outputs.dropped-count }}
+          HEAD_SHA: ${{ steps.checkout-pr.outputs.head-sha }}
         run: |
           set -uo pipefail
           # #604: every stall below adds board:stalled before its marker --
           # see board_item_marker.py.
           if [ "$OUTCOME" = "converged" ]; then
+            # FR-006b (contracts/resume-recovery.md clause 2b): the head
+            # SHA this round reviewed is recorded on the comment itself so
+            # a later resume's head_moved_since_last_review() can compare
+            # SHAs directly -- see board_item_marker.py.
             # specs/093-not-ready-board-release research.md D6: --round
             # preserves the fix->review budget across a later not-ready
             # detour instead of dropping to the default 0.
-            marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step readiness --pr "$PR_NUMBER" --branch "$BRANCH" --round "$ROUND" --nr-count "$NR_COUNT")"
-            gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Review round %s converged -- zero open in-scope findings on PR #%s. Proceeding to readiness.\n\n%s' "$ROUND" "$PR_NUMBER" "$marker")"
+            marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step readiness --pr "$PR_NUMBER" --branch "$BRANCH" --round "$ROUND" --nr-count "$NR_COUNT")" \
+              || { echo "::error::board-loop review (converged): the readiness marker could not be rendered -- nothing is posted on issue #$ISSUE_NUMBER (#786)."; exit 1; }
+            gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Review round %s converged -- zero open in-scope findings on PR #%s (head %s). Proceeding to readiness.\n\n%s' "$ROUND" "$PR_NUMBER" "$HEAD_SHA" "$marker")"
           elif [ "$STALL_REASON" = "parse-failed" ]; then
             # SF1/#499: distinct from the budget-spent message below -- this
             # round never produced a trustworthy findings list at all, so
@@ -3391,12 +4297,21 @@ jobs:
             # be none, or the reviewer may not have run to completion).
             marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step stalled --issue "$ISSUE_NUMBER" --add-label "board:stalled")" \
               || { echo "::error::board-loop review ($STALL_REASON): board:stalled could not be added to issue #$ISSUE_NUMBER -- no stalled marker is posted (#604)."; exit 1; }
-            gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Review round %s on PR #%s could not be read -- the reviewer did not return a parseable findings block. Treating this as inconclusive, never as a clean review. The PR is left open, unmerged, pending a maintainer look. Removing board:stalled is the sole re-eligibility condition.\n\n%s' "$ROUND" "$PR_NUMBER" "$marker")"
+            # FR-011: the run-summary line is recorded only after the
+            # comment below actually posts -- see triage's own comment on
+            # this idiom above (its canonical home is
+            # board_item_marker.record_stall_summary()).
+            gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Review round %s on PR #%s could not be read -- the reviewer did not return a parseable findings block. Treating this as inconclusive, never as a clean review. The PR is left open, unmerged, pending a maintainer look. Removing board:stalled is the sole re-eligibility condition.\n\n%s' "$ROUND" "$PR_NUMBER" "$marker")" \
+              || { echo "::error::board-loop review ($STALL_REASON): board:stalled was applied to issue #$ISSUE_NUMBER but the stalled-marker comment could not be posted."; exit 1; }
+            python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --record-stall-summary --issue "$ISSUE_NUMBER" --from-step "review ($STALL_REASON)"
           elif [ "$STALL_REASON" = "malformed-findings" ]; then
             # #583: see "Decide the round outcome".
             marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step stalled --issue "$ISSUE_NUMBER" --add-label "board:stalled")" \
               || { echo "::error::board-loop review ($STALL_REASON): board:stalled could not be added to issue #$ISSUE_NUMBER -- no stalled marker is posted (#604)."; exit 1; }
-            gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Review round %s on PR #%s returned no valid in-scope finding, but dropped %s malformed finding(s) that may have been in scope. Treating this as inconclusive, never as a clean review. The PR is left open, unmerged, pending a maintainer look. Removing board:stalled is the sole re-eligibility condition.\n\n%s' "$ROUND" "$PR_NUMBER" "${DROPPED_COUNT:-an unknown number of}" "$marker")"
+            # FR-011 -- see triage's own comment on this idiom above.
+            gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Review round %s on PR #%s returned no valid in-scope finding, but dropped %s malformed finding(s) that may have been in scope. Treating this as inconclusive, never as a clean review. The PR is left open, unmerged, pending a maintainer look. Removing board:stalled is the sole re-eligibility condition.\n\n%s' "$ROUND" "$PR_NUMBER" "${DROPPED_COUNT:-an unknown number of}" "$marker")" \
+              || { echo "::error::board-loop review ($STALL_REASON): board:stalled was applied to issue #$ISSUE_NUMBER but the stalled-marker comment could not be posted."; exit 1; }
+            python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --record-stall-summary --issue "$ISSUE_NUMBER" --from-step "review ($STALL_REASON)"
           else
             # #580: the titles are the reviewer agent's own text -- fenced,
             # as in "Compose the review body" above.
@@ -3404,7 +4319,10 @@ jobs:
               || remaining="(the open findings could not be rendered)"
             marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step stalled --issue "$ISSUE_NUMBER" --add-label "board:stalled")" \
               || { echo "::error::board-loop review ($STALL_REASON): board:stalled could not be added to issue #$ISSUE_NUMBER -- no stalled marker is posted (#604)."; exit 1; }
-            gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Review round budget (%s) spent on PR #%s with in-scope findings still open. The PR is left open, unmerged. Removing board:stalled is the sole re-eligibility condition.\n\n%s\n\n%s' "$ROUND_BUDGET" "$PR_NUMBER" "$remaining" "$marker")"
+            # FR-011 -- see triage's own comment on this idiom above.
+            gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Review round budget (%s) spent on PR #%s with in-scope findings still open. The PR is left open, unmerged. Removing board:stalled is the sole re-eligibility condition.\n\n%s\n\n%s' "$ROUND_BUDGET" "$PR_NUMBER" "$remaining" "$marker")" \
+              || { echo "::error::board-loop review ($STALL_REASON): board:stalled was applied to issue #$ISSUE_NUMBER but the stalled-marker comment could not be posted."; exit 1; }
+            python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --record-stall-summary --issue "$ISSUE_NUMBER" --from-step "review (round budget spent)"
           fi
 
       - name: Compose tool args (review-fixup)
@@ -3468,6 +4386,13 @@ jobs:
             --allowedTools "${{ steps.tool-args-review-fixup.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-review-fixup.outputs.disallowed-tools }}"
 
+      - name: Record agent-ran signal (review-fixup)
+        id: agent-ran-review-fixup
+        if: "!cancelled() && steps.review-fixup.outcome != 'skipped'"
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-agent-ran-signal
+        with:
+          agent-outcome: ${{ steps.review-fixup.outcome }}
+
       - name: Re-establish Wing Commander context (post-agent, review-fixup)
         id: reestablish-review-fixup
         if: "!cancelled() && steps.review-fixup.outcome != 'skipped'"
@@ -3513,6 +4438,7 @@ jobs:
           verdict: ${{ steps.review-fixup-verdict.outputs.verdict }}
           verdict-reason: ${{ steps.review-fixup-verdict.outputs.reason }}
           stage: board-loop
+          spec-identity-is-own: 'false'
 
       # #499/Gate 23: continue-on-error: true (review-step-gating resolution
       # 4), not a hard exit -- the gate-suite/push steps below are this
@@ -3557,15 +4483,33 @@ jobs:
           PR_NUMBER: ${{ steps.pr.outputs.pr-number }}
           BRANCH: ${{ steps.pr.outputs.branch }}
           CURRENT_ROUND: ${{ steps.pr.outputs.round }}
+          REVIEWED_SHA: ${{ steps.checkout-pr.outputs.head-sha }}
+          CAN_PUSH_WORKFLOWS: ${{ vars.WING_COMMANDER_BOARD_CAN_PUSH_WORKFLOWS == 'true' }}
           # specs/093-not-ready-board-release research.md D5: carried
           # through unchanged -- the round already advances here; the
           # not-ready count does not.
           NR_COUNT: ${{ steps.pr.outputs.nr-count }}
         run: |
           set -uo pipefail
-          git push origin "HEAD:refs/heads/$BRANCH"
+          # The fix job's pre-push hold, for review-fixup's own commit
+          # (found by the code review of #901) -- see fix's "Push and open
+          # the PR". Only the commits this push adds are checked: GitHub
+          # refuses them when they change a workflow file and the App holds
+          # no Workflows permission.
+          held="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_workflow_scope_hold.py" --site review-fixup --issue "$ISSUE_NUMBER" --add-label "board:stalled" --can-push-workflows "$CAN_PUSH_WORKFLOWS" --diff-base "$REVIEWED_SHA" --pr "$PR_NUMBER")" \
+            || exit 1
+          if [ "$held" = "held" ]; then
+            exit 0
+          fi
+          # The step's default shell is `bash -e`, so a refused push already
+          # stops it here; the check only names why in the annotation.
+          if ! git push origin "HEAD:refs/heads/$BRANCH"; then
+            echo "::error::board-loop review-fixup: the follow-up commit could not be pushed to $BRANCH -- the round is not advanced and no review-round comment is posted."
+            exit 1
+          fi
           next_round=$((CURRENT_ROUND + 1))
-          marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step review --round "$next_round" --pr "$PR_NUMBER" --branch "$BRANCH" --nr-count "$NR_COUNT")"
+          marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step review --round "$next_round" --pr "$PR_NUMBER" --branch "$BRANCH" --nr-count "$NR_COUNT")" \
+            || { echo "::error::board-loop review-fixup: the follow-up is pushed to $BRANCH, but the round $next_round marker could not be rendered -- nothing is posted on issue #$ISSUE_NUMBER (#786)."; exit 1; }
           gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Review round %s: pushed a follow-up commit addressing the in-scope findings on PR #%s. Re-reviewing on a later run.\n\n%s' "$next_round" "$PR_NUMBER" "$marker")"
 
       - name: Comment the failing gate on the issue (review-fixup, gate suite red)
@@ -3580,6 +4524,39 @@ jobs:
           failure="$(python3 -I -c "import os, sys; sys.path.insert(0, os.path.join(os.environ['RUNNER_TEMP'], 'wc-pristine', 'scripts')); from board_spec_request_body import fenced_section; print(fenced_section('First failing gate (gate suite output, shown as text):', os.environ['FIRST_FAILURE'], 4000))")" \
             || failure="(the failing gate could not be rendered)"
           gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'A review-fixup follow-up commit failed the local gate suite before any push -- nothing was pushed, the PR is unchanged:\n\n%s' "$failure")"
+
+      # specs/097-recorded-stop-point FR-015/SC-008
+      # (contracts/metrics-classification.md): a second, separate record
+      # from the reviewer's/review-fixup's own per-agent metrics calls
+      # above -- this one reports what the JOB as a whole did (stood down,
+      # or its own round outcome), distinguishable from a quiet run by this
+      # field alone.
+      - name: Record run outcome (review)
+        if: always()
+        continue-on-error: true
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-metrics-summary
+        with:
+          transcript-path: ${{ runner.temp }}/wing-commander-no-transcript.json
+          model: ''
+          stage: board-loop
+          # maintainer review fold leg-2: see triage's own run-label comment
+          # above -- same one-home `stop-cause-run-label` read, not a
+          # per-job re-derivation.
+          run-label: >-
+            ${{ steps.killswitch-recheck.outputs.stop-cause != '' && format('review: {0}', steps.killswitch-recheck.outputs.stop-cause-run-label) ||
+                format('review: {0}', steps.round.outputs.outcome) }}
+          record-path: ${{ runner.temp }}/wing-commander-metrics-record-review-outcome.json
+          spec-identity-is-own: 'false'
+
+      - name: Upload metrics record (review outcome)
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v6
+        with:
+          name: metrics-record-review-outcome
+          path: ${{ runner.temp }}/wing-commander-metrics-record-review-outcome.json
+          if-no-files-found: ignore
+          retention-days: 90
 
   # Phase 7 (User Story 5, contracts/readiness-report.md): every condition
   # is re-derived against the PR's exact head SHA; the loop reports ready
@@ -3606,10 +4583,12 @@ jobs:
       issues: write
       pull-requests: read
       actions: write
-    # One board item is in flight repository-wide. A directed proof run,
-    # which selects no board item and opens no fix PR, is the only run
-    # permitted to overlap an ordinary board-loop run. Every other pair of
-    # board-loop.yml runs queues rather than races or cancels.
+    # One board item is in flight repository-wide. A directed proof run
+    # and a merged item's own prove run — neither of which selects a
+    # board item or opens a fix PR — are the only runs permitted to
+    # overlap an ordinary board-loop run, or each other when they prove
+    # distinct merged items. Every other pair of board-loop.yml runs
+    # queues rather than races or cancels.
     concurrency:
       group: wing-commander-board-loop
       cancel-in-progress: false
@@ -3742,8 +4721,10 @@ jobs:
         run: |
           set -uo pipefail
           base_sha="$(git merge-base origin/main HEAD)"
-          git diff "$base_sha" HEAD > "$RUNNER_TEMP/board-readiness-final-diff.patch"
-          git diff --name-only "$base_sha" HEAD > "$RUNNER_TEMP/board-readiness-final-diff-paths.txt"
+          export BASE_SHA="$base_sha"
+          # --no-renames: see fix's "Re-apply the route backstop to the
+          # final diff".
+          git -c core.quotePath=false diff --no-renames "$base_sha" HEAD > "$RUNNER_TEMP/board-readiness-final-diff.patch"
 
           python3 -I - <<'PYEOF'
           import json
@@ -3752,26 +4733,22 @@ jobs:
 
           sys.path.insert(0, os.path.join(os.environ["RUNNER_TEMP"], "wc-pristine", "scripts"))
           from board_eligibility import BREACH_STEP
-          from board_route_backstop import contract_widened
+          from board_route_backstop import (contract_widened, diff_name_list,
+                                            read_base_contents, read_worktree_contents)
 
           runner_temp = os.environ["RUNNER_TEMP"]
           with open(os.path.join(runner_temp, "board-readiness-final-diff.patch"), encoding="utf-8") as fh:
               diff_text = fh.read()
-          with open(os.path.join(runner_temp, "board-readiness-final-diff-paths.txt"), encoding="utf-8") as fh:
-              diff_paths = [line.strip() for line in fh if line.strip()]
-
-          file_contents = {}
-          for path in diff_paths:
-              if os.path.isfile(path):
-                  with open(path, encoding="utf-8") as fh:
-                      file_contents[path] = fh.read()
+          diff_paths = diff_name_list(os.environ["BASE_SHA"])
+          file_contents = read_worktree_contents(diff_paths)
 
           files = len(diff_paths)
           lines = sum(1 for line in diff_text.splitlines()
                       if line[:1] in "+-" and not line.startswith(("+++", "---")))
           board_max_files = int(os.environ["BOARD_MAX_FILES"])
           board_max_lines = int(os.environ["BOARD_MAX_LINES"])
-          widened = contract_widened(diff_paths, diff_text, file_contents)
+          widened = contract_widened(diff_paths, diff_text, file_contents,
+                                     read_base_contents(os.environ.get("BASE_SHA", ""), diff_paths))
           holds = files <= board_max_files and lines <= board_max_lines and not widened
           breach_retry = os.environ.get("RESUME_STEP") == BREACH_STEP
           if breach_retry:
@@ -3781,6 +4758,12 @@ jobs:
               fh.write("holds={0}\n".format("true" if holds else "false"))
               fh.write("measured=files={0},lines={1}\n".format(files, lines))
               fh.write("breach-retry={0}\n".format("true" if breach_retry else "false"))
+              # specs/097-recorded-stop-point (maintainer review fold
+              # leg-3): the base-sha this step already computed fresh, for
+              # the stop-point record's marker -- needs.select.outputs.
+              # base-sha is select's own one-time read and can be stale by
+              # the time readiness runs.
+              fh.write("base-sha={0}\n".format(os.environ.get("BASE_SHA", "")))
           PYEOF
 
       # FR-051/FR-052 (#604): this re-check gates EVERY durable action
@@ -3800,14 +4783,28 @@ jobs:
           bot-login: ${{ steps.ctx.outputs.bot-slug }}[bot]
           issue-number: ${{ needs.select.outputs.issue-number || inputs.directed-issue }}
           initial-paused: ${{ vars.WING_COMMANDER_BOARD_LOOP_PAUSED == 'true' }}
+          # specs/097-recorded-stop-point (maintainer review fold leg-3):
+          # needs.select.outputs.branch/base-sha is select's own one-time
+          # read -- empty on a same-run review->readiness handoff, which
+          # would record branch: null. steps.pr/steps.final-diff-backstop
+          # are this job's own fresh reads of the PR actually under
+          # readiness.
+          marker-branch: ${{ steps.pr.outputs.branch }}
+          marker-base-sha: ${{ steps.final-diff-backstop.outputs.base-sha }}
 
       # FR-052: the stop point is recorded; nothing durable is written.
       - name: Record the stand-down (readiness)
         if: steps.killswitch-recheck.outputs.paused == 'true'
         env:
           ISSUE_NUMBER: ${{ needs.select.outputs.issue-number || inputs.directed-issue }}
+          STOP_CAUSE_PHRASE: ${{ steps.killswitch-recheck.outputs.stop-cause-phrase }}
         run: |
-          echo "board-loop: kill switch or stop request found immediately before readiness's durable actions on issue #$ISSUE_NUMBER -- standing down without acting (#604)." >> "$GITHUB_STEP_SUMMARY"
+          set -uo pipefail
+          # specs/097-recorded-stop-point FR-014: name the cause actually
+          # observed, never "kill switch or stop request" unconditionally --
+          # read from the wing-commander-board-stop-check composite's own
+          # `stop-cause-phrase` output (maintainer review fold leg-2).
+          echo "board-loop: $STOP_CAUSE_PHRASE found immediately before readiness's durable actions on issue #$ISSUE_NUMBER -- standing down without acting (#604)." >> "$GITHUB_STEP_SUMMARY"
 
       # Zero open in-scope findings is trusted from the state machine
       # itself, not re-derived: readiness is entered ONLY when review's own
@@ -3953,6 +4950,29 @@ jobs:
           }
           echo "existing-spec-url=$existing" >> "$GITHUB_OUTPUT"
 
+      # specs/093-not-ready-board-release FR-009 (research.md D8): the
+      # dedup check's comment read lives in its own step, never in the
+      # spec-request site below -- Gate 93 forbids that site from reading
+      # the issue itself (FR-056). Reached only on the not-ready path the
+      # backstop holds for; a failed read degrades to posting a new
+      # comment, never to editing one.
+      - name: Read the issue's comments for the not-ready dedup check
+        id: not-ready-comments
+        if: steps.decide.outputs.ready != 'true' && steps.killswitch-recheck.outputs.paused == 'false' && steps.final-diff-backstop.outputs.holds == 'true'
+        env:
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
+          ISSUE_NUMBER: ${{ needs.select.outputs.issue-number || inputs.directed-issue }}
+        run: |
+          set -uo pipefail
+          if gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments" --paginate \
+              --jq '.[] | {created_at, body, user: {login: .user.login, type: .user.type}}' | jq -s '.' \
+              > "$RUNNER_TEMP/board-not-ready-comments.json"; then
+            echo "fetched=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::board-loop readiness (not ready): could not fetch issue #$ISSUE_NUMBER's comments for the FR-009 dedup check -- the report step posts a new comment rather than risk editing the wrong one."
+            echo "fetched=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Report the unmet condition (not ready)
         id: report-unmet
         if: steps.decide.outputs.ready != 'true' && steps.killswitch-recheck.outputs.paused == 'false'
@@ -3971,6 +4991,7 @@ jobs:
           # specs/093-not-ready-board-release research.md D5: carried-in
           # count only -- never derived from anything but the marker.
           NR_COUNT: ${{ needs.select.outputs.nr-count || needs.review.outputs.nr-count || 0 }}
+          DEDUP_COMMENTS_FETCHED: ${{ steps.not-ready-comments.outputs.fetched }}
           DIRECTED_ATTRIBUTION: >-
             ${{ inputs.directed-stage != '' && format('_Directed proof run
             (stage: `{0}`), dispatched to prove PR #{1} -- selects no board
@@ -4004,19 +5025,23 @@ jobs:
                 || printf '%s\n\nNo drafted body.\n\n---\n%s\n' "$notice" "$footer" > "$spec_body_file"
               spec_url="$(gh issue create -R "$GITHUB_REPOSITORY" --title "$issue_title" \
                 --body-file "$spec_body_file" \
-                --label spec-request)"
+                --label spec-proposal)"
               # #514 -- see route's spec-request site.
               [[ "$spec_url" =~ ^https?://[^[:space:]]+/issues/[0-9]+$ ]] || { echo "::error::board-loop readiness (backstop breach): creating the spec-request returned no issue URL (got '$spec_url') -- no spec-request was filed; the issue is left without board:stalled so a later run retries it."; exit 1; }
             fi
             echo "spec-url=$spec_url" >> "$GITHUB_OUTPUT"
             echo "measured=$MEASURED" >> "$GITHUB_OUTPUT"
-            # #530/#604: board:stalled before the stalled marker -- see
-            # board_item_marker.py.
-            marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step stalled --issue "$ISSUE_NUMBER" --add-label "board:stalled")" \
-              || { echo "::error::board-loop readiness (backstop breach): spec-request $spec_url was filed but board:stalled could not be added to issue #$ISSUE_NUMBER -- no stalled marker is posted, so a later run retries (#530)."; exit 1; }
-            body="$(printf '%s on PR #%s (measured: %s) -- the branch/PR are left open, unmerged; a spec-request now covers finishing this at the right size.\n\n%s' "$breach_what" "$PR_NUMBER" "$MEASURED" "$marker")"
-            [ -n "$DIRECTED_ATTRIBUTION" ] && body="$(printf '%s\n\n%s' "$DIRECTED_ATTRIBUTION" "$body")"
-            gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$body"
+            spec_request_number="${spec_url##*/issues/}"
+            echo "spec-request-number=$spec_request_number" >> "$GITHUB_OUTPUT"
+
+            # spec 108 (contracts/duplicate-disposition.md): dispose of the
+            # originating issue as a duplicate of the spec-request (fresh
+            # or reused) -- one open issue per routed request, instead of
+            # leaving this issue open under board:stalled (research.md D1).
+            python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_duplicate_disposition.py" --originating "$ISSUE_NUMBER" \
+              --spec-request-issue "$spec_request_number" --spec-request-url "$spec_url" \
+              --reason "$(printf '%s on PR #%s (measured: %s)' "$breach_what" "$PR_NUMBER" "$MEASURED")" \
+              || { echo "::error::board-loop readiness (backstop breach): spec-request $spec_url was filed but disposing of issue #$ISSUE_NUMBER as a duplicate failed. Whether a later run finishes it depends on this site and on the step that failed (specs/108-routed-original-disposition/contracts/duplicate-disposition.md, failure semantics)."; exit 1; }
           else
             # specs/093-not-ready-board-release FR-004(a)/FR-008/FR-009:
             # never a second hardcoded 3 -- read from board_eligibility.py's
@@ -4029,11 +5054,14 @@ jobs:
               # handover marker uniquely carries --pr/--nr-head-sha
               # (research.md D7) so a later board:stalled removal can tell
               # whether the head has moved since the handover.
-              marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step stalled --issue "$ISSUE_NUMBER" --add-label "board:stalled" --pr "$PR_NUMBER" --round "$ROUND" --nr-head-sha "$head_sha")" \
+              marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step stalled --pr "$PR_NUMBER" --round "$ROUND" --nr-head-sha "$head_sha" --issue "$ISSUE_NUMBER" --add-label "board:stalled")" \
                 || { echo "::error::board-loop readiness (not-ready handover): board:stalled could not be added to issue #$ISSUE_NUMBER -- no stalled marker is posted, so a later run retries (specs/093-not-ready-board-release FR-008)."; exit 1; }
               body="$(printf 'Not ready on PR #%s: %s (head_sha %s) -- %s not-ready outcome(s) reached; handing this off to a human. Removing board:stalled is the sole condition that makes this item eligible again.\n\n%s' "$PR_NUMBER" "$unmet" "$head_sha" "$new_count" "$marker")"
               [ -n "$DIRECTED_ATTRIBUTION" ] && body="$(printf '%s\n\n%s' "$DIRECTED_ATTRIBUTION" "$body")"
-              gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$body"
+              # FR-011 (spec 097) -- see triage's own comment on this idiom.
+              gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$body" \
+                || { echo "::error::board-loop readiness (not-ready handover): board:stalled was applied to issue #$ISSUE_NUMBER but the stalled-marker comment could not be posted."; exit 1; }
+              python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --record-stall-summary --issue "$ISSUE_NUMBER" --from-step "readiness (not-ready threshold reached)"
             else
               marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step readiness --pr "$PR_NUMBER" --branch "$BRANCH" --round "$ROUND" --nr-count "$new_count" --nr-head-sha "$head_sha" --nr-class "$unmet_class")" \
                 || { echo "::error::board-loop readiness (not ready): board_item_marker.py failed to render the not-ready marker -- not posting a marker-less comment (specs/093-not-ready-board-release FR-002)."; exit 1; }
@@ -4045,10 +5073,9 @@ jobs:
               # and unmet condition edits that comment in place instead of
               # appending a duplicate (research.md D8) -- the count is
               # still advanced in the edited comment's own marker.
-              if ! gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments" --paginate \
-                  --jq '.[] | {created_at, body, user: {login: .user.login, type: .user.type}}' | jq -s '.' \
-                  > "$RUNNER_TEMP/board-not-ready-comments.json"; then
-                echo "::error::board-loop readiness (not ready): could not fetch issue #$ISSUE_NUMBER's comments for the FR-009 dedup check -- posting a new comment rather than risk editing the wrong one." >&2
+              # The comments were read by the step above (Gate 93: this
+              # spec-request site never reads the issue itself).
+              if [ "$DEDUP_COMMENTS_FETCHED" != "true" ]; then
                 gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$body"
               else
                 same_record="$(COMMENTS_PATH="$RUNNER_TEMP/board-not-ready-comments.json" HEAD_SHA="$head_sha" UNMET="$unmet" python3 -I - <<'PYEOF'
@@ -4100,8 +5127,18 @@ jobs:
         with:
           token: ${{ env.WC_BOT_TOKEN }}
           issue-number: ${{ needs.select.outputs.issue-number || inputs.directed-issue }}
-          phrase: "Routed to spec-request"
+          phrase: "Routed to a spec proposal (the owner promotes it with spec-request)"
           artifact-url: ${{ steps.report-unmet.outputs.spec-url }}
+          context: "(readiness backstop breach, measured=${{ steps.report-unmet.outputs.measured }})"
+
+      - name: Cross-link the originating issue onto the readiness-backstop-breach spec-request
+        if: steps.report-unmet.outputs.needs-reciprocal-link == 'true' && steps.killswitch-recheck.outputs.paused == 'false'
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-outstanding-task-item
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
+          issue-number: ${{ steps.report-unmet.outputs.spec-request-number }}
+          phrase: "Filed for the routed original"
+          artifact-url: ${{ github.server_url }}/${{ github.repository }}/issues/${{ needs.select.outputs.issue-number || inputs.directed-issue }}
           context: "(readiness backstop breach, measured=${{ steps.report-unmet.outputs.measured }})"
 
       # T067/FR-047/SC-010: no agent runs in this job, but readiness still
@@ -4117,8 +5154,18 @@ jobs:
           transcript-path: ${{ runner.temp }}/wing-commander-no-transcript.json
           model: ''
           stage: board-loop
-          run-label: ${{ steps.decide.outputs.ready == 'true' && 'ready' || 'not ready' }}
+          # specs/097-recorded-stop-point FR-015/SC-008
+          # (contracts/metrics-classification.md): a stop-request/kill-switch
+          # stand-down is distinguishable from an ordinary ready/not-ready
+          # run from this one field alone.
+          # maintainer review fold leg-2: see triage's own run-label comment
+          # above -- same one-home `stop-cause-run-label` read, not a
+          # per-job re-derivation.
+          run-label: >-
+            ${{ steps.killswitch-recheck.outputs.stop-cause != '' && format('readiness: {0}', steps.killswitch-recheck.outputs.stop-cause-run-label) ||
+                (steps.decide.outputs.ready == 'true' && 'ready' || 'not ready') }}
           record-path: ${{ runner.temp }}/wing-commander-metrics-record-readiness.json
+          spec-identity-is-own: 'false'
 
       - name: Upload metrics record (readiness)
         if: always()
@@ -4147,14 +5194,18 @@ jobs:
       contents: read
       issues: write
       pull-requests: read
-    # One board item is in flight repository-wide. A directed proof run,
-    # which selects no board item and opens no fix PR, is the only run
-    # permitted to overlap an ordinary board-loop run. Every other pair of
-    # board-loop.yml runs queues rather than races or cancels.
+    # One board item is in flight repository-wide. A directed proof run
+    # and a merged item's own prove run — neither of which selects a
+    # board item or opens a fix PR — are the only runs permitted to
+    # overlap an ordinary board-loop run, or each other when they prove
+    # distinct merged items. Every other pair of board-loop.yml runs
+    # queues rather than races or cancels.
     concurrency:
       group: >-
         ${{ (github.event_name == 'workflow_dispatch' && inputs.directed-stage != '') &&
-        'wing-commander-board-loop-directed-proof' || 'wing-commander-board-loop' }}
+        'wing-commander-board-loop-directed-proof' ||
+        (github.event_name == 'pull_request' && format('wing-commander-board-loop-prove-{0}', github.event.pull_request.number)) ||
+        'wing-commander-board-loop' }}
       cancel-in-progress: false
     outputs:
       issue-number: ${{ steps.gate.outputs.issue-number }}
@@ -4212,7 +5263,17 @@ jobs:
           # already re-derives from github.event.pull_request.* (Principle IX).
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             issue_number="$DIRECTED_ISSUE"
-            merged="$(gh pr view "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --json merged --jq .merged)"
+            # `gh pr view --json merged` is not a real field (the REST/GraphQL
+            # shapes gh exposes have no top-level `merged` key under that
+            # name) -- fetch the PR directly instead, and reuse the same file
+            # below for the ownership check, since $GITHUB_EVENT_PATH carries
+            # no `.pull_request` payload at all on workflow_dispatch
+            # (maintainer review).
+            if ! gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > "$RUNNER_TEMP/board-prove-pr.json"; then
+              echo "::error::board-loop: could not look up PR #$PR_NUMBER -- a directed prove dispatch cannot re-derive its own merged state or ownership without it."
+              exit 1
+            fi
+            merged="$(jq -r '.merged' "$RUNNER_TEMP/board-prove-pr.json")"
           else
             issue_number="$(python3 -c "
           import os, re
@@ -4220,6 +5281,7 @@ jobs:
           print(m.group(1) if m else '')
           ")"
             merged="$MERGED_EVENT"
+            jq '.pull_request' "$GITHUB_EVENT_PATH" > "$RUNNER_TEMP/board-prove-pr.json"
           fi
 
           eligible=false
@@ -4235,9 +5297,10 @@ jobs:
           # Issue #557: only this loop's own PR enters prove -- the same
           # ownership test the resume step applies to a marker's PR
           # (BOARD_PR_OWNED_JQ -- see this workflow's top-level env:
-          # block), read off the event's own pull_request payload (labels
-          # as of the close, head.repo).
-          jq '.pull_request' "$GITHUB_EVENT_PATH" > "$RUNNER_TEMP/board-prove-pr.json"
+          # block), read off board-prove-pr.json (the event's own
+          # pull_request payload for a pull_request trigger, or the fresh
+          # gh api fetch above for a directed workflow_dispatch -- both
+          # carry the same labels/head.repo shape BOARD_PR_OWNED_JQ reads).
           if [ "$(jq -r --arg repo "$GITHUB_REPOSITORY" "$BOARD_PR_OWNED_JQ" "$RUNNER_TEMP/board-prove-pr.json")" != "true" ]; then
             echo "PR #$PR_NUMBER is not board:owned with its head in this repository -- not a board item; prove is not entered." >> "$GITHUB_STEP_SUMMARY"
             {
@@ -4301,6 +5364,7 @@ jobs:
           stage: board-loop
           run-label: ${{ steps.gate.outcome == 'failure' && 'prove-gate failed' || steps.gate.outputs.eligible == 'true' && 'eligible for prove' || 'prove not entered' }}
           record-path: ${{ runner.temp }}/wing-commander-metrics-record-prove-gate.json
+          spec-identity-is-own: 'false'
 
       - name: Upload metrics record (prove-gate)
         if: always()
@@ -4327,15 +5391,29 @@ jobs:
       issues: write
       pull-requests: read
       actions: write
-    # One board item is in flight repository-wide. A directed proof run,
-    # which selects no board item and opens no fix PR, is the only run
-    # permitted to overlap an ordinary board-loop run. Every other pair of
-    # board-loop.yml runs queues rather than races or cancels.
+    # One board item is in flight repository-wide. A directed proof run
+    # and a merged item's own prove run — neither of which selects a
+    # board item or opens a fix PR — are the only runs permitted to
+    # overlap an ordinary board-loop run, or each other when they prove
+    # distinct merged items. Every other pair of board-loop.yml runs
+    # queues rather than races or cancels.
     concurrency:
       group: >-
         ${{ (github.event_name == 'workflow_dispatch' && inputs.directed-stage != '') &&
-        'wing-commander-board-loop-directed-proof' || 'wing-commander-board-loop' }}
+        'wing-commander-board-loop-directed-proof' ||
+        (github.event_name == 'pull_request' && format('wing-commander-board-loop-prove-{0}', github.event.pull_request.number)) ||
+        'wing-commander-board-loop' }}
       cancel-in-progress: false
+    # specs/096-durable-prove-entry FR-014/FR-015, maintainer review: one
+    # canonical recovery notice (CLAUDE.md single-home), at job level so
+    # both "Close the issue on the merge evidence alone" and "Record the
+    # proof outcome" read the identical text rather than each carrying its
+    # own copy.
+    env:
+      RECOVERY_NOTICE: >-
+        ${{ inputs.directed-recovery == 'true' && 'This proof had previously
+        been displaced or could not be correlated to a dispatch; this
+        recovery run addresses that.' || '' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -4361,6 +5439,23 @@ jobs:
         with:
           app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
           private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
+
+      # #488: board-loop.yml's own labels (see wing-commander-board-labels).
+      # This used to be ensured inside wing-commander-board-stop-check's own
+      # composite; moved out to every caller's own job (spec 097-recorded-
+      # stop-point review) because a composite's own `uses: ./...` step
+      # resolves against $GITHUB_WORKSPACE, not the composite's own
+      # directory -- inside fix/review/readiness that workspace is the
+      # item's own (possibly attacker-controlled) branch checkout, so the
+      # nested call ran that composite's definition as the branch carried
+      # it, with the App token, whenever a stop request was honoured.
+      # continue-on-error: a missed create cannot block prove's own
+      # close/redrive step.
+      - name: Ensure board-loop's own labels exist
+        continue-on-error: true
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-board-labels
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
 
       # research.md D15 + contracts/prove-step.md "Re-drive". The
       # dispatchable set and the uses-graph are read off the checked-out
@@ -4432,32 +5527,27 @@ jobs:
           issue-number: ${{ needs.prove-gate.outputs.issue-number }}
           initial-paused: ${{ vars.WING_COMMANDER_BOARD_LOOP_PAUSED == 'true' }}
           check-issue-closed: "true"
+          # prove tracks no branch of its own (it acts on merge evidence or
+          # redrives a workflow, never checks one out) -- explicit empty
+          # strings, matching the composite's own defaults, so this call
+          # site is wired like every other one rather than silently relying
+          # on the default (maintainer review: Gate 135 check 8).
+          marker-branch: ""
+          marker-base-sha: ""
 
-      # research.md D4/FR-001a: whether the directed-proof concurrency
-      # group a directed dispatch would join is already occupied by
-      # another directed run -- read fresh, right before any dispatch is
-      # attempted, never cached or assumed from the busy-ness of the
-      # ordinary group.
+      # research.md D4/FR-001a, CLAUDE.md "Shared logic has exactly one
+      # home": the same composite the select job's own recovery dispatch
+      # uses -- see that composite's own header for why this was two
+      # pasted copies before (maintainer review).
       - name: Check whether the directed proof group is busy
         id: busy-check
         if: >-
           steps.decide.outputs.actions-only == 'true' &&
           steps.decide.outputs.directed-stage != '' &&
           steps.killswitch-recheck.outputs.paused != 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -uo pipefail
-          run_list_json="$(gh run list --workflow=board-loop.yml -R "$GITHUB_REPOSITORY" \
-            --json databaseId,displayTitle,status -L 20)"
-
-          busy="$(RUN_LIST_JSON="$run_list_json" OWN_RUN_ID="$GITHUB_RUN_ID" python3 -c "
-          import os, sys
-          sys.path.insert(0, '.github/scripts')
-          from board_prove import directed_proof_group_busy
-          print('true' if directed_proof_group_busy(os.environ['RUN_LIST_JSON'], os.environ['OWN_RUN_ID']) else 'false')
-          ")"
-          echo "busy=$busy" >> "$GITHUB_OUTPUT"
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-directed-proof-busy-check
+        with:
+          token: ${{ github.token }}
 
       # FR-041 scenario 4: nothing a fresh dispatch would prove that the
       # merged PR's own required checks did not already prove -- the issue
@@ -4469,11 +5559,24 @@ jobs:
           ISSUE_NUMBER: ${{ needs.prove-gate.outputs.issue-number }}
           PR_NUMBER: ${{ github.event.pull_request.number || inputs.directed-pr }}
           REASON: ${{ steps.decide.outputs.reason }}
+          RECOVERY: ${{ inputs.directed-recovery }}
         run: |
           set -uo pipefail
-          marker="$(python3 .github/scripts/board_item_marker.py --step proven)"
+          # maintainer review (FR-014/FR-015): this is the other arm that
+          # can close an issue a recovery dispatch targeted -- the success
+          # arm of "Record the proof outcome" below already records
+          # --recovery-attempted and the recovery notice; this one must
+          # too, or a recovery of an item that turns out Actions-only-free
+          # leaves no record the attempt was ever spent.
+          recovery_flag=()
+          [ "$RECOVERY" = "true" ] && recovery_flag=(--recovery-attempted)
+          recovery_suffix=""
+          [ -n "$RECOVERY_NOTICE" ] && recovery_suffix="$(printf '\n\n%s' "$RECOVERY_NOTICE")"
+
+          marker="$(python3 .github/scripts/board_item_marker.py --step proven "${recovery_flag[@]}")" \
+            || { echo "::error::board-loop prove: the proven marker could not be rendered -- issue #$ISSUE_NUMBER is neither commented on nor closed (#786)."; exit 1; }
           gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
-            --body "$(printf 'Closed on the merge of PR #%s alone: %s -- no Actions-only behaviour changed, so a re-driven run would prove nothing this merge did not.\n\n%s' "$PR_NUMBER" "$REASON" "$marker")"
+            --body "$(printf 'Closed on the merge of PR #%s alone: %s -- no Actions-only behaviour changed, so a re-driven run would prove nothing this merge did not.\n\n%s' "$PR_NUMBER" "$REASON" "$marker")$recovery_suffix"
           gh issue close "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY"
 
       # FR-042: the re-drive itself. `conclusion` is read from the
@@ -4514,7 +5617,7 @@ jobs:
             ${{ steps.decide.outputs.directed-stage != '' &&
             format('{{"directed-stage":"{0}","directed-issue":"{1}","directed-pr":"{2}"}}',
             steps.decide.outputs.directed-stage, needs.prove-gate.outputs.issue-number,
-            github.event.pull_request.number) ||
+            github.event.pull_request.number || inputs.directed-pr) ||
             '{}' }}
 
       - name: Cross-link the proof run onto the originating issue
@@ -4596,6 +5699,7 @@ jobs:
           DIRECTED_STAGE: ${{ steps.decide.outputs.directed-stage }}
           BUSY: ${{ steps.busy-check.outputs.busy }}
           DISAMBIGUATED_REASON: ${{ steps.disambiguate.outputs.reason }}
+          RECOVERY: ${{ inputs.directed-recovery }}
           # FR-011, contracts/directed-proof-run.md "Attribution": one
           # canonical attribution string (CLAUDE.md single-home), gated on
           # inputs.directed-stage != '', prepended rather than a
@@ -4605,6 +5709,9 @@ jobs:
             ${{ inputs.directed-stage != '' && format('_Directed proof run
             (stage: `{0}`), dispatched to prove PR #{1} -- selects no board
             item, opens no fix PR._', inputs.directed-stage, inputs.directed-pr) || '' }}
+          # RECOVERY_NOTICE is now a job-level env (see this job's own
+          # `env:` block header comment) -- read here via the ordinary env
+          # merge, not redeclared.
         run: |
           set -uo pipefail
           reason="$(python3 -c "
@@ -4620,53 +5727,58 @@ jobs:
           ")"
           attr_prefix=""
           [ -n "$DIRECTED_ATTRIBUTION" ] && attr_prefix="$(printf '%s\n\n' "$DIRECTED_ATTRIBUTION")"
+          recovery_suffix=""
+          [ -n "$RECOVERY_NOTICE" ] && recovery_suffix="$(printf '\n\n%s' "$RECOVERY_NOTICE")"
+          recovery_flag=()
+          [ "$RECOVERY" = "true" ] && recovery_flag=(--recovery-attempted)
+
+          # One render per marker kind, before any write. errexit already
+          # stops the step on a failed render; the guard names why (#786).
+          if [ "$reason" = "success" ]; then
+            marker="$(python3 .github/scripts/board_item_marker.py --step proven "${recovery_flag[@]}")" \
+              || { echo "::error::board-loop prove: the proven marker could not be rendered -- issue #$ISSUE_NUMBER is neither commented on nor closed (#786)."; exit 1; }
+          else
+            marker="$(python3 .github/scripts/board_item_marker.py --step prove --outcome-reason "$reason" "${recovery_flag[@]}")" \
+              || { echo "::error::board-loop prove ($reason): the prove marker could not be rendered -- nothing is posted on issue #$ISSUE_NUMBER (#786)."; exit 1; }
+          fi
 
           case "$reason" in
             success)
-              marker="$(python3 .github/scripts/board_item_marker.py --step proven)"
               gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
-                --body "$attr_prefix$(printf 'Proven: %s was re-driven after the merge of PR #%s and concluded success -- %s\n\n%s' "$REDRIVE_WORKFLOW" "$PR_NUMBER" "$RUN_URL" "$marker")"
+                --body "$attr_prefix$(printf 'Proven: %s was re-driven after the merge of PR #%s and concluded success -- %s\n\n%s' "$REDRIVE_WORKFLOW" "$PR_NUMBER" "$RUN_URL" "$marker")$recovery_suffix"
               gh issue close "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY"
               ;;
             failure)
-              marker="$(python3 .github/scripts/board_item_marker.py --step prove)"
               gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
-                --body "$attr_prefix$(printf 'Not proven: %s was re-driven after the merge of PR #%s and concluded failure -- %s. This issue stays open.\n\n%s' "$REDRIVE_WORKFLOW" "$PR_NUMBER" "$RUN_URL" "$marker")"
+                --body "$attr_prefix$(printf 'Not proven: %s was re-driven after the merge of PR #%s and concluded failure -- %s. This issue stays open.\n\n%s' "$REDRIVE_WORKFLOW" "$PR_NUMBER" "$RUN_URL" "$marker")$recovery_suffix"
               ;;
             group-busy)
-              marker="$(python3 .github/scripts/board_item_marker.py --step prove)"
               gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
-                --body "$attr_prefix$(printf 'PR #%s merged, but the directed proof group was already occupied by another proof run -- nothing was dispatched. Picked up again on a later run.\n\n%s' "$PR_NUMBER" "$marker")"
+                --body "$attr_prefix$(printf 'PR #%s merged, but the directed proof group was already occupied by another proof run -- nothing was dispatched. This issue stays open; group-busy is not a recoverable reason (FR-011c), so no automatic retry is scheduled -- a maintainer must re-drive it manually.\n\n%s' "$PR_NUMBER" "$marker")$recovery_suffix"
               ;;
             no-target)
-              marker="$(python3 .github/scripts/board_item_marker.py --step prove)"
               gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
-                --body "$attr_prefix$(printf 'PR #%s merged, but no directed run of board-loop.yml reaches the changed behaviour -- nothing was dispatched. This issue stays open for a maintainer to review.\n\n%s' "$PR_NUMBER" "$marker")"
+                --body "$attr_prefix$(printf 'PR #%s merged, but no directed run of board-loop.yml reaches the changed behaviour -- nothing was dispatched. This issue stays open for a maintainer to review.\n\n%s' "$PR_NUMBER" "$marker")$recovery_suffix"
               ;;
             nothing-reaches)
-              marker="$(python3 .github/scripts/board_item_marker.py --step prove)"
               gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
-                --body "$attr_prefix$(printf 'PR #%s merged, but no workflow in the repository reaches the changed behaviour (%s) -- nothing was dispatched. This issue stays open for a maintainer to review.\n\n%s' "$PR_NUMBER" "$REDRIVE_REASON" "$marker")"
+                --body "$attr_prefix$(printf 'PR #%s merged, but no workflow in the repository reaches the changed behaviour (%s) -- nothing was dispatched. This issue stays open for a maintainer to review.\n\n%s' "$PR_NUMBER" "$REDRIVE_REASON" "$marker")$recovery_suffix"
               ;;
             not-started)
-              marker="$(python3 .github/scripts/board_item_marker.py --step prove)"
               gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
-                --body "$attr_prefix$(printf 'PR #%s merged, and %s was dispatched to prove it (%s), but that run never left the queue within the wait budget. This issue stays open.\n\n%s' "$PR_NUMBER" "$REDRIVE_WORKFLOW" "$RUN_URL" "$marker")"
+                --body "$attr_prefix$(printf 'PR #%s merged, and %s was dispatched to prove it (%s), but that run never left the queue within the wait budget. This issue stays open.\n\n%s' "$PR_NUMBER" "$REDRIVE_WORKFLOW" "$RUN_URL" "$marker")$recovery_suffix"
               ;;
             unfinished)
-              marker="$(python3 .github/scripts/board_item_marker.py --step prove)"
               gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
-                --body "$attr_prefix$(printf 'PR #%s merged, and %s was dispatched to prove it (%s), but it did not reach a terminal conclusion within the wait budget. This issue stays open.\n\n%s' "$PR_NUMBER" "$REDRIVE_WORKFLOW" "$RUN_URL" "$marker")"
+                --body "$attr_prefix$(printf 'PR #%s merged, and %s was dispatched to prove it (%s), but it did not reach a terminal conclusion within the wait budget. This issue stays open.\n\n%s' "$PR_NUMBER" "$REDRIVE_WORKFLOW" "$RUN_URL" "$marker")$recovery_suffix"
               ;;
             displaced)
-              marker="$(python3 .github/scripts/board_item_marker.py --step prove)"
               gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
-                --body "$attr_prefix$(printf 'PR #%s merged, but the proof run dispatched to prove it was evicted before it could ever be correlated. This issue stays open.\n\n%s' "$PR_NUMBER" "$marker")"
+                --body "$attr_prefix$(printf 'PR #%s merged, but the proof run dispatched to prove it was evicted before it could ever be correlated. This issue stays open.\n\n%s' "$PR_NUMBER" "$marker")$recovery_suffix"
               ;;
             uncorrelated|*)
-              marker="$(python3 .github/scripts/board_item_marker.py --step prove)"
               gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" \
-                --body "$attr_prefix$(printf 'PR #%s merged, but the proof run could not be correlated (%s). This issue stays open.\n\n%s' "$PR_NUMBER" "$REDRIVE_REASON" "$marker")"
+                --body "$attr_prefix$(printf 'PR #%s merged, but the proof run could not be correlated (%s). This issue stays open.\n\n%s' "$PR_NUMBER" "$REDRIVE_REASON" "$marker")$recovery_suffix"
               ;;
           esac
 
@@ -4683,12 +5795,23 @@ jobs:
           DIRECTED_STAGE: ${{ steps.decide.outputs.directed-stage }}
           CONCLUSION: ${{ steps.redrive.outputs.conclusion }}
           DISAMBIGUATED_REASON: ${{ steps.disambiguate.outputs.reason }}
+          STOP_CAUSE_RUN_LABEL: ${{ steps.killswitch-recheck.outputs.stop-cause-run-label }}
         run: |
           set -uo pipefail
+          # specs/097-recorded-stop-point FR-014/FR-015: name the cause
+          # actually observed, distinguishably, in the metrics run_label
+          # (contracts/metrics-classification.md) -- never an undifferentiated
+          # "stood down" for every cause. Read from the wing-commander-
+          # board-stop-check composite's own `stop-cause-run-label` output,
+          # the one home for this suffix (maintainer review fold leg-2).
           if [ "${{ steps.killswitch-recheck.outputs.paused }}" = "true" ]; then
-            label="stood down"
+            label="prove: $STOP_CAUSE_RUN_LABEL"
           elif [ "${{ steps.decide.outputs.actions-only }}" != "true" ]; then
-            label="closed on merge evidence alone"
+            if [ "${{ inputs.directed-recovery }}" = "true" ]; then
+              label="closed on merge evidence alone (recovered)"
+            else
+              label="closed on merge evidence alone"
+            fi
           else
             reason="$(python3 -c "
           import os, sys
@@ -4701,7 +5824,11 @@ jobs:
               os.environ.get('CONCLUSION') or None,
               os.environ.get('DISAMBIGUATED_REASON') or None))
           ")"
-            label="proof: $reason"
+            if [ "${{ inputs.directed-recovery }}" = "true" ]; then
+              label="proof (recovered): $reason"
+            else
+              label="proof: $reason"
+            fi
           fi
           echo "label=$label" >> "$GITHUB_OUTPUT"
 
@@ -4716,6 +5843,7 @@ jobs:
           stage: board-loop
           run-label: ${{ steps.outcome.outputs.label }}
           record-path: ${{ runner.temp }}/wing-commander-metrics-record-prove.json
+          spec-identity-is-own: 'false'
 
       - name: Upload metrics record (prove)
         if: always()

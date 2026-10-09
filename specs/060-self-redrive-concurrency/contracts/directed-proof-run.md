@@ -25,6 +25,7 @@ to be in flight at the same time as another `board-loop.yml` run
 | `directed-stage` | no | `""` | one of the aimable jobs below; `""` means an ordinary run |
 | `directed-issue` | no | `""` | the issue number the directed run acts on |
 | `directed-pr` | no | `""` | the PR number; only meaningful when `directed-stage == "prove"` |
+| `directed-recovery` | no | `""` | `specs/096-durable-prove-entry`: `"true"` when this dispatch recovers a previously displaced/uncorrelated proof (internal use); any other value, including blank, is an ordinary directed run |
 
 `attempt-token` (existing input) is unchanged: it still names the
 correlation token the caller's `wing-commander-dispatch-and-wait` composite
@@ -93,3 +94,16 @@ Any comment a directed proof run posts to the issue it acts on states that
 it is a directed proof run and names the merge/PR it is proving, so a
 maintainer reading the issue never mistakes it for an ordinary lifecycle
 comment.
+
+## Recovery dispatch (specs/096-durable-prove-entry)
+
+`directed-recovery=true` names a `stage == "prove"` directed run that the
+`select` job's own "Recover a stranded prove" step dispatched for an issue
+whose newest marker was left by a displaced or uncorrelated proof attempt —
+structurally the same directed dispatch as any other (FR-002), carrying one
+extra input the dispatched run's "Record the proof outcome" step reads to
+state the recovery in its comment and label its metrics record `"proof
+(recovered): <outcome_reason>"` instead of `"proof: <outcome_reason>"`. See
+`specs/096-durable-prove-entry/contracts/recovery-and-resume.md` for the
+candidate selection and pre-dispatch check this entry point's own caller
+performs.

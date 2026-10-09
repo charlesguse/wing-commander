@@ -39,7 +39,8 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from board_item_marker import read_marker_with_timestamp  # noqa: E402
+from board_item_marker import (  # noqa: E402
+    find_latest_marker_matching, find_markers_matching, read_marker_with_timestamp)
 
 MAINTAINER_ASSOCIATIONS = {"OWNER", "MEMBER", "COLLABORATOR"}
 
@@ -52,6 +53,30 @@ PIPELINE_LABEL_PREFIXES = ("auto-update:", "found-by:")
 STALLED_LABEL = "board:stalled"
 DISPOSITION_PREFIX = "disposition:"
 LIFECYCLE_PREFIXES = ("stage:", "spec:")
+# The board reset of 2026-10-01: an issue carrying either label is the
+# feature lifecycle's, never a board item. spec-proposal is the loop's own
+# filing of spec-shaped work awaiting the owner; spec-request is the
+# owner's promotion into intake, which can sit unstaged for a moment
+# before intake applies stage:spec (or for as long as intake is paused).
+# Without this, a maintainer adding any label to a proposal made it
+# "maintainer-labeled" and the loop could route a proposal of a proposal.
+LIFECYCLE_LABELS = ("spec-proposal", "spec-request")
+# A pipeline stage's own self-managing tracker, never a board item, though
+# its prefix is a pipeline label (PIPELINE_LABEL_PREFIXES). The auto-update
+# stage finds its settle state on the one open issue carrying
+# auto-update:tracking; routing it closed that issue as a duplicate and
+# left the stage to adopt the routed copy (#852 -> #904, 2026-10-01). The
+# upgrades that stage files under other auto-update:* labels stay eligible.
+# auto-release:failed is the same shape: auto-release.yml files it, appends
+# later failures to it, finds it as the one open issue with that label, and
+# alone closes it -- only once every mode its record names has passed,
+# re-verifying an outstanding mode on a quiet day while it stays open (#966,
+# #977; _shared/auto-release-outstanding-modes.sh). Routing it to a spec
+# proposal closed it as a duplicate and erased the open failure (#949 ->
+# #950, #979 -> #980). It stays in PIPELINE_LABEL_EXACT (FR-006 is about who
+# filed it); exclusion wins over eligibility, so the loop never triages,
+# routes, fixes or closes it, and board-status.yml lists it for the owner.
+SELF_MANAGED_LABELS = ("auto-update:tracking", "auto-release:failed")
 
 # data-model.md "Step" / contracts/in-flight-detection.md: the loop's named
 # steps, split by whether a PR can exist yet at that step. Pre-fix qualifies
@@ -78,13 +103,24 @@ AWAITING_MERGE_STEP = "awaiting-merge"
 BREACH_STEP = "breach"
 PRE_FIX_STEPS = frozenset({"triage", "route"})
 FIX_OR_LATER_STEPS = frozenset({"fix", BREACH_STEP, "review", "readiness", AWAITING_MERGE_STEP, "prove"})
-TERMINAL_STEPS = frozenset({"closed", "stalled", "proven"})
+
+# spec 108 (contracts/duplicate-disposition.md, data-model.md): the step
+# board_duplicate_disposition.py's marker write records, and the exact
+# label it applies alongside it -- the canonical registry for both
+# (mirroring STALLED_LABEL/BREACH_STEP/AWAITING_MERGE_STEP's own role
+# here), so board_duplicate_disposition.py imports them from this module
+# rather than defining its own copy.
+DUPLICATE_STEP = "duplicate"
+DISPOSITION_LABEL = DISPOSITION_PREFIX + "duplicate"
+
+TERMINAL_STEPS = frozenset({"closed", "stalled", "proven", DUPLICATE_STEP})
 
 # Issue #555: the select job's PR lookup records an OPEN PR that is not this
 # loop's own (no board:owned label, or its head in another repository) as
 # this state instead of "OPEN". Such a marker never makes its issue
 # in-flight, and select()'s fallback passes the issue over until the PR is
-# CLOSED or MERGED (_unowned_open_pr_holds()), so the resume step's no-op
+# CLOSED (_unowned_open_pr_holds(); a MERGED one stays held by
+# _merged_fix_holds() instead), so the resume step's no-op
 # hold for it is never re-selected every run.
 UNOWNED_OPEN_PR_STATE = "OPEN_UNOWNED"
 
@@ -172,10 +208,116 @@ def classify_issue(issue, labeled_events):
     return "ineligible"
 
 
-def is_excluded(issue):
+def _find_duplicate_marker(issue, comments, bot_login):
+    """The newest loop-authored marker with step == DUPLICATE_STEP among
+    `issue`'s own comments, scanning every comment rather than stopping at
+    the single overall-newest one -- a later route/fix/review marker
+    posted after a reopen must not hide an earlier re-admission-worthy
+    duplicate marker (spec 108 maintainer review, fold leg-0:
+    FR-005/FR-006/FR-007, SC-005). None when `issue` does not carry
+    DISPOSITION_LABEL at all (the common case, skipped without scanning
+    comments) or no such marker exists."""
+    if DISPOSITION_LABEL not in _label_names(issue):
+        return None
+    found = find_latest_marker_matching(
+        comments, bot_login, lambda marker: marker.get("step") == DUPLICATE_STEP)
+    return found[1] if found else None
+
+
+def originating_issues_by_spec_request(comments_by_issue, bot_login):
+    """{spec_request number: {"issue": originating issue number, "current":
+    bool}} over EVERY loop-authored step == DUPLICATE_STEP marker on every
+    issue in `comments_by_issue` (keys: issue numbers, int or str).
+
+    Every such marker counts, not only an issue's overall-newest marker: an
+    issue disposed as a duplicate of one spec-request, then reopened and
+    re-routed to a second, names both, and the first spec-request's own
+    closed-without-landing notice needs it too (#874). "current" is True
+    only for the spec-request the issue's NEWEST duplicate marker names --
+    the one the re-admission carve-out reads (_find_duplicate_marker(),
+    FR-006) -- so a caller tells the issue "reopening returns the request
+    to the board" only when that is true (FR-017); a superseded
+    spec-request's notice belongs on the spec-request alone. Should two
+    issues name one spec-request, the newest marker wins. The single home
+    for this map: board-loop.yml's closed-without-landing scan calls it
+    rather than scanning inline."""
+    named = []
+    for number, comments in comments_by_issue.items():
+        try:
+            issue_number = int(number)
+        except (TypeError, ValueError):
+            continue
+        markers = find_markers_matching(
+            comments, bot_login, lambda m: m.get("step") == DUPLICATE_STEP)
+        for index, (created_at, marker) in enumerate(markers):
+            try:
+                spec_request = int(marker.get("spec_request"))
+            except (TypeError, ValueError):
+                continue
+            named.append((created_at, spec_request, issue_number, index == len(markers) - 1))
+    named.sort(key=lambda item: item[0])
+    return {spec_request: {"issue": issue_number, "current": current}
+            for _created_at, spec_request, issue_number, current in named}
+
+
+def spec_request_numbers_to_resolve(open_issues, comments_by_issue, bot_login):
+    """The distinct `spec_request` issue numbers is_excluded()'s
+    re-admission carve-out needs the live state of (spec 108,
+    contracts/eligibility-and-readmission-delta.md, FR-006): every OPEN
+    issue carrying DISPOSITION_LABEL, resolved via _find_duplicate_marker()
+    -- the same newest-duplicate-marker scan is_excluded()'s own callers
+    use, never a second copy of it. This is the single home for that scan;
+    the select job's step in board-loop.yml calls this instead of
+    reimplementing it inline (CLAUDE.md "shared logic has exactly one
+    home", maintainer review of #791, fold leg-1).
+
+    `comments_by_issue` keys may be either the issue number or its string
+    form (raw JSON object keys are always strings; callers that have
+    already normalized to int keys work too)."""
+    numbers = set()
+    for issue in open_issues:
+        if (issue.get("state") or "").upper() != "OPEN":
+            continue
+        number = issue.get("number")
+        comments = comments_by_issue.get(number)
+        if comments is None:
+            comments = comments_by_issue.get(str(number)) or []
+        marker = _find_duplicate_marker(issue, comments, bot_login)
+        if marker is None:
+            continue
+        try:
+            numbers.add(int(marker.get("spec_request")))
+        except (TypeError, ValueError):
+            continue
+    return sorted(numbers)
+
+
+def is_excluded(issue, spec_request_state_by_number=None, duplicate_marker=None):
     """FR-010: (True, reason) when the issue is closed, carries a settled
     disposition:* marker, carries board:stalled, or carries any stage:*/
-    spec:* label. (False, None) otherwise."""
+    spec:* label, a LIFECYCLE_LABELS label or a SELF_MANAGED_LABELS label.
+    (False, None) otherwise.
+
+    spec 108 carve-out (contracts/eligibility-and-readmission-delta.md,
+    FR-005/FR-006/FR-007): when the issue is OPEN and DISPOSITION_LABEL
+    is the ONLY exclusion-worthy label it carries (not just any
+    disposition:* match), the caller's already-resolved newest
+    step==DUPLICATE_STEP marker (`duplicate_marker` --
+    in_flight_candidate()/select() resolve this per issue via
+    _find_duplicate_marker(), scanning every comment rather than only the
+    issue's overall-newest marker: fold leg-0 found that gating on the
+    overall-newest marker re-excluded a re-admitted issue the moment its
+    next route/fix/review marker superseded the duplicate one, even
+    though DISPOSITION_LABEL is never removed) is consulted: if it names a
+    `spec_request` issue number that resolves CLOSED in
+    spec_request_state_by_number, the issue is NOT excluded (re-admitted,
+    and stays re-admitted for as long as DISPOSITION_LABEL persists --
+    "at most once per reopen" is enforced by the reopen requiring a human,
+    not by this carve-out forgetting the re-admission). Still OPEN, or
+    unresolved/missing, keeps the issue excluded -- a reopen while the
+    linked spec-request is still open must not re-admit it. Every OTHER
+    exclusion reason (plain closed, board:stalled, any other
+    disposition:* value, stage:*/spec:*) is unaffected."""
     if (issue.get("state") or "").upper() == "CLOSED":
         return True, "closed"
 
@@ -184,13 +326,22 @@ def is_excluded(issue):
     if STALLED_LABEL in labels:
         return True, STALLED_LABEL
 
-    for name in labels:
-        if name.startswith(DISPOSITION_PREFIX):
-            return True, name
-        if any(name.startswith(prefix) for prefix in LIFECYCLE_PREFIXES):
-            return True, name
+    exclusion_labels = [
+        name for name in labels
+        if name.startswith(DISPOSITION_PREFIX)
+        or any(name.startswith(prefix) for prefix in LIFECYCLE_PREFIXES)
+        or name in LIFECYCLE_LABELS
+        or name in SELF_MANAGED_LABELS
+    ]
+    if not exclusion_labels:
+        return False, None
 
-    return False, None
+    if exclusion_labels == [DISPOSITION_LABEL]:
+        spec_request_number = (duplicate_marker or {}).get("spec_request")
+        if (spec_request_state_by_number or {}).get(spec_request_number) == "CLOSED":
+            return False, None
+
+    return True, exclusion_labels[0]
 
 
 # FR-011/CLAUDE.md single-home rule: "is this issue an in-flight board item
@@ -198,8 +349,8 @@ def is_excluded(issue):
 # select() that consults it first. Never re-derive this inline in a
 # workflow's run: step or in a second module; point back at this comment
 # instead (contracts/in-flight-detection.md).
-def in_flight_candidate(open_issues, comments_by_issue, pr_state_by_number,
-                         pr_head_sha_by_number, bot_login):
+def in_flight_candidate(open_issues, comments_by_issue, pr_state_by_number, bot_login,
+                        spec_request_state_by_number=None, pr_head_sha_by_number=None):
     """FR-001/FR-002/FR-003/FR-005. Returns (issue_number, multiple_found).
     bot_login: the loop's own App login; only its comments' markers are
     read (board_item_marker.is_loop_marker_author(), issue #555).
@@ -236,11 +387,13 @@ def in_flight_candidate(open_issues, comments_by_issue, pr_state_by_number,
     """
     candidates = []
     for issue in open_issues:
-        excluded, _reason = is_excluded(issue)
+        number = issue.get("number")
+        comments = comments_by_issue.get(number) or []
+        pair = read_marker_with_timestamp(comments, bot_login)
+        duplicate_marker = _find_duplicate_marker(issue, comments, bot_login)
+        excluded, _reason = is_excluded(issue, spec_request_state_by_number, duplicate_marker)
         if excluded:
             continue
-        number = issue.get("number")
-        pair = read_marker_with_timestamp(comments_by_issue.get(number) or [], bot_login)
         if pair is None:
             continue
         created_at, marker = pair
@@ -287,7 +440,7 @@ def _not_ready_holds(marker, pr_state_by_number, pr_head_sha_by_number):
     record = not_ready_record(marker)
     if record is None or record["class"] != "durable":
         return False
-    current_head_sha = pr_head_sha_by_number.get(record["pr"])
+    current_head_sha = (pr_head_sha_by_number or {}).get(record["pr"])
     if current_head_sha is None:
         return True
     return current_head_sha == record["head_sha"]
@@ -306,7 +459,8 @@ def _awaiting_merge_holds(marker, pr_state_by_number):
     awaiting-merge PR to a no-op, so an oldest-eligible item would be
     re-selected and do nothing on every run. Skipping costs at most a
     delay for this one item (it is re-admitted on the first run whose
-    lookup returns CLOSED or MERGED), and a human merge still reaches
+    lookup returns CLOSED; a MERGED one stays held by _merged_fix_holds()
+    for the displacement recovery path), and a human merge still reaches
     prove-gate/prove through pull_request: closed, which never consults
     this."""
     if (marker or {}).get("step") != AWAITING_MERGE_STEP:
@@ -330,8 +484,32 @@ def _unowned_open_pr_holds(marker, pr_state_by_number):
     return pr_state_by_number.get(pr) == UNOWNED_OPEN_PR_STATE
 
 
-def select(open_issues, labeled_events_by_issue, comments_by_issue, pr_state_by_number,
-           pr_head_sha_by_number, bot_login):
+def _merged_fix_holds(marker, pr_state_by_number):
+    """True when `marker` records a fix-or-later step (not yet `prove`,
+    already skipped above) whose PR the select job's lookup reports
+    MERGED -- specs/096-durable-prove-entry's own resume-step clause
+    resolves such a marker to `step = "prove"` once this item is actually
+    resumed, but nothing in select's own job graph consumes a bare `prove`
+    result produced that way, and that in-memory resolution is never
+    written back to a durable marker either -- re-admitting the item here
+    would just re-select and re-resolve it to the same dead end every tick
+    (the #532-style wedge, maintainer review). The item's real path
+    forward is the displacement step's own independent scan
+    (research.md D8/FR-010b, `board_prove_displacement.find_undetected_merges()`),
+    which already treats "no later prove/proven marker" as undetected
+    regardless of select()'s own picks, and writes the `step=prove`
+    marker FR-011's recovery mechanism then acts on."""
+    if (marker or {}).get("step") not in FIX_OR_LATER_STEPS:
+        return False
+    try:
+        pr = int(marker.get("pr"))
+    except (TypeError, ValueError):
+        return False
+    return pr_state_by_number.get(pr) == "MERGED"
+
+
+def select(open_issues, labeled_events_by_issue, comments_by_issue, pr_state_by_number, bot_login,
+           spec_request_state_by_number=None, pr_head_sha_by_number=None):
     """FR-004/FR-011: consults in_flight_candidate() first; falls through to
     the existing oldest-first/classify_issue/is_excluded scan when it
     returns (None, ...). That fallback carries the same `prove`-marker skip
@@ -340,29 +518,40 @@ def select(open_issues, labeled_events_by_issue, comments_by_issue, pr_state_by_
     passed over instead of being re-selected every run with no consumer
     able to advance it. It likewise passes over an `awaiting-merge` issue
     while _awaiting_merge_holds() (#532); once that PR is closed unmerged,
-    or merged with the issue still open, the item is eligible here again
-    and the resume step sends it to a fresh triage. It also passes over an
-    issue whose marker's PR is open but not the loop's own
-    (_unowned_open_pr_holds(), issue #555), and an issue whose marker is a
-    durable, unmoved-head not-ready hold (_not_ready_holds(), specs/093-not-ready-board-release
-    FR-003/FR-004)."""
+    the item is eligible here again and the resume step sends it to a fresh
+    triage. It also passes over an issue whose marker's PR is open but not
+    the loop's own (_unowned_open_pr_holds(), issue #555). A fix-or-later
+    marker (including `awaiting-merge`) whose PR has since MERGED is held
+    too (_merged_fix_holds(), specs/096-durable-prove-entry maintainer
+    review) rather than admitted -- the resume step resolves such a marker
+    to `step = "prove"` with no durable write and no consumer in select's
+    own job graph, so re-admitting it here would just re-resolve it to the
+    same dead end every tick; the displacement step's own independent scan
+    is what actually recovers it instead. It also passes over an issue whose
+    marker is a durable, unmoved-head not-ready hold (_not_ready_holds(),
+    specs/093-not-ready-board-release FR-003/FR-004)."""
     in_flight, _multiple_found = in_flight_candidate(
-        open_issues, comments_by_issue, pr_state_by_number, pr_head_sha_by_number, bot_login)
+        open_issues, comments_by_issue, pr_state_by_number, bot_login, spec_request_state_by_number,
+        pr_head_sha_by_number)
     if in_flight is not None:
         return in_flight
 
     candidates = sorted(open_issues, key=lambda issue: issue.get("createdAt") or "")
     for issue in candidates:
-        excluded, _reason = is_excluded(issue)
+        number = issue.get("number")
+        comments = comments_by_issue.get(number) or []
+        pair = read_marker_with_timestamp(comments, bot_login)
+        duplicate_marker = _find_duplicate_marker(issue, comments, bot_login)
+        excluded, _reason = is_excluded(issue, spec_request_state_by_number, duplicate_marker)
         if excluded:
             continue
-        number = issue.get("number")
-        pair = read_marker_with_timestamp(comments_by_issue.get(number) or [], bot_login)
         if pair is not None and (pair[1] or {}).get("step") == "prove":
             continue
         if pair is not None and _awaiting_merge_holds(pair[1], pr_state_by_number):
             continue
         if pair is not None and _unowned_open_pr_holds(pair[1], pr_state_by_number):
+            continue
+        if pair is not None and _merged_fix_holds(pair[1], pr_state_by_number):
             continue
         if pair is not None and _not_ready_holds(pair[1], pr_state_by_number, pr_head_sha_by_number):
             continue
@@ -405,14 +594,20 @@ def main():
         int(number): state
         for number, state in (payload.get("pr_state_by_number") or {}).items()
     }
+    spec_request_state_by_number = {
+        int(number): state
+        for number, state in (payload.get("spec_request_state_by_number") or {}).items()
+    }
     pr_head_sha_by_number = {
         int(number): head_sha
         for number, head_sha in (payload.get("pr_head_sha_by_number") or {}).items()
     }
     in_flight_issue, multiple_found = in_flight_candidate(
-        open_issues, comments_by_issue, pr_state_by_number, pr_head_sha_by_number, bot_login)
+        open_issues, comments_by_issue, pr_state_by_number, bot_login, spec_request_state_by_number,
+        pr_head_sha_by_number)
     selected = select(open_issues, labeled_events_by_issue, comments_by_issue,
-                      pr_state_by_number, pr_head_sha_by_number, bot_login)
+                      pr_state_by_number, bot_login, spec_request_state_by_number,
+                      pr_head_sha_by_number)
     print(json.dumps({
         "decided_by_marker": in_flight_issue is not None and in_flight_issue == selected,
         "multiple_found": multiple_found,

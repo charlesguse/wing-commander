@@ -1,0 +1,16 @@
+{
+  "MARKER_STEP": "stalled",
+  "MARKER_JSON": "{\"step\": \"stalled\"}",
+  "BRANCH": "",
+  "MARKER_PR": "",
+  "PR_FROM_MARKER": "false",
+  "PR_FROM_FALLBACK": "true",
+  "PR_OWNED": "false",
+  "PR_STATE": "OPEN",
+  "PR_NUMBER": "42",
+  "MARKER_ROUND": "0",
+  "MARKER_BASE_SHA": "",
+  "ISSUE_NUMBER": "396",
+  "COMMENTS_PATH": ".github/scripts/tests/board-loop-readmission/fresh-budget-after-readmission/comments.json",
+  "BOT_LOGIN": "wing-commander-bot[bot]"
+}

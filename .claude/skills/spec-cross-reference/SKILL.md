@@ -26,11 +26,20 @@ spec 057):
   (`specs/060-self-redrive-concurrency/contracts/concurrency-groups.md`),
   rules the race out structurally: every job that can select an item or
   open a fix PR (`select` through `readiness`) joins
-  `wing-commander-board-loop`, and the only run allowed to overlap them is
-  a directed proof run in `wing-commander-board-loop-directed-proof`,
-  which selects no item and opens no fix PR. Without checking the spec,
-  that finding would have shipped at full severity instead of being
-  flagged as refuted.
+  `wing-commander-board-loop`, and the only runs allowed to overlap them
+  are a directed proof run in `wing-commander-board-loop-directed-proof`
+  and a merged item's own `pull_request: closed` prove run in its
+  per-merge group (`wing-commander-board-loop-prove-` followed by the
+  merged PR's number), neither of which selects an item or opens a fix PR. A second run whose job joins
+  that group queues behind the first rather than racing or cancelling it.
+  Without checking the spec, that finding would have shipped at full
+  severity instead of being flagged as refuted.
+
+  This example describes code that can move. Before letting it downgrade
+  a finding, run `python .github/scripts/verify-skill-board-loop-concurrency-claim.py`:
+  it passes only while the group and job names above still match
+  `board-loop.yml` and spec 060's table, and names the drift when they
+  don't.
 
 A finding can also be *reframed* rather than moved: a missing input on a
 redrive looked like a silent-failure bug until FR-043 turned out to already

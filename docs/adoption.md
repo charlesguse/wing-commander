@@ -418,6 +418,24 @@ on:
         required: false
         default: "1"
         type: string
+      fold_queue_token:
+        description: >
+          specs/074-serialized-fold-dispatch: the implement-kind fold-queue
+          ticket a winning fold-dispatch claim already enqueued for this
+          cycle. Optional, default "" — a manual dispatch, or a caller
+          predating this feature, omits it and gets today's behavior
+          exactly. Declaring this input (even if you never read it
+          yourself — just forward it to implement.yml's fold-queue-token
+          below) matters: omitting it makes `gh workflow run` reject the
+          `-f fold_queue_token=` argument the pipeline sends with an
+          "Unexpected inputs provided" error whenever a review actually
+          folds something -- the pipeline retries once without it when
+          that happens, so the dispatch still goes through, just
+          unticketed, losing this feature's cross-run serialization for
+          that one cycle (see the chaining-payload-contract table below).
+        required: false
+        default: ""
+        type: string
 
 permissions: {}
 
@@ -433,6 +451,7 @@ jobs:
       spec-dir: ${{ inputs.spec_dir }}
       issue-number: ${{ fromJSON(inputs.issue) }}
       iteration: ${{ fromJSON(inputs.iteration) }}
+      fold-queue-token: ${{ inputs.fold_queue_token }}
       max-iterations: ${{ fromJSON(vars.WING_COMMANDER_MAX_ITERATIONS || '5') }}
       self-workflow: wing-commander-5-implement.yml
       next-workflow: wing-commander-6-finalize.yml
@@ -635,8 +654,53 @@ every completion;
 (c) **pass the workflow-list input** the sweep needs to restrict its own
 discovery (`sweep-workflow-paths` — MF-02): the reference wrapper's copy
 lists its nine completion-trigger workflows plus
-`wing-commander-8-watchdog.yml`; substitute your own repository's wrapper
-filenames.
+`wing-commander-8-watchdog.yml` (and this repository's own
+`board-loop.yml`, which you do not have); substitute your own
+repository's wrapper filenames.
+
+### Your wrapper's display name is free-form
+
+Every one of your wrapper files' `name:` — the string GitHub shows as the
+workflow's own name, and the one every example in this document pins to a
+`"Wing Commander · N stage"` string purely by convention — may be anything
+you like. The watchdog's stage-identity resolution (specs/099-name-free-
+stage-identity) reads each inspected run's own metrics record first: every
+published stage writes its pipeline-defined `stage` literal into that
+record regardless of which wrapper, under which name, called it, so
+renaming your wrapper changes nothing about the coverage you get.
+
+Two behaviours still read a wrapper's display name.
+
+The main one is the fallback case: a run that left no metrics record at
+all — an expired or missing artifact, a failure early enough that the
+stage never got to write one, or a cancellation. For that one case only,
+the watchdog recognises the ten reference names this document's own
+example wrappers already use (`intake` through `pr-conversation`,
+`rebase`, and `watchdog`); a differently-named wrapper in that same
+no-record situation is inspected and reported as the same run, but with
+its stage genuinely unresolved rather than guessed: four collectors
+(branch drift, spec-meta, final PR claims, and spec collision) skip their
+own checks and record an "unresolved" outcome instead, and the report
+names the stage as not identified rather than guessing one, and (only
+when the run otherwise looks like a pipeline stage run, i.e. it left
+behind an agent execution-output artifact) notes that the display name
+was not recognised either.
+
+The second is independent of the fallback above: the self-dispatch cap
+that limits how many times the watchdog may re-dispatch itself
+(`watchdog.yml`'s "Self-dispatch depth" step) counts prior runs with
+`gh run list --workflow 'Wing Commander · 8 watchdog'` — a literal
+workflow-name lookup, not a metrics-record read. If you rename your own
+watchdog wrapper, that lookup fails, and the step treats a run list it
+cannot read as a capped chain: every watchdog run that inspects another
+watchdog run then files and comments on no pipeline-defect issue, and
+annotates why. Before this was fixed the failed lookup read as zero prior
+runs, so the cap never fired. There is currently no record-based
+alternative for this one check.
+
+Every reference-named example wrapper already shown in this document
+keeps working exactly as it does today either way: nothing here asks you
+to change a wrapper that already uses the names this document ships.
 
 ## Migrating to `@v2`
 
@@ -884,11 +948,12 @@ know before you set either:
   image and checks it for every tool the pipeline's own steps and shared
   composite actions need: `git`, `gh`, `jq`, `curl`, `python3`, `bash`,
   `node` (an inferred dependency of the Claude Code action, not something
-  this repository's own scripts invoke directly), and `timeout`. A missing
-  tool fails the stage fast, before any billable agent step, naming every
-  missing tool at once — never just the first one found. An image with no
-  POSIX shell at all is reported as that, rather than as "every tool is
-  missing".
+  this repository's own scripts invoke directly), `timeout`, and `unzip`
+  (the Claude Code action's first step extracts its Bun runtime from a zip
+  archive with it). A missing tool fails the stage fast, before any
+  billable agent step, naming every missing tool at once — never just the
+  first one found. An image with no POSIX shell at all is reported as that,
+  rather than as "every tool is missing".
 
   **`timeout` became a real requirement in v2.5.1, before it was listed
   here or checked.** The shared lifecycle gate wraps its issue-state read
@@ -898,7 +963,7 @@ know before you set either:
   `timeout`, those stages currently fail at their first step with a bare
   exit 127 that the gate reports as an unclassifiable failure. From this
   version the prerequisite check names it directly instead. Any image
-  already carrying the other seven tools almost certainly has it —
+  already carrying the other tools almost certainly has it —
   `timeout` is part of coreutils, and BusyBox provides an applet — so in
   practice this changes the error message you would get, not whether your
   image works.
@@ -1132,7 +1197,7 @@ Common to every stage below:
 
 | | |
 |---|---|
-| Inputs | `issue-number` (number, required); `model` (string, `claude-opus-5`); `max-turns` (number, `50`) |
+| Inputs | `issue-number` (number, required); `model` (string, `claude-opus-5-5`); `max-turns` (number, `50`) |
 | Secrets | credentials + App (all stages; omitted below) |
 | Preconditions | spec-kit present in your checkout |
 | Side effects | `spec-draft/NNN-slug` branch (prefix configurable via `WING_COMMANDER_SPEC_DRAFT_PREFIX`, default `spec-draft/`) + draft spec PR to your default branch; `specs/NNN-slug/` with `spec.md`, `spec-meta.json`; `spec:NNN-slug` + `stage:spec` labels; clarification-questions or ready-for-review comment, flipped to `stage:clarify` while clarification questions are open |
@@ -1171,7 +1236,7 @@ jobs:
 
 | | |
 |---|---|
-| Inputs | `issue-number` (number, required); `comment-id` (number, required); `model` (string, `claude-opus-5`); `max-turns` (number, `65`) |
+| Inputs | `issue-number` (number, required); `comment-id` (number, required); `model` (string, `claude-opus-5-5`); `max-turns` (number, `65`) |
 | Preconditions | spec-kit present; issue carries a `spec:NNN-slug` label; open `spec-draft/NNN-slug` branch (prefix configurable via `WING_COMMANDER_SPEC_DRAFT_PREFIX`, default `spec-draft/`) |
 | Side effects | commits to the draft branch (PR updates automatically); 👀 reaction on the comment; updated PR body; status comment on the issue; `stage:clarify` applied on a follow-up question, or flipped back to `stage:spec` when the spec is ready for review |
 | Outputs | none |
@@ -1188,7 +1253,7 @@ The wrapper owns the commenter-authorization gate — see wrapper 2 above.
 
 | | |
 |---|---|
-| Inputs | `head-ref` (string) **or** `slug` (string) — one required; `merged` (boolean, `true`; `false` no-ops); `pr-number` (string, `""` — refusal comments only); `model` (string, `claude-sonnet-5`); `max-turns` (number, `110`) |
+| Inputs | `head-ref` (string) **or** `slug` (string) — one required; `merged` (boolean, `true`; `false` no-ops); `pr-number` (string, `""` — refusal comments only); `model` (string, `claude-sonnet-5-5`); `max-turns` (number, `110`) |
 | Preconditions | `specs/NNN-slug/spec.md` + `spec-meta.json` on your default branch; no existing `plan/NNN-slug` branch (prefix configurable via `WING_COMMANDER_PLAN_PREFIX`, default `plan/`) (duplicate guard) |
 | Side effects | `spec/NNN-slug` persistent branch (prefix configurable via `WING_COMMANDER_SPEC_PREFIX`, default `spec/`), created if absent; `plan/NNN-slug` branch (prefix configurable via `WING_COMMANDER_PLAN_PREFIX`, default `plan/`) + plan PR into the spec branch; lifecycle issue created for hand-submitted specs; `spec-meta.json` → `plan`; label flip |
 | Outputs | `spec-branch`, `spec-dir` |
@@ -1225,7 +1290,7 @@ jobs:
 
 | | |
 |---|---|
-| Inputs | `mode` (string `generate`\|`approved`, default `generate`); `head-ref` or `slug` (one required — `plan/…` for generate, `tasks/…` for approved); `restart` (boolean, `false` — admits a `stalled` spec on deliberate manual restart); `tasks-review` (string `auto`\|`pr`, default `auto`); `model` (string, `claude-sonnet-5`); `max-turns` (number, `60`); `next-workflow` (string, `""` = no dispatch) |
+| Inputs | `mode` (string `generate`\|`approved`, default `generate`); `head-ref` or `slug` (one required — `plan/…` for generate, `tasks/…` for approved); `restart` (boolean, `false` — admits a `stalled` spec on deliberate manual restart); `tasks-review` (string `auto`\|`pr`, default `auto`); `model` (string, `claude-sonnet-5-5`); `max-turns` (number, `60`); `next-workflow` (string, `""` = no dispatch) |
 | Preconditions | `generate`: `plan.md` on the spec branch; `spec-meta.json.stage == "plan"` (or `stalled` with `restart: true`). `approved`: `spec-meta.json.stage == "tasks"` |
 | Side effects | `auto`: `tasks.md` + stage flip committed to the spec branch, implement dispatched if configured. `pr`: `tasks/NNN-slug` branch (prefix configurable via `WING_COMMANDER_TASKS_PREFIX`, default `tasks/`) + review PR, no dispatch. `approved`: dispatch only |
 | Outputs | `spec-dir` |
@@ -1245,9 +1310,9 @@ itself.
 
 | | |
 |---|---|
-| Inputs | `spec-dir` (string, required); `issue-number` (number, required); `iteration` (number, required); `model` (string, `claude-sonnet-5`); `max-turns` (number, `180`); `max-iterations` (number, `5`); `self-workflow` (string, `""`); `next-workflow` (string, `""`) |
+| Inputs | `spec-dir` (string, required); `issue-number` (number, required); `iteration` (number, required); `model` (string, `claude-sonnet-5-5`); `max-turns` (number, `180`); `max-iterations` (number, `5`); `self-workflow` (string, `""`); `next-workflow` (string, `""`) |
 | Preconditions | `spec.md`/`plan.md`/`tasks.md`/`spec-meta.json` on the `spec/NNN-slug` branch; spec-meta agrees with the inputs; `(stage, iteration)` is the next expected step |
-| Side effects | ONE implement ⟲ converge cycle committed to the spec branch; per-cycle progress comment; tier-up retry on failure (→ `claude-opus-5`); stall marking + runbook comment on exhausted retry; dispatches `self-workflow` (next iteration) or `next-workflow` (finalize) when configured, otherwise reports to the issue and stops |
+| Side effects | ONE implement ⟲ converge cycle committed to the spec branch; per-cycle progress comment; tier-up retry on failure (→ `claude-opus-5-5`); stall marking + runbook comment on exhausted retry; dispatches `self-workflow` (next iteration) or `next-workflow` (finalize) when configured, otherwise reports to the issue and stops |
 | Outputs | `converged` (boolean; empty on failure/skip) |
 
 Findings filing: `findings-filing-enabled` (boolean, default `true`;
@@ -1255,6 +1320,15 @@ Findings filing: `findings-filing-enabled` (boolean, default `true`;
 (string, `found-by`; `WING_COMMANDER_FINDINGS_LABEL_PREFIX`),
 `findings-cap` (number, `3`; `WING_COMMANDER_FINDINGS_CAP`) — see
 [Stage-found defect filing](#stage-found-defect-filing).
+
+Write boundary: `no-write-paths` (string, comma-separated path prefixes,
+default `.claude/`; `WING_COMMANDER_IMPLEMENT_NO_WRITE_PATHS`) — paths this
+stage's agent may not target with `Edit`/`Write`, stated in its prompt
+before its first tool call. `write-boundary-label-prefix` (string, default
+`route-out-of-boundary`; `WING_COMMANDER_WRITE_BOUNDARY_LABEL_PREFIX`) —
+label prefix for a task routed out of the write boundary; deliberately
+distinct from `findings-label-prefix` so the board loop never treats a
+routed item as fix-shaped authorization.
 
 One call = one cycle. The loop exists only through `self-workflow`
 re-dispatch, so you decide whether iteration is automatic (wrapper 5 above)
@@ -1274,6 +1348,12 @@ Findings filing: `findings-filing-enabled` (boolean, default `true`;
 (string, `found-by`; `WING_COMMANDER_FINDINGS_LABEL_PREFIX`),
 `findings-cap` (number, `3`; `WING_COMMANDER_FINDINGS_CAP`) — see
 [Stage-found defect filing](#stage-found-defect-filing).
+
+Write boundary: `write-boundary-label-prefix` (string, default
+`route-out-of-boundary`; `WING_COMMANDER_WRITE_BOUNDARY_LABEL_PREFIX`) —
+this stage never classifies a task, only looks up an already-routed one by
+fingerprint so the remaining-manual-work list can point at its tracked
+issue instead of losing it as an orphan line.
 
 ### cleanup
 
@@ -1323,7 +1403,7 @@ conventions your wrapper owns.
 
 | | |
 |---|---|
-| Inputs | `model` (string, `claude-sonnet-5`); `max-turns` (number, `50`) |
+| Inputs | `model` (string, `claude-sonnet-5-5`); `max-turns` (number, `50`) |
 | Preconditions | none — discovers in-flight `spec/*` branches itself; empty discovery is a clean no-op |
 | Side effects | per-branch rebase onto your default branch: clean → force-push with lease; conflicting → agent resolution with a deterministic scope check; unresolvable → abandoned untouched + `rebase:blocked` escalation comment (deduped by SHA marker) |
 | Outputs | none |
@@ -1339,7 +1419,7 @@ for the full routing design.
 
 | | |
 |---|---|
-| Inputs | `pr-number` (number, required); `event-kind` (string `review`\|`review-comment`\|`issue-comment`, required); `body` (string, required, untrusted); `actor-login`/`actor-association` (string, required); `comment-id`/`review-id` (number, `0`); `thread-path`/`thread-diff-hunk` (string, `""`); `confirm-categories` (string, `""` = act-then-report for every category); `confirm-environment` (string, `pr-conversation-confirm`); `confirm-timeout-minutes` (number, `1440` — how long a confirm-gated leg may wait on that environment's approval before GitHub cancels it outright); `model` (string, `claude-sonnet-5`); `max-turns` (number, `40`); `implement-workflow` (string, `""`) |
+| Inputs | `pr-number` (number, required); `event-kind` (string `review`\|`review-comment`\|`issue-comment`, required); `body` (string, required, untrusted); `actor-login`/`actor-association` (string, required); `comment-id`/`review-id` (number, `0`); `thread-path`/`thread-diff-hunk` (string, `""`); `confirm-categories` (string, `""` = act-then-report for every category); `confirm-environment` (string, `pr-conversation-confirm`); `confirm-timeout-minutes` (number, `1440` — how long a confirm-gated leg may wait on that environment's approval before GitHub cancels it outright); `model` (string, `claude-sonnet-5-5`); `max-turns` (number, `40`); `implement-workflow` (string, `""`) |
 | Preconditions | the PR's base is your default branch and its head starts with `spec-prefix` (not `spec-draft-prefix`/`plan-prefix`/`tasks-prefix`) — anything else short-circuits with no reply at all; the lifecycle issue is open |
 | Side effects | posts one `IntentAnnouncement` per classification before any mutation; routes per category — see the architecture doc for the full list |
 | Outputs | none — side effects only. (`classify-and-announce` has *job*-level outputs, which a caller cannot read; `needs.pr-conversation.outputs.qualifies` in your own wrapper resolves to an empty string.) |
@@ -1434,13 +1514,23 @@ When a stage dispatches a `next-workflow`/`self-workflow`, the target is a
 wrapper translates them to the stage's kebab-case inputs, as wrappers 5 and 6
 show):
 
-| Dispatch target | Required `workflow_dispatch` inputs |
-|---|---|
-| implement wrapper (`next-workflow` of tasks; `self-workflow` of implement) | `spec_dir` (string), `issue` (string), `iteration` (string) |
-| finalize wrapper (`next-workflow` of implement) | `spec_dir` (string), `issue` (string), `converged` (string) |
+| Dispatch target | Required `workflow_dispatch` inputs | Optional |
+|---|---|---|
+| implement wrapper (`next-workflow` of tasks; `self-workflow` of implement) | `spec_dir` (string), `issue` (string), `iteration` (string) | `fold_queue_token` (string, default `""`) |
+| finalize wrapper (`next-workflow` of implement) | `spec_dir` (string), `issue` (string), `converged` (string) | |
 
 Rename the wrapper *files* freely — the stages take the filenames as inputs —
 but keep the input *names* exactly.
+
+`fold_queue_token` (specs/074-serialized-fold-dispatch) is sent as a plain
+`-f fold_queue_token=` argument to `gh workflow run` whenever a review's fold
+actually dispatches a cycle. An implement wrapper that doesn't declare this
+input gets that dispatch rejected outright with a 422 "Unexpected inputs
+provided" — the pipeline retries once without it when that happens (so the
+fold still dispatches, just unticketed), but declaring it and forwarding it
+to `implement.yml`'s own `fold-queue-token` input (section 5's wrapper does
+this) keeps this feature's cross-run serialization intact for your wrapper
+too.
 
 ## Stage-found defect filing
 

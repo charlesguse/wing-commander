@@ -135,7 +135,9 @@ timestamp it processed, in the same commit as any records append (a
 fixture forcing a push rejection proves both files retry together, not
 independently — research.md R-C2); a second sweep started from the
 advanced mark does not re-list runs the first one already accounted for
-except within the fixed one-hour overlap (research.md R-C3).
+except within the fixed one-hour overlap (research.md R-C3); a sweep
+whose window holds no metrics-record artifact (the retrieve step skipped)
+succeeds and still advances the mark to its latest concluded run.
 
 ### `verify-metrics-expired-artifact-outcome` (new)
 
@@ -158,6 +160,17 @@ collide (same minute+hour) with any other scheduled workflow in the
 repository (FR-030(b), FR-030(c) — a literal-list comparison, matching
 the discovery-based convention this repository already uses for its
 comment-canonical-pointer and wiring gates).
+
+Extended by #889: every workflow that uploads a `metrics-record*`
+artifact (directly, through a local composite, or through a reusable
+workflow it calls) is named in both `workflow_run.workflows` (the
+watchdog and `board-loop` excepted, which are sweep-only and must stay
+off it) and the `sweep` job's
+`sweep-workflow-paths`; the discovery is pinned by a fixture tree, and
+the 043 wrapper contract's published trigger list must match the
+shipped one. A spelled-out count of the completion path's workflows
+("N completion-trigger workflows", "N-stage path") in the live wrapper,
+stage, contracts or docs/adoption.md must equal the shipped list's length.
 
 ## Wiring assertions common to all new/amended gates
 

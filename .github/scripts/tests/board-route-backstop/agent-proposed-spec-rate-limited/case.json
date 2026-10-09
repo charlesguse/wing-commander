@@ -1,0 +1,19 @@
+{
+  "_note": "A proposal the agent did deliver is its judgment even when its run then hit the rate limit: spec stays spec, reported as the agent's own.",
+  "agent_proposal": "spec",
+  "proposal_extracted": true,
+  "agent_rate_limited": true,
+  "board_max_files": 6,
+  "board_max_lines": 120,
+  "measure": {
+    "over_threshold": false,
+    "files": 1,
+    "lines": 4
+  },
+  "diff_paths": [],
+  "diff_text": "",
+  "expected": {
+    "backstop_verdict": "spec",
+    "reason": "agent_proposed_spec"
+  }
+}

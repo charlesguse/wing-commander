@@ -120,7 +120,7 @@ SHELL_LINTED = tuple(
         "intake", "clarify", "plan", "tasks", "implement", "finalize",
         "cleanup", "rebase", "metrics-persist", "private-image-dogfood",
         "watchdog", "auto-update-spec-kit", "pr-conversation",
-        "release"))
+        "release", "fold-cycle-guard"))
 
 SHELLCHECK_OPTS = "--severity=warning"
 # actionlint 1.7.7 rule_shellcheck.go, verbatim: the codes its

@@ -182,8 +182,30 @@ jobs:
             # nothing this gate does commits to that branch, so (unlike
             # T069's now-deleted peel) the head never moves on its own
             # account.
-            review_gate_json="$(gh issue view "$meta_issue" -R "$GITHUB_REPOSITORY" --json comments --jq '.comments' \
-              | python3 .wc-pristine-repo/.github/scripts/wc_lifecycle_review_marker.py read --bot-login "$BOT_LOGIN")"
+            # #826: read through REST, never `gh issue view --json comments`
+            # -- see wc_lifecycle_review_marker.py's read_marker(). A failed
+            # read is not "no round yet": treating it as {} would re-review a
+            # PR the round budget or the unmoved-head skip already settled.
+            # A candidate with no lifecycle issue number has no marker to
+            # read and is skipped. HTTP 404/410 means the issue was deleted
+            # or transferred: skipped with a warning rather than wedge every
+            # run on it, as board-loop.yml's select does (#557). Any other
+            # failure stops select. Gate 95 runs each case.
+            case "$meta_issue" in
+              ''|*[!0-9]*) continue ;;
+            esac
+            if ! review_gate_json="$(gh api "repos/$GITHUB_REPOSITORY/issues/$meta_issue/comments" --paginate --jq '.[]' \
+              2> "$RUNNER_TEMP/lifecycle-comments-$meta_issue.err" \
+              | jq -s '.' \
+              | python3 .wc-pristine-repo/.github/scripts/wc_lifecycle_review_marker.py read --bot-login "$BOT_LOGIN")"; then
+              if grep -qE 'HTTP (404|410)' "$RUNNER_TEMP/lifecycle-comments-$meta_issue.err"; then
+                echo "::warning::lifecycle-review-gate select: lifecycle issue #$meta_issue (PR #$number) is gone (comments fetch returned 404/410) -- PR #$number is skipped this run (#826)."
+                continue
+              fi
+              cat "$RUNNER_TEMP/lifecycle-comments-$meta_issue.err" >&2
+              echo "::error::lifecycle-review-gate select: could not read the review_gate marker off lifecycle issue #$meta_issue (PR #$number) -- select stops here rather than treat a failed read as no round yet (#826)."
+              exit 1
+            fi
             recorded_head_sha="$(printf '%s' "$review_gate_json" | jq -r '.head_sha // empty')"
             [ "$recorded_head_sha" != "$head_sha" ] || continue
 
@@ -290,11 +312,20 @@ jobs:
           # (the `merge` job's own KILL_SWITCH_PAUSED points here): defence
           # in depth, NOT a guaranteed mid-run kill. An earlier revision of
           # this comment claimed a step-level `vars.` expression is resolved
-          # when the step runs, so a switch set mid-run is seen here; that
-          # mechanism is not something GitHub documents, and this is a
-          # `vars.` expression rather than a live Variables API read (one
-          # the App has no permission for, and T078 asks for none), so it
-          # can only ever be as fresh as the context this run was handed. A
+          # when the step runs, so a switch set mid-run is seen here. It is
+          # not (#794). GitHub's docs say only that `vars` holds the
+          # organization, repository and environment variables, nothing
+          # about refreshing it; the runner shows what happens. In
+          # actions/runner (src/Runner.Worker/ExecutionContext.cs,
+          # InitializeJob, at commit d7bc179b), `vars` arrives inside the
+          # job request message's ContextData, which is copied into the
+          # job's expression values once, when the job starts. Every step's
+          # `env:`, `with:` and `if:` is evaluated against that copy, and
+          # nothing in the runner fetches `vars` again. So a step-level
+          # `vars.` expression is fixed no later than the start of its job,
+          # and a switch set after that is invisible to every step of it.
+          # This is a `vars.` expression, not a live Variables API read (one
+          # the App has no permission for, and T078 asks for none). A
           # maintainer who sets the switch while the run is already in
           # flight is NOT guaranteed to be seen by it. The bound that always
           # holds is the one to rely on: the `kill-switch` job plus the
@@ -490,9 +521,14 @@ jobs:
           # never this checkout's own copy (T073/F1) -- this step runs
           # before the reviewer agent, but the branch under review must
           # never supply the code any of this job's own steps execute.
-          round="$(gh issue view "$ISSUE" -R "$GITHUB_REPOSITORY" --json comments --jq '.comments' \
+          # #826: REST, never `--json comments` -- see select's marker read.
+          if ! round="$(gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE/comments" --paginate --jq '.[]' \
+            | jq -s '.' \
             | python3 -I "$RUNNER_TEMP/wc-pristine/scripts/wc_lifecycle_review_marker.py" read --bot-login "$BOT_LOGIN" \
-            | jq -r '(.round // 0) + 1')"
+            | jq -r '(.round // 0) + 1')"; then
+            echo "::error::lifecycle-review-gate review: could not read the review_gate marker off lifecycle issue #$ISSUE (#826)."
+            exit 1
+          fi
           echo "round=$round" >> "$GITHUB_OUTPUT"
 
       # T018/contracts/review-and-findings.md: the same read-only shape
@@ -520,7 +556,7 @@ jobs:
           MODEL_VAR: ${{ vars.WING_COMMANDER_LIFECYCLE_REVIEW_GATE_MODEL }}
         run: |
           set -uo pipefail
-          echo "model=${MODEL_VAR:-claude-sonnet-5}" >> "$GITHUB_OUTPUT"
+          echo "model=${MODEL_VAR:-claude-sonnet-5-5}" >> "$GITHUB_OUTPUT"
 
       # T019/FR-008: a separate job, separate agent invocation -- no shared
       # transcript/memory with whatever implemented or finalized this PR,
@@ -594,11 +630,11 @@ jobs:
 
       # T020/spec 052 (Gate 68): every agent step is followed, before the
       # next agent step or the job's end, by its own agent-ran-signal and
-      # context-remint calls -- this job is not exempt like board-loop.yml's
-      # reviewer, since it is a new subject, not an established exemption.
-      # No wing-commander-refresh-remote call: this job never persists a
-      # git remote credential (its only write is the `gh api` review post,
-      # via env.WC_BOT_TOKEN directly) -- registered in
+      # context-remint calls -- this job is a full subject, not an
+      # exemption.
+      # No wing-commander-refresh-remote call: no step after the agent uses
+      # origin's persisted credential (its only write is the `gh api` review
+      # post, via env.WC_BOT_TOKEN directly) -- registered in
       # verify-post-agent-credential-refresh.py's NO_REMOTE_REFRESH_JOBS,
       # matching pr-conversation.yml's classify-and-announce precedent.
       - name: Record agent-ran signal
@@ -645,6 +681,7 @@ jobs:
           verdict: ${{ steps.review-verdict.outputs.verdict }}
           verdict-reason: ${{ steps.review-verdict.outputs.reason }}
           stage: lifecycle-review-gate
+          spec-identity-is-own: 'false'
 
       # review-step-gating resolution 4: continue-on-error: true, not a
       # hard exit -- the extract/post-review steps below are this job's own
@@ -978,8 +1015,13 @@ jobs:
           BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}[bot]
         run: |
           set -euo pipefail
-          review_gate_json="$(gh issue view "$ISSUE" -R "$GITHUB_REPOSITORY" --json comments --jq '.comments' \
-            | python3 .wc-pristine-repo/.github/scripts/wc_lifecycle_review_marker.py read --bot-login "$BOT_LOGIN")"
+          # #826: REST, never `--json comments` -- see select's marker read.
+          if ! review_gate_json="$(gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE/comments" --paginate --jq '.[]' \
+            | jq -s '.' \
+            | python3 .wc-pristine-repo/.github/scripts/wc_lifecycle_review_marker.py read --bot-login "$BOT_LOGIN")"; then
+            echo "::error::lifecycle-review-gate: could not read the review_gate marker off lifecycle issue #$ISSUE (#826)."
+            exit 1
+          fi
           echo "json=$review_gate_json" >> "$GITHUB_OUTPUT"
 
       # T023/T074: the raw-zero fast path. Computes this round's data from
@@ -1595,8 +1637,13 @@ jobs:
           BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}[bot]
         run: |
           set -euo pipefail
-          review_gate_json="$(gh issue view "$ISSUE" -R "$GITHUB_REPOSITORY" --json comments --jq '.comments' \
-            | python3 .wc-pristine-repo/.github/scripts/wc_lifecycle_review_marker.py read --bot-login "$BOT_LOGIN")"
+          # #826: REST, never `--json comments` -- see select's marker read.
+          if ! review_gate_json="$(gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE/comments" --paginate --jq '.[]' \
+            | jq -s '.' \
+            | python3 .wc-pristine-repo/.github/scripts/wc_lifecycle_review_marker.py read --bot-login "$BOT_LOGIN")"; then
+            echo "::error::lifecycle-review-gate: could not read the review_gate marker off lifecycle issue #$ISSUE (#826)."
+            exit 1
+          fi
           echo "json=$review_gate_json" >> "$GITHUB_OUTPUT"
 
       - name: Evaluate the merge preconditions against the current head SHA
@@ -1708,6 +1755,7 @@ jobs:
           PR_NUMBER: ${{ needs.select.outputs.pr-number }}
           ROUND: ${{ needs.disposition.outputs.round }}
           HEAD_SHA: ${{ steps.preconditions.outputs.head-sha || needs.select.outputs.head-sha }}
+          REVIEW_GATE_OUTCOME: ${{ steps.review-gate.outcome }}
           MAY_MERGE: ${{ steps.preconditions.outputs.may-merge }}
           UNMET_REASON: ${{ steps.preconditions.outputs.unmet-reason }}
           MERGED: ${{ steps.merge.outputs.merged }}
@@ -1735,6 +1783,9 @@ jobs:
           elif [ -n "$UNMET_REASON" ]; then
             body="$(printf "lifecycle-review-gate did **not** merge PR #%s at %s: the precondition \`%s\` does not hold.\n\nConditions checked, in order: %s. The PR stays open for a maintainer and is re-evaluated on a later run.\n" \
               "$PR_NUMBER" "$HEAD_SHA" "$UNMET_REASON" "$conditions")"
+          elif [ "$REVIEW_GATE_OUTCOME" = "failure" ]; then
+            body="$(printf "lifecycle-review-gate did **not** merge PR #%s at %s: the review_gate marker could not be read off this issue, so the merge preconditions were never evaluated. The PR stays open and is re-evaluated on a later run.\n" \
+              "$PR_NUMBER" "$HEAD_SHA")"
           else
             body="$(printf "lifecycle-review-gate did **not** merge PR #%s at %s: the merge preconditions were never evaluated (the lifecycle issue or PR closed mid-round, or the evaluation step itself failed).\n" \
               "$PR_NUMBER" "$HEAD_SHA")"

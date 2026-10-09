@@ -69,6 +69,15 @@ scaffold_run() { # scaffold_run <marker-file-name>  -> echoes the step's exit co
   rm -rf "$RUNDIR/w"; mkdir -p "$RUNDIR/w"
   (
     cd "$RUNDIR/w"
+    # specs/074-serialized-fold-dispatch: the orphan-reset idiom's own reset-
+    # to-empty-orphan-branch fragment now lives one level up in
+    # orphan-branch-empty-tree.sh (Gate 60), resolved via $GITHUB_ACTION_PATH
+    # the same way production does -- matching wing-commander-fold-queue-
+    # admit/tests/run.sh's own GITHUB_ACTION_PATH convention. Captured under
+    # its own name, and BEFORE the `export REPO=` below, because the
+    # composite's own `env: REPO` input (the scratch full_name) reuses the
+    # bare name `REPO` that lib.sh's checkout-root variable also uses.
+    export GITHUB_ACTION_PATH="$REPO/.github/actions/_shared/orphan-branch-reset"
     # The composite's own `env:` block (TOKEN/REPO/BRANCH/BOT_NAME/
     # BOT_EMAIL/WORKDIR/COMMIT_MESSAGE) is never part of the extracted
     # run: text -- it is a separate step key extract.py does not pull in

@@ -10,7 +10,9 @@ wing-commander-size-path-backstop composite (via its own runtime wrapper,
 outside this module -- see board-loop.yml's `route` job) with the board's
 own thresholds, ORs in `contract_widened()`'s structural verdict, and
 re-applies the same decision to the pushed branch's final diff
-(`route_final_diff()`, FR-021).
+(`route_final_diff()`, FR-021). A fix this loop cannot push (a workflow
+file, while the App holds no Workflows permission) is narrowed to "hold"
+rather than to "spec": see `workflow_push_blocked_paths()`.
 
 `contract_widened()` (research.md D6) is a structural check, not a size
 check: it asks "did this diff touch the exact YAML keys that define a
@@ -130,33 +132,269 @@ def _is_wc_composite_action_path(path):
             and path.split("/")[-1] in ("action.yml", "action.yaml"))
 
 
-def touches_protected_file(diff_paths):
-    """Coarse, pre-push proxy for contract_widened() (research.md D6):
-    before a fix has been pushed, this job has only the route-propose
-    agent's drafted diff snippets, not the new side's full file content
-    contract_widened() needs to locate the workflow_call:/inputs:/outputs:
-    block precisely -- so the pre-push route step treats ANY touched
-    `.github/workflows/*.yml` or `wing-commander-*` composite `action.yml`
-    as provisionally contract-widening (never under-protects; may
-    over-flag a workflow/composite change that turns out not to touch the
-    published surface, which route_final_diff()'s precise post-push check
-    corrects once the real diff and file content exist)."""
-    return [p for p in diff_paths
-            if _is_workflow_path(p) or _is_wc_composite_action_path(p)]
+def normalize_repo_path(path):
+    """A drafted path as a repository-relative path: backslashes made
+    forward, any leading "./" dropped, and a unified-diff "a/" or "b/"
+    prefix dropped in front of ".github/"."""
+    p = str(path or "").strip().replace("\\", "/")
+    while p.startswith("./"):
+        p = p[2:]
+    for prefix in ("a/", "b/"):
+        if p.startswith(prefix + ".github/"):
+            p = p[len(prefix):]
+    return p
 
 
-def contract_widened(diff_paths, diff_text, file_contents=None):
+WORKFLOW_CALL_RE = re.compile(r"\bworkflow_call\b")
+
+
+def _contract_block(path, text):
+    """The text of `path`'s published-contract block in `text` -- a
+    workflow's whole `on: workflow_call:` block, or a composite's top-level
+    `inputs:`/`outputs:` -- trailing whitespace dropped, or None when the
+    file is absent or has none."""
+    if not text:
+        return None
+    rng = (_protected_range_workflow(text) if _is_workflow_path(path)
+           else _protected_range_composite(text))
+    if rng is None:
+        return None
+    lines = text.splitlines()
+    return "\n".join(line.rstrip() for line in lines[rng[0] - 1:rng[1] - 1]).strip()
+
+
+def contract_changed(path, old_text, new_text):
+    """True when the change from `old_text` (None: the file did not exist)
+    to `new_text` (None or empty: the file is gone) widens or breaks the
+    published contract at `path` (Principle VII): its contract block
+    differs -- which covers adding or removing `workflow_call:` and adding
+    or removing a composite's inputs/outputs -- or a `wing-commander-*`
+    composite was added or deleted outright."""
+    path = normalize_repo_path(path)
+    if _is_wc_composite_action_path(path):
+        if (old_text is None) != (not new_text):
+            return True
+    elif not _is_workflow_path(path):
+        return False
+    return _contract_block(path, old_text) != _contract_block(path, new_text)
+
+
+def _split_hunks(diff_text):
+    """The hunk bodies of one file's unified diff, each a list of its
+    ' '/'-'/'+' lines; header lines are found with HUNK_HEADER_RE (the
+    module's one hunk-header parser) and their line numbers are ignored."""
+    hunks = []
+    current = None
+    for line in (diff_text or "").splitlines():
+        if HUNK_HEADER_RE.match(line):
+            current = []
+            hunks.append(current)
+        elif current is not None and line[:1] in (" ", "-", "+") and not line.startswith(("+++", "---")):
+            current.append(line)
+        elif current is not None and line == "":
+            current.append(" ")
+    return hunks
+
+
+def _apply_drafted_diff(old_text, diff_text):
+    """main's `old_text` with the drafted hunks applied, each located by
+    its own context and removed lines -- never by the line numbers in its
+    header, which an agent can get wrong -- or None when any hunk cannot be
+    located (no hunks, a hunk with no old-side lines in an existing file,
+    or old-side lines that do not occur in order)."""
+    hunks = _split_hunks(diff_text)
+    if not hunks:
+        return None
+    old_lines = (old_text or "").splitlines()
+    result = []
+    pos = 0
+    for hunk in hunks:
+        src = [line[1:] for line in hunk if line[:1] in (" ", "-")]
+        dst = [line[1:] for line in hunk if line[:1] in (" ", "+")]
+        if not src:
+            if old_lines:
+                return None
+            result.extend(dst)
+            continue
+        at = None
+        for i in range(pos, len(old_lines) - len(src) + 1):
+            if [l.rstrip() for l in old_lines[i:i + len(src)]] == [l.rstrip() for l in src]:
+                at = i
+                break
+        if at is None:
+            return None
+        result.extend(old_lines[pos:at])
+        result.extend(dst)
+        pos = at + len(src)
+    result.extend(old_lines[pos:])
+    return "\n".join(result) + ("\n" if result else "")
+
+
+COMPOSITE_CONTRACT_KEY_RE = re.compile(r"^(inputs|outputs):")
+
+
+def _unapplied_diff_signals_contract(path, diff):
+    """For a drafted diff _apply_drafted_diff() could not place: True when
+    one of its own added or removed lines names the contract outright -- a
+    workflow's `workflow_call` trigger, or a composite's column-0
+    `inputs:`/`outputs:` key. A wholly new file always applies, so the
+    create case never reaches here."""
+    changed = [line[1:] for line in (diff or "").splitlines()
+               if line[:1] in ("+", "-") and not line.startswith(("+++", "---"))]
+    if _is_workflow_path(path):
+        return any(WORKFLOW_CALL_RE.search(line) for line in changed)
+    if _is_wc_composite_action_path(path):
+        return any(COMPOSITE_CONTRACT_KEY_RE.match(line) for line in changed)
+    return False
+
+
+def drafted_contract_widened(file_changes, read_text, unknown=None):
+    """The pre-push half of FR-021's contract check, run on the route
+    agent's drafted change (`file-changes`: [{"path", "diff"}]) against
+    main's own file content -- `read_text(path)` returns it, or None for a
+    file main does not have. Each drafted diff is applied to main's text by
+    content (_apply_drafted_diff()), and the path is returned when
+    contract_changed() says the result widens or breaks the published
+    contract (Principle VII). A diff that cannot be applied is an unknown,
+    not a widening: it counts only when its own changed lines carry a
+    contract signal (_unapplied_diff_signals_contract()). Anything else is
+    left to the precise check on the pushed diff, route_final_diff()
+    (FR-021), which files the spec as a breach if the real change widens
+    a contract -- the way route() leaves a rate-limited agent's missing
+    proposal to a later run instead of guessing. Counting every unappliable
+    diff on a file with a contract block sent plain plumbing fixes to a
+    spec-proposal (#936). A change to a workflow's `run:` code or a
+    composite's `runs:` steps is never a contract change, however many
+    workflow files it edits.
+
+    `unknown`, when a list, receives each path whose effect is left
+    unknown. A change with a workflow file this loop cannot push is held,
+    never pushed, so no final-diff check follows: route() records those
+    paths, and the hold comment tells the maintainer the contract effect is
+    unchecked."""
+    widened = []
+    for fc in file_changes or []:
+        if not isinstance(fc, dict):
+            continue
+        path = normalize_repo_path(fc.get("path"))
+        if not (_is_workflow_path(path) or _is_wc_composite_action_path(path)):
+            continue
+        diff = fc.get("diff") if isinstance(fc.get("diff"), str) else ""
+        old_text = read_text(path)
+        new_text = _apply_drafted_diff(old_text, diff)
+        if new_text is None:
+            if _unapplied_diff_signals_contract(path, diff):
+                widened.append(path)
+            else:
+                if unknown is not None:
+                    unknown.append(path)
+                print("note: board_route_backstop: the drafted diff for {0} could not be applied "
+                      "to main; whether it changes a contract is left to the final-diff "
+                      "check.".format(path), file=sys.stderr)
+            continue
+        if contract_changed(path, old_text, new_text):
+            widened.append(path)
+    return widened
+
+
+def workflow_push_blocked_paths(diff_paths, can_push_workflows):
+    """The paths in `diff_paths` under `.github/workflows/` (any file, not
+    only *.yml) this loop cannot push, or [] when it can. The wing-commander App holds no Workflows
+    permission (docs/setup.md), and GitHub refuses a push that changes a
+    workflow file without it, so a fix whose drafted diff edits one cannot
+    land from this loop however small it is. `can_push_workflows` is the
+    maintainer's statement that the App has been granted that permission
+    (`WING_COMMANDER_BOARD_CAN_PUSH_WORKFLOWS`).
+
+    This replaced the pre-push `touches_protected_file()` proxy, which
+    counted every touched workflow or `wing-commander-*` composite as
+    contract-widening and so routed nearly every fix in this repository to
+    a spec (the 2026-10-01 board reset). Contract widening is decided by
+    `drafted_contract_widened()` before push and `contract_widened()` on
+    the pushed diff (`route_final_diff()`, FR-021); a workflow change that
+    widens a contract is spec-shaped, never held."""
+    if can_push_workflows:
+        return []
+    # GitHub refuses a push that changes ANY file under .github/workflows/
+    # without the permission, not only *.yml.
+    return [p for p in (normalize_repo_path(d) for d in diff_paths)
+            if p.startswith(".github/workflows/")]
+
+
+def read_base_contents(base_sha, paths):
+    """{path: the file's text at `base_sha`, or None when it has none} for
+    every workflow or `wing-commander-*` composite path in `paths` -- the
+    `base_contents` contract_widened() compares against. The one home for
+    this read (board-loop.yml's fix and readiness final-diff checks).
+    None, never {}, when `base_sha` is empty: no base, no comparison."""
+    import subprocess
+    if not base_sha:
+        return None
+    contents = {}
+    for path in paths:
+        if not (_is_workflow_path(path) or _is_wc_composite_action_path(path)):
+            continue
+        shown = subprocess.run(["git", "show", "{0}:{1}".format(base_sha, path)],
+                               capture_output=True, text=True)
+        contents[path] = shown.stdout if shown.returncode == 0 else None
+    return contents
+
+
+def diff_name_list(base_sha, head="HEAD"):
+    """The paths changed between `base_sha` and `head`, as the repository
+    stores them -- the one home for this listing (board-loop.yml's
+    workflow-scope holds via board_workflow_scope_hold.py, and its fix and
+    readiness final-diff checks; verify-board-route-backstop.py fails on a
+    `git diff --name-only` in board-loop.yml). `-z`: a plain listing
+    C-quotes a non-ASCII path under core.quotePath (`"\\303\\251.yml"`), so
+    `.github/workflows/é.yml` read as no workflow file and GitHub then
+    refused the push (found by the code review of #953). `--no-renames`: a
+    rename lists its deleted path and its added one, so a `workflow_call`
+    workflow moved out of `.github/workflows/` still has its contract
+    removal compared (found by the code review of #955). Raises
+    subprocess.CalledProcessError when git fails."""
+    import subprocess
+    out = subprocess.run(["git", "diff", "-z", "--no-renames", "--name-only", base_sha, head],
+                         capture_output=True, check=True).stdout
+    return [p for p in out.decode("utf-8", "surrogateescape").split("\0") if p]
+
+
+def read_worktree_contents(paths):
+    """{path: its text in the checkout} for each of `paths` that is a file
+    there (a deleted path has none) -- the `file_contents`
+    contract_widened() reads, in one home for the same callers as
+    diff_name_list()."""
+    import os
+    contents = {}
+    for path in paths:
+        if os.path.isfile(path):
+            with open(path, encoding="utf-8", errors="replace") as fh:
+                contents[path] = fh.read()
+    return contents
+
+
+def contract_widened(diff_paths, diff_text, file_contents=None, base_contents=None):
     """research.md D6. `file_contents`: optional {path: new-side full text}
     -- when omitted, this function cannot determine protected line ranges
     for a path and treats it conservatively (not widened for that path
     alone; callers that need path content read it from the checkout they
     already have, e.g. board-loop.yml's route job on disk).
+    `base_contents`: optional {path: base-side full text, or None when the
+    base has no such file}. A path present in it is decided by
+    contract_changed() instead -- the base and new contract blocks
+    compared whole -- which also sees a contract REMOVED (a dropped
+    `workflow_call:`, a deleted composite or inputs/outputs block) that the
+    new side alone cannot show.
 
     Returns the subset of diff_paths that are contract-widening."""
     file_contents = file_contents or {}
     widened = []
     for path in diff_paths:
         if not (_is_workflow_path(path) or _is_wc_composite_action_path(path)):
+            continue
+        if base_contents is not None and path in base_contents:
+            if contract_changed(path, base_contents[path], file_contents.get(path)):
+                widened.append(path)
             continue
         text = file_contents.get(path)
         if text is None:
@@ -193,7 +431,9 @@ def normalize_category(category):
 
 def route(agent_proposal, file_changes, board_max_files, board_max_lines,
           measure_backstop, diff_paths=None, diff_text=None, file_contents=None,
-          widened_paths_override=None, proposal_extracted=True):
+          widened_paths_override=None, proposal_extracted=True,
+          workflow_push_blocked=None, base_contents=None,
+          agent_rate_limited=False, contract_unknown_paths=None):
     """FR-016..FR-020. `measure_backstop` is a callable
     (file_changes, max_files, max_lines) -> (over_threshold, files, lines)
     -- the runtime caller (board-loop.yml) supplies one that shells out to
@@ -201,16 +441,36 @@ def route(agent_proposal, file_changes, board_max_files, board_max_lines,
     stand-in. Narrows agent_proposal ("fix" -> "spec") only, never widens
     ("spec" stays "spec", FR-017). `widened_paths_override`, when not None,
     is used instead of calling contract_widened() internally -- the
-    pre-push route job passes touches_protected_file()'s coarser result
-    here (research.md D6's precise check needs the new side's full file
-    content, unavailable before a fix has been pushed).
+    pre-push route job passes drafted_contract_widened()'s result here
+    (the drafted diff's hunks located against main's file content), and
+    route_final_diff() runs the precise check on the pushed diff.
+    `workflow_push_blocked` (workflow_push_blocked_paths()'s result) turns
+    an otherwise-fix verdict into "hold", reason "workflow_scope": the fix
+    is fix-shaped but this loop cannot push it, so it waits for a
+    maintainer as the one issue it already is -- never a spec, which is for
+    design trade-offs, not push permissions.
     `proposal_extracted` is False when the caller had no usable proposal
     from the agent and fell back to a default `spec` -- that spec is then
     reported as `no_usable_proposal`, never as the agent's own judgment
     (#534). `agent_proposal` is read through normalize_category(); a
     value outside fix/spec is no usable proposal whatever
     `proposal_extracted` says, so it is spec, never fix (#548). The
-    decision records the normalised value."""
+    decision records the normalised value.
+    `agent_rate_limited` is True when the route agent's own verdict was
+    rate-limited (an API 429). No usable proposal from a rate-limited agent
+    is "defer", reason "agent_rate_limited", never the default spec: the
+    agent judged nothing, and filing a spec-proposal closed the original
+    as a duplicate during a usage outage (#902 -> #907, #906 -> #908).
+    Defer takes no durable action. The issue's route marker (triage writes
+    it before route runs) keeps it in flight, and the next run triages it
+    again -- a rate-limited triage then defers too and posts nothing
+    (board_triage.defer_on_rate_limit()) -- and routes it once the usage
+    window resets.
+    `contract_unknown_paths` (drafted_contract_widened()'s `unknown`): on a
+    hold, all of them -- a composite held alongside a workflow file too --
+    are recorded as `measured.contract_unknown_paths`, because a held fix
+    is never pushed and so never reaches route_final_diff()'s contract
+    check."""
     category = normalize_category(agent_proposal)
     if category is None:
         agent_proposal, proposal_extracted = "spec", False
@@ -220,7 +480,8 @@ def route(agent_proposal, file_changes, board_max_files, board_max_lines,
     if widened_paths_override is not None:
         widened_paths = widened_paths_override
     else:
-        widened_paths = contract_widened(diff_paths or [], diff_text or "", file_contents)
+        widened_paths = contract_widened(diff_paths or [], diff_text or "", file_contents,
+                                         base_contents)
 
     if agent_proposal == "spec":
         backstop_verdict = "spec"
@@ -236,6 +497,9 @@ def route(agent_proposal, file_changes, board_max_files, board_max_lines,
             reason = "over_threshold"
         elif proposal_extracted:
             reason = "agent_proposed_spec"
+        elif agent_rate_limited:
+            backstop_verdict = "defer"
+            reason = "agent_rate_limited"
         else:
             reason = "no_usable_proposal"
     elif widened_paths:
@@ -244,6 +508,9 @@ def route(agent_proposal, file_changes, board_max_files, board_max_lines,
     elif over_threshold:
         backstop_verdict = "spec"
         reason = "over_threshold"
+    elif workflow_push_blocked:
+        backstop_verdict = "hold"
+        reason = "workflow_scope"
     else:
         backstop_verdict = "fix"
         reason = "under_threshold"
@@ -251,6 +518,13 @@ def route(agent_proposal, file_changes, board_max_files, board_max_lines,
     measured = {"files": files, "lines": lines}
     if reason == "contract_widening":
         measured["contract_touched_paths"] = widened_paths
+    if reason == "workflow_scope":
+        measured["workflow_paths"] = list(workflow_push_blocked)
+        # Every unknown path, not only the held workflow files: a composite
+        # in the same change is never pushed by this loop either.
+        unchecked = list(dict.fromkeys(contract_unknown_paths or []))
+        if unchecked:
+            measured["contract_unknown_paths"] = unchecked
 
     return {
         "agent_proposal": agent_proposal,
@@ -295,14 +569,18 @@ def one_line_rationale(proposal, limit=RATIONALE_MAX_CHARS):
 
 
 def route_final_diff(route_decision, final_diff, board_max_files, board_max_lines,
-                      measure_backstop, diff_paths=None, diff_text=None, file_contents=None):
+                      measure_backstop, diff_paths=None, diff_text=None, file_contents=None,
+                      base_contents=None):
     """FR-021/FR-018: re-applies route() to the pushed branch's final diff.
     A newly introduced breach is reported (never merges/deletes anything --
     the caller in board-loop.yml owns leaving the branch/PR open under a
-    notice and filing the spun-off spec-request)."""
+    notice and filing the spun-off spec proposal). `base_contents` (see
+    contract_widened()) lets the check see a contract removed, not only
+    one added."""
     re_evaluated = route(route_decision.get("agent_proposal", "fix"), final_diff,
                           board_max_files, board_max_lines, measure_backstop,
-                          diff_paths=diff_paths, diff_text=diff_text, file_contents=file_contents)
+                          diff_paths=diff_paths, diff_text=diff_text, file_contents=file_contents,
+                          base_contents=base_contents)
     if re_evaluated["backstop_verdict"] == "spec" and route_decision.get("backstop_verdict") != "spec":
         re_evaluated["reason"] = "post_push_final_diff_breach"
     return re_evaluated

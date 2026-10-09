@@ -128,21 +128,54 @@ SIX CHECKS, per contracts/single-home-gate.md (plus a spec 052 addition)
    from implement.yml's former inline step so implement, plan, and tasks
    share one copy (FR-011/FR-012).
 
+8. gha-expr-evaluator (code review of #940): a gate script that
+   evaluates a shipped `if:` itself instead of through
+   `.github/scripts/wc_gha_expr.py`. Five gate scripts and a shared
+   module each carried one (a Python `eval` of a transpiled expression,
+   or a regex `==`/`!=` term parser split on `&&`), and none read `==`
+   with GitHub's case-insensitive rule. Scans every `.github/scripts/**/*.py`, not the
+   workflows: these copies live in gates, not in steps. Matched by any of
+   three signs: `&&` replaced with Python's `and`; `eval(` sandboxed with
+   `__builtins__`; or `.split("&&")` in a file that also compiles an
+   `(==|!=)` alternation. A pattern-matching gate that only reads
+   comparisons (verify-gate-24.py) splits on nothing and is not matched.
+
 Plus a promotion-prevention pass (FR-025): every `workflow_call`-only
 stage workflow and every non-underscore-prefixed composite action scanned
 for any reference resolving into a `_shared/` path.
 
 Plus a composite-checkout-order pass (maintainer review of #607, fold
-leg-0 and leg-1): every workflow job's own step list scanned for a local
-`uses: ./...` step preceding the `actions/checkout@` step that actually
-populates the directory it resolves from -- a root-relative reference
-(`./.github/actions/...`) needs a preceding checkout with no `path:`
-(the workspace root); a sidecar-relative reference (e.g.
+leg-0 and leg-1; extended by fold leg-2, issue #757): every workflow
+job's own step list scanned for a local `uses: ./...` step preceding
+the `actions/checkout@` step that actually populates the directory it
+resolves from -- a root-relative reference (`./.github/actions/...`)
+needs a preceding checkout with no `path:` (the workspace root); a
+sidecar-relative reference (e.g.
 `./.wc-pristine-repo/.github/actions/...`) needs a preceding checkout
 whose `with.path` matches that same first path segment -- an unrelated
 root checkout does not satisfy it, and vice versa. Such a step cannot
 resolve its action.yml from the not-yet-checked-out directory and fails
-at run time, not gate time.
+at run time, not gate time. Leg-2 also flags a job's path-scoped sidecar
+checkout that precedes its own root checkout even with no local action
+step involved: actions/checkout@v5's prepareExistingDirectory wipes the
+sidecar directory when the root checkout runs after it.
+
+Plus a shared-path-workdir pass (#889): a workflow `run:` step whose
+effective `working-directory:` (its own, or its job's `defaults.run`) is
+anything but the workspace root must not name a `.github/actions/_shared/`
+helper by a bare repo-relative path -- that path then resolves inside the
+other directory (auto-release.yml's scaffold step runs in the test
+repository's clone, where no such helper exists), so the call fails only
+on the error path it exists to report. Anchor it at `$GITHUB_WORKSPACE/`
+instead.
+
+Plus a substitution-fallback pass (#889, #959): a command substitution
+whose body ends `|| echo ...` / `|| printf ...` -- in a workflow or
+composite `run:`, or a `.github/actions/**/*.sh` script -- appends its
+fallback to whatever the command printed before failing (jq's `[]`
+then `[]` again). The one home for the fallback is the assignment:
+`x="$(cmd)" || x='[]'`. The `[ ... ] && echo a || echo b` test ternary
+is exempt; anything else safe is waived with its reason.
 
 Waivers: `.github/scripts/single-home-waivers.json`, same shape as Gate
 31's `stage-invariant-waivers.json` -- `{file, check, pattern, count,
@@ -183,7 +216,12 @@ WAIVERS_PATH = ".github/scripts/single-home-waivers.json"
 VERDICT_SCRIPT = ".github/actions/_shared/auto-release-verdict.sh"
 
 DECLARED_HOMES = {
-    "orphan-reset": ".github/actions/_shared/orphan-branch-reset/action.yml",
+    # specs/074-serialized-fold-dispatch: the reset-to-empty-orphan-branch
+    # fragment moved out of orphan-branch-reset/action.yml's own inline
+    # shell into this plain script once fold-queue-ledger.sh needed the
+    # same reset from inside its own retry loop (a bash script, which
+    # cannot `uses:` a composite) -- see orphan-branch-empty-tree.sh.
+    "orphan-reset": ".github/actions/_shared/orphan-branch-empty-tree.sh",
     # specs/056-stage-found-defect-filing, research.md D8: promoted out of
     # _shared/ and given the wing-commander- prefix because a published
     # composite (wing-commander-stage-findings) is now a second, deliberate
@@ -265,6 +303,9 @@ DECLARED_HOMES = {
     # REVIEW_FINDING_FINGERPRINT_RE keys on the `issue_number` argument name
     # that formula never uses, so the two checks do not collide.
     "review-finding-fingerprint": ".github/scripts/wc_review_finding_fingerprint.py",
+    # Code review of #940: the GitHub-expression evaluator every gate that
+    # evaluates a shipped `if:` uses -- see check_gha_expr_evaluator.
+    "gha-expr-evaluator": ".github/scripts/wc_gha_expr.py",
     # specs/062-lifecycle-review-gate T031/T042: the append-tasks.md-
     # section/flip-stage/union-actor/commit+push fold sequence.
     # pr-conversation.yml's `act` job (T033) and lifecycle-review-gate.yml's
@@ -291,7 +332,9 @@ DECLARED_HOMES = {
     # new site is what this check catches.
     "pr-branch": ".github/actions/_shared/resolve-pr-branch/action.yml",
 }
-CHECK_NAMES = tuple(DECLARED_HOMES) + ("promotion", "composite-checkout-order")
+CHECK_NAMES = tuple(DECLARED_HOMES) + ("promotion", "composite-checkout-order",
+                                        "shared-path-workdir",
+                                        "substitution-fallback")
 
 ORPHAN_FRAGMENTS = (
     "checkout --quiet --orphan",
@@ -474,11 +517,58 @@ def read(root, path):
         return fh.read()
 
 
+class _LineMap(dict):
+    """A YAML mapping that remembers where it sat in the source.
+
+    `line` is the mapping's own 1-based start line and `key_lines` maps
+    each scalar key to the 1-based line it was written on. Both are
+    attributes, never dict keys, so they cannot collide with a real step
+    key or show up in `.items()` (issue #758)."""
+
+    line = 0
+    key_lines = None
+
+
+class _LineMarkedLoader(yaml.SafeLoader):
+    """SafeLoader whose mappings are _LineMap, so a per-step finding can
+    name the violating step's own line. Re-finding the step's text with
+    `text.find(run.splitlines()[0])` returned the first occurrence
+    anywhere in the file, which for a common opener like
+    `set -uo pipefail` is an earlier, unrelated step (issue #758)."""
+
+
+def _construct_line_map(loader, node):
+    data = _LineMap()
+    data.line = node.start_mark.line + 1
+    data.key_lines = {}
+    yield data
+    data.update(loader.construct_mapping(node))
+    for key_node, _value in node.value:
+        if isinstance(key_node, yaml.ScalarNode):
+            data.key_lines[key_node.value] = key_node.start_mark.line + 1
+
+
+_LineMarkedLoader.add_constructor(
+    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _construct_line_map)
+
+
 def load_yaml(root, path):
     try:
-        return yaml.safe_load(read(root, path)) or {}
+        return yaml.load(read(root, path), Loader=_LineMarkedLoader) or {}
     except (yaml.YAMLError, OSError):
         return None
+
+
+def step_key_line(step, key):
+    """1-based line of a step's own `key:` (the step's start line if the
+    key's position is unknown) -- see _LineMarkedLoader."""
+    key_lines = getattr(step, "key_lines", None) or {}
+    return key_lines.get(key) or getattr(step, "line", 0) or 1
+
+
+def step_run_line(step):
+    """1-based line of a step's own `run:` key -- step_key_line()."""
+    return step_key_line(step, "run")
 
 
 def line_of(text, offset):
@@ -544,17 +634,15 @@ def check_failure_issue(root="."):
         doc = load_yaml(root, path)
         if doc is None:
             continue
-        text = read(root, path)
         for _ctx, steps in _step_lists(doc):
             for step in steps:
                 run = str((step or {}).get("run") or "")
                 if not run:
                     continue
                 if LABEL_CREATE_RE.search(run) and ISSUE_LOOKUP_RE.search(run):
-                    offset = text.find(run.splitlines()[0]) if run.splitlines() else 0
                     findings.append(Finding(
                         path, "failure-issue",
-                        line_of(text, max(offset, 0)),
+                        step_run_line(step),
                         "gh label create ... --force + gh issue list ... "
                         "--jq '.[0].number // empty'"))
     return findings
@@ -572,17 +660,15 @@ def check_outstanding_task_item(root="."):
         doc = load_yaml(root, path)
         if doc is None:
             continue
-        text = read(root, path)
         for _ctx, steps in _step_lists(doc):
             for step in steps:
                 run = str((step or {}).get("run") or "")
                 if not run:
                     continue
                 if OUTSTANDING_TASK_RE.search(run):
-                    offset = text.find(run.splitlines()[0]) if run.splitlines() else 0
                     findings.append(Finding(
                         path, "outstanding-task-item",
-                        line_of(text, max(offset, 0)),
+                        step_run_line(step),
                         'gh issue comment ... "- [ ] ..."'))
     return findings
 
@@ -599,17 +685,15 @@ def check_post_review_comment(root="."):
         doc = load_yaml(root, path)
         if doc is None:
             continue
-        text = read(root, path)
         for _ctx, steps in _step_lists(doc):
             for step in steps:
                 run = str((step or {}).get("run") or "")
                 if not run:
                     continue
                 if POST_REVIEW_COMMENT_RE.search(run):
-                    offset = text.find(run.splitlines()[0]) if run.splitlines() else 0
                     findings.append(Finding(
                         path, "post-review-comment",
-                        line_of(text, max(offset, 0)),
+                        step_run_line(step),
                         'gh api -X POST ... reviews ... -f event=COMMENT'))
     return findings
 
@@ -626,18 +710,61 @@ def check_review_finding_fingerprint(root="."):
         doc = load_yaml(root, path)
         if doc is None:
             continue
-        text = read(root, path)
         for _ctx, steps in _step_lists(doc):
             for step in steps:
                 run = str((step or {}).get("run") or "")
                 if not run:
                     continue
                 if REVIEW_FINDING_FINGERPRINT_RE.search(run):
-                    offset = text.find(run.splitlines()[0]) if run.splitlines() else 0
                     findings.append(Finding(
                         path, "review-finding-fingerprint",
-                        line_of(text, max(offset, 0)),
+                        step_run_line(step),
                         'hashlib.sha256("{0}|{1}|{2}".format(issue_number, ...))'))
+    return findings
+
+
+# --------------------------------------------------------------------------
+# Check: gha-expr-evaluator (file-wide, over .github/scripts -- code review
+# of #940)
+# --------------------------------------------------------------------------
+THIS_GATE = ".github/scripts/verify-single-home-idioms.py"
+GHA_EXPR_TRANSPILE_RE = re.compile(
+    r"""\.replace\(\s*["']&&["']\s*,\s*["']\s*and\b""")
+GHA_EXPR_EVAL_RE = re.compile(r"\beval\s*\(")
+GHA_EXPR_SPLIT_RE = re.compile(r"""\.split\(\s*["']&&["']\s*\)""")
+GHA_EXPR_TERM_RE = re.compile(
+    r"\((?:\?P<\w+>|\?:)?(?:==\\?\|!=|!=\\?\|==)\)")
+
+
+def script_files(root="."):
+    """Every *.py under .github/scripts/**, repo-relative."""
+    base = os.path.join(root, ".github", "scripts")
+    found = []
+    for dirpath, _dirs, names in os.walk(base):
+        for name in names:
+            if name.endswith(".py"):
+                path = os.path.join(dirpath, name)
+                found.append(os.path.relpath(path, root).replace(os.sep, "/"))
+    return sorted(found)
+
+
+def check_gha_expr_evaluator(root="."):
+    home = DECLARED_HOMES["gha-expr-evaluator"]
+    findings = []
+    for path in script_files(root):
+        # This gate names the three signs itself, in its docstring and its
+        # self-test pastes.
+        if path in (home, THIS_GATE):
+            continue
+        text = read(root, path)
+        m = GHA_EXPR_TRANSPILE_RE.search(text)
+        if m is None and "__builtins__" in text:
+            m = GHA_EXPR_EVAL_RE.search(text)
+        if m is None and GHA_EXPR_TERM_RE.search(text):
+            m = GHA_EXPR_SPLIT_RE.search(text)
+        if m is not None:
+            findings.append(Finding(path, "gha-expr-evaluator",
+                                    line_of(text, m.start()), m.group(0)))
     return findings
 
 
@@ -653,16 +780,14 @@ def check_fold_commit(root="."):
         doc = load_yaml(root, path)
         if doc is None:
             continue
-        text = read(root, path)
         for _ctx, steps in _step_lists(doc):
             for step in steps:
                 run = str((step or {}).get("run") or "")
                 if not run:
                     continue
                 if FOLD_COMMIT_RE.search(run):
-                    offset = text.find(run.splitlines()[0]) if run.splitlines() else 0
                     findings.append(Finding(
-                        path, "fold-commit", line_of(text, max(offset, 0)),
+                        path, "fold-commit", step_run_line(step),
                         '.pending_re_review_from = (((.pending_re_review_from ...'))
     return findings
 
@@ -679,16 +804,14 @@ def check_fold_dispatch(root="."):
         doc = load_yaml(root, path)
         if doc is None:
             continue
-        text = read(root, path)
         for _ctx, steps in _step_lists(doc):
             for step in steps:
                 run = str((step or {}).get("run") or "")
                 if not run:
                     continue
                 if FOLD_DISPATCH_RE.search(run):
-                    offset = text.find(run.splitlines()[0]) if run.splitlines() else 0
                     findings.append(Finding(
-                        path, "fold-dispatch", line_of(text, max(offset, 0)),
+                        path, "fold-dispatch", step_run_line(step),
                         'git fetch --quiet origin "refs/heads/${SPEC_BRANCH}"'))
     return findings
 
@@ -789,14 +912,19 @@ def check_board_stop_check(root="."):
         doc = load_yaml(root, path)
         if doc is None:
             continue
-        text = read(root, path)
         for _ctx, steps in _step_lists(doc):
             run_text = "\n".join(str((step or {}).get("run") or "") for step in steps)
             decision_match = BOARD_STOP_CHECK_DECISION_RE.search(run_text)
             if decision_match and BOARD_STOP_CHECK_CANCEL in run_text:
-                offset = text.find(decision_match.group(0))
+                # The step that obtains the decision, by its own run: key
+                # -- never text.find(), whose first match in the file can
+                # sit in another job's step list (#882's class).
+                decision_step = next(
+                    step for step in steps
+                    if BOARD_STOP_CHECK_DECISION_RE.search(
+                        str((step or {}).get("run") or "")))
                 findings.append(Finding(
-                    path, "board-stop-check", line_of(text, max(offset, 0)),
+                    path, "board-stop-check", step_run_line(decision_step),
                     f"{decision_match.group(0)!r} (obtains a stop decision) + "
                     f"'gh run cancel' (performs a cancellation), in the same "
                     f"step list"))
@@ -827,16 +955,14 @@ def check_marker_write(root="."):
         doc = load_yaml(root, path)
         if doc is None:
             continue
-        text = read(root, path)
         for _ctx, steps in _step_lists(doc):
             for step in steps:
                 run = str((step or {}).get("run") or "")
                 if not run:
                     continue
                 if all(fragment in run for fragment in MARKER_WRITE_FRAGMENTS):
-                    offset = text.find(run.splitlines()[0]) if run.splitlines() else 0
                     findings.append(Finding(
-                        path, "marker-write", line_of(text, max(offset, 0)),
+                        path, "marker-write", step_run_line(step),
                         "sys.path.insert + board_item_marker + write_marker "
                         "co-occurrence"))
     return findings
@@ -855,16 +981,14 @@ def check_pr_branch(root="."):
         doc = load_yaml(root, path)
         if doc is None:
             continue
-        text = read(root, path)
         for _ctx, steps in _step_lists(doc):
             for step in steps:
                 run = str((step or {}).get("run") or "")
                 if not run:
                     continue
                 if all(fragment in run for fragment in PR_BRANCH_FRAGMENTS):
-                    offset = text.find(run.splitlines()[0]) if run.splitlines() else 0
                     findings.append(Finding(
-                        path, "pr-branch", line_of(text, max(offset, 0)),
+                        path, "pr-branch", step_run_line(step),
                         "gh pr view ... headRefName + pr-number=/branch= "
                         "GITHUB_OUTPUT co-occurrence"))
     return findings
@@ -931,8 +1055,8 @@ def check_token_mint(root="."):
                 step = step or {}
                 uses = str(step.get("uses") or "")
                 if step.get("continue-on-error") is True and CREATE_TOKEN_RE.match(uses):
-                    mint_ids.append((idx, step.get("id")))
-            for idx, step_id in mint_ids:
+                    mint_ids.append((idx, step.get("id"), step))
+            for idx, step_id, mint_step in mint_ids:
                 if not step_id:
                     continue
                 needle = f"steps.{step_id}.outcome"
@@ -942,9 +1066,11 @@ def check_token_mint(root="."):
                                         for k in ("if", "run")) + " ".join(
                         str(v) for v in (later.get("env") or {}).values())
                     if needle in haystack:
-                        offset = text.find(str(step_id))
+                        # The mint step's own uses: line, never the first
+                        # text match of its id, which an earlier
+                        # steps.<id>.outputs read or comment wins (#882).
                         findings.append(Finding(
-                            path, "token-mint", line_of(text, max(offset, 0)),
+                            path, "token-mint", step_key_line(mint_step, "uses"),
                             f"continue-on-error create-github-app-token "
                             f"(id: {step_id}) + a later read of its .outcome"))
                         break
@@ -1001,6 +1127,20 @@ def check_branch_advance_capture(root="."):
 # `.wc-pristine-repo`, `.wing-commander-pipeline`) and now needs a
 # preceding checkout whose own `with.path` matches that exact segment --
 # a root checkout, however early, never satisfies it.
+#
+# Extended again in fold leg-2 (issue #757, found by the code review of
+# #683): neither leg above catches a path-scoped sidecar checkout placed
+# BEFORE the job's own root checkout, even when no local `uses: ./...`
+# step is involved at all. actions/checkout@v5's prepareExistingDirectory
+# removes every entry in a workspace directory that lacks its own `.git`
+# before checking out -- so a root checkout that runs after a sidecar
+# checkout wipes the sidecar (a write-protected one fails the removal with
+# EACCES; an unprotected one is silently deleted). PR #683 shipped exactly
+# this ordering, in board-loop's review and readiness jobs, with the whole
+# gate suite green; it was caught only by manual review. This pass now
+# also flags a job with a root checkout whose first path-scoped checkout
+# precedes it -- the root checkout must be the job's first
+# `actions/checkout@` step of any kind.
 # --------------------------------------------------------------------------
 ROOT_ACTIONS_SEGMENT = ".github"
 
@@ -1015,16 +1155,22 @@ def check_local_action_before_checkout(root="."):
     fails at run time ("Did you forget to run actions/checkout") instead
     of failing here. Composite actions' own `runs.steps` execute inside
     the CALLER's already-checked-out workspace, so only workflow jobs
-    (doc["jobs"]) are scanned -- never an action.yml's own `runs.steps`."""
+    (doc["jobs"]) are scanned -- never an action.yml's own `runs.steps`.
+
+    Also flags a path-scoped (sidecar) `actions/checkout@` step that
+    precedes the job's own root `actions/checkout@` step (no `path:`):
+    that root checkout's `prepareExistingDirectory` removes the sidecar
+    directory on the way to populating the workspace root (issue #757)."""
     findings = []
     for path in all_subject_files(root):
         doc = load_yaml(root, path)
         if not isinstance(doc, dict) or not doc.get("jobs"):
             continue
-        text = read(root, path)
         for job_id, steps in _step_lists(doc):
             seen_root = False
             seen_scoped = set()
+            scoped_before_root = None
+            scoped_before_root_with = None
             for step in steps:
                 uses = str((step or {}).get("uses") or "")
                 if not uses:
@@ -1033,6 +1179,9 @@ def check_local_action_before_checkout(root="."):
                     scoped_path = (step.get("with") or {}).get("path")
                     if scoped_path:
                         seen_scoped.add(scoped_path)
+                        if not seen_root and scoped_before_root is None:
+                            scoped_before_root = scoped_path
+                            scoped_before_root_with = step.get("with")
                     else:
                         seen_root = True
                 elif uses.startswith("./"):
@@ -1042,12 +1191,24 @@ def check_local_action_before_checkout(root="."):
                     else:
                         ok, where = first_seg in seen_scoped, f"path: {first_seg}"
                     if not ok:
-                        offset = text.find(uses)
+                        # This step's own uses: line, never the first job
+                        # that calls the same local action (#882).
                         findings.append(Finding(
                             path, "composite-checkout-order",
-                            line_of(text, max(offset, 0)),
+                            step_key_line(step, "uses"),
                             f"job {job_id!r}: {uses} resolved before the "
                             f"actions/checkout@ step for {where}"))
+            if seen_root and scoped_before_root is not None:
+                # The scoped checkout's own `path:` line, never an earlier
+                # step's identical `path:` in the same job (code review of
+                # #939, the same rule as #882's).
+                findings.append(Finding(
+                    path, "composite-checkout-order",
+                    step_key_line(scoped_before_root_with, "path"),
+                    f"job {job_id!r}: a path-scoped actions/checkout@ step "
+                    f"(path: {scoped_before_root}) precedes the job's root "
+                    f"actions/checkout@ step -- the root checkout removes "
+                    f"the sidecar on its way to populating the workspace"))
     return findings
 
 
@@ -1074,6 +1235,231 @@ def check_promotion(root="."):
     return findings
 
 
+# --------------------------------------------------------------------------
+# shared-path-workdir (#889): auto-release.yml's scaffold step runs under
+# `working-directory: e2e-test-repo` yet called
+# `bash .github/actions/_shared/auto-release-verdict.sh`, which resolved
+# inside the test repository's clone -- every one of its failure verdicts
+# would have died "No such file or directory" instead of naming the failure.
+# A bare `.github/actions/_shared/...` reference is only right from the
+# workspace root; anywhere else it must be anchored ($GITHUB_WORKSPACE/ or
+# ${{ github.workspace }}/).
+# --------------------------------------------------------------------------
+ROOT_WORKDIRS = ("", ".", "./", "${{ github.workspace }}", "$GITHUB_WORKSPACE",
+                 "${GITHUB_WORKSPACE}")
+# An optional leading `./` is the same bare repo-relative path (#960 review).
+BARE_SHARED_REF_RE = re.compile(r"(?<![\w}/.$-])(?:\./)?\.github/actions/_shared/[A-Za-z0-9_.\-/]+")
+SHARED_PATH_WORKDIR_HINT = ("\"$GITHUB_WORKSPACE/.github/actions/_shared/...\" "
+                            "(a bare repo-relative path resolves inside the "
+                            "step's working-directory)")
+
+
+def check_shared_path_workdir(root="."):
+    findings = []
+    for path in _relativize(root, workflow_files(root)):
+        doc = load_yaml(root, path)
+        if not isinstance(doc, dict):
+            continue
+        # A workflow-level `defaults.run` applies too, under any job's own
+        # (#960 review).
+        wf_wd = str(((doc.get("defaults") or {}).get("run") or {})
+                    .get("working-directory") or "")
+        for job_id, job in (doc.get("jobs") or {}).items():
+            job = job or {}
+            job_wd = str(((job.get("defaults") or {}).get("run") or {})
+                         .get("working-directory") or wf_wd)
+            for step in job.get("steps") or []:
+                step = step or {}
+                run = step.get("run")
+                if not run:
+                    continue
+                wd = str(step.get("working-directory") or job_wd).strip()
+                # A trailing slash names the same directory
+                # (`${{ github.workspace }}/` is the root; #960 second review),
+                # but `/` itself is the filesystem root, not "" (#960 third
+                # review).
+                if wd != "/" and wd.rstrip("/") in ROOT_WORKDIRS:
+                    continue
+                m = BARE_SHARED_REF_RE.search(str(run))
+                if m:
+                    findings.append(Finding(
+                        path, "shared-path-workdir", step_run_line(step),
+                        f"job {job_id!r}: {m.group(0)} under "
+                        f"working-directory: {wd}"))
+    return findings
+
+
+# --------------------------------------------------------------------------
+# substitution-fallback (#889, #959): `x="$(cmd || echo '[]')"` appends
+# the fallback to whatever `cmd` already printed when `cmd` prints and then
+# exits non-zero -- jq emitting `[]` before failing on a later document gave
+# `[]\n[]`, which every downstream `--argjson` rejected. The fallback
+# belongs at the assignment, where it replaces instead of appends:
+# `x="$(cmd)" || x='[]'`. One rule for every workflow `run:`, composite
+# `run:` and `.github/actions/**/*.sh` script.
+#
+# Exempt without a waiver: the test ternary, `$([ "$a" = x ] && echo y ||
+# echo z)` -- every command left of the `||` but the last is a `[`/`[[`/
+# `test` that prints nothing, and the last is the `echo`/`printf` itself,
+# so at most one of the two echoes ever prints. Nothing else is guessed
+# safe: a command that "cannot print on failure" is fixed or waived with
+# its reason, never inferred here.
+#
+# A `$(` is found anywhere in the text, including inside a single-quoted
+# literal outside any substitution: modelling the outer quoting would let
+# an apostrophe in a heredoc body desync it and hide every real site after
+# it. That errs toward a finding, which a waiver can name.
+# --------------------------------------------------------------------------
+SUBST_FALLBACK_HINT = ('x="$(cmd)" || x=\'fallback\' (an assignment-level '
+                       'fallback replaces what cmd printed; one inside the '
+                       '$( ) appends to it)')
+_SF_FALLBACK_RE = re.compile(r"(?:echo|printf)(?:\s|$)")
+_SF_TEST_RE = re.compile(r"(?:\[\[?|test)(?:\s|$)")
+_SF_BLOCK_KEY_RE = re.compile(r"\brun:\s*[|>][-+0-9]*\s*(?:#.*)?$")
+
+
+def _scan_substitution(text, start):
+    """Parse the `$( ... )` whose body begins at `start` (just past the
+    `$(`). Returns (end, ops): `end` is the index of the closing `)` (or
+    None if unbalanced), `ops` the (kind, index) of each `&&`/`||`/`|`/
+    `;`/newline at the body's own top level -- outside quotes and nested
+    substitutions/subshells. A newline is recorded only where it separates
+    commands: not at the body's start, after `&&`/`||`/`|`/`|&`/`;` (bash
+    continues the list across any blank or comment lines there) or after
+    another newline. Heredoc bodies are not modelled; a run block that
+    needs one inside a substitution is rare enough to waive."""
+    stack = ["sub"]
+    ops = []
+    cont = True  # no command since the body's start or the last operator
+    i, n = start, len(text)
+    while i < n:
+        c = text[i]
+        top = stack[-1]
+        if top == "dq":
+            if c == "\\":
+                i += 2
+                continue
+            if c == '"':
+                stack.pop()
+            elif text.startswith("$(", i):
+                stack.append("sub")
+                i += 2
+                continue
+            i += 1
+            continue
+        # top is "sub" (a `$(` or a bare `(` subshell)
+        comment = c == "#" and (i == start or text[i - 1] in " \t\n;")
+        if (len(stack) == 1 and c not in " \t\n" and not comment
+                and text[i:i + 2] != "\\\n"):
+            cont = False
+        if c == "\\":
+            i += 2
+            continue
+        if c == "'":
+            close = text.find("'", i + 1)
+            i = n if close < 0 else close + 1
+            continue
+        if c == '"':
+            stack.append("dq")
+            i += 1
+            continue
+        if comment:
+            nl = text.find("\n", i)
+            i = n if nl < 0 else nl
+            continue
+        if text.startswith("$(", i) or c == "(":
+            stack.append("sub")
+            i += 2 if c == "$" else 1
+            continue
+        if c == ")":
+            stack.pop()
+            if not stack:
+                return i, ops
+            i += 1
+            continue
+        if len(stack) == 1:
+            two = text[i:i + 2]
+            if two in ("&&", "||", "|&"):
+                ops.append((two if two != "|&" else "|", i))
+                cont = True
+                i += 2
+                continue
+            if c == "|" or c == ";":
+                ops.append((c, i))
+                cont = True
+            elif c == "\n" and not cont:
+                ops.append(("\n", i))
+                cont = True
+        i += 1
+    return None, ops
+
+
+def substitution_fallbacks(text):
+    """Every `$( ... )` in `text` whose body ends `|| echo ...` or
+    `|| printf ...`, minus the test ternary. Yields (offset, body)."""
+    for m in re.finditer(r"\$\((?!\()", text):
+        start = m.end()
+        end, ops = _scan_substitution(text, start)
+        if end is None:
+            continue
+        ors = [i for kind, i in ops if kind == "||"]
+        if not ors:
+            continue
+        last_or = ors[-1]
+        # The `||` must be the body's last list operator: one followed by
+        # another command (`... || printf x\n done`, a loop's body) is not
+        # a fallback for the whole substitution.
+        if any(i > last_or and (kind != "\n" or text[i:end].strip())
+               for kind, i in ops):
+            continue
+        # Past any comment lines bash skips after a line-ending `||`.
+        tail = re.sub(r"^(?:\s*#[^\n]*\n)*\s*", "", text[last_or + 2:end])
+        if not _SF_FALLBACK_RE.match(tail):
+            continue
+        # The test ternary: `[ ... ] && [ ... ] && echo a || echo b` --
+        # every command before the final `||` joined by `&&` alone (no
+        # earlier `||`, `|`, `;` or newline), each a test but the last.
+        cuts = [start] + [i + 2 for kind, i in ops
+                          if kind == "&&" and i < last_or] + [last_or]
+        segs = [text[a:b].strip() for a, b in zip(cuts, cuts[1:])]
+        if (len(segs) >= 2 and _SF_FALLBACK_RE.match(segs[-1])
+                and all(_SF_TEST_RE.match(s) for s in segs[:-1])
+                and all(kind == "&&" for kind, i in ops if i < last_or)):
+            continue
+        yield m.start(), " ".join(text[start:end].replace("\\\n", " ").split())
+
+
+def check_substitution_fallback(root="."):
+    findings = []
+    for path in all_subject_files(root):
+        if path.endswith(".sh"):
+            text = read(root, path)
+            for off, body in substitution_fallbacks(text):
+                findings.append(Finding(path, "substitution-fallback",
+                                        line_of(text, off), body))
+            continue
+        doc = load_yaml(root, path)
+        if doc is None:
+            continue
+        lines = read(root, path).split("\n")
+        for _ctx, steps in _step_lists(doc):
+            for step in steps:
+                run = (step or {}).get("run")
+                if not isinstance(run, str) or not run:
+                    continue
+                base = step_run_line(step)
+                # A block scalar's first line sits under the `run:` key --
+                # read off the key's own line, since a one-line `run: |`
+                # body carries no inner newline to tell it from `run: x`.
+                if _SF_BLOCK_KEY_RE.search(lines[base - 1] if base <= len(lines) else ""):
+                    base += 1
+                for off, body in substitution_fallbacks(run):
+                    findings.append(Finding(
+                        path, "substitution-fallback",
+                        base + run.count("\n", 0, off), body))
+    return findings
+
+
 ALL_CHECKS = {
     "orphan-reset": check_orphan_reset,
     "extraheader-refresh": check_extraheader_refresh,
@@ -1088,6 +1474,7 @@ ALL_CHECKS = {
     "dispatch-and-wait": check_dispatch_and_wait,
     "board-stop-check": check_board_stop_check,
     "transcript-normalise": check_transcript_normalise,
+    "gha-expr-evaluator": check_gha_expr_evaluator,
     "verdict-shape": check_verdict_shape,
     "token-mint": check_token_mint,
     "mode-tag-shape": check_mode_tag_shape,
@@ -1096,6 +1483,8 @@ ALL_CHECKS = {
     "pr-branch": check_pr_branch,
     "promotion": check_promotion,
     "composite-checkout-order": check_local_action_before_checkout,
+    "shared-path-workdir": check_shared_path_workdir,
+    "substitution-fallback": check_substitution_fallback,
 }
 
 
@@ -1214,9 +1603,14 @@ def report(findings, hard_failures):
     for msg in hard_failures:
         fail(f"verify-single-home-idioms: {msg}")
     for f in findings:
-        home = DECLARED_HOMES.get(f.check, "(promotion: no single home -- "
-                                            "an internal helper must not be "
-                                            "resolved from a published surface)")
+        if f.check == "shared-path-workdir":
+            home = SHARED_PATH_WORKDIR_HINT
+        elif f.check == "substitution-fallback":
+            home = SUBST_FALLBACK_HINT
+        else:
+            home = DECLARED_HOMES.get(f.check, "(promotion: no single home -- "
+                                                "an internal helper must not be "
+                                                "resolved from a published surface)")
         fail(f"verify-single-home-idioms: {f.path}:{f.line}: {f.check} "
             f"({f.text}) -- see {home}")
 
@@ -1443,6 +1837,8 @@ def _clean_tree(root):
           "<<<\"$stop_decision_json\")\"\n"
           "        GH_TOKEN=\"$CANCEL_TOKEN\" gh run cancel "
           "\"$cancel_run_id\" -R \"$GITHUB_REPOSITORY\" 2>/dev/null || true\n")
+    _write(root, DECLARED_HOMES["gha-expr-evaluator"],
+          "def evaluate(expr, ctx):\n    return Parser(expr, ctx).parse()\n")
     _write(root, DECLARED_HOMES["transcript-normalise"],
           "#!/usr/bin/env bash\n"
           "jq -cs 'map(if type==\"array\" then .[] else . end) "
@@ -1558,6 +1954,252 @@ def selftest_third_paste_fails(check_key, paste_path, paste_content):
             note(f"[{case}] passed ({hits[0].path}:{hits[0].line})")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+def selftest_composite_checkout_order_line_attribution():
+    """Issue #757 fold leg-2 follow-up: when the same sidecar `path:`
+    literal recurs across jobs (as `.wc-pristine-repo` does across
+    board-loop.yml's own jobs), the scoped_before_root finding must point
+    at the offending job's own step, not at the first occurrence of the
+    literal anywhere earlier in the file."""
+    case = "composite-checkout-order line attribution survives a repeated path literal"
+    tmp = tempfile.mkdtemp(prefix="wc-single-home-")
+    try:
+        _clean_tree(tmp)
+        paste_path = ".github/workflows/third-checkout-order-repeated-literal.yml"
+        content = (
+            "on: push\n"
+            "jobs:\n"
+            "  a:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    steps:\n"
+            "      - uses: actions/checkout@v5\n"
+            "      - uses: actions/checkout@v5\n"
+            "        with:\n"
+            "          path: .wc-pristine-repo\n"
+            "  b:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    steps:\n"
+            "      - uses: actions/checkout@v5\n"
+            "        with:\n"
+            "          path: .wc-pristine-repo\n"
+            "      - uses: actions/checkout@v5\n"
+        )
+        lines = content.splitlines()
+        first_occurrence = lines.index("          path: .wc-pristine-repo")
+        second_occurrence = lines.index(
+            "          path: .wc-pristine-repo", first_occurrence + 1)
+        expected_line = second_occurrence + 1
+        _write(tmp, paste_path, content)
+        findings, hard = evaluate(tmp)
+        if hard:
+            fail(f"[{case}] unexpected hard failure(s): {hard}")
+            return
+        hits = [f for f in findings
+                if f.check == "composite-checkout-order" and f.path == paste_path
+                and "job 'b'" in f.text]
+        if not hits:
+            fail(f"[{case}] expected a composite-checkout-order finding for "
+                f"job 'b' at {paste_path}, got: {findings}")
+        elif hits[0].line != expected_line:
+            fail(f"[{case}] job 'b' finding pointed at line {hits[0].line}, "
+                f"expected {expected_line} (job 'b' own step, not the earlier "
+                f"use of the same path literal in job 'a')")
+        else:
+            note(f"[{case}] passed ({hits[0].path}:{hits[0].line})")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+# One violating run: body per check that locates its finding with
+# step_run_line(); selftest_per_step_line_attribution prefixes each with a
+# shared `set -uo pipefail` opener (issue #758).
+PER_STEP_LINE_CASES = (
+    ("marker-write",
+     "          python3 -c \"import sys; "
+     "sys.path.insert(0, '.github/scripts'); "
+     "from board_item_marker import write_marker; "
+     "write_marker('x', 1, 2, 'b', 'sha')\"\n"),
+    ("pr-branch",
+     "          head=$(gh pr view 1 --json headRefName --jq .headRefName)\n"
+     "          echo \"pr-number=1\" >> \"$GITHUB_OUTPUT\"\n"
+     "          echo \"branch=${head}\" >> \"$GITHUB_OUTPUT\"\n"),
+    ("failure-issue",
+     "          gh label create \"third:failed\" --color B60205 --force\n"
+     "          gh issue list --label \"third:failed\" --state open "
+     "--json number --jq '.[0].number // empty'\n"),
+    ("outstanding-task-item",
+     "          gh issue comment \"$N\" --body \"- [ ] a third paste "
+     "\u2014 $URL\"\n"),
+    ("post-review-comment",
+     "          gh api -X POST \"repos/$R/pulls/1/reviews\" -f body=x -f event=COMMENT\n"),
+    ("review-finding-fingerprint",
+     "          python3 - <<'PYEOF'\n"
+     "          import hashlib\n"
+     "          fp = hashlib.sha256(\"{0}|{1}|{2}\".format(\n"
+     "              issue_number, norm(title), norm(file_path)\n"
+     "          ).encode(\"utf-8\")).hexdigest()\n"
+     "          PYEOF\n"),
+    ("fold-commit",
+     "          jq --arg actor \"$ACTOR_LOGIN\" '\n"
+     "            .stage = \"implement\"\n"
+     "            | .pending_re_review_from = (((.pending_re_review_from "
+     "// []) + (if $actor == \"\" then [] else [$actor] end)) | unique)\n"
+     "          ' \"$SPEC_DIR/spec-meta.json\" > /tmp/m.json\n"),
+    ("fold-dispatch",
+     "          git fetch --quiet origin \"refs/heads/${SPEC_BRANCH}\" "
+     "|| true\n"),
+)
+
+
+def selftest_per_step_line_attribution(check_key, violating_body):
+    """Issue #758: a per-step finding must name the violating step's own
+    line. The decoy step opens its `run:` with the same common line
+    (`set -uo pipefail`) earlier in the file; re-finding that text, as the
+    per-step checks once did, reported the decoy's line instead (PR #683:
+    board-loop.yml:298 reported at :176)."""
+    case = f"{check_key} line attribution survives a shared first run: line"
+    tmp = tempfile.mkdtemp(prefix="wc-single-home-")
+    try:
+        _clean_tree(tmp)
+        paste_path = f".github/workflows/third-{check_key}-shared-opener.yml"
+        content = (
+            "on: push\n"
+            "jobs:\n"
+            "  x:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    steps:\n"
+            "      - name: Decoy sharing the opener\n"
+            "        shell: bash\n"
+            "        run: |\n"
+            "          set -uo pipefail\n"
+            "          echo unrelated\n"
+            "      - name: Real violation\n"
+            "        shell: bash\n"
+            "        run: |\n"
+            "          set -uo pipefail\n"
+            + violating_body
+        )
+        lines = content.splitlines()
+        decoy_run = lines.index("        run: |") + 1
+        expected_line = lines.index("        run: |", decoy_run) + 1
+        _write(tmp, paste_path, content)
+        findings, hard = evaluate(tmp)
+        if hard:
+            fail(f"[{case}] unexpected hard failure(s): {hard}")
+            return
+        hits = [f for f in findings
+                if f.check == check_key and f.path == paste_path]
+        if len(hits) != 1:
+            fail(f"[{case}] expected exactly one {check_key} finding at "
+                f"{paste_path}, got: {findings}")
+        elif hits[0].line != expected_line:
+            fail(f"[{case}] finding pointed at line {hits[0].line}, expected "
+                f"{expected_line} (the violating step's own run: key, not "
+                f"the decoy step's shared `set -uo pipefail`)")
+        else:
+            note(f"[{case}] passed ({hits[0].path}:{hits[0].line})")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _selftest_decoy_line(case, check_key, paste_path, content, expected_text, job=None):
+    """#882: the finding names the violating step's own line, the one
+    holding `expected_text`, not an earlier decoy holding the same text."""
+    tmp = tempfile.mkdtemp(prefix="wc-single-home-")
+    try:
+        _clean_tree(tmp)
+        lines = content.splitlines()
+        first = lines.index(expected_text)
+        expected_line = lines.index(expected_text, first + 1) + 1
+        _write(tmp, paste_path, content)
+        findings, hard = evaluate(tmp)
+        if hard:
+            fail(f"[{case}] unexpected hard failure(s): {hard}")
+            return
+        hits = [f for f in findings if f.check == check_key and f.path == paste_path
+                and (job is None or "job {0!r}".format(job) in f.text)]
+        if len(hits) != 1:
+            fail(f"[{case}] expected exactly one {check_key} finding at {paste_path}, "
+                 f"got: {findings}")
+        elif hits[0].line != expected_line:
+            fail(f"[{case}] finding pointed at line {hits[0].line}, expected "
+                 f"{expected_line} (the violating step's own line, not the decoy's)")
+        else:
+            note(f"[{case}] passed ({hits[0].path}:{hits[0].line})")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def selftest_token_mint_line_attribution():
+    """#882: an earlier step reading steps.<id>.outputs mentions the mint
+    step's id first; the finding must still name the mint step."""
+    _selftest_decoy_line(
+        "token-mint line attribution survives an earlier mention of the id",
+        "token-mint", ".github/workflows/third-token-decoy.yml",
+        "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - id: other\n"
+        "        uses: actions/create-github-app-token@v3\n"
+        "      - shell: bash\n        env:\n"
+        "          T: ${{ steps.mint.outputs.token }}\n"
+        "        run: echo hi\n"
+        "      - id: mint\n        continue-on-error: true\n"
+        "        uses: actions/create-github-app-token@v3\n"
+        "      - shell: bash\n        env:\n"
+        "          OUTCOME: ${{ steps.mint.outcome }}\n"
+        "        run: echo hi\n",
+        "        uses: actions/create-github-app-token@v3")
+
+
+def selftest_local_action_line_attribution():
+    """#882: job a calls the local action correctly after its checkout;
+    job b calls the same action before any checkout. The finding names
+    job b's own step, not job a's earlier, identical uses: line."""
+    _selftest_decoy_line(
+        "composite-checkout-order line attribution survives a repeated local uses:",
+        "composite-checkout-order", ".github/workflows/third-checkout-order-decoy.yml",
+        "on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - uses: actions/checkout@v5\n"
+        "      - uses: ./.github/actions/widget\n"
+        "  b:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - uses: ./.github/actions/widget\n"
+        "      - uses: actions/checkout@v5\n",
+        "      - uses: ./.github/actions/widget", job="b")
+
+
+def selftest_scoped_checkout_line_attribution():
+    """Code review of #939: an earlier step in the same job carries the
+    identical `path:` line; the finding names the path-scoped checkout's
+    own, not the first textual match after the job's header."""
+    _selftest_decoy_line(
+        "composite-checkout-order line attribution survives an earlier identical path:",
+        "composite-checkout-order", ".github/workflows/third-scoped-checkout-decoy.yml",
+        "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - uses: actions/upload-artifact@v4\n"
+        "        with:\n"
+        "          path: .wc-pristine-repo\n"
+        "      - uses: actions/checkout@v5\n"
+        "        with:\n"
+        "          path: .wc-pristine-repo\n"
+        "      - uses: actions/checkout@v5\n",
+        "          path: .wc-pristine-repo", job="x")
+
+
+def selftest_board_stop_check_line_attribution():
+    """Code review of #939: job a references board_stop_check.py with no
+    cancellation (a legitimate consumer); job b pastes the whole idiom.
+    The finding names job b's decision step, not job a's earlier match."""
+    _selftest_decoy_line(
+        "board-stop-check line attribution survives an earlier job's identical decision",
+        "board-stop-check", ".github/workflows/third-board-stop-decoy.yml",
+        "on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - shell: bash\n        run: |\n"
+        "          python3 .github/scripts/board_stop_check.py < in.json\n"
+        "  b:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - shell: bash\n        run: |\n"
+        "          python3 .github/scripts/board_stop_check.py < in.json\n"
+        "      - shell: bash\n        run: gh run cancel \"$ID\"\n",
+        "        run: |")
 
 
 def selftest_per_document_wrap_passes():
@@ -1743,6 +2385,191 @@ def selftest_marker_write_cli_resolves_symbolic_steps_under_dash_i():
         shutil.rmtree(other_cwd, ignore_errors=True)
 
 
+def selftest_shared_path_workdir_anchored_passes():
+    case = "shared-path-workdir: an anchored or root-run _shared/ path passes"
+    tmp = tempfile.mkdtemp(prefix="wc-single-home-")
+    try:
+        _clean_tree(tmp)
+        _write(tmp, ".github/workflows/anchored-shared-path.yml",
+               "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
+               "      - shell: bash\n        working-directory: sub\n        run: |\n"
+               "          bash \"$GITHUB_WORKSPACE/.github/actions/_shared/auto-release-verdict.sh\" a\n"
+               "          bash ${{ github.workspace }}/.github/actions/_shared/auto-release-verdict.sh a\n"
+               "          cp ../e2e-source/.github/actions/_shared/x.sh .\n"
+               "      - shell: bash\n        run: |\n"
+               "          bash .github/actions/_shared/auto-release-verdict.sh a\n"
+               # The workspace root written with a trailing slash is still
+               # the root (#960 second review).
+               "      - shell: bash\n        working-directory: ${{ github.workspace }}/\n        run: |\n"
+               "          bash .github/actions/_shared/auto-release-verdict.sh a\n"
+               "      - shell: bash\n        working-directory: $GITHUB_WORKSPACE/\n        run: |\n"
+               "          bash .github/actions/_shared/auto-release-verdict.sh a\n")
+        findings, hard = evaluate(tmp)
+        hits = [f for f in findings if f.check == "shared-path-workdir"]
+        if hard:
+            fail(f"[{case}] unexpected hard failure(s): {hard}")
+        elif hits:
+            fail(f"[{case}] unexpected finding(s): {hits}")
+        else:
+            note(f"[{case}] passed")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def selftest_shared_path_workdir_waivable():
+    case = "shared-path-workdir: a waiver naming the check is accepted and suppresses it"
+    tmp = tempfile.mkdtemp(prefix="wc-single-home-")
+    try:
+        _clean_tree(tmp)
+        path = ".github/workflows/waived-shared-path.yml"
+        _write(tmp, path,
+               "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
+               "      - shell: bash\n        working-directory: sub\n        run: |\n"
+               "          bash .github/actions/_shared/auto-release-verdict.sh a\n")
+        _write(tmp, WAIVERS_PATH, json.dumps({"waivers": [{
+            "file": path, "check": "shared-path-workdir",
+            "pattern": "auto-release-verdict", "count": 1, "issue": "#1",
+            "reason": "self-test"}]}))
+        findings, hard = evaluate(tmp)
+        hits = [f for f in findings if f.check == "shared-path-workdir"]
+        if hard:
+            fail(f"[{case}] unexpected hard failure(s): {hard}")
+        elif hits:
+            fail(f"[{case}] waived finding(s) still reported: {hits}")
+        else:
+            note(f"[{case}] passed")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+SUBST_FALLBACK_WF = ("on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n"
+                     "    steps:\n      - shell: bash\n        run: |\n")
+
+
+def selftest_substitution_fallback_safe_shapes_pass():
+    case = ("substitution-fallback: the assignment-level fallback, the test "
+            "ternary (also opened on its own line, or continued past a "
+            "blank line), `|| true` and a loop body's `||` pass")
+    tmp = tempfile.mkdtemp(prefix="wc-single-home-")
+    try:
+        _clean_tree(tmp)
+        _write(tmp, ".github/workflows/safe-subst.yml", SUBST_FALLBACK_WF +
+               "          a=\"$(jq -c '.x' \"$f\" 2>/dev/null)\" || a='[]'\n"
+               "          b=$(printf '%s' \"$r\" | jq length) || b=0\n"
+               "          c=\"$([ \"$x\" = y ] && [ -n \"$z\" ] && echo true || echo false)\"\n"
+               "          d=\"$(jq -r '.n' \"$f\" 2>/dev/null || true)\"\n"
+               "          e=\"$(jq -r '.[]' \"$f\" | while read -r n; do\n"
+               "            [ -d \"$n\" ] || printf '%s\\n' \"$n\"\n"
+               "          done)\"\n"
+               "          g=\"$(\n"
+               "            [ -f \"$f\" ] &&\n\n"
+               "            echo y || echo n\n"
+               "          )\"\n")
+        _write(tmp, ".github/actions/_shared/safe-subst.sh",
+               "#!/usr/bin/env bash\n"
+               "n=\"$(git rev-list --count \"$a..HEAD\" 2>/dev/null)\" || n=0\n")
+        findings, hard = evaluate(tmp)
+        hits = [f for f in findings if f.check == "substitution-fallback"]
+        if hard:
+            fail(f"[{case}] unexpected hard failure(s): {hard}")
+        elif hits:
+            fail(f"[{case}] unexpected finding(s): {hits}")
+        else:
+            note(f"[{case}] passed")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def selftest_substitution_fallback_waivable():
+    case = "substitution-fallback: a waiver naming the check suppresses it"
+    tmp = tempfile.mkdtemp(prefix="wc-single-home-")
+    try:
+        _clean_tree(tmp)
+        path = ".github/workflows/waived-subst.yml"
+        _write(tmp, path, SUBST_FALLBACK_WF +
+               "          t=\"$(date -u -d \"$at\" +%s 2>/dev/null || echo 0)\"\n")
+        _write(tmp, WAIVERS_PATH, json.dumps({"waivers": [{
+            "file": path, "check": "substitution-fallback",
+            "pattern": r"^date -u -d ", "count": 1, "issue": "#1",
+            "reason": "self-test"}]}))
+        findings, hard = evaluate(tmp)
+        hits = [f for f in findings if f.check == "substitution-fallback"]
+        if hard:
+            fail(f"[{case}] unexpected hard failure(s): {hard}")
+        elif hits:
+            fail(f"[{case}] waived finding(s) still reported: {hits}")
+        else:
+            note(f"[{case}] passed")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def selftest_substitution_fallback_line():
+    """The finding names the substitution's own line, not the `run:` key."""
+    case = "substitution-fallback: the finding names the substitution's line"
+    tmp = tempfile.mkdtemp(prefix="wc-single-home-")
+    try:
+        _clean_tree(tmp)
+        path = ".github/workflows/subst-line.yml"
+        content = (SUBST_FALLBACK_WF + "          set -uo pipefail\n"
+                   "          echo unrelated\n"
+                   "          x=\"$(jq -c '.' \"$f\" || echo '[]')\"\n")
+        _write(tmp, path, content)
+        expected = content.splitlines().index(
+            "          x=\"$(jq -c '.' \"$f\" || echo '[]')\"") + 1
+        findings, _hard = evaluate(tmp)
+        hits = [f for f in findings if f.check == "substitution-fallback"]
+        if [h.line for h in hits] != [expected]:
+            fail(f"[{case}] expected one finding at line {expected}, got {hits}")
+        else:
+            note(f"[{case}] passed ({path}:{expected})")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def selftest_substitution_fallback_line_one_line_block():
+    """A one-line `run: |` body: the finding names the body's line, not
+    the `run:` key one line above it."""
+    case = ("substitution-fallback: a one-line `run: |` finding names the "
+            "body's line")
+    tmp = tempfile.mkdtemp(prefix="wc-single-home-")
+    try:
+        _clean_tree(tmp)
+        path = ".github/workflows/subst-line-one.yml"
+        body = "          x=\"$(jq -c '.' \"$f\" || echo '[]')\""
+        content = SUBST_FALLBACK_WF + body + "\n"
+        _write(tmp, path, content)
+        expected = content.splitlines().index(body) + 1
+        findings, _hard = evaluate(tmp)
+        hits = [f for f in findings if f.check == "substitution-fallback"]
+        if [h.line for h in hits] != [expected]:
+            fail(f"[{case}] expected one finding at line {expected}, got {hits}")
+        else:
+            note(f"[{case}] passed ({path}:{expected})")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def selftest_substitution_fallback_semantics():
+    """Pins the rule's reason in a real bash: a command that prints and
+    then fails makes the in-substitution fallback APPEND (#959's
+    `[]\n[]`), and the assignment-level fallback REPLACE."""
+    global BASH
+    case = "substitution-fallback: in-$( ) appends, assignment-level replaces"
+    if BASH is None:
+        BASH = resolve_bash()
+    script = ("emit() { echo '[]'; return 1; }\n"
+              "a=\"$(emit || echo '[]')\"\n"
+              "b=\"$(emit)\" || b='[]'\n"
+              "printf '%s|%s' \"$a\" \"$b\"\n")
+    out = subprocess.run([BASH, "-c", script], capture_output=True,
+                         text=True).stdout
+    if out != "[]\n[]|[]":
+        fail(f"[{case}] expected '[]\\n[]|[]', got {out!r}")
+    else:
+        note(f"[{case}] passed")
+
+
 def run_selftest():
     use_utf8_stdout()
     selftest_clean_tree_passes()
@@ -1866,6 +2693,21 @@ def run_selftest():
             "    steps:\n      - shell: bash\n        run: |\n"
             f"          jq -cs '{program}' \"$T\"\n")
     selftest_per_document_wrap_passes()
+    # Code review of #940: each shape the five gate scripts and
+    # wc_chain_stop_conditions.py carried before moving onto wc_gha_expr.
+    for slug, body in (
+        ("transpile", "e = expr.replace(\"&&\", \" and \")\n"),
+        ("eval", "ok = eval(src, {\"__builtins__\": {}}, ctx)\n"),
+        ("term-split",
+         "TERM = re.compile(r\"(\\w+)\\s*(==|!=)\\s*'([^']*)'\")\n"
+         "terms = expr.split(\"&&\")\n"),
+        ("named-term-split",
+         "TERM = re.compile(r\"(?P<lhs>\\w+)\\s*(?P<op>==|!=)\")\n"
+         "for term in expr.split(\"&&\"):\n    pass\n"),
+    ):
+        selftest_third_paste_fails(
+            "gha-expr-evaluator", f".github/scripts/verify-third-{slug}.py",
+            "import re\n" + body)
     selftest_third_paste_fails(
         "verdict-shape", ".github/workflows/third-verdict.yml",
         "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
@@ -1967,6 +2809,109 @@ def run_selftest():
         "      - id: pr\n"
         "        uses: ./.wc-pristine-repo/.github/actions/_shared/resolve-pr-branch\n"
         "        with:\n          pr-number: 1\n")
+    # fold leg-2 (issue #757, found by the code review of #683): a
+    # path-scoped sidecar checkout placed before the job's root checkout
+    # must be caught even with no local `uses: ./...` step at all -- the
+    # root checkout's prepareExistingDirectory wipes the sidecar at run
+    # time, not gate time.
+    selftest_third_paste_fails(
+        "composite-checkout-order",
+        ".github/workflows/third-checkout-order-sidecar-before-root.yml",
+        "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - uses: actions/checkout@v5\n"
+        "        with:\n          path: .wc-pristine-repo\n"
+        "      - uses: actions/checkout@v5\n")
+    # #889: a bare _shared/ helper path under a non-root working-directory
+    # fails; the same step anchored at $GITHUB_WORKSPACE/ is clean (the
+    # clean tree's harmless.yml carries no such step, so add one here).
+    selftest_third_paste_fails(
+        "shared-path-workdir", ".github/workflows/third-shared-path-workdir.yml",
+        "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - shell: bash\n        working-directory: sub\n        run: |\n"
+        "          bash .github/actions/_shared/auto-release-verdict.sh a b\n")
+    selftest_third_paste_fails(
+        "shared-path-workdir", ".github/workflows/third-shared-path-job-default.yml",
+        "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n"
+        "    defaults:\n      run:\n        working-directory: sub\n    steps:\n"
+        "      - shell: bash\n        run: |\n"
+        "          source .github/actions/_shared/helper.sh\n")
+    # #960 review: a `./`-prefixed bare path, and a workflow-level
+    # defaults.run working-directory, are the same defect.
+    selftest_third_paste_fails(
+        "shared-path-workdir", ".github/workflows/third-shared-path-dot-slash.yml",
+        "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - shell: bash\n        working-directory: sub\n        run: |\n"
+        "          bash ./.github/actions/_shared/auto-release-verdict.sh a b\n")
+    selftest_third_paste_fails(
+        "shared-path-workdir", ".github/workflows/third-shared-path-workflow-default.yml",
+        "on: push\ndefaults:\n  run:\n    working-directory: sub\n"
+        "jobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - shell: bash\n        run: |\n"
+        "          source .github/actions/_shared/helper.sh\n")
+    # #960 third review: the filesystem root `/` is not the workspace
+    # root, even though stripping its trailing slash leaves "".
+    selftest_third_paste_fails(
+        "shared-path-workdir", ".github/workflows/third-shared-path-fs-root.yml",
+        "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - shell: bash\n        working-directory: /\n        run: |\n"
+        "          bash .github/actions/_shared/auto-release-verdict.sh a b\n")
+    selftest_shared_path_workdir_anchored_passes()
+    selftest_shared_path_workdir_waivable()
+    # #889/#959: a fallback printed inside the substitution -- the jq
+    # case, the pipeline case, a multi-line gh call, a composite step, and
+    # a _shared/ script -- fails.
+    selftest_third_paste_fails(
+        "substitution-fallback", ".github/workflows/third-subst-jq.yml",
+        SUBST_FALLBACK_WF + "          hold_back=\"$(jq -c '[.[] | "
+        "select(.held)]' \"$missing_file\" 2>/dev/null || echo '[]')\"\n")
+    selftest_third_paste_fails(
+        "substitution-fallback", ".github/workflows/third-subst-pipeline.yml",
+        SUBST_FALLBACK_WF + "          set -o pipefail\n"
+        "          n=\"$(printf '%s' \"$raw\" | jq 'length' 2>/dev/null "
+        "|| printf 0)\"\n")
+    selftest_third_paste_fails(
+        "substitution-fallback", ".github/workflows/third-subst-multiline.yml",
+        SUBST_FALLBACK_WF + "          prs=$(gh pr list --json number \\\n"
+        "            --jq '.' 2>/dev/null \\\n"
+        "            || echo '[]')\n")
+    selftest_third_paste_fails(
+        "substitution-fallback", ".github/actions/third-subst/action.yml",
+        "runs:\n  using: composite\n  steps:\n    - shell: bash\n      run: |\n"
+        "        echo \"json=$(jq -c . \"$P\" 2>/dev/null || printf '{}')\"\n")
+    selftest_third_paste_fails(
+        "substitution-fallback", ".github/actions/_shared/third-subst.sh",
+        "#!/usr/bin/env bash\nx=\"$(gh api \"$u\" --jq .n || echo 0)\"\n")
+    # A bare `||` ending a line continues the list: the fallback on the
+    # next line is still inside the substitution.
+    selftest_third_paste_fails(
+        "substitution-fallback", ".github/workflows/third-subst-or-newline.yml",
+        SUBST_FALLBACK_WF + "          n=\"$(jq length \"$f\" 2>/dev/null ||\n"
+        "            echo 0)\"\n")
+    selftest_third_paste_fails(
+        "substitution-fallback",
+        ".github/workflows/third-subst-or-comment.yml",
+        SUBST_FALLBACK_WF + "          n=\"$(jq length \"$f\" 2>/dev/null || # none\n"
+        "\n            echo 0)\"\n")
+    # Not a test ternary: a non-test command (`jq`) runs before the last
+    # `||`, so its output and the fallback's can both land.
+    selftest_third_paste_fails(
+        "substitution-fallback", ".github/workflows/third-subst-fake-ternary.yml",
+        SUBST_FALLBACK_WF + "          v=\"$([ -f a ] || jq . f && echo y "
+        "|| echo n)\"\n")
+    selftest_substitution_fallback_safe_shapes_pass()
+    selftest_substitution_fallback_waivable()
+    selftest_substitution_fallback_line()
+    selftest_substitution_fallback_line_one_line_block()
+    selftest_substitution_fallback_semantics()
+    selftest_composite_checkout_order_line_attribution()
+    selftest_token_mint_line_attribution()
+    selftest_board_stop_check_line_attribution()
+    selftest_local_action_line_attribution()
+    selftest_scoped_checkout_line_attribution()
+    # Every per-step check that reports step_run_line() gets the same
+    # decoy test, so one regressing to a first-text-match lookup fails here.
+    for check_key, body in PER_STEP_LINE_CASES:
+        selftest_per_step_line_attribution(check_key, body)
     selftest_waived_copy_passes()
     selftest_stale_waiver_fails()
     selftest_promotion_fails()

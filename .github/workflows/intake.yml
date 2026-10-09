@@ -22,7 +22,7 @@ on:
         description: "Model for the specification agent (constitution II tiering default)"
         type: string
         required: false
-        default: claude-opus-5
+        default: claude-opus-5-5
       max-turns:
         description: "Turn budget for the specification agent"
         type: number
@@ -240,6 +240,12 @@ on:
 
 permissions: {}
 
+# Pins bash for every run: step without its own shell:, a caller-supplied
+# container included -- see pr-conversation.yml.
+defaults:
+  run:
+    shell: bash -e {0}
+
 jobs:
   verify-image-prerequisites:
     # This job now carries `if: inputs.container-image != ''` and reports
@@ -260,7 +266,7 @@ jobs:
         run: |
           # Canonical required-tool list: .github/scripts/required-tools.txt
           # (kept in agreement by Gate 23, specs/038 FR-011a).
-          REQUIRED_TOOLS="git gh jq curl python3 bash node timeout"
+          REQUIRED_TOOLS="git gh jq curl python3 bash node timeout unzip"
 
           if [ -n "$REGISTRY_USERNAME" ] && [ -n "$REGISTRY_PASSWORD" ]; then
             # A bare/namespaced Docker Hub reference (no "." or ":" or
@@ -336,6 +342,11 @@ jobs:
             && fromJSON(format('{{"username":{0},"password":{1}}}', toJSON(secrets.container-registry-username), toJSON(secrets.container-registry-password)))
             || fromJSON('{}')
         }}
+      # Git safe.directory for the caller's container image -- see clarify.yml.
+      env:
+        GIT_CONFIG_COUNT: "1"
+        GIT_CONFIG_KEY_0: safe.directory
+        GIT_CONFIG_VALUE_0: "*"
     # environment-binding empirical basis (FR-013) -- see
     # specs/031-stage-environment-binding/contracts/environment-binding.md.
     environment:
@@ -364,6 +375,7 @@ jobs:
       refusal-reason: ${{ steps.preflight.outputs.reason }}
       agent-ran: ${{ steps.agent-ran.outputs.ran }}
       agent-conclusion: ${{ steps.agent-ran.outputs.conclusion }}
+      agent-started: ${{ steps.agent-ran.outputs.started }}
       credential-refresh-ok: ${{ steps.credential-status.outputs.ok }}
       commits-published: ${{ steps.publish-stranded.outputs.commits-published }}
       push-ok: ${{ steps.publish-stranded.outputs.push-ok }}
@@ -502,7 +514,7 @@ jobs:
           WC_PIPELINE_REF: ${{ steps.pipeline-ref.outputs.ref }}
         run: |
           p=.wing-commander-pipeline; want="$(cd "$GITHUB_WORKSPACE" && pwd -P)/$p"
-          if [ -L "$p" ] || [ ! -d "$p" ] || [ -L "$p/.git" ] || [ ! -d "$p/.git" ] || [ "$(git -C "$p" rev-parse --show-toplevel 2>/dev/null)" != "$want" ] || { [[ "${WC_PIPELINE_REF:-}" =~ ^[0-9a-f]{40}$ ]] && [ "$(git -C "$p" rev-parse HEAD 2>/dev/null)" != "$WC_PIPELINE_REF" ]; }; then rm -rf -- "$p"; echo "::error::wing-commander: $p is no longer the trusted pipeline checkout (a symlink, a missing or replaced .git, or another commit): the branch just checked out replaced it. Removed it so no later step loads branch code from there (#611)."; exit 1; fi
+          if [ -L "$p" ] || [ ! -d "$p" ] || [ -L "$p/.git" ] || [ ! -d "$p/.git" ] || [ "$(git -C "$p" rev-parse --show-toplevel 2>/dev/null)" != "$want" ] || { [[ "${WC_PIPELINE_REF:-}" =~ ^[0-9a-f]{40}$ ]] && [ "$(git -C "$p" rev-parse HEAD 2>/dev/null)" != "$(git -C "$p" rev-parse --verify -q "${WC_PIPELINE_REF}^{commit}" 2>/dev/null)" ]; }; then rm -rf -- "$p"; echo "::error::wing-commander: $p is no longer the trusted pipeline checkout (a symlink, a missing or replaced .git, or another commit): the branch just checked out replaced it. Removed it so no later step loads branch code from there (#611)."; exit 1; fi
           git -C "$p" cat-file blob HEAD:.github/scripts/pipeline-checkout-guard.sh | bash -s
 
       # Recorded before the agent step runs so a later publish call
@@ -715,12 +727,12 @@ jobs:
                write its body (a summary of the spec, then the line
                'Closes nothing — lifecycle issue: #${{ inputs.issue-number }}')
                with the Write tool to exactly
-               ${{ runner.temp }}/intake-pr-body.md -- not under the
+               ${{ steps.ctx.outputs.runner-temp }}/intake-pr-body.md -- not under the
                repository; --body-file avoids the quoting hazards of a
                multi-line --body on the command line -- then run:
                gh pr create --base ${{ steps.defbranch.outputs.name }} --head ${{ inputs.spec-draft-prefix }}<NNN-slug> \
                  --title "Spec: <feature name> (#${{ inputs.issue-number }})" \
-                 --body-file ${{ runner.temp }}/intake-pr-body.md
+                 --body-file ${{ steps.ctx.outputs.runner-temp }}/intake-pr-body.md
             7. Update the lifecycle issue #${{ inputs.issue-number }}:
                - Create the spec identity label first (adding a nonexistent label fails):
                  gh label create "spec:<NNN-slug>" --color C5DEF5 --description "Lifecycle: <spec-dir>" --force
@@ -873,9 +885,9 @@ jobs:
           f="$RUNNER_TEMP/claude-execution-output.json"
           agent_ok="$(jq -r '([.[] | select(.type=="result")] | last) as $r
             | if $r != null and $r.is_error == false and $r.subtype == "success"
-              then "true" else "false" end' "$f" 2>/dev/null || echo false)"
+              then "true" else "false" end' "$f" 2>/dev/null)" || agent_ok=false
           if [ "$agent_ok" != "true" ]; then
-            err=$(jq -r '[.[] | select(.type=="result")] | last | .result // "missing or invalid terminal result"' "$f" 2>/dev/null || echo "missing execution output file")
+            err=$(jq -r '[.[] | select(.type=="result")] | last | .result // "missing or invalid terminal result"' "$f" 2>/dev/null) || err="missing execution output file"
             echo "::error::wing-commander intake stage: the agent run did not complete with a valid result — $err"
             echo "valid=false" >> "$GITHUB_OUTPUT"
             exit 0
@@ -923,7 +935,7 @@ jobs:
         run: |
           f="$RUNNER_TEMP/claude-execution-output.json"
           raw="$(jq -r '[.[] | select(.type=="result")] | last | .result // empty' "$f" 2>/dev/null || true)"
-          findings_json="$(printf '%s' "$raw" | jq -c 'if type=="object" and (.findings|type)=="array" then .findings else [] end' 2>/dev/null || echo '[]')"
+          findings_json="$(printf '%s' "$raw" | jq -c 'if type=="object" and (.findings|type)=="array" then .findings else [] end' 2>/dev/null)" || findings_json='[]'
           {
             echo "findings-json<<WC_INTAKE_FINDINGS_EOF"
             echo "$findings_json"
@@ -975,7 +987,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 90
 
-      # (canonical copy; do not condense)
+      # (canonical copy: metrics-summary; do not condense)
       # Surface this run's own metrics (model, turns/budget, duration, tokens,
       # cost) in the run summary so tuning signals are legible without
       # downloading the artifact above. Pure read of that same transcript.
@@ -994,6 +1006,7 @@ jobs:
           stage: intake
           spec-dir: ${{ steps.created.outputs.spec-dir }}
           spec-issue: ${{ inputs.issue-number }}
+          spec-identity-is-own: 'true'
 
       # Durable record (specs/043-durable-metrics-record) — the artifact this
       # feature persists past the transcript's own retention window.
@@ -1076,8 +1089,8 @@ jobs:
         run: |
           f="$RUNNER_TEMP/claude-execution-output.json"
           raw="$(jq -r '[.[] | select(.type=="result")] | last | .result // empty' "$f" 2>/dev/null || true)"
-          count="$(printf '%s' "$raw" | jq 'if type=="object" and (.clarifications|type)=="array" then (.clarifications|length) else 0 end' 2>/dev/null || echo 0)"
-          specified="$(printf '%s' "$raw" | jq -r 'if type=="object" and (.specified|type)=="boolean" then .specified else false end' 2>/dev/null || echo false)"
+          count="$(printf '%s' "$raw" | jq 'if type=="object" and (.clarifications|type)=="array" then (.clarifications|length) else 0 end' 2>/dev/null)" || count=0
+          specified="$(printf '%s' "$raw" | jq -r 'if type=="object" and (.specified|type)=="boolean" then .specified else false end' 2>/dev/null)" || specified=false
           echo "specified=$specified" >> "$GITHUB_OUTPUT"
           if [ "$specified" = "true" ] && [ "$count" -gt 0 ]; then
             echo "needed=true" >> "$GITHUB_OUTPUT"
@@ -1287,7 +1300,7 @@ jobs:
                 + "**Your choice**: _Reply on this issue_\n"
               )
             | join("\n")
-          ' > "${{ runner.temp }}/intake-clarification.md"
+          ' > "$RUNNER_TEMP/intake-clarification.md"
 
       - name: Announce clarification needed
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.needed == 'true'
@@ -1476,8 +1489,7 @@ jobs:
     if: |
       needs.verify-image-prerequisites.result != 'failure' &&
       !cancelled() &&
-      ( needs.verify-image-prerequisites.result == 'failure' ||
-        needs.intake.result == 'failure' ||
+      ( needs.intake.result == 'failure' ||
         needs.intake.result == 'skipped' ) &&
       needs.intake.outputs.refusal-reason == ''
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
@@ -1489,6 +1501,11 @@ jobs:
             && fromJSON(format('{{"username":{0},"password":{1}}}', toJSON(secrets.container-registry-username), toJSON(secrets.container-registry-password)))
             || fromJSON('{}')
         }}
+      # Git safe.directory for the caller's container image -- see clarify.yml.
+      env:
+        GIT_CONFIG_COUNT: "1"
+        GIT_CONFIG_KEY_0: safe.directory
+        GIT_CONFIG_VALUE_0: "*"
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
@@ -1558,6 +1575,7 @@ jobs:
           entry-result: ${{ needs.intake.result }}
           agent-ran: ${{ needs.intake.outputs.agent-ran }}
           agent-conclusion: ${{ needs.intake.outputs.agent-conclusion }}
+          agent-started: ${{ needs.intake.outputs.agent-started }}
           credential-refresh-ok: ${{ needs.intake.outputs.credential-refresh-ok }}
           failed-post-agent-step: ${{ needs.intake.outputs.failed-post-agent-step }}
 
@@ -1571,9 +1589,10 @@ jobs:
           reason: ${{ steps.reason.outputs.reason }}
           # FR-015: resume-oriented wording when the agent ran and a step
           # after it is what stalled the job -- not a from-scratch restart.
-          # Worded from agent-conclusion -- see clarify.yml.
-          restart-command: ${{ needs.intake.outputs.agent-ran == 'true' && needs.intake.outputs.agent-conclusion == 'success' && 'The intake agent step completed its work; a step after it did not. Re-dispatch the intake stage for this specification once the cause above is resolved.' || needs.intake.outputs.agent-ran == 'true' && 'The intake agent step failed after running; its pushed commits are on the branch. Re-dispatch the intake stage for this specification once the cause above is resolved.' || 'Re-dispatch the intake stage for this specification once the cause above is resolved.' }}
+          # Worded from agent-conclusion and agent-started -- see clarify.yml.
+          restart-command: ${{ needs.intake.outputs.agent-ran == 'true' && needs.intake.outputs.agent-conclusion == 'success' && 'The intake agent step completed its work; a step after it did not. Re-dispatch the intake stage for this specification once the cause above is resolved.' || needs.intake.outputs.agent-ran == 'true' && needs.intake.outputs.agent-started != 'false' && 'The intake agent step failed after running; its pushed commits are on the branch. Re-dispatch the intake stage for this specification once the cause above is resolved.' || 'Re-dispatch the intake stage for this specification once the cause above is resolved.' }}
           agent-ran: ${{ needs.intake.outputs.agent-ran }}
           agent-conclusion: ${{ needs.intake.outputs.agent-conclusion }}
+          agent-started: ${{ needs.intake.outputs.agent-started }}
           commits-published: ${{ needs.intake.outputs.commits-published }}
           push-ok: ${{ needs.intake.outputs.push-ok }}

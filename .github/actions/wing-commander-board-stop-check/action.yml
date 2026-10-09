@@ -17,6 +17,15 @@
 # write`) must. `initial-paused` and `check-issue-closed` are resolved by
 # the caller because a composite `run:` step cannot read the caller's
 # `vars` context directly.
+#
+# The two halves are not equally fresh (#794). The stop-request and
+# closed-issue reads are live API calls made when this composite runs. The
+# kill switch is not: `initial-paused` comes from the caller's `vars.`
+# expression, and the runner hands a job its `vars` once, when the job
+# starts, so a switch set after the calling job started is not seen here.
+# That half is defence in depth, and a pause takes effect on the next run
+# -- see lifecycle-review-gate.yml for the runner evidence on when a
+# step-level `vars.` expression is fixed.
 name: wing-commander-board-stop-check
 description: >
   Re-checks the kill switch and any maintainer stop request on a board-loop
@@ -54,7 +63,9 @@ inputs:
       The kill switch's own already-resolved boolean -- the caller's own
       `vars.WING_COMMANDER_BOARD_LOOP_PAUSED == 'true'` comparison,
       evaluated by the caller before this composite is invoked (a
-      composite step cannot read the caller's vars context directly).
+      composite step cannot read the caller's vars context directly). It
+      is only as fresh as the calling job's start; see this file's header
+      comment.
     required: true
   check-issue-closed:
     description: >
@@ -62,11 +73,50 @@ inputs:
       treated as paused when it is already CLOSED.
     required: false
     default: "false"
+  marker-branch:
+    description: >
+      The item's currently-known branch name (from needs.select.outputs.
+      branch), passed through to the stop-point record's marker when a stop
+      is honoured (specs/097-recorded-stop-point). Empty for an item with no
+      branch yet (triage/route). Inert unless stop-cause resolves to
+      "stop-request".
+    required: false
+    default: ""
+  marker-base-sha:
+    description: >
+      The item's currently-known base commit (from needs.select.outputs.
+      base-sha), passed through the same way and under the same condition
+      as marker-branch.
+    required: false
+    default: ""
 
 outputs:
   paused:
     description: "true when this job's next durable action must stand down"
     value: ${{ steps.check.outputs.paused }}
+  stop-cause:
+    description: >
+      One of "" (not standing down), "closed-issue", "kill-switch",
+      "stop-request" -- specs/097-recorded-stop-point data-model.md "Stand-down
+      cause". paused is unchanged and remains true iff stop-cause != "".
+    value: ${{ steps.check.outputs.stop-cause }}
+  stop-cause-phrase:
+    description: >
+      The human-legible phrase naming stop-cause -- "a maintainer stop
+      request" | "the kill switch" | "the issue being closed" | "" (not
+      standing down). The one home for the prose every resume-stage job's
+      own stand-down message names (CLAUDE.md "Shared logic has exactly one
+      home"; was pasted into six `case "$STOP_CAUSE"` blocks in
+      board-loop.yml, maintainer review fold leg-2).
+    value: ${{ steps.check.outputs.stop-cause-phrase }}
+  stop-cause-run-label:
+    description: >
+      The metrics run-label suffix naming stop-cause -- "stopped
+      (stop-request)" | "stood down (kill-switch)" | "stood down (issue
+      closed)" | "" (not standing down) -- consumed by each resume-stage
+      job's own "Record run outcome" step instead of re-deriving the same
+      two-branch ternary six times (maintainer review fold leg-2).
+    value: ${{ steps.check.outputs.stop-cause-run-label }}
 
 runs:
   using: composite
@@ -100,23 +150,67 @@ runs:
         ISSUE_IS_OPEN: ${{ steps.closed-check.outputs.is-open }}
       run: |
         set -uo pipefail
-        paused="$INITIAL_PAUSED"
-        if [ "$ISSUE_IS_OPEN" = "false" ]; then
-          paused=true
-        fi
         gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments" --paginate \
-          --jq '.[] | {body, author_association, created_at, user: {login: .user.login, type: .user.type}}' | jq -s '.' \
+          --jq '.[] | {body, author_association, created_at, user: {login: .user.login, type: .user.type}, html_url}' | jq -s '.' \
           > "$RUNNER_TEMP/board-stop-check-comments.json"
         stop_decision_json="$(jq -n --slurpfile comments "$RUNNER_TEMP/board-stop-check-comments.json" \
           --arg run_id "$GITHUB_RUN_ID" --arg bot_login "$BOT_LOGIN" \
           '{comments: $comments[0], current_run_id: $run_id, bot_login: $bot_login}' \
-          | python3 .github/scripts/board_stop_check.py)"
+          | python3 -I "$GITHUB_ACTION_PATH/../../scripts/board_stop_check.py")"
         jq -e '.stand_down | type == "boolean"' >/dev/null <<<"$stop_decision_json" || {
           echo "::error::wing-commander-board-stop-check: could not read a stop decision from board_stop_check.py: $stop_decision_json"
           exit 1
         }
         stand_down="$(jq -r '.stand_down' <<<"$stop_decision_json")"
         cancel_run_id="$(jq -r '.cancel_run_id // empty' <<<"$stop_decision_json")"
+
+        # specs/097-recorded-stop-point, contracts/stop-check-composite.md
+        # "Decision order": a single ordered check, evaluated once. A closed
+        # issue suppresses recording even when a stop request is also
+        # present; a stop request takes priority over the kill switch
+        # (FR-012). paused is unchanged in meaning (true iff stop-cause !=
+        # "") -- computed independently of the record-write step below, so
+        # a later stop check in the same run still reports the right cause
+        # even after the record was already written (FR-008).
+        if [ "$ISSUE_IS_OPEN" = "false" ]; then
+          stop_cause="closed-issue"
+        elif [ "$stand_down" = "true" ]; then
+          stop_cause="stop-request"
+        elif [ "$INITIAL_PAUSED" = "true" ]; then
+          stop_cause="kill-switch"
+        else
+          stop_cause=""
+        fi
+        if [ -n "$stop_cause" ]; then
+          paused=true
+        else
+          paused=false
+        fi
+
+        # specs/097-recorded-stop-point (maintainer review fold leg-2,
+        # CLAUDE.md "Shared logic has exactly one home"): the prose/
+        # run-label pair for each stop-cause, computed once here instead of
+        # a `case "$STOP_CAUSE"` block pasted into each of board-loop.yml's
+        # six resume-stage jobs.
+        case "$stop_cause" in
+          stop-request)
+            stop_cause_phrase="a maintainer stop request"
+            stop_cause_run_label="stopped (stop-request)"
+            ;;
+          kill-switch)
+            stop_cause_phrase="the kill switch"
+            stop_cause_run_label="stood down (kill-switch)"
+            ;;
+          closed-issue)
+            stop_cause_phrase="the issue being closed"
+            stop_cause_run_label="stood down (issue closed)"
+            ;;
+          *)
+            stop_cause_phrase=""
+            stop_cause_run_label=""
+            ;;
+        esac
+
         if [ "$stand_down" = "true" ]; then
           # find_stop_request()'s own contract (Gate 87, mutation-proven)
           # already guarantees cancel_run_id is never this run's own id --
@@ -172,6 +266,136 @@ runs:
               fi
             fi
           fi
-          paused=true
         fi
         echo "paused=$paused" >> "$GITHUB_OUTPUT"
+        echo "stop-cause=$stop_cause" >> "$GITHUB_OUTPUT"
+        echo "stop-cause-phrase=$stop_cause_phrase" >> "$GITHUB_OUTPUT"
+        echo "stop-cause-run-label=$stop_cause_run_label" >> "$GITHUB_OUTPUT"
+
+    # specs/097-recorded-stop-point: the durable consequence of an honoured
+    # stop request -- the existing `stalled` marker shape plus board:stalled
+    # plus a human-legible comment naming the cause, the specific stop
+    # comment, and the release condition (contracts/stop-point-record.md).
+    # A kill-switch-only or closed-issue stand-down never reaches this step
+    # (FR-011/FR-013). A separate step, not folded into `check` above, so
+    # Gate 87's composite-shell harness (which exercises only the `check`
+    # step) stays unaffected by this new write path.
+    - name: Record the stop point
+      id: record-stop-point
+      if: steps.check.outputs.stop-cause == 'stop-request'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        ISSUE_NUMBER: ${{ inputs.issue-number }}
+        BOT_LOGIN: ${{ inputs.bot-login }}
+        MARKER_BRANCH: ${{ inputs.marker-branch }}
+        MARKER_BASE_SHA: ${{ inputs.marker-base-sha }}
+      run: |
+        set -uo pipefail
+        # research.md D5/D6: at most one stop-point record per run
+        # (FR-007) -- a fresh label read short-circuits a second write,
+        # whatever caused board:stalled to already be present (this run's
+        # own earlier write, or an unrelated existing stall). Not given
+        # continue-on-error: an unreadable label state must not be guessed
+        # (unlike the closed-check step's documented exception).
+        existing_labels="$(gh issue view "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --json labels --jq '[.labels[].name]')" || {
+          echo "::error::wing-commander-board-stop-check: could not read issue #$ISSUE_NUMBER's labels -- no stop-point record is posted, so a later run retries the check (FR-017)."
+          exit 1
+        }
+        if jq -e 'index("board:stalled") != null' <<<"$existing_labels" >/dev/null; then
+          exit 0
+        fi
+
+        # FR-018: identify the winning comment and its reason through the
+        # one home board_stop_check.py provides, never a re-derivation of
+        # the match/authorization rule in this shell. current_run_id is
+        # passed the same way the `check` step above passes it (FR-006/
+        # FR-008, maintainer review fold leg-1): without it,
+        # find_stop_command_comment() cannot tell this run's own
+        # not-yet-posted stop-point record apart from a genuinely earlier
+        # run's marker.
+        stop_comment_json="$(jq -n --slurpfile comments "$RUNNER_TEMP/board-stop-check-comments.json" \
+          --arg run_id "$GITHUB_RUN_ID" --arg bot_login "$BOT_LOGIN" \
+          '{comments: $comments[0], current_run_id: $run_id, bot_login: $bot_login}' \
+          | python3 -I "$GITHUB_ACTION_PATH/../../scripts/board_stop_check.py" --stop-comment)" || {
+          echo "::error::wing-commander-board-stop-check: could not identify the winning stop comment for issue #$ISSUE_NUMBER -- no stop-point record is posted, so a later run retries the check (FR-017)."
+          exit 1
+        }
+        # FR-017 (maintainer review fold leg-4): stop-cause == 'stop-request'
+        # already means find_stop_request() found a winner, so Gate 135
+        # check 4's invariant guarantees find_stop_command_comment() finds
+        # one too -- an empty `{}` result here (board_stop_check.py's own
+        # "no winner" shape) means the two disagreed, not that there is
+        # legitimately nothing to record. Failing loudly here, rather than
+        # silently posting a record with blank fields, is what makes a
+        # later run retry instead of publishing bad data.
+        jq -e '.html_url | type == "string"' >/dev/null <<<"$stop_comment_json" || {
+          echo "::error::wing-commander-board-stop-check: board_stop_check.py --stop-comment returned no winning comment for issue #$ISSUE_NUMBER ($stop_comment_json) -- no stop-point record is posted, so a later run retries the check (FR-017)."
+          exit 1
+        }
+        html_url="$(jq -r '.html_url // empty' <<<"$stop_comment_json")"
+        login="$(jq -r '.login // empty' <<<"$stop_comment_json")"
+        created_at="$(jq -r '.created_at // empty' <<<"$stop_comment_json")"
+        reason="$(jq -r '.reason // empty' <<<"$stop_comment_json")"
+
+        # #488, one-line fallback matching the fix job's own push-pr
+        # precedent for board:owned (see wing-commander-board-labels'
+        # header comment): every caller already ensures board:stalled
+        # exists before reaching this composite (wing-commander-board-
+        # labels, called at the top of each job), but this composite's own
+        # `--add-label "board:stalled"` call below still needs its OWN
+        # earlier step to create it (verify-board-label-creation.py is
+        # job-scoped with no cross-file fallback by design) -- a nested
+        # `uses: ./.github/actions/wing-commander-board-labels` step here
+        # was the leg-2 RCE (it resolves against $GITHUB_WORKSPACE, not
+        # this composite's own trusted directory), so this is one inline
+        # `--force` create instead, not a second composite call.
+        if ! gh label create "board:stalled" -R "$GITHUB_REPOSITORY" --color B60205 --description "Board loop: stalled awaiting a human (CLAUDE.md board-loop rules)" --force; then
+          echo "::warning::wing-commander-board-stop-check: gh label create failed for board:stalled -- the --add-label call below may fail until this label exists."
+        fi
+
+        # FR-018: the label-then-marker write goes through the existing
+        # stall helper (add_stalled_label(), and the marker-render routine
+        # beside it) verbatim, resolved relative to this composite's own
+        # $GITHUB_ACTION_PATH (maintainer review fold leg-0; every caller
+        # invokes this composite as `./.wc-pristine-repo/.github/actions/
+        # wing-commander-board-stop-check`, so $GITHUB_ACTION_PATH always
+        # points inside that same trusted checkout -- spec 086 FR-003 --
+        # never a caller-populated snapshot this composite would have to
+        # trust separately) -- never a new implementation.
+        marker="$(python3 -I "$GITHUB_ACTION_PATH/../../scripts/board_item_marker.py" \
+          --step stalled --issue "$ISSUE_NUMBER" --add-label "board:stalled" \
+          ${MARKER_BRANCH:+--branch "$MARKER_BRANCH"} \
+          ${MARKER_BASE_SHA:+--base-sha "$MARKER_BASE_SHA"})" || {
+          echo "::error::wing-commander-board-stop-check: board:stalled could not be added to issue #$ISSUE_NUMBER -- no stop-point record is posted, so a later run retries the check (FR-017)."
+          exit 1
+        }
+
+        reason_block=""
+        if [ -n "$reason" ]; then
+          # FR-017 (maintainer review fold leg-4): a failure here must not
+          # silently drop the reason and post the record as if none were
+          # given -- fail loudly instead, same as every other step in this
+          # block, so a later run retries rather than publishing a record
+          # that is missing data it actually had.
+          reason_block="$(REASON="$reason" python3 -I -c 'import os, sys; sys.path.insert(0, os.path.join(os.environ["GITHUB_ACTION_PATH"], "..", "..", "scripts")); from board_spec_request_body import fenced_section; print(fenced_section("Reason given:", os.environ["REASON"], 2000))')" || {
+            echo "::error::wing-commander-board-stop-check: could not render the reason block for issue #$ISSUE_NUMBER -- no stop-point record is posted, so a later run retries the check (FR-017)."
+            exit 1
+          }
+        fi
+
+        # contracts/stop-point-record.md: names the cause, links the
+        # specific stop comment with no leading @ (never pings the
+        # maintainer), fences the reason (FR-005), states the release
+        # condition, and ends with the marker -- simultaneously
+        # human-legible and machine-readable (FR-044).
+        body="$(printf 'This item stopped because a maintainer posted a stop request.\n\nStop comment: %s (from %s, %s)' "$html_url" "$login" "$created_at")"
+        if [ -n "$reason_block" ]; then
+          body="$(printf '%s\n\n%s' "$body" "$reason_block")"
+        fi
+        body="$(printf '%s\n\nTo resume this item, remove the `board:stalled` label.\n\n%s' "$body" "$marker")"
+
+        gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$body" || {
+          echo "::error::wing-commander-board-stop-check: could not post the stop-point record comment on issue #$ISSUE_NUMBER (FR-017)."
+          exit 1
+        }

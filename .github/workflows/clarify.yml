@@ -21,7 +21,7 @@ on:
         description: "Model for the clarification agent (constitution II tiering default)"
         type: string
         required: false
-        default: claude-opus-5
+        default: claude-opus-5-5
       max-turns:
         description: "Turn budget for the clarification agent"
         type: number
@@ -204,6 +204,12 @@ on:
 
 permissions: {}
 
+# Pins bash for every run: step without its own shell:, a caller-supplied
+# container included -- see pr-conversation.yml.
+defaults:
+  run:
+    shell: bash -e {0}
+
 jobs:
   verify-image-prerequisites:
     # This job now carries `if: inputs.container-image != ''` and reports
@@ -224,7 +230,7 @@ jobs:
         run: |
           # Canonical required-tool list: .github/scripts/required-tools.txt
           # (kept in agreement by Gate 23, specs/038 FR-011a).
-          REQUIRED_TOOLS="git gh jq curl python3 bash node timeout"
+          REQUIRED_TOOLS="git gh jq curl python3 bash node timeout unzip"
 
           if [ -n "$REGISTRY_USERNAME" ] && [ -n "$REGISTRY_PASSWORD" ]; then
             # A bare/namespaced Docker Hub reference (no "." or ":" or
@@ -300,12 +306,31 @@ jobs:
             && fromJSON(format('{{"username":{0},"password":{1}}}', toJSON(secrets.container-registry-username), toJSON(secrets.container-registry-password)))
             || fromJSON('{}')
         }}
+      # Git safe.directory for the caller's container image; every other
+      # stage's container: block points here. The workspace is bind-mounted from the host, owned by the runner's uid,
+      # while steps in a caller's image run as that image's user (root when it
+      # declares no USER), so git >= 2.35.2 refuses every repository in it as
+      # "dubious ownership" -- `git config` then dies "not in a git directory"
+      # (exit 128). actions/checkout adds safe.directory only to a temporary
+      # HOME for its own run, so nothing after it inherits the exception. These
+      # three variables are command-scope git config, which git honors for
+      # safe.directory from 2.38 on (older git reads it only from system or
+      # global config, so an image whose git is older still fails here), set
+      # on the container itself so they reach every step, composite and
+      # action in it; git_read.py carries them across its GIT_CONFIG* drop. "*", not a path: the workspace path inside
+      # the container differs from github.workspace, nested checkouts each need
+      # their own entry, and the container is single-tenant and discarded with
+      # the job. Never depend on the adopter's image for this (Gate 22).
+      env:
+        GIT_CONFIG_COUNT: "1"
+        GIT_CONFIG_KEY_0: safe.directory
+        GIT_CONFIG_VALUE_0: "*"
     # environment-binding empirical basis (FR-013) -- see
     # specs/031-stage-environment-binding/contracts/environment-binding.md.
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
-    # (canonical copy; do not condense)
+    # (canonical copy: image-prerequisites-skip; do not condense)
     # verify-image-prerequisites now carries its own job-level `if:` and
     # reports `skipped` when no image is configured (#224's old
     # never-skip invariant is gone -- see specs/058-per-job-minute-floor/
@@ -331,6 +356,7 @@ jobs:
       refusal-reason: ${{ steps.preflight.outputs.reason || steps.identity.outputs.reason }}
       agent-ran: ${{ steps.agent-ran.outputs.ran }}
       agent-conclusion: ${{ steps.agent-ran.outputs.conclusion }}
+      agent-started: ${{ steps.agent-ran.outputs.started }}
       credential-refresh-ok: ${{ steps.credential-status.outputs.ok }}
       commits-published: ${{ steps.publish-stranded.outputs.commits-published }}
       push-ok: ${{ steps.publish-stranded.outputs.push-ok }}
@@ -435,7 +461,7 @@ jobs:
           json=$(gh issue view "$ISSUE" --json labels --jq '[.labels[] | {name: .name}]')
           echo "json=$json" >> "$GITHUB_OUTPUT"
 
-      # (canonical copy; do not condense)
+      # (canonical copy: credential-reestablishment; do not condense)
       # Credential re-establishment (spec 052, FR-001/FR-002/FR-004): the
       # minted App installation token has a one-hour lifetime, shorter than
       # some agent runs. `wing-commander-context` relays its mint into the
@@ -530,7 +556,7 @@ jobs:
           WC_PIPELINE_REF: ${{ steps.pipeline-ref.outputs.ref }}
         run: |
           p=.wing-commander-pipeline; want="$(cd "$GITHUB_WORKSPACE" && pwd -P)/$p"
-          if [ -L "$p" ] || [ ! -d "$p" ] || [ -L "$p/.git" ] || [ ! -d "$p/.git" ] || [ "$(git -C "$p" rev-parse --show-toplevel 2>/dev/null)" != "$want" ] || { [[ "${WC_PIPELINE_REF:-}" =~ ^[0-9a-f]{40}$ ]] && [ "$(git -C "$p" rev-parse HEAD 2>/dev/null)" != "$WC_PIPELINE_REF" ]; }; then rm -rf -- "$p"; echo "::error::wing-commander: $p is no longer the trusted pipeline checkout (a symlink, a missing or replaced .git, or another commit): the branch just checked out replaced it. Removed it so no later step loads branch code from there (#611)."; exit 1; fi
+          if [ -L "$p" ] || [ ! -d "$p" ] || [ -L "$p/.git" ] || [ ! -d "$p/.git" ] || [ "$(git -C "$p" rev-parse --show-toplevel 2>/dev/null)" != "$want" ] || { [[ "${WC_PIPELINE_REF:-}" =~ ^[0-9a-f]{40}$ ]] && [ "$(git -C "$p" rev-parse HEAD 2>/dev/null)" != "$(git -C "$p" rev-parse --verify -q "${WC_PIPELINE_REF}^{commit}" 2>/dev/null)" ]; }; then rm -rf -- "$p"; echo "::error::wing-commander: $p is no longer the trusted pipeline checkout (a symlink, a missing or replaced .git, or another commit): the branch just checked out replaced it. Removed it so no later step loads branch code from there (#611)."; exit 1; fi
           git -C "$p" cat-file blob HEAD:.github/scripts/pipeline-checkout-guard.sh | bash -s
 
       # Recorded before the agent step runs so a later publish call
@@ -596,7 +622,7 @@ jobs:
         with:
           intended-turns: ${{ inputs.max-turns }}
 
-      # (canonical copy; do not condense)
+      # (canonical copy: push-credential-retry; do not condense)
       # This step's prompt below carries the retry-bound paragraph for a
       # `git push` that fails with the credential-expiry signature
       # (specs/071-agent-push-credential, research.md D7).
@@ -612,7 +638,7 @@ jobs:
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           SPECIFY_FEATURE_DIRECTORY: ${{ steps.ctx.outputs.spec-dir }}
-          # (canonical copy; do not condense)
+          # (canonical copy: synchronous-subagents; do not condense)
           # Force subagents synchronous — headless has no turn-boundary resume,
           # so a backgrounded subagent silently yields an unbuilt deliverable
           # (anthropics/claude-code-action#1462 / #1499).
@@ -622,7 +648,7 @@ jobs:
           anthropic_api_key: ${{ secrets.anthropic-api-key }}
           use_bedrock: ${{ inputs.use-bedrock }}
           github_token: ${{ env.WC_BOT_TOKEN }}
-          # (canonical copy; do not condense)
+          # (canonical copy: allowed-bots; do not condense)
           # Wrappers may dispatch this stage via GITHUB_TOKEN (custom
           # triggers); the action rejects bot actors unless allow-listed.
           # The pipeline's own App bot is the actor whenever one stage
@@ -631,14 +657,14 @@ jobs:
           # filter form is the bare slug, no [bot] suffix.
           allowed_bots: "github-actions,${{ steps.ctx.outputs.bot-slug }}"
 
-          # (canonical copy; do not condense)
+          # (canonical copy: inspection-guidance; do not condense)
           # #266: the prompt below tells the agent to inspect files with the
           # Grep, Glob and Read tools, never shell loops or unlisted commands
           # (`for f in ...; do cat "$f"`, `awk`): the stage's allowlist
           # denies those by design, and each denial costs a turn and files a
           # denied-tool watchdog finding.
 
-          # (canonical copy; do not condense)
+          # (canonical copy: anchor-rule; do not condense)
           # #569: the settled anchor rule the prompt below states --
           # "gate_or_artifact" only moves the dedup key once it is found,
           # normalized, inside the file "file_path" names (the anchor
@@ -672,7 +698,7 @@ jobs:
             `&&`, which keeps the permission (`git commit ... && git push ...`),
             or make separate calls. Do not build files by redirecting with `>`;
             use Write. Prefer the tools over shell equivalents — Read instead of
-            `cat`, Grep instead of `sed`. `sed` and `wc` are not available to
+            `cat`, Grep instead of `sed`. `sed` is not available to
             you at all. Inspect files with the Grep, Glob and Read tools, not
             shell loops or commands this run does not list (`for f in …; do
             cat "$f"`, `awk`) — those are denied here.
@@ -703,10 +729,10 @@ jobs:
                replace the section with a note that all clarifications are
                resolved (with a link to the answer comment). Leave the rest of
                the body untouched. Write the new body with the Write tool to
-               exactly ${{ runner.temp }}/clarify-pr-body.md -- not under the
+               exactly ${{ steps.ctx.outputs.runner-temp }}/clarify-pr-body.md -- not under the
                repository (a path inside .git/ is denied outright, and any
                other path there would be swept into the commit) -- then apply
-               it with gh pr edit <num> --body-file ${{ runner.temp }}/clarify-pr-body.md;
+               it with gh pr edit <num> --body-file ${{ steps.ctx.outputs.runner-temp }}/clarify-pr-body.md;
                do not build the body by redirecting shell output into a file.
             6. Return your final result matching the provided schema: `answered`
                is `true` if the reply (step 2) addressed at least one open
@@ -756,7 +782,7 @@ jobs:
       # !cancelled(), not always() (spec 052, should-fix per maintainer
       # review of PR #407): a run cancelled during the agent step must not
       # still perform a network mint and a remote rewrite in the cancel
-      # window -- see clarify.yml.
+      # window (the rescue step's canonical copy below gives the full reason).
       - name: Record agent-ran signal
         if: "!cancelled() && steps.agent.outcome != 'skipped'"
         id: agent-ran
@@ -782,7 +808,7 @@ jobs:
         with:
           token: ${{ env.WC_BOT_TOKEN }}
 
-      # (canonical copy; do not condense)
+      # (canonical copy: push-rescue; do not condense)
       # Deterministic rescue for work the agent could not push itself --
       # runs whether or not a later agent step ever would have carried it
       # along (specs/071-agent-push-credential, FR-015). Every other
@@ -844,6 +870,7 @@ jobs:
           stage: clarify
           spec-dir: ${{ steps.ctx.outputs.spec-dir }}
           spec-issue: ${{ inputs.issue-number }}
+          spec-identity-is-own: 'true'
 
       # Durable record (specs/043-durable-metrics-record) — the artifact this
       # feature persists past the transcript's own retention window.
@@ -900,9 +927,9 @@ jobs:
           f="$RUNNER_TEMP/claude-execution-output.json"
           agent_ok="$(jq -r '([.[] | select(.type=="result")] | last) as $r
             | if $r != null and $r.is_error == false and $r.subtype == "success"
-              then "true" else "false" end' "$f" 2>/dev/null || echo false)"
+              then "true" else "false" end' "$f" 2>/dev/null)" || agent_ok=false
           if [ "$agent_ok" != "true" ]; then
-            err=$(jq -r '[.[] | select(.type=="result")] | last | .result // "missing or invalid terminal result"' "$f" 2>/dev/null || echo "missing execution output file")
+            err=$(jq -r '[.[] | select(.type=="result")] | last | .result // "missing or invalid terminal result"' "$f" 2>/dev/null) || err="missing execution output file"
             echo "::error::wing-commander clarify stage: the agent run did not complete with a valid result — $err"
             exit 1
           fi
@@ -911,7 +938,7 @@ jobs:
             # Name the shape actually received: the fix is different for a
             # bare array (agent skipped the schema wrapper) than for prose,
             # and this is the only place that distinction is visible.
-            got="$(printf '%s' "$raw" | jq -r 'type' 2>/dev/null || echo 'not JSON')"
+            got="$(printf '%s' "$raw" | jq -r 'type' 2>/dev/null)" || got='not JSON'
             echo "::error::wing-commander clarify stage: the agent's structured result is missing a valid answered/clarifications shape (received: $got). The fold may ALREADY be committed and pushed to the spec PR — check the PR before re-running; no callout was posted for it."
             exit 1
           fi
@@ -949,17 +976,17 @@ jobs:
           # `answered`/`clarifications` — extracted here, at this stage's one
           # deterministic read-back point, never taken from the agent's
           # prose directly by the filing composite (FR-010).
-          findings_json="$(printf '%s' "$raw" | jq -c 'if type=="object" and (.findings|type)=="array" then .findings else [] end' 2>/dev/null || echo '[]')"
+          findings_json="$(printf '%s' "$raw" | jq -c 'if type=="object" and (.findings|type)=="array" then .findings else [] end' 2>/dev/null)" || findings_json='[]'
           {
             echo "findings-json<<WC_CLARIFY_FINDINGS_EOF"
             echo "$findings_json"
             echo "WC_CLARIFY_FINDINGS_EOF"
           } >> "$GITHUB_OUTPUT"
-          answered="$(printf '%s' "$raw" | jq -r 'if type=="object" and (.answered|type)=="boolean" then .answered else false end' 2>/dev/null || echo false)"
+          answered="$(printf '%s' "$raw" | jq -r 'if type=="object" and (.answered|type)=="boolean" then .answered else false end' 2>/dev/null)" || answered=false
           if [ "$answered" != "true" ]; then
             echo "outcome=none" >> "$GITHUB_OUTPUT"
           else
-            count="$(printf '%s' "$raw" | jq 'if (.clarifications|type)=="array" then (.clarifications|length) else 0 end' 2>/dev/null || echo 0)"
+            count="$(printf '%s' "$raw" | jq 'if (.clarifications|type)=="array" then (.clarifications|length) else 0 end' 2>/dev/null)" || count=0
             if [ "$count" -gt 0 ]; then
               echo "outcome=needs-clarification" >> "$GITHUB_OUTPUT"
               structured=true
@@ -1048,7 +1075,7 @@ jobs:
               ;;
             ready)
               if [ "$BLOCKED" != "true" ]; then
-                gh label create "stage:spec" --color 1D76DB --description "Spec drafted / awaiting review" --force
+                gh label create "stage:spec" --color 1D76DB --description "Spec drafted / awaiting review" --force || echo "::warning::wing-commander clarify: could not create the stage:spec label (the spec PR is still announced ready)." >> "$GITHUB_STEP_SUMMARY"
                 if ! gh issue edit "$ISSUE" --add-label "stage:spec"; then
                   echo "::warning::wing-commander clarify: could not add stage:spec to issue #$ISSUE (the spec PR was still announced ready)." >> "$GITHUB_STEP_SUMMARY"
                 fi
@@ -1128,7 +1155,7 @@ jobs:
                 + "**Your choice**: _Reply on this issue_\n"
               )
             | join("\n")
-          ' > "${{ runner.temp }}/clarify-followup.md"
+          ' > "$RUNNER_TEMP/clarify-followup.md"
 
       - name: Announce remaining clarification questions
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.outcome == 'needs-clarification'
@@ -1171,7 +1198,7 @@ jobs:
       # STOP, judging the reply to answer no open question); this covers
       # every outcome the same way intake.yml's copy does.
       #
-      # (canonical copy; do not condense)
+      # (canonical copy: cost-report-tolerance; do not condense)
       # FR-009 tolerance: a lost cost comment must not change the run's
       # conclusion. continue-on-error: true below is what makes that true —
       # an API error or a permissions blip posting this report leaves the
@@ -1189,7 +1216,7 @@ jobs:
           cost-line: ${{ steps.cost-line.outputs.line }}
           stage-label: Clarify
 
-      # (canonical copy; do not condense)
+      # (canonical copy: budget-observability; do not condense)
       # Observability, not failure (FR-017) — the intended budget was fully
       # used but the run finished healthy; the runaway ceiling above is the
       # only hard stop. This tolerance is enforced, not just documented
@@ -1260,7 +1287,7 @@ jobs:
       # error) post-agent steps in execution order, each read via
       # `.conclusion` (not `.outcome`) so a continue-on-error step that
       # raw-failed is never misnamed as the cause (second maintainer review
-      # of PR #407, FR-011, SC-003) -- see clarify.yml for the composite.
+      # of PR #407, FR-011, SC-003).
       - name: Determine failed post-agent step
         id: failed-step
         if: "!cancelled() && steps.agent.outcome != 'skipped'"
@@ -1283,8 +1310,7 @@ jobs:
     if: |
       needs.verify-image-prerequisites.result != 'failure' &&
       !cancelled() &&
-      ( needs.verify-image-prerequisites.result == 'failure' ||
-        needs.clarify.result == 'failure' ||
+      ( needs.clarify.result == 'failure' ||
         needs.clarify.result == 'skipped' ) &&
       needs.clarify.outputs.refusal-reason == ''
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
@@ -1296,6 +1322,11 @@ jobs:
             && fromJSON(format('{{"username":{0},"password":{1}}}', toJSON(secrets.container-registry-username), toJSON(secrets.container-registry-password)))
             || fromJSON('{}')
         }}
+      # Git safe.directory for the caller's container image -- see above in this file.
+      env:
+        GIT_CONFIG_COUNT: "1"
+        GIT_CONFIG_KEY_0: safe.directory
+        GIT_CONFIG_VALUE_0: "*"
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
@@ -1375,7 +1406,7 @@ jobs:
             echo "spec-dir=" >> "$GITHUB_OUTPUT"
           fi
 
-      # (canonical copy; do not condense)
+      # (canonical copy: failed-step-naming; do not condense)
       # FR-004/FR-011 (spec 052, maintainer review of PR #407): a credential
       # re-establishment failure is named as such, ahead of the generic
       # agent-ran branch; otherwise, a real post-agent step failure names
@@ -1394,6 +1425,7 @@ jobs:
           entry-result: ${{ needs.clarify.result }}
           agent-ran: ${{ needs.clarify.outputs.agent-ran }}
           agent-conclusion: ${{ needs.clarify.outputs.agent-conclusion }}
+          agent-started: ${{ needs.clarify.outputs.agent-started }}
           credential-refresh-ok: ${{ needs.clarify.outputs.credential-refresh-ok }}
           failed-post-agent-step: ${{ needs.clarify.outputs.failed-post-agent-step }}
 
@@ -1411,13 +1443,19 @@ jobs:
           # after it is what stalled the job -- not a from-scratch restart.
           # Worded from agent-conclusion, not asserted as "ran to
           # completion" regardless of outcome (second maintainer review of
-          # PR #407, FR-011) -- see clarify.yml's own copy of this note in
-          # wing-commander-chain-stop-notice/action.yml.
-          restart-command: ${{ needs.clarify.outputs.agent-ran == 'true' && needs.clarify.outputs.agent-conclusion == 'success' && 'The clarify agent step completed its work; a step after it did not. Re-dispatch the clarify stage for this specification once the cause above is resolved.' || needs.clarify.outputs.agent-ran == 'true' && 'The clarify agent step failed after running; its pushed commits are on the branch. Re-dispatch the clarify stage for this specification once the cause above is resolved.' || 'Re-dispatch the clarify stage for this specification once the cause above is resolved.' }}
+          # PR #407, FR-011); the wing-commander-chain-stop-notice composite
+          # carries the same note on its own agent clause.
+          # agent-started == 'false' (the agent step's action failed in its
+          # own setup, before the agent started -- #889/#972) falls through
+          # to the plain re-dispatch line: there is no agent work and no
+          # pushed commit to resume from, and the notice body itself says
+          # to fix the runner environment before re-dispatching.
+          restart-command: ${{ needs.clarify.outputs.agent-ran == 'true' && needs.clarify.outputs.agent-conclusion == 'success' && 'The clarify agent step completed its work; a step after it did not. Re-dispatch the clarify stage for this specification once the cause above is resolved.' || needs.clarify.outputs.agent-ran == 'true' && needs.clarify.outputs.agent-started != 'false' && 'The clarify agent step failed after running; its pushed commits are on the branch. Re-dispatch the clarify stage for this specification once the cause above is resolved.' || 'Re-dispatch the clarify stage for this specification once the cause above is resolved.' }}
           # FR-011/FR-015: drops the composite's default "stage did not
           # start" / "no work was lost" wording, which is false once the
-          # agent ran -- see clarify.yml.
+          # agent ran.
           agent-ran: ${{ needs.clarify.outputs.agent-ran }}
           agent-conclusion: ${{ needs.clarify.outputs.agent-conclusion }}
+          agent-started: ${{ needs.clarify.outputs.agent-started }}
           commits-published: ${{ needs.clarify.outputs.commits-published }}
           push-ok: ${{ needs.clarify.outputs.push-ok }}

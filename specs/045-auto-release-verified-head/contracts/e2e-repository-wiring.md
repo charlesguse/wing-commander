@@ -44,19 +44,35 @@ prior state.
    `SPECKIT_SUPPORTED_VERSION`, plus the minimal wrapper set
    `docs/adoption.md` documents (`wing-commander-1-intake.yml` …
    `wing-commander-7-cleanup.yml`, `wing-commander-rebase.yml`), each
-   rewritten to `uses: charlesguse/wing-commander/.github/workflows/<stage>.yml@<head_sha>`
-   — the exact commit under verification, never a tag or `@main`
-   (research.md D7).
+   rewritten to `uses: charlesguse/wing-commander/.github/workflows/<stage>.yml@e2e-verify-<run id>-<attempt>`,
+   an annotated tag the `e2e-pin` job creates on the exact commit under
+   verification and never moves, so the pin still names that commit and
+   is never a moving tag or `@main` (research.md D7). An annotated tag is
+   the shape of an adopter's `@v2` pin: through one,
+   `github.job_workflow_sha` is the tag object's SHA, which a bare commit
+   pin never exercised (#928). verify-e2e reads the tag back before the
+   fixture names it. The tag stays until the next run's `e2e-pin` replaces
+   it, so the test repository's wrappers keep resolving between runs.
 5. **Kick off**: `gh issue create` (no label) with the fixed trivial-
    feature body (research.md D9), then a separate `gh issue edit --add-
    label spec-request` call (research.md D8 — creating with a label
    attached does not fire the `labeled` event `wing-commander-1-intake.yml`
    is gated on).
 6. **Poll to a verdict** (research.md D10, data-model.md "End-to-end
-   verdict"): bounded by the job's own `timeout-minutes`; reads only
-   `issues: read`-scoped state (issue state, labels, timeline) and
-   repository contents (to assert per-stage artifacts) on the test
-   repository — never that repository's own Actions run logs.
+   verdict"): bounded by the step's own `POLL_BUDGET_SECONDS` (8100s),
+   which sits inside the job's `timeout-minutes` with a reserve for the
+   steps before and after the loop, so an exhausted budget still writes a
+   `fail-timeout` verdict rather than the runner killing the step. Reads
+   issue state, labels, comments and timeline, open and merged pull
+   requests (specs/055's gate driving), and repository contents (to
+   assert per-stage artifacts) on the test repository; in container mode
+   also that repository's Actions run and job metadata (specs/067) --
+   never its run logs. Every one of those reads, like the gate-driving
+   writes, runs under the fixture maintainer credential
+   (`WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN`, specs/055 and
+   specs/066), not the scoped App token above: an App installation token
+   expires 60 minutes after it is minted and the poll can run longer
+   (#979). The App token stays the credential for steps 1–5.
 
 ## What this feature never does to the test repository
 

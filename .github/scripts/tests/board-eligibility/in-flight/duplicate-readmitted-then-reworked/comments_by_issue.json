@@ -1,0 +1,20 @@
+{
+  "5104": [
+    {
+      "created_at": "2026-01-02T00:00:00Z",
+      "body": "Closed as a duplicate of #5204.\n\n<!-- wing-commander-board-item: {\"base_sha\": null, \"branch\": null, \"pr\": null, \"round\": 0, \"spec_request\": 5204, \"step\": \"duplicate\"} -->",
+      "user": {
+        "login": "wing-commander-bot[bot]",
+        "type": "Bot"
+      }
+    },
+    {
+      "created_at": "2026-01-03T00:00:00Z",
+      "body": "Reopened -- re-admitted and routed afresh.\n\n<!-- wing-commander-board-item: {\"base_sha\": null, \"branch\": null, \"pr\": null, \"round\": 0, \"step\": \"route\"} -->",
+      "user": {
+        "login": "wing-commander-bot[bot]",
+        "type": "Bot"
+      }
+    }
+  ]
+}

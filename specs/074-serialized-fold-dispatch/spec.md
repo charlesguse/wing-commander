@@ -90,6 +90,41 @@ notice.
   not eviction-free anyway: a concurrency group holds one pending entry, so a
   third review would cancel the pending second run (FR-017).
 
+### Session 2026-09-29 (maintainer, reconciling with spec 075)
+
+Spec 075 (run-scoped fold evidence) shipped between this feature's tasks
+stage and its implement stage. Its FR-014 requires the dispatch decision to
+stay scoped to a run's own fold evidence — a run that folded nothing of its
+own must never dispatch, even when the branch tip moved during its window.
+The tasks-stage design of FR-009/FR-011 as originally written let the last
+run in an overlapping set dispatch regardless of whether THAT run folded
+anything itself, which contradicts FR-014 outright: the maintainer's merge
+of this branch with main took 075's fold-evidence-driven `dispatch-once` and
+`wing-commander-fold-dispatch` whole rather than this feature's original
+claim-dispatch step, to avoid shipping the contradiction.
+
+- Q: When an overlapping set contains a run that folded nothing of its own
+  alongside one or more runs that did, who is entitled to attempt the round's
+  one dispatch, and does a folding run ever step aside instead of trying
+  again? → A: (reconciliation, option 1) a run with no folds of its own never
+  claims the round's dispatch — it posts spec 075's declined-dispatch notice
+  (075 FR-015) and takes no further part in the claim. A run WITH folds of
+  its own that finds another run's `act` ticket still queued does not step
+  aside either: it re-queues its own dispatch ticket to wait behind the
+  outstanding `act` ticket(s) and re-attempts the claim once they clear,
+  rather than yielding the round to whichever run happens to reach the head
+  last. The last run with folds of its own to reach an empty, unclaimed round
+  dispatches exactly one implement cycle for the round, and its reply lists
+  every run's folds accumulated in that round (its own plus every other
+  run's, each still attributed to its own `run_id` via the ledger's
+  `folded_items`) — not only the dispatching run's own fold evidence. Spec
+  075 FR-014 ("no own folds, no dispatch") is preserved unchanged; only the
+  scope of the fold list a *winning* dispatch's reply publishes is widened
+  from that run's own evidence to the round's accumulated evidence. Every
+  run's own `report-fold-outcomes` report, and every declined-dispatch
+  notice, stays scoped to that run's own items exactly as spec 075 requires
+  (FR-006/FR-015 unchanged) (FR-009, FR-011, SC-003).
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - No review item is lost when two reviews land on one PR (Priority: P1)
@@ -173,6 +208,18 @@ one dispatch outcome for the overlapping set rather than one per stage-9 run.
    one item, **When** the last fold leg of the set reaches a terminal state,
    **Then** exactly one implement cycle is dispatched for the pair, carrying one
    iteration number, and its reply names the folds of both runs.
+6. **Given** two overlapping stage-9 runs on one PR where the first folded at
+   least one item and the second folded nothing of its own, **When** both
+   reach the dispatch decision, **Then** the second run declines and posts
+   spec 075's declined-dispatch notice, and the first run dispatches the
+   round's one cycle naming only its own fold(s) (the second run contributed
+   none).
+7. **Given** two overlapping stage-9 runs on one PR that both folded at least
+   one item, **When** the first run reaches the dispatch decision while the
+   second run's fold-route legs are still in flight, **Then** the first run
+   re-queues its own dispatch attempt behind the second run's outstanding
+   legs instead of stepping aside, and dispatches the round's one cycle
+   (naming both runs' folds) once those legs clear.
 
 ---
 
@@ -286,17 +333,28 @@ no re-dispatch.
   queuing of any job belonging to a stage-9 run on the same PR.
 - **FR-009**: For a set of overlapping stage-9 runs on one PR that collectively
   folded at least one item, the pipeline MUST dispatch exactly one implement
-  cycle for the whole set. The later runs' folds ride along in that one cycle
-  and the earlier runs' dispatches yield to it, so a maintainer's follow-up
-  comment posted mid-fold is absorbed into the round already in flight rather
-  than producing a second iteration number.
+  cycle for the whole set — but only from a run that folded at least one item
+  of its own (spec 075 FR-014, preserved unchanged: a run with no folds of its
+  own never claims the round's dispatch, and instead posts spec 075's
+  declined-dispatch notice). A run that DID fold something of its own, and
+  that finds another run's fold-route legs still in flight for the same
+  round, MUST NOT step aside — it re-queues its own dispatch attempt to wait
+  behind the outstanding legs and re-attempts the claim once they clear,
+  rather than a later run's claim winning by default. The later runs' folds
+  ride along in the one cycle the round's dispatch eventually produces, so a
+  maintainer's follow-up comment posted mid-fold is absorbed into the round
+  already in flight rather than producing a second iteration number.
 - **FR-010**: The "Implementation cycle N dispatched" reply MUST name a run that
   goes on to start. When the named run does not start, the discrepancy MUST be
   reported rather than left standing as the last word on the round.
 - **FR-011**: Because one dispatch now covers a whole overlapping set (FR-009),
-  the `folded` list that dispatch reply publishes MUST name exactly the items
-  the set folded — every one of them, and no item no run in the set folded —
-  so the list and the per-run per-item reports (FR-006) cannot disagree.
+  the `folded` list that the WINNING dispatch's reply publishes MUST name
+  exactly the items the round folded — every run's contribution, and no item
+  no run in the round folded — each still attributed to the run that folded
+  it, so the list and the per-run per-item reports (FR-006) cannot disagree.
+  A run that declines under FR-009/FR-014 (no folds of its own) publishes
+  spec 075's declined-dispatch notice instead, scoped to that run alone —
+  it never publishes the round's aggregate list.
 
 #### Making a lost cycle visible
 
@@ -384,10 +442,13 @@ no re-dispatch.
   from every report.
 - **SC-002**: Across the fixture-covered overlapping-run scenarios, zero
   implement runs conclude `cancelled` as a result of pending replacement.
-- **SC-003**: For a set of overlapping stage-9 runs on one PR, the lifecycle
-  issue carries exactly one dispatch outcome — one "dispatched" notice whose run
-  started, or one explicitly-reported reason no cycle was dispatched — never one
-  notice per stage-9 run. In the reproduced two-run scenario this is one
+- **SC-003**: For a set of overlapping stage-9 runs on one PR that collectively
+  folded at least one item, exactly one run's reply carries the "dispatched"
+  notice naming the round's whole fold list — the run that folded its own
+  fold(s) last and found the round empty of outstanding legs — while every
+  other run in the set that folded nothing of its own posts spec 075's
+  declined-dispatch notice for itself alone; never more than one "dispatched"
+  notice per round. In the reproduced two-run scenario this is one
   "dispatched" notice where today there are two.
 - **SC-004**: 100% of implement runs cancelled by concurrency replacement
   produce a lifecycle-issue notice; 0% of maintainer-cancelled runs do.

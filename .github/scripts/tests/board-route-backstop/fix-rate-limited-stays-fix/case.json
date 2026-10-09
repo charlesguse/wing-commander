@@ -1,0 +1,19 @@
+{
+  "_note": "A fix proposal the agent delivered stands even when its run then hit the rate limit: defer is only for a missing proposal.",
+  "agent_proposal": "fix",
+  "proposal_extracted": true,
+  "agent_rate_limited": true,
+  "board_max_files": 6,
+  "board_max_lines": 120,
+  "measure": {
+    "over_threshold": false,
+    "files": 1,
+    "lines": 4
+  },
+  "diff_paths": [],
+  "diff_text": "",
+  "expected": {
+    "backstop_verdict": "fix",
+    "reason": "under_threshold"
+  }
+}

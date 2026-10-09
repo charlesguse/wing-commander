@@ -951,6 +951,15 @@ def check_single_home(path, exempt):
 
 
 SPEC_REQUEST_BUILDER = ".github/scripts/board_spec_request_body.py"
+
+# spec 108 (contracts/gate-93-check-3-delta.md, FR-012): the same
+# disposition call, covering both the direct-path form (a job with no
+# agent step, e.g. route) and the pre-agent snapshot form (a job that
+# runs one, e.g. fix/readiness -- Gate 98's own split).
+DISPOSITION_MODULE = "board_duplicate_disposition.py"
+DISPOSITION_CALL_RE = re.compile(
+    r"(?:\.github/scripts/|\$RUNNER_TEMP/wc-pristine/scripts/)"
+    + re.escape(DISPOSITION_MODULE))
 ISSUE_CONTEXT_USES = "wing-commander-issue-context"
 CONTEXT_FILE_EXPR_RE = re.compile(
     r"^\$\{\{\s*steps\.([A-Za-z0-9_-]+)\.outputs\.context-file\s*\}\}$")
@@ -1014,8 +1023,16 @@ def _logical_lines(run_text):
     return re.sub(r"\\\n\s*", " ", run_text or "").split("\n")
 
 
+# The labels a board-loop.yml filing of spec-shaped work carries. The loop
+# files spec-proposal (board reset of 2026-10-01; only the owner applies
+# spec-request, which starts intake), and spec-request is kept so a site
+# that reverts to it is still checked -- either way the body is what a
+# maintainer promotes into intake, so the same trust rules hold.
+SPEC_FILING_LABEL_RE = re.compile(r"\bspec-(?:request|proposal)\b")
+
+
 def _is_spec_request_create(line):
-    return bool(GH_ISSUE_CREATE_RE.search(line) and "spec-request" in line)
+    return bool(GH_ISSUE_CREATE_RE.search(line) and SPEC_FILING_LABEL_RE.search(line))
 
 
 # Check 3's create guard (#514). A site's `run:` has no `-e`, so a failed
@@ -1117,6 +1134,39 @@ def _create_guard_problems(where, step, steps, job_id, lines, create_idx):
     return problems
 
 
+def _has_disposition_call(where, lines, create_idx):
+    """Gate 93 check 3 extension (spec 108, FR-012): every spec-request
+    create site must also dispose of the originating issue -- the single
+    shared disposition module (contracts/duplicate-disposition.md), never
+    an inline close/label/comment sequence (which the existing single-home
+    check for board_spec_request_body.py already polices for the CREATE
+    side; this is the same rule for the DISPOSE side). Scans strictly
+    AFTER _create_guard_problems()'s own exit point (the guard line, when
+    found) so a disposition call placed BEFORE the guard is left to that
+    existing check's own ACT_BEFORE_GUARD_RE/var_ref ordering rule
+    (contracts/gate-93-check-3-delta.md fixture 3) -- never a second,
+    redundant ordering check here."""
+    problems = []
+    for index in create_idx:
+        m = CREATE_CAPTURE_RE.match(lines[index])
+        var = m.group(1) if m else None
+        guard_exit = None
+        if var:
+            guard = _url_guard_re(var)
+            for offset, later in enumerate(lines[index + 1:], start=index + 1):
+                if guard.search(later):
+                    guard_exit = offset
+                    break
+        scan_start = (guard_exit + 1) if guard_exit is not None else index + 1
+        if not any(DISPOSITION_CALL_RE.search(line) for line in lines[scan_start:]):
+            problems.append(
+                f"{where} files a spec-request but never calls "
+                f"{DISPOSITION_MODULE} after it -- the originating issue "
+                f"is never disposed of as a duplicate "
+                f"(contracts/duplicate-disposition.md, FR-012).")
+    return problems
+
+
 def check_spec_request_bodies(path):
     """Gate 93 check 3: every spec-request board-loop.yml files gets its
     body from board_spec_request_body.py, fed the issue-context
@@ -1153,7 +1203,7 @@ def check_spec_request_bodies(path):
 
             for line in lines:
                 if (re.search(r"\bgh\s+issue\s+edit\b", line)
-                        and re.search(r"--add-label[= ]\s*[\"']?spec-request",
+                        and re.search(r"--add-label[= ]\s*[\"']?spec-(?:request|proposal)\b",
                                       line)):
                     problems.append(
                         f"{where} relabels an issue as spec-request -- its "
@@ -1180,6 +1230,7 @@ def check_spec_request_bodies(path):
             sites += len(creates)
             problems.extend(_create_guard_problems(
                 where, step, steps, job_id, lines, create_idx))
+            problems.extend(_has_disposition_call(where, lines, create_idx))
 
             builder_idx = [i for i, line in enumerate(lines)
                            if "board_spec_request_body.py" in line]
@@ -1336,6 +1387,9 @@ def check_repo():
 _URL_GUARD = (
     '          [[ "$spec_url" =~ ^https?://[^[:space:]]+/issues/[0-9]+$ ]] '
     '|| { echo "::error::no spec-request URL (got \'$spec_url\')"; exit 1; }\n')
+_DISPOSITION_CALL = (
+    '          python3 .github/scripts/board_duplicate_disposition.py --originating 1 '
+    '--spec-request-issue 2 --spec-request-url "$spec_url" --reason "r"\n')
 _GOOD_SITE_RUN = (
     '          set -uo pipefail\n'
     '          jq -r \'.proposal["pr-body"] // empty\' "$RUNNER_TEMP/d.json" > "$RUNNER_TEMP/drafted.md"\n'
@@ -1351,6 +1405,7 @@ _GOOD_SITE_RUN = (
     '            --label spec-request)"\n'
     + _URL_GUARD +
     '          echo "spec-url=$spec_url" >> "$GITHUB_OUTPUT"\n'
+    + _DISPOSITION_CALL +
     '          gh issue comment 1 --body "re-routed"\n'
     '          gh issue edit 1 --add-label "board:stalled"\n'
 )
@@ -1412,6 +1467,7 @@ def _create_guard_cases(good):
     comment = '          gh issue comment 1 --body "re-routed"\n'
     edit = '          gh issue edit 1 --add-label "board:stalled"\n'
     output = '          echo "spec-url=$spec_url" >> "$GITHUB_OUTPUT"\n'
+    disposition = _DISPOSITION_CALL
 
     def guard_with(tail):
         return good.replace(
@@ -1436,7 +1492,7 @@ def _create_guard_cases(good):
          _site_fixture(run=unguarded), "acts on the spec-request before"),
         ("no guard and nothing after the create",
          _site_fixture(run=unguarded.replace(output, "").replace(
-             comment, "").replace(edit, "")),
+             comment, "").replace(edit, "").replace(disposition, "")),
          "never checks $spec_url"),
         ("guard after the re-route comment",
          _site_fixture(run=unguarded.replace(output, "").replace(
@@ -1602,6 +1658,14 @@ def _self_test_spec_request_sites(tmpdir):
         ("no spec-request site at all (vacuous)",
          _site_fixture(run=good.replace("spec-request", "board:stalled")),
          "would pass vacuously"),
+        # spec 108 (contracts/gate-93-check-3-delta.md, FR-012).
+        ("create-guard-only, no disposition call anywhere in the step",
+         _site_fixture(run=good.replace(_DISPOSITION_CALL, "")),
+         "never calls board_duplicate_disposition.py"),
+        ("disposition call placed BEFORE the create guard's exit point",
+         _site_fixture(run=good.replace(_URL_GUARD + '          echo "spec-url=$spec_url" >> "$GITHUB_OUTPUT"\n' + _DISPOSITION_CALL,
+                                        _DISPOSITION_CALL + _URL_GUARD + '          echo "spec-url=$spec_url" >> "$GITHUB_OUTPUT"\n')),
+         "acts on the spec-request before"),
     ]
     cases.extend(_create_guard_cases(good))
     for index, (label, text, expect) in enumerate(cases):
@@ -1917,8 +1981,8 @@ def _mutation_check_builder():
 # edit could reopen #509's gap; check 3 must catch every one.
 SPEC_REQUEST_MUTATIONS = (
     ("route site's body inlined again",
-     '--body-file "$spec_body_file" --label spec-request',
-     '--body "${pr_body:-No drafted body.}" --label spec-request'),
+     '--body-file "$spec_body_file" --label spec-proposal',
+     '--body "${pr_body:-No drafted body.}" --label spec-proposal'),
     ("fallback fed the comments-file",
      "ISSUE_CONTEXT_FILE: ${{ steps.issue-context-route.outputs.context-file }}",
      "ISSUE_CONTEXT_FILE: ${{ steps.issue-context-route.outputs.comments-file }}"),
@@ -2445,6 +2509,61 @@ def _self_test_git_read_wrapper():
             failures.append(f"wrapper --output call exited "
                             f"{result.returncode} (want 2) or wrote "
                             f"{target}: {result.stderr!r}")
+    # Inside a caller's container image the workspace is owned by another
+    # uid, and the stage's container.env safe.directory=* (see clarify.yml)
+    # is what lets git open it. clean_env drops every GIT_CONFIG* variable,
+    # so the wrapper must carry safe.directory back as -c (and nothing
+    # else), or every agent git read there is refused as "not inside a git
+    # work tree". GIT_TEST_ASSUME_DIFFERENT_OWNER is git's own switch for
+    # simulating that ownership mismatch.
+    safe = w.safe_directories({"GIT_CONFIG_COUNT": "2",
+                               "GIT_CONFIG_KEY_0": "core.pager",
+                               "GIT_CONFIG_VALUE_0": "x",
+                               "GIT_CONFIG_KEY_1": "safe.directory",
+                               "GIT_CONFIG_VALUE_1": "*"})
+    if safe != ["*"]:
+        failures.append(f"wrapper safe_directories kept {safe!r}, want "
+                        f"['*'] (safe.directory only)")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        repo = os.path.join(tmpdir, "repo")
+        subprocess.run(["git", "init", "-q", repo], check=True)
+        subprocess.run(["git", "-C", repo, "-c", "user.name=t", "-c",
+                        "user.email=t@e", "commit", "-q", "--allow-empty",
+                        "-m", "x"], check=True)
+        base = {"PATH": os.environ.get("PATH", ""), "HOME": tmpdir,
+                "GIT_TEST_ASSUME_DIFFERENT_OWNER": "1"}
+        cases = [({"GIT_CONFIG_COUNT": "1",
+                   "GIT_CONFIG_KEY_0": "safe.directory",
+                   "GIT_CONFIG_VALUE_0": "*"}, 0)]
+        # The refusal case proves something only where plain git, under the
+        # same simulated ownership and an empty HOME, refuses the repo. A
+        # host whose system gitconfig already trusts it (safe.directory=*
+        # in /etc/gitconfig), or a git that ignores the test switch, opens
+        # it anyway; the wrapper cannot narrow that (it drops
+        # GIT_CONFIG_NOSYSTEM with the rest), so there the case is skipped
+        # with a note rather than failed.
+        probe = subprocess.run(["git", "rev-parse", "--show-toplevel"],
+                               cwd=repo, capture_output=True, text=True,
+                               env=base)
+        if probe.returncode != 0:
+            cases.append(({"GIT_CONFIG_COUNT": "1",
+                           "GIT_CONFIG_KEY_0": "core.pager",
+                           "GIT_CONFIG_VALUE_0": "cat"}, 2))
+        else:
+            print("note: plain git opens the simulated foreign-owned repo "
+                  "on this host (its system gitconfig trusts it, or git "
+                  "ignores GIT_TEST_ASSUME_DIFFERENT_OWNER), so the "
+                  "wrapper's no-safe.directory refusal case is skipped.")
+        for extra, want in cases:
+            result = subprocess.run(
+                [sys.executable, "-I", os.path.abspath(GIT_READ_WRAPPER),
+                 "log", "-1", "--format=%s"],
+                cwd=repo, capture_output=True, text=True,
+                env={**base, **extra})
+            if result.returncode != want:
+                failures.append(f"wrapper log in a foreign-owned repo with "
+                                f"{extra!r} exited {result.returncode} (want "
+                                f"{want}): {result.stderr.strip()[:200]!r}")
     if not failures:
         print(f"note: {GIT_READ_WRAPPER} unit tests passed ({len(allowed)} "
               f"read-only calls allowed, {len(refused)} write/other "

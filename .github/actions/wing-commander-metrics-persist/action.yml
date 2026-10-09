@@ -115,7 +115,7 @@ runs:
           jq -s '[.[] | select(.name | startswith("metrics-record"))]' "$dir/artifacts.ndjson" \
             > "$dir/artifacts.json" 2>/dev/null || echo '[]' > "$dir/artifacts.json"
 
-          count="$(jq 'length' "$dir/artifacts.json" 2>/dev/null || echo 0)"
+          count="$(jq 'length' "$dir/artifacts.json" 2>/dev/null)" || count=0
           echo "Discovered $count metrics-record* artifact(s) for run $rid." >> "$GITHUB_STEP_SUMMARY"
           total=$(( total + count ))
         done
@@ -233,7 +233,7 @@ runs:
         # match keeps job_id: null and record_key in its emission-time
         # run_id:job_key:step_index form rather than guess wrong — a
         # known limitation, not a silent one.
-        jobs_json="$(cat "$dir/jobs.json" 2>/dev/null || echo '[]')"
+        jobs_json="$(cat "$dir/jobs.json" 2>/dev/null)" || jobs_json='[]'
 
         if [ -d "$dl_dir" ]; then
           for adir in "$dl_dir"/metrics-record*/; do
@@ -329,7 +329,7 @@ runs:
                   )
                 ) as $valid
                 | if $valid then "true" else "false" end
-              ' 2>/dev/null || echo false)"
+              ' 2>/dev/null)" || ok=false
 
               if [ "$ok" != "true" ]; then
                 rejected="$rejected $key"
@@ -433,8 +433,21 @@ runs:
             # MF-03: exclude any run the retrieve step held back (a live
             # artifact whose download merely failed) -- absent/empty means
             # every run counts, unchanged from before this file existed.
-            hold_back="$(jq -R -s -c 'split("\n") | map(select(length > 0))' "$dir/mark-hold-back.txt" 2>/dev/null || echo '[]')"
-            hwm="$(printf '%s' "$SWEEP_RUNS" | jq -r --argjson hb "$hold_back" '[.[] | select((.run_id|tostring) as $rid | ($hb | index($rid)) == null) | .concluded_at] | max // empty' 2>/dev/null)"
+            # Absent is the zero-artifact sweep: discover counted 0, so the
+            # retrieve step's `if:` skipped it and nothing created the file.
+            # The fallback REPLACES jq's output rather than appending to it:
+            # `jq -R -s` on a missing file still prints `[]` before exiting
+            # 2, so an inner `|| echo '[]'` made hold_back two documents,
+            # `--argjson` below refused them, and errexit killed this step
+            # with exit 2 and no message (sweeps 2026-09-28/10-03/10-04).
+            hold_back='[]'
+            if [ -f "$dir/mark-hold-back.txt" ]; then
+              hold_back="$(jq -R -s -c 'split("\n") | map(select(length > 0))' "$dir/mark-hold-back.txt" 2>/dev/null)" || hold_back='[]'
+            fi
+            if ! hwm="$(printf '%s' "$SWEEP_RUNS" | jq -r --argjson hb "$hold_back" '[.[] | select((.run_id|tostring) as $rid | ($hb | index($rid)) == null) | .concluded_at] | max // empty' 2>"$dir/hwm-err.txt")"; then
+              echo "::error::wing-commander-metrics-persist: could not compute the sweep high-water mark -- $(cat "$dir/hwm-err.txt" 2>/dev/null)"
+              exit 1
+            fi
             if [ -n "$hwm" ]; then
               printf '{"high_water_mark":"%s"}\n' "$hwm" > sweep-state.json
               git add sweep-state.json
@@ -475,7 +488,7 @@ runs:
           git add "$DEST_PATH"
           n="$(wc -l < "$to_append" | tr -d ' ')"
           if [ -n "${SWEEP_RUNS:-}" ]; then
-            sweep_n="$(printf '%s' "$SWEEP_RUNS" | jq -r 'length' 2>/dev/null || echo 0)"
+            sweep_n="$(printf '%s' "$SWEEP_RUNS" | jq -r 'length' 2>/dev/null)" || sweep_n=0
             git commit -m "metrics: sweep appended $n record(s) across $sweep_n run(s)" --allow-empty >/dev/null
           elif [ "$branch_is_new" = "true" ]; then
             git commit -m "metrics: initialize $DEST_PATH with $n record(s) from run ${RUN_ID}" --allow-empty >/dev/null
@@ -573,7 +586,7 @@ runs:
                   cost: (map(select(.cost_available==true) | .cost_usd) | add // 0)
                 }) | sort_by(.stage))
             }
-          ' "$recs" 2>/dev/null || echo '{}')"
+          ' "$recs" 2>/dev/null)" || totals='{}'
 
           history="$(jq -s -r '
             map(
@@ -621,8 +634,10 @@ runs:
           # first match of each page rather than the first match overall.
           # `head -1` (bash-side, over the whole streamed result) is what
           # actually selects "the first match across every page" safely.
-          existing="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${issue}/comments" --paginate --jq \
-            '.[] | select(.user.login == "github-actions[bot]") | select(.body // "" | contains("wing-commander-metrics-rollup:begin")) | {id, body}' 2>/dev/null | head -1)"
+          if ! existing="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${issue}/comments" --paginate --jq \
+            '.[] | select(.user.login == "github-actions[bot]") | select(.body // "" | contains("wing-commander-metrics-rollup:begin")) | {id, body}' 2>/dev/null | head -1)"; then
+            existing=""
+          fi
           existing_id="$(printf '%s' "$existing" | jq -r '.id // empty' 2>/dev/null)"
 
           if [ -n "$existing_id" ]; then

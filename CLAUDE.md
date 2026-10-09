@@ -43,6 +43,30 @@ way — a rule with no gate behind it lasts until the next session.
 
 ## Working the issue board
 
+The board has three lanes, and only the first one waits on the owner:
+
+- **Roadmap** — specs the owner chose. The open `disposition:tracking`
+  issue titled "Roadmap" (#890 at the 2026-10-01 board reset) lists what
+  is in flight, queued and parked. Only the owner applies `spec-request`.
+- **Maintenance** — small defects from stages, reviews and the watchdog.
+  They are fixed directly, never turned into specs. Collect them as
+  checklist lines on the open `disposition:tracking` issue titled
+  "Maintenance backlog" (#889 at the reset), not as one issue each.
+- **Signals** — watchdog classes that are recoveries or cosmetic, not
+  defects (`denied-tool`, `narrative-drift`). The watchdog reports them
+  on the lifecycle issue and files nothing (watchdog.yml's `Determine
+  issue-filing eligibility`).
+
+The open `disposition:tracking` issue titled "Board status" is rewritten
+daily by `board-status.yml` from the board itself: what waits on the
+owner, what the pipeline is working on, and main's CI. Read it before
+the board.
+
+Keep at most three lifecycles in implement at once; the rest wait in the
+Roadmap issue's "Queued" list. A lifecycle that has to wait for the
+owner's answers belongs in "Parked", closed with the `parked` label, not
+open on the board.
+
 Open issues are worked in this order: triage, route, fix, review, merge,
 prove. Each step has a rule.
 
@@ -51,17 +75,35 @@ prove. Each step has a rule.
   `pipeline-defect` whose execution-output artifact records an API 429
   (a `rate_limit_event`, `api_error_status: 429`, one turn, zero cost) or
   an upstream action bump is closed with that evidence quoted, not fixed.
+- Before closing any issue, check that no waiver register cites it as its
+  tracker: `grep -rnE '"#N"|issue *= *\([^)]*\bN\b' .github/scripts/`
+  covers the `*-waivers.json` registers and the `EXEMPT_*` tables (a
+  `decided_by` hit is provenance and can stay). Gate 124
+  (`verify-waiver-citations.py --check-open`) runs on pushes to main and
+  on the daily schedule, never on a pull request, so closing a cited
+  issue turns main red while every PR stays green. Repoint the waiver at
+  the issue that now tracks the work, usually the Maintenance backlog, in
+  the same sitting.
 - Route by shape. A change that is deterministic and gate-shaped (a new
   `verify-*.py`, a plumbing fix, a comment correction) and carries no
-  design trade-off is a local fix PR. A change that needs the owner to
-  decide a trade-off, spans several stages, or would benefit from the
-  clarify stage's questions gets the `spec-request` label so the pipeline
-  runs it. File the issue first and apply the label as a separate action;
-  the label event is what starts intake.
+  design trade-off is a local fix PR, even when it edits a workflow. A
+  change that needs the owner to decide a trade-off, spans several
+  stages, or would benefit from the clarify stage's questions is filed
+  with the `spec-proposal` label and added to the Roadmap issue's
+  "Proposed" list. Never apply `spec-request` yourself: the owner's label
+  event is what starts intake, and every intake ends in questions only the
+  owner can answer.
 - Every fix PR gets a code review before merge. Fix the findings in the
   same PR. A bug the review surfaces outside the PR's scope becomes a new
-  issue carrying the line `Found by the code review of #N`, never an
-  extra commit that widens the PR.
+  checklist line on the Maintenance backlog issue carrying `found by the
+  code review of #N`, never a new issue and never an extra commit that
+  widens the PR.
+- Spec documents are not defects. An error in a spec's own spec.md,
+  plan.md, tasks.md or research.md is corrected in that spec's open PR,
+  or not at all once it has merged (see "Other repo-specific rules").
+  The stage-findings composite drops findings that cite only those files
+  for the same reason. Contracts under `specs/*/contracts/` are the
+  exception: they are live and fixed like code.
 - A review of a PR whose changed files a `specs/NNN-*/` spec references
   should also get a pass from the `spec-cross-reference` skill, which can
   elevate a finding into a named-requirement violation or refute one

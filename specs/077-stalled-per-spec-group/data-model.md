@@ -95,20 +95,37 @@ T023 kept their `needs`/`if` in lockstep so the same criteria admit both.
 | Stage | `needs:` | `if:` (abnormal-termination arm) |
 |---|---|---|
 | pr-conversation (before this feature) | `[verify-image-prerequisites, classify-and-announce]` | `needs.verify-image-prerequisites.result != 'failure' && !cancelled() && ( needs.verify-image-prerequisites.result == 'failure' \|\| needs.classify-and-announce.result == 'failure' \|\| needs.classify-and-announce.result == 'skipped' ) && needs.classify-and-announce.outputs.refusal-reason == ''` |
-| pr-conversation (after this feature) | `[verify-image-prerequisites, resolve-identity, classify-and-announce]` | `needs.verify-image-prerequisites.result != 'failure' && !cancelled() && ( needs.verify-image-prerequisites.result == 'failure' \|\| needs.resolve-identity.result == 'failure' \|\| needs.classify-and-announce.result == 'failure' \|\| needs.classify-and-announce.result == 'skipped' ) && needs.classify-and-announce.outputs.refusal-reason == ''` |
+| pr-conversation (after this feature) | `[verify-image-prerequisites, resolve-identity, classify-and-announce]` | `needs.verify-image-prerequisites.result != 'failure' && !cancelled() && ( needs.resolve-identity.result == 'failure' \|\| needs.classify-and-announce.result == 'failure' \|\| needs.classify-and-announce.result == 'skipped' ) && needs.classify-and-announce.outputs.refusal-reason == ''` |
 
 Verified case by case (SC-003), against every combination the three jobs can
 reach. The outer `needs.verify-image-prerequisites.result != 'failure'` guard
-(present both before and after this feature) means the first arm inside the
-parenthesized group can never itself admit the job — a failed image check
-is excluded by the outer guard before the inner `||` chain is even reached:
+(present both before and after this feature) excludes a failed image check
+before the inner `||` chain is even reached, so no arm inside the
+parenthesized group admits that case (spec 041 research.md D11):
+
+> **Correction (2026-09-30, #728).** As merged, the "after this feature" row
+> above, and this paragraph, carried a first inner arm
+> `needs.verify-image-prerequisites.result == 'failure' ||` and described it
+> as an arm that "can never itself admit the job". It could not: the outer
+> `!= 'failure'` conjunct forecloses it, so it was dead code that read like
+> a live admission path and produced #728's false-contradiction report.
+> PR #844 removed it from `stalled` and `stalled-mark`, and from the six
+> other survivor jobs that inherited the same arm (clarify, finalize,
+> implement, intake, and tasks' `stalled`/`stalled-approved`); Gate 33
+> (`verify-chain-stop-notice.py`) now rejects its return. The row, this
+> paragraph, and the arm names in the case table below were updated to
+> match; admission is unchanged in every case. The "before this feature"
+> row is left as it was, since it records the condition as it stood then,
+> and the `stalled` job table's "Same, plus a fourth arm" wording above
+> likewise describes the delta as merged (the added arm is now the first
+> of three).
 
 | `resolve-identity` | `classify-and-announce` | Admits `stalled` today? | Admits `stalled` after this change? |
 |---|---|---|---|
 | success | success (healthy run) | No | No (unchanged) |
-| success | failure | Yes | Yes (unchanged — third arm) |
+| success | failure | Yes | Yes (unchanged — the `classify-and-announce` failure arm) |
 | success, `qualifies=false` | success (silent stop, User Story 3) | No | No (unchanged) |
-| **failure** (API read error) | **skipped** (this job's own `if:` now tolerates the failure explicitly) | N/A (job did not exist) | **Yes** — via the new explicit arm, and independently via the third arm's `skipped` case |
+| **failure** (API read error) | **skipped** (this job's own `if:` now tolerates the failure explicitly) | N/A (job did not exist) | **Yes** — via the new explicit arm, and independently via the `classify-and-announce` `skipped` arm |
 | skipped (image check failed) | skipped | No (outer guard) | No (outer guard) |
 
 The "failure" row is Story 2's scenario. Two independent arms admit it
