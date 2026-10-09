@@ -811,8 +811,9 @@ step itself always looks green in the API — `continue-on-error` reports the
 post-rescue conclusion); and the diagnose execution log parses without
 `is_error` or known fabrication markers. On any failure 8b turns red and
 files (or appends to) a deduplicated `pipeline-defect` issue: one issue per
-failure fingerprint (a hash of the digit-normalized fail reasons, carried as
-a hidden body marker), never appended to an issue the board loop has
+failure fingerprint (a hash of the digit-normalized fail reasons, leaving out
+the history-dependent run-duration band reasons when any other reason
+remains, carried as a hidden body marker), never appended to an issue the board loop has
 excluded (`board_eligibility.is_excluded()`, e.g. `board:stalled`), and
 naming the inspected run and the diagnose job's first failed step. The chain can
 be exercised on demand — including its red path — via the manual

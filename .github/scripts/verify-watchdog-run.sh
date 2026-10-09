@@ -39,6 +39,12 @@ set -uo pipefail
 fail_reasons=()
 note() { echo "::notice::verify-watchdog: $1"; }
 reason() { fail_reasons+=("$1"); echo "::error::verify-watchdog: $1"; }
+# A run-level duration-band reason is a symptom whose presence depends on
+# this workflow's recent history (the median moves, the history fetch can
+# fail), not on the defect: recorded apart as well, so the filing arm's
+# fingerprint can leave it out whenever another reason names the failure.
+band_reasons=()
+band_reason() { reason "$1"; band_reasons+=("$1"); }
 
 api() { gh api "repos/$REPO/$1"; }
 
@@ -141,10 +147,10 @@ if [ -n "$hist" ] && [ "$count" -ge 3 ]; then
     if [ "$rate_limited" = "true" ]; then
       note "run finished in ${duration}s, under the ${floor}s floor — expected, rate-limited run (one-turn rejection)"
     else
-      reason "run finished in ${duration}s — under the ${floor}s floor (median ${median}s); too fast to have done real work"
+      band_reason "run finished in ${duration}s — under the ${floor}s floor (median ${median}s); too fast to have done real work"
     fi
   elif [ "$duration" -gt "$ceiling" ]; then
-    reason "run took ${duration}s — over the ${ceiling}s ceiling (median ${median}s); something stalled"
+    band_reason "run took ${duration}s — over the ${ceiling}s ceiling (median ${median}s); something stalled"
   fi
 else
   note "fewer than 3 prior successful runs; skipping the duration band"
@@ -293,20 +299,32 @@ if [ "${CREATE_ISSUE:-false}" = "true" ]; then
   # was invisible to everything. The fingerprint is the fail reasons with
   # every digit run collapsed (so a duration, a median or a run id never
   # splits one failure into two), sorted, hashed; it rides in the body as a
-  # hidden marker and in the title as a suffix.
-  fingerprint="$(printf '%s\n' "${fail_reasons[@]}" | sed -E 's/[0-9]+/N/g' | LC_ALL=C sort -u | sha256sum | cut -c1-12)"
+  # hidden marker and in the title as a suffix. The run-level duration-band
+  # reasons (band_reasons) are left out whenever another reason remains:
+  # whether a crashing run also lands under the floor depends on that day's
+  # history median, and must not split one defect into two issues. A band
+  # breach alone is still its own fingerprint.
+  fp_basis=()
+  for r in "${fail_reasons[@]}"; do
+    in_band=false
+    for b in "${band_reasons[@]}"; do [ "$r" = "$b" ] && in_band=true; done
+    [ "$in_band" = "true" ] || fp_basis+=("$r")
+  done
+  [ "${#fp_basis[@]}" -gt 0 ] || fp_basis=("${fail_reasons[@]}")
+  fingerprint="$(printf '%s\n' "${fp_basis[@]}" | sed -E 's/[0-9]+/N/g' | LC_ALL=C sort -u | sha256sum | cut -c1-12)"
   fp_marker="<!-- watchdog-verify-fingerprint: $fingerprint -->"
   title_base="watchdog-verify: stage 8 run failed deterministic verification"
   title="$title_base [$fingerprint]"
 
   # Deterministic pointers a triager needs, from data already fetched above:
   # the run this watchdog run was inspecting (stage 8's run-name carries its
-  # id: "inspect <workflow> run <id> (...)" / "re-inspect run <id>"), and
+  # id: "inspect <workflow> run <id> (...)" / "re-inspect run <id>", so the
+  # LAST "run <digits>" is it, whatever the workflow's name holds), and
   # where the diagnose job broke. continue-on-error reports the agent's
   # failed steps as success in the jobs API, so a step whose conclusion is
   # failure is used when there is one, and otherwise the step whose time
   # window holds the job log's first ##[error] line.
-  inspected_id="$(jq -r '.display_title // ""' <<<"$run_json" | grep -oE 'run [0-9]+' | head -1 | grep -oE '[0-9]+')"
+  inspected_id="$(jq -r '.display_title // ""' <<<"$run_json" | grep -oE 'run [0-9]+' | tail -1 | grep -oE '[0-9]+')"
   diag='def diag: .jobs[] | select(.name == "diagnose" or (.name | endswith("/ diagnose")));'
   diagnose_job_url="$(jq -r "$diag"' [diag | .html_url // empty] | first // empty' <<<"$jobs_json")"
   first_error="$(printf '%s\n' "${dlog:-}" | grep -a -m1 '##\[error\]')"
@@ -355,29 +373,34 @@ if [ "${CREATE_ISSUE:-false}" = "true" ]; then
   # marker AND the board loop will still read it: board_eligibility.
   # is_excluded() is the one home for "the board loop will not act on this
   # issue" (board:stalled, disposition:*, lifecycle labels), so a comment
-  # never lands where nothing reads it.
-  if candidates="$(gh issue list -R "$REPO" --state open --label pipeline-defect --limit 100 \
-       --search "\"$title_base\" in:title" --json number,title,state,labels,body)" \
-     && existing="$(python3 -I -c '
+  # never lands where nothing reads it. It is imported from this script's
+  # own directory, never the caller's cwd. The marker must be a whole body
+  # line, so log text quoted into a body can never pass for one. A
+  # classifier that cannot run is reported as itself and, like a failed
+  # search, files nothing.
+  scripts_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  if ! candidates="$(gh issue list -R "$REPO" --state open --label pipeline-defect --limit 100 \
+       --search "\"$title_base\" in:title" --json number,title,state,labels,body)"; then
+    echo "::error::verify-watchdog: the pipeline-defect issue search FAILED - not filing, to avoid creating a duplicate of an issue the search could not see (#167). The verification failure above still stands."
+  elif ! existing="$(python3 -I -c '
 import json, sys
-sys.path.insert(0, ".github/scripts")
+sys.path.insert(0, sys.argv[3])
 from board_eligibility import is_excluded
 title_base, marker = sys.argv[1], sys.argv[2]
 for issue in sorted(json.loads(sys.stdin.read().strip() or "[]"), key=lambda i: i["number"]):
-    if (issue.get("title") or "").startswith(title_base) and marker in (issue.get("body") or "") \
+    if (issue.get("title") or "").startswith(title_base) \
+       and marker in (issue.get("body") or "").splitlines() \
        and not is_excluded(issue)[0]:
         print(issue["number"])
         break
-' "$title_base" "$fp_marker" <<<"$candidates")"; then
-    if [ -n "$existing" ]; then
-      gh issue comment "$existing" -R "$REPO" --body "$body" \
-        && note "appended to existing issue #$existing (same fingerprint $fingerprint)"
-    else
-      gh issue create -R "$REPO" --title "$title" --label pipeline-defect --body "$body" \
-        && note "created pipeline-defect issue (fingerprint $fingerprint)"
-    fi
+' "$title_base" "$fp_marker" "$scripts_dir" <<<"$candidates")"; then
+    echo "::error::verify-watchdog: classifying the found pipeline-defect issues FAILED (board_eligibility could not run) - not filing, to avoid a duplicate of an issue that could not be classified. The verification failure above still stands."
+  elif [ -n "$existing" ]; then
+    gh issue comment "$existing" -R "$REPO" --body "$body" \
+      && note "appended to existing issue #$existing (same fingerprint $fingerprint)"
   else
-    echo "::error::verify-watchdog: the pipeline-defect issue search FAILED - not filing, to avoid creating a duplicate of an issue the search could not see (#167). The verification failure above still stands."
+    gh issue create -R "$REPO" --title "$title" --label pipeline-defect --body "$body" \
+      && note "created pipeline-defect issue (fingerprint $fingerprint)"
   fi
 fi
 
