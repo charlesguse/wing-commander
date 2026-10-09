@@ -30,6 +30,14 @@
 # image has to provide it. It was previously assumed present under Gate
 # 23's ALWAYS_AVAILABLE coreutils set, which is exactly how a hard
 # dependency reached eleven stages without ever being declared here.
+# unzip is an INDIRECT dependency: anthropics/claude-code-action@v1's first
+# step, "Install Bun" (oven-sh/setup-bun), downloads bun-linux-x64.zip and
+# extracts it with unzip, so every agent-bearing job dies before Claude
+# Code starts on an image without it. Intake run 37866026318 (job
+# 113612908101) on wing-commander's own e2e reference image failed there
+# with "Unable to locate executable file: unzip." while this check, which
+# did not yet list unzip, had passed the image. It was previously assumed
+# present under Gate 23's ALWAYS_AVAILABLE set, as timeout was.
 #
 # Presence is all this contract checks, for `timeout` as for `gh`. A
 # BusyBox build older than 1.30 (2018) provides the applet but requires
@@ -44,3 +52,4 @@ python3
 bash
 node
 timeout
+unzip

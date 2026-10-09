@@ -948,11 +948,12 @@ know before you set either:
   image and checks it for every tool the pipeline's own steps and shared
   composite actions need: `git`, `gh`, `jq`, `curl`, `python3`, `bash`,
   `node` (an inferred dependency of the Claude Code action, not something
-  this repository's own scripts invoke directly), and `timeout`. A missing
-  tool fails the stage fast, before any billable agent step, naming every
-  missing tool at once — never just the first one found. An image with no
-  POSIX shell at all is reported as that, rather than as "every tool is
-  missing".
+  this repository's own scripts invoke directly), `timeout`, and `unzip`
+  (the Claude Code action's first step extracts its Bun runtime from a zip
+  archive with it). A missing tool fails the stage fast, before any
+  billable agent step, naming every missing tool at once — never just the
+  first one found. An image with no POSIX shell at all is reported as that,
+  rather than as "every tool is missing".
 
   **`timeout` became a real requirement in v2.5.1, before it was listed
   here or checked.** The shared lifecycle gate wraps its issue-state read
@@ -962,7 +963,7 @@ know before you set either:
   `timeout`, those stages currently fail at their first step with a bare
   exit 127 that the gate reports as an unclassifiable failure. From this
   version the prerequisite check names it directly instead. Any image
-  already carrying the other seven tools almost certainly has it —
+  already carrying the other tools almost certainly has it —
   `timeout` is part of coreutils, and BusyBox provides an applet — so in
   practice this changes the error message you would get, not whether your
   image works.

@@ -96,7 +96,7 @@ jobs:
           REGISTRY_USERNAME: ${{ secrets.container-registry-username }}
           REGISTRY_PASSWORD: ${{ secrets.container-registry-password }}
         run: |
-          REQUIRED_TOOLS="git gh jq curl python3 bash node timeout"
+          REQUIRED_TOOLS="git gh jq curl python3 bash node timeout unzip"
 
           if [ -n "$REGISTRY_USERNAME" ] && [ -n "$REGISTRY_PASSWORD" ]; then
             candidate=""
