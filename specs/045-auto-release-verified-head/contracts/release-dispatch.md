@@ -85,14 +85,26 @@ only place this feature writes anything maintainer-facing:
   `success` and still produced no JSON verdict is filed as infrastructure
   with a body that says the contract broke, not that the job stopped.
 - **`release-outcome: released`**: close the open `auto-release:failed`
-  issue with a comment naming the version that shipped -- only when the
-  issue's recorded `**Mode**:` is the mode this run verified, or it
-  records no single mode (an early job crash, a collision, a release
-  failure). A pass in the other mode leaves it open and says so in the
-  summary: a default-runner pass is no evidence about a container-mode
-  failure (#966). `detect` re-verifies the current head on that mode's
-  next turn even when nothing is unreleased; a pass there closes the
-  issue and cuts nothing.
+  issue with a comment naming the version that shipped -- only when
+  nothing on it stays outstanding (#966). The issue's record is its body
+  plus every comment the auto-release bot added (failures are deduped by
+  label, so a later failure, possibly in the other mode, lands as a
+  comment). Each failure entry is owned by the mode on its `**Mode**:`
+  line (`container` or `default-runner`), or by no single mode
+  (`unrecorded`: an early job crash, a collision, a release failure, a
+  decide-version or dispatch-release crash after a pass). The rule: a
+  mode's failure stays outstanding until a later pass in that same mode;
+  an unrecorded failure until any later success. A success that leaves
+  something outstanding but cleared something leaves a `**Passed mode**:`
+  note on the issue (`none` for the quiet day, which verified nothing),
+  so later runs read it; one that cleared nothing only says so in the
+  summary. A default-runner pass is no evidence about a container-mode
+  failure. `detect` re-verifies the current head on each outstanding
+  mode's next turn even when nothing is unreleased; a pass there cuts
+  nothing. A success never closes an issue `detect` did not see open,
+  nor one whose record it could not read. The reader is
+  `.github/actions/_shared/auto-release-outstanding-modes.sh`; Gates 52
+  and 64 run it against what `report` writes.
 
 This is a deliberately different mechanism from `wing-commander-callout`
 (research.md D13) — there is no spec lifecycle issue for an auto-release

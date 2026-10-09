@@ -23,8 +23,11 @@ the year-boundary scenario actually fails on that defect.
 whether this run verifies (unreleased head, or an open failure in this
 run's mode)": a container-mode failure was closed by a default-runner pass
 and then never re-checked, because every later quiet day skipped
-verification. The step is executed, verbatim, under a stubbed `gh issue
-list`, for each recorded mode an open auto-release:failed issue can carry;
+verification. The step is executed, verbatim, under a stubbed `gh` (the
+issue lookup and the issue's comments), for each record an open
+auto-release:failed issue can carry -- including a failure in the other
+mode appended as a bot comment, which a body-only read missed, and the
+pass notes report leaves when a success clears only part of the record;
 static checks then pin the job conditions that consume its output
 (e2e-pin and verify-e2e on run-verification, decide-version still on
 has-new-work), and mutations put the mode-blind shapes back.
@@ -40,8 +43,8 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wc_shell_harness import (  # noqa: E402
-    ensure_jq, find_job, find_step, parse_github_output, resolve_bash,
-    run_step, use_utf8_stdout)
+    ensure_jq, find_job, find_step, gh_error_stub_arm, parse_github_output,
+    resolve_bash, run_step, use_utf8_stdout)
 
 WORKFLOW = ".github/workflows/auto-release.yml"
 STEP = "Derive this run's execution mode (container vs default-runner)"
@@ -195,91 +198,174 @@ def mut_day_of_year_parity(script):
 # --------------------------------------------------------------------------
 # #966: detect's "does this run verify" decision.
 # --------------------------------------------------------------------------
-# Answers the step's one `gh issue list` with GH_STUB_ISSUE (already the
-# `.[0] // empty` the step's --jq would print), or fails it when
-# GH_STUB_FAIL is set. Anything else is a regression the stub refuses.
-STUB_GH = r'''#!/usr/bin/env bash
-if [ "$1 $2" = "issue list" ]; then
-  if [ -n "${GH_STUB_FAIL:-}" ]; then
-    echo "HTTP 502: Bad Gateway" >&2
-    exit 1
-  fi
-  printf '%s' "${GH_STUB_ISSUE:-}"
-  exit 0
-fi
+# The step makes two `gh` reads: the open auto-release:failed issue (`gh
+# issue list ... --json number,body --jq '.[0] // empty'`) and that issue's
+# comments (`gh api repos/.../issues/N/comments --paginate --jq ...`). The
+# stub answers each from raw API-shaped JSON (GH_STUB_ISSUES, a list of
+# issues; GH_STUB_COMMENTS, the REST comment list) and applies the step's
+# own --jq filter to it with the real jq, so the bot-only comment filter is
+# exercised too. A failed read is gh's real two-stream shape (#497):
+# the JSON error body on stdout, the message on stderr, exit 1.
+def _stub_gh():
+    return r'''#!/usr/bin/env bash
+filter=""
+args=("$@")
+for ((i = 0; i < ${#args[@]}; i++)); do
+  if [ "${args[$i]}" = "--jq" ]; then filter="${args[$((i + 1))]}"; fi
+done
+case "$*" in
+  "issue list"*)
+    if [ -n "${GH_STUB_FAIL_LIST:-}" ]; then
+''' + gh_error_stub_arm("issue list", "502", "Bad Gateway") + r'''    fi
+    printf '%s' "${GH_STUB_ISSUES:-[]}" | jq -r "$filter"
+    exit $?
+    ;;
+  "api repos/"*"/issues/"*"/comments --paginate"*)
+    if [ -n "${GH_STUB_FAIL_COMMENTS:-}" ]; then
+''' + gh_error_stub_arm("api comments", "403", "Resource not accessible by integration") + r'''    fi
+    printf '%s' "${GH_STUB_COMMENTS:-[]}" | jq -c "$filter"
+    exit $?
+    ;;
+esac
 echo "unexpected gh invocation: $*" >&2
 exit 1
 '''
 
 
-def _issue(body):
-    return json.dumps({"number": 966, "body": body})
+BOT = "github-actions[bot]"
 
 
-CONTAINER_FAILURE = _issue(
-    "**Classification**: pipeline defect (fail-wrong-output)\n\n"
-    "**Verified head**: abc\n\n**Mode**: container\n\n"
-    "**Failing check**: verify-image-prerequisites\n")
-DEFAULT_RUNNER_FAILURE = _issue(
-    "**Classification**: infrastructure (fail-infra)\r\n\r\n"
-    "**Mode**: default-runner\r\n\r\n**Failing check**: reset\r\n")
-PAUSED_FAILURE = _issue(
-    "**Mode**: default-runner (container mode not exercised: paused)\n")
-UNKNOWN_MODE_FAILURE = _issue(
-    "**Classification**: infrastructure (job failure)\n\n"
-    "**Mode**: unknown (this run did not reach verify-e2e, or its mode "
-    "could not be read)\n")
-COLLISION_FAILURE = _issue(
-    "**Classification**: version collision\n\n**Verified head**: abc\n")
+def _issues(body, number=966):
+    return json.dumps([{"number": number, "body": body}])
 
-# (name, HAS_NEW_WORK, MODE, issue JSON -- "" for none open, None for "the
-#  lookup fails" -- expected run-verification, expected failure-issue-mode)
+
+def _comments(*entries):
+    """REST-shaped comments: (login, body) pairs, oldest first."""
+    return json.dumps([{"user": {"login": login}, "body": body}
+                       for login, body in entries])
+
+
+CONTAINER_BODY = ("**Classification**: pipeline defect (fail-wrong-output)\n\n"
+                  "**Verified head**: abc\n\n**Mode**: container\n\n"
+                  "**Failing check**: verify-image-prerequisites\n")
+DEFAULT_RUNNER_BODY = ("**Classification**: infrastructure (fail-infra)\r\n\r\n"
+                       "**Mode**: default-runner\r\n\r\n**Failing check**: reset\r\n")
+PAUSED_BODY = ("**Classification**: infrastructure (fail-infra)\n\n"
+               "**Mode**: default-runner (container mode not exercised: paused)\n")
+UNKNOWN_BODY = ("**Classification**: infrastructure (job failure)\n\n"
+                "**Mode**: unknown (this run did not reach verify-e2e, or its mode "
+                "could not be read)\n")
+COLLISION_BODY = "**Classification**: version collision\n\n**Verified head**: abc\n"
+CONTAINER_PASS_NOTE = ("**Passed mode**: container\n\nv2.7.7 released. Still "
+                       "outstanding on this issue: default-runner\n")
+DEFAULT_RUNNER_PASS_NOTE = "**Passed mode**: default-runner\n\nv2.7.7 released.\n"
+
+# (name, HAS_NEW_WORK, MODE, issues JSON (None: the list read fails),
+#  comments JSON (None: the comment read fails), expected run-verification,
+#  expected failure-issue-modes, expected failure-issue)
+NO_COMMENTS = "[]"
 VERIFY_SCENARIOS = [
     ("no unreleased head, open container failure, container turn: the "
      "failing mode is re-verified (#966)",
-     "false", "container", CONTAINER_FAILURE, "true", "container"),
+     "false", "container", _issues(CONTAINER_BODY), NO_COMMENTS,
+     "true", "container", "966"),
     ("no unreleased head, open container failure, default-runner turn: "
      "nothing to verify -- the container failure waits for its own turn",
-     "false", "default-runner", CONTAINER_FAILURE, "false", "container"),
+     "false", "default-runner", _issues(CONTAINER_BODY), NO_COMMENTS,
+     "false", "container", "966"),
     ("no unreleased head, open default-runner failure (CRLF body), "
      "default-runner turn: re-verified",
-     "false", "default-runner", DEFAULT_RUNNER_FAILURE, "true", "default-runner"),
+     "false", "default-runner", _issues(DEFAULT_RUNNER_BODY), NO_COMMENTS,
+     "true", "default-runner", "966"),
     ("a failure filed on a paused container turn records the default-runner "
      "mode that actually ran",
-     "false", "default-runner", PAUSED_FAILURE, "true", "default-runner"),
+     "false", "default-runner", _issues(PAUSED_BODY), NO_COMMENTS,
+     "true", "default-runner", "966"),
     ("an open failure no single mode owns is unrecorded and triggers nothing",
-     "false", "container", UNKNOWN_MODE_FAILURE, "false", "unrecorded"),
+     "false", "container", _issues(UNKNOWN_BODY), NO_COMMENTS,
+     "false", "unrecorded", "966"),
     ("a collision body carries no Mode line: unrecorded",
-     "false", "default-runner", COLLISION_FAILURE, "false", "unrecorded"),
+     "false", "default-runner", _issues(COLLISION_BODY), NO_COMMENTS,
+     "false", "unrecorded", "966"),
+    # The known gap this PR closes: failures are deduped by label, so a
+    # later failure in the other mode is a COMMENT on the open issue.
+    ("a container failure appended as a bot comment to an unrecorded issue: "
+     "the container turn re-verifies it",
+     "false", "container", _issues(UNKNOWN_BODY),
+     _comments((BOT, CONTAINER_BODY)), "true", "container unrecorded", "966"),
+    ("a default-runner failure appended to a container issue: both modes "
+     "outstanding, and the default-runner turn re-verifies",
+     "false", "default-runner", _issues(CONTAINER_BODY),
+     _comments((BOT, DEFAULT_RUNNER_BODY)), "true", "container default-runner", "966"),
+    ("a container pass note clears container; the appended default-runner "
+     "failure is still outstanding, the container turn does nothing",
+     "false", "container", _issues(CONTAINER_BODY),
+     _comments((BOT, DEFAULT_RUNNER_BODY), (BOT, CONTAINER_PASS_NOTE)),
+     "false", "default-runner", "966"),
+    ("a failure in a mode AFTER that mode's pass note is outstanding again",
+     "false", "container", _issues(CONTAINER_BODY),
+     _comments((BOT, DEFAULT_RUNNER_BODY), (BOT, CONTAINER_PASS_NOTE),
+               (BOT, CONTAINER_BODY)),
+     "true", "container default-runner", "966"),
+    ("a pass note clears an unrecorded failure too, whatever its mode",
+     "false", "container", _issues(UNKNOWN_BODY),
+     _comments((BOT, DEFAULT_RUNNER_PASS_NOTE)), "false", "", "966"),
+    ("a human's comment quoting a Mode or Passed mode line is not evidence",
+     "false", "default-runner", _issues(CONTAINER_BODY),
+     _comments(("a-maintainer", DEFAULT_RUNNER_BODY),
+               ("a-maintainer", "**Passed mode**: container\n")),
+     "false", "container", "966"),
+    ("a bot comment that is neither a failure nor a pass note is ignored",
+     "false", "container", _issues(COLLISION_BODY),
+     _comments((BOT, "**Mode**: container (quoted in passing)\n")),
+     "false", "unrecorded", "966"),
     ("no open failure issue, nothing unreleased: a quiet day",
-     "false", "container", "", "false", ""),
+     "false", "container", "[]", NO_COMMENTS, "false", "", ""),
     ("unreleased head, no open failure: verified, as before",
-     "true", "default-runner", "", "true", ""),
+     "true", "default-runner", "[]", NO_COMMENTS, "true", "", ""),
     ("unreleased head, open failure in the other mode: still verified",
-     "true", "default-runner", CONTAINER_FAILURE, "true", "container"),
+     "true", "default-runner", _issues(CONTAINER_BODY), NO_COMMENTS,
+     "true", "container", "966"),
     ("the issue lookup fails: unreadable, and only unreleased work verifies",
-     "false", "container", None, "false", "unreadable"),
+     "false", "container", None, NO_COMMENTS, "false", "unreadable", ""),
     ("the issue lookup fails on a day with unreleased work: still verified",
-     "true", "container", None, "true", "unreadable"),
+     "true", "container", None, NO_COMMENTS, "true", "unreadable", ""),
+    ("the comment read fails: unreadable -- never the body alone, which "
+     "would miss a failure appended in the other mode",
+     "false", "container", _issues(CONTAINER_BODY), None,
+     "false", "unreadable", ""),
+    ("the issue lookup returns no usable number: unreadable",
+     "false", "container", json.dumps([{"body": CONTAINER_BODY}]), NO_COMMENTS,
+     "false", "unreadable", ""),
 ]
 
+OUTSTANDING_REL = os.path.join(".github", "actions", "_shared",
+                               "auto-release-outstanding-modes.sh")
 
-def run_verify_step(script, has_new_work, mode, issue, tmproot):
+
+def run_verify_step(script, has_new_work, mode, issues, comments, tmproot):
     import shutil
     workdir = tempfile.mkdtemp(dir=tmproot)
     runner_temp = tempfile.mkdtemp(dir=tmproot)
     bindir = tempfile.mkdtemp(dir=tmproot)
+    # The step runs the shipped reader repo-relative, as it does from the
+    # real checkout; stage it at that path in this bare workdir.
+    dst = os.path.join(workdir, OUTSTANDING_REL)
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    shutil.copyfile(OUTSTANDING_REL, dst)
     gh_path = os.path.join(bindir, "gh")
     with open(gh_path, "w", encoding="utf-8", newline="\n") as fh:
-        fh.write(STUB_GH)
+        fh.write(_stub_gh())
     os.chmod(gh_path, 0o755)
     env = {
         "GH_TOKEN": "dummy-token",
         "GITHUB_REPOSITORY": "charlesguse/wing-commander",
         "HAS_NEW_WORK": has_new_work,
         "MODE": mode,
-        "GH_STUB_ISSUE": issue or "",
-        "GH_STUB_FAIL": "1" if issue is None else "",
+        "GH_STUB_ISSUES": issues or "",
+        "GH_STUB_FAIL_LIST": "1" if issues is None else "",
+        "GH_STUB_COMMENTS": comments or "",
+        "GH_STUB_FAIL_COMMENTS": "1" if comments is None else "",
         "PATH": bindir + os.pathsep + os.environ["PATH"],
     }
     rc, out, outputs, _summary = run_step(BASH, script, workdir, env,
@@ -291,9 +377,10 @@ def run_verify_step(script, has_new_work, mode, issue, tmproot):
 
 def verify_suite(script, tmproot):
     failures = []
-    for name, new_work, mode, issue, want_run, want_mode in VERIFY_SCENARIOS:
+    for (name, new_work, mode, issues, comments, want_run, want_modes,
+         want_issue) in VERIFY_SCENARIOS:
         tag = f"[{name}]"
-        rc, out, o = run_verify_step(script, new_work, mode, issue, tmproot)
+        rc, out, o = run_verify_step(script, new_work, mode, issues, comments, tmproot)
         if rc != 0:
             failures.append(f"{tag} the step exited {rc} -- it must never fail "
                             f"detect:\n{out}")
@@ -301,11 +388,12 @@ def verify_suite(script, tmproot):
         if o.get("run-verification") != want_run:
             failures.append(f"{tag} run-verification={o.get('run-verification')!r}, "
                             f"expected {want_run!r}; outputs {o}")
-        if (o.get("failure-issue-mode") or "") != want_mode:
-            failures.append(f"{tag} failure-issue-mode={o.get('failure-issue-mode')!r}, "
-                            f"expected {want_mode!r}")
-        if issue and o.get("failure-issue") != "966":
-            failures.append(f"{tag} failure-issue={o.get('failure-issue')!r}, expected '966'")
+        if (o.get("failure-issue-modes") or "") != want_modes:
+            failures.append(f"{tag} failure-issue-modes={o.get('failure-issue-modes')!r}, "
+                            f"expected {want_modes!r}")
+        if (o.get("failure-issue") or "") != want_issue:
+            failures.append(f"{tag} failure-issue={o.get('failure-issue')!r}, "
+                            f"expected {want_issue!r}")
     return failures
 
 
@@ -330,21 +418,42 @@ def static_failures(conds):
     return failures
 
 
-SAME_MODE_ARM = 'elif [ -n "$MODE" ] && [ "$failure_mode" = "$MODE" ]; then'
+SAME_MODE_ARM = 'elif [ -n "$MODE" ] && [[ " $failure_modes " == *" $MODE "* ]]; then'
+COMMENTS_READ = ('{ printf \'%s\' "$issue_json" | jq -c \'{body: (.body // "")}\'; '
+                 'printf \'%s\\n\' "$comments"; }')
+
+
+def _swap(script, old, new, what):
+    if script.count(old) != 1:
+        sys.exit(f"::error::verify-auto-release-mode: could not locate {what} "
+                 "to mutate -- update this harness alongside the step.")
+    return script.replace(old, new, 1)
 
 
 def mut_mode_blind_verification(script):
     """Put back "verify only unreleased work" -- the pre-#966 shape."""
-    if script.count(SAME_MODE_ARM) != 1:
-        sys.exit("::error::verify-auto-release-mode: could not locate the "
-                 "same-mode re-verification arm to mutate -- update this "
-                 "harness alongside the step.")
-    return script.replace(SAME_MODE_ARM, "elif false; then", 1)
+    return _swap(script, SAME_MODE_ARM, "elif false; then",
+                 "the same-mode re-verification arm")
 
 
 def mut_any_failure_verifies(script):
     """Re-verify on any open failure, whatever mode it records."""
-    return script.replace(SAME_MODE_ARM, 'elif [ -n "$failure_mode" ]; then', 1)
+    return _swap(script, SAME_MODE_ARM, 'elif [ -n "$failure_modes" ]; then',
+                 "the same-mode re-verification arm")
+
+
+def mut_body_only(script):
+    """The known gap: read only the body's mode, so a failure appended as a
+    comment in the other mode is invisible."""
+    return _swap(script, COMMENTS_READ,
+                 '{ printf \'%s\' "$issue_json" | jq -c \'{body: (.body // "")}\'; }',
+                 "the body-plus-comments record")
+
+
+def mut_any_author(script):
+    """Read every commenter's text as evidence, not only the bot's."""
+    return _swap(script, '.[] | select(.user.login == "github-actions[bot]") | {body}',
+                 '.[] | {body}', "the bot-only comment filter")
 
 
 def main():
@@ -393,7 +502,11 @@ def main():
                 ("re-verification blind to the open failure's mode (#966)",
                  mut_mode_blind_verification),
                 ("any open failure re-verifies, whatever its mode",
-                 mut_any_failure_verifies)):
+                 mut_any_failure_verifies),
+                ("only the issue body's mode is read, never a failure appended "
+                 "as a comment (#966 review)", mut_body_only),
+                ("any commenter's text is read as evidence, not only the bot's",
+                 mut_any_author)):
             mutated = mutate(verify_script)
             if mutated == verify_script or not verify_suite(mutated, tmproot):
                 print(f"::error::MUTATION SURVIVED -- {label}")

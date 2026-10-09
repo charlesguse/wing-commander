@@ -56,7 +56,7 @@ jobs:
       # to default-runner instead.
       paused: ${{ steps.mode.outputs.paused }}
       failure-issue: ${{ steps.verification.outputs.failure-issue }}
-      failure-issue-mode: ${{ steps.verification.outputs.failure-issue-mode }}
+      failure-issue-modes: ${{ steps.verification.outputs.failure-issue-modes }}
       run-verification: ${{ steps.verification.outputs.run-verification }}
     steps:
       - name: Checkout
@@ -147,22 +147,28 @@ jobs:
           echo "mode=$mode" >> "$GITHUB_OUTPUT"
           echo "paused=$paused" >> "$GITHUB_OUTPUT"
 
-      # A pass may only clear a failure filed in the same mode (#966): a
+      # A pass may only clear a failure it actually disproves (#966): a
       # container-mode failure that a default-runner pass closed was never
       # re-checked, because every later quiet day skipped verification
       # entirely. So read the one open auto-release:failed issue -- the
       # same `.[0]` the durable-failure-issue composite's label lookup
-      # finds and would close -- and its recorded `**Mode**:` line
-      # (report's write_failure_body is that line's one home). When it
-      # records THIS run's mode, verify the current head even with nothing
-      # unreleased; decide-version still runs only on has-new-work, so the
-      # release decision is unchanged. The alternation itself is
-      # untouched (specs/054 FR-018/SC-009): the other mode's failure
-      # waits for its own turn.
-      #   failure-issue-mode: empty (none open) | container | default-runner
-      #     | unrecorded (open, no single mode owns it -- an early job
-      #     crash, a collision, a release failure) | unreadable (the
-      #     lookup failed; report then closes nothing it cannot attribute)
+      # finds and would close -- and its whole record: the body, then
+      # every comment the auto-release bot added (a later failure lands
+      # there as a comment, never as a second issue, and may be in the
+      # other mode). _shared/auto-release-outstanding-modes.sh is the one
+      # reader of that record and documents the rule: a mode's failure is
+      # outstanding until a later pass in that mode, a failure no single
+      # mode owns until any later success. When THIS run's mode is
+      # outstanding, verify the current head even with nothing unreleased;
+      # decide-version still runs only on has-new-work, so the release
+      # decision is unchanged. The alternation itself is untouched
+      # (specs/054 FR-018/SC-009): the other mode's failure waits for its
+      # own turn.
+      #   failure-issue-modes: the outstanding set, space-separated, from
+      #     `container default-runner unrecorded` -- empty when no issue is
+      #     open (failure-issue empty) or the open one has nothing left
+      #     outstanding -- or `unreadable` (the lookup failed; report then
+      #     closes nothing it cannot attribute)
       # Never exits non-zero: a failed lookup degrades to "verify only
       # unreleased work", today's behaviour, never to a red detect.
       - name: Decide whether this run verifies (unreleased head, or an open failure in this run's mode)
@@ -175,32 +181,44 @@ jobs:
         run: |
           set -uo pipefail
           failure_issue=""
-          failure_mode=""
+          failure_modes=""
           lookup_err="$(mktemp)"
+          unreadable() {
+            failure_issue=""
+            failure_modes=unreadable
+            echo "::warning::auto-release detect: could not read the open auto-release:failed issue's record -- $1 -- verifying only unreleased work this run, and closing nothing."
+          }
           if issue_json="$(gh issue list --repo "$GITHUB_REPOSITORY" --label "auto-release:failed" --state open --json number,body --jq '.[0] // empty' 2>"$lookup_err")"; then
             if [ -n "$issue_json" ]; then
               failure_issue="$(printf '%s' "$issue_json" | jq -r '.number // empty' 2>/dev/null || true)"
-              recorded="$(printf '%s' "$issue_json" | jq -r '.body // ""' 2>/dev/null | tr -d '\r' | sed -n 's/^\*\*Mode\*\*: \([a-z-]*\).*/\1/p' | head -n 1 || true)"
-              case "$recorded" in
-                container|default-runner) failure_mode="$recorded" ;;
-                *) failure_mode=unrecorded ;;
-              esac
+              if ! [[ "$failure_issue" =~ ^[0-9]+$ ]]; then
+                unreadable "the issue lookup returned no issue number"
+              else
+                # One {body} object per comment, oldest first, collected
+                # across pages below; the bot's own comments only -- nobody
+                # else's text is evidence.
+                if ! comments="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${failure_issue}/comments" --paginate --jq '.[] | select(.user.login == "github-actions[bot]") | {body}' 2>"$lookup_err")"; then
+                  comments=""
+                  unreadable "$(tr '\n' ' ' < "$lookup_err")"
+                elif ! failure_modes="$( { printf '%s' "$issue_json" | jq -c '{body: (.body // "")}'; printf '%s\n' "$comments"; } | jq -cs 'map(.body)' | bash .github/actions/_shared/auto-release-outstanding-modes.sh 2>"$lookup_err")"; then
+                  unreadable "$(tr '\n' ' ' < "$lookup_err")"
+                fi
+              fi
             fi
           else
-            failure_mode=unreadable
-            echo "::warning::auto-release detect: could not read the open auto-release:failed issue -- $(tr '\n' ' ' < "$lookup_err") -- verifying only unreleased work this run, and closing nothing."
+            unreadable "$(tr '\n' ' ' < "$lookup_err")"
           fi
 
           run_verification=false
           if [ "$HAS_NEW_WORK" = "true" ]; then
             run_verification=true
-          elif [ -n "$MODE" ] && [ "$failure_mode" = "$MODE" ]; then
+          elif [ -n "$MODE" ] && [[ " $failure_modes " == *" $MODE "* ]]; then
             run_verification=true
-            echo "detect: no unreleased head, but #${failure_issue} records a ${failure_mode}-mode failure and this run's mode is ${MODE} -- re-verifying the current head (nothing will be released)." >> "$GITHUB_STEP_SUMMARY"
+            echo "detect: no unreleased head, but #${failure_issue} still awaits a passing ${MODE}-mode run (outstanding: ${failure_modes}) and this run's mode is ${MODE} -- re-verifying the current head (nothing will be released)." >> "$GITHUB_STEP_SUMMARY"
           fi
           {
             echo "failure-issue=$failure_issue"
-            echo "failure-issue-mode=$failure_mode"
+            echo "failure-issue-modes=$failure_modes"
             echo "run-verification=$run_verification"
           } >> "$GITHUB_OUTPUT"
 
@@ -2370,15 +2388,22 @@ jobs:
           HEAD_SHA: ${{ needs.detect.outputs.head-sha }}
           HAS_NEW_WORK: ${{ needs.detect.outputs.has-new-work }}
           # #966: whether verify-e2e ran on a head with nothing unreleased
-          # (an open failure in this run's mode), and the open failure
-          # issue's recorded mode, which decides what a pass may close.
+          # (an open failure outstanding in this run's mode), and the open
+          # failure issue's outstanding modes, which decide what a pass may
+          # close.
           RUN_VERIFICATION: ${{ needs.detect.outputs.run-verification }}
           FAILURE_ISSUE: ${{ needs.detect.outputs.failure-issue }}
-          FAILURE_ISSUE_MODE: ${{ needs.detect.outputs.failure-issue-mode }}
+          FAILURE_ISSUE_MODES: ${{ needs.detect.outputs.failure-issue-modes }}
+          # Whether the container leg is paused at all (not only on this
+          # run's container day): a left-open container failure must not
+          # promise a container turn the pause will never run.
+          CONTAINER_PAUSED: ${{ vars.WING_COMMANDER_AUTO_RELEASE_E2E_CONTAINER_PAUSED }}
           TAG_EXISTS: ${{ needs.detect.outputs.tag-exists }}
           LATEST_TAG: ${{ needs.detect.outputs.latest-tag }}
           VERDICT_JSON: ${{ needs.verify-e2e.outputs.verdict }}
-          PAUSED: ${{ needs.verify-e2e.outputs.paused }}
+          # Derived in detect; read from there, not through verify-e2e's
+          # copy, which is empty whenever verify-e2e did not run.
+          PAUSED: ${{ needs.detect.outputs.paused }}
           # specs/055-unattended-e2e-gates FR-019/FR-025: gate evidence for
           # a pass verdict's summary, read only on the pass path below.
           SPEC_DRAFT_PR: ${{ needs.verify-e2e.outputs.spec-draft-pr }}
@@ -2434,32 +2459,54 @@ jobs:
           # the note is decided here rather than templated into the `with:`
           # block.
           #
-          # A success closes only a failure it actually disproves (#966):
-          # the second argument is the mode this run verified (empty when
-          # it verified nothing), and an issue recording a container or
-          # default-runner failure stays open unless that same mode passed
-          # -- a default-runner pass says nothing about a container image.
-          # An issue no single mode owns (unrecorded) is cleared by any
-          # success, as before; one whose mode detect could not read
-          # (unreadable) is never closed blind.
+          # A success closes only what it actually disproves (#966). detect
+          # hands this step the open issue's outstanding modes
+          # (FAILURE_ISSUE_MODES, read off the body AND every failure the
+          # bot appended as a comment -- _shared/auto-release-outstanding-
+          # modes.sh documents the rule); the second argument here is the
+          # mode this run verified (empty when it verified nothing). This
+          # success clears `unrecorded` (a failure no single mode owns) and
+          # its own mode; a default-runner pass says nothing about a
+          # container image. Nothing left -> close. Something cleared but
+          # something left -> a pass note on the issue, so the next run's
+          # detect knows this mode is done. Nothing cleared -> left open,
+          # said in the summary. No issue open when detect looked -> close
+          # nothing (never one filed mid-run that detect never read), and
+          # one whose record detect could not read (unreadable) is never
+          # closed blind.
           close_failure_on_success() {
             local resolved_note="${1:-${NEXT_VERSION} released.}" passed_mode="${2:-}"
-            case "$FAILURE_ISSUE_MODE" in
-              container|default-runner)
-                if [ "$FAILURE_ISSUE_MODE" != "$passed_mode" ]; then
-                  echo "failure issue #${FAILURE_ISSUE} left open: it records a ${FAILURE_ISSUE_MODE}-mode failure, and this run verified ${passed_mode:-nothing} -- the next ${FAILURE_ISSUE_MODE}-mode turn re-checks it" >> "$GITHUB_STEP_SUMMARY"
-                  return 0
-                fi
-                ;;
-              unreadable)
-                echo "any open failure issue left open: detect could not read its recorded mode" >> "$GITHUB_STEP_SUMMARY"
-                return 0
-                ;;
-            esac
-            {
-              echo "action=close"
-              echo "close-comment=Resolved: ${resolved_note}"
-            } >> "$GITHUB_OUTPUT"
+            local m remaining="" waits
+            if [ "$FAILURE_ISSUE_MODES" = "unreadable" ]; then
+              echo "any open failure issue left open: detect could not read its record" >> "$GITHUB_STEP_SUMMARY"
+              return 0
+            fi
+            [ -n "$FAILURE_ISSUE" ] || return 0
+            for m in $FAILURE_ISSUE_MODES; do
+              if [ "$m" != "unrecorded" ] && [ "$m" != "$passed_mode" ]; then
+                remaining="${remaining:+$remaining }$m"
+              fi
+            done
+            if [ -z "$remaining" ]; then
+              {
+                echo "action=close"
+                echo "close-comment=Resolved: ${resolved_note}"
+              } >> "$GITHUB_OUTPUT"
+              return 0
+            fi
+            waits="the next ${remaining// / and } turn re-checks it"
+            if [[ " $remaining " == *" container "* ]] && [ "$CONTAINER_PAUSED" = "true" ]; then
+              waits="the container leg is paused (WING_COMMANDER_AUTO_RELEASE_E2E_CONTAINER_PAUSED), so no container turn re-checks it until the pause is lifted"
+            fi
+            echo "failure issue #${FAILURE_ISSUE} left open: it still awaits a passing ${remaining// / and }-mode run, and this run verified ${passed_mode:-nothing} -- ${waits}" >> "$GITHUB_STEP_SUMMARY"
+            if [ "$remaining" != "$FAILURE_ISSUE_MODES" ]; then
+              {
+                echo "**Passed mode**: ${passed_mode:-none (nothing verified; clears only failures no single mode owns)}"
+                echo ""
+                echo "${resolved_note} Still outstanding on this issue: ${remaining// / and } -- it closes once that mode passes too. ${RUN_URL}"
+              } > "$RUNNER_TEMP/auto-release-pass-note.md"
+              echo "action=note" >> "$GITHUB_OUTPUT"
+            fi
           }
 
           # #325: a need whose job ended `failure` wrote no outputs, so
@@ -2666,7 +2713,7 @@ jobs:
           # never dispatched.
           case "$DECIDE_RESULT" in
             failure)
-              file_job_failure decide-version "computing the next version from the merged pull requests' labels" "$mode"
+              file_job_failure decide-version "computing the next version from the merged pull requests' labels" "not mode-specific (the job failed after a ${verified_mode}-mode pass)"
               exit 0
               ;;
             cancelled)
@@ -2691,7 +2738,7 @@ jobs:
           # #325: no outcome at all means dispatch-release never wrote one --
           # the job crashed (infrastructure) or never ran.
           if [ "$DISPATCH_RESULT" = "failure" ]; then
-            file_job_failure dispatch-release "dispatching release.yml and correlating its run" "$mode"
+            file_job_failure dispatch-release "dispatching release.yml and correlating its run" "not mode-specific (the job failed after a ${verified_mode}-mode pass)"
             exit 0
           fi
           if [ -z "$TAG_MATCHES" ]; then
@@ -2794,3 +2841,25 @@ jobs:
           # the mode and head that passed, this attempt's own release names
           # the version it cut.
           close-comment: ${{ steps.outcome.outputs.close-comment }}
+
+      # #966: a success that cleared part of the open issue's record but
+      # not all of it (the other mode's failure, appended as a comment, is
+      # still unproven) leaves the issue open and records what it proved,
+      # so the next run's detect stops re-verifying this mode. The note's
+      # `**Passed mode**:` line is read by _shared/auto-release-outstanding-
+      # modes.sh, and Gate 52 runs the note the step above writes through
+      # it. On the exact issue detect read, never a fresh label lookup: a
+      # note belongs to the record it was computed from. Not the durable-
+      # failure-issue composite: its `report` would file a new issue if
+      # this one had been closed meanwhile, and a pass is not a failure.
+      - name: Record the pass on the failure issue
+        if: steps.outcome.outputs.action == 'note'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FAILURE_ISSUE: ${{ needs.detect.outputs.failure-issue }}
+        run: |
+          set -uo pipefail
+          if ! gh issue comment "$FAILURE_ISSUE" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/auto-release-pass-note.md"; then
+            echo "::warning::auto-release report: could not record the pass on #${FAILURE_ISSUE} -- the next run in this mode re-verifies it instead."
+          fi

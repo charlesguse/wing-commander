@@ -47,8 +47,11 @@ release-dispatch-failed — the three distinct bodies today), then calls
 Three paths close a standing report, and they name different things
 (the third, a same-mode re-verification of an already-released head,
 names the mode and head that passed -- #966); all three are mode-aware,
-closing only an issue whose recorded mode the run verified or that
-records none. The original two name different versions:
+closing only an issue with nothing left outstanding once the run's
+success is applied (the rule is in specs/045's release-dispatch.md; a
+partial clear is a direct `gh issue comment` pass note on the issue
+`detect` read, not this composite, whose `report` would file a new issue
+if that one had closed meanwhile). The original two name different versions:
 this attempt's own release (`"Resolved: ${NEXT_VERSION} released."`, the
 unchanged text from today's `close_failure_on_success`) and the quiet day
 whose latest tag already points at HEAD (`"Resolved: ${LATEST_TAG}

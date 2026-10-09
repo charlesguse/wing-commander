@@ -45,11 +45,21 @@ report/close/dedup mechanics are its own concern, not re-tested here.
 
 #966 made the close decision mode-aware: a default-runner pass closed a
 container-mode failure that was never fixed, and nothing re-checked it.
-`detect` now hands this step the open failure issue's recorded mode
-(FAILURE_ISSUE_MODE) and whether it re-verified an already-released head
-(RUN_VERIFICATION); the scenarios marked #966 below cover a pass in the
-other mode (left open), in the same mode (closed), a quiet day beside a
-mode-owned failure (left open), and a re-verification's pass and failure.
+`detect` now hands this step the open failure issue's OUTSTANDING modes
+(FAILURE_ISSUE_MODES, read off its body and every failure the bot
+appended as a comment by _shared/auto-release-outstanding-modes.sh) and
+whether it re-verified an already-released head (RUN_VERIFICATION); the
+scenarios marked #966 below cover a pass in the other mode (left open),
+in the same mode (closed), a pass that clears one of two outstanding
+modes (a pass note, left open), a quiet day beside a mode-owned failure
+(left open), a paused container leg, no issue open when detect looked
+(nothing closed), and a re-verification's pass and failure.
+
+The writer and the reader of that record are tied together here: every
+failure body this step writes (`record_modes`) and every pass note
+(`note_record`) is run through the shipped reader script, so a reworded
+`**Mode**:` or `**Passed mode**:` line fails this gate instead of
+silently reading as `unrecorded`.
 
 It ends with MUTATION checks that put each defect back and assert the
 suite then fails. A test that cannot fail is not a test.
@@ -60,6 +70,7 @@ Requires: bash, jq. See wc_shell_harness.py for running this on Windows.
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 
@@ -162,8 +173,11 @@ BASE = dict(DETECT_RESULT="skipped", PIN_RESULT="skipped", VERIFY_RESULT="skippe
             TAG_MATCHES="", CORRELATION="", CORRELATED_RUN_ID="",
             CORRELATED_RUN_URL="", REQUEST_TIME=REQUEST_TIME,
             DISPATCH_REJECTED="false", PAUSED="false",
-            # #966: no open failure issue unless a scenario says otherwise.
-            RUN_VERIFICATION="false", FAILURE_ISSUE="", FAILURE_ISSUE_MODE="",
+            # #966: an open failure issue no single mode owns unless a
+            # scenario says otherwise -- the pre-#966 "any success closes
+            # it" situation every older scenario was written against.
+            RUN_VERIFICATION="false", FAILURE_ISSUE="966",
+            FAILURE_ISSUE_MODES="unrecorded", CONTAINER_PAUSED="",
             # specs/055-unattended-e2e-gates FR-019/FR-025: gate evidence
             # for a pass verdict's summary.
             SPEC_DRAFT_PR="", PLAN_PR="", FINALIZE_PR="",
@@ -184,7 +198,7 @@ DEFAULT_RUNNER_PASS = json.dumps({"outcome": "pass", "verified_head": HEAD,
 REVERIFIED = dict(DETECT_RESULT="success", HAS_NEW_WORK="false", RUN_VERIFICATION="true",
                   TAG_EXISTS="true", LATEST_TAG="v2.7.7", HEAD_SHA=HEAD,
                   VERIFY_RESULT="success", FAILURE_ISSUE="966",
-                  FAILURE_ISSUE_MODE="container")
+                  FAILURE_ISSUE_MODES="container")
 
 SCENARIOS = [
     dict(
@@ -194,6 +208,7 @@ SCENARIOS = [
         action="report",
         body_contains=["infrastructure", "`detect`", RUN_URL, "unknown"],
         body_excludes=["release.yml was dispatched"],
+        record_modes="unrecorded",
         summary_contains="infrastructure failure",
         summary_excludes="no release tag exists yet",
     ),
@@ -288,6 +303,7 @@ SCENARIOS = [
         action="report",
         body_contains=["pipeline defect", "spec.md content", "https://example.invalid/e2e"],
         body_excludes=["infrastructure"],
+        record_modes="default-runner",
     ),
     dict(
         name="verdict passed but decide-version crashed: infrastructure "
@@ -297,8 +313,13 @@ SCENARIOS = [
                  LATEST_TAG="v2.7.2", HEAD_SHA=HEAD, VERIFY_RESULT="success",
                  VERDICT_JSON=PASS, DECIDE_RESULT="failure"),
         action="report",
-        body_contains=["infrastructure", "`decide-version`", RUN_URL],
+        body_contains=["infrastructure", "`decide-version`", RUN_URL,
+                       "**Mode**: not mode-specific (the job failed after a "
+                       "container-mode pass)"],
         body_excludes=["release.yml was dispatched", "release failure"],
+        # #966: a crash after the pass is no evidence about either mode, so
+        # any later success may clear it -- not only the next container one.
+        record_modes="unrecorded",
         summary_excludes="release dispatch failed",
     ),
     dict(
@@ -318,6 +339,7 @@ SCENARIOS = [
         action="report",
         body_contains=["version collision", "v2.8.0"],
         summary_contains="version collision",
+        record_modes="unrecorded",
     ),
     dict(
         name="released, own run correlated (FR-007): the open failure "
@@ -411,6 +433,7 @@ SCENARIOS = [
         action="report",
         body_contains=["infrastructure", "`dispatch-release`", RUN_URL],
         body_excludes=["release failure"],
+        record_modes="unrecorded",
     ),
     dict(
         name="dispatch-release skipped after a pass (paused mid-run): "
@@ -596,23 +619,28 @@ SCENARIOS = [
         name="#966: a default-runner pass releases but leaves an open "
              "container-mode failure open -- it says nothing about the image",
         env=dict(RELEASED, VERDICT_JSON=DEFAULT_RUNNER_PASS,
-                 FAILURE_ISSUE="966", FAILURE_ISSUE_MODE="container"),
+                 FAILURE_ISSUE="966", FAILURE_ISSUE_MODES="container"),
         action=None,
-        summary_contains="failure issue #966 left open: it records a container-mode "
-                         "failure, and this run verified default-runner",
+        summary_contains="failure issue #966 left open: it still awaits a passing "
+                         "container-mode run, and this run verified default-runner "
+                         "-- the next container turn re-checks it",
     ),
     dict(
         name="#966: a paused container turn's default-runner pass leaves a "
-             "container failure open too",
+             "container failure open too, and says the pause blocks the re-check",
         env=dict(RELEASED, VERDICT_JSON=DEFAULT_RUNNER_PASS, PAUSED="true",
-                 FAILURE_ISSUE="966", FAILURE_ISSUE_MODE="container"),
+                 CONTAINER_PAUSED="true",
+                 FAILURE_ISSUE="966", FAILURE_ISSUE_MODES="container"),
         action=None,
-        summary_contains="failure issue #966 left open",
+        summary_contains="the container leg is paused "
+                         "(WING_COMMANDER_AUTO_RELEASE_E2E_CONTAINER_PAUSED), so no "
+                         "container turn re-checks it until the pause is lifted",
+        summary_excludes="the next container turn re-checks it",
     ),
     dict(
         name="#966: a same-mode pass that releases closes the failure",
         env=dict(RELEASED, VERDICT_JSON=PASS,
-                 FAILURE_ISSUE="966", FAILURE_ISSUE_MODE="container"),
+                 FAILURE_ISSUE="966", FAILURE_ISSUE_MODES="container"),
         action="close",
         close_comment_contains="v2.7.7 released",
         summary_excludes="left open",
@@ -621,32 +649,91 @@ SCENARIOS = [
         name="#966: a failure no single mode owns (unrecorded) is cleared by "
              "any release, as before",
         env=dict(RELEASED, VERDICT_JSON=DEFAULT_RUNNER_PASS,
-                 FAILURE_ISSUE="966", FAILURE_ISSUE_MODE="unrecorded"),
+                 FAILURE_ISSUE="966", FAILURE_ISSUE_MODES="unrecorded"),
         action="close",
         close_comment_contains="v2.7.7 released",
     ),
     dict(
-        name="#966: an open failure whose mode detect could not read is never "
-             "closed blind",
-        env=dict(RELEASED, VERDICT_JSON=PASS, FAILURE_ISSUE_MODE="unreadable"),
+        name="#966: a container failure appended as a comment to a "
+             "default-runner issue -- a default-runner pass clears only its "
+             "own mode, records that in a pass note, and leaves it open",
+        env=dict(RELEASED, VERDICT_JSON=DEFAULT_RUNNER_PASS, FAILURE_ISSUE="966",
+                 FAILURE_ISSUE_MODES="container default-runner"),
+        action="note",
+        note_contains=["**Passed mode**: default-runner", "v2.7.7 released.",
+                       "Still outstanding on this issue: container", RUN_URL],
+        summary_contains="failure issue #966 left open: it still awaits a passing "
+                         "container-mode run, and this run verified default-runner",
+        # The record this note is appended to, oldest first, and what the
+        # shipped reader must make of it afterwards.
+        note_record=(["**Classification**: infrastructure (fail-infra)\n\n"
+                      "**Mode**: default-runner\n",
+                      "**Classification**: pipeline defect (fail-wrong-output)\n\n"
+                      "**Mode**: container\n"], "container"),
+    ),
+    dict(
+        name="#966: both modes outstanding, a container pass releases: "
+             "pass note, still awaiting default-runner",
+        env=dict(RELEASED, VERDICT_JSON=PASS, FAILURE_ISSUE="966",
+                 FAILURE_ISSUE_MODES="container default-runner unrecorded"),
+        action="note",
+        note_contains=["**Passed mode**: container",
+                       "Still outstanding on this issue: default-runner"],
+        note_record=(["**Mode**: unknown (this run did not reach verify-e2e)\n",
+                      "**Classification**: x\n\n**Mode**: container\n",
+                      "**Classification**: y\n\n**Mode**: default-runner\n"],
+                     "default-runner"),
+    ),
+    dict(
+        name="#966: a quiet day beside a container failure and an unrecorded "
+             "one clears the unrecorded one in a pass note, container stays",
+        env=dict(DETECT_RESULT="success", HAS_NEW_WORK="false", TAG_EXISTS="true",
+                 LATEST_TAG="v2.7.7", HEAD_SHA=HEAD, FAILURE_ISSUE="966",
+                 FAILURE_ISSUE_MODES="container unrecorded"),
+        action="note",
+        note_contains=["**Passed mode**: none", "v2.7.7 already released."],
+        note_record=(["**Classification**: version collision\n",
+                      "**Classification**: x\n\n**Mode**: container\n"],
+                     "container"),
+    ),
+    dict(
+        name="#966: an open failure whose record detect could not read is "
+             "never closed blind",
+        env=dict(RELEASED, VERDICT_JSON=PASS, FAILURE_ISSUE="",
+                 FAILURE_ISSUE_MODES="unreadable"),
         action=None,
-        summary_contains="detect could not read its recorded mode",
+        summary_contains="detect could not read its record",
+    ),
+    dict(
+        name="#966: no failure issue was open when detect looked -- a success "
+             "closes nothing, never one filed or reopened mid-run",
+        env=dict(RELEASED, VERDICT_JSON=PASS, FAILURE_ISSUE="", FAILURE_ISSUE_MODES=""),
+        action=None,
+        summary_excludes="left open",
+    ),
+    dict(
+        name="#966: an open issue whose record has nothing left outstanding "
+             "closes on any success",
+        env=dict(RELEASED, VERDICT_JSON=DEFAULT_RUNNER_PASS, FAILURE_ISSUE="966",
+                 FAILURE_ISSUE_MODES=""),
+        action="close",
+        close_comment_contains="v2.7.7 released",
     ),
     dict(
         name="#966: a quiet day beside an open container failure leaves it "
-             "open -- nothing was verified",
+             "open -- nothing was verified, and nothing cleared, so no note",
         env=dict(DETECT_RESULT="success", HAS_NEW_WORK="false", TAG_EXISTS="true",
                  LATEST_TAG="v2.7.7", HEAD_SHA=HEAD,
-                 FAILURE_ISSUE="966", FAILURE_ISSUE_MODE="container"),
+                 FAILURE_ISSUE="966", FAILURE_ISSUE_MODES="container"),
         action=None,
-        summary_contains="failure issue #966 left open: it records a container-mode "
-                         "failure, and this run verified nothing",
+        summary_contains="failure issue #966 left open: it still awaits a passing "
+                         "container-mode run, and this run verified nothing",
     ),
     dict(
         name="#966: a quiet day still closes an unrecorded failure as stale",
         env=dict(DETECT_RESULT="success", HAS_NEW_WORK="false", TAG_EXISTS="true",
                  LATEST_TAG="v2.7.7", HEAD_SHA=HEAD,
-                 FAILURE_ISSUE="966", FAILURE_ISSUE_MODE="unrecorded"),
+                 FAILURE_ISSUE="966", FAILURE_ISSUE_MODES="unrecorded"),
         action="close",
         close_comment_contains="v2.7.7 already released",
     ),
@@ -670,6 +757,17 @@ SCENARIOS = [
         action="report",
         body_contains=["**Mode**: container", "missing:unzip"],
         summary_excludes="no new work since",
+        record_modes="container",
+    ),
+    dict(
+        name="#966: a failure on a paused container turn is recorded under the "
+             "default-runner mode that actually ran",
+        env=dict(DETECT_RESULT="success", HAS_NEW_WORK="true", TAG_EXISTS="true",
+                 LATEST_TAG="v2.7.2", HEAD_SHA=HEAD, VERIFY_RESULT="success",
+                 VERDICT_JSON=WRONG_OUTPUT, PAUSED="true", CONTAINER_PAUSED="true"),
+        action="report",
+        body_contains=["**Mode**: default-runner (container mode not exercised: paused)"],
+        record_modes="default-runner",
     ),
 ]
 
@@ -732,21 +830,42 @@ def run_scenario(script, env, sc, tmproot):
     run_env["GIT_STUB_CURRENT_TIP"] = sc.get("current_tip") or run_env.get("HEAD_SHA") or HEAD
 
     rc, out, outputs, summary = run_step(BASH, script, workdir, run_env, runner_temp)
-    body = ""
+    body = note = ""
     body_path = os.path.join(runner_temp, "auto-release-failure-body.md")
     if os.path.exists(body_path):
         with open(body_path, encoding="utf-8") as fh:
             body = fh.read()
+    note_path = os.path.join(runner_temp, "auto-release-pass-note.md")
+    if os.path.exists(note_path):
+        with open(note_path, encoding="utf-8") as fh:
+            note = fh.read()
     for d in (workdir, runner_temp, bindir):
         shutil.rmtree(d, ignore_errors=True)
-    return rc, out, summary, outputs, body
+    return rc, out, summary, outputs, body, note
+
+
+# #966: detect's one reader of the failure issue's record. Run here against
+# what this step actually writes, so the `**Mode**:`/`**Passed mode**:`
+# writer and the reader cannot drift apart with both gates green.
+OUTSTANDING_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..",
+                                  "actions", "_shared", "auto-release-outstanding-modes.sh")
+
+
+def read_record(entries):
+    """The outstanding modes the shipped reader finds in `entries` (the
+    issue body, then the bot's comments, oldest first)."""
+    proc = subprocess.run([BASH, OUTSTANDING_SCRIPT], input=json.dumps(entries),
+                          capture_output=True, text=True, encoding="utf-8")
+    if proc.returncode != 0:
+        return f"<reader exited {proc.returncode}: {proc.stderr.strip()}>"
+    return proc.stdout.strip()
 
 
 def suite(script, env, tmproot):
     failures = []
     for sc in SCENARIOS:
         tag = f"[{sc['name']}]"
-        rc, out, summary, outputs, body = run_scenario(script, env, sc, tmproot)
+        rc, out, summary, outputs, body, note = run_scenario(script, env, sc, tmproot)
         if rc != 0:
             failures.append(f"{tag} the step exited {rc}:\n{out}")
             continue
@@ -771,6 +890,29 @@ def suite(script, env, tmproot):
         for needle in sc.get("body_excludes", []):
             if needle in body:
                 failures.append(f"{tag} failure body wrongly contains {needle!r}:\n{body}")
+        for needle in sc.get("note_contains", []):
+            if needle not in note:
+                failures.append(f"{tag} pass note lacks {needle!r}:\n{note}")
+        if sc["action"] != "note" and note:
+            failures.append(f"{tag} a pass note was written without action=note:\n{note}")
+        if "record_modes" in sc:
+            got = read_record([body])
+            if got != sc["record_modes"]:
+                failures.append(f"{tag} detect's reader makes {got!r} of this failure "
+                                f"body, expected {sc['record_modes']!r}:\n{body}")
+            # The same body appended as a comment to an issue another mode
+            # filed: still a failure entry, still in its own mode.
+            got = read_record(["**Classification**: other\n\n**Mode**: unknown\n", body])
+            want = " ".join(sorted({"unrecorded", sc["record_modes"]}))
+            if got != want:
+                failures.append(f"{tag} as an appended comment, detect's reader makes "
+                                f"{got!r} of this failure body, expected {want!r}")
+        if "note_record" in sc:
+            prior, want = sc["note_record"]
+            got = read_record(prior + [note])
+            if got != want:
+                failures.append(f"{tag} after this pass note detect's reader still finds "
+                                f"{got!r} outstanding, expected {want!r}:\n{note}")
         if "summary_contains" in sc and sc["summary_contains"] not in summary:
             failures.append(f"{tag} step summary lacks {sc['summary_contains']!r}: "
                             f"{summary!r}")
@@ -892,8 +1034,55 @@ def _swap(script, old, new, what):
 
 def mut_mode_blind_close(script):
     """#966: any pass closes the open failure, whatever mode it records."""
-    return _swap(script, 'if [ "$FAILURE_ISSUE_MODE" != "$passed_mode" ]; then',
+    return _swap(script,
+                 'if [ "$m" != "unrecorded" ] && [ "$m" != "$passed_mode" ]; then',
                  "if false; then", "the same-mode close check")
+
+
+def mut_no_pass_note(script):
+    """#966: a pass that clears one of two outstanding modes records
+    nothing, so detect keeps re-verifying a mode that already passed and the
+    issue can never close."""
+    return _swap(script, 'if [ "$remaining" != "$FAILURE_ISSUE_MODES" ]; then',
+                 "if false; then", "the pass-note branch")
+
+
+def mut_close_without_detect_issue(script):
+    """#966 review: close whatever issue the composite finds at report time,
+    even one detect never saw (filed or reopened mid-run)."""
+    return _swap(script, '[ -n "$FAILURE_ISSUE" ] || return 0', ":",
+                 "the no-issue-at-detect guard")
+
+
+def mut_pause_ignored_in_left_open(script):
+    """#966 review: promise a container re-check the pause will never run."""
+    return _swap(script, '&& [ "$CONTAINER_PAUSED" = "true" ]; then', "&& false; then",
+                 "the paused-container-leg wording")
+
+
+def mut_post_pass_crash_owned_by_mode(script):
+    """#966 review: a decide-version/dispatch-release crash after the pass
+    recorded under that pass's mode, so only that mode's next pass clears it."""
+    old = '"not mode-specific (the job failed after a ${verified_mode}-mode pass)"'
+    if script.count(old) != 2:
+        sys.exit("::error::verify-auto-release-report: could not locate the two "
+                 "post-pass job-failure mode arguments to mutate -- update this "
+                 "harness alongside the step.")
+    return script.replace(old, '"$mode"')
+
+
+def mut_mode_line_reworded(script):
+    """#966 review: write_failure_body's Mode line reworded, so detect's
+    reader finds no mode and every failure reads as unrecorded."""
+    return _swap(script, 'echo "**Mode**: ${mode}"', 'echo "**Mode:** ${mode}"',
+                 "write_failure_body's Mode line")
+
+
+def mut_pass_note_line_reworded(script):
+    """#966 review: the pass note's machine line reworded, so detect's
+    reader never sees the pass."""
+    return _swap(script, 'echo "**Passed mode**: ', 'echo "**Passed**: ',
+                 "the pass note's Passed mode line")
 
 
 def mut_reverification_read_as_quiet_day(script):
@@ -915,6 +1104,16 @@ def mut_reverification_pass_falls_through(script):
 
 MUTATIONS = [
     ("#966: a pass closes a failure filed in the other mode", mut_mode_blind_close),
+    ("#966: a partial pass leaves no pass note", mut_no_pass_note),
+    ("#966: a success closes an issue detect never read", mut_close_without_detect_issue),
+    ("#966: a paused container leg still promised a re-check",
+     mut_pause_ignored_in_left_open),
+    ("#966: a post-pass job crash owned by the pass's mode",
+     mut_post_pass_crash_owned_by_mode),
+    ("#966: the failure body's Mode line drifts from detect's reader",
+     mut_mode_line_reworded),
+    ("#966: the pass note's line drifts from detect's reader",
+     mut_pass_note_line_reworded),
     ("#966: a re-verification read as a quiet day", mut_reverification_read_as_quiet_day),
     ("#966: a re-verification's pass never closes the failure",
      mut_reverification_pass_falls_through),
