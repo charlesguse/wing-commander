@@ -1344,7 +1344,7 @@ or one-cycle-at-a-time manual.
 
 | | |
 |---|---|
-| Inputs | `spec-dir` (string, required); `issue-number` (number, required); `converged` (boolean, required); `summary-model` (string, `claude-haiku-4-5`); `max-turns` (number, `20`) |
+| Inputs | `spec-dir` (string, required); `issue-number` (number, required); `converged` (boolean, required); `summary-model` (string, `claude-haiku-5-5`); `max-turns` (number, `20`) |
 | Preconditions | full artifact set on `spec/NNN-slug`; branch has commits ahead of your default branch; no final PR exists yet (any state) |
 | Side effects | final PR `spec/NNN-slug` → default branch (summary, changed files, remaining-manual-work); same remaining-work list commented on the issue; `spec-meta.json` → `review`; `stage:review` label |
 | Outputs | `pr-number` |
@@ -1365,7 +1365,7 @@ issue instead of losing it as an orphan line.
 
 | | |
 |---|---|
-| Inputs | `head-ref`, `base-ref` (string, required); `merged` (boolean, required); `pr-number` (number, required); `merge-commit-sha` (string, `""`); `summary-model` (string, `claude-haiku-4-5`); `max-turns` (number, `20`) |
+| Inputs | `head-ref`, `base-ref` (string, required); `merged` (boolean, required); `pr-number` (number, required); `merge-commit-sha` (string, `""`); `summary-model` (string, `claude-haiku-5-5`); `max-turns` (number, `20`) |
 | Preconditions | matched spec's artifacts exist and self-identify consistently (identity refusal otherwise) |
 | Side effects | self-selects exactly one outcome from the raw PR facts: merged final PR → full teardown + issue closed (`teardown-done`); unmerged draft PR → draft deleted, issue left open (`teardown-rejected`); unmerged final/plan/tasks/impl PR (the `plan/`, `tasks/`, `impl/` prefixes are configurable defaults, set via `WING_COMMANDER_PLAN_PREFIX`/`WING_COMMANDER_TASKS_PREFIX`/`WING_COMMANDER_IMPL_PREFIX`) → marked stalled, nothing deleted (`mark-stalled`); everything else → no-op |
 | Outputs | `outcome` (`teardown-done` \| `teardown-rejected` \| `mark-stalled` \| `none`) |

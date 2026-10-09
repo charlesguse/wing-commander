@@ -49,7 +49,7 @@ jobs:
     outputs:
       model: ${{ steps.tier.outputs.tier }}
       escalation-model: ${{ vars.WING_COMMANDER_IMPLEMENT_ESCALATION_MODEL || 'claude-opus-5-5' }}
-      summary-model: ${{ vars.WING_COMMANDER_SUMMARY_MODEL || 'claude-haiku-4-5' }}
+      summary-model: ${{ vars.WING_COMMANDER_SUMMARY_MODEL || 'claude-haiku-5-5' }}
     steps:
       - name: Resolve model tier
         id: tier

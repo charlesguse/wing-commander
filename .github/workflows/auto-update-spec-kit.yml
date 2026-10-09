@@ -3534,7 +3534,7 @@ jobs:
           gh issue view "$ISSUE_NUMBER" --json body,comments --jq '.body, (.comments[].body)' \
             > "$RUNNER_TEMP/question-context.md" 2>/dev/null || printf '' > "$RUNNER_TEMP/question-context.md"
 
-      # T026: claude-haiku-4-5, bounded, read-only — map the reply onto one
+      # T026: claude-haiku-5-5, bounded, read-only — map the reply onto one
       # of the previously posted options, or "unrecognized". The comment body
       # is framed as untrusted data throughout (constitution V, Scenario 15).
       #
@@ -3583,7 +3583,7 @@ jobs:
             option. If it does not, set recognized=false. Never invent an
             option that was not posted.
           claude_args: |
-            --model claude-haiku-4-5
+            --model claude-haiku-5-5
             --max-turns ${{ steps.interpret-ceiling.outputs.ceiling }}
             --allowedTools "Read"
             --disallowedTools "WebSearch,WebFetch,Write,Edit,Bash"
