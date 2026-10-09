@@ -88,7 +88,9 @@ drop-detection.
    with the agent-started guard on the very restart-command arm that says
    "its pushed commits are on the branch", and implement's agent-started
    never read from its non-pushing progress composer
-   (AGENT_STARTED_EXCLUDED_SIGNALS).
+   (AGENT_STARTED_EXCLUDED_SIGNALS). The agent-started wiring is also
+   checked on every other job in those files whose reason step calls the
+   composite (pr-conversation's stalled-mark).
 7. Every agent step in a `full_subject` job has its own refresh/agent-ran/
    credential-status composite call, matched by `uses:` rather than any one
    step's `name:` (REQUIRED_PER_AGENT_STEP_COMPOSITES, exempting
@@ -888,7 +890,7 @@ AGENT_STARTED_EXCLUDED_SIGNALS = {
 }
 
 
-def check_agent_started_wiring(path, job, wf):
+def check_agent_started_wiring(path, job, wf, job_name="stalled"):
     """-> list[str]. #889/#972: the agent-started signal reaches the stall
     reason and the notice. The entry job is the one the reason step's own
     agent-ran input names; it must publish agent-started from
@@ -902,7 +904,7 @@ def check_agent_started_wiring(path, job, wf):
     ran = str((reason.get("with") or {}).get("agent-ran", "")).strip()
     m = _AGENT_RAN_NEEDS_RE.match(ran)
     if not m:
-        return [f"{path} [stalled] step {REASON_STEP_NAME!r}: agent-ran is "
+        return [f"{path} [{job_name}] step {REASON_STEP_NAME!r}: agent-ran is "
                 f"not a needs.<job>.outputs.agent-ran reference ({ran!r}) "
                 f"-- cannot check its agent-started wiring (#889)"]
     entry = m.group(1)
@@ -955,7 +957,7 @@ def check_agent_started_wiring(path, job, wf):
             continue
         if str(w.get("agent-started", "")).strip() != want:
             failures.append(
-                f"{path} [stalled] step {step.get('name')!r} passes "
+                f"{path} [{job_name}] step {step.get('name')!r} passes "
                 f"agent-ran but not agent-started: {want} (#889) -- got "
                 f"{w.get('agent-started')!r}")
         restart = str(w.get("restart-command", ""))
@@ -970,7 +972,7 @@ def check_agent_started_wiring(path, job, wf):
         if "pushed commits are on the branch" in restart and (
                 not arms or any(a != want_ref for a in arms)):
             failures.append(
-                f"{path} [stalled] step {step.get('name')!r}: its "
+                f"{path} [{job_name}] step {step.get('name')!r}: its "
                 f"restart-command offers \"its pushed commits are on the "
                 f"branch\" without the {guard!r} guard, so an agent that "
                 f"never started is told its commits exist (#889)")
@@ -1009,6 +1011,19 @@ def scan(loaded):
                 f"stall-reason composite call (FR-022)")
             continue
         failures += check_stall_reason_job(path, job, wf)
+        # Review pass 3 of PR #978: every OTHER job in the file whose
+        # reason step also resolves through the composite (pr-conversation's
+        # stalled-mark, which records the reason in the lifecycle record)
+        # gets the same agent-started wiring check -- otherwise dropping
+        # agent-started there passes while the record blames an agent that
+        # never started.
+        for other_name, other in (wf.get("jobs") or {}).items():
+            if other_name == job_name:
+                continue
+            step = _find_step(other or {}, REASON_STEP_NAME) or {}
+            if REASON_COMPOSITE in str(step.get("uses", "")):
+                failures += check_agent_started_wiring(path, other, wf,
+                                                    other_name)
 
     # Checks 3/5 -- job-agnostic, every job in every loaded file (D9).
     for path, wf in loaded.items():
@@ -1402,6 +1417,20 @@ def mut_stall_reason_drops_agent_started(loaded):
     run whose agent action died in its own setup is reported as "the agent
     step ran ... its pushed commits are on the branch" again."""
     job = loaded[".github/workflows/intake.yml"]["jobs"]["stalled"]
+    step = _find_step(job, REASON_STEP_NAME)
+    assert step is not None, "fixture assumption broken: step renamed"
+    assert "agent-started" in (step.get("with") or {}), \
+        "fixture assumption broken: agent-started already absent"
+    del step["with"]["agent-started"]
+
+
+def mut_stall_mark_reason_drops_agent_started(loaded):
+    """Review pass 3 of PR #978: pr-conversation's stalled-mark job (not the
+    'stalled' job STALL_REASON_JOBS names) stops passing agent-started to
+    its own stall-reason call, so the lifecycle record's stall-mark reason
+    says the agent ran for an agent that never started."""
+    job = loaded[".github/workflows/pr-conversation.yml"]["jobs"][
+        "stalled-mark"]
     step = _find_step(job, REASON_STEP_NAME)
     assert step is not None, "fixture assumption broken: step renamed"
     assert "agent-started" in (step.get("with") or {}), \
@@ -1827,6 +1856,8 @@ SIMPLE_MUTATIONS = [
      mut_stall_reason_single_home_reverted),
     ("intake's stall reason stops passing agent-started (#889)",
      mut_stall_reason_drops_agent_started),
+    ("pr-conversation's stalled-mark stall reason stops passing "
+     "agent-started", mut_stall_mark_reason_drops_agent_started),
     ("implement's stall notice stops passing agent-started (#889)",
      mut_notice_drops_agent_started),
     ("clarify's restart-command loses its agent-started guard (#889)",
