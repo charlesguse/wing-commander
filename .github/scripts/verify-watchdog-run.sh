@@ -332,11 +332,21 @@ if [ "${CREATE_ISSUE:-false}" = "true" ]; then
   failed_step="$(jq -r "$diag"' [diag | .steps[]? | select(.conclusion == "failure")
     | "\(.number)|\(.name)"] | first // empty' <<<"$jobs_json")"
   step_how="its jobs-API conclusion is failure"
+  # epoch: an ISO-8601 time in any shape the API emits - whole seconds and
+  # Z as observed, or fractional seconds and a +/-HH:MM offset as the REST
+  # docs show - since bare fromdateiso8601 accepts only the first and, on
+  # anything else, errors the whole program into "no step". A step whose
+  # times still cannot be read is skipped on its own.
   if [ -z "$failed_step" ] && [ -n "$first_error" ]; then
     failed_step="$(jq -r --arg ts "${first_error%% *}" "$diag"'
-      ($ts | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601) as $t
+      def epoch: sub("\\.[0-9]+"; "")
+        | if test("[+-][0-9]{2}:[0-9]{2}$")
+          then .[-6:] as $o | (.[:-6] + "Z" | fromdateiso8601)
+               - (($o[0:1] + "1" | tonumber) * (($o[1:3] | tonumber) * 3600 + ($o[4:6] | tonumber) * 60))
+          else fromdateiso8601 end;
+      ($ts | epoch) as $t
       | [diag | .steps[]? | select(.started_at != null and .completed_at != null)
-         | select((.started_at | fromdateiso8601) <= $t and (.completed_at | fromdateiso8601) >= $t)
+         | select(try ((.started_at | epoch) <= $t and (.completed_at | epoch) >= $t) catch false)
          | "\(.number)|\(.name)"] | first // empty' <<<"$jobs_json" 2>/dev/null)"
     step_how="it was running when the job log's first ##[error] line was written"
   fi

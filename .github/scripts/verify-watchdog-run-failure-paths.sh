@@ -293,6 +293,23 @@ scenarios() {
   else
     fail "$tag s18: expected inspected-run, failed-step and first-error pointers in the filed body; got rc=$rc: $(grep -E 'Inspected run|Diagnose job|First error' "$work/calls.log" | tr '\n' ' ')"
   fi
+
+  # s23: the same failure with the step times in the shape the REST docs
+  # show (fractional seconds, a -07:00 offset) instead of the whole-second
+  # Z observed: the log line still lands in the Diagnose step, never in
+  # "no failed step is determinable".
+  cp "$work/fixtures/jobs.json" "$work/jobs.json.bak_ts"
+  sed -i 's/"2026-08-25T01:00:50Z", "completed_at": "2026-08-25T01:01:10Z"/"2026-08-24T18:00:50.000-07:00", "completed_at": "2026-08-24T18:01:10.000-07:00"/;
+          s/"2026-08-25T01:01:10Z", "completed_at": "2026-08-25T01:01:11Z"/"2026-08-24T18:01:10.000-07:00", "completed_at": "2026-08-24T18:01:11.000-07:00"/' \
+    "$work/fixtures/jobs.json"
+  run_scenario "$script" '' true
+  if [ "$rc" = "1" ] \
+     && grep -qF 'first failed step: [Diagnose](https://example.invalid/o/r/actions/runs/9001/job/2#step:15:1)' "$work/calls.log"; then
+    ok "$tag s23: offset/fractional step times still locate the failed diagnose step"
+  else
+    fail "$tag s23: expected the Diagnose step pointer with offset step times; got rc=$rc: $(grep -o 'Diagnose job: [^)]*)[^)]*' "$work/calls.log")"
+  fi
+  mv "$work/jobs.json.bak_ts" "$work/fixtures/jobs.json"
   mv "$work/diagnose.log.bak" "$work/fixtures/diagnose.log"
 
   # s19: the same failure, but this time the run also landed under the
@@ -646,10 +663,12 @@ run_mutation() {
   fi
 }
 
-# The mutant sits beside copies of the modules the script imports from its
-# own directory, as the real script does in .github/scripts.
+# The mutant sits beside copies of every module in .github/scripts, as the
+# real script does there - never a hand-kept list of what board_eligibility
+# imports today, which a new sibling import would turn into every dedup
+# scenario failing for a reason no mutation names.
 mkdir -p "$work/scripts"
-cp .github/scripts/board_eligibility.py .github/scripts/board_item_marker.py "$work/scripts/"
+cp .github/scripts/*.py "$work/scripts/"
 mut="$work/scripts/mutated.sh"
 
 # m1: the run-fetch guard degrades to a pass -> s1 must catch it.
@@ -696,10 +715,10 @@ sed 's/^       and marker in (issue.get("body") or "").splitlines() \\$/       a
 run_mutation "$mut" "m6" "s17 s22" "deduping on title alone is caught"
 
 # m7: the step-locating log fallback never finds the first ##[error] line.
-# s18 must catch it.
+# s18 and s23 must catch it.
 sed 's/grep -a -m1 '"'"'##\\\[error\\\]'"'"'/grep -a -m1 '"'"'NO-SUCH-LINE'"'"'/' \
   "$SCRIPT" > "$mut"
-run_mutation "$mut" "m7" "s18" "losing the first-error pointer is caught"
+run_mutation "$mut" "m7" "s18 s23" "losing the first-error pointer is caught"
 
 # m8: the fingerprint hashes the duration-band reasons too, so whether a
 # crash also beat that day's floor splits one defect into two issues. s19
@@ -726,5 +745,12 @@ sed 's/ or "")\.splitlines() \\$/ or "") \\/' \
   "$SCRIPT" > "$mut"
 run_mutation "$mut" "m11" "s22" "a marker matched inside quoted log text is caught"
 
-echo "Gate 36: 22 scenario(s) x 11 runs + 10 mutation(s); $bad failure(s)."
+# m12: the step times are read with bare fromdateiso8601 again, which
+# rejects an offset, so the failed-step pointer silently vanishes. s23
+# must catch it.
+sed 's/        | if test("\[+-\]\[0-9\]{2}:\[0-9\]{2}\$")$/        | if false/' \
+  "$SCRIPT" > "$mut"
+run_mutation "$mut" "m12" "s23" "an offset step time losing the failed-step pointer is caught"
+
+echo "Gate 36: 23 scenario(s) x 12 runs + 11 mutation(s); $bad failure(s)."
 exit $([ "$bad" -eq 0 ] && echo 0 || echo 1)
