@@ -39,7 +39,10 @@ def compared_count(path, since):
                 rec = json.loads(line)
             except ValueError as exc:
                 raise SystemExit(f"trial-bound: {path}:{lineno}: {exc}") from exc
-            if (rec.get("run") or {}).get("run_label") != "diagnose-shadow":
+            # The metrics record carries run_label at the top level; the
+            # contract's run.run_label spelling is accepted too.
+            label = rec.get("run_label") or (rec.get("run") or {}).get("run_label")
+            if label != "diagnose-shadow":
                 continue
             outcome = (rec.get("trial") or {}).get("outcome")
             if outcome is None or outcome in NOT_COUNTED:

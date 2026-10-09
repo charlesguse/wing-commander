@@ -838,6 +838,30 @@ def case_multi_model_record_tokens_sum_across_per_model():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def case_refusal_flag_follows_terminal_stop_reason():
+    """Spec 110 trial-record contract: `refusal` is true iff the terminal
+    result carries stop_reason "refusal", and false on an ordinary run."""
+    case = "refusal flag follows the terminal stop_reason"
+    for stop_reason, want in (("refusal", True), ("end_turn", False)):
+        tmp = tempfile.mkdtemp(prefix="wc-metrics-record-")
+        try:
+            transcript = healthy_transcript(main=2)
+            transcript[-1]["stop_reason"] = stop_reason
+            rc, _outputs, _summary, record, output = run_case(
+                tmp, records=transcript, env_over={"MODEL": "claude-haiku-5-5"})
+            if rc != 0 or record is None:
+                fail(case, f"exited {rc}: {output.strip()[:300]}")
+                return
+            if record.get("refusal") is not want:
+                fail(case, f"stop_reason {stop_reason!r} must give "
+                           f"refusal={want}, got {record.get('refusal')!r}")
+                return
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+    note("the record's refusal flag is true only for a terminal "
+         "stop_reason of refusal")
+
+
 def case_cost_line_formatter_has_exactly_one_home():
     """The 12-site paste this gate's docstring describes must not creep
     back: a workflow or composite action needing the cost line consumes
@@ -1353,6 +1377,7 @@ CASES = [
     case_plan_tasks_branch_advance_call_sites_emit_conforming_records,
     case_spec_identity_is_own_recorded_verbatim,
     case_multi_model_record_tokens_sum_across_per_model,
+    case_refusal_flag_follows_terminal_stop_reason,
     case_cost_line_formatter_has_exactly_one_home,
     case_cost_report_has_exactly_one_home,
     case_container_pipefail_steps_pin_shell_bash,

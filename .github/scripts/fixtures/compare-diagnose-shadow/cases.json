@@ -1,0 +1,40 @@
+{
+  "agreed": {
+    "baseline_verdict": "healthy", "shadow_verdict": "healthy", "refusal": "false",
+    "baseline": {"findings": [{"class": "pipeline-defect", "evidence": [{"signalId": "s1"}]}]},
+    "shadow": {"findings": [{"class": "pipeline-defect", "evidence": [{"signalId": "s1"}]}]},
+    "expect": "agreed"
+  },
+  "disagreed": {
+    "baseline_verdict": "healthy", "shadow_verdict": "healthy", "refusal": "false",
+    "baseline": {"findings": [{"class": "pipeline-defect", "evidence": [{"signalId": "s1"}]}]},
+    "shadow": {"findings": [{"class": "denied-tool", "evidence": [{"signalId": "s1"}]}]},
+    "expect": "disagreed"
+  },
+  "exhausted": {
+    "baseline_verdict": "healthy", "shadow_verdict": "exhausted", "refusal": "false",
+    "baseline": {"findings": []}, "shadow": {"findings": []},
+    "expect": "exhausted"
+  },
+  "malformed": {
+    "baseline_verdict": "healthy", "shadow_verdict": "healthy", "refusal": "false",
+    "baseline": {"findings": []},
+    "shadow": {"findings": [{"class": "not-a-class", "evidence": []}]},
+    "expect": "malformed"
+  },
+  "error": {
+    "baseline_verdict": "healthy", "shadow_verdict": "rate-limited", "refusal": "false",
+    "baseline": {"findings": []}, "shadow": {"findings": []},
+    "expect": "error"
+  },
+  "refused": {
+    "baseline_verdict": "healthy", "shadow_verdict": "healthy", "refusal": "true",
+    "baseline": {"findings": []}, "shadow": {"findings": []},
+    "expect": "refused"
+  },
+  "no-baseline": {
+    "baseline_verdict": "exhausted", "shadow_verdict": "healthy", "refusal": "false",
+    "baseline": {"findings": []}, "shadow": {"findings": []},
+    "expect": "no-baseline"
+  }
+}
