@@ -77,11 +77,16 @@ runs:
         # The never-started branch outranks every other agent-ran branch:
         # the post-agent steps that fail after a setup failure (the
         # non-healthy-verdict check, typically) are its consequence, so the
-        # named step is kept only as context, never as the cause.
+        # named step is kept only as context, never as the cause -- and so
+        # is a failed credential re-establishment, as on every other branch
+        # that knows both (third maintainer review of PR #407).
         if [ "$AGENT_RAN" = "true" ] && [ "$AGENT_STARTED" = "false" ]; then
           reason="the agent step's action failed in its own setup before the agent started (concluded: $AGENT_CONCLUSION; no execution transcript was written) -- the runner environment (the job's container image or the action's setup), not the agent, is the cause; the agent step's log names the setup step that failed"
           if [ -n "$FAILED_STEP" ]; then
             reason="$reason, and the '$FAILED_STEP' step after it did not complete either"
+          fi
+          if [ "$CREDENTIAL_REFRESH_OK" = "false" ]; then
+            reason="$reason; the post-agent credential could not be re-established either"
           fi
         elif [ "$AGENT_RAN" = "true" ] && [ -n "$FAILED_STEP" ] && [ "$CREDENTIAL_REFRESH_OK" = "false" ]; then
           reason="the agent step ran (concluded: $AGENT_CONCLUSION); the credential could not be re-established, and step '$FAILED_STEP' failed after it"

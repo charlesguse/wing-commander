@@ -84,7 +84,11 @@ drop-detection.
    job's agent-started output -- published from
    wing-commander-agent-ran-signal's `started` -- to that composite and to
    every chain-stop-notice call beside it that passes agent-ran (#889/#972:
-   an agent action that failed in its own setup is not "the agent ran").
+   an agent action that failed in its own setup is not "the agent ran"),
+   with the agent-started guard on the very restart-command arm that says
+   "its pushed commits are on the branch", and implement's agent-started
+   never read from its non-pushing progress composer
+   (AGENT_STARTED_EXCLUDED_SIGNALS).
 7. Every agent step in a `full_subject` job has its own refresh/agent-ran/
    credential-status composite call, matched by `uses:` rather than any one
    step's `name:` (REQUIRED_PER_AGENT_STEP_COMPOSITES, exempting
@@ -874,6 +878,15 @@ NOTICE_COMPOSITE = "wing-commander-chain-stop-notice"
 _AGENT_RAN_NEEDS_RE = re.compile(
     r"^\$\{\{\s*needs\.([A-Za-z0-9_-]+)\.outputs\.agent-ran\s*\}\}$")
 
+# Agent-ran signal step ids whose `started` must never feed a job's
+# agent-started output (code review of PR #978): implement's progress
+# composer runs only after a cycle or retry succeeded and never pushes, so
+# its own setup failure would tell the notice no agent work exists while
+# that cycle's commits are on the branch (FR-015).
+AGENT_STARTED_EXCLUDED_SIGNALS = {
+    ".github/workflows/implement.yml": {"agent-ran-progress"},
+}
+
 
 def check_agent_started_wiring(path, job, wf):
     """-> list[str]. #889/#972: the agent-started signal reaches the stall
@@ -902,6 +915,14 @@ def check_agent_started_wiring(path, job, wf):
             f"wing-commander-agent-ran-signal's `started` (got "
             f"{published!r}) -- the stall path cannot tell an agent that "
             f"never started from one that ran (#889)")
+    for sid in sorted(AGENT_STARTED_EXCLUDED_SIGNALS.get(path, ())):
+        if f"steps.{sid}.outputs.started" in published:
+            failures.append(
+                f"{path} [{entry}]: agent-started reads steps.{sid}'s "
+                f"`started` -- that agent step runs only after the work-"
+                f"bearing one succeeded and never pushes, so its own setup "
+                f"failure would report no agent work while that work is on "
+                f"the branch (FR-015, code review of PR #978)")
     for step in job.get("steps") or []:
         uses = str((step or {}).get("uses", ""))
         if REASON_COMPOSITE not in uses and NOTICE_COMPOSITE not in uses:
@@ -916,7 +937,15 @@ def check_agent_started_wiring(path, job, wf):
                 f"{w.get('agent-started')!r}")
         restart = str(w.get("restart-command", ""))
         guard = "needs.%s.outputs.agent-started != 'false'" % entry
-        if "pushed commits are on the branch" in restart and guard not in restart:
+        # The guard must sit in the very `&&` arm that yields the "pushed
+        # commits" string, not merely somewhere in the expression (code
+        # review of PR #978): every quoted alternative carrying that phrase
+        # is preceded directly by `<guard> && `.
+        arms = re.findall(r"(?:(\S+)\s*!=\s*'false'\s*&&\s*)?'[^']*pushed "
+                          r"commits are on the branch[^']*'", restart)
+        want_ref = "needs.%s.outputs.agent-started" % entry
+        if "pushed commits are on the branch" in restart and (
+                not arms or any(a != want_ref for a in arms)):
             failures.append(
                 f"{path} [stalled] step {step.get('name')!r}: its "
                 f"restart-command offers \"its pushed commits are on the "
@@ -1379,6 +1408,34 @@ def mut_restart_command_drops_agent_started_guard(loaded):
     step["with"]["restart-command"] = restart.replace(guard, "")
 
 
+def mut_restart_command_guard_on_wrong_arm(loaded):
+    """Code review of PR #978: intake's agent-started guard moved onto the
+    success arm, leaving the "pushed commits" arm unguarded while the guard
+    text still appears in the expression."""
+    job = loaded[".github/workflows/intake.yml"]["jobs"]["stalled"]
+    step = _find_step(job, "Report the stage did not start")
+    assert step is not None, "fixture assumption broken: step renamed"
+    guard = " && needs.intake.outputs.agent-started != 'false'"
+    restart = step["with"]["restart-command"]
+    assert guard in restart, "fixture assumption broken: guard absent"
+    restart = restart.replace(guard, "")
+    success = "needs.intake.outputs.agent-conclusion == 'success'"
+    assert success in restart, "fixture assumption broken: success arm"
+    step["with"]["restart-command"] = restart.replace(
+        success, success + guard, 1)
+
+
+def mut_implement_agent_started_reads_progress(loaded):
+    """Code review of PR #978: implement's agent-started output reads the
+    non-pushing progress composer's `started` again."""
+    job = loaded[".github/workflows/implement.yml"]["jobs"]["implement"]
+    out = job["outputs"]["agent-started"]
+    assert "agent-ran-progress" not in out, \
+        "fixture assumption broken: progress already read"
+    job["outputs"]["agent-started"] = out.replace(
+        "${{ ", "${{ steps.agent-ran-progress.outputs.started || ", 1)
+
+
 def mut_entry_job_drops_agent_started_output(loaded):
     """#889/#972: tasks' entry job stops publishing agent-started, so the
     stalled job's needs.tasks.outputs.agent-started reads empty."""
@@ -1730,6 +1787,12 @@ SIMPLE_MUTATIONS = [
      mut_restart_command_drops_agent_started_guard),
     ("tasks' entry job stops publishing the agent-started output (#889)",
      mut_entry_job_drops_agent_started_output),
+    ("intake's agent-started guard moved onto the restart-command's "
+     "success arm (code review of PR #978)",
+     mut_restart_command_guard_on_wrong_arm),
+    ("implement's agent-started reads the progress composer's signal "
+     "(code review of PR #978)",
+     mut_implement_agent_started_reads_progress),
     ("the refresh-remote step deleted entirely, not merely reverted",
      mut_refresh_remote_step_deleted),
     ("the credential-status step renamed away from its recognized name "

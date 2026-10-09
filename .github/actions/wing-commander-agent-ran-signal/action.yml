@@ -7,8 +7,8 @@
 name: wing-commander-agent-ran-signal
 description: >
   Publishes a durable, prose-free record of whether an agent step ran,
-  what it concluded, and whether the agent itself started inside it, immune to the agent step's own `continue-on-error:
-  true` masking a real failure as `success` (spec 052 maintainer review of
+  what it concluded, and whether the agent itself started inside it,
+  immune to the agent step's own `continue-on-error: true` masking a real failure as `success` (spec 052 maintainer review of
   PR #407: `steps.<id>.conclusion` is rewritten to `success` by
   continue-on-error; only `steps.<id>.outcome` preserves the real result,
   so this composite takes outcome, never conclusion).

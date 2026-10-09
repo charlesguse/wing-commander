@@ -63,7 +63,10 @@ reads `'true'`; only the file's presence is checked, never its content, so
 agent step in the same job reads `'true'`, which only keeps the pre-existing
 agent-ran wording. The six consuming stages publish it as a job output
 alongside the other two, with the same most-recent-wins `||` chain where a
-job has more than one agent step:
+job has more than one agent step -- except implement's progress composer,
+which runs only after a cycle or retry succeeded and never pushes, so its
+own setup failure must not erase that cycle's work (FR-015); implement's
+`agent-started` reads the retry and cycle signals only:
 
 ```yaml
 agent-started:
@@ -95,7 +98,8 @@ when needs.<entry-job>.outputs.agent-ran == 'true'
               container image or the action's setup), not the agent, is
               the cause; the agent step's log names the setup step that
               failed[, and the '<failed-post-agent-step>' step after it did
-              not complete either]"
+              not complete either][; the post-agent credential could not
+              be re-established either]"
 when needs.<entry-job>.outputs.agent-ran == 'true'
  and needs.<entry-job>.outputs.failed-post-agent-step is non-empty
  and needs.<entry-job>.outputs.credential-refresh-ok == 'false':
@@ -177,9 +181,10 @@ chooses the string; the composite's own contract is unchanged.
 When `agent-started == 'false'` (#889/#972) the caller passes the plain
 re-dispatch line instead of "failed after running; its pushed commits are
 on the branch", and passes `agent-started` to the notice composite, whose
-body then reads "the agent never started ... pushed no commits" and says a
-re-dispatch fails the same way until the runner environment (the job's
-container image or the agent action's own setup) is fixed.
+body then reads "the agent never started ... pushed no commits" and says
+that when the runner environment (the job's container image or the agent
+action's own setup) is the cause a re-dispatch fails the same way until it
+is fixed, while a transient download or network error clears on one.
 `verify-post-agent-credential-refresh.py` (check 6) requires the wiring
 in all six stages; `verify-implement-stall-notice-unchanged.py` and
 `verify-chain-stop-notice-body.py` execute the shipped branches.

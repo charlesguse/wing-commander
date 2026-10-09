@@ -267,11 +267,12 @@ runs:
         # agent-started == 'false' (#889/#972): the agent step's action
         # failed in its own setup, so "the agent ran" and "its pushed
         # commits are on the branch" are both false, and a re-dispatch
-        # alone fails identically -- say so, and leave the caller-rendered
+        # alone fails identically when the cause is the image (a transient
+        # download error is not) -- say so, and leave the caller-rendered
         # restart-command as the plain re-dispatch line.
         if [ "$AGENT_RAN" = "true" ] && [ "$AGENT_STARTED" = "false" ]; then
           headline="⏸️ **Stage stalled — the agent never started**"
-          body="The agent step's action failed before its agent started (concluded: $AGENT_CONCLUSION; no execution transcript was written), so that agent step did no work and pushed no commits. A re-dispatch fails the same way until the runner environment -- the job's container image or the agent action's own setup -- is fixed. $record_clause"
+          body="The agent step's action failed before its agent started (concluded: $AGENT_CONCLUSION; no execution transcript was written), so that agent step did no work and pushed no commits. The agent step's log names the setup step that failed: when the runner environment -- the job's container image or the agent action's own setup -- is the cause, a re-dispatch fails the same way until it is fixed; a transient download or network error clears on a re-dispatch. $record_clause"
         elif [ "$AGENT_RAN" = "true" ]; then
           headline="⏸️ **Stage stalled — the agent ran but the stage did not complete**"
           case "$AGENT_CONCLUSION" in

@@ -374,6 +374,73 @@ def check_agent_never_started(signal_script=None, reason_script=None):
                 f"{DEPENDENCY_STEP_NAME!r} for an agent action that failed "
                 f"before the agent started dropped the named post-agent "
                 f"step as context: {reason!r} (#889)")
+
+        # A failed credential re-establishment is context here too, as on
+        # every other branch that knows both (code review of PR #978).
+        for cred_ok, want_cred in (("false", True), ("true", False)):
+            _rc, _out, outputs, _summary = run_step(
+                bash, reason_script, workdir,
+                {"STAGE_NAME": "intake", "IMAGE_RESULT": "success",
+                 "ENTRY_RESULT": "failure",
+                 "AGENT_RAN": "true", "AGENT_CONCLUSION": "failure",
+                 "AGENT_STARTED": "false",
+                 "CREDENTIAL_REFRESH_OK": cred_ok, "FAILED_STEP": ""},
+                runner_temp, shell=reason_shell)
+            reason = outputs.get("reason", "")
+            if ("credential" in reason) != want_cred:
+                failures.append(
+                    f"{DEPENDENCY_STEP_NAME!r} for an agent action that "
+                    f"failed before the agent started, with "
+                    f"credential-refresh-ok={cred_ok!r}, "
+                    f"{'dropped' if want_cred else 'invented'} the "
+                    f"credential context: {reason!r} (#889)")
+    return failures
+
+
+RESTART_STEP_NAME = "Compute restart command"
+PUSHED_COMMITS_PHRASE = "its pushed commits are on the branch"
+
+
+def check_restart_command_agent_started(script=None):
+    """#889/#972: implement's own "Compute restart command" step renders
+    its restart line in shell (the other five stages build it in a `with:`
+    expression that Gate 68 inspects), so execute it: an agent whose action
+    never started gets the plain re-dispatch line, never "its pushed
+    commits are on the branch"; agent-started 'true' or empty (an entry job
+    that never published it) keeps that resume line.
+
+    `script` overrides the shipped block; the self-test hands in a drifted
+    copy.
+    """
+    if script is None:
+        script = find_step(STAGE, RESTART_STEP_NAME).get("run") or ""
+        if not script:
+            return [f"{RESTART_STEP_NAME!r} has no `run:` block in {STAGE}"]
+    bash = resolve_bash()
+    shell = step_shell(STAGE, RESTART_STEP_NAME)
+    failures = []
+    with tempfile.TemporaryDirectory() as workdir, \
+         tempfile.TemporaryDirectory() as runner_temp:
+        for started, want in (("false", False), ("true", True), ("", True)):
+            _rc, _out, outputs, _summary = run_step(
+                bash, script, workdir,
+                {"SPEC_DIR": "specs/041-x", "ISSUE": "231", "ITERATION": "2",
+                 "SELF_WORKFLOW": "wing-commander-5-implement.yml",
+                 "CHECKOUT_OK": "false", "AGENT_RAN": "true",
+                 "AGENT_CONCLUSION": "failure", "AGENT_STARTED": started,
+                 "GITHUB_REPOSITORY": "example/example"},
+                runner_temp, shell=shell)
+            rendered = outputs.get("restart-command", "")
+            if not rendered:
+                failures.append(f"{RESTART_STEP_NAME!r} rendered no "
+                                f"restart-command (agent-started="
+                                f"{started!r}): {_out.strip()!r}")
+                continue
+            if (PUSHED_COMMITS_PHRASE in rendered) != want:
+                failures.append(
+                    f"{RESTART_STEP_NAME!r} with agent-started={started!r} "
+                    f"{'omits' if want else 'still offers'} "
+                    f"{PUSHED_COMMITS_PHRASE!r} (#889): {rendered!r}")
     return failures
 
 
@@ -502,6 +569,7 @@ def run():
     return (check_pinned_steps(new_text, baseline)
             + check_dependency_reason_branch()
             + check_agent_never_started()
+            + check_restart_command_agent_started()
             + check_commits_published_branch())
 
 
@@ -622,6 +690,33 @@ def self_test():
            "the agent ran (#889)",
            check_agent_never_started(reason_script=no_branch),
            "still claims the agent ran")
+
+    no_cred = (reason_script or "").replace(
+        'reason="$reason; the post-agent credential could not be '
+        're-established either"', ':')
+    if no_cred == reason_script:
+        problems.append("self-test setup: the no-credential-context "
+                        "mutation's target text was not found in the shipped "
+                        "reason script -- update the mutation together with "
+                        "it.")
+    expect("a never-started reason that drops the failed credential "
+           "re-establishment (code review of PR #978)",
+           check_agent_never_started(reason_script=no_cred),
+           "dropped the credential context")
+
+    restart_script = find_step(STAGE, RESTART_STEP_NAME).get("run") or ""
+    unguarded = restart_script.replace(
+        'elif [ "$AGENT_RAN" = "true" ] && [ "$AGENT_STARTED" != "false" ]; then',
+        'elif [ "$AGENT_RAN" = "true" ]; then')
+    if unguarded == restart_script:
+        problems.append("self-test setup: the unguarded-restart mutation's "
+                        "target text was not found in implement.yml's "
+                        f"{RESTART_STEP_NAME!r} step -- update the mutation "
+                        "together with it.")
+    expect("implement's restart command offers pushed commits to an agent "
+           "that never started (#889)",
+           check_restart_command_agent_started(unguarded),
+           "still offers")
 
     commits_script = find_step(STAGE, COMMITS_STEP_NAME).get("run") or ""
     passthrough_line = 'published_line="$PUBLISHED_LINE"'

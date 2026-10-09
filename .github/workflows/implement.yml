@@ -559,7 +559,11 @@ jobs:
       # path reads is the LAST chain that actually ran, by construction
       # (most-recent-wins `||`, same convention as agent-ran above).
       agent-conclusion: ${{ steps.agent-ran-progress.outputs.conclusion || steps.agent-ran-retry.outputs.conclusion || steps.agent-ran-cycle.outputs.conclusion }}
-      agent-started: ${{ steps.agent-ran-progress.outputs.started || steps.agent-ran-retry.outputs.started || steps.agent-ran-cycle.outputs.started }}
+      # Retry/cycle only, unlike agent-ran above: the progress composer runs
+      # only after a cycle or retry succeeded (final ok) and never pushes,
+      # so its own setup failure must not tell the stall notice that no
+      # agent work exists -- that cycle's commits are on the branch (FR-015).
+      agent-started: ${{ steps.agent-ran-retry.outputs.started || steps.agent-ran-cycle.outputs.started }}
       credential-refresh-ok: ${{ steps.credential-status-progress.outputs.ok || steps.credential-status-retry.outputs.ok || steps.credential-status-cycle.outputs.ok }}
       # Most-recent-wins across retry/cycle only, same convention as above.
       commits-published: ${{ steps.publish-stranded-retry.outputs.commits-published || steps.publish-stranded-cycle.outputs.commits-published }}

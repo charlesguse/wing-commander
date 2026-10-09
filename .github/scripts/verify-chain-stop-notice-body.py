@@ -540,8 +540,11 @@ def scenario_agent_never_started(steps, root):
         if bad in body:
             failures.append(f"{where}: notice says {bad!r} for an agent "
                             f"that never started: {body!r}")
+    # Not every setup failure is the image: a transient download error
+    # clears on a re-dispatch, so the notice must not promise that every
+    # re-dispatch fails (code review of PR #978).
     for good in ("the agent never started", "pushed no commits",
-                 "runner environment"):
+                 "runner environment", "clears on a re-dispatch"):
         if good not in body:
             failures.append(f"{where}: notice does not say {good!r}: "
                             f"{body!r}")
@@ -745,6 +748,15 @@ def _mut_notice_ignores_agent_started(steps):
         'if false; then')
 
 
+def _mut_notice_promises_every_redispatch_fails(steps):
+    """Code review of PR #978: the never-started body asserts every
+    re-dispatch fails until the runner environment is fixed, though a
+    transient setup failure (a runtime download, say) clears on one."""
+    steps[NOTICE_STEP] = steps[NOTICE_STEP].replace(
+        "; a transient download or network error clears on a re-dispatch.",
+        ".")
+
+
 def _mut_notice_ignores_commits_published(steps):
     """specs/071-agent-push-credential regression: the notice stops naming
     a nonzero commits-published count (the eval of the single-homed
@@ -778,6 +790,9 @@ MUTATIONS = [
     ("notice ignores agent-started and claims an agent that never started "
      "ran and pushed commits",
      _mut_notice_ignores_agent_started),
+    ("never-started notice promises every re-dispatch fails, even after a "
+     "transient setup failure",
+     _mut_notice_promises_every_redispatch_fails),
 ]
 
 
