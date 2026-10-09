@@ -101,9 +101,12 @@ TOKEN_STANDINS = {
 }
 # The App-token stand-in answers this many calls, then 401s every call after.
 APP_TOKEN_LIFETIME_CALLS = 2
-# The issue reaches a terminal label on this `gh issue view` call: late
-# enough that a poll still reading under the App token has already hit
-# MAX_GATE_FAILURES (3) rejected clarification reads.
+# The issue reaches a terminal label on this `gh issue view` call, several
+# poll iterations in. The stub counts only views that pass its token check,
+# so a poll whose view runs under an expired or revoked credential never
+# reaches the terminal label at all and ends on MAX_GATE_FAILURES (3)
+# rejected clarification reads instead; the value only has to leave the
+# poll enough iterations to make more than APP_TOKEN_LIFETIME_CALLS reads.
 TERMINAL_AT_VIEW = 6
 
 BASE = {
