@@ -289,9 +289,10 @@ for it has a sanctioned route named in that stage's own prompt: clarify's
 issue-comment body is staged into the checkout by a deterministic workflow
 step before the agent runs (matching specs/029-intake-issue-comments' existing
 pattern for intake); plan's pull-request reads use its own `gh pr view --json`
-grant. `watchdog.diagnose` reaches `gh api` today only through its
-pre-existing, wider `Bash(gh:*)` grant — recorded here as pre-existing and
-untouched by this policy, not a grant this policy makes.
+grant. `watchdog.diagnose` once reached `gh api` through a wider `Bash(gh:*)`
+grant; spec 101 removed it, and the failed jobs' logs are now staged as files
+by a deterministic step. A read-only agent holds no `gh` grant; the rationale
+is in `docs/agent-friendly-workflows.md` ("Read-only agents and gh").
 
 **The gate suite.** `python .github/scripts/run-local-gates.py` is permitted
 only for `implement.cycle`/`implement.retry`, run by a deterministic step
@@ -342,7 +343,7 @@ already read-only via its allowed list; see footnote).
 | finalize | `finalize` | `Read,Glob,Grep,Bash(git log:*),Bash(git diff:*),Bash(git show:*),Write` | `WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage` |
 | cleanup | `cleanup` | `Read,Glob,Grep,Bash(git log:*),Bash(git diff:*),Bash(git show:*),Write` | `WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage` |
 | rebase | `rebase` | `Read,Edit,Grep,Glob,Bash(git status:*),Bash(git diff:*),Bash(git add:*),Bash(git rebase --continue:*),Bash(git rebase --abort:*)` | `WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage` |
-| watchdog | `watchdog.diagnose` | `Read,Grep,Bash(gh:*),Bash(python3 -I .wing-commander-pipeline/.github/scripts/git_read.py:*)` (deliberately read-only). No raw `git` grant — same reason as `implement.post-progress-comment` (#518) | `WebSearch,WebFetch,Write,Edit,Bash(git:*),Bash(cd:*),Bash(pushd:*),Bash(popd:*),Bash(git commit:*),Bash(git push:*)` † |
+| watchdog | `watchdog.diagnose` | `Read,Grep,Bash(python3 -I .wing-commander-pipeline/.github/scripts/git_read.py:*)` (deliberately read-only). No raw `git` grant — same reason as `implement.post-progress-comment` (#518) | `WebSearch,WebFetch,Write,Edit,Bash(git:*),Bash(cd:*),Bash(pushd:*),Bash(popd:*),Bash(git commit:*),Bash(git push:*)` † |
 | pr-conversation | `pr-conversation.classify` | `Read,Grep,Glob,Bash(python3 -I .wing-commander-pipeline/.github/scripts/git_read.py:*),Bash(cat:*),Bash(gh pr view:*),Bash(gh issue view:*),Bash(gh search issues:*)` (deliberately read-only). No raw `git` grant — same reason as `implement.post-progress-comment` (#518) | `Write,Edit,WebSearch,WebFetch,Bash(git:*),Bash(cd:*),Bash(pushd:*),Bash(popd:*),Bash(git push:*),Bash(git commit:*),ScheduleWakeup,Monitor,SendMessage` |
 | pr-conversation | `pr-conversation.act` | `Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git log:*),Bash(git diff:*),Bash(git checkout:*),Bash(git switch:*),Bash(git branch:*),Bash(cat:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh issue create:*),Bash(gh issue edit:*),Bash(gh pr view:*),Bash(gh pr comment:*),Bash(gh pr create:*),Bash(gh pr edit:*),Bash(gh api:*),Bash(gh label create:*),Bash(gh search issues:*),Bash(gh search prs:*)` — every category except the fold route below (in-scope-change, new-functionality+current-spec) | `WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage` |
 | pr-conversation | `pr-conversation.act.fold` | `Read,Write,Glob,Grep,Bash(cat:*)` — specs/062-lifecycle-review-gate T033: the fold route no longer touches `git` or `gh` itself (a later, deterministic step calls `wing-commander-fold-commit` to append/flip/commit/push); this agent only drafts the tasks.md section to a file | `WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage` |
