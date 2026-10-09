@@ -1224,7 +1224,14 @@ jobs:
 
 
           _DQ_PARAM = r'\$\{(?!\{)' + _dq_brace_body(SUB_DEPTH) + r'\}'
-          SHELL_WORD = (r'(?:"(?:[^"\\$]|\\.|' + _CMD_SUB + r'|' + _EXPR
+          # A backtick substitution inside double quotes is one part of
+          # the quoted string, whatever quotes it holds: closed at the
+          # first `"` inside `"`git log --format="%s by %an"`"`, the
+          # word ended at that substitution's blank, the quoted text
+          # after it began no word, and the call's `-X POST` after it
+          # went unread (code review of #969).
+          SHELL_WORD = (r'(?:"(?:[^"\\$`]|\\.|' + _BACKTICK + r'|' + _CMD_SUB
+                        + r'|' + _EXPR
                         + r'|' + _DQ_PARAM + r'|\$(?![({]))*"|\'[^\']*\''
                         r'|' + _CMD_SUB + r'|' + _PROC_SUB + r'|' + _EXPR
                         + r'|' + _PARAM_EXP + r'|' + _BACKTICK +
@@ -1332,7 +1339,9 @@ jobs:
                   found = list(heredoc_re.finditer(line))
                   if found:
                       base = len("\n".join(out)) + (1 if out else 0)
-                      flags = executable_flags("\n".join(out + [line]))
+                      in_bt = []
+                      flags = executable_flags("\n".join(out + [line]),
+                                               in_bt=in_bt)
                       # The `((` that makes a `<<` a shift is read on the
                       # line's executable characters only: a quoted `((`
                       # (`echo "((" ; cat <<EOF`) opens no arithmetic, and
@@ -1345,30 +1354,62 @@ jobs:
                               continue
                           if re.search(r"\(\((?:(?!\)\)).)*$", code[:m.start()]):
                               continue
-                          delims.append(m.group(1) or m.group(2) or m.group(3))
+                          # One inside a backtick substitution takes its
+                          # body from that substitution's text, which
+                          # ends at its closing backtick: read as taking
+                          # the lines after it, `"`cat <<EOF | tr ...`"`
+                          # hid the call on the next line (code review of
+                          # #969). Closed on this line, it takes none;
+                          # otherwise its body stops before the first line
+                          # holding a backtick.
+                          bounded = in_bt[base + m.start()]
+                          if bounded and any(
+                                  ch == "`" and not line[k - 1] == "\\"
+                                  for k, ch in enumerate(code)
+                                  if k > m.start()):
+                              continue
+                          delims.append((m.group(1) or m.group(2) or m.group(3),
+                                         bounded))
                   out.append(line)
                   i += 1
-                  for delim in delims:
-                      while i < len(lines) and lines[i].strip() != delim:
+                  for delim, bounded in delims:
+                      while (i < len(lines) and lines[i].strip() != delim
+                             and not (bounded and re.search(r"(?<!\\)`", lines[i]))):
                           i += 1
-                      if i < len(lines):
+                      if i < len(lines) and lines[i].strip() == delim:
                           out.append(lines[i])
                           i += 1
               return "\n".join(out)
 
 
           def strip_comments(text):
-              return "\n".join(l for l in text.splitlines() if not l.strip().startswith("#"))
+              """Drop each line that is one whole shell comment. A line
+              starting with `#` inside a quoted string (a markdown
+              heading in a multi-line body) is text: dropped, its
+              closing quote went with it, and the quote hid every call
+              after it (code review of #969)."""
+              comments = [False] * len(text)
+              executable_flags(text, comments)
+              out, pos = [], 0
+              for line in text.split("\n"):
+                  k = pos + len(line) - len(line.lstrip())
+                  if not (line.lstrip().startswith("#")
+                          and all(comments[k:pos + len(line)])):
+                      out.append(line)
+                  pos += len(line) + 1
+              return "\n".join(out)
 
 
-          def executable_flags(text, comments=None):
+          def executable_flags(text, comments=None, in_bt=None):
               """True per character where shell would actually EXECUTE what it finds,
               as opposed to inside a single-quoted or (non-substitution) double-quoted
               literal — e.g. the "gh workflow run ..." inside an `echo "...gh..."`
               human-facing message never runs. `$( ... )` command substitutions stay
               executable even nested inside double quotes, because bash really does
               run them there, and so do backtick ones. `comments`, when given, is
-              filled with True per character of a shell comment."""
+              filled with True per character of a shell comment, and `in_bt`
+              is extended with True per character inside a backtick
+              substitution."""
               n = len(text)
               flags = [True] * n
               stack = []
@@ -1380,9 +1421,13 @@ jobs:
               # frames, that apostrophe opened a quote that hid the write on
               # the next line (code review of #969).
               bt_ends = []
+              if in_bt is not None:
+                  in_bt.extend([False] * n)
               i = 0
               while i < n:
                   c = text[i]
+                  if in_bt is not None:
+                      in_bt[i] = bool(bt_ends) and i < bt_ends[-1]
                   if bt_ends and i >= bt_ends[-1]:
                       here = False
                       while bt_ends and i >= bt_ends[-1]:
@@ -1494,8 +1539,13 @@ jobs:
                       # as its script: run on to the line's end, it hid the
                       # call after `echo "`date #x`";` (code review of
                       # #969).
+                      # An escaped backtick ends it too, so a comment
+                      # inside a nested substitution hides nothing after
+                      # that substitution (code review of #969).
                       if bt_ends:
                           j = min(bt_ends[-1], j)
+                          esc = text.find("\\`", i, j)
+                          j = j if esc < 0 else esc
                       for k in range(i, j):
                           flags[k] = False
                           if comments is not None:
@@ -1826,7 +1876,14 @@ jobs:
                           continue
                   if flags[i] and c == "\\" and i + 1 < n and text[i + 1] == "\n":
                       out.append(" "); raw.append(" "); i += 2; continue
-                  if flags[i] and c == "\\" and i + 1 < n:
+                  # One before an Actions expression escapes the value
+                  # GitHub puts there, as executable_flags() reads it:
+                  # taken with the expression's `$`, the rest of the
+                  # expression read as no shell text, ended the call's
+                  # words there, and a `-X POST` after it went unread
+                  # (code review of #969).
+                  if (flags[i] and c == "\\" and i + 1 < n
+                          and not EXPR_RE.match(text, i + 1)):
                       out.append(c + (text[i + 1] if flags[i + 1] else " "))
                       raw.append(c + text[i + 1])
                       i += 2
@@ -1835,6 +1892,13 @@ jobs:
                       if outer_bt:
                           break
                       in_bt = not in_bt
+                  # Inside one, nothing but its closing backtick ends
+                  # anything, as executable_flags() reads it: the `)` of
+                  # a `case` pattern in `-f b="`case ...`"` closed the
+                  # call there, and its `-X POST` after the value went
+                  # unread (code review of #969).
+                  elif in_bt:
+                      pass
                   elif (flags[i] and c == "$" and i + 1 < n
                           and text[i + 1] in "{("):
                       if text[i + 1] == "{":

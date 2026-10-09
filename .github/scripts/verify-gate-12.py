@@ -1589,6 +1589,67 @@ CASES = [
             ["x='${{ contains(github.ref, '`') }}`'",
              'gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" -f body=x']),
      True, ("issues", "write")),
+
+    ("a `)` inside a backtick substitution in one of the call's values "
+     "(a `case` pattern) closes nothing of the call's: its `-X POST` after "
+     "that value is still its own, and the write fails under issues:read",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['gh api "repos/${GITHUB_REPOSITORY}/issues/1/comments" '
+             '-f body="`case $x in a) echo y;; esac`" -X POST']),
+     True, ("issues", "write")),
+
+    ("a line starting with `#` inside a multi-line quoted string (a "
+     "markdown heading) is text, not a comment: the quote still closes, "
+     "and the write after it fails under issues:read",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['body="Summary:',
+             '## Details"',
+             'gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" -f body="$body"']),
+     True, ("issues", "write")),
+
+    ("a heredoc opened inside a backtick substitution ends with it: "
+     "`\"`cat <<EOF | tr a-z A-Z`\"` takes no body from the lines after "
+     "it, and the write on the next line fails under issues:read",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['x="`cat <<EOF | tr a-z A-Z`"',
+             'gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" -f body=x']),
+     True, ("issues", "write")),
+
+    ("... and one spanning lines ends at the line closing it: the "
+     "unterminated `<<EOF` inside a multi-line backtick substitution "
+     "hides nothing after it, and the write after it fails under "
+     "issues:read",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['x=`cat <<EOF',
+             'body',
+             '`',
+             'gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" -f body=x']),
+     True, ("issues", "write")),
+
+    ("a `\\` before an Actions expression in a call's value ends none of "
+     "the call's words: the `-X POST` after `-f body=\\${{ ... }}` is the "
+     "call's own, and the write fails under issues:read",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['gh api "repos/${GITHUB_REPOSITORY}/issues/1/comments" '
+             '-f body=\\${{ toJSON(inputs.a) }} -X POST']),
+     True, ("issues", "write")),
+
+    ("a comment inside a nested, escaped backtick substitution ends with "
+     "it: the `-X POST` after `\\`date #now\\`` is the call's own, and "
+     "the write fails under issues:read",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['x=`gh api "repos/${GITHUB_REPOSITORY}/issues/1/comments" '
+             '-f body=\\`date #now\\` -X POST`']),
+     True, ("issues", "write")),
+
+    ("a backtick substitution inside a call's double-quoted value is one "
+     "part of that word, quotes and blanks and all: the `-X POST` after "
+     "`-f body=\"`git log -1 --format=\"%s by %an\"`\"` is the call's "
+     "own, and the write fails under issues:read",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['gh api "repos/${GITHUB_REPOSITORY}/issues/1/comments" '
+             '-f body="`git log -1 --format="%s by %an"`" -X POST']),
+     True, ("issues", "write")),
 ]
 
 
