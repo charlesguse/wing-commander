@@ -46,7 +46,7 @@ runs:
         SCHEMA: ${{ inputs.schema }}
       run: |
         set -uo pipefail
-        refusal="$(jq -r '.refusal // false' "$RECORD_PATH" 2>/dev/null || echo false)"
+        refusal="$(jq -r '.refusal // false' "$RECORD_PATH" 2>/dev/null)" || refusal=false
         if ! trial="$(python3 -I "$GITHUB_ACTION_PATH/../_shared/compare-diagnose-shadow.py" \
             --baseline-findings "$BASELINE_FINDINGS" \
             --baseline-verdict "$BASELINE_VERDICT" \
