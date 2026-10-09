@@ -274,7 +274,7 @@ with a ticketed one) and re-dispatches it automatically, at most once.
 ### Model tiering (constitution II)
 | Work | Model |
 |---|---|
-| Triage, diff summaries, labels | `claude-haiku-4-5` |
+| Triage, diff summaries, labels | `claude-haiku-5-5` |
 | Watchdog diagnosis | `claude-opus-5-5` (evidence adjudication under a strict schema — not the triage tier; see issue #124) |
 | specify / clarify | `claude-opus-5-5` (constitution v1.1.0: spec quality is bought up front) |
 | plan / tasks | `claude-sonnet-5-5` |
@@ -602,7 +602,7 @@ vars.WING_COMMANDER_MAX_ITERATIONS`).
 3. On hitting the iteration cap, or on the FR-010 early hand-off above: post
    the remaining tasks + final convergence-pass report to the lifecycle
    issue and dispatch finalize with `converged=false`.
-4. Post a brief progress comment (`claude-haiku-4-5` summary) each iteration.
+4. Post a brief progress comment (`claude-haiku-5-5` summary) each iteration.
 5. **Failure ≠ non-convergence** (FR-013): an outright pass failure (step
    fails, or `spec-meta.json` didn't advance as instructed — read through the
    `wing-commander-spec-meta` composite, #340) auto-retries the
@@ -1380,7 +1380,7 @@ which candidate a match proposes from its head branch name rather than its
 title or body text. `comment-reply` additionally gates the
 commenter (`OWNER`/`MEMBER`/`COLLABORATOR` or the issue author — the same
 actor gate `wing-commander-2-clarify.yml` uses) and interprets the reply with
-a read-only `claude-haiku-4-5` step before re-entering `prepare` → `verify` →
+a read-only `claude-haiku-5-5` step before re-entering `prepare` → `verify` →
 `act`.
 
 **Outcome recording** — the split mirrors this repo's existing convention: a

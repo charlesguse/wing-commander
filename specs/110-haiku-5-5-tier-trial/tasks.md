@@ -11,7 +11,7 @@
 ## Phase 1: Setup (verification before any model ID changes)
 
 - [ ] T001 Verify `anthropics/claude-code-action@v1` accepts `--model claude-haiku-5-5` (research D1): drive one real run through a Haiku-tier step (e.g. dispatch cleanup/finalize summary or auto-update-spec-kit T026 path) and record the evidence in a comment on #972; if rejected, STOP and report the upgrade as blocked
-- [ ] T002 [P] Audit 400-triggering settings (research D4): Grep `.github/` for `thinking`, `budget_tokens`, `temperature`, `top_p`, `prefill`, computer-use; record the result (none expected) in the #972 comment, remove any hit for the Haiku path
+- [X] T002 [P] Audit 400-triggering settings (research D4): Grep `.github/` for `thinking`, `budget_tokens`, `temperature`, `top_p`, `prefill`, computer-use; record the result (none expected) in the #972 comment, remove any hit for the Haiku path
 - [ ] T003 [P] Check whether repository variable `WING_COMMANDER_SUMMARY_MODEL` is set (`gh variable list`); if it equals `claude-haiku-4-5`, delete it with the change (#970 precedent) and note it on #972
 
 ---
@@ -33,12 +33,12 @@
 
 **Independent Test**: Grep of `.github/workflows/`, `.github/actions/`, `.specify/memory/constitution.md`, `docs/` for `claude-haiku-4-5` finds nothing; the new gate passes and its fixtures fail as designed.
 
-- [ ] T006 [P] [US1] Change `summary-model` default to `claude-haiku-5-5` in `.github/workflows/implement.yml`, `.github/workflows/finalize.yml`, `.github/workflows/cleanup.yml`
-- [ ] T007 [P] [US1] Change the summary-model fallbacks to `claude-haiku-5-5` in `.github/workflows/wing-commander-5-implement.yml`, `.github/workflows/wing-commander-6-finalize.yml`, `.github/workflows/wing-commander-7-cleanup.yml` (cleanup has two)
-- [ ] T008 [P] [US1] Change T026's literal `--model` and its comment to `claude-haiku-5-5` in `.github/workflows/auto-update-spec-kit.yml` (no new input, research D2)
-- [ ] T009 [P] [US1] Replace `claude-haiku-4-5` with `claude-haiku-5-5` in `docs/setup.md` (2), `docs/adoption.md` (2), `docs/architecture.md` (3)
-- [ ] T010 [US1] Create `.github/scripts/verify-haiku-tier-model-id.py` scanning `.github/workflows/`, `.github/actions/`, `.specify/memory/constitution.md`, `docs/` for `claude-haiku-4-5` (any suffix); ignore `.github/scripts/` fixtures, `constitution-history.md`, `specs/`; fail loudly on an empty scan root. Add failure fixtures under `.github/scripts/fixtures/` (workflow hit, docs hit, constitution hit, empty root); register it in the gate registry and wire it in `.github/workflows/lint-workflows.yml` like sibling gates
-- [ ] T011 [US1] Confirm the constitution scan (T010) passes only after the T004 amendment PR has merged to `main`; note on #972 that the lifecycle PR must not merge before it (FR-003, FR-005)
+- [X] T006 [P] [US1] Change `summary-model` default to `claude-haiku-5-5` in `.github/workflows/implement.yml`, `.github/workflows/finalize.yml`, `.github/workflows/cleanup.yml`
+- [X] T007 [P] [US1] Change the summary-model fallbacks to `claude-haiku-5-5` in `.github/workflows/wing-commander-5-implement.yml`, `.github/workflows/wing-commander-6-finalize.yml`, `.github/workflows/wing-commander-7-cleanup.yml` (cleanup has two)
+- [X] T008 [P] [US1] Change T026's literal `--model` and its comment to `claude-haiku-5-5` in `.github/workflows/auto-update-spec-kit.yml` (no new input, research D2)
+- [X] T009 [P] [US1] Replace `claude-haiku-4-5` with `claude-haiku-5-5` in `docs/setup.md` (2), `docs/adoption.md` (2), `docs/architecture.md` (3)
+- [X] T010 [US1] Create `.github/scripts/verify-haiku-tier-model-id.py` scanning `.github/workflows/`, `.github/actions/`, `.specify/memory/constitution.md`, `docs/` for `claude-haiku-4-5` (any suffix); ignore `.github/scripts/` fixtures, `constitution-history.md`, `specs/`; fail loudly on an empty scan root. Add failure fixtures under `.github/scripts/fixtures/` (workflow hit, docs hit, constitution hit, empty root); register it in the gate registry and wire it in `.github/workflows/lint-workflows.yml` like sibling gates
+- [X] T011 [US1] Confirm the constitution scan (T010) passes only after the T004 amendment PR has merged to `main`; note on #972 that the lifecycle PR must not merge before it (FR-003, FR-005)
 - [ ] T012 [US1] Run `python .github/scripts/run-local-gates.py`; all gates green
 
 **Checkpoint**: Story 1 complete and independently shippable.
