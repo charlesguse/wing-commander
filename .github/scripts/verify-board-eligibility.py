@@ -150,6 +150,12 @@ IN_FLIGHT_CASES = {
     # pipeline label; an upgrade it files under another auto-update:*
     # label is still selected.
     "auto-update-tracker-not-selected",
+    # auto-release:failed is auto-release.yml's own record of an open
+    # failure: only a same-mode pass closes it (#977). Routing it closed
+    # it as a duplicate twice (#949 -> #950, #979 -> #980) and erased the
+    # failure. Not selected even with a pre-fix marker on it; the newer
+    # pipeline-defect is.
+    "auto-release-failure-not-selected",
 }
 
 # (name, replacement for board_item_marker.is_loop_marker_author)

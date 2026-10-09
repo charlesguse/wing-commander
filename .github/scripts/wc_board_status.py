@@ -155,6 +155,10 @@ def classify(snap):
             owner.append((ref, "promote it with `spec-request`, or close it", age))
         elif "board:stalled" in labels:
             owner.append((ref, "held for a maintainer (`board:stalled`)", age))
+        elif "auto-release:failed" in labels:
+            # The board loop never acts on it (board_eligibility.
+            # SELF_MANAGED_LABELS), so nothing but the owner fixes its cause.
+            owner.append((ref, "fix the release failure; auto-release closes this after a pass in that mode", age))
         else:
             names = sorted(labels)
             family = "unlabelled"

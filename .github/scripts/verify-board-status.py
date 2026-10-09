@@ -60,6 +60,7 @@ SNAP = {
         issue(723, ["spec-request", "stage:spec", "stage:implement", "spec:096-durable-prove-entry"]),
         issue(760, ["spec-request", "stage:tasks", "spec:101-read-only-gh-grants"]),
         issue(780, ["board:stalled"], "held fix"),
+        issue(979, ["auto-release:failed"], "auto-release failed"),
         issue(902, ["found-by:implement"]),
         issue(911, ["found-by:finalize"]),
         issue(905, ["usage-limit"]),
@@ -109,6 +110,8 @@ def render_half():
           and pipeline[723][1] == "implement", pipeline.get(723))
     check("a tasks PR in auto review mode is the pipeline's", 760 in pipeline, pipeline.get(760))
     check("a board:stalled hold waits on the owner", 780 in owner, owner.get(780))
+    check("an auto-release failure waits on the owner (the board loop never acts on it)",
+          979 in owner and "auto-release:failed" not in rows["signals"], owner.get(979))
     check("a lifecycle row names its spec number", owner[675][0] == "#675 spec 090", owner[675][0])
     sig = rows["signals"]
     check("found-by:* issues group together", sig.get("found-by:*") == [902, 911], sig)
@@ -136,7 +139,7 @@ def render_half():
     check("the release line names the tag, its age and the paused switch",
           "v2.7.3, 15d ago; auto-release **paused**" in body, body)
     check("the maintenance count is shown", "30 open, 1 done on #889." in body, body)
-    check("the waiting-on-you count is in its heading", "### Waiting on you (8)" in body, body)
+    check("the waiting-on-you count is in its heading", "### Waiting on you (9)" in body, body)
     check("PRs outside any lifecycle are named", "not part of a lifecycle: #909" in body, body)
     check("the roadmap is linked", "Roadmap issue, #890" in body, body)
     green = bs.render(dict(SNAP, main_ci={"status": "completed", "conclusion": "success", "sha": "abc1234ffff"}))

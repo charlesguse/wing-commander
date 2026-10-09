@@ -67,7 +67,15 @@ LIFECYCLE_LABELS = ("spec-proposal", "spec-request")
 # auto-update:tracking; routing it closed that issue as a duplicate and
 # left the stage to adopt the routed copy (#852 -> #904, 2026-10-01). The
 # upgrades that stage files under other auto-update:* labels stay eligible.
-SELF_MANAGED_LABELS = ("auto-update:tracking",)
+# auto-release:failed is the same shape: auto-release.yml files it, appends
+# later failures to it, finds it as the one open issue with that label, and
+# alone closes it -- only after a pass in the mode that failed, re-verifying
+# that mode on a quiet day while it stays open (#977). Routing it to a spec
+# proposal closed it as a duplicate and erased the open failure (#949 ->
+# #950, #979 -> #980). It stays in PIPELINE_LABEL_EXACT (FR-006 is about who
+# filed it); exclusion wins over eligibility, so the loop never triages,
+# routes, fixes or closes it, and board-status.yml lists it for the owner.
+SELF_MANAGED_LABELS = ("auto-update:tracking", "auto-release:failed")
 
 # data-model.md "Step" / contracts/in-flight-detection.md: the loop's named
 # steps, split by whether a PR can exist yet at that step. Pre-fix qualifies

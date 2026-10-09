@@ -1,0 +1,28 @@
+{
+  "7101": [
+    {
+      "event": "labeled",
+      "created_at": "2026-01-01T00:01:00Z",
+      "label": {
+        "name": "auto-release:failed"
+      },
+      "actor": {
+        "login": "wing-commander-bot[bot]",
+        "association": "BOT"
+      }
+    }
+  ],
+  "7102": [
+    {
+      "event": "labeled",
+      "created_at": "2026-01-02T00:01:00Z",
+      "label": {
+        "name": "pipeline-defect"
+      },
+      "actor": {
+        "login": "wing-commander-bot[bot]",
+        "association": "BOT"
+      }
+    }
+  ]
+}
