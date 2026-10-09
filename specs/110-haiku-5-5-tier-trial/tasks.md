@@ -73,9 +73,9 @@
 
 **Independent Test**: A `model:haiku` lifecycle's implement record shows `claude-haiku-5-5`; with both labels `model:opus` wins; pr-conversation and the board loop ignore the label.
 
-- [ ] T024 [US3] In `.github/workflows/wing-commander-5-implement.yml` `resolve-model` job: when the lifecycle issue has `model:haiku` and not `model:opus`, output `model=claude-haiku-5-5`, `escalation-model=claude-sonnet-5-5`, `max-turns=${{ vars.WING_COMMANDER_IMPLEMENT_HAIKU_MAX_TURNS || '180' }}`; other cycles keep their model and escalation variable and get `max-turns` literal `180`; `model:opus` wins. Make `escalation-model` step-computed and pass `max-turns` to implement (research D11); implement.yml stays unchanged
-- [ ] T025 [US3] Add a gate (extend the nearest input-default gate, else a small new `verify-*.py` with fixtures) asserting the wrapper's literal `180` equals implement.yml's `max-turns` input default; register and wire
-- [ ] T026 [P] [US3] Add a gate fixture/check asserting pr-conversation and the board loop never grep `model:haiku` nor treat it as Opus; confirm finalize's label mirroring is unchanged
+- [X] T024 [US3] In `.github/workflows/wing-commander-5-implement.yml` `resolve-model` job: when the lifecycle issue has `model:haiku` and not `model:opus`, output `model=claude-haiku-5-5`, `escalation-model=claude-sonnet-5-5`, `max-turns=${{ vars.WING_COMMANDER_IMPLEMENT_HAIKU_MAX_TURNS || '180' }}`; other cycles keep their model and escalation variable and get `max-turns` literal `180`; `model:opus` wins. Make `escalation-model` step-computed and pass `max-turns` to implement (research D11); implement.yml stays unchanged
+- [X] T025 [US3] Add a gate (extend the nearest input-default gate, else a small new `verify-*.py` with fixtures) asserting the wrapper's literal `180` equals implement.yml's `max-turns` input default; register and wire
+- [X] T026 [P] [US3] Add a gate fixture/check asserting pr-conversation and the board loop never grep `model:haiku` nor treat it as Opus; confirm finalize's label mirroring is unchanged
 - [ ] T027 [US3] Run the gate suite and the `review-step-gating` skill over the wrapper change
 
 **Checkpoint**: Haiku implement opt-in works per lifecycle; no default moved (FR-016).
