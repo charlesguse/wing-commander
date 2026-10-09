@@ -1,0 +1,22 @@
+{
+  "type": "object",
+  "properties": {
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["class", "evidence"],
+        "properties": {
+          "class": {"enum": ["pipeline-defect", "denied-tool", "__new__"]},
+          "evidence": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {"signalId": {"enum": ["s1", "s2", "s3"]}}
+            }
+          }
+        }
+      }
+    }
+  }
+}

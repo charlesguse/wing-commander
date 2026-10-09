@@ -1,0 +1,49 @@
+name: wing-commander-trial-bound
+description: >
+  Decides whether the watchdog diagnose shadow trial is still inside its
+  bound (spec 110, research D10): the switch variable is set, fewer than 60
+  days have passed since it, and fewer than 300 compared shadow runs are on
+  the metrics branch. The logic lives in _shared/trial-bound.py.
+
+inputs:
+  since:
+    description: >
+      Value of the WING_COMMANDER_DIAGNOSE_SHADOW_SINCE variable (an ISO
+      date). Empty or unset means the shadow is off.
+    required: false
+    default: ''
+  records-path:
+    description: Path to a checkout of the metrics branch's records.jsonl.
+    required: false
+    default: ''
+
+outputs:
+  enabled:
+    description: >
+      'true' only while the trial is inside its bound. Callers keep a
+      one-line `false` fallback for the case where this action never ran.
+    value: ${{ steps.bound.outputs.enabled }}
+
+runs:
+  using: composite
+  steps:
+    - name: Decide whether the diagnose shadow is inside its bound
+      id: bound
+      shell: bash
+      env:
+        SINCE: ${{ inputs.since }}
+        RECORDS_PATH: ${{ inputs.records-path }}
+      run: |
+        set -uo pipefail
+        if [ -z "${SINCE:-}" ]; then
+          echo "enabled=false" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        if out="$(python3 -I "$GITHUB_ACTION_PATH/../_shared/trial-bound.py" \
+            --since "$SINCE" --records "${RECORDS_PATH:-/nonexistent}")"; then
+          echo "$out" >> "$GITHUB_OUTPUT"
+        else
+          # An unreadable SINCE or records file fails closed: the shadow
+          # stays off rather than running unbounded.
+          echo "enabled=false" >> "$GITHUB_OUTPUT"
+        fi

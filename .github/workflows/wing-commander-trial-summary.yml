@@ -1,0 +1,35 @@
+name: "wing-commander-trial-summary"
+
+# Haiku 5.5 trial summary (spec 110, FR-015). Dispatch-only and read-only:
+# it checks out the metrics branch next to this repository's scripts and
+# writes .github/scripts/trial-summary.py's Markdown to the job summary. No
+# agent, no App token, no write. It only reports; any default-model move is
+# a separate owner decision (FR-016).
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  summarize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout scripts
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Checkout the metrics branch
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ vars.WING_COMMANDER_METRICS_BRANCH || 'metrics' }}
+          path: metrics-branch
+          persist-credentials: false
+
+      - name: Write the trial summary
+        shell: bash
+        env:
+          RECORDS_PATH: metrics-branch/${{ vars.WING_COMMANDER_METRICS_PATH || 'records.jsonl' }}
+        run: python3 -I .github/scripts/trial-summary.py --records "$RECORDS_PATH" >> "$GITHUB_STEP_SUMMARY"
