@@ -57,7 +57,7 @@ Workflow comments are load-bearing (gates byte-compare them): after any edit und
 **Independent Test**: The inline `--allowedTools` has no `gh`, and the prompt names only the staged `release-notes.json`.
 
 - [X] T009 [P] [US2] In `.github/workflows/auto-update-spec-kit.yml`, remove `Bash(gh api:*)` from the "Decide upgrade path" inline `--allowedTools` (~line 1131).
-- [ ] T010 [US2] In the same step's prompt (~lines 1092-1094), rewrite the sentence that describes `gh api` as an evidence tool. It should say Bash is restricted to the git wrapper and that the only evidence is the staged `release-notes.json`. Then run `python .github/scripts/run-local-gates.py`.
+- [X] T010 [US2] In the same step's prompt (~lines 1092-1094), rewrite the sentence that describes `gh api` as an evidence tool. It should say Bash is restricted to the git wrapper and that the only evidence is the staged `release-notes.json`. Then run `python .github/scripts/run-local-gates.py`.
 
 **Checkpoint**: Both named agents are at zero `gh` grants.
 
