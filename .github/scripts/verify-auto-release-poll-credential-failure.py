@@ -400,10 +400,12 @@ def mut_reads_under_app_token(script, step_env):
 
 
 # label, mutation, scenario names each of which must fail under it (empty:
-# any one failing assertion is enough).
+# any one failing assertion is enough). Every scenario that expects the
+# credential arm's verdict must break when that arm is dropped.
 MUTATIONS = [
     ("FR-011's credential-signature branch dropped from write_repeated_failure_verdict",
-     mut_drop_credential_branch, ()),
+     mut_drop_credential_branch,
+     (SCENARIOS[0][0], SCENARIOS[3][0], EXPIRY_NAMES_REJECTED_CREDENTIAL)),
     ("the poll step's reads run under the App installation token again (#979)",
      mut_reads_under_app_token,
      (EXPIRY_OUTLIVES_APP_TOKEN, EXPIRY_NAMES_REJECTED_CREDENTIAL)),
