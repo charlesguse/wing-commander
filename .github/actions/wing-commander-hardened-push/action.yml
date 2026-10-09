@@ -1,0 +1,31 @@
+# wing-commander-hardened-push — the single push idiom for steps that hold a
+# write credential after agent code has run (spec 095 FR-015..FR-017). The
+# body lives in _shared/hardened-push.sh. Constitution VII: the optional
+# inputs have defaults; `branch`, `token` and `expected-head-sha` are
+# required because a push without them is meaningless.
+name: wing-commander-hardened-push
+description: >-
+  Pushes HEAD to a branch with hooks disabled, pristine git config and an
+  explicit remote URL, refusing when HEAD is not the expected verified SHA.
+inputs:
+  branch:
+    description: Branch to push HEAD to.
+    required: true
+  token:
+    description: Write token used for the push.
+    required: true
+  expected-head-sha:
+    description: The SHA the gate verdict was bound to; the push refuses otherwise.
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Push with hooks and config neutralised
+      shell: bash
+      env:
+        BRANCH: ${{ inputs.branch }}
+        PUSH_TOKEN: ${{ inputs.token }}
+        EXPECTED_HEAD_SHA: ${{ inputs.expected-head-sha }}
+        PUSH_SERVER_URL: ${{ github.server_url }}
+      run: |
+        bash "$GITHUB_ACTION_PATH/../_shared/hardened-push.sh" "$BRANCH" "$EXPECTED_HEAD_SHA"

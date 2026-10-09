@@ -1,0 +1,18 @@
+{
+  "expected_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "trusted_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "reader_cases": [
+    {"name": "artifact-missing", "file": "does-not-exist.json", "outcome": "fail", "reason": "verdict artifact missing"},
+    {"name": "unparsable", "file": "unparsable.json", "outcome": "fail", "reason": "verdict unreadable"},
+    {"name": "unknown-key", "file": "unknown-key.json", "outcome": "fail", "reason": "unknown key"},
+    {"name": "outcome-not-pass-fail", "file": "outcome-skipped.json", "outcome": "fail", "reason": "outcome is neither"},
+    {"name": "head-sha-mismatch", "file": "head-mismatch.json", "outcome": "fail", "reason": "head_sha mismatch"},
+    {"name": "trusted-sha-mismatch", "file": "trusted-mismatch.json", "outcome": "fail", "reason": "trusted_sha mismatch"},
+    {"name": "valid-pass", "file": "valid-pass.json", "outcome": "pass", "reason": "gate suite passed"},
+    {"name": "valid-fail", "file": "valid-fail.json", "outcome": "fail", "reason": "gate suite failed"}
+  ],
+  "publisher_if_cases": [
+    {"name": "skipped-treated-green", "file": "publisher-if-skipped-green.txt", "ok": false},
+    {"name": "requires-explicit-pass", "file": "publisher-if-explicit-pass.txt", "ok": true}
+  ]
+}

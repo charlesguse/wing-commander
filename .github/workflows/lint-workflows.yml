@@ -5500,6 +5500,29 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-write-boundary.py --self-test
 
+      # Gate 141 — specs/095-agent-code-credential-containment FR-002/FR-003/
+      # FR-004: a gate-suite verdict is read fail-closed (absent, unparsable,
+      # unknown-keyed, mis-bound or non-pass/fail reads as a failure), and no
+      # publisher `if:` treats a skipped or cancelled gate-suite job as green
+      # (contracts/new-gates.md). Path trigger: .github/scripts/** above.
+      - name: "Gate 141 — a gate-suite verdict that is absent, malformed or mis-bound reads as a failure, and no publisher treats a skipped gate job as green"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-gate-verdict-fail-closed.py
+      - name: "Gate 141 self-test — a negated gate-result condition and a wrong reader expectation each fail"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-gate-verdict-fail-closed.py --self-test
+
+      # Gate 142 — specs/095-agent-code-credential-containment FR-015..FR-017,
+      # FR-022: every covered push goes through the wing-commander-hardened-push
+      # composite, and its shared script is driven against a real repository
+      # with a planted pre-push hook and a planted insteadOf rewrite.
+      - name: "Gate 142 — covered pushes use the hardened-push composite, and a planted hook or insteadOf cannot steer it"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-hardened-push.py
+      - name: "Gate 142 self-test — a raw push, a pasted idiom, a planted hook and a planted insteadOf each fail"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-hardened-push.py --self-test
+
       # Gate 114 — specs/066-fine-grained-maintainer-token FR-017/FR-018: "a
       # classic PAT, not fine-grained" was asserted in at least four places
       # (docs/setup.md, auto-release.yml's credential-step comment, Gate

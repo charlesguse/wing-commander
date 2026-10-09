@@ -1,0 +1,34 @@
+# wing-commander-gate-bundle — package an agent-authored workspace's new
+# commits as a git bundle for a credential-free gate-suite job (spec 095,
+# contracts/workspace-bundle.md). Constitution VII: inputs are optional
+# with defaults.
+name: wing-commander-gate-bundle
+description: >-
+  Builds bundle.git (base-sha..HEAD) and meta.json (base_sha, head_sha,
+  site) and uploads them as wc-gate-bundle-<site>.
+inputs:
+  site:
+    description: "Gate site: board-fix, board-review-fixup, implement-cycle or implement-retry."
+    required: false
+    default: board-fix
+  base-sha:
+    description: Commit the agent started from; the bundle holds base-sha..HEAD.
+    required: false
+    default: ""
+runs:
+  using: composite
+  steps:
+    - name: Build workspace bundle
+      shell: bash
+      env:
+        SITE: ${{ inputs.site }}
+        BASE_SHA: ${{ inputs.base-sha }}
+        OUT_DIR: ${{ runner.temp }}/wc-gate-bundle-out
+      run: |
+        bash "$GITHUB_ACTION_PATH/../_shared/build-gate-bundle.sh" "$SITE" "$BASE_SHA" "$OUT_DIR"
+    - name: Upload workspace bundle
+      uses: actions/upload-artifact@v4
+      with:
+        name: wc-gate-bundle-${{ inputs.site }}
+        path: ${{ runner.temp }}/wc-gate-bundle-out
+        if-no-files-found: error

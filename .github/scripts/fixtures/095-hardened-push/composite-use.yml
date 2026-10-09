@@ -1,0 +1,9 @@
+jobs:
+  publish:
+    steps:
+      - name: Push the branch
+        uses: ./.github/actions/wing-commander-hardened-push
+        with:
+          branch: ${{ env.BRANCH }}
+          token: ${{ steps.token.outputs.token }}
+          expected-head-sha: ${{ steps.verdict.outputs.head-sha }}
