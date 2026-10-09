@@ -71,11 +71,11 @@ Workflow comments are load-bearing (gates byte-compare them): after any edit und
 
 **Depends on**: US1 and US2 (otherwise the gate fails the clean tree).
 
-- [ ] T011 [US3] In `.github/scripts/verify-issue-context-single-home.py`, extend `_bash_grant_problems` and `check_read_only_git(strict=False)` so a `Bash` grant whose first token's basename is `gh` (any wildcard spelling or path-qualified) is a problem. Match by whitespace-split token, not substring. Reword the message to name the workflow, step and grant, say `gh` reaches remote writes, local file writes and alias/extension execution, point at the staged-file route, and point at `docs/agent-friendly-workflows.md` rather than restating the rationale. Update the check 4b docstring to drop "Other Bash grants (`gh ...`) are not this check's business" and to state the shipped-defaults-only scope (FR-014).
-- [ ] T012 [US3] Add an exemption table in the same script for `pr-conversation.classify` (`.github/workflows/pr-conversation.yml`), scoped to exactly `gh pr view`, `gh issue view` and `gh search issues`, per research D4 and `data-model.md`. The gate fails if the site holds any other `gh` grant or holds none (stale). Cite the open "Maintenance backlog" issue (#889) as tracker. Before closing out, run `grep -rnE '"#889"|issue *= *\([^)]*\b889\b' .github/scripts/` and follow the waiver-register shape that Gate 124 (`verify-waiver-citations.py`) expects.
-- [ ] T013 [US3] Make the loud-failure cases fail: a `FLEET_READ_ONLY_STEP_LABELS` label with no matching site, and zero read-only sites across the fleet.
-- [ ] T014 [US3] Add the nine fixtures from `contracts/gate-93-check-4c.md` to the self-test, one per failure branch. Update the existing `_inline_fixture` default (`Bash(gh api:*)`) and the 4b "gh left alone" case, which encode the old behaviour.
-- [ ] T015 [US3] Add mutations to the self-test that restore `Bash(gh:*)` in `watchdog.yml`'s `watchdog.diagnose` site and `Bash(gh api:*)` in `auto-update-spec-kit.yml`'s inline list, on copies of the real files. The gate must fail on each.
+- [X] T011 [US3] In `.github/scripts/verify-issue-context-single-home.py`, extend `_bash_grant_problems` and `check_read_only_git(strict=False)` so a `Bash` grant whose first token's basename is `gh` (any wildcard spelling or path-qualified) is a problem. Match by whitespace-split token, not substring. Reword the message to name the workflow, step and grant, say `gh` reaches remote writes, local file writes and alias/extension execution, point at the staged-file route, and point at `docs/agent-friendly-workflows.md` rather than restating the rationale. Update the check 4b docstring to drop "Other Bash grants (`gh ...`) are not this check's business" and to state the shipped-defaults-only scope (FR-014).
+- [X] T012 [US3] Add an exemption table in the same script for `pr-conversation.classify` (`.github/workflows/pr-conversation.yml`), scoped to exactly `gh pr view`, `gh issue view` and `gh search issues`, per research D4 and `data-model.md`. The gate fails if the site holds any other `gh` grant or holds none (stale). Cite the open "Maintenance backlog" issue (#889) as tracker. Before closing out, run `grep -rnE '"#889"|issue *= *\([^)]*\b889\b' .github/scripts/` and follow the waiver-register shape that Gate 124 (`verify-waiver-citations.py`) expects.
+- [X] T013 [US3] Make the loud-failure cases fail: a `FLEET_READ_ONLY_STEP_LABELS` label with no matching site, and zero read-only sites across the fleet.
+- [X] T014 [US3] Add the nine fixtures from `contracts/gate-93-check-4c.md` to the self-test, one per failure branch. Update the existing `_inline_fixture` default (`Bash(gh api:*)`) and the 4b "gh left alone" case, which encode the old behaviour.
+- [X] T015 [US3] Add mutations to the self-test that restore `Bash(gh:*)` in `watchdog.yml`'s `watchdog.diagnose` site and `Bash(gh api:*)` in `auto-update-spec-kit.yml`'s inline list, on copies of the real files. The gate must fail on each.
 - [ ] T016 [US3] Run `python .github/scripts/verify-issue-context-single-home.py --self-test`, then `python .github/scripts/run-local-gates.py`. Confirm the gate is invoked the same way locally as in `lint-workflows.yml`.
 
 **Checkpoint**: A regression of either grant fails the PR-time suite.
@@ -88,11 +88,11 @@ Workflow comments are load-bearing (gates byte-compare them): after any edit und
 
 **Independent Test**: Grep for `Bash(gh:*)` and `Bash(gh api:*)` in docs and contracts. Each survivor is labelled historical.
 
-- [ ] T017 [US4] In `docs/agent-friendly-workflows.md`, replace the `--allowedTools "Read,Grep,Bash(gh:*)"` read-only example with a list that cannot write. Make this section the single canonical rationale (FR-017): `gh` reaches remote writes, local file writes, and arbitrary execution via `gh alias set` / `gh extension install`, and the rule is total rather than per-subcommand.
-- [ ] T018 [P] [US4] Update `specs/010-reusable-pipeline/contracts/stage-interfaces.md`: the per-stage table (~line 339) and the `gh api` disposition paragraph (~line 293). State the new lists and point at the canonical home instead of restating the rationale.
-- [ ] T019 [P] [US4] Update the diagnose `--allowedTools` record in `specs/015-pipeline-watchdog/contracts/watchdog-workflow.md` (~line 81) to match the shipped list, and add the staged job-log files.
-- [ ] T020 [P] [US4] Update the evaluate-path `--allowedTools` record in `specs/027-auto-update-spec-kit/contracts/auto-update-spec-kit-workflow.md` (~line 104).
-- [ ] T021 [P] [US4] Rewrite the "pre-existing, wider `Bash(gh:*)` grant … untouched by this policy" paragraph in `specs/051-read-only-inspection-policy/contracts/inspection-policy.md` in the past tense, with a pointer to the canonical home.
+- [X] T017 [US4] In `docs/agent-friendly-workflows.md`, replace the `--allowedTools "Read,Grep,Bash(gh:*)"` read-only example with a list that cannot write. Make this section the single canonical rationale (FR-017): `gh` reaches remote writes, local file writes, and arbitrary execution via `gh alias set` / `gh extension install`, and the rule is total rather than per-subcommand.
+- [X] T018 [P] [US4] Update `specs/010-reusable-pipeline/contracts/stage-interfaces.md`: the per-stage table (~line 339) and the `gh api` disposition paragraph (~line 293). State the new lists and point at the canonical home instead of restating the rationale.
+- [X] T019 [P] [US4] Update the diagnose `--allowedTools` record in `specs/015-pipeline-watchdog/contracts/watchdog-workflow.md` (~line 81) to match the shipped list, and add the staged job-log files.
+- [X] T020 [P] [US4] Update the evaluate-path `--allowedTools` record in `specs/027-auto-update-spec-kit/contracts/auto-update-spec-kit-workflow.md` (~line 104).
+- [X] T021 [P] [US4] Rewrite the "pre-existing, wider `Bash(gh:*)` grant … untouched by this policy" paragraph in `specs/051-read-only-inspection-policy/contracts/inspection-policy.md` in the past tense, with a pointer to the canonical home.
 - [ ] T022 [US4] Add a "single home" assertion for the rationale (per research D6) to the nearest existing gate: the rationale's distinguishing sentence must occur in exactly one file. If no cheap deterministic form exists, record why in the PR description instead.
 
 **Checkpoint**: SC-006 and SC-007 hold.
@@ -101,7 +101,7 @@ Workflow comments are load-bearing (gates byte-compare them): after any edit und
 
 ## Phase 7: Polish & Cross-Cutting Concerns
 
-- [ ] T023 Grep `.github/` and `docs/` for remaining `Bash(gh:*)`, `Bash(gh api:*)`, and prompt text that coaches `gh` on read-only agents (SC-001, SC-006).
+- [X] T023 Grep `.github/` and `docs/` for remaining `Bash(gh:*)`, `Bash(gh api:*)`, and prompt text that coaches `gh` on read-only agents (SC-001, SC-006).
 - [ ] T024 Run `python .github/scripts/run-local-gates.py` clean, then walk `quickstart.md`.
 - [ ] T025 Post-merge proof (hand to the maintainer, since the merge needs the `workflow` scope): re-drive one watchdog run with `gh workflow run` and record the schema-valid verdict with no denied-tool event (SC-004). Record one auto-update evaluation returning an outcome from the staged release notes (SC-005). Record a simulated fetch failure ending in `outcome:"failed"` and a verdict naming job logs (SC-008).
 

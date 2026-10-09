@@ -212,6 +212,15 @@ def run_one(script, env, sc, tmproot):
     fixtures = tempfile.mkdtemp(dir=tmproot)
     bindir = tempfile.mkdtemp(dir=tmproot)
 
+    # The collector fetches through the shared helper in the pipeline
+    # checkout (specs/101-read-only-gh-grants); put it where the step looks.
+    helper_dir = os.path.join(workdir, ".wing-commander-pipeline", ".github",
+                              "actions", "_shared")
+    os.makedirs(helper_dir)
+    shutil.copy(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..",
+                             "actions", "_shared", "fetch-job-logs.sh"),
+                helper_dir)
+
     with open(os.path.join(runner_temp, "signals.json"), "w",
               encoding="utf-8") as fh:
         fh.write("[]")

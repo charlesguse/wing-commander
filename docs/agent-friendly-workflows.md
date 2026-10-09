@@ -182,8 +182,16 @@ you have never seen fail is not monitoring.
   success, and never route agent-authored content through side-files a gate
   can silently ignore.
 - **Tool allow-lists**: read-only diagnosis gets read-only tools
-  (`--allowedTools "Read,Grep,Bash(gh:*)"`, deny `Write`, `Edit`, pushes).
+  (`--allowedTools "Read,Grep"`, deny `Write`, `Edit`, pushes).
   The write decision stays in deterministic steps.
+- **Read-only agents and gh**: a read-only agent holds no `gh` grant at
+  all, in any spelling (`gh:*`, `gh api:*`, a path-qualified `gh`). `gh`
+  reaches remote writes, local file writes, and arbitrary execution
+  (`gh alias set`, `gh extension install`), so the rule is total rather
+  than per-subcommand. Stage what the agent needs as a file in a
+  deterministic step (the diagnose job stages failed-job logs this way, and
+  records a failed fetch rather than hiding it). Gate 93 check 4b enforces
+  it; this is the one home for the rationale.
 - **Prompt-injection posture**: anything collected from a run under
   inspection is *data, not instructions* — say so in the prompt, and keep
   collectors deterministic so no raw untrusted content reaches the agent
