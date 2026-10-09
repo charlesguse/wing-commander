@@ -33,6 +33,12 @@ branch never emits the pre-existing "never started" phrase, and that the
 regression pin research.md calls for: this feature's wording change must
 land only on the new branch).
 
+#889/#972 adds a third behavioral check (check_agent_never_started): the
+shipped wing-commander-agent-ran-signal block publishes started='false'
+for a failed agent step with no execution transcript, and the shipped
+dependency-reason block fed that value says the agent never started
+instead of "the agent step ran". The self-test drifts each block in turn.
+
 SELF-TEST (#410 item 3)
 -----------------------
 `--self-test` reintroduces each regression this gate exists to catch and
@@ -81,6 +87,10 @@ NEVER_STARTED_PHRASE = "the implement stage failed before it could run its own s
 # itself is now a `uses:` call to this composite, not an inline `run:` block
 # in implement.yml -- the composite's own copy is what this gate executes.
 STALL_REASON_COMPOSITE = ".github/actions/wing-commander-stall-reason/action.yml"
+
+# #889/#972: the agent-started signal the never-started branch reads.
+AGENT_RAN_SIGNAL_COMPOSITE = ".github/actions/wing-commander-agent-ran-signal/action.yml"
+AGENT_RAN_SIGNAL_STEP_NAME = "Record agent-ran signal"
 
 
 def find_step_in_text(text, name):
@@ -276,6 +286,97 @@ def check_dependency_reason_branch(script=None):
     return failures
 
 
+def check_agent_never_started(signal_script=None, reason_script=None):
+    """#889/#972: an agent step whose action failed in its own setup.
+
+    Run 37866026318's intake agent step concluded failure because
+    claude-code-action's own runtime install failed, before the agent
+    started; the stall comment still said "the agent step ran ... its pushed
+    commits are on the branch". Executes the two shipped blocks that now
+    tell those apart, chained the way the stage wires them:
+    wing-commander-agent-ran-signal's `started` (failure plus an absent or
+    empty transcript reads 'false'; a non-empty transcript, or any other
+    outcome, reads 'true'), then the stall reason fed that value -- which
+    must say the agent never started, keep a named post-agent step only as
+    context, and never claim the agent ran.
+
+    `signal_script`/`reason_script` override the shipped blocks; the
+    self-test hands in drifted copies.
+    """
+    if signal_script is None:
+        signal_script = find_step(AGENT_RAN_SIGNAL_COMPOSITE,
+                                  AGENT_RAN_SIGNAL_STEP_NAME).get("run") or ""
+    if reason_script is None:
+        reason_script, failures = shipped_dependency_script()
+        if failures:
+            return failures
+    bash = resolve_bash()
+    signal_shell = step_shell(AGENT_RAN_SIGNAL_COMPOSITE,
+                              AGENT_RAN_SIGNAL_STEP_NAME)
+    reason_shell = step_shell(STALL_REASON_COMPOSITE, DEPENDENCY_STEP_NAME)
+    failures = []
+    with tempfile.TemporaryDirectory() as workdir, \
+         tempfile.TemporaryDirectory() as runner_temp:
+        transcript = os.path.join(workdir, "claude-execution-output.json")
+
+        def started_for(outcome, content):
+            if os.path.exists(transcript):
+                os.remove(transcript)
+            if content is not None:
+                with open(transcript, "w", encoding="utf-8") as fh:
+                    fh.write(content)
+            _rc, _out, outputs, _summary = run_step(
+                bash, signal_script, workdir,
+                {"AGENT_OUTCOME": outcome, "TRANSCRIPT_PATH": transcript},
+                runner_temp, shell=signal_shell)
+            return outputs.get("started", "")
+
+        cases = [
+            ("failure", None, "false"),
+            ("failure", "", "false"),
+            ("failure", '[{"type":"result","subtype":"error"}]', "true"),
+            ("success", None, "true"),
+        ]
+        never_started = None
+        for outcome, content, want in cases:
+            got = started_for(outcome, content)
+            if got != want:
+                shape = ("absent" if content is None
+                         else "empty" if content == "" else "non-empty")
+                failures.append(
+                    f"{AGENT_RAN_SIGNAL_STEP_NAME!r} with outcome "
+                    f"{outcome!r} and an {shape} transcript published "
+                    f"started={got!r}, expected {want!r} (#889)")
+            if (outcome, content) == ("failure", None):
+                never_started = got
+
+        _rc, _out, outputs, _summary = run_step(
+            bash, reason_script, workdir,
+            {"STAGE_NAME": "intake", "IMAGE_RESULT": "success",
+             "ENTRY_RESULT": "failure",
+             "AGENT_RAN": "true", "AGENT_CONCLUSION": "failure",
+             "AGENT_STARTED": never_started or "",
+             "CREDENTIAL_REFRESH_OK": "true",
+             "FAILED_STEP": "Fail loud on non-healthy agent verdict"},
+            runner_temp, shell=reason_shell)
+        reason = outputs.get("reason", "")
+        if "before the agent started" not in reason:
+            failures.append(
+                f"{DEPENDENCY_STEP_NAME!r} for an agent action that failed "
+                f"before the agent started did not say so: {reason!r} (#889)")
+        if "the agent step ran" in reason or "pushed commits" in reason:
+            failures.append(
+                f"{DEPENDENCY_STEP_NAME!r} for an agent action that failed "
+                f"before the agent started still claims the agent ran: "
+                f"{reason!r} (#889)")
+        if "'Fail loud on non-healthy agent verdict'" not in reason:
+            failures.append(
+                f"{DEPENDENCY_STEP_NAME!r} for an agent action that failed "
+                f"before the agent started dropped the named post-agent "
+                f"step as context: {reason!r} (#889)")
+    return failures
+
+
 def check_commits_published_branch(script=None):
     """Execute the "Report stalled on lifecycle issue" script (COMMITS_STEP_NAME).
 
@@ -400,6 +501,7 @@ def run():
         new_text = fh.read()
     return (check_pinned_steps(new_text, baseline)
             + check_dependency_reason_branch()
+            + check_agent_never_started()
             + check_commits_published_branch())
 
 
@@ -495,6 +597,31 @@ def self_test():
            "agent-ran-unset branch",
            check_dependency_reason_branch(NEVER_NEVER_STARTED),
            "changed from the pinned never-started phrase")
+
+    signal_script = find_step(AGENT_RAN_SIGNAL_COMPOSITE,
+                              AGENT_RAN_SIGNAL_STEP_NAME).get("run") or ""
+    always_started = signal_script.replace('started="false"', 'started="true"')
+    if always_started == signal_script:
+        problems.append("self-test setup: the always-started mutation's "
+                        "target text was not found in the shipped signal -- "
+                        "update the mutation together with the step.")
+    expect("an agent-ran signal that always reports the agent started, even "
+           "with no transcript (#889)",
+           check_agent_never_started(signal_script=always_started),
+           "expected 'false'", "did not say so")
+
+    reason_script, _ = shipped_dependency_script()
+    no_branch = (reason_script or "").replace(
+        'if [ "$AGENT_RAN" = "true" ] && [ "$AGENT_STARTED" = "false" ]; then',
+        'if false; then')
+    if no_branch == reason_script:
+        problems.append("self-test setup: the never-started-branch mutation's "
+                        "target text was not found in the shipped reason "
+                        "script -- update the mutation together with it.")
+    expect("a dependency-reason script that ignores agent-started and says "
+           "the agent ran (#889)",
+           check_agent_never_started(reason_script=no_branch),
+           "still claims the agent ran")
 
     commits_script = find_step(STAGE, COMMITS_STEP_NAME).get("run") or ""
     passthrough_line = 'published_line="$PUBLISHED_LINE"'

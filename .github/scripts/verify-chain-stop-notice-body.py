@@ -38,6 +38,12 @@ with `wc_shell_harness.run_step` — against three shapes (quickstart.md §3):
      job it never waited on; the mark-only half (post-notice: "false")
      still removes the stale stage:<name> label on a successful mark but
      never adds the stage:stalled label itself.
+  5. An agent step whose action failed in its own setup (#889/#972:
+     agent-ran 'true', agent-started 'false') — the notice must say the
+     agent never started and pushed no commits and point at the runner
+     environment, never "failed after running; its pushed commits are on
+     the branch"; agent-started 'true' or empty keeps the agent-ran
+     wording.
 
 Also asserts (T019): restart-command is rendered byte-for-byte as the
 caller supplied it — the composite treats it as an opaque, fully
@@ -158,7 +164,7 @@ def run_labels(steps, repo, runner_temp, bindir, calls, stage_label,
 def run_notice(steps, repo, runner_temp, bindir, calls, reason,
                restart_command, record_status, run_url="", agent_ran="",
                agent_conclusion="", commits_published="", push_ok="",
-               mark_record="true", spec_dir=SPEC_DIR):
+               mark_record="true", spec_dir=SPEC_DIR, agent_started=""):
     return run_step(
         BASH, steps[NOTICE_STEP], repo,
         {"GH_TOKEN": "x", "ISSUE": ISSUE, "REASON": reason,
@@ -166,6 +172,8 @@ def run_notice(steps, repo, runner_temp, bindir, calls, reason,
          "DEFAULT_RUN_URL": "https://example.invalid/actions/runs/1",
          "RESTART_COMMAND": restart_command, "RECORD_STATUS": record_status,
          "AGENT_RAN": agent_ran, "AGENT_CONCLUSION": agent_conclusion,
+         # #889/#972: empty by default, as the composite's input default.
+         "AGENT_STARTED": agent_started,
          # specs/071-agent-push-credential: always supplied, empty by
          # default, matching the composite's own input default -- `set -u`
          # inside the step under test would otherwise reject a truly unset
@@ -502,6 +510,64 @@ def scenario_agent_ran_success(steps, root):
     return failures
 
 
+def scenario_agent_never_started(steps, root):
+    """#889/#972: the agent step's action failed in its own setup (run
+    37866026318: its runtime install failed on an image without unzip), so
+    agent-ran is 'true' and agent-conclusion 'failure', but agent-started
+    is 'false'. The notice must not claim the agent ran or that it pushed
+    commits, and must send the reader to the runner environment rather
+    than straight to a re-dispatch that fails identically."""
+    failures = []
+    where = "scenario: agent action failed before the agent started (#889)"
+    work, repo = make_workspace(root, reachable_remote=True)
+    runner_temp = os.path.join(work, "runner_temp")
+    os.makedirs(runner_temp, exist_ok=True)
+    bindir, calls = new_gh_stub(work)
+
+    rc, out, _, _ = run_notice(
+        steps, repo, runner_temp, bindir, calls,
+        "the agent step's action failed in its own setup before the agent "
+        "started",
+        "Re-dispatch the intake stage for this specification once the "
+        "cause above is resolved.", "marked",
+        agent_ran="true", agent_conclusion="failure", agent_started="false")
+    if rc != 0:
+        failures.append(f"{where}: {NOTICE_STEP!r} exited {rc}: {out.strip()}")
+        return failures
+    body = read_notice_body(runner_temp)
+    for bad in ("pushed commits are on the branch", "failed after running",
+                "the agent ran but"):
+        if bad in body:
+            failures.append(f"{where}: notice says {bad!r} for an agent "
+                            f"that never started: {body!r}")
+    for good in ("the agent never started", "pushed no commits",
+                 "runner environment"):
+        if good not in body:
+            failures.append(f"{where}: notice does not say {good!r}: "
+                            f"{body!r}")
+    if "no work was lost" in body:
+        failures.append(f"{where}: notice uses the stage-did-not-start "
+                        f"wording although the agent step itself ran: "
+                        f"{body!r}")
+
+    # agent-started 'true' or empty (a caller predating the input) keeps
+    # the agent-ran wording unchanged.
+    for started in ("true", ""):
+        rc, out, _, _ = run_notice(
+            steps, repo, runner_temp, bindir, calls,
+            "the agent step ran (concluded: failure) and a step after it "
+            "did not complete",
+            "Re-dispatch the intake stage for this specification once the "
+            "cause above is resolved.", "marked",
+            agent_ran="true", agent_conclusion="failure",
+            agent_started=started)
+        body = read_notice_body(runner_temp)
+        if rc != 0 or "failed after running" not in body:
+            failures.append(f"{where}: agent-started={started!r} no longer "
+                            f"renders the agent-ran wording: {body!r}")
+    return failures
+
+
 def scenario_commits_published(steps, root):
     """specs/071-agent-push-credential FR-016/FR-017: a nonzero
     commits-published count names it; zero/empty renders no such line.
@@ -615,6 +681,7 @@ def suite(steps, root):
     failures += scenario_split_mark_only_labels(steps, root)
     failures += scenario_agent_ran(steps, root)
     failures += scenario_agent_ran_success(steps, root)
+    failures += scenario_agent_never_started(steps, root)
     failures += scenario_commits_published(steps, root)
     for stage, cmd in PLAIN_RESTART_FIXTURES:
         failures += scenario_restart_command_verbatim(
@@ -669,6 +736,15 @@ def _mut_notice_ignores_agent_conclusion(steps):
         'agent_clause="the agent completed its work"')
 
 
+def _mut_notice_ignores_agent_started(steps):
+    """#889/#972 regression: an agent step whose action failed in its own
+    setup is reported as "the agent step failed after running; its pushed
+    commits are on the branch"."""
+    steps[NOTICE_STEP] = steps[NOTICE_STEP].replace(
+        'if [ "$AGENT_RAN" = "true" ] && [ "$AGENT_STARTED" = "false" ]; then',
+        'if false; then')
+
+
 def _mut_notice_ignores_commits_published(steps):
     """specs/071-agent-push-credential regression: the notice stops naming
     a nonzero commits-published count (the eval of the single-homed
@@ -699,6 +775,9 @@ MUTATIONS = [
     ("notice ignores agent-conclusion and always claims the agent completed "
      "its work",
      _mut_notice_ignores_agent_conclusion),
+    ("notice ignores agent-started and claims an agent that never started "
+     "ran and pushed commits",
+     _mut_notice_ignores_agent_started),
 ]
 
 
@@ -739,7 +818,7 @@ def main():
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
-    print(f"chain-stop-notice composite body: 5 base scenario(s), "
+    print(f"chain-stop-notice composite body: 9 base scenario(s), "
           f"{len(PLAIN_RESTART_FIXTURES)} restart-command fixture(s), "
           f"{len(MUTATIONS)} mutation(s); {len(failures)} failure(s).")
     sys.exit(1 if failures else 0)

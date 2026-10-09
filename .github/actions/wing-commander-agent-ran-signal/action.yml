@@ -6,8 +6,8 @@
 # verified self-checkout snippet.
 name: wing-commander-agent-ran-signal
 description: >
-  Publishes a durable, prose-free record of whether an agent step ran and
-  what it concluded, immune to the agent step's own `continue-on-error:
+  Publishes a durable, prose-free record of whether an agent step ran,
+  what it concluded, and whether the agent itself started inside it, immune to the agent step's own `continue-on-error:
   true` masking a real failure as `success` (spec 052 maintainer review of
   PR #407: `steps.<id>.conclusion` is rewritten to `success` by
   continue-on-error; only `steps.<id>.outcome` preserves the real result,
@@ -20,6 +20,14 @@ inputs:
       passes this in rather than the composite reading it directly, since
       composite steps cannot see the calling job's `steps` context.
     required: true
+  transcript-path:
+    description: >
+      The agent step's execution transcript -- the same file, at the same
+      default, that wing-commander-agent-verdict and
+      wing-commander-metrics-summary read. Only its presence is checked
+      here (for `started`), never its content.
+    required: false
+    default: ${{ runner.temp }}/claude-execution-output.json
 
 outputs:
   ran:
@@ -28,6 +36,16 @@ outputs:
   conclusion:
     description: One of success/failure/cancelled, sourced from the agent step's outcome.
     value: ${{ steps.record.outputs.conclusion }}
+  started:
+    description: >
+      'false' only when the agent step concluded failure AND its execution
+      transcript is absent or empty -- the agent action failed in its own
+      setup (e.g. installing its runtime) before the agent itself started,
+      so it did no work and pushed nothing (#889/#972). 'true' otherwise,
+      including whenever the outcome is not failure. A stale transcript
+      left by an earlier agent step in the same job reads as 'true', which
+      keeps the pre-existing "the agent ran" wording -- never the reverse.
+    value: ${{ steps.record.outputs.started }}
 
 runs:
   using: composite
@@ -37,5 +55,14 @@ runs:
       shell: bash
       env:
         AGENT_OUTCOME: ${{ inputs.agent-outcome }}
+        TRANSCRIPT_PATH: ${{ inputs.transcript-path }}
       run: |
         echo "conclusion=$AGENT_OUTCOME" >> "$GITHUB_OUTPUT"
+        # claude-code-action writes its transcript only once the agent
+        # itself ran; a setup failure ahead of that (run 37866026318: its
+        # runtime install failed on an image without unzip) leaves none.
+        started="true"
+        if [ "$AGENT_OUTCOME" = "failure" ] && [ -n "$TRANSCRIPT_PATH" ] && [ ! -s "$TRANSCRIPT_PATH" ]; then
+          started="false"
+        fi
+        echo "started=$started" >> "$GITHUB_OUTPUT"

@@ -81,6 +81,17 @@ inputs:
       signal. Only rendered when agent-ran is 'true'.
     required: false
     default: ""
+  agent-started:
+    description: >
+      The entry job's agent-started output (wing-commander-agent-ran-signal's
+      `started`). 'false' with agent-ran 'true' means the agent step's
+      action failed in its own setup before the agent started (#889/#972):
+      the notice then says the agent did no work and pushed no commits, and
+      that the runner environment must be fixed before a re-dispatch. Any
+      other value, including empty for a caller that predates this input,
+      keeps the agent-ran wording.
+    required: false
+    default: ""
   commits-published:
     description: >
       commits-published output of this job's own
@@ -212,6 +223,7 @@ runs:
         RECORD_STATUS: ${{ steps.mark.outputs.record-status }}
         AGENT_RAN: ${{ inputs.agent-ran }}
         AGENT_CONCLUSION: ${{ inputs.agent-conclusion }}
+        AGENT_STARTED: ${{ inputs.agent-started }}
         COMMITS_PUBLISHED: ${{ inputs.commits-published }}
         PUSH_OK: ${{ inputs.push-ok }}
         MARK_RECORD: ${{ inputs.mark-record }}
@@ -251,7 +263,16 @@ runs:
         # (second maintainer review of PR #407, FR-011): a
         # continue-on-error-wrapped agent step can conclude failure, and the
         # notice must say so rather than implying success either way.
-        if [ "$AGENT_RAN" = "true" ]; then
+        #
+        # agent-started == 'false' (#889/#972): the agent step's action
+        # failed in its own setup, so "the agent ran" and "its pushed
+        # commits are on the branch" are both false, and a re-dispatch
+        # alone fails identically -- say so, and leave the caller-rendered
+        # restart-command as the plain re-dispatch line.
+        if [ "$AGENT_RAN" = "true" ] && [ "$AGENT_STARTED" = "false" ]; then
+          headline="⏸️ **Stage stalled — the agent never started**"
+          body="The agent step's action failed before its agent started (concluded: $AGENT_CONCLUSION; no execution transcript was written), so that agent step did no work and pushed no commits. A re-dispatch fails the same way until the runner environment -- the job's container image or the agent action's own setup -- is fixed. $record_clause"
+        elif [ "$AGENT_RAN" = "true" ]; then
           headline="⏸️ **Stage stalled — the agent ran but the stage did not complete**"
           case "$AGENT_CONCLUSION" in
             success) agent_clause="the agent completed its work" ;;

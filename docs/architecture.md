@@ -204,6 +204,11 @@ attribute a later, real failure to the credential rather than to whichever
 unrelated step happens to run next — but a named post-agent step failure
 always outranks the credential-only diagnosis, mentioning the credential
 only as context when both are known (third maintainer review of PR #407).
+Ahead of both, the agent-ran signal's `started` output (`false` when the
+agent step failed and left no execution transcript) lets the stall reason
+and notice say the agent action failed in its own setup before the agent
+started -- no agent work, no pushed commits, fix the runner environment
+before re-dispatching -- instead of "the agent step ran" (#889/#972).
 
 The credential an agent step itself pushes with while it is still running —
 the gap the remedy above does not cover, tracked as
