@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,5 +31,5 @@
 
 ## Notes
 
-- Three [NEEDS CLARIFICATION] markers remain (trial candidate scope, trial bar, trial bound); they are posted to issue #972 for the clarify stage.
+- All three [NEEDS CLARIFICATION] markers (trial candidate scope, trial bar, trial bound) were resolved from the owner's reply on issue #972; see the spec's Clarifications section. The same reply corrected the amendment to MINOR 2.4.0 and widened FR-006's exclusions.
 - Model IDs and workflow/file names appear because the feature is itself a model-tier change in a CI pipeline repository; they are the subject of the requirements, not implementation choices.

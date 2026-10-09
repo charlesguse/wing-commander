@@ -17,13 +17,22 @@ Claude Haiku 5.5 (`claude-haiku-5-5`) has been released. #970 moved the Opus and
 
 The requester's 28-day sizing (metrics branch, 2026-09-11 to 2026-10-08, token counts re-priced, approximate) shows: watchdog diagnose runs ~40×/day on Opus at 2 turns and ~23K-token prompts (every request on Haiku 5.5's low rate card; ~$0.08/run on Opus vs ~$0.002 on Haiku 5.5); pr-conversation's act and classify-and-announce steps stay under 100K tokens on every run (~11 runs/day on Sonnet); implement is the costliest step but ~70% of cycles exceed 100K tokens, so its saving is ~3× rather than ~20×; plan never stays under 100K. Pipeline runs and local sessions share one usage window, which is the real limit rather than dollars.
 
+## Clarifications
+
+### Session 2026-10-09
+
+- Q: Which candidates beyond watchdog diagnose are in scope? → A: Only a per-lifecycle `model:haiku` opt-in for implement. `model:opus` wins if both labels are present; the label affects implement only; a Haiku cycle escalates to `claude-sonnet-5-5` via the existing `escalation-model` input; its turn budget goes through `max-turns`. pr-conversation classify-and-announce/act and rebase become later specs.
+- Q: What bar decides a step is ready for Haiku, and what makes a trial window? → A: Diagnose shadow: over ≥200 compared runs, ≥95% filing-decision agreement, ≥90% class agreement on shared findings, refused+exhausted+malformed ≤2% (errors reported separately); fewer than 200 runs reports "sample too small". Implement: no numeric bar; per-lifecycle comparison against the median Sonnet lifecycle.
+- Q: Is the trial bound self-expiring or manual? → A: Self-expiring: the diagnose shadow runs at most 14 days or 300 compared runs, whichever first, then turns itself off; the single switch stops it sooner. Implement trials are bounded by the owner applying `model:haiku` one lifecycle at a time.
+- Corrections from the same reply: the constitution amendment is MINOR 2.3.1 → 2.4.0 (not PATCH), covering both the model ID and the opt-in, and Principle II states how a trial shadow fits; the FR-006 check ignores `.github/scripts/` gate fixtures that hold model strings as data and the helper ID `claude-haiku-4-5-20251001`.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - The Haiku tier names the current Haiku model (Priority: P1)
 
 As the repository owner, I want every place that runs or documents the Haiku tier to name `claude-haiku-5-5` instead of `claude-haiku-4-5`, so the constitution, the wrappers, the stages and the docs all describe the model that actually runs.
 
-**Why this priority**: It is a self-contained correctness fix with the shape of #970 (a constitution PATCH, 2.3.1 → 2.3.2) and is useful even if no trial ever runs.
+**Why this priority**: It is a self-contained correctness fix with the shape of #970 and is useful even if no trial ever runs. Its constitution change rides in the single MINOR amendment (2.3.1 → 2.4.0) that also adds the implement opt-in (FR-003).
 
 **Independent Test**: Search the live tree (excluding merged historical spec documents) for `claude-haiku-4-5` as a pipeline-chosen model and find none; run each Haiku-tier step once and see `claude-haiku-5-5` recorded as its model in the metrics record.
 
@@ -31,7 +40,7 @@ As the repository owner, I want every place that runs or documents the Haiku tie
 
 1. **Given** the repository variable for the summary model is unset, **When** implement's progress comment, finalize's summary or cleanup's summary runs, **Then** it runs on `claude-haiku-5-5`.
 2. **Given** an auto-update-spec-kit run reaches the T026 reply classifier, **When** it classifies a reply, **Then** it runs on `claude-haiku-5-5`.
-3. **Given** the constitution is amended for this change, **When** a reader opens Principle II, **Then** the Haiku tier names `claude-haiku-5-5`, the version is 2.3.2 (PATCH), and a Sync Impact Report is added to the top of `constitution-history.md`.
+3. **Given** the constitution is amended for this change, **When** a reader opens Principle II, **Then** the Haiku tier names `claude-haiku-5-5`, the per-lifecycle `model:haiku` opt-in for implement is described, a trial shadow is described as declaring an explicit Haiku model and acting on nothing, the version is 2.4.0 (MINOR), and a Sync Impact Report is added to the top of `constitution-history.md`.
 4. **Given** the setup, adoption and architecture docs, **When** a reader looks up the Haiku tier, **Then** they name `claude-haiku-5-5`.
 
 ---
@@ -53,21 +62,23 @@ As the repository owner, I want a Haiku 5.5 diagnose to run alongside the Opus d
 
 ---
 
-### User Story 3 - Further candidates can be trialled under the same evidence model (Priority: P3)
+### User Story 3 - Implement can be trialled on Haiku 5.5 per lifecycle (Priority: P3)
 
-As the repository owner, I want the other candidate steps chosen during clarification to be trialled on Haiku 5.5 in a bounded way, with their outcomes landing in the same place as the diagnose shadow, so I can decide each step's tier from evidence.
+As the repository owner, I want to opt a single lifecycle into running implement on Haiku 5.5 with a `model:haiku` label, with its outcomes landing in the same place as the diagnose shadow's, so I can decide implement's tier from evidence.
 
-**Why this priority**: These candidates carry more risk (their outputs act on PRs and branches) or more design surface (implement's turn budget and retry ladder), so they follow the low-risk shadow.
+**Why this priority**: Implement carries more risk (its output acts on branches and PRs) and more design surface (turn budget and retry ladder), so it follows the low-risk shadow.
 
-**Independent Test**: For each in-scope candidate, run one trial-enabled invocation and confirm a trial record appears with the model, turns, tokens, cost and outcome.
+**Scope**: The diagnose shadow (Story 2) and this implement opt-in are the only trials in this spec. pr-conversation's classify-and-announce and act steps (re-testing spec 033 D2) and rebase are out of scope and become later specs.
+
+**Independent Test**: Apply `model:haiku` to one lifecycle, let implement run one cycle, and confirm its metrics/trial record shows `claude-haiku-5-5` with turns, tokens, cost and outcome.
 
 **Acceptance Scenarios**:
 
-1. **Given** a lifecycle opted into a Haiku implement trial, **When** implement runs, **Then** the cycle runs on `claude-haiku-5-5` with its own turn budget, and its escalation retry goes one tier up (to Sonnet) before Opus.
-2. **Given** a trial-enabled run of an in-scope step, **When** it finishes, **Then** a trial record captures model, turns, tokens, cost and outcome, comparable with the same step's non-trial records.
-3. **Given** no trial is enabled, **When** any candidate step runs, **Then** it runs on its current tier with no behaviour change.
-
-[NEEDS CLARIFICATION: Which candidates beyond watchdog diagnose are in scope for this spec — pr-conversation classify-and-announce and act (re-testing D2), rebase, and/or a per-lifecycle Haiku opt-in for implement?]
+1. **Given** a lifecycle issue labelled `model:haiku` (and not `model:opus`), **When** implement runs, **Then** wrapper 5's model resolution chooses `claude-haiku-5-5` for the cycle, with the turn budget passed through implement's existing `max-turns` input, and the wrapper passes `claude-sonnet-5-5` as `escalation-model` so the one-tier-up retry goes to Sonnet. implement.yml gains no extra escalation rung; Opus stays reachable only through `model:opus`.
+2. **Given** a lifecycle issue labelled both `model:haiku` and `model:opus`, **When** implement runs, **Then** `model:opus` wins.
+3. **Given** a `model:haiku` label on a lifecycle (or mirrored onto its PR by finalize), **When** pr-conversation or the board loop runs, **Then** they ignore it and run on their current tier.
+4. **Given** a Haiku implement cycle finishes, **When** its record is written, **Then** a record captures model, turns, tokens, cost and outcome, comparable with Sonnet cycles' records (this may be the cycle's normal metrics record if it carries what FR-011 needs; planning decides).
+5. **Given** no lifecycle carries `model:haiku`, **When** implement runs, **Then** it runs on its current tier with no behaviour change.
 
 ---
 
@@ -82,7 +93,9 @@ As the repository owner, I want trial evidence summarised per step against agree
 **Acceptance Scenarios**:
 
 1. **Given** trial records exist for a step, **When** the summary is produced, **Then** it reports runs, agreement or success rate, refusal count, turn-exhaustion count, median turns and cost per run on each model, computed deterministically.
-2. **Given** the summary meets or misses the agreed bar, **When** the owner reads it, **Then** no default has moved; any move is a separate owner decision.
+2. **Given** at least 200 compared diagnose shadow runs, **When** the summary is produced, **Then** it states "meets" or "misses" against the diagnose bar (FR-017); **given** fewer than 200 when the window ends, it states that the sample is too small instead.
+3. **Given** a Haiku implement lifecycle, **When** the summary is produced, **Then** it reports, against the median Sonnet lifecycle on the metrics branch, cycles to converge, escalations and the tier each went to, refusals and turn exhaustions, and total cost including retries — with no numeric meets/misses verdict.
+4. **Given** the summary meets or misses the agreed bar, **When** the owner reads it, **Then** no default has moved; any move is a separate owner decision.
 
 ---
 
@@ -104,10 +117,10 @@ As the repository owner, I want trial evidence summarised per step against agree
 
 - **FR-001**: Every pipeline-chosen use of `claude-haiku-4-5` in stage workflows, wrapper fallbacks and auto-update-spec-kit MUST become `claude-haiku-5-5`.
 - **FR-002**: T026's reply classifier model MUST NOT remain silently hardcoded to a superseded ID; it MUST name `claude-haiku-5-5`. Whether it becomes a declared input is a planning decision; if it does, the new input is a deliberate widening of the published contract (Principle VII).
-- **FR-003**: Principle II MUST name `claude-haiku-5-5` for the Haiku tier, as a PATCH amendment (2.3.1 → 2.3.2) with its Sync Impact Report moved to the top of `constitution-history.md` in the same commit.
+- **FR-003**: Principle II MUST name `claude-haiku-5-5` for the Haiku tier, describe the per-lifecycle `model:haiku` implement opt-in (FR-014), and state that a trial shadow declares an explicit Haiku model and acts on nothing (so the diagnose shadow does not read as running against the diagnose carve-out). This is one MINOR amendment (2.3.1 → 2.4.0) covering both the model ID and the opt-in, with its Sync Impact Report moved to the top of `constitution-history.md` in the same commit.
 - **FR-004**: `docs/setup.md`, `docs/adoption.md` and `docs/architecture.md` MUST name `claude-haiku-5-5` for the Haiku tier.
 - **FR-005**: The existing check that guards metrics/summary emission and any fixtures that name the Haiku tier model MUST be updated consistently so the gate suite stays green and still fails on a drifted copy.
-- **FR-006**: A check MUST fail if a pipeline-chosen model reference to `claude-haiku-4-5` reappears in live workflows, wrappers or docs (historical spec documents excluded).
+- **FR-006**: A check MUST fail if a pipeline-chosen model reference to `claude-haiku-4-5` reappears in live workflows, wrappers or docs. It MUST ignore historical spec documents, gate fixtures under `.github/scripts/` that hold model strings only as data (as #970 did), and Claude Code's own helper ID `claude-haiku-4-5-20251001`.
 - **FR-007**: Each Haiku step MUST have defined refusal behaviour: summary steps degrade as a failed summary does today; T026 fails closed.
 
 **Trial infrastructure (Stories 2–4)**
@@ -117,13 +130,13 @@ As the repository owner, I want trial evidence summarised per step against agree
 - **FR-010**: Verdict comparison MUST be performed by deterministic code (Principle IX), and MUST record per-run agreement and the differing fields.
 - **FR-011**: Every trial outcome MUST be recorded where metrics records already go, carrying the step, model, turns, tokens, cost and an outcome from a fixed set that distinguishes at least: agreed/succeeded, disagreed/failed, exhausted, malformed, error, refused.
 - **FR-012**: Trials MUST be off by default for adopters and switchable from the consuming wrapper (repository variable or label), not from ambient state inside a stage workflow (Principle VII). Any new stage input is a deliberate contract widening.
-- **FR-013**: Trials MUST be bounded so they cannot consume the shared usage window unboundedly, and MUST be stoppable by a single switch.
-- **FR-014**: Each in-scope trial candidate other than diagnose MUST be opt-in per run or per lifecycle (for implement, a lifecycle label analogous to `model:opus`), with its own explicit turn budget; an implement Haiku cycle's escalation retry MUST go to Sonnet before Opus.
-- **FR-015**: A per-step summary of trial evidence MUST be producible deterministically from the trial records alone, against the agreed bar.
+- **FR-013**: Trials MUST be bounded so they cannot consume the shared usage window unboundedly, and MUST be stoppable by a single switch. Once enabled, the diagnose shadow MUST run for at most 14 days or 300 compared runs, whichever comes first, counted deterministically, and then turn itself off; the single switch stops it sooner, and restarting a trial is a deliberate owner act. Implement trials are bounded by the owner applying `model:haiku` one lifecycle at a time, under the existing limit of three lifecycles in implement.
+- **FR-014**: The only trial candidate other than the diagnose shadow is implement, opted in per lifecycle by a `model:haiku` label on the lifecycle issue. Wrapper 5's model resolution MUST choose `claude-haiku-5-5` for that lifecycle's cycles the same way `model:opus` chooses Opus; if both labels are present, `model:opus` MUST win. The label MUST affect implement only: pr-conversation and the board loop MUST ignore it, including when finalize mirrors it onto the PR. For a Haiku lifecycle the wrapper MUST pass `claude-sonnet-5-5` as `escalation-model`, so the one-tier-up retry goes to Sonnet; implement.yml gains no extra escalation rung, and Opus stays reachable only through `model:opus`. The Haiku cycle's turn budget MUST go through implement's existing `max-turns` input, with the value set in planning from data. pr-conversation classify-and-announce/act and rebase are out of scope.
+- **FR-015**: A per-step summary of trial evidence MUST be producible deterministically from the trial records alone, against the agreed bar (FR-017). The summary only reports.
 - **FR-016**: This spec MUST NOT move any step's default model to Haiku; moving one is a later MINOR amendment on owner decision.
-- **FR-017**: The trial bar ("good enough") and trial bound MUST be explicit before any trial runs. [NEEDS CLARIFICATION: What bar decides that a step is ready to move to Haiku — e.g. diagnose verdict agreement rate with Opus, refusal and exhaustion ceilings — and how many runs (or how many days) make a trial window?]
-
-[NEEDS CLARIFICATION: Does the trial bound mean a fixed run count/day window after which trials switch themselves off, or an open-ended trial the owner switches off manually?]
+- **FR-017**: The trial bar ("good enough") and trial bound (FR-013) MUST be explicit before any trial runs:
+  - **Diagnose shadow**: meets the bar when, over at least 200 compared runs, (a) at least 95% of runs agree with Opus on the filing decision (the same findings would be filed, or nothing would be); (b) at least 90% of the findings both verdicts raise agree on class; and (c) refused, exhausted and malformed outcomes together are at most 2% of runs. Error outcomes are reported separately and do not count toward the 2% (they are usually infrastructure, e.g. a 429 or runner fault). If the window ends before 200 compared runs, the summary reports the sample as too small rather than meets or misses.
+  - **Implement opt-in**: no numeric bar. For each Haiku lifecycle the summary reports, against the median Sonnet lifecycle on the metrics branch: cycles to converge; escalations and the tier each went to; refusals and turn exhaustions; and total cost including retries. The owner judges from that and from the final-PR review.
 
 ### Key Entities
 
@@ -143,6 +156,7 @@ As the repository owner, I want trial evidence summarised per step against agree
 - **SC-004**: 100% of shadow or trial runs produce a trial record with an outcome from the fixed set, including runs that are refused, exhausted or malformed.
 - **SC-005**: The owner can read, for each trialled step, its runs, agreement/success rate, refusal count, exhaustion count, median turns and cost per run on each model, without reading any agent transcript.
 - **SC-006**: Disabling trials via the single switch stops all trial model calls on the next run.
+- **SC-007**: An enabled diagnose shadow makes no Haiku calls once 14 days or 300 compared runs have passed, whichever comes first, without any owner action.
 
 ## Assumptions
 
@@ -153,5 +167,5 @@ As the repository owner, I want trial evidence summarised per step against agree
 - The board loop's agent steps (triage-propose, route-propose, fixer, reviewer) are out of scope: their metrics records carry no model or token counts.
 - Claude Code's internal Haiku calls are out of scope; the pipeline does not choose that model.
 - The Opus and Sonnet tiers are unchanged (#970). Intake, clarify and plan are not trial candidates: Principle II pays for Opus at intake/clarify on purpose, and plan never stays under 100K tokens.
-- Moving a step to Haiku or adding a Haiku opt-in for implement changes the tiering, which is a MINOR amendment to Principle II; adding an opt-in (FR-014) is therefore a MINOR amendment even though no default moves.
+- Moving a step to Haiku or adding a Haiku opt-in for implement changes the tiering, which is a MINOR amendment to Principle II; adding the `model:haiku` opt-in (FR-014) is therefore a MINOR amendment (2.4.0) even though no default moves, and it carries the Haiku model-ID change with it (FR-003).
 - Default trial switches are off; this repository's own wrappers enable the diagnose shadow.
