@@ -2,7 +2,7 @@
   "issue": 737,
   "spec_dir": "specs/095-agent-code-credential-containment",
   "feature_num": "095",
-  "stage": "tasks",
-  "iteration": 0,
+  "stage": "implement",
+  "iteration": 1,
   "spec_branch": "spec/095-agent-code-credential-containment"
 }
