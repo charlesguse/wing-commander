@@ -44,7 +44,11 @@ release-dispatch-failed — the three distinct bodies today), then calls
 `operation: close`, `close-comment` read from the deciding step's own
 `close-comment` output rather than templated into the `with:` block.
 
-Two paths close a standing report, and they name different versions:
+Three paths close a standing report, and they name different things
+(the third, a same-mode re-verification of an already-released head,
+names the mode and head that passed -- #966); all three are mode-aware,
+closing only an issue whose recorded mode the run verified or that
+records none. The original two name different versions:
 this attempt's own release (`"Resolved: ${NEXT_VERSION} released."`, the
 unchanged text from today's `close_failure_on_success`) and the quiet day
 whose latest tag already points at HEAD (`"Resolved: ${LATEST_TAG}

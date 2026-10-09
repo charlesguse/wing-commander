@@ -43,6 +43,14 @@ harness therefore asserts on the decision (action/title/close-comment/
 body/summary), not on `gh` issue calls -- the composite's own
 report/close/dedup mechanics are its own concern, not re-tested here.
 
+#966 made the close decision mode-aware: a default-runner pass closed a
+container-mode failure that was never fixed, and nothing re-checked it.
+`detect` now hands this step the open failure issue's recorded mode
+(FAILURE_ISSUE_MODE) and whether it re-verified an already-released head
+(RUN_VERIFICATION); the scenarios marked #966 below cover a pass in the
+other mode (left open), in the same mode (closed), a quiet day beside a
+mode-owned failure (left open), and a re-verification's pass and failure.
+
 It ends with MUTATION checks that put each defect back and assert the
 suite then fails. A test that cannot fail is not a test.
 
@@ -154,10 +162,29 @@ BASE = dict(DETECT_RESULT="skipped", PIN_RESULT="skipped", VERIFY_RESULT="skippe
             TAG_MATCHES="", CORRELATION="", CORRELATED_RUN_ID="",
             CORRELATED_RUN_URL="", REQUEST_TIME=REQUEST_TIME,
             DISPATCH_REJECTED="false", PAUSED="false",
+            # #966: no open failure issue unless a scenario says otherwise.
+            RUN_VERIFICATION="false", FAILURE_ISSUE="", FAILURE_ISSUE_MODE="",
             # specs/055-unattended-e2e-gates FR-019/FR-025: gate evidence
             # for a pass verdict's summary.
             SPEC_DRAFT_PR="", PLAN_PR="", FINALIZE_PR="",
             CLARIFICATION_ROUNDS_ANSWERED="", CLARIFICATION_COMMENT_IDS="")
+
+# The release a passing verdict leads to, reused by the #966 scenarios.
+RELEASED = dict(DETECT_RESULT="success", HAS_NEW_WORK="true", RUN_VERIFICATION="true",
+                TAG_EXISTS="true", LATEST_TAG="v2.7.6", HEAD_SHA=HEAD,
+                VERIFY_RESULT="success", DECIDE_RESULT="success",
+                NEXT_VERSION="v2.7.7", COLLISION="false",
+                DISPATCH_RESULT="success", TAG_MATCHES="true",
+                CORRELATION="found", CORRELATED_RUN_ID="4242",
+                CORRELATED_RUN_URL=CORRELATED_RUN_URL)
+DEFAULT_RUNNER_PASS = json.dumps({"outcome": "pass", "verified_head": HEAD,
+                                  "mode": "default-runner"})
+# A quiet day on which detect re-verified the already-released head
+# because the open failure issue records this run's mode.
+REVERIFIED = dict(DETECT_RESULT="success", HAS_NEW_WORK="false", RUN_VERIFICATION="true",
+                  TAG_EXISTS="true", LATEST_TAG="v2.7.7", HEAD_SHA=HEAD,
+                  VERIFY_RESULT="success", FAILURE_ISSUE="966",
+                  FAILURE_ISSUE_MODE="container")
 
 SCENARIOS = [
     dict(
@@ -565,6 +592,85 @@ SCENARIOS = [
         action="close",
         summary_contains="clarification: answered by a human before the harness",
     ),
+    dict(
+        name="#966: a default-runner pass releases but leaves an open "
+             "container-mode failure open -- it says nothing about the image",
+        env=dict(RELEASED, VERDICT_JSON=DEFAULT_RUNNER_PASS,
+                 FAILURE_ISSUE="966", FAILURE_ISSUE_MODE="container"),
+        action=None,
+        summary_contains="failure issue #966 left open: it records a container-mode "
+                         "failure, and this run verified default-runner",
+    ),
+    dict(
+        name="#966: a paused container turn's default-runner pass leaves a "
+             "container failure open too",
+        env=dict(RELEASED, VERDICT_JSON=DEFAULT_RUNNER_PASS, PAUSED="true",
+                 FAILURE_ISSUE="966", FAILURE_ISSUE_MODE="container"),
+        action=None,
+        summary_contains="failure issue #966 left open",
+    ),
+    dict(
+        name="#966: a same-mode pass that releases closes the failure",
+        env=dict(RELEASED, VERDICT_JSON=PASS,
+                 FAILURE_ISSUE="966", FAILURE_ISSUE_MODE="container"),
+        action="close",
+        close_comment_contains="v2.7.7 released",
+        summary_excludes="left open",
+    ),
+    dict(
+        name="#966: a failure no single mode owns (unrecorded) is cleared by "
+             "any release, as before",
+        env=dict(RELEASED, VERDICT_JSON=DEFAULT_RUNNER_PASS,
+                 FAILURE_ISSUE="966", FAILURE_ISSUE_MODE="unrecorded"),
+        action="close",
+        close_comment_contains="v2.7.7 released",
+    ),
+    dict(
+        name="#966: an open failure whose mode detect could not read is never "
+             "closed blind",
+        env=dict(RELEASED, VERDICT_JSON=PASS, FAILURE_ISSUE_MODE="unreadable"),
+        action=None,
+        summary_contains="detect could not read its recorded mode",
+    ),
+    dict(
+        name="#966: a quiet day beside an open container failure leaves it "
+             "open -- nothing was verified",
+        env=dict(DETECT_RESULT="success", HAS_NEW_WORK="false", TAG_EXISTS="true",
+                 LATEST_TAG="v2.7.7", HEAD_SHA=HEAD,
+                 FAILURE_ISSUE="966", FAILURE_ISSUE_MODE="container"),
+        action=None,
+        summary_contains="failure issue #966 left open: it records a container-mode "
+                         "failure, and this run verified nothing",
+    ),
+    dict(
+        name="#966: a quiet day still closes an unrecorded failure as stale",
+        env=dict(DETECT_RESULT="success", HAS_NEW_WORK="false", TAG_EXISTS="true",
+                 LATEST_TAG="v2.7.7", HEAD_SHA=HEAD,
+                 FAILURE_ISSUE="966", FAILURE_ISSUE_MODE="unrecorded"),
+        action="close",
+        close_comment_contains="v2.7.7 already released",
+    ),
+    dict(
+        name="#966: a same-mode re-verification of an already-released head "
+             "passes -- the failure closes, nothing is cut",
+        env=dict(REVERIFIED, VERDICT_JSON=PASS),
+        action="close",
+        close_comment_contains=f"container-mode verification passed at {HEAD}",
+        summary_contains="nothing unreleased, nothing cut",
+        summary_excludes="no new work since",
+    ),
+    dict(
+        name="#966: a same-mode re-verification fails -- reported on the "
+             "open issue, never read as a quiet day",
+        env=dict(REVERIFIED, VERDICT_JSON=json.dumps({
+            "outcome": "fail-infra", "verified_head": HEAD,
+            "failing_check": "verify-image-prerequisites",
+            "expected": "unzip on PATH", "observed": "missing:unzip",
+            "evidence_url": "https://example.invalid/e2e", "mode": "container"})),
+        action="report",
+        body_contains=["**Mode**: container", "missing:unzip"],
+        summary_excludes="no new work since",
+    ),
 ]
 
 
@@ -776,7 +882,42 @@ def mut_gate_stall_collapsed_into_pipeline_defect(script):
     return script.replace(old, 'fail-gate-stall) classification="pipeline defect" ;;', 1)
 
 
+def _swap(script, old, new, what):
+    if script.count(old) != 1:
+        sys.exit(f"::error::verify-auto-release-report: could not locate {what} "
+                 f"to mutate — the step text may have changed shape; update "
+                 f"this harness alongside it.")
+    return script.replace(old, new, 1)
+
+
+def mut_mode_blind_close(script):
+    """#966: any pass closes the open failure, whatever mode it records."""
+    return _swap(script, 'if [ "$FAILURE_ISSUE_MODE" != "$passed_mode" ]; then',
+                 "if false; then", "the same-mode close check")
+
+
+def mut_reverification_read_as_quiet_day(script):
+    """#966: a re-verification of a released head takes the quiet-day exit."""
+    return _swap(script,
+                 'if [ "$HAS_NEW_WORK" != "true" ] && [ "$RUN_VERIFICATION" != "true" ]; then',
+                 'if [ "$HAS_NEW_WORK" != "true" ]; then', "the quiet-day exit")
+
+
+def mut_reverification_pass_falls_through(script):
+    """#966: a re-verification's pass falls through to the release path,
+    where decide-version never ran, and closes nothing."""
+    return _swap(script,
+                 'if [ "$HAS_NEW_WORK" != "true" ]; then\n'
+                 '  echo "re-verified',
+                 'if false; then\n  echo "re-verified',
+                 "the re-verification pass branch")
+
+
 MUTATIONS = [
+    ("#966: a pass closes a failure filed in the other mode", mut_mode_blind_close),
+    ("#966: a re-verification read as a quiet day", mut_reverification_read_as_quiet_day),
+    ("#966: a re-verification's pass never closes the failure",
+     mut_reverification_pass_falls_through),
     ("report ignoring detect's job result (#325 case 1)", mut_ignore_detect_result),
     ("report filing a cancelled verify-e2e as infrastructure", mut_ignore_verify_result),
     ("report filing a run cancelled during e2e-pin as infrastructure", mut_ignore_pin_result),

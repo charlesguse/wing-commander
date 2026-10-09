@@ -84,8 +84,15 @@ only place this feature writes anything maintainer-facing:
   stopped: summarised, never filed (#325). A `verify-e2e` that ended
   `success` and still produced no JSON verdict is filed as infrastructure
   with a body that says the contract broke, not that the job stopped.
-- **`release-outcome: released`**: close any open `auto-release:failed`
-  issue with a comment naming the version that shipped.
+- **`release-outcome: released`**: close the open `auto-release:failed`
+  issue with a comment naming the version that shipped -- only when the
+  issue's recorded `**Mode**:` is the mode this run verified, or it
+  records no single mode (an early job crash, a collision, a release
+  failure). A pass in the other mode leaves it open and says so in the
+  summary: a default-runner pass is no evidence about a container-mode
+  failure (#966). `detect` re-verifies the current head on that mode's
+  next turn even when nothing is unreleased; a pass there closes the
+  issue and cuts nothing.
 
 This is a deliberately different mechanism from `wing-commander-callout`
 (research.md D13) — there is no spec lifecycle issue for an auto-release
