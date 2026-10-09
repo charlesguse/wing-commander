@@ -17,9 +17,9 @@
 
 **Purpose**: Locate current call sites; line numbers in the spec have drifted (research R4/R7).
 
-- [ ] T001 Re-read current `main` shapes and record the exact step names/line anchors for the four gate-suite sites (`board-loop.yml` fixer and review-fixup steps, `implement.yml` cycle and retry steps) and the push sites (`board-loop.yml` x2, `implement.yml` x1) as a short note at the top of `specs/095-agent-code-credential-containment/quickstart.md`
-- [ ] T002 [P] Read `.github/scripts/verify-board-loop-helper-provenance.py` (Gate 98), `verify-board-loop-composite-provenance.py` (Gate 104), `verify-implement-gate-suite-preflight.py`, `verify-stage-tool-lists.py`, and the spec-090 write-boundary definition, and list in `specs/095-agent-code-credential-containment/quickstart.md` what each asserts about the current in-job gate step (hot spot in plan.md)
-- [ ] T003 [P] Check `.github/scripts/wc_gate_registry.py` and `lint-workflows.yml` to document how a new `verify-*.py` gate is registered with path triggers (FR-019/FR-021) in `specs/095-agent-code-credential-containment/quickstart.md`
+- [x] T001 Re-read current `main` shapes and record the exact step names/line anchors for the four gate-suite sites (`board-loop.yml` fixer and review-fixup steps, `implement.yml` cycle and retry steps) and the push sites (`board-loop.yml` x2, `implement.yml` x1) as a short note at the top of `specs/095-agent-code-credential-containment/quickstart.md`
+- [x] T002 [P] Read `.github/scripts/verify-board-loop-helper-provenance.py` (Gate 98), `verify-board-loop-composite-provenance.py` (Gate 104), `verify-implement-gate-suite-preflight.py`, `verify-stage-tool-lists.py`, and the spec-090 write-boundary definition, and list in `specs/095-agent-code-credential-containment/quickstart.md` what each asserts about the current in-job gate step (hot spot in plan.md)
+- [x] T003 [P] Check `.github/scripts/wc_gate_registry.py` and `lint-workflows.yml` to document how a new `verify-*.py` gate is registered with path triggers (FR-019/FR-021) in `specs/095-agent-code-credential-containment/quickstart.md`
 
 ---
 

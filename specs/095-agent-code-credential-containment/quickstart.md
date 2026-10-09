@@ -1,5 +1,42 @@
 # Quickstart: validating 095
 
+## Call-site notes (T001-T003, recorded at implement cycle 2)
+
+Anchors on the branch as of this cycle (line numbers drift; names are stable):
+
+- `board-loop.yml` `fix` job: step `Run local gate suite (fixer)` (id
+  `gate-suite`), then `Comment the failing gate on the issue (fixer, gate suite
+  red)`, `Re-check kill switch ...`, `Push and open the PR` (`git push origin
+  "HEAD:refs/heads/$BRANCH"`). Job outputs `pr-number` and `breach` come from
+  `push-pr` / `final-diff-backstop`, which stay in the publish job.
+- `board-loop.yml` review-fixup: step writing
+  `board-review-fixup-gate-suite.log`, then a push guarded by
+  `if ! git push origin "HEAD:refs/heads/$BRANCH"`.
+- `implement.yml`: cycle gate-suite preflight (writes `gate-suite-cycle.log`,
+  skips when `run-local-gates.py` is absent), retry preflight
+  (`gate-suite-retry.log`), and the spec-branch push `git push origin
+  "HEAD:refs/heads/${SPEC_PREFIX}$SLUG"` plus the agent-composed `git push`
+  further down.
+
+What the existing gates assert about the in-job gate step (hot spot):
+
+- Gate 98 (`verify-board-loop-helper-provenance.py`): every `python3` in
+  fix/review/readiness is `-I` and imports from `$RUNNER_TEMP/wc-pristine`;
+  the `GATE_SUITE_CALL` (`python3 .github/scripts/run-local-gates.py`) is the
+  sole carve-out, so moving the step needs the carve-out moved with it.
+- Gate 104 (`verify-board-loop-composite-provenance.py`): composites are
+  `uses:`d from `.wc-pristine-repo`; a new gate-suite job must do the same.
+- `verify-implement-gate-suite-preflight.py`: asserts the preflight text and
+  the `script-exists` skip shape of both implement sites.
+- `verify-stage-tool-lists.py`: owns the `Bash(python ...run-local-gates.py:*)`
+  grant and the stage write-boundary lists the `.git/**` deny (T029) extends.
+
+Gate registration: a gate is a `verify-*.py` invoked from a
+`lint-workflows.yml` step (plain run plus `--self-test`) with path triggers;
+`wc_gate_registry.py` recovers argv from those steps and `run-local-gates.py`
+runs them, so one registration serves CI and local (FR-019/FR-021). Gates 141
+and 142 are the examples.
+
 Prerequisites: a checkout of the branch, Python 3 with PyYAML, `jq`, `git`.
 
 ## Local
