@@ -59,11 +59,16 @@ prior state.
    attached does not fire the `labeled` event `wing-commander-1-intake.yml`
    is gated on).
 6. **Poll to a verdict** (research.md D10, data-model.md "End-to-end
-   verdict"): bounded by the job's own `timeout-minutes`; reads only
-   `issues: read`-scoped state (issue state, labels, timeline) and
-   repository contents (to assert per-stage artifacts) on the test
-   repository — never that repository's own Actions run logs. Those reads
-   run under the fixture maintainer credential
+   verdict"): bounded by the step's own `POLL_BUDGET_SECONDS` (8100s),
+   which sits inside the job's `timeout-minutes` with a reserve for the
+   steps before and after the loop, so an exhausted budget still writes a
+   `fail-timeout` verdict rather than the runner killing the step. Reads
+   issue state, labels, comments and timeline, open and merged pull
+   requests (specs/055's gate driving), and repository contents (to
+   assert per-stage artifacts) on the test repository; in container mode
+   also that repository's Actions run and job metadata (specs/067) --
+   never its run logs. Every one of those reads, like the gate-driving
+   writes, runs under the fixture maintainer credential
    (`WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN`, specs/055 and
    specs/066), not the scoped App token above: an App installation token
    expires 60 minutes after it is minted and the poll can run longer

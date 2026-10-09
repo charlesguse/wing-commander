@@ -41,16 +41,23 @@ issue/comments read came back "Bad credentials (HTTP 401)", and the
 credential arm above blamed the harness credential for it. Every scenario
 now runs the step under the credentials its OWN `env:` mapping binds
 (each `${{ }}` expression mapped to a named stand-in, never a hard-coded
-choice), and two more scenarios use a stub whose App-token stand-in starts
-answering 401 after a few calls -- the hour mark, compressed:
+choice), and two more scenarios use a stub that 401s a stand-in after a
+few calls:
 
-  * the poll outlives the App token and reaches the issue's terminal state,
-    never ending on a credential verdict;
-  * a 401 the poll does end on names the credential that was rejected --
-    the maintainer secret, the only GitHub credential left in the step.
+  * the App-token stand-in expires (the hour mark, compressed): the poll
+    outlives it and reaches the issue's terminal state, never ending on a
+    credential verdict;
+  * the App-token stand-in never expires and the maintainer stand-in is
+    revoked instead: the clarification reads are rejected, so the 401 the
+    poll ends on is the maintainer secret's, the credential the verdict
+    names. The verdict text names that secret as a fixed string, so only
+    WHICH gate fails proves the reads ran under it -- under the App token
+    they would keep succeeding and the attempt would end elsewhere.
 
-A second mutation binds the step's GH_TOKEN back to `steps.token` and must
-fail both. It makes no network call.
+A second mutation binds the step's GH_TOKEN back to `steps.token`, and each
+mutation lists the scenarios that must break under it (`must_break`), so
+"must fail both" is enforced rather than satisfied by any one failing
+assertion. It makes no network call.
 """
 import json
 import os
@@ -176,10 +183,11 @@ def gh_stub_script(slug_behaviors):
     return "\n".join(lines) + "\n"
 
 
-def expiry_stub_script(harness_expires_after=None):
+def expiry_stub_script(app_expires_after, harness_expires_after=None):
     """A `gh` stub for a poll that outlives the App token: a call made
-    under the App-token stand-in counts toward APP_TOKEN_LIFETIME_CALLS and
-    401s once past it, the way an installation token does at the hour mark.
+    under the App-token stand-in counts toward `app_expires_after` (None:
+    never expires) and 401s once past it, the way an installation token does
+    at the hour mark.
     Calls under the harness stand-in never expire unless
     `harness_expires_after` is given, in which case they 401 past that many
     calls too (the harness credential revoked mid-attempt). Every read
@@ -187,6 +195,7 @@ def expiry_stub_script(harness_expires_after=None):
     reports the issue in flight until its TERMINAL_AT_VIEW-th call, which
     reports stage:stalled -- a terminal state the poll reaches only if its
     reads kept working."""
+    app_limit = "" if app_expires_after is None else str(app_expires_after)
     harness_limit = "" if harness_expires_after is None else str(harness_expires_after)
     return "\n".join([
         "#!/usr/bin/env bash",
@@ -200,7 +209,7 @@ def expiry_stub_script(harness_expires_after=None):
         "  fi",
         "}",
         f'if [ "$GH_TOKEN" = "{APP_TOKEN}" ]; then',
-        f'  reject "$STUB_APP_CALLS" "{APP_TOKEN_LIFETIME_CALLS}"',
+        f'  reject "$STUB_APP_CALLS" "{app_limit}"',
         f'elif [ "$GH_TOKEN" = "{HARNESS_TOKEN}" ]; then',
         f'  reject "$STUB_HARNESS_CALLS" "{harness_limit}"',
         "else",
@@ -209,7 +218,7 @@ def expiry_stub_script(harness_expires_after=None):
         "fi",
         'if [ "$1" = "api" ]; then',
         '  case "$2" in',
-        "    */comments) exit 0 ;;",
+        "    */comments|*/timeline) exit 0 ;;",
         "    */issues/*) printf '999\\n'; exit 0 ;;",
         "  esac",
         "  exit 0",
@@ -299,17 +308,27 @@ SCENARIOS = [
       "Resource not accessible by personal access token"]),
 ]
 
-# #979: name, harness_expires_after, expected outcome, expected
-# failing_check, substrings the verdict text must carry, substrings it must
-# NOT carry.
+# #979: name, app_expires_after, harness_expires_after, expected outcome,
+# expected failing_check, substrings the verdict text must carry, substrings
+# it must NOT carry.
+EXPIRY_OUTLIVES_APP_TOKEN = (
+    "the poll outlives the App token's 60-minute lifetime and reaches the "
+    "issue's terminal state (#979)")
+EXPIRY_NAMES_REJECTED_CREDENTIAL = (
+    "a 401 the poll ends on comes from the maintainer secret it names, "
+    "rejected at the clarification gate's reads (#979)")
 EXPIRY_SCENARIOS = [
-    ("the poll outlives the App token's 60-minute lifetime and reaches the "
-     "issue's terminal state (#979)",
-     None, "fail-incomplete", "end-to-end run reaching stage:done",
+    (EXPIRY_OUTLIVES_APP_TOKEN,
+     APP_TOKEN_LIFETIME_CALLS, None,
+     "fail-incomplete", "end-to-end run reaching stage:done",
      ["stage:stalled"], ["credential", "HTTP 401"]),
-    ("a 401 the poll ends on names the maintainer secret, the credential "
-     "actually rejected, at the gate that hit it (#979)",
-     4, "fail-infra", "clarification",
+    # The App-token stand-in never expires here: if the clarification reads
+    # ran under it they would keep succeeding, and the revoked maintainer
+    # credential would surface only at the spec-draft PR list (or not at
+    # all before the terminal view) -- never as a "clarification" verdict.
+    (EXPIRY_NAMES_REJECTED_CREDENTIAL,
+     None, 4,
+     "fail-infra", "clarification",
      [HARNESS_SECRET, "was rejected", "Bad credentials"], []),
 ]
 
@@ -346,10 +365,11 @@ def suite(script, step_env, tmproot):
                                          gh_stub_script(behaviors), tmproot)
         failures += check_verdict(name, rc, out, outputs, want_outcome,
                                   want_failing_check, want_in_text)
-    for (name, harness_after, want_outcome, want_failing_check, want_in_text,
-         want_not_in_text) in EXPIRY_SCENARIOS:
+    for (name, app_after, harness_after, want_outcome, want_failing_check,
+         want_in_text, want_not_in_text) in EXPIRY_SCENARIOS:
         rc, out, outputs = run_with_stub(script, token_env,
-                                         expiry_stub_script(harness_after), tmproot)
+                                         expiry_stub_script(app_after, harness_after),
+                                         tmproot)
         failures += check_verdict(name, rc, out, outputs, want_outcome,
                                   want_failing_check, want_in_text,
                                   want_not_in_text)
@@ -379,11 +399,14 @@ def mut_reads_under_app_token(script, step_env):
     return script, env
 
 
+# label, mutation, scenario names each of which must fail under it (empty:
+# any one failing assertion is enough).
 MUTATIONS = [
     ("FR-011's credential-signature branch dropped from write_repeated_failure_verdict",
-     mut_drop_credential_branch),
+     mut_drop_credential_branch, ()),
     ("the poll step's reads run under the App installation token again (#979)",
-     mut_reads_under_app_token),
+     mut_reads_under_app_token,
+     (EXPIRY_OUTLIVES_APP_TOKEN, EXPIRY_NAMES_REJECTED_CREDENTIAL)),
 ]
 
 
@@ -407,7 +430,7 @@ def main():
         failures = suite(script, step_env, tmproot)
         for f in failures:
             print(f"::error::{f}")
-        for label, mutate in MUTATIONS:
+        for label, mutate, must_break in MUTATIONS:
             m_script, m_env = mutate(script, step_env)
             if m_script == script and m_env == step_env:
                 print(f"::error::mutation {label!r} changed nothing -- the code it "
@@ -416,7 +439,15 @@ def main():
                 failures.append(f"mutation inapplicable: {label}")
                 continue
             broke = suite(m_script, m_env, tmproot)
-            if broke:
+            unbroken = [n for n in must_break
+                        if not any(b.startswith(f"{n}:") for b in broke)]
+            if unbroken:
+                for n in unbroken:
+                    print(f"::error::MUTATION SURVIVED IN PART - {label} left the "
+                          f"scenario {n!r} passing, so that scenario does not see "
+                          f"this defect. Fix the scenario, not the mutation.")
+                failures.append(f"mutation survived in part: {label}")
+            elif broke:
                 print(f"Mutation OK - {label}: {len(broke)} assertion(s) fail.")
             else:
                 print(f"::error::MUTATION SURVIVED - {label} broke nothing in this "
