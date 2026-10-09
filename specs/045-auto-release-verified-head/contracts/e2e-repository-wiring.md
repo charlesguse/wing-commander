@@ -62,7 +62,12 @@ prior state.
    verdict"): bounded by the job's own `timeout-minutes`; reads only
    `issues: read`-scoped state (issue state, labels, timeline) and
    repository contents (to assert per-stage artifacts) on the test
-   repository — never that repository's own Actions run logs.
+   repository — never that repository's own Actions run logs. Those reads
+   run under the fixture maintainer credential
+   (`WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN`, specs/055 and
+   specs/066), not the scoped App token above: an App installation token
+   expires 60 minutes after it is minted and the poll can run longer
+   (#979). The App token stays the credential for steps 1–5.
 
 ## What this feature never does to the test repository
 
