@@ -87,17 +87,23 @@ jobs:
   # branch through metrics-persist's daily sweep (the watchdog is
   # sweep-only), so the count lags by up to a day of runs.
   #
-  # Every step is continue-on-error: wing-commander-8b verifies this run
-  # and fails on any job whose conclusion is not success, so a trial-bound
-  # hiccup must leave the shadow off (an empty output reads as false
+  # Every step is continue-on-error and carries its own timeout under the
+  # job's: wing-commander-8b verifies this run and fails on any job whose
+  # conclusion is not success, so a trial-bound hiccup -- a slow checkout
+  # included -- must leave the shadow off (an empty output reads as false
   # below) rather than turn the inspection red.
+  #
+  # An adopter's copy references the composite from the pipeline
+  # repository (charlesguse/wing-commander/.github/actions/
+  # wing-commander-trial-bound@<your pin>), as its watchdog job references
+  # the stage; the local path below works only in this repository.
   trial-bound:
     if: >-
       vars.WING_COMMANDER_DIAGNOSE_SHADOW_SINCE != '' &&
       vars.WING_COMMANDER_WATCHDOG_PAUSED != 'true' &&
       github.event.workflow_run.conclusion != 'skipped'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
     permissions:
       contents: read
     outputs:
@@ -105,6 +111,7 @@ jobs:
     steps:
       - name: Checkout the trial-bound composite
         continue-on-error: true
+        timeout-minutes: 3
         uses: actions/checkout@v5
         with:
           persist-credentials: false
@@ -117,6 +124,7 @@ jobs:
       - name: Checkout the metrics branch
         id: metrics
         continue-on-error: true
+        timeout-minutes: 5
         uses: actions/checkout@v5
         with:
           ref: ${{ vars.WING_COMMANDER_METRICS_BRANCH || 'metrics' }}
@@ -128,10 +136,19 @@ jobs:
       - name: Decide whether the diagnose shadow is inside its bound
         id: bound
         continue-on-error: true
+        timeout-minutes: 3
         uses: ./.github/actions/wing-commander-trial-bound
         with:
           since: ${{ vars.WING_COMMANDER_DIAGNOSE_SHADOW_SINCE }}
           records-path: ${{ steps.metrics.outcome == 'success' && format('.wing-commander-metrics/{0}', vars.WING_COMMANDER_METRICS_PATH || 'records.jsonl') || '' }}
+
+      # The composite never answered (it could not be checked out or run):
+      # the shadow stays off, and says so.
+      - name: Report a trial bound that never answered
+        if: steps.bound.outputs.enabled == ''
+        continue-on-error: true
+        timeout-minutes: 1
+        run: echo "::warning::wing-commander-trial-bound did not run, so the diagnose shadow stays off (trial; acts on nothing)"
 
 
   # No resolve job in front of it. The run-id is a one-line expression

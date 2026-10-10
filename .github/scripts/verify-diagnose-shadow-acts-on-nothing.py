@@ -92,10 +92,9 @@ SHADOW_MAX_TIMEOUT = 5
 OTHER_STEPS_MINUTES = 10
 # Read-only, and readable under this stage's github.token grant (issues,
 # actions, checks -- no pull-requests; Gate 12 holds the grant side).
-READ_ONLY_GH = {
-    "gh run view", "gh run list", "gh issue view", "gh issue list",
-    "gh label list",
-}
+# No gh issue/pr reads: the acting verdict is already posted on the
+# lifecycle issue when the shadow runs, and reading it would be copying.
+READ_ONLY_GH = {"gh run view", "gh run list", "gh label list"}
 FORBIDDEN_ALLOWED = {"Write", "Edit", "NotebookEdit", "Bash", "Bash(*)",
                      "Bash(gh:*)", "Bash(gh api:*)", "Bash(git:*)"}
 BAD_IF = re.compile(r"\|\||failure\(\)|success\(\)")
@@ -295,6 +294,13 @@ def check(watchdog, wrapper):
             for t in ("Write", "Edit"):
                 if t not in disallowed:
                     fail(f"the shadow's disallowed list must name {t}")
+
+    # 6a. Re-runs keep the run id: every shadow upload overwrites.
+    for s in family:
+        if "actions/upload-artifact" in str(s.get("uses", "")) and \
+                (s.get("with") or {}).get("overwrite") is not True:
+            fail(f"shadow upload {s.get('name')!r} needs overwrite: true -- a "
+                 "re-run keeps the run id and would drop the re-run's record")
 
     # 6. Credentials, ambient state, and nothing reads the shadow.
     for s in family:
@@ -547,6 +553,13 @@ MUTATIONS = [
      lambda wd, w: _tool_step(wd)["with"].__setitem__(
          "default-allowed-tools",
          _tool_step(wd)["with"]["default-allowed-tools"] + ",Bash(gh:*)")),
+    ("shadow granted the lifecycle issue's posted verdict",
+     lambda wd, w: _tool_step(wd)["with"].__setitem__(
+         "default-allowed-tools",
+         _tool_step(wd)["with"]["default-allowed-tools"]
+         + ",Bash(gh issue view:*)")),
+    ("a shadow upload drops overwrite",
+     lambda wd, w: _family(wd)[-1]["with"].pop("overwrite")),
     ("shadow granted a writing gh subcommand",
      lambda wd, w: _tool_step(wd)["with"].__setitem__(
          "default-allowed-tools",

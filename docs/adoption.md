@@ -1534,7 +1534,10 @@ no repository variable for it. This repository's
 `wing-commander-8-watchdog.yml` computes the value in a `trial-bound` job
 from `WING_COMMANDER_DIAGNOSE_SHADOW_SINCE` and the metrics branch (60 days
 or 300 compared runs, whichever comes first), and
-`wing-commander-trial-summary.yml` summarises the trial.
+`wing-commander-trial-summary.yml` summarises the trial. A copy of that
+job in your wrapper references the composite from the pipeline repository
+(`charlesguse/wing-commander/.github/actions/wing-commander-trial-bound@<your pin>`)
+rather than by local path.
 
 ## Chaining payload contract
 

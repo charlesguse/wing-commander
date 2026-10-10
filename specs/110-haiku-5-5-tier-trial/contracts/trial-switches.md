@@ -52,9 +52,12 @@ Diagnose step's by Gate 146 -- research.md D7's fallback, recorded at tasks.md T
   `timeout-minutes: 5`; with the Diagnose step's 10 and ten minutes for the other
   steps it fits the job's backstop, raised from 20 to 25 minutes.
 - Allowlist is fixed read-only and takes no consumer tool-list input: `Read`,
-  `Grep`, the git read wrapper and read-only `gh` subcommands only (not the
-  diagnose default's `Bash(gh:*)`, because `github.token` holds `issues: write` in
-  this stage); no `Write`/`Edit`; `GH_TOKEN` and `github_token` are `github.token`.
+  `Grep`, the git read wrapper, `gh run view`/`gh run list` and `gh label list`
+  only (not the diagnose default's `Bash(gh:*)`, because `github.token` holds
+  `issues: write` in this stage, and no `gh issue`/`gh pr` reads, because the
+  acting verdict is already posted on the lifecycle issue); no `Write`/`Edit`;
+  `GH_TOKEN` and `github_token` are `github.token`. While it runs, the acting
+  findings and transcript are compressed out of its reach.
 - Its prompt and `--json-schema` are byte-equal to the Diagnose step's.
 - Its outputs feed only the comparator and the trial-record upload; no acting step
   and no job output of the diagnose job reads it.

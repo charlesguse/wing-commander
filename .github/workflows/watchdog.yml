@@ -3175,14 +3175,18 @@ jobs:
             echo "run-agent=false" >> "$GITHUB_OUTPUT"
           fi
 
+      # No gh issue or pr reads either: by now the acting path has posted
+      # its verdict on the lifecycle issue, and a shadow that read it would
+      # be measured copying, not judging. Only the inspected run's own
+      # Actions data and the label vocabulary remain.
       - name: Compose tool args (watchdog.diagnose-shadow)
         id: tool-args-diagnose-shadow
         if: steps.diagnose-shadow-prep.outputs.run-agent == 'true'
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-tool-args
         with:
-          default-allowed-tools: "Read,Grep,Bash(gh run view:*),Bash(gh run list:*),Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh label list:*),Bash(python3 -I .wing-commander-pipeline/.github/scripts/git_read.py:*)"
-          default-disallowed-tools: "WebSearch,WebFetch,Write,Edit,NotebookEdit,Bash(git:*),Bash(cd:*),Bash(pushd:*),Bash(popd:*),Bash(gh api:*),Bash(gh run download:*),Bash(gh issue comment:*),Bash(gh issue create:*),Bash(gh issue edit:*),Bash(gh pr comment:*),Bash(gh label create:*),ScheduleWakeup,Monitor,SendMessage"
+          default-allowed-tools: "Read,Grep,Bash(gh run view:*),Bash(gh run list:*),Bash(gh label list:*),Bash(python3 -I .wing-commander-pipeline/.github/scripts/git_read.py:*)"
+          default-disallowed-tools: "WebSearch,WebFetch,Write,Edit,NotebookEdit,Bash(git:*),Bash(cd:*),Bash(pushd:*),Bash(popd:*),Bash(gh api:*),Bash(gh run download:*),Bash(gh issue:*),Bash(gh pr:*),Bash(gh label create:*),ScheduleWakeup,Monitor,SendMessage"
           step-label: "watchdog.diagnose-shadow"
 
       - name: Compute diagnose shadow turn ceiling
@@ -3388,6 +3392,8 @@ jobs:
           name: claude-execution-output-diagnose-shadow
           path: ${{ runner.temp }}/claude-execution-output.json
           if-no-files-found: ignore
+          # a "Re-run all jobs" keeps the run id -- see "Upload findings".
+          overwrite: true
           retention-days: 90
 
       # The shadow's structured result is written as the comparator's
@@ -3461,6 +3467,8 @@ jobs:
           name: metrics-record-diagnose-shadow
           path: ${{ runner.temp }}/wing-commander-metrics-record-diagnose-shadow.json
           if-no-files-found: ignore
+          # a "Re-run all jobs" keeps the run id -- see "Upload findings".
+          overwrite: true
           retention-days: 90
 
   # One matrix entry per Finding: coexistence check, evidence-validity
