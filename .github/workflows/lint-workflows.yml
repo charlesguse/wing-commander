@@ -5522,24 +5522,27 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-shell-harness-parity.py
 
-      # Gate 141 — specs/112-agent-startup-image-check (FR-008, SC-003): the
+      # Gate 147 — specs/112-agent-startup-image-check (FR-008, SC-003): the
       # agent start-up classifier is driven over a checked-in log fixture per
       # verdict branch, and private-image-dogfood.yml's startup-agent /
       # classify-startup jobs keep their no-credential, fail-closed shape.
-      - name: "Gate 141 — the agent start-up classifier has a fixture per branch and the start-up jobs stay credential-free and fail-closed"
+      # Numbered 147, not 141: 141-146 were taken by spec 110's PR #982,
+      # which claimed them first among the open lifecycle branches.
+      - name: "Gate 147 — the agent start-up classifier has a fixture per branch and the start-up jobs stay credential-free and fail-closed"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-agent-startup-classifier.py
-      - name: "Gate 141 self-test — a missing expect file, a fixture-less verdict, a drifted verdict, and each start-up job mutation fail"
+      - name: "Gate 147 self-test — a missing expect file, a fixture-less verdict, a drifted verdict, and each start-up job mutation fail"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-agent-startup-classifier.py --self-test
 
-      # Gate 142 — specs/112-agent-startup-image-check (FR-013): the git >=
+      # Gate 148 — specs/112-agent-startup-image-check (FR-013): the git >=
       # 2.38 floor fragment (image-git-floor.sh) is driven against stubbed
       # `git --version` outputs and found verbatim in every stage's probe.
-      - name: "Gate 142 — every stage's image probe enforces the git 2.38 floor, verbatim from image-git-floor.sh"
+      # Numbered 148, not 142: 141-146 were taken by spec 110's PR #982.
+      - name: "Gate 148 — every stage's image probe enforces the git 2.38 floor, verbatim from image-git-floor.sh"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-image-git-floor.py
-      - name: "Gate 142 self-test — a lowered floor and a probe missing the fragment each fail"
+      - name: "Gate 148 self-test — a lowered floor and a probe missing the fragment each fail"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-image-git-floor.py --self-test
 

@@ -252,7 +252,7 @@ The agent action stays on the floating `@v1` tag; its dependency changes are
 caught by the agent start-up check on the next daily dogfood run, not by
 pinning. The probe additionally requires **git >= 2.38**
 (`.github/scripts/image-git-floor.sh`, verbatim in every stage's probe,
-enforced by Gate 142), failing with `git <found> is older than the 2.38
+enforced by Gate 148), failing with `git <found> is older than the 2.38
 minimum`. `private-image-dogfood.yml` gains one additive, optional input,
 `startup-check` (boolean, default `false`); no new secret.
 
