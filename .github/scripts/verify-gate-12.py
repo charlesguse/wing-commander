@@ -384,6 +384,8 @@ LOCATOR_CASES = [
     ("a ${} default before a continuation or an empty expansion",
      "${X:-gh}\\\n api x; ${X:-gh}$Y api x",
      [dis("dynamic-command"), dis("dynamic-command")]),
+    ("gh split by a continuation in a ${} word", "${X:-g\\\nh} api x; sudo ${X:-g\\\nh} a",
+     [dis("dynamic-command"), dis("unquoted-wrapper")]),
     ("text ending gh} is no expansion", 'sudo echo "$X uses gh}"', [men("quoted")]),
     ("redirect target spelled function", ">function gh a b", [C_ST]),
     ("a dashed test operand is no command", '[[ -z "$X" || -e gh ]]', []),

@@ -426,8 +426,8 @@ class _Scan:
 
 
 def _expands_to_gh(w):
-    return (w.lit is None and "${" in w.raw
-            and GH_IN_EXPANSION.search(w.raw) is not None)
+    raw = w.raw.replace("\\\n", "")                  # bash joins continuations first
+    return w.lit is None and "${" in raw and GH_IN_EXPANSION.search(raw) is not None
 
 
 def _argv_reason(argv):
