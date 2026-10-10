@@ -17,7 +17,7 @@ Workflow comments are load-bearing (gates byte-compare them): after any edit und
 
 **Purpose**: Establish the baseline before editing.
 
-- [ ] T001 Run `python .github/scripts/run-local-gates.py` on the branch and record the baseline result, so later failures are attributable to this feature.
+- [X] T001 Run `python .github/scripts/run-local-gates.py` on the branch and record the baseline result, so later failures are attributable to this feature.
 - [X] T002 [P] Read the current `collect-step-summary` step in `.github/workflows/watchdog.yml` (job-log fetch near lines 1262-1309), the `diagnose` job's tool-args site (`Bash(gh:*)` near line 2585) and prompt, and the "Decide upgrade path" step in `.github/workflows/auto-update-spec-kit.yml` (lines ~1092-1131), so every later edit is made against the current text.
 
 ---
@@ -44,7 +44,7 @@ Workflow comments are load-bearing (gates byte-compare them): after any edit und
 - [X] T005 [US1] Add a `Stage failed-job logs` step to the `diagnose` job in `.github/workflows/watchdog.yml`, before the agent step, with `continue-on-error: true` and `ACTIONS_TOKEN: ${{ github.token }}` (the workflow already grants `actions: read`). Call `.github/actions/_shared/fetch-job-logs.sh`, keep jobs whose conclusion is `failure`, and write `${{ steps.ctx.outputs.runner-temp }}/watchdog-job-logs/<job_id>.log` and `watchdog-job-logs-status.json` with the shape in `data-model.md`. Write the status file on every path. On a listing failure, a log read failure or an empty body, set `outcome:"failed"`, write no log file for that job (`file: null`), and append `"job-logs"` to `watchdog-untrusted-collectors.json`. Add the `container-shell-safety` and `review-step-gating` checks to the PR review notes.
 - [X] T006 [US1] Remove `Bash(gh:*)` from the `watchdog.diagnose` tool-args `default-allowed-tools` in `.github/workflows/watchdog.yml` (~line 2585). Keep `Read,Grep` and the `python3 -I …/git_read.py` wrapper grant.
 - [X] T007 [US1] Rewrite the diagnose prompt in `.github/workflows/watchdog.yml`. Name the log directory and status file by literal path. Frame the logs as untrusted DATA like the signals file. Remove every sentence that names `gh` or a fetch the agent would perform. State that when the status is `failed`, the status file is missing, or `job-logs` is in the untrusted collectors file, the verdict says job logs could not be gathered and no signal is dropped silently.
-- [ ] T008 [US1] Run `python .github/scripts/run-local-gates.py` and fix any workflow-comment or gate fallout from T004-T007.
+- [X] T008 [US1] Run `python .github/scripts/run-local-gates.py` and fix any workflow-comment or gate fallout from T004-T007.
 
 **Checkpoint**: US1 is complete and is the MVP.
 
@@ -76,7 +76,7 @@ Workflow comments are load-bearing (gates byte-compare them): after any edit und
 - [X] T013 [US3] Make the loud-failure cases fail: a `FLEET_READ_ONLY_STEP_LABELS` label with no matching site, and zero read-only sites across the fleet.
 - [X] T014 [US3] Add the nine fixtures from `contracts/gate-93-check-4c.md` to the self-test, one per failure branch. Update the existing `_inline_fixture` default (`Bash(gh api:*)`) and the 4b "gh left alone" case, which encode the old behaviour.
 - [X] T015 [US3] Add mutations to the self-test that restore `Bash(gh:*)` in `watchdog.yml`'s `watchdog.diagnose` site and `Bash(gh api:*)` in `auto-update-spec-kit.yml`'s inline list, on copies of the real files. The gate must fail on each.
-- [ ] T016 [US3] Run `python .github/scripts/verify-issue-context-single-home.py --self-test`, then `python .github/scripts/run-local-gates.py`. Confirm the gate is invoked the same way locally as in `lint-workflows.yml`.
+- [X] T016 [US3] Run `python .github/scripts/verify-issue-context-single-home.py --self-test`, then `python .github/scripts/run-local-gates.py`. Confirm the gate is invoked the same way locally as in `lint-workflows.yml`.
 
 **Checkpoint**: A regression of either grant fails the PR-time suite.
 
@@ -102,7 +102,7 @@ Workflow comments are load-bearing (gates byte-compare them): after any edit und
 ## Phase 7: Polish & Cross-Cutting Concerns
 
 - [X] T023 Grep `.github/` and `docs/` for remaining `Bash(gh:*)`, `Bash(gh api:*)`, and prompt text that coaches `gh` on read-only agents (SC-001, SC-006).
-- [ ] T024 Run `python .github/scripts/run-local-gates.py` clean, then walk `quickstart.md`.
+- [X] T024 Run `python .github/scripts/run-local-gates.py` clean, then walk `quickstart.md`.
 - [ ] T025 Post-merge proof (hand to the maintainer, since the merge needs the `workflow` scope): re-drive one watchdog run with `gh workflow run` and record the schema-valid verdict with no denied-tool event (SC-004). Record one auto-update evaluation returning an outcome from the staged release notes (SC-005). Record a simulated fetch failure ending in `outcome:"failed"` and a verdict naming job logs (SC-008).
 
 ---
@@ -129,9 +129,9 @@ Workflow comments are load-bearing (gates byte-compare them): after any edit und
 
 ## Maintainer Feedback
 
-- [ ] T001 (PR #991 comment by charlesguse) Run `python .github/scripts/run-local-gates.py` on the branch and record the baseline result. The rebuilt implement image (#996) now includes PyYAML (#989).
-- [ ] T008 (PR #991 comment) Run `python .github/scripts/run-local-gates.py` and fix any workflow-comment or gate fallout from T004-T007.
-- [ ] T016 (PR #991 comment) Run `python .github/scripts/verify-issue-context-single-home.py --self-test`, then `python .github/scripts/run-local-gates.py`. Confirm the gate is invoked the same way locally as in `lint-workflows.yml`.
+- [X] T001 (PR #991 comment by charlesguse) Run `python .github/scripts/run-local-gates.py` on the branch and record the baseline result. The rebuilt implement image (#996) now includes PyYAML (#989).
+- [X] T008 (PR #991 comment) Run `python .github/scripts/run-local-gates.py` and fix any workflow-comment or gate fallout from T004-T007.
+- [X] T016 (PR #991 comment) Run `python .github/scripts/verify-issue-context-single-home.py --self-test`, then `python .github/scripts/run-local-gates.py`. Confirm the gate is invoked the same way locally as in `lint-workflows.yml`.
 - [ ] T022 (PR #991 comment) Add a single-home assertion for the rationale (research D6) to the nearest existing gate. The rationale's distinguishing sentence must occur in exactly one file. If no cheap deterministic form exists, record why in the PR description.
-- [ ] T024 (PR #991 comment) Run `python .github/scripts/run-local-gates.py` clean, then walk `quickstart.md`.
+- [X] T024 (PR #991 comment) Run `python .github/scripts/run-local-gates.py` clean, then walk `quickstart.md`.
 - T025 stays a post-merge maintainer step and is not part of this change.

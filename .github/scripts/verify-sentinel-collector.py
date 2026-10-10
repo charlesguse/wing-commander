@@ -212,15 +212,6 @@ def run_one(script, env, sc, tmproot):
     fixtures = tempfile.mkdtemp(dir=tmproot)
     bindir = tempfile.mkdtemp(dir=tmproot)
 
-    # The collector fetches through the shared helper in the pipeline
-    # checkout (specs/101-read-only-gh-grants); put it where the step looks.
-    helper_dir = os.path.join(workdir, ".wing-commander-pipeline", ".github",
-                              "actions", "_shared")
-    os.makedirs(helper_dir)
-    shutil.copy(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..",
-                             "actions", "_shared", "fetch-job-logs.sh"),
-                helper_dir)
-
     with open(os.path.join(runner_temp, "signals.json"), "w",
               encoding="utf-8") as fh:
         fh.write("[]")
@@ -242,6 +233,21 @@ def run_one(script, env, sc, tmproot):
     env = dict(env)
     env["PATH"] = bindir + os.pathsep + os.environ["PATH"]
     env["GITHUB_REPOSITORY"] = "charlesguse/wing-commander"
+
+    # The collector reads what the wing-commander-fetch-job-logs composite
+    # staged (specs/101-read-only-gh-grants); run the shared helper the way
+    # that composite does, then hand the step its result.
+    import yaml
+    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..",
+                           "actions", "wing-commander-fetch-job-logs",
+                           "action.yml"), encoding="utf-8") as fh:
+        fetch_script = yaml.safe_load(fh)["runs"]["steps"][0]["run"]
+    _rc, _out, fetch_outputs, _sum = run_step(
+        BASH, fetch_script, workdir,
+        dict(env, RUN_ID=env.get("RUN_ID", "1"), GH_TOKEN="x",
+             OUT_DIR=os.path.join(runner_temp, "cs-job-logs")),
+        runner_temp)
+    env["FETCH_RESULT"] = fetch_outputs.get("result", "failed")
 
     rc, out, _, _ = run_step(BASH, script, workdir, env, runner_temp)
     with open(os.path.join(runner_temp, "signals.json"), encoding="utf-8") as fh:
