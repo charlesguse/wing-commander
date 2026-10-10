@@ -1,0 +1,56 @@
+# wing-commander-install-actionlint — install a pinned actionlint onto
+# PATH for the rest of the job. The one home of the install that
+# implement.yml's implement job (for its agent) and its
+# gate-suite-implement-cycle job (for the local gate suite, spec 095) both
+# need. Constitution VII: every input is optional with a default.
+#
+# actionlint (the proper GitHub-workflow linter — it also shellchecks the
+# shell inside run: blocks, using the shellcheck pre-installed on
+# ubuntu-latest) is not on the runner by default. Pinned to a version tag;
+# the upstream download script does not verify a checksum, so the tag is
+# the only pin. yamllint alone only proves a file parses — actionlint
+# catches Actions-schema and embedded-shell bugs an agent would otherwise
+# ship blind.
+name: wing-commander-install-actionlint
+description: >-
+  Downloads actionlint at a pinned version into $RUNNER_TEMP/bin, retrying
+  a flaky download, and adds that directory to $GITHUB_PATH.
+inputs:
+  version:
+    description: actionlint release to install, without the leading v.
+    required: false
+    default: "1.7.7"
+runs:
+  using: composite
+  steps:
+    - name: Install actionlint
+      shell: bash
+      env:
+        ACTIONLINT_VERSION: ${{ inputs.version }}
+      run: |
+        mkdir -p "$RUNNER_TEMP/bin"
+        # One connection reset from GitHub's release CDN used to fail the
+        # whole cycle before the agent started, marking the spec stalled
+        # (#395), so the install is retried. The retry wraps the whole
+        # pipeline because the download script fetches the release tarball
+        # itself, with a curl call this step cannot give flags to; success
+        # is judged by the binary existing, not by the pipe's exit status.
+        installed=false
+        for attempt in 1 2 3; do
+          if curl -fsSL "https://raw.githubusercontent.com/rhysd/actionlint/v${ACTIONLINT_VERSION}/scripts/download-actionlint.bash" \
+              | bash -s -- "$ACTIONLINT_VERSION" "$RUNNER_TEMP/bin" \
+            && [ -x "$RUNNER_TEMP/bin/actionlint" ]; then
+            installed=true
+            break
+          fi
+          echo "::warning::wing-commander implement: downloading actionlint v${ACTIONLINT_VERSION} failed (attempt $attempt of 3)."
+          if [ "$attempt" -lt 3 ]; then
+            sleep $((attempt * 5))
+          fi
+        done
+        if [ "$installed" != "true" ]; then
+          echo "::error::wing-commander implement: could not install actionlint v${ACTIONLINT_VERSION} after 3 attempts -- the download or install from github.com/rhysd/actionlint did not succeed on any of them, so it cannot be used in this job. Re-dispatch this cycle."
+          exit 1
+        fi
+        echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+        "$RUNNER_TEMP/bin/actionlint" -version

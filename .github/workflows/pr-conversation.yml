@@ -2231,6 +2231,10 @@ jobs:
           extra-disallowed-tools: ${{ inputs.extra-disallowed-tools }}
           allowed-tools-override: ${{ inputs.allowed-tools-override }}
           disallowed-tools-override: ${{ inputs.disallowed-tools-override }}
+          # spec 095 FR-018: .git/ through the write boundary tool-args applies
+          # after any adopter override or extra-allowed-tools, so neither can
+          # reopen it -- see implement.yml's no-write-paths input.
+          no-write-paths: ".git/"
           step-label: "pr-conversation.act"
 
       # The fold route's own, narrower grant: no Bash(git commit:*)/
@@ -2247,6 +2251,8 @@ jobs:
           extra-disallowed-tools: ${{ inputs.extra-disallowed-tools }}
           allowed-tools-override: ${{ inputs.allowed-tools-override }}
           disallowed-tools-override: ${{ inputs.disallowed-tools-override }}
+          # .git/ deny -- see the act step's tool args above in this file.
+          no-write-paths: ".git/"
           step-label: "pr-conversation.act.fold"
 
       # T010: the shared bounded agent step every mutation route uses. Never
@@ -2420,6 +2426,12 @@ jobs:
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-publish-stranded-commits
         with:
           before-sha: ${{ needs.classify-and-announce.outputs.base-sha }}
+          # spec 095 FR-016/FR-017: an explicit destination, pushed from a shim
+          # repository -- see wing-commander-publish-stranded-commits. No
+          # branch: input, because an unrelated-change leg's agent publishes
+          # on a branch it cut itself.
+          push-token: ${{ env.WC_BOT_TOKEN }}
+          push-repo: ${{ github.repository }}
 
       - name: Compute agent run verdict
         id: agent-verdict
@@ -2548,6 +2560,9 @@ jobs:
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-fold-commit
         with:
           token: ${{ env.WC_BOT_TOKEN }}
+          # spec 095 FR-016/FR-017 -- see wing-commander-fold-commit.
+          push-token: ${{ env.WC_BOT_TOKEN }}
+          branch: ${{ steps.route.outputs.checkout-ref }}
           spec-dir: ${{ needs.classify-and-announce.outputs.spec-dir }}
           section-file: /tmp/wing-commander/act-fold-section.md
           fold-id: ${{ matrix.id }}

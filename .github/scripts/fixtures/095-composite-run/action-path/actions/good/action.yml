@@ -1,0 +1,9 @@
+name: good
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        # .github/scripts/x.py is mentioned only in this comment
+        python3 -I "$GITHUB_ACTION_PATH/../../scripts/x.py"
+        python3 -I "$RUNNER_TEMP/wc-pristine/scripts/y.py"

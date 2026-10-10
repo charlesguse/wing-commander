@@ -1,0 +1,7 @@
+name: bad
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        python3 .github/scripts/x.py

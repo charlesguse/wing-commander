@@ -15,11 +15,18 @@ The harness also pins the refused-push path: the step's default shell is
 `bash -e`, so a refused push stops it before the round advances, and the
 annotation names why.
 
-This harness EXECUTES the shipped step through wc_shell_harness.run_step
+Spec 095 moved review-fixup's push into the review-fixup-publish job and
+split it into three steps: the hold (HOLD_STEP), the push through the
+wing-commander-hardened-push composite, and the round advance
+(ADVANCE_STEP), which runs only on `steps.push.outcome == 'success'`.
+
+This harness EXECUTES the shipped hold and advance steps through
+wc_shell_harness.run_step, and the composite's body
+(_shared/hardened-push.sh) between them the way the composite runs it,
 against a real local git origin, with the real board_item_marker.py staged
-where the step expects its pristine copy and a `gh` stub that records each
-call. A push refusal is a real one: the origin's pre-receive hook rejects
-it. Each MUTATION reverts one fix and asserts the suite then fails.
+where the steps expect their pristine copy and a `gh` stub that records
+each call. A push refusal is a real one: the origin's pre-receive hook
+rejects it. Each MUTATION reverts one fix and asserts the suite then fails.
 
 Usage: python3 .github/scripts/verify-board-review-fixup-push.py
 Requires: bash, git, python3.
@@ -36,7 +43,10 @@ sys.path.insert(0, HERE)
 from wc_shell_harness import find_step, resolve_bash, run_step, use_utf8_stdout  # noqa: E402
 
 BOARD_LOOP = ".github/workflows/board-loop.yml"
-STEP = "Push the follow-up commit and advance the round"
+HOLD_STEP = "Hold a workflow-file follow-up for a maintainer (review-fixup)"
+ADVANCE_STEP = "Advance the round"
+ADVANCE_IF = "steps.push.outcome == 'success'"
+HARDENED_PUSH = os.path.join(HERE, "..", "actions", "_shared", "hardened-push.sh")
 BRANCH = "board/fix-7"
 
 STUB_GH = '#!/usr/bin/env bash\nprintf "%s\\n" "$*" >> "$STUB_LOG"\nexit 0\n'
@@ -86,7 +96,9 @@ def build(tmp, touched, refuse):
     return work, origin, reviewed
 
 
-def run(script, touched, can_push="false", refuse=False):
+def run(steps, touched, can_push="false", refuse=False):
+    """`steps`: (hold run text, advance if: text, advance run text)."""
+    hold, advance_if, advance = steps
     tmp = tempfile.mkdtemp(prefix="wc-review-fixup-push-")
     try:
         work, origin, reviewed = build(tmp, touched, refuse)
@@ -106,8 +118,26 @@ def run(script, touched, can_push="false", refuse=False):
                "ISSUE_NUMBER": "7", "PR_NUMBER": "70", "BRANCH": BRANCH,
                "CURRENT_ROUND": "1", "REVIEWED_SHA": reviewed,
                "CAN_PUSH_WORKFLOWS": can_push}
-        rc, output, _, summary = run_step(BASH, script, work, env, runner_temp)
-        pushed = git(origin, "rev-parse", BRANCH) == git(work, "rev-parse", "HEAD")
+        rc, output, outputs, summary = run_step(BASH, hold, work, env, runner_temp)
+        push_outcome = "skipped"
+        if rc == 0 and outputs.get("held") == "false":
+            push = subprocess.run(
+                ["bash", HARDENED_PUSH, BRANCH, git(work, "rev-parse", "HEAD")], cwd=work,
+                env=dict(os.environ, PUSH_SERVER_URL="file://" + tmp,
+                         GITHUB_REPOSITORY="origin"),
+                capture_output=True, text=True)
+            output += push.stdout + push.stderr
+            push_outcome = "success" if push.returncode == 0 else "failure"
+            rc = rc or push.returncode
+        # The advance step's own `if:`, as shipped: on the push's success, or
+        # (a mutated condition) whenever the hold ran.
+        runs = (push_outcome == "success" if advance_if.strip() == ADVANCE_IF
+                else push_outcome != "skipped")
+        if runs:
+            rc2, out2, _, summary2 = run_step(BASH, advance, work, env, runner_temp)
+            rc, output, summary = rc or rc2, output + out2, summary + summary2
+        pushed = subprocess.run(["git", "rev-parse", BRANCH], cwd=origin, capture_output=True,
+                                text=True).stdout.strip() == git(work, "rev-parse", "HEAD")
         return rc, output, summary, open(log).read(), pushed
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -139,16 +169,17 @@ def suite(script, quiet=False):
     rc, out, summary, calls, pushed = run(script, "src.txt", refuse=True)
     ck("a refused push fails the step and posts nothing",
        rc != 0 and not pushed and calls.strip() == ""
-       and "::error::board-loop review-fixup: the follow-up commit could not be pushed" in out,
+       and "::error::hardened push: pushing" in out,
        "rc={0} pushed={1}\ncalls:\n{2}\n{3}".format(rc, pushed, calls, out))
     return failed
 
 
+# (name, which of the three texts it edits, old, new)
 MUTATIONS = (
-    ("workflow-scope hold removed",
+    ("workflow-scope hold removed", 0,
      'if [ "$held" = "held" ]; then', 'if false; then'),
-    ("refused push not annotated (the bare pre-fix push)",
-     'if ! git push origin "HEAD:refs/heads/$BRANCH"; then\n', 'git push origin "HEAD:refs/heads/$BRANCH"\nif false; then\n'),
+    ("the round advances whether or not the push landed", 1,
+     ADVANCE_IF, "steps.push-hold.outputs.held == 'false'"),
 )
 
 
@@ -156,14 +187,18 @@ def main():
     global BASH
     use_utf8_stdout()
     BASH = resolve_bash()
-    script = find_step(BOARD_LOOP, STEP)["run"]
-    for name, old, _new in MUTATIONS:
-        if script.count(old) != 1:
+    advance = find_step(BOARD_LOOP, ADVANCE_STEP)
+    steps = (find_step(BOARD_LOOP, HOLD_STEP)["run"], str(advance.get("if", "")),
+             advance["run"])
+    for name, which, old, _new in MUTATIONS:
+        if steps[which].count(old) != 1:
             sys.exit("::error file={0}::mutation {1!r} no longer matches the step text "
                      "exactly once. Update the mutation with the step.".format(BOARD_LOOP, name))
-    suite(script)
-    for name, old, new in MUTATIONS:
-        check("mutation caught: " + name, bool(suite(script.replace(old, new), quiet=True)),
+    suite(steps)
+    for name, which, old, new in MUTATIONS:
+        mutated = list(steps)
+        mutated[which] = mutated[which].replace(old, new)
+        check("mutation caught: " + name, bool(suite(tuple(mutated), quiet=True)),
               "the suite stayed green with this fix reverted")
     if failures:
         print("verify-board-review-fixup-push: {0} failure(s)".format(len(failures)))
