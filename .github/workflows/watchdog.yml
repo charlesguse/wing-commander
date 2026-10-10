@@ -1437,7 +1437,7 @@ jobs:
               skipped|cancelled) continue ;;
             esac
             anns_rc=0
-            GH_TOKEN="$ACTIONS_TOKEN" gh api "repos/$GITHUB_REPOSITORY/check-runs/$job_id/annotations" --paginate --jq '.[] | select(.annotation_level=="warning" or .annotation_level=="failure") | select((.message // "") | contains("diagnose shadow (trial; acts on nothing)") | not) | {source:"annotations","class-hint":null,facts:{level:.annotation_level,message:.message}}' 2>/dev/null | jq -s '.' > "$RUNNER_TEMP/ca-anns.json" || anns_rc="${PIPESTATUS[0]}"
+            GH_TOKEN="$ACTIONS_TOKEN" gh api "repos/$GITHUB_REPOSITORY/check-runs/$job_id/annotations" --paginate --jq '.[] | select(.annotation_level=="warning" or .annotation_level=="failure") | select((.message // "") | contains("(trial; acts on nothing)") | not) | {source:"annotations","class-hint":null,facts:{level:.annotation_level,message:.message}}' 2>/dev/null | jq -s '.' > "$RUNNER_TEMP/ca-anns.json" || anns_rc="${PIPESTATUS[0]}"
             [ "$anns_rc" = "0" ] || an_failed=1
             anns="$(cat "$RUNNER_TEMP/ca-anns.json" 2>/dev/null)"
             [ -n "$anns" ] || anns='[]'
@@ -3155,10 +3155,19 @@ jobs:
             *) if [ "$VERDICT" = "healthy" ] || [ -z "$VERDICT" ]; then baseline=failed; else baseline="$VERDICT"; fi ;;
           esac
           echo "baseline-verdict=$baseline" >> "$GITHUB_OUTPUT"
+          # With no healthy baseline the trial's outcome is no-baseline
+          # whatever the shadow returns (FR-017), so the shadow agent is not
+          # called at all: a rate-limited window is not spent twice. The
+          # trial record is still written, from no transcript.
+          if [ "$baseline" = "healthy" ]; then
+            echo "run-agent=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run-agent=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Compose tool args (watchdog.diagnose-shadow)
         id: tool-args-diagnose-shadow
-        if: steps.diagnose-shadow-prep.outcome == 'success'
+        if: steps.diagnose-shadow-prep.outputs.run-agent == 'true'
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-tool-args
         with:
@@ -3377,7 +3386,7 @@ jobs:
       # comparator as malformed.
       - name: Collect the diagnose shadow findings
         id: diagnose-shadow-findings
-        if: always() && steps.diagnose-shadow.outcome != 'skipped'
+        if: steps.diagnose-shadow-prep.outcome == 'success'
         continue-on-error: true
         shell: bash
         run: |

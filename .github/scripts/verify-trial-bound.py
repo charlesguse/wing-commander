@@ -85,6 +85,14 @@ def main():
                 failures.append(f"{name}: expected enabled={c['expect']}, got "
                                 f"{got!r} rc={proc.returncode} {proc.stderr}")
         failures += composite_fails_loudly(tmp)
+        # A records file that is not there cannot show the cap is unmet.
+        proc = subprocess.run(
+            [sys.executable, "-I", str(SCRIPT), "--since", "2026-10-01",
+             "--records", str(Path(tmp) / "absent.jsonl"), "--today",
+             "2026-10-05"], capture_output=True, text=True, check=False)
+        if proc.returncode != 2:
+            failures.append("a missing records file must fail closed "
+                            f"(exit 2), got rc={proc.returncode} {proc.stdout!r}")
         # A corrupt records line is named as such, never as a bad SINCE.
         bad = Path(tmp) / "corrupt.jsonl"
         bad.write_text("not json\n", encoding="utf-8")

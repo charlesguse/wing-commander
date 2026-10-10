@@ -205,5 +205,13 @@
       "findings": []
     },
     "expect": "agreed"
+  },
+  "shadow-bare-array": {
+    "baseline_verdict": "healthy",
+    "shadow_verdict": "healthy",
+    "refusal": "false",
+    "baseline": [],
+    "shadow": [],
+    "expect": "malformed"
   }
 }

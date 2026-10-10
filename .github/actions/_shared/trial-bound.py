@@ -14,8 +14,8 @@ diagnose-shadow record with no readable `trial` object counts.
 
 Usage: trial-bound.py --since ISO_DATE --records records.jsonl [--today ISO_DATE]
 Prints `enabled=true|false` (GITHUB_OUTPUT format). Exit 2 for an unreadable
-SINCE or records file that exists but is unparseable; a missing records file
-counts as zero records.
+SINCE, or a records file that is missing or unparseable (fail closed: the
+cap cannot be checked).
 """
 import argparse
 import datetime
@@ -56,8 +56,11 @@ def in_window(rec, since):
 
 
 def compared_count(path, since):
+    # A records file that is not there cannot show the cap is unmet: fail
+    # closed rather than read it as zero runs (the wrapper only gets here
+    # after checking the metrics branch out).
     if not os.path.exists(path):
-        return 0
+        raise RecordsError(f"{path}: no such records file")
     n = 0
     with open(path, encoding="utf-8") as fh:
         for lineno, line in enumerate(fh, 1):

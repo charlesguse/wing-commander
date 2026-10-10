@@ -514,7 +514,7 @@ def mut_array_collecting_annotations(script):
     # spec 110 added the diagnose-shadow marker drop to the per-item filter.
     body = ('.[] | select(.annotation_level=="warning" or '
             '.annotation_level=="failure") | select((.message // "") | '
-            'contains("diagnose shadow (trial; acts on nothing)") | not) | '
+            'contains("(trial; acts on nothing)") | not) | '
             '{source:"annotations",'
             '"class-hint":null,facts:{level:.annotation_level,message:.message}}')
     old = "--jq '" + body + "'"

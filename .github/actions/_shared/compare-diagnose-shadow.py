@@ -34,8 +34,13 @@ def load_json(path, what):
         die(f"cannot read {what} {path}: {exc}")
 
 
-def load_findings(path, what):
-    """Return the findings list, or None when the file is absent/unparseable."""
+def load_findings(path, what, wrapped_only=False):
+    """Return the findings list, or None when the file is absent/unparseable.
+
+    The baseline is the read-back's bare array. The shadow's result is the
+    agent's own structured output, which the diagnose schema requires to be
+    an object with a `findings` array (wrapped_only): a bare array misses the
+    schema and is malformed, not compared."""
     try:
         with open(path, encoding="utf-8") as fh:
             data = json.load(fh)
@@ -43,7 +48,7 @@ def load_findings(path, what):
         return None
     if isinstance(data, dict) and isinstance(data.get("findings"), list):
         return data["findings"]
-    if isinstance(data, list):
+    if isinstance(data, list) and not wrapped_only:
         return data
     return None
 
@@ -143,7 +148,8 @@ def compare(args, schema):
         return trial("exhausted", bv, False)
     if args.shadow_verdict != "healthy":
         return trial("error", bv)
-    shadow = load_findings(args.shadow_findings, "shadow findings")
+    shadow = load_findings(args.shadow_findings, "shadow findings",
+                           wrapped_only=True)
     if shadow is None or not schema_valid(shadow, schema):
         return trial("malformed", bv, False)
     baseline = load_findings(args.baseline_findings, "baseline findings")
@@ -168,7 +174,10 @@ def compare(args, schema):
         else:
             differing.append("class:" + ",".join(sorted(str(s) for s in sid)))
     differing = sorted(set(differing))
-    outcome = "agreed" if filing_agree and agree == len(shared_sets) else "disagreed"
+    # Equal key sets already mean equal classes on every shared signalId
+    # set, so the outcome is the filing decision; the class counts are the
+    # FR-017(b) statistic, accumulated over runs by trial-summary.
+    outcome = "agreed" if filing_agree else "disagreed"
     return trial(outcome, bv, filing_agree, len(shared_sets), agree, differing)
 
 

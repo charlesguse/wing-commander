@@ -69,7 +69,7 @@ runs:
           # the 300-run cap (a broken comparator cannot keep the shadow
           # spending for the whole window) and trial-summary reports it on
           # its own line. contracts/trial-record.md.
-          echo "::error::compare-diagnose-shadow failed; the trial is recorded as a comparator error"
+          echo "::error::compare-diagnose-shadow failed; the trial is recorded as a comparator error (trial; acts on nothing)"
           trial="$(jq -cn --arg bv "$BASELINE_VERDICT" --arg m "$model" '{step:"watchdog.diagnose",candidate_model:$m,baseline_run_label:"diagnose",outcome:"error",error_source:"comparator",baseline_verdict:(if $bv == "" then null else $bv end),filing_agree:null,class_shared:null,class_agree:null,differing_fields:[]}')"
         fi
         rm -f "$schema"
@@ -79,7 +79,7 @@ runs:
           # A record without its trial object would be silently dropped by
           # the summary and the bound, so fail the step instead.
           echo "outcome=error" >> "$GITHUB_OUTPUT"
-          echo "::error::could not merge the trial object into $RECORD_PATH"
+          echo "::error::could not merge the trial object into $RECORD_PATH (trial; acts on nothing)"
           exit 1
         fi
         echo "outcome=$(printf '%s' "$trial" | jq -r .outcome)" >> "$GITHUB_OUTPUT"

@@ -295,9 +295,10 @@ if [ -n "$diagnose_job_id" ] && [ "$diagnose_conclusion" != "skipped" ]; then
   if dlog="$(api "actions/jobs/$diagnose_job_id/logs" 2>/dev/null)"; then
     # spec 110: the diagnose shadow runs in this job and acts on nothing,
     # so a shadow that crashes or exhausts its turns is not a crashed
-    # diagnose (SC-003). Log lines stamped inside the shadow steps that
-    # actually ran (first start to last completion, skipped steps ignored)
-    # are left out; every other line, before or after, is still read.
+    # diagnose (SC-003). Log lines stamped strictly inside the shadow steps
+    # that actually ran (after the first start's second, before the last
+    # completion's; skipped steps ignored) are left out; every other line,
+    # including the boundary seconds an acting step may share, is read.
     shadow_span="$(jq -r "$JQ_EPOCH"'
       [.jobs[] | select(.name == "diagnose" or (.name | endswith("/ diagnose")))
        | (.steps // [])[] | select((.name // "") | test("diagnose[ -]shadow"; "i"))
@@ -308,7 +309,7 @@ if [ -n "$diagnose_job_id" ] && [ "$diagnose_conclusion" != "skipped" ]; then
     if [ -n "$shadow_span" ]; then
       read -r shadow_from shadow_to <<<"$shadow_span"
       dlog="$(printf '%s\n' "$dlog" | awk -v from="${shadow_from%Z}" -v to="${shadow_to%Z}" \
-        '/^[0-9][0-9][0-9][0-9]-/ { ts = substr($0, 1, 19); if (ts >= from && ts <= to) next } { print }')"
+        '/^[0-9][0-9][0-9][0-9]-/ { ts = substr($0, 1, 19); if (ts > from && ts < to) next } { print }')"
     fi
     if printf '%s' "$dlog" | grep -aEq '##\[error\]Action failed with error|SDK execution error|Workflow initiated by non-human actor|json-schema is not valid JSON'; then
       reason "diagnose job log carries an agent crash signature that continue-on-error hid from every API conclusion"

@@ -41,7 +41,7 @@ runs:
         fi
         if [ -z "${RECORDS_PATH:-}" ]; then
           # No records path means the 300-run cap cannot be checked.
-          echo "::warning::wing-commander-trial-bound: the diagnose shadow stays off -- no metrics records path, so the 300-run cap cannot be checked"
+          echo "::warning::wing-commander-trial-bound: the diagnose shadow stays off -- no metrics records path, so the 300-run cap cannot be checked (trial; acts on nothing)"
           echo "enabled=false" >> "$GITHUB_OUTPUT"
           exit 0
         fi
@@ -52,6 +52,6 @@ runs:
           # An unreadable SINCE (a typo, or a date still ahead of today in
           # UTC) or records file fails closed: the shadow stays off rather
           # than running unbounded, and says why.
-          echo "::warning::wing-commander-trial-bound: the diagnose shadow stays off -- SINCE '$SINCE' or the metrics records could not be read (the error above names which; SINCE must be a YYYY-MM-DD no later than today in UTC)"
+          echo "::warning::wing-commander-trial-bound: the diagnose shadow stays off -- SINCE '$SINCE' or the metrics records could not be read (the error above names which; SINCE must be a YYYY-MM-DD no later than today in UTC) (trial; acts on nothing)"
           echo "enabled=false" >> "$GITHUB_OUTPUT"
         fi

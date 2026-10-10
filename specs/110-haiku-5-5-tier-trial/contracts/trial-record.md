@@ -38,6 +38,9 @@ Extends `specs/043-durable-metrics-record/contracts/metrics-record-schema.md`
 }
 ```
 
+A shadow result that is not an object with a `findings` array (for example a
+bare array) misses the diagnose schema and is `malformed`.
+
 `candidate_model` is the record's own top-level `model` (the
 `diagnose-shadow-model` input), passed to the comparator by
 `wing-commander-trial-record`.

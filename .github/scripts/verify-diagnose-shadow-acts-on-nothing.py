@@ -59,7 +59,10 @@ WHAT IT CHECKS (watchdog.yml unless named)
    carrying a permission denial, emits no denied-tool signal (and the same
    transcript under an acting artifact name does -- the positive control);
    the annotations collector drops the marker the shadow's fail-loud
-   annotation carries.
+   annotation carries, and every annotation the trial composites raise
+   carries it too.
+9. The shadow agent is called only with a healthy baseline: its tool-args
+   step (which gates the agent) tests the prep step's run-agent output.
 
 Usage: verify-diagnose-shadow-acts-on-nothing.py [--self-test]
 Exit 0 = every check holds (self-test: every mutation is caught);
@@ -310,6 +313,14 @@ def check(watchdog, wrapper):
             fail(f"diagnose job output {out!r} reads shadow step(s) "
                  f"{sorted(hit)}")
 
+    # 9. No agent call without a healthy baseline.
+    tool = next((s for s in family if TOOL_ARGS in str(s.get("uses", ""))),
+                None)
+    if tool is not None and RUN_AGENT not in str(tool.get("if") or ""):
+        fail(f"the shadow's tool-args step (which gates its agent) must "
+             f"test {RUN_AGENT}: with no healthy baseline the trial is "
+             "no-baseline whatever the shadow says, so it must not be called")
+
     # 7. The wrapper's one-line false fallback.
     wjob = ((wrapper.get("jobs") or {}).get("watchdog")) or {}
     passed = (wjob.get("with") or {}).get("diagnose-shadow-enabled")
@@ -319,7 +330,10 @@ def check(watchdog, wrapper):
     return failures
 
 
-MARKER = "diagnose shadow (trial; acts on nothing)"
+MARKER = "(trial; acts on nothing)"
+TRIAL_COMPOSITES = (".github/actions/wing-commander-trial-record/action.yml",
+                    ".github/actions/wing-commander-trial-bound/action.yml")
+RUN_AGENT = "steps.diagnose-shadow-prep.outputs.run-agent == 'true'"
 EO_STEP = "Collect: execution-output artifacts"
 AN_STEP = "Collect: annotations"
 DENIAL = [{"type": "result", "subtype": "success", "is_error": False,
@@ -354,6 +368,11 @@ def collector_failures(watchdog):
     if not any(MARKER in str(x.get("run", "")) for x in fam):
         failures.append(f"the shadow's fail-loud annotation must carry "
                         f"{MARKER!r}, the text the annotations collector drops")
+    for comp in TRIAL_COMPOSITES:
+        for line in open(comp, encoding="utf-8"):
+            if re.search(r"::(error|warning)::", line) and MARKER not in line:
+                failures.append(f"{comp}: annotation without {MARKER!r}: "
+                                f"{line.strip()[:80]}")
     ensure_jq()
     bash = resolve_bash()
     for artifact, want in (("claude-execution-output-diagnose-shadow", 0),
@@ -506,6 +525,9 @@ MUTATIONS = [
     ("a diagnose job output reads the shadow",
      lambda wd, w: _job(wd)["outputs"].__setitem__(
          "shadow", "${{ steps.diagnose-shadow.outcome }}")),
+    ("the shadow agent runs without a healthy baseline",
+     lambda wd, w: _tool_step(wd).__setitem__(
+         "if", "steps.diagnose-shadow-prep.outcome == 'success'")),
     ("wrapper hard-codes the shadow on",
      lambda wd, w: w["jobs"]["watchdog"]["with"].__setitem__(
          "diagnose-shadow-enabled", True)),

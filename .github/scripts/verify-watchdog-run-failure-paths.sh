@@ -701,6 +701,16 @@ JSON
   else
     fail "$tag s27: expected exit 1 naming the crash signature, got rc=$rc: $(tail -3 <<<"$out")"
   fi
+  # s29: an acting step's crash stamped in the very second the shadow's
+  # first step starts (01:01:45Z) is still read: step times are whole
+  # seconds, so the boundary second is shared.
+  printf '2026-08-25T01:00:55.0000000Z diagnose ran\n2026-08-25T01:01:45.1000000Z ##[error]Action failed with error: SDK execution error\n' > "$work/fixtures/diagnose.log"
+  run_scenario "$script" '' false
+  if [ "$rc" = "1" ] && grep -q "crash signature" <<<"$out"; then
+    ok "$tag s29: a crash in the shadow's first second, from the acting tail, is still read"
+  else
+    fail "$tag s29: expected exit 1 naming the crash signature, got rc=$rc: $(tail -3 <<<"$out")"
+  fi
   # s28: the shadow never ran (its steps skipped, the default), so a crash
   # logged at the time its skipped step reports is the diagnose's own.
   jq '(.jobs[].steps[] | select(.name == "Diagnose shadow") | .conclusion) = "skipped"' \
@@ -855,15 +865,21 @@ sed 's/    if \[ -n "\$shadow_span" \]; then$/    if false; then/' \
 run_mutation "$mut" "m14" "s26" "reading the shadow's crash as the diagnose's is caught"
 
 # m15 (spec 110): the shadow cut drops everything after the shadow's first
-# step again. s27 must catch it.
-sed 's/if (ts >= from \&\& ts <= to) next/if (ts >= from) next/' \
+# step again. s27 (and s29, its boundary second) must catch it.
+sed 's/if (ts > from \&\& ts < to) next/if (ts >= from) next/' \
   "$SCRIPT" > "$mut"
-run_mutation "$mut" "m15" "s27" "cutting the log past the shadow's own span is caught"
+run_mutation "$mut" "m15" "s27 s29" "cutting the log past the shadow's own span is caught"
 
 # m16 (spec 110): skipped shadow steps cut the log again. s28 must catch it.
 sed 's/       | select(.conclusion != "skipped")$/       | ./' \
   "$SCRIPT" > "$mut"
 run_mutation "$mut" "m16" "s28" "a skipped shadow step cutting the log is caught"
 
-echo "Gate 36: 28 scenario(s) x 16 runs + 15 mutation(s); $bad failure(s)."
+# m17 (spec 110): the shadow span swallows its boundary seconds again.
+# s29 must catch it.
+sed 's/if (ts > from \&\& ts < to) next/if (ts >= from \&\& ts <= to) next/' \
+  "$SCRIPT" > "$mut"
+run_mutation "$mut" "m17" "s29" "dropping the shared boundary second is caught"
+
+echo "Gate 36: 29 scenario(s) x 17 runs + 16 mutation(s); $bad failure(s)."
 exit $([ "$bad" -eq 0 ] && echo 0 || echo 1)
