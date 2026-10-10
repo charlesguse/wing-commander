@@ -1473,7 +1473,11 @@ than only ever exercised on a bare runner:
   repository builds and publishes itself via
   `wing-commander-e2e-reference-image.yml` from
   `.github/docker/e2e-reference-image/Dockerfile`, kept in agreement with
-  `.github/scripts/required-tools.txt` by Gate 62 (research.md D5, D6). See
+  `.github/scripts/required-tools.txt` by Gate 62 (research.md D5, D6).
+  This repository pins its own `WING_COMMANDER_CONTAINER_IMAGE` to the
+  same image, so Gate 62 also runs implement.yml's gate-suite preflight
+  steps inside it and checks the lint tools the implement prompt names
+  (#989): those extras are this repository's, not adopters'. See
   [docs/adoption.md](adoption.md#runners-and-container-images) for why this
   image is not a supported image for adopters.
 - **Reporting**: both the verdict and `report`'s failure/success output

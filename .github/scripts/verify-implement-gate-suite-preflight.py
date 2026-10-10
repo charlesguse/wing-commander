@@ -21,6 +21,13 @@ and its `paragraph` output, which the agent prompt interpolates, says the
 repository has no suite in place of the "already ran once" text. With the
 script present, that paragraph reads exactly as the prompt did before.
 
+A suite script that is present but cannot run is the other skip (#989):
+the preflight also emits `missing` (the prerequisites it could not find,
+space-separated), the summary names them, and the paragraph says the suite
+did not run, that the agent must not try to run it either, and that a
+gate-run task stays unchecked -- never the "already ran once" text, which
+used to send the agent into the same ModuleNotFoundError.
+
 This harness EXECUTES the shipped preflight, summary and cycle-outcome steps
 of both legs (cycle and retry) with wc_shell_harness.run_step, in a working
 directory with and without the script. Static checks pin the env and prompt
@@ -88,7 +95,18 @@ def stub_bin(root, tools):
     return d
 
 
-def run_preflight(script, with_suite, missing_actionlint=False):
+def missing_paragraph_ok(para, missing):
+    """The missing-prerequisite paragraph names the gap, says the suite did
+    not run, forbids the agent's own attempt and keeps gate-run tasks
+    unchecked -- and never claims the suite already ran."""
+    flat = " ".join(para.split())
+    return (missing in flat and "did not run before this agent step" in flat
+            and "Do not try to run it yourself" in flat
+            and "gate-suite run unchecked" in flat
+            and "already ran once" not in flat and "red at" not in flat)
+
+
+def run_preflight(script, with_suite, missing_actionlint=False, missing_pyyaml=False):
     """-> (rc, output, outputs, summary)."""
     root = tempfile.mkdtemp(prefix="wc-gate-suite-preflight-")
     try:
@@ -108,6 +126,19 @@ def run_preflight(script, with_suite, missing_actionlint=False):
             os.symlink(shutil.which("jq"), os.path.join(bindir, "jq"))
             return run_step(BASH, script, work, {"PATH": bindir}, runner_temp,
                             path_prepend=bindir)
+        if missing_pyyaml:
+            # python3 is a stub whose every import fails, as on an image
+            # without pyyaml; jq and actionlint are present.
+            bindir = os.path.join(root, "only")
+            os.makedirs(bindir)
+            with open(os.path.join(bindir, "python3"), "w", newline="\n") as fh:
+                fh.write("#!/bin/sh\nexit 1\n")
+            os.chmod(os.path.join(bindir, "python3"), 0o755)
+            os.symlink(shutil.which("jq"), os.path.join(bindir, "jq"))
+            stub_bin(root, ["actionlint"])
+            path = bindir + os.pathsep + os.path.join(root, "bin")
+            return run_step(BASH, script, work, {"PATH": path}, runner_temp,
+                            path_prepend=path)
         bindir = stub_bin(root, ["actionlint"])
         env = {"PATH": bindir + os.pathsep + os.environ["PATH"]}
         return run_step(BASH, script, work, env, runner_temp)
@@ -165,6 +196,14 @@ def suite(leg, steps, quiet=False):
            rc == 0 and o.get("script-exists") == "true" and o.get("ready") == "false"
            and "missing prerequisites" in summary and "actionlint" in summary,
            "rc={0} outputs={1} summary={2!r}\n{3}".format(rc, o, summary, out))
+        ck("suite script present, actionlint missing: the missing output names exactly actionlint",
+           o.get("missing") == "actionlint", "outputs={0}".format(o))
+
+        rc, out, o, summary = run_preflight(pre, with_suite=True, missing_pyyaml=True)
+        ck("suite script present, pyyaml missing: ready=false and the missing output names exactly pyyaml",
+           rc == 0 and o.get("ready") == "false" and o.get("missing") == "pyyaml"
+           and "pyyaml" in summary,
+           "rc={0} outputs={1} summary={2!r}\n{3}".format(rc, o, summary, out))
 
     def summarize(script_exists, ready, outcome="", first=""):
         return run_plain(summ, {"SCRIPT_EXISTS": script_exists, "READY": ready,
@@ -191,11 +230,18 @@ def suite(leg, steps, quiet=False):
        o.get("summary") == red and o.get("paragraph") == expected_paragraph(leg, red),
        "outputs={0}\n{1}".format(o, out))
 
-    rc, out, o, _s, _f = summarize("true", "false")
-    tool = "skipped — a required tool (pyyaml, jq, or actionlint) was missing from the runner"
-    ck("missing tool: summary keeps the missing-tool arm",
-       o.get("summary") == tool and o.get("paragraph") == expected_paragraph(leg, tool),
-       "outputs={0}".format(o))
+    def summarize_missing(missing):
+        return run_plain(summ, {"SCRIPT_EXISTS": "true", "READY": "false",
+                                "MISSING": missing, "OUTCOME": "", "FIRST_FAILURE": ""})
+
+    rc, out, o, _s, _f = summarize_missing("pyyaml")
+    ck("missing tool: summary names the missing prerequisite",
+       rc == 0 and o.get("summary") == "skipped — missing prerequisite(s): pyyaml",
+       "rc={0} outputs={1}\n{2}".format(rc, o, out))
+    para = o.get("paragraph", "")
+    ck("missing tool: the prompt paragraph names it, says the suite did not run and "
+       "tells the agent not to run it or check a gate-run task",
+       missing_paragraph_ok(para, "pyyaml"), repr(para))
 
     rc, out, o, _s, files = run_plain(record, {"CONVERGED": "false", "HANDOFF": "",
                                                "GATE_OUTCOME": "", "FIRST_FAILURE": ""})
@@ -220,6 +266,12 @@ MUTATIONS = (
      'if [ "$SCRIPT_EXISTS" = "false" ]; then\n  summary=', 'if false; then\n  summary='),
     ("summary", "the prompt paragraph left unconditional",
      'if [ "$SCRIPT_EXISTS" = "false" ]; then\n  paragraph=', 'if false; then\n  paragraph='),
+    ("summary", "the missing-prerequisite paragraph arm removed (#989)",
+     'elif [ "$READY" != "true" ]; then\n  paragraph=', 'elif false; then\n  paragraph='),
+    ("summary", "the summary stops naming the missing prerequisite",
+     'missing prerequisite(s): ${{MISSING:-unrecorded}}"\nelif', 'missing prerequisite(s): unrecorded"\nelif'),
+    ("preflight", "the preflight stops emitting its missing output",
+     'echo "missing=${{missing# }}" >> "$GITHUB_OUTPUT"\n', ''),
 )
 
 
@@ -244,6 +296,9 @@ def main():
         env = found["summary"].get("env") or {}
         check("({0}) the summary step reads the preflight's script-exists output".format(leg),
               env.get("SCRIPT_EXISTS") == OPEN + "steps.gate-suite-preflight-{0}.outputs.script-exists".format(leg) + CLOSE,
+              "env={0}".format(env))
+        check("({0}) the summary step reads the preflight's missing output".format(leg),
+              env.get("MISSING") == OPEN + "steps.gate-suite-preflight-{0}.outputs.missing".format(leg) + CLOSE,
               "env={0}".format(env))
         prompt = str((found["agent"].get("with") or {}).get("prompt", ""))
         ref = OPEN + "steps.gate-suite-summary-{0}.outputs.paragraph".format(leg) + CLOSE

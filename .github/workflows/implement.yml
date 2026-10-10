@@ -915,6 +915,9 @@ jobs:
       # .github/scripts/run-local-gates.py (#935), so script-exists=false
       # forces ready=false and skips the tool checks, and the summary and
       # prompt below say there is no suite rather than that a tool is gone.
+      # Gate 62 (verify-gate-62.py) runs this step inside wing-commander's
+      # own e2e reference image, so that image cannot drop a prerequisite
+      # checked here without failing a PR (#989).
       - name: "Preflight: gate-suite prerequisites (cycle)"
         id: gate-suite-preflight-cycle
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true'
@@ -941,6 +944,7 @@ jobs:
             missing="$missing actionlint"
           fi
           echo "ready=$ready" >> "$GITHUB_OUTPUT"
+          echo "missing=${missing# }" >> "$GITHUB_OUTPUT"
           if [ "$ready" != "true" ]; then
             echo "⚠️ gate-suite preflight (cycle): missing prerequisites —$missing; skipping the local gate suite for this cycle." >> "$GITHUB_STEP_SUMMARY"
           fi
@@ -977,20 +981,24 @@ jobs:
       # restoration of T030's option (b), left unapplied when T030 chose
       # removal instead). `paragraph` is the prompt's whole gate-suite
       # paragraph: with no suite script in the repository (#935) it tells
-      # the agent so in place of the "already ran once" text.
+      # the agent so in place of the "already ran once" text; with a
+      # prerequisite missing (the preflight's `missing` output) it names
+      # the gap and tells the agent not to run the suite itself, since the
+      # same gap would fail its attempt too (#989).
       - name: Summarize gate-suite outcome (cycle)
         id: gate-suite-summary-cycle
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true'
         env:
           SCRIPT_EXISTS: ${{ steps.gate-suite-preflight-cycle.outputs.script-exists }}
           READY: ${{ steps.gate-suite-preflight-cycle.outputs.ready }}
+          MISSING: ${{ steps.gate-suite-preflight-cycle.outputs.missing }}
           OUTCOME: ${{ steps.gate-suite-cycle.outputs.outcome }}
           FIRST_FAILURE: ${{ steps.gate-suite-cycle.outputs.first-failure }}
         run: |
           if [ "$SCRIPT_EXISTS" = "false" ]; then
             summary="skipped — no local gate suite in this repository"
           elif [ "$READY" != "true" ]; then
-            summary="skipped — a required tool (pyyaml, jq, or actionlint) was missing from the runner"
+            summary="skipped — missing prerequisite(s): ${MISSING:-unrecorded}"
           elif [ "$OUTCOME" = "pass" ]; then
             summary="pass"
           else
@@ -1002,6 +1010,17 @@ jobs:
           (\`.github/scripts/run-local-gates.py\` is absent), so none ran before
           this agent step started, and CLAUDE.md's \"Before pushing\" step to run
           it does not apply here: do not try to run it."
+          elif [ "$READY" != "true" ]; then
+            paragraph="The local gate suite (\`python .github/scripts/run-local-gates.py\`)
+          did not run before this agent step started, and cannot run in this
+          job: its prerequisite(s) ${MISSING:-unrecorded} are missing from this
+          job's runner or container image. Do not try to run it yourself -- it
+          fails the same way (a missing pyyaml is a ModuleNotFoundError) and
+          only burns turns -- so CLAUDE.md's \"Before pushing\" step to run it
+          cannot be met in this run. Leave every task whose completion is a
+          gate-suite run unchecked, say in your final message that it is
+          blocked on the missing prerequisite(s), and do every other task as
+          usual."
           else
             paragraph="The local gate suite (\`python .github/scripts/run-local-gates.py\`)
           already ran once, deterministically, before this agent step
@@ -1796,6 +1815,7 @@ jobs:
             missing="$missing actionlint"
           fi
           echo "ready=$ready" >> "$GITHUB_OUTPUT"
+          echo "missing=${missing# }" >> "$GITHUB_OUTPUT"
           if [ "$ready" != "true" ]; then
             echo "⚠️ gate-suite preflight (retry): missing prerequisites —$missing; skipping the local gate suite for this retry." >> "$GITHUB_STEP_SUMMARY"
           fi
@@ -1827,13 +1847,14 @@ jobs:
         env:
           SCRIPT_EXISTS: ${{ steps.gate-suite-preflight-retry.outputs.script-exists }}
           READY: ${{ steps.gate-suite-preflight-retry.outputs.ready }}
+          MISSING: ${{ steps.gate-suite-preflight-retry.outputs.missing }}
           OUTCOME: ${{ steps.gate-suite-retry.outputs.outcome }}
           FIRST_FAILURE: ${{ steps.gate-suite-retry.outputs.first-failure }}
         run: |
           if [ "$SCRIPT_EXISTS" = "false" ]; then
             summary="skipped — no local gate suite in this repository"
           elif [ "$READY" != "true" ]; then
-            summary="skipped — a required tool (pyyaml, jq, or actionlint) was missing from the runner"
+            summary="skipped — missing prerequisite(s): ${MISSING:-unrecorded}"
           elif [ "$OUTCOME" = "pass" ]; then
             summary="pass"
           else
@@ -1845,6 +1866,17 @@ jobs:
           (\`.github/scripts/run-local-gates.py\` is absent), so none ran before
           this agent step started, and CLAUDE.md's \"Before pushing\" step to run
           it does not apply here: do not try to run it."
+          elif [ "$READY" != "true" ]; then
+            paragraph="The local gate suite (\`python .github/scripts/run-local-gates.py\`)
+          did not run before this agent step started, and cannot run in this
+          job: its prerequisite(s) ${MISSING:-unrecorded} are missing from this
+          job's runner or container image. Do not try to run it yourself -- it
+          fails the same way (a missing pyyaml is a ModuleNotFoundError) and
+          only burns turns -- so CLAUDE.md's \"Before pushing\" step to run it
+          cannot be met in this run. Leave every task whose completion is a
+          gate-suite run unchecked, say in your final message that it is
+          blocked on the missing prerequisite(s), and do every other task as
+          usual."
           else
             paragraph="The local gate suite (\`python .github/scripts/run-local-gates.py\`)
           already ran once, deterministically, before this agent step
