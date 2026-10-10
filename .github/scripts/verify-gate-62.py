@@ -166,10 +166,12 @@ def check_tools(tag, tools):
 
 
 def read_implement_subject(root="."):
-    """-> (preflight scripts {step name: run text}, lint tools, problems).
+    """-> (preflight scripts {step name: run text}, prompted commands, problems).
 
-    Both read from implement.yml itself, so the gate keeps no copy of the
-    preflight's prerequisite list or of the prompt's lint tools."""
+    Prompted commands are the suite interpreter the prompt's gate-suite
+    paragraph names plus the lint tools its lint sentence names. Both are
+    read from implement.yml itself, so the gate keeps no copy of the
+    preflight's prerequisite list or of the prompt's commands."""
     import yaml
     problems = []
     path = os.path.join(root, IMPLEMENT_WORKFLOW)
@@ -210,14 +212,14 @@ def read_implement_subject(root="."):
                             f"{', '.join(late) or 'the preflight steps'}, yet "
                             f"this gate stubs {tool} as installed by it -- "
                             f"update JOB_INSTALLED")
-    lint_tools = []
+    commands = []
     for name in SUMMARY_STEPS:
         found = SUITE_COMMAND.findall(str(by_name.get(name, {}).get("run", "")))
         if not found:
             problems.append(f"{IMPLEMENT_WORKFLOW} step {name!r}: no "
                             f"`<interpreter> .github/scripts/run-local-gates.py` "
                             f"in its prompt paragraph -- update SUITE_COMMAND")
-        lint_tools.extend(t for t in found if t not in lint_tools)
+        commands.extend(t for t in found if t not in commands)
     start, end = LINT_SENTENCE
     for name in AGENT_STEPS:
         prompt = " ".join(str((by_name.get(name, {}).get("with") or {})
@@ -231,8 +233,8 @@ def read_implement_subject(root="."):
                             f"`backticked` tool found between {start!r} and "
                             f"{end!r} in its prompt -- if the sentence was "
                             f"reworded, update LINT_SENTENCE here with it")
-        lint_tools.extend(t for t in found if t not in lint_tools)
-    return preflights, lint_tools, problems
+        commands.extend(t for t in found if t not in commands)
+    return preflights, commands, problems
 
 
 # Runs one preflight step's text the way the job's `bash -e {0}` default
@@ -245,20 +247,16 @@ w=$(mktemp -d)
 mkdir -p "$w/bin" "$w/work/.github/scripts"
 : > "$w/work/.github/scripts/run-local-gates.py"
 for t in $WC_JOB_INSTALLED; do
-  printf '#!/bin/sh
-exit 0
-' > "$w/bin/$t"
+  printf '#!/bin/sh\nexit 0\n' > "$w/bin/$t"
   chmod +x "$w/bin/$t"
 done
-printf '%s
-' "$WC_PREFLIGHT" > "$w/step.sh"
+printf '%s\n' "$WC_PREFLIGHT" > "$w/step.sh"
 : > "$w/output"
-: > "$w/summary"
 cd "$w/work" || exit 97
-GITHUB_OUTPUT="$w/output" GITHUB_STEP_SUMMARY="$w/summary"   PATH="$w/bin:$PATH" bash -e "$w/step.sh"
+GITHUB_OUTPUT="$w/output" GITHUB_STEP_SUMMARY=/dev/null \
+  PATH="$w/bin:$PATH" bash -e "$w/step.sh"
 echo "rc:$?"
 sed 's/^/output:/' "$w/output"
-sed 's/^/summary:/' "$w/summary"
 """
 
 
@@ -290,41 +288,48 @@ def check_preflight(tag, name, script):
 def scan(root=".", tag=IMAGE_TAG):
     failures = []
     tools = read_required_tools(root)
-    preflights, lint_tools, problems = read_implement_subject(root)
+    preflights, commands, problems = read_implement_subject(root)
     failures.extend(problems)
+    wanted = [t for t in commands if t not in JOB_INSTALLED and t not in tools]
     ok, log = build_image(root, tag)
     if not ok:
         failures.append(
             f"docker build of {DOCKERFILE_DIR}/Dockerfile failed -- {log[-2000:]}")
         return failures
     try:
-        missing, log = check_tools(tag, tools)
+        # One container start probes required-tools.txt and the prompted
+        # commands together; the misses are reported per list.
+        missing, log = check_tools(tag, tools + wanted)
         if missing is None:
             failures.append(
                 f"could not run a POSIX shell inside the built image to check its "
                 f"prerequisites -- {log[-1000:]}")
-        elif missing:
+            missing = []
+        req_missing = [t for t in missing if t in tools]
+        if req_missing:
             failures.append(
                 f"the reference image built from {DOCKERFILE_DIR}/Dockerfile is "
                 f"missing required tool(s) named in {REQUIRED_TOOLS_FILE}: "
-                + ", ".join(missing))
+                + ", ".join(req_missing))
+        # The legs are pinned identical but for the leg name by
+        # verify-implement-gate-suite-preflight.py, so a leg whose text only
+        # differs by that name is not run a second time.
+        seen = set()
         for name, script in preflights.items():
+            key = script.replace("retry", "cycle")
+            if key in seen:
+                continue
+            seen.add(key)
             failure = check_preflight(tag, name, script)
             if failure:
                 failures.append(failure)
-        wanted = [t for t in lint_tools if t not in JOB_INSTALLED]
-        if wanted:
-            missing, log = check_tools(tag, wanted)
-            if missing is None:
-                failures.append(
-                    f"could not run a POSIX shell inside the built image to check "
-                    f"the implement prompt's commands -- {log[-1000:]}")
-            elif missing:
-                failures.append(
-                    f"the reference image is missing command(s) the implement "
-                    f"agent prompt in {IMPLEMENT_WORKFLOW} tells the agent to run: "
-                    + ", ".join(missing) + f" -- install them in "
-                    f"{DOCKERFILE_DIR}/Dockerfile, or stop naming them in the prompt")
+        missing = [t for t in missing if t in wanted]
+        if missing:
+            failures.append(
+                f"the reference image is missing command(s) the implement "
+                f"agent prompt in {IMPLEMENT_WORKFLOW} tells the agent to run: "
+                + ", ".join(missing) + f" -- install them in "
+                f"{DOCKERFILE_DIR}/Dockerfile, or stop naming them in the prompt")
     finally:
         subprocess.run(["docker", "rmi", "-f", tag], capture_output=True, text=True)
     return failures
@@ -386,6 +391,7 @@ def _static_self_test(root):
     _, _, base = read_implement_subject(".")
     if base:
         problems.append("static fixture base already has problems: " + "; ".join(base))
+        return problems
     for label, mutate, needle in cases:
         d = os.path.join(root, "static")
         shutil.rmtree(d, ignore_errors=True)
@@ -459,9 +465,9 @@ def self_test():
                 problems.append(f"a Dockerfile that stopped installing jq was NOT "
                                  f"detected as missing jq; got: {got}")
             pre = [g for g in got if "Preflight: gate-suite prerequisites" in g]
-            if len(pre) != len(PREFLIGHT_STEPS) or not all("pyyaml" in g for g in pre):
+            if not pre or not all("pyyaml" in g for g in pre):
                 problems.append(f"a Dockerfile that stopped installing python3-yaml "
-                                 f"was NOT failed by both implement preflight legs "
+                                 f"was NOT failed by the implement preflight "
                                  f"naming pyyaml; got: {got}")
             cmds = [g for g in got if "command(s) the implement" in g]
             if not (cmds and all(t in cmds[0].split(": ", 1)[-1].split(" -- ")[0]
@@ -489,10 +495,18 @@ def main(argv):
         # A build-and-inspect check has nothing to inspect without Docker.
         # Off CI that is a clear skip (a maintainer running
         # run-local-gates.py on a machine without it); on CI it fails --
-        # see docker_missing_result.
+        # see docker_missing_result. The implement.yml drift checks need no
+        # image, so they still run here -- including where the skip itself
+        # depends on implement.yml's opt-out.
+        if "--self-test" in argv:
+            static = _static_self_test(tempfile.mkdtemp(prefix="verify_gate_62_"))
+        else:
+            static = read_implement_subject(".")[2]
+        for p in static:
+            print(f"::error::Gate 62: {p}")
         code, message = docker_missing_result(os.environ)
         print(message)
-        return code
+        return 1 if static else code
     if "--self-test" in argv:
         return self_test()
     failures = scan(".")

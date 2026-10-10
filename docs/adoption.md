@@ -1114,9 +1114,10 @@ know before you set either:
   `.github/docker/e2e-reference-image/Dockerfile` and published by
   `.github/workflows/wing-commander-e2e-reference-image.yml`, installs
   the tools this document's prerequisite-check list names plus only what
-  this repository's own implement jobs need on top of them (pyyaml for its
-  local gate suite, and the shellcheck and yamllint its implement prompt
-  names, none of which an adopter image needs) and exists solely so wing-commander's own scheduled `auto-release.yml`
+  this repository's own implement jobs need on top of them (pyyaml and a
+  `python` alias for its local gate suite, and the shellcheck and yamllint
+  its implement prompt names, none of which an adopter image needs) and
+  exists solely so wing-commander's own scheduled `auto-release.yml`
   verification can dogfood the `container:` code path above end to end
   (specs/054-e2e-container-coverage). This repository's maintainers own it:
   a change to `.github/scripts/required-tools.txt` is what triggers rebuilding
