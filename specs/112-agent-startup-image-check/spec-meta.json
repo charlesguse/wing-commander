@@ -3,7 +3,7 @@
   "spec_dir": "specs/112-agent-startup-image-check",
   "feature_num": "112",
   "stage": "implement",
-  "iteration": 3,
+  "iteration": 4,
   "spec_branch": "spec/112-agent-startup-image-check",
   "pending_re_review_from": [
     "charlesguse"
