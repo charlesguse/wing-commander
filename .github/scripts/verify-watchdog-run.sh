@@ -199,10 +199,11 @@ if [ "$diagnose_conclusion" = "skipped" ]; then
   fi
 else
   # The diagnose shadow (spec 110) runs last in this job under its own
-  # 5-minute bound and acts on nothing, so its steps -- every one named
+  # 5-minute bound and acts on nothing. Its steps -- every one named
   # "diagnose shadow"/"diagnose-shadow", which Gate 146 holds -- are
-  # not file anything (SC-003). A step time JQ_EPOCH cannot read subtracts
-  # nothing, so the acting bound is never lost to it.
+  # subtracted here: a slow shadow is not a stalled acting diagnose and
+  # must not file anything (SC-003). A step time JQ_EPOCH cannot read
+  # subtracts nothing, so the acting bound is never lost to it.
   d_secs="$(jq -r "$JQ_EPOCH"'
     [.jobs[] | select(.name == "diagnose" or (.name | endswith("/ diagnose")))
     | select(.started_at != null and .completed_at != null)
@@ -292,6 +293,18 @@ rm -rf "$tmpdir"
 diagnose_job_id="$(jq -r '[.jobs[] | select(.name == "diagnose" or (.name | endswith("/ diagnose"))) | .id] | first // empty' <<<"$jobs_json")"
 if [ -n "$diagnose_job_id" ] && [ "$diagnose_conclusion" != "skipped" ]; then
   if dlog="$(api "actions/jobs/$diagnose_job_id/logs" 2>/dev/null)"; then
+    # spec 110: the diagnose shadow runs last in this job and acts on
+    # nothing, so a shadow that crashes or exhausts its turns is not a
+    # crashed diagnose (SC-003). The log is read only up to the first
+    # shadow step's start; with no shadow step it is read whole.
+    shadow_start="$(jq -r "$JQ_EPOCH"'
+      [.jobs[] | select(.name == "diagnose" or (.name | endswith("/ diagnose")))
+       | (.steps // [])[] | select((.name // "") | test("diagnose[ -]shadow"; "i"))
+       | (try (.started_at | epoch) catch empty)] | min // empty | todate' <<<"$jobs_json" 2>/dev/null)" || shadow_start=""
+    if [ -n "$shadow_start" ]; then
+      dlog="$(printf '%s\n' "$dlog" | awk -v cut="${shadow_start%Z}" \
+        '/^[0-9][0-9][0-9][0-9]-/ && substr($0, 1, 19) >= cut { exit } { print }')"
+    fi
     if printf '%s' "$dlog" | grep -aEq '##\[error\]Action failed with error|SDK execution error|Workflow initiated by non-human actor|json-schema is not valid JSON'; then
       reason "diagnose job log carries an agent crash signature that continue-on-error hid from every API conclusion"
     fi

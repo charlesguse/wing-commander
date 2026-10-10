@@ -36,6 +36,7 @@ HAIKU = "claude-haiku-5-5"
 MIN_COMPARED = 200
 NOT_COMPARED = {"error", "no-baseline"}
 FAILED = {"refused", "exhausted", "malformed"}
+IMPLEMENT_LABELS = {"cycle", "retry"}
 
 
 def load(path):
@@ -57,6 +58,10 @@ def load(path):
 
 def label(rec):
     return rec.get("run_label") or (rec.get("run") or {}).get("run_label")
+
+
+def run_id(rec):
+    return (rec.get("run") or {}).get("workflow_run_id")
 
 
 def turns(rec):
@@ -98,7 +103,11 @@ def diagnose_section(records, since=None):
     records = [r for r in records if in_window(r, since)]
     shadow = [r for r in records if label(r) == "diagnose-shadow"
               and isinstance(r.get("trial"), dict)]
-    opus = [r for r in records if label(r) == "diagnose"]
+    # The acting row covers only the runs the shadow was measured on (same
+    # workflow run), so both rows describe one population.
+    shadow_runs = {run_id(r) for r in shadow} - {None}
+    opus = [r for r in records if label(r) == "diagnose"
+            and run_id(r) in shadow_runs]
     counts = {}
     for r in shadow:
         o = r["trial"].get("outcome")
@@ -143,7 +152,7 @@ def diagnose_section(records, since=None):
              "",
              "| Model | Runs | Median turns | Median cost |",
              "|---|---|---|---|"]
-    for name, group in (("Opus diagnose (acting)", opus),
+    for name, group in (("Opus diagnose (acting, same runs)", opus),
                         (HAIKU + " shadow", shadow)):
         lines.append(f"| {name} | {len(group)} | "
                      f"{fmt(median([turns(r) for r in group]))} | "
@@ -175,7 +184,11 @@ def lifecycle_stats(recs, start_model):
 def implement_section(records):
     by_issue = {}
     for r in records:
-        if r.get("stage") != "implement":
+        # Only the implement agent's own cycles: the stage also writes
+        # "progress comment" records on the summary tier (claude-haiku-5-5
+        # by default) and a transcript-less "branch advance" record, and
+        # either would make every lifecycle look like a Haiku opt-in.
+        if r.get("stage") != "implement" or label(r) not in IMPLEMENT_LABELS:
             continue
         issue = (r.get("spec") or {}).get("issue")
         if issue is None:

@@ -2393,8 +2393,11 @@ jobs:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
     # Backstop only — the Diagnose step's own timeout-minutes fires first so
-    # a stalled agent takes the graceful diagnose-failed path.
-    timeout-minutes: 20
+    # a stalled agent takes the graceful diagnose-failed path. 25, not 20,
+    # since spec 110: Diagnose (10) plus the diagnose shadow (5) plus ten
+    # minutes for every other step, so a hung shadow can never cancel the
+    # job and with it triage and act (Gate 146 asserts the sum).
+    timeout-minutes: 25
     outputs:
       # "passed-inspection" (zero Findings), "findings" (one or more), or
       # "diagnose-failed" (the agent step never produced a usable result —
@@ -3172,9 +3175,10 @@ jobs:
         id: diagnose-shadow
         if: steps.tool-args-diagnose-shadow.outputs.allowed-tools != '' && steps.diagnose-shadow-ceiling.outputs.ceiling != ''
         continue-on-error: true
-        # Five minutes: with the Diagnose step's 10 this stays under the
-        # job's 20-minute backstop, so a hung shadow can never cost the
-        # acting path its outputs -- Gate 146 asserts the sum.
+        # Five minutes: with the Diagnose step's 10 and ten minutes for the
+        # job's other steps this fits the job's 25-minute backstop, so a
+        # hung shadow can never cost the acting path its outputs -- Gate
+        # 146 asserts the sum.
         timeout-minutes: 5
         uses: anthropics/claude-code-action@v1
         env:

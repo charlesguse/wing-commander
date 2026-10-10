@@ -13,7 +13,9 @@ mirrored onto the PR) has no effect on them.
 
 Bound: the shadow is enabled only while `today < SINCE + 60 days` and the count of
 compared shadow records since `SINCE` (by `emitted_at`; an undated record counts,
-and so does a comparator-error record, see trial-record.md) is `< 300`. Restart =
+and so do a comparator-error record and a shadow record with no readable `trial`
+object, see trial-record.md) is `< 300`. A `SINCE` that cannot be read, or that is
+still ahead of today in UTC, leaves the shadow off with a warning. Restart =
 set a new `SINCE`. The wrapper's `trial-bound` job reads the metrics branch, which
 receives watchdog records through metrics-persist's daily sweep (the watchdog is
 sweep-only), so "at most 300" holds to within the runs of the last day not yet
@@ -44,8 +46,8 @@ Diagnose step's by Gate 146 -- research.md D7's fallback, recorded at tasks.md T
 - Runs only when `inputs.diagnose-shadow-enabled`, as the diagnose job's tail:
   after the acting path's read-back, uploads and reports.
 - Every shadow step is `continue-on-error: true`; the agent step has
-  `timeout-minutes: 5`, and with the Diagnose step's 10 stays under the job's
-  20-minute backstop.
+  `timeout-minutes: 5`; with the Diagnose step's 10 and ten minutes for the other
+  steps it fits the job's backstop, raised from 20 to 25 minutes.
 - Allowlist is fixed read-only and takes no consumer tool-list input: `Read`,
   `Grep`, the git read wrapper and read-only `gh` subcommands only (not the
   diagnose default's `Bash(gh:*)`, because `github.token` holds `issues: write` in

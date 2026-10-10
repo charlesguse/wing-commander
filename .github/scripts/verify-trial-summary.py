@@ -42,6 +42,21 @@ def shadow(outcome, agree=True):
                       "class_agree": 1 if outcome == "agreed" else 0}}
 
 
+def cycle(issue, model, label="cycle"):
+    return {"stage": "implement", "model": model, "run_label": label,
+            "spec": {"issue": issue}, "emitted_at": "2026-10-01T00:00:00Z",
+            "cost_available": True, "cost_usd": 1.0}
+
+
+def paired(run, label, model, cost, outcome=None):
+    rec = {"run_label": label, "model": model, "run": {"workflow_run_id": run},
+           "cost_available": True, "cost_usd": cost}
+    if outcome:
+        rec["trial"] = {"outcome": outcome, "filing_agree": True,
+                        "class_shared": 0, "class_agree": 0}
+    return rec
+
+
 def sonnet_with_helper():
     return {"stage": "implement", "model": "claude-sonnet-5-5",
             "spec": {"issue": 7}, "emitted_at": "2026-10-01T00:00:00Z",
@@ -71,6 +86,19 @@ CASES = {
     "no-baseline-excluded": ([shadow("agreed")] * 199 + [shadow("no-baseline")] * 50,
                              "sample too small", "Compared runs (error and no-baseline excluded): 199"),
     "helper-not-counted": ([sonnet_with_helper()], None, "| none | | | | | |"),
+    # A Sonnet lifecycle's Haiku-tier progress comment and its branch-advance
+    # record are not implement cycles: it stays the Sonnet baseline.
+    "progress-comment-not-counted": (
+        [cycle(8, "claude-sonnet-5-5"),
+         cycle(8, "claude-haiku-5-5", "progress comment"),
+         cycle(8, None, "branch advance")],
+        "| none | | | | | |", "median Sonnet lifecycle over 1: cycles 1"),
+    # The acting row covers only runs the shadow was measured on.
+    "acting-row-paired": (
+        [paired("1", "diagnose", "claude-opus-5-5", 0.08),
+         paired("1", "diagnose-shadow", "claude-haiku-5-5", 0.002, "agreed"),
+         paired("2", "diagnose", "claude-opus-5-5", 9.0)],
+        "| Opus diagnose (acting, same runs) | 1 | n/a | $0.0800 |", None),
 }
 
 

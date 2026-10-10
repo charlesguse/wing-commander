@@ -6,5 +6,6 @@
   "enabled": {"since": "2026-10-01", "today": "2026-10-20", "compared": 10, "errors": 0, "expect": "true"},
   "comparator-errors-counted": {"since": "2026-10-01", "today": "2026-10-20", "compared": 290, "errors": 0, "comparator_errors": 10, "expect": "false"},
   "undated-compared-counted": {"since": "2026-10-01", "today": "2026-10-20", "compared": 295, "errors": 0, "undated": 5, "expect": "false"},
-  "below-cap-with-comparator-error": {"since": "2026-10-01", "today": "2026-10-20", "compared": 290, "errors": 0, "comparator_errors": 9, "expect": "true"}
+  "below-cap-with-comparator-error": {"since": "2026-10-01", "today": "2026-10-20", "compared": 290, "errors": 0, "comparator_errors": 9, "expect": "true"},
+  "trial-less-shadow-records-counted": {"since": "2026-10-01", "today": "2026-10-20", "compared": 295, "errors": 0, "trialless": 5, "expect": "false"}
 }

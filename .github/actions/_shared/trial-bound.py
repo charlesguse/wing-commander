@@ -9,7 +9,8 @@ research.md D10. One kind of error does count: a trial whose
 error_source is "comparator" (wing-commander-trial-record) marks a defect
 in the comparator, not infrastructure, and the shadow still spent a run on
 it; left out, a broken comparator would keep the shadow running for the
-whole 60 days (contracts/trial-record.md).
+whole 60 days (contracts/trial-record.md). For the same reason a
+diagnose-shadow record with no readable `trial` object counts.
 
 Usage: trial-bound.py --since ISO_DATE --records records.jsonl [--today ISO_DATE]
 Prints `enabled=true|false` (GITHUB_OUTPUT format). Exit 2 for an unreadable
@@ -51,11 +52,14 @@ def compared_count(path, since):
             label = rec.get("run_label") or (rec.get("run") or {}).get("run_label")
             if label != "diagnose-shadow":
                 continue
-            trial = rec.get("trial") or {}
+            trial = rec.get("trial")
             outcome = trial.get("outcome") if isinstance(trial, dict) else None
-            if outcome is None:
-                continue
-            if outcome in NOT_COUNTED and trial.get("error_source") != "comparator":
+            # A shadow record with no readable trial object (the trial
+            # merge failed) still spent a shadow run, and nothing says it
+            # was infrastructure: it counts, like a comparator error, so a
+            # broken trial-record step cannot hold the cap open.
+            if (outcome in NOT_COUNTED
+                    and trial.get("error_source") != "comparator"):
                 continue
             stamp = rec.get("started_at") or rec.get("emitted_at")
             try:

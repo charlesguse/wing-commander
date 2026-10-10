@@ -677,6 +677,22 @@ JSON
   else
     fail "$tag s25: expected exit 1 naming the 400s stall, got rc=$rc: $(tail -3 <<<"$out")"
   fi
+  # s26 (spec 110): the same healthy shadow-bearing job, but the diagnose
+  # shadow crashed: its agent action logged a crash signature after the
+  # first shadow step started (01:01:45Z). The shadow acts on nothing, so
+  # 8b's crash-signature check must not read it as a crashed diagnose.
+  # (a 110s job, so the duration ceiling has nothing to say either way)
+  shadow_jobs "Diagnose shadow"
+  sed -i 's/"completed_at": "2026-08-25T01:07:20Z"/"completed_at": "2026-08-25T01:02:30Z"/' "$work/fixtures/jobs.json"
+  cp "$work/fixtures/diagnose.log" "$work/diagnose.log.bak_sh"
+  printf '2026-08-25T01:00:55.0000000Z diagnose ran\n2026-08-25T01:02:00.0000000Z ##[error]Action failed with error: SDK execution error\n' > "$work/fixtures/diagnose.log"
+  run_scenario "$script" '' false
+  if [ "$rc" = "0" ] && ! grep -q "crash signature" <<<"$out"; then
+    ok "$tag s26: a crash signature logged inside the diagnose shadow is not a crashed diagnose"
+  else
+    fail "$tag s26: expected exit 0 with no crash-signature reason, got rc=$rc: $(tail -3 <<<"$out")"
+  fi
+  mv "$work/diagnose.log.bak_sh" "$work/fixtures/diagnose.log"
   mv "$work/run.json.bak_sh" "$work/fixtures/run.json"
   mv "$work/jobs.json.bak_sh" "$work/fixtures/jobs.json"
 }
@@ -798,18 +814,25 @@ run_mutation "$mut" "m11" "s22" "a marker matched inside quoted log text is caug
 
 # m12: the step times are read with bare fromdateiso8601 again, which
 # rejects an offset, so the failed-step pointer silently vanishes, and the
-# diagnose shadow's step durations (spec 110) stop being subtracted. s23
-# and s24 must catch it.
+# diagnose shadow's step durations and log cut (spec 110) are lost. s23,
+# s24 and s26 must catch it.
 sed 's/        | if test("\[+-\]\[0-9\]{2}:\[0-9\]{2}\$")$/        | if false/' \
   "$SCRIPT" > "$mut"
-run_mutation "$mut" "m12" "s23 s24" "an offset step time losing the failed-step pointer, or the shadow's duration, is caught"
+run_mutation "$mut" "m12" "s23 s24 s26" "an offset step time losing the failed-step pointer, the shadow's duration or the shadow's log cut is caught"
 
 # m13 (spec 110): the diagnose duration ceiling counts the diagnose
 # shadow's steps again, so a slow shadow files a stalled-diagnose defect
 # against an acting path it never touched. s24 must catch it.
-sed 's/select((.name \/\/ "") | test("diagnose\[ -\]shadow"; "i"))/select(false)/' \
+sed 's/- (\[(.steps \/\/ \[\])\[\] | select((.name \/\/ "") | test("diagnose\[ -\]shadow"; "i"))/- ([(.steps \/\/ [])[] | select(false)/' \
   "$SCRIPT" > "$mut"
 run_mutation "$mut" "m13" "s24" "counting the diagnose shadow against the acting ceiling is caught"
 
-echo "Gate 36: 25 scenario(s) x 13 runs + 12 mutation(s); $bad failure(s)."
+# m14 (spec 110): the crash-signature check reads the diagnose shadow's
+# part of the job log again, so a crashed shadow files a crashed-diagnose
+# defect. s26 must catch it.
+sed 's/    if \[ -n "\$shadow_start" \]; then$/    if false; then/' \
+  "$SCRIPT" > "$mut"
+run_mutation "$mut" "m14" "s26" "reading the shadow's crash as the diagnose's is caught"
+
+echo "Gate 36: 26 scenario(s) x 14 runs + 13 mutation(s); $bad failure(s)."
 exit $([ "$bad" -eq 0 ] && echo 0 || echo 1)

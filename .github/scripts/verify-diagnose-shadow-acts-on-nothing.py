@@ -34,7 +34,9 @@ WHAT IT CHECKS (watchdog.yml unless named)
    beside `steps.diagnose-shadow.outcome != 'skipped'`, so it can only
    admit a run on which the shadow agent itself ran.
 4. The agent step: `timeout-minutes` <= 5, and the Diagnose step's own
-   timeout plus the shadow's stays under the job's backstop; `GH_TOKEN`
+   timeout plus the shadow's plus OTHER_STEPS_MINUTES for every other step
+   fits the job's backstop (a job timeout would cancel the job, and with
+   it triage and act); `GH_TOKEN`
    and `github_token` are exactly `${{ github.token }}`; `--model` is the
    `diagnose-shadow-model` input; its prompt and `--json-schema` are
    byte-equal to the Diagnose step's (the fallback research.md D7 names:
@@ -71,6 +73,7 @@ GITHUB_TOKEN = "${{ github.token }}"
 ENABLED = "inputs.diagnose-shadow-enabled"
 WRAPPER_ENABLED = "${{ needs.trial-bound.outputs.enabled == 'true' }}"
 SHADOW_MAX_TIMEOUT = 5
+OTHER_STEPS_MINUTES = 10
 # Read-only, and readable under this stage's github.token grant (issues,
 # actions, checks -- no pull-requests; Gate 12 holds the grant side).
 READ_ONLY_GH = {
@@ -215,9 +218,10 @@ def check(watchdog, wrapper):
         if (isinstance(timeout, (int, float))
                 and isinstance(acting_timeout, (int, float))
                 and isinstance(backstop, (int, float))):
-            if acting_timeout + timeout >= backstop:
-                fail(f"Diagnose ({acting_timeout}) + shadow ({timeout}) "
-                     f"timeout-minutes must stay under the job backstop "
+            if acting_timeout + timeout + OTHER_STEPS_MINUTES > backstop:
+                fail(f"Diagnose ({acting_timeout}) + shadow ({timeout}) + "
+                     f"{OTHER_STEPS_MINUTES} for the other steps must fit "
+                     f"the job backstop "
                      f"({backstop}), or a hung shadow can cost the acting "
                      "path its outputs")
         else:
@@ -385,7 +389,7 @@ MUTATIONS = [
     ("the acting timeout grows until the sum reaches the job backstop",
      lambda wd, w: next(s for s in _job(wd)["steps"]
                         if s.get("id") == "diagnose").__setitem__(
-         "timeout-minutes", 15)),
+         "timeout-minutes", 11)),
     ("shadow agent runs the acting model",
      lambda wd, w: _agent(wd)["with"].__setitem__(
          "claude_args", _agent(wd)["with"]["claude_args"].replace(
