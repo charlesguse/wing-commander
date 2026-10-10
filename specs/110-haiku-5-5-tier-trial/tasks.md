@@ -120,7 +120,7 @@ MVP = Phase 1 + Phase 2 (T004) + Story 1 (T006–T012): the tier upgrade and its
 
 ## Review Gate Round 1 Findings
 
-- [ ] Review finding: resolve-model aborts when gh issue view fails
+- [X] Review finding: resolve-model aborts when gh issue view fails
 
   The labels assignment from gh issue view now exits the step under bash -e on a transient gh/API error, so resolve-model fails and implement is skipped for every lifecycle; the old pipeline degraded to the default tier.
 
@@ -128,21 +128,21 @@ MVP = Phase 1 + Phase 2 (T004) + Story 1 (T006–T012): the tier upgrade and its
 
   Detail: Append || labels='' to keep graceful degradation.
 
-- [ ] Review finding: trial-bound cap fails open on missing records-path
+- [X] Review finding: trial-bound cap fails open on missing records-path
 
   An empty or missing records-path falls back to /nonexistent and counts zero records, so the 300-run cap silently does not apply, contradicting the comment that unreadable input fails closed.
 
   - .github/actions/wing-commander-trial-bound/action.yml
   - .github/scripts/trial-bound.py
 
-- [ ] Review finding: trial-record swallows a failed jq merge of the trial object
+- [X] Review finding: trial-record swallows a failed jq merge of the trial object
 
   If the jq merge of the trial object into the record fails, the step still emits outcome, and the record is uploaded without trial, so trial-summary and the bound count silently drop it.
 
   - .github/actions/wing-commander-trial-record/action.yml
   - .github/scripts/trial-summary.py
 
-- [ ] Review finding: compare-diagnose-shadow does not validate baseline findings
+- [X] Review finding: compare-diagnose-shadow does not validate baseline findings
 
   Baseline findings are not validated like the shadow's, so a non-dict finding or non-list evidence crashes the comparator with exit 1 instead of the documented 2, and the run is mislabeled outcome=error.
 

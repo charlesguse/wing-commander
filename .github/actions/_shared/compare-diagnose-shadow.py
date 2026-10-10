@@ -129,7 +129,9 @@ def compare(args, schema):
     if shadow is None or not schema_valid(shadow, schema):
         return trial("malformed", bv)
     baseline = load_findings(args.baseline_findings, "baseline findings")
-    if baseline is None:
+    if baseline is None or not all(
+            isinstance(f, dict) and isinstance(f.get("evidence") or [], list)
+            for f in baseline):
         return trial("no-baseline", bv)
 
     bkeys, skeys = keys(baseline), keys(shadow)

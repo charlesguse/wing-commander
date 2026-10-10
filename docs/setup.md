@@ -179,6 +179,7 @@ Create these labels (Issues → Labels):
 | `stage:review` | Final PR awaiting human review |
 | `stage:done` | Lifecycle complete |
 | `model:opus` | Opt this spec's implementation into `claude-opus-5-5` |
+| `model:haiku` | Opt this spec's implementation into `claude-haiku-5-5`, escalating to `claude-sonnet-5-5`; turn budget `WING_COMMANDER_IMPLEMENT_HAIKU_MAX_TURNS` (default 180). `model:opus` wins when both are present |
 | `disposition:confirmed` | **Watchdog precision.** A maintainer applying this to a `pipeline-defect` issue records that the finding was genuine |
 | `disposition:false-positive` | The counterpart: the watchdog's finding was not a real defect |
 | `disposition:duplicate` | Applied by the board loop (`board-loop.yml`) when it files a spec proposal, to the originating issue it closes as a duplicate of that proposal — re-admitted only by a maintainer reopening it once the linked proposal has closed (FR-006), never by label removal alone |
