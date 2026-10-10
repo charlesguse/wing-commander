@@ -306,7 +306,7 @@ MVP = Phase 1 + Phase 2 (T004) + Story 1 (T006–T012): the tier upgrade and its
 
   Detail: A comment carrying the opus grep literal before the haiku test keeps the opus > haiku check green even if the branches are swapped.
 
-- [ ] Review finding: docs/setup.md is missing or stale for the new variables
+- [X] Review finding: docs/setup.md is missing or stale for the new variables
 
   The variables table has no rows for WING_COMMANDER_DIAGNOSE_SHADOW_SINCE or WING_COMMANDER_IMPLEMENT_HAIKU_MAX_TURNS. The IMPLEMENT_ESCALATION_MODEL row still says the escalation is Opus.
 
@@ -371,7 +371,7 @@ MVP = Phase 1 + Phase 2 (T004) + Story 1 (T006–T012): the tier upgrade and its
 
   Detail: Swapping the branches so model:haiku wins over model:opus can still pass.
 
-- [ ] Review finding: docs/setup.md omits new variables and is stale on escalation
+- [X] Review finding: docs/setup.md omits new variables and is stale on escalation
 
   The variables table has no rows for WING_COMMANDER_DIAGNOSE_SHADOW_SINCE or WING_COMMANDER_IMPLEMENT_HAIKU_MAX_TURNS, and the ESCALATION_MODEL row still says Opus.
 

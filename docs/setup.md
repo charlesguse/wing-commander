@@ -106,7 +106,9 @@ create them now so the stubs' documentation stays true):
 | `WING_COMMANDER_PLAN_MODEL` | `claude-sonnet-5-5` | Model for the plan/tasks tier (plan, tasks, and rebase stages) |
 | `WING_COMMANDER_SUMMARY_MODEL` | `claude-haiku-5-5` | Model for the triage/summary tier (finalize, cleanup, and implement's progress comments) |
 | `WING_COMMANDER_DIAGNOSE_MODEL` | `claude-opus-5-5` | Model for the watchdog's diagnose step. Its own knob, not the summary tier's — diagnose adjudicates multi-signal evidence against a strict schema and needs the headroom |
-| `WING_COMMANDER_IMPLEMENT_ESCALATION_MODEL` | `claude-opus-5-5` | Model for implement's one-tier-up retry after a failed attempt |
+| `WING_COMMANDER_IMPLEMENT_ESCALATION_MODEL` | `claude-opus-5-5` | Model for implement's one-tier-up retry after a failed attempt. A lifecycle labelled `model:haiku` ignores it and escalates to `claude-sonnet-5-5` |
+| `WING_COMMANDER_IMPLEMENT_HAIKU_MAX_TURNS` | `180` | Turn budget for implement on a `model:haiku` lifecycle (label opt-in; `model:opus` wins if both are present) |
+| `WING_COMMANDER_DIAGNOSE_SHADOW_SINCE` | unset | ISO start date of the watchdog diagnose Haiku 5.5 shadow trial. Unset means off; it stops itself 60 days after this date or after 300 compared runs. Takes effect once the shadow step is wired into `watchdog.yml` (spec 110 T019–T020) |
 | `WING_COMMANDER_SPEC_DRAFT_PREFIX` | `spec-draft/` | Branch prefix for the draft spec branch (default `spec-draft/`) |
 | `WING_COMMANDER_SPEC_PREFIX` | `spec/` | Branch prefix for the persistent spec branch (default `spec/`) |
 | `WING_COMMANDER_PLAN_PREFIX` | `plan/` | Branch prefix for the plan branch (default `plan/`) |
