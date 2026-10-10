@@ -216,14 +216,17 @@ WHAT IT CHECKS
    occur exactly once there and in no other live file, and any other live
    file that restates the rationale's core claim (`gh` reaches remote
    writes, GH_RATIONALE_CLAIM_RE) must name GH_RATIONALE_HOME, so it is a
-   pointer and not a second copy. Live files are the text files git
-   tracks (wc_repo_files: an untracked `.wing-commander-pipeline/` or
-   `.claude/worktrees/` checkout is not read), except a spec's own documents (`specs/NNN-*/` outside
-   `contracts/`), which are historical records; contracts are live and are
-   scanned. Comment and blockquote markers opening a line are removed
-   first, so a copy wrapped across comment lines is still one sentence.
-   The claim is matched literally; a paraphrase is a reviewer's to catch.
-   Only GH_RATIONALE_HOME is in lint-workflows.yml's
+   pointer and not a second copy (naming the doc's file name counts, so a
+   sibling's relative link does). Live files are the text files git tracks
+   (wc_repo_files: an untracked `.wing-commander-pipeline/` or
+   `.claude/worktrees/` checkout is not read), except a spec's own
+   documents (`specs/NNN-*/` outside `contracts/`), which are historical
+   records; contracts are live and are scanned. This file is scanned too:
+   its check 4b message states the claim and passes because the file names
+   GH_RATIONALE_HOME. Comment and blockquote markers opening a line are
+   removed first, so a copy wrapped across comment lines is still one
+   sentence. The claim is matched literally; a paraphrase is a reviewer's
+   to catch. Only GH_RATIONALE_HOME is in lint-workflows.yml's
    pull_request paths: listing every live file would run the whole suite
    on every PR, so a copy added to a file outside the filter is caught by
    the push to main and the daily schedule, which have no paths filter.
@@ -236,8 +239,12 @@ the issue unfiltered, and read-only agents granted raw git or missing a
 deny), unit-test board_spec_request_body.py and git_read.py, run
 mutation checks (each mutation of the real board-loop.yml's spec-request
 sites and read-only tool grants, and of the other workflows' read-only
-git grants and prompts, must be caught), and confirm the real
-fleet passes.
+git grants and prompts, must be caught), run check 6 on git-repository
+fixtures built from the real home doc (a copy in a contract, in a wrapped
+workflow comment, in a tracked note; an unpointed claim; the sentence
+removed, doubled, or moved out of its entry; the heading renamed; the doc
+missing -- each must fail -- and an untracked checkout or a relative-link
+pointer must pass), and confirm the real fleet passes.
 """
 import glob
 import os
@@ -251,7 +258,7 @@ import yaml
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wc_shell_harness import use_utf8_stdout  # noqa: E402
 from wc_published_stages import published_stages  # noqa: E402
-from wc_repo_files import repo_files  # noqa: E402
+from wc_repo_files import git_env, repo_files  # noqa: E402
 
 BOARD_LOOP = ".github/workflows/board-loop.yml"
 ISSUE_CONTEXT_ACTION = ".github/actions/wing-commander-issue-context/action.yml"
@@ -1113,8 +1120,10 @@ def check_gh_rationale_home(root="."):
     home_hits = len(GH_RATIONALE_SENTENCE_RE.findall(_unwrapped(home_text)))
     head = home_text.find(GH_RATIONALE_HEADING)
     section = home_text[head:] if head >= 0 else ""
-    nxt = section.find("\n- **", 1)
-    section = section[:nxt] if nxt >= 0 else section
+    # The entry runs to the first line that is not indented (the next
+    # bullet, a heading, a paragraph).
+    nxt = re.search(r"\n(?=\S)", section)
+    section = section[:nxt.start()] if nxt else section
     if home_hits != 1:
         problems.append(
             f"{GH_RATIONALE_HOME}: carries the `gh` rationale's "
@@ -1147,7 +1156,7 @@ def check_gh_rationale_home(root="."):
                 f"lives only in {GH_RATIONALE_HOME}. Point at it instead "
                 f"(spec 101 FR-017).")
         elif (GH_RATIONALE_CLAIM_RE.search(text)
-                and GH_RATIONALE_HOME not in text):
+                and os.path.basename(GH_RATIONALE_HOME) not in text):
             problems.append(
                 f"{rel}: states that `gh` reaches remote writes without "
                 f"naming {GH_RATIONALE_HOME}, the rationale's one home; "
@@ -3166,7 +3175,20 @@ def _self_test_gh_rationale_home(tmpdir):
          {f"wt/{GH_RATIONALE_HOME}": real_home}, None),
         ("a copy of the sentence in a tracked note",
          {"notes/x.md": _RATIONALE_SENTENCE}, "notes/x.md"),
+        ("the sentence below a last entry, in a later section",
+         {GH_RATIONALE_HOME: f"- {GH_RATIONALE_HEADING}: no `gh` grant.\n\n"
+                             f"## Later\n\n{_RATIONALE_SENTENCE}"}, "not under"),
+        ("the claim pointing by a relative link",
+         {"docs/other.md": "`gh` reaches remote writes; see "
+                           "[why](agent-friendly-workflows.md).\n"}, None),
     )
+    # git keeps the GIT_CONFIG_* entries a container's safe.directory comes
+    # from, and drops a GIT_DIR that would point it at another repository.
+    env = git_env({"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "wc.probe",
+                   "GIT_CONFIG_VALUE_0": "kept", "GIT_DIR": "/no/such/repo"})
+    if env.get("GIT_CONFIG_VALUE_0") != "kept" or "GIT_DIR" in env:
+        failures.append(f"check 6: git_env dropped GIT_CONFIG_* or kept "
+                        f"GIT_DIR: {sorted(env)}")
     for n, (desc, edits, expect) in enumerate(cases):
         root = os.path.join(tmpdir, f"rationale-{n}")
         for rel, text in {**base, **edits}.items():
@@ -3176,14 +3198,18 @@ def _self_test_gh_rationale_home(tmpdir):
             os.makedirs(os.path.dirname(path), exist_ok=True)
             with open(path, "w", encoding="utf-8") as fh:
                 fh.write(text)
-        env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
         tracked = [rel for rel, text in {**base, **edits}.items()
                    if text is not None and not rel.startswith("wt/")]
-        if any(subprocess.run(cmd, cwd=root, env=env,
-                              capture_output=True).returncode
-               for cmd in (["git", "init", "-q"],
-                           ["git", "add", "--", *tracked])):
-            failures.append(f"check 6 fixture ({desc}): git init/add failed")
+        try:
+            bad_git = any(subprocess.run(cmd, cwd=root, env=git_env(),
+                                         capture_output=True).returncode
+                          for cmd in (["git", "init", "-q"],
+                                      ["git", "add", "--", *tracked]))
+        except OSError as exc:
+            bad_git = exc
+        if bad_git:
+            failures.append(f"check 6 fixture ({desc}): git init/add failed "
+                            f"({bad_git})")
             continue
         problems = check_gh_rationale_home(root)
         if expect is None and problems:

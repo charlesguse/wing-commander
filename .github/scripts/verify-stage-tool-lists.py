@@ -114,6 +114,9 @@ import tempfile
 
 import yaml
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from wc_repo_files import repo_files  # noqa: E402
+
 _NL = chr(10)
 
 TABLE_DOC = "specs/010-reusable-pipeline/contracts/stage-interfaces.md"
@@ -488,21 +491,10 @@ def _glob_has_match(root, pattern):
     it (case-sensitively, `*` crossing `/` the same way the permission
     layer's own glob does). A glob that matches nothing is the same stale
     entry a missing script is. Outside a git working tree - this gate's own
-    synthetic self-test fixtures - on-disk files stand in for tracked ones.
+    synthetic self-test fixtures - on-disk files stand in for tracked ones
+    (wc_repo_files.repo_files).
     """
-    try:
-        proc = subprocess.run(
-            ["git", "-C", root, "ls-files", "-z"],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        tracked = proc.stdout.decode("utf-8").split("\0") \
-            if proc.returncode == 0 else None
-    except OSError:
-        tracked = None
-    if tracked is None:
-        tracked = [
-            os.path.relpath(os.path.join(d, f), root).replace(os.sep, "/")
-            for d, _dirs, files in os.walk(root) for f in files]
-    return any(p and fnmatch.fnmatchcase(p, pattern) for p in tracked)
+    return any(fnmatch.fnmatchcase(p, pattern) for p in repo_files(root))
 
 
 def _script_exists(root, rel):

@@ -12,15 +12,29 @@ filesystem scanned those copies and failed gates on every implement cycle
 _glob_has_match(). Outside a git working tree (a synthetic fixture), or
 when git cannot answer, the on-disk files stand in for tracked ones,
 `.git/` excluded: that can only add files, so a gate fails rather than
-passes. git runs with the GIT_* variables cleared, so a hook's GIT_DIR
-cannot point it at another repository.
+passes. git runs without the variables that locate a repository
+(LOCATING_ENV), so a hook's GIT_DIR cannot point it at another one. The
+GIT_CONFIG_* entries stay: in a caller's container they carry the
+safe.directory setting git needs to read a workspace owned by another
+uid (clarify.yml), and without it every listing would fall back to the
+walk.
 """
 import os
 import subprocess
 
+LOCATING_ENV = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR",
+                "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+                "GIT_NAMESPACE", "GIT_PREFIX")
+
+
+def git_env(environ=None):
+    """`environ` (default os.environ) without LOCATING_ENV."""
+    environ = os.environ if environ is None else environ
+    return {k: v for k, v in environ.items() if k not in LOCATING_ENV}
+
 
 def _git(root, *args):
-    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    env = git_env()
     return subprocess.run(["git", "-C", root, *args], env=env,
                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
