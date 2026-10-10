@@ -195,3 +195,7 @@ Task: "Add fixtures for the unclassified branches in .github/scripts/agent-start
 ## Maintainer Feedback
 
 - [ ] MF6 (T032) Replace synthetic fixtures with a captured real no-credential log from the action only if this cycle can produce one. If not, leave T032 open and say in the PR that it is a maintainer step, same as T030.
+
+## Maintainer Feedback
+
+- [ ] MF7 (#1002) Address the Gate 23/Gate 50 disagreement on a credential-less agent step only if MF1 (T009/T031) cannot pass both gates without the comment workaround. Otherwise leave #1002 untouched.
