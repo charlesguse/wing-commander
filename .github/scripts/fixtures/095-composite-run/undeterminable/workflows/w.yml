@@ -1,0 +1,4 @@
+jobs:
+  j:
+    steps:
+      - uses: ./vendored/elsewhere
