@@ -246,3 +246,78 @@ MVP = Phase 1 + Phase 2 (T004) + Story 1 (T006–T012): the tier upgrade and its
   Gate 141 scans constitution.md, which still names claude-haiku-4-5 on this branch. Lint-workflows is red, and the ordering dependency is enforced only by a comment.
 
   - .github/workflows/lint-workflows.yml
+
+## Review Gate Round 4 Findings
+
+- [ ] Review finding: Trial composites are not wired into watchdog.yml
+
+  The trial-bound and trial-record composites, the shadow gates and the diagnose-shadow run label are added, but nothing wires them into watchdog.yml, so the shadow never runs.
+
+  - .github/actions/wing-commander-trial-bound/action.yml
+
+  Detail: The plan and contract promise diagnose-shadow inputs, a shadow step and a diagnose-agent composite on watchdog.yml. Those are absent from the diff. Setting WING_COMMANDER_DIAGNOSE_SHADOW_SINCE does nothing, and trial-summary always reports 'sample too small'.
+
+- [ ] Review finding: filing_agree conflates class disagreement with filing disagreement
+
+  filing_agree is computed from keys that include the finding class, so a class mismatch also sets filing_agree to false and lowers both the filing bar and the class bar.
+
+  - .github/actions/_shared/compare-diagnose-shadow.py
+
+  Detail: Baseline pipeline-defect:s1 against shadow denied-tool:s1 gives filing_agree=false and class_agree 0/1. Use a signal-id-only key for filing agreement.
+
+- [ ] Review finding: Summary window differs from trial-bound window
+
+  trial-summary counts every diagnose-shadow record on the metrics branch, but trial-bound counts only records on or after SINCE.
+
+  - .github/scripts/trial-summary.py
+  - .github/actions/_shared/trial-bound.py
+
+  Detail: After a restart with a new SINCE, the 300-run cap resets but the summary still mixes in the earlier window's runs, so the 200-run verdict and agreement percentages span two windows.
+
+- [ ] Review finding: schema_valid accepts __new__ findings without proposedClass
+
+  A __new__ finding with no proposedClass passes schema_valid, and class_of turns the missing value into an empty string, so unrelated unnamed new classes compare as equal.
+
+  - .github/actions/_shared/compare-diagnose-shadow.py
+
+  Detail: A shadow result {class: '__new__', evidence: [...]} is scored as agreed instead of malformed.
+
+- [ ] Review finding: Comparator failure records outcome error, which is excluded from the cap
+
+  When the comparator exits non-zero, trial-record discards baseline_verdict and records outcome: error, which is excluded from every denominator.
+
+  - .github/actions/wing-commander-trial-record/action.yml
+
+  Detail: A persistent schema-path or comparator bug makes every run 'error'. Those runs never count toward the 300-run cap, so the shadow keeps spending model budget for 60 days.
+
+- [ ] Review finding: Haiku branch hard-codes the escalation model and shares the Haiku turn budget
+
+  The Haiku branch sets escalation=claude-sonnet-5-5 and reuses the Haiku max-turns for the Sonnet retry. It also ignores WING_COMMANDER_IMPLEMENT_ESCALATION_MODEL.
+
+  - .github/workflows/wing-commander-5-implement.yml
+
+  Detail: With HAIKU_MAX_TURNS=60, the Sonnet escalation gets 60 turns, which is less than a normal Sonnet cycle, so it is more likely to run out of turns.
+
+- [ ] Review finding: Haiku opt-in ordering check uses whole-file str.find
+
+  verify-implement-haiku-optin.py checks label ordering with str.find over the whole file, so an earlier comment containing the literal satisfies it.
+
+  - .github/scripts/verify-implement-haiku-optin.py
+
+  Detail: A comment carrying the opus grep literal before the haiku test keeps the opus > haiku check green even if the branches are swapped.
+
+- [ ] Review finding: docs/setup.md is missing or stale for the new variables
+
+  The variables table has no rows for WING_COMMANDER_DIAGNOSE_SHADOW_SINCE or WING_COMMANDER_IMPLEMENT_HAIKU_MAX_TURNS. The IMPLEMENT_ESCALATION_MODEL row still says the escalation is Opus.
+
+  - docs/setup.md
+
+  Detail: A Haiku lifecycle ignores the escalation variable and escalates to Sonnet, so the doc misleads operators.
+
+- [ ] Review finding: Undated compared records count toward the trial cap
+
+  trial-bound counts compared records with a missing or malformed timestamp toward the new window's cap, and no fixture covers the undated branch.
+
+  - .github/actions/_shared/trial-bound.py
+
+  Detail: A restart with a new SINCE can be cut short by undated records from the previous window.
