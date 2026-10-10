@@ -186,7 +186,7 @@
 
   Detail: line ~452
 
-- [ ] Review finding: Raw-push detection too narrow and self-disabling
+- [x] Review finding: Raw-push detection too narrow and self-disabling
 
   RAW_PUSH_RE only matches `git push` at the start of a line, so `if ! git push` is missed. Any mention of the composite skips the check for the whole file. COVERED_WORKFLOWS is empty, so the static check currently checks nothing. Comments that mention core.hooksPath are also flagged.
 
