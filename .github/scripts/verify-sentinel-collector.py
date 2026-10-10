@@ -234,6 +234,21 @@ def run_one(script, env, sc, tmproot):
     env["PATH"] = bindir + os.pathsep + os.environ["PATH"]
     env["GITHUB_REPOSITORY"] = "charlesguse/wing-commander"
 
+    # The collector reads what the wing-commander-fetch-job-logs composite
+    # staged (specs/101-read-only-gh-grants); run the shared helper the way
+    # that composite does, then hand the step its result.
+    import yaml
+    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..",
+                           "actions", "wing-commander-fetch-job-logs",
+                           "action.yml"), encoding="utf-8") as fh:
+        fetch_script = yaml.safe_load(fh)["runs"]["steps"][0]["run"]
+    _rc, _out, fetch_outputs, _sum = run_step(
+        BASH, fetch_script, workdir,
+        dict(env, RUN_ID=env.get("RUN_ID", "1"), GH_TOKEN="x",
+             OUT_DIR=os.path.join(runner_temp, "cs-job-logs")),
+        runner_temp)
+    env["FETCH_RESULT"] = fetch_outputs.get("result", "failed")
+
     rc, out, _, _ = run_step(BASH, script, workdir, env, runner_temp)
     with open(os.path.join(runner_temp, "signals.json"), encoding="utf-8") as fh:
         signals = json.load(fh)

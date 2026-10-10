@@ -51,9 +51,10 @@ for it has a sanctioned route named in that stage's own prompt: clarify's
 issue-comment body is staged into the checkout by a deterministic workflow
 step before the agent runs (matching specs/029-intake-issue-comments' existing
 pattern for intake); plan's pull-request reads use its own `gh pr view --json`
-grant. `watchdog.diagnose` reaches `gh api` today only through its
-pre-existing, wider `Bash(gh:*)` grant — recorded here as pre-existing and
-untouched by this policy, not a grant this policy makes.
+grant. `watchdog.diagnose` reached `gh api` through a pre-existing, wider
+`Bash(gh:*)` grant that this policy left untouched; spec 101 later removed it
+and stages the job logs as files instead. See `docs/agent-friendly-workflows.md`
+("Read-only agents and gh") for why a read-only agent holds no `gh` grant.
 
 **The gate suite.** `python .github/scripts/run-local-gates.py` is permitted
 only for `implement.cycle`/`implement.retry`, run by a deterministic step

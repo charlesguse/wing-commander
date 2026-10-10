@@ -2168,6 +2168,22 @@ def run_stepsum_one(script, env, sc, tmproot):
     run_env = with_actions_defaults(env)
     run_env["PATH"] = bindir + os.pathsep + os.environ["PATH"]
 
+    # The collector reads what the wing-commander-fetch-job-logs composite
+    # staged (specs/101-read-only-gh-grants); run the shared helper the way
+    # that composite does, then hand the step its result.
+    import yaml
+    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..",
+                           "actions", "wing-commander-fetch-job-logs",
+                           "action.yml"), encoding="utf-8") as fh:
+        fetch_script = yaml.safe_load(fh)["runs"]["steps"][0]["run"]
+    _rc, _out, fetch_outputs, _sum = run_step(
+        BASH, fetch_script, workdir,
+        dict(run_env, RUN_ID="1", GH_TOKEN="x",
+             OUT_DIR=os.path.join(runner_temp, "cs-job-logs"),
+             GITHUB_REPOSITORY="charlesguse/wing-commander"),
+        runner_temp)
+    run_env["FETCH_RESULT"] = fetch_outputs.get("result", "failed")
+
     rc, out, _, _ = run_step(BASH, script, workdir, run_env, runner_temp)
     with open(os.path.join(runner_temp, "signals.json"), encoding="utf-8") as fh:
         signals = json.load(fh)

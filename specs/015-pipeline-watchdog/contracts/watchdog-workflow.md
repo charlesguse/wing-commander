@@ -94,11 +94,14 @@ never fabricating signals.
 ### `diagnose` (`needs: collect`, skipped if `evidence-available == false`)
 
 `claude-haiku-4-5`, `--max-turns` bounded,
-`--allowedTools "Read,Grep,Bash(gh:*),Bash(git log:*),Bash(git diff:*)"`,
+`--allowedTools "Read,Grep,Bash(python3 -I .wing-commander-pipeline/.github/scripts/git_read.py:*)"`
+(no `gh` grant, spec 101: a `Stage failed-job logs` step writes the failed
+jobs' logs to `watchdog-job-logs/<job_id>.log` and a
+`watchdog-job-logs-status.json` the agent reads),
 `--disallowedTools "WebSearch,WebFetch,Write,Edit,Bash(git commit:*),Bash(git push:*)"`,
 structured output via `--json-schema` matching data-model.md's Finding
 array shape. Prompt frames `signals.json` and anything it reads via
-`Read`/`Grep`/`gh` explicitly as untrusted data, never instructions
+`Read`/`Grep` explicitly as untrusted data, never instructions
 (FR-023) — same framing convention every comment-triggered stage already
 uses. Zero Findings in the output ⇒ `diagnose` sets
 `outcome: passed-inspection`. Findings with empty/malformed

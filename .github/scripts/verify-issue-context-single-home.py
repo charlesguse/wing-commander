@@ -165,8 +165,20 @@ WHAT IT CHECKS
    write tool, deny what check 4 requires, and its agent step must pass the
    deny list, keep permission checks on, and name the wrapper in its
    prompt by the granted path. A listed site must grant the wrapper.
-   Other Bash grants (`gh ...`) are not this check's business outside
-   board-loop.yml. The wrapper is the one file .github/scripts/
+   Since spec 101 it also grants no `gh` command in any spelling (first
+   whitespace-split token's basename `gh`: `gh:*`, `gh*`, `gh api:*`,
+   `/usr/bin/gh pr view:*`): `gh` reaches remote writes, local file writes
+   and, through `gh alias set`/`gh extension install`, arbitrary
+   execution, so no per-subcommand list is safe on an agent that must not
+   write. Exemptions live in EXEMPT_GH_READ_ONLY (one site, the exact
+   grants tolerated, an open tracker issue Gate 124 reads); an exemption
+   whose site no longer holds exactly those grants fails as stale. The
+   check also fails when a label in FLEET_READ_ONLY_STEP_LABELS matches
+   no site, and when no read-only site is found anywhere in the fleet.
+   The rule binds this repository's shipped defaults only: `${{ inputs.* }}`
+   values are a consumer's own and are not read (spec 101 FR-014). Other
+   Bash grants are not this check's business outside board-loop.yml.
+   The wrapper is the one file .github/scripts/
    git_read.py; a published stage (workflow_call) reaches it through
    its pipeline checkout, so its grant is `Bash(python3
    -I .wing-commander-pipeline/.github/scripts/git_read.py:*)`, and a
@@ -196,6 +208,29 @@ WHAT IT CHECKS
    must be one the gather step writes, and the prompt must not tell the
    agent to run `gh`.
 
+6. gh-rationale single home (spec 101 FR-017/SC-007, research D6). Why a
+   read-only agent holds no `gh` grant at all is written out in full in
+   one place, GH_RATIONALE_HOME (docs/agent-friendly-workflows.md,
+   "Read-only agents and gh"). Its distinguishing sentence -- the rule is
+   total, not a per-subcommand list (GH_RATIONALE_SENTENCE_RE) -- must
+   occur exactly once there and in no other live file, and any other live
+   file that restates the rationale's core claim (`gh` reaches remote
+   writes, GH_RATIONALE_CLAIM_RE) must name GH_RATIONALE_HOME, so it is a
+   pointer and not a second copy (naming the doc's file name counts, so a
+   sibling's relative link does). Live files are the text files git tracks
+   (wc_repo_files: an untracked `.wing-commander-pipeline/` or
+   `.claude/worktrees/` checkout is not read), except a spec's own
+   documents (`specs/NNN-*/` outside `contracts/`), which are historical
+   records; contracts are live and are scanned. This file is scanned too:
+   its check 4b message states the claim and passes because the file names
+   GH_RATIONALE_HOME. Comment and blockquote markers opening a line are
+   removed first, so a copy wrapped across comment lines is still one
+   sentence. The claim is matched literally; a paraphrase is a reviewer's
+   to catch. Only GH_RATIONALE_HOME is in lint-workflows.yml's
+   pull_request paths: listing every live file would run the whole suite
+   on every PR, so a copy added to a file outside the filter is caught by
+   the push to main and the daily schedule, which have no paths filter.
+
 `--self-test`: synthetic tempdir fixtures prove each check can fail (a
 board-loop tool-args grant carrying `gh issue view`, a second file
 re-implementing all three trust-filter fragments, and spec-request
@@ -204,12 +239,17 @@ the issue unfiltered, and read-only agents granted raw git or missing a
 deny), unit-test board_spec_request_body.py and git_read.py, run
 mutation checks (each mutation of the real board-loop.yml's spec-request
 sites and read-only tool grants, and of the other workflows' read-only
-git grants and prompts, must be caught), and confirm the real
-fleet passes.
+git grants and prompts, must be caught), run check 6 on git-repository
+fixtures built from the real home doc (a copy in a contract, in a wrapped
+workflow comment, in a tracked note; an unpointed claim; the sentence
+removed, doubled, or moved out of its entry; the heading renamed; the doc
+missing -- each must fail -- and an untracked checkout or a relative-link
+pointer must pass), and confirm the real fleet passes.
 """
 import glob
 import os
 import re
+import subprocess
 import sys
 import tempfile
 
@@ -218,6 +258,7 @@ import yaml
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wc_shell_harness import use_utf8_stdout  # noqa: E402
 from wc_published_stages import published_stages  # noqa: E402
+from wc_repo_files import git_env, repo_files  # noqa: E402
 
 BOARD_LOOP = ".github/workflows/board-loop.yml"
 ISSUE_CONTEXT_ACTION = ".github/actions/wing-commander-issue-context/action.yml"
@@ -457,6 +498,32 @@ FLEET_READ_ONLY_STEP_LABELS = {
     ".github/workflows/watchdog.yml": ("watchdog.diagnose",),
     LIFECYCLE_REVIEW_GATE: ("lifecycle-review-gate.reviewer",),
 }
+
+
+class GhExemption:
+    """One read-only agent site tolerated holding `gh` grants (spec 101 D4).
+    Gate 124 reads the `issue=` keyword of each EXEMPT_GH_READ_ONLY entry."""
+
+    def __init__(self, *, reason, issue, grants):
+        self.reason = reason
+        self.issue = issue
+        self.grants = grants
+
+
+# (workflow, step-label) -> the exact `gh` grants tolerated there. Check 4b
+# fails the site if it holds any other `gh` grant, or none of these (stale).
+EXEMPT_GH_READ_ONLY = {
+    (".github/workflows/pr-conversation.yml",
+     "pr-conversation.classify"): GhExemption(
+        reason=("classify reads the PR and issue it classifies, and searches "
+                "issues for duplicates, with three read-only gh verbs; "
+                "moving them to staged files is a design change that "
+                "belongs on the maintenance backlog, not in spec 101"),
+        issue=(889,),
+        grants=("Bash(gh pr view:*)", "Bash(gh issue view:*)",
+                "Bash(gh search issues:*)"),
+    ),
+}
 WRITE_TOOLS = ("Write", "Edit", "MultiEdit", "NotebookEdit")
 TOOL_ARGS_OUTPUT_RE = re.compile(
     r"steps\.([A-Za-z0-9_-]+)\.outputs\.(allowed|disallowed)-tools")
@@ -481,21 +548,33 @@ def _tool_names(value):
     return names
 
 
-def _bash_grant_problems(text, where, git_grant=GIT_READ_GRANT, strict=True):
+def _bash_grant_problems(text, where, git_grant=GIT_READ_GRANT, strict=True,
+                         gh_exempt=()):
     """Problems with the Bash grants in `text` for a read-only agent whose
     git grant is `git_grant`. `strict` (board-loop.yml, check 4) allows
-    only that grant and `cat`; otherwise (check 4b) only git is checked:
-    no raw git in any spelling, no unrestricted Bash, and the wrapper by
-    no other path."""
+    only that grant and `cat`; otherwise (check 4b) git is checked (no raw
+    git in any spelling, no unrestricted Bash, the wrapper by no other
+    path) and so is `gh`: any grant whose first token's basename is `gh` is
+    a problem unless it is one of `gh_exempt` (EXEMPT_GH_READ_ONLY)."""
     problems = []
     allowed = (git_grant, "Bash(cat:*)") if strict else (git_grant,)
     for m in BASH_GRANT_RE.finditer(text or ""):
         grant = m.group(0)
-        if grant in allowed:
+        if grant in allowed or grant in gh_exempt:
             continue
         command = m.group(1).split(":", 1)[0].strip().rstrip("* ")
         tokens = command.split()
-        if tokens and os.path.basename(tokens[0]) == "git":
+        if (not strict and tokens
+                and os.path.basename(tokens[0]) == "gh"):
+            problems.append(
+                f"{where} grants {grant} to a read-only agent. `gh` reaches "
+                f"remote writes, local file writes and (via `gh alias set` "
+                f"/ `gh extension install`) arbitrary execution, so no `gh` "
+                f"grant is safe on an agent that must not write. Stage what "
+                f"the agent needs as a file in a deterministic step "
+                f"instead; the rationale is in "
+                f"docs/agent-friendly-workflows.md (spec 101).")
+        elif tokens and os.path.basename(tokens[0]) == "git":
             problems.append(
                 f"{where} grants raw {grant} to a read-only agent. git "
                 f"log/diff/show take --output=<path>, which writes a file, "
@@ -580,7 +659,8 @@ def _shipped(value):
 
 
 def check_read_only_git(path, labels=READ_ONLY_STEP_LABELS,
-                        git_grant=BOARD_LOOP_GIT_GRANTS, strict=True):
+                        git_grant=BOARD_LOOP_GIT_GRANTS, strict=True,
+                        gh_exempt=None, sites=None):
     """Gate 93 check 4 (#513) and, with strict=False, check 4b (#518): a
     read-only agent gets no raw `Bash(git ...)` grant (strict: and no Bash
     grant but the wrapper and `cat`), has REQUIRED_READ_ONLY_DENIES
@@ -592,10 +672,13 @@ def check_read_only_git(path, labels=READ_ONLY_STEP_LABELS,
     (or a {label: grant} map with a None default); a site in `labels`
     must hold it, and the prompt of an agent step granted the wrapper
     must name it by exactly the granted command and never tell the agent
-    to run raw git."""
+    to run raw git. With strict=False, `gh_exempt` ({label: exact `gh`
+    grants tolerated}) names the exempted sites, and `sites`, if a list,
+    gets one entry per read-only site found (so a caller can fail on zero)."""
     problems = []
     check = "check 4" if strict else "check 4b"
     grants = git_grant if isinstance(git_grant, dict) else {None: git_grant}
+    gh_exempt = gh_exempt or {}
 
     def grant_for(label):
         return grants.get(label, grants[None])
@@ -626,6 +709,7 @@ def check_read_only_git(path, labels=READ_ONLY_STEP_LABELS,
         return out
 
     read_only_ids = {}      # tool-args step id -> the grant it must hold
+    exempt_ids = {}         # tool-args step id -> its exempt `gh` grants
     wrapper_ids = set()
     labels_seen = set()
     for step in find_tool_args_steps(doc):
@@ -642,15 +726,25 @@ def check_read_only_git(path, labels=READ_ONLY_STEP_LABELS,
                 and _can_write(allowed)):
             continue
         labels_seen.add(label)
+        if sites is not None:
+            sites.append((path, label))
         site_grant = grant_for(label)
+        site_exempt = tuple(gh_exempt.get(label, ()))
         if step.get("id"):
             read_only_ids[str(step["id"])] = site_grant
+            exempt_ids[str(step["id"])] = site_exempt
             if site_grant in allowed:
                 wrapper_ids.add(str(step["id"]))
         where = f"{path}: step {step.get('name') or label!r}"
         for value in allowed_values:
             problems.extend(_bash_grant_problems(value, where, site_grant,
-                                                 strict))
+                                                 strict, site_exempt))
+        for grant in site_exempt:
+            if grant not in allowed:
+                problems.append(
+                    f"{where} is exempt from the gh rule for {grant} "
+                    f"(EXEMPT_GH_READ_ONLY) but no longer grants it: the "
+                    f"exemption is stale. Remove or narrow it.")
         if label in labels and site_grant not in allowed:
             problems.append(
                 f"{where} does not grant {site_grant}; this read-only agent "
@@ -672,6 +766,11 @@ def check_read_only_git(path, labels=READ_ONLY_STEP_LABELS,
                 f"{path}: no tool-args step labelled {label!r} -- {check} "
                 f"would pass without checking it. If it was renamed, "
                 f"update READ_ONLY_STEP_LABELS/FLEET_READ_ONLY_STEP_LABELS.")
+    for label in gh_exempt:
+        if label not in labels_seen:
+            problems.append(
+                f"{path}: EXEMPT_GH_READ_ONLY exempts {label!r}, but no "
+                f"read-only site has that label: the exemption is stale.")
 
     for step in find_agent_steps(doc):
         with_block = step.get("with") or {}
@@ -694,6 +793,8 @@ def check_read_only_git(path, labels=READ_ONLY_STEP_LABELS,
             names = [n for v in inline_allowed for n in _tool_names(v)]
             if _can_write(names):
                 continue
+            if sites is not None:
+                sites.append((path, f"inline:{name}"))
             site_grant = grant_for(None)
             step_grants = {site_grant}
             granted_wrapper = site_grant in names
@@ -705,10 +806,12 @@ def check_read_only_git(path, labels=READ_ONLY_STEP_LABELS,
                       DISALLOWED_TOOLS_ARG_RE.finditer(claude_args)]
             problems.extend(deny_problems(
                 [n for v in denied for n in _tool_names(v)], where))
+        step_exempt = tuple(g for i in sorted(ids) for g in exempt_ids[i])
         for step_grant in sorted(step_grants):
             for value in inline_allowed:
                 problems.extend(_bash_grant_problems(value, where,
-                                                     step_grant, strict))
+                                                     step_grant, strict,
+                                                     step_exempt))
         problems.extend(_permission_bypass_problems(
             claude_args, with_block.get("settings"), where))
         for tool_id in sorted(ids):
@@ -755,10 +858,23 @@ def fleet_git_grant(path, published):
     return PUBLISHED_GIT_READ_GRANT if path in published else GIT_READ_GRANT
 
 
-def check_fleet_read_only_git(root="."):
-    """Gate 93 check 4b (#518): check 4's git rules for every workflow
-    other than board-loop.yml (which check 4 holds to the strict list)."""
+def fleet_zero_site_problems(sites):
+    """Check 4b is vacuous if it found no read-only site anywhere."""
+    if sites:
+        return []
+    return ["check 4b found no read-only agent site in any workflow -- it "
+            "would pass without checking anything. A rename of the "
+            "tool-args composite or the labels must update this gate."]
+
+
+def check_fleet_read_only_git(root=".", labels_map=None, exemptions=None):
+    """Gate 93 check 4b (#518): check 4's git rules, and the spec 101 `gh`
+    rule, for every workflow other than board-loop.yml (which check 4 holds
+    to the strict list)."""
     problems = []
+    sites = []
+    labels_map = FLEET_READ_ONLY_STEP_LABELS if labels_map is None else labels_map
+    exemptions = EXEMPT_GH_READ_ONLY if exemptions is None else exemptions
     published = set(published_stages(root))
     base = os.path.join(root, ".github", "workflows")
     paths = sorted(glob.glob(os.path.join(base, "*.yml"))
@@ -769,14 +885,23 @@ def check_fleet_read_only_git(root="."):
         rel_paths.append(rel)
         if rel == BOARD_LOOP:
             continue
+        gh_exempt = {label: entry.grants
+                     for (wf, label), entry in exemptions.items()
+                     if wf == rel}
         problems.extend(check_read_only_git(
-            full, labels=FLEET_READ_ONLY_STEP_LABELS.get(rel, ()),
-            git_grant=fleet_git_grant(rel, published), strict=False))
-    for rel in FLEET_READ_ONLY_STEP_LABELS:
+            full, labels=labels_map.get(rel, ()),
+            git_grant=fleet_git_grant(rel, published), strict=False,
+            gh_exempt=gh_exempt, sites=sites))
+    for rel in labels_map:
         if rel not in rel_paths:
             problems.append(f"{rel} is missing, but FLEET_READ_ONLY_STEP_"
                             f"LABELS names read-only agents in it -- check "
                             f"4b would pass without checking them.")
+    for wf, label in exemptions:
+        if wf not in rel_paths:
+            problems.append(f"{wf} is missing, but EXEMPT_GH_READ_ONLY "
+                            f"exempts {label!r} in it.")
+    problems.extend(fleet_zero_site_problems(sites))
     return problems
 
 
@@ -948,6 +1073,107 @@ def check_single_home(path, exempt):
             f"Consume the composite instead of re-implementing it (#499)."
         ]
     return []
+
+
+GH_RATIONALE_HOME = "docs/agent-friendly-workflows.md"
+GH_RATIONALE_HEADING = "**Read-only agents and gh**"
+# Written as a pattern so this file does not itself carry the sentence.
+GH_RATIONALE_SENTENCE_RE = re.compile(
+    r"total\s+rather\s+than\s+per-subcommand", re.IGNORECASE)
+# The home's entry: a bullet opening with the heading, at any indent.
+GH_RATIONALE_ENTRY_RE = re.compile(
+    r"^([ \t]*)[-*+][ \t]+" + re.escape(GH_RATIONALE_HEADING), re.MULTILINE)
+GH_RATIONALE_CLAIM_RE = re.compile(r"reach(?:es)?\s+remote\s+writes",
+                                   re.IGNORECASE)
+RATIONALE_SCAN_EXTS = (".md", ".yml", ".yaml", ".py", ".sh", ".json",
+                       ".txt", ".toml")
+SPEC_DIR_RE = re.compile(r"^specs/[^/]+/(?!contracts/)")
+# A comment or blockquote marker opening a line, removed before matching so
+# a copy wrapped across `#`/`//`/`>`/`*` lines still reads as one sentence.
+# A `#` followed by a digit is an issue reference (`#808`), not a marker.
+LINE_MARKER_RE = re.compile(r"^[ \t]*(?:#+(?!\d)|//+|>+|\*+)?[ \t]*",
+                            re.MULTILINE)
+
+
+def _live_text_files(root):
+    """Repository-relative paths of the live text files under `root` that
+    check 6 reads (see its docstring entry for what is not live)."""
+    return sorted(rel for rel in set(repo_files(root))
+                  if rel.endswith(RATIONALE_SCAN_EXTS)
+                  and not SPEC_DIR_RE.match(rel)
+                  and os.path.isfile(os.path.join(root, rel)))
+
+
+def _unwrapped(text):
+    return LINE_MARKER_RE.sub("", text)
+
+
+def check_gh_rationale_home(root="."):
+    """Gate 93 check 6 (spec 101 FR-017): the `gh` rationale's
+    distinguishing sentence lives only in GH_RATIONALE_HOME, exactly once
+    and under GH_RATIONALE_HEADING, and every other live file restating its
+    core claim names that home."""
+    problems = []
+    home = os.path.join(root, GH_RATIONALE_HOME)
+    try:
+        with open(home, encoding="utf-8") as fh:
+            home_text = fh.read()
+    except (OSError, UnicodeDecodeError) as exc:
+        return [f"{GH_RATIONALE_HOME}: could not read ({exc}) -- check 6 "
+                f"has no canonical home for the `gh` rationale (spec 101 "
+                f"FR-017)."]
+    home_hits = len(GH_RATIONALE_SENTENCE_RE.findall(_unwrapped(home_text)))
+    # The entry is the LAST bullet opening with the heading (a summary list
+    # naming it comes first), up to the next bullet indented no deeper than
+    # it plus one column, a heading, or a blank line. A sub-bullet (two or
+    # more columns deeper) and a lazy, unindented continuation line stay
+    # inside it.
+    entries = list(GH_RATIONALE_ENTRY_RE.finditer(home_text))
+    section = ""
+    if entries:
+        entry = entries[-1]
+        width = len(entry.group(1).expandtabs(4)) + 1
+        end = re.compile(r"\n(?=[ ]{0,%d}[-*+][ \t]|#{1,6}(?:[ \t]|$)|[ \t]*\n)"
+                         % width).search(home_text, entry.end())
+        section = home_text[entry.start():end.start() if end else len(home_text)]
+    if home_hits != 1:
+        problems.append(
+            f"{GH_RATIONALE_HOME}: carries the `gh` rationale's "
+            f"distinguishing sentence (the rule is total, not "
+            f"per-subcommand) {home_hits} time(s); it must carry it exactly "
+            f"once, under {GH_RATIONALE_HEADING} (spec 101 FR-017).")
+    if not entries:
+        problems.append(
+            f"{GH_RATIONALE_HOME}: has no {GH_RATIONALE_HEADING} entry, the "
+            f"section every pointer to the `gh` rationale names (spec 101 "
+            f"FR-017).")
+    elif home_hits == 1 and not GH_RATIONALE_SENTENCE_RE.search(
+            _unwrapped(section)):
+        problems.append(
+            f"{GH_RATIONALE_HOME}: the `gh` rationale's distinguishing "
+            f"sentence is not under {GH_RATIONALE_HEADING}, the entry every "
+            f"pointer names (spec 101 FR-017).")
+    for rel in _live_text_files(root):
+        if rel == GH_RATIONALE_HOME:
+            continue
+        try:
+            with open(os.path.join(root, rel), encoding="utf-8") as fh:
+                text = _unwrapped(fh.read())
+        except (OSError, UnicodeDecodeError):
+            continue
+        if GH_RATIONALE_SENTENCE_RE.search(text):
+            problems.append(
+                f"{rel}: restates the `gh` rationale's distinguishing "
+                f"sentence (the rule is total, not per-subcommand), which "
+                f"lives only in {GH_RATIONALE_HOME}. Point at it instead "
+                f"(spec 101 FR-017).")
+        elif (GH_RATIONALE_CLAIM_RE.search(text)
+                and os.path.basename(GH_RATIONALE_HOME) not in text):
+            problems.append(
+                f"{rel}: states that `gh` reaches remote writes without "
+                f"naming {GH_RATIONALE_HOME}, the rationale's one home; "
+                f"add the pointer (spec 101 FR-017).")
+    return problems
 
 
 SPEC_REQUEST_BUILDER = ".github/scripts/board_spec_request_body.py"
@@ -1381,6 +1607,7 @@ def check_repo():
     problems.extend(check_reviewer_staged_inputs(BOARD_LOOP))
     for path in gather_scannable_files():
         problems.extend(check_single_home(path, ISSUE_CONTEXT_ACTION))
+    problems.extend(check_gh_rationale_home())
     return problems
 
 
@@ -2113,13 +2340,15 @@ def _read_only_fixture(allowed=_RO_ALLOWED, denied=_RO_DENIED,
             + extra_step)
 
 
-_FLEET_ALLOWED = f"Read,Grep,Bash(gh run view:*),{PUBLISHED_GIT_READ_GRANT}"
+_FLEET_ALLOWED = f"Read,Grep,{PUBLISHED_GIT_READ_GRANT}"
 _FLEET_DENIED = "WebFetch,Write,Edit,Bash(git:*),Bash(cd:*),Bash(pushd:*),Bash(popd:*)"
+_GH_EXEMPT_FIXTURE = {"stage.ro": ("Bash(gh pr view:*)",)}
 
 
 def _fleet_fixture(allowed=_FLEET_ALLOWED, denied=_FLEET_DENIED,
                    prompt=f"run python3 -I {PUBLISHED_GIT_READ_WRAPPER} log -1",
-                   with_extra="", extra_site=""):
+                   with_extra="", extra_site="",
+                   claude_allowed='"${{ steps.ro.outputs.allowed-tools }}"'):
     """A published-stage-shaped workflow for check 4b: one labelled
     read-only site (`stage.ro`, id `ro`) feeding an agent step."""
     return ("name: gate-93-fixture-fleet\n"
@@ -2140,11 +2369,11 @@ def _fleet_fixture(allowed=_FLEET_ALLOWED, denied=_FLEET_DENIED,
             "        with:\n"
             f"          prompt: \"{prompt}\"\n"
             "          claude_args: |\n"
-            "            --allowedTools \"${{ steps.ro.outputs.allowed-tools }}\"\n"
+            f"            --allowedTools {claude_allowed}\n"
             "            --disallowedTools \"${{ steps.ro.outputs.disallowed-tools }}\"\n")
 
 
-def _inline_fixture(allowed=f"Read,Bash(gh api:*),{PUBLISHED_GIT_READ_GRANT}",
+def _inline_fixture(allowed=f"Read,{PUBLISHED_GIT_READ_GRANT}",
                     denied=_FLEET_DENIED,
                     prompt=f"run python3 -I {PUBLISHED_GIT_READ_WRAPPER} diff"):
     """An agent step with no tool-args site: its lists are inline in
@@ -2285,8 +2514,40 @@ def _self_test_read_only_git(tmpdir):
              "strict": False}
     inline = dict(fleet, labels=())
     cases = [c + ({},) for c in cases] + [
-        ("4b: well-formed published read-only site (gh left alone)",
+        ("4b: well-formed published read-only site",
          _fleet_fixture(), None, fleet),
+        ("4b: tool-args site granting Bash(gh:*) (spec 101)",
+         _fleet_fixture(allowed=_FLEET_ALLOWED + ",Bash(gh:*)"),
+         "grants Bash(gh:*) to a read-only agent. `gh` reaches", fleet),
+        ("4b: tool-args site granting a gh subcommand",
+         _fleet_fixture(allowed=_FLEET_ALLOWED + ",Bash(gh api:*)"),
+         "grants Bash(gh api:*) to a read-only agent. `gh` reaches", fleet),
+        ("4b: step appending a gh grant in its own claude_args",
+         _fleet_fixture(claude_allowed=(
+             '"${{ steps.ro.outputs.allowed-tools }},Bash(gh api:*)"')),
+         "claude_args grants Bash(gh api:*) to a read-only agent", fleet),
+        ("4b: path-qualified gh grant",
+         _fleet_fixture(allowed=_FLEET_ALLOWED + ",Bash(/usr/bin/gh pr view:*)"),
+         "grants Bash(/usr/bin/gh pr view:*) to a read-only agent", fleet),
+        ("4b: a forwarded inputs.extra-allowed-tools is not read (a "
+         "consumer's gh grant is theirs)",
+         _fleet_fixture(with_extra=(
+             "          extra-allowed-tools: ${{ inputs.extra-allowed-tools }}\n")),
+         None, fleet),
+        ("4b: exempt site holding exactly its exempt grants",
+         _fleet_fixture(allowed=_FLEET_ALLOWED + ",Bash(gh pr view:*)"),
+         None, dict(fleet, gh_exempt=_GH_EXEMPT_FIXTURE)),
+        ("4b: exempt site with an extra, unlisted gh grant",
+         _fleet_fixture(allowed=_FLEET_ALLOWED
+                        + ",Bash(gh pr view:*),Bash(gh api:*)"),
+         "grants Bash(gh api:*) to a read-only agent",
+         dict(fleet, gh_exempt=_GH_EXEMPT_FIXTURE)),
+        ("4b: exempt site with no gh grant (stale exemption)",
+         _fleet_fixture(), "the exemption is stale",
+         dict(fleet, gh_exempt=_GH_EXEMPT_FIXTURE)),
+        ("4b: a fleet label with no matching site",
+         _fleet_fixture(), "no tool-args step labelled 'stage.gone'",
+         dict(fleet, labels=("stage.ro", "stage.gone"))),
         ("4b: consumer override inputs are not the shipped list",
          _fleet_fixture(with_extra=(
              "          allowed-tools-override: ${{ inputs.allowed-tools-override }}\n"
@@ -2321,8 +2582,11 @@ def _self_test_read_only_git(tmpdir):
         ("4b: well-formed inline read-only agent step",
          _inline_fixture(), None, inline),
         ("4b: inline read-only agent step holds raw git (#518 review)",
-         _inline_fixture(allowed="Read,Bash(gh api:*),Bash(git diff:*)"),
+         _inline_fixture(allowed="Read,Bash(git diff:*)"),
          "grants raw Bash(git diff:*)", inline),
+        ("4b: inline-only agent step granting Bash(gh api:*) (spec 101)",
+         _inline_fixture(allowed=f"Read,Bash(gh api:*),{PUBLISHED_GIT_READ_GRANT}"),
+         "claude_args grants Bash(gh api:*) to a read-only agent", inline),
         ("4b: inline read-only agent step does not deny cd",
          _inline_fixture(denied=_FLEET_DENIED.replace(",Bash(cd:*)", "")),
          "does not deny Bash(cd:*)", inline),
@@ -2350,6 +2614,22 @@ def _self_test_read_only_git(tmpdir):
                             f"naming {expect!r}: {problems!r}")
         else:
             print(f"note: check 4 fixture {label!r} caught.")
+    # Zero read-only sites anywhere in the fleet: check 4b must fail, not
+    # pass vacuously (spec 101).
+    if not fleet_zero_site_problems([]):
+        failures.append("check 4b fixture 'zero read-only sites' was not "
+                        "caught")
+    elif fleet_zero_site_problems([("a.yml", "x")]):
+        failures.append("check 4b flagged a fleet that has a read-only site")
+    else:
+        print("note: check 4b fixture 'zero read-only sites' caught.")
+    with tempfile.TemporaryDirectory() as empty_root:
+        os.makedirs(os.path.join(empty_root, ".github", "workflows"))
+        if not any("found no read-only agent site" in p
+                   for p in check_fleet_read_only_git(
+                       empty_root, labels_map={}, exemptions={})):
+            failures.append("check 4b on a workflow-less tree did not fail "
+                            "on zero read-only sites")
     return failures
 
 
@@ -2694,8 +2974,12 @@ FLEET_READ_ONLY_GIT_MUTATIONS = (
      "Bash(git:*),Bash(cd:*),Bash(popd:*),Bash(git commit:*)"),
     (".github/workflows/auto-update-spec-kit.yml",
      "evaluate-path's inline --allowedTools regains raw git diff (#518 review)",
-     f'--allowedTools "Read,Grep,Bash(gh api:*),{_PUB_GRANT_LIT}"',
-     '--allowedTools "Read,Grep,Bash(gh api:*),Bash(git diff:*)"'),
+     f'--allowedTools "Read,Grep,{_PUB_GRANT_LIT}"',
+     '--allowedTools "Read,Grep,Bash(git diff:*)"'),
+    (".github/workflows/auto-update-spec-kit.yml",
+     "evaluate-path's inline --allowedTools regains Bash(gh api:*) (spec 101)",
+     f'--allowedTools "Read,Grep,{_PUB_GRANT_LIT}"',
+     f'--allowedTools "Read,Grep,Bash(gh api:*),{_PUB_GRANT_LIT}"'),
     (".github/workflows/auto-update-spec-kit.yml",
      "evaluate-path's inline --disallowedTools stops denying Bash(git:*)",
      '--disallowedTools "WebSearch,WebFetch,Write,Edit,Bash(git:*),'
@@ -2713,12 +2997,16 @@ FLEET_READ_ONLY_GIT_MUTATIONS = (
      f"`python3 -I {GIT_READ_WRAPPER}`\n            with `log`"),
     (".github/workflows/watchdog.yml",
      "diagnose regains raw Bash(git diff:*) beside the wrapper",
-     f"Bash(gh:*),{_PUB_GRANT_LIT}",
-     f"Bash(gh:*),Bash(git diff:*),{_PUB_GRANT_LIT}"),
+     f'"Read,Grep,{_PUB_GRANT_LIT}"',
+     f'"Read,Grep,Bash(git diff:*),{_PUB_GRANT_LIT}"'),
     (".github/workflows/watchdog.yml",
      "diagnose is granted board-loop's repo-local wrapper path",
-     f'"Read,Grep,Bash(gh:*),{_PUB_GRANT_LIT}"',
-     f'"Read,Grep,Bash(gh:*),{GIT_READ_GRANT}"'),
+     f'"Read,Grep,{_PUB_GRANT_LIT}"',
+     f'"Read,Grep,{GIT_READ_GRANT}"'),
+    (".github/workflows/watchdog.yml",
+     "diagnose regains Bash(gh:*) (spec 101)",
+     f'"Read,Grep,{_PUB_GRANT_LIT}"',
+     f'"Read,Grep,Bash(gh:*),{_PUB_GRANT_LIT}"'),
     (".github/workflows/watchdog.yml",
      "diagnose's claude_args appends raw git",
      '--allowedTools "${{ steps.tool-args-diagnose.outputs.allowed-tools }}"',
@@ -2770,7 +3058,10 @@ def _mutation_check_fleet_read_only_git():
             if not check_read_only_git(
                     path, labels=FLEET_READ_ONLY_STEP_LABELS.get(workflow, ()),
                     git_grant=fleet_git_grant(workflow, published),
-                    strict=False):
+                    strict=False,
+                    gh_exempt={label: entry.grants for (wf, label), entry
+                               in EXEMPT_GH_READ_ONLY.items()
+                               if wf == workflow}):
                 failures.append(f"mutation {label!r} was NOT caught")
             else:
                 print(f"note: mutation caught ({label}).")
@@ -2832,6 +3123,145 @@ def _mutation_check_reviewer_staging():
                 failures.append(f"mutation {label!r} was NOT caught")
             else:
                 print(f"note: mutation caught ({label}).")
+    return failures
+
+
+_RATIONALE_POINTER = (
+    "A read-only agent holds no `gh` grant: `gh` reaches remote writes. See\n"
+    "`docs/agent-friendly-workflows.md` (\"Read-only agents and gh\").\n")
+_RATIONALE_SENTENCE = "so the rule is total\nrather than per-subcommand.\n"
+
+
+def _self_test_gh_rationale_home(tmpdir):
+    """Check 6 (spec 101 FR-017): a tree built from the real canonical doc
+    passes, and each way of breaking the single home is caught."""
+    failures = []
+    try:
+        with open(GH_RATIONALE_HOME, encoding="utf-8") as fh:
+            real_home = fh.read()
+    except OSError as exc:
+        return [f"check 6 self-test: cannot read {GH_RATIONALE_HOME} ({exc})"]
+    # Spelled as f-strings so verify-gate-wiring.py does not read these
+    # made-up paths as documents this gate opens.
+    spec = "900-x"
+    contract = f"specs/{spec}/contracts/c.md"
+    base = {
+        GH_RATIONALE_HOME: real_home,
+        contract: _RATIONALE_POINTER,
+        # A spec's own documents are historical and not scanned.
+        f"specs/{spec}/spec.md": _RATIONALE_SENTENCE,
+        f"specs/{spec}/tasks.md": "`gh` reaches remote writes.\n",
+    }
+    home_without = GH_RATIONALE_SENTENCE_RE.sub("per-verb", real_home)
+    cases = (
+        ("well-formed tree", {}, None),
+        ("the sentence copied into a live contract",
+         {contract: _RATIONALE_POINTER + _RATIONALE_SENTENCE}, contract),
+        ("the sentence copied into a wrapped workflow comment",
+         {".github/workflows/w.yml": "jobs:\n  # so the rule is total\n"
+                                     "  # rather than per-subcommand.\n"},
+         ".github/workflows/w.yml"),
+        ("the claim wrapped across comment lines with no pointer",
+         {".github/scripts/s.py": "# `gh` reaches\n# remote writes.\n"},
+         ".github/scripts/s.py"),
+        ("the sentence moved out of its entry",
+         {GH_RATIONALE_HOME: home_without.replace(
+             "- " + GH_RATIONALE_HEADING, "- **Moved**: "
+             + _RATIONALE_SENTENCE.replace("\n", " ") + "\n- "
+             + GH_RATIONALE_HEADING, 1)},
+         "not under"),
+        ("the claim restated with no pointer",
+         {"README.md": "`gh` reaches remote writes, so no grant.\n"},
+         "README.md"),
+        ("the sentence removed from its home",
+         {GH_RATIONALE_HOME: home_without}, "0 time(s)"),
+        ("the sentence written twice in its home",
+         {GH_RATIONALE_HOME: real_home + _RATIONALE_SENTENCE}, "2 time(s)"),
+        ("the home's heading renamed",
+         {GH_RATIONALE_HOME: real_home.replace(GH_RATIONALE_HEADING,
+                                               "**gh**")},
+         GH_RATIONALE_HEADING),
+        ("the home missing", {GH_RATIONALE_HOME: None}, "could not read"),
+        # An untracked checkout of the repository (wt/ is never added) is
+        # not a second home; a tracked file is read.
+        ("a copy of the home in an untracked checkout",
+         {f"wt/{GH_RATIONALE_HOME}": real_home}, None),
+        ("a copy of the sentence in a tracked note",
+         {"notes/x.md": _RATIONALE_SENTENCE}, "notes/x.md"),
+        ("the sentence below a last entry, in a later section",
+         {GH_RATIONALE_HOME: f"- {GH_RATIONALE_HEADING}: no `gh` grant.\n\n"
+                             f"## Later\n\n{_RATIONALE_SENTENCE}"}, "not under"),
+        ("the entry named earlier in the doc, and a lazy continuation",
+         {GH_RATIONALE_HOME: f"Intro: see {GH_RATIONALE_HEADING} below.\n\n"
+                             f"- {GH_RATIONALE_HEADING}: no `gh` grant,\n"
+                             f"{_RATIONALE_SENTENCE}- **Next**: x.\n"}, None),
+        ("a summary item first, then the entry's sub-bullet and a #NNN line",
+         {GH_RATIONALE_HOME: f"- {GH_RATIONALE_HEADING}: see below.\n\n"
+                             f"- {GH_RATIONALE_HEADING}: no `gh` grant.\n"
+                             f"  - it reaches remote writes (see\n"
+                             f"#808), {_RATIONALE_SENTENCE}"}, None),
+        ("a sub-bullet holding the sentence",
+         {GH_RATIONALE_HOME: f"- {GH_RATIONALE_HEADING}: no `gh` grant.\n"
+                             f"  - {_RATIONALE_SENTENCE}"}, None),
+        ("an indented entry with a lazy line starting with a year",
+         {GH_RATIONALE_HOME: f"  - {GH_RATIONALE_HEADING}: no grant since\n"
+                             f"2026. The rule is total\n"
+                             f"  rather than per-subcommand.\n"}, None),
+        ("the sentence only in a summary item, or in an indented sibling",
+         {GH_RATIONALE_HOME: f"1. {GH_RATIONALE_HEADING} -- {_RATIONALE_SENTENCE}\n"
+                             f"- {GH_RATIONALE_HEADING}: no grant.\n"
+                             f" - **Other**: x\n"}, "not under"),
+        ("an indented sibling holding the sentence",
+         {GH_RATIONALE_HOME: f"- {GH_RATIONALE_HEADING}: no grant.\n"
+                             f" - **Other**: {_RATIONALE_SENTENCE}"}, "not under"),
+        ("a copy wrapped onto a #word comment line",
+         {".github/scripts/x.sh": "# the rule is total\n#rather than per-subcommand\n"},
+         ".github/scripts/x.sh"),
+        ("the sentence in the next, `+` item",
+         {GH_RATIONALE_HOME: f"- {GH_RATIONALE_HEADING}: no `gh` grant.\n"
+                             f"+ **Other**: {_RATIONALE_SENTENCE}"}, "not under"),
+        ("the claim pointing by a relative link",
+         {f"docs/{spec}.md": "`gh` reaches remote writes; see "
+                           "[why](agent-friendly-workflows.md).\n"}, None),
+    )
+    # git keeps the GIT_CONFIG_* entries a container's safe.directory comes
+    # from, and drops a GIT_DIR that would point it at another repository.
+    env = git_env({"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "wc.probe",
+                   "GIT_CONFIG_VALUE_0": "kept", "GIT_DIR": "/no/such/repo"})
+    if env.get("GIT_CONFIG_VALUE_0") != "kept" or "GIT_DIR" in env:
+        failures.append(f"check 6: git_env dropped GIT_CONFIG_* or kept "
+                        f"GIT_DIR: {sorted(env)}")
+    for n, (desc, edits, expect) in enumerate(cases):
+        root = os.path.join(tmpdir, f"rationale-{n}")
+        for rel, text in {**base, **edits}.items():
+            if text is None:
+                continue
+            path = os.path.join(root, rel)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(text)
+        tracked = [rel for rel, text in {**base, **edits}.items()
+                   if text is not None and not rel.startswith("wt/")]
+        try:
+            bad_git = any(subprocess.run(cmd, cwd=root, env=git_env(),
+                                         capture_output=True).returncode
+                          for cmd in (["git", "init", "-q"],
+                                      ["git", "add", "-f", "--", *tracked]))
+        except OSError as exc:
+            bad_git = exc
+        if bad_git:
+            failures.append(f"check 6 fixture ({desc}): git init/add failed "
+                            f"({bad_git})")
+            continue
+        problems = check_gh_rationale_home(root)
+        if expect is None and problems:
+            failures.append(f"check 6 fixture ({desc}) was flagged: "
+                            f"{problems!r}")
+        elif expect is not None and not any(expect in p for p in problems):
+            failures.append(f"check 6 fixture ({desc}) was not caught: "
+                            f"{problems!r}")
+        elif expect is not None:
+            print(f"note: check 6 fixture ({desc}) caught: {problems}")
     return failures
 
 
@@ -2959,6 +3389,7 @@ def run_self_test():
 
         failures.extend(_self_test_spec_request_sites(tmpdir))
         failures.extend(_self_test_read_only_git(tmpdir))
+        failures.extend(_self_test_gh_rationale_home(tmpdir))
     failures.extend(_self_test_builder())
     failures.extend(_mutation_check_builder())
     failures.extend(_mutation_check_spec_request_sites())
@@ -3000,7 +3431,8 @@ def main():
           "and Edit denied, and so do the read-only agents of every other "
           "workflow (by the pipeline-checkout path in a published stage). "
           "The reviewer prompt names only files its "
-          "gather step writes.")
+          "gather step writes, and the read-only `gh` rationale has one "
+          "home, docs/agent-friendly-workflows.md.")
 
     if not self_test:
         return 0
