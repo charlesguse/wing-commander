@@ -40,14 +40,22 @@ inputs:
   push-token:
     description: >
       Already-minted token to build an explicit authenticated push URL
-      from, for a target whose remote carries no stored credential (the
-      same explicit-URL idiom orphan-branch-reset/action.yml uses).
-      Empty (the default) pushes to the `origin` remote as-is -- every
-      in-scope stage's own spec-branch checkout.
+      from (the same explicit-URL idiom orphan-branch-reset/action.yml
+      uses). The push then goes from a shim repository with no config of
+      its own, so nothing in the checkout's .git/config can redirect it
+      (spec 095 FR-016/FR-017) -- a caller whose agent wrote the checkout
+      passes it. Empty (the default) pushes to the `origin` remote as-is.
     required: false
     default: ""
   push-repo:
     description: "owner/name to push to, required together with push-token."
+    required: false
+    default: ""
+  branch:
+    description: >
+      The branch this call may publish. When set, a checkout left on any
+      other branch (or a detached HEAD) is not pushed: push-ok=false.
+      Empty (the default) publishes whatever branch the checkout is on.
     required: false
     default: ""
 
@@ -79,12 +87,20 @@ runs:
         WORKDIR: ${{ inputs.workdir }}
         PUSH_TOKEN: ${{ inputs.push-token }}
         PUSH_REPO: ${{ inputs.push-repo }}
+        EXPECTED_BRANCH: ${{ inputs.branch }}
       run: |
         set -uo pipefail
         dir="${WORKDIR:-.}"
+        # spec 095 FR-015/FR-016: an agent step ran in this job just before,
+        # so every git call below runs with hooks, fsmonitor and
+        # global/system config neutralised -- git-push-hardening.sh is the
+        # one home of that environment.
+        # shellcheck source=../_shared/git-push-hardening.sh
+        . "$GITHUB_ACTION_PATH/../_shared/git-push-hardening.sh"
         (
+          wc_harden_git_env
           cd "$dir"
-          branch="$(git rev-parse --abbrev-ref HEAD)"
+          branch="$(wc_current_branch)"
           # git push already updates the local remote-tracking ref for the
           # branch it moved, so a cycle that already pushed cleanly counts
           # 0 commits ahead of origin here, not every commit since job
@@ -97,9 +113,19 @@ runs:
             count="$(git rev-list --count "${BEFORE_SHA}..HEAD" 2>/dev/null)" || count=0
           fi
           echo "commits-published=$count" >> "$GITHUB_OUTPUT"
-          target="origin"
-          [ -n "$PUSH_TOKEN" ] && target="https://x-access-token:${PUSH_TOKEN}@github.com/${PUSH_REPO}.git"
-          if git push "$target" "HEAD:$branch"; then
+          if [ -n "$EXPECTED_BRANCH" ] && [ "$branch" != "$EXPECTED_BRANCH" ]; then
+            echo "::warning::wing-commander-publish-stranded-commits: the checkout is on '$branch', not '$EXPECTED_BRANCH' -- nothing is published."
+            echo "push-ok=false" >> "$GITHUB_OUTPUT"
+          elif [ -n "$PUSH_TOKEN" ]; then
+            # spec 095 FR-016/FR-017: an explicit destination, pushed from a
+            # shim repository, so no insteadOf/pushurl the agent could have
+            # left in this checkout's .git/config can redirect the token.
+            if wc_push_from_shim "$(git rev-parse HEAD)" "$branch" "$PUSH_REPO" "$PUSH_TOKEN"; then
+              echo "push-ok=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "push-ok=false" >> "$GITHUB_OUTPUT"
+            fi
+          elif git push origin "HEAD:$branch"; then
             echo "push-ok=true" >> "$GITHUB_OUTPUT"
           else
             echo "push-ok=false" >> "$GITHUB_OUTPUT"

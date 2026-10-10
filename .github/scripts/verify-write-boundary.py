@@ -88,8 +88,9 @@ AGENT_AUTHOR_RE = r"claude\[bot\]|wing-commander-bot\[bot\]"
 BASH = None
 
 # The literal quoted no-write-paths default (FR-003) -- pass condition (a)
-# greps for this outside its one declared home in STAGE.
-DEFAULT_LITERAL = '".claude/"'
+# greps for this outside its one declared home in STAGE. Spec 095 FR-018
+# added `.git/` as an entry of this one definition, never a second list.
+DEFAULT_LITERAL = '".claude/,.git/"'
 
 
 def sh(script, cwd):

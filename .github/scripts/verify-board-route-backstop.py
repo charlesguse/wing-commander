@@ -180,10 +180,13 @@ def hold_wiring_problems(workflow_text):
 # The three workflow-scope hold sites (found by the code review of #921):
 # (job, --site value, step name). board_workflow_scope_hold.py is the one
 # home of the path check and the hold sequence; each site calls it.
+# spec 095 split the fix and review-fixup holds into their own steps ahead
+# of the hardened push, in the publishing jobs.
 HOLD_SITES = (
     ("route", "route", "Hold a workflow-file fix for a maintainer"),
-    ("fix", "fix", "Push and open the PR"),
-    ("review", "review-fixup", "Push the follow-up commit and advance the round"),
+    ("fix", "fix", "Hold a workflow-file fix for a maintainer (fix)"),
+    ("review-fixup-publish", "review-fixup",
+     "Hold a workflow-file follow-up for a maintainer (review-fixup)"),
 )
 HOLD_HELPER = "board_workflow_scope_hold.py"
 CAN_PUSH_EXPR = "${{ vars.WING_COMMANDER_BOARD_CAN_PUSH_WORKFLOWS == 'true' }}"
@@ -970,11 +973,14 @@ def run():
                  '          held="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_workflow_scope_hold.py" --site fix '),
                 ("review-fixup's call names the wrong site",
                  "board_workflow_scope_hold.py\" --site review-fixup ", "board_workflow_scope_hold.py\" --site fix "),
-                ("review-fixup ignores the answer", 'if [ "$held" = "held" ]; then\n            exit 0\n          fi\n          # The step\'s default shell',
-                 "# The step's default shell"),
+                ("review-fixup ignores the answer",
+                 '            || exit 1\n          if [ "$held" = "held" ]; then\n'
+                 '            echo "held=true" >> "$GITHUB_OUTPUT"\n          else\n'
+                 '            echo "held=false" >> "$GITHUB_OUTPUT"\n          fi\n',
+                 '            || exit 1\n          echo "held=false" >> "$GITHUB_OUTPUT"\n'),
                 ("a hold comment pasted back inline",
-                 "          # no Workflows permission.\n",
-                 "          # no Workflows permission.\n"
+                 "          # workflow file and the App holds no Workflows permission.\n",
+                 "          # workflow file and the App holds no Workflows permission.\n"
                  "          # The follow-up changes a workflow file, which this loop cannot push.\n"),
                 ("fix's listing pasted back as `git diff --name-only`",
                  '          held="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_workflow_scope_hold.py" --site fix ',

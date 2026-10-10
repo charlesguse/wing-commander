@@ -71,16 +71,24 @@ REQUIRED_TOOLS_FILE = ".github/scripts/required-tools.txt"
 IMAGE_TAG = "wing-commander-gate-62-reference-image:local"
 IMPLEMENT_WORKFLOW = ".github/workflows/implement.yml"
 IMPLEMENT_JOB = "implement"
+# spec 095: the cycle leg's preflight and suite run in this credential-free
+# job (same runner and image), the retry leg's still in the implement job.
+GATE_SUITE_JOB = "gate-suite-implement-cycle"
 PREFLIGHT_STEPS = ("Preflight: gate-suite prerequisites (cycle)",
                    "Preflight: gate-suite prerequisites (retry)")
+# The job each preflight step lives in.
+PREFLIGHT_JOBS = {PREFLIGHT_STEPS[0]: GATE_SUITE_JOB, PREFLIGHT_STEPS[1]: IMPLEMENT_JOB}
 AGENT_STEPS = ("Implement and converge (cycle)",
                "Implement and converge (retry at escalation model)")
 # The agent prompt's lint-tool sentence: every `backticked` command between
 # these two markers is a tool the prompt tells the agent to use.
 LINT_SENTENCE = ("Where the list above includes them:", "Lint the files")
-# Tools the implement job installs for itself, before the preflight, in the
-# named step -- not taken from the image, so stubbed / not required here.
-JOB_INSTALLED = {"actionlint": "Install actionlint for the agent"}
+# Tools the jobs install for themselves, before each preflight, in the named
+# step (per job) -- not taken from the image, so stubbed / not required here.
+# The install's one home is the composite each step uses.
+JOB_INSTALLED = {"actionlint": {IMPLEMENT_JOB: "Install actionlint for the agent",
+                                GATE_SUITE_JOB: "Install actionlint for the gate suite"}}
+JOB_INSTALLED_COMPOSITE = {"actionlint": "wing-commander-install-actionlint"}
 # The implement prompt's gate-suite paragraph names the suite command; the
 # interpreter word in front of the script is a command the agent will run.
 SUMMARY_STEPS = ("Summarize gate-suite outcome (cycle)",
@@ -190,7 +198,8 @@ def _optout_sites(node, path=()):
         yield path
 
 
-ALLOWED_OPTOUT = ("jobs", IMPLEMENT_JOB, "container", "env", DOCKERLESS_ENV)
+ALLOWED_OPTOUTS = tuple(("jobs", job, "container", "env", DOCKERLESS_ENV)
+                        for job in (IMPLEMENT_JOB, GATE_SUITE_JOB))
 
 
 def stray_optouts(root="."):
@@ -215,13 +224,13 @@ def stray_optouts(root="."):
         except yaml.YAMLError:
             continue  # not this gate's subject; the YAML gates report it
         for site in _optout_sites(tree):
-            if os.path.normpath(path) == allowed and site == ALLOWED_OPTOUT:
+            if os.path.normpath(path) == allowed and site in ALLOWED_OPTOUTS:
                 continue
             problems.append(f"{os.path.relpath(path, root)} sets {DOCKERLESS_ENV} at "
                             f"{'.'.join(site)}; only {IMPLEMENT_WORKFLOW}'s "
-                            f"{'.'.join(ALLOWED_OPTOUT[:-1])} may set it, or that "
-                            f"job's missing docker would skip this gate on CI "
-                            f"instead of failing it")
+                            f"{' and '.join('.'.join(a[:-1]) for a in ALLOWED_OPTOUTS)} "
+                            f"may set it, or that job's missing docker would skip "
+                            f"this gate on CI instead of failing it")
     return problems
 
 
@@ -238,54 +247,64 @@ def read_implement_subject(root=".", wf=None):
     if wf is None:
         with io.open(os.path.join(root, IMPLEMENT_WORKFLOW), encoding="utf-8") as fh:
             wf = yaml.safe_load(fh) or {}
-    job = (wf.get("jobs") or {}).get(IMPLEMENT_JOB) or {}
+    jobs = wf.get("jobs") or {}
+    job = jobs.get(IMPLEMENT_JOB) or {}
     steps = job.get("steps") or []
     by_name = {(st or {}).get("name"): (st or {}) for st in steps}
-    index = {(st or {}).get("name"): i for i, st in enumerate(steps)}
-    container = job.get("container")
-    container_env = container.get("env") if isinstance(container, dict) else None
-    if not isinstance(container_env, dict):
-        container_env = {}  # absent, or an expression this gate cannot read
-    # docker_missing_result compares the exported value to "true"; Actions
-    # exports an unquoted YAML true as "true" too, but no other spelling.
-    if container_env.get(DOCKERLESS_ENV) not in ("true", True):
-        problems.append(f"{IMPLEMENT_WORKFLOW} job {IMPLEMENT_JOB!r} no longer sets "
-                        f"{DOCKERLESS_ENV}: \"true\" in its container: env, so "
-                        f"this gate fails the gate suite the job runs in its "
-                        f"Docker-less container at every cycle start (#989)")
-    job_run = (job.get("defaults") or {}).get("run") or {}
     wf_run = (wf.get("defaults") or {}).get("run") or {}
-    job_shell = job_run.get("shell") or wf_run.get("shell")
-    default_wd = job_run.get("working-directory") or wf_run.get("working-directory")
     preflights = {}
-    for name in PREFLIGHT_STEPS:
-        run = by_name.get(name, {}).get("run")
-        if not run:
-            problems.append(f"{IMPLEMENT_WORKFLOW} job {IMPLEMENT_JOB!r} has no "
-                            f"step {name!r} with a run: block -- if it was "
-                            f"renamed, update PREFLIGHT_STEPS here with it")
-        elif ("${{" in str(run) or any(by_name[name].get(k) for k in
-                                       ("env", "shell", "working-directory"))
-              or job_shell != PREFLIGHT_SHELL or default_wd):
-            problems.append(f"{IMPLEMENT_WORKFLOW} step {name!r} now uses an "
-                            f"expression, an env:/shell:/working-directory: key, "
-                            f"a job/workflow default working-directory, or a "
-                            f"job/workflow default shell other than "
-                            f"{PREFLIGHT_SHELL!r}, none of which this gate "
-                            f"reproduces when it runs the step's text inside "
-                            f"the image -- extend check_preflight first")
-        else:
-            preflights[name] = str(run)
-    for tool, step in JOB_INSTALLED.items():
-        run = str(by_name.get(step, {}).get("run", ""))
-        late = [n for n in PREFLIGHT_STEPS
-                if n in index and index.get(step, len(steps)) > index[n]]
-        if step not in by_name or tool not in run or late:
-            problems.append(f"{IMPLEMENT_WORKFLOW} job {IMPLEMENT_JOB!r} has no "
-                            f"step {step!r} that installs {tool} ahead of "
-                            f"{', '.join(late) or 'the preflight steps'}, yet "
-                            f"this gate stubs {tool} as installed by it -- "
-                            f"update JOB_INSTALLED")
+    for job_id in (IMPLEMENT_JOB, GATE_SUITE_JOB):
+        this = jobs.get(job_id) or {}
+        container = this.get("container")
+        container_env = container.get("env") if isinstance(container, dict) else None
+        if not isinstance(container_env, dict):
+            container_env = {}  # absent, or an expression this gate cannot read
+        # docker_missing_result compares the exported value to "true"; Actions
+        # exports an unquoted YAML true as "true" too, but no other spelling.
+        if container_env.get(DOCKERLESS_ENV) not in ("true", True):
+            problems.append(f"{IMPLEMENT_WORKFLOW} job {job_id!r} no longer sets "
+                            f"{DOCKERLESS_ENV}: \"true\" in its container: env, so "
+                            f"this gate fails the gate suite the job runs in its "
+                            f"Docker-less container at every cycle start (#989)")
+        job_run = (this.get("defaults") or {}).get("run") or {}
+        job_shell = job_run.get("shell") or wf_run.get("shell")
+        default_wd = job_run.get("working-directory") or wf_run.get("working-directory")
+        job_steps = this.get("steps") or []
+        job_by_name = {(st or {}).get("name"): (st or {}) for st in job_steps}
+        index = {(st or {}).get("name"): i for i, st in enumerate(job_steps)}
+        names = [n for n in PREFLIGHT_STEPS if PREFLIGHT_JOBS[n] == job_id]
+        for name in names:
+            run = job_by_name.get(name, {}).get("run")
+            if not run:
+                problems.append(f"{IMPLEMENT_WORKFLOW} job {job_id!r} has no "
+                                f"step {name!r} with a run: block -- if it was "
+                                f"renamed or moved, update PREFLIGHT_STEPS/PREFLIGHT_JOBS "
+                                f"here with it")
+            elif ("${{" in str(run) or any(job_by_name[name].get(k) for k in
+                                           ("env", "shell", "working-directory"))
+                  or job_shell != PREFLIGHT_SHELL or default_wd):
+                problems.append(f"{IMPLEMENT_WORKFLOW} step {name!r} now uses an "
+                                f"expression, an env:/shell:/working-directory: key, "
+                                f"a job/workflow default working-directory, or a "
+                                f"job/workflow default shell other than "
+                                f"{PREFLIGHT_SHELL!r}, none of which this gate "
+                                f"reproduces when it runs the step's text inside "
+                                f"the image -- extend check_preflight first")
+            else:
+                preflights[name] = str(run)
+        for tool, by_job in JOB_INSTALLED.items():
+            step = by_job[job_id]
+            st = job_by_name.get(step, {})
+            installs = (tool in str(st.get("run", ""))
+                        or JOB_INSTALLED_COMPOSITE[tool] in str(st.get("uses", "")))
+            late = [n for n in names
+                    if n in index and index.get(step, len(job_steps)) > index[n]]
+            if step not in job_by_name or not installs or late:
+                problems.append(f"{IMPLEMENT_WORKFLOW} job {job_id!r} has no "
+                                f"step {step!r} that installs {tool} ahead of "
+                                f"{', '.join(late) or 'the preflight steps'}, yet "
+                                f"this gate stubs {tool} as installed by it -- "
+                                f"update JOB_INSTALLED")
     commands = []
     for name in SUMMARY_STEPS:
         found = SUITE_COMMAND.findall(str(by_name.get(name, {}).get("run", "")))
@@ -478,7 +497,20 @@ def _static_self_test():
     def default_wd(wf):
         wf["jobs"][IMPLEMENT_JOB].setdefault("defaults", {}).setdefault("run", {})[
             "working-directory"] = "target"
-    cases.append(("a job default working-directory", default_wd, PREFLIGHT_STEPS[0]))
+    cases.append(("a job default working-directory", default_wd, PREFLIGHT_STEPS[1]))
+
+    def gate_job_drop_env(wf):
+        wf["jobs"][GATE_SUITE_JOB]["container"]["env"].pop(DOCKERLESS_ENV)
+    cases.append(("the gate-suite job's container: env opt-out dropped", gate_job_drop_env,
+                  GATE_SUITE_JOB))
+
+    def gate_job_late_install(wf):
+        steps = wf["jobs"][GATE_SUITE_JOB]["steps"]
+        i = next(i for i, st in enumerate(steps)
+                 if st.get("name") == JOB_INSTALLED["actionlint"][GATE_SUITE_JOB])
+        steps.append(steps.pop(i))
+    cases.append(("the gate-suite job's actionlint install moved after its preflight",
+                  gate_job_late_install, JOB_INSTALLED["actionlint"][GATE_SUITE_JOB]))
 
     def env_expression(wf):
         wf["jobs"][IMPLEMENT_JOB]["container"]["env"] = "${{ fromJSON(inputs.x) }}"
@@ -487,13 +519,13 @@ def _static_self_test():
     def late_install(wf):
         steps = wf["jobs"][IMPLEMENT_JOB]["steps"]
         i = next(i for i, st in enumerate(steps)
-                 if st.get("name") == JOB_INSTALLED["actionlint"])
+                 if st.get("name") == JOB_INSTALLED["actionlint"][IMPLEMENT_JOB])
         steps.append(steps.pop(i))
     cases.append(("the actionlint install moved after the preflight", late_install,
-                  JOB_INSTALLED["actionlint"]))
+                  JOB_INSTALLED["actionlint"][IMPLEMENT_JOB]))
 
     def expression(wf):
-        st = next(st for st in wf["jobs"][IMPLEMENT_JOB]["steps"]
+        st = next(st for st in wf["jobs"][GATE_SUITE_JOB]["steps"]
                   if st.get("name") == PREFLIGHT_STEPS[0])
         st["run"] = "echo ${{ github.sha }}\n" + st["run"]
     cases.append(("an expression in the preflight", expression, PREFLIGHT_STEPS[0]))
@@ -539,7 +571,7 @@ def _static_self_test():
         if any("other.yml" in g for g in got):
             problems.append(f"a comment naming the opt-out was reported; got: {got}")
         if not any("jobs.other" in g for g in got) or any(
-                ".".join(ALLOWED_OPTOUT) in g for g in got):
+                any(".".join(a) in g for a in ALLOWED_OPTOUTS) for g in got):
             problems.append(f"within implement.yml, only the implement job's container "
                             f"env was not the one site allowed; got: {got}")
     finally:

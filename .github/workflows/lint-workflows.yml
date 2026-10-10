@@ -725,6 +725,36 @@ jobs:
                           exempt += 1
                       continue
 
+                  if (os.path.basename(f), jname) == ("implement.yml",
+                                                      "gate-suite-implement-cycle"):
+                      # specs/095-agent-code-credential-containment: the
+                      # credential-free job that runs the spec branch's gate
+                      # suite is deliberately unbound, file- and job-scoped.
+                      # It holds `contents: read` and no App token, and it
+                      # executes agent-authored code: binding an environment
+                      # would bring that environment's secrets into the one
+                      # job of the stage built to hold none, and cost an
+                      # approval prompt per cycle for a job that writes
+                      # nothing. The job that acts -- implement -- stays
+                      # bound. docs/adoption.md lists it as the third
+                      # registered exception. Asserted in the deviating
+                      # direction, like verify-image-prerequisites above.
+                      if "environment" in job:
+                          print(f"::error file={f}::job 'gate-suite-implement-cycle' "
+                                f"carries an environment: block. It is deliberately "
+                                f"unbound (specs/095): it runs agent-authored code and "
+                                f"must hold no credential, environment secrets "
+                                f"included. Remove the block, or change this gate and "
+                                f"docs/adoption.md's registered-exception list "
+                                f"together.")
+                          failures += 1
+                      else:
+                          print(f"note: {f}: job 'gate-suite-implement-cycle' is a "
+                                f"registered Gate 7 exemption — deliberately unbound, "
+                                f"not counted as bound.")
+                          exempt += 1
+                      continue
+
                   env = job.get("environment")
                   if env is None:
                       print(f"::error file={f}::job {jname!r} has no environment: block. "
@@ -3284,8 +3314,17 @@ jobs:
           # sending the author into this gate's internals to find out why.
           # No run: block starts a statement that way today; this is here so
           # the first one that does gets a real error or none, not a riddle.
-          NOT_A_COMMAND = ALWAYS_AVAILABLE | {"[", "[[", "]]", "]", "{", "}",
-                                              "DOLLARSUBST", "GHEXPR"}
+          # Shell functions a run: block defines by sourcing one of this
+          # repository's own _shared/ scripts and then calls -- code shipped
+          # with the composite, never a tool the image must carry. Each is
+          # named with the script that defines it.
+          SHARED_SHELL_FUNCTIONS = {
+              "wc_harden_git_env",  # _shared/git-push-hardening.sh (spec 095)
+              "wc_push_from_shim",  # _shared/git-push-hardening.sh (spec 095)
+              "wc_current_branch",  # _shared/git-push-hardening.sh (spec 095)
+          }
+          NOT_A_COMMAND = ALWAYS_AVAILABLE | SHARED_SHELL_FUNCTIONS | {
+              "[", "[[", "]]", "]", "{", "}", "DOLLARSUBST", "GHEXPR"}
 
           HEREDOC_OPEN = re.compile(r"<<[-~]?\s*['\"]?(\w+)['\"]?")
           TOKEN_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.+-]*$")
@@ -5503,6 +5542,106 @@ jobs:
       - name: "Gate 133 self-test — write boundary"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-write-boundary.py --self-test
+
+      # Gate 149 — specs/095-agent-code-credential-containment FR-002/FR-003/
+      # FR-004: a gate-suite verdict is read fail-closed (absent, unparsable,
+      # unknown-keyed, mis-bound or non-pass/fail reads as a failure), and no
+      # publisher `if:` treats a skipped or cancelled gate-suite job as green
+      # (contracts/new-gates.md). Path trigger: .github/scripts/** above.
+      # Numbered 149, not 141: 141-146 were taken by spec 110's PR #982 and
+      # 147-148 by spec 112's PR #1003.
+      - name: "Gate 149 — a gate-suite verdict that is absent, malformed or mis-bound reads as a failure, and no publisher treats a skipped gate job as green"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-gate-verdict-fail-closed.py
+      - name: "Gate 149 self-test — a negated gate-result condition and a wrong reader expectation each fail"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-gate-verdict-fail-closed.py --self-test
+
+      # Gate 150 — specs/095-agent-code-credential-containment FR-015..FR-017,
+      # FR-022: every covered push goes through the wing-commander-hardened-push
+      # composite, and its shared script is driven against a real repository
+      # with a planted pre-push hook and a planted insteadOf rewrite.
+      # Numbered 150, not 142: 141-146 were taken by spec 110's PR #982 and
+      # 147-148 by spec 112's PR #1003.
+      - name: "Gate 150 — covered pushes use the hardened-push composite, and a planted hook or insteadOf cannot steer it"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-hardened-push.py
+      - name: "Gate 150 self-test — a raw push, a pasted idiom, a planted hook and a planted insteadOf each fail"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-hardened-push.py --self-test
+
+      # Gate 151 — specs/095-agent-code-credential-containment FR-011/FR-013/
+      # FR-014: no composite reachable from the covered workflows reaches a
+      # workspace-relative script from a run: body, and an undeterminable
+      # reachable set fails loud. Path triggers: .github/actions/** and
+      # .github/scripts/** above, plus the workflows.
+      # Numbered 151, not 143: 141-146 were taken by spec 110's PR #982 and
+      # 147-148 by spec 112's PR #1003.
+      - name: "Gate 151 — no reachable composite run: body reaches a workspace-relative script, and an undeterminable composite set fails loud"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-composite-run-provenance.py
+      - name: "Gate 151 self-test — a workspace-relative path, an undeterminable set and a moved composite each fail"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-composite-run-provenance.py --self-test
+
+      # Gate 152 — specs/095-agent-code-credential-containment FR-001/FR-004/
+      # FR-005/FR-006: at every gate-suite site the suite runs in a job
+      # holding read-only permissions and no App token, and the job that acts
+      # waits for and reads its verdict; no credential-bearing job in the
+      # covered workflows runs the suite except a recorded deferral, and an
+      # undeterminable job graph fails loud. Path triggers: .github/
+      # workflows/**, .github/actions/** and .github/scripts/** above.
+      # Numbered 152, not 144: 141-146 were taken by spec 110's PR #982 and
+      # 147-148 by spec 112's PR #1003.
+      - name: "Gate 152 — the gate suite runs only in a credential-free job at every covered site"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-gate-suite-credential-free.py
+      - name: "Gate 152 self-test — an App-token step, write permissions, a kept credential, an in-job suite and an undeterminable graph each fail"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-gate-suite-credential-free.py --self-test
+
+      # Gate 153 — specs/095-agent-code-credential-containment FR-007..FR-010:
+      # the comment documenting board-loop's snapshot states which steps its
+      # guarantee covers, what it rests on and the runner it assumes, and no
+      # job that pushes also runs the gate suite. Path triggers: .github/
+      # workflows/** and .github/scripts/** above.
+      # Numbered 153, not 145: 141-146 were taken by spec 110's PR #982 and
+      # 147-148 by spec 112's PR #1003.
+      - name: "Gate 153 — the snapshot statement is exact, and no job that runs the gate suite pushes"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-snapshot-integrity-statement.py
+      - name: "Gate 153 self-test — a missing covered-steps or runner sentence and a pushing gate-suite job each fail"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-snapshot-integrity-statement.py --self-test
+
+      # Gate 154 — specs/095-agent-code-credential-containment FR-018 (deny
+      # half): every covered agent is denied Edit/Write on .git/** -- the
+      # implement agent through spec 090's one no-write-paths definition,
+      # never a second literal list. Path triggers: .github/workflows/** and
+      # .github/scripts/** above.
+      # Numbered 154, not 146: 141-146 were taken by spec 110's PR #982 and
+      # 147-148 by spec 112's PR #1003.
+      - name: "Gate 154 — every covered agent is denied .git/**, implement's through its write boundary"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-agent-git-deny.py
+      - name: "Gate 154 self-test — a missing deny, a second literal list and a boundary without .git/ each fail"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-agent-git-deny.py --self-test
+
+      # Gate 155 — specs/095-agent-code-credential-containment
+      # (contracts/workspace-bundle.md): the agent's commits survive the
+      # round trip build-gate-bundle.sh -> contained-gate-suite.sh ->
+      # restore-gate-bundle.sh against real git repositories, and the
+      # restore refuses any head the producer did not report. Path triggers:
+      # .github/actions/** and .github/scripts/** above.
+      # Numbered 155, not 147: 141-146 were taken by spec 110's PR #982 and
+      # 147-148 by spec 112's PR #1003.
+      - name: "Gate 155 — a workspace bundle round-trips from the agent's job through the gate job to the publisher"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-gate-bundle-roundtrip.py
+      - name: "Gate 155 self-test — a refs/* bundle fetch, a skipped head check and a full-history no-op bundle each fail"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-gate-bundle-roundtrip.py --self-test
 
       # Gate 114 — specs/066-fine-grained-maintainer-token FR-017/FR-018: "a
       # classic PAT, not fine-grained" was asserted in at least four places
