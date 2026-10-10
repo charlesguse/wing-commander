@@ -2,7 +2,8 @@
   "issue": 717,
   "spec_dir": "specs/093-not-ready-board-release",
   "feature_num": "093",
-  "stage": "implement",
+  "stage": "review",
   "iteration": 2,
-  "spec_branch": "spec/093-not-ready-board-release"
+  "spec_branch": "spec/093-not-ready-board-release",
+  "pending_re_review_from": []
 }
