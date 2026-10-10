@@ -22,6 +22,9 @@
 #     verify-*.py) imports yaml. Without it implement.yml's "Preflight:
 #     gate-suite prerequisites" step reports ready=false and every
 #     gate-run task stays unchecked, cycle after cycle (#989).
+#   - python-is-python3: the implement prompt and CLAUDE.md name the suite
+#     as `python .github/scripts/run-local-gates.py`, and the image has
+#     no `python` without it.
 #   - shellcheck, yamllint: the lint tools implement.yml's agent prompt
 #     tells the agent to use; actionlint also shells out to shellcheck for
 #     the shell inside run: blocks, and silently skips that without it.
@@ -39,6 +42,7 @@ RUN apt-get update \
         jq \
         nodejs \
         python3 \
+        python-is-python3 \
         python3-yaml \
         shellcheck \
         unzip \

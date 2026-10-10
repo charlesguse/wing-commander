@@ -75,6 +75,13 @@ LINT_SENTENCE = ("Where the list above includes them:", "Lint the files")
 # Tools the implement job installs for itself, before the preflight, in the
 # named step -- not taken from the image, so stubbed / not required here.
 JOB_INSTALLED = {"actionlint": "Install actionlint for the agent"}
+# The implement prompt's gate-suite paragraph names the suite command; the
+# interpreter word in front of the script is a command the agent will run.
+SUMMARY_STEPS = ("Summarize gate-suite outcome (cycle)",
+                 "Summarize gate-suite outcome (retry)")
+SUITE_COMMAND = re.compile(r"`([A-Za-z][A-Za-z0-9_.-]*) \.github/scripts/run-local-gates\.py")
+# Set "true" in the implement job's container: env -- see docker_missing_result.
+DOCKERLESS_ENV = "WC_GATE_SUITE_DOCKERLESS"
 
 
 def read_required_tools(root="."):
@@ -92,14 +99,7 @@ def docker_available():
     return shutil.which("docker") is not None
 
 
-def in_container():
-    """True inside a Docker (/.dockerenv) or Podman (/run/.containerenv)
-    container -- e.g. this repository's own implement job, whose container
-    runs the gate suite with GITHUB_ACTIONS=true and no Docker."""
-    return os.path.exists("/.dockerenv") or os.path.exists("/run/.containerenv")
-
-
-def docker_missing_result(env, containerised=None):
+def docker_missing_result(env):
     """-> (exit code, message) for a machine where docker is not on PATH.
 
     Off CI this is a clear skip (SF1): a maintainer running
@@ -110,20 +110,20 @@ def docker_missing_result(env, containerised=None):
     gate would otherwise pass silently over nothing, which is exactly the
     green check that proves less than it says.
 
-    A CI job that itself runs inside a container is the exception: the
-    implement stage runs this suite in its job container (#989), which has
-    no Docker by design, and failing there would leave the suite red at
-    every cycle start for a reason no agent can fix. lint-workflows.yml's
-    own runs are not containerised, so they still fail on a missing binary.
+    The one exception is a job that declares, by setting DOCKERLESS_ENV to
+    "true", that it runs the suite inside a container with no Docker by
+    design: implement.yml's implement job sets it in its container: env
+    (#989), since failing there would leave the suite red at every cycle
+    start for a reason no agent can fix. It is an explicit opt-out rather
+    than container sniffing, so a CI job that merely happens to run in a
+    container still fails here; scan() checks that implement.yml keeps it.
     """
-    if containerised is None:
-        containerised = in_container()
-    if env.get("GITHUB_ACTIONS") == "true" and containerised:
-        return 0, ("Gate 62: skipped -- this CI job runs inside a container "
-                   "with no Docker (e.g. the implement stage's job "
-                   "container), so the reference image cannot be built here. "
-                   "lint-workflows.yml runs this gate on a non-container "
-                   "runner, where a missing docker binary fails it.")
+    if env.get("GITHUB_ACTIONS") == "true" and env.get(DOCKERLESS_ENV) == "true":
+        return 0, (f"Gate 62: skipped -- this CI job sets {DOCKERLESS_ENV}=true: "
+                   f"it runs the gate suite inside a container with no Docker "
+                   f"(the implement job, #989), so the reference image cannot be "
+                   f"built here. lint-workflows.yml runs this gate where Docker "
+                   f"is present, and a missing binary fails it there.")
     if env.get("GITHUB_ACTIONS") == "true":
         return 1, ("::error::Gate 62: docker is not installed or not on PATH "
                    "on a CI runner, so the e2e reference image cannot be built "
@@ -175,8 +175,17 @@ def read_implement_subject(root="."):
     path = os.path.join(root, IMPLEMENT_WORKFLOW)
     with io.open(path, encoding="utf-8") as fh:
         wf = yaml.safe_load(fh) or {}
-    steps = ((wf.get("jobs") or {}).get(IMPLEMENT_JOB) or {}).get("steps") or []
+    job = (wf.get("jobs") or {}).get(IMPLEMENT_JOB) or {}
+    steps = job.get("steps") or []
     by_name = {(st or {}).get("name"): (st or {}) for st in steps}
+    index = {(st or {}).get("name"): i for i, st in enumerate(steps)}
+    container_env = (job.get("container") or {}).get("env") or {} \
+        if isinstance(job.get("container"), dict) else {}
+    if str(container_env.get(DOCKERLESS_ENV)) != "true":
+        problems.append(f"{IMPLEMENT_WORKFLOW} job {IMPLEMENT_JOB!r} no longer sets "
+                        f"{DOCKERLESS_ENV}: \"true\" in its container: env, so "
+                        f"this gate fails the gate suite the job runs in its "
+                        f"Docker-less container at every cycle start (#989)")
     preflights = {}
     for name in PREFLIGHT_STEPS:
         run = by_name.get(name, {}).get("run")
@@ -184,14 +193,31 @@ def read_implement_subject(root="."):
             problems.append(f"{IMPLEMENT_WORKFLOW} job {IMPLEMENT_JOB!r} has no "
                             f"step {name!r} with a run: block -- if it was "
                             f"renamed, update PREFLIGHT_STEPS here with it")
+        elif "${{" in str(run) or by_name[name].get("env"):
+            problems.append(f"{IMPLEMENT_WORKFLOW} step {name!r} now uses an "
+                            f"expression or an env: block, which this gate "
+                            f"cannot reproduce when it runs the step's text "
+                            f"inside the image -- extend check_preflight first")
         else:
             preflights[name] = str(run)
     for tool, step in JOB_INSTALLED.items():
-        if step not in by_name:
+        run = str(by_name.get(step, {}).get("run", ""))
+        late = [n for n in PREFLIGHT_STEPS
+                if n in index and index.get(step, len(steps)) > index[n]]
+        if step not in by_name or tool not in run or late:
             problems.append(f"{IMPLEMENT_WORKFLOW} job {IMPLEMENT_JOB!r} has no "
-                            f"step {step!r}, yet this gate stubs {tool} as "
-                            f"installed by it -- update JOB_INSTALLED")
+                            f"step {step!r} that installs {tool} ahead of "
+                            f"{', '.join(late) or 'the preflight steps'}, yet "
+                            f"this gate stubs {tool} as installed by it -- "
+                            f"update JOB_INSTALLED")
     lint_tools = []
+    for name in SUMMARY_STEPS:
+        found = SUITE_COMMAND.findall(str(by_name.get(name, {}).get("run", "")))
+        if not found:
+            problems.append(f"{IMPLEMENT_WORKFLOW} step {name!r}: no "
+                            f"`<interpreter> .github/scripts/run-local-gates.py` "
+                            f"in its prompt paragraph -- update SUITE_COMMAND")
+        lint_tools.extend(t for t in found if t not in lint_tools)
     start, end = LINT_SENTENCE
     for name in AGENT_STEPS:
         prompt = " ".join(str((by_name.get(name, {}).get("with") or {})
@@ -292,11 +318,11 @@ def scan(root=".", tag=IMAGE_TAG):
             if missing is None:
                 failures.append(
                     f"could not run a POSIX shell inside the built image to check "
-                    f"the implement prompt's lint tools -- {log[-1000:]}")
+                    f"the implement prompt's commands -- {log[-1000:]}")
             elif missing:
                 failures.append(
-                    f"the reference image is missing lint tool(s) the implement "
-                    f"agent prompt in {IMPLEMENT_WORKFLOW} tells the agent to use: "
+                    f"the reference image is missing command(s) the implement "
+                    f"agent prompt in {IMPLEMENT_WORKFLOW} tells the agent to run: "
                     + ", ".join(missing) + f" -- install them in "
                     f"{DOCKERFILE_DIR}/Dockerfile, or stop naming them in the prompt")
     finally:
@@ -326,6 +352,56 @@ def _drop_installs(root, packages):
     return absent
 
 
+def _static_self_test(root):
+    """-> problems: each implement.yml drift read_implement_subject must report."""
+    import yaml
+    problems = []
+    cases = []
+
+    def drop_env(wf):
+        wf["jobs"][IMPLEMENT_JOB]["container"]["env"].pop(DOCKERLESS_ENV)
+    cases.append(("the container: env opt-out dropped", drop_env, DOCKERLESS_ENV))
+
+    def late_install(wf):
+        steps = wf["jobs"][IMPLEMENT_JOB]["steps"]
+        i = next(i for i, st in enumerate(steps)
+                 if st.get("name") == JOB_INSTALLED["actionlint"])
+        steps.append(steps.pop(i))
+    cases.append(("the actionlint install moved after the preflight", late_install,
+                  JOB_INSTALLED["actionlint"]))
+
+    def expression(wf):
+        st = next(st for st in wf["jobs"][IMPLEMENT_JOB]["steps"]
+                  if st.get("name") == PREFLIGHT_STEPS[0])
+        st["run"] = "echo ${{ github.sha }}\n" + st["run"]
+    cases.append(("an expression in the preflight", expression, PREFLIGHT_STEPS[0]))
+
+    def no_suite_command(wf):
+        st = next(st for st in wf["jobs"][IMPLEMENT_JOB]["steps"]
+                  if st.get("name") == SUMMARY_STEPS[1])
+        st["run"] = st["run"].replace(".github/scripts/run-local-gates.py", "the suite")
+    cases.append(("the suite command dropped from a prompt paragraph",
+                  no_suite_command, SUMMARY_STEPS[1]))
+
+    _, _, base = read_implement_subject(".")
+    if base:
+        problems.append("static fixture base already has problems: " + "; ".join(base))
+    for label, mutate, needle in cases:
+        d = os.path.join(root, "static")
+        shutil.rmtree(d, ignore_errors=True)
+        os.makedirs(os.path.dirname(os.path.join(d, IMPLEMENT_WORKFLOW)))
+        with io.open(IMPLEMENT_WORKFLOW, encoding="utf-8") as fh:
+            wf = yaml.safe_load(fh)
+        mutate(wf)
+        with io.open(os.path.join(d, IMPLEMENT_WORKFLOW), "w", encoding="utf-8") as fh:
+            yaml.safe_dump(wf, fh, allow_unicode=True, sort_keys=False)
+        _, _, got = read_implement_subject(d)
+        if not any(needle in g for g in got):
+            problems.append(f"{label} was NOT reported (expected a problem naming "
+                            f"{needle!r}); got: {got}")
+    return problems
+
+
 def self_test():
     problems = []
 
@@ -339,69 +415,61 @@ def self_test():
     code, _message = docker_missing_result({})
     if code != 0:
         problems.append("a missing docker binary off CI was not a clear skip")
-    code, _message = docker_missing_result({"GITHUB_ACTIONS": "true"}, containerised=True)
+    code, _message = docker_missing_result({"GITHUB_ACTIONS": "true", DOCKERLESS_ENV: "true"})
     if code != 0:
-        problems.append("a missing docker binary inside a CI job's container (the "
-                         "implement stage's gate-suite run) was not a clear skip")
-    code, _message = docker_missing_result({"GITHUB_ACTIONS": "true"}, containerised=False)
+        problems.append(f"a missing docker binary in a CI job that sets {DOCKERLESS_ENV}=true "
+                         f"(the implement job's container) was not a clear skip")
+    code, _message = docker_missing_result({DOCKERLESS_ENV: "false", "GITHUB_ACTIONS": "true"})
     if code != 1:
-        problems.append("a missing docker binary on a non-container CI runner did "
-                         "NOT fail the gate")
+        problems.append(f"a missing docker binary on CI with {DOCKERLESS_ENV} not 'true' "
+                         f"did NOT fail the gate")
 
     root = tempfile.mkdtemp(prefix="verify_gate_62_")
     try:
-        # (a) the real Dockerfile and required-tools.txt, unmodified
+        # (s) static drift in implement.yml, no image needed: each edit must
+        # surface as a problem from read_implement_subject.
+        problems.extend(_static_self_test(root))
+
+        # (a) the real Dockerfile, required-tools.txt and implement.yml, unmodified
         clean = os.path.join(root, "clean")
         _copy_subject(clean)
         got = scan(clean, tag=IMAGE_TAG + "-clean")
         if got:
             problems.append("clean copy of the real image FAILED: " + "; ".join(got))
 
-        # (b) the Dockerfile silently drops one real tool's install -- the
+        # (b) one drifted build: the Dockerfile silently drops jq -- the
         # exact gap Gate 23's textual-only check cannot see, since the
         # embedded REQUIRED_TOOLS= literal and required-tools.txt both stay
-        # untouched here.
+        # untouched here -- and every package only this repository's
+        # implement jobs need. yamllint depends on python3-yaml, so both go
+        # together, or pyyaml would still arrive as a dependency.
         drifted = os.path.join(root, "drifted")
         _copy_subject(drifted)
-        dockerfile_path = os.path.join(drifted, DOCKERFILE_DIR, "Dockerfile")
-        with io.open(dockerfile_path, encoding="utf-8") as fh:
-            lines = fh.readlines()
-        kept = [ln for ln in lines if ln.strip().rstrip("\\").strip() != "jq"]
-        if len(kept) == len(lines):
-            problems.append("fixture setup: expected the reference Dockerfile to "
-                             "install jq on its own continuation line -- self-test "
-                             "can no longer construct its drift fixture, update it "
-                             "to drop a different tool")
-        else:
-            with io.open(dockerfile_path, "w", encoding="utf-8") as fh:
-                fh.writelines(kept)
-            got = scan(drifted, tag=IMAGE_TAG + "-drifted")
-            if not any("jq" in g for g in got):
-                problems.append(f"a Dockerfile that stopped installing jq was NOT "
-                                 f"detected as missing jq; got: {got}")
-
-        # (c) the Dockerfile drops what only this repository's implement jobs
-        # need. yamllint depends on python3-yaml, so both go together, or
-        # pyyaml would still arrive as a dependency.
-        extras = os.path.join(root, "extras")
-        _copy_subject(extras)
-        absent = _drop_installs(extras, ("python3-yaml", "yamllint", "shellcheck"))
+        dropped = ("jq", "python3-yaml", "python-is-python3", "yamllint", "shellcheck")
+        absent = _drop_installs(drifted, dropped)
         if absent:
             problems.append("fixture setup: expected the reference Dockerfile to "
                              "install each of " + ", ".join(absent) + " on its "
-                             "own continuation line -- update fixture (c)")
+                             "own continuation line -- self-test can no longer "
+                             "construct its drift fixture, update it")
         else:
-            got = scan(extras, tag=IMAGE_TAG + "-extras")
+            got = scan(drifted, tag=IMAGE_TAG + "-drifted")
+            req = [g for g in got if REQUIRED_TOOLS_FILE in g]
+            if not (req and "jq" in req[0]):
+                problems.append(f"a Dockerfile that stopped installing jq was NOT "
+                                 f"detected as missing jq; got: {got}")
             pre = [g for g in got if "Preflight: gate-suite prerequisites" in g]
             if len(pre) != len(PREFLIGHT_STEPS) or not all("pyyaml" in g for g in pre):
                 problems.append(f"a Dockerfile that stopped installing python3-yaml "
                                  f"was NOT failed by both implement preflight legs "
                                  f"naming pyyaml; got: {got}")
-            lint = [g for g in got if "lint tool(s)" in g]
-            if not (lint and "yamllint" in lint[0] and "shellcheck" in lint[0]):
-                problems.append(f"a Dockerfile that stopped installing yamllint and "
-                                 f"shellcheck was NOT failed by the lint-tool check "
-                                 f"naming both; got: {got}")
+            cmds = [g for g in got if "command(s) the implement" in g]
+            if not (cmds and all(t in cmds[0].split(": ", 1)[-1].split(" -- ")[0]
+                                 for t in ("yamllint", "shellcheck", "python"))):
+                problems.append(f"a Dockerfile that stopped installing yamllint, "
+                                 f"shellcheck and python-is-python3 was NOT failed by "
+                                 f"the prompted-command check naming all three; "
+                                 f"got: {got}")
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
@@ -411,7 +479,8 @@ def self_test():
         return 1
     print("Gate 62 self-test: a clean build of the real image passes; a Dockerfile "
           "that silently stops installing a required tool, the gate suite's "
-          "pyyaml, or a prompted lint tool fails, naming it.")
+          "pyyaml, or a prompted command fails, naming it; implement.yml drift "
+          "the gate depends on is reported.")
     return 0
 
 
@@ -431,7 +500,7 @@ def main(argv):
         print(f"::error::Gate 62: {f}")
     print(f"Gate 62: the e2e reference image's tool set agrees with "
           f"{REQUIRED_TOOLS_FILE} and passes {IMPLEMENT_WORKFLOW}'s gate-suite "
-          f"preflight and prompted lint tools; {len(failures)} failure(s).")
+          f"preflight and has every command its agent prompt names; {len(failures)} failure(s).")
     return 1 if failures else 0
 
 

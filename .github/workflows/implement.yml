@@ -489,6 +489,12 @@ jobs:
         GIT_CONFIG_COUNT: "1"
         GIT_CONFIG_KEY_0: safe.directory
         GIT_CONFIG_VALUE_0: "*"
+        # The local gate suite runs inside this container (the gate-suite
+        # steps below, and the agent's own run), which has no Docker. Gate
+        # 62 (verify-gate-62.py) builds an image, so it reads this to skip
+        # there instead of failing the suite at every cycle start (#989);
+        # on a runner with no container it still fails on a missing docker.
+        WC_GATE_SUITE_DOCKERLESS: "true"
     # environment-binding empirical basis (FR-013) -- see
     # specs/031-stage-environment-binding/contracts/environment-binding.md.
     environment:

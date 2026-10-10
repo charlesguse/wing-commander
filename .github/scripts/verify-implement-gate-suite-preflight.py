@@ -282,6 +282,7 @@ def main():
     ensure_jq()
     steps = find_job(WORKFLOW, JOB).get("steps") or []
     by_name = {(s or {}).get("name"): s for s in steps}
+    texts = {}
     for leg in LEGS:
         names = {"preflight": "Preflight: gate-suite prerequisites ({0})".format(leg),
                  "summary": "Summarize gate-suite outcome ({0})".format(leg),
@@ -309,6 +310,7 @@ def main():
               record_env.get("GATE_OUTCOME") == OPEN + "steps.gate-suite-{0}.outputs.outcome".format(leg) + CLOSE,
               "env={0}".format(record_env))
         run_steps = {k: str(found[k]["run"]) for k in ("preflight", "summary", "record")}
+        texts[leg] = run_steps
         for target, name, old, _new in MUTATIONS:
             if run_steps[target].count(old.format(leg=leg)) != 1:
                 sys.exit("::error file={0}::mutation {1!r} no longer matches the ({2}) {3} step "
@@ -321,6 +323,12 @@ def main():
             check("({0}) mutation caught: {1}".format(leg, name),
                   bool(suite(leg, mutated, quiet=True)),
                   "the suite stayed green with this rule reverted")
+    # The two legs carry the same preflight and summary text but for the
+    # leg's own name, so a wording fix that lands in one leg only fails here.
+    for target in ("preflight", "summary"):
+        check("the cycle and retry {0} steps match but for the leg name".format(target),
+              texts["cycle"][target] == texts["retry"][target].replace("retry", "cycle"),
+              "a change landed in one leg only -- make the same edit in both")
     if failures:
         print("verify-implement-gate-suite-preflight: {0} failure(s)".format(len(failures)))
         sys.exit(1)
