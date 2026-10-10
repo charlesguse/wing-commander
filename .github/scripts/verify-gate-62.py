@@ -36,10 +36,11 @@ either list of its own:
     report ready=true. A tool the job installs for itself in an earlier
     step (JOB_INSTALLED) is stubbed onto PATH, since the image is not where
     it comes from.
-  * every lint tool the implement agent prompt names in its "Where the
-    list above includes them:" sentence must be on the image's PATH (less
-    JOB_INSTALLED), so the prompt never advertises a command the agent's
-    container does not have.
+  * every command the implement agent prompt names must be on the image's
+    PATH (less JOB_INSTALLED): the lint tools in its "Where the list above
+    includes them:" sentence and the interpreter its gate-suite paragraph
+    runs the suite with (`python`), so the prompt never advertises a
+    command the agent's container does not have.
 
 Self-test (--self-test): copies the Dockerfile, required-tools.txt and
 implement.yml into an isolated temp tree, then (a) builds the real,
@@ -47,8 +48,10 @@ unmodified set and expects a clean pass, (b) removes one real tool's install
 from a copy of the Dockerfile and expects the failure to name that tool --
 proving this gate's failure branch actually fails on its own subject
 (Constitution VIII), the exact gap Gate 23's textual-only check leaves open
--- and (c) removes the gate-suite and lint packages and expects the
-preflight check to name pyyaml and the lint check to name the lint tools.
+-- and (c) removes the gate-suite, interpreter-alias and lint packages and
+expects the preflight check to name pyyaml and the prompted-command check
+to name python and the lint tools. Static cases (no build) cover the
+implement.yml drift the gate relies on.
 
 Usage: python3 .github/scripts/verify-gate-62.py [--self-test]
 """
@@ -81,6 +84,9 @@ JOB_INSTALLED = {"actionlint": "Install actionlint for the agent"}
 SUMMARY_STEPS = ("Summarize gate-suite outcome (cycle)",
                  "Summarize gate-suite outcome (retry)")
 SUITE_COMMAND = re.compile(r"`([A-Za-z][A-Za-z0-9_.-]*) \.github/scripts/run-local-gates\.py")
+# The shell the preflight runs under (implement.yml's defaults: run: shell:),
+# which PREFLIGHT_DRIVER reproduces as `bash -e`.
+PREFLIGHT_SHELL = "bash -e {0}"
 # Set "true" in the implement job's container: env -- see docker_missing_result.
 DOCKERLESS_ENV = "WC_GATE_SUITE_DOCKERLESS"
 
@@ -166,26 +172,54 @@ def check_tools(tag, tools):
     return missing, (proc.stdout + proc.stderr)
 
 
+def _optout_sites(node, path=()):
+    """Yield the key path of every place `node` sets DOCKERLESS_ENV: as a
+    mapping key (an env: entry) or in a string writing `NAME=` (a run:
+    appending to $GITHUB_ENV). Comments never reach the parsed tree."""
+    if isinstance(node, dict):
+        for k, v in node.items():
+            if k == DOCKERLESS_ENV:
+                yield path + (str(k),)
+            yield from _optout_sites(v, path + (str(k),))
+    elif isinstance(node, list):
+        for i, v in enumerate(node):
+            yield from _optout_sites(v, path + (str(i),))
+    elif isinstance(node, str) and DOCKERLESS_ENV + "=" in node:
+        yield path
+
+
+ALLOWED_OPTOUT = ("jobs", IMPLEMENT_JOB, "container", "env", DOCKERLESS_ENV)
+
+
 def stray_optouts(root="."):
-    """-> problems: any workflow or composite other than implement.yml that
-    names DOCKERLESS_ENV, which would let that job skip this gate on CI."""
+    """-> problems: every place a workflow or composite sets DOCKERLESS_ENV
+    other than implement.yml's implement-job container env, since any other
+    job setting it would skip this gate on CI instead of failing it."""
+    import yaml
     problems = []
     found = []
     for base in (".github/workflows", ".github/actions"):
         for dirpath, _dirs, files in os.walk(os.path.join(root, base)):
-            for f in files:
-                if f.endswith((".yml", ".yaml", ".sh")):
-                    found.append(os.path.join(dirpath, f))
+            found.extend(os.path.join(dirpath, f) for f in files
+                         if f.endswith((".yml", ".yaml")))
     allowed = os.path.normpath(os.path.join(root, IMPLEMENT_WORKFLOW))
     for path in sorted(found):
-        if os.path.normpath(path) == allowed:
-            continue
         with io.open(path, encoding="utf-8", errors="replace") as fh:
-            if DOCKERLESS_ENV in fh.read():
-                problems.append(f"{os.path.relpath(path, root)} names {DOCKERLESS_ENV}; "
-                                f"only {IMPLEMENT_WORKFLOW}'s implement job may set "
-                                f"it, or that job's missing docker would skip this "
-                                f"gate on CI instead of failing it")
+            text = fh.read()
+        if DOCKERLESS_ENV not in text:
+            continue
+        try:
+            tree = yaml.safe_load(text)
+        except yaml.YAMLError:
+            continue  # not this gate's subject; the YAML gates report it
+        for site in _optout_sites(tree):
+            if os.path.normpath(path) == allowed and site == ALLOWED_OPTOUT:
+                continue
+            problems.append(f"{os.path.relpath(path, root)} sets {DOCKERLESS_ENV} at "
+                            f"{'.'.join(site)}; only {IMPLEMENT_WORKFLOW}'s "
+                            f"{'.'.join(ALLOWED_OPTOUT[:-1])} may set it, or that "
+                            f"job's missing docker would skip this gate on CI "
+                            f"instead of failing it")
     return problems
 
 
@@ -208,11 +242,15 @@ def read_implement_subject(root=".", wf=None):
     index = {(st or {}).get("name"): i for i, st in enumerate(steps)}
     container_env = (job.get("container") or {}).get("env") or {} \
         if isinstance(job.get("container"), dict) else {}
-    if str(container_env.get(DOCKERLESS_ENV)).lower() != "true":
+    # docker_missing_result compares the exported value to "true"; Actions
+    # exports an unquoted YAML true as "true" too, but no other spelling.
+    if container_env.get(DOCKERLESS_ENV) not in ("true", True):
         problems.append(f"{IMPLEMENT_WORKFLOW} job {IMPLEMENT_JOB!r} no longer sets "
                         f"{DOCKERLESS_ENV}: \"true\" in its container: env, so "
                         f"this gate fails the gate suite the job runs in its "
                         f"Docker-less container at every cycle start (#989)")
+    job_shell = (((job.get("defaults") or {}).get("run") or {}).get("shell")
+                 or ((wf.get("defaults") or {}).get("run") or {}).get("shell"))
     preflights = {}
     for name in PREFLIGHT_STEPS:
         run = by_name.get(name, {}).get("run")
@@ -220,11 +258,15 @@ def read_implement_subject(root=".", wf=None):
             problems.append(f"{IMPLEMENT_WORKFLOW} job {IMPLEMENT_JOB!r} has no "
                             f"step {name!r} with a run: block -- if it was "
                             f"renamed, update PREFLIGHT_STEPS here with it")
-        elif "${{" in str(run) or by_name[name].get("env"):
+        elif ("${{" in str(run) or any(by_name[name].get(k) for k in
+                                       ("env", "shell", "working-directory"))
+              or job_shell != PREFLIGHT_SHELL):
             problems.append(f"{IMPLEMENT_WORKFLOW} step {name!r} now uses an "
-                            f"expression or an env: block, which this gate "
-                            f"cannot reproduce when it runs the step's text "
-                            f"inside the image -- extend check_preflight first")
+                            f"expression, an env:/shell:/working-directory: key, "
+                            f"or a job/workflow default shell other than "
+                            f"{PREFLIGHT_SHELL!r}, none of which this gate "
+                            f"reproduces when it runs the step's text inside "
+                            f"the image -- extend check_preflight first")
         else:
             preflights[name] = str(run)
     for tool, step in JOB_INSTALLED.items():
@@ -411,6 +453,21 @@ def _static_self_test():
         wf["jobs"][IMPLEMENT_JOB]["container"]["env"][DOCKERLESS_ENV] = True
     cases_ok = [("an unquoted YAML true for the opt-out", unquoted)]
 
+    def capital_true(wf):
+        wf["jobs"][IMPLEMENT_JOB]["container"]["env"][DOCKERLESS_ENV] = "True"
+    cases.append(("a quoted \"True\" the runtime check would not match", capital_true,
+                  DOCKERLESS_ENV))
+
+    def step_shell(wf):
+        st = next(st for st in wf["jobs"][IMPLEMENT_JOB]["steps"]
+                  if st.get("name") == PREFLIGHT_STEPS[1])
+        st["shell"] = "bash"
+    cases.append(("a shell: key on the preflight", step_shell, PREFLIGHT_STEPS[1]))
+
+    def default_shell(wf):
+        wf["defaults"]["run"]["shell"] = "sh -e {0}"
+    cases.append(("a changed default shell", default_shell, PREFLIGHT_STEPS[0]))
+
     def late_install(wf):
         steps = wf["jobs"][IMPLEMENT_JOB]["steps"]
         i = next(i for i, st in enumerate(steps)
@@ -449,11 +506,25 @@ def _static_self_test():
     stray = tempfile.mkdtemp(prefix="verify_gate_62_")
     try:
         os.makedirs(os.path.join(stray, ".github", "workflows"))
-        with io.open(os.path.join(stray, ".github", "workflows", "lint.yml"), "w",
-                     encoding="utf-8") as fh:
-            fh.write("env:\n  {0}: \"true\"\n".format(DOCKERLESS_ENV))
-        if not any("lint.yml" in g for g in stray_optouts(stray)):
-            problems.append("a second workflow setting the opt-out was NOT reported")
+        wfdir = os.path.join(stray, ".github", "workflows")
+        with io.open(os.path.join(wfdir, "lint.yml"), "w", encoding="utf-8") as fh:
+            fh.write("# {0} is explained, not set, here\n"
+                     "env:\n  {0}: \"true\"\n".format(DOCKERLESS_ENV))
+        with io.open(os.path.join(wfdir, "other.yml"), "w", encoding="utf-8") as fh:
+            fh.write("# only a comment names {0}\njobs: {{}}\n".format(DOCKERLESS_ENV))
+        with io.open(os.path.join(wfdir, "implement.yml"), "w", encoding="utf-8") as fh:
+            fh.write("jobs:\n  {0}:\n    container: {{env: {{{1}: \"true\"}}}}\n"
+                     "  other:\n    steps:\n    - run: echo {1}=true >> $GITHUB_ENV\n"
+                     .format(IMPLEMENT_JOB, DOCKERLESS_ENV))
+        got = stray_optouts(stray)
+        if not any("lint.yml" in g for g in got):
+            problems.append(f"a second workflow setting the opt-out was NOT reported; got: {got}")
+        if any("other.yml" in g for g in got):
+            problems.append(f"a comment naming the opt-out was reported; got: {got}")
+        if not any("jobs.other" in g for g in got) or any(
+                ".".join(ALLOWED_OPTOUT) in g for g in got):
+            problems.append(f"within implement.yml, only the implement job's container "
+                            f"env was not the one site allowed; got: {got}")
     finally:
         shutil.rmtree(stray, ignore_errors=True)
     with io.open(IMPLEMENT_WORKFLOW, encoding="utf-8") as fh:

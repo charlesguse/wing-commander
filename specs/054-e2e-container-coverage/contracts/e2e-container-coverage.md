@@ -87,7 +87,8 @@ asserting an exact key set) — no consumer-side breaking change.
   `WING_COMMANDER_CONTAINER_IMAGE` to this image, so the gate also runs
   `.github/workflows/implement.yml`'s "Preflight: gate-suite prerequisites"
   steps (cycle and retry) inside the built image and requires `ready=true`,
-  and requires every lint tool the implement agent prompt names to be on
+  and requires every command the implement agent prompt names (its lint
+  tools and the suite interpreter, `python`) to be on
   the image's PATH. Both lists are read from implement.yml, never copied;
   tools the job installs for itself (actionlint) are stubbed.
   `required-tools.txt` stays the adopter contract and does not gain them.

@@ -30,7 +30,7 @@
 #     the shell inside run: blocks, and silently skips that without it.
 #     actionlint itself is installed by the implement job at run time.
 # Gate 62 also runs implement.yml's own preflight step inside the built
-# image and checks every lint tool the agent prompt names, reading both
+# image and checks every command the agent prompt names, reading both
 # from implement.yml itself, so the gate keeps no copy of either list.
 FROM ubuntu:24.04
 

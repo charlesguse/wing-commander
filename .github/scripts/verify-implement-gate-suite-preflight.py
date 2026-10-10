@@ -238,6 +238,12 @@ def suite(leg, steps, quiet=False):
        "tells the agent not to run it or check a gate-run task",
        missing_paragraph_ok(para, "pyyaml"), repr(para))
 
+    rc, out, o, _s, _f = summarize_missing("")
+    ck("missing tool, no list recorded: summary and paragraph say 'unrecorded', never a blank",
+       o.get("summary") == "skipped — missing prerequisite(s): unrecorded"
+       and missing_paragraph_ok(o.get("paragraph", ""), "prerequisite(s) unrecorded are missing"),
+       "outputs={0}".format(o))
+
     rc, out, o, _s, files = run_plain(record, {"CONVERGED": "false", "HANDOFF": "",
                                                "GATE_OUTCOME": "", "FIRST_FAILURE": ""})
     blob = files.get("wing-commander-cycle-outcome-{0}.json".format(leg), "")
