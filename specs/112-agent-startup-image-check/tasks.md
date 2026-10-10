@@ -171,3 +171,9 @@ Task: "Add fixtures for the unclassified branches in .github/scripts/agent-start
 - Only `private-image-dogfood.yml` gains a published input (FR-010); no stage workflow other than the 14 probe edits changes.
 - Workflow comments are load-bearing; re-run the suite after any comment edit.
 - Spec documents in this directory are not edited by implementation except by corrections in this spec's open PR.
+
+## Phase 8: Convergence
+
+- [ ] T031 Run the start-up check on every reference-image rebuild without a `push`-event agent call: Gate 6 rejects `private-image-dogfood.yml` called from `wing-commander-e2e-reference-image.yml` because `anthropics/claude-code-action` does not support `push`. Have the rebuild workflow dispatch the check on a supported event (e.g. a `workflow_dispatch` wrapper run against the published digest) and keep Gate 62 unchanged, per FR-005 / T009 (partial)
+- [ ] T032 Replace the synthetic fixtures in `.github/scripts/agent-startup-fixtures/` and the wording assumptions at the top of `classify-agent-startup.py` with a captured real no-credential log from `anthropics/claude-code-action@v1` (and one from an image without `unzip`), per FR-008 / T001 (partial)
+- [ ] T033 Make the git-floor failure message reach the job log under its own name: the probe's non-zero exit currently surfaces behind the "could not run a POSIX shell" prefix in all 14 stages, so adjust the host-side message (and Gate 23/142 checks) so the floor failure is not mislabelled, per FR-013 (partial)
