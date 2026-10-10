@@ -22,6 +22,30 @@ This spec describes both layers (Principle VII): the published contract
 any image-check job they carry) and the consuming instrument (this
 repository's own wrappers and the e2e reference image).
 
+## Clarifications
+
+### Session 2026-10-10
+
+- Q: Where should the start-up check run? → A: Daily in
+  `private-image-dogfood.yml` and on every rebuild of the e2e reference
+  image; no per-stage preflight. That covers upstream action drift and this
+  repository's own image changes without adding time to every agent job or
+  widening the published stage contract.
+- Q: How does the check decide setup completed? → A: Invoke the real agent
+  action with no credential and require that it fails at authentication,
+  not during setup. Any outcome the check does not recognise fails
+  (FR-004), so a change in the action's failure shape shows as a red check.
+- Q: Pin the agent action or keep the floating tag? → A: Keep the floating
+  major-version tag (`@v1`) and rely on the start-up check. Every action
+  reference in this repository uses a tag; moving to immutable pins is a
+  repository-wide policy change for its own proposal.
+- Scope addition (owner): the image prerequisite check
+  (`verify-image-prerequisites`) also asserts git ≥ 2.38 and fails naming
+  the version found. Older git (including distro builds with the ownership
+  check backported, e.g. Ubuntu 22.04's 2.34.1) ignores the `container.env`
+  `safe.directory` setting from #963 and dies with "dubious ownership".
+  Closes the corresponding line on the Maintenance backlog (#889).
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - An image the agent cannot start in is caught before a lifecycle hits it (Priority: P1)
@@ -93,18 +117,45 @@ silently through a floating tag.
 **Why this priority**: Prevents recurrence at the source; the start-up check
 detects, this governs when the change arrives.
 
-**Independent Test**: Depends on the answer to the pinning question below;
-under any answer, the spec's documentation of how the agent action is
-referenced, and what a dependency change looks like when it arrives, is
-reviewable in the repository.
+**Independent Test**: The documentation of the image prerequisite contract
+states that the agent action is consumed by its floating major-version tag
+and that dependency changes arriving through it are caught by the start-up
+check on its next scheduled or rebuild run.
 
 **Acceptance Scenarios**:
 
-1. **Given** the owner's chosen pinning policy, **When** the agent action
-   publishes a release that changes its setup dependencies, **Then** that
-   change either reaches this repository as a reviewable change (pinned) or
-   is caught by the start-up check on its next run (floating), and the
-   policy is recorded where both maintainers and adopters can read it.
+1. **Given** the agent action is consumed by its floating major-version
+   tag, **When** the action publishes a release that changes its setup
+   dependencies, **Then** the change is caught by the start-up check on its
+   next daily dogfood or reference-image rebuild run, and the policy is
+   recorded where both maintainers and adopters can read it.
+
+---
+
+### User Story 4 - An image whose git is too old is rejected by the prerequisite check (Priority: P2)
+
+A maintainer or adopter whose image carries git older than 2.38 wants the
+image prerequisite check to fail and name the version found, rather than a
+stage dying later with "dubious ownership" because that git ignores the
+`safe.directory` setting the stage passes through `container.env`.
+
+**Why this priority**: Same class of gap as User Story 1 (a tool is present
+but the pipeline cannot run with it); added to scope by the owner during
+clarification.
+
+**Independent Test**: Run the prerequisite check against an image with git
+2.34.1 (e.g. Ubuntu 22.04's distro build) and against one with git ≥ 2.38.
+The first fails naming 2.34.1; the second passes.
+
+**Acceptance Scenarios**:
+
+1. **Given** an image whose git reports a version below 2.38, **When** the
+   image prerequisite check runs, **Then** it fails and its message names
+   the version found and the 2.38 minimum.
+2. **Given** an image whose git is 2.38 or newer, **When** the image
+   prerequisite check runs, **Then** the git version assertion passes.
+3. **Given** git's version output cannot be parsed, **When** the check runs,
+   **Then** it fails rather than passing.
 
 ---
 
@@ -125,8 +176,15 @@ reviewable in the repository.
 - The required-tool list and the start-up check disagree (the start-up check
   passes an image the tool list rejects, or vice versa): both results are
   reported; neither silently overrides the other.
-- No private dogfood image is configured: the dogfood-hosted variant of the
-  check (if chosen) no-ops cleanly as the existing dogfood job does.
+- No private dogfood image is configured: the dogfood-hosted start-up check
+  no-ops cleanly as the existing dogfood job does.
+- The agent action, run with no credential, gets past setup but fails
+  somewhere other than authentication (or succeeds further): the outcome is
+  unrecognised and the check fails (FR-004).
+- A distro git build that backports the ownership check but reports a
+  version below 2.38 (Ubuntu 22.04's 2.34.1): rejected by the version
+  assertion, since it still ignores the `container.env` `safe.directory`
+  setting.
 
 ## Requirements *(mandatory)*
 
@@ -144,28 +202,31 @@ reviewable in the repository.
   setup completed; any outcome it cannot classify (unrecognised failure
   shape, missing output, image not pulled, check skipped) MUST fail with a
   reason distinct from "setup failed in image".
-- **FR-005**: The start-up check MUST run at [NEEDS CLARIFICATION: where
-  should the start-up check run — on the daily private-image dogfood
-  schedule, on every reference-image rebuild, as a preflight in every
-  agent-bearing stage job (≈30–60 s each), or a combination?].
+- **FR-005**: The start-up check MUST run daily in
+  `private-image-dogfood.yml` against the configured private image and on
+  every rebuild of the e2e reference image. It MUST NOT be added as a
+  per-stage preflight in the agent-bearing stage jobs.
 - **FR-006**: The start-up check MUST determine "setup completed" by
-  [NEEDS CLARIFICATION: invoke the real agent action with no credential and
-  assert it fails at authentication rather than setup (tracks the floating
-  tag automatically, depends on the action's failure shape), or replay the
-  action's setup steps directly (stable, but can drift from the action)?].
-- **FR-007**: The agent action MUST be referenced according to
-  [NEEDS CLARIFICATION: keep the floating major-version tag, or pin to an
-  immutable revision so dependency changes arrive as reviewable bumps?],
-  and the chosen policy MUST be recorded in the documentation of the image
-  prerequisite contract.
+  invoking the real agent action (at the same reference the stages use)
+  with no model credential and requiring that it fails at authentication,
+  not during setup. A failure during setup is "setup failed in image"
+  (FR-003); any other outcome — success, a failure after setup that is not
+  the authentication failure, or a failure shape it does not recognise —
+  is unclassified and fails per FR-004.
+- **FR-007**: The agent action MUST continue to be referenced by its
+  floating major-version tag (`@v1`), relying on the start-up check to
+  catch dependency changes; this policy MUST be recorded in the
+  documentation of the image prerequisite contract. Moving to immutable
+  revision pins is out of scope.
 - **FR-008**: Every failure branch the start-up check ships MUST be
   exercised by a checked-in fixture, and the check MUST be reachable
   through the gate registry and run identically locally and in CI where it
   is gate-shaped (Principle VIII).
 - **FR-009**: The existing tool-presence checks (`verify-image-prerequisites`,
-  Gate 23, Gate 62) MUST continue to run unchanged in what they assert; the
-  start-up check supplements them and does not replace the required-tool
-  list.
+  Gate 23, Gate 62) MUST continue to assert everything they assert today;
+  the start-up check supplements them and does not replace the required-tool
+  list. The only addition to what they assert is FR-013's git version
+  check.
 - **FR-010**: Any input, secret, or output the start-up check adds to a
   published stage workflow or to `private-image-dogfood.yml` MUST be an
   additive, optional change to the published contract (Principle VII); an
@@ -177,6 +238,11 @@ reviewable in the repository.
   the failure MUST be visible on the run itself (failed job with the quoted
   reason), so the existing watchdog/board machinery can pick it up without
   a new reporting channel.
+- **FR-013**: The image prerequisite check (`verify-image-prerequisites`)
+  MUST assert that the image's git is version 2.38 or newer and, when it
+  is not, fail with a message naming the version found and the minimum.
+  A git version it cannot parse MUST fail, not pass. Each failure branch
+  is covered by a checked-in fixture (FR-008).
 
 ### Key Entities
 
@@ -189,8 +255,12 @@ reviewable in the repository.
 - **Required-tool list**: The existing declared list of executables
   (`.github/scripts/required-tools.txt`); unchanged by this feature, now
   cross-checked by observed start-up.
-- **Agent-action reference policy**: Whether the agent action is consumed by
-  floating tag or pinned revision, and where that is recorded.
+- **Agent-action reference policy**: The agent action is consumed by its
+  floating major-version tag; recorded in the image prerequisite contract
+  documentation.
+- **Git version floor**: The minimum git version (2.38) the image
+  prerequisite check asserts, below which `safe.directory` from
+  `container.env` is ignored.
 
 ## Success Criteria *(mandatory)*
 
@@ -206,9 +276,15 @@ reviewable in the repository.
 - **SC-004**: After the feature ships, an upstream change to the agent
   action's setup dependencies that breaks a configured image is reported by
   a failing start-up check before, or no later than, the first lifecycle
-  stage that would have died on it, at whichever cadence FR-005 settles.
+  stage that would have died on it, given the daily dogfood and
+  reference-image rebuild cadence of FR-005.
 - **SC-005**: No existing adopter wrapper requires a change to keep passing
-  its current checks after the feature ships.
+  its current checks after the feature ships. The one exception is an image
+  whose git is older than 2.38, which FR-013 now rejects; such an image
+  could not already run a stage (it dies with "dubious ownership").
+- **SC-006**: Run against an image with git 2.34.1, the image prerequisite
+  check fails and names 2.34.1; against the current reference image, it
+  passes.
 
 ## Assumptions
 
@@ -224,5 +300,8 @@ reviewable in the repository.
   feature does not depend on it, and SC-001 uses an image without `unzip`
   as its fixture rather than relying on the list.
 - Cost of the check is bounded by not calling the model; runner minutes are
-  the only cost, and the per-stage preflight option's ≈30–60 s per agent
-  job is the upper bound the owner weighs in FR-005.
+  the only cost, and with no per-stage preflight (FR-005) stage jobs pay
+  nothing.
+- The published stage workflows gain no start-up-check input; the only
+  published-contract surface the start-up check touches is
+  `private-image-dogfood.yml` (FR-010).

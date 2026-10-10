@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,10 +31,12 @@
 
 ## Notes
 
-- Three [NEEDS CLARIFICATION] markers remain (FR-005 where the check runs,
-  FR-006 how setup completion is judged, FR-007 agent-action pinning). These
-  are the owner trade-offs named in #974 and are posted to the lifecycle
-  issue for the clarify stage.
+- All three [NEEDS CLARIFICATION] markers were resolved from the owner's
+  reply on #974 (2026-10-10): FR-005 daily dogfood + reference-image
+  rebuild, no per-stage preflight; FR-006 invoke the real action with no
+  credential and require an authentication failure; FR-007 keep the
+  floating `@v1` tag. The owner also added FR-013 (git ≥ 2.38 in the image
+  prerequisite check) and User Story 4.
 - The subject of this feature is CI infrastructure, so names of existing
   checks (`verify-image-prerequisites`, Gate 23, Gate 62) and the observed
   failing step ("Install Bun") appear as domain vocabulary needed for
