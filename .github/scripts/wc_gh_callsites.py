@@ -42,10 +42,12 @@ class Token:
 
 
 GH_WORD = re.compile(r"(?<![\w./$@:%-])gh(?![\w-])")
-# A dynamic word ending in a `${...}` whose value may be `gh` (`${X:-gh}`,
-# `"${X:+gh}"`, `${X:-"gh"}`, `${X:-${Y:-gh}}`, `${X/a/gh}`): it may expand
-# to the command itself. `${X#gh}`/`${X%gh}` strip gh, so they are not.
-GH_IN_EXPANSION = re.compile(r"""(?<![\w.$@%#])["']?gh["']?\}+["']*$""")
+# A dynamic word holding a `${...}` whose value may be `gh` (`${X:-gh}`,
+# `"${X:+gh}"`, `${X:-"gh"}`, `${X:-${Y:-gh}}`, `${X/a/gh}`), followed only
+# by closers, quotes and plain expansions that may be empty: it may expand
+# to the command itself. `${X#gh}`/`${X%gh}` strip gh; `${X:-gh}/x` is a path.
+GH_IN_EXPANSION = re.compile(r"""\$\{[^}]*?[-+=?/]["']?gh["']?\}""")
+EXPANSION_TAIL = re.compile(r"""(?:\}|["']|\$\{?\w+\}?)*""")
 TIME_GAP = re.compile(r"(?:[ \t]|\\\n)*")
 ASSIGN = re.compile(r"[A-Za-z_]\w*=")
 HEREDOC_DELIM = re.compile(r"\\?([^\s;&|<>()'\"`\\]+)")
@@ -68,9 +70,10 @@ API_ATTACHED = re.compile(r"-(?:[HfFqtp]|-(?:header|raw-field|field|jq|template|
 class _Word:
     __slots__ = ("raw", "lit", "off", "plain", "skel", "pre", "split", "toks")
 
-    def __init__(self, raw, lit, off, plain, skel, pre, split):
+    def __init__(self, raw, lit, off, plain, skel, pre, split, toks=range(0)):
         self.raw, self.lit, self.off, self.plain = raw, lit, off, plain
         self.skel, self.pre, self.split = skel, pre, split
+        self.toks = toks                # indexes of the tokens its own text holds
 
     def argv(self):
         if self.lit is not None:
@@ -277,8 +280,8 @@ class _Scan:
                 lit.append(c)
                 i += 1
         word = _Word(t[s:i], None if pre is not None else "".join(lit), s,
-                     not quoted and pre is None, "".join(lit), pre or "", split)
-        word.toks = self.toks[tok0:]                    # the tokens its own text holds
+                     not quoted and pre is None, "".join(lit), pre or "", split,
+                     range(tok0, len(self.toks)))
         return word, i
 
     # ------------------------------------------------------------- heredocs
@@ -419,12 +422,14 @@ class _Scan:
     def _note_once(self, w, reason):
         """A disallowed call at word `w`, unless its own text already holds one
         (`${X:+gh}` is marked inside the expansion)."""
-        if not any(t.kind == "call" for t in w.toks):
+        if not any(self.toks[k].kind == "call" for k in w.toks):
             self._note(w.off, "call", position="disallowed", reason=reason)
 
 
 def _expands_to_gh(w):
-    return w.lit is None and GH_IN_EXPANSION.search(w.raw) is not None
+    raw = w.raw.replace("\\\n", "")
+    m = w.lit is None and GH_IN_EXPANSION.search(raw)
+    return bool(m) and EXPANSION_TAIL.fullmatch(raw, m.end()) is not None
 
 
 def _argv_reason(argv):
