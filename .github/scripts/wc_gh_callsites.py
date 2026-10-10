@@ -47,6 +47,7 @@ GH_WORD = re.compile(r"(?<![\w./$@:%-])gh(?![\w-])")
 # `${X:-gh}${Y:-}`), so as a command word it is a disallowed call (FR-006),
 # even where it could never be `gh` (`${X##*/gh}`).
 GH_IN_EXPANSION = re.compile(r"(?<![\w.$@%])gh(?![\w-])")
+FUNCTION_NAME = re.compile(r"[ \t]+[^\s;&|()<>]")    # `function NAME`, not `function)`
 TIME_GAP = re.compile(r"(?:[ \t]|\\\n)*")
 ASSIGN = re.compile(r"[A-Za-z_]\w*=")
 HEREDOC_DELIM = re.compile(r"\\?([^\s;&|<>()'\"`\\]+)")
@@ -58,7 +59,7 @@ RESERVED = frozenset(("if", "then", "elif", "else", "do", "while", "until", "!",
                       "}", "time"))
 WRAPPERS = frozenset(("env", "eval", "command", "exec", "sudo", "xargs", "nohup",
                       "nice", "stdbuf", "watch", "setsid", "timeout", "script",
-                      "coproc"))
+                      "coproc", "builtin", "flock", "ionice", "taskset", "chrt", "doas"))
 API_VALUED = frozenset(("-X", "--method", "-H", "--header", "-f", "--raw-field", "-F",
                         "--field", "-q", "--jq", "-t", "--template", "-p", "--preview",
                         "--hostname", "--input", "--cache"))
@@ -363,8 +364,8 @@ class _Scan:
             else:
                 w, i = self._word(i, ctx)
                 lead = not words and w.plain and w.lit
-                if drop or lead == "function":                 # `function NAME`: drop NAME
-                    drop = not drop
+                if drop or (lead == "function" and FUNCTION_NAME.match(t, i)):
+                    drop = not drop                            # `function NAME`: drop NAME
                     continue
                 if lead in ("case", "esac"):
                     ctx.cases = max(0, ctx.cases + (1 if lead == "case" else -1))
@@ -411,18 +412,21 @@ class _Scan:
                                  "subst_first" if ctx.depth else "statement"))
         elif _expands_to_gh(head):
             self._note_once(head, "dynamic-command")
-        elif head.lit in WRAPPERS and not (head.lit == "command" and any(
-                w.lit in ("-v", "-V") for w in words[k + 1:])):
-            w = next((w for w in words[k + 1:]
-                      if "gh" in (w.lit, w.skel) or _expands_to_gh(w)), None)
-            if w:
-                self._note_once(w, "unquoted-wrapper")
+        elif (head.lit is None                         # `$SUDO gh`: may expand to nothing
+              or (head.lit or "").rsplit("/", 1)[-1] in WRAPPERS and not (
+                  head.lit == "command" and any(w.lit in ("-v", "-V") for w in words[k + 1:]))):
+            for w in words[k + 1:]:
+                if ("gh" in (w.lit, w.skel) or _expands_to_gh(w)) and self._note_once(
+                        w, "dynamic-command" if head.lit is None else "unquoted-wrapper"):
+                    break
 
     def _note_once(self, w, reason):
         """A disallowed call at word `w`, unless its own text already holds one
-        (`${X:+gh}` is marked inside the expansion)."""
-        if not any(self.toks[k].kind == "call" for k in w.toks):
-            self._note(w.off, "call", position="disallowed", reason=reason)
+        (`${X:+gh}` is marked inside the expansion). -> whether it noted one."""
+        if any(self.toks[k].kind == "call" for k in w.toks):
+            return False
+        self._note(w.off, "call", position="disallowed", reason=reason)
+        return True
 
 
 def _expands_to_gh(w):
