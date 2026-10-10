@@ -3098,6 +3098,10 @@ jobs:
     # here with fix-agent's own success added: the commits this job
     # publishes exist only once fix-agent succeeded. gate-suite-fix's
     # result is deliberately NOT read: its verdict is (spec 095 FR-004).
+    # Nor is the pause variable: fix-agent already checked it, and a pause
+    # set since then is this job's killswitch-recheck's to find and record
+    # (specs/097 FR-014) -- a job-level check would skip the job with
+    # nothing recorded and the fixer's commits unpublished.
     if: >-
       !cancelled()
       && needs.select.result == 'success'
@@ -3106,7 +3110,7 @@ jobs:
       && (
         (needs.route.result == 'success' && needs.route.outputs.decision == 'fix')
         || (needs.select.outputs.step == 'fix' && needs.select.outputs.branch != '' && needs.select.outputs.pr == '')
-      ) && vars.WING_COMMANDER_BOARD_LOOP_PAUSED != 'true'
+      )
     runs-on: ubuntu-latest
     permissions:
       contents: write

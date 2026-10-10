@@ -313,7 +313,10 @@ def main():
           "with the pipeline checked out".format(GATE_JOB),
           outs.get("script-exists") == OPEN + "steps.gate-suite-preflight-cycle.outputs.script-exists" + CLOSE
           and str(outs.get("ready", "")).startswith(OPEN + piped + "ready || 'false'")
-          and str(outs.get("missing", "")).startswith(OPEN + piped + "missing || '"),
+          and str(outs.get("missing", "")).startswith(
+              OPEN + "steps.pipeline-ref.outcome == 'failure' && '")
+          and str(outs.get("missing", "")).endswith(
+              "|| steps.gate-suite-preflight-cycle.outputs.missing" + CLOSE),
           "outputs={0}".format(outs))
     contained = [s for s in gate_job.get("steps") or []
                  if "wing-commander-contained-gate-suite" in str((s or {}).get("uses", ""))]
@@ -332,6 +335,10 @@ def main():
         check("(cycle) {0}'s {1!r} is tolerated, so its preflight still runs".format(
                   GATE_JOB, name),
               st.get("continue-on-error") is True, "step={0}".format(st))
+    inst = gate_by_name.get("Install actionlint for the gate suite") or {}
+    check("(cycle) the gate job installs actionlint only where there is a suite to run (#935)",
+          "hashFiles('.github/scripts/run-local-gates.py') != ''" in str(inst.get("if", "")),
+          "if={0}".format(inst.get("if")))
     reader = by_id.get("gate-suite-cycle") or {}
     rif = str(reader.get("if", ""))
     check("(cycle) the implement job reads the verdict fail-closed through wing-commander-gate-verdict",

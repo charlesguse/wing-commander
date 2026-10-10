@@ -118,11 +118,17 @@ def no_change(_repo):
     pass
 
 
-def round_trip(shared, tmp, change, site="board-fix"):
+def round_trip(shared, tmp, change, site="board-fix", base_override=None, meta_edit=None):
     """-> (verdict dict or None, build/gate output, clones, base, head, bundle dir)."""
     clones, base, head = world(tmp, change)
     bundle = os.path.join(tmp, "bundle")
-    rc, out, outs = sh(shared, "build-gate-bundle.sh", [site, base, bundle], clones["agent"])
+    rc, out, outs = sh(shared, "build-gate-bundle.sh",
+                       [site, base_override or base, bundle], clones["agent"])
+    if rc == 0 and meta_edit:
+        meta_path = os.path.join(bundle, "meta.json")
+        meta = json.load(open(meta_path))
+        meta.update(meta_edit(base, head))
+        json.dump(meta, open(meta_path, "w"))
     if rc != 0:
         return None, "build exited {0}: {1}".format(rc, out), clones, base, head, bundle
     verdict_path = os.path.join(tmp, "verdict.json")
@@ -211,6 +217,26 @@ def checks(shared):
            verify.stdout + verify.stderr)
 
     with tempfile.TemporaryDirectory() as tmp:
+        # A resumed branch whose recorded base this repository does not hold:
+        # the bundle must not guess a prerequisite.
+        v, out, clones, base, head, bundle = round_trip(
+            shared, tmp, commit_file("src.txt", "fix\n"), base_override="1" * 40)
+        rc, rout, _ = sh(shared, "restore-gate-bundle.sh", [bundle, head, "b"],
+                         clones["publisher"])
+        ck("a base the agent's repository does not hold still round-trips",
+           v is not None and v.get("outcome") == "pass" and v.get("head_sha") == head
+           and rc == 0, "verdict={0}\n{1}\n{2}".format(v, out[-600:], rout))
+
+    with tempfile.TemporaryDirectory() as tmp:
+        # meta.json naming a commit other than the bundle's HEAD (one the
+        # trusted checkout holds, so a checkout of it would succeed).
+        v, out, *_rest = round_trip(shared, tmp, commit_file("src.txt", "fix\n"),
+                                    meta_edit=lambda base, head: {"head_sha": base})
+        ck("a bundle whose HEAD is not its metadata's head_sha is red",
+           v is not None and v.get("outcome") == "fail"
+           and "does not match" in v.get("first_failure", ""), str(v))
+
+    with tempfile.TemporaryDirectory() as tmp:
         v, out, *_rest = round_trip(shared, tmp, remove_suite)
         ck("a head that deleted run-local-gates.py is red, never a skip",
            v is not None and v.get("outcome") == "fail"
@@ -251,6 +277,12 @@ MUTATIONS = (
     ("a bundle that fails verification is refused without saying why",
      [("restore-gate-bundle.sh", " The containment could not be established; nothing is pushed.\"\n  exit 1\nfi\n# The bundle",
        "\"\n  exit 1\nfi\n# The bundle")]),
+    ("an unknown base is bundled as a thin range anyway",
+     [("build-gate-bundle.sh", 'if [ -n "$base_sha" ] && ! git cat-file -e "${base_sha}^{commit}" 2>/dev/null; then',
+       'if false; then')]),
+    ("the gate job gates whatever meta.json names",
+     [("contained-gate-suite.sh", 'if [ "$(git rev-parse --verify --quiet refs/wc-gate/head)" != "$head_sha" ]; then',
+       "if false; then")]),
     ("a head with no new commits ships the whole history",
      [("build-gate-bundle.sh", 'git bundle create --quiet "$out_dir/bundle.git" HEAD~1..HEAD HEAD',
        'git bundle create --quiet "$out_dir/bundle.git" HEAD')]),

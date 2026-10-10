@@ -174,6 +174,10 @@ BOT_LOGIN = "wing-commander-bot[bot]"
 # spec 095: fix-agent (the fixer) and fix (the publisher, after the
 # credential-free gate-suite-fix) carry the same resume gating.
 RESUME_JOBS = ("fix-agent", "fix", "review", "readiness")
+# spec 095: fix publishes what fix-agent wrote. A pause set between the two
+# is found by its own killswitch-recheck, which records the stand-down; a
+# job-level pause check would skip it silently (code review of #990).
+PAUSE_BY_STEP = ("fix",)
 SIM_JOBS = ("select", "resolve-model", "triage", "route", "fix-agent", "gate-suite-fix", "fix",
             "review", "readiness")
 PAUSE_VAR = "vars.WING_COMMANDER_BOARD_LOOP_PAUSED"
@@ -494,7 +498,18 @@ def static_findings(doc):
             if not ok:
                 findings.append(
                     "{0}: if: lacks top-level `needs.{1}.result == 'success'`".format(name, up))
-        if not any(_is_cmp(p, "!=", PAUSE_VAR, "true") for p in top):
+        if name in PAUSE_BY_STEP:
+            if any(_is_cmp(p, "!=", PAUSE_VAR, "true") for p in top):
+                findings.append(
+                    "{0}: if: checks `{1}` at job level -- a pause set after the job before "
+                    "it would skip this job with nothing recorded; its killswitch-recheck "
+                    "step finds and records it (spec 095)".format(name, PAUSE_VAR))
+            steps = job.get("steps") or []
+            if not any(isinstance(st, dict) and st.get("id") == "killswitch-recheck"
+                       and "wing-commander-board-stop-check" in str(st.get("uses", ""))
+                       for st in steps):
+                findings.append("{0}: no killswitch-recheck step to find a pause".format(name))
+        elif not any(_is_cmp(p, "!=", PAUSE_VAR, "true") for p in top):
             findings.append("{0}: if: lacks the `{1} != 'true'` pause check".format(name, PAUSE_VAR))
 
         reads = []
@@ -2011,6 +2026,10 @@ def _mutations(text):
         after="\n  review:\n")
     sub("fix without resolve-model.result guard",
         "      && needs.resolve-model.result == 'success'\n", "", after="\n  fix:\n")
+    sub("fix (the publisher) checks the pause at job level again (spec 095)",
+        "        || (needs.select.outputs.step == 'fix' && needs.select.outputs.branch != '' && needs.select.outputs.pr == '')\n      )\n",
+        "        || (needs.select.outputs.step == 'fix' && needs.select.outputs.branch != '' && needs.select.outputs.pr == '')\n      ) && vars.WING_COMMANDER_BOARD_LOOP_PAUSED != 'true'\n",
+        after="\n  fix:\n")
     sub("readiness without the pause check",
         "      ) && vars.WING_COMMANDER_BOARD_LOOP_PAUSED != 'true'\n", "      )\n",
         after="\n  readiness:\n")

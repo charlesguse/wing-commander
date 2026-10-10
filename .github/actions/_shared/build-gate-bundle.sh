@@ -16,15 +16,22 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 wc_harden_git_env
 mkdir -p "$out_dir"
 head_sha="$(git rev-parse HEAD)"
-# The bundle's one ref is HEAD; its consumers fetch exactly that.
-# No new commits (no base, or the base is HEAD) or a base HEAD does not
-# descend from: git refuses an empty thin bundle, so ship the head commit
-# alone (its parent is in every consumer's full-history checkout), and the
-# whole history only for a root commit.
-if [ -z "$base_sha" ] || [ "$base_sha" = "$head_sha" ] \
-  || ! git bundle create --quiet "$out_dir/bundle.git" "$base_sha..HEAD" HEAD 2>/dev/null; then
-  git bundle create --quiet "$out_dir/bundle.git" HEAD~1..HEAD HEAD 2>/dev/null \
-    || git bundle create --quiet "$out_dir/bundle.git" HEAD
+# The bundle's one ref is HEAD; its consumers fetch exactly that, and its
+# prerequisites must be commits every consumer's full-history checkout
+# holds:
+#   - a base this repository does not hold (a resumed branch whose base left
+#     main's history): the whole history, never a guessed prerequisite;
+#   - new commits since the base: base..HEAD (prerequisites on main);
+#   - none (HEAD is the base or behind it): the head commit alone, whose
+#     parent is on main too -- the whole history only for a root commit.
+if [ -n "$base_sha" ] && ! git cat-file -e "${base_sha}^{commit}" 2>/dev/null; then
+  git bundle create --quiet "$out_dir/bundle.git" HEAD
+elif [ -n "$base_sha" ] && ! git merge-base --is-ancestor HEAD "$base_sha"; then
+  git bundle create --quiet "$out_dir/bundle.git" "$base_sha..HEAD" HEAD
+elif git rev-parse --verify --quiet "HEAD~1^{commit}" >/dev/null; then
+  git bundle create --quiet "$out_dir/bundle.git" HEAD~1..HEAD HEAD
+else
+  git bundle create --quiet "$out_dir/bundle.git" HEAD
 fi
 jq -n --arg base "$base_sha" --arg head "$head_sha" --arg site "$site" \
   '{base_sha: $base, head_sha: $head, site: $site}' > "$out_dir/meta.json"

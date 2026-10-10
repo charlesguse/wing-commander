@@ -525,7 +525,7 @@ jobs:
     outputs:
       script-exists: ${{ steps.gate-suite-preflight-cycle.outputs.script-exists }}
       ready: ${{ steps.pipeline-ref.outcome == 'success' && steps.gate-suite-preflight-cycle.outputs.ready || 'false' }}
-      missing: ${{ steps.pipeline-ref.outcome == 'success' && steps.gate-suite-preflight-cycle.outputs.missing || 'the pipeline checkout (github.job_workflow_sha is empty and this job holds no id-token; set the pipeline-ref input)' }}
+      missing: ${{ steps.pipeline-ref.outcome == 'failure' && 'the pipeline checkout (github.job_workflow_sha is empty and this job holds no id-token; set the pipeline-ref input)' || steps.gate-suite-preflight-cycle.outputs.missing }}
     steps:
       # The trusted commit, full history (so origin/<spec branch> is here),
       # and no credential left in .git/config afterwards.
@@ -590,9 +590,10 @@ jobs:
           echo "ref=${SPEC_PREFIX}${SPEC_DIR_INPUT#specs/}" >> "$GITHUB_OUTPUT"
 
       # FR-009a: a failed install degrades to the preflight's missing-
-      # actionlint skip below, never to a job failure with no verdict.
+      # actionlint skip below, never to a job failure with no verdict. Not
+      # installed at all where there is no suite to run (#935).
       - name: Install actionlint for the gate suite
-        if: steps.pipeline-ref.outcome == 'success'
+        if: steps.pipeline-ref.outcome == 'success' && hashFiles('.github/scripts/run-local-gates.py') != ''
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-install-actionlint
 

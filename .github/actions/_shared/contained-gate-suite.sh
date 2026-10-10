@@ -94,7 +94,11 @@ else
   fi
   # The bundle carries one ref, HEAD (build-gate-bundle.sh).
   if ! git fetch --quiet --no-tags "$bundle" "+HEAD:refs/wc-gate/head" 2>/dev/null; then
-    write_verdict fail 1 "$head_sha" "bundle does not contain head_sha"
+    write_verdict fail 1 "$head_sha" "workspace bundle could not be fetched"
+    exit 0
+  fi
+  if [ "$(git rev-parse --verify --quiet refs/wc-gate/head)" != "$head_sha" ]; then
+    write_verdict fail 1 "$head_sha" "bundle head does not match its metadata's head_sha"
     exit 0
   fi
 fi
