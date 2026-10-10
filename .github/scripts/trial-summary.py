@@ -78,27 +78,38 @@ readable_trial = _BOUND.readable_trial
 NOT_COMPARED = _BOUND.NOT_COUNTED
 
 
-DIGITS = re.compile(r"[0-9]+")
+DIGITS = re.compile(r"[0-9]{1,30}")
 
 
 def scalar(value):
     """A JSON string or integer id as a string, else None (never an
-    unhashable key). A numeric id is canonical decimal, so 972, "972" and
-    "0972" are one id."""
+    unhashable key, never a blank one). A numeric id is canonical decimal,
+    so 972, "972" and "0972" are one id; any other string is kept as is."""
     if isinstance(value, bool) or not isinstance(value, (str, int)):
         return None
-    text = str(value).strip()
-    return str(int(text)) if DIGITS.fullmatch(text) else text
+    text = str(value)
+    if DIGITS.fullmatch(text.strip()):
+        return str(int(text))
+    return text if text.strip() else None
 
 
 def number(value):
-    """A finite JSON number, else None: a string, an object, NaN or an
-    infinity where a count or a cost belongs is read as absent, never
+    """A finite JSON number, else None: a string, an object, NaN, an
+    infinity or an absurdly large integer where a count or a cost belongs is read as absent, never
     summed into a TypeError or a nan."""
-    if isinstance(value, (int, float)) and not isinstance(value, bool) \
-            and math.isfinite(value):
-        return value
-    return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    # An integer past any real count or cost (and past what a float, and
+    # so fmt(), can hold) is as unreadable as a NaN.
+    return value if abs(value) <= 10 ** 15 else None
+
+
+def issue_order(key):
+    """Numeric ids in number order (#972 before #1001), any other after."""
+    numeric = DIGITS.fullmatch(key)
+    return (not numeric, int(key) if numeric else 0, key)
 
 
 def run_id(rec):
@@ -246,9 +257,8 @@ def implement_section(records):
         by_issue.setdefault(issue, []).append(r)
     haiku, sonnet = {}, []
     # Numeric order (#972 before #1001), any non-numeric key after.
-    for issue, recs in sorted(by_issue.items(), key=lambda kv: (
-            not DIGITS.fullmatch(kv[0]),
-            int(kv[0]) if DIGITS.fullmatch(kv[0]) else 0, kv[0])):
+    for issue, recs in sorted(by_issue.items(),
+                              key=lambda kv: issue_order(kv[0])):
         # A record without a timestamp sorts last, never first.
         recs.sort(key=lambda r: (not r.get("emitted_at"), str(r.get("emitted_at") or "")))
         models = [str(r.get("model", "")) for r in recs]
