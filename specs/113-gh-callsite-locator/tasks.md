@@ -117,3 +117,7 @@
 
 - **MVP**: Phases 1–4 (US1 + US2): locator, moved gate, fail-closed fixtures, repository migrated and green. Do not merge without the US3 proof if possible; US3 and US4 may land in follow-up commits of the same PR.
 - Then US3 (proof), then US4 (single home), then polish.
+
+## Phase 8: Convergence
+
+- [ ] T030 Bring the shell-reading code of `.github/scripts/wc_gh_callsites.py` (the `_Scan` class, about 380 lines with comments) toward the SC-003 target of about 250 lines without losing a behaviour the self-test pins: merge the near-duplicate span helpers, drop dead branches, and re-run `python3 .github/scripts/verify-gate-12.py` (zero unaccounted invocations, mutation caught) and `python3 .github/scripts/run-local-gates.py` per SC-003 (partial)
