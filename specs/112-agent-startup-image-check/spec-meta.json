@@ -2,8 +2,8 @@
   "issue": 974,
   "spec_dir": "specs/112-agent-startup-image-check",
   "feature_num": "112",
-  "stage": "stalled",
-  "iteration": 2,
+  "stage": "implement",
+  "iteration": 3,
   "spec_branch": "spec/112-agent-startup-image-check",
   "pending_re_review_from": [
     "charlesguse"
