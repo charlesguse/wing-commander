@@ -113,6 +113,7 @@ jobs:
       # A failed checkout (no metrics branch yet, or a fetch error) leaves
       # records-path empty below, and the composite then fails closed: the
       # 300-run cap cannot be checked, so the shadow stays off.
+      # Only the one records file is read, so only it is checked out.
       - name: Checkout the metrics branch
         id: metrics
         continue-on-error: true
@@ -121,6 +122,8 @@ jobs:
           ref: ${{ vars.WING_COMMANDER_METRICS_BRANCH || 'metrics' }}
           path: .wing-commander-metrics
           persist-credentials: false
+          sparse-checkout: ${{ vars.WING_COMMANDER_METRICS_PATH || 'records.jsonl' }}
+          sparse-checkout-cone-mode: false
 
       - name: Decide whether the diagnose shadow is inside its bound
         id: bound
@@ -131,12 +134,14 @@ jobs:
           records-path: ${{ steps.metrics.outcome == 'success' && format('.wing-commander-metrics/{0}', vars.WING_COMMANDER_METRICS_PATH || 'records.jsonl') || '' }}
 
 
-  # One job, with no resolve job in front of it. The run-id is a one-line
-  # expression (the dispatch input, else the workflow_run payload) and the
-  # run-name is resolved stage-side, so a wrapper job would exist only to
-  # gate and forward — and every job a wrapper declares is a runner
-  # allocation GitHub counts as a whole minute however short it runs. Same
-  # fold as wing-commander-metrics-persist.yml's (spec 043).
+  # No resolve job in front of it. The run-id is a one-line expression
+  # (the dispatch input, else the workflow_run payload) and the run-name is
+  # resolved stage-side, so a wrapper job would exist only to gate and
+  # forward — and every job a wrapper declares is a runner allocation
+  # GitHub counts as a whole minute however short it runs. Same fold as
+  # wing-commander-metrics-persist.yml's (spec 043). The one other job,
+  # trial-bound above, allocates a runner only while the diagnose shadow
+  # trial is switched on (Gate 75).
   watchdog:
     # Kill switch, wrapper-side (constitution VII: the wrapper owns triggers,
     # gates, and every vars.* read). watchdog.yml used to honour the same

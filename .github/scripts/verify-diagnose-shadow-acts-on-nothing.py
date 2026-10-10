@@ -53,6 +53,13 @@ WHAT IT CHECKS (watchdog.yml unless named)
 7. wing-commander-8-watchdog.yml passes `diagnose-shadow-enabled` as
    exactly `${{ needs.trial-bound.outputs.enabled == 'true' }}` -- false
    whenever the trial-bound job was skipped or failed.
+8. When the watchdog re-inspects one of its own runs, the shadow's traces
+   are not evidence: the shipped "Collect: execution-output artifacts"
+   step, run against a `claude-execution-output-diagnose-shadow` artifact
+   carrying a permission denial, emits no denied-tool signal (and the same
+   transcript under an acting artifact name does -- the positive control);
+   the annotations collector drops the marker the shadow's fail-loud
+   annotation carries.
 
 Usage: verify-diagnose-shadow-acts-on-nothing.py [--self-test]
 Exit 0 = every check holds (self-test: every mutation is caught);
@@ -312,6 +319,78 @@ def check(watchdog, wrapper):
     return failures
 
 
+MARKER = "diagnose shadow (trial; acts on nothing)"
+EO_STEP = "Collect: execution-output artifacts"
+AN_STEP = "Collect: annotations"
+DENIAL = [{"type": "result", "subtype": "success", "is_error": False,
+           "permission_denials": [{"tool_name": "Bash", "tool_use_id": "t1",
+                                   "tool_input": {"command": "gh api x"}}]}]
+GH_STUB = """#!/usr/bin/env bash
+# gh run download <id> ... -D <dir>: materialise the fixture artifacts.
+dir=""; prev=""
+for a in "$@"; do [ "$prev" = "-D" ] && dir="$a"; prev="$a"; done
+cp -R "$WC_ARTIFACTS"/. "$dir"/
+"""
+
+
+def collector_failures(watchdog):
+    """Check 8: run the shipped execution-output collector both ways."""
+    import json
+    import os
+    import tempfile
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from wc_shell_harness import ensure_jq, resolve_bash, run_step
+    steps = (watchdog.get("jobs") or {}).get("collect", {}).get("steps") or []
+    eo = next((x for x in steps if x.get("name") == EO_STEP), None)
+    an = next((x for x in steps if x.get("name") == AN_STEP), None)
+    failures = []
+    if eo is None or an is None:
+        return [f"collect job lost {EO_STEP!r} or {AN_STEP!r}"]
+    if f'contains("{MARKER}") | not' not in str(an.get("run")):
+        failures.append(f"{AN_STEP!r} must drop annotations carrying "
+                        f"{MARKER!r} (the shadow's fail-loud message)")
+    fam = [x for x in (watchdog.get("jobs") or {}).get("diagnose", {})
+           .get("steps") or [] if FAMILY_RE.search(str(x.get("name", "")))]
+    if not any(MARKER in str(x.get("run", "")) for x in fam):
+        failures.append(f"the shadow's fail-loud annotation must carry "
+                        f"{MARKER!r}, the text the annotations collector drops")
+    ensure_jq()
+    bash = resolve_bash()
+    for artifact, want in (("claude-execution-output-diagnose-shadow", 0),
+                           ("claude-execution-output-cycle", 1)):
+        with tempfile.TemporaryDirectory() as tmp:
+            arts = os.path.join(tmp, "arts", artifact)
+            os.makedirs(arts)
+            with open(os.path.join(arts, "claude-execution-output.json"),
+                      "w", encoding="utf-8") as fh:
+                json.dump(DENIAL, fh)
+            bindir = os.path.join(tmp, "bin")
+            os.makedirs(bindir)
+            stub = os.path.join(bindir, "gh")
+            with open(stub, "w", encoding="utf-8", newline="\n") as fh:
+                fh.write(GH_STUB)
+            os.chmod(stub, 0o755)
+            rt = os.path.join(tmp, "rt")
+            os.makedirs(rt)
+            for name in ("signals.json", "collector-outcomes.json"):
+                with open(os.path.join(rt, name), "w", encoding="utf-8") as fh:
+                    fh.write("[]")
+            env = {"GH_TOKEN": "x", "ACTIONS_TOKEN": "x", "RUN_ID": "1",
+                   "RUN_CONCLUSION": "success", "INSPECTED_STAGE": "watchdog",
+                   "GITHUB_REPOSITORY": "o/r",
+                   "WC_ARTIFACTS": os.path.join(tmp, "arts"),
+                   "PATH": bindir + os.pathsep + os.environ["PATH"]}
+            rc, out, _o, _s = run_step(bash, eo["run"], tmp, env, rt)
+            with open(os.path.join(rt, "signals.json"), encoding="utf-8") as fh:
+                got = sum(1 for x in json.load(fh)
+                          if x.get("class-hint") == "denied-tool")
+            if rc != 0 or got != want:
+                failures.append(f"{EO_STEP!r} on a {artifact} artifact: "
+                                f"{got} denied-tool signal(s), expected {want} "
+                                f"(rc={rc}) {out.strip()[:200]}")
+    return failures
+
+
 # ── self-test ──────────────────────────────────────────────────────────────
 def _job(wd):
     return wd["jobs"]["diagnose"]
@@ -433,9 +512,30 @@ MUTATIONS = [
 ]
 
 
+def _eo_step(wd):
+    return next(x for x in wd["jobs"]["collect"]["steps"]
+                if x.get("name") == EO_STEP)
+
+
+def _an_step(wd):
+    return next(x for x in wd["jobs"]["collect"]["steps"]
+                if x.get("name") == AN_STEP)
+
+
+COLLECTOR_MUTATIONS = [
+    ("the execution-output collector reads the shadow's denials",
+     lambda wd: _eo_step(wd).__setitem__("run", _eo_step(wd)["run"].replace(
+         "*/claude-execution-output-diagnose-shadow/*) continue",
+         "*/no-such-artifact/*) continue"))),
+    ("the annotations collector keeps the shadow's annotation",
+     lambda wd: _an_step(wd).__setitem__("run", _an_step(wd)["run"].replace(
+         f'contains("{MARKER}") | not', "true"))),
+]
+
+
 def self_test(watchdog, wrapper):
     bad = 0
-    base = check(watchdog, wrapper)
+    base = check(watchdog, wrapper) + collector_failures(watchdog)
     if base:
         print("self-test: the shipped tree must pass first:")
         for f in base:
@@ -450,7 +550,17 @@ def self_test(watchdog, wrapper):
         else:
             bad += 1
             print(f"[FAIL] not caught: {name}")
-    print(f"Gate 146 self-test: {len(MUTATIONS)} mutation(s), {bad} missed")
+    for name, mutate in COLLECTOR_MUTATIONS:
+        wd = copy.deepcopy(watchdog)
+        mutate(wd)
+        got = collector_failures(wd)
+        if got:
+            print(f"[ok] caught: {name} ({got[0][:90]})")
+        else:
+            bad += 1
+            print(f"[FAIL] not caught: {name}")
+    total = len(MUTATIONS) + len(COLLECTOR_MUTATIONS)
+    print(f"Gate 146 self-test: {total} mutation(s), {bad} missed")
     return 1 if bad else 0
 
 
@@ -458,7 +568,7 @@ def main(argv):
     watchdog, wrapper = load(WATCHDOG), load(WRAPPER)
     if "--self-test" in argv:
         return self_test(watchdog, wrapper)
-    failures = check(watchdog, wrapper)
+    failures = check(watchdog, wrapper) + collector_failures(watchdog)
     for f in failures:
         print(f"::error::Gate 146: {f}")
     if failures:

@@ -692,6 +692,26 @@ JSON
   else
     fail "$tag s26: expected exit 0 with no crash-signature reason, got rc=$rc: $(tail -3 <<<"$out")"
   fi
+  # s27: the same job, but the crash line is stamped AFTER the shadow's
+  # last step (01:06:45Z) -- an acting post-step's -- so it is still read.
+  printf '2026-08-25T01:00:55.0000000Z diagnose ran\n2026-08-25T01:06:50.0000000Z ##[error]Action failed with error: SDK execution error\n' > "$work/fixtures/diagnose.log"
+  run_scenario "$script" '' false
+  if [ "$rc" = "1" ] && grep -q "crash signature" <<<"$out"; then
+    ok "$tag s27: a crash logged after the shadow's steps is still a crash signature"
+  else
+    fail "$tag s27: expected exit 1 naming the crash signature, got rc=$rc: $(tail -3 <<<"$out")"
+  fi
+  # s28: the shadow never ran (its steps skipped, the default), so a crash
+  # logged at the time its skipped step reports is the diagnose's own.
+  jq '(.jobs[].steps[] | select(.name == "Diagnose shadow") | .conclusion) = "skipped"' \
+    "$work/fixtures/jobs.json" > "$work/jobs.json.tmp" && mv "$work/jobs.json.tmp" "$work/fixtures/jobs.json"
+  printf '2026-08-25T01:00:55.0000000Z diagnose ran\n2026-08-25T01:02:00.0000000Z ##[error]Action failed with error: SDK execution error\n' > "$work/fixtures/diagnose.log"
+  run_scenario "$script" '' false
+  if [ "$rc" = "1" ] && grep -q "crash signature" <<<"$out"; then
+    ok "$tag s28: a skipped shadow step cuts nothing from the diagnose log"
+  else
+    fail "$tag s28: expected exit 1 naming the crash signature, got rc=$rc: $(tail -3 <<<"$out")"
+  fi
   mv "$work/diagnose.log.bak_sh" "$work/fixtures/diagnose.log"
   mv "$work/run.json.bak_sh" "$work/fixtures/run.json"
   mv "$work/jobs.json.bak_sh" "$work/fixtures/jobs.json"
@@ -830,9 +850,20 @@ run_mutation "$mut" "m13" "s24" "counting the diagnose shadow against the acting
 # m14 (spec 110): the crash-signature check reads the diagnose shadow's
 # part of the job log again, so a crashed shadow files a crashed-diagnose
 # defect. s26 must catch it.
-sed 's/    if \[ -n "\$shadow_start" \]; then$/    if false; then/' \
+sed 's/    if \[ -n "\$shadow_span" \]; then$/    if false; then/' \
   "$SCRIPT" > "$mut"
 run_mutation "$mut" "m14" "s26" "reading the shadow's crash as the diagnose's is caught"
 
-echo "Gate 36: 26 scenario(s) x 14 runs + 13 mutation(s); $bad failure(s)."
+# m15 (spec 110): the shadow cut drops everything after the shadow's first
+# step again. s27 must catch it.
+sed 's/if (ts >= from \&\& ts <= to) next/if (ts >= from) next/' \
+  "$SCRIPT" > "$mut"
+run_mutation "$mut" "m15" "s27" "cutting the log past the shadow's own span is caught"
+
+# m16 (spec 110): skipped shadow steps cut the log again. s28 must catch it.
+sed 's/       | select(.conclusion != "skipped")$/       | ./' \
+  "$SCRIPT" > "$mut"
+run_mutation "$mut" "m16" "s28" "a skipped shadow step cutting the log is caught"
+
+echo "Gate 36: 28 scenario(s) x 16 runs + 15 mutation(s); $bad failure(s)."
 exit $([ "$bad" -eq 0 ] && echo 0 || echo 1)

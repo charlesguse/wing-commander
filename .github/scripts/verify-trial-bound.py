@@ -85,6 +85,16 @@ def main():
                 failures.append(f"{name}: expected enabled={c['expect']}, got "
                                 f"{got!r} rc={proc.returncode} {proc.stderr}")
         failures += composite_fails_loudly(tmp)
+        # A corrupt records line is named as such, never as a bad SINCE.
+        bad = Path(tmp) / "corrupt.jsonl"
+        bad.write_text("not json\n", encoding="utf-8")
+        proc = subprocess.run(
+            [sys.executable, "-I", str(SCRIPT), "--since", "2026-10-01",
+             "--records", str(bad), "--today", "2026-10-05"],
+            capture_output=True, text=True, check=False)
+        if proc.returncode != 2 or "unreadable metrics records" not in proc.stderr:
+            failures.append("a corrupt records.jsonl must exit 2 naming the "
+                            f"records, got rc={proc.returncode} {proc.stderr!r}")
     for f in failures:
         print(f, file=sys.stderr)
     if failures:

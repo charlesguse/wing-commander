@@ -28,8 +28,31 @@ MAX_COMPARED = 300
 NOT_COUNTED = {"error", "no-baseline"}
 
 
+class RecordsError(Exception):
+    """records.jsonl exists but a line cannot be read."""
+
+
 def parse_date(text):
     return datetime.date.fromisoformat(text.strip()[:10])
+
+
+# The window and label rules below are this trial's one home:
+# .github/scripts/trial-summary.py imports them from this file.
+def label(rec):
+    """run_label sits at the top level of a metrics record; the contract's
+    original run.run_label spelling is accepted too."""
+    run = rec.get("run")
+    return rec.get("run_label") or (run.get("run_label")
+                                    if isinstance(run, dict) else None)
+
+
+def in_window(rec, since):
+    """On or after SINCE by emitted_at. An undated record counts as inside
+    (fail closed for the cap; every persisted record carries emitted_at)."""
+    try:
+        return parse_date(rec.get("emitted_at")) >= since
+    except (AttributeError, TypeError, ValueError):
+        return True
 
 
 def compared_count(path, since):
@@ -44,13 +67,10 @@ def compared_count(path, since):
             try:
                 rec = json.loads(line)
             except ValueError as exc:
-                raise ValueError(f"{path}:{lineno}: {exc}") from exc
+                raise RecordsError(f"{path}:{lineno}: {exc}") from exc
             if not isinstance(rec, dict):
-                raise ValueError(f"{path}:{lineno}: record is not an object")
-            # The metrics record carries run_label at the top level; the
-            # contract's run.run_label spelling is accepted too.
-            label = rec.get("run_label") or (rec.get("run") or {}).get("run_label")
-            if label != "diagnose-shadow":
+                raise RecordsError(f"{path}:{lineno}: record is not an object")
+            if label(rec) != "diagnose-shadow":
                 continue
             trial = rec.get("trial")
             outcome = trial.get("outcome") if isinstance(trial, dict) else None
@@ -61,17 +81,7 @@ def compared_count(path, since):
             if (outcome in NOT_COUNTED
                     and trial.get("error_source") != "comparator"):
                 continue
-            stamp = rec.get("started_at") or rec.get("emitted_at")
-            try:
-                when = parse_date(stamp)
-            except (AttributeError, TypeError, ValueError):
-                # Fail closed: an undated compared record still counts toward
-                # the cap, so the cap can never stay open past 300 real runs.
-                # It cannot come from an earlier window in practice: every
-                # record the persist collector accepts carries emitted_at.
-                n += 1
-                continue
-            if when >= since:
+            if in_window(rec, since):
                 n += 1
     return n
 
@@ -97,6 +107,9 @@ def main(argv):
         today = parse_date(args.today) if args.today else datetime.datetime.now(
             datetime.timezone.utc).date()
         enabled = decide(args.since, args.records, today)
+    except RecordsError as exc:
+        print(f"trial-bound: unreadable metrics records: {exc}", file=sys.stderr)
+        return 2
     except ValueError as exc:
         print(f"trial-bound: unreadable date: {exc}", file=sys.stderr)
         return 2

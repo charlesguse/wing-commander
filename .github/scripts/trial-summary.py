@@ -21,13 +21,18 @@ With --since (the WING_COMMANDER_DIAGNOSE_SHADOW_SINCE date), the diagnose
 section counts only records in the trial window trial-bound.py counts: dated
 on or after SINCE, an undated record counting as inside it. A restarted
 trial is then summarised over its own window, the one its bound closes.
-verify-trial-summary.py holds the two scripts to the same count.
+The window and run_label rules are imported from
+.github/actions/_shared/trial-bound.py, their one home. The two counts still
+differ by design: the cap also counts comparator errors and shadow records
+with no trial object (spend the bar does not judge); FR-017's compared runs
+do not. verify-trial-summary.py holds that difference exact.
 
 Usage: trial-summary.py --records records.jsonl [--since YYYY-MM-DD]
 Exit 2 for a missing or unparseable records file or SINCE.
 """
 import argparse
-import datetime
+import importlib.util
+import os
 import json
 import statistics
 import sys
@@ -56,8 +61,17 @@ def load(path):
     return records
 
 
-def label(rec):
-    return rec.get("run_label") or (rec.get("run") or {}).get("run_label")
+def _load_bound():
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..",
+                        "actions", "_shared", "trial-bound.py")
+    spec = importlib.util.spec_from_file_location("trial_bound", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+_BOUND = _load_bound()
+label = _BOUND.label
 
 
 def run_id(rec):
@@ -89,14 +103,8 @@ def pct(num, den):
 
 
 def in_window(rec, since):
-    """trial-bound.py's window: on or after SINCE; undated counts inside."""
-    if since is None:
-        return True
-    stamp = rec.get("started_at") or rec.get("emitted_at")
-    try:
-        return datetime.date.fromisoformat(stamp.strip()[:10]) >= since
-    except (AttributeError, TypeError, ValueError):
-        return True
+    """trial-bound.py's window (its in_window); no SINCE means every record."""
+    return since is None or _BOUND.in_window(rec, since)
 
 
 def diagnose_section(records, since=None):
@@ -236,7 +244,7 @@ def main(argv):
     since = None
     if args.since.strip():
         try:
-            since = datetime.date.fromisoformat(args.since.strip()[:10])
+            since = _BOUND.parse_date(args.since)
         except ValueError as exc:
             print(f"trial-summary: unreadable --since: {exc}", file=sys.stderr)
             return 2

@@ -137,6 +137,17 @@ def check_window(tmp, failures):
                         "own line")
 
 
+def check_single_home(failures):
+    """The window/label rules live only in _shared/trial-bound.py; a
+    re-pasted date parse or run_label rule in trial-summary.py is the drift
+    CLAUDE.md's single-home rule forbids."""
+    text = SCRIPT.read_text(encoding="utf-8")
+    for needle in ("fromisoformat", '"started_at"', 'get("run_label")'):
+        if needle in text:
+            failures.append(f"trial-summary.py carries its own {needle!r}: "
+                            "import the rule from _shared/trial-bound.py")
+
+
 def check_wrappers(failures):
     text = PERSIST.read_text(encoding="utf-8")
     want = {var: set(re.findall(r"vars\." + var + r" \|\| '([^']*)'", text))
@@ -164,6 +175,7 @@ def check_wrappers(failures):
 def main():
     failures = []
     check_wrappers(failures)
+    check_single_home(failures)
     with tempfile.TemporaryDirectory() as tmp:
         check_window(tmp, failures)
         for name, (records, verdict, extra) in sorted(CASES.items()):

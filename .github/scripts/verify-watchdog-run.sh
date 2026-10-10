@@ -293,17 +293,22 @@ rm -rf "$tmpdir"
 diagnose_job_id="$(jq -r '[.jobs[] | select(.name == "diagnose" or (.name | endswith("/ diagnose"))) | .id] | first // empty' <<<"$jobs_json")"
 if [ -n "$diagnose_job_id" ] && [ "$diagnose_conclusion" != "skipped" ]; then
   if dlog="$(api "actions/jobs/$diagnose_job_id/logs" 2>/dev/null)"; then
-    # spec 110: the diagnose shadow runs last in this job and acts on
-    # nothing, so a shadow that crashes or exhausts its turns is not a
-    # crashed diagnose (SC-003). The log is read only up to the first
-    # shadow step's start; with no shadow step it is read whole.
-    shadow_start="$(jq -r "$JQ_EPOCH"'
+    # spec 110: the diagnose shadow runs in this job and acts on nothing,
+    # so a shadow that crashes or exhausts its turns is not a crashed
+    # diagnose (SC-003). Log lines stamped inside the shadow steps that
+    # actually ran (first start to last completion, skipped steps ignored)
+    # are left out; every other line, before or after, is still read.
+    shadow_span="$(jq -r "$JQ_EPOCH"'
       [.jobs[] | select(.name == "diagnose" or (.name | endswith("/ diagnose")))
        | (.steps // [])[] | select((.name // "") | test("diagnose[ -]shadow"; "i"))
-       | (try (.started_at | epoch) catch empty)] | min // empty | todate' <<<"$jobs_json" 2>/dev/null)" || shadow_start=""
-    if [ -n "$shadow_start" ]; then
-      dlog="$(printf '%s\n' "$dlog" | awk -v cut="${shadow_start%Z}" \
-        '/^[0-9][0-9][0-9][0-9]-/ && substr($0, 1, 19) >= cut { exit } { print }')"
+       | select(.conclusion != "skipped")
+       | (try [(.started_at | epoch), (.completed_at | epoch)] catch empty)]
+      | if length == 0 then empty
+        else "\(map(.[0]) | min | todate) \(map(.[1]) | max | todate)" end' <<<"$jobs_json" 2>/dev/null)" || shadow_span=""
+    if [ -n "$shadow_span" ]; then
+      read -r shadow_from shadow_to <<<"$shadow_span"
+      dlog="$(printf '%s\n' "$dlog" | awk -v from="${shadow_from%Z}" -v to="${shadow_to%Z}" \
+        '/^[0-9][0-9][0-9][0-9]-/ { ts = substr($0, 1, 19); if (ts >= from && ts <= to) next } { print }')"
     fi
     if printf '%s' "$dlog" | grep -aEq '##\[error\]Action failed with error|SDK execution error|Workflow initiated by non-human actor|json-schema is not valid JSON'; then
       reason "diagnose job log carries an agent crash signature that continue-on-error hid from every API conclusion"

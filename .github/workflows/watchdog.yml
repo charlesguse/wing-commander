@@ -684,6 +684,9 @@ jobs:
           eo_outcome="ok"
           for f in "$dl_dir"/*/*.json "$dl_dir"/*.json; do
             [ -e "$f" ] || continue
+            # A re-inspected watchdog run's diagnose shadow acts on nothing
+            # (spec 110, SC-003): its denials are not the run's (Gate 146).
+            case "$f" in */claude-execution-output-diagnose-shadow/*) continue ;; esac
             found=true
             # `|| { ...; }` rather than a bare `$?`: an unreadable/malformed
             # artifact must mark this collector untrusted (T032), not
@@ -1434,7 +1437,7 @@ jobs:
               skipped|cancelled) continue ;;
             esac
             anns_rc=0
-            GH_TOKEN="$ACTIONS_TOKEN" gh api "repos/$GITHUB_REPOSITORY/check-runs/$job_id/annotations" --paginate --jq '.[] | select(.annotation_level=="warning" or .annotation_level=="failure") | {source:"annotations","class-hint":null,facts:{level:.annotation_level,message:.message}}' 2>/dev/null | jq -s '.' > "$RUNNER_TEMP/ca-anns.json" || anns_rc="${PIPESTATUS[0]}"
+            GH_TOKEN="$ACTIONS_TOKEN" gh api "repos/$GITHUB_REPOSITORY/check-runs/$job_id/annotations" --paginate --jq '.[] | select(.annotation_level=="warning" or .annotation_level=="failure") | select((.message // "") | contains("diagnose shadow (trial; acts on nothing)") | not) | {source:"annotations","class-hint":null,facts:{level:.annotation_level,message:.message}}' 2>/dev/null | jq -s '.' > "$RUNNER_TEMP/ca-anns.json" || anns_rc="${PIPESTATUS[0]}"
             [ "$anns_rc" = "0" ] || an_failed=1
             anns="$(cat "$RUNNER_TEMP/ca-anns.json" 2>/dev/null)"
             [ -n "$anns" ] || anns='[]'
