@@ -957,6 +957,19 @@ know before you set either:
   a malformed JSON-looking value (starts with `[` but doesn't parse) fails at
   GitHub's own expression-evaluation time, not with a pipeline-authored
   error.
+- **The agent action floats on `@v1`, and its start-up is checked.** Stages
+  consume `anthropics/claude-code-action@v1`, so the action's own
+  dependencies can change under an image that passed the tool-presence check.
+  The image prerequisite probe also requires **git >= 2.38** (it names the
+  version found). Separately, `private-image-dogfood.yml` has an optional
+  `startup-check` input (boolean, default `false`) that runs the real
+  action's setup in the image with no model credential and classifies the
+  log (`classify-agent-startup.py`): a red `classify-startup` job names the
+  failing setup step and quotes its error. The caller must grant
+  `actions: read`; the classifier script comes from the caller's own
+  checkout, so only a repository carrying `.github/scripts/classify-agent-startup.py`
+  (this one) should turn it on. This repository runs it on the daily dogfood
+  run, so a dependency change that breaks an image surfaces within a day.
 - **`container-image` runs every job of the stage inside that image**,
   exactly as written (registry, repository, tag or digest — whatever you'd
   hand `docker pull`). Before any agent-bearing job's own container is

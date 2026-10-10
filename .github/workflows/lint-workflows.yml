@@ -5533,6 +5533,16 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-agent-startup-classifier.py --self-test
 
+      # Gate 142 — specs/112-agent-startup-image-check (FR-013): the git >=
+      # 2.38 floor fragment (image-git-floor.sh) is driven against stubbed
+      # `git --version` outputs and found verbatim in every stage's probe.
+      - name: "Gate 142 — every stage's image probe enforces the git 2.38 floor, verbatim from image-git-floor.sh"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-image-git-floor.py
+      - name: "Gate 142 self-test — a lowered floor and a probe missing the fragment each fail"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-image-git-floor.py --self-test
+
       # Gate 133 — specs/090-stage-write-boundary: the implement stage's
       # write boundary (no-write-paths) is stated in the prompt before the
       # agent's first tool call, classified consistently by one shared
