@@ -274,7 +274,7 @@ MVP = Phase 1 + Phase 2 (T004) + Story 1 (T006–T012): the tier upgrade and its
 
   Detail: After a restart with a new SINCE, the 300-run cap resets but the summary still mixes in the earlier window's runs, so the 200-run verdict and agreement percentages span two windows.
 
-- [ ] Review finding: schema_valid accepts __new__ findings without proposedClass
+- [X] Review finding: schema_valid accepts __new__ findings without proposedClass
 
   A __new__ finding with no proposedClass passes schema_valid, and class_of turns the missing value into an empty string, so unrelated unnamed new classes compare as equal.
 

@@ -81,6 +81,9 @@ def schema_valid(findings, schema):
             return False
         if class_enum is not None and f.get("class") not in class_enum:
             return False
+        if f.get("class") == "__new__" and not normalise(
+                f.get("proposedClass") if isinstance(f.get("proposedClass"), str) else ""):
+            return False
         ev = f.get("evidence")
         if not isinstance(ev, list):
             return False
