@@ -104,9 +104,11 @@ create them now so the stubs' documentation stays true):
 | `WING_COMMANDER_IMPLEMENT_MODEL` | `claude-sonnet-5-5` | Model for implement/converge; set `claude-opus-5-5` for hard specs |
 | `WING_COMMANDER_SPEC_MODEL` | `claude-opus-5-5` | Model for the spec/clarify tier (intake and clarify stages) |
 | `WING_COMMANDER_PLAN_MODEL` | `claude-sonnet-5-5` | Model for the plan/tasks tier (plan, tasks, and rebase stages) |
-| `WING_COMMANDER_SUMMARY_MODEL` | `claude-haiku-4-5` | Model for the triage/summary tier (finalize, cleanup, and implement's progress comments) |
+| `WING_COMMANDER_SUMMARY_MODEL` | `claude-haiku-5-5` | Model for the triage/summary tier (finalize, cleanup, and implement's progress comments) |
 | `WING_COMMANDER_DIAGNOSE_MODEL` | `claude-opus-5-5` | Model for the watchdog's diagnose step. Its own knob, not the summary tier's — diagnose adjudicates multi-signal evidence against a strict schema and needs the headroom |
-| `WING_COMMANDER_IMPLEMENT_ESCALATION_MODEL` | `claude-opus-5-5` | Model for implement's one-tier-up retry after a failed attempt |
+| `WING_COMMANDER_IMPLEMENT_ESCALATION_MODEL` | `claude-opus-5-5` | Model for implement's one-tier-up retry after a failed attempt. A lifecycle labelled `model:haiku` ignores it and escalates to `claude-sonnet-5-5` |
+| `WING_COMMANDER_IMPLEMENT_HAIKU_MAX_TURNS` | `180` | Turn budget for implement on a `model:haiku` lifecycle (label opt-in; `model:opus` wins if both are present) |
+| `WING_COMMANDER_DIAGNOSE_SHADOW_SINCE` | unset | ISO start date (`YYYY-MM-DD`) of the watchdog diagnose Haiku 5.5 shadow trial (spec 110). Unset means off, and no trial job runs. Set, `wing-commander-8-watchdog.yml` turns the shadow on until 60 days after this date or 300 compared runs on the metrics branch, whichever comes first; set a new date to restart. `wing-commander-trial-summary.yml` (dispatch) summarises the same window |
 | `WING_COMMANDER_SPEC_DRAFT_PREFIX` | `spec-draft/` | Branch prefix for the draft spec branch (default `spec-draft/`) |
 | `WING_COMMANDER_SPEC_PREFIX` | `spec/` | Branch prefix for the persistent spec branch (default `spec/`) |
 | `WING_COMMANDER_PLAN_PREFIX` | `plan/` | Branch prefix for the plan branch (default `plan/`) |
@@ -179,6 +181,7 @@ Create these labels (Issues → Labels):
 | `stage:review` | Final PR awaiting human review |
 | `stage:done` | Lifecycle complete |
 | `model:opus` | Opt this spec's implementation into `claude-opus-5-5` |
+| `model:haiku` | Opt this spec's implementation into `claude-haiku-5-5`, escalating to `claude-sonnet-5-5`; turn budget `WING_COMMANDER_IMPLEMENT_HAIKU_MAX_TURNS` (default 180). `model:opus` wins when both are present |
 | `disposition:confirmed` | **Watchdog precision.** A maintainer applying this to a `pipeline-defect` issue records that the finding was genuine |
 | `disposition:false-positive` | The counterpart: the watchdog's finding was not a real defect |
 | `disposition:duplicate` | Applied by the board loop (`board-loop.yml`) when it files a spec proposal, to the originating issue it closes as a duplicate of that proposal — re-admitted only by a maintainer reopening it once the linked proposal has closed (FR-006), never by label removal alone |
@@ -240,7 +243,7 @@ gh label create board:owned                 --color 0E8A16 --description "Board 
 - Model usage draws on your Claude subscription limits. Model tiers are set
   by the `WING_COMMANDER_*_MODEL` variables above (spec/clarify default to
   `claude-opus-5-5`, plan/tasks and implement to `claude-sonnet-5-5`, summaries
-  to `claude-haiku-4-5`), all with bounded `--max-turns`; the implement
+  to `claude-haiku-5-5`), all with bounded `--max-turns`; the implement
   tier's `model:opus` opt-in is where the cost swing is largest.
 - `auto-release.yml`'s own end-to-end run (this repository's, not an
   adopter's) now drives all four human gates unattended

@@ -5761,6 +5761,39 @@ jobs:
       - name: "Gate 119 self-test — a harness or standalone verify-* script under .github/actions/ (outside _shared/), at any depth, is caught; a _shared/ helper is not"
         run: python3 .github/scripts/verify-actions-no-gate-scripts.py --self-test
 
+      # spec 110, FR-006 — the Haiku tier names claude-haiku-5-5; the retired
+      # 4.5 model ID must not reappear in a workflow, composite, the
+      # constitution or the docs. The constitution half covers Principle II
+      # as amended to 2.4.0 by its own PR (#988, tasks T004/T011).
+      - name: "Gate 141 — no pipeline-chosen 4.5 Haiku model ID remains"
+        run: python3 .github/scripts/verify-haiku-tier-model-id.py
+      - name: "Gate 141 self-test — a workflow, docs or constitution hit, and an empty scan root, each fail"
+        run: python3 .github/scripts/verify-haiku-tier-model-id.py --self-test
+
+      # spec 110, FR-008/FR-010 — the diagnose shadow's comparison and its
+      # stop condition are deterministic; each outcome and each bound branch
+      # has a checked-in fixture under .github/scripts/fixtures/.
+      - name: "Gate 142 — compare-diagnose-shadow classifies every trial outcome"
+        run: python3 .github/scripts/verify-compare-diagnose-shadow.py
+      - name: "Gate 143 — trial-bound stops the diagnose shadow at 60 days or 300 compared runs"
+        run: python3 .github/scripts/verify-trial-bound.py
+      - name: "Gate 144 — trial-summary reports meets, misses or sample too small from records alone"
+        run: python3 .github/scripts/verify-trial-summary.py
+      - name: "Gate 145 — the model:haiku implement opt-in keeps the 180-turn default and stays in the implement wrapper"
+        run: python3 .github/scripts/verify-implement-haiku-optin.py
+      - name: "Gate 145 self-test — a drifted budget, a haiku-before-opus order, a stray reader and a wrong escalation each fail"
+        run: python3 .github/scripts/verify-implement-haiku-optin.py --self-test
+
+      # spec 110, FR-009/SC-003 and constitution II (2.4.0) — the watchdog's
+      # diagnose shadow acts on nothing: the diagnose job's continue-on-error
+      # tail, enable-gated, github.token only, read-only tools, bounded under
+      # the job backstop, its prompt byte-equal to Diagnose's, and read by no
+      # acting step or job output.
+      - name: "Gate 146 — the diagnose shadow acts on nothing"
+        run: python3 .github/scripts/verify-diagnose-shadow-acts-on-nothing.py
+      - name: "Gate 146 self-test — an App token, a write tool, an always() gate, a reordered step, a drifted prompt and a wrapper hard-on each fail"
+        run: python3 .github/scripts/verify-diagnose-shadow-acts-on-nothing.py --self-test
+
       # spec 053, SC-007 (Constitution VIII) — the E2E onboarding-element
       # list has exactly one home (.github/scripts/e2e-provisioning/), so a
       # future change cannot paste a second, independently-drifting copy of

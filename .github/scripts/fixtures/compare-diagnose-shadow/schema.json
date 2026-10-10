@@ -1,0 +1,82 @@
+{
+  "type": "object",
+  "properties": {
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "class",
+          "evidence"
+        ],
+        "properties": {
+          "class": {
+            "type": "string",
+            "enum": [
+              "pipeline-defect",
+              "denied-tool",
+              "__new__"
+            ]
+          },
+          "proposedClass": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description": {
+            "type": "string"
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "signalId"
+              ],
+              "properties": {
+                "signalId": {
+                  "type": "string",
+                  "enum": [
+                    "s1",
+                    "s2",
+                    "s3"
+                  ]
+                },
+                "source": {
+                  "type": "string"
+                },
+                "locator": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "normalizedFacts": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "tool": {
+                "type": "string"
+              },
+              "stage": {
+                "type": "string"
+              }
+            }
+          },
+          "severityHint": {
+            "type": "string",
+            "enum": [
+              "minor",
+              "notable",
+              "large"
+            ]
+          }
+        }
+      }
+    }
+  },
+  "required": [
+    "findings"
+  ]
+}
