@@ -165,11 +165,35 @@ and options, recommending one:
 
 ## Effort level
 
-`medium` by default; one `high` pass for high-risk diffs.
+`medium` by default; one `high` pass for high-risk diffs; never `low`.
 
-`code-review`'s effort levels trade precision for recall: higher levels
-report more findings, more of them uncertain. In this loop that trade
-mostly goes the wrong way:
+What each level does, from the `code-review` recipe in Claude Code 2.1.296.
+Re-read it when the recipe changes; the levels differ in more than
+"how many findings".
+
+| Level | Finders | Verify | Default cap | Skips |
+|---|---|---|---|---|
+| `low` | one pass over the diff hunks, no subagents, no full-file reads | none | about 4 | test and fixture hunks (`test/`, `spec/`, `__tests__/`, `*_test.*`, `*.test.*`, `fixtures/`, `testdata/`); flags only runtime bugs visible in the hunk |
+| `medium` | 8 angles (3 correctness, 3 cleanup, altitude, conventions), up to 6 candidates each | one vote, precision | 8 | nothing |
+| `high` | the same 8 angles | one vote, recall-biased | 10 | nothing |
+| `xhigh`, `max` | 10 angles (5 correctness), up to 8 each, plus a sweep for gaps | one vote, recall | 15 | nothing |
+
+- **Never `low`.** It doesn't read `.github/scripts/fixtures/` (60 files
+  the gates run on) or any other fixture hunk, and nothing verifies what it
+  reports.
+- **A pass that reports exactly the cap was cut short.** Record its count
+  as "8 or more" in the ledger and don't apply the count-trend rule to it.
+  `--max-findings all` lifts the cap, but the setting sticks for the
+  owner's own later `/code-review` runs until `--max-findings default`.
+- **Check the reviewer ran the full recipe.** Without the Agent tool the
+  medium and higher recipes fall back to a single pass in one context with
+  no independent verify, and the recipe makes the reviewer say so in its
+  summary. If a pass's report says "single-pass", it was not the review the
+  table describes.
+
+Above `low`, the levels trade precision for recall: higher levels report
+more findings, more of them uncertain. In this loop that trade mostly goes
+the wrong way:
 
 - The loop is already a recall multiplier. Three independent medium passes
   are three samples, and the observed 4 -> 1 -> 0 runs show that they
