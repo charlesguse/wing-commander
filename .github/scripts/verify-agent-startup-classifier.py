@@ -153,6 +153,10 @@ def check_workflow(path):
         runs = "\n".join(str(s.get("run", "")) for s in classify.get("steps") or [])
         if "classify-agent-startup.py" not in runs:
             errors.append("classify-startup must invoke classify-agent-startup.py")
+        if not classify.get("timeout-minutes"):
+            errors.append("classify-startup needs timeout-minutes (a hung gh call would hold the job for 6 hours)")
+        if "job-lookup-error.log" not in runs or "::warning::" not in runs:
+            errors.append("classify-startup must name a failed job lookup or log fetch, not read it as an empty log")
         if not re.search(r"for attempt in[^\n]*\n(?:.*\n)*?.*actions/jobs/\$job_id/logs(?:.*\n)*?.*sleep ", runs):
             errors.append("classify-startup must retry the job-log fetch (a just-finished job's log can 404)")
     if re.search(r"AUTH_MARKERS|failed at authentication", text):
@@ -218,6 +222,9 @@ def self_test():
                 if "uses" in s:
                     s.setdefault("with", {})["anthropic_api_key"] = "x"
 
+        def drop_timeout(jobs):
+            jobs["classify-startup"].pop("timeout-minutes", None)
+
         def drop_cancelled(jobs):
             jobs["classify-startup"]["if"] = "inputs.startup-check"
 
@@ -243,6 +250,7 @@ def self_test():
                 if "run" in s:
                     s["run"] = re.sub(r"for attempt in [^\n]*", "true", s["run"])
 
+        expect("no timeout", mutated(drop_timeout), "timeout-minutes")
         expect("no prompt", mutated(drop_prompt), "needs a prompt")
         expect("no allowed_bots", mutated(drop_bots), "allowed_bots")
         expect("always()", mutated(use_always), "always()")

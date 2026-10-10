@@ -137,7 +137,7 @@ jobs:
 
           if ! missing=$(docker run --rm -e REQUIRED_TOOLS="$REQUIRED_TOOLS" \
             --entrypoint sh "$IMAGE" -c \
-            'for t in $REQUIRED_TOOLS; do command -v "$t" >/dev/null 2>&1 || printf " %s" "$t"; done; if command -v git >/dev/null 2>&1; then v=$(git --version 2>/dev/null); n=${v#git version }; maj=${n%%.*}; r=${n#*.}; min=${r%%.*}; case "$maj.$min" in .|*[!0-9.]*|.*|*.) echo "could not parse git version from \"$v\"" >&2; exit 1;; esac; if [ "$maj" -lt 2 ] || { [ "$maj" -eq 2 ] && [ "$min" -lt 38 ]; }; then echo "git ${n%% *} is older than the 2.38 minimum" >&2; exit 1; fi; fi' \
+            'for t in $REQUIRED_TOOLS; do command -v "$t" >/dev/null 2>&1 || printf " %s" "$t"; done; if command -v git >/dev/null 2>&1; then v=$(git --version 2>/dev/null); n=${v#git version }; case "$n" in *.*) ;; *) n=;; esac; maj=${n%%.*}; r=${n#*.}; min=${r%%.*}; case "$maj.$min" in .|*[!0-9.]*|.*|*.) echo "could not parse git version from \"$v\"" >&2; exit 1;; esac; if [ "$maj" -lt 2 ] || { [ "$maj" -eq 2 ] && [ "$min" -lt 38 ]; }; then echo "git ${n%% *} is older than the 2.38 minimum" >&2; exit 1; fi; fi' \
             2>docker-inspect-error.log); then
             if grep -qE 'is older than the 2\.38 minimum|could not parse git version' docker-inspect-error.log; then
               echo "::error::wing-commander verify-image-prerequisites: $IMAGE failed the git version floor -- $(cat docker-inspect-error.log)${missing:+ (also missing required tool(s):$missing)}"
@@ -258,6 +258,7 @@ jobs:
     permissions:
       actions: read
       contents: read
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
         with:
@@ -271,18 +272,24 @@ jobs:
         run: |
           : > startup-agent.log
           if [ "$AGENT_RESULT" != "skipped" ]; then
+            # A lookup failure is named (e.g. a caller that did not grant
+            # actions: read), not left to read as an empty log.
             job_id=$(gh api "repos/$REPO/actions/runs/$RUN_ID/jobs" --paginate \
-              --jq '.jobs[] | select(.name | endswith("startup-agent")) | .id' | head -n 1) || job_id=""
+              --jq '.jobs[] | select(.name | endswith("startup-agent")) | .id' 2>job-lookup-error.log | head -n 1) || job_id=""
+            if [ -z "$job_id" ]; then
+              echo "::warning::wing-commander classify-startup: could not find the startup-agent job in run $RUN_ID -- $(cat job-lookup-error.log 2>/dev/null)"
+            fi
             # A just-finished job's log can 404 until it is archived; retry
             # before falling back to the empty (unclassified) log.
             if [ -n "$job_id" ]; then
               for attempt in 1 2 3 4 5 6; do
-                if gh api "repos/$REPO/actions/jobs/$job_id/logs" > startup-agent.log && [ -s startup-agent.log ]; then
+                if gh api "repos/$REPO/actions/jobs/$job_id/logs" > startup-agent.log 2>job-log-error.log && [ -s startup-agent.log ]; then
                   break
                 fi
                 : > startup-agent.log
                 [ "$attempt" -eq 6 ] || sleep 10
               done
+              [ -s startup-agent.log ] || echo "::warning::wing-commander classify-startup: could not fetch job $job_id's log -- $(cat job-log-error.log 2>/dev/null)"
             fi
           fi
           rc=0

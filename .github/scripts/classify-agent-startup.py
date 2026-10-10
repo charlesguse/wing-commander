@@ -107,7 +107,10 @@ def classify(text):
                 return _unclassified(
                     "an error appeared before the agent action started "
                     "(job set-up, container start or image pull)", error)
-            if any(m.search(error) for m in AUTH_MARKERS):
+            # Positive evidence needs both: setup finished, then the
+            # credential check failed. An auth-looking error during setup
+            # (a registry or proxy refusing the bun download) is setup's.
+            if setup_done and any(m.search(error) for m in AUTH_MARKERS):
                 return _result(
                     VERDICT_COMPLETED, None, error,
                     "failed at authentication, after setup",

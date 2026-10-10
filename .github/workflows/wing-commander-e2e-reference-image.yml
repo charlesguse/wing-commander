@@ -25,6 +25,11 @@ permissions:
   contents: read
   packages: write
 
+# The one place this image's name is written; the tags, the summary and the
+# start-up check dispatch all read it.
+env:
+  E2E_IMAGE: ghcr.io/charlesguse/wing-commander-e2e-image
+
 jobs:
   build-and-publish:
     runs-on: ubuntu-latest
@@ -48,8 +53,8 @@ jobs:
           context: .github/docker/e2e-reference-image
           push: true
           tags: |
-            ghcr.io/charlesguse/wing-commander-e2e-image:latest
-            ghcr.io/charlesguse/wing-commander-e2e-image:${{ github.sha }}
+            ${{ env.E2E_IMAGE }}:latest
+            ${{ env.E2E_IMAGE }}:${{ github.sha }}
 
       - name: Print the published digest
         env:
@@ -61,7 +66,7 @@ jobs:
             echo ""
             echo "Digest: \`${DIGEST}\`"
             echo ""
-            echo "Copy \`ghcr.io/charlesguse/wing-commander-e2e-image@${DIGEST}\` into the"
+            echo "Copy \`${E2E_IMAGE}@${DIGEST}\` into the"
             echo "end-to-end test repository's \`WING_COMMANDER_CONTAINER_IMAGE\` variable"
             echo "(docs/setup.md) -- this workflow does not write it for you."
           } >> "$GITHUB_STEP_SUMMARY"
@@ -86,4 +91,4 @@ jobs:
         run: |
           set -euo pipefail
           gh workflow run wing-commander-private-image-dogfood.yml \
-            -f "container-image=ghcr.io/charlesguse/wing-commander-e2e-image@${DIGEST}"
+            -f "container-image=${E2E_IMAGE}@${DIGEST}"

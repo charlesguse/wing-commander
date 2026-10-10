@@ -1,0 +1,1 @@
+{"verdict": "setup-failed", "step": "Run oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6", "error_contains": "authentication failed", "note": "synthetic: an auth-looking error before setup finished is setup's, not the credential check"}
