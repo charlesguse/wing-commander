@@ -208,6 +208,20 @@ WHAT IT CHECKS
    must be one the gather step writes, and the prompt must not tell the
    agent to run `gh`.
 
+6. gh-rationale single home (spec 101 FR-017/SC-007, research D6). Why a
+   read-only agent holds no `gh` grant at all is written out in full in
+   one place, GH_RATIONALE_HOME (docs/agent-friendly-workflows.md,
+   "Read-only agents and gh"). Its distinguishing sentence -- the rule is
+   total, not a per-subcommand list (GH_RATIONALE_SENTENCE_RE) -- must
+   occur exactly once there and in no other live file, and any other live
+   file that restates the rationale's core claim (`gh` reaches remote
+   writes, GH_RATIONALE_CLAIM_RE) must name GH_RATIONALE_HOME, so it is a
+   pointer and not a second copy. Live files are the text files under the
+   repository root outside .git, except a spec's own documents
+   (`specs/NNN-*/` outside `contracts/`), which are historical records;
+   contracts are live and are scanned. This file is skipped: its check 4b
+   message has to name the claim it points at.
+
 `--self-test`: synthetic tempdir fixtures prove each check can fail (a
 board-loop tool-args grant carrying `gh issue view`, a second file
 re-implementing all three trust-filter fragments, and spec-request
@@ -1046,6 +1060,87 @@ def check_single_home(path, exempt):
     return []
 
 
+GH_RATIONALE_HOME = "docs/agent-friendly-workflows.md"
+GH_RATIONALE_HEADING = "**Read-only agents and gh**"
+# Written as a pattern so this file does not itself carry the sentence.
+GH_RATIONALE_SENTENCE_RE = re.compile(
+    r"total\s+rather\s+than\s+per-subcommand", re.IGNORECASE)
+GH_RATIONALE_CLAIM_RE = re.compile(r"reach(?:es)?\s+remote\s+writes",
+                                   re.IGNORECASE)
+RATIONALE_SCAN_EXTS = (".md", ".yml", ".yaml", ".py", ".sh", ".json",
+                       ".txt", ".toml")
+RATIONALE_SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv"}
+SPEC_DIR_RE = re.compile(r"^specs/[^/]+/(?!contracts/)")
+
+
+def _live_text_files(root):
+    """Repository-relative paths of the live text files under `root` that
+    check 6 reads (see its docstring entry for what is not live)."""
+    out = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(d for d in dirnames
+                             if d not in RATIONALE_SKIP_DIRS)
+        for name in filenames:
+            if not name.endswith(RATIONALE_SCAN_EXTS):
+                continue
+            rel = os.path.relpath(os.path.join(dirpath, name), root)
+            rel = rel.replace(os.sep, "/")
+            if SPEC_DIR_RE.match(rel):
+                continue
+            out.append(rel)
+    return sorted(out)
+
+
+def check_gh_rationale_home(root=".", self_path=None):
+    """Gate 93 check 6 (spec 101 FR-017): the `gh` rationale's
+    distinguishing sentence lives only in GH_RATIONALE_HOME, exactly once,
+    and every other live file restating its core claim names that home."""
+    self_path = os.path.normpath(self_path or os.path.relpath(
+        os.path.abspath(__file__), os.path.abspath(root)))
+    problems = []
+    home = os.path.join(root, GH_RATIONALE_HOME)
+    try:
+        with open(home, encoding="utf-8") as fh:
+            home_text = fh.read()
+    except (OSError, UnicodeDecodeError) as exc:
+        return [f"{GH_RATIONALE_HOME}: could not read ({exc}) -- check 6 "
+                f"has no canonical home for the `gh` rationale (spec 101 "
+                f"FR-017)."]
+    home_hits = len(GH_RATIONALE_SENTENCE_RE.findall(home_text))
+    if home_hits != 1:
+        problems.append(
+            f"{GH_RATIONALE_HOME}: carries the `gh` rationale's "
+            f"distinguishing sentence (the rule is total, not "
+            f"per-subcommand) {home_hits} time(s); it must carry it exactly "
+            f"once, under {GH_RATIONALE_HEADING} (spec 101 FR-017).")
+    if GH_RATIONALE_HEADING not in home_text:
+        problems.append(
+            f"{GH_RATIONALE_HOME}: has no {GH_RATIONALE_HEADING} entry, the "
+            f"section every pointer to the `gh` rationale names (spec 101 "
+            f"FR-017).")
+    for rel in _live_text_files(root):
+        if rel == GH_RATIONALE_HOME or os.path.normpath(rel) == self_path:
+            continue
+        try:
+            with open(os.path.join(root, rel), encoding="utf-8") as fh:
+                text = fh.read()
+        except (OSError, UnicodeDecodeError):
+            continue
+        if GH_RATIONALE_SENTENCE_RE.search(text):
+            problems.append(
+                f"{rel}: restates the `gh` rationale's distinguishing "
+                f"sentence (the rule is total, not per-subcommand), which "
+                f"lives only in {GH_RATIONALE_HOME}. Point at it instead "
+                f"(spec 101 FR-017).")
+        elif (GH_RATIONALE_CLAIM_RE.search(text)
+                and GH_RATIONALE_HOME not in text):
+            problems.append(
+                f"{rel}: states that `gh` reaches remote writes without "
+                f"naming {GH_RATIONALE_HOME}, the rationale's one home; "
+                f"add the pointer (spec 101 FR-017).")
+    return problems
+
+
 SPEC_REQUEST_BUILDER = ".github/scripts/board_spec_request_body.py"
 
 # spec 108 (contracts/gate-93-check-3-delta.md, FR-012): the same
@@ -1477,6 +1572,7 @@ def check_repo():
     problems.extend(check_reviewer_staged_inputs(BOARD_LOOP))
     for path in gather_scannable_files():
         problems.extend(check_single_home(path, ISSUE_CONTEXT_ACTION))
+    problems.extend(check_gh_rationale_home())
     return problems
 
 
@@ -2995,6 +3091,74 @@ def _mutation_check_reviewer_staging():
     return failures
 
 
+_RATIONALE_POINTER = (
+    "A read-only agent holds no `gh` grant: `gh` reaches remote writes. See\n"
+    "`docs/agent-friendly-workflows.md` (\"Read-only agents and gh\").\n")
+_RATIONALE_SENTENCE = "so the rule is total\nrather than per-subcommand.\n"
+
+
+def _self_test_gh_rationale_home(tmpdir):
+    """Check 6 (spec 101 FR-017): a tree built from the real canonical doc
+    passes, and each way of breaking the single home is caught."""
+    failures = []
+    try:
+        with open(GH_RATIONALE_HOME, encoding="utf-8") as fh:
+            real_home = fh.read()
+    except OSError as exc:
+        return [f"check 6 self-test: cannot read {GH_RATIONALE_HOME} ({exc})"]
+    # Spelled as f-strings so verify-gate-wiring.py does not read these
+    # made-up paths as documents this gate opens.
+    spec = "900-x"
+    contract = f"specs/{spec}/contracts/c.md"
+    base = {
+        GH_RATIONALE_HOME: real_home,
+        contract: _RATIONALE_POINTER,
+        # A spec's own documents are historical and not scanned.
+        f"specs/{spec}/spec.md": _RATIONALE_SENTENCE,
+        f"specs/{spec}/tasks.md": "`gh` reaches remote writes.\n",
+    }
+    home_without = GH_RATIONALE_SENTENCE_RE.sub("per-verb", real_home)
+    cases = (
+        ("well-formed tree", {}, None),
+        ("the sentence copied into a live contract",
+         {contract: _RATIONALE_POINTER + _RATIONALE_SENTENCE}, contract),
+        ("the sentence copied into a workflow comment",
+         {".github/workflows/w.yml": "# " + _RATIONALE_SENTENCE},
+         ".github/workflows/w.yml"),
+        ("the claim restated with no pointer",
+         {"README.md": "`gh` reaches remote writes, so no grant.\n"},
+         "README.md"),
+        ("the sentence removed from its home",
+         {GH_RATIONALE_HOME: home_without}, "0 time(s)"),
+        ("the sentence written twice in its home",
+         {GH_RATIONALE_HOME: real_home + _RATIONALE_SENTENCE}, "2 time(s)"),
+        ("the home's heading renamed",
+         {GH_RATIONALE_HOME: real_home.replace(GH_RATIONALE_HEADING,
+                                               "**gh**")},
+         GH_RATIONALE_HEADING),
+        ("the home missing", {GH_RATIONALE_HOME: None}, "could not read"),
+    )
+    for n, (desc, edits, expect) in enumerate(cases):
+        root = os.path.join(tmpdir, f"rationale-{n}")
+        for rel, text in {**base, **edits}.items():
+            if text is None:
+                continue
+            path = os.path.join(root, rel)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(text)
+        problems = check_gh_rationale_home(root, self_path="-")
+        if expect is None and problems:
+            failures.append(f"check 6 fixture ({desc}) was flagged: "
+                            f"{problems!r}")
+        elif expect is not None and not any(expect in p for p in problems):
+            failures.append(f"check 6 fixture ({desc}) was not caught: "
+                            f"{problems!r}")
+        elif expect is not None:
+            print(f"note: check 6 fixture ({desc}) caught: {problems}")
+    return failures
+
+
 def run_self_test():
     failures = []
 
@@ -3119,6 +3283,7 @@ def run_self_test():
 
         failures.extend(_self_test_spec_request_sites(tmpdir))
         failures.extend(_self_test_read_only_git(tmpdir))
+        failures.extend(_self_test_gh_rationale_home(tmpdir))
     failures.extend(_self_test_builder())
     failures.extend(_mutation_check_builder())
     failures.extend(_mutation_check_spec_request_sites())
@@ -3160,7 +3325,8 @@ def main():
           "and Edit denied, and so do the read-only agents of every other "
           "workflow (by the pipeline-checkout path in a published stage). "
           "The reviewer prompt names only files its "
-          "gather step writes.")
+          "gather step writes, and the read-only `gh` rationale has one "
+          "home, docs/agent-friendly-workflows.md.")
 
     if not self_test:
         return 0
