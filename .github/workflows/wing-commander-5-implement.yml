@@ -75,6 +75,9 @@ jobs:
             tier="claude-haiku-5-5"
             escalation="claude-sonnet-5-5"
             max_turns="${HAIKU_MAX_TURNS:-180}"
+            case "$max_turns" in
+              ''|*[!0-9]*|0|0[0-9]*) max_turns=180 ;;
+            esac
           fi
           {
             echo "tier=$tier"

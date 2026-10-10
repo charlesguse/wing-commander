@@ -20,7 +20,8 @@ from pathlib import Path
 WRAPPER = ".github/workflows/wing-commander-5-implement.yml"
 STAGE = ".github/workflows/implement.yml"
 OTHERS = (".github/workflows/wing-commander-9-pr-conversation.yml",
-          ".github/workflows/board-loop.yml")
+          ".github/workflows/board-loop.yml",
+          ".github/workflows/pr-conversation.yml")
 
 
 def check(texts):
@@ -46,7 +47,9 @@ def check(texts):
     if 'escalation="claude-sonnet-5-5"' not in wrapper:
         failures.append("the Haiku branch must escalate to claude-sonnet-5-5")
     for rel in OTHERS:
-        if "model:haiku" in texts.get(rel, ""):
+        if rel not in texts:
+            failures.append(f"{rel} missing; the confinement check cannot run")
+        elif "model:haiku" in texts[rel]:
             failures.append(f"{rel} must not read the model:haiku label")
     return failures
 
@@ -61,12 +64,15 @@ GOOD_STAGE = "      max-turns:\n        type: number\n        default: 180\n"
 
 def self_test():
     base = {WRAPPER: GOOD_WRAPPER, STAGE: GOOD_STAGE,
-            OTHERS[0]: "model:opus\n", OTHERS[1]: "model:opus\n"}
+            OTHERS[0]: "model:opus\n", OTHERS[1]: "model:opus\n",
+            OTHERS[2]: "model:opus\n"}
     ok = not check(base)
     bad = [
         dict(base, **{STAGE: GOOD_STAGE.replace("180", "100")}),
         dict(base, **{WRAPPER: GOOD_WRAPPER.replace("model:opus", "model:zzz")}),
         dict(base, **{OTHERS[1]: "model:opus model:haiku\n"}),
+        dict(base, **{OTHERS[2]: "model:haiku\n"}),
+        {k: v for k, v in base.items() if k != OTHERS[1]},
         dict(base, **{WRAPPER: GOOD_WRAPPER.replace("sonnet", "opus")}),
     ]
     for i, texts in enumerate(bad):

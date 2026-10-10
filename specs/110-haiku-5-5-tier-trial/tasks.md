@@ -150,7 +150,7 @@ MVP = Phase 1 + Phase 2 (T004) + Story 1 (T006–T012): the tier upgrade and its
 
 ## Review Gate Round 2 Findings
 
-- [ ] Review finding: Comparator crashes on unhashable baseline class/signalId
+- [X] Review finding: Comparator crashes on unhashable baseline class/signalId
 
   compare-diagnose-shadow.py builds sets/frozensets from baseline fields, so a list- or dict-valued class or signalId raises an uncaught TypeError and exits 1, which the trial-record fallback records as a shadow error with baseline_verdict null.
 
@@ -158,13 +158,13 @@ MVP = Phase 1 + Phase 2 (T004) + Story 1 (T006–T012): the tier upgrade and its
 
   Detail: Only non-dict findings and non-list evidence were guarded in the last round; unhashable values remain unguarded.
 
-- [ ] Review finding: Haiku opt-in gate passes vacuously on missing files and omits pr-conversation.yml
+- [X] Review finding: Haiku opt-in gate passes vacuously on missing files and omits pr-conversation.yml
 
   verify-implement-haiku-optin.py reads only files that exist and uses texts.get(rel, ''), so a renamed board-loop.yml is an empty string and the gate stays green; the reusable pr-conversation.yml stage is not in OTHERS, so a model:haiku reader added there would go undetected.
 
   - .github/scripts/verify-implement-haiku-optin.py
 
-- [ ] Review finding: HAIKU_MAX_TURNS is passed to fromJSON unvalidated
+- [X] Review finding: HAIKU_MAX_TURNS is passed to fromJSON unvalidated
 
   The tier step writes WING_COMMANDER_IMPLEMENT_HAIKU_MAX_TURNS straight to max-turns, which is read via fromJSON(); a non-numeric value fails expression evaluation and stops the implement job, and 0 or a negative value is accepted as a budget.
 
@@ -177,13 +177,13 @@ MVP = Phase 1 + Phase 2 (T004) + Story 1 (T006–T012): the tier upgrade and its
   - .github/actions/wing-commander-trial-bound/action.yml
   - .github/actions/wing-commander-trial-record/action.yml
 
-- [ ] Review finding: trial-bound accepts a future SINCE date and exits 1 on a malformed record
+- [X] Review finding: trial-bound accepts a future SINCE date and exits 1 on a malformed record
 
   trial-bound.py has no today < since check, so a typo'd future SINCE leaves the shadow unbounded; a torn records.jsonl line raises SystemExit with a string (exit 1) instead of the documented exit 2, and the composite treats any non-zero exit as false, so the trial stops silently.
 
   - .github/actions/_shared/trial-bound.py
 
-- [ ] Review finding: trial-summary misclassifies lifecycles by earliest record and over-counts escalations
+- [X] Review finding: trial-summary misclassifies lifecycles by earliest record and over-counts escalations
 
   trial-summary.py buckets a lifecycle by recs[0] (a record missing emitted_at sorts first), and counts escalations against recs[0].model, so a Haiku, Sonnet, Haiku sequence is counted as 2 escalations and Opus-escalated lifecycles can enter the median Sonnet baseline. Criterion (b) sums class_shared/class_agree over all compared runs, so the bar depends on which outcomes populate those fields.
 

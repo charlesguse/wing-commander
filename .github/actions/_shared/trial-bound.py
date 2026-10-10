@@ -38,7 +38,9 @@ def compared_count(path, since):
             try:
                 rec = json.loads(line)
             except ValueError as exc:
-                raise SystemExit(f"trial-bound: {path}:{lineno}: {exc}") from exc
+                raise ValueError(f"{path}:{lineno}: {exc}") from exc
+            if not isinstance(rec, dict):
+                raise ValueError(f"{path}:{lineno}: record is not an object")
             # The metrics record carries run_label at the top level; the
             # contract's run.run_label spelling is accepted too.
             label = rec.get("run_label") or (rec.get("run") or {}).get("run_label")
@@ -61,7 +63,9 @@ def decide(since_text, records, today):
     if not since_text or not since_text.strip():
         return False
     since = parse_date(since_text)
-    if today >= since + datetime.timedelta(days=WINDOW_DAYS):
+    if since > today:
+        raise ValueError(f"SINCE {since} is in the future")
+    if today >= since +datetime.timedelta(days=WINDOW_DAYS):
         return False
     return compared_count(records, since) < MAX_COMPARED
 
