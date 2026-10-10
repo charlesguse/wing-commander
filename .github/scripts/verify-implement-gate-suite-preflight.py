@@ -32,10 +32,11 @@ Spec 095 moved the cycle leg's preflight and suite out of the implement
 job, which holds the App token, into the credential-free
 gate-suite-implement-cycle job (GATE_JOB). The implement job reads that
 job's preflight outputs and its verdict (through wing-commander-gate-verdict,
-fail-closed) and keeps the summary step. An output the gate job never set
-(it failed or was cancelled) must read as "suite present and ready", so the
-summary falls through to the verdict, which is then absent -- red, never a
-skip and never green. The retry leg is unchanged (its containment is a
+fail-closed) and keeps the summary step. The verdict is read exactly when
+the gate job said the suite was ready (it was started), so a suite that
+crashed or hung reads red; outputs the gate job never set (it ended before
+its preflight) read as a named missing prerequisite -- a skip, never green
+and never a red suite the agent would chase. The retry leg is unchanged (its containment is a
 recorded deferral, wc_gate_suite_sites.EXEMPT_GATE_SUITE_SITES).
 
 This harness EXECUTES the shipped preflight, summary and cycle-outcome steps
@@ -307,15 +308,20 @@ def main():
     check("(cycle) the preflight no longer runs in the implement job, beside the App token",
           "Preflight: gate-suite prerequisites (cycle)" not in by_name, "")
     outs = gate_job.get("outputs") or {}
-    check("(cycle) {0} exports the preflight's script-exists, ready and missing".format(GATE_JOB),
-          all(outs.get(k) == OPEN + "steps.gate-suite-preflight-cycle.outputs." + k + CLOSE
-              for k in ("script-exists", "ready", "missing")), "outputs={0}".format(outs))
+    piped = "steps.pipeline-ref.outcome == 'success' && steps.gate-suite-preflight-cycle.outputs."
+    check("(cycle) {0} exports the preflight's script-exists, and ready/missing only "
+          "with the pipeline checked out".format(GATE_JOB),
+          outs.get("script-exists") == OPEN + "steps.gate-suite-preflight-cycle.outputs.script-exists" + CLOSE
+          and str(outs.get("ready", "")).startswith(OPEN + piped + "ready || 'false'")
+          and str(outs.get("missing", "")).startswith(OPEN + piped + "missing || '"),
+          "outputs={0}".format(outs))
     contained = [s for s in gate_job.get("steps") or []
                  if "wing-commander-contained-gate-suite" in str((s or {}).get("uses", ""))]
     check("(cycle) {0} runs the suite through the contained composite, only when ready".format(
               GATE_JOB),
           len(contained) == 1
-          and str(contained[0].get("if", "")) == "steps.gate-suite-preflight-cycle.outputs.ready == 'true'"
+          and str(contained[0].get("if", "")) == ("steps.gate-suite-preflight-cycle.outputs.ready == 'true'"
+                                                 " && steps.pipeline-ref.outcome == 'success'")
           and (contained[0].get("with") or {}).get("site") == "implement-cycle",
           "steps={0}".format(contained))
     # A gate job that cannot resolve the pipeline or install actionlint must
@@ -333,10 +339,9 @@ def main():
           and (reader.get("with") or {}).get("site") == "implement-cycle"
           and (reader.get("with") or {}).get("expected-head-sha") == OPEN + "steps.base.outputs.base-sha" + CLOSE,
           "step={0}".format(reader))
-    check("(cycle) the verdict read is skipped only on the gate job's explicit no-suite or not-ready",
-          NEEDS + "script-exists != 'false'" in rif and NEEDS + "ready != 'false'" in rif
-          and NEEDS + "ready == 'true'" not in rif
-          and NEEDS + "script-exists == 'true'" not in rif, "if={0}".format(rif))
+    check("(cycle) the verdict is read exactly when the gate job started the suite (ready == 'true')",
+          rif.endswith("&& " + NEEDS + "ready == 'true'") and "!= 'false'" not in rif,
+          "if={0}".format(rif))
     for leg in LEGS:
         names = {"preflight": "Preflight: gate-suite prerequisites ({0})".format(leg),
                  "summary": "Summarize gate-suite outcome ({0})".format(leg),
@@ -355,8 +360,9 @@ def main():
             # An output the gate job never set reads as present and ready,
             # so the summary falls through to the (absent, red) verdict.
             want = {"SCRIPT_EXISTS": OPEN + NEEDS + "script-exists || 'true'" + CLOSE,
-                    "READY": OPEN + NEEDS + "ready || 'true'" + CLOSE,
-                    "MISSING": OPEN + NEEDS + "missing" + CLOSE}
+                    "READY": OPEN + NEEDS + "ready || 'false'" + CLOSE,
+                    "MISSING": OPEN + NEEDS + "missing || 'the gate-suite-implement-cycle job "
+                               "(it ended before its preflight ran)'" + CLOSE}
         else:
             want = {k: OPEN + "steps.gate-suite-preflight-{0}.outputs.{1}".format(leg, v) + CLOSE
                     for k, v in (("SCRIPT_EXISTS", "script-exists"), ("READY", "ready"),

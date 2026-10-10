@@ -14,7 +14,11 @@
 #     so a planted pre-push hook or fsmonitor command cannot run.
 # The entries are APPENDED after any GIT_CONFIG_KEY_n the caller already
 # set (a container job's safe.directory entry -- see clarify.yml), never
-# written over them.
+# written over them. Global and system config are dropped whole, by design
+# (spec 095 FR-018): a proxy, CA bundle or credential helper there is just
+# what a planted value would use to steer the token. A self-hosted runner
+# that needs one supplies it through the environment (HTTPS_PROXY,
+# GIT_SSL_CAINFO) or a GIT_CONFIG_KEY_n entry of its own.
 #
 # What the environment cannot do: neutralise a `url.<base>.insteadOf` or a
 # `remote.*.pushurl` in the repository's own .git/config (local config

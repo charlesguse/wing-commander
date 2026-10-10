@@ -58,7 +58,7 @@ runs:
         bash "$GITHUB_ACTION_PATH/../_shared/contained-gate-suite.sh" "$SITE" "$BUNDLE_DIR" "$TRUSTED_SHA" "$VERDICT_OUT" "$HEAD_REF"
     - name: Upload gate verdict
       if: ${{ !cancelled() }}
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v6
       with:
         name: wc-gate-verdict-${{ inputs.site }}
         path: ${{ runner.temp }}/wc-gate-verdict.json

@@ -3010,6 +3010,32 @@ jobs:
           site: board-fix
           base-sha: ${{ steps.base.outputs.base-sha }}
 
+      # specs/097-recorded-stop-point FR-015/SC-008: fix records what the
+      # item's fix did, but when this job fails fix never runs, so the
+      # failure is recorded here -- under the same artifact name, which fix
+      # then never uploads in this run.
+      - name: Record run outcome (fix, fixer job failed)
+        if: failure()
+        continue-on-error: true
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-metrics-summary
+        with:
+          transcript-path: ${{ runner.temp }}/wing-commander-no-transcript.json
+          model: ''
+          stage: board-loop
+          run-label: 'fix: fixer job failed'
+          record-path: ${{ runner.temp }}/wing-commander-metrics-record-fix-outcome.json
+          spec-identity-is-own: 'false'
+
+      - name: Upload metrics record (fix outcome, fixer job failed)
+        if: failure()
+        continue-on-error: true
+        uses: actions/upload-artifact@v6
+        with:
+          name: metrics-record-fix-outcome
+          path: ${{ runner.temp }}/wing-commander-metrics-record-fix-outcome.json
+          if-no-files-found: ignore
+          retention-days: 90
+
   # spec 095 (FR-001/FR-004..FR-008): the one job that executes the
   # fixer's tree -- run-local-gates.py and every verify-*.py the branch
   # carries -- does so here, holding `contents: read` and no App token, on

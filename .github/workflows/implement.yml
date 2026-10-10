@@ -518,10 +518,14 @@ jobs:
         WC_GATE_SUITE_DOCKERLESS: "true"
     permissions:
       contents: read
+    # ready is 'true' only when the suite can actually run here: the
+    # preflight found it and its prerequisites AND the pipeline (its
+    # composite and verdict writer) was checked out. A pipeline this job
+    # could not resolve reads as a named missing prerequisite.
     outputs:
       script-exists: ${{ steps.gate-suite-preflight-cycle.outputs.script-exists }}
-      ready: ${{ steps.gate-suite-preflight-cycle.outputs.ready }}
-      missing: ${{ steps.gate-suite-preflight-cycle.outputs.missing }}
+      ready: ${{ steps.pipeline-ref.outcome == 'success' && steps.gate-suite-preflight-cycle.outputs.ready || 'false' }}
+      missing: ${{ steps.pipeline-ref.outcome == 'success' && steps.gate-suite-preflight-cycle.outputs.missing || 'the pipeline checkout (github.job_workflow_sha is empty and this job holds no id-token; set the pipeline-ref input)' }}
     steps:
       # The trusted commit, full history (so origin/<spec branch> is here),
       # and no credential left in .git/config afterwards.
@@ -535,9 +539,10 @@ jobs:
       # This job holds no id-token, so the OIDC fallback below has nothing to
       # read: with github.job_workflow_sha empty and no pipeline-ref input it
       # fails. continue-on-error, and every pipeline step below is skipped or
-      # tolerated, so the preflight reports the suite not ready (actionlint is
-      # never installed) -- an honest skip in the agent's prompt, never a red
-      # suite read off a verdict that was never written.
+      # tolerated, so this job reports the suite not ready, naming the
+      # pipeline checkout as the missing prerequisite -- an honest skip in the
+      # agent's prompt, never a red suite read off a verdict that was never
+      # written.
       - name: Resolve pipeline ref
         id: pipeline-ref
         continue-on-error: true
@@ -632,7 +637,7 @@ jobs:
           fi
 
       - name: Run the cycle-start gate suite (credential-free)
-        if: steps.gate-suite-preflight-cycle.outputs.ready == 'true'
+        if: steps.gate-suite-preflight-cycle.outputs.ready == 'true' && steps.pipeline-ref.outcome == 'success'
         timeout-minutes: 10
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-contained-gate-suite
         with:
@@ -1049,17 +1054,17 @@ jobs:
       # implement agent to run, run deterministically ahead of the agent step
       # so its outcome is known before the agent starts -- in
       # gate-suite-implement-cycle, holding no credential (spec 095), not
-      # here beside the App token. Its verdict is read fail-closed: an
-      # absent, malformed or mis-bound verdict is outcome=fail, which the
-      # summary below reports to the agent as red at cycle start, never as
-      # green. Skipped, not failed, only when that job's preflight said the
-      # repository has no suite or a prerequisite is missing; a job that
-      # never said either (it failed or was cancelled) is read, and reads
-      # as red. A red suite informs the agent, it does not end the job (the
-      # #345 misdiagnosis pattern).
+      # here beside the App token. Read only when that job said the suite
+      # was ready, i.e. it was started: from then on the verdict is read
+      # fail-closed, so a suite that crashed, hung or uploaded nothing is
+      # outcome=fail, red at cycle start, never green. A job that ended
+      # before its preflight (an infrastructure failure, not the suite's)
+      # reaches the summary below as a named missing prerequisite -- a
+      # skip, not a red suite the agent would chase. A red suite informs
+      # the agent, it does not end the job (the #345 misdiagnosis pattern).
       - name: Read the cycle-start gate suite's verdict (cycle)
         id: gate-suite-cycle
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true' && needs.gate-suite-implement-cycle.outputs.script-exists != 'false' && needs.gate-suite-implement-cycle.outputs.ready != 'false'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true' && needs.gate-suite-implement-cycle.outputs.ready == 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-gate-verdict
         with:
           site: implement-cycle
@@ -1080,11 +1085,12 @@ jobs:
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true'
         env:
           # spec 095: from gate-suite-implement-cycle -- see "Read the
-          # cycle-start gate suite's verdict (cycle)" above for why an empty
-          # output reads as present and ready.
+          # cycle-start gate suite's verdict (cycle)" above. An empty output
+          # (that job ended before its preflight) reads as a suite that
+          # exists but did not run, naming why.
           SCRIPT_EXISTS: ${{ needs.gate-suite-implement-cycle.outputs.script-exists || 'true' }}
-          READY: ${{ needs.gate-suite-implement-cycle.outputs.ready || 'true' }}
-          MISSING: ${{ needs.gate-suite-implement-cycle.outputs.missing }}
+          READY: ${{ needs.gate-suite-implement-cycle.outputs.ready || 'false' }}
+          MISSING: ${{ needs.gate-suite-implement-cycle.outputs.missing || 'the gate-suite-implement-cycle job (it ended before its preflight ran)' }}
           OUTCOME: ${{ steps.gate-suite-cycle.outputs.outcome }}
           FIRST_FAILURE: ${{ steps.gate-suite-cycle.outputs.first-failure }}
         run: |

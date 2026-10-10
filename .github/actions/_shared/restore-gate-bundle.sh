@@ -29,12 +29,15 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$here/git-push-hardening.sh"
 wc_harden_git_env
 if ! git bundle verify "$bundle" >/dev/null 2>&1; then
-  echo "::error::restore-gate-bundle: the workspace bundle failed verification"
+  echo "::error::restore-gate-bundle: the workspace bundle failed verification -- a corrupt bundle, or a prerequisite commit (the agent's base) this checkout does not hold. The containment could not be established; nothing is pushed."
   exit 1
 fi
 # The bundle carries one ref, HEAD (build-gate-bundle.sh); a refs/* refspec
 # would match nothing and import no objects.
-git fetch --quiet --no-tags "$bundle" "+HEAD:refs/wc-gate/head"
+if ! git fetch --quiet --no-tags "$bundle" "+HEAD:refs/wc-gate/head"; then
+  echo "::error::restore-gate-bundle: fetching the workspace bundle failed -- the containment could not be established; nothing is pushed."
+  exit 1
+fi
 if ! git cat-file -e "${expected}^{commit}" 2>/dev/null; then
   echo "::error::restore-gate-bundle: the bundle does not hold $expected"
   exit 1

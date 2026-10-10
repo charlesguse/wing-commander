@@ -164,6 +164,24 @@ def checks(shared):
         rc3, rout3, _ = sh(shared, "restore-gate-bundle.sh",
                            [os.path.join(tmp, "nowhere"), head, "b"], clones["publisher"])
         ck("the restore refuses a missing bundle", rc3 != 0, rout3)
+        corrupt = os.path.join(tmp, "corrupt")
+        os.makedirs(corrupt)
+        with open(os.path.join(corrupt, "bundle.git"), "w") as fh:
+            fh.write("not a bundle\n")
+        rc4, rout4, _ = sh(shared, "restore-gate-bundle.sh", [corrupt, head, "b"],
+                           clones["publisher"])
+        ck("a bundle that fails verification is refused with an annotation saying the "
+           "containment could not be established",
+           rc4 != 0 and "::error::" in rout4 and "containment could not be established" in rout4,
+           rout4)
+        # The verdict writer's copy is write-protected before the head is
+        # checked out (static: this harness runs as whatever user CI uses,
+        # root included, for whom a mode bit proves nothing).
+        text = open(os.path.join(shared, "contained-gate-suite.sh"), encoding="utf-8").read()
+        protect = text.find('chmod -R a-w "$trusted_copy"')
+        checkout = text.find("git worktree add")
+        ck("the verdict writer's copy is write-protected before the head is checked out",
+           0 <= protect < checkout, "chmod at {0}, worktree add at {1}".format(protect, checkout))
         verdict_path = os.path.join(tmp, "missing-verdict.json")
         sh(shared, "contained-gate-suite.sh",
            ["board-fix", os.path.join(tmp, "nowhere"), TRUSTED_SHA, verdict_path],
@@ -228,6 +246,11 @@ MUTATIONS = (
     ("the restore stops checking that the bundle holds the reported head",
      [("restore-gate-bundle.sh", 'if ! git cat-file -e "${expected}^{commit}" 2>/dev/null; then',
        "if false; then")]),
+    ("the verdict writer's copy is left writable",
+     [("contained-gate-suite.sh", 'chmod -R a-w "$trusted_copy"', "true")]),
+    ("a bundle that fails verification is refused without saying why",
+     [("restore-gate-bundle.sh", " The containment could not be established; nothing is pushed.\"\n  exit 1\nfi\n# The bundle",
+       "\"\n  exit 1\nfi\n# The bundle")]),
     ("a head with no new commits ships the whole history",
      [("build-gate-bundle.sh", 'git bundle create --quiet "$out_dir/bundle.git" HEAD~1..HEAD HEAD',
        'git bundle create --quiet "$out_dir/bundle.git" HEAD')]),

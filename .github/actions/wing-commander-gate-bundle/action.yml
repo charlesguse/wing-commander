@@ -52,7 +52,7 @@ runs:
         bash "$GITHUB_ACTION_PATH/../_shared/build-gate-bundle.sh" "$SITE" "$BASE_SHA" "$OUT_DIR"
     - name: Upload workspace bundle
       if: inputs.mode != 'restore'
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v6
       with:
         name: wc-gate-bundle-${{ inputs.site }}
         path: ${{ runner.temp }}/wc-gate-bundle-out

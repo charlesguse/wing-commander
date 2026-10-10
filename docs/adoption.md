@@ -851,7 +851,10 @@ things to know before you bind one:
      and cost a prompt per cycle for a job that writes nothing. The
      `implement` job, which acts on the verdict, is bound normally. In a
      repository with no `.github/scripts/run-local-gates.py` it only checks
-     out and reports that there is no suite.
+     out and reports that there is no suite. It holds no `id-token` either,
+     so where `github.job_workflow_sha` comes through empty it cannot find
+     the pipeline commit: set the `pipeline-ref` input, or the cycle-start
+     suite is reported as skipped for that reason.
 
   Counting the jobs that do run:
 

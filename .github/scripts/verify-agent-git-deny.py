@@ -16,8 +16,10 @@ arrive another way.
 WHAT IT CHECKS
 --------------
   1. Each wing-commander-tool-args call whose step-label is in
-     DENY_LABELS carries `Edit(.git/**)` and `Write(.git/**)` in its
-     default-disallowed-tools.
+     DENY_LABELS (board-loop, which takes no adopter override) carries
+     `Edit(.git/**)` and `Write(.git/**)` in its default-disallowed-tools,
+     and each in BOUNDARY_LABELS (pr-conversation, a published stage) passes
+     `.git/` in no-write-paths, which tool-args applies after any override.
   2. implement.yml carries the deny as an ENTRY of spec 090's one
      write-boundary definition, never as a second literal list: the
      `no-write-paths` input's default lists `.git/`; every
@@ -45,8 +47,16 @@ WORKFLOWS = os.path.join(ROOT, ".github", "workflows")
 FIXTURES = os.path.join(HERE, "fixtures", "095-agent-git-deny")
 TOOL_ARGS = "wing-commander-tool-args"
 DENIES = ("Edit(.git/**)", "Write(.git/**)")
+# board-loop is not a published stage: its tool-args calls take no adopter
+# override, so the deny can sit in the defaults.
 DENY_LABELS = {
     "board-loop.yml": ("board-loop.fixer", "board-loop.review-fixup"),
+}
+# pr-conversation is published: an adopter's disallowed-tools-override
+# replaces the defaults wholesale, and an extra-allowed-tools entry is
+# subtracted from them, so its deny goes through no-write-paths, which
+# tool-args appends after both (code review of #990).
+BOUNDARY_LABELS = {
     "pr-conversation.yml": ("pr-conversation.act", "pr-conversation.act.fold"),
 }
 IMPLEMENT = "implement.yml"
@@ -83,6 +93,27 @@ def deny_problems(doc, name, labels):
                 problems.append("{0}: {1} does not deny {2} in default-disallowed-tools -- the "
                                 "agent could plant a git hook or config (FR-018)".format(
                                     name, label, deny))
+    for label in labels:
+        if label not in seen:
+            problems.append("{0}: no {1} call labelled {2!r} -- the covered agent moved out of "
+                            "view".format(name, TOOL_ARGS, label))
+    return problems
+
+
+def boundary_problems(doc, name, labels):
+    problems = []
+    seen = set()
+    for _job, step in tool_args_steps(doc):
+        with_ = step.get("with") or {}
+        label = str(with_.get("step-label", ""))
+        if label not in labels:
+            continue
+        seen.add(label)
+        entries = [e if e.endswith("/") else e + "/" for e in _entries(with_.get("no-write-paths"))]
+        if GIT_ENTRY not in entries:
+            problems.append("{0}: {1} does not carry {2} in no-write-paths -- an adopter's "
+                            "disallowed-tools-override or extra-allowed-tools could reopen "
+                            ".git/** (FR-018)".format(name, label, GIT_ENTRY))
     for label in labels:
         if label not in seen:
             problems.append("{0}: no {1} call labelled {2!r} -- the covered agent moved out of "
@@ -143,13 +174,15 @@ def check(texts):
     problems = []
     for name, labels in DENY_LABELS.items():
         problems += deny_problems(yaml.safe_load(texts[name]), name, labels)
+    for name, labels in BOUNDARY_LABELS.items():
+        problems += boundary_problems(yaml.safe_load(texts[name]), name, labels)
     problems += implement_problems(yaml.safe_load(texts[IMPLEMENT]))
     problems += wrapper_problems(texts[WRAPPER])
     return problems
 
 
 def _shipped():
-    return {n: _read(n) for n in list(DENY_LABELS) + [IMPLEMENT, WRAPPER]}
+    return {n: _read(n) for n in list(DENY_LABELS) + list(BOUNDARY_LABELS) + [IMPLEMENT, WRAPPER]}
 
 
 def run():
@@ -171,11 +204,17 @@ def self_test():
         ("missing-deny.yml", "deny", "does not deny Write(.git/**)"),
         ("second-literal-list.yml", "boundary", "a second literal list"),
         ("boundary-without-git.yml", "boundary", "has no .git/ entry"),
+        ("published-with-boundary.yml", "published", None),
+        ("published-without-boundary.yml", "published", "does not carry .git/"),
     )
     for name, kind, expect in cases:
         doc = yaml.safe_load(_read(name, FIXTURES))
-        got = (deny_problems(doc, name, ("fixture.fixer",)) if kind == "deny"
-               else implement_problems(doc, name))
+        if kind == "deny":
+            got = deny_problems(doc, name, ("fixture.fixer",))
+        elif kind == "published":
+            got = boundary_problems(doc, name, ("fixture.act",))
+        else:
+            got = implement_problems(doc, name)
         if expect is None and got:
             failures.append("fixture {0} should pass: {1}".format(name, got))
         elif expect is not None and not any(expect in p for p in got):
@@ -198,9 +237,9 @@ def self_test():
         ("the fixer loses its Write(.git/**) deny",
          mutated("board-loop.yml", ',Edit(.git/**),Write(.git/**)"', ',Edit(.git/**)"'),
          "does not deny Write(.git/**)"),
-        ("pr-conversation.act loses its deny",
-         mutated("pr-conversation.yml", "SendMessage,Edit(.git/**),Write(.git/**)\"",
-                 "SendMessage\""), "pr-conversation.act does not deny"),
+        ("pr-conversation.act loses its boundary entry",
+         mutated("pr-conversation.yml", '          no-write-paths: ".git/"\n', ""),
+         "pr-conversation.act does not carry .git/"),
         ("implement's boundary default drops .git/",
          mutated(IMPLEMENT, 'default: ".claude/,.git/"', 'default: ".claude/"'),
          "has no .git/ entry"),

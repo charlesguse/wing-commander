@@ -13,7 +13,8 @@
 #     not write), when it is non-empty. BUNDLE_DIR is ignored then.
 # Every byte of that head is hostile: it is checked out into a separate
 # worktree directory, and the verdict writer and the suite's existence
-# check come from copies taken BEFORE it is. A missing, unverifiable or
+# check come from a read-only copy and the trusted checkout, taken and read
+# BEFORE it is. A missing, unverifiable or
 # oversized bundle, or an unresolvable HEAD_REF, writes outcome=fail -- it
 # never skips.
 #
@@ -32,10 +33,15 @@ max_bundle_bytes=$((200 * 1024 * 1024))
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 trusted_root="$(pwd -P)"
 
-# Trusted copy of the pipeline's scripts, taken before the hostile head is
-# checked out anywhere.
+# Copy of the pipeline's scripts, taken before the hostile head is checked
+# out anywhere, and write-protected. Read-only deters but does not stop code
+# running as the same user (it can chmod it back): like the verdict itself,
+# what this protects is the credential-free job's own bookkeeping, not
+# anything the publisher trusts -- the publisher binds the verdict to the
+# head it restores.
 trusted_copy="$(mktemp -d)"
 cp -R "$here/../../scripts" "$trusted_copy/scripts"
+chmod -R a-w "$trusted_copy"
 verdict_py="$trusted_copy/scripts/wc_gate_verdict.py"
 # Principle VI: whether this repository has a gate suite at all is read
 # from the trusted checkout (an adopter repository has none, #935), never

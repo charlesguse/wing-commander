@@ -179,8 +179,25 @@ def isolation_problems(doc, name, exempt=EXEMPT_GATE_SUITE_SITES):
     return problems
 
 
+def outcome_record_problems(doc):
+    """specs/097 FR-015 across the split: fix records the job's outcome,
+    but never runs when fix-agent fails, so fix-agent records that failure
+    itself (a failure()-gated metrics-summary step)."""
+    steps = (((doc or {}).get("jobs") or {}).get(CANONICAL_JOB) or {}).get("steps") or []
+    ok = any(isinstance(st, dict) and "failure()" in str(st.get("if", ""))
+             and "wing-commander-metrics-summary" in str(st.get("uses", ""))
+             for st in steps)
+    return [] if ok else ["{0}: job {1!r} records no run outcome when it fails, and fix "
+                          "never runs to record one (specs/097 FR-015)".format(
+                              BOARD_LOOP, CANONICAL_JOB)]
+
+
 def check(board_text, implement_text, exempt=EXEMPT_GATE_SUITE_SITES):
     problems = statement_problems(board_text) + implement_pointer_problems(implement_text)
+    try:
+        problems += outcome_record_problems(yaml.safe_load(board_text))
+    except yaml.YAMLError:
+        pass
     for name, text in ((BOARD_LOOP, board_text), (IMPLEMENT, implement_text)):
         try:
             doc = yaml.safe_load(text)
@@ -248,6 +265,10 @@ def self_test():
                                 "separate job, and the runner it assumes.", 1),
          None, "does not point at the runner assumption"),
         ("the retry site without its exemption", board, implement_text, {}, "later pushes"),
+        ("fix-agent stops recording its own failure",
+         board.replace("      - name: Record run outcome (fix, fixer job failed)\n        if: failure()",
+                       "      - name: Record run outcome (fix, fixer job failed)\n        if: always()", 1),
+         implement_text, None, "records no run outcome when it fails"),
     )
     for label, btext, itext, exempt, expect in mutations:
         got = check(btext, itext, EXEMPT_GATE_SUITE_SITES if exempt is None else exempt)
