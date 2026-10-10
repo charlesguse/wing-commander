@@ -276,9 +276,10 @@ with a ticketed one) and re-dispatches it automatically, at most once.
 |---|---|
 | Triage, diff summaries, labels | `claude-haiku-5-5` |
 | Watchdog diagnosis | `claude-opus-5-5` (evidence adjudication under a strict schema — not the triage tier; see issue #124) |
+| Watchdog diagnose shadow (trial, acts on nothing) | `claude-haiku-5-5` (`diagnose-shadow-model`; off unless the wrapper enables it — spec 110) |
 | specify / clarify | `claude-opus-5-5` (constitution v1.1.0: spec quality is bought up front) |
 | plan / tasks | `claude-sonnet-5-5` |
-| implement / converge | stage `model` input (default `claude-sonnet-5-5`); this repo's wrapper wires `vars.WING_COMMANDER_IMPLEMENT_MODEL` and the `model:opus` label opt-in into it |
+| implement / converge | stage `model` input (default `claude-sonnet-5-5`); this repo's wrapper wires `vars.WING_COMMANDER_IMPLEMENT_MODEL` and the `model:opus` label opt-in into it, and the `model:haiku` trial opt-in (`claude-haiku-5-5`, escalating to `claude-sonnet-5-5`; `model:opus` wins) |
 
 Every agent step declares `--model` and `--max-turns`. Each is followed by a
 deterministic `.github/actions/wing-commander-metrics-summary` step that reads the
@@ -777,8 +778,10 @@ otherwise calls the stage directly. The `resolve` job it used to carry
 existed only to turn one event payload into two strings, and a wrapper job
 is a whole billed runner minute however short it runs; the same argument
 removed `wing-commander-metrics-persist.yml`'s own resolve job in spec 043.
-Gate 75 holds the one-job shape. Every job below lives in the reusable
-`watchdog.yml`.
+Gate 75 holds the one-job shape. The one exception is spec 110's
+`trial-bound` job, which runs only while `WING_COMMANDER_DIAGNOSE_SHADOW_SINCE`
+is set (see "Diagnose shadow trial" below). Every other job below lives in
+the reusable `watchdog.yml`.
 
 `run-name` is therefore **not** passed from the wrapper. The stage's input
 defaults to `''` and `collect`'s existing `gh run view` call resolves the
@@ -1173,6 +1176,35 @@ Every finding the watchdog ever filed landed on the report-only path; the two
 autonomous-fix rungs never fired once in production, which is part of why
 spec 024 removed them rather than hardening them — an unexercised write path
 is a liability, not a capability.
+
+### Diagnose shadow trial (spec 110)
+
+A bounded measurement of whether Haiku 5.5 can take the diagnose step off
+Opus, without letting it decide anything. When `watchdog.yml` gets
+`diagnose-shadow-enabled: true`, the `diagnose` job ends with a second,
+read-only agent step on the same signals, prompt and schema as Diagnose,
+on `diagnose-shadow-model` with its own turn budget. It runs after every
+step that files, routes, reports or uploads the acting verdict, every one
+of its steps is `continue-on-error`, its credential is `github.token`, its
+tools are fixed read-only, and nothing downstream reads it (Gate 146).
+
+Its transcript gets its own metrics record (`run_label: diagnose-shadow`),
+and `wing-commander-trial-record` adds a `trial` object to it: a
+deterministic comparison against the acting verdict
+(`_shared/compare-diagnose-shadow.py`) whose outcome is one of `agreed`,
+`disagreed`, `exhausted`, `malformed`, `error`, `refused` or `no-baseline`
+(`specs/110-haiku-5-5-tier-trial/contracts/trial-record.md`). The
+turn-budget collector skips these records, and 8b's diagnose-duration
+ceiling subtracts the shadow's steps.
+
+The switch is one repository variable, `WING_COMMANDER_DIAGNOSE_SHADOW_SINCE`.
+The wrapper's `trial-bound` job reads the metrics branch and enables the
+shadow only for 60 days from that date and fewer than 300 compared runs;
+records reach the branch through the daily sweep, so the count lags by up
+to a day. `wing-commander-trial-summary.yml` reports the same window
+against the bar the owner set (200 compared runs; 95% filing agreement,
+90% class agreement, at most 2% refused, exhausted or malformed). No
+default model moves on the result; that is a later amendment.
 
 ## Stage 10 — PR Conversation (`pr-conversation.yml`, wrapper `wing-commander-9-pr-conversation.yml` — see `specs/033-pr-conversation-commands/`)
 
