@@ -60,5 +60,11 @@ runs:
         fi
         if updated="$(jq --argjson trial "$trial" '. + {trial: $trial}' "$RECORD_PATH")"; then
           printf '%s\n' "$updated" > "$RECORD_PATH"
+        else
+          # A record without its trial object would be silently dropped by
+          # the summary and the bound, so fail the step instead.
+          echo "outcome=error" >> "$GITHUB_OUTPUT"
+          echo "::error::could not merge the trial object into $RECORD_PATH"
+          exit 1
         fi
         echo "outcome=$(printf '%s' "$trial" | jq -r .outcome)" >> "$GITHUB_OUTPUT"
