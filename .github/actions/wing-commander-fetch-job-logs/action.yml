@@ -1,0 +1,110 @@
+# wing-commander-fetch-job-logs — fetch an inspected run's job list and job
+# logs into a directory.
+#
+# The one home of that fetch (specs/101-read-only-gh-grants, FR-018).
+# watchdog.yml's `collect-step-summary` collector (which scans the logs for
+# sentinels) and the diagnose job's `Stage failed-job logs` step (which hands
+# the failed jobs' logs to a read-only agent as files) both call it, so a
+# second copy never has to be kept in step with the first (CLAUDE.md "Shared
+# logic has exactly one home"). The gh calls live in this composite's own step,
+# not in a `_shared/` script, because Gate 12 resolves a gh call's token only
+# from a composite step's env.
+#
+# Writes into `out-dir`:
+#   jobs.json        every job of the run, as one JSON array ([] when the
+#                    listing failed)
+#   <job_id>.log     the raw log of one job, written ONLY when the read
+#                    succeeded and returned a non-empty body. An error message
+#                    or an empty body is never written as log content, so a
+#                    log file that exists is always real evidence.
+#   reason.txt       only when the result is `failed`: `jobs-list` or
+#                    `log-read`
+# Jobs concluded `skipped` or `cancelled` are not fetched: they owe no log
+# (spec 024 FR-004/FR-005).
+#
+# The step never fails the job: failure travels in the `result` output (`ok`
+# or `failed`) so each caller records it its own way. Exactly one bounded retry
+# (after `sleep 10`) is spent per invocation, not per job: logs for a
+# just-completed job can lag the jobs API by a few seconds, but a systematic
+# failure (a token without actions: read 403s every job) must not burn N x 10s.
+#
+# Constitution VII: this composite is part of the published surface; adding it
+# is a minor-version change at the next release.
+name: wing-commander-fetch-job-logs
+description: >-
+  Fetches the job list and per-job logs of a workflow run into a directory.
+  Writes jobs.json and one <job_id>.log per successfully read job, never an
+  error message or empty body as log content. Returns ok or failed.
+inputs:
+  token:
+    description: A token carrying actions:read (the GitHub App token does not).
+    required: true
+  run-id:
+    description: The inspected run's id.
+    required: true
+  out-dir:
+    description: Directory the job list and logs are written into.
+    required: true
+outputs:
+  result:
+    description: "`ok` or `failed`."
+    value: ${{ steps.fetch.outputs.result }}
+runs:
+  using: composite
+  steps:
+    - name: Fetch job logs
+      id: fetch
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        RUN_ID: ${{ inputs.run-id }}
+        OUT_DIR: ${{ inputs.out-dir }}
+      run: |
+        set -uo pipefail
+        fetch_all() {
+          mkdir -p "$OUT_DIR"
+          rm -f "$OUT_DIR/reason.txt"
+          local failed=0 jobs_rc=0 retried=0
+          # Captured via a direct pipeline with `|| rc=` (never a bare $(...),
+          # whose own PIPESTATUS would only report jq's exit code) so a failed
+          # listing is told apart from a legitimately empty one.
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/${RUN_ID:-}/jobs" --paginate --jq '.jobs[]' 2>/dev/null | jq -s '.' > "$OUT_DIR/jobs.json" || jobs_rc="${PIPESTATUS[0]}"
+          [ -s "$OUT_DIR/jobs.json" ] || printf '[]' > "$OUT_DIR/jobs.json"
+          if [ "$jobs_rc" != "0" ]; then
+            printf 'jobs-list' > "$OUT_DIR/reason.txt"
+            echo "failed"
+            return 0
+          fi
+          fetch_one() {
+            local id="$1" rc=0
+            gh api "repos/$GITHUB_REPOSITORY/actions/jobs/$id/logs" > "$OUT_DIR/$id.log" 2>/dev/null || rc=$?
+            if [ "$rc" != "0" ] && [ "$retried" = "0" ]; then
+              retried=1
+              sleep 10
+              rc=0
+              gh api "repos/$GITHUB_REPOSITORY/actions/jobs/$id/logs" > "$OUT_DIR/$id.log" 2>/dev/null || rc=$?
+            fi
+            if [ "$rc" != "0" ] || [ ! -s "$OUT_DIR/$id.log" ]; then
+              rm -f "$OUT_DIR/$id.log"
+              return 1
+            fi
+            return 0
+          }
+          local job_id conclusion
+          for job_id in $(jq -r '.[]?.id // empty' "$OUT_DIR/jobs.json"); do
+            conclusion="$(jq -r --arg id "$job_id" '.[] | select((.id|tostring) == $id) | .conclusion // "in_progress"' "$OUT_DIR/jobs.json")"
+            case "$conclusion" in
+              skipped|cancelled) continue ;;
+            esac
+            fetch_one "$job_id" || failed=1
+          done
+          if [ "$failed" != "0" ]; then
+            printf 'log-read' > "$OUT_DIR/reason.txt"
+            echo "failed"
+          else
+            echo "ok"
+          fi
+          return 0
+        }
+        result="$(fetch_all | tail -n 1)"
+        echo "result=${result:-failed}" >> "$GITHUB_OUTPUT"

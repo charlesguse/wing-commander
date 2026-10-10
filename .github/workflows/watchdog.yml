@@ -1228,13 +1228,22 @@ jobs:
       # step-summary-content endpoint; job logs are the closest retrievable
       # surface, and every step that writes a step-summary sentinel also logs
       # around it). A job whose log cannot be fetched is skipped, not failed.
+      - name: "Collect: fetch job logs"
+        id: cs-fetch
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-fetch-job-logs
+        with:
+          token: ${{ github.token }}
+          run-id: ${{ inputs.run-id }}
+          out-dir: ${{ runner.temp }}/cs-job-logs
+
       - name: "Collect: step summaries"
         id: collect-step-summary
         shell: bash
         continue-on-error: true
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
-          ACTIONS_TOKEN: ${{ github.token }}
+          FETCH_RESULT: ${{ steps.cs-fetch.outputs.result }}
           RUN_ID: ${{ inputs.run-id }}
         run: |
           set -uo pipefail
@@ -1265,7 +1274,7 @@ jobs:
           # `failed` on its last line and always returns 0, so a failed
           # read is recorded below rather than aborting this step.
           cs_dir="$RUNNER_TEMP/cs-job-logs"
-          fetch_out="$(GH_TOKEN="$ACTIONS_TOKEN" bash .wing-commander-pipeline/.github/actions/_shared/fetch-job-logs.sh "$cs_dir" | tail -n 1)"
+          fetch_out="${FETCH_RESULT:-failed}"
           jobs_json="$(cat "$cs_dir/jobs.json" 2>/dev/null)"
           [ -n "$jobs_json" ] || jobs_json='[]'
           so_failed=0
@@ -2451,13 +2460,21 @@ jobs:
       # used by collect-step-summary); the status file is written on every
       # path, and a failed or crashed step reads to the agent as "job logs
       # could not be gathered", never as "there were none".
+      - name: Fetch failed-job logs
+        id: dj-fetch
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-fetch-job-logs
+        with:
+          token: ${{ github.token }}
+          run-id: ${{ inputs.run-id }}
+          out-dir: ${{ runner.temp }}/dj-fetch
+
       - name: Stage failed-job logs
         id: stage-job-logs
         shell: bash
         continue-on-error: true
         env:
-          ACTIONS_TOKEN: ${{ github.token }}
-          RUN_ID: ${{ inputs.run-id }}
+          FETCH_RESULT: ${{ steps.dj-fetch.outputs.result }}
         run: |
           set -uo pipefail
           # Errexit off: every failure below is recorded in the status file.
@@ -2467,7 +2484,7 @@ jobs:
           status="$RUNNER_TEMP/watchdog-job-logs-status.json"
           mkdir -p "$log_dir"
           printf '%s' '{"outcome":"failed","jobs":[],"reason":"step-incomplete"}' > "$status"
-          fetch_out="$(GH_TOKEN="$ACTIONS_TOKEN" bash .wing-commander-pipeline/.github/actions/_shared/fetch-job-logs.sh "$fetch_dir" | tail -n 1)"
+          fetch_out="${FETCH_RESULT:-failed}"
           outcome="ok"
           reason=""
           jobs_arr='[]'
