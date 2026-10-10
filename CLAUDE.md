@@ -97,9 +97,10 @@ prove. Each step has a rule.
   the ones a precedent already settles and raise the rest
   (`answer-from-precedent` skill).
 - Every fix PR gets a code review before merge. Fix the findings in the
-  same PR. The `review-until-clean` skill is the procedure: a fresh
-  reviewer per pass, a test that fails without each fix, and a thrash
-  check after every pass. A bug the review surfaces outside the PR's
+  same PR. The `review-until-clean` skill is the procedure: every pass
+  is a brand-new session that reviews with no findings cap and fixes,
+  each fix carries a test that fails without it, and the loop checks for
+  thrash after every pass. A bug the review surfaces outside the PR's
   scope becomes a new checklist line on the Maintenance backlog issue
   carrying `found by the code review of #N`, never a new issue and never
   an extra commit that widens the PR.
@@ -120,9 +121,9 @@ prove. Each step has a rule.
   `prove-after-merge` skill finds the runs that reach the change and
   checks the run actually took the changed path.
 - Pipeline agent runs and local Claude sessions share one usage window.
-  Keep concurrent local agents to two (one review pass is one agent), and
-  treat any agent that has run longer than ten minutes as having spent
-  most of the window. Note any lifecycle issue in `stage:implement`
+  Keep concurrent local agents to two (one review pass is one session),
+  and treat any agent that has run longer than ten minutes as having
+  spent most of the window. Note any lifecycle issue in `stage:implement`
   before fanning out so a stall can be attributed to the burst rather
   than to the pipeline.
 - `gh pr merge` on a PR that touches `.github/workflows/` needs a token
