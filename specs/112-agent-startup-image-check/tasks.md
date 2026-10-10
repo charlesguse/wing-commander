@@ -85,10 +85,10 @@ Repository root; scripts in `.github/scripts/`, workflows in `.github/workflows/
 
 **Independent Test**: Grep the three docs for `@v1` policy text and `startup-check`.
 
-- [ ] T017 [P] [US3] Document in `docs/adoption.md` ("Runners and container images"): the agent action is consumed by floating `@v1`; its dependency changes are caught by the start-up check on the next daily dogfood or reference-image rebuild run; the optional `startup-check` input and the `actions: read` requirement; the git >= 2.38 floor.
-- [ ] T018 [P] [US3] Mirror the setup instructions in `docs/setup.md` (input, permission, what a red `classify-startup` means) with a pointer to `docs/adoption.md` rather than repeating prose.
-- [ ] T019 [P] [US3] Edit the 038 image-prerequisite contract under `specs/*/contracts/` (find it with Glob/Grep for the `required-tools.txt` contract table) to record the `@v1` policy, the git 2.38 floor, and the additive `startup-check` input. Contracts are live; edit as code.
-- [ ] T020 [US3] Add the header note to `.github/scripts/required-tools.txt` that the list is an inference cross-checked by the start-up check, and the basis for the git floor and `unzip` (FR-009: list contents unchanged). Re-run the gates that read this file (Gates 23, 62).
+- [x] T017 [P] [US3] Document in `docs/adoption.md` ("Runners and container images"): the agent action is consumed by floating `@v1`; its dependency changes are caught by the start-up check on the next daily dogfood or reference-image rebuild run; the optional `startup-check` input and the `actions: read` requirement; the git >= 2.38 floor.
+- [x] T018 [P] [US3] Mirror the setup instructions in `docs/setup.md` (input, permission, what a red `classify-startup` means) with a pointer to `docs/adoption.md` rather than repeating prose.
+- [x] T019 [P] [US3] Edit the 038 image-prerequisite contract under `specs/*/contracts/` (find it with Glob/Grep for the `required-tools.txt` contract table) to record the `@v1` policy, the git 2.38 floor, and the additive `startup-check` input. Contracts are live; edit as code.
+- [x] T020 [US3] Add the header note to `.github/scripts/required-tools.txt` that the list is an inference cross-checked by the start-up check, and the basis for the git floor and `unzip` (FR-009: list contents unchanged). Re-run the gates that read this file (Gates 23, 62).
 
 ---
 
@@ -100,15 +100,15 @@ Repository root; scripts in `.github/scripts/`, workflows in `.github/workflows/
 
 ### Tests for User Story 4
 
-- [ ] T021 [P] [US4] Add fixtures under `.github/scripts/image-git-floor-fixtures/`: `2.34.1.txt`, `2.38.0.txt`, `2.43.0.txt`, `2.39.5.Apple-Git-154.txt` (suffix tolerated), `unparseable.txt`, `empty.txt`, each with its expected result.
-- [ ] T022 [US4] Extend the gate (new `verify-image-git-floor.py`, or an addition to `verify-agent-startup-classifier.py`; pick one and register it with the same steps as T014) to run `image-git-floor.sh` against each fixture with `git` stubbed, asserting pass/fail and that failure messages are exactly `git <found> is older than the 2.38 minimum` or `could not parse git version from "<output>"`.
+- [x] T021 [P] [US4] Add fixtures under `.github/scripts/image-git-floor-fixtures/`: `2.34.1.txt`, `2.38.0.txt`, `2.43.0.txt`, `2.39.5.Apple-Git-154.txt` (suffix tolerated), `unparseable.txt`, `empty.txt`, each with its expected result.
+- [x] T022 [US4] Extend the gate (new `verify-image-git-floor.py`, or an addition to `verify-agent-startup-classifier.py`; pick one and register it with the same steps as T014) to run `image-git-floor.sh` against each fixture with `git` stubbed, asserting pass/fail and that failure messages are exactly `git <found> is older than the 2.38 minimum` or `could not parse git version from "<output>"`.
 
 ### Implementation for User Story 4
 
-- [ ] T023 [US4] Create `.github/scripts/image-git-floor.sh`: POSIX `sh` fragment (runs inside the `docker run --entrypoint sh` probe, after the tool presence loop) that reads `git --version`, parses major.minor, fails below 2.38 with the contract message, fails on unparseable output with the contract message, no bashisms.
-- [ ] T024 [US4] Paste the fragment verbatim into the probe of `verify-image-prerequisites` in all 14 stage workflows under `.github/workflows/` (find them with Grep for `REQUIRED_TOOLS`; includes `private-image-dogfood.yml`). Keep indentation consistent with the existing probe.
-- [ ] T025 [US4] Extend Gate 23 to fail any stage whose probe lacks the fragment from `image-git-floor.sh` byte-for-byte (same mechanism as the `REQUIRED_TOOLS` comparison); add a self-test case with a probe missing the fragment.
-- [ ] T026 [US4] Run `python .github/scripts/run-local-gates.py`; confirm Gates 23 and 62 still assert everything they did before (FR-009).
+- [x] T023 [US4] Create `.github/scripts/image-git-floor.sh`: POSIX `sh` fragment (runs inside the `docker run --entrypoint sh` probe, after the tool presence loop) that reads `git --version`, parses major.minor, fails below 2.38 with the contract message, fails on unparseable output with the contract message, no bashisms.
+- [x] T024 [US4] Paste the fragment verbatim into the probe of `verify-image-prerequisites` in all 14 stage workflows under `.github/workflows/` (find them with Grep for `REQUIRED_TOOLS`; includes `private-image-dogfood.yml`). Keep indentation consistent with the existing probe.
+- [x] T025 [US4] Extend Gate 23 to fail any stage whose probe lacks the fragment from `image-git-floor.sh` byte-for-byte (same mechanism as the `REQUIRED_TOOLS` comparison); add a self-test case with a probe missing the fragment.
+- [x] T026 [US4] Run `python .github/scripts/run-local-gates.py`; confirm Gates 23 and 62 still assert everything they did before (FR-009).
 
 ---
 

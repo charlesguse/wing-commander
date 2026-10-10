@@ -247,6 +247,15 @@ The list `verify-image-prerequisites` checks against a named image:
 | `timeout` | Direct invocation, required since **v2.5.1** (`1d1452c`): `wing-commander-lifecycle-gate` wraps its `gh issue view` read in `timeout "$read_timeout" ...` so a hung read becomes a retryable 124 rather than a stalled stage (specs/039-lifecycle-gate-retry). That composite runs inside the adopter's container at the entry of six stages. Previously assumed present under Gate 23's `ALWAYS_AVAILABLE` coreutils set, which is how a hard dependency reached eleven stages undeclared. |
 | `unzip` | *Indirect*, through `anthropics/claude-code-action@v1`: its first step, "Install Bun" (`oven-sh/setup-bun`), downloads `bun-linux-x64.zip` and extracts it with `unzip`, so an image without it fails every agent-bearing job before Claude Code starts. Observed on wing-commander's own e2e reference image (intake run 37866026318: "Unable to locate executable file: unzip.") after this check had passed it. Previously assumed present under Gate 23's `ALWAYS_AVAILABLE` set, as `timeout` was. |
 
+**Agent action policy and git floor (specs/112-agent-startup-image-check).**
+The agent action stays on the floating `@v1` tag; its dependency changes are
+caught by the agent start-up check on the next daily dogfood run, not by
+pinning. The probe additionally requires **git >= 2.38**
+(`.github/scripts/image-git-floor.sh`, verbatim in every stage's probe,
+enforced by Gate 142), failing with `git <found> is older than the 2.38
+minimum`. `private-image-dogfood.yml` gains one additive, optional input,
+`startup-check` (boolean, default `false`); no new secret.
+
 Kept in agreement with reality by Gate 23 (below), not by convention alone
 (FR-011a): Gate 23 parses this table and fails on any set difference against
 `.github/scripts/required-tools.txt`, in both directions. Before that, "kept

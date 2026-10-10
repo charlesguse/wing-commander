@@ -39,6 +39,14 @@
 # did not yet list unzip, had passed the image. It was previously assumed
 # present under Gate 23's ALWAYS_AVAILABLE set, as timeout was.
 #
+# This list is an INFERENCE, cross-checked rather than proven by the agent
+# start-up check (specs/112-agent-startup-image-check): the daily
+# private-image dogfood run (startup-check input) runs the real agent action's
+# setup in the image and names the step that fails. The git floor (>= 2.38,
+# image-git-floor.sh) is checked in the same probe as presence; the 2.38
+# minimum is the oldest git the agent action's checkout handling is
+# known to work with, and unzip is listed on the evidence above.
+#
 # Presence is all this contract checks, for `timeout` as for `gh`. A
 # BusyBox build older than 1.30 (2018) provides the applet but requires
 # `-t DURATION`, so it would pass the check and still fail the call. Not
