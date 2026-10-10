@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gate 141 - the agent start-up classifier is driven by a fixture per branch
+"""Gate 147 - the agent start-up classifier is driven by a fixture per branch
 (specs/112-agent-startup-image-check, FR-008, SC-003).
 
 A start-up check that cannot fail its subject proves nothing (Constitution
@@ -19,6 +19,10 @@ startup-agent job carries continue-on-error: true on the action step and no
 model credential; classify-startup's `if:` contains !cancelled(); the
 classifier is invoked as a script (single home) and no inline copy of its
 marker or verdict logic appears in the workflow.
+
+NOTE ON GATE NUMBERING: this gate was first registered as Gate 141. It is
+numbered 147, not 141: 141-146 were taken by spec 110's PR #982, which
+claimed them first among the open lifecycle branches.
 
 Usage: python3 .github/scripts/verify-agent-startup-classifier.py [--self-test]
 """
@@ -211,9 +215,9 @@ def self_test():
         expect("no script call", mutated(drop_script), "must invoke classify-agent-startup.py")
         del doc
     for f in failures:
-        print("::error::Gate 141 self-test: " + f)
+        print("::error::Gate 147 self-test: " + f)
     if not failures:
-        print("Gate 141 self-test: ok")
+        print("Gate 147 self-test: ok")
     return 1 if failures else 0
 
 
@@ -222,9 +226,9 @@ def main(argv):
         return self_test()
     errors = run_checks()
     for e in errors:
-        print("::error::Gate 141: " + e)
+        print("::error::Gate 147: " + e)
     if not errors:
-        print("Gate 141: ok")
+        print("Gate 147: ok")
     return 1 if errors else 0
 
 

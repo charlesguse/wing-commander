@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gate 142 - every stage's image probe enforces the git >= 2.38 floor
+"""Gate 148 - every stage's image probe enforces the git >= 2.38 floor
 (specs/112-agent-startup-image-check, FR-013, User Story 4).
 
 .github/scripts/image-git-floor.sh is the canonical POSIX sh fragment. This
@@ -9,6 +9,10 @@ image-git-floor-fixtures/ and asserts pass/fail and the exact failure message
 from "<output>"`), and (b) asserts every published stage's
 verify-image-prerequisites probe (found by its REQUIRED_TOOLS list) contains
 the fragment byte for byte, so the 14 pasted copies cannot drift.
+
+NOTE ON GATE NUMBERING: this gate was first registered as Gate 142. It is
+numbered 148, not 142: 141-146 were taken by spec 110's PR #982, which
+claimed them first among the open lifecycle branches.
 
 Usage: python3 .github/scripts/verify-image-git-floor.py [--self-test]
 """
@@ -110,9 +114,9 @@ def self_test():
         if not any(os.path.basename(path) in e for e in check_stages(fragment, broken)):
             failures.append("a probe missing the fragment was not caught")
     for f in failures:
-        print("::error::Gate 142 self-test: " + f)
+        print("::error::Gate 148 self-test: " + f)
     if not failures:
-        print("Gate 142 self-test: ok")
+        print("Gate 148 self-test: ok")
     return 1 if failures else 0
 
 
@@ -121,9 +125,9 @@ def main(argv):
         return self_test()
     errors = run_checks()
     for e in errors:
-        print("::error::Gate 142: " + e)
+        print("::error::Gate 148: " + e)
     if not errors:
-        print("Gate 142: ok")
+        print("Gate 148: ok")
     return 1 if errors else 0
 
 
