@@ -97,13 +97,12 @@ class _Scan:
         self.toks.append(Token(kind=kind, line=bisect.bisect_left(self.nl, off) + 1,
                                offset=off, **kw))
 
-    def _mention(self, text, base, clause):
+    def _mark(self, text, base, why, call=True):
+        """Note each `gh` in `text` (at `base`): a disallowed call for reason
+        `why`, or with call=False a mention in clause `why`."""
+        kw = {"position": "disallowed", "reason": why} if call else {"mention_clause": why}
         for m in GH_WORD.finditer(text):
-            self._note(base + m.start(), "mention", mention_clause=clause)
-
-    def _deny(self, text, base, reason):
-        for m in GH_WORD.finditer(text):
-            self._note(base + m.start(), "call", position="disallowed", reason=reason)
+            self._note(base + m.start(), "call" if call else "mention", **kw)
 
     def _unsure(self, off, reason):
         """A construct this scanner cannot track exactly: nothing after it is
@@ -112,29 +111,22 @@ class _Scan:
             self.broken = (off, reason)
 
     # ----------------------------------------------------------- span helpers
-    def _skip_quoted(self, i, ansi=False):
-        """Index after the quoted span opening at i, or n when unterminated."""
-        q, t, n = self.t[i], self.t, self.n
-        j = i + 1
-        while j < n:
-            if t[j] == "\\" and (q == '"' or ansi):
-                j += 2
-                continue
-            if t[j] == q:
-                return j + 1
-            j += 1
-        return n
+    def _close(self, i, esc):
+        """Index of the character closing the quote t[i] opens, or n when
+        unterminated; with `esc`, a backslash escapes the next character."""
+        t, n, j = self.t, self.n, i + 1
+        while j < n and t[j] != t[i]:
+            j += 2 if esc and t[j] == "\\" else 1
+        return min(j, n)
 
     def _group(self, i, op, cl):
         """Index after the bracket matching the `op` at i, quotes skipped."""
         t, n, d = self.t, self.n, 0
         while i < n:
             c = t[i]
-            if c == "\\":
-                i += 2
-                continue
-            if c in "'\"":
-                i = self._skip_quoted(i, c == "'" and t[i - 1:i] == "$")
+            if c in "\\'\"":
+                i = (i + 2 if c == "\\" else
+                     self._close(i, c == '"' or t[i - 1:i] == "$") + 1)
                 continue
             d += (c == op) - (c == cl)
             i += 1
@@ -143,19 +135,9 @@ class _Scan:
         return n
 
     def _backtick(self, i):
-        t, n, j = self.t, self.n, i + 1
-        while j < n:
-            if t[j] == "\\":
-                j += 2
-            elif t[j] == "`":
-                break
-            else:
-                j += 1
-        else:
-            self._deny(t[i + 1:], i + 1, "unterminated-quote")
-            return n
-        self._deny(t[i + 1:j], i + 1, "backtick")
-        return j + 1
+        j = self._close(i, True)
+        self._mark(self.t[i + 1:j], i + 1, "backtick" if j < self.n else "unterminated-quote")
+        return min(j + 1, self.n)
 
     def _expr_end(self, i):
         """Index after the Actions expression opening at i (`${{`), else None."""
@@ -190,89 +172,70 @@ class _Scan:
         t = self.t
         nxt = t[i + 1:i + 2]
         if nxt == "'":                                  # $'...' ANSI-C
-            j = self._skip_quoted(i + 1, True)
-            self._deny(t[i + 2:j - 1], i + 2, "ansi-c")
+            j = min(self._close(i + 1, True) + 1, self.n)
+            self._mark(t[i + 2:j - 1], i + 2, "ansi-c")
             return j
         if nxt == "(":
             j = self._arithmetic(i + 1, 2) if t.startswith("((", i + 1) else None
             return j or self._nest(i, ctx)
         if nxt == "{":
-            if t.startswith("{{", i + 1):
-                end = self._expr_end(i)
-                if end is not None:
-                    return end
-            return self._brace(i, ctx)
+            end = self._expr_end(i) if t.startswith("{{", i + 1) else None
+            return end or self._span(i, ctx, "}")[2]
         m = VAR.match(t, i)
         return m.end() if m else i + 1
 
-    def _brace(self, i, ctx):
-        """Index after the `${...}` opening at i. Its text is data and a
-        substitution inside it is a disallowed form (the authoring rule); a
-        lone `'` could be a quote or text depending on the quoting around
-        the expansion, so it makes everything after unprovable."""
-        t, n = self.t, self.n
-        if self.braces >= MAX_DEPTH:
-            self._unsure(i, "nested-expansion")
-            return n
-        self.braces += 1
-        inner = _Ctx(ctx.depth, i, "param-expansion")
-        j, start, segs = i + 2, i + 2, []
-        while j < n and t[j] != "}":
-            c = t[j]
-            if c == "\\":
-                j += 2
-            elif c == "'":
-                self._unsure(j, "unparsed-expansion")
-                j += 1
-            elif c in '"`$' and (c != "$" or t[j + 1:j + 2] in ("(", "{")):
-                segs.append((start, j))
-                if c == '"':
-                    j = self._dq(j, inner)[2]
-                else:
-                    j = self._backtick(j) if c == "`" else self._dollar(j, inner)
-                start = j
-            else:
-                j += 1
-        segs.append((start, min(j, n)))
-        for a, b in segs:
-            self._deny(t[a:b], a, "param-expansion")
-        if j >= n:
-            self._unsure(i, "unterminated-expansion")
-        self.braces -= 1
-        return min(j + 1, n)
+    def _span(self, i, ctx, close):
+        """Walk the `"..."` (close '"') or `${...}` (close '}') span at i,
+        handing each expansion in it to its reader. -> (literal text, literal
+        prefix before the first expansion or None, index after).
 
-    # ---------------------------------------------------------------- words
-    def _dq(self, i, ctx):
-        """-> (literal text, literal prefix before the first expansion or None,
-        index after) for the double-quoted span at i."""
-        t, n = self.t, self.n
-        j, start, segs, buf, first, sub = i + 1, i + 1, [], [], None, False
-        while j < n and t[j] != '"':
-            c = t[j]
-            if c == "\\" and t.startswith("${{", j + 1):
+        A double-quoted span's text is a mention unless it holds a command
+        substitution. A `${...}` span's text is data and a substitution in it
+        a disallowed form (the authoring rule); a lone `'` there could be a
+        quote or text depending on the quoting around the expansion, so it
+        makes everything after unprovable."""
+        t, n, dq = self.t, self.n, close == '"'
+        if not dq:
+            if self.braces >= MAX_DEPTH:
+                self._unsure(i, "nested-expansion")
+                return "", None, n
+            self.braces += 1
+            ctx = _Ctx(ctx.depth, i, "param-expansion")
+        j = start = i + 2 - dq
+        segs, buf, first, sub = [], [], None, False
+        while j < n and t[j] != close:
+            c, nx = t[j], t[j + 1:j + 2]
+            if c == "\\" and dq and t.startswith("${{", j + 1):
                 j += 1
             elif c == "\\":
-                buf.append(t[j + 1:j + 2] if t[j + 1:j + 2] in ('$', '`', '"', '\\')
-                           else c + t[j + 1:j + 2])
+                buf.append(nx if nx in ("$", "`", '"', "\\") else c + nx)
                 j += 2
-            elif c == "`" or (c == "$" and (t[j + 1:j + 2] in ("(", "{") or VAR.match(t, j))):
+            elif c == "'" and not dq:
+                self._unsure(j, "unparsed-expansion")
+                j += 1
+            elif c in '`"' or (c == "$" and (nx in ("(", "{") or dq and VAR.match(t, j))):
                 first = "".join(buf) if first is None else first
                 segs.append((start, j))
-                sub |= c == "`" or (t.startswith("(", j + 1) and not t.startswith("((", j + 1))
-                j = self._backtick(j) if c == "`" else self._dollar(j, ctx)
+                sub |= c == "`" or (nx == "(" and not t.startswith("((", j + 1))
+                j = (self._backtick(j) if c == "`" else self._span(j, ctx, c)[2]
+                     if c == '"' else self._dollar(j, ctx))
                 start = j
             else:
                 buf.append(c)
                 j += 1
         segs.append((start, min(j, n)))
-        reason = "unterminated-quote" if j >= n else "quoted-substitution"
+        bad = not dq or j >= n or sub
+        why = ("param-expansion" if not dq else "unterminated-quote" if j >= n
+               else "quoted-substitution" if sub else "quoted")
         for a, b in segs:
-            if j >= n or sub:
-                self._deny(t[a:b], a, reason)
-            else:
-                self._mention(t[a:b], a, "quoted")
+            self._mark(t[a:b], a, why, bad)
+        if not dq:
+            if j >= n:
+                self._unsure(i, "unterminated-expansion")
+            self.braces -= 1
         return "".join(buf), first, min(j + 1, n)
 
+    # ---------------------------------------------------------------- words
     def _word(self, i, ctx):
         t, n, s = self.t, self.n, i
         lit, pre, split, quoted = [], None, False, False
@@ -281,26 +244,19 @@ class _Scan:
             if c in " \t\n;&|()<>":
                 break
             if c == "\\":
-                if t[i + 1:i + 2] == "\n":
-                    i += 2
-                    continue
-                if t.startswith("${{", i + 1):          # escapes the value GitHub puts there
-                    i += 1
+                if t[i + 1:i + 2] == "\n" or t.startswith("${{", i + 1):
+                    i += 1 + (t[i + 1:i + 2] == "\n")  # `${{`: escapes the value GitHub puts there
                     continue
                 lit.append(t[i + 1:i + 2])
                 i, quoted = i + 2, True
             elif c == "'":
-                j = t.find("'", i + 1)
-                if j < 0:
-                    self._deny(t[i + 1:], i + 1, "unterminated-quote")
-                    lit.append(t[i + 1:])
-                    i, quoted = n, True
-                    continue
-                self._mention(t[i + 1:j], i + 1, "quoted")
+                j = self._close(i, False)
+                self._mark(t[i + 1:j], i + 1, "unterminated-quote" if j >= n else "quoted",
+                           j >= n)
                 lit.append(t[i + 1:j])
-                i, quoted = j + 1, True
+                i, quoted = min(j + 1, n), True
             elif c == '"':
-                text, p, i = self._dq(i, ctx)
+                text, p, i = self._span(i, ctx, '"')
                 if p is not None and pre is None:
                     pre = "".join(lit) + p
                 lit.append(text)
@@ -324,21 +280,17 @@ class _Scan:
         while self.pending and i < n:
             delim, quoted, strip = self.pending.pop(0)
             body = i
-            while True:
-                if i >= n:
-                    self._deny(t[body:n], body, "unterminated-heredoc")
-                    return n
+            while i < n:
                 e = t.find("\n", i)
                 e = n if e < 0 else e
-                line = t[i:e].lstrip("\t") if strip else t[i:e]
-                if line == delim:
-                    if quoted:
-                        self._mention(t[body:i], body, "quoted-heredoc")
-                    else:
-                        self._deny(t[body:i], body, "unquoted-heredoc")
-                    i = min(e + 1, n)
+                line, i = t[i:e], min(e + 1, n)
+                if (line.lstrip("\t") if strip else line) == delim:
+                    self._mark(t[body:e - len(line)], body, ("quoted-heredoc" if quoted
+                                                             else "unquoted-heredoc"), not quoted)
                     break
-                i = min(e + 1, n)
+            else:
+                self._mark(t[body:n], body, "unterminated-heredoc")
+                return n
         if i >= n:
             self.pending.clear()
         return i
@@ -355,8 +307,7 @@ class _Scan:
             while t[j:j + 1] in (" ", "\t"):
                 j += 1
             if t[j:j + 1] in ("'", '"'):
-                k = t.find(t[j], j + 1)
-                k = self.n if k < 0 else k
+                k = self._close(j, False)
                 self.pending.append((t[j + 1:k], True, strip))
                 return k + 1, False
             m = HEREDOC_DELIM.match(t, j)
@@ -366,10 +317,7 @@ class _Scan:
             return j, False
         if t[i + 1:i + 2] == "(":                       # <( ) reads like $( )
             return self._nest(i, ctx), False
-        j = i + 1
-        if t[j:j + 1] in (">", "&", "|"):
-            j += 1
-        return j, True
+        return i + 1 + (t[i + 1:i + 2] in (">", "&", "|")), True
 
     # ------------------------------------------------------------- commands
     def _cmds(self, i, ctx):
@@ -385,42 +333,32 @@ class _Scan:
             elif c == "#":
                 j = t.find("\n", i)
                 j = n if j < 0 else j
-                self._mention(t[i:j], i, "comment")
+                self._mark(t[i:j], i, "comment", False)
                 i = j
             elif c == "&" and t[i + 1:i + 2] == ">" or c in "<>":
                 i, drop = self._redirect(i + (c == "&"), ctx)
-            elif c in ";&|":
-                self._end(words, ctx)
-                words, i = [], i + 1
-            elif c == "(":
-                j = self._arithmetic(i, 2) if not words and t[i + 1:i + 2] == "(" else None
-                if j:                                          # (( arithmetic ))
-                    i = j
-                    continue
-                self._end(words, ctx)
-                words, i = [], i + 1
-                ctx.parens += 1
+            elif c in ";&|(":                                  # `((` may be arithmetic
+                j = c == "(" and not words and t.startswith("((", i) and self._arithmetic(i, 2)
+                if not j:
+                    self._end(words, ctx)
+                    ctx.parens += c == "("
+                words, i = [], j or i + 1
             elif c == ")":
-                if ctx.parens:
+                if ctx.parens or not ctx.cases:                # else a case pattern's `)`
                     self._end(words, ctx)
-                    ctx.parens -= 1
-                elif ctx.cases:                                # a case pattern's `)`
-                    pass
-                elif ctx.depth:
-                    self._end(words, ctx)
-                    return i + 1
-                else:
-                    self._end(words, ctx)
+                    if ctx.depth and not ctx.parens:
+                        return i + 1
+                    ctx.parens = max(ctx.parens - 1, 0)
                 words, i = [], i + 1
             else:
                 w, i = self._word(i, ctx)
+                lead = not words and w.plain and w.lit
                 if drop:
                     drop = False
-                elif not words and w.plain and w.lit in RESERVED:
-                    pass
-                else:
-                    if not words and w.plain and w.lit in ("case", "esac"):
-                        ctx.cases = max(0, ctx.cases + (1 if w.lit == "case" else -1))
+                    continue
+                if lead in ("case", "esac"):
+                    ctx.cases = max(0, ctx.cases + (1 if lead == "case" else -1))
+                if lead not in RESERVED:
                     words.append(w)
         self._end(words, ctx)
         if ctx.depth:
@@ -432,13 +370,11 @@ class _Scan:
         if not words:
             return
         was_first, ctx.first = ctx.first, False
-        k, prefix, odd_prefix = 0, None, False
+        k = 0
         while k < len(words) and ASSIGN.match(words[k].raw):
-            if words[k].raw.startswith("GH_TOKEN="):
-                prefix = words[k].raw[9:]
-            else:
-                odd_prefix = True
             k += 1
+        tokens = [w.raw[9:] for w in words[:k] if w.raw.startswith("GH_TOKEN=")]
+        prefix, odd_prefix = (tokens or [None])[-1], len(tokens) < k
         timeout = (k + 1 < len(words) and words[k].lit == "timeout"
                    and not words[k + 1].raw.startswith("-"))
         k += 2 * timeout
@@ -460,11 +396,9 @@ class _Scan:
                                  "subst_first" if ctx.depth else "statement"))
         elif head.lit in WRAPPERS and not (head.lit == "command" and any(
                 w.lit in ("-v", "-V") for w in words[k + 1:])):
-            for w in words[k + 1:]:
-                if w.lit == "gh" or w.skel == "gh":
-                    self._note(w.off, "call", position="disallowed",
-                               reason="unquoted-wrapper")
-                    break
+            w = next((w for w in words[k + 1:] if "gh" in (w.lit, w.skel)), None)
+            if w:
+                self._note(w.off, "call", position="disallowed", reason="unquoted-wrapper")
 
 
 def _argv_reason(argv):
