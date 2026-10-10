@@ -93,7 +93,7 @@ Workflow comments are load-bearing (gates byte-compare them): after any edit und
 - [X] T019 [P] [US4] Update the diagnose `--allowedTools` record in `specs/015-pipeline-watchdog/contracts/watchdog-workflow.md` (~line 81) to match the shipped list, and add the staged job-log files.
 - [X] T020 [P] [US4] Update the evaluate-path `--allowedTools` record in `specs/027-auto-update-spec-kit/contracts/auto-update-spec-kit-workflow.md` (~line 104).
 - [X] T021 [P] [US4] Rewrite the "pre-existing, wider `Bash(gh:*)` grant … untouched by this policy" paragraph in `specs/051-read-only-inspection-policy/contracts/inspection-policy.md` in the past tense, with a pointer to the canonical home.
-- [ ] T022 [US4] Add a "single home" assertion for the rationale (per research D6) to the nearest existing gate: the rationale's distinguishing sentence must occur in exactly one file. If no cheap deterministic form exists, record why in the PR description instead.
+- [X] T022 [US4] Add a "single home" assertion for the rationale (per research D6) to the nearest existing gate: the rationale's distinguishing sentence must occur in exactly one file. If no cheap deterministic form exists, record why in the PR description instead.
 
 **Checkpoint**: SC-006 and SC-007 hold.
 
@@ -132,7 +132,7 @@ Workflow comments are load-bearing (gates byte-compare them): after any edit und
 - [X] T001 (PR #991 comment by charlesguse) Run `python .github/scripts/run-local-gates.py` on the branch and record the baseline result. The rebuilt implement image (#996) now includes PyYAML (#989).
 - [X] T008 (PR #991 comment) Run `python .github/scripts/run-local-gates.py` and fix any workflow-comment or gate fallout from T004-T007.
 - [X] T016 (PR #991 comment) Run `python .github/scripts/verify-issue-context-single-home.py --self-test`, then `python .github/scripts/run-local-gates.py`. Confirm the gate is invoked the same way locally as in `lint-workflows.yml`.
-- [ ] T022 (PR #991 comment) Add a single-home assertion for the rationale (research D6) to the nearest existing gate. The rationale's distinguishing sentence must occur in exactly one file. If no cheap deterministic form exists, record why in the PR description.
+- [X] T022 (PR #991 comment) Add a single-home assertion for the rationale (research D6) to the nearest existing gate. The rationale's distinguishing sentence must occur in exactly one file. If no cheap deterministic form exists, record why in the PR description.
 - [X] T024 (PR #991 comment) Run `python .github/scripts/run-local-gates.py` clean, then walk `quickstart.md`.
 - T025 stays a post-merge maintainer step and is not part of this change.
 

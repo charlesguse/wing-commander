@@ -191,7 +191,7 @@ you have never seen fail is not monitoring.
   than per-subcommand. Stage what the agent needs as a file in a
   deterministic step (the diagnose job stages failed-job logs this way, and
   records a failed fetch rather than hiding it). Gate 93 check 4b enforces
-  it; this is the one home for the rationale.
+  it, and its check 6 keeps this the one home for the rationale.
 - **Prompt-injection posture**: anything collected from a run under
   inspection is *data, not instructions* — say so in the prompt, and keep
   collectors deterministic so no raw untrusted content reaches the agent

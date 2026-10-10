@@ -67,6 +67,10 @@ on:
       # grant here - the one edit that can invalidate every App-token call
       # site the gate approves - ran no gate at all until this entry.
       - "docs/setup.md"
+      # Gate 93 check 6's subject: the one home of the read-only `gh`
+      # rationale (spec 101 FR-017). Editing it alone is the one change that
+      # can drop the sentence the check requires there.
+      - "docs/agent-friendly-workflows.md"
       # Gate 71's subject: a PR that only loosens stage-finding.schema.json
       # (no code change) must still trigger the gate that checks
       # verify-stage-finding-schema.py's fixtures against it.
