@@ -6,6 +6,23 @@ A new amendment adds its report to the top of this list (below this
 header), not to `constitution.md` -- see CLAUDE.md.
 
 <!--
+Sync Impact Report — 2026-10-09
+Version change: 2.3.1 → 2.4.0 (MINOR: Principle II gains a tier choice — a per-lifecycle `model:haiku` opt-in for implement — and a sentence on trial shadows; it also moves the Haiku tier's identifier from claude-haiku-4-5 to claude-haiku-5-5. Adding an opt-in changes the tiering even though no default moves, so this is MINOR, not PATCH, and the identifier change rides in the same amendment (spec 110 FR-003))
+Modified principles: II. Cost-Conscious Model Tiering (the Haiku tier names claude-haiku-5-5; the implement sentence adds the `model:haiku` opt-in — `model:opus` wins when both are present, the escalation retry goes to claude-sonnet-5-5, implement only; a new closing sentence states that a trial shadow declares an explicit Haiku model and turn budget, is bounded and off by default, and acts on nothing, so the diagnose shadow does not read as running against the diagnose carve-out)
+Modified sections: none
+Added sections: none
+Removed sections: none
+Templates requiring updates:
+  ✅ .specify/templates/plan-template.md — no change needed (Constitution Check is generic)
+  ✅ .specify/templates/spec-template.md — no change needed (no principle references)
+  ✅ .specify/templates/tasks-template.md — no change needed (no principle references)
+  ⚠ docs/setup.md, docs/adoption.md, docs/architecture.md — updated by spec 110's lifecycle PR (FR-004), not by this amendment: the amendment is human-merged on its own (FR-003) and the lifecycle PR carries no `.specify/memory/` edit
+  ✅ .specify/extensions.yml — absent; no before/after_constitution hooks apply
+Motivation: spec 110 (`specs/110-haiku-5-5-tier-trial`, lifecycle #972). Haiku 5.5 replaces Haiku 4.5 as the current Haiku, and spec 110 measures whether it can take work off Sonnet and Opus through a watchdog diagnose shadow and a `model:haiku` implement opt-in. FR-003 requires Principle II to name the new identifier, describe the opt-in, and say how a trial shadow fits beside the diagnose carve-out, in one MINOR amendment merged by a human that reaches `main` no later than the lifecycle PR. Gate 141 (`verify-haiku-tier-model-id.py`, FR-006) scans this file and fails while it names claude-haiku-4-5.
+Worked example: this PR is spec 110's task T004. Its lifecycle PR (finalize PR #982) carries the stage, wrapper and doc changes and Gate 141; with this amendment on `main`, Gate 141 passes there.
+Follow-up TODOs: moving any step's default to Haiku on the strength of trial data is a further MINOR amendment and the owner's decision (spec 110 User Story 4). The 2.3.1 report below says claude-haiku-4-5 "is still the current Haiku and stays"; that was true when written and is superseded here.
+-->
+<!--
 Sync Impact Report — 2026-10-05
 Version change: 2.3.0 → 2.3.1 (PATCH: clarification — the Opus tier's model identifier moves from claude-opus-5 to claude-opus-5-5 and the Sonnet tier's from claude-sonnet-5 to claude-sonnet-5-5; the tiering itself is unchanged, only which models the tiers name. claude-haiku-4-5 is still the current Haiku and stays)
 Modified principles: II. Cost-Conscious Model Tiering (identifiers only — the watchdog diagnose carve-out, the spec/clarify tier, the plan/tasks tier, and the implementation default and opt-in tiers)
