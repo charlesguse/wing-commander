@@ -1,0 +1,31 @@
+# Failure branch: a job that pushes also runs the gate suite.
+on: workflow_dispatch
+jobs:
+  fix-agent:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      # What the guarantee covers, and what it rests on: it covers every
+      # step of this job after this one. Read-only (chmod -R a-w) is not
+      # what makes it hold. It holds because the gate suite runs in a
+      # separate credential-free job that shares no filesystem, $GITHUB_ENV
+      # or $GITHUB_PATH with this one. Runner assumption: every job gets a
+      # fresh virtual machine; on a self-hosted runner this protection holds
+      # only if the runner is ephemeral.
+      - name: Snapshot helper scripts (before any agent runs)
+        run: chmod -R a-w "$RUNNER_TEMP/wc-pristine"
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.wc-pristine-repo/.github/actions/wing-commander-contained-gate-suite
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      # #583: see the fix-agent job's "Snapshot helper scripts" step.
+      - name: Snapshot helper scripts (before any agent runs)
+        run: chmod -R a-w "$RUNNER_TEMP/wc-pristine"
+      - run: python3 .github/scripts/run-local-gates.py
+      - run: git push origin HEAD:refs/heads/b

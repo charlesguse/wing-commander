@@ -91,6 +91,13 @@ CYCLE_STEP = "Read back cycle outcome"
 RETRY_STEP = "Read back retry outcome"
 FINAL_STEP = "Consolidate final outcome"
 COUNT_STEP = "Record truncated-cycle count"
+# spec 095: the count's commit leaves through wing-commander-hardened-push
+# (a uses: step, so its body -- _shared/hardened-push.sh -- is run here the
+# way the composite runs it), and this step reports the count only once that
+# push landed.
+COUNT_REPORT_STEP = "Report the truncated-cycle count"
+HARDENED_PUSH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "actions",
+                             "_shared", "hardened-push.sh")
 DISPATCH_STEP = "Dispatch next step"
 EFFECTIVE_MODEL_STEP = "Resolve effective model tier (cycle)"
 CYCLE_ANNOTATION_STEP = "Report exhausted cycle classification (cycle)"
@@ -409,12 +416,31 @@ def make_blocked_push_workspace(root, starting_count):
 
 
 def run_count_step(steps, repo, truncated, tier=None):
+    """The three steps that record the count: the commit, the hardened push
+    (only when the commit step asked for one), and the report. Returns the
+    report step's (rc, output, outputs, summary), with every step's output."""
     runner_temp = tempfile.mkdtemp(dir=os.path.dirname(repo))
     if tier is None:
         tier = PRIMARY_MODEL if truncated == "true" else ""
     env = {"SLUG": SLUG, "SPEC_DIR": SPEC_DIR, "SPEC_PREFIX": SPEC_PREFIX,
            "TRUNCATED": truncated, "TIER": tier, "BOT_SLUG": BOT_SLUG}
-    return run_step(BASH, steps[COUNT_STEP], repo, env, runner_temp)
+    rc, out, outputs, _ = run_step(BASH, steps[COUNT_STEP], repo, env, runner_temp)
+    push_outcome = "skipped"
+    if outputs.get("push") == "true":
+        work = os.path.dirname(repo)
+        push_env = dict(os.environ, PUSH_SERVER_URL="file://" + os.path.dirname(work),
+                        GITHUB_REPOSITORY=os.path.basename(work) + "/remote")
+        proc = subprocess.run(["bash", HARDENED_PUSH, f"{SPEC_PREFIX}{SLUG}",
+                               outputs.get("head-sha", "")], cwd=repo, env=push_env,
+                              capture_output=True, text=True)
+        push_outcome = "success" if proc.returncode == 0 else "failure"
+        out += proc.stdout + proc.stderr
+    report_env = {"PUSH": outputs.get("push", ""), "PUSH_OUTCOME": push_outcome,
+                  "COUNT": outputs.get("count", ""),
+                  "PENDING_COUNT": outputs.get("pending-count", "")}
+    rc2, out2, outputs2, summary2 = run_step(BASH, STEPS_CACHE[COUNT_REPORT_STEP], repo,
+                                             report_env, runner_temp)
+    return (rc or rc2), out + out2, outputs2, summary2
 
 
 def run_effective_model_step(steps, root, truncated_tier):
@@ -1543,7 +1569,7 @@ STEPS_CACHE = {}
 
 
 def load_steps():
-    for name in (CYCLE_STEP, RETRY_STEP, FINAL_STEP, COUNT_STEP, DISPATCH_STEP,
+    for name in (CYCLE_STEP, RETRY_STEP, FINAL_STEP, COUNT_STEP, COUNT_REPORT_STEP, DISPATCH_STEP,
                  EFFECTIVE_MODEL_STEP, CYCLE_ANNOTATION_STEP, RETRY_ANNOTATION_STEP):
         STEPS_CACHE[name] = find_step(STAGE, name)["run"]
     return STEPS_CACHE

@@ -251,12 +251,16 @@ on:
           The one declared definition FR-003 requires: the rendered prompt
           statement, the per-task classification, and the routing label all
           read this input, never a second literal default. Default
-          (.claude/) covers this repository's vendored speckit-* skills,
-          its own skills, and its control surface — deterministic non-agent
-          writes (auto-update-spec-kit.yml) are unaffected (FR-002, FR-018).
+          (.claude/,.git/): .claude/ covers this repository's vendored
+          speckit-* skills, its own skills, and its control surface; .git/
+          keeps the agent from planting a hook or a config value that a
+          later git call in this job would run or obey
+          (specs/095-agent-code-credential-containment FR-018). An override
+          should keep .git/. Deterministic non-agent writes
+          (auto-update-spec-kit.yml) are unaffected (FR-002, FR-018).
         type: string
         required: false
-        default: ".claude/"
+        default: ".claude/,.git/"
       write-boundary-label-prefix:
         description: >
           Label prefix a routed out-of-boundary task carries, as
@@ -472,6 +476,157 @@ jobs:
           kind: implement
           existing-token: ${{ inputs.fold-queue-token }}
 
+  # spec 095 (FR-001/FR-004..FR-008): the cycle-start gate suite runs the
+  # spec branch's own run-local-gates.py and verify-*.py -- code earlier
+  # cycles' agents wrote -- so it runs here, holding `contents: read` and
+  # no App token, on a runner of its own, never in the implement job beside
+  # the token. It reads the spec branch from a full-history checkout of the
+  # trusted commit (the repository is readable with the job's own
+  # read-only token, which the checkout does not keep) and hands back a
+  # verdict artifact bound to that head; the implement job reads it
+  # fail-closed as its agent's cycle-start input. Same runner and image as
+  # the implement job, so the suite's prerequisites are the same. Why a
+  # separate job, and the runner it assumes -- see board-loop.yml.
+  #
+  # The retry leg's suite still runs inside the implement job: containing
+  # it means splitting the retry chain into a job of its own, deferred and
+  # recorded on #737 (specs/095-agent-code-credential-containment
+  # tasks.md T015; EXEMPT_GATE_SUITE_SITES in wc_gate_suite_sites.py).
+  gate-suite-implement-cycle:
+    needs: [verify-image-prerequisites, fold-turn-implement]
+    if: >-
+      !cancelled() &&
+      needs.verify-image-prerequisites.result != 'failure' &&
+      needs.fold-turn-implement.result == 'success'
+    runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
+    container:
+      image: ${{ inputs.container-image }}
+      credentials: >-
+        ${{
+          (secrets.container-registry-username != '' && secrets.container-registry-password != '')
+            && fromJSON(format('{{"username":{0},"password":{1}}}', toJSON(secrets.container-registry-username), toJSON(secrets.container-registry-password)))
+            || fromJSON('{}')
+        }}
+      # Git safe.directory for the caller's container image -- see clarify.yml.
+      env:
+        GIT_CONFIG_COUNT: "1"
+        GIT_CONFIG_KEY_0: safe.directory
+        GIT_CONFIG_VALUE_0: "*"
+        # The cycle-start gate suite runs inside this container, which has
+        # no Docker: the same opt-out, for the same reason, as the implement
+        # job's own container env below (#989).
+        WC_GATE_SUITE_DOCKERLESS: "true"
+    permissions:
+      contents: read
+    outputs:
+      script-exists: ${{ steps.gate-suite-preflight-cycle.outputs.script-exists }}
+      ready: ${{ steps.gate-suite-preflight-cycle.outputs.ready }}
+      missing: ${{ steps.gate-suite-preflight-cycle.outputs.missing }}
+    steps:
+      # The trusted commit, full history (so origin/<spec branch> is here),
+      # and no credential left in .git/config afterwards.
+      - name: Checkout consumer repository (trusted commit, no credential kept)
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      # pin the exact commit, never a branch -- see specs/010-reusable-pipeline/research.md.
+      - name: Resolve pipeline ref
+        id: pipeline-ref
+        env:
+          JOB_WORKFLOW_SHA: ${{ github.job_workflow_sha }}
+          PIPELINE_REF_INPUT: ${{ inputs.pipeline-ref }}
+        run: |
+          ref="${PIPELINE_REF_INPUT:-$JOB_WORKFLOW_SHA}"
+          if [ -z "$ref" ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            payload=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN"               "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=wing-commander-pipeline-ref"               | jq -r '.value' | cut -d. -f2 | tr '_-' '/+')
+            while [ $(( ${#payload} % 4 )) -ne 0 ]; do payload="$payload="; done
+            ref=$(printf '%s' "$payload" | base64 -d 2>/dev/null | jq -r '.job_workflow_sha // empty' || true)
+          fi
+          if [ -z "$ref" ]; then
+            echo "::error::wing-commander stage: cannot determine the pipeline commit to check out — github.job_workflow_sha is empty and no OIDC token is available. Grant the calling job id-token: write, or set the pipeline-ref input to the same ref as your uses: pin."
+            exit 1
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout pipeline repository (shared composite actions)
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ inputs.pipeline-repo }}
+          ref: ${{ steps.pipeline-ref.outputs.ref }}
+          # A private pipeline repository is not readable by the caller's
+          # GITHUB_TOKEN — pipeline-repo-token covers that case (docs/adoption.md).
+          token: ${{ secrets.pipeline-repo-token || github.token }}
+          path: .wing-commander-pipeline
+          persist-credentials: false
+
+      # The spec branch to gate, from the same validated spec-dir the
+      # implement job resolves; anything else is refused, and the implement
+      # job then reads an absent verdict as red.
+      - name: Resolve the spec branch to gate
+        id: head
+        env:
+          SPEC_DIR_INPUT: ${{ inputs.spec-dir }}
+          SPEC_PREFIX: ${{ inputs.spec-prefix }}
+        run: |
+          if ! printf '%s' "$SPEC_DIR_INPUT" | grep -Eq '^specs/[0-9]{3}-[a-z0-9][a-z0-9-]*$'; then
+            echo "::error::spec-dir '$SPEC_DIR_INPUT' does not match specs/NNN-slug; refusing to guess."
+            exit 1
+          fi
+          echo "ref=${SPEC_PREFIX}${SPEC_DIR_INPUT#specs/}" >> "$GITHUB_OUTPUT"
+
+      - name: Install actionlint for the gate suite
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-install-actionlint
+
+      # FR-009a: check the gate suite's prerequisites without (re)installing
+      # them — actionlint is installed by the step above, so this leg only
+      # confirms it. A missing prerequisite degrades to a step-
+      # summary note; it never fails this step or denies the agent. The
+      # suite script itself is checked first: an adopter repository has no
+      # .github/scripts/run-local-gates.py (#935), so script-exists=false
+      # forces ready=false and skips the tool checks, and the summary and
+      # prompt below say there is no suite rather than that a tool is gone.
+      # Gate 62 runs this step inside wing-commander's own reference image
+      # (#989) -- see .github/docker/e2e-reference-image/Dockerfile.
+      - name: "Preflight: gate-suite prerequisites (cycle)"
+        id: gate-suite-preflight-cycle
+        run: |
+          if [ ! -f .github/scripts/run-local-gates.py ]; then
+            echo "script-exists=false" >> "$GITHUB_OUTPUT"
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "ℹ️ gate-suite preflight (cycle): no local gate suite in this repository (.github/scripts/run-local-gates.py is absent); skipping it for this cycle." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "script-exists=true" >> "$GITHUB_OUTPUT"
+          ready=true
+          missing=""
+          if ! python3 -c "import yaml" >/dev/null 2>&1; then
+            ready=false
+            missing="$missing pyyaml"
+          fi
+          if ! command -v jq >/dev/null 2>&1; then
+            ready=false
+            missing="$missing jq"
+          fi
+          if ! command -v actionlint >/dev/null 2>&1; then
+            ready=false
+            missing="$missing actionlint"
+          fi
+          echo "ready=$ready" >> "$GITHUB_OUTPUT"
+          echo "missing=${missing# }" >> "$GITHUB_OUTPUT"
+          if [ "$ready" != "true" ]; then
+            echo "⚠️ gate-suite preflight (cycle): missing prerequisites —$missing; skipping the local gate suite for this cycle." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Run the cycle-start gate suite (credential-free)
+        if: steps.gate-suite-preflight-cycle.outputs.ready == 'true'
+        timeout-minutes: 10
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-contained-gate-suite
+        with:
+          site: implement-cycle
+          head-ref: ${{ steps.head.outputs.ref }}
+
   implement:
     # container-image no-op and the runs-on JSON-array branch stay unverified (D2, D3) -- see
     # specs/038-runner-container-passthrough/research.md.
@@ -517,7 +672,7 @@ jobs:
     # reason as pr-conversation.yml's fold-turn-act/-dispatch checks --
     # without it, a ticket-admission timeout would not stop this job from
     # running unticketed.
-    needs: [verify-image-prerequisites, fold-turn-implement]
+    needs: [verify-image-prerequisites, fold-turn-implement, gate-suite-implement-cycle]
     if: >-
       !cancelled() &&
       needs.verify-image-prerequisites.result != 'failure' &&
@@ -870,115 +1025,33 @@ jobs:
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true'
         run: echo "base-sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      # actionlint (the proper GitHub-workflow linter — it also shellchecks
-      # the shell inside run: blocks, using the shellcheck pre-installed on
-      # ubuntu-latest) is not on the runner by default. Install it here, once,
-      # onto PATH via GITHUB_PATH so BOTH the cycle and retry agent steps can
-      # invoke it. Pinned to a version tag; the upstream download script does
-      # not verify a checksum, so the tag is the only pin. yamllint alone only
-      # proves a file parses — actionlint catches Actions-schema and
-      # embedded-shell bugs the agent would otherwise ship blind (it edits
-      # workflow YAML for a living).
+      # actionlint, onto PATH via GITHUB_PATH so BOTH the cycle and retry
+      # agent steps (and the retry leg's gate suite) can invoke it -- see
+      # wing-commander-install-actionlint for the pin and the retry.
       - name: Install actionlint for the agent
         id: actionlint
-        shell: bash
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true'
-        env:
-          ACTIONLINT_VERSION: "1.7.7"
-        run: |
-          mkdir -p "$RUNNER_TEMP/bin"
-          # One connection reset from GitHub's release CDN used to fail the
-          # whole cycle before the agent started, marking the spec stalled
-          # (#395), so the install is retried. The retry wraps the whole
-          # pipeline because the download script fetches the release tarball
-          # itself, with a curl call this step cannot give flags to; success
-          # is judged by the binary existing, not by the pipe's exit status.
-          installed=false
-          for attempt in 1 2 3; do
-            if curl -fsSL "https://raw.githubusercontent.com/rhysd/actionlint/v${ACTIONLINT_VERSION}/scripts/download-actionlint.bash" \
-                | bash -s -- "$ACTIONLINT_VERSION" "$RUNNER_TEMP/bin" \
-              && [ -x "$RUNNER_TEMP/bin/actionlint" ]; then
-              installed=true
-              break
-            fi
-            echo "::warning::wing-commander implement: downloading actionlint v${ACTIONLINT_VERSION} failed (attempt $attempt of 3)."
-            if [ "$attempt" -lt 3 ]; then
-              sleep $((attempt * 5))
-            fi
-          done
-          if [ "$installed" != "true" ]; then
-            echo "::error::wing-commander implement: could not install actionlint v${ACTIONLINT_VERSION} after 3 attempts -- the download or install from github.com/rhysd/actionlint did not succeed on any of them, so the agent cannot be given it. Re-dispatch this cycle."
-            exit 1
-          fi
-          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
-          "$RUNNER_TEMP/bin/actionlint" -version
-
-      # FR-009a: check the gate suite's prerequisites without (re)installing
-      # them — actionlint is already installed unconditionally above, so this
-      # leg only confirms it. A missing prerequisite degrades to a step-
-      # summary note; it never fails this step or denies the agent. The
-      # suite script itself is checked first: an adopter repository has no
-      # .github/scripts/run-local-gates.py (#935), so script-exists=false
-      # forces ready=false and skips the tool checks, and the summary and
-      # prompt below say there is no suite rather than that a tool is gone.
-      # Gate 62 runs this step inside wing-commander's own reference image
-      # (#989) -- see .github/docker/e2e-reference-image/Dockerfile.
-      - name: "Preflight: gate-suite prerequisites (cycle)"
-        id: gate-suite-preflight-cycle
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true'
-        run: |
-          if [ ! -f .github/scripts/run-local-gates.py ]; then
-            echo "script-exists=false" >> "$GITHUB_OUTPUT"
-            echo "ready=false" >> "$GITHUB_OUTPUT"
-            echo "ℹ️ gate-suite preflight (cycle): no local gate suite in this repository (.github/scripts/run-local-gates.py is absent); skipping it for this cycle." >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-          echo "script-exists=true" >> "$GITHUB_OUTPUT"
-          ready=true
-          missing=""
-          if ! python3 -c "import yaml" >/dev/null 2>&1; then
-            ready=false
-            missing="$missing pyyaml"
-          fi
-          if ! command -v jq >/dev/null 2>&1; then
-            ready=false
-            missing="$missing jq"
-          fi
-          if ! command -v actionlint >/dev/null 2>&1; then
-            ready=false
-            missing="$missing actionlint"
-          fi
-          echo "ready=$ready" >> "$GITHUB_OUTPUT"
-          echo "missing=${missing# }" >> "$GITHUB_OUTPUT"
-          if [ "$ready" != "true" ]; then
-            echo "⚠️ gate-suite preflight (cycle): missing prerequisites —$missing; skipping the local gate suite for this cycle." >> "$GITHUB_STEP_SUMMARY"
-          fi
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-install-actionlint
 
       # FR-009: the same suite CLAUDE.md's "Before pushing" section tells the
       # implement agent to run, run deterministically ahead of the agent step
-      # so its outcome is known before the agent starts. continue-on-error +
-      # its own id (T031, reversing T030's full removal): a red gate suite at
-      # cycle start must inform the agent, not end the job before the agent
-      # ever runs (the #345 misdiagnosis pattern). Skipped, not failed, when
-      # the preflight above found a missing prerequisite.
-      - name: Run local gate suite (cycle)
+      # so its outcome is known before the agent starts -- in
+      # gate-suite-implement-cycle, holding no credential (spec 095), not
+      # here beside the App token. Its verdict is read fail-closed: an
+      # absent, malformed or mis-bound verdict is outcome=fail, which the
+      # summary below reports to the agent as red at cycle start, never as
+      # green. Skipped, not failed, only when that job's preflight said the
+      # repository has no suite or a prerequisite is missing; a job that
+      # never said either (it failed or was cancelled) is read, and reads
+      # as red. A red suite informs the agent, it does not end the job (the
+      # #345 misdiagnosis pattern).
+      - name: Read the cycle-start gate suite's verdict (cycle)
         id: gate-suite-cycle
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true' && steps.gate-suite-preflight-cycle.outputs.ready == 'true'
-        continue-on-error: true
-        timeout-minutes: 10
-        run: |
-          set +e
-          python3 .github/scripts/run-local-gates.py > "$RUNNER_TEMP/gate-suite-cycle.log" 2>&1
-          rc=$?
-          cat "$RUNNER_TEMP/gate-suite-cycle.log"
-          if [ "$rc" -eq 0 ]; then
-            echo "outcome=pass" >> "$GITHUB_OUTPUT"
-          else
-            first_failure=$(grep -m1 '^FAIL' "$RUNNER_TEMP/gate-suite-cycle.log" || true)
-            echo "outcome=fail" >> "$GITHUB_OUTPUT"
-            echo "first-failure=${first_failure:-gate suite exited $rc}" >> "$GITHUB_OUTPUT"
-          fi
-          exit "$rc"
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true' && needs.gate-suite-implement-cycle.outputs.script-exists != 'false' && needs.gate-suite-implement-cycle.outputs.ready != 'false'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-gate-verdict
+        with:
+          site: implement-cycle
+          expected-head-sha: ${{ steps.base.outputs.base-sha }}
 
       # Turns the preflight/gate-suite steps above into one line the agent
       # prompt below can quote verbatim, so a red-at-start suite informs the
@@ -994,9 +1067,12 @@ jobs:
         id: gate-suite-summary-cycle
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true'
         env:
-          SCRIPT_EXISTS: ${{ steps.gate-suite-preflight-cycle.outputs.script-exists }}
-          READY: ${{ steps.gate-suite-preflight-cycle.outputs.ready }}
-          MISSING: ${{ steps.gate-suite-preflight-cycle.outputs.missing }}
+          # spec 095: from gate-suite-implement-cycle -- see "Read the
+          # cycle-start gate suite's verdict (cycle)" above for why an empty
+          # output reads as present and ready.
+          SCRIPT_EXISTS: ${{ needs.gate-suite-implement-cycle.outputs.script-exists || 'true' }}
+          READY: ${{ needs.gate-suite-implement-cycle.outputs.ready || 'true' }}
+          MISSING: ${{ needs.gate-suite-implement-cycle.outputs.missing }}
           OUTCOME: ${{ steps.gate-suite-cycle.outputs.outcome }}
           FIRST_FAILURE: ${{ steps.gate-suite-cycle.outputs.first-failure }}
         run: |
@@ -3145,7 +3221,7 @@ jobs:
       # stall-then-manual-restart boundary resets the count too). Committed
       # only when the value actually changes.
       - name: Record truncated-cycle count
-        id: record-truncation
+        id: record-truncation-commit
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true'
         env:
           SLUG: ${{ steps.spec.outputs.slug }}
@@ -3189,19 +3265,50 @@ jobs:
             else
               git commit -q -m "implement: reset truncated-cycle count"
             fi
-            # The count is reported ONLY once the push actually lands — a
-            # race with e.g. a scheduled auto-rebase force-push can reject
-            # it, and reporting the computed value regardless would tell
-            # "Dispatch next step" a count that was never actually
-            # persisted. On rejection, emit an explicit "unknown" marker
-            # instead of a stale or fabricated number.
-            if git push origin "HEAD:refs/heads/${SPEC_PREFIX}$SLUG"; then
-              echo "count=$new_count" >> "$GITHUB_OUTPUT"
-            else
-              echo "::error::wing-commander implement stage: could not persist the truncated-cycle count — push rejected. The consecutive-truncation count is unknown for this cycle."
-              echo "count=unknown" >> "$GITHUB_OUTPUT"
-              exit 1
-            fi
+            # The count is reported ONLY once the push below actually lands
+            # (see "Report the truncated-cycle count").
+            echo "pending-count=$new_count" >> "$GITHUB_OUTPUT"
+            echo "head-sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+            echo "push=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # spec 095 FR-015..FR-017: the bookkeeping commit leaves through the
+      # one hardened push idiom -- agent code ran earlier in this job, so a
+      # hook or config it planted must not run or steer this push.
+      - name: Push the truncated-cycle count
+        id: push-truncation
+        if: steps.record-truncation-commit.outputs.push == 'true'
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-hardened-push
+        with:
+          branch: ${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}
+          token: ${{ env.WC_BOT_TOKEN }}
+          expected-head-sha: ${{ steps.record-truncation-commit.outputs.head-sha }}
+
+      # The count is reported ONLY once the push actually lands — a race
+      # with e.g. a scheduled auto-rebase force-push can reject it, and
+      # reporting the computed value regardless would tell "Dispatch next
+      # step" a count that was never actually persisted. On rejection, emit
+      # an explicit "unknown" marker instead of a stale or fabricated
+      # number.
+      - name: Report the truncated-cycle count
+        id: record-truncation
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true'
+        continue-on-error: true
+        env:
+          PUSH: ${{ steps.record-truncation-commit.outputs.push }}
+          PUSH_OUTCOME: ${{ steps.push-truncation.outcome }}
+          COUNT: ${{ steps.record-truncation-commit.outputs.count }}
+          PENDING_COUNT: ${{ steps.record-truncation-commit.outputs.pending-count }}
+        run: |
+          if [ "$PUSH" != "true" ]; then
+            echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+          elif [ "$PUSH_OUTCOME" = "success" ]; then
+            echo "count=$PENDING_COUNT" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::wing-commander implement stage: could not persist the truncated-cycle count — push rejected. The consecutive-truncation count is unknown for this cycle."
+            echo "count=unknown" >> "$GITHUB_OUTPUT"
+            exit 1
           fi
 
       # Exact-SHA branch-drift baseline (specs/050-branch-drift-sha-

@@ -31,7 +31,10 @@ For every job in `.github/workflows/*.yml` that can push, i.e. one that
       continues into another command with `&&`, `;` or `|` is kept),
   (b) grants its agent `Bash(git push:*)` through `wing-commander-tool-args`
       (the agent stages push through the agent, not a `run:` step), or
-  (c) calls a local composite whose own `run:` steps push,
+  (c) calls a local composite whose own `run:` steps push -- directly, or
+      through a `_shared/<script>.sh` they run that pushes (spec 095's
+      wing-commander-hardened-push keeps its `git push` in
+      `_shared/hardened-push.sh`),
 
 the job's `concurrency.group` must be the per-spec group in one of the three
 shipped spellings:
@@ -133,14 +136,35 @@ def _composite_name(uses):
     return m.group(1) if m else None
 
 
+SHARED_SCRIPT_RE = re.compile(r"_shared/([\w.-]+\.sh)\b")
+# A shared script's push may carry git's own options first
+# (`git --git-dir="$shim/.git" push`, hardened-push.sh).
+SHARED_PUSH_RE = re.compile(r"(?<![\w-])git\s+(?:-\S+\s+)*push\b")
+
+
+def _shared_pushes(root, text):
+    """True when `text` runs a `_shared/<script>.sh` whose own lines push."""
+    for name in SHARED_SCRIPT_RE.findall(text):
+        path = os.path.join(root, ACTIONS_DIR, "_shared", name)
+        if not os.path.isfile(path):
+            continue
+        with io.open(path, encoding="utf-8") as fh:
+            body = "\n".join(line for line in fh.read().splitlines() if not _is_noise(line))
+        if SHARED_PUSH_RE.search(body):
+            return True
+    return False
+
+
 def pushing_composites(root="."):
-    """-> {composite-name} whose action.yml runs `git push` itself."""
+    """-> {composite-name} whose action.yml runs `git push` itself, or runs
+    a _shared script that does."""
     out = set()
     for path in sorted(glob.glob(os.path.join(root, ACTIONS_DIR, "*", "action.yml"))):
         with io.open(path, encoding="utf-8") as fh:
             doc = yaml.safe_load(fh) or {}
         steps = ((doc.get("runs") or {}).get("steps")) or []
-        if any(PUSH_RE.search(_run_text(s)) for s in steps if isinstance(s, dict)):
+        texts = [_run_text(s) for s in steps if isinstance(s, dict)]
+        if any(PUSH_RE.search(t) or _shared_pushes(root, t) for t in texts):
             out.add(os.path.basename(os.path.dirname(path)))
     return out
 
@@ -367,6 +391,13 @@ def _fallback_group_value(spec_dir, pr_number):
     return "wing-commander-" + spec_dir + tail
 
 
+SHARED_PUSHER_CALL = ("      - uses: ./.github/actions/shared-pusher" + _NL)
+SHARED_PUSHER_ACTION = ("name: shared-pusher" + _NL + "runs:" + _NL +
+                        "  using: composite" + _NL + "  steps:" + _NL +
+                        "    - shell: bash" + _NL +
+                        "      run: bash \"$GITHUB_ACTION_PATH/../_shared/push-it.sh\"" + _NL)
+
+
 def _tree(jobs_text, waivers=None, composite=True):
     tmp = tempfile.mkdtemp(prefix="gate80-")
     os.makedirs(os.path.join(tmp, WORKFLOW_DIR))
@@ -378,6 +409,15 @@ def _tree(jobs_text, waivers=None, composite=True):
         with io.open(os.path.join(tmp, ACTIONS_DIR, "pusher", "action.yml"),
                      "w", encoding="utf-8", newline="") as fh:
             fh.write(COMPOSITE_ACTION)
+        os.makedirs(os.path.join(tmp, ACTIONS_DIR, "shared-pusher"))
+        with io.open(os.path.join(tmp, ACTIONS_DIR, "shared-pusher", "action.yml"),
+                     "w", encoding="utf-8", newline="") as fh:
+            fh.write(SHARED_PUSHER_ACTION)
+        os.makedirs(os.path.join(tmp, ACTIONS_DIR, "_shared"))
+        with io.open(os.path.join(tmp, ACTIONS_DIR, "_shared", "push-it.sh"),
+                     "w", encoding="utf-8", newline="") as fh:
+            fh.write("#!/usr/bin/env bash" + _NL +
+                     "git --git-dir=\"$shim/.git\" push \"$url\" HEAD:refs/heads/x" + _NL)
     if waivers is not None:
         os.makedirs(os.path.join(tmp, ".github/scripts"), exist_ok=True)
         with io.open(os.path.join(tmp, WAIVERS_PATH), "w",
@@ -473,6 +513,10 @@ def self_test():
     case("a composite that pushes, called from outside the group, fails",
          _job("a", None, COMPOSITE_CALL), ["a"],
          expect_substrings=["composite pusher"])
+    case("a composite that pushes through a _shared script, called from outside the "
+         "group, fails (spec 095's hardened push)",
+         _job("a", None, SHARED_PUSHER_CALL), ["a"],
+         expect_substrings=["composite shared-pusher"])
     case("the same composite call inside the group passes",
          _job("a", GOOD_GROUP, COMPOSITE_CALL), [])
     case("a runbook that only echoes or comments `git push` is not a pusher",

@@ -27,6 +27,7 @@ import os
 import re
 import sys
 import tempfile
+from collections import namedtuple
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
@@ -36,8 +37,19 @@ COVERED_WORKFLOWS = (
     "board-loop.yml", "intake.yml", "clarify.yml", "plan.yml", "tasks.yml",
     "implement.yml", "finalize.yml", "pr-conversation.yml",
 )
-# Exempt by design (see module docstring).
-EXEMPT_COMPOSITES = ("wing-commander-contained-gate-suite",)
+Exemption = namedtuple("Exemption", "reason issue permanent permanent_reason decided_by",
+                       defaults=(False, None, ()))
+
+# Exempt by design (see module docstring). Gate 124 reads this table.
+EXEMPT_COMPOSITES = {
+    "wing-commander-contained-gate-suite": Exemption(
+        reason=("runs the gate suite over an agent-written head on purpose, in a "
+                "credential-free job"),
+        issue=(),
+        permanent=True,
+        permanent_reason="Running the agent's gate suite is the composite's whole job.",
+    ),
+}
 
 USES_RE = re.compile(r"^\s*(?:-\s+)?uses:\s*['\"]?(\./[^\s'\"#]+)")
 RUN_RE = re.compile(r"^(\s*)(?:-\s+)?run:\s*(.*?)\s*$")

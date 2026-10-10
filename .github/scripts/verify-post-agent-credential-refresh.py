@@ -503,7 +503,7 @@ SUBJECT_FLOOR = {
     ".github/workflows/rebase.yml": {"rebase"},
     ".github/workflows/cleanup.yml": {"teardown-done"},
     ".github/workflows/watchdog.yml": {"diagnose"},
-    ".github/workflows/board-loop.yml": {"triage", "route", "fix", "review"},
+    ".github/workflows/board-loop.yml": {"triage", "route", "fix-agent", "review"},
 }
 
 # (workflow_path, job_name) -> ExemptionEntry -- every entry a derived
@@ -1768,7 +1768,7 @@ def mut_board_loop_fixer_refresh_inlined(loaded):
     """Check 5 (code review of #947): board-loop names its refresh steps
     "Refresh authenticated remote (post-agent, <agent>)", which the
     single-home pattern used to miss. Reverted to an inline block."""
-    job = loaded[".github/workflows/board-loop.yml"]["jobs"]["fix"]
+    job = loaded[".github/workflows/board-loop.yml"]["jobs"]["fix-agent"]
     step = _find_step(job, "Refresh authenticated remote (post-agent, fixer)")
     assert step is not None, "fixture assumption broken: step renamed"
     step.pop("uses", None)
@@ -1997,7 +1997,7 @@ def self_test():
              ".github/workflows/auto-update-spec-kit.yml [e2e-stage]: "
              "credential-status call"),
             (mut_board_loop_fixer_refresh_inlined,
-             ".github/workflows/board-loop.yml [fix] step 'Refresh "
+             ".github/workflows/board-loop.yml [fix-agent] step 'Refresh "
              "authenticated remote (post-agent, fixer)' does not call the "
              "wing-commander-refresh-remote composite")):
         mutated = copy.deepcopy(base)
