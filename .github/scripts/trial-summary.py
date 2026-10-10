@@ -78,38 +78,41 @@ readable_trial = _BOUND.readable_trial
 NOT_COMPARED = _BOUND.NOT_COUNTED
 
 
-DIGITS = re.compile(r"[0-9]{1,30}")
+DIGITS = re.compile(r"[0-9]+")
 
 
 def scalar(value):
-    """A JSON string or integer id as a string, else None (never an
-    unhashable key, never a blank one). A numeric id is canonical decimal,
-    so 972, "972" and "0972" are one id; any other string is kept as is."""
+    """A JSON string or integer id as a stripped string, else None (never
+    an unhashable key, never a blank one). A numeric id is canonical
+    decimal, leading zeros dropped as text (no int() and its digit limit),
+    so 972, "972", " 972" and "0972" are one id."""
     if isinstance(value, bool) or not isinstance(value, (str, int)):
         return None
-    text = str(value)
-    if DIGITS.fullmatch(text.strip()):
-        return str(int(text))
-    return text if text.strip() else None
+    text = str(value).strip()
+    if DIGITS.fullmatch(text):
+        return text.lstrip("0") or "0"
+    return text or None
 
 
 def number(value):
-    """A finite JSON number, else None: a string, an object, NaN, an
-    infinity or an absurdly large integer where a count or a cost belongs is read as absent, never
-    summed into a TypeError or a nan."""
+    """A count or cost: a finite, non-negative JSON number, else None. A
+    string, an object, NaN, an infinity, a negative, or an integer too
+    large for a float (and so for fmt()) is read as absent, never summed
+    into a TypeError, a nan or an OverflowError."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
     if isinstance(value, float) and not math.isfinite(value):
         return None
-    # An integer past any real count or cost (and past what a float, and
-    # so fmt(), can hold) is as unreadable as a NaN.
-    return value if abs(value) <= 10 ** 15 else None
+    if isinstance(value, int) and value > 10 ** 300:
+        return None
+    return value if value >= 0 else None
 
 
 def issue_order(key):
-    """Numeric ids in number order (#972 before #1001), any other after."""
-    numeric = DIGITS.fullmatch(key)
-    return (not numeric, int(key) if numeric else 0, key)
+    """Numeric ids in number order (#972 before #1001), any other after.
+    scalar() drops leading zeros, so a shorter numeric id is the smaller."""
+    numeric = DIGITS.fullmatch(key) is not None
+    return (not numeric, len(key) if numeric else 0, key)
 
 
 def run_id(rec):
