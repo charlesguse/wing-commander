@@ -53,7 +53,7 @@ Repository root; scripts in `.github/scripts/`, workflows in `.github/workflows/
 - [x] T006 [US1] Add job `startup-agent` to `.github/workflows/private-image-dogfood.yml`: `if: inputs.startup-check && inputs.container-image != ''`, same `needs`, `runs-on`, `container`, `credentials` binding as the `dogfood` job (Gates 7/22/23 shape, honouring `verify-image-prerequisites` result like `dogfood`), `permissions: contents: read`, one step `uses: anthropics/claude-code-action@v1` with `continue-on-error: true`, `github_token: ${{ github.token }}`, and no model credential input. Container steps need `shell: bash` per the `container-shell-safety` skill. Image arrives only from `inputs.container-image` (FR-011).
 - [x] T007 [US1] Add job `classify-startup` to `.github/workflows/private-image-dogfood.yml`: `needs: [verify-image-prerequisites, startup-agent]`, `if: !cancelled() && inputs.startup-check && inputs.container-image != ''`, `permissions: actions: read`. Steps: fetch the `startup-agent` job log with `gh api repos/${{ github.repository }}/actions/jobs/<job id>/logs` (look up the job id by name via the run's jobs API), run `python3 .github/scripts/classify-agent-startup.py --log <file> --json` (check out the repo first), write the verdict to `$GITHUB_STEP_SUMMARY`, emit `::error::` with `reason`, and exit non-zero unless `setup-completed`. If the log fetch fails or the agent job was skipped/never started, classify an empty log so the result is `unclassified` rather than green. Apply the `review-step-gating` skill to every `if:` here.
 - [x] T008 [US1] Opt the scheduled wrapper in: set `startup-check: true` and grant `actions: read` on the calling job in `.github/workflows/wing-commander-private-image-dogfood.yml`.
-- [ ] T009 [US1] Add a job to `.github/workflows/wing-commander-e2e-reference-image.yml` after `build-and-publish` that calls `uses: ./.github/workflows/private-image-dogfood.yml` with the digest reference output by the build step as `container-image`, `startup-check: true`, `permissions: actions: read, contents: read, packages: read`, and `WING_COMMANDER_CONTAINER_REGISTRY_USERNAME`/`_PASSWORD` secrets passed explicitly (research D5/D8). Leave Gate 62's assertions unchanged.
+- [x] T009 [US1] Add a job to `.github/workflows/wing-commander-e2e-reference-image.yml` after `build-and-publish` that calls `uses: ./.github/workflows/private-image-dogfood.yml` with the digest reference output by the build step as `container-image`, `startup-check: true`, `permissions: actions: read, contents: read, packages: read`, and `WING_COMMANDER_CONTAINER_REGISTRY_USERNAME`/`_PASSWORD` secrets passed explicitly (research D5/D8). Leave Gate 62's assertions unchanged.
 - [x] T010 [US1] Run `python .github/scripts/run-local-gates.py`; fix any gate (7, 22, 23, 47, workflow-comment byte-compare gates) the new jobs trip. Workflow comments are load-bearing: re-run after any comment edit.
 
 **Checkpoint**: US1 deliverable; a red `classify-startup` job names the failing step and error.
@@ -174,13 +174,13 @@ Task: "Add fixtures for the unclassified branches in .github/scripts/agent-start
 
 ## Phase 8: Convergence
 
-- [ ] T031 Run the start-up check on every reference-image rebuild without a `push`-event agent call: Gate 6 rejects `private-image-dogfood.yml` called from `wing-commander-e2e-reference-image.yml` because `anthropics/claude-code-action` does not support `push`. Have the rebuild workflow dispatch the check on a supported event (e.g. a `workflow_dispatch` wrapper run against the published digest) and keep Gate 62 unchanged, per FR-005 / T009 (partial)
+- [x] T031 Run the start-up check on every reference-image rebuild without a `push`-event agent call: Gate 6 rejects `private-image-dogfood.yml` called from `wing-commander-e2e-reference-image.yml` because `anthropics/claude-code-action` does not support `push`. Have the rebuild workflow dispatch the check on a supported event (e.g. a `workflow_dispatch` wrapper run against the published digest) and keep Gate 62 unchanged, per FR-005 / T009 (partial)
 - [ ] T032 Replace the synthetic fixtures in `.github/scripts/agent-startup-fixtures/` and the wording assumptions at the top of `classify-agent-startup.py` with a captured real no-credential log from `anthropics/claude-code-action@v1` (and one from an image without `unzip`), per FR-008 / T001 (partial)
 - [ ] T033 Make the git-floor failure message reach the job log under its own name: the probe's non-zero exit currently surfaces behind the "could not run a POSIX shell" prefix in all 14 stages, so adjust the host-side message (and Gate 23/142 checks) so the floor failure is not mislabelled, per FR-013 (partial)
 
 ## Phase 9: Maintainer Feedback
 
-- [ ] MF1 (T009/T031) Run the start-up check on every reference-image rebuild via a claude-code-action-supported event (e.g. a `workflow_dispatch` run against the published digest), not a `push`-event call to `private-image-dogfood.yml` (Gate 6). Keep Gate 62 assertions unchanged. Per T031's named approach.
+- [x] MF1 (T009/T031) Run the start-up check on every reference-image rebuild via a claude-code-action-supported event (e.g. a `workflow_dispatch` run against the published digest), not a `push`-event call to `private-image-dogfood.yml` (Gate 6). Keep Gate 62 assertions unchanged. Per T031's named approach.
 
 ## Maintainer Feedback
 
@@ -198,4 +198,4 @@ Task: "Add fixtures for the unclassified branches in .github/scripts/agent-start
 
 ## Maintainer Feedback
 
-- [ ] MF7 (#1002) Address the Gate 23/Gate 50 disagreement on a credential-less agent step only if MF1 (T009/T031) cannot pass both gates without the comment workaround. Otherwise leave #1002 untouched.
+- [x] MF7 (#1002) Address the Gate 23/Gate 50 disagreement on a credential-less agent step only if MF1 (T009/T031) cannot pass both gates without the comment workaround. Otherwise leave #1002 untouched.

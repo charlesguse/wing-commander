@@ -28,6 +28,8 @@ permissions:
 jobs:
   build-and-publish:
     runs-on: ubuntu-latest
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -63,3 +65,25 @@ jobs:
             echo "end-to-end test repository's \`WING_COMMANDER_CONTAINER_IMAGE\` variable"
             echo "(docs/setup.md) -- this workflow does not write it for you."
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # The agent action does not support the `push` event this workflow runs
+  # on (Gate 6), so the start-up check is dispatched as a
+  # `workflow_dispatch` run of the private-image-dogfood wrapper against
+  # the digest just published (specs/112-agent-startup-image-check).
+  startup-check:
+    needs: build-and-publish
+    if: ${{ !cancelled() && needs.build-and-publish.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Dispatch the start-up check against the published digest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          DIGEST: ${{ needs.build-and-publish.outputs.digest }}
+        run: |
+          set -euo pipefail
+          gh workflow run wing-commander-private-image-dogfood.yml \
+            -f "container-image=ghcr.io/charlesguse/wing-commander-e2e-image@${DIGEST}"
