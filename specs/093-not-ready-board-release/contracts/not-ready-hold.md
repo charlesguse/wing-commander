@@ -48,7 +48,15 @@ def _not_ready_holds(marker, pr_state_by_number, pr_head_sha_by_number):
     otherwise -- including a self-clearing record (never held, FR-005) and
     a durable record whose head has moved (re-admitted, not merely
     un-held -- resume's step resolution decides review vs. readiness, not
-    this predicate)."""
+    this predicate). Also True for a readiness marker that names an
+    nr_class but whose record does not parse (FR-011: passed over, never
+    admitted)."""
+
+def not_ready_readmitted(marker, pr_head_sha):
+    """FR-007. True when marker carries a durable record and the known live
+    head is no longer held by _not_ready_holds() -- the hold ended because
+    the head moved. The resume step calls this instead of comparing head
+    SHAs itself (FR-003)."""
 
 def not_ready_handover_due(nr_count):
     """FR-004(a). True when nr_count >= NOT_READY_THRESHOLD."""
@@ -73,14 +81,15 @@ both paths (FR-003/FR-004).
 
 ```python
 def write_marker(step, round, pr, branch, base_sha,
-                  nr_count=None, nr_head_sha=None, nr_class=None):
-    """Unchanged shape, three new optional trailing fields serialized only
+                  nr_count=None, nr_head_sha=None, nr_class=None, nr_reason=None):
+    """Unchanged shape, four new optional trailing fields serialized only
     when not None (an absent field, not a null-valued one, keeps old
     markers and new no-not-ready-record markers byte-identical in every
     field that already existed)."""
 ```
 
-`main()`'s CLI gains `--nr-count`, `--nr-head-sha`, `--nr-class`, each
+`main()`'s CLI gains `--nr-count`, `--nr-head-sha`, `--nr-class`,
+`--nr-reason` (the unmet condition, FR-002), each
 optional and independent of `--step`. `add_stalled_label()`'s own
 docstring is NOT changed by this feature (research.md D7, D10) — that
 canonical statement is spec 100's (#752) to update when it generalizes
@@ -162,12 +171,16 @@ extended decision (research.md D2), and:
      if the label add fails (unchanged pattern, `add_stalled_label()`).
   3. Otherwise: write a `readiness` marker carrying `--nr-count
      "$new_count"`, `--nr-head-sha` (this run's head), `--nr-class`
-     (`unmet_class`), plus the unchanged `--pr`/`--branch`. Before posting
-     the comment, compare `(pr, head_sha, unmet_reason text)` against the
-     current marker's own recorded triple (FR-009); on an exact match,
-     `gh issue comment --edit-last` the existing comment (updating its
-     embedded marker to the new count) instead of appending a new one
-     (research.md D8); otherwise post a new comment as today.
+     (`unmet_class`), `--nr-reason` (the unmet condition), plus the
+     unchanged `--pr`/`--branch`. Before posting the comment, compare
+     `(pr, head_sha, unmet_reason)` against the newest loop marker's own
+     `pr`/`nr_head_sha`/`nr_reason` (FR-009, never the comment's prose); on
+     an exact match, edit THAT comment by its id
+     (`PATCH /repos/:owner/:repo/issues/comments/:id`), updating its
+     embedded marker to the new count, instead of appending a new one
+     (research.md D8); otherwise post a new comment as today. The count
+     and round reach this step on every path: from select, from review,
+     or, on a directed run, from the marker the directed run itself reads.
 
 Every durable action above stays behind
 `steps.killswitch-recheck.outputs.paused == 'false'`, unchanged (research.md

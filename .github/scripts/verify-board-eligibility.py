@@ -162,6 +162,10 @@ IN_FLIGHT_CASES = {
     "not-ready-self-clearing-not-held",
     "not-ready-head-unresolvable",
     "not-ready-two-held-one-eligible",
+    # FR-011: a readiness marker naming an nr_class whose record does not
+    # parse (nr_count "one", no nr_head_sha) is passed over, not admitted,
+    # even with the PR's head resolvable.
+    "not-ready-record-unparsable-held",
 }
 
 # (name, replacement for board_item_marker.is_loop_marker_author)

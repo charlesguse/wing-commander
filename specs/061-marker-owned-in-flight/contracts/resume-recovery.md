@@ -104,7 +104,7 @@ fires only when the ones above it don't apply:
 0.5a. (specs/093-not-ready-board-release FR-008/D7) The marker's step is
    stalled, it carries both pr and nr_head_sha (this feature's own
    not-ready handover, never any other stall site's marker, which keeps
-   pr: null), and its pr resolves
+   pr: null), and its pr resolves OPEN
      -> step = "readiness" when `head_moved_since_last_review(pr_number,
         comments, bot_login)` (`board_item_marker.py`, the one shared
         determination, same as clause 2b) is False -- the head matches the
@@ -113,12 +113,15 @@ fires only when the ones above it don't apply:
         already produces for every other stalled marker. nr_head_sha is
         not compared here.
    A stalled marker lacking either field is unaffected and falls through
-   unchanged to clause 2 below.
+   unchanged to clause 2 below. A handover whose pr has since been merged
+   or closed falls through as well, to clause 4's triage, with the pr
+   cleared like the rest of the abandoned attempt (FR-022).
 
 0.5b. (specs/093-not-ready-board-release FR-001/FR-007/D3) The marker's
    step is readiness, its pr resolves OPEN, and it carries a durable
    not-ready record (contracts/not-ready-hold.md) whose head SHA differs
-   from the pr's current head
+   from the pr's current head (`board_eligibility.not_ready_readmitted()`,
+   the hold's own module, never an inline comparison -- FR-003)
      -> step = "review", never "readiness" -- the held item is
         automatically re-admitted the moment its head moves, at review
         (a human's new commits have not been through an independent

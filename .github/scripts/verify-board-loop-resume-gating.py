@@ -1009,6 +1009,17 @@ RESUME_CASES = [
      _resume_env("stalled", "42", True, "OPEN", "42",
                  marker_extra={"pr": 42, "nr_head_sha": "deadbeef"}, pr_head_sha="deadbeef"),
      {"step": "review", "pr_number": "42"}),
+    # A handover whose PR was merged or closed since is not resumed on that
+    # PR (code review of #1010): it falls through to triage, exactly as a
+    # pr-less stalled marker with no open board:owned PR always has.
+    ("not-ready handover (stalled, pr+nr_head_sha), PR MERGED -> triage",
+     _resume_env("stalled", "42", True, "MERGED", "42", branch="",
+                 marker_extra={"pr": 42, "nr_head_sha": "deadbeef"}, pr_head_sha="deadbeef"),
+     {"step": "triage", "pr_number": ""}),
+    ("not-ready handover (stalled, pr+nr_head_sha), PR CLOSED -> triage",
+     _resume_env("stalled", "42", True, "CLOSED", "42", branch="",
+                 marker_extra={"pr": 42, "nr_head_sha": "deadbeef"}, pr_head_sha="deadbeef"),
+     {"step": "triage", "pr_number": ""}),
     # FR-015: a stalled marker from any other stall site keeps pr: null and
     # is unaffected -- still resolved by the generic board:owned fallback
     # clause, never triage.
@@ -1967,6 +1978,99 @@ def not_ready_report_findings(doc):
                and '--add-label "board:stalled"' in ln for ln in lines):
         findings.append("readiness: the not-ready threshold no longer hands over with a stalled marker "
                         "carrying --pr/--nr-head-sha and board:stalled (specs/093 FR-004(a)/FR-008)")
+    if not re.search(r"case \"\$not_ready_threshold\" in\s*\n\s*''\|\*\[!0-9\]\*\)[^\n]*exit 1", run):
+        findings.append("readiness: an unreadable NOT_READY_THRESHOLD is not refused -- the handover "
+                        "would be silently skipped (specs/093 FR-004(a))")
+    if not any("--step readiness" in ln and "--nr-reason" in ln for ln in lines):
+        findings.append("readiness: the not-ready record no longer carries --nr-reason, the unmet "
+                        "condition FR-002 requires (and FR-009's dedup reads)")
+    # Code review of #1010: the count and round survive every hop, a
+    # directed run and a review-fixup round advance included.
+    jobs = doc.get("jobs") or {}
+    nr_env = next((str((s.get("env") or {}).get("NR_COUNT", "")) for s in steps
+                   if isinstance(s, dict) and "NOT_READY_THRESHOLD" in str(s.get("run", ""))), "")
+    if "steps.resolve-directed-pr.outputs.nr-count" not in nr_env:
+        findings.append("readiness: a directed run's NR_COUNT does not fall back to the marker's "
+                        "own count (resolve-directed-pr) -- it restarts at 0")
+    for job in ("review", "readiness"):
+        for s in (jobs.get(job) or {}).get("steps") or []:
+            if isinstance(s, dict) and s.get("id") == "pr":
+                w = s.get("with") or {}
+                key = "nr-count" if job == "review" else "round"
+                if "steps.resolve-directed-pr.outputs." + key not in str(w.get(key, "")):
+                    findings.append("{0}: the PR step's {1} does not fall back to resolve-directed-pr's".format(job, key))
+    publish = "\n".join(_logical_lines("\n".join(
+        str(s.get("run", "")) for s in (jobs.get("review-fixup-publish") or {}).get("steps") or []
+        if isinstance(s, dict))))
+    for ln in publish.split("\n"):
+        if "--step review" in ln and "board_item_marker.py" in ln and "--nr-count" not in ln:
+            findings.append("review-fixup-publish: the round-advance marker drops --nr-count, resetting "
+                            "the not-ready count (specs/093 research.md D5)")
+    # FR-003: resume asks board_eligibility whether a hold ended; it never
+    # compares the record's head SHA itself.
+    resume = _step_run(doc, "select", "resume")
+    if "not_ready_readmitted(" not in resume or '["head_sha"]' in resume:
+        findings.append("select: resume re-derives the not-ready hold inline instead of calling "
+                        "board_eligibility.not_ready_readmitted() (specs/093 FR-003)")
+    return findings
+
+
+# specs/093-not-ready-board-release FR-009 (code review of #1010): the
+# dedup finds the newest loop marker for the same PR, head SHA and unmet
+# condition by the marker's own nr_reason (never the prose) and returns
+# THAT comment's id to edit -- not the bot's newest comment, which may be a
+# later marker-less one.
+_BOT = "wing-commander-bot[bot]"
+
+
+def _dedup_comment(cid, created_at, marker):
+    body = "Not ready.\n\n"
+    if marker is not None:
+        body += "<!-- wing-commander-board-item: {0} -->".format(json.dumps(marker, sort_keys=True))
+    return {"id": cid, "created_at": created_at, "body": body,
+            "user": {"login": _BOT, "type": "Bot"}}
+
+
+_NR = {"step": "readiness", "pr": 42, "nr_head_sha": "deadbeef", "nr_class": "self-clearing",
+       "nr_count": 1, "nr_reason": "checks not green on head_sha deadbeef (stale or failing)"}
+DEDUP_CASES = [
+    ("same pr/head/reason, a later marker-less bot comment -> the marker comment's id",
+     [_dedup_comment(111, "2026-01-01T00:00:00Z", _NR), _dedup_comment(222, "2026-01-02T00:00:00Z", None)],
+     "111"),
+    ("different unmet condition -> new comment",
+     [_dedup_comment(111, "2026-01-01T00:00:00Z", dict(_NR, nr_reason="1 open in-scope finding(s)"))], ""),
+    ("different head -> new comment",
+     [_dedup_comment(111, "2026-01-01T00:00:00Z", dict(_NR, nr_head_sha="cafefeed"))], ""),
+    ("marker without nr_reason (prose only) -> new comment",
+     [_dedup_comment(111, "2026-01-01T00:00:00Z", {k: v for k, v in _NR.items() if k != "nr_reason"})], ""),
+]
+
+
+def not_ready_dedup_findings(doc, scripts_root=ROOT):
+    steps = ((doc.get("jobs") or {}).get("readiness") or {}).get("steps") or []
+    run = next((str(s.get("run", "")) for s in steps
+                if isinstance(s, dict) and "NOT_READY_THRESHOLD" in str(s.get("run", ""))), "")
+    code = _heredoc(run, "same_comment_id")
+    if code is None:
+        return ["readiness: no `same_comment_id` dedup heredoc in the not-ready report (specs/093 FR-009)"]
+    findings = []
+    if "--edit-last" in run:
+        findings.append("readiness: the not-ready dedup edits with --edit-last, not by the matched comment's id")
+    with tempfile.TemporaryDirectory() as tmp:
+        os.makedirs(os.path.join(tmp, "wc-pristine"))
+        os.symlink(os.path.join(os.path.abspath(scripts_root), ".github", "scripts"),
+                   os.path.join(tmp, "wc-pristine", "scripts"))
+        for i, (title, comments, expected) in enumerate(DEDUP_CASES):
+            # One file per case: _exec_heredoc memoizes on the env.
+            path = os.path.join(tmp, "comments-{0}.json".format(i))
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump(comments, fh)
+            env = {"RUNNER_TEMP": tmp, "COMMENTS_PATH": path, "BOT_LOGIN": _BOT, "PR_NUMBER": "42",
+                   "HEAD_SHA": "deadbeef", "UNMET": _NR["nr_reason"]}
+            rc, out, err = _exec_heredoc(code, env, scripts_root)
+            if rc != 0 or out.strip() != expected:
+                findings.append("dedup `{0}`: expected {1!r}, got rc={2} {3!r} {4}".format(
+                    title, expected, rc, out.strip(), err.strip()[-200:]))
     return findings
 
 
@@ -1981,7 +2085,7 @@ def all_findings(text, table=None, scripts_root=ROOT):
             + fetch_handling_findings(doc) + lookup_handling_findings(doc)
             + fetch_behaviour_findings(doc) + breach_retry_findings(doc, scripts_root)
             + stall_label_findings(doc, scripts_root) + readiness_stop_gate_findings(doc)
-            + not_ready_report_findings(doc))
+            + not_ready_report_findings(doc) + not_ready_dedup_findings(doc, scripts_root))
 
 
 def print_table(table):
@@ -2155,6 +2259,21 @@ def _mutations(text):
     # and the threshold handover are each load-bearing.
     sub("not-ready report drops its record write (--nr-count)",
         '--nr-count "$new_count" ', "")
+    # Code review of #1010.
+    sub("not-ready dedup ignores the unmet condition (nr_reason)",
+        '\n                      and marker.get("nr_reason") == os.environ["UNMET"]', "")
+    sub("not-ready threshold read left unguarded",
+        "''|*[!0-9]*) echo \"::error::board-loop readiness (not ready): could not read NOT_READY_THRESHOLD",
+        "XX) echo \"::error::board-loop readiness (not ready): could not read NOT_READY_THRESHOLD")
+    sub("resume clause 0.5a resumes a merged/closed handover PR",
+        'marker_step == "stalled" and pr_from_marker and pr_state == "OPEN"',
+        'marker_step == "stalled" and pr_from_marker')
+    sub("review-fixup-publish round advance drops --nr-count",
+        '--branch "$BRANCH" --nr-count "$NR_COUNT")"', '--branch "$BRANCH")"',
+        after="\n  review-fixup-publish:\n")
+    sub("directed readiness NR_COUNT restarts at 0",
+        " || steps.resolve-directed-pr.outputs.nr-count || 0 }}\n          DEDUP_COMMENTS_FETCHED",
+        " || 0 }}\n          DEDUP_COMMENTS_FETCHED")
     sub("not-ready handover drops its nr_head_sha",
         '--step stalled --pr "$PR_NUMBER" --round "$ROUND" --nr-head-sha "$head_sha" ',
         '--step stalled --round "$ROUND" ')

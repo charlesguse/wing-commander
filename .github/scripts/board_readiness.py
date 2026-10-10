@@ -60,10 +60,19 @@ def _gate_suite_green(rollup):
     return False
 
 
-NOT_CONCLUDED_STATES = ("QUEUED", "IN_PROGRESS", "PENDING", "EXPECTED")
+# A legacy StatusContext carries `state` (PENDING/EXPECTED); an Actions
+# CheckRun that has not concluded carries `status` (QUEUED/IN_PROGRESS/
+# WAITING/REQUESTED/PENDING) with an empty `conclusion` and no `state`.
+NOT_CONCLUDED_STATES = ("QUEUED", "IN_PROGRESS", "WAITING", "REQUESTED", "PENDING", "EXPECTED")
 
 
-def _unmet_class(rollup, checks_green):
+def _entry_state(entry):
+    """A rollup entry's state: a concluded CheckRun's `conclusion`, a
+    StatusContext's `state`, else a not-yet-concluded CheckRun's `status`."""
+    return (entry.get("state") or entry.get("conclusion") or entry.get("status") or "").upper()
+
+
+def _unmet_class(rollup, checks_green, other_unmet=False):
     """specs/093-not-ready-board-release contracts/not-ready-hold.md,
     research.md D2: "self-clearing" only when every rollup entry is in a
     not-yet-concluded state (rollup non-empty, checks_green false because
@@ -72,13 +81,14 @@ def _unmet_class(rollup, checks_green):
     unmet reason that is not about checks_green at all: gate_suite_green,
     zero_open_findings, backstop_holds, kill_switch_clear). FR-005: derived
     only from the rollup's own per-entry states, never from an agent's
-    reading of them."""
-    if checks_green:
+    reading of them. `other_unmet`: a non-check condition (open findings, a
+    breached backstop) is also unmet, which no later run clears on its own."""
+    if checks_green or other_unmet:
         return "durable"
     if not rollup:
         return "durable"
     for entry in rollup:
-        state = (entry.get("state") or entry.get("conclusion") or "").upper()
+        state = _entry_state(entry)
         if state not in ("SUCCESS", "NEUTRAL", "SKIPPED") and state not in NOT_CONCLUDED_STATES:
             return "durable"
     return "self-clearing"
@@ -106,7 +116,10 @@ def evaluate_from_snapshot(snapshot, open_in_scope_findings, backstop_holds,
     unmet_reason = None
     unmet_class = None
     if not ready:
-        unmet_class = _unmet_class(rollup, checks_green)
+        # Open findings or a breached backstop stay unmet when the checks
+        # finish, so they are durable whatever the rollup says.
+        unmet_class = _unmet_class(rollup, checks_green,
+                                   other_unmet=not (zero_open_findings and backstop_holds))
         if not checks_green:
             if not rollup:
                 unmet_reason = "no checks reported on head_sha {0}".format(head_sha)

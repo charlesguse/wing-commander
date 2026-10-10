@@ -430,7 +430,9 @@ def _not_ready_holds(marker, pr_state_by_number, pr_head_sha_by_number):
     (not_ready_record()) whose class is "durable" AND the PR's current
     head SHA (pr_head_sha_by_number.get(pr)) either cannot be determined
     at all (fail-safe: unknown degrades to held, never to admitted) or
-    equals the record's own head_sha (unchanged head holds). False
+    equals the record's own head_sha (unchanged head holds), and when a
+    readiness marker names an nr_class but its record does not parse
+    (FR-011: passed over, never admitted). False
     otherwise -- including when there is no not-ready record at all, a
     "self-clearing" record (FR-005: never held), or a durable record
     whose head has moved (admitted, not merely un-held -- resume's own
@@ -438,12 +440,30 @@ def _not_ready_holds(marker, pr_state_by_number, pr_head_sha_by_number):
     predicate). Mirrors _awaiting_merge_holds()/_unowned_open_pr_holds()'s
     existing shape beside it (contracts/not-ready-hold.md)."""
     record = not_ready_record(marker)
-    if record is None or record["class"] != "durable":
+    if record is None:
+        # FR-011: a readiness marker that names a not-ready class but whose
+        # record does not parse is passed over, never admitted -- admitting
+        # it would re-report the same outcome with nothing changed.
+        return (marker is not None and marker.get("step") == "readiness"
+                and "nr_class" in marker)
+    if record["class"] != "durable":
         return False
     current_head_sha = (pr_head_sha_by_number or {}).get(record["pr"])
     if current_head_sha is None:
         return True
     return current_head_sha == record["head_sha"]
+
+
+def not_ready_readmitted(marker, pr_head_sha):
+    """specs/093-not-ready-board-release FR-007: True when `marker` carries
+    a durable not-ready record and the PR's live head `pr_head_sha` is known
+    and no longer held by _not_ready_holds() -- the head moved, so the item
+    resumes at review. The resume step calls this rather than comparing
+    head SHAs itself (FR-003: one home for the hold)."""
+    record = not_ready_record(marker)
+    if record is None or record["class"] != "durable" or not pr_head_sha:
+        return False
+    return not _not_ready_holds(marker, None, {record["pr"]: pr_head_sha})
 
 
 def _awaiting_merge_holds(marker, pr_state_by_number):

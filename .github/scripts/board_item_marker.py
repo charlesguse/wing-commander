@@ -183,7 +183,7 @@ def read_marker(issue_comments, bot_login):
 
 def write_marker(step, round, pr, branch, base_sha, spec_request=None,
                  outcome_reason=None, recovery_attempted=False,
-                 nr_count=None, nr_head_sha=None, nr_class=None):
+                 nr_count=None, nr_head_sha=None, nr_class=None, nr_reason=None):
     """Renders the run announcement plus the HTML-comment marker line.
     Appended to the loop's own human-legible status comment -- never the
     comment's only content (FR-044) -- by the caller.
@@ -208,7 +208,7 @@ def write_marker(step, round, pr, branch, base_sha, spec_request=None,
     `"outcome_reason": null, "recovery_attempted": false` alongside the
     five existing keys.
 
-    nr_count/nr_head_sha/nr_class (specs/093-not-ready-board-release,
+    nr_count/nr_head_sha/nr_class/nr_reason (specs/093-not-ready-board-release,
     contracts/not-ready-hold.md): the not-ready record, meaningful only on
     a `readiness` marker (and, for the threshold handover only, a
     `stalled` marker's `nr_head_sha`, D7). Each is serialized only when not
@@ -225,6 +225,8 @@ def write_marker(step, round, pr, branch, base_sha, spec_request=None,
         payload_dict["nr_head_sha"] = nr_head_sha
     if nr_class is not None:
         payload_dict["nr_class"] = nr_class
+    if nr_reason is not None:
+        payload_dict["nr_reason"] = nr_reason
     payload = json.dumps(payload_dict, sort_keys=True)
     marker = "<!-- wing-commander-board-item: {0} -->".format(payload)
 
@@ -460,6 +462,9 @@ def main():
                         help="specs/093-not-ready-board-release: the PR head SHA the not-ready decision was measured against")
     parser.add_argument("--nr-class", default=None,
                         help="specs/093-not-ready-board-release: 'self-clearing' or 'durable' (FR-005)")
+    parser.add_argument("--nr-reason", default=None,
+                        help="specs/093-not-ready-board-release: the unmet condition (FR-002), "
+                             "which the FR-009 dedup compares")
     args = parser.parse_args()
     if args.record_stall_summary:
         if args.issue is None or not args.from_step:
@@ -480,7 +485,7 @@ def main():
                        outcome_reason=args.outcome_reason,
                        recovery_attempted=args.recovery_attempted,
                        nr_count=args.nr_count, nr_head_sha=args.nr_head_sha,
-                       nr_class=args.nr_class))
+                       nr_class=args.nr_class, nr_reason=args.nr_reason))
 
 
 if __name__ == "__main__":

@@ -1210,7 +1210,8 @@ jobs:
 
           sys.path.insert(0, ".github/scripts")
           from board_eligibility import (
-              PRE_FIX_STEPS, FIX_OR_LATER_STEPS, AWAITING_MERGE_STEP, BREACH_STEP, not_ready_record)
+              PRE_FIX_STEPS, FIX_OR_LATER_STEPS, AWAITING_MERGE_STEP, BREACH_STEP,
+              not_ready_readmitted)
           from board_item_marker import STALLED_STEP, head_moved_since_last_review, is_loop_branch
 
           marker_step = os.environ.get("MARKER_STEP") or None
@@ -1307,7 +1308,7 @@ jobs:
               round_ = "0"
               base_sha = ""
               nr_count_ = "0"
-          elif (marker_step == "stalled" and pr_from_marker
+          elif (marker_step == "stalled" and pr_from_marker and pr_state == "OPEN"
                 and marker_full.get("pr") is not None and marker_full.get("nr_head_sha")):
               # specs/093-not-ready-board-release FR-008/D7: this feature's
               # own handover marker is the one stalled-step marker that
@@ -1319,7 +1320,9 @@ jobs:
               # what the generic fallback clause already does for every
               # other stall site. The moved/unmoved call is the one shared
               # head_moved_since_last_review() determination (FR-007), not
-              # a second comparison against nr_head_sha.
+              # a second comparison against nr_head_sha. Only an OPEN PR:
+              # one merged or closed since the handover falls through to
+              # the clauses below (prove / fresh triage).
               with open(os.environ["COMMENTS_PATH"], encoding="utf-8") as fh:
                   comments = json.load(fh)
               if not head_moved_since_last_review(pr_number, comments, os.environ.get("BOT_LOGIN") or ""):
@@ -1331,8 +1334,7 @@ jobs:
                   note = "recorded pr {0} was handed off not-ready at head_sha {1}; head has moved -- resuming at review".format(
                       pr_number, marker_full.get("nr_head_sha"))
           elif (marker_step == "readiness" and pr_from_marker and pr_state == "OPEN"
-                and (not_ready_record(marker_full) or {}).get("class") == "durable"
-                and pr_head_sha and pr_head_sha != not_ready_record(marker_full)["head_sha"]):
+                and not_ready_readmitted(marker_full, pr_head_sha)):
               # specs/093-not-ready-board-release FR-001/FR-007 (US3): a
               # held item's PR head has moved since the durable not-ready
               # record was measured -- automatically re-admitted, at
@@ -1346,7 +1348,7 @@ jobs:
               # step = marker_step there.
               step = "review"
               note = "recorded pr {0} was held not-ready at head_sha {1}; head has moved -- re-admitted at review".format(
-                  pr_number, not_ready_record(marker_full)["head_sha"])
+                  pr_number, marker_full.get("nr_head_sha"))
           elif pr_from_marker and marker_step and (
               marker_step in PRE_FIX_STEPS
               or (marker_step in FIX_OR_LATER_STEPS and pr_state == "OPEN")
@@ -1427,12 +1429,17 @@ jobs:
                   # leak into a fresh triage (branch is already empty here
                   # -- the `elif branch:` clause above would have matched
                   # otherwise -- but round/base-sha are cleared explicitly).
+                  # The not-ready handover marker names a pr (specs/093
+                  # D7); once that PR is merged or closed it is the same
+                  # abandoned attempt, so it does not leak forward either.
+                  pr_number = ""
+                  pr_state = ""
                   if marker_step == STALLED_STEP:
-                      # Every stall site's marker is pr=None (research.md
-                      # D1), so a stalled item with no open board:owned PR
-                      # to recover reaches here by design, not by decay --
-                      # never describe this as a "stale marker" (maintainer
-                      # review of #885).
+                      # Every other stall site's marker is pr=None
+                      # (research.md D1), so a stalled item with no open
+                      # board:owned PR to recover reaches here by design, not
+                      # by decay -- never describe this as a "stale marker"
+                      # (maintainer review of #885).
                       reason = "re-admitted from a stall -- no open board:owned pull request citing this issue; starting a fresh triage"
                   else:
                       reason = "stale marker -- recorded branch/pr could not be re-derived live"
@@ -3758,7 +3765,7 @@ jobs:
           gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments" --paginate \
             --jq '.[] | {created_at, body, user}' | jq -s '.' > "$RUNNER_TEMP/board-directed-issue-comments.json"
 
-          pr="$(COMMENTS_PATH="$RUNNER_TEMP/board-directed-issue-comments.json" python3 -I - <<'PYEOF'
+          directed="$(COMMENTS_PATH="$RUNNER_TEMP/board-directed-issue-comments.json" python3 -I - <<'PYEOF'
           import json
           import os
           import sys
@@ -3768,11 +3775,19 @@ jobs:
 
           with open(os.environ["COMMENTS_PATH"], encoding="utf-8") as fh:
               comments = json.load(fh)
-          marker = read_marker(comments, os.environ["BOT_LOGIN"])
-          print((marker or {}).get("pr") or "")
+          marker = read_marker(comments, os.environ["BOT_LOGIN"]) or {}
+          # specs/093-not-ready-board-release: a directed run carries the
+          # marker's not-ready count and round forward like select does,
+          # rather than restarting the FR-004(a) bound at 0.
+          print(json.dumps({"pr": marker.get("pr") or "", "nr_count": marker.get("nr_count") or 0,
+                            "round": marker.get("round") or 0}))
           PYEOF
           )"
-          echo "pr=$pr" >> "$GITHUB_OUTPUT"
+          {
+            echo "pr=$(printf '%s' "$directed" | jq -r '.pr')"
+            echo "nr-count=$(printf '%s' "$directed" | jq -r '.nr_count')"
+            echo "round=$(printf '%s' "$directed" | jq -r '.round')"
+          } >> "$GITHUB_OUTPUT"
 
       # A same-run handoff from `fix` starts this PR's first review at
       # round 0; a cross-run resume reads the marker's own round
@@ -3785,7 +3800,7 @@ jobs:
           pr-number: ${{ needs.fix.outputs.pr-number || needs.select.outputs.pr || steps.resolve-directed-pr.outputs.pr }}
           token: ${{ github.token }}
           round: ${{ needs.select.outputs.round || 0 }}
-          nr-count: ${{ needs.select.outputs.nr-count || 0 }}
+          nr-count: ${{ needs.select.outputs.nr-count || steps.resolve-directed-pr.outputs.nr-count || 0 }}
 
       # Gate 98 holds this job to exactly one actions/checkout@ step (the
       # first one, taken before the pristine snapshot above) -- switching
@@ -5035,7 +5050,7 @@ jobs:
           gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments" --paginate \
             --jq '.[] | {created_at, body, user}' | jq -s '.' > "$RUNNER_TEMP/board-directed-issue-comments.json"
 
-          pr="$(COMMENTS_PATH="$RUNNER_TEMP/board-directed-issue-comments.json" python3 -I - <<'PYEOF'
+          directed="$(COMMENTS_PATH="$RUNNER_TEMP/board-directed-issue-comments.json" python3 -I - <<'PYEOF'
           import json
           import os
           import sys
@@ -5045,11 +5060,19 @@ jobs:
 
           with open(os.environ["COMMENTS_PATH"], encoding="utf-8") as fh:
               comments = json.load(fh)
-          marker = read_marker(comments, os.environ["BOT_LOGIN"])
-          print((marker or {}).get("pr") or "")
+          marker = read_marker(comments, os.environ["BOT_LOGIN"]) or {}
+          # specs/093-not-ready-board-release: a directed run carries the
+          # marker's not-ready count and round forward like select does,
+          # rather than restarting the FR-004(a) bound at 0.
+          print(json.dumps({"pr": marker.get("pr") or "", "nr_count": marker.get("nr_count") or 0,
+                            "round": marker.get("round") or 0}))
           PYEOF
           )"
-          echo "pr=$pr" >> "$GITHUB_OUTPUT"
+          {
+            echo "pr=$(printf '%s' "$directed" | jq -r '.pr')"
+            echo "nr-count=$(printf '%s' "$directed" | jq -r '.nr_count')"
+            echo "round=$(printf '%s' "$directed" | jq -r '.round')"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Resolve the PR under readiness
         id: pr
@@ -5060,7 +5083,7 @@ jobs:
           # specs/093-not-ready-board-release research.md D6: carried
           # through so a not-ready outcome's marker rewrite never drops the
           # fix->review round budget (FR-007).
-          round: ${{ needs.review.outputs.round || needs.select.outputs.round || 0 }}
+          round: ${{ needs.review.outputs.round || needs.select.outputs.round || steps.resolve-directed-pr.outputs.round || 0 }}
 
       # Gate 98 holds this job to exactly one actions/checkout@ step (the
       # first one, taken before the pristine snapshot above) -- switching
@@ -5345,7 +5368,7 @@ jobs:
         run: |
           set -uo pipefail
           if gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments" --paginate \
-              --jq '.[] | {created_at, body, user: {login: .user.login, type: .user.type}}' | jq -s '.' \
+              --jq '.[] | {id, created_at, body, user: {login: .user.login, type: .user.type}}' | jq -s '.' \
               > "$RUNNER_TEMP/board-not-ready-comments.json"; then
             echo "fetched=true" >> "$GITHUB_OUTPUT"
           else
@@ -5370,7 +5393,7 @@ jobs:
           ISSUE_CONTEXT_FILE: ${{ steps.issue-context-readiness.outputs.context-file }}
           # specs/093-not-ready-board-release research.md D5: carried-in
           # count only -- never derived from anything but the marker.
-          NR_COUNT: ${{ needs.select.outputs.nr-count || needs.review.outputs.nr-count || 0 }}
+          NR_COUNT: ${{ needs.select.outputs.nr-count || needs.review.outputs.nr-count || steps.resolve-directed-pr.outputs.nr-count || 0 }}
           DEDUP_COMMENTS_FETCHED: ${{ steps.not-ready-comments.outputs.fetched }}
           DIRECTED_ATTRIBUTION: >-
             ${{ inputs.directed-stage != '' && format('_Directed proof run
@@ -5426,7 +5449,13 @@ jobs:
             # specs/093-not-ready-board-release FR-004(a)/FR-008/FR-009:
             # never a second hardcoded 3 -- read from board_eligibility.py's
             # own NOT_READY_THRESHOLD (T005).
-            not_ready_threshold="$(python3 -I -c "import os, sys; sys.path.insert(0, os.path.join(os.environ['RUNNER_TEMP'], 'wc-pristine', 'scripts')); from board_eligibility import NOT_READY_THRESHOLD; print(NOT_READY_THRESHOLD)")"
+            not_ready_threshold="$(python3 -I -c "import os, sys; sys.path.insert(0, os.path.join(os.environ['RUNNER_TEMP'], 'wc-pristine', 'scripts')); from board_eligibility import NOT_READY_THRESHOLD; print(NOT_READY_THRESHOLD)")" \
+              || not_ready_threshold=""
+            # An empty or non-numeric threshold would make the -ge test
+            # below false on every run and silently disable the handover.
+            case "$not_ready_threshold" in
+              ''|*[!0-9]*) echo "::error::board-loop readiness (not ready): could not read NOT_READY_THRESHOLD from board_eligibility.py (got '$not_ready_threshold') -- no not-ready record is written, so a later run retries (specs/093-not-ready-board-release FR-004(a))."; exit 1 ;;
+            esac
             new_count=$(( ${NR_COUNT:-0} + 1 ))
             if [ "$new_count" -ge "$not_ready_threshold" ]; then
               # FR-004(a)/FR-008: board:stalled goes on before the stalled
@@ -5443,7 +5472,7 @@ jobs:
                 || { echo "::error::board-loop readiness (not-ready handover): board:stalled was applied to issue #$ISSUE_NUMBER but the stalled-marker comment could not be posted."; exit 1; }
               python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --record-stall-summary --issue "$ISSUE_NUMBER" --from-step "readiness (not-ready threshold reached)"
             else
-              marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step readiness --pr "$PR_NUMBER" --branch "$BRANCH" --round "$ROUND" --nr-count "$new_count" --nr-head-sha "$head_sha" --nr-class "$unmet_class")" \
+              marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step readiness --pr "$PR_NUMBER" --branch "$BRANCH" --round "$ROUND" --nr-count "$new_count" --nr-head-sha "$head_sha" --nr-class "$unmet_class" --nr-reason "$unmet")" \
                 || { echo "::error::board-loop readiness (not ready): board_item_marker.py failed to render the not-ready marker -- not posting a marker-less comment (specs/093-not-ready-board-release FR-002)."; exit 1; }
               body="$(printf 'Not ready on PR #%s: %s. Picked up again on a later run.\n\n%s' "$PR_NUMBER" "$unmet" "$marker")"
               [ -n "$DIRECTED_ATTRIBUTION" ] && body="$(printf '%s\n\n%s' "$DIRECTED_ATTRIBUTION" "$body")"
@@ -5452,16 +5481,19 @@ jobs:
               # newest one already on the issue for the same PR, head SHA
               # and unmet condition edits that comment in place instead of
               # appending a duplicate (research.md D8) -- the count is
-              # still advanced in the edited comment's own marker.
+              # still advanced in the edited comment's own marker. The
+              # match reads the marker's own nr_reason, never the prose,
+              # and the edit targets that comment by id: "edit the last
+              # comment" would edit the bot's newest comment, which may be
+              # a different one (code review of #1010).
               # The comments were read by the step above (Gate 93: this
               # spec-request site never reads the issue itself).
               if [ "$DEDUP_COMMENTS_FETCHED" != "true" ]; then
                 gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$body"
               else
-                same_record="$(COMMENTS_PATH="$RUNNER_TEMP/board-not-ready-comments.json" HEAD_SHA="$head_sha" UNMET="$unmet" python3 -I - <<'PYEOF'
+                same_comment_id="$(COMMENTS_PATH="$RUNNER_TEMP/board-not-ready-comments.json" HEAD_SHA="$head_sha" UNMET="$unmet" python3 -I - <<'PYEOF'
           import json
           import os
-          import re
           import sys
 
           sys.path.insert(0, os.path.join(os.environ["RUNNER_TEMP"], "wc-pristine", "scripts"))
@@ -5475,21 +5507,18 @@ jobs:
           if pair is not None:
               created_at, marker = pair
               if (marker.get("step") == "readiness" and marker.get("pr") == pr_number
-                      and marker.get("nr_head_sha") == os.environ["HEAD_SHA"]):
-                  body = ""
+                      and marker.get("nr_head_sha") == os.environ["HEAD_SHA"]
+                      and marker.get("nr_reason") == os.environ["UNMET"]):
                   for comment in comments:
-                      if is_loop_marker_author(comment, bot_login) and comment.get("created_at") == created_at:
-                          body = comment.get("body") or ""
-                  match = re.search(
-                      r"Not ready on PR #\d+: (.+?)\. Picked up again on a later run\.", body)
-                  if match and match.group(1) == os.environ["UNMET"]:
-                      print("true")
-                      sys.exit(0)
-          print("false")
+                      if (is_loop_marker_author(comment, bot_login) and comment.get("created_at") == created_at
+                              and str(comment.get("id") or "").isdigit()):
+                          print(comment["id"])
+                          sys.exit(0)
+          print("")
           PYEOF
           )"
-                if [ "$same_record" = "true" ]; then
-                  gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --edit-last --body "$body"
+                if [ -n "$same_comment_id" ]; then
+                  gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$same_comment_id" -f body="$body" > /dev/null
                 else
                   gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$body"
                 fi

@@ -1,0 +1,19 @@
+{
+  "snapshot": {
+    "headRefOid": "dddd444",
+    "statusCheckRollup": [
+      {
+        "context": "ci/external",
+        "state": "PENDING"
+      }
+    ]
+  },
+  "open_in_scope_findings": 2,
+  "backstop_holds": true,
+  "kill_switch_paused": false,
+  "expected": {
+    "ready": false,
+    "reason_contains": "dddd444",
+    "unmet_class": "durable"
+  }
+}
