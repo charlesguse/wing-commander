@@ -216,11 +216,15 @@ WHAT IT CHECKS
    occur exactly once there and in no other live file, and any other live
    file that restates the rationale's core claim (`gh` reaches remote
    writes, GH_RATIONALE_CLAIM_RE) must name GH_RATIONALE_HOME, so it is a
-   pointer and not a second copy. Live files are the text files under the
-   repository root outside .git, except a spec's own documents
-   (`specs/NNN-*/` outside `contracts/`), which are historical records;
-   contracts are live and are scanned. This file is skipped: its check 4b
-   message has to name the claim it points at.
+   pointer and not a second copy. Live files are the text files git tracks
+   or would track (gitignored trees such as `.claude/worktrees/` are not
+   read), except a spec's own documents (`specs/NNN-*/` outside
+   `contracts/`), which are historical records; contracts are live and are
+   scanned. This file is skipped: its check 4b message has to name the
+   claim it points at. Only GH_RATIONALE_HOME is in lint-workflows.yml's
+   pull_request paths: listing every live file would run the whole suite
+   on every PR, so a copy added to a file outside the filter is caught by
+   the push to main and the daily schedule, which have no paths filter.
 
 `--self-test`: synthetic tempdir fixtures prove each check can fail (a
 board-loop tool-args grant carrying `gh issue view`, a second file
@@ -236,6 +240,7 @@ fleet passes.
 import glob
 import os
 import re
+import subprocess
 import sys
 import tempfile
 
@@ -1073,22 +1078,35 @@ RATIONALE_SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv"}
 SPEC_DIR_RE = re.compile(r"^specs/[^/]+/(?!contracts/)")
 
 
+def _repo_files(root):
+    """Repository-relative paths under `root`: what git tracks plus untracked
+    files it does not ignore, so a gitignored copy of the repository (a
+    `.claude/worktrees/*` checkout, a pristine snapshot) is not read as a
+    second home. Outside a git work tree, every file under `root`."""
+    try:
+        res = subprocess.run(
+            ["git", "-C", root, "ls-files", "-z", "--cached", "--others",
+             "--exclude-standard"], capture_output=True, check=False)
+    except OSError:
+        res = None
+    if res is not None and res.returncode == 0:
+        return [p for p in res.stdout.decode("utf-8", "replace").split("\0")
+                if p]
+    out = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in RATIONALE_SKIP_DIRS]
+        out.extend(os.path.relpath(os.path.join(dirpath, name), root)
+                   .replace(os.sep, "/") for name in filenames)
+    return out
+
+
 def _live_text_files(root):
     """Repository-relative paths of the live text files under `root` that
     check 6 reads (see its docstring entry for what is not live)."""
-    out = []
-    for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = sorted(d for d in dirnames
-                             if d not in RATIONALE_SKIP_DIRS)
-        for name in filenames:
-            if not name.endswith(RATIONALE_SCAN_EXTS):
-                continue
-            rel = os.path.relpath(os.path.join(dirpath, name), root)
-            rel = rel.replace(os.sep, "/")
-            if SPEC_DIR_RE.match(rel):
-                continue
-            out.append(rel)
-    return sorted(out)
+    return sorted(rel for rel in set(_repo_files(root))
+                  if rel.endswith(RATIONALE_SCAN_EXTS)
+                  and not SPEC_DIR_RE.match(rel)
+                  and os.path.isfile(os.path.join(root, rel)))
 
 
 def check_gh_rationale_home(root=".", self_path=None):
@@ -3137,6 +3155,12 @@ def _self_test_gh_rationale_home(tmpdir):
                                                "**gh**")},
          GH_RATIONALE_HEADING),
         ("the home missing", {GH_RATIONALE_HOME: None}, "could not read"),
+        # A gitignored checkout of the repository is not a second home.
+        ("a copy of the home in a gitignored worktree",
+         {".gitignore": "wt/\n", f"wt/{GH_RATIONALE_HOME}": real_home}, None),
+        ("a copy of the sentence in an untracked, unignored file",
+         {".gitignore": "wt/\n", "notes/x.md": _RATIONALE_SENTENCE},
+         "notes/x.md"),
     )
     for n, (desc, edits, expect) in enumerate(cases):
         root = os.path.join(tmpdir, f"rationale-{n}")
@@ -3147,6 +3171,10 @@ def _self_test_gh_rationale_home(tmpdir):
             os.makedirs(os.path.dirname(path), exist_ok=True)
             with open(path, "w", encoding="utf-8") as fh:
                 fh.write(text)
+        if subprocess.run(["git", "init", "-q", root],
+                          capture_output=True).returncode:
+            failures.append(f"check 6 fixture ({desc}): git init failed")
+            continue
         problems = check_gh_rationale_home(root, self_path="-")
         if expect is None and problems:
             failures.append(f"check 6 fixture ({desc}) was flagged: "
