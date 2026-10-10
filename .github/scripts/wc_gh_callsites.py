@@ -42,6 +42,8 @@ class Token:
 
 
 GH_WORD = re.compile(r"(?<![\w./$@:%-])gh(?![\w-])")
+# A command word whose `${...}` may expand to `gh` (`${X:-gh} api ...`).
+GH_IN_EXPANSION = re.compile(r"\$\{[^}]*?(?<![\w.$@%])gh(?![\w-])")
 ASSIGN = re.compile(r"[A-Za-z_]\w*=")
 HEREDOC_DELIM = re.compile(r"\\?([^\s;&|<>()'\"`\\]+)")
 VAR = re.compile(r"\$(?:[A-Za-z_]\w*|[0-9@*#?!$-])")
@@ -51,7 +53,8 @@ MAX_DEPTH = 40          # of nested substitutions, well inside Python's recursio
 RESERVED = frozenset(("if", "then", "elif", "else", "do", "while", "until", "!", "{",
                       "}", "time"))
 WRAPPERS = frozenset(("env", "eval", "command", "exec", "sudo", "xargs", "nohup",
-                      "nice", "stdbuf", "watch", "setsid", "timeout", "script"))
+                      "nice", "stdbuf", "watch", "setsid", "timeout", "script",
+                      "coproc"))
 API_VALUED = frozenset(("-X", "--method", "-H", "--header", "-f", "--raw-field", "-F",
                         "--field", "-q", "--jq", "-t", "--template", "-p", "--preview",
                         "--hostname", "--input", "--cache"))
@@ -172,9 +175,9 @@ class _Scan:
         t = self.t
         nxt = t[i + 1:i + 2]
         if nxt == "'":                                  # $'...' ANSI-C
-            j = min(self._close(i + 1, True) + 1, self.n)
-            self._mark(t[i + 2:j - 1], i + 2, "ansi-c")
-            return j
+            j = self._close(i + 1, True)            # unterminated: to the end
+            self._mark(t[i + 2:j], i + 2, "ansi-c")
+            return min(j + 1, self.n)
         if nxt == "(":
             j = self._arithmetic(i + 1, 2) if t.startswith("((", i + 1) else None
             return j or self._nest(i, ctx)
@@ -228,7 +231,7 @@ class _Scan:
         why = ("param-expansion" if not dq else "unterminated-quote" if j >= n
                else "quoted-substitution" if sub else "quoted")
         for a, b in segs:
-            self._mark(t[a:b], a, why, bad)
+            self._mark(t[a:b], a, why, call=bad)
         if not dq:
             if j >= n:
                 self._unsure(i, "unterminated-expansion")
@@ -244,15 +247,16 @@ class _Scan:
             if c in " \t\n;&|()<>":
                 break
             if c == "\\":
+                # A line continuation, or `\${{` escaping the value GitHub puts there.
                 if t[i + 1:i + 2] == "\n" or t.startswith("${{", i + 1):
-                    i += 1 + (t[i + 1:i + 2] == "\n")  # `${{`: escapes the value GitHub puts there
+                    i += 1 + (t[i + 1:i + 2] == "\n")
                     continue
                 lit.append(t[i + 1:i + 2])
                 i, quoted = i + 2, True
             elif c == "'":
                 j = self._close(i, False)
                 self._mark(t[i + 1:j], i + 1, "unterminated-quote" if j >= n else "quoted",
-                           j >= n)
+                           call=j >= n)
                 lit.append(t[i + 1:j])
                 i, quoted = min(j + 1, n), True
             elif c == '"':
@@ -286,7 +290,7 @@ class _Scan:
                 line, i = t[i:e], min(e + 1, n)
                 if (line.lstrip("\t") if strip else line) == delim:
                     self._mark(t[body:e - len(line)], body, ("quoted-heredoc" if quoted
-                                                             else "unquoted-heredoc"), not quoted)
+                                                             else "unquoted-heredoc"), call=not quoted)
                     break
             else:
                 self._mark(t[body:n], body, "unterminated-heredoc")
@@ -333,7 +337,7 @@ class _Scan:
             elif c == "#":
                 j = t.find("\n", i)
                 j = n if j < 0 else j
-                self._mark(t[i:j], i, "comment", False)
+                self._mark(t[i:j], i, "comment", call=False)
                 i = j
             elif c == "&" and t[i + 1:i + 2] == ">" or c in "<>":
                 i, drop = self._redirect(i + (c == "&"), ctx)
@@ -353,12 +357,13 @@ class _Scan:
             else:
                 w, i = self._word(i, ctx)
                 lead = not words and w.plain and w.lit
-                if drop:
-                    drop = False
+                if drop or lead == "function":                 # `function NAME`: drop NAME
+                    drop = lead == "function"
                     continue
                 if lead in ("case", "esac"):
                     ctx.cases = max(0, ctx.cases + (1 if lead == "case" else -1))
-                if lead not in RESERVED:
+                # A dashed word cannot name a command (`time -p gh`): the next one does.
+                if lead not in RESERVED and not (lead and lead[0] == "-"):
                     words.append(w)
         self._end(words, ctx)
         if ctx.depth:
@@ -394,6 +399,8 @@ class _Scan:
                        timeout=timeout, argv=argv,
                        position=("disallowed" if reason else
                                  "subst_first" if ctx.depth else "statement"))
+        elif head.lit is None and GH_IN_EXPANSION.search(head.raw):
+            self._note(head.off, "call", position="disallowed", reason="dynamic-command")
         elif head.lit in WRAPPERS and not (head.lit == "command" and any(
                 w.lit in ("-v", "-V") for w in words[k + 1:])):
             w = next((w for w in words[k + 1:] if "gh" in (w.lit, w.skel)), None)
