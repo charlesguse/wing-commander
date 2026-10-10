@@ -9,7 +9,8 @@
     {"name": "head-sha-mismatch", "file": "head-mismatch.json", "outcome": "fail", "reason": "head_sha mismatch"},
     {"name": "trusted-sha-mismatch", "file": "trusted-mismatch.json", "outcome": "fail", "reason": "trusted_sha mismatch"},
     {"name": "valid-pass", "file": "valid-pass.json", "outcome": "pass", "reason": "gate suite passed"},
-    {"name": "valid-fail", "file": "valid-fail.json", "outcome": "fail", "reason": "gate suite failed"}
+    {"name": "valid-fail", "file": "valid-fail.json", "outcome": "fail", "reason": "gate suite failed"},
+    {"name": "no-head-found", "file": "no-head.json", "outcome": "fail", "reason": "found no head to gate"}
   ],
   "publisher_if_cases": [
     {"name": "skipped-treated-green", "file": "publisher-if-skipped-green.txt", "ok": false},

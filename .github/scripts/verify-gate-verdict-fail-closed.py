@@ -105,8 +105,34 @@ def check_workflows(workflow_dir):
     return errors
 
 
+COMPOSITE = os.path.join(HERE, "..", "actions", "wing-commander-gate-verdict", "action.yml")
+
+
+def check_composite_read(composite=COMPOSITE):
+    """The reader's front door, executed: a gate job replaced while pending
+    (gate-job-result=cancelled) reads outcome=cancelled -- never pass, and
+    never a red suite -- while a missing artifact with no such result still
+    reads fail (code review of #990)."""
+    from wc_shell_harness import find_step, resolve_bash, run_step
+    errors = []
+    script = find_step(composite, "Read gate verdict (fail-closed)")["run"]
+    with tempfile.TemporaryDirectory() as tmp:
+        base = {"SITE": "board-fix", "EXPECTED_HEAD_SHA": "a" * 40,
+                "VERDICT_FILE": os.path.join(tmp, "absent.json"),
+                "GITHUB_ACTION_PATH": os.path.dirname(os.path.abspath(composite)),
+                "GITHUB_SHA": "b" * 40}
+        for result, want in (("cancelled", "cancelled"), ("", "fail"), ("failure", "fail")):
+            rc, out, outputs, _ = run_step(resolve_bash(), script, tmp,
+                                           dict(base, GATE_JOB_RESULT=result), tmp)
+            if rc != 0 or outputs.get("outcome") != want:
+                errors.append("composite read with gate-job-result={0!r}: outcome {1!r}, want "
+                              "{2!r}\n{3}".format(result, outputs.get("outcome"), want, out[-300:]))
+    return errors
+
+
 def run():
-    errors = check_reader_cases(FIXTURES) + check_workflows(WORKFLOWS)
+    errors = (check_reader_cases(FIXTURES) + check_workflows(WORKFLOWS)
+              + check_composite_read())
     for err in errors:
         print("::error::" + err)
     if not errors:
@@ -139,6 +165,21 @@ def self_test():
             fh.write("    if: needs.gate-suite-x.result == 'success'\n")
         if check_workflows(tmp):
             failures.append("workflow with explicit-pass if failed")
+    with tempfile.TemporaryDirectory() as tmp:
+        mutated_dir = os.path.join(tmp, "wing-commander-gate-verdict")
+        os.makedirs(mutated_dir)
+        text = open(COMPOSITE, encoding="utf-8").read()
+        old = 'if [ "$GATE_JOB_RESULT" = "cancelled" ]; then'
+        if old not in text:
+            failures.append("composite read step changed: update the mutation")
+        with open(os.path.join(mutated_dir, "action.yml"), "w", encoding="utf-8") as fh:
+            fh.write(text.replace(old, "if false; then"))
+        mutated = check_composite_read(os.path.join(mutated_dir, "action.yml"))
+        if not any("cancelled" in e for e in mutated):
+            failures.append("a read step that ignores a cancelled gate job was not caught")
+    if check_composite_read():
+        failures.append("the shipped composite read already fails: {0}".format(
+            check_composite_read()))
     # A broken reader must be caught: a fixture expecting pass from a fail.
     with tempfile.TemporaryDirectory() as tmp:
         for entry in os.listdir(FIXTURES):

@@ -40,7 +40,9 @@ trusted_root="$(pwd -P)"
 # anything the publisher trusts -- the publisher binds the verdict to the
 # head it restores.
 trusted_copy="$(mktemp -d)"
-cp -R "$here/../../scripts" "$trusted_copy/scripts"
+mkdir "$trusted_copy/scripts"
+cp "$here/../../scripts/wc_gate_verdict.py" "$here/../../scripts/wc_step_output.py" \
+  "$trusted_copy/scripts/"
 chmod -R a-w "$trusted_copy"
 verdict_py="$trusted_copy/scripts/wc_gate_verdict.py"
 # Principle VI: whether this repository has a gate suite at all is read

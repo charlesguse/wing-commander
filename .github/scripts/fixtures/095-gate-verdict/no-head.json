@@ -1,0 +1,1 @@
+{"exit_code": 1, "first_failure": "head ref origin/spec/x not found in the trusted checkout", "head_sha": "0000000000000000000000000000000000000000", "outcome": "fail", "schema_version": 1, "site": "board-fix", "trusted_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}

@@ -4,8 +4,9 @@
 # resolved beside this composite (the trusted copy the caller resolved
 # the composite from), never from the workspace.
 #
-# An absent artifact (the gate job failed, was cancelled, timed out or
-# was skipped), an unreadable or malformed one, one bound to another head
+# An absent artifact (the gate job failed, timed out or was skipped, or
+# was cancelled with no gate-job-result passed), an unreadable or
+# malformed one, one bound to another head
 # or another trusted commit, and a reader that cannot run all read as
 # outcome=fail with a reason -- never as a pass, never as an empty value.
 # first-failure is cleaned of control characters by wc_step_output; a
@@ -26,9 +27,18 @@ inputs:
     description: The commit about to be acted on; a verdict for any other head reads as a failure.
     required: false
     default: ""
+  gate-job-result:
+    description: >-
+      The gate-suite job's needs.<job>.result. 'cancelled' -- the job was
+      replaced while pending in a shared concurrency group, so no suite ran
+      -- yields outcome=cancelled: still not a pass, so nothing is pushed,
+      but not a red suite a caller would report either. Empty (the default)
+      reads the artifact alone.
+    required: false
+    default: ""
 outputs:
   outcome:
-    description: "pass or fail -- never empty."
+    description: "pass or fail -- never empty -- or cancelled when gate-job-result says so."
     value: ${{ steps.read.outputs.outcome }}
   reason:
     description: Why the reader chose its outcome.
@@ -51,8 +61,14 @@ runs:
       env:
         SITE: ${{ inputs.site }}
         EXPECTED_HEAD_SHA: ${{ inputs.expected-head-sha }}
+        GATE_JOB_RESULT: ${{ inputs.gate-job-result }}
         VERDICT_FILE: ${{ runner.temp }}/wc-gate-verdict-in-${{ inputs.site }}/wc-gate-verdict.json
       run: |
+        if [ "$GATE_JOB_RESULT" = "cancelled" ]; then
+          printf 'outcome=cancelled\nreason=gate suite job cancelled before it ran\nfirst-failure=\n' >> "$GITHUB_OUTPUT"
+          echo "gate verdict ($SITE): the gate suite job was cancelled -- nothing is pushed, and no suite result is reported." >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+        fi
         if ! result="$(python3 -I "$GITHUB_ACTION_PATH/../../scripts/wc_gate_verdict.py" read \
             --file "$VERDICT_FILE" --expected-head-sha "$EXPECTED_HEAD_SHA" \
             --trusted-sha "$GITHUB_SHA" --site "$SITE")"; then

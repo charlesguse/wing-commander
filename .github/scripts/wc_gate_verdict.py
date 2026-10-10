@@ -33,6 +33,7 @@ KEYS = ("schema_version", "site", "trusted_sha", "head_sha", "outcome",
         "first_failure", "exit_code")
 SHA_RE = re.compile(r"[0-9a-f]{40}")
 MAX_FAILURE = 4000
+NO_HEAD = "0" * 40  # contained-gate-suite.sh: the head itself could not be found
 
 
 def build_verdict(site, trusted_sha, head_sha, outcome, exit_code,
@@ -102,6 +103,10 @@ def read_verdict(path, expected_head_sha, trusted_sha, site=None):
     problem = validate(data)
     if problem:
         return "fail", problem, "gate verdict invalid"
+    # The gate job writes the zero SHA when it could not even find the head
+    # it was to gate: a red suite with its own reason, not "another head".
+    if data["head_sha"] == NO_HEAD and data["outcome"] == "fail":
+        return "fail", "gate suite found no head to gate", data["first_failure"]
     if data["head_sha"] != expected_head_sha:
         return "fail", "head_sha mismatch", "gate verdict is for another commit"
     if data["trusted_sha"] != trusted_sha:
@@ -148,6 +153,10 @@ def _self_test():
         expect("valid pass", outcome()[0], "pass")
         raw(json.dumps(dict(good, outcome="fail", first_failure="Gate 3")))
         expect("valid fail", outcome(), ("fail", "gate suite failed", "Gate 3"))
+        raw(json.dumps(dict(good, head_sha=NO_HEAD, outcome="fail",
+                            first_failure="head ref origin/x not found")))
+        expect("no head found", outcome(), ("fail", "gate suite found no head to gate",
+                                            "head ref origin/x not found"))
         write_verdict(path, site="board-fix", trusted_sha=sha_b,
                       head_sha=sha_a, outcome="pass", exit_code=0)
         expect("writer round trip", outcome()[0], "pass")

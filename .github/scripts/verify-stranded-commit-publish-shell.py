@@ -102,7 +102,7 @@ git rev-parse HEAD
     return work, remote, runner_temp, initial_sha
 
 
-def run_publish(work, runner_temp, before_sha, action_path=ACTION):
+def run_publish(work, runner_temp, before_sha, action_path=ACTION, extra=None):
     step = find_step(action_path, STEP_NAME)
     script = step["run"]
     # spec 095: the step sources _shared/git-push-hardening.sh beside the
@@ -111,6 +111,7 @@ def run_publish(work, runner_temp, before_sha, action_path=ACTION):
     env_extra = {"BEFORE_SHA": before_sha, "WORKDIR": "", "PUSH_TOKEN": "", "PUSH_REPO": "",
                  "EXPECTED_BRANCH": "",
                  "GITHUB_ACTION_PATH": os.path.dirname(os.path.abspath(ACTION))}
+    env_extra.update(extra or {})
     rc, out, outputs, _ = run_step(BASH, script, work, env_extra, runner_temp)
     log(out)
     return rc, out, outputs
@@ -190,8 +191,49 @@ git update-ref -d 'refs/remotes/origin/{BRANCH}'
     return failures
 
 
+def scenario_shim_push(root):
+    """spec 095 FR-016/FR-017 (code review of #990): with push-token, the
+    push goes from a shim repository to the explicit destination, so a
+    url.insteadOf planted in the checkout's .git/config cannot redirect it;
+    a tag sharing the branch's name does not turn the destination into
+    refs/heads/heads/<branch>; and the branch: input is honoured."""
+    failures = []
+    where = "scenario: shim push (explicit destination)"
+    work, remote, runner_temp, before_sha = make_workspace(root)
+    decoy = tempfile.mkdtemp(dir=root, prefix="decoy-")
+    server = "file://" + os.path.dirname(remote)
+    sh(f"""
+git init -q --bare '{decoy}'
+cd '{work}'
+git commit -q --allow-empty -m "stranded"
+git tag '{BRANCH}'
+git config 'url.file://{decoy}.insteadOf' 'file://{remote}'
+""", root)
+    extra = {"PUSH_TOKEN": "t", "PUSH_REPO": os.path.basename(remote).removesuffix(".git"),
+             "PUSH_SERVER_URL": server, "EXPECTED_BRANCH": BRANCH}
+    if not remote.endswith(".git"):
+        os.rename(remote, remote + ".git")
+        remote = remote + ".git"
+        extra["PUSH_REPO"] = os.path.basename(remote)[:-len(".git")]
+    rc, out, outputs = run_publish(work, runner_temp, before_sha, extra=extra)
+    local_head = sh("git rev-parse HEAD", work).strip()
+    landed = subprocess.run(["git", "rev-parse", "--verify", "-q", "refs/heads/" + BRANCH],
+                            cwd=remote, capture_output=True, text=True).stdout.strip()
+    stray = subprocess.run(["git", "rev-parse", "--verify", "-q", "refs/heads/heads/" + BRANCH],
+                           cwd=remote, capture_output=True, text=True).returncode == 0
+    if rc != 0 or outputs.get("push-ok") != "true" or landed != local_head or stray:
+        failures.append(f"{where}: rc={rc} push-ok={outputs.get('push-ok')!r} "
+                        f"landed={landed!r} head={local_head!r} stray-heads-branch={stray}\n{out}")
+    sh(f"cd '{work}' && git checkout -q --detach", root)
+    rc, out, outputs = run_publish(work, runner_temp, before_sha, extra=extra)
+    if outputs.get("push-ok") != "false":
+        failures.append(f"{where}: a detached checkout with branch: set was published "
+                        f"(push-ok={outputs.get('push-ok')!r})")
+    return failures
+
+
 SCENARIOS = [scenario_everything_already_pushed, scenario_two_stranded_commits,
-             scenario_no_remote_tracking_ref]
+             scenario_no_remote_tracking_ref, scenario_shim_push]
 
 
 def run_scenarios(root):

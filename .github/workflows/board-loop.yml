@@ -3219,6 +3219,10 @@ jobs:
         with:
           site: board-fix
           expected-head-sha: ${{ needs.fix-agent.outputs.head-sha }}
+          # A gate job replaced while pending in the board-loop group ran no
+          # suite: outcome=cancelled, so neither the push nor the red-suite
+          # report below fires (code review of #990).
+          gate-job-result: ${{ needs.gate-suite-fix.result }}
 
       - name: Comment the failing gate on the issue (fixer, gate suite red)
         if: steps.gate-suite.outputs.outcome == 'fail'
@@ -4765,6 +4769,10 @@ jobs:
         with:
           site: board-review-fixup
           expected-head-sha: ${{ needs.review.outputs.fixup-head-sha }}
+          # A gate job replaced while pending in the board-loop group ran no
+          # suite: outcome=cancelled, so neither the push nor the red-suite
+          # report below fires (code review of #990).
+          gate-job-result: ${{ needs.gate-suite-review-fixup.result }}
 
       - name: Hold a workflow-file follow-up for a maintainer (review-fixup)
         id: push-hold
