@@ -191,7 +191,8 @@ runs:
           if gh issue list --repo "$GITHUB_REPOSITORY" --label "$LABEL" --state "$scope" --json number,url,state,body --limit 1000 > "$issues_file" 2>"$issues_err"; then
             :
           else
-            echo "::warning::wing-commander-durable-failure-issue: gh issue list failed for label $LABEL -- $(cat "$issues_err") -- treating as no existing issue found this run, which risks a duplicate issue."
+            issues_err_text="$(cat "$issues_err")"
+            echo "::warning::wing-commander-durable-failure-issue: gh issue list failed for label $LABEL -- $issues_err_text -- treating as no existing issue found this run, which risks a duplicate issue."
             echo "[]" > "$issues_file"
           fi
           match_json="$(bash "$MATCH_SCRIPT" "$issues_file" "$MARKER" 2>/dev/null || true)"

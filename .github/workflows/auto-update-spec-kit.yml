@@ -398,7 +398,8 @@ jobs:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           DEFAULT_BRANCH: ${{ inputs.default-branch }}
         run: |
-          db="${DEFAULT_BRANCH:-$(gh repo view "$GITHUB_REPOSITORY" --json defaultBranchRef --jq .defaultBranchRef.name)}"
+          db="${DEFAULT_BRANCH:-}"
+          [ -n "$db" ] || db="$(gh repo view "$GITHUB_REPOSITORY" --json defaultBranchRef --jq .defaultBranchRef.name)"
           echo "name=$db" >> "$GITHUB_OUTPUT"
 
       - name: Read currently pinned version
@@ -936,7 +937,8 @@ jobs:
           DEFAULT_BRANCH: ${{ inputs.default-branch }}
         run: |
           set -euo pipefail
-          db="${DEFAULT_BRANCH:-$(gh repo view "$GITHUB_REPOSITORY" --json defaultBranchRef --jq .defaultBranchRef.name)}"
+          db="${DEFAULT_BRANCH:-}"
+          [ -n "$db" ] || db="$(gh repo view "$GITHUB_REPOSITORY" --json defaultBranchRef --jq .defaultBranchRef.name)"
           git fetch --no-tags --quiet origin "$db:refs/remotes/origin/$db"
           echo "name=$db" >> "$GITHUB_OUTPUT"
 
@@ -1545,7 +1547,8 @@ jobs:
           DEFAULT_BRANCH: ${{ inputs.default-branch }}
         run: |
           set -euo pipefail
-          db="${DEFAULT_BRANCH:-$(gh repo view "$GITHUB_REPOSITORY" --json defaultBranchRef --jq .defaultBranchRef.name)}"
+          db="${DEFAULT_BRANCH:-}"
+          [ -n "$db" ] || db="$(gh repo view "$GITHUB_REPOSITORY" --json defaultBranchRef --jq .defaultBranchRef.name)"
           git fetch --no-tags --quiet origin "$db:refs/remotes/origin/$db"
           echo "name=$db" >> "$GITHUB_OUTPUT"
 
@@ -2849,7 +2852,8 @@ jobs:
           DEFAULT_BRANCH: ${{ inputs.default-branch }}
         run: |
           set -euo pipefail
-          db="${DEFAULT_BRANCH:-$(gh repo view "$GITHUB_REPOSITORY" --json defaultBranchRef --jq .defaultBranchRef.name)}"
+          db="${DEFAULT_BRANCH:-}"
+          [ -n "$db" ] || db="$(gh repo view "$GITHUB_REPOSITORY" --json defaultBranchRef --jq .defaultBranchRef.name)"
           git fetch --no-tags --quiet origin "$db:refs/remotes/origin/$db"
           echo "name=$db" >> "$GITHUB_OUTPUT"
 
