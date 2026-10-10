@@ -72,7 +72,7 @@ A reviewer can see that the new locator agrees with real bash: the self-test rep
 
 **Acceptance Scenarios**:
 
-1. **Given** PR #969's self-test scenarios (183, preserved on branch `ccr-21847495-5ln7qn`), **When** they are replayed against the new gate, **Then** every scenario where #969 expected a failure still fails (by permission check or by disallowed form), and every scenario #969 expected to pass either passes or fails only as a disallowed form that is documented in the corpus as an intended rule-driven change.
+1. **Given** PR #969's self-test scenarios (183, archived on branch `archive/pr-969-gate-12-corpus`), **When** they are replayed against the new gate, **Then** every scenario where #969 expected a failure still fails (by permission check or by disallowed form), and every scenario #969 expected to pass either passes or fails only as a disallowed form that is documented in the corpus as an intended rule-driven change.
 2. **Given** the differential check runs scripts under real bash with a stub `gh` that records each invocation, **When** a recorded invocation is not located by the gate, **Then** the gate must have failed that script as a disallowed form; otherwise the self-test fails.
 3. **Given** a mutation that makes the locator treat a real call as a mention, **When** the self-test runs, **Then** it goes red.
 
@@ -164,13 +164,14 @@ A maintainer who needs to find `gh` calls in shell (Gate 12 and Gate 28's `gh ap
 - **SC-004**: At most a handful (estimated about two) of existing call sites need rewriting to conform.
 - **SC-005**: All six `main`-shared parser gaps recorded on #889 are closed and covered by fixtures.
 - **SC-006**: Exactly one module in the repository locates `gh` call sites in shell, and a gate enforces it; the single waived exception is #954's script-call reader, pending its own migration lifecycle.
-- **SC-008**: The change adds no new dependency to CI or the implement image.
 - **SC-007**: Every failure branch Gate 12 ships is exercised by a checked-in fixture.
+- **SC-008**: The change adds no new dependency to CI or the implement image.
 
 ## Assumptions
 
 - The census in the issue (87 files, 478 executable calls; 294 statement-level, 183 first-in-`$( )`, one `timeout`-wrapped, none in backticks/nested/`${…}`/variable-method) is accurate on `main` as of 2026-10-10 and is re-verified during planning.
-- PR #969's branch `ccr-21847495-5ln7qn` (head 7fc5465f) remains available as the source of the acceptance corpus and fuzzer; the corpus is copied into this change rather than referenced remotely.
+- That census counted executable calls only. About 80 further `gh` tokens are mentions in `echo` text and heredoc bodies. Under FR-004, a mention inside an unquoted-delimiter heredoc body, or in a double-quoted string that also contains `$(` or a backtick, is treated as a call. Planning MUST count those sites as well, because each one is either rewritten (for example by quoting the heredoc delimiter) or becomes a false failure. SC-004's estimate of about two migrations covers executable calls only.
+- PR #969's corpus and fuzzer are archived on branch `archive/pr-969-gate-12-corpus`. That branch is PR #969's head 7fc5465f, whose `.github/scripts/verify-gate-12.py` holds the 183 scenarios, plus `archive/gate-12-fuzz/`: the generator, the real-bash runner with its stub `gh`, the shrinker and the minimized repros. Both are copied into this change rather than referenced remotely. The archive branch is never merged.
 - `wc_shell_harness.py`'s stub-`gh` support is sufficient for the differential oracle, or can be extended within this spec.
 - Gate numbering is preserved: the moved gate is still "Gate 12" in the registry and in workflow step names.
 - No stage input, output or secret changes; this is an internal authoring rule (Principle VII) and does not widen the published contract.
