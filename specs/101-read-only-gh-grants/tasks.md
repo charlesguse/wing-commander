@@ -135,3 +135,7 @@ Workflow comments are load-bearing (gates byte-compare them): after any edit und
 - [ ] T022 (PR #991 comment) Add a single-home assertion for the rationale (research D6) to the nearest existing gate. The rationale's distinguishing sentence must occur in exactly one file. If no cheap deterministic form exists, record why in the PR description.
 - [X] T024 (PR #991 comment) Run `python .github/scripts/run-local-gates.py` clean, then walk `quickstart.md`.
 - T025 stays a post-merge maintainer step and is not part of this change.
+
+## Phase 8: Convergence
+
+- [ ] T026 Update the live contract `specs/101-read-only-gh-grants/contracts/diagnose-staged-logs.md` (its "Helper" heading, line 6): the fetch now lives in the published composite `.github/actions/wing-commander-fetch-job-logs/action.yml` (its own step, because Gate 12 forbids `gh` calls in `_shared/` scripts and Gate 60 forbids a published stage resolving `_shared/`), and the callers read its `result` output instead of the helper's last stdout line, per FR-018 (contracts are live) (partial)
