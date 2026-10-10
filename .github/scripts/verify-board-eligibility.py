@@ -166,6 +166,9 @@ IN_FLIGHT_CASES = {
     # parse (nr_count "one", no nr_head_sha) is passed over, not admitted,
     # even with the PR's head resolvable.
     "not-ready-record-unparsable-held",
+    # Code review of #1010: a durable record on a PR closed since is not a
+    # hold -- the item falls through to resume's fresh triage, as before.
+    "not-ready-durable-pr-closed-not-held",
 }
 
 # (name, replacement for board_item_marker.is_loop_marker_author)
@@ -287,6 +290,30 @@ def run_in_flight_cases():
             else:
                 print("[ok] in-flight/{0}: select() == {1!r} (oldest-first "
                       "fallback)".format(case, selected))
+
+        # specs/093-not-ready-board-release FR-011: main() records which
+        # items a not-ready hold passed over, and why.
+        if "not_ready_held" in expected:
+            script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "board_eligibility.py")
+            payload = {"open_issues": open_issues, "labeled_events_by_issue": {},
+                       "comments_by_issue": {str(k): v for k, v in comments_by_issue.items()},
+                       "pr_state_by_number": {str(k): v for k, v in pr_state_by_number.items()},
+                       "pr_head_sha_by_number": {str(k): v for k, v in pr_head_sha_by_number.items()},
+                       "bot_login": BOT_LOGIN}
+            proc = subprocess.run([sys.executable, script], input=json.dumps(payload),
+                                  text=True, capture_output=True)
+            try:
+                held = [h["issue"] for h in json.loads(proc.stderr).get("not_ready_held", [])
+                        if h.get("reason")]
+            except (ValueError, AttributeError, KeyError, TypeError):
+                held = None
+            if held != expected["not_ready_held"]:
+                failures += 1
+                print("::error::verify-board-eligibility: in-flight/{0}: main() not_ready_held "
+                      "expected {1!r}, got {2!r} (stderr {3!r}).".format(
+                          case, expected["not_ready_held"], held, proc.stderr[-300:]))
+            else:
+                print("[ok] in-flight/{0}: main() records not_ready_held == {1!r}".format(case, held))
     return failures
 
 
@@ -430,7 +457,7 @@ def run():
 
     # specs/093-not-ready-board-release FR-004(a)/FR-013: the handover
     # threshold is spec 093's stated value (3 not-ready outcomes per PR);
-    # the workflow reads it from NOT_READY_THRESHOLD, so a drifted value
+    # the workflow asks not_ready_handover_due(), so a drifted value
     # would silently move when a human is reached.
     if (NOT_READY_THRESHOLD != 3 or not_ready_handover_due(2)
             or not not_ready_handover_due(3)):

@@ -114,21 +114,23 @@ fires only when the ones above it don't apply:
         not compared here.
    A stalled marker lacking either field is unaffected and falls through
    unchanged to clause 2 below. A handover whose pr has since been merged
-   or closed falls through as well, to clause 4's triage, with the pr
-   cleared like the rest of the abandoned attempt (FR-022).
+   goes to prove like any merged fix (spec 096); one closed falls to
+   clause 4's triage, with the pr cleared like the rest of the abandoned
+   attempt (FR-022).
 
 0.5b. (specs/093-not-ready-board-release FR-001/FR-007/D3) The marker's
-   step is readiness, its pr resolves OPEN, and it carries a durable
-   not-ready record (contracts/not-ready-hold.md) whose head SHA differs
-   from the pr's current head (`board_eligibility.not_ready_readmitted()`,
+   step is readiness, its pr resolves OPEN, and it carries a not-ready
+   record of either class (contracts/not-ready-hold.md) whose head SHA differs
+   from the pr's current head (`board_eligibility.not_ready_head_moved()`,
    the hold's own module, never an inline comparison -- FR-003)
      -> step = "review", never "readiness" -- the held item is
         automatically re-admitted the moment its head moves, at review
         (a human's new commits have not been through an independent
         review), continuing rather than resetting the round and not-ready
         count clause 1 below would otherwise carry through unchanged. A
-        readiness marker with no not-ready record, a self-clearing one, or
-        a durable one whose head is unchanged is unaffected and falls
+        self-clearing record is never held, but its moved head needs the
+        same review (SC-010). A readiness marker with no not-ready record,
+        or one whose head is unchanged, is unaffected and falls
         through to clause 1, which resolves step = "readiness" there (the
         hold itself, contracts/not-ready-hold.md, keeps such an item off
         select()'s candidate list in the first place).
@@ -235,3 +237,5 @@ live state, not the marker's say-so, decides which clause applies.
 | spec 100 FR-006a (label-less stall is always deliberate) | precondition of this whole clause -- see "Marker source" above and FR-001/FR-002 |
 | specs/093-not-ready-board-release US2 AS3 (this feature's own stalled handover marker, board:stalled removed, head unchanged) | clause 0.5a → readiness |
 | specs/093-not-ready-board-release US3 AS1-AS4 (readiness marker, durable not-ready record, head moved) | clause 0.5b → review, round/nr_count carried through unchanged |
+| specs/093-not-ready-board-release SC-010 (readiness marker, self-clearing not-ready record, head moved) | clause 0.5b → review |
+| specs/093-not-ready-board-release handover marker, its PR merged / closed since | prove / clause 4 → `triage`, pr cleared |

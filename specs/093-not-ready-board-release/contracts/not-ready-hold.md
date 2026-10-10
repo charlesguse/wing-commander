@@ -52,11 +52,13 @@ def _not_ready_holds(marker, pr_state_by_number, pr_head_sha_by_number):
     nr_class but whose record does not parse (FR-011: passed over, never
     admitted)."""
 
-def not_ready_readmitted(marker, pr_head_sha):
-    """FR-007. True when marker carries a durable record and the known live
-    head is no longer held by _not_ready_holds() -- the hold ended because
-    the head moved. The resume step calls this instead of comparing head
-    SHAs itself (FR-003)."""
+def not_ready_head_moved(marker, pr_head_sha):
+    """FR-007/SC-010. True when marker carries a not-ready record of either
+    class and the known live head differs from the record's: for a durable
+    record, the end of the hold (re-admission); for a self-clearing one,
+    new commits no review covered. Either way the item resumes at review.
+    The resume step calls this instead of comparing head SHAs itself
+    (FR-003)."""
 
 def not_ready_handover_due(nr_count):
     """FR-004(a). True when nr_count >= NOT_READY_THRESHOLD."""
@@ -162,7 +164,9 @@ extended decision (research.md D2), and:
 - **otherwise (the plain not-ready branch, today's bare "Not ready on PR
   #%s: %s" comment)**:
   1. `new_count = (carried-in nr_count or 0) + 1`.
-  2. If `new_count >= NOT_READY_THRESHOLD` (FR-004(a)): apply
+  2. If `not_ready_handover_due(new_count)` (`new_count >=
+     NOT_READY_THRESHOLD`, FR-004(a); the step asks board_eligibility.py
+     and fails on no answer rather than re-deriving the comparison): apply
      `board:stalled` first (`add_stalled_label()`), then write a `stalled`
      marker carrying `--pr` and `--nr-head-sha` (research.md D7) — never a
      `readiness` marker in this branch. Post the FR-008 handover notice
@@ -181,6 +185,14 @@ extended decision (research.md D2), and:
      (research.md D8); otherwise post a new comment as today. The count
      and round reach this step on every path: from select, from review,
      or, on a directed run, from the marker the directed run itself reads.
+     The comment says what happens next: a durable outcome is held until
+     the PR's head moves (a push re-admits it at review), a self-clearing
+     one is picked up again on a later run.
+
+`select` names every item a not-ready hold passed over, and why, in its
+step summary, from `board_eligibility.py`'s own `not_ready_held` output
+(FR-011). A PR known to be CLOSED or MERGED is never held; resume routes it
+(fresh triage, or prove for a merged handover).
 
 Every durable action above stays behind
 `steps.killswitch-recheck.outputs.paused == 'false'`, unchanged (research.md

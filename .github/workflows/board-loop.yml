@@ -880,6 +880,11 @@ jobs:
           if [ "$multiple_found" = "true" ]; then
             echo "board-loop: more than one issue qualified as in-flight -- selected the one with the newest marker (FR-005)." >> "$GITHUB_STEP_SUMMARY"
           fi
+          # specs/093-not-ready-board-release FR-011: name every item a
+          # not-ready hold passed over, and why (board_eligibility.py's own
+          # decision, not re-derived here).
+          jq -r '(.not_ready_held // [])[] | "board-loop: passed over issue #\(.issue) -- \(.reason) (specs/093 FR-011)."' \
+            "$RUNNER_TEMP/board-eligibility-provenance.json" >> "$GITHUB_STEP_SUMMARY" || true
 
       # specs/096-durable-prove-entry research.md D3/D5/D6, FR-011: an item
       # already stranded by a past displacement -- or Q3's uncorrelated
@@ -1211,7 +1216,7 @@ jobs:
           sys.path.insert(0, ".github/scripts")
           from board_eligibility import (
               PRE_FIX_STEPS, FIX_OR_LATER_STEPS, AWAITING_MERGE_STEP, BREACH_STEP,
-              not_ready_readmitted)
+              not_ready_head_moved)
           from board_item_marker import STALLED_STEP, head_moved_since_last_review, is_loop_branch
 
           marker_step = os.environ.get("MARKER_STEP") or None
@@ -1235,6 +1240,11 @@ jobs:
 
           reason = ""
           note = ""
+          # specs/093-not-ready-board-release D7: the not-ready threshold's
+          # own stalled handover marker is the one stall marker naming a pr.
+          handover_marker = bool(marker_step == STALLED_STEP and marker_full.get("pr") is not None
+                                 and marker_full.get("nr_head_sha"))
+
           # Issue #555: a marker's branch is adopted only when it has this
           # loop's own fix/<issue>-<slug> name, and its PR only when that PR
           # carries board:owned and its head is in this repository.
@@ -1308,8 +1318,7 @@ jobs:
               round_ = "0"
               base_sha = ""
               nr_count_ = "0"
-          elif (marker_step == "stalled" and pr_from_marker and pr_state == "OPEN"
-                and marker_full.get("pr") is not None and marker_full.get("nr_head_sha")):
+          elif handover_marker and pr_from_marker and pr_state == "OPEN":
               # specs/093-not-ready-board-release FR-008/D7: this feature's
               # own handover marker is the one stalled-step marker that
               # carries pr/nr_head_sha (every other stall site keeps
@@ -1321,8 +1330,8 @@ jobs:
               # other stall site. The moved/unmoved call is the one shared
               # head_moved_since_last_review() determination (FR-007), not
               # a second comparison against nr_head_sha. Only an OPEN PR:
-              # one merged or closed since the handover falls through to
-              # the clauses below (prove / fresh triage).
+              # one merged since the handover goes to prove (the merged-fix
+              # clause below), one closed to a fresh triage.
               with open(os.environ["COMMENTS_PATH"], encoding="utf-8") as fh:
                   comments = json.load(fh)
               if not head_moved_since_last_review(pr_number, comments, os.environ.get("BOT_LOGIN") or ""):
@@ -1334,27 +1343,27 @@ jobs:
                   note = "recorded pr {0} was handed off not-ready at head_sha {1}; head has moved -- resuming at review".format(
                       pr_number, marker_full.get("nr_head_sha"))
           elif (marker_step == "readiness" and pr_from_marker and pr_state == "OPEN"
-                and not_ready_readmitted(marker_full, pr_head_sha)):
+                and not_ready_head_moved(marker_full, pr_head_sha)):
               # specs/093-not-ready-board-release FR-001/FR-007 (US3): a
               # held item's PR head has moved since the durable not-ready
               # record was measured -- automatically re-admitted, at
               # review (never readiness, a human's new commits have not
               # been through an independent review), continuing rather
               # than resetting round_/nr_count_ (both already carried
-              # through unchanged above -- research.md D5/D6). Every other
-              # case this clause's sibling below already covers (no
-              # not-ready record, a self-clearing one, or a durable one
-              # whose head is unchanged) is unaffected and still resolves
-              # step = marker_step there.
+              # through unchanged above -- research.md D5/D6). A
+              # self-clearing record's moved head goes to review too
+              # (SC-010: nothing reported ready on unreviewed commits).
+              # No not-ready record, or an unchanged head, is unaffected
+              # and still resolves step = marker_step below.
               step = "review"
-              note = "recorded pr {0} was held not-ready at head_sha {1}; head has moved -- re-admitted at review".format(
+              note = "recorded pr {0} was not ready at head_sha {1}; head has moved -- resuming at review".format(
                   pr_number, marker_full.get("nr_head_sha"))
           elif pr_from_marker and marker_step and (
               marker_step in PRE_FIX_STEPS
               or (marker_step in FIX_OR_LATER_STEPS and pr_state == "OPEN")
           ):
               step = marker_step
-          elif pr_from_marker and marker_step in FIX_OR_LATER_STEPS and pr_state == "MERGED":
+          elif pr_from_marker and (marker_step in FIX_OR_LATER_STEPS or handover_marker) and pr_state == "MERGED":
               # specs/096-durable-prove-entry research.md D7/FR-007/FR-008/
               # FR-009: resolved by number, MERGED, and the issue is still
               # open -- the loop's own fix landed but nothing proved it yet
@@ -3799,7 +3808,7 @@ jobs:
         with:
           pr-number: ${{ needs.fix.outputs.pr-number || needs.select.outputs.pr || steps.resolve-directed-pr.outputs.pr }}
           token: ${{ github.token }}
-          round: ${{ needs.select.outputs.round || 0 }}
+          round: ${{ needs.select.outputs.round || steps.resolve-directed-pr.outputs.round || 0 }}
           nr-count: ${{ needs.select.outputs.nr-count || steps.resolve-directed-pr.outputs.nr-count || 0 }}
 
       # Gate 98 holds this job to exactly one actions/checkout@ step (the
@@ -5447,17 +5456,18 @@ jobs:
               || { echo "::error::board-loop readiness (backstop breach): spec-request $spec_url was filed but disposing of issue #$ISSUE_NUMBER as a duplicate failed. Whether a later run finishes it depends on this site and on the step that failed (specs/108-routed-original-disposition/contracts/duplicate-disposition.md, failure semantics)."; exit 1; }
           else
             # specs/093-not-ready-board-release FR-004(a)/FR-008/FR-009:
-            # never a second hardcoded 3 -- read from board_eligibility.py's
-            # own NOT_READY_THRESHOLD (T005).
-            not_ready_threshold="$(python3 -I -c "import os, sys; sys.path.insert(0, os.path.join(os.environ['RUNNER_TEMP'], 'wc-pristine', 'scripts')); from board_eligibility import NOT_READY_THRESHOLD; print(NOT_READY_THRESHOLD)")" \
-              || not_ready_threshold=""
-            # An empty or non-numeric threshold would make the -ge test
-            # below false on every run and silently disable the handover.
-            case "$not_ready_threshold" in
-              ''|*[!0-9]*) echo "::error::board-loop readiness (not ready): could not read NOT_READY_THRESHOLD from board_eligibility.py (got '$not_ready_threshold') -- no not-ready record is written, so a later run retries (specs/093-not-ready-board-release FR-004(a))."; exit 1 ;;
-            esac
+            # never a second hardcoded 3 -- the count rule's one home is
+            # board_eligibility.not_ready_handover_due() (NOT_READY_THRESHOLD,
+            # T005). Anything but true/false fails the step, rather than
+            # silently never handing over.
             new_count=$(( ${NR_COUNT:-0} + 1 ))
-            if [ "$new_count" -ge "$not_ready_threshold" ]; then
+            handover_due="$(NEW_COUNT="$new_count" python3 -I -c "import os, sys; sys.path.insert(0, os.path.join(os.environ['RUNNER_TEMP'], 'wc-pristine', 'scripts')); from board_eligibility import not_ready_handover_due; print('true' if not_ready_handover_due(int(os.environ['NEW_COUNT'])) else 'false')")" \
+              || handover_due=""
+            case "$handover_due" in
+              true|false) ;;
+              *) echo "::error::board-loop readiness (not ready): board_eligibility.not_ready_handover_due() gave no answer (got '$handover_due') -- no not-ready record is written, so a later run retries (specs/093-not-ready-board-release FR-004(a))."; exit 1 ;;
+            esac
+            if [ "$handover_due" = "true" ]; then
               # FR-004(a)/FR-008: board:stalled goes on before the stalled
               # marker is rendered (#604 pattern) -- this feature's own
               # handover marker uniquely carries --pr/--nr-head-sha
@@ -5474,7 +5484,12 @@ jobs:
             else
               marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step readiness --pr "$PR_NUMBER" --branch "$BRANCH" --round "$ROUND" --nr-count "$new_count" --nr-head-sha "$head_sha" --nr-class "$unmet_class" --nr-reason "$unmet")" \
                 || { echo "::error::board-loop readiness (not ready): board_item_marker.py failed to render the not-ready marker -- not posting a marker-less comment (specs/093-not-ready-board-release FR-002)."; exit 1; }
-              body="$(printf 'Not ready on PR #%s: %s. Picked up again on a later run.\n\n%s' "$PR_NUMBER" "$unmet" "$marker")"
+              if [ "$unmet_class" = "durable" ]; then
+                next_step="Held until the PR's head moves: a push re-admits it at review"
+              else
+                next_step="Picked up again on a later run"
+              fi
+              body="$(printf 'Not ready on PR #%s: %s. %s.\n\n%s' "$PR_NUMBER" "$unmet" "$next_step" "$marker")"
               [ -n "$DIRECTED_ATTRIBUTION" ] && body="$(printf '%s\n\n%s' "$DIRECTED_ATTRIBUTION" "$body")"
 
               # FR-009 dedup: an unmet-condition comment identical to the
@@ -5518,13 +5533,29 @@ jobs:
           PYEOF
           )"
                 if [ -n "$same_comment_id" ]; then
-                  gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$same_comment_id" -f body="$body" > /dev/null
+                  # Edited by the next step: Gate 93 keeps REST calls out of
+                  # this spec-request site.
+                  printf '%s' "$body" > "$RUNNER_TEMP/board-not-ready-dedup-body.md"
+                  echo "dedup-comment-id=$same_comment_id" >> "$GITHUB_OUTPUT"
                 else
                   gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$body"
                 fi
               fi
             fi
           fi
+
+      # specs/093-not-ready-board-release FR-009: the not-ready report found
+      # its own earlier comment for the same PR, head SHA and unmet
+      # condition; edit THAT comment (by id) with the advanced count.
+      - name: Edit the matching not-ready comment in place (FR-009)
+        if: steps.report-unmet.outputs.dedup-comment-id != '' && steps.killswitch-recheck.outputs.paused == 'false'
+        env:
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
+          COMMENT_ID: ${{ steps.report-unmet.outputs.dedup-comment-id }}
+        run: |
+          set -euo pipefail
+          gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$COMMENT_ID" \
+            -F body=@"$RUNNER_TEMP/board-not-ready-dedup-body.md" > /dev/null
 
       # FR-045 (T068): the identical artifact the route job (T028) and the
       # fix job's own post-push-breach path (T029) already cross-link this

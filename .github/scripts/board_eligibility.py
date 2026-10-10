@@ -439,31 +439,55 @@ def _not_ready_holds(marker, pr_state_by_number, pr_head_sha_by_number):
     step-resolution logic decides review vs. readiness, never this
     predicate). Mirrors _awaiting_merge_holds()/_unowned_open_pr_holds()'s
     existing shape beside it (contracts/not-ready-hold.md)."""
+    return not_ready_hold_reason(marker, pr_state_by_number, pr_head_sha_by_number) is not None
+
+
+def not_ready_hold_reason(marker, pr_state_by_number, pr_head_sha_by_number):
+    """_not_ready_holds()'s decision with its reason (FR-011: the run
+    records why an item was passed over), or None when not held. A PR
+    known to be CLOSED or MERGED is never held: resume's own clauses route
+    it (fresh triage, prove), as they did before this feature."""
+    if marker is None or marker.get("step") != "readiness":
+        return None
+    try:
+        pr = int(marker.get("pr"))
+    except (TypeError, ValueError):
+        pr = None
+    if pr is not None and (pr_state_by_number or {}).get(pr) in ("CLOSED", "MERGED"):
+        return None
     record = not_ready_record(marker)
     if record is None:
         # FR-011: a readiness marker that names a not-ready class but whose
         # record does not parse is passed over, never admitted -- admitting
-        # it would re-report the same outcome with nothing changed.
-        return (marker is not None and marker.get("step") == "readiness"
-                and "nr_class" in marker)
+        # it would re-report the same outcome with nothing changed. Closing
+        # the PR releases it (above).
+        if "nr_class" in marker:
+            return "its not-ready record does not parse"
+        return None
     if record["class"] != "durable":
-        return False
+        return None
     current_head_sha = (pr_head_sha_by_number or {}).get(record["pr"])
     if current_head_sha is None:
-        return True
-    return current_head_sha == record["head_sha"]
+        return "PR #{0}'s current head could not be resolved (durable not-ready record)".format(record["pr"])
+    if current_head_sha == record["head_sha"]:
+        return "held not-ready on PR #{0} at head {1} until the head moves".format(
+            record["pr"], record["head_sha"])
+    return None
 
 
-def not_ready_readmitted(marker, pr_head_sha):
-    """specs/093-not-ready-board-release FR-007: True when `marker` carries
-    a durable not-ready record and the PR's live head `pr_head_sha` is known
-    and no longer held by _not_ready_holds() -- the head moved, so the item
-    resumes at review. The resume step calls this rather than comparing
-    head SHAs itself (FR-003: one home for the hold)."""
+def not_ready_head_moved(marker, pr_head_sha):
+    """specs/093-not-ready-board-release FR-007/SC-010: True when `marker`
+    carries a not-ready record of either class and the PR's live head
+    `pr_head_sha` is known and differs from the record's -- commits no
+    review covered, so the item resumes at review, never readiness. For a
+    durable record this is exactly the end of _not_ready_holds()'s hold
+    (re-admission); a self-clearing record is never held, but its moved
+    head needs the same review. The resume step calls this rather than
+    comparing head SHAs itself (FR-003: one home)."""
     record = not_ready_record(marker)
-    if record is None or record["class"] != "durable" or not pr_head_sha:
+    if record is None or not pr_head_sha:
         return False
-    return not _not_ready_holds(marker, None, {record["pr"]: pr_head_sha})
+    return pr_head_sha != record["head_sha"]
 
 
 def _awaiting_merge_holds(marker, pr_state_by_number):
@@ -628,9 +652,19 @@ def main():
     selected = select(open_issues, labeled_events_by_issue, comments_by_issue,
                       pr_state_by_number, bot_login, spec_request_state_by_number,
                       pr_head_sha_by_number)
+    held = []
+    for issue in open_issues:
+        number = issue.get("number")
+        pair = read_marker_with_timestamp(comments_by_issue.get(number, []), bot_login)
+        reason = not_ready_hold_reason(pair[1] if pair else None, pr_state_by_number,
+                                       pr_head_sha_by_number)
+        if reason is not None:
+            held.append({"issue": number, "reason": reason})
     print(json.dumps({
         "decided_by_marker": in_flight_issue is not None and in_flight_issue == selected,
         "multiple_found": multiple_found,
+        # FR-011: every item a not-ready hold passed over, and why.
+        "not_ready_held": held,
     }), file=sys.stderr)
     if selected is not None:
         print(selected)
