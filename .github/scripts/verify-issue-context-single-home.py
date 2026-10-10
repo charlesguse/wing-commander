@@ -3203,7 +3203,7 @@ def _self_test_gh_rationale_home(tmpdir):
         ("a sub-bullet holding the sentence",
          {GH_RATIONALE_HOME: f"- {GH_RATIONALE_HEADING}: no `gh` grant.\n"
                              f"  - {_RATIONALE_SENTENCE}"}, None),
-        ("an indented entry, a wrapped #word comment line and a year",
+        ("an indented entry with a lazy line starting with a year",
          {GH_RATIONALE_HOME: f"  - {GH_RATIONALE_HEADING}: no grant since\n"
                              f"2026. The rule is total\n"
                              f"  rather than per-subcommand.\n"}, None),
