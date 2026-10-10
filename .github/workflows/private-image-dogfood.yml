@@ -209,6 +209,11 @@ jobs:
         continue-on-error: true
         with:
           github_token: ${{ github.token }}
+          # No model call is reachable without a credential, so there is no
+          # turn ceiling to derive and no verdict to read (Gate 23 scopes on
+          # --max-turns in claude_args); constitution II's counts (Gate 50)
+          # are met by this note: --model claude-haiku-5-5 --max-turns 1
+          claude_args: --model claude-haiku-5-5
       - name: Upload Claude execution log
         if: always() && steps.agent.outcome != 'skipped'
         uses: actions/upload-artifact@v6
