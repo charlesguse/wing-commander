@@ -216,12 +216,14 @@ WHAT IT CHECKS
    occur exactly once there and in no other live file, and any other live
    file that restates the rationale's core claim (`gh` reaches remote
    writes, GH_RATIONALE_CLAIM_RE) must name GH_RATIONALE_HOME, so it is a
-   pointer and not a second copy. Live files are the text files git tracks
-   or would track (gitignored trees such as `.claude/worktrees/` are not
-   read), except a spec's own documents (`specs/NNN-*/` outside
+   pointer and not a second copy. Live files are the text files git
+   tracks (wc_repo_files: an untracked `.wing-commander-pipeline/` or
+   `.claude/worktrees/` checkout is not read), except a spec's own documents (`specs/NNN-*/` outside
    `contracts/`), which are historical records; contracts are live and are
-   scanned. This file is skipped: its check 4b message has to name the
-   claim it points at. Only GH_RATIONALE_HOME is in lint-workflows.yml's
+   scanned. Comment and blockquote markers opening a line are removed
+   first, so a copy wrapped across comment lines is still one sentence.
+   The claim is matched literally; a paraphrase is a reviewer's to catch.
+   Only GH_RATIONALE_HOME is in lint-workflows.yml's
    pull_request paths: listing every live file would run the whole suite
    on every PR, so a copy added to a file outside the filter is caught by
    the push to main and the daily schedule, which have no paths filter.
@@ -249,6 +251,7 @@ import yaml
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wc_shell_harness import use_utf8_stdout  # noqa: E402
 from wc_published_stages import published_stages  # noqa: E402
+from wc_repo_files import repo_files  # noqa: E402
 
 BOARD_LOOP = ".github/workflows/board-loop.yml"
 ISSUE_CONTEXT_ACTION = ".github/actions/wing-commander-issue-context/action.yml"
@@ -1074,47 +1077,30 @@ GH_RATIONALE_CLAIM_RE = re.compile(r"reach(?:es)?\s+remote\s+writes",
                                    re.IGNORECASE)
 RATIONALE_SCAN_EXTS = (".md", ".yml", ".yaml", ".py", ".sh", ".json",
                        ".txt", ".toml")
-RATIONALE_SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv"}
 SPEC_DIR_RE = re.compile(r"^specs/[^/]+/(?!contracts/)")
-
-
-def _repo_files(root):
-    """Repository-relative paths under `root`: what git tracks plus untracked
-    files it does not ignore, so a gitignored copy of the repository (a
-    `.claude/worktrees/*` checkout, a pristine snapshot) is not read as a
-    second home. Outside a git work tree, every file under `root`."""
-    try:
-        res = subprocess.run(
-            ["git", "-C", root, "ls-files", "-z", "--cached", "--others",
-             "--exclude-standard"], capture_output=True, check=False)
-    except OSError:
-        res = None
-    if res is not None and res.returncode == 0:
-        return [p for p in res.stdout.decode("utf-8", "replace").split("\0")
-                if p]
-    out = []
-    for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if d not in RATIONALE_SKIP_DIRS]
-        out.extend(os.path.relpath(os.path.join(dirpath, name), root)
-                   .replace(os.sep, "/") for name in filenames)
-    return out
+# A comment or blockquote marker opening a line, removed before matching so
+# a copy wrapped across `#`/`//`/`>`/`*` lines still reads as one sentence.
+LINE_MARKER_RE = re.compile(r"^[ \t]*(?:#+|//+|>+|\*+)?[ \t]*", re.MULTILINE)
 
 
 def _live_text_files(root):
     """Repository-relative paths of the live text files under `root` that
     check 6 reads (see its docstring entry for what is not live)."""
-    return sorted(rel for rel in set(_repo_files(root))
+    return sorted(rel for rel in set(repo_files(root))
                   if rel.endswith(RATIONALE_SCAN_EXTS)
                   and not SPEC_DIR_RE.match(rel)
                   and os.path.isfile(os.path.join(root, rel)))
 
 
-def check_gh_rationale_home(root=".", self_path=None):
+def _unwrapped(text):
+    return LINE_MARKER_RE.sub("", text)
+
+
+def check_gh_rationale_home(root="."):
     """Gate 93 check 6 (spec 101 FR-017): the `gh` rationale's
-    distinguishing sentence lives only in GH_RATIONALE_HOME, exactly once,
-    and every other live file restating its core claim names that home."""
-    self_path = os.path.normpath(self_path or os.path.relpath(
-        os.path.abspath(__file__), os.path.abspath(root)))
+    distinguishing sentence lives only in GH_RATIONALE_HOME, exactly once
+    and under GH_RATIONALE_HEADING, and every other live file restating its
+    core claim names that home."""
     problems = []
     home = os.path.join(root, GH_RATIONALE_HOME)
     try:
@@ -1124,24 +1110,34 @@ def check_gh_rationale_home(root=".", self_path=None):
         return [f"{GH_RATIONALE_HOME}: could not read ({exc}) -- check 6 "
                 f"has no canonical home for the `gh` rationale (spec 101 "
                 f"FR-017)."]
-    home_hits = len(GH_RATIONALE_SENTENCE_RE.findall(home_text))
+    home_hits = len(GH_RATIONALE_SENTENCE_RE.findall(_unwrapped(home_text)))
+    head = home_text.find(GH_RATIONALE_HEADING)
+    section = home_text[head:] if head >= 0 else ""
+    nxt = section.find("\n- **", 1)
+    section = section[:nxt] if nxt >= 0 else section
     if home_hits != 1:
         problems.append(
             f"{GH_RATIONALE_HOME}: carries the `gh` rationale's "
             f"distinguishing sentence (the rule is total, not "
             f"per-subcommand) {home_hits} time(s); it must carry it exactly "
             f"once, under {GH_RATIONALE_HEADING} (spec 101 FR-017).")
-    if GH_RATIONALE_HEADING not in home_text:
+    if head < 0:
         problems.append(
             f"{GH_RATIONALE_HOME}: has no {GH_RATIONALE_HEADING} entry, the "
             f"section every pointer to the `gh` rationale names (spec 101 "
             f"FR-017).")
+    elif home_hits == 1 and not GH_RATIONALE_SENTENCE_RE.search(
+            _unwrapped(section)):
+        problems.append(
+            f"{GH_RATIONALE_HOME}: the `gh` rationale's distinguishing "
+            f"sentence is not under {GH_RATIONALE_HEADING}, the entry every "
+            f"pointer names (spec 101 FR-017).")
     for rel in _live_text_files(root):
-        if rel == GH_RATIONALE_HOME or os.path.normpath(rel) == self_path:
+        if rel == GH_RATIONALE_HOME:
             continue
         try:
             with open(os.path.join(root, rel), encoding="utf-8") as fh:
-                text = fh.read()
+                text = _unwrapped(fh.read())
         except (OSError, UnicodeDecodeError):
             continue
         if GH_RATIONALE_SENTENCE_RE.search(text):
@@ -3140,9 +3136,18 @@ def _self_test_gh_rationale_home(tmpdir):
         ("well-formed tree", {}, None),
         ("the sentence copied into a live contract",
          {contract: _RATIONALE_POINTER + _RATIONALE_SENTENCE}, contract),
-        ("the sentence copied into a workflow comment",
-         {".github/workflows/w.yml": "# " + _RATIONALE_SENTENCE},
+        ("the sentence copied into a wrapped workflow comment",
+         {".github/workflows/w.yml": "jobs:\n  # so the rule is total\n"
+                                     "  # rather than per-subcommand.\n"},
          ".github/workflows/w.yml"),
+        ("the claim wrapped across comment lines with no pointer",
+         {".github/scripts/s.py": "# `gh` reaches\n# remote writes.\n"},
+         ".github/scripts/s.py"),
+        ("the sentence moved out of its entry",
+         {GH_RATIONALE_HOME: home_without.replace(
+             GH_RATIONALE_HEADING, "- **Moved**: " + _RATIONALE_SENTENCE.replace(
+                 "\n", " ") + "\n" + GH_RATIONALE_HEADING, 1)},
+         "not under"),
         ("the claim restated with no pointer",
          {"README.md": "`gh` reaches remote writes, so no grant.\n"},
          "README.md"),
@@ -3155,12 +3160,12 @@ def _self_test_gh_rationale_home(tmpdir):
                                                "**gh**")},
          GH_RATIONALE_HEADING),
         ("the home missing", {GH_RATIONALE_HOME: None}, "could not read"),
-        # A gitignored checkout of the repository is not a second home.
-        ("a copy of the home in a gitignored worktree",
-         {".gitignore": "wt/\n", f"wt/{GH_RATIONALE_HOME}": real_home}, None),
-        ("a copy of the sentence in an untracked, unignored file",
-         {".gitignore": "wt/\n", "notes/x.md": _RATIONALE_SENTENCE},
-         "notes/x.md"),
+        # An untracked checkout of the repository (wt/ is never added) is
+        # not a second home; a tracked file is read.
+        ("a copy of the home in an untracked checkout",
+         {f"wt/{GH_RATIONALE_HOME}": real_home}, None),
+        ("a copy of the sentence in a tracked note",
+         {"notes/x.md": _RATIONALE_SENTENCE}, "notes/x.md"),
     )
     for n, (desc, edits, expect) in enumerate(cases):
         root = os.path.join(tmpdir, f"rationale-{n}")
@@ -3171,11 +3176,16 @@ def _self_test_gh_rationale_home(tmpdir):
             os.makedirs(os.path.dirname(path), exist_ok=True)
             with open(path, "w", encoding="utf-8") as fh:
                 fh.write(text)
-        if subprocess.run(["git", "init", "-q", root],
-                          capture_output=True).returncode:
-            failures.append(f"check 6 fixture ({desc}): git init failed")
+        env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+        tracked = [rel for rel, text in {**base, **edits}.items()
+                   if text is not None and not rel.startswith("wt/")]
+        if any(subprocess.run(cmd, cwd=root, env=env,
+                              capture_output=True).returncode
+               for cmd in (["git", "init", "-q"],
+                           ["git", "add", "--", *tracked])):
+            failures.append(f"check 6 fixture ({desc}): git init/add failed")
             continue
-        problems = check_gh_rationale_home(root, self_path="-")
+        problems = check_gh_rationale_home(root)
         if expect is None and problems:
             failures.append(f"check 6 fixture ({desc}) was flagged: "
                             f"{problems!r}")

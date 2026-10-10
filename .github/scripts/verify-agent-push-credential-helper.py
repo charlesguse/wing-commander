@@ -96,6 +96,9 @@ import sys
 
 import yaml
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from wc_repo_files import repo_files  # noqa: E402
+
 AGENT_ACTION_RE = re.compile(r"^anthropics/claude-code-action@")
 PUBLISH_MARKER = "wing-commander-publish-stranded-commits"
 CONTEXT_REMINT_MARKERS = ("wing-commander-context", "scoped-app-token")
@@ -337,42 +340,11 @@ def _is_self(path, rel):
 
 
 def _repo_files(root="."):
-    """-> every file check 3 scans, repo-root-relative ('/'-separated).
-
-    The git-tracked files (`git ls-files -z`) when `root` is the top of a
-    git working tree -- the repository's content is what is committed, not
-    whatever else sits on disk. An implement run checks the pipeline
-    repository out at `.wing-commander-pipeline/` beside the tree under
-    test, untracked; walking the filesystem scanned that copy of this very
-    gate, whose source quotes the two JWT strings, and failed the gate and
-    its self-test on every implement cycle (#808, #822, #823). Same idiom
-    as verify-stage-tool-lists.py's _glob_has_match(). Outside a git
-    working tree (a synthetic fixture) there is nothing to ask, so the
-    on-disk files stand in for tracked ones, `.git/` excluded.
-    """
-    try:
-        top = subprocess.run(
-            ["git", "-C", root, "rev-parse", "--show-toplevel"],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        # Only when root IS the top: a fixture directory nested inside some
-        # other repository's work tree is not that repository.
-        if top.returncode == 0 and os.path.realpath(
-                os.fsdecode(top.stdout).strip()) == os.path.realpath(root):
-            proc = subprocess.run(
-                ["git", "-C", root, "ls-files", "-z"],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            if proc.returncode == 0:
-                return sorted(os.fsdecode(p) for p in proc.stdout.split(b"\0") if p)
-    except OSError:
-        pass
-    rels = []
-    for dirpath, dirnames, filenames in os.walk(root):
-        if ".git" in dirnames:
-            dirnames.remove(".git")
-        for filename in filenames:
-            rels.append(os.path.relpath(
-                os.path.join(dirpath, filename), root).replace(os.sep, "/"))
-    return sorted(rels)
+    """-> every file check 3 scans: wc_repo_files.repo_files() (the
+    git-tracked files, so the untracked `.wing-commander-pipeline/`
+    checkout an implement run places beside the tree is not scanned --
+    #808, #822, #823)."""
+    return repo_files(root)
 
 
 def check_no_jwt_construction(root="."):
