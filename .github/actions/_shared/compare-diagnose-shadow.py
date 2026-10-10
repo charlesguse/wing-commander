@@ -70,33 +70,54 @@ def signal_ids(finding):
                      if isinstance(e, dict))
 
 
+JSON_TYPES = {
+    "object": dict, "array": list, "string": str, "boolean": bool,
+    "null": type(None),
+}
+
+
+def conforms(value, schema):
+    """The JSON Schema subset the diagnose schema uses -- type (one or a
+    list), enum, properties, required, additionalProperties: false, items --
+    applied recursively, so the shadow's result is held to the whole schema
+    the acting agent's --json-schema enforces, not only its enums."""
+    if not isinstance(schema, dict):
+        return True
+    types = schema.get("type")
+    if types is not None:
+        types = types if isinstance(types, list) else [types]
+        if not any(isinstance(value, JSON_TYPES.get(t, ()))
+                   and not (t != "boolean" and isinstance(value, bool))
+                   for t in types):
+            return False
+    if "enum" in schema and value not in schema["enum"]:
+        return False
+    if isinstance(value, dict):
+        props = schema.get("properties") or {}
+        if any(k not in value for k in schema.get("required") or []):
+            return False
+        if schema.get("additionalProperties") is False and \
+                any(k not in props for k in value):
+            return False
+        if not all(conforms(value[k], props[k]) for k in value if k in props):
+            return False
+    if isinstance(value, list) and "items" in schema:
+        if not all(conforms(v, schema["items"]) for v in value):
+            return False
+    return True
+
+
 def schema_valid(findings, schema):
-    """Structural check against the Opus schema's findings item shape."""
-    items = (schema.get("properties", {}).get("findings", {}).get("items")
-             if isinstance(schema, dict) else None) or {}
-    props = items.get("properties", {})
-    required = items.get("required", [])
-    class_enum = props.get("class", {}).get("enum")
-    sid_enum = (props.get("evidence", {}).get("items", {})
-                .get("properties", {}).get("signalId", {}).get("enum"))
+    """The shadow's findings against the full diagnose schema, plus the
+    pipeline's own rule that a `__new__` class names its proposedClass."""
+    if not isinstance(schema, dict) or not conforms({"findings": findings}, schema):
+        return False
     for f in findings:
         if not baseline_usable(f):
-            return False
-        if any(k not in f for k in required):
-            return False
-        if class_enum is not None and f.get("class") not in class_enum:
             return False
         if f.get("class") == "__new__" and not normalise(
                 f.get("proposedClass") if isinstance(f.get("proposedClass"), str) else ""):
             return False
-        ev = f.get("evidence")
-        if not isinstance(ev, list):
-            return False
-        for e in ev:
-            if not isinstance(e, dict) or "signalId" not in e:
-                return False
-            if sid_enum is not None and e["signalId"] not in sid_enum:
-                return False
     return True
 
 

@@ -151,7 +151,8 @@ def check_single_home(failures):
     re-pasted date parse or run_label rule in trial-summary.py is the drift
     CLAUDE.md's single-home rule forbids."""
     text = SCRIPT.read_text(encoding="utf-8")
-    for needle in ("fromisoformat", '"started_at"', 'get("run_label")'):
+    for needle in ("fromisoformat", '"started_at"', 'get("run_label")',
+                   '{"error", "no-baseline"}'):
         if needle in text:
             failures.append(f"trial-summary.py carries its own {needle!r}: "
                             "import the rule from _shared/trial-bound.py")

@@ -56,22 +56,44 @@ HAIKU_ELIF = re.compile(r"^elif grep -qx 'model:haiku'")
 BRANCH = re.compile(r"^(elif|else|fi)\b")
 
 
+IF_OPEN = re.compile(r"^if\b")
+FI = re.compile(r"^fi\b")
+
+
+def branch_lines(lines, start):
+    """(index of the next elif/else/fi at the same nesting depth as the
+    branch opened at `start`, the branch's own depth-0 body lines). A nested
+    if ... fi inside the branch neither ends it nor counts as its body
+    (review-gate round 7: a nested elif could hide a missing escalation)."""
+    depth, body = 0, []
+    for i in range(start + 1, len(lines)):
+        ln = lines[i]
+        if depth == 0 and BRANCH.match(ln):
+            return i, body
+        if IF_OPEN.match(ln):
+            depth += 1
+        elif FI.match(ln):
+            depth -= 1
+        elif depth == 0:
+            body.append(ln)
+    return len(lines), body
+
+
 def branch_failures(wrapper):
-    """model:opus is the if, model:haiku its next elif, and the Haiku branch
-    (up to its own next elif/else/fi) sets the Sonnet escalation."""
+    """model:opus is the if, model:haiku its next same-depth elif, and the
+    Haiku branch's own (not a nested block's) body sets the Sonnet
+    escalation."""
     lines = [ln.strip() for ln in wrapper.splitlines()]
     lines = [ln for ln in lines if ln and not ln.startswith("#")]
     at = next((i for i, ln in enumerate(lines) if OPUS_IF.match(ln)), None)
     if at is None:
         return [f"{WRAPPER} has no `if grep -qx 'model:opus'` test"]
-    nxt = next((i for i in range(at + 1, len(lines))
-                if BRANCH.match(lines[i])), None)
-    if nxt is None or not HAIKU_ELIF.match(lines[nxt]):
+    nxt, _ = branch_lines(lines, at)
+    if nxt >= len(lines) or not HAIKU_ELIF.match(lines[nxt]):
         return ["model:opus must be tested first and model:haiku in its very "
                 f"next elif in {WRAPPER}, so model:opus wins"]
-    end = next((i for i in range(nxt + 1, len(lines))
-                if BRANCH.match(lines[i])), len(lines))
-    if 'escalation="claude-sonnet-5-5"' not in lines[nxt + 1:end]:
+    _, body = branch_lines(lines, nxt)
+    if 'escalation="claude-sonnet-5-5"' not in body:
         return ["the Haiku branch must escalate to claude-sonnet-5-5"]
     return []
 
@@ -99,6 +121,14 @@ def self_test():
             OTHERS[0]: "model:opus\n", OTHERS[1]: "model:opus\n",
             OTHERS[2]: "model:opus\n"}
     ok = not check(base)
+    # A nested if inside the Haiku branch, before the escalation, is fine.
+    nested = dict(base, **{WRAPPER: GOOD_WRAPPER.replace(
+        '  escalation="claude-sonnet-5-5"\n',
+        '  if [ -n "$x" ]; then\n    :\n  fi\n  escalation="claude-sonnet-5-5"\n')})
+    if check(nested):
+        print("self-test: a nested if in the Haiku branch must pass: "
+              f"{check(nested)}", file=sys.stderr)
+        ok = False
     bad = [
         dict(base, **{STAGE: GOOD_STAGE.replace("180", "100")}),
         dict(base, **{WRAPPER: GOOD_WRAPPER.replace("model:opus", "model:zzz")}),
@@ -108,6 +138,11 @@ def self_test():
         dict(base, **{WRAPPER: GOOD_WRAPPER.replace("sonnet", "opus")}),
         # a comment quoting the opus test above swapped branches
         dict(base, **{WRAPPER: SWAPPED}),
+        # the escalation set only inside a nested if within the Haiku branch
+        dict(base, **{WRAPPER: GOOD_WRAPPER.replace(
+            '  escalation="claude-sonnet-5-5"\n',
+            '  if [ -n "$x" ]; then\n    escalation="claude-sonnet-5-5"\n'
+            '  elif true; then\n    :\n  fi\n')}),
         # the Sonnet escalation set in the opus branch, not the Haiku one
         dict(base, **{WRAPPER: GOOD_WRAPPER.replace(
             '  tier="claude-opus-5-5"', '  escalation="claude-sonnet-5-5"')

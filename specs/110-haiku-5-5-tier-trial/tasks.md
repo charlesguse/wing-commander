@@ -420,3 +420,26 @@ MVP = Phase 1 + Phase 2 (T004) + Story 1 (T006–T012): the tier upgrade and its
   - .github/workflows/wing-commander-trial-summary.yml
 
   Detail: Mismatched defaults would make the checkout or python step fail on a missing file.
+
+## Review Gate Round 7 Findings
+
+Round 7 (at 4b003161) posted these on #982 after the gate's round budget was spent, so they were not folded automatically; recorded here with their resolution. Round 8 (at d122c74a) was inconclusive.
+
+- [X] Review finding: schema_valid is only a shallow check of the diagnose schema
+  Resolution: the comparator now validates the shadow's result against the whole schema subset the diagnose schema uses (type, enum, properties, required, additionalProperties, items); fixtures for bad normalizedFacts, a bad severityHint and a wrong field type fail the old check.
+- [X] Review finding: 300-run cap fails open for shadow records with no trial object
+  Resolution: fixed before this round's report reached the branch: trial-bound counts a diagnose-shadow record with no readable trial object (fixture trial-less-shadow-records-counted).
+- [X] Review finding: trial-bound errors silently disable the shadow with no annotation
+  Resolution: fixed: the composite warns whenever it keeps the shadow off, trial-bound.py names a corrupt or missing records file apart from a bad SINCE, and the wrapper warns when the composite never answered; Gate 143 runs the composite's step.
+- [X] Review finding: Diagnose prompt pasted into the watchdog shadow step
+  Resolution: refuted, recorded at T005: no composite may invoke the agent action (Gate 38) and the acting prompt must name its git wrapper inline, so research D7's byte-equality fallback applies; Gate 146 fails on any drift between the two prompts and schemas.
+- [X] Review finding: trial-summary re-implements trial-bound window and counting rules
+  Resolution: fixed: label, the window, the date parse and the not-compared outcomes are imported from _shared/trial-bound.py; Gate 144 fails if a copy reappears.
+- [X] Review finding: Cap and summary count comparator-error trials differently
+  Resolution: kept by design and documented (contracts/trial-record.md): the cap counts spend the bar does not judge, so a broken comparator stops the trial instead of running 60 days; the summary reports those runs on their own line.
+- [X] Review finding: Haiku opt-in gate BRANCH scan is not nesting-aware
+  Resolution: fixed: Gate 145 tracks if/fi depth, so a nested if in the Haiku branch passes and an escalation only inside a nested block fails (both cases fail the old scan).
+- [X] Review finding: Shadow that dies before writing its transcript can go uncounted
+  Resolution: fixed in structure: the acting transcript is compressed away before the shadow runs, and the metrics record is written whenever the prep step succeeded (from no transcript if need be), so every shadow run leaves a record. A shadow that dies is an `error` trial, which FR-013/FR-017 leave out of the cap; the 60-day bound covers it.
+- [X] Review finding: Watchdog job now waits on trial-bound with !cancelled()
+  Resolution: with the trial off trial-bound is skipped at once; with it on, each step has its own short timeout and tolerates failure (Gate 75), so the wait is the checkout time.

@@ -39,7 +39,6 @@ import sys
 
 HAIKU = "claude-haiku-5-5"
 MIN_COMPARED = 200
-NOT_COMPARED = {"error", "no-baseline"}
 FAILED = {"refused", "exhausted", "malformed"}
 IMPLEMENT_LABELS = {"cycle", "retry"}
 
@@ -72,6 +71,8 @@ def _load_bound():
 
 _BOUND = _load_bound()
 label = _BOUND.label
+# FR-017's not-compared outcomes, from the same home as the cap's.
+NOT_COMPARED = _BOUND.NOT_COUNTED
 
 
 def run_id(rec):
