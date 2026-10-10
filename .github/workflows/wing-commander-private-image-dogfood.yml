@@ -29,9 +29,13 @@ permissions: {}
 jobs:
   dogfood:
     if: vars.WING_COMMANDER_PRIVATE_IMAGE_DOGFOOD_IMAGE != ''
+    permissions:
+      actions: read
+      contents: read
     uses: ./.github/workflows/private-image-dogfood.yml
     with:
       container-image: ${{ vars.WING_COMMANDER_PRIVATE_IMAGE_DOGFOOD_IMAGE }}
+      startup-check: true
     secrets:
       container-registry-username: ${{ secrets.WING_COMMANDER_CONTAINER_REGISTRY_USERNAME }}
       container-registry-password: ${{ secrets.WING_COMMANDER_CONTAINER_REGISTRY_PASSWORD }}

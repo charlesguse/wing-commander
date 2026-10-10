@@ -1,0 +1,10 @@
+2026-10-10T00:00:01.0000000Z ##[group]Install Bun
+2026-10-10T00:00:01.1000000Z bun installed
+2026-10-10T00:00:02.0000000Z ##[endgroup]
+2026-10-10T00:00:02.1000000Z ##[group]Install Dependencies
+2026-10-10T00:00:03.0000000Z dependencies installed
+2026-10-10T00:00:03.1000000Z ##[endgroup]
+2026-10-10T00:00:03.2000000Z ##[group]Prepare action
+2026-10-10T00:00:04.0000000Z Prepare step failed: ANTHROPIC_API_KEY is required but not set
+2026-10-10T00:00:04.1000000Z ##[error]Prepare step failed: ANTHROPIC_API_KEY is required but not set
+2026-10-10T00:00:04.2000000Z ##[endgroup]

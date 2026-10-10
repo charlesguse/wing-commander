@@ -5522,6 +5522,17 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-shell-harness-parity.py
 
+      # Gate 141 — specs/112-agent-startup-image-check (FR-008, SC-003): the
+      # agent start-up classifier is driven over a checked-in log fixture per
+      # verdict branch, and private-image-dogfood.yml's startup-agent /
+      # classify-startup jobs keep their no-credential, fail-closed shape.
+      - name: "Gate 141 — the agent start-up classifier has a fixture per branch and the start-up jobs stay credential-free and fail-closed"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-agent-startup-classifier.py
+      - name: "Gate 141 self-test — a missing expect file, a fixture-less verdict, a drifted verdict, and each start-up job mutation fail"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-agent-startup-classifier.py --self-test
+
       # Gate 133 — specs/090-stage-write-boundary: the implement stage's
       # write boundary (no-write-paths) is stated in the prompt before the
       # agent's first tool call, classified consistently by one shared

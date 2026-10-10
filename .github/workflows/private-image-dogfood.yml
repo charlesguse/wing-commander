@@ -58,6 +58,15 @@ on:
         type: string
         required: false
         default: ""
+      startup-check:
+        description: >
+          Also run the agent action's setup in container-image with no model
+          credential and classify the outcome (specs/112-agent-startup-image-check).
+          Needs the caller to grant actions: read. Inert when container-image
+          is empty.
+        type: boolean
+        required: false
+        default: false
     secrets:
       container-registry-username:
         description: "Username for container-image's registry, if private. Inert when container-image is empty."
@@ -166,3 +175,101 @@ jobs:
       # Just enough to prove the container actually started, per T044.
       - name: Prove the container actually started
         run: cat /etc/os-release
+
+  # specs/112-agent-startup-image-check: runs the real agent action's setup in
+  # the image with NO model credential. The action stops at authentication,
+  # so no model call is reachable; classify-startup reads this job's log.
+  startup-agent:
+    needs: verify-image-prerequisites
+    if: "!cancelled() && needs.verify-image-prerequisites.result != 'failure' && inputs.startup-check && inputs.container-image != ''"
+    runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
+    container:
+      image: ${{ inputs.container-image }}
+      credentials: >-
+        ${{
+          (secrets.container-registry-username != '' && secrets.container-registry-password != '')
+            && fromJSON(format('{{"username":{0},"password":{1}}}', toJSON(secrets.container-registry-username), toJSON(secrets.container-registry-password)))
+            || fromJSON('{}')
+        }}
+      # Git safe.directory for the caller's container image -- see clarify.yml.
+      env:
+        GIT_CONFIG_COUNT: "1"
+        GIT_CONFIG_KEY_0: safe.directory
+        GIT_CONFIG_VALUE_0: "*"
+    environment:
+      name: ${{ inputs.environment }}
+      deployment: ${{ inputs.environment-deployment }}
+    permissions:
+      contents: read
+    timeout-minutes: 10
+    steps:
+      - name: Run the agent action's setup without a model credential
+        id: agent
+        uses: anthropics/claude-code-action@v1
+        continue-on-error: true
+        with:
+          github_token: ${{ github.token }}
+      - name: Upload Claude execution log
+        if: always() && steps.agent.outcome != 'skipped'
+        uses: actions/upload-artifact@v6
+        with:
+          name: claude-execution-output
+          path: ${{ runner.temp }}/claude-execution-output.json
+          if-no-files-found: ignore
+          retention-days: 90
+
+  classify-startup:
+    needs: [verify-image-prerequisites, startup-agent]
+    if: "!cancelled() && needs.verify-image-prerequisites.result != 'failure' && inputs.startup-check && inputs.container-image != ''"
+    runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
+    container:
+      image: ${{ inputs.container-image }}
+      credentials: >-
+        ${{
+          (secrets.container-registry-username != '' && secrets.container-registry-password != '')
+            && fromJSON(format('{{"username":{0},"password":{1}}}', toJSON(secrets.container-registry-username), toJSON(secrets.container-registry-password)))
+            || fromJSON('{}')
+        }}
+      # Git safe.directory for the caller's container image -- see clarify.yml.
+      env:
+        GIT_CONFIG_COUNT: "1"
+        GIT_CONFIG_KEY_0: safe.directory
+        GIT_CONFIG_VALUE_0: "*"
+    environment:
+      name: ${{ inputs.environment }}
+      deployment: ${{ inputs.environment-deployment }}
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          sparse-checkout: .github/scripts
+      - name: Classify the agent start-up log
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          AGENT_RESULT: ${{ needs.startup-agent.result }}
+        run: |
+          : > startup-agent.log
+          if [ "$AGENT_RESULT" != "skipped" ]; then
+            job_id=$(gh api "repos/$REPO/actions/runs/$RUN_ID/jobs" --paginate \
+              --jq '.jobs[] | select(.name | endswith("startup-agent")) | .id' | head -n 1) || job_id=""
+            if [ -n "$job_id" ]; then
+              gh api "repos/$REPO/actions/jobs/$job_id/logs" > startup-agent.log || : > startup-agent.log
+            fi
+          fi
+          rc=0
+          python3 .github/scripts/classify-agent-startup.py --log startup-agent.log --json > verdict.json || rc=$?
+          {
+            echo "### Agent start-up check"
+            echo
+            echo '```json'
+            cat verdict.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::wing-commander classify-startup: $(jq -r .reason verdict.json)"
+            exit 1
+          fi

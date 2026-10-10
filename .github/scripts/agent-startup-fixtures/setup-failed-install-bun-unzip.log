@@ -1,0 +1,4 @@
+2026-10-10T00:00:01.0000000Z ##[group]Install Bun
+2026-10-10T00:00:01.1000000Z Downloading bun
+2026-10-10T00:00:01.5000000Z ##[error]Unable to locate executable file: unzip. Please verify either the file path exists or the file can be found within a directory specified by the PATH environment variable. Also check the file mode to verify the file is executable.
+2026-10-10T00:00:01.6000000Z ##[endgroup]
