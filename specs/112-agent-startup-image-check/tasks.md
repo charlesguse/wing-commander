@@ -181,3 +181,7 @@ Task: "Add fixtures for the unclassified branches in .github/scripts/agent-start
 ## Phase 9: Maintainer Feedback
 
 - [ ] MF1 (T009/T031) Run the start-up check on every reference-image rebuild via a claude-code-action-supported event (e.g. a `workflow_dispatch` run against the published digest), not a `push`-event call to `private-image-dogfood.yml` (Gate 6). Keep Gate 62 assertions unchanged. Per T031's named approach.
+
+## Maintainer Feedback
+
+- [ ] MF2 (T033) Emit the git-floor failure under its own message, not behind the 'could not run a POSIX shell' prefix, in all affected stages. Update Gate 23/142 to match (FR-013).
