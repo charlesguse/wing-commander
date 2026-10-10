@@ -42,9 +42,11 @@ class Token:
 
 
 GH_WORD = re.compile(r"(?<![\w./$@:%-])gh(?![\w-])")
-# A word that is a `${...}` whose default or alternate value is `gh`
-# (`${X:-gh}`, `"${X:+gh}"`): it may expand to the command itself.
-GH_IN_EXPANSION = re.compile(r'"?\$\{[^{}]*?[-+=?]gh\}"?')
+# A dynamic word ending in a `${...}` whose value may be `gh` (`${X:-gh}`,
+# `"${X:+gh}"`, `${X:-"gh"}`, `${X:-${Y:-gh}}`, `${X/a/gh}`): it may expand
+# to the command itself. `${X#gh}`/`${X%gh}` strip gh, so they are not.
+GH_IN_EXPANSION = re.compile(r"""(?<![\w.$@%#])["']?gh["']?\}+["']*$""")
+TIME_GAP = re.compile(r"(?:[ \t]|\\\n)*")
 ASSIGN = re.compile(r"[A-Za-z_]\w*=")
 HEREDOC_DELIM = re.compile(r"\\?([^\s;&|<>()'\"`\\]+)")
 VAR = re.compile(r"\$(?:[A-Za-z_]\w*|[0-9@*#?!$-])")
@@ -64,7 +66,7 @@ API_ATTACHED = re.compile(r"-(?:[HfFqtp]|-(?:header|raw-field|field|jq|template|
 
 
 class _Word:
-    __slots__ = ("raw", "lit", "off", "plain", "skel", "pre", "split")
+    __slots__ = ("raw", "lit", "off", "plain", "skel", "pre", "split", "toks")
 
     def __init__(self, raw, lit, off, plain, skel, pre, split):
         self.raw, self.lit, self.off, self.plain = raw, lit, off, plain
@@ -241,7 +243,7 @@ class _Scan:
 
     # ---------------------------------------------------------------- words
     def _word(self, i, ctx):
-        t, n, s = self.t, self.n, i
+        t, n, s, tok0 = self.t, self.n, i, len(self.toks)
         lit, pre, split, quoted = [], None, False, False
         while i < n:
             c = t[i]
@@ -276,6 +278,7 @@ class _Scan:
                 i += 1
         word = _Word(t[s:i], None if pre is not None else "".join(lit), s,
                      not quoted and pre is None, "".join(lit), pre or "", split)
+        word.toks = self.toks[tok0:]                    # the tokens its own text holds
         return word, i
 
     # ------------------------------------------------------------- heredocs
@@ -327,7 +330,7 @@ class _Scan:
     # ------------------------------------------------------------- commands
     def _cmds(self, i, ctx):
         t, n = self.t, self.n
-        words, drop, timed = [], False, False
+        words, drop, timed = [], False, None
         while i < n:
             c = t[i]
             if c in " \t" or (c == "\\" and t[i + 1:i + 2] == "\n"):
@@ -363,9 +366,11 @@ class _Scan:
                     continue
                 if lead in ("case", "esac"):
                     ctx.cases = max(0, ctx.cases + (1 if lead == "case" else -1))
-                if timed and lead and lead[0] == "-":         # `time -p gh`
+                if (lead and lead[0] == "-" and timed is not None   # `time -p gh`
+                        and TIME_GAP.fullmatch(t, timed, w.off)):
+                    timed = i
                     continue
-                timed = lead == "time"
+                timed = i if lead == "time" else None
                 if lead not in RESERVED:
                     words.append(w)
         self._end(words, ctx)
@@ -414,12 +419,12 @@ class _Scan:
     def _note_once(self, w, reason):
         """A disallowed call at word `w`, unless its own text already holds one
         (`${X:+gh}` is marked inside the expansion)."""
-        if not any(w.off <= t.offset < w.off + len(w.raw) for t in self.toks):
+        if not any(t.kind == "call" for t in w.toks):
             self._note(w.off, "call", position="disallowed", reason=reason)
 
 
 def _expands_to_gh(w):
-    return w.lit is None and GH_IN_EXPANSION.fullmatch(w.raw) is not None
+    return w.lit is None and GH_IN_EXPANSION.search(w.raw) is not None
 
 
 def _argv_reason(argv):
