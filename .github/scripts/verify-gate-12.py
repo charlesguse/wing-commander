@@ -1642,6 +1642,15 @@ CASES = [
              '-f body=\\`date #now\\` -X POST`']),
      True, ("issues", "write")),
 
+    ("... while an escaped backtick inside a comment of the enclosing "
+     "substitution's own text is commented out with it: the `-X GET` "
+     "after `# not \\`this\\`` is no method of the call, and its POST "
+     "fails under issues:read",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['x=`gh api "repos/${GITHUB_REPOSITORY}/issues/1/comments" '
+             '-f body=x -X POST # not \\`this\\` -X GET`']),
+     True, ("issues", "write")),
+
     ("a backtick substitution inside a call's double-quoted value is one "
      "part of that word, quotes and blanks and all: the `-X POST` after "
      "`-f body=\"`git log -1 --format=\"%s by %an\"`\"` is the call's "
@@ -1649,6 +1658,24 @@ CASES = [
      mkcase(ISSUES_READ, "", [DEFAULT_ENV],
             ['gh api "repos/${GITHUB_REPOSITORY}/issues/1/comments" '
              '-f body="`git log -1 --format="%s by %an"`" -X POST']),
+     True, ("issues", "write")),
+
+    ("... and so is one inside an unquoted `${...}`: the `}` in "
+     "`${A:+`echo }`}` closes nothing, so the Actions expression after it "
+     "is one word part and the `-X POST` after that is the call's own; "
+     "the write fails under issues:read",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['gh api "repos/${GITHUB_REPOSITORY}/issues/1/comments" '
+             "-f body=${A:+`echo }`}${{ inputs.a == '`' }} -X POST"]),
+     True, ("issues", "write")),
+
+    ("Actions expressions are found in linear time: a step holding 20000 "
+     "unclosed `${{` openers (a backtick before each) finishes, and its "
+     "write still fails, in well under the per-scenario timeout -- matched "
+     "afresh at each opener, every one scanned the rest of the step",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" -f body=x',
+             'echo "' + "`${{" * 20000 + '"']),
      True, ("issues", "write")),
 ]
 

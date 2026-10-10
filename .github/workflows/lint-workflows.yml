@@ -1171,6 +1171,7 @@ jobs:
           # opened a quote that hid every call after it (code review of
           # #969).
           _EXPR = r"\$\{\{(?:[^}']|'[^']*'|\}(?!\}))*\}\}"
+          _BACKTICK = r'`(?:[^`\\]|\\.)*`'
 
 
           def _brace_body(depth):
@@ -1182,9 +1183,11 @@ jobs:
               one (an expression as the default of `${A:-${B:-...}}`) is one
               part of it, never two brace levels: counted as two, the word
               nested too deep to parse and its call failed closed (code
-              review of #956)."""
+              review of #956). A backtick substitution inside one is one
+              part too: its `}` (`${A+`echo }`}`) closes nothing (code
+              review of #969)."""
               inner = _brace_body(depth - 1) if depth > 1 else None
-              return (r'(?:[^}$]|\$(?!\{)|' + _EXPR
+              return (r'(?:[^}$`]|\$(?!\{)|' + _BACKTICK + '|' + _EXPR
                       + (r'|\$\{(?!\{)' + inner + r'\}' if inner else '')
                       + r')*')
 
@@ -1206,7 +1209,6 @@ jobs:
           # started a word of its own after the PATH and read as the call's
           # last method (code review of #944).
           _PARAM_EXP = _PARAM_EXP_AT(SUB_DEPTH)
-          _BACKTICK = r'`(?:[^`\\]|\\.)*`'
 
 
           def _dq_brace_body(depth):
@@ -1294,7 +1296,33 @@ jobs:
           # nested `-X GET` command into a read.
           API_METHOD_FLAG_RE = re.compile(r'(?:^|\s)(?P<flag>-i*X|--method(?![\w-]))')
           SHELL_WORD_RE = re.compile(SHELL_WORD)
-          EXPR_RE = re.compile(_EXPR)
+          _EXPR_ENDS_MEMO = [None, None]
+
+
+          def expr_ends(text):
+              """-> per position of `text`, where the Actions expression
+              opening there ends (where `_EXPR` would end it), else None, from one
+              backward pass. Matched afresh at each `${{`, an unclosed one
+              scanned the rest of the step every time, and 4000 of them
+              took 6s (code review of #969). The last text's answer is
+              kept, so a step's calls share one pass."""
+              if _EXPR_ENDS_MEMO[0] is text:
+                  return _EXPR_ENDS_MEMO[1]
+              n = len(text)
+              out_, in_ = [None] * (n + 1), [None] * (n + 1)
+              for i in range(n - 1, -1, -1):
+                  if text[i] == "'":
+                      out_[i], in_[i] = in_[i + 1], out_[i + 1]
+                  else:
+                      in_[i] = in_[i + 1]
+                      out_[i] = i + 2 if text.startswith("}}", i) else out_[i + 1]
+              ends = [None] * (n + 2)
+              i = text.find(EXPR_OPEN)
+              while i >= 0:
+                  ends[i] = out_[i + 3]
+                  i = text.find(EXPR_OPEN, i + 1)
+              _EXPR_ENDS_MEMO[:] = [text, ends]
+              return ends
           API_WRITE_METHOD_RE = re.compile(r'(?:POST|PATCH|PUT|DELETE)\b')
 
 
@@ -1413,6 +1441,7 @@ jobs:
               n = len(text)
               flags = [True] * n
               stack = []
+              xe = expr_ends(text)
               # Where each open backtick substitution ends, innermost last.
               # bash ends one at its first unescaped backtick, whatever
               # quote, `$(` or `${` its text opened before it (`echo
@@ -1421,6 +1450,7 @@ jobs:
               # frames, that apostrophe opened a quote that hid the write on
               # the next line (code review of #969).
               bt_ends = []
+              bt_starts = []
               if in_bt is not None:
                   in_bt.extend([False] * n)
               i = 0
@@ -1432,6 +1462,7 @@ jobs:
                       here = False
                       while bt_ends and i >= bt_ends[-1]:
                           end = bt_ends.pop()
+                          bt_starts.pop()
                           here = here or end == i
                           while stack.pop() != "bt":
                               pass
@@ -1449,7 +1480,7 @@ jobs:
                   # the quote after it hid the call on the next line (code
                   # review of #969).
                   if (c == "\\" and top != "sq" and i + 1 < n
-                          and not EXPR_RE.match(text, i + 1)):
+                          and xe[i + 1] is None):
                       flags[i + 1] = cur_exec
                       i += 2
                       continue
@@ -1460,11 +1491,10 @@ jobs:
                   # skips expressions) ended elsewhere, so an apostrophe
                   # after it hid the next line's call (code review of #969).
                   if top == "sq":
-                      em = EXPR_RE.match(text, i) if c == "$" else None
-                      if em:
-                          for k in range(i + 1, em.end()):
+                      if xe[i] is not None:
+                          for k in range(i + 1, xe[i]):
                               flags[k] = False
-                          i = em.end()
+                          i = xe[i]
                           continue
                       if c == "'":
                           stack.pop()
@@ -1483,14 +1513,13 @@ jobs:
                   if c == "`":
                       k = i + 1
                       while k < n and text[k] != "`":
-                          em = (EXPR_RE.match(text, k)
-                                if text.startswith(EXPR_OPEN, k) else None)
-                          k = em.end() if em else k + (
-                              2 if text[k] == "\\" and not EXPR_RE.match(text, k + 1)
+                          k = xe[k] if xe[k] is not None else k + (
+                              2 if text[k] == "\\" and xe[k + 1] is None
                               else 1)
                       flags[i] = True
                       stack.append("bt")
                       bt_ends.append(min([k, n] + bt_ends[-1:]))
+                      bt_starts.append(i)
                       i += 1; continue
                   # An Actions expression is replaced before the shell ever
                   # runs: its braces, `||`, quotes and backticks are no
@@ -1502,13 +1531,11 @@ jobs:
                   # that hid the rest of the step; counted as executable, one
                   # outside quotes made cmdline_of() end the next call on
                   # its line at its first backtick (code review of #969).
-                  if c == "$" and text.startswith(EXPR_OPEN, i):
-                      em = EXPR_RE.match(text, i)
-                      if em:
-                          for k in range(i + 1, em.end()):
-                              flags[k] = False
-                          i = em.end()
-                          continue
+                  if xe[i] is not None:
+                      for k in range(i + 1, xe[i]):
+                          flags[k] = False
+                      i = xe[i]
+                      continue
                   # `$$` is the shell's PID, not a `$` opening the `${`
                   # after it: read as one, `$${ #it's` opened a brace frame
                   # in which that `#` began no comment, and its apostrophe
@@ -1539,13 +1566,16 @@ jobs:
                       # as its script: run on to the line's end, it hid the
                       # call after `echo "`date #x`";` (code review of
                       # #969).
-                      # An escaped backtick ends it too, so a comment
-                      # inside a nested substitution hides nothing after
+                      # One inside a nested, escaped substitution (an
+                      # odd number of escaped backticks since the
+                      # enclosing one opened) ends at the escaped
+                      # backtick closing it, so it hides nothing after
                       # that substitution (code review of #969).
                       if bt_ends:
                           j = min(bt_ends[-1], j)
-                          esc = text.find("\\`", i, j)
-                          j = j if esc < 0 else esc
+                          if text.count("\\`", bt_starts[-1], i) % 2:
+                              esc = text.find("\\`", i, j)
+                              j = j if esc < 0 else esc
                       for k in range(i, j):
                           flags[k] = False
                           if comments is not None:
@@ -1843,6 +1873,7 @@ jobs:
               if closers is None:
                   closers = closers_after(text, flags)
               close_paren, close_brace, close_bt = closers
+              xe = expr_ends(text)
               out, raw = [], []
               i, n = m.start(), len(text)
               depth, in_bt = 0, False
@@ -1868,12 +1899,10 @@ jobs:
                   # An Actions expression is one value, whatever it holds:
                   # its `||`, `&&` or `|` cut the call short, and the call
                   # failed closed as unreadable (code review of #956).
-                  if flags[i] and c == "$" and text.startswith(EXPR_OPEN, i):
-                      em = EXPR_RE.match(text, i)
-                      if em:
-                          out.append(em.group(0)); raw.append(em.group(0))
-                          i = em.end()
-                          continue
+                  if flags[i] and xe[i] is not None:
+                      out.append(text[i:xe[i]]); raw.append(text[i:xe[i]])
+                      i = xe[i]
+                      continue
                   if flags[i] and c == "\\" and i + 1 < n and text[i + 1] == "\n":
                       out.append(" "); raw.append(" "); i += 2; continue
                   # One before an Actions expression escapes the value
@@ -1883,7 +1912,7 @@ jobs:
                   # words there, and a `-X POST` after it went unread
                   # (code review of #969).
                   if (flags[i] and c == "\\" and i + 1 < n
-                          and not EXPR_RE.match(text, i + 1)):
+                          and xe[i + 1] is None):
                       out.append(c + (text[i + 1] if flags[i + 1] else " "))
                       raw.append(c + text[i + 1])
                       i += 2
