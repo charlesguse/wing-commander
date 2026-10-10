@@ -147,6 +147,34 @@ def composite_errors(name, text):
     return []
 
 
+# Composites a covered job calls that push the agent-written checkout. Each
+# must push through wc_push_from_shim when given push-token, and every
+# covered call must pass one (FR-016/FR-017: an explicit destination that no
+# repository-local insteadOf/pushurl can redirect).
+SHIM_PUSH_COMPOSITES = ("wing-commander-publish-stranded-commits", "wing-commander-fold-commit")
+
+
+def shim_push_errors(docs, root=ROOT):
+    errors = []
+    for comp in SHIM_PUSH_COMPOSITES:
+        with open(os.path.join(root, ".github", "actions", comp, "action.yml"),
+                  encoding="utf-8") as fh:
+            if "wc_push_from_shim" not in _code(fh.read()):
+                errors.append("{0}: pushes without wc_push_from_shim -- a repository-local "
+                              "insteadOf or pushurl could redirect the token".format(comp))
+    for name, jobs in COVERED_JOBS.items():
+        all_jobs = (docs.get(name) or {}).get("jobs") or {}
+        for job_id in jobs:
+            for step in (all_jobs.get(job_id) or {}).get("steps") or []:
+                uses = str((step or {}).get("uses", ""))
+                if any(uses.endswith("/" + c) for c in SHIM_PUSH_COMPOSITES):
+                    if not str(((step or {}).get("with") or {}).get("push-token", "")).strip():
+                        errors.append("{0}: job {1!r} calls {2} without push-token, so it "
+                                      "pushes to the checkout's own origin".format(
+                                          name, job_id, uses.rsplit("/", 1)[-1]))
+    return errors
+
+
 def single_home_errors(paths):
     """Rule 3: the idiom is spelled only in git-push-hardening.sh."""
     errors = []
@@ -266,6 +294,7 @@ def static_errors(docs, root=ROOT):
     with open(SCRIPT, encoding="utf-8") as fh:
         errors += composite_errors("_shared/hardened-push.sh", fh.read())
     errors += single_home_errors(idiom_paths(root))
+    errors += shim_push_errors(docs, root)
     return errors
 
 
@@ -306,6 +335,13 @@ def self_test():
     docs = _load_workflows()
     if static_errors(docs):
         failures.append("the shipped workflows already fail: {0}".format(static_errors(docs)))
+    unshimmed = _load_workflows()
+    for step in unshimmed["implement.yml"]["jobs"]["implement"]["steps"]:
+        if "wing-commander-publish-stranded-commits" in str(step.get("uses", "")):
+            step["with"].pop("push-token")
+            break
+    if not any("without push-token" in e for e in static_errors(unshimmed)):
+        failures.append("a covered publish-stranded call without push-token not detected")
     if not RAW_PUSH_RE.search('git -C "$WORKDIR" push origin HEAD'):
         failures.append("`git -C <dir> push` not recognised as a push")
     # T031: a raw push put back at each real covered site is caught there.
@@ -333,9 +369,12 @@ def self_test():
         shim_less = os.path.join(tmp, "hardened-push.sh")
         with open(SCRIPT, encoding="utf-8") as fh:
             ptext = fh.read()
-        tail = ptext.index("shim=\"$(mktemp -d)\"")
+        shim_call = 'wc_push_from_shim "$expected" "$url" "refs/heads/${branch}"'
+        if shim_call not in ptext:
+            sys.exit("::error::Gate 142 self-test: {0!r} not in hardened-push.sh".format(shim_call))
         with open(shim_less, "w", encoding="utf-8") as fh:
-            fh.write(ptext[:tail] + 'git push --no-verify "$url" "HEAD:refs/heads/${branch}"\n')
+            fh.write(ptext.replace(shim_call,
+                                   'git push --no-verify "$url" "HEAD:refs/heads/${branch}"'))
         shutil.copy(HARDENING, overwrite)
         got = check_behaviour(lambda w, e, h, b: hardened_push(w, e, h, b, shim_less))
         if not any("insteadOf" in e for e in got):

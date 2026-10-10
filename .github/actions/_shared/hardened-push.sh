@@ -17,8 +17,6 @@ if [ "$actual" != "$expected" ]; then
   echo "::error::refusing to push: HEAD $actual is not the verified $expected"
   exit 1
 fi
-objects="$(git rev-parse --absolute-git-dir)/objects"
-
 # shellcheck source=git-push-hardening.sh
 . "$here/git-push-hardening.sh"
 wc_harden_git_env
@@ -36,14 +34,9 @@ if [ -n "${PUSH_TOKEN:-}" ]; then
   export GIT_CONFIG_COUNT=$((n + 1))
 fi
 # The env override cannot beat the workspace's own `url.<base>.insteadOf`
-# (local config outranks global), so the push runs from a fresh shim
-# repository that borrows the workspace's objects and shares none of its
-# config (research R7 fallback).
-shim="$(mktemp -d)"
-git init --quiet "$shim"
-printf '%s\n' "$objects" > "$shim/.git/objects/info/alternates"
-git --git-dir="$shim/.git" update-ref refs/heads/shim "$expected"
-if ! git --git-dir="$shim/.git" push --no-verify "$url" "refs/heads/shim:refs/heads/${branch}"; then
+# (local config outranks global), so the push runs from a shim repository
+# (wc_push_from_shim, research R7 fallback).
+if ! wc_push_from_shim "$expected" "$url" "refs/heads/${branch}"; then
   echo "::error::hardened push: pushing $expected to ${branch} was refused -- nothing that assumes it landed may run."
   exit 1
 fi

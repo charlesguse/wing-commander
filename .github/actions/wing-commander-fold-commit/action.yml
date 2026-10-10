@@ -37,6 +37,15 @@ inputs:
   fold-summary:
     description: One-line commit-message summary.
     required: true
+  push-token:
+    description: >-
+      Optional. A write token for an explicit push URL
+      (https://github.com/<this repository>), pushed from a shim repository
+      with no config of its own, so nothing an agent left in the checkout's
+      .git/config can redirect it (spec 095 FR-016/FR-017). Empty (the
+      default) keeps the bare `git push` to the caller's remote.
+    required: false
+    default: ""
   actor-login:
     description: Login to union into spec-meta.json's pending_re_review_from. Empty is tolerated (no human actor -- e.g. an automated review round's own fold) and adds nothing.
     required: true
@@ -69,6 +78,7 @@ runs:
         FOLD_ID: ${{ inputs.fold-id }}
         FOLD_SUMMARY: ${{ inputs.fold-summary }}
         ACTOR_LOGIN: ${{ inputs.actor-login }}
+        PUSH_TOKEN: ${{ inputs.push-token }}
       run: |
         set -euo pipefail
         if [ ! -s "$SECTION_FILE" ]; then
@@ -106,7 +116,13 @@ runs:
         # shellcheck source=../_shared/git-push-hardening.sh
         . "$GITHUB_ACTION_PATH/../_shared/git-push-hardening.sh"
         wc_harden_git_env
-        git push
+        if [ -n "$PUSH_TOKEN" ]; then
+          wc_push_from_shim "$(git rev-parse HEAD)" \
+            "https://x-access-token:${PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+            "refs/heads/$(git rev-parse --abbrev-ref HEAD)"
+        else
+          git push
+        fi
         echo "folded=true" >> "$GITHUB_OUTPUT"
         echo "commit-sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
         echo "folded-json=$(jq -cn --arg id "$FOLD_ID" --arg summary "$FOLD_SUMMARY" '[{id: $id, summary: $summary}]')" >> "$GITHUB_OUTPUT"

@@ -111,15 +111,18 @@ fails if the deferral outlives its step.
   `GIT_CONFIG_GLOBAL` would also hide the action's own git setup. The
   `.git/**` deny (Gate 146) removes the agent's own route to plant a hook or
   config value; the deterministic push sites are hardened (Gate 142).
-- Push hardening inside `wing-commander-publish-stranded-commits` and
-  `wing-commander-fold-commit` covers hooks, fsmonitor and global/system
-  config (`git-push-hardening.sh`), not a repository-local
-  `url.<base>.insteadOf`: they push to `origin`, not through the shim
-  repository with an explicit URL. The `.git/**` deny is what keeps the
-  agent from writing that value.
-- Git calls other than pushes that run after an agent in the same
-  credential-bearing job (implement's fetch/commit bookkeeping) are not run
-  under the hardening env; the `.git/**` deny is their mitigation.
+- FR-015 beyond the push: git calls other than the push that run after an
+  agent in the same credential-bearing job -- implement's bookkeeping
+  `git reset`/`git commit` before the hardened truncated-count push, its
+  checkbox-count fetches, and `wing-commander-fold-commit`'s commit -- run
+  without the hardening environment, so a hook the agent planted (a
+  `pre-commit`, a `reference-transaction`) would still run there with the
+  token in reach. FR-015 names "any git operation" (code review of #990,
+  cross-referenced). Closing it means hardening the whole job's git
+  environment after each agent step, which also switches off
+  pr-conversation's own run-attribution `core.hooksPath` and changes the
+  agent steps' git setup -- a trade-off for the owner. Until then the
+  `.git/**` deny (Gate 146) is the mitigation.
 
 ## Read-access audit (T032, research R8)
 

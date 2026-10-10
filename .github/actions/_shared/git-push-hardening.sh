@@ -16,11 +16,12 @@
 # set (a container job's safe.directory entry -- see clarify.yml), never
 # written over them.
 #
-# What this cannot do: neutralise a `url.<base>.insteadOf` in the
-# repository's own .git/config (local config cannot be switched off
-# through the environment). A push that must also be immune to that goes
-# through _shared/hardened-push.sh, which pushes from a fresh shim
-# repository to an explicit URL.
+# What the environment cannot do: neutralise a `url.<base>.insteadOf` or a
+# `remote.*.pushurl` in the repository's own .git/config (local config
+# cannot be switched off through the environment). wc_push_from_shim is
+# the push that is immune to those too: it pushes from a fresh shim
+# repository that borrows the workspace's objects and shares none of its
+# config, to an explicit URL (spec 095 FR-016/FR-017, research R7).
 wc_harden_git_env() {
   local n
   GIT_CONFIG_GLOBAL="$(mktemp)"
@@ -35,4 +36,18 @@ wc_harden_git_env() {
   export "GIT_CONFIG_KEY_${n}=core.fsmonitor" "GIT_CONFIG_VALUE_${n}=false"
   n=$((n + 1))
   export GIT_CONFIG_COUNT="$n"
+}
+
+# wc_push_from_shim SHA URL DEST_REF -- push SHA (present in the current
+# repository's object store) to DEST_REF at URL from a shim repository with
+# no config of its own. Call wc_harden_git_env first. Returns git push's
+# status.
+wc_push_from_shim() {
+  local sha="$1" url="$2" dest="$3" objects shim
+  objects="$(git rev-parse --absolute-git-dir)/objects" || return 1
+  shim="$(mktemp -d)"
+  git init --quiet "$shim" || return 1
+  printf '%s\n' "$objects" > "$shim/.git/objects/info/alternates"
+  git --git-dir="$shim/.git" update-ref refs/heads/shim "$sha" || return 1
+  git --git-dir="$shim/.git" push --no-verify "$url" "refs/heads/shim:${dest}"
 }

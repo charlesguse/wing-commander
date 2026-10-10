@@ -40,10 +40,11 @@ inputs:
   push-token:
     description: >
       Already-minted token to build an explicit authenticated push URL
-      from, for a target whose remote carries no stored credential (the
-      same explicit-URL idiom orphan-branch-reset/action.yml uses).
-      Empty (the default) pushes to the `origin` remote as-is -- every
-      in-scope stage's own spec-branch checkout.
+      from (the same explicit-URL idiom orphan-branch-reset/action.yml
+      uses). The push then goes from a shim repository with no config of
+      its own, so nothing in the checkout's .git/config can redirect it
+      (spec 095 FR-016/FR-017) -- a caller whose agent wrote the checkout
+      passes it. Empty (the default) pushes to the `origin` remote as-is.
     required: false
     default: ""
   push-repo:
@@ -104,9 +105,18 @@ runs:
             count="$(git rev-list --count "${BEFORE_SHA}..HEAD" 2>/dev/null)" || count=0
           fi
           echo "commits-published=$count" >> "$GITHUB_OUTPUT"
-          target="origin"
-          [ -n "$PUSH_TOKEN" ] && target="https://x-access-token:${PUSH_TOKEN}@github.com/${PUSH_REPO}.git"
-          if git push "$target" "HEAD:$branch"; then
+          if [ -n "$PUSH_TOKEN" ]; then
+            # spec 095 FR-016/FR-017: an explicit destination, pushed from a
+            # shim repository, so no insteadOf/pushurl the agent could have
+            # left in this checkout's .git/config can redirect the token.
+            target="https://x-access-token:${PUSH_TOKEN}@github.com/${PUSH_REPO}.git"
+            if wc_push_from_shim "$(git rev-parse HEAD)" "$target" "refs/heads/$branch"; then
+              git update-ref "refs/remotes/origin/$branch" HEAD
+              echo "push-ok=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "push-ok=false" >> "$GITHUB_OUTPUT"
+            fi
+          elif git push origin "HEAD:$branch"; then
             echo "push-ok=true" >> "$GITHUB_OUTPUT"
           else
             echo "push-ok=false" >> "$GITHUB_OUTPUT"

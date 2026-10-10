@@ -1364,6 +1364,10 @@ jobs:
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-publish-stranded-commits
         with:
           before-sha: ${{ steps.base.outputs.base-sha }}
+          # spec 095 FR-016/FR-017: an explicit destination, pushed from a shim
+          # repository -- see wing-commander-publish-stranded-commits.
+          push-token: ${{ env.WC_BOT_TOKEN }}
+          push-repo: ${{ github.repository }}
 
       # deterministic, transcript-only verdict -- see specs/037-agent-turn-budget-guard/
       # data-model.md. Guarded like the upload/metrics
@@ -2242,6 +2246,10 @@ jobs:
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-publish-stranded-commits
         with:
           before-sha: ${{ steps.retry-base.outputs.base-sha }}
+          # spec 095 FR-016/FR-017: an explicit destination, pushed from a shim
+          # repository -- see wing-commander-publish-stranded-commits.
+          push-token: ${{ env.WC_BOT_TOKEN }}
+          push-repo: ${{ github.repository }}
 
       # See "Compute agent run verdict (cycle)" above — same shared
       # composite, same steps.retry.outcome != 'skipped' guard so this

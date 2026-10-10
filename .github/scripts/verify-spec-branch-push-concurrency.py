@@ -150,7 +150,8 @@ def _shared_pushes(root, text):
             continue
         with io.open(path, encoding="utf-8") as fh:
             body = "\n".join(line for line in fh.read().splitlines() if not _is_noise(line))
-        if SHARED_PUSH_RE.search(body):
+        # wc_push_from_shim (git-push-hardening.sh) is a push by name.
+        if SHARED_PUSH_RE.search(body) or "wc_push_from_shim" in body:
             return True
     return False
 
@@ -164,7 +165,8 @@ def pushing_composites(root="."):
             doc = yaml.safe_load(fh) or {}
         steps = ((doc.get("runs") or {}).get("steps")) or []
         texts = [_run_text(s) for s in steps if isinstance(s, dict)]
-        if any(PUSH_RE.search(t) or _shared_pushes(root, t) for t in texts):
+        if any(PUSH_RE.search(t) or "wc_push_from_shim" in t or _shared_pushes(root, t)
+               for t in texts):
             out.add(os.path.basename(os.path.dirname(path)))
     return out
 

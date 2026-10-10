@@ -2420,6 +2420,10 @@ jobs:
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-publish-stranded-commits
         with:
           before-sha: ${{ needs.classify-and-announce.outputs.base-sha }}
+          # spec 095 FR-016/FR-017: an explicit destination, pushed from a shim
+          # repository -- see wing-commander-publish-stranded-commits.
+          push-token: ${{ env.WC_BOT_TOKEN }}
+          push-repo: ${{ github.repository }}
 
       - name: Compute agent run verdict
         id: agent-verdict
@@ -2548,6 +2552,8 @@ jobs:
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-fold-commit
         with:
           token: ${{ env.WC_BOT_TOKEN }}
+          # spec 095 FR-016/FR-017 -- see wing-commander-fold-commit.
+          push-token: ${{ env.WC_BOT_TOKEN }}
           spec-dir: ${{ needs.classify-and-announce.outputs.spec-dir }}
           section-file: /tmp/wing-commander/act-fold-section.md
           fold-id: ${{ matrix.id }}
