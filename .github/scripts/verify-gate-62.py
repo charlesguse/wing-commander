@@ -42,16 +42,18 @@ either list of its own:
     runs the suite with (`python`), so the prompt never advertises a
     command the agent's container does not have.
 
-Self-test (--self-test): copies the Dockerfile, required-tools.txt and
-implement.yml into an isolated temp tree, then (a) builds the real,
-unmodified set and expects a clean pass, (b) removes one real tool's install
-from a copy of the Dockerfile and expects the failure to name that tool --
-proving this gate's failure branch actually fails on its own subject
-(Constitution VIII), the exact gap Gate 23's textual-only check leaves open
--- and (c) removes the gate-suite, interpreter-alias and lint packages and
-expects the preflight check to name pyyaml and the prompted-command check
-to name python and the lint tools. Static cases (no build) cover the
-implement.yml drift the gate relies on.
+Self-test (--self-test): (0) checks the Docker-missing decision, (s) runs
+static cases with no build -- each implement.yml drift the gate relies on,
+the stray opt-out scan, and the preflight verdict parser -- then copies the
+Dockerfile, required-tools.txt and implement.yml into an isolated temp tree
+and (a) builds the real, unmodified set and expects a clean pass, and (b)
+builds ONE drifted copy of the Dockerfile that drops jq together with
+python3-yaml, python-is-python3, yamllint and shellcheck, and expects the
+required-tools failure to name jq (the gap Gate 23's textual-only check
+leaves open, proving this gate fails on its own subject, Constitution
+VIII), the preflight failure to name pyyaml, and the prompted-command
+failure to name python, yamllint and shellcheck. One build serves all
+three because each assertion names its own package.
 
 Usage: python3 .github/scripts/verify-gate-62.py [--self-test]
 """
@@ -240,8 +242,10 @@ def read_implement_subject(root=".", wf=None):
     steps = job.get("steps") or []
     by_name = {(st or {}).get("name"): (st or {}) for st in steps}
     index = {(st or {}).get("name"): i for i, st in enumerate(steps)}
-    container_env = (job.get("container") or {}).get("env") or {} \
-        if isinstance(job.get("container"), dict) else {}
+    container = job.get("container")
+    container_env = container.get("env") if isinstance(container, dict) else None
+    if not isinstance(container_env, dict):
+        container_env = {}  # absent, or an expression this gate cannot read
     # docker_missing_result compares the exported value to "true"; Actions
     # exports an unquoted YAML true as "true" too, but no other spelling.
     if container_env.get(DOCKERLESS_ENV) not in ("true", True):
@@ -249,8 +253,10 @@ def read_implement_subject(root=".", wf=None):
                         f"{DOCKERLESS_ENV}: \"true\" in its container: env, so "
                         f"this gate fails the gate suite the job runs in its "
                         f"Docker-less container at every cycle start (#989)")
-    job_shell = (((job.get("defaults") or {}).get("run") or {}).get("shell")
-                 or ((wf.get("defaults") or {}).get("run") or {}).get("shell"))
+    job_run = (job.get("defaults") or {}).get("run") or {}
+    wf_run = (wf.get("defaults") or {}).get("run") or {}
+    job_shell = job_run.get("shell") or wf_run.get("shell")
+    default_wd = job_run.get("working-directory") or wf_run.get("working-directory")
     preflights = {}
     for name in PREFLIGHT_STEPS:
         run = by_name.get(name, {}).get("run")
@@ -260,10 +266,11 @@ def read_implement_subject(root=".", wf=None):
                             f"renamed, update PREFLIGHT_STEPS here with it")
         elif ("${{" in str(run) or any(by_name[name].get(k) for k in
                                        ("env", "shell", "working-directory"))
-              or job_shell != PREFLIGHT_SHELL):
+              or job_shell != PREFLIGHT_SHELL or default_wd):
             problems.append(f"{IMPLEMENT_WORKFLOW} step {name!r} now uses an "
                             f"expression, an env:/shell:/working-directory: key, "
-                            f"or a job/workflow default shell other than "
+                            f"a job/workflow default working-directory, or a "
+                            f"job/workflow default shell other than "
                             f"{PREFLIGHT_SHELL!r}, none of which this gate "
                             f"reproduces when it runs the step's text inside "
                             f"the image -- extend check_preflight first")
@@ -468,6 +475,15 @@ def _static_self_test():
         wf["defaults"]["run"]["shell"] = "sh -e {0}"
     cases.append(("a changed default shell", default_shell, PREFLIGHT_STEPS[0]))
 
+    def default_wd(wf):
+        wf["jobs"][IMPLEMENT_JOB].setdefault("defaults", {}).setdefault("run", {})[
+            "working-directory"] = "target"
+    cases.append(("a job default working-directory", default_wd, PREFLIGHT_STEPS[0]))
+
+    def env_expression(wf):
+        wf["jobs"][IMPLEMENT_JOB]["container"]["env"] = "${{ fromJSON(inputs.x) }}"
+    cases.append(("an expression-valued container env", env_expression, DOCKERLESS_ENV))
+
     def late_install(wf):
         steps = wf["jobs"][IMPLEMENT_JOB]["steps"]
         i = next(i for i, st in enumerate(steps)
@@ -500,9 +516,10 @@ def _static_self_test():
             ("a clean exit with ready=false", "rc:0\noutput:ready=false\noutput:missing=pyyaml\n", False)):
         if (preflight_verdict(stdout) is None) != ok:
             problems.append(f"preflight_verdict misjudged {label}: {preflight_verdict(stdout)!r}")
-    if stray_optouts("."):
+    real = stray_optouts(".")
+    if real:
         problems.append("the real tree already sets the opt-out outside implement.yml: "
-                        + "; ".join(stray_optouts(".")))
+                        + "; ".join(real))
     stray = tempfile.mkdtemp(prefix="verify_gate_62_")
     try:
         os.makedirs(os.path.join(stray, ".github", "workflows"))
@@ -607,8 +624,8 @@ def self_test():
                                  f"was NOT failed by the implement preflight "
                                  f"naming pyyaml; got: {got}")
             cmds = [g for g in got if "command(s) the implement" in g]
-            if not (cmds and all(t in cmds[0].split(": ", 1)[-1].split(" -- ")[0]
-                                 for t in ("yamllint", "shellcheck", "python"))):
+            named = set(cmds[0].split(": ", 1)[-1].split(" -- ")[0].split(", ")) if cmds else set()
+            if not {"yamllint", "shellcheck", "python"} <= named:
                 problems.append(f"a Dockerfile that stopped installing yamllint, "
                                  f"shellcheck and python-is-python3 was NOT failed by "
                                  f"the prompted-command check naming all three; "
