@@ -5624,8 +5624,8 @@ jobs:
 
       # spec 110, FR-006 — the Haiku tier names claude-haiku-5-5; the retired
       # 4.5 model ID must not reappear in a workflow, composite, the
-      # constitution or the docs. The constitution half passes only once the
-      # separate Principle II amendment PR has merged (tasks T004/T011).
+      # constitution or the docs. The constitution half covers Principle II
+      # as amended to 2.4.0 by its own PR (#988, tasks T004/T011).
       - name: "Gate 141 — no pipeline-chosen 4.5 Haiku model ID remains"
         run: python3 .github/scripts/verify-haiku-tier-model-id.py
       - name: "Gate 141 self-test — a workflow, docs or constitution hit, and an empty scan root, each fail"

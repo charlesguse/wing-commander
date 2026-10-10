@@ -111,9 +111,12 @@ def diagnose_section(records, since=None):
     records = [r for r in records if in_window(r, since)]
     shadow = [r for r in records if label(r) == "diagnose-shadow"
               and isinstance(r.get("trial"), dict)]
-    # The acting row covers only the runs the shadow was measured on (same
-    # workflow run), so both rows describe one population.
-    shadow_runs = {run_id(r) for r in shadow} - {None}
+    # Both model rows cover the compared runs only (a no-baseline run never
+    # called the shadow; an error run is infrastructure), the acting row
+    # matched to them by workflow run, so both describe one population.
+    compared_shadow = [r for r in shadow
+                       if r["trial"].get("outcome") not in NOT_COMPARED]
+    shadow_runs = {run_id(r) for r in compared_shadow} - {None}
     opus = [r for r in records if label(r) == "diagnose"
             and run_id(r) in shadow_runs]
     counts = {}
@@ -161,7 +164,7 @@ def diagnose_section(records, since=None):
              "| Model | Runs | Median turns | Median cost |",
              "|---|---|---|---|"]
     for name, group in (("Opus diagnose (acting, same runs)", opus),
-                        (HAIKU + " shadow", shadow)):
+                        (HAIKU + " shadow (compared runs)", compared_shadow)):
         lines.append(f"| {name} | {len(group)} | "
                      f"{fmt(median([turns(r) for r in group]))} | "
                      f"{fmt(median([cost(r) for r in group]), True)} |")
@@ -173,6 +176,11 @@ def diagnose_section(records, since=None):
               and failed / n <= 0.02)
         verdict = "meets" if ok else "misses"
     lines.append(f"**Diagnose bar ({MIN_COMPARED} compared runs): {verdict}**")
+    if n >= MIN_COMPARED and shared == 0:
+        # (b) is vacuous with nothing to compare (review-gate round 3);
+        # say so, so the verdict is not read as a class measurement.
+        lines.append("Bar (b) was not measured: no finding was raised by "
+                     "both models on a shared signal set.")
     return lines
 
 

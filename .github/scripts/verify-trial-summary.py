@@ -80,6 +80,11 @@ WINDOW = ([dated(shadow("agreed"), "2026-08-01")] * 50
 
 CASES = {
     "meets": ([shadow("agreed")] * 200, "**Diagnose bar (200 compared runs): meets**", None),
+    # (b) vacuous: a meets with no shared finding says (b) went unmeasured.
+    "meets-b-unmeasured": ([dict(shadow("agreed"), trial={
+        "outcome": "agreed", "filing_agree": True, "class_shared": 0,
+        "class_agree": 0})] * 200, "**Diagnose bar (200 compared runs): meets**",
+        "Bar (b) was not measured"),
     "misses": ([shadow("agreed")] * 180 + [shadow("disagreed", False)] * 20,
                "**Diagnose bar (200 compared runs): misses**", None),
     "too-small": ([shadow("agreed")] * 10, "sample too small", None),
@@ -93,12 +98,16 @@ CASES = {
          cycle(8, "claude-haiku-5-5", "progress comment"),
          cycle(8, None, "branch advance")],
         "| none | | | | | |", "median Sonnet lifecycle over 1: cycles 1"),
-    # The acting row covers only runs the shadow was measured on.
+    # Both rows cover the compared runs only: run 2 had no shadow, run 3's
+    # shadow was no-baseline (never called).
     "acting-row-paired": (
         [paired("1", "diagnose", "claude-opus-5-5", 0.08),
          paired("1", "diagnose-shadow", "claude-haiku-5-5", 0.002, "agreed"),
-         paired("2", "diagnose", "claude-opus-5-5", 9.0)],
-        "| Opus diagnose (acting, same runs) | 1 | n/a | $0.0800 |", None),
+         paired("2", "diagnose", "claude-opus-5-5", 9.0),
+         paired("3", "diagnose", "claude-opus-5-5", 0.0),
+         paired("3", "diagnose-shadow", "claude-haiku-5-5", 0.0, "no-baseline")],
+        "| Opus diagnose (acting, same runs) | 1 | n/a | $0.0800 |",
+        "| claude-haiku-5-5 shadow (compared runs) | 1 | n/a | $0.0020 |"),
 }
 
 

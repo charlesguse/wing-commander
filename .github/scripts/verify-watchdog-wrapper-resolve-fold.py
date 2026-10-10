@@ -46,10 +46,10 @@ requires `vars.WING_COMMANDER_DIAGNOSE_SHADOW_SINCE != ''`. With the trial
 off it is skipped, so the inspection still allocates exactly one wrapper
 runner; with the trial on it is the bounded price of the trial.
 
-Six mutations (the wrapper passes the WRONG run-name field, the wrapper
+Seven mutations (the wrapper passes the WRONG run-name field, the wrapper
 drops run-name entirely, the wrapper regains a second job, the wrapper
 stops calling the stage directly, the trial-bound job loses its switch
-guard, the stage's empty-input fallback dropped) must each break an
+guard or has it OR'd away, the stage's empty-input fallback dropped) must each break an
 assertion.
 
 Wiring: lint-workflows.yml, Gate 75.
@@ -123,9 +123,12 @@ def wrapper_failures(subject):
                      f"switch-guarded {TRIAL_JOB!r}) -- every extra job is a "
                      f"billed runner minute that only gates and forwards")
     trial = jobs.get(TRIAL_JOB)
-    if trial is not None and TRIAL_GUARD not in str(trial.get("if") or ""):
+    trial_if = str((trial or {}).get("if") or "")
+    # A conjunct, not merely a substring: `guard || true` contains it too.
+    if trial is not None and (TRIAL_GUARD not in trial_if or "||" in trial_if):
         broke.append(f"the {TRIAL_JOB!r} job's if: must require {TRIAL_GUARD} "
-                     f"-- with the trial off it must not allocate a runner")
+                     f"as a conjunct (no ||) -- with the trial off it must not "
+                     f"allocate a runner")
     job = jobs.get(WRAPPER_JOB) or {}
     if not str(job.get("uses") or "").strip():
         broke.append(f"the {WRAPPER_JOB!r} job is not a `uses:` call -- the "
@@ -278,6 +281,14 @@ def mut_trial_bound_loses_its_switch_guard(subject):
     return s
 
 
+def mut_trial_bound_guard_or_true(subject):
+    s = dict(subject)
+    jobs = {k: dict(v) for k, v in subject["wrapper:jobs"].items()}
+    jobs[TRIAL_JOB]["if"] = jobs[TRIAL_JOB]["if"] + " || true"
+    s["wrapper:jobs"] = jobs
+    return s
+
+
 def mut_wrapper_stops_calling_the_stage(subject):
     s = dict(subject)
     jobs = {k: dict(v) for k, v in subject["wrapper:jobs"].items()}
@@ -304,6 +315,8 @@ MUTATIONS = [
      mut_wrapper_stops_calling_the_stage),
     ("the trial-bound job loses its switch guard",
      mut_trial_bound_loses_its_switch_guard),
+    ("the trial-bound job's guard is OR'd away",
+     mut_trial_bound_guard_or_true),
     ("the stage's empty-input fallback is dropped",
      mut_stage_drops_the_empty_input_fallback),
 ]

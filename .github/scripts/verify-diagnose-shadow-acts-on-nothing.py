@@ -62,7 +62,13 @@ WHAT IT CHECKS (watchdog.yml unless named)
    annotation carries, and every annotation the trial composites raise
    carries it too.
 9. The shadow agent is called only with a healthy baseline: its tool-args
-   step (which gates the agent) tests the prep step's run-agent output.
+   step (which gates the agent) tests the prep step's run-agent output; and
+   it cannot read the acting verdict: the prep step leaves neither
+   watchdog-findings.json nor the acting transcript readable in
+   $RUNNER_TEMP, and the baseline is unpacked only after the agent step.
+10. Every artifact-selection loop in watchdog.yml (`for f in
+   "$dl_dir"/*/*.json`) skips the shadow's artifact, so no collector can
+   take the shadow's record or transcript for the inspected run's own.
 
 Usage: verify-diagnose-shadow-acts-on-nothing.py [--self-test]
 Exit 0 = every check holds (self-test: every mutation is caught);
@@ -321,6 +327,22 @@ def check(watchdog, wrapper):
              f"test {RUN_AGENT}: with no healthy baseline the trial is "
              "no-baseline whatever the shadow says, so it must not be called")
 
+    # 9b. The acting verdict is out of the shadow's reach while it runs.
+    prep = next((s for s in family if s.get("id") == "diagnose-shadow-prep"),
+                None)
+    prep_run = str((prep or {}).get("run") or "")
+    for acting_file in ("watchdog-findings.json", "claude-execution-output.json"):
+        if f'rm -f "$RUNNER_TEMP/{acting_file}"' not in prep_run:
+            fail(f"the prep step must take {acting_file} out of the shadow's "
+                 "reach (compress, then remove) before the agent runs")
+    unpack = [i for i, s in enumerate(steps)
+              if "watchdog-findings-baseline.json.gz" in str(s.get("run") or "")
+              and "gzip -dc" in str(s.get("run") or "")]
+    agent_at = next((i for i, s in enumerate(steps)
+                     if s.get("id") == "diagnose-shadow"), None)
+    if not unpack or agent_at is None or min(unpack) < agent_at:
+        fail("the acting baseline may be unpacked only after the shadow agent")
+
     # 7. The wrapper's one-line false fallback.
     wjob = ((wrapper.get("jobs") or {}).get("watchdog")) or {}
     passed = (wjob.get("with") or {}).get("diagnose-shadow-enabled")
@@ -347,8 +369,27 @@ cp -R "$WC_ARTIFACTS"/. "$dir"/
 """
 
 
-def collector_failures(watchdog):
-    """Check 8: run the shipped execution-output collector both ways."""
+LOOP_RE = re.compile(r'for f in "\$dl_dir"/\*/\*\.json')
+SKIP_RE = re.compile(r'case "\$f" in \*/[a-z-]+-diagnose-shadow/\*\) continue ;; esac')
+
+
+def loop_failures(text):
+    """Check 10: every artifact-selection loop skips the shadow's artifact
+    within its first lines -- the one rule, held at every copy."""
+    lines = text.splitlines()
+    loops = [i for i, line in enumerate(lines) if LOOP_RE.search(line)]
+    if not loops:
+        return ["no artifact-selection loop found in watchdog.yml; update "
+                "Gate 146's check 10 with the collectors"]
+    return [f"watchdog.yml:{i + 1}: artifact-selection loop does not skip the "
+            "diagnose shadow's artifact"
+            for i in loops
+            if not any(SKIP_RE.search(x) for x in lines[i + 1:i + 5])]
+
+
+def collector_failures(watchdog, text=None):
+    """Checks 8 and 10: run the shipped execution-output collector both
+    ways, and hold every artifact loop to the shadow skip."""
     import json
     import os
     import tempfile
@@ -357,9 +398,11 @@ def collector_failures(watchdog):
     steps = (watchdog.get("jobs") or {}).get("collect", {}).get("steps") or []
     eo = next((x for x in steps if x.get("name") == EO_STEP), None)
     an = next((x for x in steps if x.get("name") == AN_STEP), None)
-    failures = []
+    if text is None:
+        text = open(WATCHDOG, encoding="utf-8").read()
+    failures = loop_failures(text)
     if eo is None or an is None:
-        return [f"collect job lost {EO_STEP!r} or {AN_STEP!r}"]
+        return failures + [f"collect job lost {EO_STEP!r} or {AN_STEP!r}"]
     if f'contains("{MARKER}") | not' not in str(an.get("run")):
         failures.append(f"{AN_STEP!r} must drop annotations carrying "
                         f"{MARKER!r} (the shadow's fail-loud message)")
@@ -525,6 +568,12 @@ MUTATIONS = [
     ("a diagnose job output reads the shadow",
      lambda wd, w: _job(wd)["outputs"].__setitem__(
          "shadow", "${{ steps.diagnose-shadow.outcome }}")),
+    ("the acting findings stay readable while the shadow runs",
+     lambda wd, w: _family(wd)[0].__setitem__("run", _family(wd)[0]["run"]
+         .replace('rm -f "$RUNNER_TEMP/watchdog-findings.json"', ":"))),
+    ("the baseline is unpacked before the shadow agent",
+     lambda wd, w: _family(wd)[0].__setitem__("run", _family(wd)[0]["run"]
+         + '\ngzip -dc "$RUNNER_TEMP/watchdog-findings-baseline.json.gz" > x\n')),
     ("the shadow agent runs without a healthy baseline",
      lambda wd, w: _tool_step(wd).__setitem__(
          "if", "steps.diagnose-shadow-prep.outcome == 'success'")),
@@ -545,6 +594,8 @@ def _an_step(wd):
 
 
 COLLECTOR_MUTATIONS = [
+    ("the cost-report collector's artifact loop loses its shadow skip",
+     "text"),
     ("the execution-output collector reads the shadow's denials",
      lambda wd: _eo_step(wd).__setitem__("run", _eo_step(wd)["run"].replace(
          "*/claude-execution-output-diagnose-shadow/*) continue",
@@ -572,10 +623,16 @@ def self_test(watchdog, wrapper):
         else:
             bad += 1
             print(f"[FAIL] not caught: {name}")
+    text = open(WATCHDOG, encoding="utf-8").read()
     for name, mutate in COLLECTOR_MUTATIONS:
-        wd = copy.deepcopy(watchdog)
-        mutate(wd)
-        got = collector_failures(wd)
+        wd, t = copy.deepcopy(watchdog), text
+        if mutate == "text":
+            skip = 'case "$f" in */metrics-record-diagnose-shadow/*) continue ;; esac'
+            at = t.rindex(skip)
+            t = t[:at] + ":" + t[at + len(skip):]
+        else:
+            mutate(wd)
+        got = collector_failures(wd, t)
         if got:
             print(f"[ok] caught: {name} ({got[0][:90]})")
         else:

@@ -3144,8 +3144,18 @@ jobs:
           VERDICT: ${{ steps.diagnose-verdict.outputs.verdict }}
         run: |
           set -uo pipefail
+          # The shadow may Read and Grep anywhere, and the acting verdict
+          # sits in $RUNNER_TEMP: compressed, neither the acting transcript
+          # nor the acting findings can be grepped and copied, so the trial
+          # measures the shadow's own judgment. The baseline is unpacked
+          # again only after the shadow agent has finished.
           if [ -f "$RUNNER_TEMP/claude-execution-output.json" ]; then
-            mv "$RUNNER_TEMP/claude-execution-output.json" "$RUNNER_TEMP/claude-execution-output-diagnose.json"
+            gzip -c "$RUNNER_TEMP/claude-execution-output.json" > "$RUNNER_TEMP/claude-execution-output-diagnose.json.gz"
+            rm -f "$RUNNER_TEMP/claude-execution-output.json"
+          fi
+          if [ -f "$RUNNER_TEMP/watchdog-findings.json" ]; then
+            gzip -c "$RUNNER_TEMP/watchdog-findings.json" > "$RUNNER_TEMP/watchdog-findings-baseline.json.gz"
+            rm -f "$RUNNER_TEMP/watchdog-findings.json"
           fi
           # The baseline is the acting verdict only when the read-back
           # accepted it; a healthy verdict the read-back rejected is a
@@ -3393,6 +3403,10 @@ jobs:
           set -uo pipefail
           findings="$RUNNER_TEMP/watchdog-findings-diagnose-shadow.json"
           rm -f "$findings"
+          # The acting baseline, unpacked now the shadow has finished.
+          if [ -f "$RUNNER_TEMP/watchdog-findings-baseline.json.gz" ]; then
+            gzip -dc "$RUNNER_TEMP/watchdog-findings-baseline.json.gz" > "$RUNNER_TEMP/watchdog-findings-baseline.json"
+          fi
           if [ -f "$RUNNER_TEMP/claude-execution-output.json" ]; then
             jq -r '[.[] | select(.type=="result")] | last | .result // empty' "$RUNNER_TEMP/claude-execution-output.json" 2>/dev/null \
               | jq -c . > "$findings" 2>/dev/null \
@@ -3430,7 +3444,7 @@ jobs:
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-trial-record
         with:
           record-path: ${{ runner.temp }}/wing-commander-metrics-record-diagnose-shadow.json
-          baseline-findings: ${{ runner.temp }}/watchdog-findings.json
+          baseline-findings: ${{ runner.temp }}/watchdog-findings-baseline.json
           baseline-verdict: ${{ steps.diagnose-shadow-prep.outputs.baseline-verdict }}
           shadow-findings: ${{ runner.temp }}/watchdog-findings-diagnose-shadow.json
           shadow-verdict: ${{ steps.diagnose-shadow-verdict.outputs.verdict }}
