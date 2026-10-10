@@ -1302,7 +1302,7 @@ jobs:
           def expr_ends(text):
               """-> per position of `text`, where the Actions expression
               opening there ends (where `_EXPR` would end it), else None, from one
-              backward pass. Matched afresh at each `${{`, an unclosed one
+              backward pass. Matched afresh at each opener, an unclosed one
               scanned the rest of the step every time, and 4000 of them
               took 6s (code review of #969). The last text's answer is
               kept, so a step's calls share one pass."""
