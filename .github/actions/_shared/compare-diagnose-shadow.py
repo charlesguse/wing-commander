@@ -72,26 +72,44 @@ def signal_ids(finding):
 
 JSON_TYPES = {
     "object": dict, "array": list, "string": str, "boolean": bool,
-    "null": type(None),
+    "null": type(None), "integer": int, "number": (int, float),
 }
+SUPPORTED = {"type", "enum", "properties", "required",
+             "additionalProperties", "items", "description"}
+
+
+class UnsupportedSchema(Exception):
+    """The schema uses a keyword this checker does not implement."""
 
 
 def conforms(value, schema):
     """The JSON Schema subset the diagnose schema uses -- type (one or a
     list), enum, properties, required, additionalProperties: false, items --
     applied recursively, so the shadow's result is held to the whole schema
-    the acting agent's --json-schema enforces, not only its enums."""
+    the acting agent's --json-schema enforces, not only its enums. Any other
+    keyword raises UnsupportedSchema: the comparator then fails loudly (a
+    comparator error, counted toward the cap) rather than treat a constraint
+    it cannot check as met."""
     if not isinstance(schema, dict):
-        return True
+        raise UnsupportedSchema(f"schema node is not an object: {schema!r}")
+    extra = set(schema) - SUPPORTED
+    if extra or schema.get("additionalProperties", False) not in (True, False):
+        raise UnsupportedSchema(f"unsupported keyword(s) {sorted(extra) or ['additionalProperties']}")
     types = schema.get("type")
     if types is not None:
         types = types if isinstance(types, list) else [types]
-        if not any(isinstance(value, JSON_TYPES.get(t, ()))
-                   and not (t != "boolean" and isinstance(value, bool))
+        if any(t not in JSON_TYPES for t in types):
+            raise UnsupportedSchema(f"unsupported type in {types}")
+        # bool is an int in Python; JSON keeps them apart.
+        if not any(isinstance(value, JSON_TYPES[t])
+                   and (t == "boolean" or not isinstance(value, bool))
                    for t in types):
             return False
-    if "enum" in schema and value not in schema["enum"]:
-        return False
+    if "enum" in schema:
+        if not isinstance(schema["enum"], list):
+            raise UnsupportedSchema("enum is not a list")
+        if not any(v == value and type(v) is type(value) for v in schema["enum"]):
+            return False
     if isinstance(value, dict):
         props = schema.get("properties") or {}
         if any(k not in value for k in schema.get("required") or []):
@@ -109,11 +127,17 @@ def conforms(value, schema):
 
 def schema_valid(findings, schema):
     """The shadow's findings against the full diagnose schema, plus the
-    pipeline's own rule that a `__new__` class names its proposedClass."""
+    comparator's own invariants whatever the schema says: every finding is
+    an object whose evidence is a list of objects each carrying a signalId,
+    and a `__new__` class names its proposedClass."""
     if not isinstance(schema, dict) or not conforms({"findings": findings}, schema):
         return False
     for f in findings:
         if not baseline_usable(f):
+            return False
+        ev = f.get("evidence")
+        if not isinstance(ev, list) or not all(
+                isinstance(e, dict) and "signalId" in e for e in ev):
             return False
         if f.get("class") == "__new__" and not normalise(
                 f.get("proposedClass") if isinstance(f.get("proposedClass"), str) else ""):
@@ -215,7 +239,10 @@ def main(argv):
     if args.shadow_refusal not in ("true", "false"):
         die("--shadow-refusal must be true or false")
     schema = load_json(args.schema, "schema")
-    result = compare(args, schema)
+    try:
+        result = compare(args, schema)
+    except UnsupportedSchema as exc:
+        die(f"cannot check the shadow against this schema: {exc}")
     result["candidate_model"] = args.candidate_model
     print(json.dumps(result, sort_keys=True))
     return 0

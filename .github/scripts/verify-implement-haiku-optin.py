@@ -56,7 +56,10 @@ HAIKU_ELIF = re.compile(r"^elif grep -qx 'model:haiku'")
 BRANCH = re.compile(r"^(elif|else|fi)\b")
 
 
-IF_OPEN = re.compile(r"^if\b")
+# A shell `if` that opens a block: not YAML's `if:` key, and not a
+# one-line `if ...; then ...; fi`, which closes itself.
+IF_OPEN = re.compile(r"^if\s")
+ONE_LINE_IF = re.compile(r"(;|\s)fi\s*$")
 FI = re.compile(r"^fi\b")
 
 
@@ -70,7 +73,7 @@ def branch_lines(lines, start):
         ln = lines[i]
         if depth == 0 and BRANCH.match(ln):
             return i, body
-        if IF_OPEN.match(ln):
+        if IF_OPEN.match(ln) and not ONE_LINE_IF.search(ln):
             depth += 1
         elif FI.match(ln):
             depth -= 1
@@ -125,6 +128,13 @@ def self_test():
     nested = dict(base, **{WRAPPER: GOOD_WRAPPER.replace(
         '  escalation="claude-sonnet-5-5"\n',
         '  if [ -n "$x" ]; then\n    :\n  fi\n  escalation="claude-sonnet-5-5"\n')})
+    one_line = dict(base, **{WRAPPER: GOOD_WRAPPER.replace(
+        '  tier="claude-opus-5-5"\n',
+        '  tier="claude-opus-5-5"\n  if [ -n "$X" ]; then tier=x; fi\n')})
+    if check(one_line):
+        print("self-test: a one-line if in the opus branch must pass: "
+              f"{check(one_line)}", file=sys.stderr)
+        ok = False
     if check(nested):
         print("self-test: a nested if in the Haiku branch must pass: "
               f"{check(nested)}", file=sys.stderr)
@@ -143,6 +153,12 @@ def self_test():
             '  escalation="claude-sonnet-5-5"\n',
             '  if [ -n "$x" ]; then\n    escalation="claude-sonnet-5-5"\n'
             '  elif true; then\n    :\n  fi\n')}),
+        # a one-line if in the Haiku branch, the escalation moved after the
+        # chain where it applies to every tier
+        dict(base, **{WRAPPER: GOOD_WRAPPER.replace(
+            '  escalation="claude-sonnet-5-5"\nfi\n',
+            '  if [ -n "$x" ]; then y=1; fi\n  tier=haiku\nfi\n'
+            'escalation="claude-sonnet-5-5"\n')}),
         # the Sonnet escalation set in the opus branch, not the Haiku one
         dict(base, **{WRAPPER: GOOD_WRAPPER.replace(
             '  tier="claude-opus-5-5"', '  escalation="claude-sonnet-5-5"')
