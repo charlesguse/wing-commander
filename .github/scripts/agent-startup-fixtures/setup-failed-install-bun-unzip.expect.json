@@ -1,0 +1,1 @@
+{"verdict": "setup-failed", "step": "Install Bun", "error_contains": "Unable to locate executable file: unzip", "note": "synthetic"}

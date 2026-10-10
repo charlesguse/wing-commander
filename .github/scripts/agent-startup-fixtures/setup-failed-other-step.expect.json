@@ -1,0 +1,1 @@
+{"verdict": "setup-failed", "step": "Install Dependencies", "error_contains": "git: command not found", "note": "synthetic"}

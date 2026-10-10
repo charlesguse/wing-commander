@@ -1,0 +1,5 @@
+2026-10-10T00:00:01.0000000Z ##[group]Install Bun
+2026-10-10T00:00:02.0000000Z ##[endgroup]
+2026-10-10T00:00:02.1000000Z ##[group]Prepare action
+2026-10-10T00:00:03.0000000Z ##[error]Resource not accessible by integration
+2026-10-10T00:00:03.1000000Z ##[endgroup]
