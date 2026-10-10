@@ -185,3 +185,9 @@ Task: "Add fixtures for the unclassified branches in .github/scripts/agent-start
 ## Maintainer Feedback
 
 - [ ] MF2 (T033) Emit the git-floor failure under its own message, not behind the 'could not run a POSIX shell' prefix, in all affected stages. Update Gate 23/142 to match (FR-013).
+
+## Maintainer Feedback
+
+- [ ] MF3 (T027) Run the container-shell-safety and review-step-gating skills over the changed workflows and fix findings in this PR.
+- [ ] MF4 (T028) Grep the diff for hardcoded repository/owner/image names or private consumer references (FR-011).
+- [ ] MF5 (T029) Run quickstart.md end to end and confirm `python .github/scripts/run-local-gates.py` is green.
