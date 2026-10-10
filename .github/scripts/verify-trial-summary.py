@@ -151,10 +151,38 @@ def check_single_home(failures):
     re-pasted date parse or run_label rule in trial-summary.py is the drift
     CLAUDE.md's single-home rule forbids."""
     text = SCRIPT.read_text(encoding="utf-8")
-    for m in re.finditer(r"^\s*NOT_COMPARED\s*=\s*(.+)$", text, re.M):
-        if m.group(1).strip() != "_BOUND.NOT_COUNTED":
-            failures.append("trial-summary.py defines NOT_COMPARED itself: "
-                            "take _BOUND.NOT_COUNTED from _shared/trial-bound.py")
+    # Parsed, not grepped: any binding of NOT_COMPARED must be the import,
+    # and no literal may spell trial-bound's not-counted outcomes again --
+    # compared against trial-bound's own set, so the check has no copy.
+    import ast
+    not_counted = set(load_bound().NOT_COUNTED)
+    tree = ast.parse(text)
+
+    def names(target):
+        return [n.id for n in ast.walk(target) if isinstance(n, ast.Name)]
+
+    for node in ast.walk(tree):
+        bound = None
+        if isinstance(node, ast.Assign):
+            targets, value = node.targets, node.value
+        elif isinstance(node, (ast.AnnAssign, ast.AugAssign, ast.NamedExpr)):
+            targets, value = [node.target], node.value
+        else:
+            targets, value = [], None
+        if any("NOT_COMPARED" in names(t) for t in targets):
+            plain = (isinstance(node, (ast.Assign, ast.AnnAssign))
+                     and all(isinstance(t, ast.Name) for t in targets))
+            bound = ast.unparse(value).strip("() ") if value is not None else ""
+            if value is not None and (not plain or bound != "_BOUND.NOT_COUNTED"):
+                failures.append("trial-summary.py binds NOT_COMPARED to "
+                                "something other than _BOUND.NOT_COUNTED: take "
+                                "it from _shared/trial-bound.py")
+        if isinstance(node, (ast.Set, ast.Tuple, ast.List)):
+            consts = {e.value for e in node.elts
+                      if isinstance(e, ast.Constant)}
+            if not_counted and not_counted <= consts:
+                failures.append("trial-summary.py spells the not-compared "
+                                "outcomes again: use NOT_COMPARED")
     for needle in ("fromisoformat", '"started_at"', 'get("run_label")'):
         if needle in text:
             failures.append(f"trial-summary.py carries its own {needle!r}: "

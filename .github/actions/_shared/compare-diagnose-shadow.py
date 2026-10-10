@@ -70,46 +70,87 @@ def signal_ids(finding):
                      if isinstance(e, dict))
 
 
-JSON_TYPES = {
-    "object": dict, "array": list, "string": str, "boolean": bool,
-    "null": type(None), "integer": int, "number": (int, float),
-}
+JSON_TYPES = {"object", "array", "string", "boolean", "null", "integer",
+              "number"}
 SUPPORTED = {"type", "enum", "properties", "required",
              "additionalProperties", "items", "description"}
 
 
 class UnsupportedSchema(Exception):
-    """The schema uses a keyword this checker does not implement."""
+    """The schema uses a keyword, or a keyword value, this checker does not
+    implement."""
+
+
+def check_schema(schema, where="schema"):
+    """Vet the WHOLE schema tree once, before any value is checked, so a
+    constraint this checker cannot honour fails loudly on every run, not
+    only on runs whose result happens to reach that node."""
+    if not isinstance(schema, dict):
+        raise UnsupportedSchema(f"{where} is not an object")
+    extra = set(schema) - SUPPORTED
+    if extra:
+        raise UnsupportedSchema(f"{where}: unsupported keyword(s) {sorted(extra)}")
+    types = schema.get("type")
+    if types is not None:
+        types = types if isinstance(types, list) else [types]
+        if not all(isinstance(t, str) and t in JSON_TYPES for t in types):
+            raise UnsupportedSchema(f"{where}: bad type {schema['type']!r}")
+    if "enum" in schema and not isinstance(schema["enum"], list):
+        raise UnsupportedSchema(f"{where}: enum is not a list")
+    req = schema.get("required", [])
+    if not (isinstance(req, list) and all(isinstance(k, str) for k in req)):
+        raise UnsupportedSchema(f"{where}: required is not a list of names")
+    if not isinstance(schema.get("additionalProperties", True), bool):
+        raise UnsupportedSchema(f"{where}: additionalProperties is not a boolean")
+    props = schema.get("properties", {})
+    if not isinstance(props, dict):
+        raise UnsupportedSchema(f"{where}: properties is not an object")
+    for key, sub in props.items():
+        check_schema(sub, f"{where}.properties.{key}")
+    if "items" in schema:
+        check_schema(schema["items"], f"{where}.items")
+
+
+def is_type(value, t):
+    """JSON's types, not Python's: a bool is never a number, and 3.0 is an
+    integer."""
+    if isinstance(value, bool):
+        return t == "boolean"
+    return {
+        "object": isinstance(value, dict),
+        "array": isinstance(value, list),
+        "string": isinstance(value, str),
+        "null": value is None,
+        "number": isinstance(value, (int, float)),
+        "integer": isinstance(value, int) or (
+            isinstance(value, float) and value.is_integer()),
+    }.get(t, False)
+
+
+def json_equal(a, b):
+    """Equality as JSON sees it, at every depth: 1 == 1.0, but true != 1."""
+    if isinstance(a, bool) or isinstance(b, bool):
+        return isinstance(a, bool) and isinstance(b, bool) and a == b
+    if isinstance(a, list) and isinstance(b, list):
+        return len(a) == len(b) and all(map(json_equal, a, b))
+    if isinstance(a, dict) and isinstance(b, dict):
+        return a.keys() == b.keys() and all(json_equal(a[k], b[k]) for k in a)
+    return a == b
 
 
 def conforms(value, schema):
     """The JSON Schema subset the diagnose schema uses -- type (one or a
     list), enum, properties, required, additionalProperties: false, items --
-    applied recursively, so the shadow's result is held to the whole schema
-    the acting agent's --json-schema enforces, not only its enums. Any other
-    keyword raises UnsupportedSchema: the comparator then fails loudly (a
-    comparator error, counted toward the cap) rather than treat a constraint
-    it cannot check as met."""
-    if not isinstance(schema, dict):
-        raise UnsupportedSchema(f"schema node is not an object: {schema!r}")
-    extra = set(schema) - SUPPORTED
-    if extra or schema.get("additionalProperties", False) not in (True, False):
-        raise UnsupportedSchema(f"unsupported keyword(s) {sorted(extra) or ['additionalProperties']}")
+    applied recursively over a schema check_schema has already vetted, so
+    the shadow's result is held to the whole schema the acting agent's
+    --json-schema enforces, not only its enums."""
     types = schema.get("type")
     if types is not None:
         types = types if isinstance(types, list) else [types]
-        if any(t not in JSON_TYPES for t in types):
-            raise UnsupportedSchema(f"unsupported type in {types}")
-        # bool is an int in Python; JSON keeps them apart.
-        if not any(isinstance(value, JSON_TYPES[t])
-                   and (t == "boolean" or not isinstance(value, bool))
-                   for t in types):
+        if not any(is_type(value, t) for t in types):
             return False
-    if "enum" in schema:
-        if not isinstance(schema["enum"], list):
-            raise UnsupportedSchema("enum is not a list")
-        if not any(v == value and type(v) is type(value) for v in schema["enum"]):
-            return False
+    if "enum" in schema and not any(json_equal(v, value) for v in schema["enum"]):
+        return False
     if isinstance(value, dict):
         props = schema.get("properties") or {}
         if any(k not in value for k in schema.get("required") or []):
@@ -240,6 +281,7 @@ def main(argv):
         die("--shadow-refusal must be true or false")
     schema = load_json(args.schema, "schema")
     try:
+        check_schema(schema)
         result = compare(args, schema)
     except UnsupportedSchema as exc:
         die(f"cannot check the shadow against this schema: {exc}")

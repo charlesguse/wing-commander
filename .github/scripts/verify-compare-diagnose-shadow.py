@@ -22,11 +22,18 @@ OUTCOMES = {"agreed", "disagreed", "exhausted", "malformed", "error",
             "refused", "no-baseline"}
 
 
-def run_case(name, case, tmp, extra=()):
+def run_case(name, case, tmp, extra=(), schema=None):
+    """Run the comparator on one case; `schema` (a dict) replaces the
+    fixture schema. Returns (trial, stderr) -- trial is None on a non-zero
+    exit, and stderr then carries the exit code."""
     paths = {}
     for key in ("baseline", "shadow"):
         paths[key] = Path(tmp) / f"{name}-{key}.json"
         paths[key].write_text(json.dumps(case[key]), encoding="utf-8")
+    schema_path = FIXTURES / "schema.json"
+    if schema is not None:
+        schema_path = Path(tmp) / f"{name}-schema.json"
+        schema_path.write_text(json.dumps(schema), encoding="utf-8")
     proc = subprocess.run(
         [sys.executable, "-I", str(COMPARATOR),
          "--baseline-findings", str(paths["baseline"]),
@@ -34,10 +41,10 @@ def run_case(name, case, tmp, extra=()):
          "--shadow-findings", str(paths["shadow"]),
          "--shadow-verdict", case["shadow_verdict"],
          "--shadow-refusal", case["refusal"],
-         "--schema", str(FIXTURES / "schema.json"), *extra],
+         "--schema", str(schema_path), *extra],
         capture_output=True, text=True, check=False)
     if proc.returncode != 0:
-        return None, proc.stderr.strip()
+        return None, f"rc={proc.returncode} {proc.stderr.strip()}"
     return json.loads(proc.stdout), ""
 
 
@@ -99,19 +106,12 @@ def full(cls="pipeline-defect", **extra):
     return f
 
 
-def run_raw(tmp, name, baseline, shadow, schema):
-    paths = {}
-    for key, data in (("baseline", baseline), ("shadow", shadow),
-                      ("schema", schema)):
-        paths[key] = Path(tmp) / f"{name}-{key}.json"
-        paths[key].write_text(json.dumps(data), encoding="utf-8")
-    return subprocess.run(
-        [sys.executable, "-I", str(COMPARATOR),
-         "--baseline-findings", str(paths["baseline"]),
-         "--baseline-verdict", "healthy",
-         "--shadow-findings", str(paths["shadow"]), "--shadow-verdict", "healthy",
-         "--shadow-refusal", "false", "--schema", str(paths["schema"])],
-        capture_output=True, text=True, check=False)
+def outcome_of(tmp, name, baseline, shadow, schema):
+    trial, err = run_case(name, {"baseline": baseline, "shadow": shadow,
+                                 "baseline_verdict": "healthy",
+                                 "shadow_verdict": "healthy",
+                                 "refusal": "false"}, tmp, schema=schema)
+    return (trial or {}).get("outcome"), err
 
 
 def schema_failures(tmp):
@@ -132,34 +132,47 @@ def schema_failures(tmp):
             [full()], {"findings": [full(evidence=[{"signalId": "s1"}])]},
             "malformed"),
     }
-    for name, (base, shadow, want) in cases.items():
-        proc = run_raw(tmp, name, base, shadow, prod)
-        got = json.loads(proc.stdout)["outcome"] if proc.returncode == 0 else None
-        if got != want:
-            failures.append(f"{name}: expected {want}, got {got} {proc.stderr}")
-    # A keyword the checker cannot honour is a loud comparator failure,
-    # never a constraint silently treated as met.
-    bad = dict(prod)
-    bad["properties"] = {"findings": dict(prod["properties"]["findings"],
-                                          minItems=1)}
-    proc = run_raw(tmp, "unsupported", [full()], {"findings": [full()]}, bad)
-    if proc.returncode != 2:
-        failures.append("an unsupported schema keyword must exit 2, got "
-                        f"rc={proc.returncode}")
-    # JSON types: integer accepts 3, rejects true; enum compares types.
+    f = {"class": "pipeline-defect", "evidence": [{"signalId": "s1"}]}
     typed = {"type": "object", "properties": {"findings": {"type": "array",
              "items": {"type": "object", "properties": {
                  "class": {"type": "string"},
                  "n": {"type": "integer"}, "k": {"enum": [0, 1]},
                  "evidence": {"type": "array"}}}}}}
-    for name, extra, want in (("int-ok", {"n": 3}, "agreed"),
-                              ("int-bool", {"n": True}, "malformed"),
-                              ("enum-bool", {"k": True}, "malformed")):
-        f = {"class": "pipeline-defect", "evidence": [{"signalId": "s1"}]}
-        proc = run_raw(tmp, name, [f], {"findings": [dict(f, **extra)]}, typed)
-        got = json.loads(proc.stdout)["outcome"] if proc.returncode == 0 else None
+    cases.update({
+        # JSON types: 3 and 3.0 are integers, true is not; enum likewise.
+        "int-ok": ([f], {"findings": [dict(f, n=3)]}, "agreed", typed),
+        "int-float": ([f], {"findings": [dict(f, n=3.0)]}, "agreed", typed),
+        "int-bool": ([f], {"findings": [dict(f, n=True)]}, "malformed", typed),
+        "enum-bool": ([f], {"findings": [dict(f, k=True)]}, "malformed", typed),
+        "enum-float": ([f], {"findings": [dict(f, k=1.0)]}, "agreed", typed),
+    })
+    for name, case in cases.items():
+        base, shadow, want = case[:3]
+        schema = case[3] if len(case) > 3 else prod
+        got, err = outcome_of(tmp, name, base, shadow, schema)
         if got != want:
-            failures.append(f"{name}: expected {want}, got {got} {proc.stderr}")
+            failures.append(f"{name}: expected {want}, got {got} {err}")
+    # A keyword, or keyword value, the checker cannot honour is a loud
+    # comparator failure (exit 2) on EVERY run -- also when the shadow's
+    # result never reaches that schema node (an empty findings array).
+    items = prod["properties"]["findings"]["items"]
+    unsupported = {
+        "minItems": dict(prod, properties={"findings": dict(
+            prod["properties"]["findings"], minItems=1)}),
+        "deep-unvisited": dict(prod, properties={"findings": dict(
+            prod["properties"]["findings"], items=dict(items, minProperties=3))}),
+        "bad-type-value": dict(prod, properties={"findings": dict(
+            prod["properties"]["findings"], items=dict(items, type={"a": 1}))}),
+        "required-string": dict(prod, required="findings"),
+        "additional-zero": dict(prod, properties={"findings": dict(
+            prod["properties"]["findings"], items=dict(
+                items, additionalProperties=0))}),
+    }
+    for name, schema in unsupported.items():
+        _got, err = outcome_of(tmp, name, [], {"findings": []}, schema)
+        if not err.startswith("rc=2"):
+            failures.append(f"unsupported schema {name}: must exit 2, got "
+                            f"{err or 'a trial'}")
     return failures
 
 

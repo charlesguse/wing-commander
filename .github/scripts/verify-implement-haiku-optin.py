@@ -17,6 +17,7 @@ Usage: verify-implement-haiku-optin.py [--root DIR]
 """
 import argparse
 import re
+import shlex
 import sys
 from pathlib import Path
 
@@ -56,11 +57,36 @@ HAIKU_ELIF = re.compile(r"^elif grep -qx 'model:haiku'")
 BRANCH = re.compile(r"^(elif|else|fi)\b")
 
 
-# A shell `if` that opens a block: not YAML's `if:` key, and not a
-# one-line `if ...; then ...; fi`, which closes itself.
-IF_OPEN = re.compile(r"^if\s")
-ONE_LINE_IF = re.compile(r"(;|\s)fi\s*$")
-FI = re.compile(r"^fi\b")
+SEPARATORS = {";", "&&", "||", "&", "|", ";;"}
+OPENS_COMMAND = {"if", "then", "else", "elif", "do", "!"}
+
+
+def net_depth(line):
+    """How many if-blocks this line opens minus how many it closes, reading
+    `if` and `fi` only where the shell would: as the first word of a
+    command (so `[ a = fi ]`, a quoted `#` and a trailing comment are
+    data). A line shlex cannot split counts as neither."""
+    try:
+        lex = shlex.shlex(line, posix=True, punctuation_chars=";&|")
+        lex.whitespace_split = True
+        tokens = list(lex)
+    except ValueError:
+        return 0
+    depth, command_start = 0, True
+    for tok in tokens:
+        if tok in SEPARATORS:
+            command_start = True
+            continue
+        if command_start:
+            if tok == "if":
+                depth += 1
+            elif tok == "fi":
+                depth -= 1
+            # `if`/`then`/`else`/... are followed by another command word;
+            # any other first word is followed by its arguments.
+            command_start = tok in OPENS_COMMAND
+        # else: an argument, never a keyword
+    return depth
 
 
 def branch_lines(lines, start):
@@ -73,12 +99,10 @@ def branch_lines(lines, start):
         ln = lines[i]
         if depth == 0 and BRANCH.match(ln):
             return i, body
-        if IF_OPEN.match(ln) and not ONE_LINE_IF.search(ln):
-            depth += 1
-        elif FI.match(ln):
-            depth -= 1
-        elif depth == 0:
+        net = net_depth(ln)
+        if depth == 0 and net == 0 and not ln.startswith("if "):
             body.append(ln)
+        depth += net
     return len(lines), body
 
 
@@ -128,13 +152,17 @@ def self_test():
     nested = dict(base, **{WRAPPER: GOOD_WRAPPER.replace(
         '  escalation="claude-sonnet-5-5"\n',
         '  if [ -n "$x" ]; then\n    :\n  fi\n  escalation="claude-sonnet-5-5"\n')})
-    one_line = dict(base, **{WRAPPER: GOOD_WRAPPER.replace(
-        '  tier="claude-opus-5-5"\n',
-        '  tier="claude-opus-5-5"\n  if [ -n "$X" ]; then tier=x; fi\n')})
-    if check(one_line):
-        print("self-test: a one-line if in the opus branch must pass: "
-              f"{check(one_line)}", file=sys.stderr)
-        ok = False
+    for variant in ('if [ -n "$X" ]; then tier=x; fi',
+                    'if [ -n "$X" ]; then tier=x; fi  # override',
+                    'if [ -n "$X" ]; then tier=x; fi;',
+                    'if [ "$x" = "a #b" ]; then y=1; fi'):
+        one_line = dict(base, **{WRAPPER: GOOD_WRAPPER.replace(
+            '  tier="claude-opus-5-5"\n',
+            f'  tier="claude-opus-5-5"\n  {variant}\n')})
+        if check(one_line):
+            print(f"self-test: a one-line if ({variant!r}) in the opus branch "
+                  f"must pass: {check(one_line)}", file=sys.stderr)
+            ok = False
     if check(nested):
         print("self-test: a nested if in the Haiku branch must pass: "
               f"{check(nested)}", file=sys.stderr)
@@ -159,6 +187,22 @@ def self_test():
             '  escalation="claude-sonnet-5-5"\nfi\n',
             '  if [ -n "$x" ]; then y=1; fi\n  tier=haiku\nfi\n'
             'escalation="claude-sonnet-5-5"\n')}),
+        # a multi-line if whose condition ends in the word fi, the
+        # escalation only inside it
+        dict(base, **{WRAPPER: GOOD_WRAPPER.replace(
+            '  escalation="claude-sonnet-5-5"\n',
+            '  if test "$m" = fi\n  then\n    escalation="claude-sonnet-5-5"\n'
+            '  fi\n')}),
+        # an if still open after a nested one-line if, the escalation in it
+        dict(base, **{WRAPPER: GOOD_WRAPPER.replace(
+            '  escalation="claude-sonnet-5-5"\n',
+            '  if a; then if b; then c; fi\n    escalation="claude-sonnet-5-5"\n'
+            '  fi\n')}),
+        # then/fi as test operands, the escalation in the still-open if
+        dict(base, **{WRAPPER: GOOD_WRAPPER.replace(
+            '  escalation="claude-sonnet-5-5"\n',
+            '  if [ a = then ] && [ b = fi ]; then\n'
+            '    escalation="claude-sonnet-5-5"\n  fi\n')}),
         # the Sonnet escalation set in the opus branch, not the Haiku one
         dict(base, **{WRAPPER: GOOD_WRAPPER.replace(
             '  tier="claude-opus-5-5"', '  escalation="claude-sonnet-5-5"')
