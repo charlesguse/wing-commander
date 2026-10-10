@@ -108,8 +108,8 @@ matches, it doesn't; raise it.
 
 ```
 R=$(git remote get-url origin | sed -E 's#(\.git)?/?$##; s#.*[/:]([^/:]+/[^/:]+)$#\1#')
-gh search issues --repo "$R" "<topic words>" --state all --limit 30
-gh search prs    --repo "$R" "<topic words>" --state all --limit 30
+gh search issues --repo "$R" "<topic words>" --limit 30
+gh search prs    --repo "$R" "<topic words>" --limit 30
 gh api "repos/$R/issues/N/comments" --paginate \
   --jq '.[] | {who: .user.login, at: .created_at, claude: (.body | test("Generated (by|with) \\[Claude Code\\]")), body: .body[0:600]}'
 grep -rn -i "<topic>" CLAUDE.md .specify/memory/ specs/*/contracts/ specs/*/research.md

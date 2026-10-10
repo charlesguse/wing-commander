@@ -169,9 +169,13 @@ alone.** A fix with no such test is a claim, not a fix. Add a gate
 scenario, fixture or self-test mutation that exercises the finding. Then
 check only that test, not the whole suite: in a throwaway worktree at the
 new head, put the fixed code back the way it was and keep the new test.
+Commit the fix and its test first (step 6 pushes them): the worktree is
+built from `HEAD`, and uncommitted work isn't in it.
 
 ```
+SCRATCH=<your scratchpad directory>
 OLD=<the head you started from>
+git add <the fix and its test> && git commit -m "<message, with the session's trailers>"
 git worktree add --detach "$SCRATCH/unfixed" HEAD
 git -C "$SCRATCH/unfixed" checkout "$OLD" -- <the files the fix changed, not the test files>
 (cd "$SCRATCH/unfixed" && python .github/scripts/run-local-gates.py <gate-name-filter>)
@@ -204,7 +208,8 @@ python .github/scripts/run-local-gates.py --jobs 4
   load-sensitive or to need Docker, and re-run any single failure alone
   with its filter before believing it.
 
-**6. Commit with the session's trailers, and push to the PR branch.**
+**6. Commit anything left with the session's trailers, and push to the
+PR branch.**
 
 **7. Report on the PR.** Post one comment, with `gh` or the session's
 GitHub tools, that begins with `<!-- review-until-clean pass N -->` and

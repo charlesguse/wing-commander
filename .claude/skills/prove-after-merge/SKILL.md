@@ -103,7 +103,9 @@ it once or twice; then say it is overdue rather than waiting forever.
 **5. Verify. Green isn't enough.**
 
 - **The run is on the merged code.**
-  `git merge-base --is-ancestor <merge-sha> <run headSha>` must succeed.
+  `git fetch origin main && git merge-base --is-ancestor <merge-sha> <run headSha>`
+  must succeed. The fetch matters: the run's head can be newer than your
+  checkout.
 - **The changed step ran.** Open the job: `gh run view -R "$R" <id> --json jobs`
   shows each step's conclusion.
 - **It did what the fix says.** Read the log line the fix changes:
