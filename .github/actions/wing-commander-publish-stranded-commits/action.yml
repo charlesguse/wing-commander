@@ -82,7 +82,14 @@ runs:
       run: |
         set -uo pipefail
         dir="${WORKDIR:-.}"
+        # spec 095 FR-015/FR-016: an agent step ran in this job just before,
+        # so every git call below runs with hooks, fsmonitor and
+        # global/system config neutralised -- git-push-hardening.sh is the
+        # one home of that environment.
+        # shellcheck source=../_shared/git-push-hardening.sh
+        . "$GITHUB_ACTION_PATH/../_shared/git-push-hardening.sh"
         (
+          wc_harden_git_env
           cd "$dir"
           branch="$(git rev-parse --abbrev-ref HEAD)"
           # git push already updates the local remote-tracking ref for the

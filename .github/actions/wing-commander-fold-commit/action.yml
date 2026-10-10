@@ -97,6 +97,15 @@ runs:
         git config user.email "${bot_login}@users.noreply.github.com"
         git add "$SPEC_DIR/tasks.md" "$SPEC_DIR/spec-meta.json"
         git commit -m "fold(${FOLD_ID}): ${FOLD_SUMMARY}"
+        # spec 095 FR-015/FR-016: pr-conversation's act agent ran in this
+        # job before this push, so it runs with hooks, fsmonitor and
+        # global/system config neutralised -- see
+        # _shared/git-push-hardening.sh. Only the push: the commit above
+        # keeps the caller's own hooksPath (pr-conversation's
+        # run-attribution hook).
+        # shellcheck source=../_shared/git-push-hardening.sh
+        . "$GITHUB_ACTION_PATH/../_shared/git-push-hardening.sh"
+        wc_harden_git_env
         git push
         echo "folded=true" >> "$GITHUB_OUTPUT"
         echo "commit-sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"

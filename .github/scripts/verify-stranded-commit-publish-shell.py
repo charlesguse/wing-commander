@@ -105,7 +105,11 @@ git rev-parse HEAD
 def run_publish(work, runner_temp, before_sha, action_path=ACTION):
     step = find_step(action_path, STEP_NAME)
     script = step["run"]
-    env_extra = {"BEFORE_SHA": before_sha, "WORKDIR": "", "PUSH_TOKEN": "", "PUSH_REPO": ""}
+    # spec 095: the step sources _shared/git-push-hardening.sh beside the
+    # shipped composite, so the action path is the real one even when the
+    # step text under test is a mutated copy.
+    env_extra = {"BEFORE_SHA": before_sha, "WORKDIR": "", "PUSH_TOKEN": "", "PUSH_REPO": "",
+                 "GITHUB_ACTION_PATH": os.path.dirname(os.path.abspath(ACTION))}
     rc, out, outputs, _ = run_step(BASH, script, work, env_extra, runner_temp)
     log(out)
     return rc, out, outputs
