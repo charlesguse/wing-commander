@@ -191,3 +191,7 @@ Task: "Add fixtures for the unclassified branches in .github/scripts/agent-start
 - [ ] MF3 (T027) Run the container-shell-safety and review-step-gating skills over the changed workflows and fix findings in this PR.
 - [ ] MF4 (T028) Grep the diff for hardcoded repository/owner/image names or private consumer references (FR-011).
 - [ ] MF5 (T029) Run quickstart.md end to end and confirm `python .github/scripts/run-local-gates.py` is green.
+
+## Maintainer Feedback
+
+- [ ] MF6 (T032) Replace synthetic fixtures with a captured real no-credential log from the action only if this cycle can produce one. If not, leave T032 open and say in the PR that it is a maintainer step, same as T030.
