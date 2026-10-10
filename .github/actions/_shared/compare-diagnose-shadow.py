@@ -75,7 +75,7 @@ def schema_valid(findings, schema):
     sid_enum = (props.get("evidence", {}).get("items", {})
                 .get("properties", {}).get("signalId", {}).get("enum"))
     for f in findings:
-        if not isinstance(f, dict):
+        if not baseline_usable(f):
             return False
         if any(k not in f for k in required):
             return False
@@ -90,6 +90,21 @@ def schema_valid(findings, schema):
             if sid_enum is not None and e["signalId"] not in sid_enum:
                 return False
     return True
+
+
+def baseline_usable(f):
+    """A baseline finding whose class/signalId values are hashable scalars."""
+    if not isinstance(f, dict):
+        return False
+    cls = f.get("class")
+    if cls == "__new__":
+        cls = f.get("proposedClass")
+    ev = f.get("evidence") or []
+    if not isinstance(cls, (str, type(None))) or not isinstance(ev, list):
+        return False
+    return all(isinstance(e, dict)
+               and isinstance(e.get("signalId"), (str, int, type(None)))
+               for e in ev)
 
 
 def keys(findings):
@@ -129,9 +144,7 @@ def compare(args, schema):
     if shadow is None or not schema_valid(shadow, schema):
         return trial("malformed", bv)
     baseline = load_findings(args.baseline_findings, "baseline findings")
-    if baseline is None or not all(
-            isinstance(f, dict) and isinstance(f.get("evidence") or [], list)
-            for f in baseline):
+    if baseline is None or not all(baseline_usable(f) for f in baseline):
         return trial("no-baseline", bv)
 
     bkeys, skeys = keys(baseline), keys(shadow)

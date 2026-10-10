@@ -89,8 +89,11 @@ def diagnose_section(records):
     # (a) filing agreement: refused / exhausted / malformed count as not agreeing.
     filing = sum(1 for r in compared if r["trial"].get("filing_agree") is True
                  and r["trial"].get("outcome") not in FAILED)
-    shared = sum(r["trial"].get("class_shared") or 0 for r in compared)
-    cagree = sum(r["trial"].get("class_agree") or 0 for r in compared)
+    # (b) only runs that reached the findings comparison carry class counts.
+    judged = [r for r in compared
+              if r["trial"].get("outcome") in ("agreed", "disagreed")]
+    shared = sum(r["trial"].get("class_shared") or 0 for r in judged)
+    cagree = sum(r["trial"].get("class_agree") or 0 for r in judged)
     failed = sum(counts.get(o, 0) for o in FAILED)
     lines = ["## Diagnose shadow", "",
              f"- Shadow runs with a trial record: {len(shadow)}",
@@ -126,12 +129,12 @@ def diagnose_section(records):
     return lines
 
 
-def lifecycle_stats(recs):
+def lifecycle_stats(recs, start_model):
     cost_total = sum(cost(r) or 0 for r in recs)
-    tiers = []
-    for r in recs[1:]:
-        if r.get("model") != recs[0].get("model"):
-            tiers.append(str(r.get("model")))
+    # Escalations are cycles that ran above the tier the lifecycle opted
+    # into, so a Haiku, Sonnet, Haiku sequence counts one, not two.
+    tiers = [str(r.get("model")) for r in recs
+             if r.get("model") != start_model]
     return {"cycles": len(recs), "escalations": tiers,
             "refusals": sum(1 for r in recs if r.get("refusal") is True),
             "exhaustions": sum(1 for r in recs
@@ -150,12 +153,14 @@ def implement_section(records):
         by_issue.setdefault(issue, []).append(r)
     haiku, sonnet = {}, []
     for issue, recs in sorted(by_issue.items()):
-        recs.sort(key=lambda r: r.get("emitted_at") or "")
-        stats = lifecycle_stats(recs)
-        if recs[0].get("model") == HAIKU:
-            haiku[issue] = stats
-        elif str(recs[0].get("model", "")).startswith("claude-sonnet"):
-            sonnet.append(stats)
+        # A record without a timestamp sorts last, never first.
+        recs.sort(key=lambda r: (not r.get("emitted_at"), r.get("emitted_at") or ""))
+        models = [str(r.get("model", "")) for r in recs]
+        if HAIKU in models:
+            haiku[issue] = lifecycle_stats(recs, HAIKU)
+        elif all(m.startswith("claude-sonnet") for m in models):
+            # Only pure-Sonnet lifecycles form the baseline (no Opus cycle).
+            sonnet.append(lifecycle_stats(recs, models[0]))
     lines = ["## Implement opt-in (`model:haiku`)", ""]
     if sonnet:
         base = (f"median Sonnet lifecycle over {len(sonnet)}: cycles "
