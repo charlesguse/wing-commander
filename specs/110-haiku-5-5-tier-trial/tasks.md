@@ -199,43 +199,43 @@ MVP = Phase 1 + Phase 2 (T004) + Story 1 (T006–T012): the tier upgrade and its
 
   Detail: Gates 142-144 pass only against fixtures.
 
-- [ ] Review finding: Verdict 'meets' requires shared > 0
+- [X] Review finding: Verdict 'meets' requires shared > 0
 
   A run set with perfect agreement but zero shared findings is reported as 'misses'. Criterion (b) should be vacuously satisfied or reported separately.
 
   - .github/scripts/trial-summary.py
 
-- [ ] Review finding: Trial-bound skips undated records, so the 300-run cap undercounts
+- [X] Review finding: Trial-bound skips undated records, so the 300-run cap undercounts
 
   compared_count silently skips records with a missing or unparseable timestamp. The cap can stay open past 300 real compared runs. The check should fail closed.
 
   - .github/actions/_shared/trial-bound.py
 
-- [ ] Review finding: filing_agree is null for refused, exhausted and malformed outcomes
+- [X] Review finding: filing_agree is null for refused, exhausted and malformed outcomes
 
   The comparator emits filing_agree=null for these outcomes. The contract and data-model require false for them, and null only for no-baseline and error.
 
   - .github/actions/_shared/compare-diagnose-shadow.py
 
-- [ ] Review finding: Label-fetch failure silently drops the model opt-in
+- [X] Review finding: Label-fetch failure silently drops the model opt-in
 
   A transient gh failure sets labels='' and the lifecycle runs on the default tier with no warning. The fallback should emit a ::warning.
 
   - .github/workflows/wing-commander-5-implement.yml
 
-- [ ] Review finding: printf | grep -q under pipefail can misroute the tier
+- [X] Review finding: printf | grep -q under pipefail can misroute the tier
 
   grep -q exits on the first match and printf can take SIGPIPE, so pipefail makes the condition false. A here-string avoids it.
 
   - .github/workflows/wing-commander-5-implement.yml
 
-- [ ] Review finding: trial-summary load() accepts non-object JSON lines
+- [X] Review finding: trial-summary load() accepts non-object JSON lines
 
   A records.jsonl line that is valid JSON but not an object passes load() and later raises AttributeError. The script exits 1 with a traceback instead of the documented exit code 2.
 
   - .github/scripts/trial-summary.py
 
-- [ ] Review finding: Haiku opt-in gate regex uses \s for indentation
+- [X] Review finding: Haiku opt-in gate regex uses \s for indentation
 
   \s{8} and \s{6} also match newlines, so the regex can capture the wrong default after a reformat. It should parse the YAML or use [ ].
 

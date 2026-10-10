@@ -3,7 +3,7 @@
   "spec_dir": "specs/110-haiku-5-5-tier-trial",
   "feature_num": "110",
   "stage": "implement",
-  "iteration": 6,
+  "iteration": 7,
   "spec_branch": "spec/110-haiku-5-5-tier-trial",
   "pending_re_review_from": []
 }
