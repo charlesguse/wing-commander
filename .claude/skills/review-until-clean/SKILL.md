@@ -178,6 +178,10 @@ git -C "$SCRATCH/unfixed" checkout "$OLD" -- <the files the fix changed, not the
 git worktree remove --force "$SCRATCH/unfixed"
 ```
 
+- A file the fix added doesn't exist at `$OLD`, and naming it makes the
+  checkout fail with `pathspec did not match`, leaving the worktree
+  fixed. Leave it out of the checkout and delete it in the worktree
+  instead: `git -C "$SCRATCH/unfixed" rm -q <the files the fix added>`.
 - When the fix and its test share a file (a gate and its own self-test),
   revert just the fix's hunk in the worktree instead.
 - `run-local-gates.py` treats its arguments as a substring filter on gate

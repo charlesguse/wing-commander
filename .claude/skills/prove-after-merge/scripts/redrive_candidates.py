@@ -96,7 +96,12 @@ def main():
         sys.exit("redrive_candidates: check out a tree that contains {0} first".format(merge[:12]))
     base = args.base or merge + "^1"
 
-    changed = diff_name_list(base, merge)
+    try:
+        changed = diff_name_list(base, merge)
+    except subprocess.CalledProcessError as err:
+        sys.exit("redrive_candidates: git can't diff {0}..{1} ({2}); on a shallow "
+                 "clone, fetch more history or pass --base".format(
+                     base, merge[:12], (err.stderr or b"").decode(errors="replace").strip()))
     needs_run, needs_reason = actions_only(changed)
     safe, uses_graph = scan_dispatchable_and_uses_graph(WORKFLOWS_DIR)
     pick, pick_reason = redrive_target(changed, safe, uses_graph)

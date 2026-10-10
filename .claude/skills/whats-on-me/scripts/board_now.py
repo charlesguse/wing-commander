@@ -6,8 +6,8 @@ evening it can be most of a day old. This prints the same report from a
 fresh snapshot, through wc_board_status.py's own snapshot() and render() --
 the one home of what the report reads and says -- without publishing
 anything. The switches come from the repository variables board-status.yml
-passes in its env; the variable-to-switch names below mirror
-wc_board_status.main()'s, which is where a new switch is added first.
+passes in its env, read through wc_board_status.switches_from(), so a new
+switch added there reaches this report too.
 
 Needs gh authenticated with read access to the repository and its
 variables (a variable it can't read renders as unset).
@@ -26,14 +26,6 @@ sys.path.insert(0, os.path.join(REPO_ROOT, ".github", "scripts"))
 
 import wc_board_status  # noqa: E402
 
-SWITCH_VARIABLES = {
-    "auto_release_paused": "WING_COMMANDER_AUTO_RELEASE_PAUSED",
-    "board_loop_paused": "WING_COMMANDER_BOARD_LOOP_PAUSED",
-    "lifecycle_auto_merge": "WING_COMMANDER_LIFECYCLE_AUTO_MERGE",
-    "review_gate_paused": "WING_COMMANDER_LIFECYCLE_REVIEW_GATE_PAUSED",
-    "tasks_review": "WING_COMMANDER_TASKS_REVIEW",
-}
-
 
 def gh(*args):
     return subprocess.run(["gh"] + list(args), capture_output=True, text=True)
@@ -46,9 +38,7 @@ def switches_for(repo):
         values = {v["name"]: v.get("value", "") for v in json.loads(out.stdout)}
     else:
         sys.stderr.write("board_now: couldn't read repository variables; switches render as unset\n")
-    switches = {key: values.get(name, "") for key, name in SWITCH_VARIABLES.items()}
-    switches["tasks_review"] = switches["tasks_review"].strip().lower()
-    return switches
+    return wc_board_status.switches_from(lambda env: values.get("WING_COMMANDER_" + env, ""))
 
 
 def main():

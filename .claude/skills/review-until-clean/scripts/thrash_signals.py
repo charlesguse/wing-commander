@@ -111,11 +111,22 @@ def removed_ranges(old, new, cwd):
                "--no-color", old, new], cwd).stdout
     ranges = []
     path = None
+    in_header = False
     for line in out.splitlines():
-        if line.startswith("--- "):
+        # A deleted line reading "-- x" shows up as "--- x" inside a hunk, so
+        # "--- " names a file only in the header between "diff --git" and the
+        # first "@@". Git ends the name with a tab when it contains a space.
+        if line.startswith("diff --git "):
+            in_header, path = True, None
+        elif in_header and line.startswith("--- "):
             target = line[4:]
+            if target.endswith("\t"):
+                target = target[:-1]
             path = target[2:] if target.startswith("a/") else None
-        elif line.startswith("@@") and path:
+        elif line.startswith("@@"):
+            in_header = False
+            if not path:
+                continue
             match = HUNK_RE.match(line)
             if match:
                 start = int(match.group(1))
@@ -144,6 +155,15 @@ def measure(base, heads, findings, counts, cwd):
     report = {"base": base, "heads": heads}
 
     report["growth"] = [dict(diff_size(base, h, cwd), head=h[:12]) for h in heads]
+
+    # Attribution reads ancestry against the recorded heads; a rebase or
+    # force-push between two of them gives the PR's commits new SHAs that
+    # only the later head contains, which would label them passK.
+    report["warnings"] = [
+        "H{0} is not an ancestor of H{1}: history was rewritten between "
+        "them, so attribution and churn are unreliable".format(k - 1, k)
+        for k in range(1, len(heads))
+        if not origins._is_ancestor(heads[k - 1], heads[k])]
 
     churn = []
     for k in range(1, len(heads)):
@@ -175,7 +195,8 @@ def measure(base, heads, findings, counts, cwd):
 
 
 def render(report):
-    lines = ["Growth (diff vs main at each recorded head):"]
+    lines = ["WARNING: " + w for w in report.get("warnings", [])]
+    lines.append("Growth (diff vs main at each recorded head):")
     for i, g in enumerate(report["growth"]):
         label = "H{0} (before pass 1)".format(i) if i == 0 else "H{0} (after pass {0})".format(i)
         lines.append("  {0} {1}: {2} files, {3} lines".format(label, g["head"], g["files"], g["lines"]))
@@ -200,13 +221,14 @@ def self_test():
         def run(*args):
             git(list(args), repo)
 
-        def write(text):
-            with open(os.path.join(repo, "f.py"), "w", encoding="utf-8") as fh:
+        def write(text, name="f.py"):
+            with open(os.path.join(repo, name), "w", encoding="utf-8") as fh:
                 fh.write(text)
 
         def commit(message):
             run("add", "-A")
-            run("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", message)
+            run("-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false",
+                "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", message)
             return rev("HEAD", repo)
 
         run("init", "-q", "-b", "main")
@@ -233,11 +255,38 @@ def self_test():
         sizes = [g["lines"] for g in report["growth"]]
         if sizes != [2, 3, 4]:
             failures.append("growth: expected 2, 3, 4 changed lines; got {0}".format(sizes))
+        if report["warnings"]:
+            failures.append("warnings: expected none on linear history; got {0}".format(report["warnings"]))
+
+        # A second loop from H0: pass 2 deletes a "-- c" line above a rewrite
+        # of a pass-1 line, and rewrites a pass-1 line in a file whose name
+        # has a space; all three are churn.
+        run("checkout", "-q", "-b", "headers", h0)
+        write("-- c\nx\nfix2\n", "g.py")
+        write("y\nfix2\n", "a b.py")
+        h3 = commit("pass 1 adds lines to g.py and 'a b.py'")
+        write("x\nfix3\n", "g.py")
+        write("y\nfix3\n", "a b.py")
+        h4 = commit("pass 2 deletes '-- c' and rewrites pass 1's lines")
+        report = measure(base, [h0, h3, h4], [], [], repo)
+        churn = [(c["pass"], c["rewrote_earlier_pass_lines"]) for c in report["churn"]]
+        if churn != [(1, {}), (2, {"pass1": 3})]:
+            failures.append("header parsing: expected pass 2 to churn 3 pass1 lines "
+                            "('-- c' and fix2 in g.py, fix2 in 'a b.py'); got {0}".format(churn))
+
+        # A head rebuilt off H0's line (a rebase) is flagged, not trusted.
+        run("checkout", "-q", "-b", "rebased", base)
+        write("a\nb\nc\npr1\npr2\n")
+        h0_rebased = commit("the PR, rebased")
+        report = measure(base, [h0, h0_rebased], [], [], repo)
+        if not report["warnings"]:
+            failures.append("rewrite: expected a warning when H0 is not an ancestor of H1")
+
         for failure in failures:
             print("FAIL " + failure)
         if failures:
             return 1
-        print("ok: attribution, self-inflicted share, churn and growth")
+        print("ok: attribution, self-inflicted share, churn, growth, header parsing, rewrite warning")
         return 0
 
 
@@ -255,7 +304,13 @@ def main():
     if not args.heads:
         parser.error("--heads is required")
     heads = [h for h in args.heads.split(",") if h]
-    counts = [int(c) for c in args.counts.split(",")] if args.counts else []
+    counts = [c.strip() for c in args.counts.split(",") if c.strip()] if args.counts else []
+    if not all(c.isdigit() for c in counts):
+        parser.error("--counts wants comma-separated integers, got {0!r}".format(args.counts))
+    counts = [int(c) for c in counts]
+    if counts and len(counts) != len(heads) - 1:
+        parser.error("--counts has {0} value(s) but --heads records {1} pass(es)".format(
+            len(counts), len(heads) - 1))
     report = measure(args.base, heads, args.finding, counts, os.getcwd())
     print(json.dumps(report, indent=2) if args.json else render(report))
     return 0
