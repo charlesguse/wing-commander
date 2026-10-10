@@ -1080,11 +1080,9 @@ GH_RATIONALE_HEADING = "**Read-only agents and gh**"
 # Written as a pattern so this file does not itself carry the sentence.
 GH_RATIONALE_SENTENCE_RE = re.compile(
     r"total\s+rather\s+than\s+per-subcommand", re.IGNORECASE)
-LIST_ITEM = r"(?:[-*+]|\d+[.)])[ \t]"
+# The home's entry: a bullet opening with the heading, at any indent.
 GH_RATIONALE_ENTRY_RE = re.compile(
-    "^" + LIST_ITEM + re.escape(GH_RATIONALE_HEADING), re.MULTILINE)
-ENTRY_END_RE = re.compile(r"\n(?=" + LIST_ITEM + r"|#{1,6}(?:[ \t]|$)|[ \t]*\n)",
-                          re.MULTILINE)
+    r"^([ \t]*)[-*+][ \t]+" + re.escape(GH_RATIONALE_HEADING), re.MULTILINE)
 GH_RATIONALE_CLAIM_RE = re.compile(r"reach(?:es)?\s+remote\s+writes",
                                    re.IGNORECASE)
 RATIONALE_SCAN_EXTS = (".md", ".yml", ".yaml", ".py", ".sh", ".json",
@@ -1092,7 +1090,8 @@ RATIONALE_SCAN_EXTS = (".md", ".yml", ".yaml", ".py", ".sh", ".json",
 SPEC_DIR_RE = re.compile(r"^specs/[^/]+/(?!contracts/)")
 # A comment or blockquote marker opening a line, removed before matching so
 # a copy wrapped across `#`/`//`/`>`/`*` lines still reads as one sentence.
-LINE_MARKER_RE = re.compile(r"^[ \t]*(?:#+(?=[ \t]|$)|//+|>+|\*+)?[ \t]*",
+# A `#` followed by a digit is an issue reference (`#808`), not a marker.
+LINE_MARKER_RE = re.compile(r"^[ \t]*(?:#+(?!\d)|//+|>+|\*+)?[ \t]*",
                             re.MULTILINE)
 
 
@@ -1124,30 +1123,32 @@ def check_gh_rationale_home(root="."):
                 f"has no canonical home for the `gh` rationale (spec 101 "
                 f"FR-017)."]
     home_hits = len(GH_RATIONALE_SENTENCE_RE.findall(_unwrapped(home_text)))
-    # Each top-level list item that opens with the heading, up to the next
-    # top-level item, heading or blank line: an indented sub-bullet or a
-    # lazy, unindented continuation line stays inside it. A summary list
-    # naming the heading is one more item, so any item holding the
-    # sentence counts.
-    starts = [m.start() for m in GH_RATIONALE_ENTRY_RE.finditer(home_text)]
-    head = starts[0] if starts else -1
-    sections = []
-    for a in starts:
-        end = ENTRY_END_RE.search(home_text, a + 1)
-        sections.append(home_text[a:end.start() if end else len(home_text)])
+    # The entry is the LAST bullet opening with the heading (a summary list
+    # naming it comes first), up to the next bullet indented no deeper than
+    # it plus one column, a heading, or a blank line. A sub-bullet (two or
+    # more columns deeper) and a lazy, unindented continuation line stay
+    # inside it.
+    entries = list(GH_RATIONALE_ENTRY_RE.finditer(home_text))
+    section = ""
+    if entries:
+        entry = entries[-1]
+        width = len(entry.group(1).expandtabs(4)) + 1
+        end = re.compile(r"\n(?=[ ]{0,%d}[-*+][ \t]|#{1,6}(?:[ \t]|$)|[ \t]*\n)"
+                         % width).search(home_text, entry.end())
+        section = home_text[entry.start():end.start() if end else len(home_text)]
     if home_hits != 1:
         problems.append(
             f"{GH_RATIONALE_HOME}: carries the `gh` rationale's "
             f"distinguishing sentence (the rule is total, not "
             f"per-subcommand) {home_hits} time(s); it must carry it exactly "
             f"once, under {GH_RATIONALE_HEADING} (spec 101 FR-017).")
-    if head < 0:
+    if not entries:
         problems.append(
             f"{GH_RATIONALE_HOME}: has no {GH_RATIONALE_HEADING} entry, the "
             f"section every pointer to the `gh` rationale names (spec 101 "
             f"FR-017).")
-    elif home_hits == 1 and not any(GH_RATIONALE_SENTENCE_RE.search(
-            _unwrapped(sec)) for sec in sections):
+    elif home_hits == 1 and not GH_RATIONALE_SENTENCE_RE.search(
+            _unwrapped(section)):
         problems.append(
             f"{GH_RATIONALE_HOME}: the `gh` rationale's distinguishing "
             f"sentence is not under {GH_RATIONALE_HEADING}, the entry every "
@@ -3202,6 +3203,20 @@ def _self_test_gh_rationale_home(tmpdir):
         ("a sub-bullet holding the sentence",
          {GH_RATIONALE_HOME: f"- {GH_RATIONALE_HEADING}: no `gh` grant.\n"
                              f"  - {_RATIONALE_SENTENCE}"}, None),
+        ("an indented entry, a wrapped #word comment line and a year",
+         {GH_RATIONALE_HOME: f"  - {GH_RATIONALE_HEADING}: no grant since\n"
+                             f"2026. The rule is total\n"
+                             f"  rather than per-subcommand.\n"}, None),
+        ("the sentence only in a summary item, or in an indented sibling",
+         {GH_RATIONALE_HOME: f"1. {GH_RATIONALE_HEADING} -- {_RATIONALE_SENTENCE}\n"
+                             f"- {GH_RATIONALE_HEADING}: no grant.\n"
+                             f" - **Other**: x\n"}, "not under"),
+        ("an indented sibling holding the sentence",
+         {GH_RATIONALE_HOME: f"- {GH_RATIONALE_HEADING}: no grant.\n"
+                             f" - **Other**: {_RATIONALE_SENTENCE}"}, "not under"),
+        ("a copy wrapped onto a #word comment line",
+         {".github/scripts/x.sh": "# the rule is total\n#rather than per-subcommand\n"},
+         ".github/scripts/x.sh"),
         ("the sentence in the next, `+` item",
          {GH_RATIONALE_HOME: f"- {GH_RATIONALE_HEADING}: no `gh` grant.\n"
                              f"+ **Other**: {_RATIONALE_SENTENCE}"}, "not under"),
