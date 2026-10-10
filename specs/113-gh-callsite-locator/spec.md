@@ -18,6 +18,14 @@ That parser has not converged. A recent extension attempt (PR #969, closed unmer
 
 Meanwhile the repository's real call sites are simple. Across all 87 workflow and action files there are 478 executable `gh` calls: 294 at statement level, 183 as the first command of a one-level `$(...)` (bare or behind a `GH_TOKEN=` prefix), one wrapped in `timeout`, and none inside backticks, nested substitutions, `${…}` values, or with the subcommand/method held in a variable. The parsing that keeps producing misses serves shapes nobody writes. Separately, Gate 28 (`gh api` method declaration), the gate registry's heredoc reader, and #954's script-call reader each parse shell their own way, against CLAUDE.md's "shared logic has exactly one home" rule.
 
+## Clarifications
+
+### Session 2026-10-10
+
+- Q: Does the owner accept a written authoring rule for `gh` call sites, enforced by a fail-closed gate, including in published stage workflows and composites? → A: Yes (A) — adopt the rule and the fail-closed locator everywhere, as chosen when PR #969 was closed in favour of this spec (FR-020).
+- Q: Are Gate 28 and #954's script-call reader migrated onto the shared locator in this spec? → A: C — Gate 28 moves in this spec; #954's reader follows in its own lifecycle, waived in the single-home check meanwhile with a tracking line on #889 (FR-012).
+- Q: Is a pinned `shfmt` binary an acceptable fallback dependency? → A: Not now — this spec adds no new dependency; a real-parser fallback becomes its own proposal, decided with evidence of the authoring rule's false-failure rate (FR-019).
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - A miss becomes impossible by construction (Priority: P1)
@@ -72,7 +80,7 @@ A reviewer can see that the new locator agrees with real bash: the self-test rep
 
 ### User Story 4 - One home for locating `gh` call sites (Priority: P2)
 
-A maintainer who needs to find `gh` calls in shell (Gate 12, Gate 28's `gh api` method check, #954's script-call reader) imports one module instead of writing another parser. Gate 12 itself moves out of its inline heredoc in `lint-workflows.yml` into a `verify-*.py` script that the gate registry reaches and that runs identically locally and in CI.
+A maintainer who needs to find `gh` calls in shell (Gate 12 and Gate 28's `gh api` method check in this spec; #954's script-call reader in its own follow-up lifecycle) imports one module instead of writing another parser. Gate 12 itself moves out of its inline heredoc in `lint-workflows.yml` into a `verify-*.py` script that the gate registry reaches and that runs identically locally and in CI.
 
 **Why this priority**: The single-home rule exists because a pasted copy is invisible until the first divergent fix. Three independent shell readers will diverge.
 
@@ -81,8 +89,8 @@ A maintainer who needs to find `gh` calls in shell (Gate 12, Gate 28's `gh api` 
 **Acceptance Scenarios**:
 
 1. **Given** the change has landed, **When** Gate 12 runs, **Then** it runs from a `verify-*.py` script (not an inline heredoc) that uses the shared locator module.
-2. **Given** a consumer in scope for this spec (see FR-012), **When** it needs to find `gh` calls, **Then** it imports the shared locator rather than tokenising shell itself.
-3. **Given** someone reintroduces an independent `gh`-locating parser in another gate, **When** the gate suite runs, **Then** the nearest existing gate fails naming the duplicate.
+2. **Given** Gate 28 after the change (see FR-012), **When** it needs to find `gh api` calls, **Then** it imports the shared locator rather than tokenising shell itself.
+3. **Given** someone reintroduces an independent `gh`-locating parser in another gate, **When** the gate suite runs, **Then** the nearest existing gate fails naming the duplicate; the only reader it tolerates is #954's script-call reader, and only through a waiver cited to its tracking line on #889.
 
 ---
 
@@ -122,7 +130,7 @@ A maintainer who needs to find `gh` calls in shell (Gate 12, Gate 28's `gh api` 
 - **FR-009**: Gate 12 MUST move from its inline heredoc in `lint-workflows.yml` into a standalone `verify-*.py` script, reachable through the gate registry, run with the same arguments locally (`run-local-gates.py`) and in CI, and triggered by changes to the workflows, composite actions, `docs/setup.md`, and the locator module it checks against.
 - **FR-010**: The `gh` call-site locator MUST live in exactly one shared module under `.github/scripts/` (e.g. `wc_gh_callsites.py`), imported by every in-scope consumer.
 - **FR-011**: The nearest existing gate MUST fail if an independent `gh`-locating shell reader reappears outside the shared module (the "single home" check CLAUDE.md requires for every consolidation).
-- **FR-012**: Gate 28 (`gh api` field/method declaration) and #954's script-call reader MUST [NEEDS CLARIFICATION: are Gate 28 and #954's reader migrated onto the shared locator within this spec, or does this spec ship only Gate 12 plus the module and leave them to a follow-up?].
+- **FR-012**: Gate 28 (`gh api` field/method declaration) MUST move onto the shared locator within this spec. #954's script-call reader (in `verify-stop-point-recording.py`) is out of scope and migrates in its own lifecycle; until it does, the FR-011 single-home check MUST carry a temporary waiver naming that reader as its only permitted exception, cited to a tracking checklist line on the Maintenance backlog (#889) that this change adds.
 
 **Proof**
 
@@ -135,8 +143,8 @@ A maintainer who needs to find `gh` calls in shell (Gate 12, Gate 28's `gh api` 
 
 - **FR-017**: Every existing call site that does not conform to the authoring rule MUST be rewritten to an allowed form in the same change, with unchanged runtime behaviour; no stage input, output or secret name changes.
 - **FR-018**: The six `main`-shared parser gaps recorded on #889 (ANSI-C quoting, unquoted heredoc bodies, `case` inside `$( )`, glued method flags, separators inside escaped backticks, quadratic heredoc stripping) MUST each be closed by the new locator (either located correctly or failed closed) and covered by a fixture, so their checklist lines on #889 can be ticked.
-- **FR-019**: If applying the authoring rule to the repository produces more false failures than migration can reasonably absorb, the fallback is to locate calls with a real shell parser; the acceptable fallback is [NEEDS CLARIFICATION: is a pinned `shfmt` binary (required in CI and in the implement image, see #989) an acceptable fallback dependency, or must the fallback stay pure-Python?].
-- **FR-020**: Adopting a written authoring rule for `gh` call sites in published stage workflows and composites is [NEEDS CLARIFICATION: does the owner accept a written authoring rule that constrains how `gh` may be called in published workflows and composites, enforced by a gate that fails closed?].
+- **FR-019**: This change MUST NOT add any new dependency (no `shfmt` or other external shell parser, in CI or in the implement image; see #989). The locator stays pure-Python. If the authoring rule's false-failure rate proves too high in practice, adopting a real shell parser is a separate proposal, decided with evidence of that measured false-failure rate, and is not part of this spec.
+- **FR-020**: The written authoring rule (FR-001) and the fail-closed locator MUST apply to every `run:` block in this repository's workflows and composite actions, including the published stage workflows and composites, enforced by Gate 12 failing closed. (Owner decision on #993; this is the approach chosen when PR #969 was closed in favour of this spec.)
 
 ### Key Entities
 
@@ -155,7 +163,8 @@ A maintainer who needs to find `gh` calls in shell (Gate 12, Gate 28's `gh api` 
 - **SC-003**: The shell-reading code behind Gate 12 shrinks from about 690 lines to at most about 250 lines.
 - **SC-004**: At most a handful (estimated about two) of existing call sites need rewriting to conform.
 - **SC-005**: All six `main`-shared parser gaps recorded on #889 are closed and covered by fixtures.
-- **SC-006**: Exactly one module in the repository locates `gh` call sites in shell, and a gate enforces it.
+- **SC-006**: Exactly one module in the repository locates `gh` call sites in shell, and a gate enforces it; the single waived exception is #954's script-call reader, pending its own migration lifecycle.
+- **SC-008**: The change adds no new dependency to CI or the implement image.
 - **SC-007**: Every failure branch Gate 12 ships is exercised by a checked-in fixture.
 
 ## Assumptions
@@ -166,4 +175,5 @@ A maintainer who needs to find `gh` calls in shell (Gate 12, Gate 28's `gh api` 
 - Gate numbering is preserved: the moved gate is still "Gate 12" in the registry and in workflow step names.
 - No stage input, output or secret changes; this is an internal authoring rule (Principle VII) and does not widen the published contract.
 - The authoring rule applies to `run:` blocks only; agent tool-grant strings (`Bash(gh …:*)`) are checked as today.
+- Migrating #954's script-call reader onto the shared locator is a separate lifecycle; this spec only waives it in the single-home check.
 - An adopter's own workflows are not subject to this repository's gate suite; the rule governs this repository's files.
