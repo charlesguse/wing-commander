@@ -3,7 +3,7 @@
   "spec_dir": "specs/101-read-only-gh-grants",
   "feature_num": "101",
   "stage": "implement",
-  "iteration": 4,
+  "iteration": 5,
   "spec_branch": "spec/101-read-only-gh-grants",
   "pending_re_review_from": [
     "charlesguse"

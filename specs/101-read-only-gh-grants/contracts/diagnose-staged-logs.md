@@ -3,10 +3,15 @@
 Layer: consuming-stage internals of `watchdog.yml` (not a `workflow_call`
 input, output or secret; Principle VII unaffected).
 
-## Helper: `.github/actions/_shared/fetch-job-logs.sh`
+## Helper: `.github/actions/wing-commander-fetch-job-logs/action.yml`
 
-Inputs (env): `GH_TOKEN` (the `github.token`, set by the caller as
-`ACTIONS_TOKEN`), `GITHUB_REPOSITORY`, `RUN_ID`, output directory argument.
+A published composite with its own step, not a `_shared/` script: Gate 12
+forbids `gh` calls in `_shared/` scripts, and Gate 60 forbids a published stage
+resolving `_shared/`.
+
+Inputs: `token` (the `github.token`, passed by the caller from
+`ACTIONS_TOKEN`), `run-id`, `out-dir`. `GITHUB_REPOSITORY` comes from the
+runner environment.
 
 Behaviour:
 
@@ -15,9 +20,10 @@ Behaviour:
 - per job not `skipped`/`cancelled`: fetch the log; exactly one bounded retry
   per invocation after `sleep 10` on a non-zero status;
 - never writes an error message or empty body as log content;
-- exit/outputs: writes `jobs.json` and per-job log files into the directory and
-  prints a one-line outcome (`ok` or `failed`) on its final line; returns 0
-  always, failure travels in the outcome so callers keep errexit semantics.
+- outputs: writes `jobs.json`, per-job log files and (on failure) `reason.txt`
+  (`jobs-list` or `log-read`) into the directory, and sets the `result` output
+  (`ok` or `failed`); the step never fails the job, so failure travels in
+  `result` and callers read that output rather than any stdout line.
 
 Callers: `collect-step-summary` (scans logs for sentinels; keeps its sentinel
 logic inline) and `Stage failed-job logs` (keeps jobs with conclusion
