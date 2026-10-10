@@ -193,11 +193,15 @@ def schema_valid(result, findings, schema):
 
 
 def baseline_usable(f):
-    """A finding whose class and signalIds are strings, the only type the
-    diagnose schema gives them. The shadow is held to that schema, so a
-    baseline 1 (or null, or a missing signalId) could never meet a shadow
-    "1": comparing it would score a disagreement no model made. Such a
-    baseline -- an acting result that skipped the schema -- is no baseline."""
+    """A finding whose class (for `__new__`, its proposedClass) and
+    signalIds are strings. The schema gives class and signalId no other
+    type, so a baseline 1 (or null, or a missing signalId) could never meet
+    a shadow "1": comparing it would score a disagreement no model made.
+    Such a baseline -- an acting result that skipped the schema -- is no
+    baseline. The schema does let a `__new__` proposedClass be null, but a
+    shadow finding with no proposal names no class to compare and is
+    malformed (review gate round 4); the acting read-back never leaves a
+    `__new__` in the baseline."""
     if not isinstance(f, dict):
         return False
     cls = f.get("class")

@@ -116,6 +116,26 @@ JQ_EPOCH='def epoch: sub("\\.[0-9]+"; "")
                - (($o[0:1] + "1" | tonumber) * (($o[1:3] | tonumber) * 3600 + ($o[4:6] | tonumber) * 60))
           else fromdateiso8601 end;'
 
+# The diagnose shadow's span (spec 110): its steps -- every one named
+# "diagnose shadow"/"diagnose-shadow", together the diagnose job's
+# contiguous tail, both of which Gate 146 holds -- from the first start to
+# the last completion, skipped steps ignored, as "from_epoch to_epoch
+# from_date to_date". One home for check 1's duration ceiling and check
+# 8's log cut, so the two always leave out the same span; empty when no
+# shadow step ran or none has a time JQ_EPOCH can read.
+shadow_span="$(jq -r "$JQ_EPOCH"'
+  [.jobs[] | select(.name == "diagnose" or (.name | endswith("/ diagnose")))
+   | (.steps // [])[] | select((.name // "") | test("diagnose[ -]shadow"; "i"))
+       | select(.conclusion != "skipped")
+   | (try [(.started_at | epoch), (.completed_at | epoch)] catch empty)]
+  | if length == 0 then empty
+    else [(map(.[0]) | min), (map(.[1]) | max)]
+         | "\(.[0]) \(.[1]) \(.[0] | todate) \(.[1] | todate)" end' <<<"$jobs_json" 2>/dev/null)" || shadow_span=""
+shadow_from_epoch="" shadow_to_epoch="" shadow_from="" shadow_to=""
+if [ -n "$shadow_span" ]; then
+  read -r shadow_from_epoch shadow_to_epoch shadow_from shadow_to <<<"$shadow_span"
+fi
+
 # ── Check 2: runtime anomaly vs. this workflow's own successful history ────
 # Median of the last 20 successful runs (excluding this one). Bounds are
 # deliberately loose — this gates issue creation, and a run with real
@@ -199,23 +219,19 @@ if [ "$diagnose_conclusion" = "skipped" ]; then
   fi
 else
   # The diagnose shadow (spec 110) runs last in this job under its own
-  # 5-minute bound and acts on nothing. Its steps -- every one named
-  # "diagnose shadow"/"diagnose-shadow", and together the job's contiguous
-  # tail, both of which Gate 146 holds -- are subtracted here as one span,
-  # first start to last completion, so the gaps between them go too: a
-  # slow shadow is not a stalled acting diagnose and must not file
-  # anything (SC-003). It is the same span check 8 cuts from the log. A
-  # step time JQ_EPOCH cannot read subtracts nothing, so the acting bound
-  # is never lost to it.
-  d_secs="$(jq -r "$JQ_EPOCH"'
+  # 5-minute bound and acts on nothing, so its span (shadow_span above,
+  # gaps between its steps included) is subtracted here: a slow shadow is
+  # not a stalled acting diagnose and must not file anything (SC-003). A
+  # step time JQ_EPOCH cannot read leaves no span and subtracts nothing,
+  # so the acting bound is never lost to it.
+  d_secs="$(jq -r '
     [.jobs[] | select(.name == "diagnose" or (.name | endswith("/ diagnose")))
     | select(.started_at != null and .completed_at != null)
     | ((.completed_at | fromdateiso8601) - (.started_at | fromdateiso8601))
-      - ([(.steps // [])[] | select((.name // "") | test("diagnose[ -]shadow"; "i"))
-          | select(.conclusion != "skipped")
-          | (try [(.started_at | epoch), (.completed_at | epoch)] catch empty)]
-         | if length == 0 then 0 else (map(.[1]) | max) - (map(.[0]) | min) end)
     ] | first // empty' <<<"$jobs_json")"
+  if [ -n "$d_secs" ] && [ -n "$shadow_from_epoch" ]; then
+    d_secs=$(( d_secs - (shadow_to_epoch - shadow_from_epoch) ))
+  fi
   if [ -n "$d_secs" ] && [ "$d_secs" -gt 300 ]; then
     reason "the diagnose job ran ${d_secs}s (normal is under 75s; hard ceiling 300s) — the agent stalled"
   fi
@@ -300,19 +316,11 @@ if [ -n "$diagnose_job_id" ] && [ "$diagnose_conclusion" != "skipped" ]; then
   if dlog="$(api "actions/jobs/$diagnose_job_id/logs" 2>/dev/null)"; then
     # spec 110: the diagnose shadow runs in this job and acts on nothing,
     # so a shadow that crashes or exhausts its turns is not a crashed
-    # diagnose (SC-003). Log lines stamped strictly inside the shadow steps
-    # that actually ran (after the first start's second, before the last
-    # completion's; skipped steps ignored) are left out; every other line,
-    # including the boundary seconds an acting step may share, is read.
-    shadow_span="$(jq -r "$JQ_EPOCH"'
-      [.jobs[] | select(.name == "diagnose" or (.name | endswith("/ diagnose")))
-       | (.steps // [])[] | select((.name // "") | test("diagnose[ -]shadow"; "i"))
-       | select(.conclusion != "skipped")
-       | (try [(.started_at | epoch), (.completed_at | epoch)] catch empty)]
-      | if length == 0 then empty
-        else "\(map(.[0]) | min | todate) \(map(.[1]) | max | todate)" end' <<<"$jobs_json" 2>/dev/null)" || shadow_span=""
+    # diagnose (SC-003). Log lines stamped strictly inside the shadow's
+    # span (shadow_span above: after its first start's second, before its
+    # last completion's) are left out; every other line, including the
+    # boundary seconds an acting step may share, is read.
     if [ -n "$shadow_span" ]; then
-      read -r shadow_from shadow_to <<<"$shadow_span"
       dlog="$(printf '%s\n' "$dlog" | awk -v from="${shadow_from%Z}" -v to="${shadow_to%Z}" \
         '/^[0-9][0-9][0-9][0-9]-/ { ts = substr($0, 1, 19); if (ts > from && ts < to) next } { print }')"
     fi

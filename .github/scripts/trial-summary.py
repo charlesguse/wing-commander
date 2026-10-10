@@ -77,9 +77,19 @@ NOT_COMPARED = _BOUND.NOT_COUNTED
 
 
 def scalar(value):
-    """A JSON string or integer id, else None (never an unhashable key)."""
-    return value if isinstance(value, (str, int)) and \
-        not isinstance(value, bool) else None
+    """A JSON string or integer id as a string (so 123 and "123" are one
+    id), else None (never an unhashable key)."""
+    if isinstance(value, (str, int)) and not isinstance(value, bool):
+        return str(value)
+    return None
+
+
+def number(value):
+    """A JSON number, else None: a string or object where a count or a
+    cost belongs is read as absent, never summed into a TypeError."""
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return value
+    return None
 
 
 def run_id(rec):
@@ -88,12 +98,14 @@ def run_id(rec):
 
 
 def turns(rec):
-    t = rec.get("turns") or {}
-    return t.get("counted") if t.get("available") else None
+    t = rec.get("turns")
+    if not isinstance(t, dict) or not t.get("available"):
+        return None
+    return number(t.get("counted"))
 
 
 def cost(rec):
-    return rec.get("cost_usd") if rec.get("cost_available") else None
+    return number(rec.get("cost_usd")) if rec.get("cost_available") else None
 
 
 def median(values):
@@ -143,8 +155,8 @@ def diagnose_section(records, since=None):
     # (b) only runs that reached the findings comparison carry class counts.
     judged = [r for r in compared
               if r["trial"].get("outcome") in ("agreed", "disagreed")]
-    shared = sum(r["trial"].get("class_shared") or 0 for r in judged)
-    cagree = sum(r["trial"].get("class_agree") or 0 for r in judged)
+    shared = sum(number(r["trial"].get("class_shared")) or 0 for r in judged)
+    cagree = sum(number(r["trial"].get("class_agree")) or 0 for r in judged)
     failed = sum(counts.get(o, 0) for o in FAILED)
     # A comparator crash is this pipeline's defect, not infrastructure:
     # named on its own so it is never mistaken for a 429 (trial-record).
@@ -222,10 +234,11 @@ def implement_section(records):
         issue = scalar(spec.get("issue")) if isinstance(spec, dict) else None
         if issue is None:
             continue
-        issue = str(issue)  # 972 and "972" are one lifecycle, and sortable
         by_issue.setdefault(issue, []).append(r)
     haiku, sonnet = {}, []
-    for issue, recs in sorted(by_issue.items()):
+    # Numeric order (#972 before #1001), any non-numeric key after.
+    for issue, recs in sorted(by_issue.items(), key=lambda kv: (
+            not kv[0].isdigit(), int(kv[0]) if kv[0].isdigit() else 0, kv[0])):
         # A record without a timestamp sorts last, never first.
         recs.sort(key=lambda r: (not r.get("emitted_at"), str(r.get("emitted_at") or "")))
         models = [str(r.get("model", "")) for r in recs]

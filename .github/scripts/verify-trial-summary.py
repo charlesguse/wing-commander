@@ -116,9 +116,24 @@ CASES = {
            dict(shadow("agreed"), trial={"outcome": {"a": 1}}),
            dict(shadow("agreed"), run={"workflow_run_id": ["1"]}),
            dict(cycle(9, "claude-haiku-5-5"), run_label=["cycle"]),
-           dict(cycle(9, "claude-haiku-5-5"), spec={"issue": [9]})],
-        "Shadow runs with a trial record: 4 (without a readable one: 2)",
-        "| none | | | | | |"),
+           dict(cycle(9, "claude-haiku-5-5"), spec={"issue": [9]}),
+           # ...and a string or object where a count, cost or turns belongs
+           # is read as absent
+           dict(shadow("agreed"), trial={"outcome": "agreed",
+                                         "class_shared": "2",
+                                         "class_agree": {"n": 1}}),
+           dict(cycle(11, "claude-haiku-5-5"), cost_usd="0.1", turns=[])],
+        "Shadow runs with a trial record: 5 (without a readable one: 2)",
+        "| #11 | 1 | 0 | 0 | 0 | $0.0000 |"),
+    # Lifecycles list in issue-number order, and a run id written as a
+    # number on one record and a string on the other still pairs.
+    "issue-order": (
+        [cycle(1001, "claude-haiku-5-5"), cycle(972, "claude-haiku-5-5")],
+        "| #972 | 1 | 0 | 0 | 0 | $1.0000 |\n| #1001 |", None),
+    "mixed-run-id-types": (
+        [paired(1, "diagnose", "claude-opus-5-5", 0.08),
+         paired("1", "diagnose-shadow", "claude-haiku-5-5", 0.002, "agreed")],
+        "| Opus diagnose (acting, same runs) | 1 | n/a | $0.0800 |", None),
     # Both rows cover the compared runs only: run 2 had no shadow, run 3's
     # shadow was no-baseline (never called).
     "acting-row-paired": (

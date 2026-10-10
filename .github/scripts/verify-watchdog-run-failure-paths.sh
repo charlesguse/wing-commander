@@ -870,9 +870,9 @@ sed 's/        | if test("\[+-\]\[0-9\]{2}:\[0-9\]{2}\$")$/        | if false/' 
 run_mutation "$mut" "m12" "s23 s24 s26" "an offset step time losing the failed-step pointer, the shadow's duration or the shadow's log cut is caught"
 
 # m13 (spec 110): the diagnose duration ceiling counts the diagnose
-# shadow's steps again, so a slow shadow files a stalled-diagnose defect
-# against an acting path it never touched. s24 must catch it.
-sed 's/- (\[(.steps \/\/ \[\])\[\] | select((.name \/\/ "") | test("diagnose\[ -\]shadow"; "i"))/- ([(.steps \/\/ [])[] | select(false)/' \
+# shadow's span again, so a slow shadow files a stalled-diagnose defect
+# against an acting path it never touched. s24 and s30 must catch it.
+sed 's/^    d_secs=\$(( d_secs - (shadow_to_epoch - shadow_from_epoch) ))$/    :/' \
   "$SCRIPT" > "$mut"
 run_mutation "$mut" "m13" "s24 s30" "counting the diagnose shadow against the acting ceiling is caught"
 
@@ -900,12 +900,12 @@ sed 's/if (ts > from \&\& ts < to) next/if (ts >= from \&\& ts <= to) next/' \
   "$SCRIPT" > "$mut"
 run_mutation "$mut" "m17" "s29" "dropping the shared boundary second is caught"
 
-# m18 (spec 110, review gate round 9): the ceiling subtracts the sum of the
-# shadow's step durations again, so the gaps between them count against the
-# acting diagnose. s30 must catch it.
-sed 's/         | if length == 0 then 0 else (map(.\[1\]) | max) - (map(.\[0\]) | min) end)$/         | map(.[1] - .[0]) | add \/\/ 0)/' \
+# m18 (spec 110, review gate round 9): the shadow's span starts at its
+# last step again, so the gaps between its steps (and every earlier shadow
+# step) count against the acting diagnose. s30 must catch it.
+sed 's/    else \[(map(.\[0\]) | min), (map(.\[1\]) | max)\]$/    else [(map(.[0]) | max), (map(.[1]) | max)]/' \
   "$SCRIPT" > "$mut"
-run_mutation "$mut" "m18" "s30" "counting the gaps between the shadow's steps is caught"
+run_mutation "$mut" "m18" "s30" "a span that drops the gaps between the shadow's steps is caught"
 
 echo "Gate 36: 30 scenario(s) x 18 runs + 17 mutation(s); $bad failure(s)."
 exit $([ "$bad" -eq 0 ] && echo 0 || echo 1)

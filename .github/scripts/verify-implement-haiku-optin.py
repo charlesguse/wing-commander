@@ -59,25 +59,37 @@ def stage_default(stage_text):
 
 
 def tier_job(wrapper_text):
+    """(workflow, resolve-model job, its `tier` step), or Nones."""
     try:
         doc = yaml.safe_load(wrapper_text) or {}
         job = doc["jobs"]["resolve-model"]
         step = next(s for s in job["steps"] if s.get("id") == "tier")
     except (yaml.YAMLError, AttributeError, KeyError, TypeError, StopIteration):
-        return None, None
-    return job, step
+        return None, None, None
+    return doc, job, step
 
 
-def run_tier(step, labels, env_vars, gh_fails=False):
-    """Run the step's script as GitHub would (`bash -e {0}` when the step
-    names no shell) and return (outputs dict, stdout+stderr, exit code)."""
-    shell = step.get("shell") or "bash -e {0}"
+def run_shell(doc, job, step):
+    """The shell the runner uses for this step: the step's `shell:`, else
+    the job's, else the workflow's `defaults.run.shell`, else `bash -e
+    {0}`. Returns a template with {0}, or None for one this gate does not
+    run (only bash is, as `bash` or an explicit bash template)."""
+    shell = step.get("shell")
+    for scope in (job, doc):
+        if shell is None:
+            shell = ((scope.get("defaults") or {}).get("run") or {}).get("shell")
+    shell = shell or "bash -e {0}"
+    if shell == "bash":
+        return "bash --noprofile --norc -eo pipefail {0}"
+    if isinstance(shell, str) and "{0}" in shell and shell.split()[0] == "bash":
+        return shell
+    return None
+
+
+def run_tier(template, step, bindir, labels, env_vars, gh_fails=False):
+    """Run the step's script under `template` with the stub gh in `bindir`
+    and return (outputs dict, stdout+stderr, exit code)."""
     with tempfile.TemporaryDirectory() as tmp:
-        bindir = Path(tmp) / "bin"
-        bindir.mkdir()
-        gh = bindir / "gh"
-        gh.write_text(STUB_GH, encoding="utf-8")
-        gh.chmod(0o755)
         script = Path(tmp) / "step.sh"
         script.write_text(step.get("run") or "", encoding="utf-8")
         out, summary = Path(tmp) / "output", Path(tmp) / "summary"
@@ -93,10 +105,7 @@ def run_tier(step, labels, env_vars, gh_fails=False):
             env[key] = ""
         env.update({"ISSUE": "1", "GH_TOKEN": "x"})
         env.update(env_vars)
-        if shell == "bash":
-            argv = ["bash", "--noprofile", "--norc", "-eo", "pipefail", str(script)]
-        else:
-            argv = shell.replace("{0}", str(script)).split()
+        argv = template.replace("{0}", str(script)).split()
         proc = subprocess.run(argv, env=env, capture_output=True, text=True,
                               check=False, timeout=30)
         outputs = {}
@@ -108,9 +117,21 @@ def run_tier(step, labels, env_vars, gh_fails=False):
 
 
 def behaviour_failures(wrapper_text, budget):
-    job, step = tier_job(wrapper_text)
+    doc, job, step = tier_job(wrapper_text)
     if step is None:
         return [f"{WRAPPER}: no resolve-model job with a `tier` step"]
+    template = run_shell(doc, job, step)
+    if template is None:
+        return [f"{WRAPPER}: the tier step's shell is not bash; this gate "
+                "runs it under bash only"]
+    with tempfile.TemporaryDirectory() as bindir:
+        gh = Path(bindir) / "gh"
+        gh.write_text(STUB_GH, encoding="utf-8")
+        gh.chmod(0o755)
+        return run_cases(template, job, step, bindir, budget)
+
+
+def run_cases(template, job, step, bindir, budget):
     failures = []
     outputs = job.get("outputs") or {}
     for name, want in JOB_OUTPUTS.items():
@@ -147,7 +168,8 @@ def behaviour_failures(wrapper_text, budget):
     ]
     for name, labels, env, gh_fails, want, prints in cases:
         try:
-            got, log, rc = run_tier(step, labels, env, gh_fails)
+            got, log, rc = run_tier(template, step, bindir, labels, env,
+                                    gh_fails)
         except (OSError, subprocess.TimeoutExpired) as exc:
             failures.append(f"{name}: the tier step could not run: {exc}")
             continue
@@ -248,6 +270,13 @@ def self_test():
         if got:
             print(f"self-test: {name} must pass: {got}", file=sys.stderr)
             ok = False
+    # A workflow-level `defaults.run.shell: bash` (pipefail) is honoured.
+    got = check(dict(base, **{WRAPPER: "defaults:\n  run:\n    shell: bash\n"
+                                       + wrapper_doc(GOOD_RUN)}))
+    if got:
+        print(f"self-test: a bash defaults.run.shell must pass: {got}",
+              file=sys.stderr)
+        ok = False
     swapped = GOOD_RUN.replace("'model:opus'", "'model:TMP'") \
         .replace("'model:haiku'", "'model:opus'") \
         .replace("'model:TMP'", "'model:haiku'") \
@@ -289,6 +318,8 @@ def self_test():
         "job output unmapped": dict(base, **{WRAPPER: wrapper_doc(GOOD_RUN)
                                     .replace("steps.tier.outputs.escalation",
                                              "steps.tier.outputs.tier")}),
+        "tier step under sh": dict(base, **{WRAPPER: wrapper_doc(GOOD_RUN)
+                                    .replace("id: tier", "id: tier\n      shell: sh")}),
         "stray reader": dict(base, **{OTHERS[1]: "model:opus model:haiku\n"}),
         "stray reader in pr-conversation": dict(base, **{OTHERS[2]: "model:haiku\n"}),
         "reader file missing": {k: v for k, v in base.items() if k != OTHERS[1]},
