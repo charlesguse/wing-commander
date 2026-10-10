@@ -1,3 +1,3 @@
 {"issue": 993, "spec_dir": "specs/113-gh-callsite-locator",
- "feature_num": "113", "stage": "spec", "iteration": 0,
- "spec_branch": null}
+ "feature_num": "113", "stage": "plan", "iteration": 0,
+ "spec_branch": "spec/113-gh-callsite-locator"}
