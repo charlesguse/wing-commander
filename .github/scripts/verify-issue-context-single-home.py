@@ -1080,6 +1080,11 @@ GH_RATIONALE_HEADING = "**Read-only agents and gh**"
 # Written as a pattern so this file does not itself carry the sentence.
 GH_RATIONALE_SENTENCE_RE = re.compile(
     r"total\s+rather\s+than\s+per-subcommand", re.IGNORECASE)
+LIST_ITEM = r"(?:[-*+]|\d+[.)])[ \t]"
+GH_RATIONALE_ENTRY_RE = re.compile(
+    "^" + LIST_ITEM + re.escape(GH_RATIONALE_HEADING), re.MULTILINE)
+ENTRY_END_RE = re.compile(r"\n(?=" + LIST_ITEM + r"|#{1,6}(?:[ \t]|$)|[ \t]*\n)",
+                          re.MULTILINE)
 GH_RATIONALE_CLAIM_RE = re.compile(r"reach(?:es)?\s+remote\s+writes",
                                    re.IGNORECASE)
 RATIONALE_SCAN_EXTS = (".md", ".yml", ".yaml", ".py", ".sh", ".json",
@@ -1087,7 +1092,8 @@ RATIONALE_SCAN_EXTS = (".md", ".yml", ".yaml", ".py", ".sh", ".json",
 SPEC_DIR_RE = re.compile(r"^specs/[^/]+/(?!contracts/)")
 # A comment or blockquote marker opening a line, removed before matching so
 # a copy wrapped across `#`/`//`/`>`/`*` lines still reads as one sentence.
-LINE_MARKER_RE = re.compile(r"^[ \t]*(?:#+|//+|>+|\*+)?[ \t]*", re.MULTILINE)
+LINE_MARKER_RE = re.compile(r"^[ \t]*(?:#+(?=[ \t]|$)|//+|>+|\*+)?[ \t]*",
+                            re.MULTILINE)
 
 
 def _live_text_files(root):
@@ -1118,14 +1124,17 @@ def check_gh_rationale_home(root="."):
                 f"has no canonical home for the `gh` rationale (spec 101 "
                 f"FR-017)."]
     home_hits = len(GH_RATIONALE_SENTENCE_RE.findall(_unwrapped(home_text)))
-    entry = re.search(r"^[ \t]*[-*] " + re.escape(GH_RATIONALE_HEADING),
-                      home_text, re.MULTILINE)
-    head = entry.start() if entry else -1
-    section = home_text[head:] if entry else ""
-    # The entry runs to the next bullet, heading or blank line; a lazy,
-    # unindented continuation line still belongs to it.
-    nxt = re.search(r"\n(?=[ \t]*[-*] |#|[ \t]*\n)", section)
-    section = section[:nxt.start()] if nxt else section
+    # Each top-level list item that opens with the heading, up to the next
+    # top-level item, heading or blank line: an indented sub-bullet or a
+    # lazy, unindented continuation line stays inside it. A summary list
+    # naming the heading is one more item, so any item holding the
+    # sentence counts.
+    starts = [m.start() for m in GH_RATIONALE_ENTRY_RE.finditer(home_text)]
+    head = starts[0] if starts else -1
+    sections = []
+    for a in starts:
+        end = ENTRY_END_RE.search(home_text, a + 1)
+        sections.append(home_text[a:end.start() if end else len(home_text)])
     if home_hits != 1:
         problems.append(
             f"{GH_RATIONALE_HOME}: carries the `gh` rationale's "
@@ -1137,8 +1146,8 @@ def check_gh_rationale_home(root="."):
             f"{GH_RATIONALE_HOME}: has no {GH_RATIONALE_HEADING} entry, the "
             f"section every pointer to the `gh` rationale names (spec 101 "
             f"FR-017).")
-    elif home_hits == 1 and not GH_RATIONALE_SENTENCE_RE.search(
-            _unwrapped(section)):
+    elif home_hits == 1 and not any(GH_RATIONALE_SENTENCE_RE.search(
+            _unwrapped(sec)) for sec in sections):
         problems.append(
             f"{GH_RATIONALE_HOME}: the `gh` rationale's distinguishing "
             f"sentence is not under {GH_RATIONALE_HEADING}, the entry every "
@@ -3185,6 +3194,17 @@ def _self_test_gh_rationale_home(tmpdir):
          {GH_RATIONALE_HOME: f"Intro: see {GH_RATIONALE_HEADING} below.\n\n"
                              f"- {GH_RATIONALE_HEADING}: no `gh` grant,\n"
                              f"{_RATIONALE_SENTENCE}- **Next**: x.\n"}, None),
+        ("a summary item first, then the entry's sub-bullet and a #NNN line",
+         {GH_RATIONALE_HOME: f"- {GH_RATIONALE_HEADING}: see below.\n\n"
+                             f"- {GH_RATIONALE_HEADING}: no `gh` grant.\n"
+                             f"  - it reaches remote writes (see\n"
+                             f"#808), {_RATIONALE_SENTENCE}"}, None),
+        ("a sub-bullet holding the sentence",
+         {GH_RATIONALE_HOME: f"- {GH_RATIONALE_HEADING}: no `gh` grant.\n"
+                             f"  - {_RATIONALE_SENTENCE}"}, None),
+        ("the sentence in the next, `+` item",
+         {GH_RATIONALE_HOME: f"- {GH_RATIONALE_HEADING}: no `gh` grant.\n"
+                             f"+ **Other**: {_RATIONALE_SENTENCE}"}, "not under"),
         ("the claim pointing by a relative link",
          {f"docs/{spec}.md": "`gh` reaches remote writes; see "
                            "[why](agent-friendly-workflows.md).\n"}, None),
