@@ -22,19 +22,24 @@ name: "Wing Commander · private-image-dogfood"
 on:
   schedule:
     - cron: "37 8 * * *"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      container-image:
+        description: "Image to check instead of the configured dogfood image (the reference-image rebuild passes its published digest)"
+        required: false
+        default: ""
 
 permissions: {}
 
 jobs:
   dogfood:
-    if: vars.WING_COMMANDER_PRIVATE_IMAGE_DOGFOOD_IMAGE != ''
+    if: vars.WING_COMMANDER_PRIVATE_IMAGE_DOGFOOD_IMAGE != '' || inputs.container-image != ''
     permissions:
       actions: read
       contents: read
     uses: ./.github/workflows/private-image-dogfood.yml
     with:
-      container-image: ${{ vars.WING_COMMANDER_PRIVATE_IMAGE_DOGFOOD_IMAGE }}
+      container-image: ${{ inputs.container-image || vars.WING_COMMANDER_PRIVATE_IMAGE_DOGFOOD_IMAGE }}
       startup-check: true
     secrets:
       container-registry-username: ${{ secrets.WING_COMMANDER_CONTAINER_REGISTRY_USERNAME }}
