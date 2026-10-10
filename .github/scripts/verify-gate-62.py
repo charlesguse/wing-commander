@@ -52,6 +52,7 @@ preflight check to name pyyaml and the lint check to name the lint tools.
 
 Usage: python3 .github/scripts/verify-gate-62.py [--self-test]
 """
+import copy
 import io
 import os
 import re
@@ -165,18 +166,19 @@ def check_tools(tag, tools):
     return missing, (proc.stdout + proc.stderr)
 
 
-def read_implement_subject(root="."):
+def read_implement_subject(root=".", wf=None):
     """-> (preflight scripts {step name: run text}, prompted commands, problems).
 
     Prompted commands are the suite interpreter the prompt's gate-suite
     paragraph names plus the lint tools its lint sentence names. Both are
     read from implement.yml itself, so the gate keeps no copy of the
-    preflight's prerequisite list or of the prompt's commands."""
+    preflight's prerequisite list or of the prompt's commands. `wf`, if
+    given, is an already-parsed implement.yml used in place of the file."""
     import yaml
     problems = []
-    path = os.path.join(root, IMPLEMENT_WORKFLOW)
-    with io.open(path, encoding="utf-8") as fh:
-        wf = yaml.safe_load(fh) or {}
+    if wf is None:
+        with io.open(os.path.join(root, IMPLEMENT_WORKFLOW), encoding="utf-8") as fh:
+            wf = yaml.safe_load(fh) or {}
     job = (wf.get("jobs") or {}).get(IMPLEMENT_JOB) or {}
     steps = job.get("steps") or []
     by_name = {(st or {}).get("name"): (st or {}) for st in steps}
@@ -260,6 +262,25 @@ sed 's/^/output:/' "$w/output"
 """
 
 
+def preflight_verdict(stdout):
+    """-> None when the driver's output shows the step exiting 0 with
+    ready=true, else a short description of what it showed instead. The
+    job has no continue-on-error on the preflight, so a non-zero exit fails
+    the real job even after it wrote ready=true."""
+    outputs, rc = {}, None
+    for line in stdout.splitlines():
+        if line.startswith("output:") and "=" in line:
+            k, v = line[len("output:"):].split("=", 1)
+            outputs[k] = v
+        elif line.startswith("rc:"):
+            rc = line[len("rc:"):].strip()
+    if rc == "0" and outputs.get("ready") == "true":
+        return None
+    missing = outputs.get("missing") or "(the step recorded no missing list)"
+    return (f"exit status {rc if rc is not None else '<unknown>'}, "
+            f"ready={outputs.get('ready', '<unset>')}, missing: {missing}")
+
+
 def check_preflight(tag, name, script):
     """-> failure message or None. Runs one implement.yml preflight step
     inside the built image and requires ready=true."""
@@ -269,16 +290,11 @@ def check_preflight(tag, name, script):
          "--entrypoint", "bash", tag, "-c", PREFLIGHT_DRIVER],
         capture_output=True, text=True,
     )
-    outputs = {}
-    for line in proc.stdout.splitlines():
-        if line.startswith("output:") and "=" in line:
-            k, v = line[len("output:"):].split("=", 1)
-            outputs[k] = v
-    if outputs.get("ready") == "true":
+    verdict = preflight_verdict(proc.stdout)
+    if verdict is None:
         return None
-    missing = outputs.get("missing") or "(the step recorded no missing list)"
     return (f"the reference image fails {IMPLEMENT_WORKFLOW}'s {name!r} step "
-            f"(ready={outputs.get('ready', '<unset>')}, missing: {missing}). "
+            f"({verdict}). "
             f"This repository's own implement jobs run in this image, so the "
             f"local gate suite would be skipped every cycle and no gate-run "
             f"task could be checked (#989). Install what is missing in "
@@ -357,7 +373,7 @@ def _drop_installs(root, packages):
     return absent
 
 
-def _static_self_test(root):
+def _static_self_test():
     """-> problems: each implement.yml drift read_implement_subject must report."""
     import yaml
     problems = []
@@ -392,16 +408,19 @@ def _static_self_test(root):
     if base:
         problems.append("static fixture base already has problems: " + "; ".join(base))
         return problems
+    for label, stdout, ok in (
+            ("a clean exit with ready=true", "rc:0\noutput:ready=true\noutput:missing=\n", True),
+            ("ready=true then a non-zero exit", "rc:1\noutput:ready=true\n", False),
+            ("no exit status recorded", "output:ready=true\n", False),
+            ("a clean exit with ready=false", "rc:0\noutput:ready=false\noutput:missing=pyyaml\n", False)):
+        if (preflight_verdict(stdout) is None) != ok:
+            problems.append(f"preflight_verdict misjudged {label}: {preflight_verdict(stdout)!r}")
+    with io.open(IMPLEMENT_WORKFLOW, encoding="utf-8") as fh:
+        parsed = yaml.safe_load(fh)
     for label, mutate, needle in cases:
-        d = os.path.join(root, "static")
-        shutil.rmtree(d, ignore_errors=True)
-        os.makedirs(os.path.dirname(os.path.join(d, IMPLEMENT_WORKFLOW)))
-        with io.open(IMPLEMENT_WORKFLOW, encoding="utf-8") as fh:
-            wf = yaml.safe_load(fh)
+        wf = copy.deepcopy(parsed)
         mutate(wf)
-        with io.open(os.path.join(d, IMPLEMENT_WORKFLOW), "w", encoding="utf-8") as fh:
-            yaml.safe_dump(wf, fh, allow_unicode=True, sort_keys=False)
-        _, _, got = read_implement_subject(d)
+        _, _, got = read_implement_subject(wf=wf)
         if not any(needle in g for g in got):
             problems.append(f"{label} was NOT reported (expected a problem naming "
                             f"{needle!r}); got: {got}")
@@ -434,7 +453,7 @@ def self_test():
     try:
         # (s) static drift in implement.yml, no image needed: each edit must
         # surface as a problem from read_implement_subject.
-        problems.extend(_static_self_test(root))
+        problems.extend(_static_self_test())
 
         # (a) the real Dockerfile, required-tools.txt and implement.yml, unmodified
         clean = os.path.join(root, "clean")
@@ -499,7 +518,7 @@ def main(argv):
         # image, so they still run here -- including where the skip itself
         # depends on implement.yml's opt-out.
         if "--self-test" in argv:
-            static = _static_self_test(tempfile.mkdtemp(prefix="verify_gate_62_"))
+            static = _static_self_test()
         else:
             static = read_implement_subject(".")[2]
         for p in static:

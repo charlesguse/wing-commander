@@ -1120,8 +1120,11 @@ know before you set either:
   exists solely so wing-commander's own scheduled `auto-release.yml`
   verification can dogfood the `container:` code path above end to end
   (specs/054-e2e-container-coverage). This repository's maintainers own it:
-  a change to `.github/scripts/required-tools.txt` is what triggers rebuilding
-  it, enforced at PR time by Gate 62 (`.github/scripts/verify-gate-62.py`,
+  a change to `.github/scripts/required-tools.txt` or to the Dockerfile
+  triggers rebuilding it, after which a maintainer repins the new digest
+  by hand wherever `WING_COMMANDER_CONTAINER_IMAGE` names it
+  ([docs/setup.md](setup.md)), this repository included. Its contents are
+  enforced at PR time by Gate 62 (`.github/scripts/verify-gate-62.py`,
   which builds the image and inspects it the same way the prerequisite check
   above inspects yours) and, at run time, by the same prerequisite check
   every adopter's own image already goes through. Bring your own image for

@@ -83,14 +83,14 @@ def expected_paragraph(leg, summary):
             "yourself once your own changes are in place.").format(leg, summary)
 
 
-def stub_bin(root, tools):
-    """A bin dir holding a stub for each name in `tools` that exits 0."""
-    d = os.path.join(root, "bin")
+def stub_bin(root, tools, name="bin", code=0):
+    """A bin dir `name` holding a stub for each name in `tools` that exits `code`."""
+    d = os.path.join(root, name)
     os.makedirs(d, exist_ok=True)
     for t in tools:
         p = os.path.join(d, t)
         with open(p, "w", newline="\n") as fh:
-            fh.write("#!/bin/sh\nexit 0\n")
+            fh.write("#!/bin/sh\nexit {0}\n".format(code))
         os.chmod(p, 0o755)
     return d
 
@@ -129,14 +129,9 @@ def run_preflight(script, with_suite, missing_actionlint=False, missing_pyyaml=F
         if missing_pyyaml:
             # python3 is a stub whose every import fails, as on an image
             # without pyyaml; jq and actionlint are present.
-            bindir = os.path.join(root, "only")
-            os.makedirs(bindir)
-            with open(os.path.join(bindir, "python3"), "w", newline="\n") as fh:
-                fh.write("#!/bin/sh\nexit 1\n")
-            os.chmod(os.path.join(bindir, "python3"), 0o755)
+            bindir = stub_bin(root, ["python3"], name="only", code=1)
             os.symlink(shutil.which("jq"), os.path.join(bindir, "jq"))
-            stub_bin(root, ["actionlint"])
-            path = bindir + os.pathsep + os.path.join(root, "bin")
+            path = bindir + os.pathsep + stub_bin(root, ["actionlint"])
             return run_step(BASH, script, work, {"PATH": path}, runner_temp,
                             path_prepend=path)
         bindir = stub_bin(root, ["actionlint"])
