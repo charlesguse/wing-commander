@@ -12,7 +12,13 @@
 mirrored onto the PR) has no effect on them.
 
 Bound: the shadow is enabled only while `today < SINCE + 60 days` and the count of
-compared shadow records since `SINCE` is `< 300`. Restart = set a new `SINCE`.
+compared shadow records since `SINCE` (by `emitted_at`; an undated record counts,
+and so does a comparator-error record, see trial-record.md) is `< 300`. Restart =
+set a new `SINCE`. The wrapper's `trial-bound` job reads the metrics branch, which
+receives watchdog records through metrics-persist's daily sweep (the watchdog is
+sweep-only), so "at most 300" holds to within the runs of the last day not yet
+swept. `wing-commander-trial-summary.yml` passes the same `SINCE`, so the summary
+covers the window the bound closes.
 
 ## Published contract (additive widening, Principle VII)
 
@@ -27,15 +33,25 @@ compared shadow records since `SINCE` is `< 300`. Restart = set a new `SINCE`.
 No input, output or secret is removed or renamed. `implement.yml`, `finalize.yml`,
 `cleanup.yml` change only the default of the existing `summary-model` input.
 `auto-update-spec-kit.yml` gains no input. New composites are internal to the
-pipeline checkout; `wing-commander-diagnose-agent`, `-trial-record`, `-trial-bound`
-are not part of the adopter-pinned surface until a release says so.
+pipeline checkout; `wing-commander-trial-record` and `-trial-bound` are not part of
+the adopter-pinned surface until a release says so. (The planned
+`wing-commander-diagnose-agent` composite was not built: no composite may invoke the
+agent action, Gate 38, so the shadow's prompt is pasted and held byte-equal to the
+Diagnose step's by Gate 146 -- research.md D7's fallback, recorded at tasks.md T005.)
 
 ## Shadow step guarantees (checked by `verify-diagnose-shadow-acts-on-nothing.py`)
 
-- Runs only when `inputs.diagnose-shadow-enabled`, after the acting path's
-  read-back and uploads.
-- `continue-on-error: true`, `timeout-minutes: 5`.
-- Allowlist is the diagnose read-only default; no `Write`/`Edit`; `GH_TOKEN` is
-  `github.token`.
-- Its outputs feed only the comparator and the trial-record upload; no job output of
-  the diagnose job depends on it.
+- Runs only when `inputs.diagnose-shadow-enabled`, as the diagnose job's tail:
+  after the acting path's read-back, uploads and reports.
+- Every shadow step is `continue-on-error: true`; the agent step has
+  `timeout-minutes: 5`, and with the Diagnose step's 10 stays under the job's
+  20-minute backstop.
+- Allowlist is fixed read-only and takes no consumer tool-list input: `Read`,
+  `Grep`, the git read wrapper and read-only `gh` subcommands only (not the
+  diagnose default's `Bash(gh:*)`, because `github.token` holds `issues: write` in
+  this stage); no `Write`/`Edit`; `GH_TOKEN` and `github_token` are `github.token`.
+- Its prompt and `--json-schema` are byte-equal to the Diagnose step's.
+- Its outputs feed only the comparator and the trial-record upload; no acting step
+  and no job output of the diagnose job reads it.
+- wing-commander-8b's diagnose-duration ceiling subtracts the shadow's steps, so a
+  slow shadow files nothing (SC-003).

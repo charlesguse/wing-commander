@@ -76,6 +76,61 @@ on:
 permissions: {}
 
 jobs:
+  # spec 110 (FR-012/FR-013, research.md D10): the diagnose shadow's
+  # switch and bound. WING_COMMANDER_DIAGNOSE_SHADOW_SINCE is the single
+  # switch; while it is unset this job is skipped, so a repository that
+  # never runs the trial pays no runner minute for it. When it is set,
+  # wing-commander-trial-bound reads the metrics branch and says whether
+  # the trial is still inside 60 days and 300 compared runs; the watchdog
+  # job below passes that on as diagnose-shadow-enabled, and reads false
+  # whenever this job was skipped or failed. Records reach the metrics
+  # branch through metrics-persist's daily sweep (the watchdog is
+  # sweep-only), so the count lags by up to a day of runs.
+  #
+  # Every step is continue-on-error: wing-commander-8b verifies this run
+  # and fails on any job whose conclusion is not success, so a trial-bound
+  # hiccup must leave the shadow off (an empty output reads as false
+  # below) rather than turn the inspection red.
+  trial-bound:
+    if: >-
+      vars.WING_COMMANDER_DIAGNOSE_SHADOW_SINCE != '' &&
+      vars.WING_COMMANDER_WATCHDOG_PAUSED != 'true' &&
+      github.event.workflow_run.conclusion != 'skipped'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      enabled: ${{ steps.bound.outputs.enabled }}
+    steps:
+      - name: Checkout the trial-bound composite
+        continue-on-error: true
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/actions
+
+      # A failed checkout (no metrics branch yet, or a fetch error) leaves
+      # records-path empty below, and the composite then fails closed: the
+      # 300-run cap cannot be checked, so the shadow stays off.
+      - name: Checkout the metrics branch
+        id: metrics
+        continue-on-error: true
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ vars.WING_COMMANDER_METRICS_BRANCH || 'metrics' }}
+          path: .wing-commander-metrics
+          persist-credentials: false
+
+      - name: Decide whether the diagnose shadow is inside its bound
+        id: bound
+        continue-on-error: true
+        uses: ./.github/actions/wing-commander-trial-bound
+        with:
+          since: ${{ vars.WING_COMMANDER_DIAGNOSE_SHADOW_SINCE }}
+          records-path: ${{ steps.metrics.outcome == 'success' && format('.wing-commander-metrics/{0}', vars.WING_COMMANDER_METRICS_PATH || 'records.jsonl') || '' }}
+
+
   # One job, with no resolve job in front of it. The run-id is a one-line
   # expression (the dispatch input, else the workflow_run payload) and the
   # run-name is resolved stage-side, so a wrapper job would exist only to
@@ -107,7 +162,14 @@ jobs:
     # skips. The rationale for gating at the wrapper -- see
     # wing-commander-metrics-persist.yml. Dispatch carries no workflow_run
     # payload; '' != 'skipped' keeps that path open.
+    #
+    # Third, spec 110: the job waits on trial-bound and runs whatever that
+    # job's result -- skipped (the trial is off), failed or successful --
+    # so !cancelled() replaces the implicit success() a skipped need would
+    # otherwise turn into a skipped watchdog.
+    needs: trial-bound
     if: >-
+      !cancelled() &&
       vars.WING_COMMANDER_WATCHDOG_PAUSED != 'true' &&
       github.event.workflow_run.conclusion != 'skipped'
     # Must be a superset of watchdog.yml's workflow-level `permissions:` —
@@ -140,6 +202,8 @@ jobs:
       run-name: ${{ github.event_name == 'workflow_run' && github.event.workflow.name || '' }}
       runner: ${{ vars.WING_COMMANDER_RUNNER || 'ubuntu-latest' }}
       container-image: ${{ vars.WING_COMMANDER_CONTAINER_IMAGE || '' }}
+      # spec 110: false unless trial-bound ran and said true.
+      diagnose-shadow-enabled: ${{ needs.trial-bound.outputs.enabled == 'true' }}
     secrets:
       claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}

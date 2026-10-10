@@ -5645,6 +5645,16 @@ jobs:
       - name: "Gate 145 self-test — a drifted budget, a haiku-before-opus order, a stray reader and a wrong escalation each fail"
         run: python3 .github/scripts/verify-implement-haiku-optin.py --self-test
 
+      # spec 110, FR-009/SC-003 and constitution II (2.4.0) — the watchdog's
+      # diagnose shadow acts on nothing: the diagnose job's continue-on-error
+      # tail, enable-gated, github.token only, read-only tools, bounded under
+      # the job backstop, its prompt byte-equal to Diagnose's, and read by no
+      # acting step or job output.
+      - name: "Gate 146 — the diagnose shadow acts on nothing"
+        run: python3 .github/scripts/verify-diagnose-shadow-acts-on-nothing.py
+      - name: "Gate 146 self-test — an App token, a write tool, an always() gate, a reordered step, a drifted prompt and a wrapper hard-on each fail"
+        run: python3 .github/scripts/verify-diagnose-shadow-acts-on-nothing.py --self-test
+
       # spec 053, SC-007 (Constitution VIII) — the E2E onboarding-element
       # list has exactly one home (.github/scripts/e2e-provisioning/), so a
       # future change cannot paste a second, independently-drifting copy of

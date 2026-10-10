@@ -307,6 +307,103 @@ PY
   fi
 fi
 
+# ── spec 110 (FR-011): the diagnose shadow's records are not the watchdog
+#    stage's turn history. TURN_BUDGET_RECORDS_FILTER is extracted from the
+#    live step like TURN_BUDGET_FILTER, fed a mixed record set, and must
+#    drop the shadow's record and keep every other; the durable-store read
+#    must actually apply it; and the REAL step, given only the shadow's
+#    metrics-record artifact (an over-budget 20 of 8 turns), must find no
+#    record of its own rather than report the shadow's budget as the
+#    watchdog's.
+RECORDS_FILTER="$(python3 - <<'PY'
+import sys
+sys.path.insert(0, ".github/scripts")
+from wc_shell_harness import extract_quoted_var
+print(extract_quoted_var(".github/workflows/watchdog.yml", "TURN_BUDGET_RECORDS_FILTER"))
+PY
+)"
+kept="$(jq -c "$RECORDS_FILTER" <<<'[{"run_label":"diagnose","stage":"watchdog"},{"run_label":"diagnose-shadow","stage":"watchdog"},{"stage":"implement"}]' 2>/dev/null | jq -r '[.[] | (.run_label // .stage)] | join(",")' 2>/dev/null)"
+if [ "$kept" != "diagnose,implement" ]; then
+  reason "spec 110: TURN_BUDGET_RECORDS_FILTER must drop only the diagnose-shadow record, kept '$kept'"
+else
+  note "TURN_BUDGET_RECORDS_FILTER drops the diagnose shadow's record and keeps the rest"
+fi
+if ! python3 - <<'PY'
+import sys
+sys.path.insert(0, ".github/scripts")
+from wc_shell_harness import find_step
+step = find_step(".github/workflows/watchdog.yml", "Collect: turn budget")["run"]
+sys.exit(0 if 'jq -cs "$TURN_BUDGET_RECORDS_FILTER"' in step else 1)
+PY
+then
+  reason "spec 110: collect-turn-budget no longer applies TURN_BUDGET_RECORDS_FILTER to the durable store's records"
+fi
+shadow_only_out="$(python3 - "$work/shadow-only" <<'PY'
+import json
+import os
+import subprocess
+import sys
+
+sys.path.insert(0, ".github/scripts")
+from wc_shell_harness import ensure_jq, find_step, resolve_bash, run_step
+
+work = sys.argv[1]
+os.makedirs(work)
+ensure_jq()
+bash = resolve_bash()
+remote = os.path.join(work, "remote.git")
+repo = os.path.join(work, "repo")
+subprocess.run(["git", "init", "--bare", "-q", "-b", "main", remote], check=True)
+subprocess.run(["git", "clone", "-q", remote, repo], check=True,
+               stderr=subprocess.DEVNULL)
+runner_temp = os.path.join(work, "runner_temp")
+shadow_dir = os.path.join(runner_temp, "metrics-record-shared",
+                          "metrics-record-diagnose-shadow")
+os.makedirs(shadow_dir)
+with open(os.path.join(shadow_dir,
+                       "wing-commander-metrics-record-diagnose-shadow.json"),
+          "w", encoding="utf-8") as fh:
+    json.dump({"schema_version": 1, "record_available": True,
+               "run": {"workflow_run_id": "999000333", "step_index": 1,
+                       "record_key": "999000333:diagnose:1"},
+               "stage": "watchdog", "stage_available": True,
+               "run_label": "diagnose-shadow",
+               "turns": {"counted": 20, "reported": 20, "intended_budget": 8,
+                         "enforced_ceiling": 20, "available": True}}, fh)
+for name in ("collector-outcomes.json", "signals.json"):
+    with open(os.path.join(runner_temp, name), "w", encoding="utf-8") as fh:
+        fh.write("[]")
+step_text = find_step(".github/workflows/watchdog.yml", "Collect: turn budget")["run"]
+env = {
+    "GH_TOKEN": "x", "ACTIONS_TOKEN": "x", "RUN_ID": "999000333",
+    "RUN_CONCLUSION": "success",
+    "METRICS_BRANCH": "metrics", "METRICS_PATH": "records.jsonl",
+    "HISTORY_WINDOW": "10", "CONSECUTIVE_TRIGGER": "3", "CLIMB_FRACTION": "0.6",
+    "PATH": os.environ["PATH"],
+}
+rc, out, _outputs, summary = run_step(bash, step_text, repo, env, runner_temp)
+with open(os.path.join(runner_temp, "signals.json"), encoding="utf-8") as fh:
+    signals = json.load(fh)
+reasons = []
+if rc != 0:
+    reasons.append(f"exited {rc}: {out.strip()[:400]}")
+if any(s.get("source") == "turn-budget" for s in signals):
+    reasons.append("the shadow's over-budget record became the watchdog's own turn-budget signal")
+if "no metrics record (durable store or artifact) found" not in summary:
+    reasons.append("the shadow's artifact was taken as the run's own record")
+if reasons:
+    for r in reasons:
+        print(f"FAIL: {r}")
+    sys.exit(1)
+print("PASS")
+PY
+)"
+if [ $? -ne 0 ]; then
+  reason "spec 110: collect-turn-budget read the diagnose shadow's metrics-record artifact as the run's own record — $shadow_only_out"
+else
+  note "collect-turn-budget skips the diagnose shadow's metrics-record artifact"
+fi
+
 if [ "${#fail_reasons[@]}" -eq 0 ]; then
   echo "✅ verify-turn-budget-collector: all assertions passed."
   exit 0

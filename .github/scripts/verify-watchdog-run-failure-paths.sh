@@ -628,6 +628,57 @@ JSON
   mv "$work/jobs.json.bak_cp" "$work/fixtures/jobs.json"
   mv "$work/history.json.bak_cp" "$work/fixtures/history.json"
   mv "$work/artifact.json.bak_cp" "$work/fixtures/artifact.json"
+
+  # s24 (spec 110): a 400s diagnose job, 300s of it the diagnose shadow's
+  # steps (offset step times, as the REST docs show them). The shadow runs
+  # last, acts on nothing and has its own 5-minute bound, so the acting
+  # diagnose's 300s stall ceiling is measured without it: healthy.
+  # s25: the same 400s job with no shadow step is a stalled acting
+  # diagnose, exactly as before spec 110.
+  cp "$work/fixtures/run.json" "$work/run.json.bak_sh"
+  cp "$work/fixtures/jobs.json" "$work/jobs.json.bak_sh"
+  cat > "$work/fixtures/run.json" <<'JSON'
+{"id": 9001, "conclusion": "success", "workflow_id": 777,
+ "run_started_at": "2026-08-25T01:00:00Z", "updated_at": "2026-08-25T01:08:00Z",
+ "display_title": "inspect Wing Commander · 1 intake run 8999 (failure)",
+ "html_url": "https://example.invalid/o/r/actions/runs/9001"}
+JSON
+  shadow_jobs() {
+    jq -n --arg shadow "$1" '{"total_count": 2, "jobs": [
+      {"id": 2, "name": "watchdog / diagnose", "conclusion": "success",
+       "started_at": "2026-08-25T01:00:40Z", "completed_at": "2026-08-25T01:07:20Z",
+       "steps": [
+         {"number": 15, "name": "Diagnose", "conclusion": "success",
+          "started_at": "2026-08-24T18:00:50.000-07:00", "completed_at": "2026-08-24T18:01:10.000-07:00"},
+         {"name": "Report \"diagnose failed\" to lifecycle issue", "conclusion": "skipped"},
+         {"name": "Read back diagnose outcome", "conclusion": "success"},
+         {"number": 30, "name": $shadow, "conclusion": "success",
+          "started_at": "2026-08-24T18:01:45.000-07:00", "completed_at": "2026-08-24T18:06:45.000-07:00"}
+       ]},
+      {"id": 3, "name": "watchdog / report-unhandled-failure", "conclusion": "success",
+       "started_at": "2026-08-25T01:07:25Z", "completed_at": "2026-08-25T01:07:35Z",
+       "steps": [
+         {"name": "Determine failed jobs", "conclusion": "success"},
+         {"name": "Report unhandled job failure", "conclusion": "skipped"},
+         {"name": "Report unhandled job failure to run summary", "conclusion": "skipped"}
+       ]}]}' > "$work/fixtures/jobs.json"
+  }
+  shadow_jobs "Diagnose shadow"
+  run_scenario "$script" '' false
+  if [ "$rc" = "0" ] && ! grep -q "the agent stalled" <<<"$out"; then
+    ok "$tag s24: 300s of diagnose-shadow steps do not count against the acting diagnose's ceiling"
+  else
+    fail "$tag s24: expected exit 0 with no stall, got rc=$rc: $(tail -3 <<<"$out")"
+  fi
+  shadow_jobs "Some other step"
+  run_scenario "$script" '' false
+  if [ "$rc" = "1" ] && grep -q "the diagnose job ran 400s" <<<"$out"; then
+    ok "$tag s25: a 400s diagnose job with no shadow step is still a stalled diagnose"
+  else
+    fail "$tag s25: expected exit 1 naming the 400s stall, got rc=$rc: $(tail -3 <<<"$out")"
+  fi
+  mv "$work/run.json.bak_sh" "$work/fixtures/run.json"
+  mv "$work/jobs.json.bak_sh" "$work/fixtures/jobs.json"
 }
 
 # ── The real script must pass every scenario ───────────────────────────────
@@ -746,11 +797,19 @@ sed 's/ or "")\.splitlines() \\$/ or "") \\/' \
 run_mutation "$mut" "m11" "s22" "a marker matched inside quoted log text is caught"
 
 # m12: the step times are read with bare fromdateiso8601 again, which
-# rejects an offset, so the failed-step pointer silently vanishes. s23
-# must catch it.
+# rejects an offset, so the failed-step pointer silently vanishes, and the
+# diagnose shadow's step durations (spec 110) stop being subtracted. s23
+# and s24 must catch it.
 sed 's/        | if test("\[+-\]\[0-9\]{2}:\[0-9\]{2}\$")$/        | if false/' \
   "$SCRIPT" > "$mut"
-run_mutation "$mut" "m12" "s23" "an offset step time losing the failed-step pointer is caught"
+run_mutation "$mut" "m12" "s23 s24" "an offset step time losing the failed-step pointer, or the shadow's duration, is caught"
 
-echo "Gate 36: 23 scenario(s) x 12 runs + 11 mutation(s); $bad failure(s)."
+# m13 (spec 110): the diagnose duration ceiling counts the diagnose
+# shadow's steps again, so a slow shadow files a stalled-diagnose defect
+# against an acting path it never touched. s24 must catch it.
+sed 's/select((.name \/\/ "") | test("diagnose\[ -\]shadow"; "i"))/select(false)/' \
+  "$SCRIPT" > "$mut"
+run_mutation "$mut" "m13" "s24" "counting the diagnose shadow against the acting ceiling is caught"
+
+echo "Gate 36: 25 scenario(s) x 13 runs + 12 mutation(s); $bad failure(s)."
 exit $([ "$bad" -eq 0 ] && echo 0 || echo 1)

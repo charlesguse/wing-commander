@@ -105,6 +105,17 @@ rate_limited=false
 # the floor was scaled from.
 diagnose_conclusion="$(jq -r '[.jobs[] | select(.name == "diagnose" or (.name | endswith("/ diagnose"))) | .conclusion] | first // empty' <<<"$jobs_json")"
 
+# epoch: an ISO-8601 time in any shape the API emits - whole seconds and
+# Z as observed, or fractional seconds and a +/-HH:MM offset as the REST
+# docs show (step times) - since bare fromdateiso8601 accepts only the
+# first and, on anything else, errors the whole program. One home for the
+# failed-step pointer below and the diagnose duration ceiling.
+JQ_EPOCH='def epoch: sub("\\.[0-9]+"; "")
+        | if test("[+-][0-9]{2}:[0-9]{2}$")
+          then .[-6:] as $o | (.[:-6] + "Z" | fromdateiso8601)
+               - (($o[0:1] + "1" | tonumber) * (($o[1:3] | tonumber) * 3600 + ($o[4:6] | tonumber) * 60))
+          else fromdateiso8601 end;'
+
 # ── Check 2: runtime anomaly vs. this workflow's own successful history ────
 # Median of the last 20 successful runs (excluding this one). Bounds are
 # deliberately loose — this gates issue creation, and a run with real
@@ -187,9 +198,18 @@ if [ "$diagnose_conclusion" = "skipped" ]; then
     reason "diagnose was skipped but neither of collect's reporters ran — the run decided something and recorded nothing"
   fi
 else
-  d_secs="$(jq -r '[.jobs[] | select(.name == "diagnose" or (.name | endswith("/ diagnose")))
+  # The diagnose shadow (spec 110) runs last in this job under its own
+  # 5-minute bound and acts on nothing, so its steps -- every one named
+  # "diagnose shadow"/"diagnose-shadow", which Gate 146 holds -- are
+  # not file anything (SC-003). A step time JQ_EPOCH cannot read subtracts
+  # nothing, so the acting bound is never lost to it.
+  d_secs="$(jq -r "$JQ_EPOCH"'
+    [.jobs[] | select(.name == "diagnose" or (.name | endswith("/ diagnose")))
     | select(.started_at != null and .completed_at != null)
-    | ((.completed_at | fromdateiso8601) - (.started_at | fromdateiso8601))] | first // empty' <<<"$jobs_json")"
+    | ((.completed_at | fromdateiso8601) - (.started_at | fromdateiso8601))
+      - ([(.steps // [])[] | select((.name // "") | test("diagnose[ -]shadow"; "i"))
+          | (try ((.completed_at | epoch) - (.started_at | epoch)) catch 0)] | add // 0)
+    ] | first // empty' <<<"$jobs_json")"
   if [ -n "$d_secs" ] && [ "$d_secs" -gt 300 ]; then
     reason "the diagnose job ran ${d_secs}s (normal is under 75s; hard ceiling 300s) — the agent stalled"
   fi
@@ -332,18 +352,9 @@ if [ "${CREATE_ISSUE:-false}" = "true" ]; then
   failed_step="$(jq -r "$diag"' [diag | .steps[]? | select(.conclusion == "failure")
     | "\(.number)|\(.name)"] | first // empty' <<<"$jobs_json")"
   step_how="its jobs-API conclusion is failure"
-  # epoch: an ISO-8601 time in any shape the API emits - whole seconds and
-  # Z as observed, or fractional seconds and a +/-HH:MM offset as the REST
-  # docs show - since bare fromdateiso8601 accepts only the first and, on
-  # anything else, errors the whole program into "no step". A step whose
-  # times still cannot be read is skipped on its own.
+  # A step whose times cannot be read (see JQ_EPOCH) is skipped on its own.
   if [ -z "$failed_step" ] && [ -n "$first_error" ]; then
-    failed_step="$(jq -r --arg ts "${first_error%% *}" "$diag"'
-      def epoch: sub("\\.[0-9]+"; "")
-        | if test("[+-][0-9]{2}:[0-9]{2}$")
-          then .[-6:] as $o | (.[:-6] + "Z" | fromdateiso8601)
-               - (($o[0:1] + "1" | tonumber) * (($o[1:3] | tonumber) * 3600 + ($o[4:6] | tonumber) * 60))
-          else fromdateiso8601 end;
+    failed_step="$(jq -r --arg ts "${first_error%% *}" "$diag$JQ_EPOCH"'
       ($ts | epoch) as $t
       | [diag | .steps[]? | select(.started_at != null and .completed_at != null)
          | select(try ((.started_at | epoch) <= $t and (.completed_at | epoch) >= $t) catch false)
