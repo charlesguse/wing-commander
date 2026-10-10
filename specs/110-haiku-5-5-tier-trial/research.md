@@ -159,8 +159,8 @@ on one side only and shared keys whose class differs. Fixtures cover each outcom
 repository until the owner sets it; FR-016 does not forbid enabling it). A
 deterministic composite `wing-commander-trial-bound` runs in the wrapper
 (`wing-commander-8-watchdog.yml` and `-8b-`), reads the metrics branch's
-`records.jsonl`, counts records with `run.run_label == "diagnose-shadow"`,
-`trial.outcome` not in `{error, no-baseline}` and `started_at >= SINCE`, and outputs
+`records.jsonl`, counts records with top-level `run_label == "diagnose-shadow"`,
+`trial.outcome` not in `{error, no-baseline}` and `emitted_at >= SINCE`, and outputs
 `enabled = SINCE set && today < SINCE + 60d && compared < 300`. The wrapper passes it
 as new `watchdog.yml` input `diagnose-shadow-enabled` (boolean, default false). The
 stage reads no `vars.*` for it (VII; watchdog.yml's existing documented `vars.*`

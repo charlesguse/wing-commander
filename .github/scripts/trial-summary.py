@@ -17,10 +17,17 @@ Model identity is always the record's top-level `model`; a claude-haiku-5-5
 `per_model` entry on another model's record is Claude Code's helper and is
 never counted. See specs/110-haiku-5-5-tier-trial/research.md D12.
 
-Usage: trial-summary.py --records records.jsonl
-Exit 2 for a missing or unparseable records file.
+With --since (the WING_COMMANDER_DIAGNOSE_SHADOW_SINCE date), the diagnose
+section counts only records in the trial window trial-bound.py counts: dated
+on or after SINCE, an undated record counting as inside it. A restarted
+trial is then summarised over its own window, the one its bound closes.
+verify-trial-summary.py holds the two scripts to the same count.
+
+Usage: trial-summary.py --records records.jsonl [--since YYYY-MM-DD]
+Exit 2 for a missing or unparseable records file or SINCE.
 """
 import argparse
+import datetime
 import json
 import statistics
 import sys
@@ -76,7 +83,19 @@ def pct(num, den):
     return f"{100 * num / den:.1f}%" if den else "n/a"
 
 
-def diagnose_section(records):
+def in_window(rec, since):
+    """trial-bound.py's window: on or after SINCE; undated counts inside."""
+    if since is None:
+        return True
+    stamp = rec.get("started_at") or rec.get("emitted_at")
+    try:
+        return datetime.date.fromisoformat(stamp.strip()[:10]) >= since
+    except (AttributeError, TypeError, ValueError):
+        return True
+
+
+def diagnose_section(records, since=None):
+    records = [r for r in records if in_window(r, since)]
     shadow = [r for r in records if label(r) == "diagnose-shadow"
               and isinstance(r.get("trial"), dict)]
     opus = [r for r in records if label(r) == "diagnose"]
@@ -98,7 +117,14 @@ def diagnose_section(records):
     shared = sum(r["trial"].get("class_shared") or 0 for r in judged)
     cagree = sum(r["trial"].get("class_agree") or 0 for r in judged)
     failed = sum(counts.get(o, 0) for o in FAILED)
+    # A comparator crash is this pipeline's defect, not infrastructure:
+    # named on its own so it is never mistaken for a 429 (trial-record).
+    comparator_errors = sum(1 for r in shadow
+                            if r["trial"].get("error_source") == "comparator")
+    window = (f"since {since.isoformat()}" if since is not None
+              else "all records")
     lines = ["## Diagnose shadow", "",
+             f"- Window: {window}",
              f"- Shadow runs with a trial record: {len(shadow)}",
              f"- Compared runs (error and no-baseline excluded): {n}",
              f"- Outcomes: {outcomes}",
@@ -111,7 +137,8 @@ def diagnose_section(records):
              f"refused={counts.get('refused', 0)}, "
              f"exhausted={counts.get('exhausted', 0)}, "
              f"malformed={counts.get('malformed', 0)}",
-             f"- Errors (reported separately): {counts.get('error', 0)}; "
+             f"- Errors (reported separately): {counts.get('error', 0)}, of "
+             f"which comparator errors: {comparator_errors}; "
              f"no-baseline: {counts.get('no-baseline', 0)}",
              "",
              "| Model | Runs | Median turns | Median cost |",
@@ -191,10 +218,18 @@ def implement_section(records):
 def main(argv):
     p = argparse.ArgumentParser()
     p.add_argument("--records", required=True)
+    p.add_argument("--since", default="")
     args = p.parse_args(argv)
+    since = None
+    if args.since.strip():
+        try:
+            since = datetime.date.fromisoformat(args.since.strip()[:10])
+        except ValueError as exc:
+            print(f"trial-summary: unreadable --since: {exc}", file=sys.stderr)
+            return 2
     records = load(args.records)
     out = ["# Haiku 5.5 trial summary", ""]
-    out += diagnose_section(records) + [""] + implement_section(records)
+    out += diagnose_section(records, since) + [""] + implement_section(records)
     print("\n".join(out))
     return 0
 

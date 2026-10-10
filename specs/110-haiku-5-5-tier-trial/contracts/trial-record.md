@@ -9,8 +9,10 @@ Extends `specs/043-durable-metrics-record/contracts/metrics-record-schema.md`
    `wing-commander-metrics-summary` with `run-label: diagnose-shadow`; the
    `per_model` sum invariant holds; `outcome` keeps its agent-verdict values.
 2. It has its own `run.record_key` (its own job step index / artifact) and
-   `run.run_label == "diagnose-shadow"`, so readers filtering on `run_label ==
-   "diagnose"` (the turn-budget trend collector) never count it.
+   top-level `run_label == "diagnose-shadow"` (the metrics record carries
+   `run_label` at the top level, not under `run`), so readers of the acting
+   diagnose's record never count it: the turn-budget trend collector drops
+   `run_label == "diagnose-shadow"` records and the shadow's artifact.
 3. Added top-level fields: `trial` (object below) and, on every record,
    `refusal` (bool; true iff the terminal result carries `stop_reason: "refusal"`,
    false otherwise, absent on records written before this change and read as false).
@@ -36,6 +38,19 @@ Extends `specs/043-durable-metrics-record/contracts/metrics-record-schema.md`
 }
 ```
 
+`candidate_model` is the record's own top-level `model` (the
+`diagnose-shadow-model` input), passed to the comparator by
+`wing-commander-trial-record`.
+
+**Comparator failure.** When the comparator itself exits non-zero,
+`wing-commander-trial-record` still writes a `trial` object: `outcome:
+"error"`, the baseline verdict it was given, and the additive field
+`error_source: "comparator"`. Such a run is still not a compared run for the
+FR-017 bar, but it marks a defect in this pipeline rather than
+infrastructure, so `trial-bound.py` counts it toward the 300-run cap (a
+broken comparator cannot keep the shadow spending for the whole window) and
+`trial-summary.py` reports it on its own line.
+
 `outcome` evaluation order (first match wins): `no-baseline` (baseline verdict not
 `healthy`) → `refused` → `exhausted` → `error` (failed / rate-limited / unavailable /
 unclassifiable shadow) → `malformed` (result fails the diagnose schema) →
@@ -43,6 +58,6 @@ unclassifiable shadow) → `malformed` (result fails the diagnose schema) →
 
 ## Comparator CLI
 
-`python3 -I .github/scripts/compare-diagnose-shadow.py --baseline-findings F --baseline-verdict V --shadow-findings F --shadow-verdict V --shadow-refusal true|false --schema S` prints the `trial` object
+`python3 -I .github/actions/_shared/compare-diagnose-shadow.py --baseline-findings F --baseline-verdict V --shadow-findings F --shadow-verdict V --shadow-refusal true|false --schema S [--candidate-model M]` prints the `trial` object
 as JSON; exit 0 always for a classifiable input, exit 2 for unreadable arguments
 (loud failure, Principle VIII).

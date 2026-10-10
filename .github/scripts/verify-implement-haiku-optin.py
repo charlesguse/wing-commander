@@ -4,8 +4,11 @@
 1. wing-commander-5-implement.yml's literal `max_turns=180` equals
    implement.yml's `max-turns` input default, so a non-Haiku cycle keeps the
    budget it has today.
-2. In that wrapper the `model:opus` branch precedes the `model:haiku` branch
-   (model:opus wins), and the Haiku branch escalates to claude-sonnet-5-5.
+2. In that wrapper the `model:opus` test is the `if` and the `model:haiku`
+   test its very next `elif` (model:opus wins), and the Haiku branch itself
+   escalates to claude-sonnet-5-5. Read from the executable lines only, in
+   order: a comment that quotes either test cannot satisfy it (review gate
+   rounds 4-5: a whole-file str.find could).
 3. Only that wrapper reads the label: pr-conversation and the board loop
    never mention `model:haiku`.
 
@@ -39,13 +42,7 @@ def check(texts):
     elif lit.group(1) != default.group(1):
         failures.append(f"wrapper max_turns={lit.group(1)} != implement.yml "
                         f"max-turns default {default.group(1)}")
-    opus = wrapper.find("grep -qx 'model:opus'")
-    haiku = wrapper.find("grep -qx 'model:haiku'")
-    if opus < 0 or haiku < 0 or opus > haiku:
-        failures.append("model:opus must be tested before model:haiku in "
-                        f"{WRAPPER}")
-    if 'escalation="claude-sonnet-5-5"' not in wrapper:
-        failures.append("the Haiku branch must escalate to claude-sonnet-5-5")
+    failures += branch_failures(wrapper)
     for rel in OTHERS:
         if rel not in texts:
             failures.append(f"{rel} missing; the confinement check cannot run")
@@ -54,10 +51,45 @@ def check(texts):
     return failures
 
 
+OPUS_IF = re.compile(r"^if grep -qx 'model:opus'")
+HAIKU_ELIF = re.compile(r"^elif grep -qx 'model:haiku'")
+BRANCH = re.compile(r"^(elif|else|fi)\b")
+
+
+def branch_failures(wrapper):
+    """model:opus is the if, model:haiku its next elif, and the Haiku branch
+    (up to its own next elif/else/fi) sets the Sonnet escalation."""
+    lines = [ln.strip() for ln in wrapper.splitlines()]
+    lines = [ln for ln in lines if ln and not ln.startswith("#")]
+    at = next((i for i, ln in enumerate(lines) if OPUS_IF.match(ln)), None)
+    if at is None:
+        return [f"{WRAPPER} has no `if grep -qx 'model:opus'` test"]
+    nxt = next((i for i in range(at + 1, len(lines))
+                if BRANCH.match(lines[i])), None)
+    if nxt is None or not HAIKU_ELIF.match(lines[nxt]):
+        return ["model:opus must be tested first and model:haiku in its very "
+                f"next elif in {WRAPPER}, so model:opus wins"]
+    end = next((i for i in range(nxt + 1, len(lines))
+                if BRANCH.match(lines[i])), len(lines))
+    if 'escalation="claude-sonnet-5-5"' not in lines[nxt + 1:end]:
+        return ["the Haiku branch must escalate to claude-sonnet-5-5"]
+    return []
+
+
 GOOD_WRAPPER = """max_turns=180
-if grep -qx 'model:opus'; then x
-elif grep -qx 'model:haiku'; then
-escalation="claude-sonnet-5-5"
+if grep -qx 'model:opus' <<< "$labels"; then
+  tier="claude-opus-5-5"
+elif grep -qx 'model:haiku' <<< "$labels"; then
+  escalation="claude-sonnet-5-5"
+fi
+"""
+SWAPPED = """max_turns=180
+# if grep -qx 'model:opus' runs first, model:opus wins
+if grep -qx 'model:haiku' <<< "$labels"; then
+  escalation="claude-sonnet-5-5"
+elif grep -qx 'model:opus' <<< "$labels"; then
+  tier="claude-opus-5-5"
+fi
 """
 GOOD_STAGE = "      max-turns:\n        type: number\n        default: 180\n"
 
@@ -74,6 +106,13 @@ def self_test():
         dict(base, **{OTHERS[2]: "model:haiku\n"}),
         {k: v for k, v in base.items() if k != OTHERS[1]},
         dict(base, **{WRAPPER: GOOD_WRAPPER.replace("sonnet", "opus")}),
+        # a comment quoting the opus test above swapped branches
+        dict(base, **{WRAPPER: SWAPPED}),
+        # the Sonnet escalation set in the opus branch, not the Haiku one
+        dict(base, **{WRAPPER: GOOD_WRAPPER.replace(
+            '  tier="claude-opus-5-5"', '  escalation="claude-sonnet-5-5"')
+            .replace('then\n  escalation="claude-sonnet-5-5"\nfi',
+                     'then\n  tier="claude-haiku-5-5"\nfi')}),
     ]
     for i, texts in enumerate(bad):
         if not check(texts):

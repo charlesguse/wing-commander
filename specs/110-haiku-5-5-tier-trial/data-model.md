@@ -16,8 +16,10 @@ Additive top-level field on a `schema_version` 1 record; see
 | `class_shared` / `class_agree` | int \| null | findings sharing a signal-id set / those with equal class |
 | `differing_fields` | string[] | finding keys on one side only; shared keys whose class differs |
 
-Related top-level record fields: `run.run_label = "diagnose-shadow"`, own
+Related record fields: top-level `run_label = "diagnose-shadow"`, own
 `run.record_key`; `refusal` (bool, additive, set by `wing-commander-metrics-summary`).
+A comparator failure is an `error` trial carrying `error_source: "comparator"`
+(see contracts/trial-record.md); it counts toward the trial cap.
 
 **Compared run**: `outcome ∉ {error, no-baseline}`. `refused`, `exhausted`,
 `malformed` are compared runs and count as not agreeing under criterion (a).

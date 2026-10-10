@@ -4,17 +4,35 @@
 Builds a records.jsonl per case and checks the summary's verdict line:
 meets, misses, sample too small, no-baseline runs excluded from the sample,
 and a Sonnet implement record carrying a claude-haiku-5-5 per_model helper
-entry NOT being counted as a Haiku lifecycle.
+entry NOT being counted as a Haiku lifecycle. Also (review gate rounds 4-5):
+
+* --since windows the diagnose section exactly as trial-bound.py windows
+  its cap -- the same mixed record set gives the same compared count from
+  both scripts, so a restarted trial is summarised over the window its
+  bound closes;
+* a comparator error is reported on its own line;
+* wing-commander-trial-summary.yml and wing-commander-8-watchdog.yml read
+  the metrics branch and path with the same defaults
+  wing-commander-metrics-persist.yml writes them with, and the summary
+  wrapper passes the trial's SINCE.
 
 Usage: verify-trial-summary.py
 """
+import importlib.util
 import json
+import re
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
-SCRIPT = Path(__file__).resolve().parent / "trial-summary.py"
+HERE = Path(__file__).resolve().parent
+SCRIPT = HERE / "trial-summary.py"
+BOUND = HERE.parent / "actions" / "_shared" / "trial-bound.py"
+WORKFLOWS = HERE.parent / "workflows"
+PERSIST = WORKFLOWS / "wing-commander-metrics-persist.yml"
+READERS = (WORKFLOWS / "wing-commander-trial-summary.yml",
+           WORKFLOWS / "wing-commander-8-watchdog.yml")
 
 
 def shadow(outcome, agree=True):
@@ -30,6 +48,21 @@ def sonnet_with_helper():
             "per_model": [{"model": "claude-haiku-5-5"}]}
 
 
+def dated(rec, day):
+    return dict(rec, emitted_at=f"{day}T00:00:00Z")
+
+
+# A restarted trial: 50 agreed runs in an earlier window, 30 in this one,
+# 5 undated (counted inside, as trial-bound counts them), and one
+# comparator error (counted toward the cap, reported on its own line).
+WINDOW = ([dated(shadow("agreed"), "2026-08-01")] * 50
+          + [dated(shadow("agreed"), "2026-10-05")] * 30
+          + [shadow("agreed")] * 5
+          + [dated({"run_label": "diagnose-shadow",
+                    "trial": {"outcome": "error",
+                              "error_source": "comparator"}},
+                   "2026-10-06")])
+
 CASES = {
     "meets": ([shadow("agreed")] * 200, "**Diagnose bar (200 compared runs): meets**", None),
     "misses": ([shadow("agreed")] * 180 + [shadow("disagreed", False)] * 20,
@@ -41,9 +74,70 @@ CASES = {
 }
 
 
+def load_bound():
+    spec = importlib.util.spec_from_file_location("trial_bound", BOUND)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def check_window(tmp, failures):
+    path = Path(tmp) / "window.jsonl"
+    path.write_text("\n".join(json.dumps(r) for r in WINDOW) + "\n",
+                    encoding="utf-8")
+    proc = subprocess.run([sys.executable, "-I", str(SCRIPT), "--records",
+                           str(path), "--since", "2026-10-01"],
+                          capture_output=True, text=True, check=False)
+    m = re.search(r"Compared runs \(error and no-baseline excluded\): (\d+)",
+                  proc.stdout)
+    summary_n = int(m.group(1)) if m else None
+    if summary_n != 35:
+        failures.append(f"window: --since 2026-10-01 must count the 35 "
+                        f"in-window compared runs, got {summary_n} "
+                        f"(rc={proc.returncode}) {proc.stderr[:200]}")
+    import datetime
+    bound_n = load_bound().compared_count(str(path),
+                                          datetime.date(2026, 10, 1))
+    # trial-bound also counts the comparator error toward its cap.
+    if summary_n is not None and bound_n != summary_n + 1:
+        failures.append(f"window: trial-summary counts {summary_n} compared "
+                        f"runs but trial-bound counts {bound_n} (expected "
+                        "summary + 1 comparator error): the two windows "
+                        "have drifted")
+    if "of which comparator errors: 1" not in proc.stdout:
+        failures.append("window: a comparator error must be reported on its "
+                        "own line")
+
+
+def check_wrappers(failures):
+    text = PERSIST.read_text(encoding="utf-8")
+    want = {var: set(re.findall(r"vars\." + var + r" \|\| '([^']*)'", text))
+            for var in ("WING_COMMANDER_METRICS_BRANCH",
+                        "WING_COMMANDER_METRICS_PATH")}
+    for var, defaults in want.items():
+        if len(defaults) != 1:
+            failures.append(f"{PERSIST.name}: expected one default for "
+                            f"{var}, found {sorted(defaults)}")
+    for reader in READERS:
+        rtext = reader.read_text(encoding="utf-8")
+        for var, defaults in want.items():
+            got = set(re.findall(r"vars\." + var + r" \|\| '([^']*)'", rtext))
+            if not got or got != defaults:
+                failures.append(f"{reader.name}: {var} defaults {sorted(got)} "
+                                f"differ from {PERSIST.name}'s "
+                                f"{sorted(defaults)}")
+    summary = READERS[0].read_text(encoding="utf-8")
+    if "vars.WING_COMMANDER_DIAGNOSE_SHADOW_SINCE" not in summary \
+            or "--since" not in summary:
+        failures.append(f"{READERS[0].name} must pass the trial's SINCE to "
+                        "trial-summary.py --since")
+
+
 def main():
     failures = []
+    check_wrappers(failures)
     with tempfile.TemporaryDirectory() as tmp:
+        check_window(tmp, failures)
         for name, (records, verdict, extra) in sorted(CASES.items()):
             path = Path(tmp) / f"{name}.jsonl"
             path.write_text("\n".join(json.dumps(r) for r in records) + "\n",

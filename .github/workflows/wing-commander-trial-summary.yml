@@ -28,8 +28,13 @@ jobs:
           path: metrics-branch
           persist-credentials: false
 
+      # SINCE windows the diagnose section to the trial window
+      # wing-commander-trial-bound caps, so a restarted trial is summarised
+      # over its own runs; unset, every record counts. The branch and path
+      # defaults match wing-commander-metrics-persist.yml's (Gate 144).
       - name: Write the trial summary
         shell: bash
         env:
           RECORDS_PATH: metrics-branch/${{ vars.WING_COMMANDER_METRICS_PATH || 'records.jsonl' }}
-        run: python3 -I .github/scripts/trial-summary.py --records "$RECORDS_PATH" >> "$GITHUB_STEP_SUMMARY"
+          SINCE: ${{ vars.WING_COMMANDER_DIAGNOSE_SHADOW_SINCE }}
+        run: python3 -I .github/scripts/trial-summary.py --records "$RECORDS_PATH" --since "$SINCE" >> "$GITHUB_STEP_SUMMARY"

@@ -1,40 +1,209 @@
 {
   "agreed": {
-    "baseline_verdict": "healthy", "shadow_verdict": "healthy", "refusal": "false",
-    "baseline": {"findings": [{"class": "pipeline-defect", "evidence": [{"signalId": "s1"}]}]},
-    "shadow": {"findings": [{"class": "pipeline-defect", "evidence": [{"signalId": "s1"}]}]},
+    "baseline_verdict": "healthy",
+    "shadow_verdict": "healthy",
+    "refusal": "false",
+    "baseline": {
+      "findings": [
+        {
+          "class": "pipeline-defect",
+          "evidence": [
+            {
+              "signalId": "s1"
+            }
+          ]
+        }
+      ]
+    },
+    "shadow": {
+      "findings": [
+        {
+          "class": "pipeline-defect",
+          "evidence": [
+            {
+              "signalId": "s1"
+            }
+          ]
+        }
+      ]
+    },
     "expect": "agreed"
   },
   "disagreed": {
-    "baseline_verdict": "healthy", "shadow_verdict": "healthy", "refusal": "false",
-    "baseline": {"findings": [{"class": "pipeline-defect", "evidence": [{"signalId": "s1"}]}]},
-    "shadow": {"findings": [{"class": "denied-tool", "evidence": [{"signalId": "s1"}]}]},
+    "baseline_verdict": "healthy",
+    "shadow_verdict": "healthy",
+    "refusal": "false",
+    "baseline": {
+      "findings": [
+        {
+          "class": "pipeline-defect",
+          "evidence": [
+            {
+              "signalId": "s1"
+            }
+          ]
+        }
+      ]
+    },
+    "shadow": {
+      "findings": [
+        {
+          "class": "denied-tool",
+          "evidence": [
+            {
+              "signalId": "s1"
+            }
+          ]
+        }
+      ]
+    },
     "expect": "disagreed"
   },
   "exhausted": {
-    "baseline_verdict": "healthy", "shadow_verdict": "exhausted", "refusal": "false",
-    "baseline": {"findings": []}, "shadow": {"findings": []},
+    "baseline_verdict": "healthy",
+    "shadow_verdict": "exhausted",
+    "refusal": "false",
+    "baseline": {
+      "findings": []
+    },
+    "shadow": {
+      "findings": []
+    },
     "expect": "exhausted"
   },
   "malformed": {
-    "baseline_verdict": "healthy", "shadow_verdict": "healthy", "refusal": "false",
-    "baseline": {"findings": []},
-    "shadow": {"findings": [{"class": "not-a-class", "evidence": []}]},
+    "baseline_verdict": "healthy",
+    "shadow_verdict": "healthy",
+    "refusal": "false",
+    "baseline": {
+      "findings": []
+    },
+    "shadow": {
+      "findings": [
+        {
+          "class": "not-a-class",
+          "evidence": []
+        }
+      ]
+    },
     "expect": "malformed"
   },
   "error": {
-    "baseline_verdict": "healthy", "shadow_verdict": "rate-limited", "refusal": "false",
-    "baseline": {"findings": []}, "shadow": {"findings": []},
+    "baseline_verdict": "healthy",
+    "shadow_verdict": "rate-limited",
+    "refusal": "false",
+    "baseline": {
+      "findings": []
+    },
+    "shadow": {
+      "findings": []
+    },
     "expect": "error"
   },
   "refused": {
-    "baseline_verdict": "healthy", "shadow_verdict": "healthy", "refusal": "true",
-    "baseline": {"findings": []}, "shadow": {"findings": []},
+    "baseline_verdict": "healthy",
+    "shadow_verdict": "healthy",
+    "refusal": "true",
+    "baseline": {
+      "findings": []
+    },
+    "shadow": {
+      "findings": []
+    },
     "expect": "refused"
   },
   "no-baseline": {
-    "baseline_verdict": "exhausted", "shadow_verdict": "healthy", "refusal": "false",
-    "baseline": {"findings": []}, "shadow": {"findings": []},
+    "baseline_verdict": "exhausted",
+    "shadow_verdict": "healthy",
+    "refusal": "false",
+    "baseline": {
+      "findings": []
+    },
+    "shadow": {
+      "findings": []
+    },
     "expect": "no-baseline"
+  },
+  "new-class-against-resolved-baseline": {
+    "baseline_verdict": "healthy",
+    "shadow_verdict": "healthy",
+    "refusal": "false",
+    "baseline": [
+      {
+        "class": "flaky-runner",
+        "proposedClass": "Flaky Runner",
+        "newClass": true,
+        "index": 0,
+        "evidence": [
+          {
+            "signalId": "s2"
+          }
+        ]
+      }
+    ],
+    "shadow": {
+      "findings": [
+        {
+          "class": "__new__",
+          "proposedClass": "flaky runner",
+          "evidence": [
+            {
+              "signalId": "s2"
+            }
+          ]
+        }
+      ]
+    },
+    "expect": "agreed"
+  },
+  "new-class-without-proposal": {
+    "baseline_verdict": "healthy",
+    "shadow_verdict": "healthy",
+    "refusal": "false",
+    "baseline": [],
+    "shadow": {
+      "findings": [
+        {
+          "class": "__new__",
+          "evidence": [
+            {
+              "signalId": "s2"
+            }
+          ]
+        }
+      ]
+    },
+    "expect": "malformed"
+  },
+  "unhashable-baseline-class": {
+    "baseline_verdict": "healthy",
+    "shadow_verdict": "healthy",
+    "refusal": "false",
+    "baseline": [
+      {
+        "class": [
+          "pipeline-defect"
+        ],
+        "evidence": [
+          {
+            "signalId": "s1"
+          }
+        ]
+      }
+    ],
+    "shadow": {
+      "findings": []
+    },
+    "expect": "no-baseline"
+  },
+  "both-empty": {
+    "baseline_verdict": "healthy",
+    "shadow_verdict": "healthy",
+    "refusal": "false",
+    "baseline": [],
+    "shadow": {
+      "findings": []
+    },
+    "expect": "agreed"
   }
 }

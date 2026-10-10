@@ -7,7 +7,7 @@ Deterministic (Principle IX): no model call decides agreement.
 Usage:
   compare-diagnose-shadow.py --baseline-findings F --baseline-verdict V
       --shadow-findings F --shadow-verdict V --shadow-refusal true|false
-      --schema S
+      --schema S [--candidate-model M]
 
 Exit 0 for any classifiable input; exit 2 for unreadable arguments.
 """
@@ -177,6 +177,7 @@ def main(argv):
     for name in ("baseline-findings", "baseline-verdict", "shadow-findings",
                  "shadow-verdict", "shadow-refusal", "schema"):
         p.add_argument("--" + name, required=True)
+    p.add_argument("--candidate-model", default=CANDIDATE)
     try:
         args = p.parse_args(argv)
     except SystemExit:
@@ -184,7 +185,9 @@ def main(argv):
     if args.shadow_refusal not in ("true", "false"):
         die("--shadow-refusal must be true or false")
     schema = load_json(args.schema, "schema")
-    print(json.dumps(compare(args, schema), sort_keys=True))
+    result = compare(args, schema)
+    result["candidate_model"] = args.candidate_model
+    print(json.dumps(result, sort_keys=True))
     return 0
 
 

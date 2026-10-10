@@ -2,9 +2,14 @@
 """Decide whether the watchdog diagnose shadow is still inside its bound.
 
 enabled = SINCE set && today < SINCE + 60d && compared < 300
-where `compared` counts records on the metrics branch with
-run.run_label == "diagnose-shadow", trial.outcome not in {error, no-baseline}
-and a timestamp >= SINCE. See specs/110-haiku-5-5-tier-trial/research.md D10.
+where `compared` counts records on the metrics branch with top-level
+run_label == "diagnose-shadow", trial.outcome not in {error, no-baseline}
+and an emitted_at date >= SINCE. See specs/110-haiku-5-5-tier-trial/
+research.md D10. One kind of error does count: a trial whose
+error_source is "comparator" (wing-commander-trial-record) marks a defect
+in the comparator, not infrastructure, and the shadow still spent a run on
+it; left out, a broken comparator would keep the shadow running for the
+whole 60 days (contracts/trial-record.md).
 
 Usage: trial-bound.py --since ISO_DATE --records records.jsonl [--today ISO_DATE]
 Prints `enabled=true|false` (GITHUB_OUTPUT format). Exit 2 for an unreadable
@@ -46,15 +51,20 @@ def compared_count(path, since):
             label = rec.get("run_label") or (rec.get("run") or {}).get("run_label")
             if label != "diagnose-shadow":
                 continue
-            outcome = (rec.get("trial") or {}).get("outcome")
-            if outcome is None or outcome in NOT_COUNTED:
+            trial = rec.get("trial") or {}
+            outcome = trial.get("outcome") if isinstance(trial, dict) else None
+            if outcome is None:
+                continue
+            if outcome in NOT_COUNTED and trial.get("error_source") != "comparator":
                 continue
             stamp = rec.get("started_at") or rec.get("emitted_at")
             try:
                 when = parse_date(stamp)
-            except (TypeError, ValueError):
+            except (AttributeError, TypeError, ValueError):
                 # Fail closed: an undated compared record still counts toward
                 # the cap, so the cap can never stay open past 300 real runs.
+                # It cannot come from an earlier window in practice: every
+                # record the persist collector accepts carries emitted_at.
                 n += 1
                 continue
             if when >= since:
@@ -68,7 +78,7 @@ def decide(since_text, records, today):
     since = parse_date(since_text)
     if since > today:
         raise ValueError(f"SINCE {since} is in the future")
-    if today >= since +datetime.timedelta(days=WINDOW_DAYS):
+    if today >= since + datetime.timedelta(days=WINDOW_DAYS):
         return False
     return compared_count(records, since) < MAX_COMPARED
 

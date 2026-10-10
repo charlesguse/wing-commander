@@ -3,7 +3,8 @@
 
 Builds a records.jsonl per checked-in fixture case and runs trial-bound.py:
 unset SINCE, expiry by the 60-day window, expiry by the 300-run count,
-error/no-baseline records not counted, and the enabled case. Fails when any
+error/no-baseline records not counted, comparator errors and undated
+compared records counted (fail closed), and the enabled case. Fails when any
 decision differs or the fixture file is missing.
 
 Usage: verify-trial-bound.py
@@ -19,10 +20,12 @@ CASES = HERE / "fixtures" / "trial-bound" / "cases.json"
 SCRIPT = HERE.parent / "actions" / "_shared" / "trial-bound.py"
 
 
-def record(outcome, day):
-    return json.dumps({"run_label": "diagnose-shadow",
-                       "trial": {"outcome": outcome},
-                       "started_at": f"{day}T00:00:00Z"})
+def record(outcome, day, **trial):
+    rec = {"run_label": "diagnose-shadow",
+           "trial": dict(trial, outcome=outcome)}
+    if day is not None:
+        rec["emitted_at"] = f"{day}T00:00:00Z"
+    return json.dumps(rec)
 
 
 def main():
@@ -36,10 +39,13 @@ def main():
             lines = [record("agreed", "2026-10-05")] * c["compared"]
             lines += [record("error", "2026-10-05"),
                       record("no-baseline", "2026-10-05")] * (c["errors"] // 2)
+            lines += [record("error", "2026-10-05", error_source="comparator")
+                      ] * c.get("comparator_errors", 0)
+            lines += [record("agreed", None)] * c.get("undated", 0)
             # A diagnose (non-shadow) record and a pre-SINCE record never count.
             lines.append(json.dumps({"run_label": "diagnose",
                                      "trial": {"outcome": "agreed"},
-                                     "started_at": "2026-10-05T00:00:00Z"}))
+                                     "emitted_at": "2026-10-05T00:00:00Z"}))
             lines.append(record("agreed", "2020-01-01"))
             path = Path(tmp) / f"{name}.jsonl"
             path.write_text("\n".join(lines) + "\n", encoding="utf-8")

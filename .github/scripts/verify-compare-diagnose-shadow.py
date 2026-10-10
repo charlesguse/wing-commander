@@ -21,7 +21,7 @@ OUTCOMES = {"agreed", "disagreed", "exhausted", "malformed", "error",
             "refused", "no-baseline"}
 
 
-def run_case(name, case, tmp):
+def run_case(name, case, tmp, extra=()):
     paths = {}
     for key in ("baseline", "shadow"):
         paths[key] = Path(tmp) / f"{name}-{key}.json"
@@ -33,11 +33,11 @@ def run_case(name, case, tmp):
          "--shadow-findings", str(paths["shadow"]),
          "--shadow-verdict", case["shadow_verdict"],
          "--shadow-refusal", case["refusal"],
-         "--schema", str(FIXTURES / "schema.json")],
+         "--schema", str(FIXTURES / "schema.json"), *extra],
         capture_output=True, text=True, check=False)
     if proc.returncode != 0:
         return None, proc.stderr.strip()
-    return json.loads(proc.stdout)["outcome"], ""
+    return json.loads(proc.stdout), ""
 
 
 def main():
@@ -51,10 +51,18 @@ def main():
         failures.append(f"no fixture exercises outcome {missing}")
     with tempfile.TemporaryDirectory() as tmp:
         for name, case in sorted(cases.items()):
-            got, err = run_case(name, case, tmp)
+            trial, err = run_case(name, case, tmp)
+            got = (trial or {}).get("outcome")
             if got != case["expect"]:
                 failures.append(f"{name}: expected {case['expect']}, got "
                                 f"{got} {err}")
+        # candidate_model is the record's own model (wing-commander-trial-
+        # record passes it), never a hard-coded Haiku ID.
+        trial, err = run_case("agreed", cases["agreed"], tmp,
+                              ("--candidate-model", "claude-haiku-9-9"))
+        if (trial or {}).get("candidate_model") != "claude-haiku-9-9":
+            failures.append("--candidate-model must reach the trial's "
+                            f"candidate_model, got {trial} {err}")
     for f in failures:
         print(f, file=sys.stderr)
     if failures:

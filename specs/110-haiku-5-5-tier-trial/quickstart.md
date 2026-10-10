@@ -24,7 +24,7 @@ gh workflow run wing-commander-8-watchdog.yml -f run-id=<an inspected run id>
 
 Expected: the diagnose job has a `claude-haiku-5-5` shadow step; the filed/routed
 outcome matches a rerun with the variable deleted; the metrics branch gains a record
-with `run.run_label == "diagnose-shadow"` and a `trial.outcome` from the fixed set.
+with top-level `run_label == "diagnose-shadow"` and a `trial.outcome` from the fixed set.
 Delete the variable and re-run: no Haiku step runs (SC-006). Set `SINCE` 61 days back:
 no Haiku step runs (SC-007).
 

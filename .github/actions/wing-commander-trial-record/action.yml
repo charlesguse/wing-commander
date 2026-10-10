@@ -22,8 +22,10 @@ inputs:
   shadow-verdict:
     description: The shadow's verdict.
     required: true
-  schema:
-    description: Path to the diagnose findings JSON schema.
+  schema-json:
+    description: >
+      The diagnose findings JSON schema itself (the class-vocabulary step's
+      `schema` output), written to a temporary file for the comparator.
     required: true
 
 outputs:
@@ -43,21 +45,34 @@ runs:
         BASELINE_VERDICT: ${{ inputs.baseline-verdict }}
         SHADOW_FINDINGS: ${{ inputs.shadow-findings }}
         SHADOW_VERDICT: ${{ inputs.shadow-verdict }}
-        SCHEMA: ${{ inputs.schema }}
+        SCHEMA_JSON: ${{ inputs.schema-json }}
       run: |
         set -uo pipefail
         refusal="$(jq -r '.refusal // false' "$RECORD_PATH" 2>/dev/null)" || refusal=false
+        # candidate_model equals the record's own top-level model (FR-011).
+        model="$(jq -r '.model // empty' "$RECORD_PATH" 2>/dev/null)" || model=''
+        model="${model:-claude-haiku-5-5}"
+        schema="$(mktemp)"
+        printf '%s' "$SCHEMA_JSON" > "$schema"
         if ! trial="$(python3 -I "$GITHUB_ACTION_PATH/../_shared/compare-diagnose-shadow.py" \
             --baseline-findings "$BASELINE_FINDINGS" \
             --baseline-verdict "$BASELINE_VERDICT" \
             --shadow-findings "$SHADOW_FINDINGS" \
             --shadow-verdict "$SHADOW_VERDICT" \
             --shadow-refusal "$refusal" \
-            --schema "$SCHEMA")"; then
-          # Unreadable arguments: record an error trial rather than none, so
-          # the failure stays visible in the trial summary.
-          trial='{"step":"watchdog.diagnose","candidate_model":"claude-haiku-5-5","baseline_run_label":"diagnose","outcome":"error","baseline_verdict":null,"filing_agree":null,"class_shared":null,"class_agree":null,"differing_fields":[]}'
+            --candidate-model "$model" \
+            --schema "$schema")"; then
+          # The comparator itself failed (exit 2: unreadable arguments, or
+          # a crash). Recorded as an error trial rather than none, and
+          # marked error_source "comparator": that marks a defect in this
+          # pipeline, not infrastructure, so trial-bound counts it toward
+          # the 300-run cap (a broken comparator cannot keep the shadow
+          # spending for the whole window) and trial-summary reports it on
+          # its own line. contracts/trial-record.md.
+          echo "::error::compare-diagnose-shadow failed; the trial is recorded as a comparator error"
+          trial="$(jq -cn --arg bv "$BASELINE_VERDICT" --arg m "$model" '{step:"watchdog.diagnose",candidate_model:$m,baseline_run_label:"diagnose",outcome:"error",error_source:"comparator",baseline_verdict:(if $bv == "" then null else $bv end),filing_agree:null,class_shared:null,class_agree:null,differing_fields:[]}')"
         fi
+        rm -f "$schema"
         if updated="$(jq --argjson trial "$trial" '. + {trial: $trial}' "$RECORD_PATH")"; then
           printf '%s\n' "$updated" > "$RECORD_PATH"
         else
