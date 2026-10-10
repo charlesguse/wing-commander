@@ -51,6 +51,13 @@ inputs:
     description: "owner/name to push to, required together with push-token."
     required: false
     default: ""
+  branch:
+    description: >
+      The branch this call may publish. When set, a checkout left on any
+      other branch (or a detached HEAD) is not pushed: push-ok=false.
+      Empty (the default) publishes whatever branch the checkout is on.
+    required: false
+    default: ""
 
 outputs:
   commits-published:
@@ -80,6 +87,7 @@ runs:
         WORKDIR: ${{ inputs.workdir }}
         PUSH_TOKEN: ${{ inputs.push-token }}
         PUSH_REPO: ${{ inputs.push-repo }}
+        EXPECTED_BRANCH: ${{ inputs.branch }}
       run: |
         set -uo pipefail
         dir="${WORKDIR:-.}"
@@ -105,12 +113,14 @@ runs:
             count="$(git rev-list --count "${BEFORE_SHA}..HEAD" 2>/dev/null)" || count=0
           fi
           echo "commits-published=$count" >> "$GITHUB_OUTPUT"
-          if [ -n "$PUSH_TOKEN" ]; then
+          if [ -n "$EXPECTED_BRANCH" ] && [ "$branch" != "$EXPECTED_BRANCH" ]; then
+            echo "::warning::wing-commander-publish-stranded-commits: the checkout is on '$branch', not '$EXPECTED_BRANCH' -- nothing is published."
+            echo "push-ok=false" >> "$GITHUB_OUTPUT"
+          elif [ -n "$PUSH_TOKEN" ]; then
             # spec 095 FR-016/FR-017: an explicit destination, pushed from a
             # shim repository, so no insteadOf/pushurl the agent could have
             # left in this checkout's .git/config can redirect the token.
-            target="https://x-access-token:${PUSH_TOKEN}@github.com/${PUSH_REPO}.git"
-            if wc_push_from_shim "$(git rev-parse HEAD)" "$target" "refs/heads/$branch"; then
+            if wc_push_from_shim "$(git rev-parse HEAD)" "$branch" "$PUSH_REPO" "$PUSH_TOKEN"; then
               git update-ref "refs/remotes/origin/$branch" HEAD
               echo "push-ok=true" >> "$GITHUB_OUTPUT"
             else

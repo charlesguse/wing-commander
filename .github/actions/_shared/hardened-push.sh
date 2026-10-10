@@ -21,22 +21,10 @@ fi
 . "$here/git-push-hardening.sh"
 wc_harden_git_env
 
-server="${PUSH_SERVER_URL:-https://github.com}"
-url="${server}/${GITHUB_REPOSITORY}.git"
-if [ -n "${PUSH_TOKEN:-}" ]; then
-  # The token travels as an auth header, not in the URL, so a failed push
-  # cannot echo it into the job log.
-  basic="$(printf 'x-access-token:%s' "$PUSH_TOKEN" | base64 | tr -d '\n')"
-  echo "::add-mask::${basic}"
-  n="$GIT_CONFIG_COUNT"
-  export "GIT_CONFIG_KEY_${n}=http.${server}/.extraheader"
-  export "GIT_CONFIG_VALUE_${n}=AUTHORIZATION: basic ${basic}"
-  export GIT_CONFIG_COUNT=$((n + 1))
-fi
 # The env override cannot beat the workspace's own `url.<base>.insteadOf`
 # (local config outranks global), so the push runs from a shim repository
-# (wc_push_from_shim, research R7 fallback).
-if ! wc_push_from_shim "$expected" "$url" "refs/heads/${branch}"; then
+# to an explicit URL (wc_push_from_shim, research R7 fallback).
+if ! wc_push_from_shim "$expected" "$branch" "$GITHUB_REPOSITORY" "${PUSH_TOKEN:-}"; then
   echo "::error::hardened push: pushing $expected to ${branch} was refused -- nothing that assumes it landed may run."
   exit 1
 fi

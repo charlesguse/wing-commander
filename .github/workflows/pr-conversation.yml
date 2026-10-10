@@ -2421,7 +2421,9 @@ jobs:
         with:
           before-sha: ${{ needs.classify-and-announce.outputs.base-sha }}
           # spec 095 FR-016/FR-017: an explicit destination, pushed from a shim
-          # repository -- see wing-commander-publish-stranded-commits.
+          # repository -- see wing-commander-publish-stranded-commits. No
+          # branch: input, because an unrelated-change leg's agent publishes
+          # on a branch it cut itself.
           push-token: ${{ env.WC_BOT_TOKEN }}
           push-repo: ${{ github.repository }}
 
@@ -2554,6 +2556,7 @@ jobs:
           token: ${{ env.WC_BOT_TOKEN }}
           # spec 095 FR-016/FR-017 -- see wing-commander-fold-commit.
           push-token: ${{ env.WC_BOT_TOKEN }}
+          branch: ${{ steps.route.outputs.checkout-ref }}
           spec-dir: ${{ needs.classify-and-announce.outputs.spec-dir }}
           section-file: /tmp/wing-commander/act-fold-section.md
           fold-id: ${{ matrix.id }}

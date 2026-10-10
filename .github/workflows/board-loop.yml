@@ -2952,21 +2952,12 @@ jobs:
           app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
           private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
 
-      - name: Refresh authenticated remote (post-agent, fixer)
-        id: refresh-remote-fix
-        if: "!cancelled() && steps.fixer.outcome != 'skipped'"
-        continue-on-error: true
-        uses: ./.wc-pristine-repo/.github/actions/wing-commander-refresh-remote
-        with:
-          token: ${{ env.WC_BOT_TOKEN }}
-
       - name: Determine post-agent credential status (fixer)
         id: credential-status-fix
         if: "!cancelled() && steps.fixer.outcome != 'skipped'"
         uses: ./.wc-pristine-repo/.github/actions/wing-commander-post-agent-credential-status
         with:
           mint-outcome: ${{ steps.reestablish-fix.outcome }}
-          refresh-outcome: ${{ steps.refresh-remote-fix.outcome }}
 
       - name: Compute agent run verdict (fixer)
         id: fix-verdict
@@ -3869,21 +3860,12 @@ jobs:
           app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
           private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
 
-      - name: Refresh authenticated remote (post-agent, reviewer)
-        id: refresh-remote-review
-        if: "!cancelled() && steps.reviewer.outcome != 'skipped'"
-        continue-on-error: true
-        uses: ./.wc-pristine-repo/.github/actions/wing-commander-refresh-remote
-        with:
-          token: ${{ env.WC_BOT_TOKEN }}
-
       - name: Determine post-agent credential status (reviewer)
         id: credential-status-review
         if: "!cancelled() && steps.reviewer.outcome != 'skipped'"
         uses: ./.wc-pristine-repo/.github/actions/wing-commander-post-agent-credential-status
         with:
           mint-outcome: ${{ steps.reestablish-review.outcome }}
-          refresh-outcome: ${{ steps.refresh-remote-review.outcome }}
 
       - name: Compute agent run verdict (reviewer)
         id: review-verdict
@@ -4530,21 +4512,12 @@ jobs:
           app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
           private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
 
-      - name: Refresh authenticated remote (post-agent, review-fixup)
-        id: refresh-remote-review-fixup
-        if: "!cancelled() && steps.review-fixup.outcome != 'skipped'"
-        continue-on-error: true
-        uses: ./.wc-pristine-repo/.github/actions/wing-commander-refresh-remote
-        with:
-          token: ${{ env.WC_BOT_TOKEN }}
-
       - name: Determine post-agent credential status (review-fixup)
         id: credential-status-review-fixup
         if: "!cancelled() && steps.review-fixup.outcome != 'skipped'"
         uses: ./.wc-pristine-repo/.github/actions/wing-commander-post-agent-credential-status
         with:
           mint-outcome: ${{ steps.reestablish-review-fixup.outcome }}
-          refresh-outcome: ${{ steps.refresh-remote-review-fixup.outcome }}
 
       - name: Compute agent run verdict (review-fixup)
         id: review-fixup-verdict

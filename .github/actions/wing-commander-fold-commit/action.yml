@@ -46,6 +46,13 @@ inputs:
       default) keeps the bare `git push` to the caller's remote.
     required: false
     default: ""
+  branch:
+    description: >-
+      Optional. The branch the fold may push. When set, a checkout on any
+      other branch (or a detached HEAD) fails the step before the push.
+      Empty (the default) pushes whatever branch the checkout is on.
+    required: false
+    default: ""
   actor-login:
     description: Login to union into spec-meta.json's pending_re_review_from. Empty is tolerated (no human actor -- e.g. an automated review round's own fold) and adds nothing.
     required: true
@@ -79,6 +86,7 @@ runs:
         FOLD_SUMMARY: ${{ inputs.fold-summary }}
         ACTOR_LOGIN: ${{ inputs.actor-login }}
         PUSH_TOKEN: ${{ inputs.push-token }}
+        EXPECTED_BRANCH: ${{ inputs.branch }}
       run: |
         set -euo pipefail
         if [ ! -s "$SECTION_FILE" ]; then
@@ -116,10 +124,13 @@ runs:
         # shellcheck source=../_shared/git-push-hardening.sh
         . "$GITHUB_ACTION_PATH/../_shared/git-push-hardening.sh"
         wc_harden_git_env
+        branch="$(git rev-parse --abbrev-ref HEAD)"
+        if [ -n "$EXPECTED_BRANCH" ] && [ "$branch" != "$EXPECTED_BRANCH" ]; then
+          echo "::error::wing-commander-fold-commit: the checkout is on '$branch', not '$EXPECTED_BRANCH' -- the fold is not pushed."
+          exit 1
+        fi
         if [ -n "$PUSH_TOKEN" ]; then
-          wc_push_from_shim "$(git rev-parse HEAD)" \
-            "https://x-access-token:${PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
-            "refs/heads/$(git rev-parse --abbrev-ref HEAD)"
+          wc_push_from_shim "$(git rev-parse HEAD)" "$branch" "$GITHUB_REPOSITORY" "$PUSH_TOKEN"
         else
           git push
         fi

@@ -263,6 +263,46 @@ def check_preserves_caller_config(hardening=HARDENING):
     return []
 
 
+def check_shim_guards(hardening=HARDENING):
+    """(d) wc_push_from_shim refuses a detached HEAD's `HEAD` as a branch
+    name (the old bare `git push` refused it too), and (e) pushes from a
+    linked worktree, whose objects live in the common directory."""
+    errors = []
+    with tempfile.TemporaryDirectory() as tmp:
+        bare = os.path.join(tmp, "o", "r.git")
+        os.makedirs(bare)
+        _git(["init", "--quiet", "--bare"], bare)
+        work = os.path.join(tmp, "work")
+        os.makedirs(work)
+        _git(["init", "--quiet"], work)
+        _git(["-c", "user.email=t@x.invalid", "-c", "user.name=t", "commit", "--quiet",
+              "--allow-empty", "-m", "c"], work)
+        linked = os.path.join(tmp, "linked")
+        _git(["worktree", "add", "--quiet", "--detach", linked], work)
+        _git(["-c", "user.email=t@x.invalid", "-c", "user.name=t", "commit", "--quiet",
+              "--allow-empty", "-m", "in the linked worktree"], linked)
+        head = _git(["rev-parse", "HEAD"], linked).stdout.strip()
+        env = dict(os.environ, PUSH_SERVER_URL="file://" + tmp)
+
+        def push(branch, cwd):
+            return subprocess.run(
+                ["bash", "-c", '. "$1"; wc_harden_git_env; wc_push_from_shim "$2" "$3" o/r ""',
+                 "harness", hardening, head, branch], cwd=cwd, env=env,
+                capture_output=True, text=True)
+
+        if push("HEAD", linked).returncode == 0 or subprocess.run(
+                ["git", "rev-parse", "--verify", "refs/heads/HEAD"], cwd=bare,
+                capture_output=True).returncode == 0:
+            errors.append("wc_push_from_shim pushed a branch literally named HEAD")
+        got = push("main", linked)
+        landed = subprocess.run(["git", "rev-parse", "--verify", "refs/heads/main"], cwd=bare,
+                                capture_output=True, text=True).stdout.strip()
+        if got.returncode != 0 or landed != head:
+            errors.append("wc_push_from_shim could not push from a linked worktree: "
+                          + (got.stdout + got.stderr)[-300:])
+    return errors
+
+
 def hardened_push(work, env, head, branch, script=SCRIPT):
     full = dict(os.environ, **env)
     subprocess.run(["bash", script, branch, head], cwd=work, env=full,
@@ -300,7 +340,7 @@ def static_errors(docs, root=ROOT):
 
 def run():
     errors = (static_errors(_load_workflows()) + check_behaviour(hardened_push)
-              + check_preserves_caller_config())
+              + check_preserves_caller_config() + check_shim_guards())
     for err in errors:
         print("::error::Gate 142: " + err)
     if not errors:
@@ -366,15 +406,29 @@ def self_test():
             fh.write(text.replace(old, "n=0"))
         if not check_preserves_caller_config(overwrite):
             failures.append("a hardening that overwrites GIT_CONFIG_KEY_0 not detected")
+        if check_shim_guards():
+            failures.append("the shipped shim guards already fail: {0}".format(check_shim_guards()))
+        for label, old_text, new_text in (
+                ("the branch-name guard", "    '' | HEAD | refs/*)", "    '')"),
+                ("the common-directory object path", 'common="$(git rev-parse --git-common-dir)"',
+                 'common="$(git rev-parse --absolute-git-dir)"')):
+            if old_text not in text:
+                sys.exit("::error::Gate 142 self-test: {0!r} not in git-push-hardening.sh"
+                         .format(old_text))
+            with open(overwrite, "w", encoding="utf-8") as fh:
+                fh.write(text.replace(old_text, new_text))
+            if not check_shim_guards(overwrite):
+                failures.append("{0} removed, and nothing failed".format(label))
         shim_less = os.path.join(tmp, "hardened-push.sh")
         with open(SCRIPT, encoding="utf-8") as fh:
             ptext = fh.read()
-        shim_call = 'wc_push_from_shim "$expected" "$url" "refs/heads/${branch}"'
+        shim_call = 'wc_push_from_shim "$expected" "$branch" "$GITHUB_REPOSITORY" "${PUSH_TOKEN:-}"'
         if shim_call not in ptext:
             sys.exit("::error::Gate 142 self-test: {0!r} not in hardened-push.sh".format(shim_call))
         with open(shim_less, "w", encoding="utf-8") as fh:
             fh.write(ptext.replace(shim_call,
-                                   'git push --no-verify "$url" "HEAD:refs/heads/${branch}"'))
+                                   'git push --no-verify "$PUSH_SERVER_URL/$GITHUB_REPOSITORY.git" '
+                                   '"HEAD:refs/heads/${branch}"'))
         shutil.copy(HARDENING, overwrite)
         got = check_behaviour(lambda w, e, h, b: hardened_push(w, e, h, b, shim_less))
         if not any("insteadOf" in e for e in got):

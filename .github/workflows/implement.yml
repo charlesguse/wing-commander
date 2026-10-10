@@ -532,8 +532,15 @@ jobs:
           fetch-depth: 0
 
       # pin the exact commit, never a branch -- see specs/010-reusable-pipeline/research.md.
+      # This job holds no id-token, so the OIDC fallback below has nothing to
+      # read: with github.job_workflow_sha empty and no pipeline-ref input it
+      # fails. continue-on-error, and every pipeline step below is skipped or
+      # tolerated, so the preflight reports the suite not ready (actionlint is
+      # never installed) -- an honest skip in the agent's prompt, never a red
+      # suite read off a verdict that was never written.
       - name: Resolve pipeline ref
         id: pipeline-ref
+        continue-on-error: true
         env:
           JOB_WORKFLOW_SHA: ${{ github.job_workflow_sha }}
           PIPELINE_REF_INPUT: ${{ inputs.pipeline-ref }}
@@ -551,6 +558,7 @@ jobs:
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
 
       - name: Checkout pipeline repository (shared composite actions)
+        if: steps.pipeline-ref.outcome == 'success'
         uses: actions/checkout@v5
         with:
           repository: ${{ inputs.pipeline-repo }}
@@ -576,7 +584,11 @@ jobs:
           fi
           echo "ref=${SPEC_PREFIX}${SPEC_DIR_INPUT#specs/}" >> "$GITHUB_OUTPUT"
 
+      # FR-009a: a failed install degrades to the preflight's missing-
+      # actionlint skip below, never to a job failure with no verdict.
       - name: Install actionlint for the gate suite
+        if: steps.pipeline-ref.outcome == 'success'
+        continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-install-actionlint
 
       # FR-009a: check the gate suite's prerequisites without (re)installing
@@ -1368,6 +1380,7 @@ jobs:
           # repository -- see wing-commander-publish-stranded-commits.
           push-token: ${{ env.WC_BOT_TOKEN }}
           push-repo: ${{ github.repository }}
+          branch: ${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}
 
       # deterministic, transcript-only verdict -- see specs/037-agent-turn-budget-guard/
       # data-model.md. Guarded like the upload/metrics
@@ -2250,6 +2263,7 @@ jobs:
           # repository -- see wing-commander-publish-stranded-commits.
           push-token: ${{ env.WC_BOT_TOKEN }}
           push-repo: ${{ github.repository }}
+          branch: ${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}
 
       # See "Compute agent run verdict (cycle)" above — same shared
       # composite, same steps.retry.outcome != 'skipped' guard so this

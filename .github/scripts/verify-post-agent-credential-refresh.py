@@ -327,6 +327,13 @@ NO_REMOTE_REFRESH_JOBS = {
     # fix and review (#733/#848, tracked on #889).
     (".github/workflows/board-loop.yml", "triage"),
     (".github/workflows/board-loop.yml", "route"),
+    # spec 095: fix-agent and review no longer push -- fix and
+    # review-fixup-publish push from a fresh checkout through
+    # wing-commander-hardened-push with env.WC_BOT_TOKEN. Writing a fresh
+    # token into the remote of a checkout an agent just wrote would only
+    # leave a live credential where nothing uses it (code review of #990).
+    (".github/workflows/board-loop.yml", "fix-agent"),
+    (".github/workflows/board-loop.yml", "review"),
     # T009 (spec 052's own tasks.md): classify-and-announce resolves
     # spec-meta.json via the contents API rather than a "Checkout spec
     # branch" step, so there is no persisted git remote credential to
@@ -1769,11 +1776,11 @@ def mut_board_loop_fixer_refresh_inlined(loaded):
     "Refresh authenticated remote (post-agent, <agent>)", which the
     single-home pattern used to miss. Reverted to an inline block."""
     job = loaded[".github/workflows/board-loop.yml"]["jobs"]["fix-agent"]
-    step = _find_step(job, "Refresh authenticated remote (post-agent, fixer)")
-    assert step is not None, "fixture assumption broken: step renamed"
-    step.pop("uses", None)
-    step.pop("with", None)
-    step["run"] = 'git remote set-url origin "https://x-access-token:${WC_BOT_TOKEN}@github.com/o/r"'
+    # spec 095 dropped fix-agent's own refresh (it no longer pushes), so the
+    # board-loop-named step is put back inline, the way it would regress.
+    job["steps"].append({
+        "name": "Refresh authenticated remote (post-agent, fixer)",
+        "run": 'git remote set-url origin "https://x-access-token:${WC_BOT_TOKEN}@github.com/o/r"'})
 
 
 def mut_upper_case_step_references(loaded):

@@ -38,16 +38,40 @@ wc_harden_git_env() {
   export GIT_CONFIG_COUNT="$n"
 }
 
-# wc_push_from_shim SHA URL DEST_REF -- push SHA (present in the current
-# repository's object store) to DEST_REF at URL from a shim repository with
-# no config of its own. Call wc_harden_git_env first. Returns git push's
-# status.
+# wc_push_from_shim SHA BRANCH REPO TOKEN -- push SHA (present in the
+# current repository's object store) to refs/heads/BRANCH of REPO on
+# $PUSH_SERVER_URL (else $GITHUB_SERVER_URL, else https://github.com), from
+# a shim repository with no config of its own. The token travels as an auth
+# header, never in the URL, so a failed push cannot echo it into the log.
+# BRANCH must be a real branch name: an empty one, or `HEAD` from a detached
+# checkout, is refused rather than pushed as a branch literally named HEAD.
+# The one home of the push URL and its authentication (spec 095
+# FR-016/FR-017). Call wc_harden_git_env first. Returns git push's status.
 wc_push_from_shim() {
-  local sha="$1" url="$2" dest="$3" objects shim
-  objects="$(git rev-parse --absolute-git-dir)/objects" || return 1
+  local sha="$1" branch="$2" repo="$3" token="$4" server common shim basic n
+  case "$branch" in
+    '' | HEAD | refs/*)
+      echo "::error::wc_push_from_shim: '$branch' is not a branch name to push to" >&2
+      return 1 ;;
+  esac
+  server="${PUSH_SERVER_URL:-${GITHUB_SERVER_URL:-https://github.com}}"
+  # The object store of a linked worktree lives in the common directory.
+  common="$(git rev-parse --git-common-dir)" || return 1
+  common="$(cd "$common" && pwd -P)" || return 1
   shim="$(mktemp -d)"
   git init --quiet "$shim" || return 1
-  printf '%s\n' "$objects" > "$shim/.git/objects/info/alternates"
+  printf '%s\n' "$common/objects" > "$shim/.git/objects/info/alternates"
   git --git-dir="$shim/.git" update-ref refs/heads/shim "$sha" || return 1
-  git --git-dir="$shim/.git" push --no-verify "$url" "refs/heads/shim:${dest}"
+  (
+    if [ -n "$token" ]; then
+      basic="$(printf 'x-access-token:%s' "$token" | base64 | tr -d '\n')"
+      echo "::add-mask::${basic}"
+      n="${GIT_CONFIG_COUNT:-0}"
+      export "GIT_CONFIG_KEY_${n}=http.${server}/.extraheader"
+      export "GIT_CONFIG_VALUE_${n}=AUTHORIZATION: basic ${basic}"
+      export GIT_CONFIG_COUNT=$((n + 1))
+    fi
+    git --git-dir="$shim/.git" push --no-verify "${server}/${repo}.git" \
+      "refs/heads/shim:refs/heads/${branch}"
+  )
 }

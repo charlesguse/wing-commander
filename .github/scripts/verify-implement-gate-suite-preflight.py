@@ -318,6 +318,14 @@ def main():
           and str(contained[0].get("if", "")) == "steps.gate-suite-preflight-cycle.outputs.ready == 'true'"
           and (contained[0].get("with") or {}).get("site") == "implement-cycle",
           "steps={0}".format(contained))
+    # A gate job that cannot resolve the pipeline or install actionlint must
+    # still reach its preflight, so the implement job reads "not ready" (an
+    # honest skip), never a missing verdict (red at cycle start).
+    for name in ("Resolve pipeline ref", "Install actionlint for the gate suite"):
+        st = gate_by_name.get(name) or {}
+        check("(cycle) {0}'s {1!r} is tolerated, so its preflight still runs".format(
+                  GATE_JOB, name),
+              st.get("continue-on-error") is True, "step={0}".format(st))
     reader = by_id.get("gate-suite-cycle") or {}
     rif = str(reader.get("if", ""))
     check("(cycle) the implement job reads the verdict fail-closed through wing-commander-gate-verdict",
