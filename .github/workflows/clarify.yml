@@ -21,7 +21,7 @@ on:
         description: "Model for the clarification agent (constitution II tiering default)"
         type: string
         required: false
-        default: claude-opus-5
+        default: claude-opus-5-5
       max-turns:
         description: "Turn budget for the clarification agent"
         type: number
@@ -230,7 +230,7 @@ jobs:
         run: |
           # Canonical required-tool list: .github/scripts/required-tools.txt
           # (kept in agreement by Gate 23, specs/038 FR-011a).
-          REQUIRED_TOOLS="git gh jq curl python3 bash node timeout"
+          REQUIRED_TOOLS="git gh jq curl python3 bash node timeout unzip"
 
           if [ -n "$REGISTRY_USERNAME" ] && [ -n "$REGISTRY_PASSWORD" ]; then
             # A bare/namespaced Docker Hub reference (no "." or ":" or
@@ -356,6 +356,7 @@ jobs:
       refusal-reason: ${{ steps.preflight.outputs.reason || steps.identity.outputs.reason }}
       agent-ran: ${{ steps.agent-ran.outputs.ran }}
       agent-conclusion: ${{ steps.agent-ran.outputs.conclusion }}
+      agent-started: ${{ steps.agent-ran.outputs.started }}
       credential-refresh-ok: ${{ steps.credential-status.outputs.ok }}
       commits-published: ${{ steps.publish-stranded.outputs.commits-published }}
       push-ok: ${{ steps.publish-stranded.outputs.push-ok }}
@@ -1424,6 +1425,7 @@ jobs:
           entry-result: ${{ needs.clarify.result }}
           agent-ran: ${{ needs.clarify.outputs.agent-ran }}
           agent-conclusion: ${{ needs.clarify.outputs.agent-conclusion }}
+          agent-started: ${{ needs.clarify.outputs.agent-started }}
           credential-refresh-ok: ${{ needs.clarify.outputs.credential-refresh-ok }}
           failed-post-agent-step: ${{ needs.clarify.outputs.failed-post-agent-step }}
 
@@ -1443,11 +1445,17 @@ jobs:
           # completion" regardless of outcome (second maintainer review of
           # PR #407, FR-011); the wing-commander-chain-stop-notice composite
           # carries the same note on its own agent clause.
-          restart-command: ${{ needs.clarify.outputs.agent-ran == 'true' && needs.clarify.outputs.agent-conclusion == 'success' && 'The clarify agent step completed its work; a step after it did not. Re-dispatch the clarify stage for this specification once the cause above is resolved.' || needs.clarify.outputs.agent-ran == 'true' && 'The clarify agent step failed after running; its pushed commits are on the branch. Re-dispatch the clarify stage for this specification once the cause above is resolved.' || 'Re-dispatch the clarify stage for this specification once the cause above is resolved.' }}
+          # agent-started == 'false' (the agent step's action failed in its
+          # own setup, before the agent started -- #889/#972) falls through
+          # to the plain re-dispatch line: there is no agent work and no
+          # pushed commit to resume from, and the notice body itself says
+          # to fix the runner environment before re-dispatching.
+          restart-command: ${{ needs.clarify.outputs.agent-ran == 'true' && needs.clarify.outputs.agent-conclusion == 'success' && 'The clarify agent step completed its work; a step after it did not. Re-dispatch the clarify stage for this specification once the cause above is resolved.' || needs.clarify.outputs.agent-ran == 'true' && needs.clarify.outputs.agent-started != 'false' && 'The clarify agent step failed after running; its pushed commits are on the branch. Re-dispatch the clarify stage for this specification once the cause above is resolved.' || 'Re-dispatch the clarify stage for this specification once the cause above is resolved.' }}
           # FR-011/FR-015: drops the composite's default "stage did not
           # start" / "no work was lost" wording, which is false once the
           # agent ran.
           agent-ran: ${{ needs.clarify.outputs.agent-ran }}
           agent-conclusion: ${{ needs.clarify.outputs.agent-conclusion }}
+          agent-started: ${{ needs.clarify.outputs.agent-started }}
           commits-published: ${{ needs.clarify.outputs.commits-published }}
           push-ok: ${{ needs.clarify.outputs.push-ok }}

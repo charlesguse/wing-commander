@@ -26,8 +26,8 @@ permissions: {}
 
 jobs:
   # Default tier from vars.WING_COMMANDER_PR_CONVERSATION_MODEL
-  # (claude-sonnet-5 when unset, research.md D2 — not the haiku triage
-  # tier); the model:opus label escalates to claude-opus-5 regardless of
+  # (claude-sonnet-5-5 when unset, research.md D2 — not the haiku triage
+  # tier); the model:opus label escalates to claude-opus-5-5 regardless of
   # the variable. Read from the PR's own labels (finalize.yml mirrors the
   # lifecycle issue's full label set onto the implementation PR), not the
   # issue, since the lifecycle issue number isn't resolved until
@@ -82,9 +82,9 @@ jobs:
           MODEL_VAR: ${{ vars.WING_COMMANDER_PR_CONVERSATION_MODEL }}
           PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
         run: |
-          tier="${MODEL_VAR:-claude-sonnet-5}"
+          tier="${MODEL_VAR:-claude-sonnet-5-5}"
           if gh pr view "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --json labels --jq '.labels[].name' | grep -qx 'model:opus'; then
-            tier="claude-opus-5"
+            tier="claude-opus-5-5"
           fi
           echo "tier=$tier" >> "$GITHUB_OUTPUT"
           echo "PR conversation model for this run: $tier" >> "$GITHUB_STEP_SUMMARY"

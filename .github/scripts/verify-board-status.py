@@ -23,6 +23,7 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import wc_board_status as bs  # noqa: E402
+import board_eligibility as be  # noqa: E402
 
 failures = []
 
@@ -60,6 +61,7 @@ SNAP = {
         issue(723, ["spec-request", "stage:spec", "stage:implement", "spec:096-durable-prove-entry"]),
         issue(760, ["spec-request", "stage:tasks", "spec:101-read-only-gh-grants"]),
         issue(780, ["board:stalled"], "held fix"),
+        issue(979, ["auto-release:failed"], "auto-release failed"),
         issue(902, ["found-by:implement"]),
         issue(911, ["found-by:finalize"]),
         issue(905, ["usage-limit"]),
@@ -109,6 +111,34 @@ def render_half():
           and pipeline[723][1] == "implement", pipeline.get(723))
     check("a tasks PR in auto review mode is the pipeline's", 760 in pipeline, pipeline.get(760))
     check("a board:stalled hold waits on the owner", 780 in owner, owner.get(780))
+    check("an auto-release failure waits on the owner (the board loop never acts on it)",
+          979 in owner and "auto-release:failed" not in rows["signals"], owner.get(979))
+    # #977: report closes the issue only when nothing stays outstanding --
+    # a pass in one mode leaves a later-appended other-mode failure open.
+    check("the auto-release wait says every recorded mode must pass, not just one",
+          979 in owner and "every mode" in owner[979][1] and "that mode" not in owner[979][1], owner.get(979))
+    # "the board loop never acts on it" holds only while the label is in
+    # board_eligibility.SELF_MANAGED_LABELS, the loop's one exclusion home.
+    check("the owner-only auto-release label is one the board loop excludes",
+          bs.AUTO_RELEASE_FAILED_LABEL in be.SELF_MANAGED_LABELS
+          and be.is_excluded({"state": "open", "labels": [{"name": bs.AUTO_RELEASE_FAILED_LABEL}]})[0],
+          be.SELF_MANAGED_LABELS)
+    # auto-release.yml's detect job is skipped while the pause switch is on
+    # (SNAP has it on), so the row must not promise a self-close then.
+    check("a paused auto-release is named on the auto-release wait",
+          "auto-release is paused" in owner[979][1], owner[979][1])
+    running = rows_by_number(bs.classify(dict(SNAP, switches=dict(SNAP["switches"], auto_release_paused="")))["owner"])
+    check("an unpaused auto-release wait does not mention a pause",
+          "paused" not in running[979][1], running[979][1])
+    # The auto-release row outranks spec-proposal ("close it" would erase
+    # the open failure) and board:stalled (the loop excludes it either way).
+    mixed = rows_by_number(bs.classify(dict(SNAP, issues=[
+        issue(985, ["auto-release:failed", "spec-proposal"]),
+        issue(986, ["auto-release:failed", "board:stalled"]),
+    ]))["owner"])
+    for n in (985, 986):
+        check("an auto-release failure with another owner label gets the auto-release wait (#{0})".format(n),
+              n in mixed and mixed[n][1].startswith("fix the release failure"), mixed.get(n))
     check("a lifecycle row names its spec number", owner[675][0] == "#675 spec 090", owner[675][0])
     sig = rows["signals"]
     check("found-by:* issues group together", sig.get("found-by:*") == [902, 911], sig)
@@ -136,7 +166,7 @@ def render_half():
     check("the release line names the tag, its age and the paused switch",
           "v2.7.3, 15d ago; auto-release **paused**" in body, body)
     check("the maintenance count is shown", "30 open, 1 done on #889." in body, body)
-    check("the waiting-on-you count is in its heading", "### Waiting on you (8)" in body, body)
+    check("the waiting-on-you count is in its heading", "### Waiting on you (9)" in body, body)
     check("PRs outside any lifecycle are named", "not part of a lifecycle: #909" in body, body)
     check("the roadmap is linked", "Roadmap issue, #890" in body, body)
     green = bs.render(dict(SNAP, main_ci={"status": "completed", "conclusion": "success", "sha": "abc1234ffff"}))

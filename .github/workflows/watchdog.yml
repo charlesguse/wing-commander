@@ -5,7 +5,7 @@
 #   - collect:  deterministic evidence gathering (five FR-006 sources) into
 #               one normalized signals.json; no LLM sees raw untrusted
 #               content directly (FR-023).
-#   - diagnose: a single claude-opus-5, read-only, structured-output step
+#   - diagnose: a single claude-opus-5-5, read-only, structured-output step
 #               turning signals into zero or more Findings.
 #   - triage:   one matrix entry per Finding — coexistence check, an
 #               evidence-validity gate (spec 024 FR-008/FR-009), fingerprint,
@@ -46,7 +46,7 @@ on:
         # evidence against a strict output schema; on haiku it exhausted its
         # turn budget wandering the repo instead of reaching a verdict
         # (issue #124, run 30161188955: error_max_turns at 21 turns).
-        default: claude-opus-5
+        default: claude-opus-5-5
       diagnose-max-turns:
         description: "Turn budget for the diagnose agent"
         type: number
@@ -264,7 +264,7 @@ jobs:
         run: |
           # Canonical required-tool list: .github/scripts/required-tools.txt
           # (kept in agreement by Gate 23, specs/038 FR-011a).
-          REQUIRED_TOOLS="git gh jq curl python3 bash node timeout"
+          REQUIRED_TOOLS="git gh jq curl python3 bash node timeout unzip"
 
           if [ -n "$REGISTRY_USERNAME" ] && [ -n "$REGISTRY_PASSWORD" ]; then
             # A bare/namespaced Docker Hub reference (no "." or ":" or

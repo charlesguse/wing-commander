@@ -80,7 +80,17 @@ drop-detection.
 6. Each of the six stages' separate 'stalled' survivor job (STALL_REASON_JOBS)
    has a "Determine which dependency did not start" step that resolves
    through `.github/actions/wing-commander-stall-reason` (second maintainer
-   review of PR #407, CLAUDE.md single-home rule).
+   review of PR #407, CLAUDE.md single-home rule), and passes the entry
+   job's agent-started output -- published from
+   wing-commander-agent-ran-signal's `started` -- to that composite and to
+   every chain-stop-notice call beside it that passes agent-ran (#889/#972:
+   an agent action that failed in its own setup is not "the agent ran"),
+   with the agent-started guard on the very restart-command arm that says
+   "its pushed commits are on the branch", and implement's agent-started
+   never read from its non-pushing progress composer
+   (AGENT_STARTED_EXCLUDED_SIGNALS). The agent-started wiring is also
+   checked on every other job in those files whose reason step calls the
+   composite (pr-conversation's stalled-mark).
 7. Every agent step in a `full_subject` job has its own refresh/agent-ran/
    credential-status composite call, matched by `uses:` rather than any one
    step's `name:` (REQUIRED_PER_AGENT_STEP_COMPOSITES, exempting
@@ -866,7 +876,110 @@ def check_job_full_subject(path, job_name, job):
     return failures
 
 
-def check_stall_reason_job(path, job):
+NOTICE_COMPOSITE = "wing-commander-chain-stop-notice"
+_AGENT_RAN_NEEDS_RE = re.compile(
+    r"^\$\{\{\s*needs\.([A-Za-z0-9_-]+)\.outputs\.agent-ran\s*\}\}$")
+
+# Agent-ran signal step ids whose `started` must never feed a job's
+# agent-started output (code review of PR #978): implement's progress
+# composer runs only after a cycle or retry succeeded and never pushes, so
+# its own setup failure would tell the notice no agent work exists while
+# that cycle's commits are on the branch (FR-015).
+AGENT_STARTED_EXCLUDED_SIGNALS = {
+    ".github/workflows/implement.yml": {"agent-ran-progress"},
+}
+
+
+def check_agent_started_wiring(path, job, wf, job_name="stalled"):
+    """-> list[str]. #889/#972: the agent-started signal reaches the stall
+    reason and the notice. The entry job is the one the reason step's own
+    agent-ran input names; it must publish agent-started from
+    wing-commander-agent-ran-signal's `started`, and every stall-reason or
+    chain-stop-notice call in this job that passes agent-ran from it must
+    pass the matching agent-started too -- a call that drops it falls back
+    to "the agent ran ... its pushed commits are on the branch" for an
+    agent whose action never got past its own setup."""
+    failures = []
+    reason = _find_step(job, REASON_STEP_NAME) or {}
+    ran = str((reason.get("with") or {}).get("agent-ran", "")).strip()
+    m = _AGENT_RAN_NEEDS_RE.match(ran)
+    if not m:
+        return [f"{path} [{job_name}] step {REASON_STEP_NAME!r}: agent-ran is "
+                f"not a needs.<job>.outputs.agent-ran reference ({ran!r}) "
+                f"-- cannot check its agent-started wiring (#889)"]
+    entry = m.group(1)
+    want = "${{ needs.%s.outputs.agent-started }}" % entry
+    entry_job = ((wf or {}).get("jobs") or {}).get(entry) or {}
+    outputs = entry_job.get("outputs") or {}
+    published = str(outputs.get("agent-started", ""))
+    # Pass-2 review of PR #978: a bare "outputs.started" substring let a
+    # mistyped step id, an unrelated step, or a dropped `||` arm through.
+    # agent-started must read exactly agent-ran's own signal steps, in the
+    # same most-recent-wins order, minus the excluded ones -- and each of
+    # those ids must be a wing-commander-agent-ran-signal step of the entry
+    # job.
+    signal_ids = {str((s or {}).get("id", "")) for s in
+                  entry_job.get("steps") or []
+                  if "wing-commander-agent-ran-signal" in
+                  str((s or {}).get("uses", ""))}
+    excluded = AGENT_STARTED_EXCLUDED_SIGNALS.get(path, set())
+    ran_ids = re.findall(r"steps\.([A-Za-z0-9_-]+)\.outputs\.ran",
+                         str(outputs.get("agent-ran", "")))
+    want_ids = [i for i in ran_ids if i not in excluded]
+    got_ids = re.findall(r"steps\.([A-Za-z0-9_-]+)\.outputs\.started",
+                         published)
+    want_expr = "${{ %s }}" % " || ".join(
+        "steps.%s.outputs.started" % i for i in want_ids)
+    if (not want_ids or got_ids != want_ids
+            or published.strip() != want_expr
+            or any(i not in signal_ids for i in got_ids)):
+        failures.append(
+            f"{path} [{entry}]: agent-started must read "
+            f"wing-commander-agent-ran-signal's `started` from exactly the "
+            f"signal steps agent-ran reads, in the same order ({want_expr!r}"
+            f"), got {published!r} -- a missing, mistyped or foreign step "
+            f"id reads empty and the stall path cannot tell an agent that "
+            f"never started from one that ran (#889)")
+    for sid in sorted(AGENT_STARTED_EXCLUDED_SIGNALS.get(path, ())):
+        if f"steps.{sid}.outputs.started" in published:
+            failures.append(
+                f"{path} [{entry}]: agent-started reads steps.{sid}'s "
+                f"`started` -- that agent step runs only after the work-"
+                f"bearing one succeeded and never pushes, so its own setup "
+                f"failure would report no agent work while that work is on "
+                f"the branch (FR-015, code review of PR #978)")
+    for step in job.get("steps") or []:
+        uses = str((step or {}).get("uses", ""))
+        if REASON_COMPOSITE not in uses and NOTICE_COMPOSITE not in uses:
+            continue
+        w = (step or {}).get("with") or {}
+        if str(w.get("agent-ran", "")).strip() != ran:
+            continue
+        if str(w.get("agent-started", "")).strip() != want:
+            failures.append(
+                f"{path} [{job_name}] step {step.get('name')!r} passes "
+                f"agent-ran but not agent-started: {want} (#889) -- got "
+                f"{w.get('agent-started')!r}")
+        restart = str(w.get("restart-command", ""))
+        guard = "needs.%s.outputs.agent-started != 'false'" % entry
+        # The guard must sit in the very `&&` arm that yields the "pushed
+        # commits" string, not merely somewhere in the expression (code
+        # review of PR #978): every quoted alternative carrying that phrase
+        # is preceded directly by `<guard> && `.
+        arms = re.findall(r"(?:(\S+)\s*!=\s*'false'\s*&&\s*)?'[^']*pushed "
+                          r"commits are on the branch[^']*'", restart)
+        want_ref = "needs.%s.outputs.agent-started" % entry
+        if "pushed commits are on the branch" in restart and (
+                not arms or any(a != want_ref for a in arms)):
+            failures.append(
+                f"{path} [{job_name}] step {step.get('name')!r}: its "
+                f"restart-command offers \"its pushed commits are on the "
+                f"branch\" without the {guard!r} guard, so an agent that "
+                f"never started is told its commits exist (#889)")
+    return failures
+
+
+def check_stall_reason_job(path, job, wf=None):
     """-> list[str]. The reason step's own single-home composite call."""
     step = _find_step(job, REASON_STEP_NAME)
     if step is None:
@@ -878,7 +991,7 @@ def check_stall_reason_job(path, job):
         return [f"{path} [stalled] step {REASON_STEP_NAME!r} does not call "
                 f"the {REASON_COMPOSITE} composite (CLAUDE.md single-home "
                 f"rule) -- got uses: {uses!r}"]
-    return []
+    return check_agent_started_wiring(path, job, wf)
 
 
 def scan(loaded):
@@ -897,7 +1010,20 @@ def scan(loaded):
                 f"{path}: job {job_name!r} not found -- cannot check its "
                 f"stall-reason composite call (FR-022)")
             continue
-        failures += check_stall_reason_job(path, job)
+        failures += check_stall_reason_job(path, job, wf)
+        # Review pass 3 of PR #978: every OTHER job in the file whose
+        # reason step also resolves through the composite (pr-conversation's
+        # stalled-mark, which records the reason in the lifecycle record)
+        # gets the same agent-started wiring check -- otherwise dropping
+        # agent-started there passes while the record blames an agent that
+        # never started.
+        for other_name, other in (wf.get("jobs") or {}).items():
+            if other_name == job_name:
+                continue
+            step = _find_step(other or {}, REASON_STEP_NAME) or {}
+            if REASON_COMPOSITE in str(step.get("uses", "")):
+                failures += check_agent_started_wiring(path, other, wf,
+                                                    other_name)
 
     # Checks 3/5 -- job-agnostic, every job in every loaded file (D9).
     for path, wf in loaded.items():
@@ -1286,6 +1412,114 @@ def mut_stall_reason_single_home_reverted(loaded):
     step["uses"] = "actions/checkout@v5"
 
 
+def mut_stall_reason_drops_agent_started(loaded):
+    """#889/#972: intake's stall reason stops passing agent-started, so a
+    run whose agent action died in its own setup is reported as "the agent
+    step ran ... its pushed commits are on the branch" again."""
+    job = loaded[".github/workflows/intake.yml"]["jobs"]["stalled"]
+    step = _find_step(job, REASON_STEP_NAME)
+    assert step is not None, "fixture assumption broken: step renamed"
+    assert "agent-started" in (step.get("with") or {}), \
+        "fixture assumption broken: agent-started already absent"
+    del step["with"]["agent-started"]
+
+
+def mut_stall_mark_reason_drops_agent_started(loaded):
+    """Review pass 3 of PR #978: pr-conversation's stalled-mark job (not the
+    'stalled' job STALL_REASON_JOBS names) stops passing agent-started to
+    its own stall-reason call, so the lifecycle record's stall-mark reason
+    says the agent ran for an agent that never started."""
+    job = loaded[".github/workflows/pr-conversation.yml"]["jobs"][
+        "stalled-mark"]
+    step = _find_step(job, REASON_STEP_NAME)
+    assert step is not None, "fixture assumption broken: step renamed"
+    assert "agent-started" in (step.get("with") or {}), \
+        "fixture assumption broken: agent-started already absent"
+    del step["with"]["agent-started"]
+
+
+def mut_notice_drops_agent_started(loaded):
+    """#889/#972: implement's stall notice stops passing agent-started."""
+    job = loaded[".github/workflows/implement.yml"]["jobs"]["stalled"]
+    step = _find_step(job, "Report the stage did not start")
+    assert step is not None, "fixture assumption broken: step renamed"
+    assert "agent-started" in (step.get("with") or {}), \
+        "fixture assumption broken: agent-started already absent"
+    del step["with"]["agent-started"]
+
+
+def mut_restart_command_drops_agent_started_guard(loaded):
+    """#889/#972: clarify's restart-command offers "its pushed commits are
+    on the branch" to an agent that never started again."""
+    job = loaded[".github/workflows/clarify.yml"]["jobs"]["stalled"]
+    step = _find_step(job, "Report the stage did not start")
+    assert step is not None, "fixture assumption broken: step renamed"
+    guard = " && needs.clarify.outputs.agent-started != 'false'"
+    restart = step["with"]["restart-command"]
+    assert guard in restart, "fixture assumption broken: guard absent"
+    step["with"]["restart-command"] = restart.replace(guard, "")
+
+
+def mut_restart_command_guard_on_wrong_arm(loaded):
+    """Code review of PR #978: intake's agent-started guard moved onto the
+    success arm, leaving the "pushed commits" arm unguarded while the guard
+    text still appears in the expression."""
+    job = loaded[".github/workflows/intake.yml"]["jobs"]["stalled"]
+    step = _find_step(job, "Report the stage did not start")
+    assert step is not None, "fixture assumption broken: step renamed"
+    guard = " && needs.intake.outputs.agent-started != 'false'"
+    restart = step["with"]["restart-command"]
+    assert guard in restart, "fixture assumption broken: guard absent"
+    restart = restart.replace(guard, "")
+    success = "needs.intake.outputs.agent-conclusion == 'success'"
+    assert success in restart, "fixture assumption broken: success arm"
+    step["with"]["restart-command"] = restart.replace(
+        success, success + guard, 1)
+
+
+def mut_implement_agent_started_reads_progress(loaded):
+    """Code review of PR #978: implement's agent-started output reads the
+    non-pushing progress composer's `started` again."""
+    job = loaded[".github/workflows/implement.yml"]["jobs"]["implement"]
+    out = job["outputs"]["agent-started"]
+    assert "agent-ran-progress" not in out, \
+        "fixture assumption broken: progress already read"
+    job["outputs"]["agent-started"] = out.replace(
+        "${{ ", "${{ steps.agent-ran-progress.outputs.started || ", 1)
+
+
+def mut_entry_job_drops_agent_started_output(loaded):
+    """#889/#972: tasks' entry job stops publishing agent-started, so the
+    stalled job's needs.tasks.outputs.agent-started reads empty."""
+    job = loaded[".github/workflows/tasks.yml"]["jobs"]["tasks"]
+    assert "agent-started" in (job.get("outputs") or {}), \
+        "fixture assumption broken: agent-started output already absent"
+    del job["outputs"]["agent-started"]
+
+
+def mut_tasks_agent_started_drops_pr_arm(loaded):
+    """Pass-2 review of PR #978: tasks' agent-started reads only the auto
+    path's signal, so a pr-path setup failure reads empty and is reported
+    as an agent that ran and pushed commits."""
+    job = loaded[".github/workflows/tasks.yml"]["jobs"]["tasks"]
+    arm = " || steps.agent-ran-pr.outputs.started"
+    out = job["outputs"]["agent-started"]
+    assert arm in out, "fixture assumption broken: pr arm absent"
+    job["outputs"]["agent-started"] = out.replace(arm, "")
+
+
+def mut_clarify_agent_started_foreign_step(loaded):
+    """Pass-2 review of PR #978: clarify's agent-started names a step that
+    is not its agent-ran signal (here the credential-status step), so it
+    always reads empty."""
+    job = loaded[".github/workflows/clarify.yml"]["jobs"]["clarify"]
+    out = job["outputs"]["agent-started"]
+    assert "steps.agent-ran.outputs.started" in out, \
+        "fixture assumption broken: signal step id changed"
+    job["outputs"]["agent-started"] = out.replace(
+        "steps.agent-ran.", "steps.credential-status.")
+
+
 def mut_refresh_remote_step_deleted(loaded):
     """Hole (a): deleting the refresh-remote step entirely (not merely
     reverting its `uses:`) must fail -- check 5 alone only inspects a step
@@ -1620,6 +1854,27 @@ SIMPLE_MUTATIONS = [
     ("the 'Determine which dependency did not start' composite call (in "
      "the stalled job) reverted to a non-composite step",
      mut_stall_reason_single_home_reverted),
+    ("intake's stall reason stops passing agent-started (#889)",
+     mut_stall_reason_drops_agent_started),
+    ("pr-conversation's stalled-mark stall reason stops passing "
+     "agent-started", mut_stall_mark_reason_drops_agent_started),
+    ("implement's stall notice stops passing agent-started (#889)",
+     mut_notice_drops_agent_started),
+    ("clarify's restart-command loses its agent-started guard (#889)",
+     mut_restart_command_drops_agent_started_guard),
+    ("tasks' entry job stops publishing the agent-started output (#889)",
+     mut_entry_job_drops_agent_started_output),
+    ("intake's agent-started guard moved onto the restart-command's "
+     "success arm (code review of PR #978)",
+     mut_restart_command_guard_on_wrong_arm),
+    ("implement's agent-started reads the progress composer's signal "
+     "(code review of PR #978)",
+     mut_implement_agent_started_reads_progress),
+    ("tasks' agent-started drops the pr path's signal (pass-2 review of "
+     "PR #978)", mut_tasks_agent_started_drops_pr_arm),
+    ("clarify's agent-started reads a step that is not its agent-ran "
+     "signal (pass-2 review of PR #978)",
+     mut_clarify_agent_started_foreign_step),
     ("the refresh-remote step deleted entirely, not merely reverted",
      mut_refresh_remote_step_deleted),
     ("the credential-status step renamed away from its recognized name "

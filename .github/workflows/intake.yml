@@ -22,7 +22,7 @@ on:
         description: "Model for the specification agent (constitution II tiering default)"
         type: string
         required: false
-        default: claude-opus-5
+        default: claude-opus-5-5
       max-turns:
         description: "Turn budget for the specification agent"
         type: number
@@ -266,7 +266,7 @@ jobs:
         run: |
           # Canonical required-tool list: .github/scripts/required-tools.txt
           # (kept in agreement by Gate 23, specs/038 FR-011a).
-          REQUIRED_TOOLS="git gh jq curl python3 bash node timeout"
+          REQUIRED_TOOLS="git gh jq curl python3 bash node timeout unzip"
 
           if [ -n "$REGISTRY_USERNAME" ] && [ -n "$REGISTRY_PASSWORD" ]; then
             # A bare/namespaced Docker Hub reference (no "." or ":" or
@@ -375,6 +375,7 @@ jobs:
       refusal-reason: ${{ steps.preflight.outputs.reason }}
       agent-ran: ${{ steps.agent-ran.outputs.ran }}
       agent-conclusion: ${{ steps.agent-ran.outputs.conclusion }}
+      agent-started: ${{ steps.agent-ran.outputs.started }}
       credential-refresh-ok: ${{ steps.credential-status.outputs.ok }}
       commits-published: ${{ steps.publish-stranded.outputs.commits-published }}
       push-ok: ${{ steps.publish-stranded.outputs.push-ok }}
@@ -1574,6 +1575,7 @@ jobs:
           entry-result: ${{ needs.intake.result }}
           agent-ran: ${{ needs.intake.outputs.agent-ran }}
           agent-conclusion: ${{ needs.intake.outputs.agent-conclusion }}
+          agent-started: ${{ needs.intake.outputs.agent-started }}
           credential-refresh-ok: ${{ needs.intake.outputs.credential-refresh-ok }}
           failed-post-agent-step: ${{ needs.intake.outputs.failed-post-agent-step }}
 
@@ -1587,9 +1589,10 @@ jobs:
           reason: ${{ steps.reason.outputs.reason }}
           # FR-015: resume-oriented wording when the agent ran and a step
           # after it is what stalled the job -- not a from-scratch restart.
-          # Worded from agent-conclusion -- see clarify.yml.
-          restart-command: ${{ needs.intake.outputs.agent-ran == 'true' && needs.intake.outputs.agent-conclusion == 'success' && 'The intake agent step completed its work; a step after it did not. Re-dispatch the intake stage for this specification once the cause above is resolved.' || needs.intake.outputs.agent-ran == 'true' && 'The intake agent step failed after running; its pushed commits are on the branch. Re-dispatch the intake stage for this specification once the cause above is resolved.' || 'Re-dispatch the intake stage for this specification once the cause above is resolved.' }}
+          # Worded from agent-conclusion and agent-started -- see clarify.yml.
+          restart-command: ${{ needs.intake.outputs.agent-ran == 'true' && needs.intake.outputs.agent-conclusion == 'success' && 'The intake agent step completed its work; a step after it did not. Re-dispatch the intake stage for this specification once the cause above is resolved.' || needs.intake.outputs.agent-ran == 'true' && needs.intake.outputs.agent-started != 'false' && 'The intake agent step failed after running; its pushed commits are on the branch. Re-dispatch the intake stage for this specification once the cause above is resolved.' || 'Re-dispatch the intake stage for this specification once the cause above is resolved.' }}
           agent-ran: ${{ needs.intake.outputs.agent-ran }}
           agent-conclusion: ${{ needs.intake.outputs.agent-conclusion }}
+          agent-started: ${{ needs.intake.outputs.agent-started }}
           commits-published: ${{ needs.intake.outputs.commits-published }}
           push-ok: ${{ needs.intake.outputs.push-ok }}

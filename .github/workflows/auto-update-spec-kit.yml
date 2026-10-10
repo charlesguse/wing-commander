@@ -11,7 +11,7 @@
 #                    classification (patch/minor/major).
 #   - settle:       issue-marker settle-tracking state machine — a freshly
 #                    detected candidate never adopts the same day it appears.
-#   - evaluate-path: one claude-sonnet-5 judgment step deciding clean-bump /
+#   - evaluate-path: one claude-sonnet-5-5 judgment step deciding clean-bump /
 #                    needs-migration / ambiguous-options.
 #   - prepare:      deterministic version-bump diff, no push yet.
 #   - e2e-stage:    (minor/major only, specs/034) scaffolds the candidate
@@ -87,12 +87,12 @@ on:
         description: "Model for the evaluate-path judgment agent (constitution II tiering: implementation-weight)."
         type: string
         required: false
-        default: claude-sonnet-5
+        default: claude-sonnet-5-5
       e2e-stage-model:
         description: "Model for the e2e-stage disposable smoke-test agent (constitution II tiering: disposable smoke-test generation, not the foundational-spec premium tier)."
         type: string
         required: false
-        default: claude-sonnet-5
+        default: claude-sonnet-5-5
       e2e-stage-max-turns:
         description: "Max turns for the e2e-stage disposable smoke-test agent."
         type: string
@@ -235,7 +235,7 @@ jobs:
         run: |
           # Canonical required-tool list: .github/scripts/required-tools.txt
           # (kept in agreement by Gate 23, specs/038 FR-011a).
-          REQUIRED_TOOLS="git gh jq curl python3 bash node timeout"
+          REQUIRED_TOOLS="git gh jq curl python3 bash node timeout unzip"
 
           if [ -n "$REGISTRY_USERNAME" ] && [ -n "$REGISTRY_PASSWORD" ]; then
             # A bare/namespaced Docker Hub reference (no "." or ":" or
@@ -848,7 +848,7 @@ jobs:
           echo "settled=$settled" >> "$GITHUB_OUTPUT"
           echo "issue-number=$issue_number" >> "$GITHUB_OUTPUT"
 
-  # One claude-sonnet-5 judgment step: clean-bump / needs-migration /
+  # One claude-sonnet-5-5 judgment step: clean-bump / needs-migration /
   # ambiguous-options. Also the re-entry point for a resumed
   # ambiguous-options decision (comment-reply, US4) — same job, two ways in.
   evaluate-path:

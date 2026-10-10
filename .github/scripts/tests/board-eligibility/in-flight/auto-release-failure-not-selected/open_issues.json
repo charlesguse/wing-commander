@@ -1,0 +1,30 @@
+[
+  {
+    "number": 7101,
+    "author": {
+      "login": "wing-commander-bot[bot]"
+    },
+    "authorAssociation": "NONE",
+    "labels": [
+      {
+        "name": "auto-release:failed"
+      }
+    ],
+    "state": "OPEN",
+    "createdAt": "2026-01-01T00:00:00Z"
+  },
+  {
+    "number": 7102,
+    "author": {
+      "login": "wing-commander-bot[bot]"
+    },
+    "authorAssociation": "NONE",
+    "labels": [
+      {
+        "name": "pipeline-defect"
+      }
+    ],
+    "state": "OPEN",
+    "createdAt": "2026-01-02T00:00:00Z"
+  }
+]

@@ -13,7 +13,7 @@
 # max-iterations-cap path below rather than looping to the cap; at the
 # max-iterations cap (or that early hand-off) post the remaining work and
 # dispatch next-workflow (converged=false). An outright pass failure retries
-# the same iteration once on claude-opus-5;
+# the same iteration once on claude-opus-5-5;
 # if the retry also fails (or the pass already ran on opus) the spec is
 # marked stalled. Empty chaining inputs ⇒ report to the issue and stop —
 # any stage runs standalone (FR-002).
@@ -53,7 +53,7 @@ on:
         description: "Model for the implementation agent (constitution II tiering default)"
         type: string
         required: false
-        default: claude-sonnet-5
+        default: claude-sonnet-5-5
       max-turns:
         description: "Turn budget for each implementation attempt"
         type: number
@@ -71,7 +71,7 @@ on:
         description: "Model for the one-tier-up retry after a failed attempt (constitution II escalation default)"
         type: string
         required: false
-        default: claude-opus-5
+        default: claude-opus-5-5
       summary-model:
         description: "Model for the progress-comment and metrics-summary steps (constitution II tiering default)"
         type: string
@@ -322,7 +322,7 @@ jobs:
         run: |
           # Canonical required-tool list: .github/scripts/required-tools.txt
           # (kept in agreement by Gate 23, specs/038 FR-011a).
-          REQUIRED_TOOLS="git gh jq curl python3 bash node timeout"
+          REQUIRED_TOOLS="git gh jq curl python3 bash node timeout unzip"
 
           if [ -n "$REGISTRY_USERNAME" ] && [ -n "$REGISTRY_PASSWORD" ]; then
             # A bare/namespaced Docker Hub reference (no "." or ":" or
@@ -559,6 +559,11 @@ jobs:
       # path reads is the LAST chain that actually ran, by construction
       # (most-recent-wins `||`, same convention as agent-ran above).
       agent-conclusion: ${{ steps.agent-ran-progress.outputs.conclusion || steps.agent-ran-retry.outputs.conclusion || steps.agent-ran-cycle.outputs.conclusion }}
+      # Retry/cycle only, unlike agent-ran above: the progress composer runs
+      # only after a cycle or retry succeeded (final ok) and never pushes,
+      # so its own setup failure must not tell the stall notice that no
+      # agent work exists -- that cycle's commits are on the branch (FR-015).
+      agent-started: ${{ steps.agent-ran-retry.outputs.started || steps.agent-ran-cycle.outputs.started }}
       credential-refresh-ok: ${{ steps.credential-status-progress.outputs.ok || steps.credential-status-retry.outputs.ok || steps.credential-status-cycle.outputs.ok }}
       # Most-recent-wins across retry/cycle only, same convention as above.
       commits-published: ${{ steps.publish-stranded-retry.outputs.commits-published || steps.publish-stranded-cycle.outputs.commits-published }}
@@ -3841,6 +3846,7 @@ jobs:
           CHECKOUT_OK: ${{ steps.identity-checkout.outcome == 'success' }}
           AGENT_RAN: ${{ needs.implement.outputs.agent-ran }}
           AGENT_CONCLUSION: ${{ needs.implement.outputs.agent-conclusion }}
+          AGENT_STARTED: ${{ needs.implement.outputs.agent-started }}
         run: |
           restart_workflow="$SELF_WORKFLOW"
           [ -n "$restart_workflow" ] || restart_workflow="<your implement wrapper workflow>"
@@ -3856,10 +3862,10 @@ jobs:
             # "starting from zero" here, the cycle's own work already landed.
             # Worded from agent-conclusion, not asserted as "ran to
             # completion" regardless of outcome (second maintainer review of
-            # PR #407, FR-011) -- see clarify.yml.
+            # PR #407, FR-011), and from agent-started -- see clarify.yml.
             if [ "$AGENT_RAN" = "true" ] && [ "$AGENT_CONCLUSION" = "success" ]; then
               echo "The implement agent step completed its work; a step after it did not. Once the cause above is resolved, resume via **Run workflow** with these inputs (GitHub cannot prefill them from a link):"
-            elif [ "$AGENT_RAN" = "true" ]; then
+            elif [ "$AGENT_RAN" = "true" ] && [ "$AGENT_STARTED" != "false" ]; then
               echo "The implement agent step failed after running; its pushed commits are on the branch. Once the cause above is resolved, resume via **Run workflow** with these inputs (GitHub cannot prefill them from a link):"
             else
               echo "Re-dispatch the implement wrapper workflow via **Run workflow** with these inputs (GitHub cannot prefill them from a link):"
@@ -3896,6 +3902,7 @@ jobs:
           entry-result: ${{ needs.implement.result }}
           agent-ran: ${{ needs.implement.outputs.agent-ran }}
           agent-conclusion: ${{ needs.implement.outputs.agent-conclusion }}
+          agent-started: ${{ needs.implement.outputs.agent-started }}
           credential-refresh-ok: ${{ needs.implement.outputs.credential-refresh-ok }}
           failed-post-agent-step: ${{ needs.implement.outputs.failed-post-agent-step }}
 
@@ -3912,6 +3919,7 @@ jobs:
           restart-command: ${{ steps.restart.outputs.restart-command }}
           agent-ran: ${{ needs.implement.outputs.agent-ran }}
           agent-conclusion: ${{ needs.implement.outputs.agent-conclusion }}
+          agent-started: ${{ needs.implement.outputs.agent-started }}
           commits-published: ${{ needs.implement.outputs.commits-published }}
           push-ok: ${{ needs.implement.outputs.push-ok }}
 

@@ -81,7 +81,7 @@ on:
         description: "Model for the classify and act agent steps (constitution II — sonnet default, opus opt-in, research.md D2)"
         type: string
         required: false
-        default: claude-sonnet-5
+        default: claude-sonnet-5-5
       max-turns:
         description: "Turn budget for the classify and act agent steps"
         type: number
@@ -272,7 +272,7 @@ jobs:
         run: |
           # Canonical required-tool list: .github/scripts/required-tools.txt
           # (kept in agreement by Gate 23, specs/038 FR-011a).
-          REQUIRED_TOOLS="git gh jq curl python3 bash node timeout"
+          REQUIRED_TOOLS="git gh jq curl python3 bash node timeout unzip"
 
           if [ -n "$REGISTRY_USERNAME" ] && [ -n "$REGISTRY_PASSWORD" ]; then
             # A bare/namespaced Docker Hub reference (no "." or ":" or
@@ -547,6 +547,7 @@ jobs:
       refusal-reason: ${{ steps.preflight.outputs.reason || steps.meta.outputs.reason }}
       agent-ran: ${{ steps.agent-ran.outputs.ran }}
       agent-conclusion: ${{ steps.agent-ran.outputs.conclusion }}
+      agent-started: ${{ steps.agent-ran.outputs.started }}
       credential-refresh-ok: ${{ steps.credential-status.outputs.ok }}
       failed-post-agent-step: ${{ steps.failed-step.outputs.step }}
     steps:
@@ -4020,6 +4021,7 @@ jobs:
           entry-result: ${{ needs.classify-and-announce.result }}
           agent-ran: ${{ needs.classify-and-announce.outputs.agent-ran }}
           agent-conclusion: ${{ needs.classify-and-announce.outputs.agent-conclusion }}
+          agent-started: ${{ needs.classify-and-announce.outputs.agent-started }}
           credential-refresh-ok: ${{ needs.classify-and-announce.outputs.credential-refresh-ok }}
           failed-post-agent-step: ${{ needs.classify-and-announce.outputs.failed-post-agent-step }}
           resolve-identity-result: ${{ needs.resolve-identity.result }}
@@ -4039,10 +4041,11 @@ jobs:
           reason: ${{ steps.reason.outputs.reason }}
           # FR-015: resume-oriented wording when the agent ran and a step
           # after it is what stalled the job -- not a from-scratch restart.
-          # Worded from agent-conclusion -- see clarify.yml.
-          restart-command: ${{ needs.classify-and-announce.outputs.agent-ran == 'true' && needs.classify-and-announce.outputs.agent-conclusion == 'success' && 'The classify agent step completed its work; a step after it did not. Re-dispatch the pr-conversation stage for this pull request once the cause above is resolved.' || needs.classify-and-announce.outputs.agent-ran == 'true' && 'The classify agent step failed after running; its pushed commits are on the branch. Re-dispatch the pr-conversation stage for this pull request once the cause above is resolved.' || 'Re-dispatch the pr-conversation stage for this pull request once the cause above is resolved.' }}
+          # Worded from agent-conclusion and agent-started -- see clarify.yml.
+          restart-command: ${{ needs.classify-and-announce.outputs.agent-ran == 'true' && needs.classify-and-announce.outputs.agent-conclusion == 'success' && 'The classify agent step completed its work; a step after it did not. Re-dispatch the pr-conversation stage for this pull request once the cause above is resolved.' || needs.classify-and-announce.outputs.agent-ran == 'true' && needs.classify-and-announce.outputs.agent-started != 'false' && 'The classify agent step failed after running; its pushed commits are on the branch. Re-dispatch the pr-conversation stage for this pull request once the cause above is resolved.' || 'Re-dispatch the pr-conversation stage for this pull request once the cause above is resolved.' }}
           agent-ran: ${{ needs.classify-and-announce.outputs.agent-ran }}
           agent-conclusion: ${{ needs.classify-and-announce.outputs.agent-conclusion }}
+          agent-started: ${{ needs.classify-and-announce.outputs.agent-started }}
           mark-record: "false"
 
   # Queues only the spec-meta.json stall-mark write in the canonical
@@ -4160,6 +4163,7 @@ jobs:
           entry-result: ${{ needs.classify-and-announce.result }}
           agent-ran: ${{ needs.classify-and-announce.outputs.agent-ran }}
           agent-conclusion: ${{ needs.classify-and-announce.outputs.agent-conclusion }}
+          agent-started: ${{ needs.classify-and-announce.outputs.agent-started }}
           credential-refresh-ok: ${{ needs.classify-and-announce.outputs.credential-refresh-ok }}
           failed-post-agent-step: ${{ needs.classify-and-announce.outputs.failed-post-agent-step }}
           resolve-identity-result: ${{ needs.resolve-identity.result }}

@@ -405,7 +405,7 @@ def static_checks(jobs, steps):
     check("verify-e2e needs e2e-pin and still runs when e2e-pin failed, so its check names it",
           "e2e-pin" in (verify_job.get("needs") or []) and "!cancelled()" in verify_if
           and "needs.detect.result == 'success'" in verify_if
-          and "needs.detect.outputs.has-new-work == 'true'" in verify_if,
+          and "needs.detect.outputs.run-verification == 'true'" in verify_if,
           "needs={0} if={1!r}".format(verify_job.get("needs"), verify_if))
     deleters = ["{0} / {1}".format(name, (step or {}).get("name"))
                 for name, job in jobs.items() if name != "e2e-pin"

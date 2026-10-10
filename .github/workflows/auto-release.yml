@@ -40,12 +40,24 @@ jobs:
     if: vars.WING_COMMANDER_AUTO_RELEASE_PAUSED != 'true'
     permissions:
       contents: read
+      # Reads (never writes) the open auto-release:failed issue's recorded
+      # mode -- see "Decide whether this run verifies" below.
+      issues: read
     runs-on: ubuntu-latest
     outputs:
       head-sha: ${{ steps.resolve.outputs.head-sha }}
       tag-exists: ${{ steps.resolve.outputs.tag-exists }}
       latest-tag: ${{ steps.resolve.outputs.latest-tag }}
       has-new-work: ${{ steps.resolve.outputs.has-new-work }}
+      mode: ${{ steps.mode.outputs.mode }}
+      # Carried separately from the verdict's `mode` field (data-model.md
+      # "Execution mode") -- true only when the container leg was due by
+      # date parity but the pause control (research.md D3) forced this run
+      # to default-runner instead.
+      paused: ${{ steps.mode.outputs.paused }}
+      failure-issue: ${{ steps.verification.outputs.failure-issue }}
+      failure-issue-modes: ${{ steps.verification.outputs.failure-issue-modes }}
+      run-verification: ${{ steps.verification.outputs.run-verification }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -94,6 +106,121 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           echo "detect: latest release $latest_tag ($tag_sha); head $head_sha; has-new-work=$has_new_work." >> "$GITHUB_STEP_SUMMARY"
 
+      # A stateless derivation, recomputed fresh every run from the UTC
+      # calendar date -- nothing is persisted, so a cancelled, skipped, or
+      # manually dispatched run can never leave the rotation stuck on one
+      # mode (research.md D1, Edge Case: "the alternation loses its
+      # place"). Derived here in detect, once per run, rather than inside
+      # verify-e2e: whether this run verifies at all now depends on it (the
+      # next step), and verify-e2e's verdict-emitting steps read the same
+      # value through needs.detect.outputs.mode, exactly as verified_head
+      # is threaded today (research.md D9).
+      - name: Derive this run's execution mode (container vs default-runner)
+        id: mode
+        shell: bash
+        env:
+          CONTAINER_PAUSED: ${{ vars.WING_COMMANDER_AUTO_RELEASE_E2E_CONTAINER_PAUSED }}
+        run: |
+          set -uo pipefail
+          # Days since the Unix epoch, NOT day-of-year parity (SC-009): the
+          # day-of-year resets to 1 every January 1st, and in a non-leap
+          # year day 365 (Dec 31) and day 1 (Jan 1) are both odd, so parity
+          # of day-of-year repeats the same mode across every year boundary
+          # instead of alternating -- a monotonic count has no such seam,
+          # since consecutive calendar days always increment it by exactly
+          # one regardless of which year they fall in.
+          days_since_epoch="$(( $(date -u +%s) / 86400 ))"
+          if [ $(( days_since_epoch % 2 )) -eq 0 ]; then
+            mode=default-runner
+          else
+            mode=container
+          fi
+          # Independent of WING_COMMANDER_AUTO_RELEASE_PAUSED (research.md
+          # D3): pausing the container leg does not pause auto-release as a
+          # whole, and vice versa. Never overrides an already-even-day
+          # (default-runner) result, since that leg was never paused.
+          paused=false
+          if [ "$CONTAINER_PAUSED" = "true" ] && [ "$mode" = "container" ]; then
+            mode=default-runner
+            paused=true
+          fi
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+          echo "paused=$paused" >> "$GITHUB_OUTPUT"
+
+      # A pass may only clear a failure it actually disproves (#966): a
+      # container-mode failure that a default-runner pass closed was never
+      # re-checked, because every later quiet day skipped verification
+      # entirely. So read the one open auto-release:failed issue -- the
+      # same `.[0]` the durable-failure-issue composite's label lookup
+      # finds and would close -- and its whole record: the body, then
+      # every comment the auto-release bot added (a later failure lands
+      # there as a comment, never as a second issue, and may be in the
+      # other mode). _shared/auto-release-outstanding-modes.sh is the one
+      # reader of that record and the one statement of which failures a
+      # pass clears -- see there. When THIS run's mode is
+      # outstanding, verify the current head even with nothing unreleased;
+      # decide-version still runs only on has-new-work, so the release
+      # decision is unchanged. The alternation itself is untouched
+      # (specs/054 FR-018/SC-009): the other mode's failure waits for its
+      # own turn.
+      #   failure-issue-modes: the outstanding set, space-separated, from
+      #     `container default-runner unrecorded` -- empty when no issue is
+      #     open (failure-issue empty) or the open one has nothing left
+      #     outstanding -- or `unreadable` (the lookup failed; report then
+      #     closes nothing it cannot attribute)
+      # Never exits non-zero: a failed lookup degrades to "verify only
+      # unreleased work", today's behaviour, never to a red detect.
+      - name: Decide whether this run verifies (unreleased head, or an open failure in this run's mode)
+        id: verification
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HAS_NEW_WORK: ${{ steps.resolve.outputs.has-new-work }}
+          MODE: ${{ steps.mode.outputs.mode }}
+        run: |
+          set -uo pipefail
+          failure_issue=""
+          failure_modes=""
+          lookup_err="$(mktemp)"
+          unreadable() {
+            failure_issue=""
+            failure_modes=unreadable
+            echo "::warning::auto-release detect: could not read the open auto-release:failed issue's record -- $1 -- verifying only unreleased work this run, and closing nothing."
+          }
+          if issue_json="$(gh issue list --repo "$GITHUB_REPOSITORY" --label "auto-release:failed" --state open --json number,body --jq '.[0] // empty' 2>"$lookup_err")"; then
+            if [ -n "$issue_json" ]; then
+              failure_issue="$(printf '%s' "$issue_json" | jq -r '.number // empty' 2>/dev/null || true)"
+              if ! [[ "$failure_issue" =~ ^[0-9]+$ ]]; then
+                unreadable "the issue lookup returned no issue number"
+              else
+                # One {body} object per comment, oldest first, collected
+                # across pages below; the bot's own comments only -- nobody
+                # else's text is evidence.
+                if ! comments="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${failure_issue}/comments" --paginate --jq '.[] | select(.user.login == "github-actions[bot]") | {body}' 2>"$lookup_err")"; then
+                  comments=""
+                  unreadable "$(tr '\n' ' ' < "$lookup_err")"
+                elif ! failure_modes="$( { printf '%s' "$issue_json" | jq -c '{body: (.body // "")}'; printf '%s\n' "$comments"; } | jq -cs 'map(.body)' | bash .github/actions/_shared/auto-release-outstanding-modes.sh 2>"$lookup_err")"; then
+                  unreadable "$(tr '\n' ' ' < "$lookup_err")"
+                fi
+              fi
+            fi
+          else
+            unreadable "$(tr '\n' ' ' < "$lookup_err")"
+          fi
+
+          run_verification=false
+          if [ "$HAS_NEW_WORK" = "true" ]; then
+            run_verification=true
+          elif [ -n "$MODE" ] && [[ " $failure_modes " == *" $MODE "* ]]; then
+            run_verification=true
+            echo "detect: no unreleased head, but #${failure_issue} still awaits a passing ${MODE}-mode run (outstanding: ${failure_modes}) and this run's mode is ${MODE} -- re-verifying the current head (nothing will be released)." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          {
+            echo "failure-issue=$failure_issue"
+            echo "failure-issue-modes=$failure_modes"
+            echo "run-verification=$run_verification"
+          } >> "$GITHUB_OUTPUT"
+
   # The test repository calls the stages through an annotated tag on the
   # verified head, because that is the shape of every adopter's `@v2` or
   # `@v2.x.y` pin: github.job_workflow_sha is then the tag object's SHA, not
@@ -115,7 +242,7 @@ jobs:
   # verify-e2e's pin check turns that into a fail-infra verdict.
   e2e-pin:
     needs: detect
-    if: needs.detect.outputs.has-new-work == 'true' && vars.WING_COMMANDER_AUTO_RELEASE_PAUSED != 'true'
+    if: needs.detect.outputs.run-verification == 'true' && vars.WING_COMMANDER_AUTO_RELEASE_PAUSED != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -196,18 +323,15 @@ jobs:
   # to say only that verify-e2e never ran (#325).
   verify-e2e:
     needs: [detect, e2e-pin]
-    if: ${{ !cancelled() && needs.detect.result == 'success' && needs.detect.outputs.has-new-work == 'true' && vars.WING_COMMANDER_AUTO_RELEASE_PAUSED != 'true' }}
+    if: ${{ !cancelled() && needs.detect.result == 'success' && needs.detect.outputs.run-verification == 'true' && vars.WING_COMMANDER_AUTO_RELEASE_PAUSED != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 150
     permissions:
       contents: read
     outputs:
       verdict: ${{ steps.config.outputs.verdict || steps.reachable.outputs.verdict || steps.maintainer-credential.outputs.verdict || steps.container-evidence-config.outputs.verdict || steps.cleanup.outputs.verdict || steps.reset.outputs.verdict || steps.speckit-version.outputs.verdict || steps.pin.outputs.verdict || steps.scaffold.outputs.verdict || steps.kickoff.outputs.verdict || steps.poll.outputs.verdict }}
-      # Carried separately from the verdict's `mode` field (data-model.md
-      # "Execution mode") -- true only when the container leg was due by
-      # date parity but the pause control (research.md D3) forced this run
-      # to default-runner instead.
-      paused: ${{ steps.mode.outputs.paused }}
+      # Derived in detect -- see its `paused` output.
+      paused: ${{ needs.detect.outputs.paused }}
       # Gate evidence for a `pass` verdict (research.md D12, FR-017, FR-019)
       # -- empty on every non-pass path, since the poll step exits before
       # writing them.
@@ -227,52 +351,13 @@ jobs:
         with:
           persist-credentials: false
 
-      # A stateless derivation, recomputed fresh every run from the UTC
-      # calendar date -- nothing is persisted, so a cancelled, skipped, or
-      # manually dispatched run can never leave the rotation stuck on one
-      # mode (research.md D1, Edge Case: "the alternation loses its
-      # place"). Runs first and unconditionally: every later verdict-
-      # emitting step threads its output through exactly as verified_head
-      # already is today (research.md D9).
-      - name: Derive this run's execution mode (container vs default-runner)
-        id: mode
-        shell: bash
-        env:
-          CONTAINER_PAUSED: ${{ vars.WING_COMMANDER_AUTO_RELEASE_E2E_CONTAINER_PAUSED }}
-        run: |
-          set -uo pipefail
-          # Days since the Unix epoch, NOT day-of-year parity (SC-009): the
-          # day-of-year resets to 1 every January 1st, and in a non-leap
-          # year day 365 (Dec 31) and day 1 (Jan 1) are both odd, so parity
-          # of day-of-year repeats the same mode across every year boundary
-          # instead of alternating -- a monotonic count has no such seam,
-          # since consecutive calendar days always increment it by exactly
-          # one regardless of which year they fall in.
-          days_since_epoch="$(( $(date -u +%s) / 86400 ))"
-          if [ $(( days_since_epoch % 2 )) -eq 0 ]; then
-            mode=default-runner
-          else
-            mode=container
-          fi
-          # Independent of WING_COMMANDER_AUTO_RELEASE_PAUSED (research.md
-          # D3): pausing the container leg does not pause auto-release as a
-          # whole, and vice versa. Never overrides an already-even-day
-          # (default-runner) result, since that leg was never paused.
-          paused=false
-          if [ "$CONTAINER_PAUSED" = "true" ] && [ "$mode" = "container" ]; then
-            mode=default-runner
-            paused=true
-          fi
-          echo "mode=$mode" >> "$GITHUB_OUTPUT"
-          echo "paused=$paused" >> "$GITHUB_OUTPUT"
-
       - name: Resolve and validate the end-to-end test repository configuration
         id: config
         shell: bash
         env:
           E2E_REPO: ${{ vars.WING_COMMANDER_AUTO_RELEASE_E2E_REPO }}
           HEAD_SHA: ${{ needs.detect.outputs.head-sha }}
-          MODE: ${{ steps.mode.outputs.mode }}
+          MODE: ${{ needs.detect.outputs.mode }}
         run: |
           set -uo pipefail
           if [ -z "$E2E_REPO" ]; then
@@ -351,7 +436,7 @@ jobs:
           DEFAULT_BRANCH: ${{ steps.token.outputs.default-branch }}
           E2E_REPO: ${{ steps.config.outputs.e2e-repo }}
           HEAD_SHA: ${{ needs.detect.outputs.head-sha }}
-          MODE: ${{ steps.mode.outputs.mode }}
+          MODE: ${{ needs.detect.outputs.mode }}
         run: |
           set -uo pipefail
           if [ "$OK" != "true" ]; then
@@ -400,7 +485,7 @@ jobs:
           MAINTAINER_TOKEN_EXPIRY_WARNING_DAYS: ${{ vars.WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN_EXPIRY_WARNING_DAYS }}
           E2E_REPO: ${{ steps.config.outputs.e2e-repo }}
           HEAD_SHA: ${{ needs.detect.outputs.head-sha }}
-          MODE: ${{ steps.mode.outputs.mode }}
+          MODE: ${{ needs.detect.outputs.mode }}
         run: |
           set -uo pipefail
           # A username secret stored with a trailing newline or space (easy to
@@ -721,7 +806,7 @@ jobs:
           WC_SOURCE_CONTAINER_IMAGE: ${{ vars.WING_COMMANDER_CONTAINER_IMAGE }}
           E2E_REPO: ${{ steps.config.outputs.e2e-repo }}
           HEAD_SHA: ${{ needs.detect.outputs.head-sha }}
-          MODE: ${{ steps.mode.outputs.mode }}
+          MODE: ${{ needs.detect.outputs.mode }}
         run: |
           set -uo pipefail
           if [ "$MODE" != "container" ]; then
@@ -803,7 +888,7 @@ jobs:
           GH_TOKEN: ${{ steps.token.outputs.token }}
           E2E_REPO: ${{ steps.config.outputs.e2e-repo }}
           HEAD_SHA: ${{ needs.detect.outputs.head-sha }}
-          MODE: ${{ steps.mode.outputs.mode }}
+          MODE: ${{ needs.detect.outputs.mode }}
         run: |
           set -uo pipefail
 
@@ -886,7 +971,7 @@ jobs:
           FAILURE_STAGE: ${{ steps.reset-branch.outputs.failure-stage }}
           E2E_REPO: ${{ steps.config.outputs.e2e-repo }}
           HEAD_SHA: ${{ needs.detect.outputs.head-sha }}
-          MODE: ${{ steps.mode.outputs.mode }}
+          MODE: ${{ needs.detect.outputs.mode }}
         run: |
           set -uo pipefail
           if [ "$OK" != "true" ]; then
@@ -922,7 +1007,7 @@ jobs:
         shell: bash
         env:
           HEAD_SHA: ${{ needs.detect.outputs.head-sha }}
-          MODE: ${{ steps.mode.outputs.mode }}
+          MODE: ${{ needs.detect.outputs.mode }}
         run: |
           set -uo pipefail
           v="$(sed -n 's/.*SPECKIT_SUPPORTED_VERSION: "\([^"]*\)".*/\1/p' e2e-source/.github/actions/wing-commander-preflight/action.yml | head -1)"
@@ -957,7 +1042,7 @@ jobs:
           PIN_FAILURE: ${{ needs.e2e-pin.outputs.failure }}
           E2E_REPO: ${{ steps.config.outputs.e2e-repo }}
           HEAD_SHA: ${{ needs.detect.outputs.head-sha }}
-          MODE: ${{ steps.mode.outputs.mode }}
+          MODE: ${{ needs.detect.outputs.mode }}
         run: |
           set -uo pipefail
           err="$RUNNER_TEMP/auto-release-pin-err.txt"
@@ -1025,7 +1110,7 @@ jobs:
           HEAD_SHA: ${{ needs.detect.outputs.head-sha }}
           PIN_TAG: ${{ needs.e2e-pin.outputs.tag }}
           SPECKIT_VERSION: ${{ steps.speckit-version.outputs.version }}
-          MODE: ${{ steps.mode.outputs.mode }}
+          MODE: ${{ needs.detect.outputs.mode }}
         run: |
           set -uo pipefail
 
@@ -1122,7 +1207,7 @@ jobs:
           GH_TOKEN: ${{ steps.token.outputs.token }}
           E2E_REPO: ${{ steps.config.outputs.e2e-repo }}
           HEAD_SHA: ${{ needs.detect.outputs.head-sha }}
-          MODE: ${{ steps.mode.outputs.mode }}
+          MODE: ${{ needs.detect.outputs.mode }}
         run: |
           set -uo pipefail
           # specs/067-e2e-container-image-evidence: captured before the
@@ -1186,12 +1271,24 @@ jobs:
       # correcting research.md D13's original, incorrect "align the two
       # clocks" reasoning). The 900s (15 minute) reserve is sized for that
       # pre-loop and post-loop work, not for the loop itself.
+      #
+      # Every read in this step runs under the same maintainer credential
+      # as the gate-driving acts, never under steps.token: an App
+      # installation token expires 60 minutes after it is minted, and
+      # POLL_BUDGET_SECONDS outlives it, so a container-mode run that
+      # crossed the hour had every issue/comments read rejected with HTTP
+      # 401 and ended fail-infra (#979). That credential already holds
+      # Issues and Contents (read and write) on the test repository alone
+      # and carries its own expiry check (-- see docs/setup.md), so this
+      # adds no grant and widens no reach. It also makes it the one GitHub
+      # credential in this step, so write_repeated_failure_verdict's
+      # credential arm can name it outright.
       - name: Poll the test repository to a verdict
         id: poll
         if: steps.kickoff.outputs.ok == 'true'
         shell: bash
         env:
-          GH_TOKEN: ${{ steps.token.outputs.token }}
+          GH_TOKEN: ${{ secrets.WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN }}
           HARNESS_TOKEN: ${{ secrets.WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN }}
           # Read directly from the secret, not from an earlier step's
           # output -- GitHub drops a step output whose value is masked
@@ -1211,7 +1308,7 @@ jobs:
           POLL_BUDGET_SECONDS: "8100"
           GATE_BLOCKED_ALLOWANCE_SECONDS: "1200"
           MAX_CLARIFICATION_ROUNDS: "3"
-          MODE: ${{ steps.mode.outputs.mode }}
+          MODE: ${{ needs.detect.outputs.mode }}
           # specs/067-e2e-container-image-evidence: the matching image
           # reference container-evidence-config already observed, carried
           # into the eventual pass verdict's evidence (T009) -- empty on a
@@ -1255,6 +1352,10 @@ jobs:
           # the phrase list wing-commander-lifecycle-gate's own credential
           # check already matches (.github/actions/wing-commander-
           # lifecycle-gate/action.yml) rather than inventing a second one.
+          # The verdict names the secret because it is the only credential
+          # this step's gh calls can run under (see the comment above this
+          # step); #979 blamed it for a 401 that was really the App token's,
+          # back when the reads ran under steps.token.
           write_repeated_failure_verdict() { # gate expected observed
             if printf '%s' "$3" | grep -qi 'rate limit'; then
               write_verdict "fail-infra" "polling the test repository for a terminal state" \
@@ -1262,8 +1363,8 @@ jobs:
                 "GitHub API rate limit encountered while driving the $1 gate: $3"
             elif printf '%s' "$3" | grep -qiE 'HTTP 401|Bad credentials|Resource not accessible by integration|Resource not accessible by personal access token|requires authentication|insufficient .*scope|missing .*scope'; then
               write_verdict "fail-infra" "$1" \
-                "the harness credential authenticates and authorizes every gate-driving act" \
-                "the harness credential was rejected while driving the $1 gate: $3"
+                "the harness credential (WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN) authenticates and authorizes every read and gate-driving act" \
+                "the harness credential (WING_COMMANDER_AUTO_RELEASE_E2E_MAINTAINER_TOKEN) was rejected while driving the $1 gate: $3"
             else
               write_verdict "fail-gate-stall" "$1" "$2" "$3"
             fi
@@ -2070,10 +2171,14 @@ jobs:
   # !cancelled(): verify-e2e can run after a failed e2e-pin (see there), and
   # without a status function of its own this job would be skipped by that
   # failure before its `if` is read (Gate 15). The verdict guard below is
-  # what gates it: a failed e2e-pin never yields a `pass`.
+  # what gates it: a failed e2e-pin never yields a `pass`. has-new-work
+  # keeps the release decision where it was: verify-e2e also runs on a
+  # head that is already released, to re-check an open failure in this
+  # run's mode (detect's run-verification, #966), and that pass cuts
+  # nothing.
   decide-version:
     needs: [detect, verify-e2e]
-    if: ${{ !cancelled() && needs.verify-e2e.result == 'success' && fromJSON(needs.verify-e2e.outputs.verdict || '{}').outcome == 'pass' && vars.WING_COMMANDER_AUTO_RELEASE_PAUSED != 'true' }}
+    if: ${{ !cancelled() && needs.detect.outputs.has-new-work == 'true' && needs.verify-e2e.result == 'success' && fromJSON(needs.verify-e2e.outputs.verdict || '{}').outcome == 'pass' && vars.WING_COMMANDER_AUTO_RELEASE_PAUSED != 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -2297,10 +2402,27 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           HEAD_SHA: ${{ needs.detect.outputs.head-sha }}
           HAS_NEW_WORK: ${{ needs.detect.outputs.has-new-work }}
+          # #966: whether verify-e2e ran on a head with nothing unreleased
+          # (an open failure outstanding in this run's mode), and the open
+          # failure issue's outstanding modes, which decide what a pass may
+          # close.
+          RUN_VERIFICATION: ${{ needs.detect.outputs.run-verification }}
+          FAILURE_ISSUE: ${{ needs.detect.outputs.failure-issue }}
+          FAILURE_ISSUE_MODES: ${{ needs.detect.outputs.failure-issue-modes }}
+          # Whether the container leg is paused at all (not only on this
+          # run's container day): a left-open container failure must not
+          # promise a container turn the pause will never run.
+          CONTAINER_PAUSED: ${{ vars.WING_COMMANDER_AUTO_RELEASE_E2E_CONTAINER_PAUSED }}
           TAG_EXISTS: ${{ needs.detect.outputs.tag-exists }}
           LATEST_TAG: ${{ needs.detect.outputs.latest-tag }}
           VERDICT_JSON: ${{ needs.verify-e2e.outputs.verdict }}
-          PAUSED: ${{ needs.verify-e2e.outputs.paused }}
+          # Derived in detect; read from there, not through verify-e2e's
+          # copy, which is empty whenever verify-e2e did not run.
+          PAUSED: ${{ needs.detect.outputs.paused }}
+          # The mode verify-e2e ran in, for the verdict this step builds
+          # when verify-e2e handed over none: a container-day crash or
+          # timeout is that mode's failure, never one any pass clears.
+          RUN_MODE: ${{ needs.detect.outputs.mode }}
           # specs/055-unattended-e2e-gates FR-019/FR-025: gate evidence for
           # a pass verdict's summary, read only on the pass path below.
           SPEC_DRAFT_PR: ${{ needs.verify-e2e.outputs.spec-draft-pr }}
@@ -2348,18 +2470,59 @@ jobs:
           echo "title=Auto-release verification failed at ${head_short}" >> "$GITHUB_OUTPUT"
 
           # The close decision carries its own closing note, which the
-          # composite step below posts verbatim. Two paths close a standing
-          # report -- the quiet day whose latest tag already points at HEAD,
-          # and this attempt's own release -- and they name different
-          # versions (NEXT_VERSION is empty on the quiet-day path, where
-          # decide-version never ran), so the note is decided here rather
-          # than templated into the `with:` block.
+          # composite step below posts verbatim. Three paths close a
+          # standing report -- the quiet day whose latest tag already points
+          # at HEAD, a re-verification of an already-released head, and
+          # this attempt's own release -- and they name different things
+          # (NEXT_VERSION is empty wherever decide-version never ran), so
+          # the note is decided here rather than templated into the `with:`
+          # block.
+          #
+          # A success closes only what it actually disproves (#966). detect
+          # hands this step the open issue's outstanding modes
+          # (FAILURE_ISSUE_MODES, read off the body AND every failure the
+          # bot appended as a comment -- _shared/auto-release-outstanding-
+          # modes.sh documents the rule, and its --after-pass applies this
+          # success to that set); the second argument here is the mode this
+          # run verified (empty when it verified nothing). Nothing left ->
+          # close. Something cleared but something left -> a pass note on
+          # the issue, so the next run's detect knows this mode is done.
+          # Nothing cleared -> left open, said in the summary. No issue
+          # open when detect looked -> close nothing (never one filed
+          # mid-run that detect never read), and one whose record detect
+          # could not read (unreadable) is never closed blind.
           close_failure_on_success() {
-            local resolved_note="${1:-${NEXT_VERSION} released.}"
-            {
-              echo "action=close"
-              echo "close-comment=Resolved: ${resolved_note}"
-            } >> "$GITHUB_OUTPUT"
+            local resolved_note="${1:-${NEXT_VERSION} released.}" passed_mode="${2:-}"
+            local remaining waits
+            if [ "$FAILURE_ISSUE_MODES" = "unreadable" ]; then
+              echo "any open failure issue left open: detect could not read its record" >> "$GITHUB_STEP_SUMMARY"
+              return 0
+            fi
+            [ -n "$FAILURE_ISSUE" ] || return 0
+            if ! remaining="$(printf '%s' "$FAILURE_ISSUE_MODES" | bash .github/actions/_shared/auto-release-outstanding-modes.sh --after-pass "${passed_mode:-none}")"; then
+              echo "failure issue #${FAILURE_ISSUE} left open: its outstanding modes (${FAILURE_ISSUE_MODES}) could not be applied to this pass" >> "$GITHUB_STEP_SUMMARY"
+              return 0
+            fi
+            if [ -z "$remaining" ]; then
+              {
+                echo "action=close"
+                echo "close-comment=Resolved: ${resolved_note}"
+              } >> "$GITHUB_OUTPUT"
+              return 0
+            fi
+            waits="the next ${remaining// / and } turn re-checks it"
+            if [[ " $remaining " == *" container "* ]] && [ "$CONTAINER_PAUSED" = "true" ]; then
+              waits="the container leg is paused (WING_COMMANDER_AUTO_RELEASE_E2E_CONTAINER_PAUSED), so no container turn re-checks it until the pause is lifted"
+            fi
+            echo "failure issue #${FAILURE_ISSUE} left open: it still awaits a passing ${remaining// / and }-mode run, and this run verified ${passed_mode:-nothing} -- ${waits}" >> "$GITHUB_STEP_SUMMARY"
+            if [ "$remaining" != "$FAILURE_ISSUE_MODES" ]; then
+              {
+                echo "**Passed mode**: ${passed_mode:-none (nothing verified; clears only failures no single mode owns)}"
+                echo ""
+                echo "${resolved_note} Still outstanding on this issue: ${remaining// / and } -- it closes once that mode passes too. ${RUN_URL}"
+              } > "$RUNNER_TEMP/auto-release-pass-note.md"
+              echo "action=note" >> "$GITHUB_OUTPUT"
+            fi
           }
 
           # #325: a need whose job ended `failure` wrote no outputs, so
@@ -2419,14 +2582,19 @@ jobs:
           # distinctly worded no-op lines (FR-003 vs FR-004): a baseline tag
           # exists and HEAD already matches it, or no baseline tag exists at
           # all yet to compare against.
-          if [ "$HAS_NEW_WORK" != "true" ]; then
+          # A run that re-verified an already-released head (#966) is not
+          # a no-op: it falls through to the verdict below.
+          if [ "$HAS_NEW_WORK" != "true" ] && [ "$RUN_VERIFICATION" != "true" ]; then
             if [ "$TAG_EXISTS" = "true" ]; then
               echo "no new work since ${LATEST_TAG}" >> "$GITHUB_STEP_SUMMARY"
               # The latest tag already points at HEAD, so a standing
-              # failure issue from an earlier attempt is stale -- close it
-              # here too, not only on the TAG_MATCHES branch below, or a
-              # run that tagged successfully once never has another chance
-              # to self-heal (every later run takes this same early exit).
+              # failure issue from an earlier attempt that no single mode
+              # owns is stale -- close it here too, not only on the
+              # TAG_MATCHES branch below, or a run that tagged successfully
+              # once never has another chance to self-heal (every later
+              # run takes this same early exit). No mode verified here, so
+              # one recording a mode's failure stays open for that mode's
+              # own turn, which detect re-verifies (#966).
               close_failure_on_success "${LATEST_TAG} already released."
             else
               echo "no release tag exists yet -- nothing to compare against, nothing cut" >> "$GITHUB_STEP_SUMMARY"
@@ -2470,10 +2638,13 @@ jobs:
             else
               no_verdict_observed="the job stopped before any step wrote one (job result: ${VERIFY_RESULT:-unknown})"
             fi
-            VERDICT_JSON="$(bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "verify-e2e produced no verdict" "a JSON verdict from verify-e2e on every path" "$no_verdict_observed" "$RUN_URL")"
+            VERDICT_JSON="$(bash .github/actions/_shared/auto-release-verdict.sh "fail-infra" "$HEAD_SHA" "verify-e2e produced no verdict" "a JSON verdict from verify-e2e on every path" "$no_verdict_observed" "$RUN_URL" "$RUN_MODE")"
           fi
           outcome="$(printf '%s' "$VERDICT_JSON" | jq -r '.outcome // empty' 2>/dev/null || true)"
           mode="$(printf '%s' "$VERDICT_JSON" | jq -r '.mode // "unknown"' 2>/dev/null)" || mode=unknown
+          # The mode that actually ran, before the paused annotation below
+          # -- what close_failure_on_success compares against.
+          verified_mode="$mode"
           # FR-009 Acceptance Scenario: a paused run must read as "container
           # mode not exercised: paused", never a plain default-runner pass
           # that looks the same as an unpaused rotation turn.
@@ -2543,13 +2714,22 @@ jobs:
             echo "- finalize PR merge: ${FINALIZE_PR:-null}"
           } >> "$GITHUB_STEP_SUMMARY"
 
+          # #966: a re-verification of an already-released head. Nothing
+          # new to cut (decide-version never ran), but this pass is the
+          # same-mode evidence the open failure issue was waiting for.
+          if [ "$HAS_NEW_WORK" != "true" ]; then
+            echo "re-verified ${HEAD_SHA} in ${mode} mode for the open failure issue: passed -- nothing unreleased, nothing cut" >> "$GITHUB_STEP_SUMMARY"
+            close_failure_on_success "${verified_mode}-mode verification passed at ${HEAD_SHA} (nothing unreleased to cut)." "$verified_mode"
+            exit 0
+          fi
+
           # Verification passed, so decide-version ran (#325): a crash there
           # left COLLISION and TAG_MATCHES empty, which used to fall
           # through to "release dispatch failed" for a release that was
           # never dispatched.
           case "$DECIDE_RESULT" in
             failure)
-              file_job_failure decide-version "computing the next version from the merged pull requests' labels" "$mode"
+              file_job_failure decide-version "computing the next version from the merged pull requests' labels" "not mode-specific (the job failed after a ${verified_mode}-mode pass)"
               exit 0
               ;;
             cancelled)
@@ -2574,7 +2754,7 @@ jobs:
           # #325: no outcome at all means dispatch-release never wrote one --
           # the job crashed (infrastructure) or never ran.
           if [ "$DISPATCH_RESULT" = "failure" ]; then
-            file_job_failure dispatch-release "dispatching release.yml and correlating its run" "$mode"
+            file_job_failure dispatch-release "dispatching release.yml and correlating its run" "not mode-specific (the job failed after a ${verified_mode}-mode pass)"
             exit 0
           fi
           if [ -z "$TAG_MATCHES" ]; then
@@ -2605,7 +2785,7 @@ jobs:
             else
               echo "released ${NEXT_VERSION} (mode: ${mode}) -- own run not correlated" >> "$GITHUB_STEP_SUMMARY"
             fi
-            close_failure_on_success
+            close_failure_on_success "" "$verified_mode"
             exit 0
           fi
 
@@ -2673,6 +2853,29 @@ jobs:
           label-description: "wing-commander auto-release: a scheduled verification/release attempt failed"
           # Decided by the step above, not templated here: the quiet-day
           # close names the latest tag (decide-version never ran, so
-          # next-version is empty there), this attempt's own release names
+          # next-version is empty there), a same-mode re-verification names
+          # the mode and head that passed, this attempt's own release names
           # the version it cut.
           close-comment: ${{ steps.outcome.outputs.close-comment }}
+
+      # #966: a success that cleared part of the open issue's record but
+      # not all of it (the other mode's failure, appended as a comment, is
+      # still unproven) leaves the issue open and records what it proved,
+      # so the next run's detect stops re-verifying this mode. The note's
+      # `**Passed mode**:` line is read by _shared/auto-release-outstanding-
+      # modes.sh, and Gate 52 runs the note the step above writes through
+      # it. On the exact issue detect read, never a fresh label lookup: a
+      # note belongs to the record it was computed from. Not the durable-
+      # failure-issue composite: its `report` would file a new issue if
+      # this one had been closed meanwhile, and a pass is not a failure.
+      - name: Record the pass on the failure issue
+        if: steps.outcome.outputs.action == 'note'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FAILURE_ISSUE: ${{ needs.detect.outputs.failure-issue }}
+        run: |
+          set -uo pipefail
+          if ! gh issue comment "$FAILURE_ISSUE" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/auto-release-pass-note.md"; then
+            echo "::warning::auto-release report: could not record the pass on #${FAILURE_ISSUE} -- the next run in this mode re-verifies it instead."
+          fi
