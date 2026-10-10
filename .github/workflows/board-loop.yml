@@ -1507,9 +1507,11 @@ jobs:
 #   4. The post-agent credential-refresh triple, gated
 #      `if: "!cancelled() && steps.<agent-id>.outcome != 'skipped'"`:
 #        a. wing-commander-context (re-mint), continue-on-error: true.
-#        b. wing-commander-refresh-remote (only for a job that pushes a git
-#           remote, e.g. the fix step -- omitted elsewhere, per that
-#           composite's own refresh-outcome default).
+#        b. wing-commander-refresh-remote (only for a job that pushes through
+#           its own git remote -- none here since spec 095: fix and
+#           review-fixup-publish push from a fresh checkout through
+#           wing-commander-hardened-push, so it is omitted everywhere, per
+#           that composite's own refresh-outcome default).
 #        c. wing-commander-post-agent-credential-status, folding (a)/(b)'s
 #           outcomes into one `ok` this job's own outcome reporting reads.
 #   5. wing-commander-agent-verdict then wing-commander-metrics-summary,
@@ -2895,8 +2897,9 @@ jobs:
 
       # research.md D23: write tools granted, push deliberately NOT (FR-024
       # requires the gate suite green BEFORE any push -- pushing is the
-      # deterministic "Push and open the PR" step below, gated on that,
-      # never the agent itself). FR-055/FR-056/FR-057/FR-058 as elsewhere.
+      # deterministic "Push the fix branch" step in the fix job, after
+      # gate-suite-fix, never the agent itself). FR-055/FR-056/FR-057/FR-058
+      # as elsewhere.
       - name: Fixer
         id: fixer
         continue-on-error: true

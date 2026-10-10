@@ -80,9 +80,11 @@ Board loop: `fix-agent` → `gate-suite-fix` → `fix`, and `review` →
 
 ## T015 decision: the implement retry site is deferred
 
-Decision: **defer**, recorded on #737 and in
-`.github/scripts/wc_gate_suite_sites.py`'s `EXEMPT_GATE_SUITE_SITES` (Gate
-124 keeps the citation honest).
+Decision: **defer**, recorded in
+`.github/scripts/wc_gate_suite_sites.py`'s `EXEMPT_GATE_SUITE_SITES`, which
+cites the Maintenance backlog (#889) as its tracker because #737 closes when
+this spec ships (Gate 124 keeps the citation honest). The maintainer adds the
+matching checklist line on #889 and records the deferrals below on #737.
 
 Reason: the retry leg's suite runs after the cycle agent and before the
 retry agent, in the same job, and its verdict feeds the retry prompt. A job

@@ -253,9 +253,9 @@ on:
           read this input, never a second literal default. Default
           (.claude/,.git/): .claude/ covers this repository's vendored
           speckit-* skills, its own skills, and its control surface; .git/
-          keeps the agent from planting a hook or a config value that a
-          later git call in this job would run or obey
-          (specs/095-agent-code-credential-containment FR-018). An override
+          denies the agent's Edit/Write tools the repository's hooks and
+          config (specs/095-agent-code-credential-containment FR-018; a
+          plant arriving by another route is neutralised at the push). An override
           should keep .git/. Deterministic non-agent writes
           (auto-update-spec-kit.yml) are unaffected (FR-002, FR-018).
         type: string
@@ -489,9 +489,9 @@ jobs:
   # separate job, and the runner it assumes -- see board-loop.yml.
   #
   # The retry leg's suite still runs inside the implement job: containing
-  # it means splitting the retry chain into a job of its own, deferred and
-  # recorded on #737 (specs/095-agent-code-credential-containment
-  # tasks.md T015; EXEMPT_GATE_SUITE_SITES in wc_gate_suite_sites.py).
+  # it means splitting the retry chain into a job of its own, deferred
+  # (specs/095-agent-code-credential-containment tasks.md T015;
+  # EXEMPT_GATE_SUITE_SITES in wc_gate_suite_sites.py names its tracker).
   gate-suite-implement-cycle:
     needs: [verify-image-prerequisites, fold-turn-implement]
     if: >-

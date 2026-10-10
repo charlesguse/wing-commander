@@ -1346,9 +1346,9 @@ Findings filing: `findings-filing-enabled` (boolean, default `true`;
 Write boundary: `no-write-paths` (string, comma-separated path prefixes,
 default `.claude/,.git/`; `WING_COMMANDER_IMPLEMENT_NO_WRITE_PATHS`) — paths
 this stage's agent may not target with `Edit`/`Write`, stated in its prompt
-before its first tool call. Keep `.git/` in an override: it stops the agent
-planting a git hook or config value that a later git call in the same job
-would run or obey. `write-boundary-label-prefix` (string, default
+before its first tool call. Keep `.git/` in an override: it denies the
+agent's `Edit`/`Write` tools the repository's git hooks and config (a
+value planted by any other route is neutralised at the push instead). `write-boundary-label-prefix` (string, default
 `route-out-of-boundary`; `WING_COMMANDER_WRITE_BOUNDARY_LABEL_PREFIX`) —
 label prefix for a task routed out of the write boundary; deliberately
 distinct from `findings-label-prefix` so the board loop never treats a

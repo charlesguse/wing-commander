@@ -9,7 +9,7 @@ SITES maps each verdict site (contracts/gate-verdict.schema.json) to the
 workflow, the credential-free job that runs the suite there, and the job
 that reads its verdict. EXEMPT_GATE_SUITE_SITES lists a step that still
 runs the suite inside a credential-bearing job, with the issue that
-records the deferral (Gate 124 holds the citation open).
+tracks the deferred work (Gate 124 holds the citation open).
 """
 import re
 from collections import namedtuple
@@ -41,7 +41,10 @@ EXEMPT_GATE_SUITE_SITES = {
             "job that holds the App token; containing it means splitting the "
             "retry chain into a job of its own (spec 095 research R6, tasks.md "
             "T015), deferred together with agent-invoked gates"),
-        issue=(737,),
+        # The Maintenance backlog, not the lifecycle issue (#737), which
+        # closes when spec 095 ships (CLAUDE.md, "Working the issue board").
+        issue=(889,),
+        decided_by=(737,),
     ),
 }
 
