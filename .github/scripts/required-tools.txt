@@ -43,9 +43,10 @@
 # start-up check (specs/112-agent-startup-image-check): the daily
 # private-image dogfood run (startup-check input) runs the real agent action's
 # setup in the image and names the step that fails. The git floor (>= 2.38,
-# image-git-floor.sh) is checked in the same probe as presence; the 2.38
-# minimum is the oldest git the agent action's checkout handling is
-# known to work with, and unzip is listed on the evidence above.
+# image-git-floor.sh) is checked in the same probe as presence; older git
+# ignores the safe.directory setting each stage passes through
+# container.env and dies with "dubious ownership" (#963). unzip is listed
+# on the evidence above.
 #
 # Presence is all this contract checks, for `timeout` as for `gh`. A
 # BusyBox build older than 1.30 (2018) provides the applet but requires

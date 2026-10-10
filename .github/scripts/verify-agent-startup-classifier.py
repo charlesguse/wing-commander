@@ -15,8 +15,10 @@ fixture in .github/scripts/agent-startup-fixtures/:
   * a missing --log is unclassified, exit 2.
 
 It also pins the workflow side in private-image-dogfood.yml: the
-startup-agent job carries continue-on-error: true on the action step and no
-model credential; classify-startup's `if:` contains !cancelled(); the
+startup-agent job carries continue-on-error: true on the action step, no
+model credential, a prompt and the github-actions bot in allowed_bots (else
+the action skips setup), and no always() gate; classify-startup retries the
+job-log fetch; classify-startup's `if:` contains !cancelled(); the
 classifier is invoked as a script (single home) and no inline copy of its
 marker or verdict logic appears in the workflow.
 
@@ -128,6 +130,18 @@ def check_workflow(path):
             for bad in CREDENTIAL_INPUTS:
                 if bad in with_:
                     errors.append("startup-agent passes the model credential input %s" % bad)
+            # Without a prompt the action exits 0 before installing Claude
+            # Code (agent mode's trigger is the prompt), so the check could
+            # never see setup finish; a bot-dispatched run needs the bot
+            # allowed past the action's human-actor check.
+            if not str(with_.get("prompt") or "").strip():
+                errors.append("startup-agent's action step needs a prompt, or the action skips setup")
+            bots = [b.strip().lower().replace("[bot]", "") for b in str(with_.get("allowed_bots") or "").split(",")]
+            if "github-actions" not in bots and "*" not in bots:
+                errors.append("startup-agent's action step must allow the github-actions bot (allowed_bots)")
+        for s in steps:
+            if "always()" in str(s.get("if", "")):
+                errors.append("startup-agent step %r uses always(); use !cancelled()" % s.get("name"))
         steps_text = yaml.safe_dump(steps)
         if "secrets." in steps_text:
             errors.append("startup-agent steps reference a secret; no model credential may reach them")
@@ -139,6 +153,8 @@ def check_workflow(path):
         runs = "\n".join(str(s.get("run", "")) for s in classify.get("steps") or [])
         if "classify-agent-startup.py" not in runs:
             errors.append("classify-startup must invoke classify-agent-startup.py")
+        if not re.search(r"for attempt in[^\n]*\n(?:.*\n)*?.*actions/jobs/\$job_id/logs(?:.*\n)*?.*sleep ", runs):
+            errors.append("classify-startup must retry the job-log fetch (a just-finished job's log can 404)")
     if re.search(r"AUTH_MARKERS|failed at authentication", text):
         errors.append("private-image-dogfood.yml carries an inline copy of the classifier's marker logic")
     return errors
@@ -209,6 +225,28 @@ def self_test():
             for s in jobs["classify-startup"]["steps"]:
                 s.pop("run", None)
 
+        def drop_prompt(jobs):
+            for s in jobs["startup-agent"]["steps"]:
+                if "uses" in s and "claude-code-action" in s["uses"]:
+                    s["with"].pop("prompt", None)
+
+        def drop_bots(jobs):
+            for s in jobs["startup-agent"]["steps"]:
+                if "uses" in s and "claude-code-action" in s["uses"]:
+                    s["with"].pop("allowed_bots", None)
+
+        def use_always(jobs):
+            jobs["startup-agent"]["steps"][-1]["if"] = "always()"
+
+        def drop_retry(jobs):
+            for s in jobs["classify-startup"]["steps"]:
+                if "run" in s:
+                    s["run"] = re.sub(r"for attempt in [^\n]*", "true", s["run"])
+
+        expect("no prompt", mutated(drop_prompt), "needs a prompt")
+        expect("no allowed_bots", mutated(drop_bots), "allowed_bots")
+        expect("always()", mutated(use_always), "always()")
+        expect("no retry", mutated(drop_retry), "retry the job-log fetch")
         expect("no continue-on-error", mutated(drop_coe), "continue-on-error")
         expect("credential input", mutated(add_key), "model credential input")
         expect("no !cancelled", mutated(drop_cancelled), "!cancelled()")

@@ -23,5 +23,13 @@
 2026-10-10T00:00:22.0000000Z cd ${GITHUB_ACTION_PATH}
 2026-10-10T00:00:23.0000000Z bun install --production
 2026-10-10T00:00:24.0000000Z ##[endgroup]
-2026-10-10T00:00:25.0000000Z /home/runner/work/_temp/x.sh: line 2: bun: command not found
-2026-10-10T00:00:26.0000000Z ##[error]Process completed with exit code 127.
+2026-10-10T00:00:25.0000000Z installed 42 packages
+2026-10-10T00:00:26.0000000Z ##[group]Run # Do NOT pass --tsconfig-override here. It triggers a Bun runtime bug
+2026-10-10T00:00:27.0000000Z bun --no-env-file \
+2026-10-10T00:00:28.0000000Z ##[endgroup]
+2026-10-10T00:00:29.0000000Z Auto-detected mode: agent for event: workflow_dispatch
+2026-10-10T00:00:30.0000000Z Trigger result: true
+2026-10-10T00:00:31.0000000Z Installing Claude Code v2.1.296...
+2026-10-10T00:00:32.0000000Z Installation attempt 3...
+2026-10-10T00:00:33.0000000Z bash: line 1: curl: command not found
+2026-10-10T00:00:34.0000000Z ##[error]Action failed with error: Failed to install Claude Code after 3 attempts: Error: Install failed with exit code 127

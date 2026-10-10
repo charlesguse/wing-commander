@@ -24,9 +24,11 @@ input, secret or output (spec Assumptions).
 1. `startup-agent` — `if: inputs.startup-check && inputs.container-image != ''`,
    same `runs-on`/`container`/`credentials` binding as `dogfood`
    (Gates 7/22). One step: `uses: anthropics/claude-code-action@v1`,
-   `continue-on-error: true`, `github_token: ${{ github.token }}`, no model
-   credential input. No `prompt` reaching a model is possible because the
-   action stops at authentication.
+   `continue-on-error: true`, `github_token: ${{ github.token }}`, a fixed
+   `prompt` and `allowed_bots: github-actions`, and no model credential input.
+   The prompt is required: without one the action's agent mode exits 0 before
+   installing Claude Code. It never reaches a model because the action stops
+   at its credential check.
 2. `classify-startup` — `needs: startup-agent`, `if: !cancelled() &&
    inputs.startup-check && inputs.container-image != ''`, `permissions:
    actions: read`. Fetches the agent job's log, runs
@@ -57,7 +59,8 @@ Inside the existing `docker run --entrypoint sh` probe of every
 - output that does not parse fails with `could not parse git version from
   "<output>"`.
 
-Gate 23 fails a stage whose probe lacks the fragment verbatim.
+Gate 148 (`verify-image-git-floor.py`) fails a stage whose probe lacks the
+fragment, or the host-side report of a floor failure, verbatim.
 
 ## Gate
 

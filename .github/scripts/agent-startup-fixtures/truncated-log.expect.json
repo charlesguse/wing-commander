@@ -1,1 +1,1 @@
-{"verdict": "unclassified", "step": null, "error_contains": null, "note": "synthetic"}
+{"verdict": "unclassified", "step": null, "error_contains": null, "note": "synthetic: shaped on claude-code-action@v1 action.yml and run.ts at 1d6de8c"}

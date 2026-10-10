@@ -140,7 +140,7 @@ jobs:
             'for t in $REQUIRED_TOOLS; do command -v "$t" >/dev/null 2>&1 || printf " %s" "$t"; done; if command -v git >/dev/null 2>&1; then v=$(git --version 2>/dev/null); n=${v#git version }; maj=${n%%.*}; r=${n#*.}; min=${r%%.*}; case "$maj.$min" in .|*[!0-9.]*|.*|*.) echo "could not parse git version from \"$v\"" >&2; exit 1;; esac; if [ "$maj" -lt 2 ] || { [ "$maj" -eq 2 ] && [ "$min" -lt 38 ]; }; then echo "git ${n%% *} is older than the 2.38 minimum" >&2; exit 1; fi; fi' \
             2>docker-inspect-error.log); then
             if grep -qE 'is older than the 2\.38 minimum|could not parse git version' docker-inspect-error.log; then
-              echo "::error::wing-commander verify-image-prerequisites: $IMAGE failed the git version floor -- $(cat docker-inspect-error.log)"
+              echo "::error::wing-commander verify-image-prerequisites: $IMAGE failed the git version floor -- $(cat docker-inspect-error.log)${missing:+ (also missing required tool(s):$missing)}"
             else
               echo "::error::wing-commander verify-image-prerequisites: could not run a POSIX shell inside $IMAGE to check its prerequisites -- $(cat docker-inspect-error.log)"
             fi
@@ -213,13 +213,21 @@ jobs:
         continue-on-error: true
         with:
           github_token: ${{ github.token }}
+          # Without a prompt the action's agent mode (schedule and
+          # workflow_dispatch) logs "No trigger found" and exits 0 before it
+          # installs Claude Code, so setup is never finished and auth never
+          # reached. The rebuild-dispatched run's actor is github-actions[bot],
+          # which the action's human-actor check rejects unless allowed.
+          # Neither can reach a model: there is no credential.
+          prompt: "Start-up check: no model credential is supplied, so this prompt is never sent."
+          allowed_bots: github-actions
           # No model call is reachable without a credential, so there is no
           # turn ceiling to derive and no verdict to read (Gate 23 scopes on
           # --max-turns in claude_args); constitution II's counts (Gate 50)
           # are met by this note: --model claude-haiku-5-5 --max-turns 1
           claude_args: --model claude-haiku-5-5
       - name: Upload Claude execution log
-        if: always() && steps.agent.outcome != 'skipped'
+        if: "!cancelled() && steps.agent.outcome != 'skipped'"
         uses: actions/upload-artifact@v6
         with:
           name: claude-execution-output
@@ -265,8 +273,16 @@ jobs:
           if [ "$AGENT_RESULT" != "skipped" ]; then
             job_id=$(gh api "repos/$REPO/actions/runs/$RUN_ID/jobs" --paginate \
               --jq '.jobs[] | select(.name | endswith("startup-agent")) | .id' | head -n 1) || job_id=""
+            # A just-finished job's log can 404 until it is archived; retry
+            # before falling back to the empty (unclassified) log.
             if [ -n "$job_id" ]; then
-              gh api "repos/$REPO/actions/jobs/$job_id/logs" > startup-agent.log || : > startup-agent.log
+              for attempt in 1 2 3 4 5 6; do
+                if gh api "repos/$REPO/actions/jobs/$job_id/logs" > startup-agent.log && [ -s startup-agent.log ]; then
+                  break
+                fi
+                : > startup-agent.log
+                [ "$attempt" -eq 6 ] || sleep 10
+              done
             fi
           fi
           rc=0

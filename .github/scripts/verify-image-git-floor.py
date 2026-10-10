@@ -8,7 +8,8 @@ image-git-floor-fixtures/ and asserts pass/fail and the exact failure message
 (`git <found> is older than the 2.38 minimum` or `could not parse git version
 from "<output>"`), and (b) asserts every published stage's
 verify-image-prerequisites probe (found by its REQUIRED_TOOLS list) contains
-the fragment byte for byte, so the 14 pasted copies cannot drift.
+the fragment byte for byte, and the host-side failure report (HOST_BRANCH)
+too, so the 14 pasted copies cannot drift.
 
 NOTE ON GATE NUMBERING: this gate was first registered as Gate 142. It is
 numbered 148, not 142: 141-146 were taken by spec 110's PR #982, which
@@ -29,6 +30,17 @@ ROOT = os.path.dirname(os.path.dirname(HERE))
 FRAGMENT = os.path.join(HERE, "image-git-floor.sh")
 FIXTURES = os.path.join(HERE, "image-git-floor-fixtures")
 WORKFLOWS = os.path.join(ROOT, ".github", "workflows", "*.yml")
+
+
+# The host side of the probe: a floor failure is reported under its own
+# name (not "could not run a POSIX shell"), and still lists any tools the
+# presence loop found missing before the fragment exited. Pinned here so the
+# 14 pasted copies cannot drift (FR-013, T033).
+HOST_BRANCH = (
+    "if grep -qE 'is older than the 2\\.38 minimum|could not parse git version' docker-inspect-error.log; then\n"
+    "              echo \"::error::wing-commander verify-image-prerequisites: $IMAGE failed the git version floor -- "
+    "$(cat docker-inspect-error.log)${missing:+ (also missing required tool(s):$missing)}\"\n"
+)
 
 
 def read_fragment(path=FRAGMENT):
@@ -90,6 +102,8 @@ def check_stages(fragment, stages):
     for path, text in stages:
         if fragment not in text:
             errors.append("%s: the image probe lacks the git-floor fragment from image-git-floor.sh" % os.path.basename(path))
+        if HOST_BRANCH not in text:
+            errors.append("%s: the image probe lacks the canonical git-floor failure report (HOST_BRANCH)" % os.path.basename(path))
     return errors
 
 
@@ -113,6 +127,11 @@ def self_test():
         broken = [(path, text.replace(fragment, "true"))] + stages[1:]
         if not any(os.path.basename(path) in e for e in check_stages(fragment, broken)):
             failures.append("a probe missing the fragment was not caught")
+    if stages:
+        path, text = stages[-1]
+        drifted = stages[:-1] + [(path, text.replace("${missing:+ (also missing", "${missing:+ (missing"))]
+        if not any("HOST_BRANCH" in e for e in check_stages(fragment, drifted)):
+            failures.append("a drifted git-floor failure report was not caught")
     for f in failures:
         print("::error::Gate 148 self-test: " + f)
     if not failures:
