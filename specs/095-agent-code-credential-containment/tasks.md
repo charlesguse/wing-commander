@@ -47,14 +47,15 @@
 
 **Independent Test**: A fixture gate that dumps its environment finds no write credential; green pushes, red stalls with a fenced first failure, and an absent verdict is red (spec US1 scenarios 1-4).
 
-- [ ] T011 [US1] In `.github/workflows/board-loop.yml` `fix` job: remove the in-job `Run local gate suite (fixer)` step, add the `wing-commander-gate-bundle` upload after the agent phase, add a `gate-suite-fix` job (`permissions: contents: read`, no `create-github-app-token`, no `wing-commander-context`, `persist-credentials: false`, uses `wing-commander-contained-gate-suite` from the trusted checkout), and make the publish steps read the verdict via `wc_gate_verdict.py` (absent/cancelled = fail via `if: !cancelled()`), preserving push-on-green and fenced `board:stalled` on red (FR-002/FR-003). Split the job at the push boundary as needed so the credential-bearing publish job downloads bundle and verdict
-- [ ] T012 [US1] Apply the same bundle → `gate-suite-review-fixup` job → verdict-gated publish change to the review-fixup gate step in `.github/workflows/board-loop.yml`, reusing the composites from T007/T008 (no pasted `run:` copies)
-- [ ] T013 [US1] Amend Gate 98 (`.github/scripts/verify-board-loop-helper-provenance.py`) and Gate 104 (`.github/scripts/verify-board-loop-composite-provenance.py`) in the same commit as T011/T012 so the `run-local-gates.py` carve-out moves with the step and the new jobs' composites are covered; update their fixtures
-- [ ] T014 [US1] In `.github/workflows/implement.yml`: add a pre-agent `gate-suite-implement-cycle` job (credential-free) on the spec-branch head whose verdict feeds the agent's prompt, and make the implement job's agent step wait on it (`needs:`) and read the verdict through `wc_gate_verdict.py`; `continue-on-error` semantics preserved (verdict is prompt input, not a push decision); apply `review-step-gating`
-- [ ] T015 [US1] Decide the implement **retry** site after reading the job graph (research R6): either bundle the cycle output and add a downstream credential-free job, or defer and record the deferral in `specs/095-agent-code-credential-containment/quickstart.md` for the #737 comment; record the decision
-- [ ] T016 [US1] Update `.github/scripts/verify-implement-gate-suite-preflight.py` and its fixtures in the same commit as T014 so they assert the new job shape
-- [ ] T017 [US1] Create `.github/scripts/verify-gate-suite-credential-free.py` (FR-001/FR-004/FR-005/FR-006) with fixtures in `.github/scripts/fixtures/095-gate-suite/`: job with App-token step; `permissions` above read; gate step still in the credential-bearing job at any FR-005 site; undeterminable job graph (fails loud); `--self-test`; register in `lint-workflows.yml` with triggers on the three workflows and the composites
-- [ ] T018 [US1] Add a fixture env-dumping gate and a `board:stalled`/green walkthrough to `specs/095-agent-code-credential-containment/quickstart.md` so SC-001/SC-005 are reproducible
+- [x] T011 [US1] In `.github/workflows/board-loop.yml` `fix` job: remove the in-job `Run local gate suite (fixer)` step, add the `wing-commander-gate-bundle` upload after the agent phase, add a `gate-suite-fix` job (`permissions: contents: read`, no `create-github-app-token`, no `wing-commander-context`, `persist-credentials: false`, uses `wing-commander-contained-gate-suite` from the trusted checkout), and make the publish steps read the verdict via `wc_gate_verdict.py` (absent/cancelled = fail via `if: !cancelled()`), preserving push-on-green and fenced `board:stalled` on red (FR-002/FR-003). Split the job at the push boundary as needed so the credential-bearing publish job downloads bundle and verdict
+- [x] T012 [US1] Apply the same bundle → `gate-suite-review-fixup` job → verdict-gated publish change to the review-fixup gate step in `.github/workflows/board-loop.yml`, reusing the composites from T007/T008 (no pasted `run:` copies)
+- [x] T013 [US1] Amend Gate 98 (`.github/scripts/verify-board-loop-helper-provenance.py`) and Gate 104 (`.github/scripts/verify-board-loop-composite-provenance.py`) in the same commit as T011/T012 so the `run-local-gates.py` carve-out moves with the step and the new jobs' composites are covered; update their fixtures
+- [x] T014 [US1] In `.github/workflows/implement.yml`: add a pre-agent `gate-suite-implement-cycle` job (credential-free) on the spec-branch head whose verdict feeds the agent's prompt, and make the implement job's agent step wait on it (`needs:`) and read the verdict through `wc_gate_verdict.py`; `continue-on-error` semantics preserved (verdict is prompt input, not a push decision); apply `review-step-gating`
+- [x] T015 [US1] Decide the implement **retry** site after reading the job graph (research R6): either bundle the cycle output and add a downstream credential-free job, or defer and record the deferral in `specs/095-agent-code-credential-containment/quickstart.md` for the #737 comment; record the decision
+  - **Decision: deferred.** The retry suite runs between the cycle agent and the retry agent in one job; containing it means moving the whole retry chain (agent, post-agent credential steps, read-back, outcome artifact, consolidation) into its own job — a control-flow restructuring that buys little while the implement agent still runs the same suite itself beside the token (agent-invoked gates, R6). Recorded in quickstart.md ("T015 decision") and as the one entry of `EXEMPT_GATE_SUITE_SITES` in `.github/scripts/wc_gate_suite_sites.py`, which Gate 144 holds (and fails if it goes stale).
+- [x] T016 [US1] Update `.github/scripts/verify-implement-gate-suite-preflight.py` and its fixtures in the same commit as T014 so they assert the new job shape
+- [x] T017 [US1] Create `.github/scripts/verify-gate-suite-credential-free.py` (FR-001/FR-004/FR-005/FR-006) with fixtures in `.github/scripts/fixtures/095-gate-suite/`: job with App-token step; `permissions` above read; gate step still in the credential-bearing job at any FR-005 site; undeterminable job graph (fails loud); `--self-test`; register in `lint-workflows.yml` with triggers on the three workflows and the composites
+- [x] T018 [US1] Add a fixture env-dumping gate and a `board:stalled`/green walkthrough to `specs/095-agent-code-credential-containment/quickstart.md` so SC-001/SC-005 are reproducible
 
 **Checkpoint**: US1 independently testable; MVP complete.
 
@@ -66,9 +67,9 @@
 
 **Independent Test**: A fixture gate that `chmod u+w`s the snapshot and appends to `$GITHUB_ENV`/`$GITHUB_PATH` affects no durable-action step, because it ran in another job.
 
-- [ ] T019 [US2] Rewrite the snapshot-documenting comment in `.github/workflows/board-loop.yml` (FR-009/FR-010) stating exactly which steps the guarantee covers, that it rests on agent-code execution having moved to a separate job, and the runner assumption (fresh VM per job; self-hosted must be ephemeral); add the one-line pointer form at other sites per CLAUDE.md "canonical comment" rule and check Gate 47
-- [ ] T020 [P] [US2] Add the matching comment at the implement gate-suite job in `.github/workflows/implement.yml` as a pointer to the canonical comment in `board-loop.yml`
-- [ ] T021 [US2] Create `.github/scripts/verify-snapshot-integrity-statement.py` (FR-007–FR-010) with fixtures in `.github/scripts/fixtures/095-snapshot-statement/`: comment missing covered-steps text; missing runner-assumption text; agent-code step remains in a job that later pushes; `--self-test`; register in `lint-workflows.yml`
+- [x] T019 [US2] Rewrite the snapshot-documenting comment in `.github/workflows/board-loop.yml` (FR-009/FR-010) stating exactly which steps the guarantee covers, that it rests on agent-code execution having moved to a separate job, and the runner assumption (fresh VM per job; self-hosted must be ephemeral); add the one-line pointer form at other sites per CLAUDE.md "canonical comment" rule and check Gate 47
+- [x] T020 [P] [US2] Add the matching comment at the implement gate-suite job in `.github/workflows/implement.yml` as a pointer to the canonical comment in `board-loop.yml`
+- [x] T021 [US2] Create `.github/scripts/verify-snapshot-integrity-statement.py` (FR-007–FR-010) with fixtures in `.github/scripts/fixtures/095-snapshot-statement/`: comment missing covered-steps text; missing runner-assumption text; agent-code step remains in a job that later pushes; `--self-test`; register in `lint-workflows.yml`
 
 **Checkpoint**: US1 and US2 both hold.
 
@@ -94,13 +95,13 @@
 
 **Independent Test**: A planted `pre-push` hook and `insteadOf` have no effect on a push through the composite; the gate fails when `.git/**` is missing at a covered label.
 
-- [ ] T025 [US4] Replace the push step in `.github/workflows/board-loop.yml` `fix` (publish) with `wing-commander-hardened-push` (one-line fallback only, no pasted idiom)
-- [ ] T026 [US4] Replace the review-fixup push step in `.github/workflows/board-loop.yml` with `wing-commander-hardened-push`
-- [ ] T027 [US4] Replace the push step in `.github/workflows/implement.yml` with `wing-commander-hardened-push`; where the agent's own `Bash(git push:*)` step env is workflow-controlled, set the same hardening env, and record in the #737 comment that agent-composed pushes are deferred (research R6)
-- [ ] T028 [P] [US4] In `.github/workflows/pr-conversation.yml` add the `.git/**` deny to `pr-conversation.act` and harden its push env as far as the workflow controls it; no gate-suite job here (FR-001/FR-006 not applicable)
-- [ ] T029 [US4] Add `Edit(.git/**)` and `Write(.git/**)` to the single stage write-boundary definition from spec 090 for implement (an entry, not a second literal list) and to the `default-disallowed-tools` of the fixer and review-fixup in `.github/workflows/board-loop.yml`; update documented lists checked by `.github/scripts/verify-stage-tool-lists.py` and its fixtures
-- [ ] T030 [US4] Create `.github/scripts/verify-agent-git-deny.py` (FR-018 first half) with fixtures in `.github/scripts/fixtures/095-agent-git-deny/`: `.git/**` missing at a covered label (fixer, review-fixup, implement, pr-conversation.act); second literal list instead of the spec-090 set; `--self-test`; register in `lint-workflows.yml`
-- [ ] T031 [US4] Extend `verify-hardened-push.py` fixtures (from T010) to cover each real push site now converted (T025–T028) so the "raw push at a covered site" branch is exercised against the live workflows
+- [x] T025 [US4] Replace the push step in `.github/workflows/board-loop.yml` `fix` (publish) with `wing-commander-hardened-push` (one-line fallback only, no pasted idiom)
+- [x] T026 [US4] Replace the review-fixup push step in `.github/workflows/board-loop.yml` with `wing-commander-hardened-push`
+- [x] T027 [US4] Replace the push step in `.github/workflows/implement.yml` with `wing-commander-hardened-push`; where the agent's own `Bash(git push:*)` step env is workflow-controlled, set the same hardening env, and record in the #737 comment that agent-composed pushes are deferred (research R6)
+- [x] T028 [P] [US4] In `.github/workflows/pr-conversation.yml` add the `.git/**` deny to `pr-conversation.act` and harden its push env as far as the workflow controls it; no gate-suite job here (FR-001/FR-006 not applicable)
+- [x] T029 [US4] Add `Edit(.git/**)` and `Write(.git/**)` to the single stage write-boundary definition from spec 090 for implement (an entry, not a second literal list) and to the `default-disallowed-tools` of the fixer and review-fixup in `.github/workflows/board-loop.yml`; update documented lists checked by `.github/scripts/verify-stage-tool-lists.py` and its fixtures
+- [x] T030 [US4] Create `.github/scripts/verify-agent-git-deny.py` (FR-018 first half) with fixtures in `.github/scripts/fixtures/095-agent-git-deny/`: `.git/**` missing at a covered label (fixer, review-fixup, implement, pr-conversation.act); second literal list instead of the spec-090 set; `--self-test`; register in `lint-workflows.yml`
+- [x] T031 [US4] Extend `verify-hardened-push.py` fixtures (from T010) to cover each real push site now converted (T025–T028) so the "raw push at a covered site" branch is exercised against the live workflows
 
 **Checkpoint**: All four paths closed or recorded as deferred.
 
@@ -108,10 +109,10 @@
 
 ## Phase 7: Polish & Proof
 
-- [ ] T032 Run the read-access audit (research R8): run the suite with write credentials unset and `GH_TOKEN` read-only, list any gate needing a write credential or more than `contents: read`, and fix any found before shipping; record the result in `specs/095-agent-code-credential-containment/quickstart.md`
-- [ ] T033 [P] Confirm `.github/scripts/wc_gate_registry.py`/`run-local-gates.py` pick up every new gate with the same arguments locally and in CI (FR-019); run `python .github/scripts/run-local-gates.py` and fix all failures
-- [ ] T034 [P] Run the `review-step-gating` skill over every new `if:`/`continue-on-error:` and `container-shell-safety` over any `run:` in a container job; fix findings in the same PR
-- [ ] T035 Verify no downstream/private consumer names appear in any added file (public repo) and that the new composites add only optional inputs (Principle VII)
+- [x] T032 Run the read-access audit (research R8): run the suite with write credentials unset and `GH_TOKEN` read-only, list any gate needing a write credential or more than `contents: read`, and fix any found before shipping; record the result in `specs/095-agent-code-credential-containment/quickstart.md`
+- [x] T033 [P] Confirm `.github/scripts/wc_gate_registry.py`/`run-local-gates.py` pick up every new gate with the same arguments locally and in CI (FR-019); run `python .github/scripts/run-local-gates.py` and fix all failures
+- [x] T034 [P] Run the `review-step-gating` skill over every new `if:`/`continue-on-error:` and `container-shell-safety` over any `run:` in a container job; fix findings in the same PR
+- [x] T035 Verify no downstream/private consumer names appear in any added file (public repo) and that the new composites add only optional inputs (Principle VII)
 - [ ] T036 Post-merge proof (FR-024/SC-008): re-drive one board-loop run (`gh workflow run` on the dispatching wrapper) through fix → green suite → pushed branch → PR, and one implement stage run; record evidence on the PR or #737; list deferrals (agent-invoked gates, agent-composed pushes, implement retry if deferred) on #737
 
 ---

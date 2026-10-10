@@ -53,6 +53,126 @@ its current shape and move in the same commit. None of this could be run
 (the gate suite needs PyYAML, absent in this job), so the split was not
 attempted blind.
 
+## How the split landed (T011-T014, local session)
+
+The three hazards above, resolved:
+
+1. Every new board-loop job joins `wing-commander-board-loop`. They run in
+   sequence through `needs:`, so sharing the group never makes one wait on
+   another, and holding it keeps another run's job out of the gap between
+   the job that ran an agent and the job that publishes its commits.
+2. The publishing job keeps the name `fix` (and its `pr-number`/`breach`
+   outputs); the agent's half is the new `fix-agent`. review-fixup's
+   publisher is the new `review-fixup-publish`; `review` keeps its outputs
+   and gains `branch`, `round`, `reviewed-sha` and `fixup-head-sha`.
+3. Each publisher rebuilds checkout, snapshot, trusted copy and context,
+   restores the agent's commits from the bundle (refusing any head but the
+   producing job's own `head-sha` output), and reads the verdict under the
+   old in-job suite's step id (`gate-suite`, `gate-suite-review-fixup`), so
+   every later step reads the same outputs it always did.
+
+Board loop: `fix-agent` → `gate-suite-fix` → `fix`, and `review` →
+`gate-suite-review-fixup` → `review-fixup-publish`. Implement:
+`gate-suite-implement-cycle` → `implement`.
+
+## T015 decision: the implement retry site is deferred
+
+Decision: **defer**, recorded on #737 and in
+`.github/scripts/wc_gate_suite_sites.py`'s `EXEMPT_GATE_SUITE_SITES` (Gate
+124 keeps the citation honest).
+
+Reason: the retry leg's suite runs after the cycle agent and before the
+retry agent, in the same job, and its verdict feeds the retry prompt. A job
+boundary cannot sit between two steps of one job, so containing it means
+moving the whole retry chain -- the retry agent, its post-agent credential
+steps, its read-back and outcome artifact, and the consolidation the
+dispatch steps read -- into a job of its own. That is a restructuring of
+the stage's control flow, not a containment change, and it buys little
+while the implement agent still runs the same suite itself with the token
+in its environment (agent-invoked gates, deferred per research R6 and
+bounded by spec 111). Gate 144 holds the retry step as the one recorded
+deferral, fails if any other credential-bearing step runs the suite, and
+fails if the deferral outlives its step.
+
+## Deferrals to record on #737 (SC-007)
+
+- Agent-invoked gates: the implement agent runs `run-local-gates.py` and
+  `verify-*.py` itself, with the App token in its environment (R6; bounded
+  by spec 111).
+- The implement retry leg's deterministic suite (T015 above).
+- Agent-composed pushes: the implement agent's and pr-conversation act's own
+  `Bash(git push:*)` pushes are not hardened. The workflow cannot set the
+  hardening env on those agent steps without a second copy of the idiom
+  (the container env already uses `GIT_CONFIG_COUNT` for safe.directory,
+  so a step-level copy would have to restate it), and an empty
+  `GIT_CONFIG_GLOBAL` would also hide the action's own git setup. The
+  `.git/**` deny (Gate 146) removes the agent's own route to plant a hook or
+  config value; the deterministic push sites are hardened (Gate 142).
+- Push hardening inside `wing-commander-publish-stranded-commits` and
+  `wing-commander-fold-commit` covers hooks, fsmonitor and global/system
+  config (`git-push-hardening.sh`), not a repository-local
+  `url.<base>.insteadOf`: they push to `origin`, not through the shim
+  repository with an explicit URL. The `.git/**` deny is what keeps the
+  agent from writing that value.
+- Git calls other than pushes that run after an agent in the same
+  credential-bearing job (implement's fetch/commit bookkeeping) are not run
+  under the hardening env; the `.git/**` deny is their mitigation.
+
+## Read-access audit (T032, research R8)
+
+Run on 2026-10-10 against this branch: `python3 .github/scripts/run-local-gates.py
+--jobs 6` with `GH_TOKEN`, `GITHUB_TOKEN` and `GH_ENTERPRISE_TOKEN` unset, `HOME`
+and `GH_CONFIG_DIR` pointed at an empty directory (no gh login, no git
+credential helper), so no gate could reach any credential at all -- stricter
+than the gate jobs, which keep a read-only `github.token` the checkout does
+not persist. Result: 248/249 gates passed. The one failure,
+`verify-auto-release-gate-waits-for-stage.py`, is a 2-second poll budget
+missed under parallel load; it passes on its own, with the same empty
+environment, and reads no credential. No gate needs a write credential, or
+any credential, so nothing was changed for the audit.
+
+## Probe fixture for SC-001/SC-005 (T018)
+
+A gate that prints what it can reach. Put it on a throwaway fix branch as
+`.github/scripts/verify-zz-probe.py` and register it in
+`lint-workflows.yml` like any gate (a plain `run: python3
+.github/scripts/verify-zz-probe.py` step), so `run-local-gates.py` runs it:
+
+```python
+#!/usr/bin/env python3
+import os, sys
+hits = sorted(k for k in os.environ
+              if any(w in k for w in ("TOKEN", "SECRET", "KEY", "PASSWORD")))
+print("credential-shaped variables: " + (", ".join(hits) or "none"))
+print("WC_BOT_TOKEN present: " + str("WC_BOT_TOKEN" in os.environ))
+for f in (os.environ.get("GITHUB_ENV"), os.environ.get("GITHUB_PATH")):
+    if f:
+        with open(f, "a") as fh:  # a write the publisher must never see
+            fh.write("WC_PROBE_INJECTED=1\n" if f.endswith("env") else "/tmp/wc-probe\n")
+pristine = os.path.join(os.environ.get("RUNNER_TEMP", "/tmp"), "wc-pristine")
+print("snapshot present in this job: " + str(os.path.isdir(pristine)))
+sys.exit(int(os.environ.get("WC_PROBE_FAIL", "0")))
+```
+
+Walkthrough, one board-loop item through `fix`:
+
+1. Green (`WC_PROBE_FAIL` unset): `gate-suite-fix`'s log prints
+   `credential-shaped variables: none` (at most `ACTIONS_*` runtime names,
+   none of which writes to the repository) and `WC_BOT_TOKEN present:
+   False` and `snapshot present in this job: False`. `fix` reads
+   `outcome=pass`, its environment has no `WC_PROBE_INJECTED`, and it
+   pushes through the hardened composite and opens the PR (SC-001,
+   SC-002).
+2. Red (the probe exits 1): `fix` reads `outcome=fail`, posts the first
+   failing gate inside a fence, applies `board:stalled`, and pushes nothing
+   (SC-005).
+3. No verdict (cancel `gate-suite-fix` mid-run): `fix` still runs, reads
+   `reason=verdict artifact missing`, and takes the red path of step 2
+   (FR-004).
+4. The same probe on a spec branch drives `gate-suite-implement-cycle`; the
+   implement agent's prompt carries the verdict, and `implement`'s
+   environment has no `WC_PROBE_INJECTED`.
+
 Prerequisites: a checkout of the branch, Python 3 with PyYAML, `jq`, `git`.
 
 ## Local
