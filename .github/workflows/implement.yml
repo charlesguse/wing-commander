@@ -521,11 +521,11 @@ jobs:
     # ready is 'true' only when the suite can actually run here: the
     # preflight found it and its prerequisites AND the pipeline (its
     # composite and verdict writer) was checked out. A pipeline this job
-    # could not resolve reads as a named missing prerequisite.
+    # could not resolve or check out reads as a named missing prerequisite.
     outputs:
       script-exists: ${{ steps.gate-suite-preflight-cycle.outputs.script-exists }}
-      ready: ${{ steps.pipeline-ref.outcome == 'success' && steps.gate-suite-preflight-cycle.outputs.ready || 'false' }}
-      missing: ${{ steps.pipeline-ref.outcome == 'failure' && 'the pipeline checkout (github.job_workflow_sha is empty and this job holds no id-token; set the pipeline-ref input)' || steps.gate-suite-preflight-cycle.outputs.missing }}
+      ready: ${{ steps.pipeline-checkout.outcome == 'success' && steps.gate-suite-preflight-cycle.outputs.ready || 'false' }}
+      missing: ${{ steps.pipeline-ref.outcome == 'failure' && 'the pipeline checkout (github.job_workflow_sha is empty and this job holds no id-token; set the pipeline-ref input)' || steps.pipeline-checkout.outcome == 'failure' && 'the pipeline checkout (the pipeline repository could not be checked out from this job)' || steps.gate-suite-preflight-cycle.outputs.missing }}
     steps:
       # The trusted commit, full history (so origin/<spec branch> is here),
       # and no credential left in .git/config afterwards.
@@ -558,7 +558,9 @@ jobs:
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
 
       - name: Checkout pipeline repository (shared composite actions)
+        id: pipeline-checkout
         if: steps.pipeline-ref.outcome == 'success'
+        continue-on-error: true
         uses: actions/checkout@v5
         with:
           repository: ${{ inputs.pipeline-repo }}
@@ -588,7 +590,7 @@ jobs:
       # actionlint skip below, never to a job failure with no verdict. Not
       # installed at all where there is no suite to run (#935).
       - name: Install actionlint for the gate suite
-        if: steps.pipeline-ref.outcome == 'success' && hashFiles('.github/scripts/run-local-gates.py') != ''
+        if: steps.pipeline-checkout.outcome == 'success' && hashFiles('.github/scripts/run-local-gates.py') != ''
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-install-actionlint
 
@@ -633,7 +635,7 @@ jobs:
           fi
 
       - name: Run the cycle-start gate suite (credential-free)
-        if: steps.gate-suite-preflight-cycle.outputs.ready == 'true' && steps.pipeline-ref.outcome == 'success'
+        if: steps.gate-suite-preflight-cycle.outputs.ready == 'true' && steps.pipeline-checkout.outcome == 'success'
         timeout-minutes: 10
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-contained-gate-suite
         with:

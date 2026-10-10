@@ -79,3 +79,13 @@ wc_push_from_shim() {
       "refs/heads/shim:refs/heads/${branch}"
   )
 }
+
+# wc_current_branch -- the branch the checkout is on, unabbreviated: `git
+# rev-parse --abbrev-ref HEAD` says `heads/<name>` when a tag shares the
+# name, and `HEAD` when detached. Prints nothing when detached, which
+# wc_push_from_shim refuses as a destination.
+wc_current_branch() {
+  local ref
+  ref="$(git symbolic-ref -q HEAD)" || return 0
+  printf '%s\n' "${ref#refs/heads/}"
+}

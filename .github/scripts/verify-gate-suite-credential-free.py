@@ -167,6 +167,14 @@ def check_docs(docs, sites, exempt):
         if not _uses_with_site(gate, CONTAINED_COMPOSITE, site):
             problems.append("site {0}: job {1!r} does not run {2} with site: {0}".format(
                 site, where.gate_job, CONTAINED_COMPOSITE))
+        # A hung suite must end as a failed step (no verdict: red), never as
+        # a job timeout, which ends the job 'cancelled' -- read as a gate job
+        # replaced while pending (code review of #990).
+        for st in _steps(gate):
+            if CONTAINED_COMPOSITE in str(st.get("uses", "")) and not st.get("timeout-minutes"):
+                problems.append("site {0}: job {1!r} runs the suite with no step "
+                                "timeout-minutes, so a hung suite ends the job cancelled, "
+                                "not red".format(site, where.gate_job))
         for p in credential_problems(where.gate_job, gate):
             problems.append("site {0}: {1}".format(site, p))
         if where.gate_job not in _needs(reader):
@@ -253,6 +261,10 @@ def _mutations():
         docs["implement.yml"]["jobs"]["gate-suite-implement-cycle"]["container"]["env"][
             "TOK"] = "${{ secrets.speckit-app-private-key }}"
 
+    def no_step_timeout(docs):
+        for st in docs["board-loop.yml"]["jobs"]["gate-suite-fix"]["steps"]:
+            st.pop("timeout-minutes", None)
+
     def reader_not_waiting(docs):
         docs["board-loop.yml"]["jobs"]["review-fixup-publish"]["needs"].remove(
             "gate-suite-review-fixup")
@@ -275,6 +287,8 @@ def _mutations():
         ("gate-suite-implement-cycle removed", gate_job_gone, "cannot be determined"),
         ("a secret in the gate job's container env", container_env_secret,
          "names a credential outside its steps"),
+        ("gate-suite-fix's suite step loses its timeout", no_step_timeout,
+         "no step timeout-minutes"),
         ("review-fixup-publish no longer needs its gate job", reader_not_waiting,
          "cannot wait for the verdict"),
         ("the retry exemption outlives its step", stale_exemption, "is stale"),

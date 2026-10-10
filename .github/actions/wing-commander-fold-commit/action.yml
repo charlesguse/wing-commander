@@ -124,9 +124,7 @@ runs:
         # shellcheck source=../_shared/git-push-hardening.sh
         . "$GITHUB_ACTION_PATH/../_shared/git-push-hardening.sh"
         wc_harden_git_env
-        # Unabbreviated -- see wing-commander-publish-stranded-commits.
-        branch="$(git symbolic-ref -q HEAD || true)"
-        branch="${branch#refs/heads/}"
+        branch="$(wc_current_branch)"
         if [ -n "$EXPECTED_BRANCH" ] && [ "$branch" != "$EXPECTED_BRANCH" ]; then
           echo "::error::wing-commander-fold-commit: the checkout is on '$branch', not '$EXPECTED_BRANCH' -- the fold is not pushed."
           exit 1

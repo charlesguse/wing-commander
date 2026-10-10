@@ -3083,6 +3083,11 @@ jobs:
         run: chmod -R a-w .wc-pristine-repo
 
       - name: Run the gate suite on the fixer's commits (credential-free)
+        # A step timeout fails the step, so the upload after it finds no
+        # verdict and this job fails: a hung suite reads red. A job timeout
+        # would end the job as cancelled, which the publisher reads as a
+        # gate job replaced while pending -- no suite run, nothing reported.
+        timeout-minutes: 60
         uses: ./.wc-pristine-repo/.github/actions/wing-commander-contained-gate-suite
         with:
           site: board-fix
@@ -4675,6 +4680,11 @@ jobs:
         run: chmod -R a-w .wc-pristine-repo
 
       - name: Run the gate suite on the review-fixup commits (credential-free)
+        # A step timeout fails the step, so the upload after it finds no
+        # verdict and this job fails: a hung suite reads red. A job timeout
+        # would end the job as cancelled, which the publisher reads as a
+        # gate job replaced while pending -- no suite run, nothing reported.
+        timeout-minutes: 60
         uses: ./.wc-pristine-repo/.github/actions/wing-commander-contained-gate-suite
         with:
           site: board-review-fixup

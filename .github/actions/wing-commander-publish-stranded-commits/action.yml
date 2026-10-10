@@ -100,11 +100,7 @@ runs:
         (
           wc_harden_git_env
           cd "$dir"
-          # The branch the checkout is on, unabbreviated: --abbrev-ref says
-          # `heads/<name>` when a tag shares the name, and says `HEAD` when
-          # detached (empty here, which the push refuses).
-          branch="$(git symbolic-ref -q HEAD || true)"
-          branch="${branch#refs/heads/}"
+          branch="$(wc_current_branch)"
           # git push already updates the local remote-tracking ref for the
           # branch it moved, so a cycle that already pushed cleanly counts
           # 0 commits ahead of origin here, not every commit since job

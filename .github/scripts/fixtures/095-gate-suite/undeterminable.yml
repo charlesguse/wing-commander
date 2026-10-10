@@ -24,6 +24,7 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
       - uses: ./.wc-pristine-repo/.github/actions/wing-commander-contained-gate-suite
+        timeout-minutes: 60
         with:
           site: board-fix
   publish:

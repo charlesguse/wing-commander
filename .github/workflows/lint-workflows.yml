@@ -3317,6 +3317,7 @@ jobs:
           SHARED_SHELL_FUNCTIONS = {
               "wc_harden_git_env",  # _shared/git-push-hardening.sh (spec 095)
               "wc_push_from_shim",  # _shared/git-push-hardening.sh (spec 095)
+              "wc_current_branch",  # _shared/git-push-hardening.sh (spec 095)
           }
           NOT_A_COMMAND = ALWAYS_AVAILABLE | SHARED_SHELL_FUNCTIONS | {
               "[", "[[", "]]", "]", "{", "}", "DOLLARSUBST", "GHEXPR"}

@@ -308,13 +308,14 @@ def main():
     check("(cycle) the preflight no longer runs in the implement job, beside the App token",
           "Preflight: gate-suite prerequisites (cycle)" not in by_name, "")
     outs = gate_job.get("outputs") or {}
-    piped = "steps.pipeline-ref.outcome == 'success' && steps.gate-suite-preflight-cycle.outputs."
+    piped = "steps.pipeline-checkout.outcome == 'success' && steps.gate-suite-preflight-cycle.outputs."
     check("(cycle) {0} exports the preflight's script-exists, and ready/missing only "
           "with the pipeline checked out".format(GATE_JOB),
           outs.get("script-exists") == OPEN + "steps.gate-suite-preflight-cycle.outputs.script-exists" + CLOSE
           and str(outs.get("ready", "")).startswith(OPEN + piped + "ready || 'false'")
           and str(outs.get("missing", "")).startswith(
               OPEN + "steps.pipeline-ref.outcome == 'failure' && '")
+          and "steps.pipeline-checkout.outcome == 'failure' && '" in str(outs.get("missing", ""))
           and str(outs.get("missing", "")).endswith(
               "|| steps.gate-suite-preflight-cycle.outputs.missing" + CLOSE),
           "outputs={0}".format(outs))
@@ -324,13 +325,14 @@ def main():
               GATE_JOB),
           len(contained) == 1
           and str(contained[0].get("if", "")) == ("steps.gate-suite-preflight-cycle.outputs.ready == 'true'"
-                                                 " && steps.pipeline-ref.outcome == 'success'")
+                                                 " && steps.pipeline-checkout.outcome == 'success'")
           and (contained[0].get("with") or {}).get("site") == "implement-cycle",
           "steps={0}".format(contained))
     # A gate job that cannot resolve the pipeline or install actionlint must
     # still reach its preflight, so the implement job reads "not ready" (an
     # honest skip), never a missing verdict (red at cycle start).
-    for name in ("Resolve pipeline ref", "Install actionlint for the gate suite"):
+    for name in ("Resolve pipeline ref", "Checkout pipeline repository (shared composite actions)",
+                 "Install actionlint for the gate suite"):
         st = gate_by_name.get(name) or {}
         check("(cycle) {0}'s {1!r} is tolerated, so its preflight still runs".format(
                   GATE_JOB, name),
