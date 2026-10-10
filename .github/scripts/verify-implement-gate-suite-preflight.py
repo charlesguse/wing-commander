@@ -397,6 +397,12 @@ def main():
         check("({0}) the cycle-outcome artifact reads the suite step's own outcome".format(leg),
               record_env.get("GATE_OUTCOME") == OPEN + own + CLOSE,
               "env={0}".format(record_env))
+        if leg == "cycle":
+            check("(cycle) a skipped verdict for another head records no first failure",
+                  record_env.get("FIRST_FAILURE") == OPEN
+                  + "steps.gate-suite-cycle.outputs.reason != 'head_sha mismatch' && "
+                  "steps.gate-suite-cycle.outputs.first-failure || ''" + CLOSE,
+                  "env={0}".format(record_env))
         run_steps = {k: str(found[k]["run"]) for k in ("preflight", "summary", "record")}
         texts[leg] = run_steps
         for target, name, old, _new in MUTATIONS:

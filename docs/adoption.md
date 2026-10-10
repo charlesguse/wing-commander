@@ -854,7 +854,11 @@ things to know before you bind one:
      out and reports that there is no suite. It holds no `id-token` either,
      so where `github.job_workflow_sha` comes through empty it cannot find
      the pipeline commit: set the `pipeline-ref` input, or the cycle-start
-     suite is reported as skipped for that reason.
+     suite is reported as skipped for that reason. It checks the pipeline
+     repository out with its own read-only `GITHUB_TOKEN` only, never
+     `pipeline-repo-token`, so with a private pipeline repository that
+     token cannot read, the cycle-start suite is likewise skipped and named
+     (the agent can still run the suite itself).
 
   Counting the jobs that do run:
 

@@ -300,6 +300,12 @@ def check_shim_guards(hardening=HARDENING):
         if got.returncode != 0 or landed != head:
             errors.append("wc_push_from_shim could not push from a linked worktree: "
                           + (got.stdout + got.stderr)[-300:])
+        tracking = subprocess.run(["git", "rev-parse", "--verify", "-q",
+                                   "refs/remotes/origin/main"], cwd=linked,
+                                  capture_output=True, text=True).stdout.strip()
+        if tracking != head:
+            errors.append("wc_push_from_shim left the checkout's refs/remotes/origin/<branch> "
+                          "behind the push, as a plain `git push origin` would not")
     return errors
 
 
@@ -411,7 +417,9 @@ def self_test():
         for label, old_text, new_text in (
                 ("the branch-name guard", "    '' | HEAD | refs/*)", "    '')"),
                 ("the common-directory object path", 'common="$(git rev-parse --git-common-dir)"',
-                 'common="$(git rev-parse --absolute-git-dir)"')):
+                 'common="$(git rev-parse --absolute-git-dir)"'),
+                ("the remote-tracking update", 'git update-ref "refs/remotes/origin/${branch}" "$sha"',
+                 "true")):
             if old_text not in text:
                 sys.exit("::error::Gate 142 self-test: {0!r} not in git-push-hardening.sh"
                          .format(old_text))

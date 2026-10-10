@@ -16,7 +16,10 @@ bundle_dir="$1"
 expected="$2"
 branch="$3"
 bundle="$bundle_dir/bundle.git"
-if ! printf '%s' "$expected" | grep -Eq '^[0-9a-f]{40}$'; then
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=gate-bundle-import.sh
+. "$here/gate-bundle-import.sh"
+if ! wc_is_sha "$expected"; then
   echo "::error::restore-gate-bundle: expected head '$expected' is not a 40-hex SHA"
   exit 1
 fi
@@ -24,22 +27,20 @@ if [ ! -f "$bundle" ]; then
   echo "::error::restore-gate-bundle: no workspace bundle at $bundle"
   exit 1
 fi
-here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=git-push-hardening.sh
 . "$here/git-push-hardening.sh"
 wc_harden_git_env
-if ! git bundle verify "$bundle" >/dev/null 2>&1; then
-  echo "::error::restore-gate-bundle: the workspace bundle failed verification -- a corrupt bundle, or a prerequisite commit (the agent's base) this checkout does not hold. The containment could not be established; nothing is pushed."
-  exit 1
-fi
-# The bundle carries one ref, HEAD (build-gate-bundle.sh); a refs/* refspec
-# would match nothing and import no objects.
-if ! git fetch --quiet --no-tags "$bundle" "+HEAD:refs/wc-gate/head"; then
-  echo "::error::restore-gate-bundle: fetching the workspace bundle failed -- the containment could not be established; nothing is pushed."
-  exit 1
-fi
-if ! git cat-file -e "${expected}^{commit}" 2>/dev/null; then
-  echo "::error::restore-gate-bundle: the bundle does not hold $expected"
+rc=0
+fetched="$(wc_import_bundle "$bundle")" || rc=$?
+case "$rc" in
+  0) ;;
+  2) echo "::error::restore-gate-bundle: the workspace bundle failed verification -- a corrupt bundle, or a prerequisite commit (the agent's base) this checkout does not hold. The containment could not be established; nothing is pushed."
+     exit 1 ;;
+  *) echo "::error::restore-gate-bundle: fetching the workspace bundle failed -- the containment could not be established; nothing is pushed."
+     exit 1 ;;
+esac
+if [ "$fetched" != "$expected" ]; then
+  echo "::error::restore-gate-bundle: the bundle does not hold $expected (its head is ${fetched:-nothing})"
   exit 1
 fi
 if [ -n "$branch" ]; then

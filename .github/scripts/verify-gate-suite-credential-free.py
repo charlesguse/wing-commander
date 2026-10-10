@@ -21,10 +21,11 @@ For every site in wc_gate_suite_sites.SITES:
      scope `read` or `none`; no `environment:` (environment secrets); no
      step that mints the App token (create-github-app-token,
      wing-commander-context); every actions/checkout step has
-     `persist-credentials: false`; and no `secrets.`, `WC_BOT_TOKEN` or
-     `github.token` reference anywhere in the job except a checkout
-     step's own `token:` (which persist-credentials: false keeps out of
-     .git/config) and `container.credentials` (an image pull);
+     `persist-credentials: false` and, if it names a `token:`, names only
+     the job's own `github.token` (a secret the job references sits in its
+     runner's memory, reachable by the code it runs); and no `secrets.`,
+     `WC_BOT_TOKEN` or `github.token` reference anywhere else in the job
+     except `container.credentials` (an image pull);
   3. the job that acts on the verdict exists, lists the gate job in its
      `needs:`, and reads it through wing-commander-gate-verdict with the
      same `site:`.
@@ -114,7 +115,14 @@ def credential_problems(job_id, job):
             if str(with_.get("persist-credentials", "")).lower() != "false":
                 problems.append("{0}: actions/checkout without persist-credentials: "
                                 "false".format(label))
-            with_.pop("token", None)
+            # Only the job's own read-only token: any secret a job references
+            # sits in its runner's memory, which the agent-authored code it
+            # runs can read (passwordless sudo on a hosted runner) -- even
+            # when persist-credentials keeps it out of .git/config.
+            token = str(with_.pop("token", "${{ github.token }}") or "")
+            if token.replace(" ", "") != "${{github.token}}":
+                problems.append("{0}: actions/checkout token {1!r} is not the job's own "
+                                "github.token".format(label, token))
         if CREDENTIAL_RE.search(json.dumps(scan, default=str)):
             problems.append("{0} names a credential".format(label))
     return problems
@@ -261,6 +269,11 @@ def _mutations():
         docs["implement.yml"]["jobs"]["gate-suite-implement-cycle"]["container"]["env"][
             "TOK"] = "${{ secrets.speckit-app-private-key }}"
 
+    def pat_checkout(docs):
+        for st in docs["implement.yml"]["jobs"]["gate-suite-implement-cycle"]["steps"]:
+            if st.get("name") == "Checkout pipeline repository (shared composite actions)":
+                st["with"]["token"] = "${{ secrets.pipeline-repo-token || github.token }}"
+
     def no_step_timeout(docs):
         for st in docs["board-loop.yml"]["jobs"]["gate-suite-fix"]["steps"]:
             st.pop("timeout-minutes", None)
@@ -287,6 +300,8 @@ def _mutations():
         ("gate-suite-implement-cycle removed", gate_job_gone, "cannot be determined"),
         ("a secret in the gate job's container env", container_env_secret,
          "names a credential outside its steps"),
+        ("the implement gate job checks the pipeline out with pipeline-repo-token",
+         pat_checkout, "is not the job's own github.token"),
         ("gate-suite-fix's suite step loses its timeout", no_step_timeout,
          "no step timeout-minutes"),
         ("review-fixup-publish no longer needs its gate job", reader_not_waiting,

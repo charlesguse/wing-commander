@@ -45,7 +45,7 @@ import tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 SHARED = os.path.join(HERE, "..", "actions", "_shared")
 SCRIPTS = ("build-gate-bundle.sh", "contained-gate-suite.sh", "restore-gate-bundle.sh",
-           "git-push-hardening.sh")
+           "git-push-hardening.sh", "gate-bundle-import.sh")
 PASSING_SUITE = "print('PASS  verify-x.py')\n"
 FAILING_SUITE = "import sys\nprint('FAIL  verify-x.py (planted)')\nsys.exit(1)\n"
 TRUSTED_SHA = "b" * 40
@@ -237,6 +237,38 @@ def checks(shared):
            and "does not match" in v.get("first_failure", ""), str(v))
 
     with tempfile.TemporaryDirectory() as tmp:
+        # The trusted commit gained the suite after the head was cut: the head
+        # never had it, so it did not remove it.
+        origin = os.path.join(tmp, "origin")
+        os.makedirs(origin)
+        git(origin, "init", "-q", "-b", "main")
+        write(origin, "README", "before the suite\n")
+        git(origin, "add", "-A")
+        git(origin, "commit", "-q", "-m", "before the suite")
+        cut = git(origin, "rev-parse", "HEAD")
+        write(origin, ".github/scripts/run-local-gates.py", PASSING_SUITE)
+        git(origin, "add", "-A")
+        git(origin, "commit", "-q", "-m", "the suite arrives")
+        trusted = os.path.join(tmp, "trusted")
+        agent = os.path.join(tmp, "agent")
+        git(tmp, "clone", "-q", origin, trusted)
+        git(tmp, "clone", "-q", origin, agent)
+        git(agent, "checkout", "-q", "-b", "spec/x", cut)
+        write(agent, "src.txt", "fix\n")
+        git(agent, "add", "-A")
+        git(agent, "commit", "-q", "-m", "agent, on a branch cut before the suite")
+        pre_head = git(agent, "rev-parse", "HEAD")
+        bundle = os.path.join(tmp, "pre-bundle")
+        sh(shared, "build-gate-bundle.sh", ["board-fix", cut, bundle], agent)
+        verdict_path = os.path.join(tmp, "pre-verdict.json")
+        sh(shared, "contained-gate-suite.sh", ["board-fix", bundle, TRUSTED_SHA, verdict_path],
+           trusted)
+        pv = json.load(open(verdict_path)) if os.path.exists(verdict_path) else {}
+        ck("a head that predates the suite is red, saying so -- not 'removed'",
+           pv.get("outcome") == "fail" and pv.get("head_sha") == pre_head
+           and "predates the gate suite" in pv.get("first_failure", ""), str(pv))
+
+    with tempfile.TemporaryDirectory() as tmp:
         v, out, *_rest = round_trip(shared, tmp, remove_suite)
         ck("a head that deleted run-local-gates.py is red, never a skip",
            v is not None and v.get("outcome") == "fail"
@@ -265,24 +297,23 @@ def mutated_shared(tmp, edits):
 
 
 MUTATIONS = (
-    ("the gate job fetches the bundle with a refs/* refspec",
-     [("contained-gate-suite.sh", '"+HEAD:refs/wc-gate/head"', '"+refs/*:refs/wc-gate/*"')]),
-    ("the restore fetches the bundle with a refs/* refspec",
-     [("restore-gate-bundle.sh", '"+HEAD:refs/wc-gate/head"', '"+refs/*:refs/wc-gate/*"')]),
+    ("both consumers fetch the bundle with a refs/* refspec",
+     [("gate-bundle-import.sh", '"+HEAD:refs/wc-gate/head"', '"+refs/*:refs/wc-gate/*"')]),
     ("the restore stops checking that the bundle holds the reported head",
-     [("restore-gate-bundle.sh", 'if ! git cat-file -e "${expected}^{commit}" 2>/dev/null; then',
-       "if false; then")]),
+     [("restore-gate-bundle.sh", 'if [ "$fetched" != "$expected" ]; then', "if false; then")]),
+    ("the gate job gates whatever meta.json names",
+     [("contained-gate-suite.sh", 'if [ "$fetched" != "$head_sha" ]; then', "if false; then")]),
+    ("a head that predates the suite is reported as having removed it",
+     [("contained-gate-suite.sh", '! git cat-file -e "${fork}:.github/scripts/run-local-gates.py"',
+       "false")]),
     ("the verdict writer's copy is left writable",
      [("contained-gate-suite.sh", 'chmod -R a-w "$trusted_copy"', "true")]),
     ("a bundle that fails verification is refused without saying why",
-     [("restore-gate-bundle.sh", " The containment could not be established; nothing is pushed.\"\n  exit 1\nfi\n# The bundle",
-       "\"\n  exit 1\nfi\n# The bundle")]),
+     [("restore-gate-bundle.sh", "this checkout does not hold. The containment could not be "
+       "established; nothing is pushed.\"", "\"")]),
     ("an unknown base is bundled as a thin range anyway",
      [("build-gate-bundle.sh", 'if [ -n "$base_sha" ] && ! git cat-file -e "${base_sha}^{commit}" 2>/dev/null; then',
        'if false; then')]),
-    ("the gate job gates whatever meta.json names",
-     [("contained-gate-suite.sh", 'if [ "$(git rev-parse --verify --quiet refs/wc-gate/head)" != "$head_sha" ]; then',
-       "if false; then")]),
     ("a head with no new commits ships the whole history",
      [("build-gate-bundle.sh", 'git bundle create --quiet "$out_dir/bundle.git" HEAD~1..HEAD HEAD',
        'git bundle create --quiet "$out_dir/bundle.git" HEAD')]),

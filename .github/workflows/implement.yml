@@ -565,9 +565,14 @@ jobs:
         with:
           repository: ${{ inputs.pipeline-repo }}
           ref: ${{ steps.pipeline-ref.outputs.ref }}
-          # A private pipeline repository is not readable by the caller's
-          # GITHUB_TOKEN — pipeline-repo-token covers that case (docs/adoption.md).
-          token: ${{ secrets.pipeline-repo-token || github.token }}
+          # Only the job's own read-only token: a pipeline-repo-token here
+          # would sit in this job's runner memory, reachable by the agent-
+          # authored code this job runs (passwordless sudo on a hosted
+          # runner). A private pipeline repository this token cannot read
+          # makes the checkout fail, which reads as a named missing
+          # prerequisite -- the cycle-start suite is skipped, never run
+          # beside a credential (docs/adoption.md).
+          token: ${{ github.token }}
           path: .wing-commander-pipeline
           persist-credentials: false
 
@@ -1841,7 +1846,7 @@ jobs:
           CONVERGED: ${{ steps.outcome.outputs.converged }}
           HANDOFF: ${{ steps.outcome.outputs.handoff }}
           GATE_OUTCOME: ${{ steps.gate-suite-cycle.outputs.reason != 'head_sha mismatch' && steps.gate-suite-cycle.outputs.outcome || 'skipped' }}
-          FIRST_FAILURE: ${{ steps.gate-suite-cycle.outputs.first-failure }}
+          FIRST_FAILURE: ${{ steps.gate-suite-cycle.outputs.reason != 'head_sha mismatch' && steps.gate-suite-cycle.outputs.first-failure || '' }}
         run: |
           set -uo pipefail
           outcome="$GATE_OUTCOME"
@@ -1892,8 +1897,9 @@ jobs:
             exit 1
           fi
 
-      # FR-009a: mirrors "Preflight: gate-suite prerequisites (cycle)" above
-      # — actionlint installed there is still on this job's PATH.
+      # FR-009a: mirrors "Preflight: gate-suite prerequisites (cycle)" (in
+      # gate-suite-implement-cycle, spec 095) -- here actionlint comes from
+      # this job's own "Install actionlint for the agent" above.
       - name: "Preflight: gate-suite prerequisites (retry)"
         id: gate-suite-preflight-retry
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true'

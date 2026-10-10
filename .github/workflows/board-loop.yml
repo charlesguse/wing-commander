@@ -4661,9 +4661,7 @@ jobs:
       group: wing-commander-board-loop
       cancel-in-progress: false
     steps:
-      # A full-history checkout of github.sha, with no credential left in
-      # it: the bundle's prerequisite commits come from here, and nothing
-      # in this job can push with it.
+      # The checkout -- see gate-suite-fix above in this file.
       - name: Checkout
         uses: actions/checkout@v5
         with:
@@ -4680,10 +4678,7 @@ jobs:
         run: chmod -R a-w .wc-pristine-repo
 
       - name: Run the gate suite on the review-fixup commits (credential-free)
-        # A step timeout fails the step, so the upload after it finds no
-        # verdict and this job fails: a hung suite reads red. A job timeout
-        # would end the job as cancelled, which the publisher reads as a
-        # gate job replaced while pending -- no suite run, nothing reported.
+        # The step timeout -- see gate-suite-fix above in this file.
         timeout-minutes: 60
         uses: ./.wc-pristine-repo/.github/actions/wing-commander-contained-gate-suite
         with:
@@ -4779,9 +4774,8 @@ jobs:
         with:
           site: board-review-fixup
           expected-head-sha: ${{ needs.review.outputs.fixup-head-sha }}
-          # A gate job replaced while pending in the board-loop group ran no
-          # suite: outcome=cancelled, so neither the push nor the red-suite
-          # report below fires (code review of #990).
+          # A replaced gate job -- see fix's "Read the gate suite's verdict
+          # (fixer)" above in this file.
           gate-job-result: ${{ needs.gate-suite-review-fixup.result }}
 
       - name: Hold a workflow-file follow-up for a maintainer (review-fixup)

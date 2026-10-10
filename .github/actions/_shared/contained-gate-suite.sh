@@ -58,7 +58,9 @@ write_verdict() { # outcome exit_code head_sha first_failure
 }
 
 zero_sha="0000000000000000000000000000000000000000"
-is_sha() { printf '%s' "$1" | grep -Eq '^[0-9a-f]{40}$'; }
+# shellcheck source=gate-bundle-import.sh
+. "$here/gate-bundle-import.sh"
+is_sha() { wc_is_sha "$1"; }
 
 if [ -n "$head_ref" ]; then
   head_sha="$(git rev-parse --verify --quiet "refs/remotes/origin/${head_ref}^{commit}" 2>/dev/null)"
@@ -90,16 +92,16 @@ else
   if is_sha "${base_sha:-}" && ! git cat-file -e "${base_sha}^{commit}" 2>/dev/null; then
     git fetch --quiet --no-tags origin "$base_sha" 2>/dev/null || true
   fi
-  if ! git bundle verify "$bundle" >/dev/null 2>&1; then
+  rc=0
+  fetched="$(wc_import_bundle "$bundle")" || rc=$?
+  if [ "$rc" -eq 2 ]; then
     write_verdict fail 1 "$head_sha" "workspace bundle failed verification"
     exit 0
-  fi
-  # The bundle carries one ref, HEAD (build-gate-bundle.sh).
-  if ! git fetch --quiet --no-tags "$bundle" "+HEAD:refs/wc-gate/head" 2>/dev/null; then
+  elif [ "$rc" -ne 0 ]; then
     write_verdict fail 1 "$head_sha" "workspace bundle could not be fetched"
     exit 0
   fi
-  if [ "$(git rev-parse --verify --quiet refs/wc-gate/head)" != "$head_sha" ]; then
+  if [ "$fetched" != "$head_sha" ]; then
     write_verdict fail 1 "$head_sha" "bundle head does not match its metadata's head_sha"
     exit 0
   fi
@@ -115,7 +117,14 @@ if ! git worktree add --quiet --detach "$work" "$head_sha" 2>/dev/null; then
   exit 0
 fi
 if [ ! -f "$work/.github/scripts/run-local-gates.py" ]; then
-  write_verdict fail 1 "$head_sha" "head removed run-local-gates.py"
+  # Removed by the head, or never there: a head cut before the trusted
+  # commit gained the suite (rebase it) is not one that deleted it.
+  fork="$(git merge-base "$head_sha" HEAD 2>/dev/null)"
+  if [ -n "$fork" ] && ! git cat-file -e "${fork}:.github/scripts/run-local-gates.py" 2>/dev/null; then
+    write_verdict fail 1 "$head_sha" "head predates the gate suite on the trusted commit -- rebase it to run the suite"
+  else
+    write_verdict fail 1 "$head_sha" "head removed run-local-gates.py"
+  fi
   exit 0
 fi
 log="$(mktemp)"

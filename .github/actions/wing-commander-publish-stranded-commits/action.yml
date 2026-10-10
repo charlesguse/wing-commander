@@ -121,7 +121,6 @@ runs:
             # shim repository, so no insteadOf/pushurl the agent could have
             # left in this checkout's .git/config can redirect the token.
             if wc_push_from_shim "$(git rev-parse HEAD)" "$branch" "$PUSH_REPO" "$PUSH_TOKEN"; then
-              git update-ref "refs/remotes/origin/$branch" HEAD
               echo "push-ok=true" >> "$GITHUB_OUTPUT"
             else
               echo "push-ok=false" >> "$GITHUB_OUTPUT"

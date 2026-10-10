@@ -77,7 +77,10 @@ wc_push_from_shim() {
     fi
     git --git-dir="$shim/.git" push --no-verify "${server}/${repo}.git" \
       "refs/heads/shim:refs/heads/${branch}"
-  )
+  ) || return 1
+  # What a plain `git push origin` would have done to the checkout's own
+  # remote-tracking ref, so a later origin/<branch>..HEAD count is right.
+  git update-ref "refs/remotes/origin/${branch}" "$sha"
 }
 
 # wc_current_branch -- the branch the checkout is on, unabbreviated: `git
