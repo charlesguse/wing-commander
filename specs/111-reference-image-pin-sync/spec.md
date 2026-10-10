@@ -256,6 +256,13 @@ containment failure; configure a correctly scoped one and confirm it syncs.
   verification that stages already run against a configured container
   image and the agent start-up check delivered by #974 (spec 112); this
   feature invents no new check and depends on spec 112 for the latter.
+- Sequencing: spec 112 (#974) adds the start-up check to every
+  reference-image rebuild. Its implementation lands on `main` before this
+  feature's implementation starts, so the sync can gate on the check's
+  result. Both features edit the reference-image build workflow, so they
+  are not implemented concurrently. If this feature is ever implemented
+  without spec 112's check on `main`, it MUST NOT write any pin
+  (FR-001 requires both checks) until that check exists.
 - "Considered and not taken" alternatives from the request are out of scope:
   auto-release syncing before each container run (it would reverse 067
   FR-003) and giving sessions direct variable access. A dispatchable,
