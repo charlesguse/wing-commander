@@ -93,7 +93,8 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import board_item_marker  # noqa: E402
 from board_eligibility import (  # noqa: E402
-    AWAITING_MERGE_STEP, FIX_OR_LATER_STEPS, classify_issue, in_flight_candidate, select)
+    AWAITING_MERGE_STEP, FIX_OR_LATER_STEPS, NOT_READY_THRESHOLD, classify_issue,
+    in_flight_candidate, not_ready_handover_due, select)
 
 BOT_LOGIN = "wing-commander-bot[bot]"
 
@@ -422,6 +423,19 @@ def run():
               "eligible again (#532).")
     else:
         print("[ok] AWAITING_MERGE_STEP is in FIX_OR_LATER_STEPS (select looks up its PR)")
+
+    # specs/093-not-ready-board-release FR-004(a)/FR-013: the handover
+    # threshold is spec 093's stated value (3 not-ready outcomes per PR);
+    # the workflow reads it from NOT_READY_THRESHOLD, so a drifted value
+    # would silently move when a human is reached.
+    if (NOT_READY_THRESHOLD != 3 or not_ready_handover_due(2)
+            or not not_ready_handover_due(3)):
+        failures += 1
+        print("::error::verify-board-eligibility: NOT_READY_THRESHOLD is {0}, or "
+              "not_ready_handover_due() disagrees with it -- spec 093 FR-004(a) "
+              "hands a PR over on its 3rd not-ready outcome.".format(NOT_READY_THRESHOLD))
+    else:
+        print("[ok] NOT_READY_THRESHOLD == 3 and not_ready_handover_due() agrees")
 
     failures += author_mutation_check()
     failures += marker_rule_mutation_check()

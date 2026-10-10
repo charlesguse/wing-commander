@@ -105,10 +105,13 @@ fires only when the ones above it don't apply:
    stalled, it carries both pr and nr_head_sha (this feature's own
    not-ready handover, never any other stall site's marker, which keeps
    pr: null), and its pr resolves
-     -> step = "readiness" when the resolved pr's current head SHA equals
-        nr_head_sha (already reviewed at that head -- do not re-review);
-        step = "review" otherwise (a moved or unresolvable head), the same
-        outcome clause 2 already produces for every other stalled marker.
+     -> step = "readiness" when `head_moved_since_last_review(pr_number,
+        comments, bot_login)` (`board_item_marker.py`, the one shared
+        determination, same as clause 2b) is False -- the head matches the
+        last converged review, so do not re-review; step = "review"
+        otherwise (a moved or unresolvable head), the same outcome clause 2
+        already produces for every other stalled marker. nr_head_sha is
+        not compared here.
    A stalled marker lacking either field is unaffected and falls through
    unchanged to clause 2 below.
 

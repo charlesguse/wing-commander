@@ -968,15 +968,14 @@ RESUME_CASES = [
      {"step": "review", "pr_number": "42", "recovered_via_fallback": True}),
     # specs/093-not-ready-board-release FR-007/FR-008/D7: this feature's
     # own stalled handover marker uniquely carries pr/nr_head_sha -- a
-    # board:stalled removal resumes at readiness (head unchanged, already
-    # reviewed) or review (head moved), never triage.
-    ("not-ready handover (stalled, pr+nr_head_sha), head unchanged -> readiness",
+    # board:stalled removal never resolves to triage; review-vs-readiness is
+    # head_moved_since_last_review()'s call (T039), so this table (no
+    # converged review comment, no gh stub) only pins the safe default.
+    # The readiness side lives in verify-board-loop-readmission.py's
+    # not-ready-handover-* fixtures.
+    ("not-ready handover (stalled, pr+nr_head_sha), no converged review resolvable -> review",
      _resume_env("stalled", "42", True, "OPEN", "42",
                  marker_extra={"pr": 42, "nr_head_sha": "deadbeef"}, pr_head_sha="deadbeef"),
-     {"step": "readiness", "pr_number": "42"}),
-    ("not-ready handover (stalled, pr+nr_head_sha), head moved -> review",
-     _resume_env("stalled", "42", True, "OPEN", "42",
-                 marker_extra={"pr": 42, "nr_head_sha": "deadbeef"}, pr_head_sha="cafefeed"),
      {"step": "review", "pr_number": "42"}),
     # FR-015: a stalled marker from any other stall site keeps pr: null and
     # is unaffected -- still resolved by the generic board:owned fallback
@@ -1915,6 +1914,30 @@ def fetch_behaviour_findings(doc):
     return findings
 
 
+# specs/093-not-ready-board-release FR-002/FR-004(a)/FR-008/FR-013: the
+# readiness job's not-ready report step records the outcome (a readiness
+# marker carrying nr_count/nr_head_sha/nr_class) and, at the threshold, hands
+# the item over (a stalled marker carrying pr/nr_head_sha, board:stalled
+# added first). Dropping either leaves every other check green, so pin both.
+def not_ready_report_findings(doc):
+    steps = ((doc.get("jobs") or {}).get("readiness") or {}).get("steps") or []
+    run = next((str(s.get("run", "")) for s in steps
+                if isinstance(s, dict) and "NOT_READY_THRESHOLD" in str(s.get("run", ""))), None)
+    if run is None:
+        return ["readiness: no not-ready report step reading NOT_READY_THRESHOLD (specs/093 FR-004(a))"]
+    findings = []
+    lines = _logical_lines(run)
+    if not any("--step readiness" in ln and "--nr-count" in ln and "--nr-head-sha" in ln
+               and "--nr-class" in ln for ln in lines):
+        findings.append("readiness: the not-ready report no longer writes a readiness marker with "
+                        "--nr-count/--nr-head-sha/--nr-class (specs/093 FR-002)")
+    if not any("--step stalled" in ln and "--pr" in ln and "--nr-head-sha" in ln
+               and '--add-label "board:stalled"' in ln for ln in lines):
+        findings.append("readiness: the not-ready threshold no longer hands over with a stalled marker "
+                        "carrying --pr/--nr-head-sha and board:stalled (specs/093 FR-004(a)/FR-008)")
+    return findings
+
+
 def all_findings(text, table=None, scripts_root=ROOT):
     try:
         doc = yaml.safe_load(text)
@@ -1925,7 +1948,8 @@ def all_findings(text, table=None, scripts_root=ROOT):
             + owned_jq_findings(doc, scripts_root) + marker_reader_findings(doc)
             + fetch_handling_findings(doc) + lookup_handling_findings(doc)
             + fetch_behaviour_findings(doc) + breach_retry_findings(doc, scripts_root)
-            + stall_label_findings(doc, scripts_root) + readiness_stop_gate_findings(doc))
+            + stall_label_findings(doc, scripts_root) + readiness_stop_gate_findings(doc)
+            + not_ready_report_findings(doc))
 
 
 def print_table(table):
@@ -2091,6 +2115,13 @@ def _mutations(text):
         "(specs/096-durable-prove-entry)",
         "elif pr_from_marker and marker_step in FIX_OR_LATER_STEPS and pr_state == \"MERGED\":",
         "elif False:")
+    # specs/093-not-ready-board-release FR-013: the not-ready record write
+    # and the threshold handover are each load-bearing.
+    sub("not-ready report drops its record write (--nr-count)",
+        '--nr-count "$new_count" ', "")
+    sub("not-ready handover drops its nr_head_sha",
+        '--step stalled --pr "$PR_NUMBER" --round "$ROUND" --nr-head-sha "$head_sha" ',
+        '--step stalled --round "$ROUND" ')
     # #555: the resume step's branch and PR guards, and the marker readers'
     # author plumbing.
     sub("resume branch-name guard dropped",

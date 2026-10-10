@@ -1317,10 +1317,14 @@ jobs:
               # already reviewed -- resume at readiness, never re-review; a
               # moved (or unresolvable) head resumes at review, matching
               # what the generic fallback clause already does for every
-              # other stall site.
-              if pr_head_sha and pr_head_sha == marker_full.get("nr_head_sha"):
+              # other stall site. The moved/unmoved call is the one shared
+              # head_moved_since_last_review() determination (FR-007), not
+              # a second comparison against nr_head_sha.
+              with open(os.environ["COMMENTS_PATH"], encoding="utf-8") as fh:
+                  comments = json.load(fh)
+              if not head_moved_since_last_review(pr_number, comments, os.environ.get("BOT_LOGIN") or ""):
                   step = "readiness"
-                  note = "recorded pr {0} was handed off not-ready at head_sha {1}; head unchanged -- resuming at readiness".format(
+                  note = "recorded pr {0} was handed off not-ready at head_sha {1}; head unchanged since the last converged review -- resuming at readiness".format(
                       pr_number, marker_full.get("nr_head_sha"))
               else:
                   step = "review"
