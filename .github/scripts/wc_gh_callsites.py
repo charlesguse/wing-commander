@@ -42,8 +42,9 @@ class Token:
 
 
 GH_WORD = re.compile(r"(?<![\w./$@:%-])gh(?![\w-])")
-# A command word whose `${...}` may expand to `gh` (`${X:-gh} api ...`).
-GH_IN_EXPANSION = re.compile(r"\$\{[^}]*?(?<![\w.$@%])gh(?![\w-])")
+# A word that is a `${...}` whose default or alternate value is `gh`
+# (`${X:-gh}`, `"${X:+gh}"`): it may expand to the command itself.
+GH_IN_EXPANSION = re.compile(r'"?\$\{[^{}]*?[-+=?]gh\}"?')
 ASSIGN = re.compile(r"[A-Za-z_]\w*=")
 HEREDOC_DELIM = re.compile(r"\\?([^\s;&|<>()'\"`\\]+)")
 VAR = re.compile(r"\$(?:[A-Za-z_]\w*|[0-9@*#?!$-])")
@@ -326,7 +327,7 @@ class _Scan:
     # ------------------------------------------------------------- commands
     def _cmds(self, i, ctx):
         t, n = self.t, self.n
-        words, drop = [], False
+        words, drop, timed = [], False, False
         while i < n:
             c = t[i]
             if c in " \t" or (c == "\\" and t[i + 1:i + 2] == "\n"):
@@ -358,12 +359,14 @@ class _Scan:
                 w, i = self._word(i, ctx)
                 lead = not words and w.plain and w.lit
                 if drop or lead == "function":                 # `function NAME`: drop NAME
-                    drop = lead == "function"
+                    drop = not drop
                     continue
                 if lead in ("case", "esac"):
                     ctx.cases = max(0, ctx.cases + (1 if lead == "case" else -1))
-                # A dashed word cannot name a command (`time -p gh`): the next one does.
-                if lead not in RESERVED and not (lead and lead[0] == "-"):
+                if timed and lead and lead[0] == "-":         # `time -p gh`
+                    continue
+                timed = lead == "time"
+                if lead not in RESERVED:
                     words.append(w)
         self._end(words, ctx)
         if ctx.depth:
@@ -399,13 +402,24 @@ class _Scan:
                        timeout=timeout, argv=argv,
                        position=("disallowed" if reason else
                                  "subst_first" if ctx.depth else "statement"))
-        elif head.lit is None and GH_IN_EXPANSION.search(head.raw):
-            self._note(head.off, "call", position="disallowed", reason="dynamic-command")
+        elif _expands_to_gh(head):
+            self._note_once(head, "dynamic-command")
         elif head.lit in WRAPPERS and not (head.lit == "command" and any(
                 w.lit in ("-v", "-V") for w in words[k + 1:])):
-            w = next((w for w in words[k + 1:] if "gh" in (w.lit, w.skel)), None)
+            w = next((w for w in words[k + 1:]
+                      if "gh" in (w.lit, w.skel) or _expands_to_gh(w)), None)
             if w:
-                self._note(w.off, "call", position="disallowed", reason="unquoted-wrapper")
+                self._note_once(w, "unquoted-wrapper")
+
+    def _note_once(self, w, reason):
+        """A disallowed call at word `w`, unless its own text already holds one
+        (`${X:+gh}` is marked inside the expansion)."""
+        if not any(w.off <= t.offset < w.off + len(w.raw) for t in self.toks):
+            self._note(w.off, "call", position="disallowed", reason=reason)
+
+
+def _expands_to_gh(w):
+    return w.lit is None and GH_IN_EXPANSION.fullmatch(w.raw) is not None
 
 
 def _argv_reason(argv):
