@@ -334,6 +334,13 @@ When a pass is CLEAN:
 
 1. Every check run on the exact head SHA has completed successfully. A head
    with no checks is not green (constitution VIII).
+
+   Some PRs have nothing for CI to run. lint-workflows.yml runs on a pull
+   request only when a changed path matches its `pull_request: paths:`
+   list, and a change to most of `.claude/skills/` or to CLAUDE.md matches
+   none of it. In that case:
+   - say so on the PR, with the last pass's local gate-suite result;
+   - merge only on the owner's explicit go-ahead for that PR.
 2. The PR is mergeable.
 3. Squash-merge, pinned to that head:
    `gh api -X PUT repos/{owner}/{repo}/pulls/N/merge -f merge_method=squash -f sha=<head>`.
