@@ -14,9 +14,10 @@ This script answers the parts of that question git can answer
 deterministically, from the head SHAs the loop recorded at each pass
 boundary:
 
-  attribution  For each finding location on the latest head, who wrote the
-               line: main, the PR as first submitted, or the fix commits of
-               pass k. Findings in pass-k lines are self-inflicted.
+  attribution  For each finding location on the head the latest pass
+               reviewed, who wrote the line: main, the PR as first
+               submitted, or the fix commits of an earlier pass k. Findings
+               in pass-k lines are self-inflicted.
   churn        For each pass, how many lines it rewrote or deleted that an
                EARLIER pass had written. A fix of a fix; a pass undoing a
                pass is the extreme case.
@@ -33,8 +34,10 @@ USAGE
       [--finding path:line ...] [--counts 4,1,1] [--json]
 
   H0 is the PR head before pass 1's fixes; Hk is the head after pass k.
-  --finding locations are on the last head. --counts holds the number of
-  real findings each pass reported, in order.
+  --finding locations are on H(n-1), the head the latest pass started
+  from and reviewed -- as its report gives them. On Hn that pass's own fix
+  has already rewritten those lines. --counts holds the number of real
+  findings each pass reported, in order.
 
   thrash_signals.py --self-test   builds a scratch repository and checks
                                   the attribution, churn and growth math.
@@ -177,12 +180,15 @@ def measure(base, heads, findings, counts, cwd):
                       "total": sum(rewrote.values())})
     report["churn"] = churn
 
+    # The latest pass reviewed heads[-2]; its findings' line numbers are
+    # that head's, and on heads[-1] its own fixes own those lines.
+    reviewed = heads[-2] if len(heads) > 1 else heads[-1]
     attributed = []
     for spec in findings:
         path, _, line = spec.rpartition(":")
         if not path or not line.isdigit():
             raise SystemExit("thrash_signals: --finding wants path:line, got {0!r}".format(spec))
-        commits = blame_commits(heads[-1], path, int(line), 1, cwd)
+        commits = blame_commits(reviewed, path, int(line), 1, cwd)
         attributed.append({"finding": spec,
                            "origin": origins.of(commits[0]) if commits else "unknown"})
     report["findings"] = attributed
@@ -208,7 +214,7 @@ def render(report):
         lines.append("  pass {0}: {1}{2}".format(c["pass"], c["total"], " ({0})".format(detail) if detail else ""))
     if report["findings"]:
         si = report["self_inflicted"]
-        lines.append("Findings on the latest head, by who wrote the line ({0} of {1} in loop-written lines):".format(si["count"], si["of"]))
+        lines.append("Findings on the head the latest pass reviewed, by who wrote the line ({0} of {1} in loop-written lines):".format(si["count"], si["of"]))
         for f in report["findings"]:
             lines.append("  {0}: {1}".format(f["finding"], f["origin"]))
     if report.get("trend"):
@@ -242,13 +248,15 @@ def self_test():
         write("a\nb\nc\npr1-fixed\npr2\nfix1-refixed\nfix2\n")
         h2 = commit("pass 2 rewrites pass 1's line and adds fix2")
 
-        report = measure(base, [h0, h1, h2], ["f.py:4", "f.py:6", "f.py:7", "f.py:2"], [2, 1], repo)
+        # Pass 2 reviewed H1 and reports its findings on H1's lines; line 6
+        # (fix1) is pass 1's, though pass 2's own fix rewrote it on H2.
+        report = measure(base, [h0, h1, h2], ["f.py:4", "f.py:6", "f.py:5", "f.py:2"], [2, 1], repo)
         origins = [f["origin"] for f in report["findings"]]
         failures = []
-        if origins != ["pass1", "pass2", "pass2", "main"]:
-            failures.append("attribution: expected pass1, pass2, pass2, main; got {0}".format(origins))
-        if report["self_inflicted"] != {"count": 3, "of": 4}:
-            failures.append("self-inflicted: expected 3 of 4; got {0}".format(report["self_inflicted"]))
+        if origins != ["pass1", "pass1", "pr", "main"]:
+            failures.append("attribution: expected pass1, pass1, pr, main; got {0}".format(origins))
+        if report["self_inflicted"] != {"count": 2, "of": 4}:
+            failures.append("self-inflicted: expected 2 of 4; got {0}".format(report["self_inflicted"]))
         churn = [(c["pass"], c["rewrote_earlier_pass_lines"]) for c in report["churn"]]
         if churn != [(1, {}), (2, {"pass1": 1})]:
             failures.append("churn: expected pass 1 none, pass 2 one pass1 line; got {0}".format(churn))
@@ -294,7 +302,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--base", default="origin/main")
     parser.add_argument("--heads", help="comma-separated: H0 (before pass 1), H1 (after pass 1), ...")
-    parser.add_argument("--finding", action="append", default=[], help="path:line on the last head")
+    parser.add_argument("--finding", action="append", default=[], help="path:line on the head the latest pass reviewed")
     parser.add_argument("--counts", help="comma-separated real findings per pass")
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--self-test", action="store_true")

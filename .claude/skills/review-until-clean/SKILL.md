@@ -231,7 +231,8 @@ python3 .claude/skills/review-until-clean/scripts/thrash_signals.py \
   --finding path:line --finding path:line ... --counts c1,c2,...,cn
 ```
 
-`--finding` takes this pass's real findings, located on the latest head.
+`--finding` takes this pass's real findings at the file:line its report
+gives, which is on H(n-1), the head the pass started from and reviewed.
 `--counts` takes the real findings per pass from the ledger. The script
 reports, from git alone:
 

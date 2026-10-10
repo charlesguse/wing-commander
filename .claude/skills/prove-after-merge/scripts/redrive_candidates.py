@@ -110,7 +110,10 @@ def main():
     # runs by path (`bash .github/scripts/verify-watchdog-run.sh`, #976's
     # merge) would reach nothing. Count a literal mention of a changed path
     # under .github/ in a workflow or composite file as an edge to it (docs
-    # paths are only ever mentioned in comments, and need no run).
+    # paths are only ever mentioned in comments, and need no run). A
+    # full-line comment is not an edge: every stage workflow's "Canonical
+    # required-tool list: .github/scripts/required-tools.txt" names a file
+    # none of them reads.
     mentioned_by = {path: set() for path in changed}
     texts = {}
     for name in os.listdir(WORKFLOWS_DIR):
@@ -122,7 +125,8 @@ def main():
                 texts[os.path.join(dirpath, name).replace(os.sep, "/")] = None
     for path in texts:
         with open(path, encoding="utf-8") as fh:
-            text = fh.read()
+            text = "\n".join(line for line in fh.read().splitlines()
+                              if not line.lstrip().startswith("#"))
         for changed_path in changed:
             if (changed_path.startswith(".github/") and changed_path != path
                     and changed_path in text):

@@ -71,7 +71,7 @@ the pipeline may only re-drive a workflow it can correlate by an
 **3. Dispatch, and find the run you started.**
 
 ```
-R=$(gh repo view --json nameWithOwner -q .nameWithOwner)
+R=$(git remote get-url origin | sed -E 's#(\.git)?/?$##; s#.*[/:]([^/:]+/[^/:]+)$#\1#')
 since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 gh workflow run <workflow>.yml --ref main [-f input=value ...]
 gh run list --workflow <workflow>.yml --event workflow_dispatch \

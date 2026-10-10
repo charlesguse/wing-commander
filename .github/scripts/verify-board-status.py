@@ -339,6 +339,21 @@ def switches_half():
     check("switches_from fills every switch and normalises tasks_review",
           got == dict({k: "" for k in bs.SWITCH_ENV}, tasks_review="required"), got)
 
+    # When gh can't list the variables (a Claude Code session's proxy
+    # refuses them), board_now.py must stop rather than render every switch
+    # as unset: that would report the board loop running and auto-merge off
+    # whatever the real switches say.
+    sys.path.insert(0, os.path.join(root, ".claude", "skills", "whats-on-me", "scripts"))
+    import board_now
+    import subprocess
+    board_now.gh = lambda *a: subprocess.CompletedProcess(a, 1, "", "HTTP 403")
+    try:
+        board_now.switches_for("o/r")
+        stopped = False
+    except SystemExit as err:
+        stopped = err.code not in (None, 0)
+    check("board_now.py exits non-zero when it can't read the switches", stopped)
+
 
 def main():
     render_half()

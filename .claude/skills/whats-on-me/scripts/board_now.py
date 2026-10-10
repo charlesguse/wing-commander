@@ -10,13 +10,17 @@ passes in its env, read through wc_board_status.switches_from(), so a new
 switch added there reaches this report too.
 
 Needs gh authenticated with read access to the repository and its
-variables (a variable it can't read renders as unset).
+variables. It exits non-zero rather than render a guess when it can't list
+them: the switches decide which bucket an item lands in. The repository
+comes from --repo, GITHUB_REPOSITORY or the origin remote, never from
+`gh repo view`, whose GraphQL call Claude Code sessions refuse.
 
   board_now.py [--repo OWNER/NAME]
 """
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -33,24 +37,27 @@ def gh(*args):
 
 def switches_for(repo):
     out = gh("variable", "list", "-R", repo, "--json", "name,value")
-    values = {}
-    if out.returncode == 0 and out.stdout.strip():
-        values = {v["name"]: v.get("value", "") for v in json.loads(out.stdout)}
-    else:
-        sys.stderr.write("board_now: couldn't read repository variables; switches render as unset\n")
+    if out.returncode != 0:
+        sys.exit("board_now: can't read the repository variables, so the switches "
+                 "are unknown: {0}".format(out.stderr.strip()))
+    values = {v["name"]: v.get("value", "") for v in json.loads(out.stdout or "[]")}
     return wc_board_status.switches_from(lambda env: values.get("WING_COMMANDER_" + env, ""))
+
+
+def repo_from_origin():
+    out = subprocess.run(["git", "-C", REPO_ROOT, "remote", "get-url", "origin"],
+                         capture_output=True, text=True)
+    match = re.search(r"([^/:]+/[^/:]+?)(?:\.git)?/?$", out.stdout.strip())
+    return match.group(1) if out.returncode == 0 and match else None
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--repo")
     args = parser.parse_args()
-    repo = args.repo
+    repo = args.repo or os.environ.get("GITHUB_REPOSITORY") or repo_from_origin()
     if not repo:
-        out = gh("repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner")
-        if out.returncode != 0:
-            sys.exit("board_now: gh can't see the repository: {0}".format(out.stderr.strip()))
-        repo = out.stdout.strip()
+        sys.exit("board_now: can't tell the repository from the origin remote; pass --repo")
     sys.stdout.write(wc_board_status.render(wc_board_status.snapshot(repo, switches_for(repo))))
     return 0
 

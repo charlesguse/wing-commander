@@ -39,7 +39,9 @@ what that report reads, and publishes nothing. The report covers:
 - the Maintenance backlog's size;
 - other open issues and open PRs.
 
-If gh can't read the board, fall back to the "Board status" issue itself
+If gh can't read the board or the repository variables (a Claude Code
+cloud session's proxy refuses the variables), the script exits non-zero;
+fall back to the "Board status" issue itself
 (open, `disposition:tracking`) and say how old its "Updated" line is.
 
 **2. Add what the board can't show.**
