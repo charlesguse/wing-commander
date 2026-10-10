@@ -226,6 +226,7 @@ the same report.
 ## The thrash check (orchestrator, after every pass)
 
 ```
+git fetch origin main   # a pass that merged main needs a base that contains it
 python3 .claude/skills/review-until-clean/scripts/thrash_signals.py \
   --base origin/main --heads H0,H1,...,Hn \
   --finding path:line --finding path:line ... --counts c1,c2,...,cn

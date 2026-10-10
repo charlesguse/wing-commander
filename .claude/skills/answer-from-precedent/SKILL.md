@@ -150,7 +150,7 @@ governs:
 
 - start the comment with `**Owner decision (YYYY-MM-DD):**`;
 - give the question, the chosen option, and that it was decided in chat;
-- `gh search issues "Owner decision"` then finds it.
+- `gh search issues --repo "$R" "Owner decision"` then finds it.
 
 Two exceptions:
 

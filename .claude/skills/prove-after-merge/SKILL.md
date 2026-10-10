@@ -73,10 +73,16 @@ the pipeline may only re-drive a workflow it can correlate by an
 ```
 R=$(git remote get-url origin | sed -E 's#(\.git)?/?$##; s#.*[/:]([^/:]+/[^/:]+)$#\1#')
 since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-gh workflow run <workflow>.yml --ref main [-f input=value ...]
-gh run list --workflow <workflow>.yml --event workflow_dispatch \
-  --json databaseId,createdAt,headSha,status --limit 5 \
-  --jq "[.[] | select(.createdAt >= \"$since\")]"
+gh workflow run -R "$R" <workflow>.yml --ref main [-f input=value ...]
+# GitHub creates the run a few seconds after the dispatch returns.
+for try in 1 2 3 4 5 6; do
+  sleep 10
+  runs=$(gh run list -R "$R" --workflow <workflow>.yml --event workflow_dispatch \
+    --json databaseId,createdAt,headSha,status --limit 5 \
+    --jq "[.[] | select(.createdAt >= \"$since\")]")
+  [ "$runs" != "[]" ] && break
+done
+echo "$runs"
 ```
 
 Leave `attempt-token` blank on a manual dispatch; it is for the pipeline's
@@ -86,7 +92,7 @@ own correlation.
 usually takes:
 
 ```
-gh run list --workflow <workflow>.yml --status completed --limit 5 \
+gh run list -R "$R" --workflow <workflow>.yml --status completed --limit 5 \
   --json createdAt,updatedAt
 ```
 
@@ -98,10 +104,10 @@ it once or twice; then say it is overdue rather than waiting forever.
 
 - **The run is on the merged code.**
   `git merge-base --is-ancestor <merge-sha> <run headSha>` must succeed.
-- **The changed step ran.** Open the job: `gh run view <id> --json jobs`
+- **The changed step ran.** Open the job: `gh run view -R "$R" <id> --json jobs`
   shows each step's conclusion.
 - **It did what the fix says.** Read the log line the fix changes:
-  `gh run view <id> --log --job <job-id> | grep ...`. Quote that line.
+  `gh run view -R "$R" <id> --log --job <job-id> | grep ...`. Quote that line.
 
 **6. Record the evidence.** Comment on the merged PR, or on the issue it
 closed. Give:

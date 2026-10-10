@@ -152,6 +152,10 @@ def diff_size(base, head, cwd):
 
 
 def measure(base, heads, findings, counts, cwd):
+    # Diff paths are relative to the repository root, and blame resolves
+    # a path against its cwd; run from a subdirectory, every blame would
+    # fail and churn and attribution would read 0.
+    cwd = git(["rev-parse", "--show-toplevel"], cwd).stdout.strip()
     base = rev(base, cwd)
     heads = [rev(h, cwd) for h in heads]
     origins = Origins(base, heads, cwd)
@@ -167,6 +171,18 @@ def measure(base, heads, findings, counts, cwd):
         "them, so attribution and churn are unreliable".format(k - 1, k)
         for k in range(1, len(heads))
         if not origins._is_ancestor(heads[k - 1], heads[k])]
+    # A pass that merged main brings in main commits; if --base predates
+    # that merge they are not its ancestors and would be labelled passK.
+    for k in range(1, len(heads)):
+        merges = git(["rev-list", "--merges", "--parents", heads[k - 1] + ".." + heads[k]],
+                     cwd).stdout.split("\n")
+        if any(not origins._is_ancestor(parent, base)
+               for line in merges if line
+               for parent in line.split()[2:]
+               if not origins._is_ancestor(parent, heads[k - 1])):
+            report["warnings"].append(
+                "pass {0} merged commits --base does not contain: fetch the base "
+                "branch, or they are counted as pass {0}'s".format(k))
 
     churn = []
     for k in range(1, len(heads)):
@@ -282,6 +298,31 @@ def self_test():
             failures.append("header parsing: expected pass 2 to churn 3 pass1 lines "
                             "('-- c' and fix2 in g.py, fix2 in 'a b.py'); got {0}".format(churn))
 
+        # Run from a subdirectory, the same loop measures the same.
+        os.makedirs(os.path.join(repo, "sub"))
+        again = measure(base, [h0, h1, h2], ["f.py:4", "f.py:6", "f.py:5", "f.py:2"], [2, 1],
+                        os.path.join(repo, "sub"))
+        if [f["origin"] for f in again["findings"]] != ["pass1", "pass1", "pr", "main"] \
+                or [c["total"] for c in again["churn"]] != [0, 1]:
+            failures.append("subdirectory: expected the same attribution and churn as "
+                            "from the root; got {0}, {1}".format(
+                                [f["origin"] for f in again["findings"]],
+                                [c["total"] for c in again["churn"]]))
+
+        # A pass that merges a main newer than --base is flagged.
+        run("checkout", "-q", "-b", "newer-main", base)
+        write("main-later\n", "m.py")
+        newer = commit("main moves on")
+        run("checkout", "-q", "-b", "merged", h0)
+        run("-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false",
+            "merge", "-q", "--no-edit", newer)
+        h0_merged = rev("HEAD", repo)
+        if not measure(base, [h0, h0_merged], [], [], repo)["warnings"]:
+            failures.append("stale base: expected a warning when a pass merges commits "
+                            "--base does not contain")
+        if measure(newer, [h0, h0_merged], [], [], repo)["warnings"]:
+            failures.append("stale base: expected no warning once --base contains the merge")
+
         # A head rebuilt off H0's line (a rebase) is flagged, not trusted.
         run("checkout", "-q", "-b", "rebased", base)
         write("a\nb\nc\npr1\npr2\n")
@@ -294,7 +335,7 @@ def self_test():
             print("FAIL " + failure)
         if failures:
             return 1
-        print("ok: attribution, self-inflicted share, churn, growth, header parsing, rewrite warning")
+        print("ok: attribution, self-inflicted share, churn, growth, header parsing, subdirectory, stale-base and rewrite warnings")
         return 0
 
 
