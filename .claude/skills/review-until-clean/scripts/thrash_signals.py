@@ -1,0 +1,265 @@
+#!/usr/bin/env python3
+"""Is a review loop converging, or feeding on its own fixes?
+
+THE FAILURE THIS MEASURES
+-------------------------
+A review -> fix -> review loop can keep finding real bugs and still be
+going nowhere: the bugs are in code the loop itself wrote. PR #969's four
+review passes found 10 cases Gate 12 would miss, and 8 of them were in the
+PR's own new parsing; #954 took 15 rounds and grew into a full shell
+parser. Each round looked productive. The signal was where the findings
+were, not how many there were, and nothing measured it.
+
+This script answers the parts of that question git can answer
+deterministically, from the head SHAs the loop recorded at each pass
+boundary:
+
+  attribution  For each finding location on the latest head, who wrote the
+               line: main, the PR as first submitted, or the fix commits of
+               pass k. Findings in pass-k lines are self-inflicted.
+  churn        For each pass, how many lines it rewrote or deleted that an
+               EARLIER pass had written. A fix of a fix; a pass undoing a
+               pass is the extreme case.
+  growth       The PR's diff size against main at every recorded head.
+  trend        Real findings per pass, when the caller passes --counts.
+
+It does not decide whether a finding is real, or whether one finding is a
+re-raise of another; the review-until-clean skill's ledger does that. It
+prints the numbers the skill's stop rules read.
+
+USAGE
+-----
+  thrash_signals.py --base origin/main --heads H0,H1,H2 \\
+      [--finding path:line ...] [--counts 4,1,1] [--json]
+
+  H0 is the PR head before pass 1's fixes; Hk is the head after pass k.
+  --finding locations are on the last head. --counts holds the number of
+  real findings each pass reported, in order.
+
+  thrash_signals.py --self-test   builds a scratch repository and checks
+                                  the attribution, churn and growth math.
+"""
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+
+HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+\d+(?:,\d+)? @@")
+
+
+def git(args, cwd=None, check=True):
+    out = subprocess.run(["git"] + args, cwd=cwd, capture_output=True, text=True)
+    if check and out.returncode != 0:
+        raise SystemExit("thrash_signals: git {0} failed: {1}".format(
+            " ".join(args), out.stderr.strip()))
+    return out
+
+
+def rev(ref, cwd):
+    return git(["rev-parse", "--verify", ref + "^{commit}"], cwd).stdout.strip()
+
+
+class Origins(object):
+    """Maps a commit to the segment of the loop that introduced it."""
+
+    def __init__(self, base, heads, cwd):
+        self.base = base
+        self.heads = heads
+        self.cwd = cwd
+        self._cache = {}
+
+    def _is_ancestor(self, commit, ref):
+        return git(["merge-base", "--is-ancestor", commit, ref],
+                   self.cwd, check=False).returncode == 0
+
+    def of(self, commit):
+        if commit not in self._cache:
+            if self._is_ancestor(commit, self.base):
+                label = "main"
+            elif self._is_ancestor(commit, self.heads[0]):
+                label = "pr"
+            else:
+                label = "unrecorded"
+                for k in range(1, len(self.heads)):
+                    if self._is_ancestor(commit, self.heads[k]):
+                        label = "pass{0}".format(k)
+                        break
+            self._cache[commit] = label
+        return self._cache[commit]
+
+
+def blame_commits(ref, path, start, count, cwd):
+    """The commit that last wrote each line in [start, start+count) at ref."""
+    out = git(["blame", "-l", "-s", "-L", "{0},+{1}".format(start, count),
+               ref, "--", path], cwd, check=False)
+    if out.returncode != 0:
+        return []
+    commits = []
+    for line in out.stdout.splitlines():
+        token = line.split(" ", 1)[0].lstrip("^")
+        if token:
+            commits.append(token)
+    return commits
+
+
+def removed_ranges(old, new, cwd):
+    """(path, start, count) for every old-side range a diff rewrites or deletes."""
+    out = git(["-c", "core.quotePath=false", "diff", "-U0", "--no-renames",
+               "--no-color", old, new], cwd).stdout
+    ranges = []
+    path = None
+    for line in out.splitlines():
+        if line.startswith("--- "):
+            target = line[4:]
+            path = target[2:] if target.startswith("a/") else None
+        elif line.startswith("@@") and path:
+            match = HUNK_RE.match(line)
+            if match:
+                start = int(match.group(1))
+                count = int(match.group(2)) if match.group(2) is not None else 1
+                if count:
+                    ranges.append((path, start, count))
+    return ranges
+
+
+def diff_size(base, head, cwd):
+    merge_base = git(["merge-base", base, head], cwd).stdout.strip()
+    out = git(["diff", "--numstat", "--no-renames", merge_base, head], cwd).stdout
+    files = lines = 0
+    for row in out.splitlines():
+        added, deleted, _path = row.split("\t", 2)
+        files += 1
+        if added != "-":
+            lines += int(added) + int(deleted)
+    return {"files": files, "lines": lines}
+
+
+def measure(base, heads, findings, counts, cwd):
+    base = rev(base, cwd)
+    heads = [rev(h, cwd) for h in heads]
+    origins = Origins(base, heads, cwd)
+    report = {"base": base, "heads": heads}
+
+    report["growth"] = [dict(diff_size(base, h, cwd), head=h[:12]) for h in heads]
+
+    churn = []
+    for k in range(1, len(heads)):
+        rewrote = {}
+        for path, start, count in removed_ranges(heads[k - 1], heads[k], cwd):
+            for commit in blame_commits(heads[k - 1], path, start, count, cwd):
+                label = origins.of(commit)
+                if label.startswith("pass"):
+                    rewrote[label] = rewrote.get(label, 0) + 1
+        churn.append({"pass": k, "rewrote_earlier_pass_lines": rewrote,
+                      "total": sum(rewrote.values())})
+    report["churn"] = churn
+
+    attributed = []
+    for spec in findings:
+        path, _, line = spec.rpartition(":")
+        if not path or not line.isdigit():
+            raise SystemExit("thrash_signals: --finding wants path:line, got {0!r}".format(spec))
+        commits = blame_commits(heads[-1], path, int(line), 1, cwd)
+        attributed.append({"finding": spec,
+                           "origin": origins.of(commits[0]) if commits else "unknown"})
+    report["findings"] = attributed
+    in_loop = sum(1 for f in attributed if f["origin"].startswith("pass"))
+    report["self_inflicted"] = {"count": in_loop, "of": len(attributed)}
+
+    if counts:
+        report["trend"] = counts
+    return report
+
+
+def render(report):
+    lines = ["Growth (diff vs main at each recorded head):"]
+    for i, g in enumerate(report["growth"]):
+        label = "H{0} (before pass 1)".format(i) if i == 0 else "H{0} (after pass {0})".format(i)
+        lines.append("  {0} {1}: {2} files, {3} lines".format(label, g["head"], g["files"], g["lines"]))
+    lines.append("Churn (lines a pass rewrote that an earlier pass wrote):")
+    if not report["churn"]:
+        lines.append("  n/a (one head recorded)")
+    for c in report["churn"]:
+        detail = ", ".join("{0}: {1}".format(k, v) for k, v in sorted(c["rewrote_earlier_pass_lines"].items()))
+        lines.append("  pass {0}: {1}{2}".format(c["pass"], c["total"], " ({0})".format(detail) if detail else ""))
+    if report["findings"]:
+        si = report["self_inflicted"]
+        lines.append("Findings on the latest head, by who wrote the line ({0} of {1} in loop-written lines):".format(si["count"], si["of"]))
+        for f in report["findings"]:
+            lines.append("  {0}: {1}".format(f["finding"], f["origin"]))
+    if report.get("trend"):
+        lines.append("Real findings per pass: {0}".format(" -> ".join(str(c) for c in report["trend"])))
+    return "\n".join(lines)
+
+
+def self_test():
+    with tempfile.TemporaryDirectory() as repo:
+        def run(*args):
+            git(list(args), repo)
+
+        def write(text):
+            with open(os.path.join(repo, "f.py"), "w", encoding="utf-8") as fh:
+                fh.write(text)
+
+        def commit(message):
+            run("add", "-A")
+            run("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", message)
+            return rev("HEAD", repo)
+
+        run("init", "-q", "-b", "main")
+        write("a\nb\nc\n")
+        base = commit("main")
+        run("checkout", "-q", "-b", "pr")
+        write("a\nb\nc\npr1\npr2\n")
+        h0 = commit("the PR as submitted")
+        write("a\nb\nc\npr1-fixed\npr2\nfix1\n")
+        h1 = commit("pass 1 fixes pr1 and adds fix1")
+        write("a\nb\nc\npr1-fixed\npr2\nfix1-refixed\nfix2\n")
+        h2 = commit("pass 2 rewrites pass 1's line and adds fix2")
+
+        report = measure(base, [h0, h1, h2], ["f.py:4", "f.py:6", "f.py:7", "f.py:2"], [2, 1], repo)
+        origins = [f["origin"] for f in report["findings"]]
+        failures = []
+        if origins != ["pass1", "pass2", "pass2", "main"]:
+            failures.append("attribution: expected pass1, pass2, pass2, main; got {0}".format(origins))
+        if report["self_inflicted"] != {"count": 3, "of": 4}:
+            failures.append("self-inflicted: expected 3 of 4; got {0}".format(report["self_inflicted"]))
+        churn = [(c["pass"], c["rewrote_earlier_pass_lines"]) for c in report["churn"]]
+        if churn != [(1, {}), (2, {"pass1": 1})]:
+            failures.append("churn: expected pass 1 none, pass 2 one pass1 line; got {0}".format(churn))
+        sizes = [g["lines"] for g in report["growth"]]
+        if sizes != [2, 3, 4]:
+            failures.append("growth: expected 2, 3, 4 changed lines; got {0}".format(sizes))
+        for failure in failures:
+            print("FAIL " + failure)
+        if failures:
+            return 1
+        print("ok: attribution, self-inflicted share, churn and growth")
+        return 0
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser.add_argument("--base", default="origin/main")
+    parser.add_argument("--heads", help="comma-separated: H0 (before pass 1), H1 (after pass 1), ...")
+    parser.add_argument("--finding", action="append", default=[], help="path:line on the last head")
+    parser.add_argument("--counts", help="comma-separated real findings per pass")
+    parser.add_argument("--json", action="store_true")
+    parser.add_argument("--self-test", action="store_true")
+    args = parser.parse_args()
+    if args.self_test:
+        return self_test()
+    if not args.heads:
+        parser.error("--heads is required")
+    heads = [h for h in args.heads.split(",") if h]
+    counts = [int(c) for c in args.counts.split(",")] if args.counts else []
+    report = measure(args.base, heads, args.finding, counts, os.getcwd())
+    print(json.dumps(report, indent=2) if args.json else render(report))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
