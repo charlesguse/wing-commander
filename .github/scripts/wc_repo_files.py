@@ -11,8 +11,9 @@ filesystem scanned those copies and failed gates on every implement cycle
 (#808, #822, #823). Same idiom as verify-stage-tool-lists.py's
 _glob_has_match(). Outside a git working tree (a synthetic fixture), or
 when git cannot answer, the on-disk files stand in for tracked ones,
-`.git/` excluded: that can only add files, so a gate fails rather than
-passes. git runs without the variables that locate a repository
+`.git/` excluded. That only adds files: a gate that hunts for copies
+fails rather than passes, but one that asks whether a file exists can
+be satisfied by an untracked leftover. git runs without the variables that locate a repository
 (LOCATING_ENV), so a hook's GIT_DIR cannot point it at another one. The
 GIT_CONFIG_* entries stay: in a caller's container they carry the
 safe.directory setting git needs to read a workspace owned by another
@@ -45,8 +46,8 @@ def repo_files(root="."):
         top = _git(root, "rev-parse", "--show-toplevel")
         # Only when root IS the top: a fixture directory nested inside some
         # other repository's work tree is not that repository.
-        if top.returncode == 0 and os.path.realpath(
-                os.fsdecode(top.stdout).strip()) == os.path.realpath(root):
+        same = os.path.normcase(os.path.realpath(os.fsdecode(top.stdout).strip()))
+        if top.returncode == 0 and same == os.path.normcase(os.path.realpath(root)):
             proc = _git(root, "ls-files", "-z")
             if proc.returncode == 0:
                 return sorted(os.fsdecode(p) for p in proc.stdout.split(b"\0") if p)

@@ -1118,11 +1118,13 @@ def check_gh_rationale_home(root="."):
                 f"has no canonical home for the `gh` rationale (spec 101 "
                 f"FR-017)."]
     home_hits = len(GH_RATIONALE_SENTENCE_RE.findall(_unwrapped(home_text)))
-    head = home_text.find(GH_RATIONALE_HEADING)
-    section = home_text[head:] if head >= 0 else ""
-    # The entry runs to the first line that is not indented (the next
-    # bullet, a heading, a paragraph).
-    nxt = re.search(r"\n(?=\S)", section)
+    entry = re.search(r"^[ \t]*[-*] " + re.escape(GH_RATIONALE_HEADING),
+                      home_text, re.MULTILINE)
+    head = entry.start() if entry else -1
+    section = home_text[head:] if entry else ""
+    # The entry runs to the next bullet, heading or blank line; a lazy,
+    # unindented continuation line still belongs to it.
+    nxt = re.search(r"\n(?=[ \t]*[-*] |#|[ \t]*\n)", section)
     section = section[:nxt.start()] if nxt else section
     if home_hits != 1:
         problems.append(
@@ -3154,8 +3156,9 @@ def _self_test_gh_rationale_home(tmpdir):
          ".github/scripts/s.py"),
         ("the sentence moved out of its entry",
          {GH_RATIONALE_HOME: home_without.replace(
-             GH_RATIONALE_HEADING, "- **Moved**: " + _RATIONALE_SENTENCE.replace(
-                 "\n", " ") + "\n" + GH_RATIONALE_HEADING, 1)},
+             "- " + GH_RATIONALE_HEADING, "- **Moved**: "
+             + _RATIONALE_SENTENCE.replace("\n", " ") + "\n- "
+             + GH_RATIONALE_HEADING, 1)},
          "not under"),
         ("the claim restated with no pointer",
          {"README.md": "`gh` reaches remote writes, so no grant.\n"},
@@ -3178,6 +3181,10 @@ def _self_test_gh_rationale_home(tmpdir):
         ("the sentence below a last entry, in a later section",
          {GH_RATIONALE_HOME: f"- {GH_RATIONALE_HEADING}: no `gh` grant.\n\n"
                              f"## Later\n\n{_RATIONALE_SENTENCE}"}, "not under"),
+        ("the entry named earlier in the doc, and a lazy continuation",
+         {GH_RATIONALE_HOME: f"Intro: see {GH_RATIONALE_HEADING} below.\n\n"
+                             f"- {GH_RATIONALE_HEADING}: no `gh` grant,\n"
+                             f"{_RATIONALE_SENTENCE}- **Next**: x.\n"}, None),
         ("the claim pointing by a relative link",
          {f"docs/{spec}.md": "`gh` reaches remote writes; see "
                            "[why](agent-friendly-workflows.md).\n"}, None),
@@ -3204,7 +3211,7 @@ def _self_test_gh_rationale_home(tmpdir):
             bad_git = any(subprocess.run(cmd, cwd=root, env=git_env(),
                                          capture_output=True).returncode
                           for cmd in (["git", "init", "-q"],
-                                      ["git", "add", "--", *tracked]))
+                                      ["git", "add", "-f", "--", *tracked]))
         except OSError as exc:
             bad_git = exc
         if bad_git:

@@ -115,7 +115,7 @@ import tempfile
 import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from wc_repo_files import repo_files  # noqa: E402
+from wc_repo_files import git_env, repo_files  # noqa: E402
 
 _NL = chr(10)
 
@@ -468,7 +468,7 @@ def _git_tracked(root, rel):
     try:
         proc = subprocess.run(
             ["git", "-C", root, "ls-files", "--error-unmatch", "--", rel],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            env=git_env(), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     except OSError:
         return None
     if proc.returncode == 0:
@@ -492,7 +492,9 @@ def _glob_has_match(root, pattern):
     layer's own glob does). A glob that matches nothing is the same stale
     entry a missing script is. Outside a git working tree - this gate's own
     synthetic self-test fixtures - on-disk files stand in for tracked ones
-    (wc_repo_files.repo_files).
+    (wc_repo_files.repo_files). `root` is the repository's top: anywhere
+    else, or where git cannot answer, the on-disk files are read, which can
+    let an untracked leftover satisfy a stale wildcard grant.
     """
     return any(fnmatch.fnmatchcase(p, pattern) for p in repo_files(root))
 
