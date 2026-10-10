@@ -26,7 +26,13 @@ export GIT_CONFIG_VALUE_0=/dev/null
 server="${PUSH_SERVER_URL:-https://github.com}"
 url="${server}/${GITHUB_REPOSITORY}.git"
 if [ -n "${PUSH_TOKEN:-}" ]; then
-  url="${server/https:\/\//https://x-access-token:${PUSH_TOKEN}@}/${GITHUB_REPOSITORY}.git"
+  # The token travels as an auth header, not in the URL, so a failed push
+  # cannot echo it into the job log.
+  basic="$(printf 'x-access-token:%s' "$PUSH_TOKEN" | base64 | tr -d '\n')"
+  echo "::add-mask::${basic}"
+  export GIT_CONFIG_COUNT=2
+  export GIT_CONFIG_KEY_1="http.${server}/.extraheader"
+  export GIT_CONFIG_VALUE_1="AUTHORIZATION: basic ${basic}"
 fi
 # The env override cannot beat the workspace's own `url.<base>.insteadOf`
 # (local config outranks global), so the push runs from a fresh shim

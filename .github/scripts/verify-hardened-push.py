@@ -33,18 +33,23 @@ COMPOSITE = "wing-commander-hardened-push"
 # Workflows whose push sites are already converted; each is held to the rule.
 COVERED_WORKFLOWS = ()
 
-RAW_PUSH_RE = re.compile(r"^\s*(?:run:\s*)?git\s+push\b", re.M)
+RAW_PUSH_RE = re.compile(r"(?<![\w-])git\s+(?:-\S+\s+)*push\b")
 IDIOM_RE = re.compile(r"core\.hooksPath|GIT_CONFIG_NOSYSTEM")
 
 
 def check_text(name, text):
+    """Comment lines are ignored; every other line is held to the rule, so a
+    file that also uses the composite cannot hide a raw push."""
     errors = []
-    if COMPOSITE not in text and RAW_PUSH_RE.search(text):
-        errors.append("{0}: raw `git push` at a covered site; use the {1} "
-                      "composite".format(name, COMPOSITE))
-    if IDIOM_RE.search(text):
-        errors.append("{0}: hardening idiom pasted instead of using the {1} "
-                      "composite".format(name, COMPOSITE))
+    for lineno, line in enumerate(text.splitlines(), 1):
+        if line.lstrip().startswith("#"):
+            continue
+        if RAW_PUSH_RE.search(line):
+            errors.append("{0}:{1}: raw `git push` at a covered site; use the "
+                          "{2} composite".format(name, lineno, COMPOSITE))
+        if IDIOM_RE.search(line):
+            errors.append("{0}:{1}: hardening idiom pasted instead of using "
+                          "the {2} composite".format(name, lineno, COMPOSITE))
     return errors
 
 

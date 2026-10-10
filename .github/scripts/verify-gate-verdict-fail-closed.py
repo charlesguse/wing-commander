@@ -28,16 +28,41 @@ import wc_gate_verdict  # noqa: E402
 FIXTURES = os.path.join(HERE, "fixtures", "095-gate-verdict")
 WORKFLOWS = os.path.join(HERE, "..", "workflows")
 GATE_RESULT_RE = re.compile(r"needs\.gate-suite[\w-]*\.result")
-EXPLICIT_RE = re.compile(r"(outcome|result)\s*==\s*'(pass|success)'")
-IF_LINE_RE = re.compile(r"^\s*(?:-\s+)?if:\s*(.+?)\s*$")
+# Every gate-suite result reference must itself be compared to 'success'.
+GATE_EXPLICIT_RE = re.compile(
+    r"needs\.gate-suite[\w-]*\.result\s*==\s*'success'")
+IF_LINE_RE = re.compile(r"^(\s*)(?:-\s+)?if:\s*(.*?)\s*$")
 
 
 def publisher_if_ok(expr):
-    """True when a condition naming a gate-suite result demands an explicit
-    pass; conditions that do not name one are not this rule's concern."""
-    if not GATE_RESULT_RE.search(expr):
+    """True when every gate-suite result a condition names is demanded to be
+    exactly 'success'; conditions that do not name one are not this rule's
+    concern. A reference with any other comparison (or none) is red."""
+    refs = len(GATE_RESULT_RE.findall(expr))
+    if not refs:
         return True
-    return bool(EXPLICIT_RE.search(expr))
+    return len(GATE_EXPLICIT_RE.findall(expr)) == refs and "!=" not in expr \
+        and not re.search(r"!\s*\(", expr)
+
+
+def if_expressions(text):
+    """Yield (lineno, expression) for every `if:` value, joining `>-`/`|`
+    block scalars and plain multi-line continuations."""
+    lines = text.splitlines()
+    for idx, line in enumerate(lines):
+        match = IF_LINE_RE.match(line)
+        if not match:
+            continue
+        indent = len(match.group(1)) + (2 if line.lstrip().startswith("-") else 0)
+        expr = match.group(2)
+        if expr in (">", ">-", ">+", "|", "|-", "|+") or not expr:
+            expr = ""
+        parts = [expr]
+        for nxt in lines[idx + 1:]:
+            if nxt.strip() and len(nxt) - len(nxt.lstrip()) <= indent:
+                break
+            parts.append(nxt.strip())
+        yield idx + 1, " ".join(p for p in parts if p)
 
 
 def check_reader_cases(fixture_dir):
@@ -72,9 +97,8 @@ def check_workflows(workflow_dir):
         if not name.endswith(".yml"):
             continue
         with open(os.path.join(workflow_dir, name), encoding="utf-8") as fh:
-            for lineno, line in enumerate(fh, 1):
-                match = IF_LINE_RE.match(line)
-                if match and not publisher_if_ok(match.group(1)):
+            for lineno, expr in if_expressions(fh.read()):
+                if not publisher_if_ok(expr):
                     errors.append("{0}:{1}: publisher `if:` treats a skipped "
                                   "or cancelled gate-suite job as green"
                                   .format(name, lineno))
@@ -98,6 +122,14 @@ def self_test():
         failures.append("explicit success rejected")
     if not publisher_if_ok("github.event_name == 'push'"):
         failures.append("unrelated condition rejected")
+    if publisher_if_ok("needs.gate-suite-x.result == 'success' || "
+                       "needs.gate-suite-y.result != 'failure'"):
+        failures.append("second unguarded gate reference accepted")
+    multi = list(if_expressions(
+        "    if: >-\n      !cancelled() &&\n      needs.gate-suite-x.result != 'failure'\n"
+        "    steps: []\n"))
+    if not multi or publisher_if_ok(multi[0][1]):
+        failures.append("multi-line skipped-as-green if accepted")
     with tempfile.TemporaryDirectory() as tmp:
         with open(os.path.join(tmp, "w.yml"), "w", encoding="utf-8") as fh:
             fh.write("    if: needs.gate-suite-x.result != 'failure'\n")

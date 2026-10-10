@@ -8,9 +8,11 @@ base_sha="$2"
 out_dir="$3"
 mkdir -p "$out_dir"
 head_sha="$(git rev-parse HEAD)"
-if [ -n "$base_sha" ]; then
+if [ -n "$base_sha" ] && [ "$base_sha" != "$head_sha" ]; then
   git bundle create "$out_dir/bundle.git" "$base_sha..HEAD" HEAD
 else
+  # No new commits (or no base): git refuses an empty thin bundle, so ship
+  # the head itself.
   git bundle create "$out_dir/bundle.git" HEAD
 fi
 jq -n --arg base "$base_sha" --arg head "$head_sha" --arg site "$site" \

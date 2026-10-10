@@ -95,7 +95,8 @@ def read_verdict(path, expected_head_sha, trusted_sha, site=None):
             data = json.load(fh)
     except FileNotFoundError:
         return "fail", "verdict artifact missing", "gate verdict absent"
-    except (OSError, ValueError, UnicodeDecodeError) as exc:
+    except (OSError, ValueError, UnicodeDecodeError, RecursionError,
+            MemoryError) as exc:
         return "fail", "verdict unreadable: {0}".format(type(exc).__name__), \
             "gate verdict unreadable"
     problem = validate(data)
@@ -175,7 +176,7 @@ def main(argv):
     r.add_argument("--file", required=True)
     r.add_argument("--expected-head-sha", required=True)
     r.add_argument("--trusted-sha", required=True)
-    r.add_argument("--site")
+    r.add_argument("--site", required=True)
     args = parser.parse_args(argv[1:])
     if args.cmd == "write":
         try:

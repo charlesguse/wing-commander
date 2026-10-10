@@ -20,9 +20,9 @@ inputs:
     required: false
     default: board-fix
   bundle-artifact:
-    description: Name of the workspace bundle artifact to download.
+    description: Name of the workspace bundle artifact; empty means wc-gate-bundle-<site>.
     required: false
-    default: wc-gate-bundle-board-fix
+    default: ""
 outputs:
   verdict-artifact:
     description: Name of the uploaded verdict artifact.
@@ -34,7 +34,7 @@ runs:
       continue-on-error: true
       uses: actions/download-artifact@v4
       with:
-        name: ${{ inputs.bundle-artifact }}
+        name: ${{ inputs.bundle-artifact || format('wc-gate-bundle-{0}', inputs.site) }}
         path: ${{ runner.temp }}/wc-gate-bundle
     - name: Run the gate suite on the bundle
       shell: bash

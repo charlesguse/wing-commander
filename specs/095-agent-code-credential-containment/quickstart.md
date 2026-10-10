@@ -35,7 +35,23 @@ Gate registration: a gate is a `verify-*.py` invoked from a
 `lint-workflows.yml` step (plain run plus `--self-test`) with path triggers;
 `wc_gate_registry.py` recovers argv from those steps and `run-local-gates.py`
 runs them, so one registration serves CI and local (FR-019/FR-021). Gates 141
-and 142 are the examples.
+and 142 are the examples (Gate 143, `verify-composite-run-provenance.py`, is
+registered the same way).
+
+## Job-split hazards found at implement cycle 4 (for T011-T014)
+
+Splitting board-loop's `fix` job at the push boundary is not a mechanical
+move. (1) `fix` holds `concurrency: group: wing-commander-board-loop`; a
+second job in the same group would queue behind it and deadlock, while a
+publish job with no group lets the next queued run start before the push.
+(2) `review` reads `needs.fix.outputs.pr-number`/`breach` and `needs.fix.result`,
+so the job that pushes must keep the name `fix` or those readers move with
+it. (3) Every post-gate step reads `steps.base`, `steps.ctx`, the snapshot
+and the `.wc-pristine-repo` copy, so the publish job must rebuild all four
+from the bundle. Gates 98/104 and the resume-gating gate each hold `fix` to
+its current shape and move in the same commit. None of this could be run
+(the gate suite needs PyYAML, absent in this job), so the split was not
+attempted blind.
 
 Prerequisites: a checkout of the branch, Python 3 with PyYAML, `jq`, `git`.
 
